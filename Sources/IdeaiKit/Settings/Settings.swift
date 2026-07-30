@@ -24,6 +24,7 @@ public final class Settings {
 			Key.excludedDirectories: Array(FileNode.defaultExcludedDirectoryNames).sorted(),
 			Key.uiScale: 1.0,
 			Key.terminalFontName: "",
+			Key.wordWrap: false,
 		])
 	}
 
@@ -38,6 +39,7 @@ public final class Settings {
 		static let excludedDirectories = "excludedDirectories"
 		static let uiScale = "uiScale"
 		static let terminalFontName = "terminalFontName"
+		static let wordWrap = "wordWrap"
 	}
 
 	// MARK: - Zoom
@@ -127,6 +129,12 @@ public final class Settings {
 		set { set(newValue, Key.terminalFontName) }
 	}
 
+	/// Soft-wrap long lines in the editor.
+	public var wordWrap: Bool {
+		get { defaults.bool(forKey: Key.wordWrap) }
+		set { set(newValue, Key.wordWrap) }
+	}
+
 	// MARK: - Navigator
 
 	/// Dotfiles are shown by default: `.gitignore` and friends are part of a
@@ -155,7 +163,7 @@ public final class Settings {
 			Key.autoSaveEnabled, Key.autoSaveDelay, Key.saveOnFocusLoss,
 			Key.editorFontSize, Key.editorLineHeight, Key.tabWidth,
 			Key.showHiddenFiles, Key.excludedDirectories,
-			Key.uiScale, Key.terminalFontName,
+			Key.uiScale, Key.terminalFontName, Key.wordWrap,
 		] {
 			defaults.removeObject(forKey: key)
 		}

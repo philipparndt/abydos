@@ -243,6 +243,7 @@ final class EditorViewController: NSViewController {
 		}
 
 		codeView.load(document: document)
+		codeView.setWordWrap(Settings.shared.wordWrap)
 		tab.sourceView = scrollView
 		return tab
 	}
@@ -627,6 +628,13 @@ final class EditorViewController: NSViewController {
 		view.window?.makeFirstResponder(tab.codeView ?? tab.contentView)
 	}
 
+	/// Flips soft wrap for every open editor and remembers the choice.
+	func toggleWordWrap() {
+		let enabled = !Settings.shared.wordWrap
+		Settings.shared.wordWrap = enabled
+		for tab in tabs { tab.codeView?.setWordWrap(enabled) }
+	}
+
 	func collapseAllFolds() { activeTab?.codeView?.collapseAllFolds() }
 	func expandAllFolds() { activeTab?.codeView?.expandAllFolds() }
 
@@ -660,6 +668,7 @@ final class EditorViewController: NSViewController {
 		if !findBar.isHidden { findBarHeight.constant = Theme.current.scaled(34) }
 		statusBar.needsDisplay = true
 		for tab in tabs {
+			tab.codeView?.setWordWrap(Settings.shared.wordWrap)
 			tab.codeView?.applyThemeChange()
 		}
 	}

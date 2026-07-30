@@ -45,6 +45,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		// Simulated input runs after the initial parse lands, so folds and
 		// highlights exist by the time it is exercised.
+		if options.wordWrap {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+				controller?.toggleWordWrap(nil)
+			}
+		}
 		if let query = options.findQuery {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
 				controller?.findInFile(nil)
@@ -287,6 +292,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 		viewMenu.addItem(withTitle: "Zoom Out", action: #selector(MainWindowController.zoomOut(_:)), keyEquivalent: "-")
 		viewMenu.addItem(withTitle: "Actual Size", action: #selector(MainWindowController.resetZoom(_:)), keyEquivalent: "0")
 		viewMenu.addItem(.separator())
+		let wrapItem = NSMenuItem(
+			title: "Toggle Word Wrap",
+			action: #selector(MainWindowController.toggleWordWrap(_:)),
+			keyEquivalent: "z"
+		)
+		wrapItem.keyEquivalentModifierMask = [.command, .option]
+		viewMenu.addItem(wrapItem)
 		let preview = NSMenuItem(
 			title: "Toggle Markdown Preview",
 			action: #selector(MainWindowController.toggleMarkdownPreview(_:)),

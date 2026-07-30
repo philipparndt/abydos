@@ -34,6 +34,8 @@ struct LaunchOptions {
 	var findQuery: String?
 	/// Query for project-wide search.
 	var searchQuery: String?
+	/// Turn soft wrap on before capture.
+	var wordWrap = false
 
 	static func parse(_ arguments: [String] = CommandLine.arguments) -> LaunchOptions {
 		var options = LaunchOptions()
@@ -63,6 +65,7 @@ struct LaunchOptions {
 			case "--review":     options.startReview = true
 			case "--find":       options.findQuery = next()
 			case "--search":     options.searchQuery = next()
+			case "--wrap":       options.wordWrap = true
 			default:
 				// A bare path is treated as the project to open.
 				if !argument.hasPrefix("-"), options.projectPath == nil {

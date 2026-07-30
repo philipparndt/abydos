@@ -250,6 +250,12 @@ final class SettingsPaneController: NSViewController {
 				get: { Settings.shared.editorLineHeight },
 				set: { Settings.shared.editorLineHeight = $0 }
 			),
+			.toggle(
+				title: "Word wrap",
+				help: "Soft-wrap long lines instead of scrolling sideways (⌥⌘Z).",
+				get: { Settings.shared.wordWrap },
+				set: { Settings.shared.wordWrap = $0 }
+			),
 			.text(
 				title: "Terminal font",
 				help: "Leave empty to choose automatically. Powerline prompts need a Nerd Font.",

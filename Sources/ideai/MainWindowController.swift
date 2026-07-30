@@ -386,6 +386,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		Settings.shared.resetZoom()
 	}
 
+	@objc func toggleWordWrap(_ sender: Any?) {
+		editor.toggleWordWrap()
+	}
+
 	@objc func toggleMarkdownPreview(_ sender: Any?) {
 		editor.toggleMarkdownPreview()
 	}

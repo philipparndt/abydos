@@ -15,6 +15,10 @@ final class CodeView: NSView, NSTextInputClient {
 	private(set) var document: TextDocument?
 	private var folding = FoldingState()
 
+	/// Row mapping when soft wrap is on. Empty means one row per line.
+	private var wrapLayout = WrapLayout()
+	private(set) var isWordWrapEnabled = false
+
 	/// Caret and selection anchor, in UTF-16 offsets.
 	private var caret = 0
 	private var selectionAnchor = 0
@@ -102,6 +106,7 @@ final class CodeView: NSView, NSTextInputClient {
 			// Editing may have invalidated regions; keep collapse state where the
 			// regions survived.
 			self.folding.setAvailable(document.folds)
+			self.rebuildWrapLayout()
 			self.updateFrameSize()
 			self.needsDisplay = true
 		}
@@ -135,7 +140,71 @@ final class CodeView: NSView, NSTextInputClient {
 
 	private var visibleLineCount: Int {
 		guard let document else { return 1 }
+		if isWordWrapEnabled { return wrapLayout.totalRows }
 		return folding.visibleLineCount(documentLineCount: document.lineCount)
+	}
+
+	/// Columns of text that fit, used as the wrap width.
+	private var wrapColumns: Int? {
+		guard isWordWrapEnabled else { return nil }
+		let available = (enclosingScrollView?.contentSize.width ?? bounds.width)
+			- gutterWidth - Self.textLeftPadding - Theme.current.scaled(16)
+		return max(20, Int(available / max(1, charWidth)))
+	}
+
+	/// Display width of a line in columns, expanding tabs.
+	private func displayColumns(ofLine line: Int) -> Int {
+		guard let document else { return 0 }
+		let text = document.rope.lineText(line)
+		guard text.contains("\t") else { return (text as NSString).length }
+
+		let tabWidth = Theme.current.tabWidth
+		var columns = 0
+		for character in text {
+			if character == "\t" {
+				columns += tabWidth - (columns % tabWidth)
+			} else {
+				columns += 1
+			}
+		}
+		return columns
+	}
+
+	private func rebuildWrapLayout() {
+		guard let document, isWordWrapEnabled else { return }
+		wrapLayout.rebuild(
+			documentLineCount: document.lineCount,
+			columns: wrapColumns,
+			folding: folding
+		) { [weak self] line in
+			self?.displayColumns(ofLine: line) ?? 0
+		}
+	}
+
+	/// Document line for a visual row, honouring both folding and wrapping.
+	private func documentLine(forVisualRow row: Int) -> Int {
+		if isWordWrapEnabled { return wrapLayout.position(forRow: row).line }
+		return folding.documentLine(forVisualLine: row)
+	}
+
+	/// Which wrapped segment of its line a row shows.
+	private func wrapSegment(forVisualRow row: Int) -> Int {
+		isWordWrapEnabled ? wrapLayout.position(forRow: row).segment : 0
+	}
+
+	private func firstVisualRow(forDocumentLine line: Int) -> Int {
+		if isWordWrapEnabled { return wrapLayout.firstRow(forLine: line) }
+		return folding.visualLine(forDocumentLine: line)
+	}
+
+	/// Turns soft wrap on or off and re-lays out.
+	func setWordWrap(_ enabled: Bool) {
+		guard enabled != isWordWrapEnabled else { return }
+		isWordWrapEnabled = enabled
+		if enabled { rebuildWrapLayout() }
+		updateFrameSize()
+		needsDisplay = true
+		scrollCaretToVisible()
 	}
 
 	private func updateFrameSize() {
@@ -143,10 +212,17 @@ final class CodeView: NSView, NSTextInputClient {
 		let digits = max(2, String(document.lineCount).count)
 		gutterWidth = ceil(CGFloat(digits) * charWidth) + Self.gutterPadding * 2 + 14
 
-		let height = CGFloat(visibleLineCount) * lineHeight + lineHeight
-		let width = gutterWidth + Self.textLeftPadding + CGFloat(longestLineColumns) * charWidth + 40
+		if isWordWrapEnabled { rebuildWrapLayout() }
 
-		let clipWidth = enclosingScrollView?.contentSize.width ?? width
+		let height = CGFloat(visibleLineCount) * lineHeight + lineHeight
+		let clipWidth = enclosingScrollView?.contentSize.width ?? bounds.width
+
+		// Wrapped text never scrolls horizontally, so the document is exactly as
+		// wide as the viewport.
+		let width = isWordWrapEnabled
+			? clipWidth
+			: gutterWidth + Self.textLeftPadding + CGFloat(longestLineColumns) * charWidth + 40
+
 		setFrameSize(NSSize(width: max(width, clipWidth), height: max(height, 10)))
 	}
 
@@ -181,8 +257,8 @@ final class CodeView: NSView, NSTextInputClient {
 		let rows = visualLineRange(in: dirtyRect)
 		guard !rows.isEmpty else { return }
 
-		let firstDocLine = folding.documentLine(forVisualLine: rows.lowerBound)
-		let lastDocLine = min(document.lineCount - 1, folding.documentLine(forVisualLine: max(rows.lowerBound, rows.upperBound - 1)))
+		let firstDocLine = documentLine(forVisualRow: rows.lowerBound)
+		let lastDocLine = min(document.lineCount - 1, documentLine(forVisualRow: max(rows.lowerBound, rows.upperBound - 1)))
 
 		// One syntax query for the whole visible span, rather than per line.
 		let tokens = document.highlights(forLineRange: firstDocLine..<(lastDocLine + 1))
@@ -204,8 +280,9 @@ final class CodeView: NSView, NSTextInputClient {
 		))
 
 		for visual in rows {
-			let docLine = folding.documentLine(forVisualLine: visual)
+			let docLine = documentLine(forVisualRow: visual)
 			guard docLine < document.lineCount else { break }
+			let segment = wrapSegment(forVisualRow: visual)
 
 			let y = yPosition(forVisualLine: visual)
 			let rowRect = NSRect(x: 0, y: y, width: bounds.width, height: lineHeight)
@@ -220,6 +297,7 @@ final class CodeView: NSView, NSTextInputClient {
 
 			drawLine(
 				docLine: docLine,
+				segment: segment,
 				rect: rowRect,
 				tokenIndex: tokenIndex,
 				selection: selection,
@@ -238,6 +316,7 @@ final class CodeView: NSView, NSTextInputClient {
 	/// Builds the attributed line and draws text, selection, and any fold marker.
 	private func drawLine(
 		docLine: Int,
+		segment: Int = 0,
 		rect: NSRect,
 		tokenIndex: TokenIndex,
 		selection: Range<Int>,
@@ -246,8 +325,19 @@ final class CodeView: NSView, NSTextInputClient {
 		guard let document else { return }
 
 		let lineRange = document.rope.lineByteRange(docLine)
-		let lineStartUTF16 = document.rope.utf16Offset(fromByte: lineRange.lowerBound)
-		let text = document.rope.string(in: lineRange)
+		var lineStartUTF16 = document.rope.utf16Offset(fromByte: lineRange.lowerBound)
+		var text = document.rope.string(in: lineRange)
+
+		// With wrap on, a row shows one slice of its line. Slicing by UTF-16
+		// offset keeps the highlight ranges valid without re-mapping them.
+		if isWordWrapEnabled, let columns = wrapColumns {
+			let ns = text as NSString
+			let start = min(ns.length, segment * columns)
+			let length = min(columns, ns.length - start)
+			guard length > 0 || segment == 0 else { return }
+			text = ns.substring(with: NSRange(location: start, length: max(0, length)))
+			lineStartUTF16 += start
+		}
 
 		let attributed = attributedLine(
 			text: text,
@@ -412,8 +502,10 @@ final class CodeView: NSView, NSTextInputClient {
 		       height: CGFloat(rows.count) * lineHeight).fill()
 
 		for visual in rows {
-			let docLine = folding.documentLine(forVisualLine: visual)
+			let docLine = documentLine(forVisualRow: visual)
 			guard docLine < document.lineCount else { break }
+			// Continuation rows leave the gutter blank, as every editor does.
+			guard wrapSegment(forVisualRow: visual) == 0 else { continue }
 			let y = yPosition(forVisualLine: visual)
 
 			let isCurrent = docLine == caretLine
@@ -472,18 +564,36 @@ final class CodeView: NSView, NSTextInputClient {
 		let docLine = document.rope.line(atByteOffset: byteOffset)
 		guard !folding.isHidden(line: docLine) else { return nil }
 
-		let visual = folding.visualLine(forDocumentLine: docLine)
+		let visual = firstVisualRow(forDocumentLine: docLine)
+			+ (isWordWrapEnabled ? wrapSegmentForOffset(caret, line: docLine) : 0)
 		let lineRange = document.rope.lineByteRange(docLine)
 		let lineStartUTF16 = document.rope.utf16Offset(fromByte: lineRange.lowerBound)
 		let text = document.rope.string(in: lineRange)
 
+		var segmentStart = lineStartUTF16
+		var segmentText = text
+		if isWordWrapEnabled, let columns = wrapColumns {
+			let ns = text as NSString
+			let start = min(ns.length, wrapSegmentForOffset(caret, line: docLine) * columns)
+			let length = min(columns, ns.length - start)
+			segmentText = ns.substring(with: NSRange(location: start, length: max(0, length)))
+			segmentStart += start
+		}
+
 		let ctLine = CTLineCreateWithAttributedString(attributedLine(
-			text: text,
-			lineStartUTF16: lineStartUTF16,
+			text: segmentText,
+			lineStartUTF16: segmentStart,
 			tokenIndex: TokenIndex(tokens: [])
 		))
-		let offset = CTLineGetOffsetForStringIndex(ctLine, caret - lineStartUTF16, nil)
+		let offset = CTLineGetOffsetForStringIndex(ctLine, max(0, caret - segmentStart), nil)
 		return NSPoint(x: textOriginX + offset, y: yPosition(forVisualLine: visual))
+	}
+
+	/// Which wrapped segment an offset falls in.
+	private func wrapSegmentForOffset(_ offset: Int, line: Int) -> Int {
+		guard let document, let columns = wrapColumns, columns > 0 else { return 0 }
+		let lineStart = document.rope.utf16Offset(fromByte: document.rope.byteOffset(ofLine: line))
+		return max(0, (offset - lineStart) / columns)
 	}
 
 	private func restartCaretBlink() {
@@ -644,11 +754,20 @@ final class CodeView: NSView, NSTextInputClient {
 		guard let document else { return 0 }
 
 		let visual = max(0, min(visibleLineCount - 1, Int(floor(point.y / lineHeight))))
-		let docLine = min(document.lineCount - 1, folding.documentLine(forVisualLine: visual))
+		let docLine = min(document.lineCount - 1, documentLine(forVisualRow: visual))
+		let segment = wrapSegment(forVisualRow: visual)
 
 		let lineRange = document.rope.lineByteRange(docLine)
-		let lineStartUTF16 = document.rope.utf16Offset(fromByte: lineRange.lowerBound)
-		let text = document.rope.string(in: lineRange)
+		var lineStartUTF16 = document.rope.utf16Offset(fromByte: lineRange.lowerBound)
+		var text = document.rope.string(in: lineRange)
+
+		if isWordWrapEnabled, let columns = wrapColumns {
+			let ns = text as NSString
+			let start = min(ns.length, segment * columns)
+			let length = min(columns, ns.length - start)
+			text = ns.substring(with: NSRange(location: start, length: max(0, length)))
+			lineStartUTF16 += start
+		}
 
 		let ctLine = CTLineCreateWithAttributedString(attributedLine(
 			text: text,
