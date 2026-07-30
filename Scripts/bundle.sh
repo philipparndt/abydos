@@ -47,6 +47,11 @@ if [ -d Resources/Fonts ]; then
 	mkdir -p "$CONTENTS/Resources/Fonts"
 	cp Resources/Fonts/*.ttf "$CONTENTS/Resources/Fonts/" 2>/dev/null || true
 	cp Resources/Fonts/LICENSE-* "$CONTENTS/Resources/Fonts/" 2>/dev/null || true
+fi
+
+# Third-party notices travel with the app, not just the repo.
+if [ -f THIRD-PARTY-NOTICES.md ]; then
+	cp THIRD-PARTY-NOTICES.md "$CONTENTS/Resources/" 
 	echo "    bundled $(ls "$CONTENTS/Resources/Fonts"/*.ttf 2>/dev/null | wc -l | tr -d ' ') fonts"
 fi
 

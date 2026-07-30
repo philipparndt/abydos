@@ -220,7 +220,18 @@ public final class TerminalEmulator {
 	/// Terminal column width. Combining marks take none; CJK and emoji take two.
 	static func displayWidth(of character: Character) -> Int {
 		guard let scalar = character.unicodeScalars.first else { return 0 }
-		if character.unicodeScalars.count >= 1, scalar.properties.isGraphemeBase == false { return 0 }
+
+		// Only true combining marks and formatting controls are zero-width.
+		//
+		// Not `isGraphemeBase`: that is false for the Private Use Area, so every
+		// powerline separator was treated as a combining mark and merged into the
+		// previous cell, which made prompt separators vanish entirely.
+		switch scalar.properties.generalCategory {
+		case .nonspacingMark, .enclosingMark, .format:
+			return 0
+		default:
+			break
+		}
 
 		let value = scalar.value
 		switch value {
@@ -323,7 +334,15 @@ public final class TerminalEmulator {
 		parameterBuffer
 			.drop(while: { $0 == "?" || $0 == ">" || $0 == "!" })
 			.split(separator: ";", omittingEmptySubsequences: false)
-			.map { Int($0) ?? 0 }
+			.map { component in
+				// Colon subparameters (SGR 4:3 curly underline, 58:2::r:g:b
+				// underline colour) carry a variant after the primary value.
+				// Parsing the whole token yields nil, which used to fall back to
+				// 0 — that is SGR "reset everything", so a single styled run
+				// wiped all attributes and left the rest of the screen wrong.
+				let primary = component.split(separator: ":", maxSplits: 1).first ?? ""
+				return Int(primary) ?? 0
+			}
 	}
 
 	private func parameter(_ index: Int, default fallback: Int) -> Int {

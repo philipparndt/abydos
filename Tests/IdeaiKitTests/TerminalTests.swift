@@ -156,6 +156,24 @@ struct TerminalEmulatorTests {
 		#expect(attributes.foreground == .default)
 	}
 
+	/// Colon subparameters must not be mistaken for SGR 0.
+	@Test func colonSubparametersDoNotResetEverything() {
+		let emulator = makeEmulator()
+		// Red, then a curly underline written in the colon form.
+		emulator.write("\u{1B}[31m\u{1B}[4:3mX")
+		let attributes = emulator.screen[0].cells[0].attributes
+		#expect(attributes.foreground == .indexed(1), "colour was wiped by a colon subparameter")
+		#expect(attributes.underline)
+	}
+
+	@Test func underlineColourIsIgnoredWithoutResetting() {
+		let emulator = makeEmulator()
+		emulator.write("\u{1B}[1;31m\u{1B}[58:2::10:20:30mX")
+		let attributes = emulator.screen[0].cells[0].attributes
+		#expect(attributes.bold)
+		#expect(attributes.foreground == .indexed(1))
+	}
+
 	// MARK: - UTF-8 and width
 
 	@Test func decodesMultiByteCharacters() {
@@ -172,6 +190,28 @@ struct TerminalEmulatorTests {
 		emulator.write([bytes[0]])
 		emulator.write([bytes[1]])
 		#expect(row(emulator, 0) == "é")
+	}
+
+	/// Powerline separators live in the Private Use Area. They were being given
+	/// zero width and merged into the previous cell, which erased them from every
+	/// starship and powerlevel10k prompt.
+	@Test func powerlineGlyphsOccupyAColumn() {
+		#expect(TerminalEmulator.displayWidth(of: "\u{E0B0}") == 1)
+		#expect(TerminalEmulator.displayWidth(of: "\u{E0B2}") == 1)
+		#expect(TerminalEmulator.displayWidth(of: "\u{E0A0}") == 1)
+
+		let emulator = makeEmulator(rows: 3, columns: 20)
+		emulator.write("a\u{E0B0}b")
+		#expect(row(emulator, 0) == "a\u{E0B0}b")
+		#expect(emulator.cursorColumn == 3, "the separator must advance the cursor")
+	}
+
+	@Test func combiningMarksStillTakeNoColumn() {
+		// U+0301 combining acute — genuinely zero-width.
+		#expect(TerminalEmulator.displayWidth(of: "\u{0301}") == 0)
+		let emulator = makeEmulator()
+		emulator.write("e\u{0301}")
+		#expect(emulator.cursorColumn == 1)
 	}
 
 	@Test func wideCharactersOccupyTwoColumns() {

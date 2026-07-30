@@ -259,7 +259,11 @@ struct AgentLauncherTests {
 		// Without this the user's own MCP servers would join the session.
 		#expect(command.arguments.contains("--strict-mcp-config"))
 		#expect(command.arguments.contains("mcp__ideai__report_review_findings"))
-		#expect(command.arguments.last == "review it")
+		// The prompt must come before --allowedTools, which is variadic and would
+		// otherwise swallow it as another tool name.
+		#expect(command.arguments.first == "review it")
+		let toolsIndex = command.arguments.firstIndex(of: "--allowedTools") ?? 0
+		#expect(toolsIndex > 0)
 		// Interactive, so the user can take the session over.
 		#expect(!command.arguments.contains("--print"))
 	}

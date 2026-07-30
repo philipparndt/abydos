@@ -131,6 +131,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 			guard let url else { return }
 			self?.navigator.selectWithoutOpening(url: url)
 		}
+		// Clicking the breakpoint gutter reaches the running debug session, and
+		// is remembered even when nothing is running yet.
+		editor.onToggleBreakpoint = { [weak self] url, line in
+			self?.toggleBreakpoint(file: url, line: line)
+		}
 
 		DispatchQueue.main.async { [weak self] in
 			guard let self else { return }
@@ -338,6 +343,34 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 	@objc func goProfile(_ sender: Any?) { runGo(.profile) }
 	@objc func goDebug(_ sender: Any?) { runGo(.debug) }
 
+	/// Breakpoints set before a session exists, so they survive between runs.
+	private var pendingBreakpoints: [String: [Int: Bool]] = [:]
+
+	private func toggleBreakpoint(file: URL, line: Int) {
+		let path = file.standardizedFileURL.path
+
+		if let session = bottomPanel.activeDebugSession {
+			session.toggleBreakpoint(file: path, line: line)
+			syncBreakpointsToEditor(from: session)
+			return
+		}
+
+		// No session yet: remember it, and hand the set over when one starts.
+		var lines = pendingBreakpoints[path] ?? [:]
+		if lines.removeValue(forKey: line) == nil { lines[line] = false }
+		pendingBreakpoints[path] = lines.isEmpty ? nil : lines
+		editor.setBreakpoints(pendingBreakpoints)
+	}
+
+	private func syncBreakpointsToEditor(from session: DebugSession) {
+		var mapped: [String: [Int: Bool]] = [:]
+		for (file, list) in session.breakpoints {
+			mapped[file] = Dictionary(uniqueKeysWithValues: list.map { ($0.line, $0.isVerified) })
+		}
+		pendingBreakpoints = mapped
+		editor.setBreakpoints(mapped)
+	}
+
 	private enum GoAction { case run, build, test, trace, profile, debug }
 
 	private func runGo(_ action: GoAction) {
@@ -364,7 +397,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 					presentGoError("Could not find `dlv`. Install Delve with: go install github.com/go-delve/delve/cmd/dlv@latest")
 					return
 				}
-				command = GoTooling.debugCommand(delve: delve, package: package)
+				startNativeDebugger(delve: delve, package: package)
+				return
 			}
 		case .test: command = GoTooling.testCommand(executable: go)
 		case .trace: command = GoTooling.traceCommand(executable: go)
@@ -377,6 +411,39 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 			executable: command.executable,
 			arguments: command.arguments
 		)
+	}
+
+	/// Starts the native debugger and wires its state to the editor.
+	private func startNativeDebugger(delve: String, package: String) {
+		setPanelVisible(true)
+		guard let session = bottomPanel.startDebugging(delve: delve, package: package) else { return }
+
+		// Carry over anything set before the session existed.
+		for (file, lines) in pendingBreakpoints {
+			for line in lines.keys.sorted() {
+				session.toggleBreakpoint(file: file, line: line)
+			}
+		}
+
+		session.onBreakpointsChanged = { [weak self, weak session] in
+			guard let self, let session else { return }
+			self.syncBreakpointsToEditor(from: session)
+		}
+		session.onStoppedAt = { [weak self] file, line in
+			guard let self else { return }
+			self.editor.open(fileURL: URL(fileURLWithPath: file), atLine: line)
+			self.editor.setExecutionLocation(file: file, line: line)
+		}
+		session.onStateChange = { [weak self] state in
+			// The marker must go when execution resumes or the process ends.
+			switch state {
+			case .running, .terminated, .idle:
+				self?.editor.setExecutionLocation(file: nil, line: nil)
+			default:
+				break
+			}
+		}
+		syncBreakpointsToEditor(from: session)
 	}
 
 	/// Picks the main package, prompting only when there is more than one.

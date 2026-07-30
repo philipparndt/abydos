@@ -240,7 +240,12 @@ public enum AgentLauncher {
 		server: MCPServer,
 		prompt: String
 	) -> Command {
-		var arguments: [String] = []
+		// The prompt goes first, before any option.
+		//
+		// `--allowedTools` is variadic, so it consumes every following bare token
+		// until the next flag. With the prompt last it was swallowed as another
+		// tool name and the agent sat at an empty prompt forever.
+		var arguments: [String] = [prompt]
 		arguments += ["--mcp-config", server.configurationJSON()]
 		arguments += ["--strict-mcp-config"]
 
@@ -250,7 +255,6 @@ public enum AgentLauncher {
 		if !allowed.isEmpty {
 			arguments += ["--allowedTools"] + allowed
 		}
-		arguments.append(prompt)
 
 		return Command(executable: executable, arguments: arguments)
 	}

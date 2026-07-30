@@ -32,6 +32,22 @@ enum BranchMenu {
 
 			let menu = NSMenu()
 			menu.autoenablesItems = false
+
+			// Fork is a common companion for anything git can't do well inline,
+			// so offer a handoff when it is actually installed.
+			if let fork = ForkIntegration.applicationURL() {
+				let item = NSMenuItem(
+					title: "Open in Fork",
+					action: #selector(BranchMenuTarget.openInFork(_:)),
+					keyEquivalent: ""
+				)
+				item.target = BranchMenuTarget.shared
+				item.representedObject = ForkRequest(application: fork, repository: root)
+				item.image = ForkIntegration.icon()
+				menu.addItem(item)
+				menu.addItem(.separator())
+			}
+
 			for branch in branches {
 				let item = NSMenuItem(
 					title: branch,
@@ -59,8 +75,62 @@ private struct BranchCheckout {
 	let branch: String
 }
 
+private struct ForkRequest {
+	let application: URL
+	let repository: URL
+}
+
+/// Detects Fork, the git client.
+enum ForkIntegration {
+	/// The installed Fork, if there is one.
+	///
+	/// Checked by bundle identifier first so a copy outside /Applications is
+	/// still found, with the conventional path as a fallback.
+	static func applicationURL() -> URL? {
+		if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.DanPristupov.Fork") {
+			return url
+		}
+		let conventional = URL(fileURLWithPath: "/Applications/Fork.app")
+		return FileManager.default.fileExists(atPath: conventional.path) ? conventional : nil
+	}
+
+	static var isInstalled: Bool { applicationURL() != nil }
+
+	/// Fork's own icon, so the menu item reads as a handoff to that app.
+	static func icon() -> NSImage? {
+		guard let url = applicationURL() else { return nil }
+		let image = NSWorkspace.shared.icon(forFile: url.path)
+		image.size = NSSize(width: 14, height: 14)
+		return image
+	}
+
+	/// Opens a repository in Fork.
+	static func open(repository: URL, application: URL) {
+		let configuration = NSWorkspace.OpenConfiguration()
+		configuration.activates = true
+		NSWorkspace.shared.open(
+			[repository],
+			withApplicationAt: application,
+			configuration: configuration
+		) { _, error in
+			guard let error else { return }
+			DispatchQueue.main.async {
+				let alert = NSAlert()
+				alert.messageText = "Could not open Fork"
+				alert.informativeText = error.localizedDescription
+				alert.runModal()
+			}
+		}
+	}
+}
+
 private final class BranchMenuTarget: NSObject {
 	static let shared = BranchMenuTarget()
+
+	@objc func openInFork(_ sender: NSMenuItem) {
+		guard let request = sender.representedObject as? ForkRequest else { return }
+		ForkIntegration.open(repository: request.repository, application: request.application)
+	}
 
 	@objc func checkout(_ sender: NSMenuItem) {
 		guard let request = sender.representedObject as? BranchCheckout else { return }

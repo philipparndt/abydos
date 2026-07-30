@@ -87,10 +87,29 @@ final class TerminalView: NSView, NSTextInputClient {
 		guard window != nil, let launch = pendingLaunch else { return }
 		pendingLaunch = nil
 
-		// Launch only once the view has a size, so the child's initial window
-		// dimensions are right and its first prompt is not mis-wrapped.
+		launchWhenSized(launch)
+	}
+
+	/// Waits until the pane has a real size before starting the child.
+	///
+	/// Measuring too early yields a grid a few rows tall. A full-screen program
+	/// like tmux lays its status bar out once, at whatever size it was told, and
+	/// never learns better unless something resizes afterwards — which is why the
+	/// status line ended up near the top until the pane was dragged.
+	private func launchWhenSized(_ launch: (URL?, (executable: String, arguments: [String])?), attempt: Int = 0) {
 		DispatchQueue.main.async { [weak self] in
 			guard let self else { return }
+
+			let height = self.enclosingScrollView?.contentView.bounds.height ?? 0
+			let width = self.enclosingScrollView?.contentView.bounds.width ?? 0
+			let isSized = height >= self.cellHeight * 4 && width >= self.cellWidth * 20
+
+			// Give layout a few turns, then start anyway rather than never.
+			guard isSized || attempt >= 20 else {
+				self.launchWhenSized(launch, attempt: attempt + 1)
+				return
+			}
+
 			self.recomputeGridSize()
 			if let command = launch.1 {
 				self.pty.start(
@@ -133,9 +152,17 @@ final class TerminalView: NSView, NSTextInputClient {
 
 	private func updateMetrics() {
 		font = Theme.terminalFont(size: Theme.current.fontSize)
-		cellWidth = ("0" as NSString).size(withAttributes: [.font: font]).width
-		cellHeight = ceil(font.ascender - font.descender + font.leading) + 2
-		baselineOffset = ceil(-font.descender + font.leading)
+
+		// Cell metrics are rounded to whole points.
+		//
+		// A fractional advance accumulates across a row, so run backgrounds land
+		// on sub-pixel boundaries and leave hairline seams between them — visible
+		// as a step where a powerline separator meets the next segment. Whole-point
+		// cells make neighbouring fills abut exactly.
+		let advance = ("0" as NSString).size(withAttributes: [.font: font]).width
+		cellWidth = max(1, advance.rounded())
+		cellHeight = max(1, (font.ascender - font.descender + font.leading).rounded() + 2)
+		baselineOffset = (-font.descender + font.leading).rounded()
 	}
 
 	func applyThemeChange() {
@@ -211,7 +238,7 @@ final class TerminalView: NSView, NSTextInputClient {
 
 	/// Draws one row, batching neighbouring cells that share attributes.
 	private func draw(line: TerminalLine, atRow index: Int) {
-		let y = Self.verticalInset + CGFloat(index) * cellHeight
+		let y = (Self.verticalInset + CGFloat(index) * cellHeight).rounded()
 
 		var column = 0
 		while column < line.cells.count {
@@ -232,14 +259,17 @@ final class TerminalView: NSView, NSTextInputClient {
 				text.append(cell.character)
 			}
 
-			let x = Self.horizontalInset + CGFloat(column) * cellWidth
-			let width = CGFloat(end - column) * cellWidth
+			let x = (Self.horizontalInset + CGFloat(column) * cellWidth).rounded()
+			// Computed from the run's end rather than its length, so consecutive
+			// runs share an edge exactly instead of each rounding independently.
+			let endX = (Self.horizontalInset + CGFloat(end) * cellWidth).rounded()
+			let width = endX - x
 			let resolved = attributes.resolved
 
 			let background = TerminalPalette.color(for: resolved.background, isForeground: false, bold: false)
 			if resolved.background != .default {
 				background.setFill()
-				NSRect(x: x, y: y, width: width, height: cellHeight).fill()
+				NSRect(x: x, y: y.rounded(), width: width, height: cellHeight).fill()
 			}
 
 			guard !attributes.hidden, !text.trimmingCharacters(in: .whitespaces).isEmpty else {
@@ -584,6 +614,13 @@ final class TerminalPane: NSView {
 	override func setFrameSize(_ newSize: NSSize) {
 		super.setFrameSize(newSize)
 		// The grid is measured in cells, so a resize changes rows and columns.
+		terminalView.viewportChanged()
+	}
+
+	override func layout() {
+		super.layout()
+		// Catches the case where the pane gains its real size through layout
+		// rather than an explicit frame change.
 		terminalView.viewportChanged()
 	}
 

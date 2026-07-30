@@ -175,12 +175,15 @@ this is a contract instead.
 Loopback is not access control, so every request must carry a per-session bearer
 token.
 
+## Licence
+
+The bundled font and every dependency permit redistribution in an open-source
+project. See [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for the details
+and obligations.
+
 ## Known gaps
 
 - No go-to-definition or rename.
-- Go debugging runs Delve's terminal UI rather than a native debugger panel with
-  gutter breakpoints and variable views. That needs a DAP client and is a
-  substantial piece of work on its own.
 - The left tool strip is decorative apart from the project toggle.
 - The theme is a fixed dark palette; there is no light mode or theme picker.
 - The titlebar pills sit inside macOS 26's rounded toolbar-item capsule. There

@@ -65,6 +65,14 @@ final class EditorViewController: NSViewController {
 	/// Notifies the window when the active file changes, so the tree can follow.
 	var onActiveFileChanged: ((URL?) -> Void)?
 
+	/// Called when the breakpoint gutter is clicked, with a 1-based line.
+	var onToggleBreakpoint: ((URL, Int) -> Void)?
+
+	/// Breakpoints to draw, per absolute file path, with verification state.
+	private var breakpointsByFile: [String: [Int: Bool]] = [:]
+	/// Where execution is currently stopped.
+	private var executionLocation: (file: String, line: Int)?
+
 	// MARK: - View
 
 	override func loadView() {
@@ -242,10 +250,47 @@ final class EditorViewController: NSViewController {
 			self?.refreshTabBar()
 		}
 
+		codeView.onToggleBreakpoint = { [weak self] line in
+			// The gutter works in 0-based lines; everything outside is 1-based.
+			self?.onToggleBreakpoint?(fileURL, line + 1)
+		}
 		codeView.load(document: document)
 		codeView.setWordWrap(Settings.shared.wordWrap)
+		applyDebugState(to: tab)
 		tab.sourceView = scrollView
 		return tab
+	}
+
+	// MARK: - Debugging
+
+	/// Sets the breakpoints to draw, keyed by absolute path.
+	func setBreakpoints(_ breakpoints: [String: [Int: Bool]]) {
+		breakpointsByFile = breakpoints
+		for tab in tabs { applyDebugState(to: tab) }
+	}
+
+	/// Marks where execution stopped, clearing it elsewhere.
+	func setExecutionLocation(file: String?, line: Int?) {
+		if let file, let line {
+			executionLocation = (file, line)
+		} else {
+			executionLocation = nil
+		}
+		for tab in tabs { applyDebugState(to: tab) }
+	}
+
+	private func applyDebugState(to tab: Tab) {
+		guard let codeView = tab.codeView else { return }
+		let path = tab.url.standardizedFileURL.path
+
+		codeView.setBreakpoints(breakpointsByFile[path] ?? [:])
+
+		// The marker belongs only in the file execution actually stopped in.
+		if let location = executionLocation, location.file == path {
+			codeView.setExecutionLine(location.line - 1)
+		} else {
+			codeView.setExecutionLine(nil)
+		}
 	}
 
 	/// A short selection, suitable for seeding a search field.

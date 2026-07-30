@@ -34,6 +34,12 @@ final class CodeView: NSView, NSTextInputClient {
 	private var searchMatches: [SearchMatch] = []
 	private var currentMatchIndex: Int?
 
+	/// Debugger state for this file: breakpoint lines and where execution stopped.
+	private var breakpointLines: [Int: Bool] = [:]   // line -> verified
+	private var executionLine: Int?
+	/// Called when the gutter is clicked in the breakpoint column.
+	var onToggleBreakpoint: ((Int) -> Void)?
+
 	// MARK: - Metrics
 
 	private var font: NSFont = Theme.current.editorFont
@@ -43,6 +49,8 @@ final class CodeView: NSView, NSTextInputClient {
 	private(set) var gutterWidth: CGFloat = 60
 
 	private static let gutterPadding: CGFloat = 10
+	/// Clickable strip on the far left of the gutter for breakpoints.
+	private static var breakpointColumnWidth: CGFloat { Theme.current.scaled(18) }
 	private static let textLeftPadding: CGFloat = 8
 	/// Extra rows drawn beyond the viewport so fast scrolling does not flash.
 	private static let overscanLines = 2
@@ -210,7 +218,8 @@ final class CodeView: NSView, NSTextInputClient {
 	private func updateFrameSize() {
 		guard let document else { return }
 		let digits = max(2, String(document.lineCount).count)
-		gutterWidth = ceil(CGFloat(digits) * charWidth) + Self.gutterPadding * 2 + 14
+		// The extra column on the left is the breakpoint gutter.
+		gutterWidth = ceil(CGFloat(digits) * charWidth) + Self.gutterPadding * 2 + 14 + Self.breakpointColumnWidth
 
 		if isWordWrapEnabled { rebuildWrapLayout() }
 
@@ -287,8 +296,11 @@ final class CodeView: NSView, NSTextInputClient {
 			let y = yPosition(forVisualLine: visual)
 			let rowRect = NSRect(x: 0, y: y, width: bounds.width, height: lineHeight)
 
-			// Current-line band, only when nothing is selected.
-			if docLine == caretLine, selection.isEmpty {
+			// The line execution is stopped on wins over the caret's own band.
+			if docLine == executionLine {
+				NSColor.hex(0x3A4A2A).setFill()
+				NSRect(x: scrollX + gutterWidth, y: y, width: bounds.width, height: lineHeight).fill()
+			} else if docLine == caretLine, selection.isEmpty {
 				Theme.current.currentLineBackground.setFill()
 				NSRect(x: scrollX + gutterWidth, y: y, width: bounds.width, height: lineHeight).fill()
 			}
@@ -509,6 +521,8 @@ final class CodeView: NSView, NSTextInputClient {
 			let y = yPosition(forVisualLine: visual)
 
 			let isCurrent = docLine == caretLine
+			drawBreakpoint(docLine: docLine, y: y, scrollX: scrollX)
+
 			let number = NSAttributedString(string: "\(docLine + 1)", attributes: [
 				.font: font,
 				.foregroundColor: isCurrent ? Theme.current.gutterCurrentLineText : Theme.current.gutterText,
@@ -527,6 +541,41 @@ final class CodeView: NSView, NSTextInputClient {
 				)
 			}
 		}
+	}
+
+	/// Draws the breakpoint marker, and the arrow for the stopped line.
+	private func drawBreakpoint(docLine: Int, y: CGFloat, scrollX: CGFloat) {
+		let size = Theme.current.scaled(9)
+		let centre = NSPoint(
+			x: scrollX + Self.breakpointColumnWidth / 2,
+			y: y + lineHeight / 2
+		)
+
+		if let verified = breakpointLines[docLine] {
+			let rect = NSRect(x: centre.x - size / 2, y: centre.y - size / 2, width: size, height: size)
+			let path = NSBezierPath(ovalIn: rect)
+			if verified {
+				NSColor.hex(0xD16969).setFill()
+				path.fill()
+			} else {
+				// Hollow when unbound: a solid marker where execution can never
+				// stop would be a lie.
+				NSColor.hex(0xD16969).withAlphaComponent(0.7).setStroke()
+				path.lineWidth = 1.5
+				path.stroke()
+			}
+		}
+
+		guard docLine == executionLine else { return }
+		// A small arrow marking the current statement.
+		let arrow = NSBezierPath()
+		let half = size / 2
+		arrow.move(to: NSPoint(x: centre.x - half, y: centre.y - half))
+		arrow.line(to: NSPoint(x: centre.x + half, y: centre.y))
+		arrow.line(to: NSPoint(x: centre.x - half, y: centre.y + half))
+		arrow.close()
+		NSColor.hex(0xE8BF6A).setFill()
+		arrow.fill()
 	}
 
 	private func drawFoldHandle(at center: NSPoint, collapsed: Bool) {
@@ -635,6 +684,27 @@ final class CodeView: NSView, NSTextInputClient {
 		let start = document.rope.byteOffset(fromUTF16: selection.lowerBound)
 		let end = document.rope.byteOffset(fromUTF16: selection.upperBound)
 		return document.rope.string(in: start..<end)
+	}
+
+	// MARK: - Debugging
+
+	/// Breakpoints to draw, keyed by 0-based line, with whether the adapter
+	/// verified each one.
+	func setBreakpoints(_ lines: [Int: Bool]) {
+		breakpointLines = lines
+		needsDisplay = true
+	}
+
+	/// The line execution is stopped on, or nil when not stopped here.
+	func setExecutionLine(_ line: Int?) {
+		guard line != executionLine else { return }
+		executionLine = line
+		if let line {
+			folding.reveal(line: line)
+			updateFrameSize()
+			reveal(line: line + 1)
+		}
+		needsDisplay = true
 	}
 
 	// MARK: - Search
@@ -817,7 +887,15 @@ final class CodeView: NSView, NSTextInputClient {
 	private func handleGutterClick(at point: NSPoint) {
 		guard let document else { return }
 		let visual = max(0, min(visibleLineCount - 1, Int(floor(point.y / lineHeight))))
-		let docLine = min(document.lineCount - 1, folding.documentLine(forVisualLine: visual))
+		let docLine = min(document.lineCount - 1, documentLine(forVisualRow: visual))
+
+		// The leftmost strip is the breakpoint column.
+		let scrollX = enclosingScrollView?.contentView.bounds.origin.x ?? 0
+		if point.x < scrollX + Self.breakpointColumnWidth {
+			onToggleBreakpoint?(docLine)
+			return
+		}
+
 		guard folding.isFoldable(line: docLine) else { return }
 
 		folding.toggle(line: docLine)

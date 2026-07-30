@@ -48,6 +48,15 @@ for entry in "${GRAMMARS[@]}"; do
 	# Some scanners include local headers alongside the sources.
 	cp "$WORK/$NAME"/src/*.h "$TARGET/src/" 2>/dev/null || true
 
+	# The licence travels with the source: MIT requires the notice to be
+	# included wherever the code is redistributed.
+	for candidate in LICENSE LICENSE.md LICENSE.txt COPYING; do
+		if [ -f "$WORK/$NAME/$candidate" ]; then
+			cp "$WORK/$NAME/$candidate" "$TARGET/LICENSE"
+			break
+		fi
+	done
+
 	if [ -d "$WORK/$NAME/queries" ]; then
 		cp "$WORK/$NAME"/queries/*.scm "$TARGET/queries/" 2>/dev/null || true
 	fi
@@ -77,6 +86,7 @@ EOF
 
 	echo "    sources: $(ls "$TARGET/src"/*.c | xargs -n1 basename | tr '\n' ' ')"
 	echo "    queries: $(ls "$TARGET/queries" 2>/dev/null | tr '\n' ' ')"
+	echo "    licence: $([ -f "$TARGET/LICENSE" ] && echo present || echo MISSING)"
 done
 
 echo "Done. Vendored grammars are in $DEST."

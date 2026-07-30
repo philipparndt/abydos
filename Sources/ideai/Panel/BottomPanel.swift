@@ -17,6 +17,7 @@ final class BottomPanel: NSView {
 			/// the chat is a view change rather than a new process.
 			case review(ReviewPane, TerminalPane)
 			case search(SearchPane)
+			case debug(DebugPane)
 		}
 
 		let title: String
@@ -36,6 +37,7 @@ final class BottomPanel: NSView {
 			case let .terminal(pane): return pane
 			case let .review(pane, _): return pane
 			case let .search(pane): return pane
+			case let .debug(pane): return pane
 			}
 		}
 
@@ -44,7 +46,7 @@ final class BottomPanel: NSView {
 			switch kind {
 			case let .terminal(pane): return pane
 			case let .review(_, pane): return pane
-			case .search: return nil
+			case .search, .debug: return nil
 			}
 		}
 	}
@@ -186,6 +188,57 @@ final class BottomPanel: NSView {
 		return pane
 	}
 
+	// MARK: - Debugging
+
+	/// Starts a native debug session for a Go package.
+	@discardableResult
+	func startDebugging(delve: String, package: String) -> DebugSession? {
+		guard let root = workingDirectory else { return nil }
+
+		// One debug session at a time; a second would fight over breakpoints.
+		if let index = sessions.firstIndex(where: { if case .debug = $0.kind { return true }; return false }) {
+			close(index: index)
+		}
+
+		let session = DebugSession(projectRoot: root)
+		let pane = DebugPane(session: session, projectRoot: root)
+		pane.onNavigate = { [weak self] url, line in
+			self?.onOpenFinding?(url, line)
+		}
+		session.onOutput = { [weak self] text in
+			self?.debugOutput?(text)
+		}
+
+		let panelSession = Session(title: "Debug", kind: .debug(pane))
+		sessions.append(panelSession)
+		activate(index: sessions.count - 1, focus: false)
+
+		Task {
+			do {
+				try await session.launch(delveExecutable: delve, package: package)
+			} catch {
+				await MainActor.run {
+					let alert = NSAlert()
+					alert.messageText = "Could not start the debugger"
+					alert.informativeText = error.localizedDescription
+					alert.runModal()
+				}
+			}
+		}
+		return session
+	}
+
+	/// Forwarded debuggee output.
+	var debugOutput: ((String) -> Void)?
+
+	/// The running debug session, if any.
+	var activeDebugSession: DebugSession? {
+		for session in sessions {
+			if case let .debug(pane) = session.kind { return pane.debugSession }
+		}
+		return nil
+	}
+
 	// MARK: - Review
 
 	/// Starts an agent review of the working tree against `baseBranch`.
@@ -290,10 +343,10 @@ final class BottomPanel: NSView {
 	private func close(index: Int) {
 		guard sessions.indices.contains(index) else { return }
 		let session = sessions[index]
-		if case let .review(pane, _) = session.kind {
-			pane.shutdown()
-		} else {
-			session.terminal?.terminalView.terminateProcess()
+		switch session.kind {
+		case let .review(pane, _): pane.shutdown()
+		case let .debug(pane): pane.shutdown()
+		default: session.terminal?.terminalView.terminateProcess()
 		}
 		session.view.removeFromSuperview()
 		sessions.remove(at: index)
@@ -332,6 +385,7 @@ final class BottomPanel: NSView {
 			switch session.kind {
 			case let .review(pane, _): pane.applySettings()
 			case let .search(pane): pane.applySettings()
+			case let .debug(pane): pane.applySettings()
 			case let .terminal(pane): pane.terminalView.applyThemeChange()
 			}
 		}
@@ -340,10 +394,10 @@ final class BottomPanel: NSView {
 	/// Terminates every session. Called when the window closes.
 	func shutdown() {
 		for session in sessions {
-			if case let .review(pane, _) = session.kind {
-				pane.shutdown()
-			} else {
-				session.terminal?.terminalView.terminateProcess()
+			switch session.kind {
+			case let .review(pane, _): pane.shutdown()
+			case let .debug(pane): pane.shutdown()
+			default: session.terminal?.terminalView.terminateProcess()
 			}
 		}
 		sessions.removeAll()
