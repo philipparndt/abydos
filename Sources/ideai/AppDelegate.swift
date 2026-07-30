@@ -6,6 +6,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 	func applicationDidFinishLaunching(_ notification: Notification) {
 		NSApp.appearance = NSAppearance(named: .darkAqua)
+		// Before any view measures text.
+		FontRegistry.registerBundledFonts()
 		buildMenu()
 
 		// On first launch there is no ideai history, so seed the switcher from

@@ -41,6 +41,15 @@ if [ "$COUNT" -eq 0 ]; then
 fi
 echo "    copied $COUNT grammar bundles"
 
+# Bundled fonts, registered at launch so powerline prompts render without the
+# user installing anything.
+if [ -d Resources/Fonts ]; then
+	mkdir -p "$CONTENTS/Resources/Fonts"
+	cp Resources/Fonts/*.ttf "$CONTENTS/Resources/Fonts/" 2>/dev/null || true
+	cp Resources/Fonts/LICENSE-* "$CONTENTS/Resources/Fonts/" 2>/dev/null || true
+	echo "    bundled $(ls "$CONTENTS/Resources/Fonts"/*.ttf 2>/dev/null | wc -l | tr -d ' ') fonts"
+fi
+
 cat > "$CONTENTS/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

@@ -85,6 +85,9 @@ struct Theme {
 		if !Settings.shared.terminalFontName.isEmpty,
 		   let chosen = NSFont(name: Settings.shared.terminalFontName, size: size) {
 			base = chosen
+		} else if let bundled = NSFont(name: FontRegistry.bundledMonospaceFamily, size: size) {
+			// The shipped Nerd Font, so powerline prompts render on any machine.
+			base = bundled
 		} else {
 			base = .monospacedSystemFont(ofSize: size, weight: .regular)
 		}
@@ -97,7 +100,12 @@ struct Theme {
 
 	/// Installed fonts known to carry powerline/Nerd glyphs, most preferred first.
 	private static let powerlineFallbackDescriptors: [NSFontDescriptor] = {
-		let preferred = [
+		// Not filtered against `availableFontFamilies`: that list does not include
+		// process-registered fonts, so filtering silently dropped the one we
+		// ship. A descriptor naming a font that is not installed is simply
+		// skipped when the cascade is resolved, so listing all of them is safe.
+		[
+			FontRegistry.bundledMonospaceFamily,
 			"MesloLGS Nerd Font", "MesloLGS NF",
 			"RobotoMono Nerd Font",
 			"JetBrainsMono Nerd Font", "JetBrainsMonoNL Nerd Font",
@@ -105,18 +113,16 @@ struct Theme {
 			"Meslo LG M for Powerline", "Meslo LG S for Powerline",
 			"DejaVu Sans Mono for Powerline",
 			"Menlo",
-		]
-		let available = Set(NSFontManager.shared.availableFontFamilies)
-		return preferred
-			.filter { available.contains($0) }
-			.map { NSFontDescriptor(fontAttributes: [.family: $0]) }
+		].map { NSFontDescriptor(fontAttributes: [.family: $0]) }
 	}()
 
 	var editorFont: NSFont {
 		// A fixed-advance font lets the code view compute column positions
 		// arithmetically instead of measuring, which is a large part of why
-		// scrolling stays cheap.
-		NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+		// scrolling stays cheap. The bundled font is fixed-advance and gives the
+		// editor the same typeface as the terminal.
+		NSFont(name: FontRegistry.bundledMonospaceFamily, size: fontSize)
+			?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
 	}
 
 	static let darcula = Theme(
