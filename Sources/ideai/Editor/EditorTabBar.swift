@@ -23,6 +23,11 @@ final class EditorTabBar: NSView {
 	var onClose: ((Int) -> Void)?
 	/// Double-click promotes a preview tab to a permanent one.
 	var onPromote: ((Int) -> Void)?
+	/// Identifies the group this strip belongs to, carried on the pasteboard so
+	/// a drop knows where the tab came from.
+	var groupID: UUID = UUID()
+	/// Asked for the URL of a tab about to be dragged, for the drag image.
+	var urlForIndex: ((Int) -> URL?)?
 
 	private(set) var items: [EditorTabItem] = []
 	private var activeIndex: Int?
@@ -144,6 +149,10 @@ final class EditorTabBar: NSView {
 		needsDisplay = true
 	}
 
+	/// Index the pointer went down on, so a drag knows what it is carrying.
+	private var pressedIndex: Int?
+	private var pressOrigin: NSPoint = .zero
+
 	override func mouseDown(with event: NSEvent) {
 		let point = convert(event.locationInWindow, from: nil)
 		guard let index = index(at: point) else { return }
@@ -156,7 +165,57 @@ final class EditorTabBar: NSView {
 			onPromote?(index)
 			return
 		}
+		pressedIndex = index
+		pressOrigin = point
 		onSelect?(index)
+	}
+
+	override func mouseUp(with event: NSEvent) {
+		pressedIndex = nil
+	}
+
+	override func mouseDragged(with event: NSEvent) {
+		guard let index = pressedIndex, index < frames.count else { return }
+		let point = convert(event.locationInWindow, from: nil)
+
+		// A small threshold, so an imprecise click is not read as a drag.
+		guard hypot(point.x - pressOrigin.x, point.y - pressOrigin.y) > 6 else { return }
+		pressedIndex = nil
+		beginDrag(index: index, event: event)
+	}
+
+	private func beginDrag(index: Int, event: NSEvent) {
+		let item = NSPasteboardItem()
+		let payload: [String: Any] = [
+			"group": groupID.uuidString,
+			"index": index,
+			"path": urlForIndex?(index)?.path ?? "",
+		]
+		guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return }
+		item.setData(data, forType: EditorTabDrag.pasteboardType)
+
+		let dragItem = NSDraggingItem(pasteboardWriter: item)
+		let rect = frames[index]
+		dragItem.setDraggingFrame(rect, contents: snapshot(of: index))
+
+		let session = beginDraggingSession(with: [dragItem], event: event, source: self)
+		session.animatesToStartingPositionsOnCancelOrFail = true
+	}
+
+	/// Renders the tab as the drag image, so what you picked up is what you see.
+	private func snapshot(of index: Int) -> NSImage? {
+		guard index < frames.count, index < items.count else { return nil }
+		let rect = frames[index]
+		guard rect.width > 1, rect.height > 1 else { return nil }
+
+		let image = NSImage(size: rect.size)
+		image.lockFocus()
+		if let context = NSGraphicsContext.current {
+			context.cgContext.translateBy(x: -rect.minX, y: 0)
+			draw(item: items[index], in: rect, isActive: true, index: index)
+		}
+		image.unlockFocus()
+		return image
 	}
 
 	// MARK: - Drawing
@@ -252,5 +311,16 @@ final class EditorTabBar: NSView {
 			Theme.current.sidebarText.setStroke()
 			cross.stroke()
 		}
+	}
+}
+
+
+extension EditorTabBar: NSDraggingSource {
+	func draggingSession(
+		_ session: NSDraggingSession,
+		sourceOperationMaskFor context: NSDraggingContext
+	) -> NSDragOperation {
+		// Within the app only: a tab has no meaning dropped elsewhere.
+		context == .withinApplication ? .move : []
 	}
 }

@@ -150,8 +150,15 @@ final class TerminalView: NSView, NSTextInputClient {
 
 	// MARK: - Metrics
 
+	/// Logged once, so "which font is it actually using?" has a definite answer.
+	private static var didLogFont = false
+
 	private func updateMetrics() {
 		font = Theme.terminalFont(size: Theme.current.fontSize)
+		if !Self.didLogFont {
+			Self.didLogFont = true
+			FileHandle.standardError.write(Data("ideai terminal font: \(font.fontName)\n".utf8))
+		}
 
 		// Cell metrics are rounded to whole points.
 		//
@@ -251,11 +258,22 @@ final class TerminalView: NSView, NSTextInputClient {
 			}
 
 			var text = ""
+			// Powerline separators are drawn as geometry, not glyphs, so a space
+			// stands in for them here to keep the run's spacing intact.
+			var powerline: [(column: Int, scalar: UInt32)] = []
+
 			for cellIndex in column..<end {
 				let cell = line.cells[cellIndex]
 				// The trailing half of a wide glyph contributes no character; the
 				// leading half already advanced two columns.
 				if cell.isWideTrailer { continue }
+
+				if let scalar = cell.character.unicodeScalars.first,
+				   PowerlineGlyph.isSeparator(scalar.value) {
+					powerline.append((cellIndex, scalar.value))
+					text.append(" ")
+					continue
+				}
 				text.append(cell.character)
 			}
 
@@ -270,6 +288,26 @@ final class TerminalView: NSView, NSTextInputClient {
 			if resolved.background != .default {
 				background.setFill()
 				NSRect(x: x, y: y.rounded(), width: width, height: cellHeight).fill()
+			}
+
+			// Separators are filled shapes in the run's foreground colour, sized to
+			// the cell exactly — which is what removes the seam and the height
+			// mismatch a font glyph leaves behind.
+			if !powerline.isEmpty {
+				let colour = TerminalPalette.color(
+					for: resolved.foreground,
+					isForeground: true,
+					bold: attributes.bold
+				)
+				for entry in powerline {
+					let cellX = (Self.horizontalInset + CGFloat(entry.column) * cellWidth).rounded()
+					let cellEnd = (Self.horizontalInset + CGFloat(entry.column + 1) * cellWidth).rounded()
+					PowerlineGlyph.draw(
+						scalar: entry.scalar,
+						in: NSRect(x: cellX, y: y.rounded(), width: cellEnd - cellX, height: cellHeight),
+						color: colour
+					)
+				}
 			}
 
 			guard !attributes.hidden, !text.trimmingCharacters(in: .whitespaces).isEmpty else {
