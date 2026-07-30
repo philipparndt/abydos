@@ -504,6 +504,12 @@ final class EditorViewController: NSViewController {
 		activate(index: next, focusEditor: true)
 	}
 
+	/// Returns keyboard focus to the code view, used when the panel closes.
+	func focusActiveEditor() {
+		guard let tab = activeTab else { return }
+		view.window?.makeFirstResponder(tab.codeView ?? tab.contentView)
+	}
+
 	func collapseAllFolds() { activeTab?.codeView?.collapseAllFolds() }
 	func expandAllFolds() { activeTab?.codeView?.expandAllFolds() }
 

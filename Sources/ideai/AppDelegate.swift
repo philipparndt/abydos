@@ -43,6 +43,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		// Simulated input runs after the initial parse lands, so folds and
 		// highlights exist by the time it is exercised.
+		if options.openTerminal {
+			controller?.toggleTerminal(nil)
+			if let input = options.terminalInput {
+				// Give the shell time to print its prompt before typing at it.
+				DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+					controller?.sendToTerminal(input + "\n")
+				}
+			}
+		}
+
 		if options.typeText != nil || options.collapseFolds || options.markdownPreview {
 			DispatchQueue.main.asyncAfter(deadline: .now() + max(0.5, options.screenshotDelay - 0.5)) {
 				if let text = options.typeText { controller?.simulateTyping(text) }
@@ -204,6 +214,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 		let viewMenuItem = NSMenuItem()
 		let viewMenu = NSMenu(title: "View")
 		viewMenu.addItem(withTitle: "Toggle Project Navigator", action: #selector(MainWindowController.toggleNavigator(_:)), keyEquivalent: "1")
+		let terminalItem = NSMenuItem(title: "Toggle Terminal", action: #selector(MainWindowController.toggleTerminal(_:)), keyEquivalent: "j")
+		viewMenu.addItem(terminalItem)
+		let newTerminalItem = NSMenuItem(title: "New Terminal", action: #selector(MainWindowController.newTerminal(_:)), keyEquivalent: "t")
+		newTerminalItem.keyEquivalentModifierMask = [.command, .shift]
+		viewMenu.addItem(newTerminalItem)
 		let foldAll = NSMenuItem(title: "Collapse All", action: #selector(MainWindowController.collapseAllFolds(_:)), keyEquivalent: "-")
 		foldAll.keyEquivalentModifierMask = [.command, .shift]
 		viewMenu.addItem(foldAll)

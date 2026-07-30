@@ -10,8 +10,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 	private let navigator = ProjectNavigatorViewController()
 	private let editor = EditorViewController()
 	private let toolStrip = ToolWindowBar()
+	private let bottomPanel = BottomPanel()
 
 	private var splitView: NSSplitView!
+	private var verticalSplitView: NSSplitView!
+	private var panelHeight: CGFloat = 260
 	private var navigatorContainer: NSView!
 	private var projectPill: ProjectPillButton!
 	private var branchPill: BranchPillButton!
@@ -79,10 +82,24 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		splitView.addArrangedSubview(editor.view)
 		splitView.autosaveName = "IdeaiSplit"
 
+		// The panel spans the full width below both the tree and the editor,
+		// which is where IDEA puts its tool windows.
+		verticalSplitView = ThinDividerSplitView()
+		verticalSplitView.isVertical = false
+		verticalSplitView.dividerStyle = .thin
+		verticalSplitView.addArrangedSubview(splitView)
+		verticalSplitView.addArrangedSubview(bottomPanel)
+		verticalSplitView.autosaveName = "IdeaiPanelSplit"
+
+		bottomPanel.onRequestHide = { [weak self] in self?.setPanelVisible(false) }
+		// Set synchronously, not deferred: anything that opens the panel during
+		// launch would otherwise be undone when the deferred block ran.
+		bottomPanel.isHidden = true
+
 		root.addSubview(toolStrip)
-		root.addSubview(splitView)
+		root.addSubview(verticalSplitView)
 		toolStrip.translatesAutoresizingMaskIntoConstraints = false
-		splitView.translatesAutoresizingMaskIntoConstraints = false
+		verticalSplitView.translatesAutoresizingMaskIntoConstraints = false
 
 		toolStripWidthConstraint = toolStrip.widthAnchor.constraint(equalToConstant: ToolWindowBar.width)
 
@@ -92,10 +109,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 			toolStrip.bottomAnchor.constraint(equalTo: root.bottomAnchor),
 			toolStripWidthConstraint,
 
-			splitView.leadingAnchor.constraint(equalTo: toolStrip.trailingAnchor),
-			splitView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-			splitView.topAnchor.constraint(equalTo: root.topAnchor),
-			splitView.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+			verticalSplitView.leadingAnchor.constraint(equalTo: toolStrip.trailingAnchor),
+			verticalSplitView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+			verticalSplitView.topAnchor.constraint(equalTo: root.topAnchor),
+			verticalSplitView.bottomAnchor.constraint(equalTo: root.bottomAnchor),
 		])
 
 		window?.contentView = root
@@ -114,6 +131,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		DispatchQueue.main.async { [weak self] in
 			guard let self else { return }
 			self.splitView.setPosition(self.navigatorWidth, ofDividerAt: 0)
+			self.verticalSplitView.adjustSubviews()
 		}
 	}
 
@@ -177,6 +195,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
 		navigator.load(project: project)
 		editor.setProject(project)
+		bottomPanel.setWorkingDirectory(project.root)
 
 		// Deferred: the titlebar has no measurable height until the window has
 		// laid out at least once.
@@ -219,6 +238,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		editor.applySettings()
 		navigator.applySettings()
 		toolStrip.applySettings()
+		bottomPanel.applySettings()
 
 		// The pills re-measure at the new scale, and the toolbar item has to be
 		// told to re-lay-out around them.
@@ -242,6 +262,52 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		} else {
 			window?.performClose(nil)
 		}
+	}
+
+	// MARK: - Bottom panel
+
+	private var isPanelVisible: Bool { !bottomPanel.isHidden }
+
+	private func setPanelVisible(_ visible: Bool) {
+		guard visible != isPanelVisible else { return }
+
+		if visible {
+			bottomPanel.isHidden = false
+			verticalSplitView.adjustSubviews()
+			// Deferred: at launch the split view has no height yet, so computing
+			// the divider position now would place it at zero.
+			DispatchQueue.main.async { [weak self] in
+				guard let self else { return }
+				let total = self.verticalSplitView.bounds.height
+				guard total > 200 else { return }
+				self.verticalSplitView.setPosition(total - self.panelHeight, ofDividerAt: 0)
+			}
+		} else {
+			// Remember the height so reopening restores the same size.
+			panelHeight = max(160, bottomPanel.frame.height)
+			bottomPanel.isHidden = true
+			verticalSplitView.adjustSubviews()
+			editor.focusActiveEditor()
+		}
+	}
+
+	@objc func toggleTerminal(_ sender: Any?) {
+		if isPanelVisible, bottomPanel.hasSessions {
+			setPanelVisible(false)
+		} else {
+			setPanelVisible(true)
+			bottomPanel.showTerminal()
+		}
+	}
+
+	/// Writes text into the active terminal, as though typed.
+	func sendToTerminal(_ text: String) {
+		bottomPanel.showTerminal()?.terminalView.send(text)
+	}
+
+	@objc func newTerminal(_ sender: Any?) {
+		setPanelVisible(true)
+		bottomPanel.newTerminal()
 	}
 
 	// MARK: - Zoom
@@ -321,6 +387,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 	func windowDidExitFullScreen(_ notification: Notification) { updateTopInsets() }
 
 	func windowWillClose(_ notification: Notification) {
+		bottomPanel.shutdown()
 		editor.windowWillClose()
 		navigator.windowWillClose()
 		onClose?()
