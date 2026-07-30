@@ -252,6 +252,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 		editMenuItem.submenu = editMenu
 		mainMenu.addItem(editMenuItem)
 
+		let runMenuItem = NSMenuItem()
+		let runMenu = NSMenu(title: "Run")
+		let goRun = NSMenuItem(title: "Go Run", action: #selector(MainWindowController.goRun(_:)), keyEquivalent: "r")
+		goRun.keyEquivalentModifierMask = [.command, .control]
+		runMenu.addItem(goRun)
+		runMenu.addItem(withTitle: "Go Build", action: #selector(MainWindowController.goBuild(_:)), keyEquivalent: "")
+		let goTest = NSMenuItem(title: "Go Test", action: #selector(MainWindowController.goTest(_:)), keyEquivalent: "t")
+		goTest.keyEquivalentModifierMask = [.command, .control]
+		runMenu.addItem(goTest)
+		runMenu.addItem(.separator())
+		let goDebug = NSMenuItem(title: "Go Debug (Delve)", action: #selector(MainWindowController.goDebug(_:)), keyEquivalent: "d")
+		goDebug.keyEquivalentModifierMask = [.command, .control]
+		runMenu.addItem(goDebug)
+		runMenu.addItem(withTitle: "Go Trace", action: #selector(MainWindowController.goTrace(_:)), keyEquivalent: "")
+		runMenu.addItem(withTitle: "Go CPU Profile", action: #selector(MainWindowController.goProfile(_:)), keyEquivalent: "")
+		runMenuItem.submenu = runMenu
+		mainMenu.addItem(runMenuItem)
+
 		// Agent actions get their own menu: this is the part of the app that is
 		// meant to grow.
 		let agentMenuItem = NSMenuItem()

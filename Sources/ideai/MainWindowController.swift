@@ -329,6 +329,86 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		bottomPanel.showSearch(query: editor.selectedTextForSearch())
 	}
 
+	// MARK: - Go
+
+	@objc func goRun(_ sender: Any?) { runGo(.run) }
+	@objc func goBuild(_ sender: Any?) { runGo(.build) }
+	@objc func goTest(_ sender: Any?) { runGo(.test) }
+	@objc func goTrace(_ sender: Any?) { runGo(.trace) }
+	@objc func goProfile(_ sender: Any?) { runGo(.profile) }
+	@objc func goDebug(_ sender: Any?) { runGo(.debug) }
+
+	private enum GoAction { case run, build, test, trace, profile, debug }
+
+	private func runGo(_ action: GoAction) {
+		guard let project else { return }
+		guard GoTooling.isGoModule(project.root) else {
+			presentGoError("This project has no go.mod at its root.")
+			return
+		}
+		guard let go = GoTooling.findGoExecutable() else {
+			presentGoError("Could not find the `go` executable. Install Go, or make sure it is in /opt/homebrew/bin or /usr/local/go/bin.")
+			return
+		}
+
+		let command: GoTooling.Command
+		switch action {
+		case .run, .build, .debug:
+			// These need a specific main package; ask when there is a choice.
+			guard let package = chooseMainPackage(in: project.root) else { return }
+			switch action {
+			case .run: command = GoTooling.runCommand(executable: go, package: package)
+			case .build: command = GoTooling.buildCommand(executable: go, package: package)
+			default:
+				guard let delve = GoTooling.findDelveExecutable() else {
+					presentGoError("Could not find `dlv`. Install Delve with: go install github.com/go-delve/delve/cmd/dlv@latest")
+					return
+				}
+				command = GoTooling.debugCommand(delve: delve, package: package)
+			}
+		case .test: command = GoTooling.testCommand(executable: go)
+		case .trace: command = GoTooling.traceCommand(executable: go)
+		case .profile: command = GoTooling.profileCommand(executable: go)
+		}
+
+		setPanelVisible(true)
+		bottomPanel.runCommand(
+			title: command.title,
+			executable: command.executable,
+			arguments: command.arguments
+		)
+	}
+
+	/// Picks the main package, prompting only when there is more than one.
+	private func chooseMainPackage(in root: URL) -> String? {
+		let packages = GoTooling.findMainPackages(in: root)
+		if packages.isEmpty {
+			presentGoError("No package main found in this module.")
+			return nil
+		}
+		if packages.count == 1 { return packages[0] }
+
+		let alert = NSAlert()
+		alert.messageText = "Which command?"
+		alert.informativeText = "This module contains several main packages."
+		alert.addButton(withTitle: "Run")
+		alert.addButton(withTitle: "Cancel")
+
+		let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+		popup.addItems(withTitles: packages)
+		alert.accessoryView = popup
+
+		guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+		return packages[popup.indexOfSelectedItem]
+	}
+
+	private func presentGoError(_ message: String) {
+		let alert = NSAlert()
+		alert.messageText = "Cannot run this Go command"
+		alert.informativeText = message
+		alert.runModal()
+	}
+
 	/// Starts an agent review of this branch, reported over MCP.
 	@objc func reviewBranch(_ sender: Any?) {
 		setPanelVisible(true)
