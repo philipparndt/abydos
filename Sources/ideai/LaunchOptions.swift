@@ -18,6 +18,8 @@ struct LaunchOptions {
 	var collapseFolds = false
 	/// Opened as a provisional tab, as a single click in the tree would.
 	var previewPath: String?
+	/// Show the markdown preview before capture.
+	var markdownPreview = false
 
 	static func parse(_ arguments: [String] = CommandLine.arguments) -> LaunchOptions {
 		var options = LaunchOptions()
@@ -39,6 +41,7 @@ struct LaunchOptions {
 			case "--type":       options.typeText = next()
 			case "--collapse":   options.collapseFolds = true
 			case "--preview":    options.previewPath = next()
+			case "--markdown":   options.markdownPreview = true
 			default:
 				// A bare path is treated as the project to open.
 				if !argument.hasPrefix("-"), options.projectPath == nil {

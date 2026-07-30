@@ -42,10 +42,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		// Simulated input runs after the initial parse lands, so folds and
 		// highlights exist by the time it is exercised.
-		if options.typeText != nil || options.collapseFolds {
+		if options.typeText != nil || options.collapseFolds || options.markdownPreview {
 			DispatchQueue.main.asyncAfter(deadline: .now() + max(0.5, options.screenshotDelay - 0.5)) {
 				if let text = options.typeText { controller?.simulateTyping(text) }
 				if options.collapseFolds { controller?.collapseAllFolds(nil) }
+				if options.markdownPreview { controller?.toggleMarkdownPreview(nil) }
 			}
 		}
 
@@ -170,6 +171,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 		let unfoldAll = NSMenuItem(title: "Expand All", action: #selector(MainWindowController.expandAllFolds(_:)), keyEquivalent: "+")
 		unfoldAll.keyEquivalentModifierMask = [.command, .shift]
 		viewMenu.addItem(unfoldAll)
+		viewMenu.addItem(.separator())
+		let preview = NSMenuItem(
+			title: "Toggle Markdown Preview",
+			action: #selector(MainWindowController.toggleMarkdownPreview(_:)),
+			keyEquivalent: "v"
+		)
+		preview.keyEquivalentModifierMask = [.command, .shift]
+		viewMenu.addItem(preview)
 		viewMenu.addItem(.separator())
 		let nextTab = NSMenuItem(title: "Next Tab", action: #selector(MainWindowController.selectNextTab(_:)), keyEquivalent: "]")
 		nextTab.keyEquivalentModifierMask = [.command, .shift]

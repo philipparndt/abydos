@@ -28,6 +28,11 @@ final class EditorViewController: NSViewController {
 		/// accumulating. Exactly one may exist at a time.
 		var isPreview: Bool
 
+		/// The source view, kept so the markdown preview can toggle back to it.
+		var sourceView: NSView?
+		var isShowingMarkdownPreview = false
+		var isMarkdown: Bool { document?.languageId == "markdown" }
+
 		init(url: URL, document: TextDocument?, codeView: CodeView?, contentView: NSView, isPreview: Bool) {
 			self.url = url
 			self.document = document
@@ -207,8 +212,97 @@ final class EditorViewController: NSViewController {
 		}
 
 		codeView.load(document: document)
+		tab.sourceView = scrollView
 		return tab
 	}
+
+	// MARK: - Markdown preview
+
+	/// Swaps the active markdown tab between source and rendered preview.
+	func toggleMarkdownPreview() {
+		guard let tab = activeTab, tab.isMarkdown, let index = activeIndex else { return }
+
+		if tab.isShowingMarkdownPreview {
+			guard let source = tab.sourceView else { return }
+			tab.contentView = source
+			tab.isShowingMarkdownPreview = false
+		} else {
+			tab.contentView = makePreviewView(for: tab)
+			tab.isShowingMarkdownPreview = true
+		}
+
+		activeIndex = nil
+		activate(index: index, focusEditor: false)
+	}
+
+	private func makePreviewView(for tab: Tab) -> NSView {
+		let textView = NSTextView()
+		textView.isEditable = false
+		textView.isSelectable = true
+		textView.drawsBackground = true
+		textView.backgroundColor = Theme.current.editorBackground
+		textView.textColor = Theme.current.editorText
+		textView.linkTextAttributes = [
+			.foregroundColor: Theme.current.gitModified,
+			.underlineStyle: NSUnderlineStyle.single.rawValue,
+			.cursor: NSCursor.pointingHand,
+		]
+		textView.textContainerInset = NSSize(width: 28, height: 24)
+		textView.isRichText = true
+
+		let scrollView = NSScrollView()
+		scrollView.documentView = textView
+		scrollView.hasVerticalScroller = true
+		scrollView.drawsBackground = true
+		scrollView.backgroundColor = Theme.current.editorBackground
+		scrollView.scrollerStyle = .overlay
+
+		// Width-tracking so text reflows with the pane.
+		textView.autoresizingMask = [.width]
+		textView.isVerticallyResizable = true
+		textView.isHorizontallyResizable = false
+		textView.textContainer?.widthTracksTextView = true
+
+		renderPreview(into: textView, tab: tab)
+
+		// Keep the preview current while the source is edited.
+		tab.document?.onSyntaxUpdated = { [weak self, weak tab, weak textView] in
+			guard let self, let tab, let textView, tab.isShowingMarkdownPreview else { return }
+			self.schedulePreviewRefresh(textView: textView, tab: tab)
+		}
+		return scrollView
+	}
+
+	private func renderPreview(into textView: NSTextView, tab: Tab) {
+		guard let document = tab.document else { return }
+		let rendered = MarkdownRenderer.render(
+			document.rope.string,
+			// Relative links and images resolve against the file's directory.
+			baseURL: tab.url.deletingLastPathComponent()
+		)
+		textView.textStorage?.setAttributedString(rendered)
+	}
+
+	private var previewRefreshWork: DispatchWorkItem?
+
+	/// Debounced: re-rendering the whole document on every keystroke would undo
+	/// the point of the incremental editor.
+	private func schedulePreviewRefresh(textView: NSTextView, tab: Tab) {
+		previewRefreshWork?.cancel()
+		let work = DispatchWorkItem { [weak textView, weak tab] in
+			guard let textView, let tab else { return }
+			let offset = textView.enclosingScrollView?.contentView.bounds.origin ?? .zero
+			self.renderPreview(into: textView, tab: tab)
+			// Preserve the scroll position across the re-render.
+			textView.enclosingScrollView?.contentView.scroll(to: offset)
+		}
+		previewRefreshWork = work
+		DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
+	}
+
+	/// True when the active tab is markdown, so the UI can offer the toggle.
+	var canPreviewMarkdown: Bool { activeTab?.isMarkdown ?? false }
+	var isShowingMarkdownPreview: Bool { activeTab?.isShowingMarkdownPreview ?? false }
 
 	/// A tab for a file that cannot be shown as text.
 	private func makeNoticeTab(for fileURL: URL, reason: String, preview: Bool) -> Tab {

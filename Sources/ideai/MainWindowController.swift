@@ -210,6 +210,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		}
 	}
 
+	@objc func toggleMarkdownPreview(_ sender: Any?) {
+		editor.toggleMarkdownPreview()
+	}
+
 	@objc func selectNextTab(_ sender: Any?) { editor.selectNextTab(offset: 1) }
 	@objc func selectPreviousTab(_ sender: Any?) { editor.selectNextTab(offset: -1) }
 
