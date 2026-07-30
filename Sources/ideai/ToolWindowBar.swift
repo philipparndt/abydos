@@ -6,7 +6,7 @@ import AppKit
 /// windows that do not exist yet, so they render disabled rather than pretending
 /// to work.
 final class ToolWindowBar: NSView {
-	static let width: CGFloat = 40
+	static var width: CGFloat { Theme.current.scaled(40) }
 
 	var onToggleNavigator: (() -> Void)?
 
@@ -57,6 +57,14 @@ final class ToolWindowBar: NSView {
 		topConstraint.constant = inset + 2
 	}
 
+	/// Re-measures the buttons after a zoom change.
+	func applySettings() {
+		for case let button as StripButton in (subviews.first as? NSStackView)?.arrangedSubviews ?? [] {
+			button.applyThemeChange()
+		}
+		needsDisplay = true
+	}
+
 	func setNavigatorSelected(_ selected: Bool) {
 		projectButton.isSelected = selected
 	}
@@ -70,7 +78,7 @@ final class ToolWindowBar: NSView {
 }
 
 /// One icon button in the strip.
-private final class StripButton: NSView {
+final class StripButton: NSView {
 	var onClick: (() -> Void)?
 
 	var isSelected = false {
@@ -79,6 +87,7 @@ private final class StripButton: NSView {
 
 	private let symbol: String
 	private let enabled: Bool
+	private var sizeConstraints: [NSLayoutConstraint] = []
 	private var isHovered = false {
 		didSet { needsDisplay = true }
 	}
@@ -90,10 +99,18 @@ private final class StripButton: NSView {
 		super.init(frame: .zero)
 		toolTip = tooltip
 		translatesAutoresizingMaskIntoConstraints = false
-		NSLayoutConstraint.activate([
-			widthAnchor.constraint(equalToConstant: 30),
-			heightAnchor.constraint(equalToConstant: 30),
-		])
+		sizeConstraints = [
+			widthAnchor.constraint(equalToConstant: Theme.current.scaled(30)),
+			heightAnchor.constraint(equalToConstant: Theme.current.scaled(30)),
+		]
+		NSLayoutConstraint.activate(sizeConstraints)
+	}
+
+	func applyThemeChange() {
+		for constraint in sizeConstraints {
+			constraint.constant = Theme.current.scaled(30)
+		}
+		needsDisplay = true
 	}
 
 	required init?(coder: NSCoder) { fatalError("not used") }
@@ -127,10 +144,15 @@ private final class StripButton: NSView {
 			? (isSelected ? Theme.current.sidebarHeaderText : Theme.current.sidebarText)
 			: Theme.current.gitIgnored.withAlphaComponent(0.5)
 		// Colour baked into the symbol configuration — see Theme.symbol.
-		guard let rendered = Theme.symbol(symbol, size: 15, color: tint) else { return }
+		guard let rendered = Theme.symbol(symbol, size: 15 * Theme.current.scale, color: tint) else { return }
 		// respectFlipped: this view is flipped; without it the glyph mirrors.
 		rendered.draw(
-			in: NSRect(x: bounds.midX - 8, y: bounds.midY - 8, width: 16, height: 16),
+			in: NSRect(
+				x: bounds.midX - Theme.current.scaled(8),
+				y: bounds.midY - Theme.current.scaled(8),
+				width: Theme.current.scaled(16),
+				height: Theme.current.scaled(16)
+			),
 			from: .zero,
 			operation: .sourceOver,
 			fraction: 1.0,

@@ -49,6 +49,8 @@ final class EditorViewController: NSViewController {
 
 	private var tabBar: EditorTabBar!
 	private var tabBarTopConstraint: NSLayoutConstraint!
+	private var tabBarHeightConstraint: NSLayoutConstraint!
+	private var statusBarHeightConstraint: NSLayoutConstraint!
 	private var contentArea: NSView!
 	private var statusBar: EditorStatusView!
 	private var placeholder: NSTextField!
@@ -70,7 +72,7 @@ final class EditorViewController: NSViewController {
 		statusBar = EditorStatusView()
 
 		placeholder = NSTextField(labelWithString: "Select a file to open")
-		placeholder.font = NSFont.systemFont(ofSize: 13)
+		placeholder.font = Theme.current.uiFont(13)
 		placeholder.textColor = Theme.current.gitIgnored
 		placeholder.alignment = .center
 
@@ -83,12 +85,14 @@ final class EditorViewController: NSViewController {
 		// titlebar is taller with a toolbar than without, and guessing clips the
 		// tab bar.
 		tabBarTopConstraint = tabBar.topAnchor.constraint(equalTo: container.topAnchor, constant: 40)
+		tabBarHeightConstraint = tabBar.heightAnchor.constraint(equalToConstant: EditorTabBar.height)
+		statusBarHeightConstraint = statusBar.heightAnchor.constraint(equalToConstant: Theme.current.scaled(24))
 
 		NSLayoutConstraint.activate([
 			tabBarTopConstraint,
 			tabBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
 			tabBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-			tabBar.heightAnchor.constraint(equalToConstant: 34),
+			tabBarHeightConstraint,
 
 			contentArea.topAnchor.constraint(equalTo: tabBar.bottomAnchor),
 			contentArea.leadingAnchor.constraint(equalTo: container.leadingAnchor),
@@ -98,7 +102,7 @@ final class EditorViewController: NSViewController {
 			statusBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
 			statusBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
 			statusBar.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-			statusBar.heightAnchor.constraint(equalToConstant: 24),
+			statusBarHeightConstraint,
 
 			placeholder.centerXAnchor.constraint(equalTo: container.centerXAnchor),
 			placeholder.centerYAnchor.constraint(equalTo: container.centerYAnchor),
@@ -525,6 +529,11 @@ final class EditorViewController: NSViewController {
 
 	/// Re-reads settings that affect the editor and repaints.
 	func applySettings() {
+		tabBarHeightConstraint.constant = EditorTabBar.height
+		statusBarHeightConstraint.constant = Theme.current.scaled(24)
+		placeholder.font = Theme.current.uiFont(13)
+		tabBar.applyThemeChange()
+		statusBar.needsDisplay = true
 		for tab in tabs {
 			tab.codeView?.applyThemeChange()
 		}
@@ -577,18 +586,18 @@ private final class EditorStatusView: NSView {
 		NSRect(x: 0, y: 0, width: bounds.width, height: 1).fill()
 
 		let attributes: [NSAttributedString.Key: Any] = [
-			.font: NSFont.systemFont(ofSize: 11),
+			.font: Theme.current.uiFont(11),
 			.foregroundColor: Theme.current.gitIgnored,
 		]
 
 		// Right-aligned, position then language.
-		var x = bounds.width - 12
+		var x = bounds.width - Theme.current.scaled(12)
 		for text in [languageText, positionText] where !text.isEmpty {
 			let attributed = NSAttributedString(string: text, attributes: attributes)
 			let size = attributed.size()
 			x -= size.width
 			attributed.draw(at: NSPoint(x: x, y: bounds.midY - size.height / 2))
-			x -= 16
+			x -= Theme.current.scaled(16)
 		}
 	}
 }

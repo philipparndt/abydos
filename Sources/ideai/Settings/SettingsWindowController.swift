@@ -225,6 +225,16 @@ final class SettingsPaneController: NSViewController {
 	static func editorRows() -> [Row] {
 		[
 			.slider(
+				title: "UI zoom",
+				help: "Scales the whole window. Also ⌘+ / ⌘− / ⌘0.",
+				// Continuous here rather than the discrete keyboard steps, since a
+				// slider invites fine adjustment.
+				range: 0.75...2.0, step: 0.05,
+				format: { String(format: "%.0f%%", $0 * 100) },
+				get: { Settings.shared.uiScale },
+				set: { Settings.shared.uiScale = $0 }
+			),
+			.slider(
 				title: "Font size",
 				help: "Applies to the code editor.",
 				range: 9...20, step: 0.5,

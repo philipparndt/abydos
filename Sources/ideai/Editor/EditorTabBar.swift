@@ -34,17 +34,26 @@ final class EditorTabBar: NSView {
 	/// Cached layout, recomputed whenever the tabs or bounds change.
 	private var frames: [NSRect] = []
 
-	private static let height: CGFloat = 34
-	private static let horizontalPadding: CGFloat = 10
-	private static let iconSize: CGFloat = 15
-	private static let closeSize: CGFloat = 14
-	private static let maxTabWidth: CGFloat = 260
-	private static let minTabWidth: CGFloat = 90
+	// Design-time dimensions; every use goes through Theme.scaled so the strip
+	// zooms with the rest of the window.
+	static var height: CGFloat { Theme.current.scaled(34) }
+	private static var horizontalPadding: CGFloat { Theme.current.scaled(10) }
+	private static var iconSize: CGFloat { Theme.current.scaled(15) }
+	private static var closeSize: CGFloat { Theme.current.scaled(14) }
+	private static var maxTabWidth: CGFloat { Theme.current.scaled(260) }
+	private static var minTabWidth: CGFloat { Theme.current.scaled(90) }
 
 	override var isFlipped: Bool { true }
 
 	override var intrinsicContentSize: NSSize {
 		NSSize(width: NSView.noIntrinsicMetric, height: Self.height)
+	}
+
+	/// Re-measures after a zoom change.
+	func applyThemeChange() {
+		recomputeFrames()
+		invalidateIntrinsicContentSize()
+		needsDisplay = true
 	}
 
 	// MARK: - Model
@@ -71,13 +80,13 @@ final class EditorTabBar: NSView {
 	private func measuredWidth(for item: EditorTabItem) -> CGFloat {
 		let name = item.url.lastPathComponent
 		let textWidth = (name as NSString).size(withAttributes: [.font: font(for: item)]).width
-		let raw = Self.horizontalPadding * 2 + Self.iconSize + 6 + ceil(textWidth) + 8 + Self.closeSize
+		let raw = Self.horizontalPadding * 2 + Self.iconSize + Theme.current.scaled(6) + ceil(textWidth) + Theme.current.scaled(8) + Self.closeSize
 		return min(Self.maxTabWidth, max(Self.minTabWidth, raw))
 	}
 
 	private func font(for item: EditorTabItem) -> NSFont {
 		// Italic marks the provisional tab.
-		let base = NSFont.systemFont(ofSize: 12.5)
+		let base = Theme.current.uiFont(12.5)
 		guard item.isPreview else { return base }
 		let descriptor = base.fontDescriptor.withSymbolicTraits(.italic)
 		return NSFont(descriptor: descriptor, size: base.pointSize) ?? base
@@ -186,7 +195,7 @@ final class EditorTabBar: NSView {
 		// Divider between inactive tabs.
 		if !isActive {
 			Theme.current.separator.withAlphaComponent(0.6).setFill()
-			NSRect(x: rect.maxX - 1, y: 6, width: 1, height: rect.height - 12).fill()
+			NSRect(x: rect.maxX - 1, y: Theme.current.scaled(6), width: 1, height: rect.height - Theme.current.scaled(12)).fill()
 		}
 
 		var x = rect.minX + Self.horizontalPadding
@@ -202,10 +211,10 @@ final class EditorTabBar: NSView {
 				hints: nil
 			)
 		}
-		x += Self.iconSize + 6
+		x += Self.iconSize + Theme.current.scaled(6)
 
 		// Reserve room for the close button so the label never runs under it.
-		let labelLimit = rect.maxX - Self.horizontalPadding - Self.closeSize - 6 - x
+		let labelLimit = rect.maxX - Self.horizontalPadding - Self.closeSize - Theme.current.scaled(6) - x
 
 		let color = isActive ? Theme.current.sidebarHeaderText : Theme.current.sidebarText.withAlphaComponent(0.75)
 		let label = NSAttributedString(string: item.url.lastPathComponent, attributes: [

@@ -40,7 +40,24 @@ struct Theme {
 
 	// Metrics. Read from Settings rather than stored, so a preference change
 	// applies on the next redraw without a restart.
-	var fontSize: CGFloat { CGFloat(Settings.shared.editorFontSize) }
+
+	/// Global zoom (⌘+ / ⌘- / ⌘0). Every dimension in the window goes through
+	/// `scaled(_:)` or `uiFont(_:)` so the interface zooms as one piece.
+	var scale: CGFloat { CGFloat(Settings.shared.uiScale) }
+
+	/// Scales a design-time dimension. Rounded to whole points so borders and
+	/// separators stay crisp instead of landing on half pixels.
+	func scaled(_ value: CGFloat) -> CGFloat {
+		(value * scale).rounded()
+	}
+
+	/// A UI font at a design-time size, scaled.
+	func uiFont(_ size: CGFloat, weight: NSFont.Weight = .regular) -> NSFont {
+		.systemFont(ofSize: size * scale, weight: weight)
+	}
+
+	/// The editor's own font size is a separate preference, multiplied by zoom.
+	var fontSize: CGFloat { CGFloat(Settings.shared.editorFontSize) * scale }
 	var lineHeightMultiple: CGFloat { CGFloat(Settings.shared.editorLineHeight) }
 	var tabWidth: Int { Settings.shared.tabWidth }
 

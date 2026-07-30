@@ -22,6 +22,7 @@ public final class Settings {
 			Key.tabWidth: 4,
 			Key.showHiddenFiles: true,
 			Key.excludedDirectories: Array(FileNode.defaultExcludedDirectoryNames).sorted(),
+			Key.uiScale: 1.0,
 		])
 	}
 
@@ -34,6 +35,45 @@ public final class Settings {
 		static let tabWidth = "tabWidth"
 		static let showHiddenFiles = "showHiddenFiles"
 		static let excludedDirectories = "excludedDirectories"
+		static let uiScale = "uiScale"
+	}
+
+	// MARK: - Zoom
+
+	/// Multiplier applied to every dimension in the window — fonts, row heights,
+	/// icons, padding, the sidebar. Driven by ⌘+ / ⌘- / ⌘0.
+	///
+	/// A single scalar rather than per-area font settings: zooming should move
+	/// the whole interface together, the way a browser does, so proportions stay
+	/// intact instead of the tree growing while its icons stay put.
+	public var uiScale: Double {
+		get {
+			let stored = defaults.double(forKey: Key.uiScale)
+			return stored == 0 ? 1.0 : max(Self.zoomSteps.first!, min(Self.zoomSteps.last!, stored))
+		}
+		set { set(newValue, Key.uiScale) }
+	}
+
+	/// Discrete steps, so repeated zooming lands on predictable values and
+	/// always returns exactly to 1.0.
+	public static let zoomSteps: [Double] = [0.75, 0.85, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0]
+
+	@discardableResult
+	public func zoomIn() -> Double {
+		let next = Self.zoomSteps.first { $0 > uiScale + 0.001 } ?? Self.zoomSteps.last!
+		uiScale = next
+		return next
+	}
+
+	@discardableResult
+	public func zoomOut() -> Double {
+		let next = Self.zoomSteps.last { $0 < uiScale - 0.001 } ?? Self.zoomSteps.first!
+		uiScale = next
+		return next
+	}
+
+	public func resetZoom() {
+		uiScale = 1.0
 	}
 
 	// MARK: - Saving

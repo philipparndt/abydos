@@ -82,7 +82,7 @@ class PillButton: NSView {
 
 	// MARK: - Shared drawing helpers
 
-	static let labelFont = NSFont.systemFont(ofSize: 13, weight: .medium)
+	static var labelFont: NSFont { Theme.current.uiFont(13, weight: .medium) }
 
 	func drawChevron(at point: NSPoint, color: NSColor) {
 		let path = NSBezierPath()
@@ -102,9 +102,9 @@ final class ProjectPillButton: PillButton {
 	private var name: String = ""
 	private var badge: NSImage?
 
-	private static let badgeSize: CGFloat = 18
-	private static let horizontalPadding: CGFloat = 8
-	private static let gap: CGFloat = 7
+	private static var badgeSize: CGFloat { Theme.current.scaled(18) }
+	private static var horizontalPadding: CGFloat { Theme.current.scaled(8) }
+	private static var gap: CGFloat { Theme.current.scaled(7) }
 
 	func configure(name: String, colorIndex: Int?) {
 		self.name = name
@@ -116,8 +116,8 @@ final class ProjectPillButton: PillButton {
 	override var intrinsicContentSize: NSSize {
 		let textWidth = (name as NSString).size(withAttributes: [.font: Self.labelFont]).width
 		return NSSize(
-			width: Self.horizontalPadding * 2 + Self.badgeSize + Self.gap + ceil(textWidth) + Self.gap + 9,
-			height: 28
+			width: Self.horizontalPadding * 2 + Self.badgeSize + Self.gap + ceil(textWidth) + Self.gap + Theme.current.scaled(9),
+			height: Theme.current.scaled(28)
 		)
 	}
 
@@ -154,9 +154,9 @@ final class ProjectPillButton: PillButton {
 final class BranchPillButton: PillButton {
 	private var branch: String?
 
-	private static let iconSize: CGFloat = 14
-	private static let horizontalPadding: CGFloat = 7
-	private static let gap: CGFloat = 6
+	private static var iconSize: CGFloat { Theme.current.scaled(14) }
+	private static var horizontalPadding: CGFloat { Theme.current.scaled(7) }
+	private static var gap: CGFloat { Theme.current.scaled(6) }
 
 	func setBranch(_ branch: String?) {
 		self.branch = branch
@@ -170,11 +170,11 @@ final class BranchPillButton: PillButton {
 	override var intrinsicContentSize: NSSize {
 		// NSToolbar measures the view even while hidden and warns about a zero
 		// dimension, so report a sliver rather than nothing when there is no branch.
-		guard let branch else { return NSSize(width: 1, height: 28) }
+		guard let branch else { return NSSize(width: 1, height: Theme.current.scaled(28)) }
 		let textWidth = (branch as NSString).size(withAttributes: [.font: PillButton.labelFont]).width
 		return NSSize(
-			width: Self.horizontalPadding * 2 + Self.iconSize + Self.gap + ceil(textWidth) + Self.gap + 9,
-			height: 28
+			width: Self.horizontalPadding * 2 + Self.iconSize + Self.gap + ceil(textWidth) + Self.gap + Theme.current.scaled(9),
+			height: Theme.current.scaled(28)
 		)
 	}
 
@@ -184,8 +184,8 @@ final class BranchPillButton: PillButton {
 
 		let tint = Theme.current.sidebarText
 		// Colour baked into the symbol configuration — see Theme.symbol.
-		if let rendered = Theme.symbol("arrow.trianglehead.branch", size: 12, color: tint)
-			?? Theme.symbol("arrow.triangle.branch", size: 12, color: tint) {
+		if let rendered = Theme.symbol("arrow.trianglehead.branch", size: 12 * Theme.current.scale, color: tint)
+			?? Theme.symbol("arrow.triangle.branch", size: 12 * Theme.current.scale, color: tint) {
 			let iconRect = NSRect(
 				x: x,
 				y: rect.midY - Self.iconSize / 2,

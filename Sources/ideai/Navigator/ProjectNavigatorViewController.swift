@@ -18,6 +18,7 @@ final class ProjectNavigatorViewController: NSViewController {
 	private var watcher: FileSystemWatcher?
 	private var outlineView: NSOutlineView!
 	private var headerTopConstraint: NSLayoutConstraint!
+	private var headerHeightConstraint: NSLayoutConstraint!
 	private var gitRoot: URL?
 
 	/// Distance from the top of the window to the "Project" header.
@@ -38,9 +39,9 @@ final class ProjectNavigatorViewController: NSViewController {
 		// callback so NavigatorRowView can draw the rounded highlight itself.
 		outline.selectionHighlightStyle = .regular
 		outline.rowSizeStyle = .custom
-		outline.rowHeight = 24
+		outline.rowHeight = Theme.current.scaled(24)
 		outline.intercellSpacing = NSSize(width: 0, height: 0)
-		outline.indentationPerLevel = 14
+		outline.indentationPerLevel = Theme.current.scaled(14)
 		outline.autoresizesOutlineColumn = false
 		outline.gridStyleMask = []
 		outline.usesAutomaticRowHeights = false
@@ -77,12 +78,13 @@ final class ProjectNavigatorViewController: NSViewController {
 
 		// Set from the window's actual titlebar height rather than hardcoded.
 		headerTopConstraint = header.topAnchor.constraint(equalTo: container.topAnchor, constant: 44)
+		headerHeightConstraint = header.heightAnchor.constraint(equalToConstant: Theme.current.scaled(30))
 
 		NSLayoutConstraint.activate([
 			headerTopConstraint,
 			header.leadingAnchor.constraint(equalTo: container.leadingAnchor),
 			header.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-			header.heightAnchor.constraint(equalToConstant: 30),
+			headerHeightConstraint,
 
 			scrollView.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 2),
 			scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
@@ -225,6 +227,9 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// Hiding or showing dotfiles changes which nodes exist, so cached children
 	/// have to be discarded rather than merely repainted.
 	func applySettings() {
+		outlineView.rowHeight = Theme.current.scaled(24)
+		outlineView.indentationPerLevel = Theme.current.scaled(14)
+		headerHeightConstraint.constant = Theme.current.scaled(30)
 		guard let rootNode else { return }
 		let expanded = expandedPaths()
 		let selected = selectedPath()
@@ -615,14 +620,14 @@ private final class NavigatorHeaderView: NSView {
 		bounds.fill()
 
 		let attributed = NSAttributedString(string: "Project", attributes: [
-			.font: NSFont.systemFont(ofSize: 13, weight: .semibold),
+			.font: Theme.current.uiFont(13, weight: .semibold),
 			.foregroundColor: Theme.current.sidebarHeaderText,
 		])
 		let size = attributed.size()
-		attributed.draw(at: NSPoint(x: 12, y: bounds.midY - size.height / 2))
+		attributed.draw(at: NSPoint(x: Theme.current.scaled(12), y: bounds.midY - size.height / 2))
 
 		let path = NSBezierPath()
-		let x = 12 + size.width + 8
+		let x = Theme.current.scaled(12) + size.width + Theme.current.scaled(8)
 		path.move(to: NSPoint(x: x, y: bounds.midY - 2))
 		path.line(to: NSPoint(x: x + 3.5, y: bounds.midY + 2))
 		path.line(to: NSPoint(x: x + 7, y: bounds.midY - 2))
@@ -692,8 +697,9 @@ private final class NavigatorRowView: NSTableRowView {
 		// uses. Focused selection is blue; unfocused grey, so the tree still
 		// shows where you are while the editor has keyboard focus.
 		let color = isTreeFocused ? Theme.current.selectionActive : Theme.current.selectionInactive
-		let rect = bounds.insetBy(dx: 5, dy: 1)
-		let path = NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6)
+		let rect = bounds.insetBy(dx: Theme.current.scaled(5), dy: 1)
+		let radius = Theme.current.scaled(6)
+		let path = NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)
 		color.setFill()
 		path.fill()
 	}
@@ -724,8 +730,8 @@ private final class NavigatorCellView: NSTableCellView {
 	override func draw(_ dirtyRect: NSRect) {
 		guard let node else { return }
 
-		var x: CGFloat = 2
-		let iconSize: CGFloat = 16
+		var x = Theme.current.scaled(2)
+		let iconSize = Theme.current.scaled(16)
 
 		if let icon = FileIcon.image(for: node, isExpanded: isExpanded) {
 			// respectFlipped: this view is flipped, and without it every symbol
@@ -739,7 +745,7 @@ private final class NavigatorCellView: NSTableCellView {
 				hints: nil
 			)
 		}
-		x += iconSize + 6
+		x += iconSize + Theme.current.scaled(6)
 
 		// On a selected row the VCS colour would fight the blue behind it, so the
 		// label goes near-white — the treatment IDEA uses.
@@ -748,8 +754,8 @@ private final class NavigatorCellView: NSTableCellView {
 			? .hex(0xE8EAED)
 			: (isRoot ? Theme.current.sidebarHeaderText : Theme.current.color(for: node.gitStatus))
 		let nameFont = isRoot
-			? NSFont.systemFont(ofSize: 13, weight: .bold)
-			: NSFont.systemFont(ofSize: 13)
+			? Theme.current.uiFont(13, weight: .bold)
+			: Theme.current.uiFont(13)
 
 		let name = NSAttributedString(string: node.name, attributes: [
 			.font: nameFont,
@@ -757,11 +763,11 @@ private final class NavigatorCellView: NSTableCellView {
 		])
 		let nameSize = name.size()
 		name.draw(at: NSPoint(x: x, y: bounds.midY - nameSize.height / 2))
-		x += nameSize.width + 8
+		x += nameSize.width + Theme.current.scaled(8)
 
 		if let subtitle {
 			let attributed = NSAttributedString(string: subtitle, attributes: [
-				.font: NSFont.systemFont(ofSize: 11),
+				.font: Theme.current.uiFont(11),
 				.foregroundColor: Theme.current.gitIgnored,
 			])
 			attributed.draw(at: NSPoint(x: x, y: bounds.midY - attributed.size().height / 2))

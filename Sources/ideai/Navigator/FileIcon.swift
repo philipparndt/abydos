@@ -12,6 +12,7 @@ enum FileIcon {
 		let color: NSColor
 	}
 
+	/// Keyed by spec *and* scale, so zooming does not serve stale small icons.
 	private static var cache: [String: NSImage] = [:]
 
 	static func image(for node: FileNode, isExpanded: Bool) -> NSImage? {
@@ -38,14 +39,16 @@ enum FileIcon {
 	}
 
 	private static func render(key: String, spec: Spec) -> NSImage? {
-		if let cached = cache[key] { return cached }
+		let scale = Theme.current.scale
+		let scaledKey = "\(key)@\(scale)"
+		if let cached = cache[scaledKey] { return cached }
 		guard let base = NSImage(systemSymbolName: spec.symbol, accessibilityDescription: nil) else {
 			return nil
 		}
-		let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .regular)
+		let config = NSImage.SymbolConfiguration(pointSize: 13 * scale, weight: .regular)
 			.applying(.init(paletteColors: [spec.color]))
 		let image = base.withSymbolConfiguration(config) ?? base
-		cache[key] = image
+		cache[scaledKey] = image
 		return image
 	}
 

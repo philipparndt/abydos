@@ -22,6 +22,8 @@ struct LaunchOptions {
 	var markdownPreview = false
 	/// Open the Settings window, and capture it instead of the project window.
 	var openSettings = false
+	/// UI zoom applied before capture.
+	var zoom: Double?
 
 	static func parse(_ arguments: [String] = CommandLine.arguments) -> LaunchOptions {
 		var options = LaunchOptions()
@@ -45,6 +47,7 @@ struct LaunchOptions {
 			case "--preview":    options.previewPath = next()
 			case "--markdown":   options.markdownPreview = true
 			case "--settings":   options.openSettings = true
+			case "--zoom":       options.zoom = next().flatMap(Double.init)
 			default:
 				// A bare path is treated as the project to open.
 				if !argument.hasPrefix("-"), options.projectPath == nil {

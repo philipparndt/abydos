@@ -16,6 +16,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 	private var projectPill: ProjectPillButton!
 	private var branchPill: BranchPillButton!
 	private var titlebarContainer: NSView?
+	private var toolStripWidthConstraint: NSLayoutConstraint!
 
 	private var navigatorWidth: CGFloat = 260
 
@@ -83,11 +84,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		toolStrip.translatesAutoresizingMaskIntoConstraints = false
 		splitView.translatesAutoresizingMaskIntoConstraints = false
 
+		toolStripWidthConstraint = toolStrip.widthAnchor.constraint(equalToConstant: ToolWindowBar.width)
+
 		NSLayoutConstraint.activate([
 			toolStrip.leadingAnchor.constraint(equalTo: root.leadingAnchor),
 			toolStrip.topAnchor.constraint(equalTo: root.topAnchor),
 			toolStrip.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-			toolStrip.widthAnchor.constraint(equalToConstant: ToolWindowBar.width),
+			toolStripWidthConstraint,
 
 			splitView.leadingAnchor.constraint(equalTo: toolStrip.trailingAnchor),
 			splitView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
@@ -215,6 +218,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 	private func applySettings() {
 		editor.applySettings()
 		navigator.applySettings()
+		toolStrip.applySettings()
+
+		// The pills re-measure at the new scale, and the toolbar item has to be
+		// told to re-lay-out around them.
+		layoutTitlebarPills()
+		window?.toolbar?.validateVisibleItems()
+
+		// The tool strip's width changed, which moves everything to its right.
+		toolStripWidthConstraint?.constant = ToolWindowBar.width
+		updateTopInsets()
 	}
 
 	/// Gives the project tree keyboard focus.
@@ -229,6 +242,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		} else {
 			window?.performClose(nil)
 		}
+	}
+
+	// MARK: - Zoom
+
+	@objc func zoomIn(_ sender: Any?) {
+		Settings.shared.zoomIn()
+	}
+
+	@objc func zoomOut(_ sender: Any?) {
+		Settings.shared.zoomOut()
+	}
+
+	@objc func resetZoom(_ sender: Any?) {
+		Settings.shared.resetZoom()
 	}
 
 	@objc func toggleMarkdownPreview(_ sender: Any?) {

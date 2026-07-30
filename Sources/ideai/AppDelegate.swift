@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 		RecentProjects.shared.seedFromJetBrainsIfEmpty()
 
 		let options = LaunchOptions.parse()
+		if let zoom = options.zoom { Settings.shared.uiScale = zoom }
 
 		let controller: MainWindowController?
 		if let path = options.projectPath {
@@ -209,6 +210,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 		let unfoldAll = NSMenuItem(title: "Expand All", action: #selector(MainWindowController.expandAllFolds(_:)), keyEquivalent: "+")
 		unfoldAll.keyEquivalentModifierMask = [.command, .shift]
 		viewMenu.addItem(unfoldAll)
+		viewMenu.addItem(.separator())
+		// ⌘+ is reported as "=" on most layouts; both are registered so the key
+		// works with and without shift.
+		let zoomIn = NSMenuItem(title: "Zoom In", action: #selector(MainWindowController.zoomIn(_:)), keyEquivalent: "+")
+		viewMenu.addItem(zoomIn)
+		let zoomInAlt = NSMenuItem(title: "Zoom In", action: #selector(MainWindowController.zoomIn(_:)), keyEquivalent: "=")
+		zoomInAlt.isAlternate = true
+		zoomInAlt.isHidden = true
+		viewMenu.addItem(zoomInAlt)
+		viewMenu.addItem(withTitle: "Zoom Out", action: #selector(MainWindowController.zoomOut(_:)), keyEquivalent: "-")
+		viewMenu.addItem(withTitle: "Actual Size", action: #selector(MainWindowController.resetZoom(_:)), keyEquivalent: "0")
 		viewMenu.addItem(.separator())
 		let preview = NSMenuItem(
 			title: "Toggle Markdown Preview",

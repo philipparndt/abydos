@@ -65,6 +65,59 @@ struct SettingsTests {
 		#expect(settings.autoSaveDelay >= 0.2)
 	}
 
+	// MARK: - Zoom
+
+	@Test func zoomStartsAtActualSize() {
+		let (settings, _, suite) = makeSettings()
+		defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+		#expect(settings.uiScale == 1.0)
+	}
+
+	@Test func zoomStepsThroughDiscreteValues() {
+		let (settings, _, suite) = makeSettings()
+		defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+
+		#expect(settings.zoomIn() == 1.1)
+		#expect(settings.zoomIn() == 1.25)
+		#expect(settings.zoomOut() == 1.1)
+		#expect(settings.zoomOut() == 1.0)
+		#expect(settings.zoomOut() == 0.9)
+	}
+
+	/// Repeated zooming must not run away past the usable range.
+	@Test func zoomClampsAtBothEnds() {
+		let (settings, _, suite) = makeSettings()
+		defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+
+		for _ in 0..<20 { settings.zoomIn() }
+		#expect(settings.uiScale == Settings.zoomSteps.last)
+
+		for _ in 0..<40 { settings.zoomOut() }
+		#expect(settings.uiScale == Settings.zoomSteps.first)
+	}
+
+	@Test func resetZoomReturnsExactlyToOne() {
+		let (settings, _, suite) = makeSettings()
+		defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+
+		settings.zoomIn()
+		settings.zoomIn()
+		settings.resetZoom()
+		// Exactly 1.0, not merely close: it is the documented "Actual Size".
+		#expect(settings.uiScale == 1.0)
+	}
+
+	@Test func zoomIsClampedWhenSetDirectly() {
+		let (settings, _, suite) = makeSettings()
+		defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+
+		settings.uiScale = 99
+		#expect(settings.uiScale <= Settings.zoomSteps.last!)
+
+		settings.uiScale = 0.01
+		#expect(settings.uiScale >= Settings.zoomSteps.first!)
+	}
+
 	@Test func resetRestoresDefaults() {
 		let (settings, _, suite) = makeSettings()
 		defer { UserDefaults.standard.removePersistentDomain(forName: suite) }

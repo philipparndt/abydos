@@ -77,9 +77,9 @@ private final class SwitcherViewController: NSViewController {
 
 		var height: CGFloat {
 			switch self {
-			case .action: return 26
-			case .header: return 28
-			case .project: return 42
+			case .action: return Theme.current.scaled(26)
+			case .header: return Theme.current.scaled(28)
+			case .project: return Theme.current.scaled(42)
 			}
 		}
 	}
@@ -139,7 +139,7 @@ private final class SwitcherViewController: NSViewController {
 		// short menu instead of a mostly-empty panel.
 		let contentHeight = rows.reduce(0) { $0 + $1.height } + 12
 		view = container
-		preferredContentSize = NSSize(width: 340, height: min(contentHeight, 560))
+		preferredContentSize = NSSize(width: Theme.current.scaled(340), height: min(contentHeight, Theme.current.scaled(560)))
 	}
 
 	override func viewDidAppear() {
@@ -421,7 +421,7 @@ private final class SwitcherActionCell: NSView {
 		var x: CGFloat = 12
 
 		// Colour baked into the symbol configuration — see Theme.symbol.
-		if let rendered = Theme.symbol(symbol, size: 12, color: tint) {
+		if let rendered = Theme.symbol(symbol, size: 12 * Theme.current.scale, color: tint) {
 			// respectFlipped: this view is flipped; without it the glyph mirrors.
 			rendered.draw(
 				in: NSRect(x: x, y: bounds.midY - 7, width: 14, height: 14),
@@ -435,7 +435,7 @@ private final class SwitcherActionCell: NSView {
 		x += 22
 
 		let attributed = NSAttributedString(string: title, attributes: [
-			.font: NSFont.systemFont(ofSize: 13),
+			.font: Theme.current.uiFont(13),
 			.foregroundColor: Theme.current.sidebarHeaderText,
 		])
 		attributed.draw(at: NSPoint(x: x, y: bounds.midY - attributed.size().height / 2))
@@ -462,7 +462,7 @@ private final class SwitcherHeaderCell: NSView {
 		}
 
 		let attributed = NSAttributedString(string: title, attributes: [
-			.font: NSFont.systemFont(ofSize: 11, weight: .semibold),
+			.font: Theme.current.uiFont(11, weight: .semibold),
 			.foregroundColor: Theme.current.gitIgnored,
 		])
 		attributed.draw(at: NSPoint(x: 12, y: bounds.height - attributed.size().height - 4))
@@ -477,7 +477,7 @@ private final class SwitcherProjectCell: NSView {
 	init(entry: RecentProject, isOpen: Bool) {
 		self.entry = entry
 		self.isOpen = isOpen
-		self.badge = ProjectBadge.image(for: entry.name, colorIndex: entry.colorIndex, size: 22)
+		self.badge = ProjectBadge.image(for: entry.name, colorIndex: entry.colorIndex, size: Theme.current.scaled(22))
 		super.init(frame: .zero)
 	}
 
@@ -486,19 +486,20 @@ private final class SwitcherProjectCell: NSView {
 	override var isFlipped: Bool { true }
 
 	override func draw(_ dirtyRect: NSRect) {
-		badge.draw(in: NSRect(x: 12, y: bounds.midY - 11, width: 22, height: 22))
+		let badgeSize = Theme.current.scaled(22)
+		badge.draw(in: NSRect(x: Theme.current.scaled(12), y: bounds.midY - badgeSize / 2, width: badgeSize, height: badgeSize))
 
 		let name = NSAttributedString(string: entry.name, attributes: [
-			.font: NSFont.systemFont(ofSize: 13),
+			.font: Theme.current.uiFont(13),
 			.foregroundColor: Theme.current.sidebarHeaderText,
 		])
 		let path = NSAttributedString(string: entry.displayPath, attributes: [
-			.font: NSFont.systemFont(ofSize: 11),
+			.font: Theme.current.uiFont(11),
 			.foregroundColor: Theme.current.gitIgnored,
 		])
 
 		// Name and path stacked, matching the reference menu.
-		name.draw(at: NSPoint(x: 44, y: bounds.midY - name.size().height - 1))
-		path.draw(at: NSPoint(x: 44, y: bounds.midY + 2))
+		name.draw(at: NSPoint(x: Theme.current.scaled(44), y: bounds.midY - name.size().height - 1))
+		path.draw(at: NSPoint(x: Theme.current.scaled(44), y: bounds.midY + 2))
 	}
 }
