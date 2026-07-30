@@ -33,8 +33,22 @@ time or subscription.
 - **Editor** — tree-sitter syntax highlighting and code folding for 18
   languages, with editing, undo/redo, multi-caret-free plain selection, IME
   support, and a fixed gutter.
+- **Search** — find in file (⌘F) with match highlighting and wrapping
+  navigation, and project-wide search (⇧⌘F) that streams results as it walks,
+  prunes excluded directories, and skips binaries.
+- **Terminal** — a real PTY with a VT100/xterm emulator: full colour, mouse
+  reporting, the alternate screen, and a bundled Nerd Font so powerline prompts
+  render without installing anything. ⌘J.
+- **Agent code review** (⇧⌘R) — an agent reviews the branch and reports findings
+  over a local MCP server, so they arrive as typed data rather than scraped
+  text. Click a finding to jump to the line; click Chat to take the same live
+  session over.
+- **Go** — run, build, test, trace, CPU profile, and debug under Delve.
+- **Word wrap** (⌥⌘Z), **markdown preview** (⇧⌘V), and a **hex viewer** for
+  binary files.
 - **Live refresh** — FSEvents watches the tree; `git checkout` in a terminal
   updates the navigator colours.
+- **Zoom** — ⌘+ / ⌘− / ⌘0 scale the whole interface, not just text.
 
 ## Performance
 
@@ -70,7 +84,7 @@ Three decisions do most of that work:
 ```sh
 make            # build and launch
 make dev        # debug build, run in foreground with logs
-make test       # 42 tests
+make test       # 159 tests
 make perf       # performance suite with timings
 make install    # copy to /Applications
 make help       # all targets
@@ -124,20 +138,49 @@ be stated explicitly — which also matters for YAML, whose scanner spans five
 ## Layout
 
 ```
-Sources/IdeaiKit/     engine — rope, syntax, folding, git, project model (no view code)
-  Text/               Rope, TextDocument, FoldingState
+Sources/IdeaiKit/     engine — no view code, so all of it is testable headless
+  Text/               Rope, TextDocument, FoldingState, WrapLayout
   Syntax/             LanguageRegistry, SyntaxEngine, HighlightKind
+  Terminal/           PseudoTerminal, TerminalEmulator, TerminalScreen
+  Agent/              MCPServer, ReviewSession, AgentLauncher
+  Search/             TextSearch, ProjectSearch
+  Go/                 GoTooling
   Git/                GitRepository
   Project/            Project, FileNode, RecentProjects, FileSystemWatcher
-Sources/ideai/        AppKit — window, navigator, titlebar, code view
+  Settings/           Settings
+Sources/ideai/        AppKit — window, navigator, titlebar, editor, terminal, panel
 Sources/Grammars/     vendored tree-sitter grammars
+Resources/Fonts/      bundled Hack Nerd Font (MIT / Bitstream Vera)
 ```
 
 `IdeaiKit` is free of view code so the engine is testable without a window.
 
+## Agent integration
+
+The design point is that agent tools are first-class rather than something you
+shell out to.
+
+An agent session is a PTY that *ideai* owns, not something a view owns. That one
+decision is what makes the rest work: a session can be hidden and shown again,
+or handed over for manual takeover, while its process keeps running throughout.
+
+Structured results come over MCP rather than by parsing rendered output. ideai
+runs a per-session HTTP MCP server on loopback and launches the agent pointed at
+it with `--strict-mcp-config`, so the user's own MCP servers stay out of the
+session. The agent calls `report_review_findings` and the UI receives typed
+data — file, line, severity, title, detail — incrementally as the work
+proceeds. Scraping a TUI would break whenever the tool restyled its output;
+this is a contract instead.
+
+Loopback is not access control, so every request must carry a per-session bearer
+token.
+
 ## Known gaps
 
-- No search and no go-to-definition.
+- No go-to-definition or rename.
+- Go debugging runs Delve's terminal UI rather than a native debugger panel with
+  gutter breakpoints and variable views. That needs a DAP client and is a
+  substantial piece of work on its own.
 - The left tool strip is decorative apart from the project toggle.
 - The theme is a fixed dark palette; there is no light mode or theme picker.
 - The titlebar pills sit inside macOS 26's rounded toolbar-item capsule. There
