@@ -250,6 +250,12 @@ final class SettingsPaneController: NSViewController {
 				get: { Settings.shared.editorLineHeight },
 				set: { Settings.shared.editorLineHeight = $0 }
 			),
+			.text(
+				title: "Terminal font",
+				help: "Leave empty to choose automatically. Powerline prompts need a Nerd Font.",
+				get: { Settings.shared.terminalFontName },
+				set: { Settings.shared.terminalFontName = $0.trimmingCharacters(in: .whitespaces) }
+			),
 			.stepper(
 				title: "Tab width",
 				help: "Columns a tab character advances to.",

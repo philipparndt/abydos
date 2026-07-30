@@ -247,6 +247,75 @@ struct TerminalEmulatorTests {
 		#expect(emulator.encodeArrow(.up) == "\u{1B}OA")
 	}
 
+	/// Primary and secondary DA are different questions. Answering the secondary
+	/// one with a primary response is what left `^[[?6c` on screen under tmux:
+	/// the reply was not what the program was parsing, so it fell through to the
+	/// shell, which echoed it as input.
+	@Test func primaryAndSecondaryDeviceAttributesDiffer() {
+		let emulator = makeEmulator()
+		var responses: [String] = []
+		emulator.onResponse = { responses.append($0) }
+
+		emulator.write("\u{1B}[c")
+		emulator.write("\u{1B}[>c")
+
+		#expect(responses.count == 2)
+		#expect(responses[0].hasPrefix("\u{1B}[?"), "primary DA must reply with ?-prefixed attributes")
+		#expect(responses[1].hasPrefix("\u{1B}[>"), "secondary DA must reply with >-prefixed attributes")
+		#expect(responses[0] != responses[1])
+	}
+
+	@Test func answersTerminalStatusReport() {
+		let emulator = makeEmulator()
+		var responses: [String] = []
+		emulator.onResponse = { responses.append($0) }
+		emulator.write("\u{1B}[5n")
+		#expect(responses.contains("\u{1B}[0n"))
+	}
+
+	// MARK: - Mouse
+
+	@Test func mouseIsSilentUntilEnabled() {
+		let emulator = makeEmulator()
+		#expect(emulator.mouseTracking == .off)
+		#expect(emulator.encodeMouse(button: .left, row: 1, column: 1, isRelease: false) == nil)
+	}
+
+	@Test func enablesSGRMouseReporting() {
+		let emulator = makeEmulator()
+		emulator.write("\u{1B}[?1002h\u{1B}[?1006h")
+		#expect(emulator.mouseTracking == .buttonEvent)
+		#expect(emulator.sgrMouseEncoding)
+
+		let press = emulator.encodeMouse(button: .left, row: 3, column: 7, isRelease: false)
+		#expect(press == "\u{1B}[<0;7;3M")
+
+		let release = emulator.encodeMouse(button: .left, row: 3, column: 7, isRelease: true)
+		#expect(release == "\u{1B}[<0;7;3m")
+	}
+
+	@Test func dragIsSuppressedInClickOnlyMode() {
+		let emulator = makeEmulator()
+		emulator.write("\u{1B}[?1000h\u{1B}[?1006h")
+		#expect(emulator.encodeMouse(button: .left, row: 2, column: 2, isRelease: false, isDrag: true) == nil)
+	}
+
+	@Test func modifiersAreEncodedInMouseReports() {
+		let emulator = makeEmulator()
+		emulator.write("\u{1B}[?1000h\u{1B}[?1006h")
+		// Control adds 16 to the button code.
+		let sequence = emulator.encodeMouse(button: .left, row: 1, column: 1, isRelease: false, control: true)
+		#expect(sequence == "\u{1B}[<16;1;1M")
+	}
+
+	@Test func mouseTrackingTurnsOff() {
+		let emulator = makeEmulator()
+		emulator.write("\u{1B}[?1003h")
+		#expect(emulator.mouseTracking == .anyEvent)
+		emulator.write("\u{1B}[?1003l")
+		#expect(emulator.mouseTracking == .off)
+	}
+
 	@Test func readsWindowTitle() {
 		let emulator = makeEmulator()
 		emulator.write("\u{1B}]0;my title\u{07}")

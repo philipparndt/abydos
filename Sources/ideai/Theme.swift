@@ -74,6 +74,44 @@ struct Theme {
 		return base.withSymbolConfiguration(config) ?? base
 	}
 
+	/// Font for the terminal, with a fallback chain for powerline glyphs.
+	///
+	/// Prompt themes draw their separators with Private Use Area codepoints that
+	/// SF Mono has no glyphs for, which is why they render as blank boxes. A
+	/// cascade list keeps the chosen font for text while borrowing those glyphs
+	/// from whichever Nerd Font is installed.
+	static func terminalFont(size: CGFloat) -> NSFont {
+		let base: NSFont
+		if !Settings.shared.terminalFontName.isEmpty,
+		   let chosen = NSFont(name: Settings.shared.terminalFontName, size: size) {
+			base = chosen
+		} else {
+			base = .monospacedSystemFont(ofSize: size, weight: .regular)
+		}
+
+		let descriptor = base.fontDescriptor.addingAttributes([
+			.cascadeList: powerlineFallbackDescriptors,
+		])
+		return NSFont(descriptor: descriptor, size: size) ?? base
+	}
+
+	/// Installed fonts known to carry powerline/Nerd glyphs, most preferred first.
+	private static let powerlineFallbackDescriptors: [NSFontDescriptor] = {
+		let preferred = [
+			"MesloLGS Nerd Font", "MesloLGS NF",
+			"RobotoMono Nerd Font",
+			"JetBrainsMono Nerd Font", "JetBrainsMonoNL Nerd Font",
+			"Hack Nerd Font", "FiraCode Nerd Font",
+			"Meslo LG M for Powerline", "Meslo LG S for Powerline",
+			"DejaVu Sans Mono for Powerline",
+			"Menlo",
+		]
+		let available = Set(NSFontManager.shared.availableFontFamilies)
+		return preferred
+			.filter { available.contains($0) }
+			.map { NSFontDescriptor(fontAttributes: [.family: $0]) }
+	}()
+
 	var editorFont: NSFont {
 		// A fixed-advance font lets the code view compute column positions
 		// arithmetically instead of measuring, which is a large part of why

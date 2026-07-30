@@ -46,6 +46,22 @@ public final class TerminalEmulator {
 	public var applicationCursorKeys = false
 	public var bracketedPaste = false
 
+	/// How the program wants pointer events reported, if at all.
+	public enum MouseTracking: Equatable, Sendable {
+		case off
+		/// 1000 — press and release only.
+		case click
+		/// 1002 — press, release, and drag.
+		case buttonEvent
+		/// 1003 — every motion.
+		case anyEvent
+	}
+
+	public private(set) var mouseTracking: MouseTracking = .off
+	/// 1006 — SGR encoding. The legacy encoding cannot express coordinates past
+	/// column 223, so modern programs all ask for this one.
+	public private(set) var sgrMouseEncoding = false
+
 	// MARK: - Parser state
 
 	private enum State {
@@ -353,13 +369,32 @@ public final class TerminalEmulator {
 		case "s": savedCursor = (cursorRow, cursorColumn, attributes)
 		case "u": restoreCursor()
 		case "n":
-			// Device status report: the shell waits for this, so it must be answered.
-			if parameter(0, default: 0) == 6 {
-				onResponse?("\u{1B}[\(cursorRow + 1);\(cursorColumn + 1)R")
+			// Device status. A shell blocks on these, so they must be answered.
+			switch csiParameters.first ?? 0 {
+			case 5: onResponse?("\u{1B}[0n")   // terminal OK
+			case 6: onResponse?("\u{1B}[\(cursorRow + 1);\(cursorColumn + 1)R")
+			default: break
 			}
 		case "c":
-			// Primary device attributes: identify as a VT102.
-			onResponse?("\u{1B}[?6c")
+			// Primary and secondary device attributes are different questions and
+			// need different answers. Replying to a secondary query with a primary
+			// response is what made tmux and powerlevel10k leave `^[[?6c` on
+			// screen: the reply was not what they were parsing, so it fell through
+			// to the shell, which echoed it as input.
+			if parameterBuffer.hasPrefix(">") {
+				// Secondary DA: terminal type 0, firmware version, cartridge 0.
+				onResponse?("\u{1B}[>0;95;0c")
+			} else {
+				// Primary DA: VT220 with 132 columns, ANSI colour.
+				onResponse?("\u{1B}[?62;1;6;22c")
+			}
+		case "p":
+			// DECRQM — a mode query. Answering "not recognised" is far better than
+			// silence, which leaves the program waiting.
+			if parameterBuffer.hasPrefix("?"), intermediates.contains("$") {
+				let mode = csiParameters.first ?? 0
+				onResponse?("\u{1B}[?\(mode);0$y")
+			}
 		default:
 			break
 		}
@@ -381,6 +416,10 @@ public final class TerminalEmulator {
 			switch value {
 			case 1: applicationCursorKeys = enabled
 			case 25: isCursorVisible = enabled
+			case 1000: mouseTracking = enabled ? .click : .off
+			case 1002: mouseTracking = enabled ? .buttonEvent : .off
+			case 1003: mouseTracking = enabled ? .anyEvent : .off
+			case 1006: sgrMouseEncoding = enabled
 			case 1049, 1047, 47:
 				setAlternateScreen(enabled)
 			case 2004: bracketedPaste = enabled
@@ -611,5 +650,48 @@ public final class TerminalEmulator {
 
 	public enum ArrowKey: String, Sendable {
 		case up = "A", down = "B", right = "C", left = "D"
+	}
+
+	public enum MouseButton: Int, Sendable {
+		case left = 0, middle = 1, right = 2
+		case scrollUp = 64, scrollDown = 65
+	}
+
+	/// Encodes a pointer event, or nil when the program is not tracking the mouse.
+	///
+	/// Coordinates are 1-based. SGR encoding is preferred because the legacy form
+	/// adds 32 to each coordinate and therefore cannot address a terminal wider
+	/// than 223 columns.
+	public func encodeMouse(
+		button: MouseButton,
+		row: Int,
+		column: Int,
+		isRelease: Bool,
+		isDrag: Bool = false,
+		shift: Bool = false,
+		option: Bool = false,
+		control: Bool = false
+	) -> String? {
+		guard mouseTracking != .off else { return nil }
+		if isDrag, mouseTracking == .click { return nil }
+
+		var code = button.rawValue
+		if isDrag { code += 32 }
+		if shift { code += 4 }
+		if option { code += 8 }
+		if control { code += 16 }
+
+		let row = max(1, min(row, screen.rows))
+		let column = max(1, min(column, screen.columns))
+
+		if sgrMouseEncoding {
+			return "\u{1B}[<\(code);\(column);\(row)\(isRelease ? "m" : "M")"
+		}
+		// Legacy X10 encoding: release is reported as button 3.
+		let legacyCode = isRelease ? 3 : code
+        guard column + 32 < 256, row + 32 < 256 else { return nil }
+		let columnByte = Character(UnicodeScalar(UInt8(column + 32)))
+		let rowByte = Character(UnicodeScalar(UInt8(row + 32)))
+		return "\u{1B}[M\(Character(UnicodeScalar(UInt8(legacyCode + 32))))\(columnByte)\(rowByte)"
 	}
 }

@@ -29,6 +29,14 @@ final class TerminalView: NSView, NSTextInputClient {
 	private static let horizontalInset: CGFloat = 8
 	private static let verticalInset: CGFloat = 4
 
+	/// Coalesces repaints to one per runloop turn.
+	///
+	/// A full-screen program repaints by emitting many small writes; redrawing on
+	/// each one both wastes work and visibly tears, because the screen is
+	/// composited mid-update. Batching to a single pass per turn is what removes
+	/// the flicker.
+	private var redrawScheduled = false
+
 	// MARK: - Init
 
 	init(workingDirectory: URL?, command: (executable: String, arguments: [String])? = nil) {
@@ -41,10 +49,7 @@ final class TerminalView: NSView, NSTextInputClient {
 		updateMetrics()
 
 		emulator.onUpdate = { [weak self] in
-			guard let self else { return }
-			self.needsDisplay = true
-			self.updateFrameSize()
-			if self.isPinnedToBottom { self.scrollToBottom() }
+			self?.scheduleRedraw()
 		}
 		// Replies such as the cursor-position report must go back to the process,
 		// otherwise shells that ask for it hang.
@@ -106,10 +111,28 @@ final class TerminalView: NSView, NSTextInputClient {
 		}
 	}
 
+	private func scheduleRedraw() {
+		guard !redrawScheduled else { return }
+		redrawScheduled = true
+		DispatchQueue.main.async { [weak self] in
+			guard let self else { return }
+			self.redrawScheduled = false
+
+			// On the alternate screen the document never grows and there is no
+			// history to follow, so resizing and autoscrolling there would fight
+			// the program's own repainting.
+			if !self.emulator.isAlternateScreen {
+				self.updateFrameSize()
+				if self.isPinnedToBottom { self.scrollToBottom() }
+			}
+			self.needsDisplay = true
+		}
+	}
+
 	// MARK: - Metrics
 
 	private func updateMetrics() {
-		font = .monospacedSystemFont(ofSize: Theme.current.fontSize, weight: .regular)
+		font = Theme.terminalFont(size: Theme.current.fontSize)
 		cellWidth = ("0" as NSString).size(withAttributes: [.font: font]).width
 		cellHeight = ceil(font.ascender - font.descender + font.leading) + 2
 		baselineOffset = ceil(-font.descender + font.leading)
@@ -138,7 +161,9 @@ final class TerminalView: NSView, NSTextInputClient {
 	}
 
 	private func updateFrameSize() {
-		let totalRows = emulator.screen.totalLineCount
+		let totalRows = emulator.isAlternateScreen
+			? emulator.screen.rows
+			: emulator.screen.totalLineCount
 		let height = CGFloat(totalRows) * cellHeight + Self.verticalInset * 2
 		let width = enclosingScrollView?.contentSize.width ?? bounds.width
 		let newSize = NSSize(width: max(width, 10), height: max(height, 10))
@@ -346,8 +371,101 @@ final class TerminalView: NSView, NSTextInputClient {
 		return characters
 	}
 
+	// MARK: - Mouse
+
+	/// Grid position under a pointer event, 1-based as the protocol expects.
+	private func gridPosition(for event: NSEvent) -> (row: Int, column: Int) {
+		let point = convert(event.locationInWindow, from: nil)
+		let column = Int((point.x - Self.horizontalInset) / max(1, cellWidth)) + 1
+		var row = Int((point.y - Self.verticalInset) / max(1, cellHeight))
+		// The protocol addresses the visible grid, so scrollback is subtracted.
+		row -= emulator.screen.scrollback.count
+		return (max(1, row + 1), max(1, column))
+	}
+
+	private func modifiers(_ event: NSEvent) -> (Bool, Bool, Bool) {
+		let flags = event.modifierFlags
+		return (flags.contains(.shift), flags.contains(.option), flags.contains(.control))
+	}
+
+	/// Forwards a pointer event, returning true when the program consumed it.
+	private func forwardMouse(
+		_ event: NSEvent,
+		button: TerminalEmulator.MouseButton,
+		isRelease: Bool,
+		isDrag: Bool = false
+	) -> Bool {
+		// Shift is the conventional override for "let the terminal handle it",
+		// which is how selection stays possible while a program grabs the mouse.
+		guard !event.modifierFlags.contains(.shift) else { return false }
+
+		let position = gridPosition(for: event)
+		let (shift, option, control) = modifiers(event)
+		guard let sequence = emulator.encodeMouse(
+			button: button,
+			row: position.row,
+			column: position.column,
+			isRelease: isRelease,
+			isDrag: isDrag,
+			shift: shift,
+			option: option,
+			control: control
+		) else { return false }
+
+		pty.write(sequence)
+		return true
+	}
+
 	override func mouseDown(with event: NSEvent) {
 		window?.makeFirstResponder(self)
+		_ = forwardMouse(event, button: .left, isRelease: false)
+	}
+
+	override func mouseUp(with event: NSEvent) {
+		_ = forwardMouse(event, button: .left, isRelease: true)
+	}
+
+	override func mouseDragged(with event: NSEvent) {
+		_ = forwardMouse(event, button: .left, isRelease: false, isDrag: true)
+	}
+
+	override func rightMouseDown(with event: NSEvent) {
+		_ = forwardMouse(event, button: .right, isRelease: false)
+	}
+
+	override func rightMouseUp(with event: NSEvent) {
+		_ = forwardMouse(event, button: .right, isRelease: true)
+	}
+
+	override func scrollWheel(with event: NSEvent) {
+		// A program tracking the mouse gets wheel events as button 64/65.
+		if emulator.mouseTracking != .off, !event.modifierFlags.contains(.shift) {
+			let steps = max(1, min(5, Int(abs(event.scrollingDeltaY) / max(1, cellHeight)) + 1))
+			let button: TerminalEmulator.MouseButton = event.scrollingDeltaY > 0 ? .scrollUp : .scrollDown
+            let position = gridPosition(for: event)
+			for _ in 0..<steps {
+				if let sequence = emulator.encodeMouse(
+					button: button,
+					row: position.row,
+					column: position.column,
+					isRelease: false
+				) {
+					pty.write(sequence)
+				}
+			}
+			return
+		}
+
+		// On the alternate screen there is no scrollback to move through, so the
+		// wheel drives the program's own cursor instead of doing nothing.
+		if emulator.isAlternateScreen {
+			let steps = max(1, min(5, Int(abs(event.scrollingDeltaY) / max(1, cellHeight)) + 1))
+			let key: TerminalEmulator.ArrowKey = event.scrollingDeltaY > 0 ? .up : .down
+			pty.write(String(repeating: emulator.encodeArrow(key), count: steps))
+			return
+		}
+
+		super.scrollWheel(with: event)
 	}
 
 	// MARK: - Actions

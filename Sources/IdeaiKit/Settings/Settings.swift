@@ -23,6 +23,7 @@ public final class Settings {
 			Key.showHiddenFiles: true,
 			Key.excludedDirectories: Array(FileNode.defaultExcludedDirectoryNames).sorted(),
 			Key.uiScale: 1.0,
+			Key.terminalFontName: "",
 		])
 	}
 
@@ -36,6 +37,7 @@ public final class Settings {
 		static let showHiddenFiles = "showHiddenFiles"
 		static let excludedDirectories = "excludedDirectories"
 		static let uiScale = "uiScale"
+		static let terminalFontName = "terminalFontName"
 	}
 
 	// MARK: - Zoom
@@ -115,6 +117,16 @@ public final class Settings {
 		set { set(newValue, Key.tabWidth) }
 	}
 
+	/// Terminal font family. Empty means "choose automatically".
+	///
+	/// Prompts like starship and powerlevel10k draw their separators with
+	/// Private Use Area glyphs that only Nerd Fonts carry, so the terminal needs
+	/// a different font from the editor.
+	public var terminalFontName: String {
+		get { defaults.string(forKey: Key.terminalFontName) ?? "" }
+		set { set(newValue, Key.terminalFontName) }
+	}
+
 	// MARK: - Navigator
 
 	/// Dotfiles are shown by default: `.gitignore` and friends are part of a
@@ -143,6 +155,7 @@ public final class Settings {
 			Key.autoSaveEnabled, Key.autoSaveDelay, Key.saveOnFocusLoss,
 			Key.editorFontSize, Key.editorLineHeight, Key.tabWidth,
 			Key.showHiddenFiles, Key.excludedDirectories,
+			Key.uiScale, Key.terminalFontName,
 		] {
 			defaults.removeObject(forKey: key)
 		}
