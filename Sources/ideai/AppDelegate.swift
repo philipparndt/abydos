@@ -55,6 +55,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 				}
 			}
 		}
+		if let split = options.split {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+				if split == "down" {
+					controller?.splitEditorDown(nil)
+				} else {
+					controller?.splitEditorRight(nil)
+				}
+			}
+		}
 		if options.wordWrap {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
 				controller?.toggleWordWrap(nil)
@@ -334,6 +343,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 		)
 		preview.keyEquivalentModifierMask = [.command, .shift]
 		viewMenu.addItem(preview)
+		viewMenu.addItem(.separator())
+		let splitRight = NSMenuItem(
+			title: "Split Right",
+			action: #selector(MainWindowController.splitEditorRight(_:)),
+			keyEquivalent: "\\"
+		)
+		viewMenu.addItem(splitRight)
+		let splitDown = NSMenuItem(
+			title: "Split Down",
+			action: #selector(MainWindowController.splitEditorDown(_:)),
+			keyEquivalent: "\\"
+		)
+		splitDown.keyEquivalentModifierMask = [.command, .shift]
+		viewMenu.addItem(splitDown)
 		viewMenu.addItem(.separator())
 		let nextTab = NSMenuItem(title: "Next Tab", action: #selector(MainWindowController.selectNextTab(_:)), keyEquivalent: "]")
 		nextTab.keyEquivalentModifierMask = [.command, .shift]

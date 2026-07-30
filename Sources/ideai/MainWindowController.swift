@@ -8,7 +8,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 	var onClose: (() -> Void)?
 
 	private let navigator = ProjectNavigatorViewController()
-	private let editor = EditorViewController()
+	/// The editor area, which may hold several split groups.
+	private let editor = EditorAreaController()
 	private let toolStrip = ToolWindowBar()
 	private let bottomPanel = BottomPanel()
 
@@ -536,6 +537,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		Settings.shared.resetZoom()
 	}
 
+	@objc func splitEditorRight(_ sender: Any?) {
+		editor.splitActiveGroup(vertical: true)
+	}
+
+	@objc func splitEditorDown(_ sender: Any?) {
+		editor.splitActiveGroup(vertical: false)
+	}
+
 	@objc func toggleWordWrap(_ sender: Any?) {
 		editor.toggleWordWrap()
 	}
@@ -667,7 +676,7 @@ extension MainWindowController: NSToolbarDelegate {
 
 /// A view that fills itself with a flat colour. Used instead of relying on
 /// `NSBox` or vibrancy so the palette matches the theme exactly.
-final class ColoredView: NSView {
+class ColoredView: NSView {
 	private let color: NSColor
 
 	init(color: NSColor) {

@@ -17,7 +17,7 @@ final class EditorViewController: NSViewController {
 	/// tab, which can swap itself for a hex dump in place. Modelling that as tab
 	/// content rather than an alert is what keeps the app free of blocking
 	/// dialogs.
-	private final class Tab {
+	final class Tab {
 		let url: URL
 		/// nil for anything not opened as text.
 		var document: TextDocument?
@@ -68,6 +68,21 @@ final class EditorViewController: NSViewController {
 	/// Called when the breakpoint gutter is clicked, with a 1-based line.
 	var onToggleBreakpoint: ((URL, Int) -> Void)?
 
+	/// Identifies this group when a tab is dragged between panes.
+	let groupID = UUID()
+
+	/// Asked to move a dragged tab here, in the given zone.
+	var onTabDropped: ((_ payload: EditorTabDrag.Payload, _ zone: EditorTabDrag.Zone, _ target: EditorViewController) -> Void)?
+	/// Fired when this group has no tabs left, so the area can collapse it.
+	var onBecameEmpty: ((EditorViewController) -> Void)?
+	/// Fired when this group takes focus, so the area knows which is active.
+	var onActivated: ((EditorViewController) -> Void)?
+
+	var isEmpty: Bool { tabs.isEmpty }
+	var tabCount: Int { tabs.count }
+	var activeTabIndex: Int? { activeIndex }
+	var activeTabURL: URL? { activeTab?.url }
+
 	/// Breakpoints to draw, per absolute file path, with verification state.
 	private var breakpointsByFile: [String: [Int: Bool]] = [:]
 	/// Where execution is currently stopped.
@@ -76,12 +91,17 @@ final class EditorViewController: NSViewController {
 	// MARK: - View
 
 	override func loadView() {
-		let container = ColoredView(color: Theme.current.editorBackground)
+		let container = EditorDropView(color: Theme.current.editorBackground)
 
 		tabBar = EditorTabBar()
 		tabBar.onSelect = { [weak self] index in self?.activate(index: index, focusEditor: true) }
 		tabBar.onClose = { [weak self] index in self?.closeTab(at: index) }
 		tabBar.onPromote = { [weak self] index in self?.promoteToPermanent(index: index) }
+		tabBar.groupID = groupID
+		tabBar.urlForIndex = { [weak self] index in
+			guard let self, self.tabs.indices.contains(index) else { return nil }
+			return self.tabs[index].url
+		}
 
 		contentArea = NSView()
 		statusBar = EditorStatusView()
@@ -140,7 +160,74 @@ final class EditorViewController: NSViewController {
 		])
 
 		view = container
+		// The whole group is a drop target, so a tab can be dropped over the text
+		// as well as over the strip.
+		container.registerForDraggedTypes([EditorTabDrag.pasteboardType])
+		(container as? EditorDropView)?.owner = self
 		updateChrome()
+	}
+
+	// MARK: - Moving tabs between groups
+
+	/// Removes a tab without tearing it down, so it can be re-homed intact.
+	func detachTab(at index: Int) -> Tab? {
+		guard tabs.indices.contains(index) else { return nil }
+		let tab = tabs.remove(at: index)
+		tab.contentView.removeFromSuperview()
+
+		if tabs.isEmpty {
+			activeIndex = nil
+			contentArea.subviews.forEach { $0.removeFromSuperview() }
+			updateChrome()
+			refreshTabBar()
+			onBecameEmpty?(self)
+		} else {
+			activeIndex = nil
+			activate(index: min(index, tabs.count - 1), focusEditor: false)
+		}
+		return tab
+	}
+
+	/// Takes ownership of a tab detached from another group.
+	func adopt(_ tab: Tab, focus: Bool = true) {
+		// Its callbacks still point at the old group, so they are re-bound.
+		rebindCallbacks(for: tab)
+		tabs.append(tab)
+		activate(index: tabs.count - 1, focusEditor: focus)
+		applyDebugState(to: tab)
+	}
+
+	private func rebindCallbacks(for tab: Tab) {
+		tab.codeView?.onCaretMoved = { [weak self, weak tab] line, column in
+			guard let self, let tab, self.activeTab === tab else { return }
+			self.statusBar.setPosition(line: line, column: column)
+		}
+		tab.codeView?.onDirtyChanged = { [weak self, weak tab] _ in
+			tab?.isPreview = false
+			self?.refreshTabBar()
+		}
+		tab.codeView?.onToggleBreakpoint = { [weak self, weak tab] line in
+			guard let tab else { return }
+			self?.onToggleBreakpoint?(tab.url, line + 1)
+		}
+		tab.document?.onAutoSaved = { [weak self] in
+			self?.refreshTabBar()
+		}
+	}
+
+	/// Index of a tab by identity, for a drag that started here.
+	func indexOfTab(withPath path: String) -> Int? {
+		tabs.firstIndex { $0.url.path == path }
+	}
+
+	/// Moves a tab within this group, for a reorder drop.
+	func moveTab(from source: Int, to destination: Int) {
+		guard tabs.indices.contains(source) else { return }
+		let tab = tabs.remove(at: source)
+		let target = max(0, min(destination, tabs.count))
+		tabs.insert(tab, at: target)
+		activeIndex = nil
+		activate(index: target, focusEditor: false)
 	}
 
 	private func updateChrome() {
@@ -230,6 +317,7 @@ final class EditorViewController: NSViewController {
 			object: scrollView.contentView,
 			queue: .main
 		) { [weak codeView] _ in
+			codeView?.viewportChanged()
 			codeView?.needsDisplay = true
 		}
 
@@ -541,6 +629,7 @@ final class EditorViewController: NSViewController {
 		statusBar.setLanguage(tab.document?.displayLanguageName)
 		updateChrome()
 		refreshTabBar()
+		onActivated?(self)
 
 		if focusEditor {
 			// A notice tab has no code view to focus.
@@ -594,6 +683,7 @@ final class EditorViewController: NSViewController {
 			updateChrome()
 			refreshTabBar()
 			onActiveFileChanged?(nil)
+			onBecameEmpty?(self)
 			return
 		}
 

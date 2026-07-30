@@ -205,6 +205,17 @@ final class CodeView: NSView, NSTextInputClient {
 		return folding.visualLine(forDocumentLine: line)
 	}
 
+	/// Re-lays out after the pane's width changed.
+	///
+	/// Wrap width is derived from the viewport, so a split or a divider drag
+	/// changes how many columns fit. Without this the layout keeps the old width
+	/// and long lines are clipped at the new pane edge instead of wrapping.
+	func viewportChanged() {
+		guard isWordWrapEnabled else { return }
+		updateFrameSize()
+		needsDisplay = true
+	}
+
 	/// Turns soft wrap on or off and re-lays out.
 	func setWordWrap(_ enabled: Bool) {
 		guard enabled != isWordWrapEnabled else { return }
