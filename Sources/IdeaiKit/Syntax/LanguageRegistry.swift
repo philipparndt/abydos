@@ -1,0 +1,257 @@
+import Foundation
+import SwiftTreeSitter
+
+import TreeSitterSwift
+import TreeSitterRust
+import TreeSitterTypeScript
+import TreeSitterTSX
+import TreeSitterGo
+import TreeSitterJSON
+import TreeSitterBash
+import TreeSitterC
+import TreeSitterCPP
+import TreeSitterJava
+import TreeSitterHTML
+import TreeSitterTOML
+import TreeSitterMarkdown
+import TreeSitterMarkdownInline
+import TreeSitterSvelte
+import TreeSitterOpenscad
+
+// Vendored because their upstream manifests drop the external scanner; see
+// Package.swift and Scripts/vendor-grammars.sh.
+import TreeSitterCSSVendored
+import TreeSitterJavaScriptVendored
+import TreeSitterPythonVendored
+import TreeSitterYAMLVendored
+
+/// A language ideai can parse, plus the queries used to highlight and fold it.
+public struct LanguageDefinition {
+	public let id: String
+	public let displayName: String
+	let parser: () -> OpaquePointer
+	/// SPM names a resource bundle `<package>_<target>`; several packages ship
+	/// more than one grammar, so the bundle name cannot be derived from the id.
+	let bundleName: String
+
+	public private(set) var configuration: LanguageConfiguration?
+	/// Loaded separately: `Query.queries(for:in:)` only knows about highlights,
+	/// injections and locals, and folding needs `folds.scm`.
+	public private(set) var foldQuery: Query?
+}
+
+/// Resolves a file to a grammar and caches the loaded queries.
+///
+/// Query compilation is the expensive part (tens of milliseconds for a big
+/// grammar), so it happens once per language on first use and is shared by every
+/// open document afterwards.
+public final class LanguageRegistry {
+	public static let shared = LanguageRegistry()
+
+	private var definitions: [String: LanguageDefinition] = [:]
+	private var loaded: [String: LanguageConfiguration] = [:]
+	private var foldQueries: [String: Query?] = [:]
+	private let lock = NSLock()
+
+	private init() {
+		register(id: "swift", name: "Swift", bundle: "TreeSitterSwift_TreeSitterSwift") { tree_sitter_swift() }
+		register(id: "rust", name: "Rust", bundle: "TreeSitterRust_TreeSitterRust") { tree_sitter_rust() }
+		register(id: "typescript", name: "TypeScript", bundle: "TreeSitterTypeScript_TreeSitterTypeScript") { tree_sitter_typescript() }
+		register(id: "tsx", name: "TSX", bundle: "TreeSitterTypeScript_TreeSitterTSX") { tree_sitter_tsx() }
+		// Vendored targets live in this package, so their resource bundles are
+		// named `ideai_<target>` rather than `<package>_<target>`.
+		register(id: "javascript", name: "JavaScript", bundle: "ideai_TreeSitterJavaScriptVendored") { tree_sitter_javascript() }
+		register(id: "python", name: "Python", bundle: "ideai_TreeSitterPythonVendored") { tree_sitter_python() }
+		register(id: "go", name: "Go", bundle: "TreeSitterGo_TreeSitterGo") { tree_sitter_go() }
+		register(id: "json", name: "JSON", bundle: "TreeSitterJSON_TreeSitterJSON") { tree_sitter_json() }
+		register(id: "bash", name: "Shell", bundle: "TreeSitterBash_TreeSitterBash") { tree_sitter_bash() }
+		register(id: "c", name: "C", bundle: "TreeSitterC_TreeSitterC") { tree_sitter_c() }
+		register(id: "cpp", name: "C++", bundle: "TreeSitterCPP_TreeSitterCPP") { tree_sitter_cpp() }
+		register(id: "java", name: "Java", bundle: "TreeSitterJava_TreeSitterJava") { tree_sitter_java() }
+		register(id: "html", name: "HTML", bundle: "TreeSitterHTML_TreeSitterHTML") { tree_sitter_html() }
+		register(id: "css", name: "CSS", bundle: "ideai_TreeSitterCSSVendored") { tree_sitter_css() }
+		register(id: "yaml", name: "YAML", bundle: "ideai_TreeSitterYAMLVendored") { tree_sitter_yaml() }
+		register(id: "toml", name: "TOML", bundle: "TreeSitterTOML_TreeSitterTOML") { tree_sitter_toml() }
+		register(id: "markdown", name: "Markdown", bundle: "TreeSitterMarkdown_TreeSitterMarkdown") { tree_sitter_markdown() }
+		register(id: "markdown_inline", name: "Markdown (inline)", bundle: "TreeSitterMarkdown_TreeSitterMarkdownInline") { tree_sitter_markdown_inline() }
+		register(id: "svelte", name: "Svelte", bundle: "TreeSitterSvelte_TreeSitterSvelte") { tree_sitter_svelte() }
+		register(id: "openscad", name: "OpenSCAD", bundle: "TreeSitterOpenscad_TreeSitterOpenscad") { tree_sitter_openscad() }
+	}
+
+	private func register(
+		id: String,
+		name: String,
+		bundle: String,
+		parser: @escaping () -> OpaquePointer
+	) {
+		definitions[id] = LanguageDefinition(id: id, displayName: name, parser: parser, bundleName: bundle)
+	}
+
+	// MARK: - Detection
+
+	/// Language id for a file, or nil when nothing matches.
+	///
+	/// Extension-based with a filename table for the many dotfiles and build
+	/// files that carry no extension at all.
+	public func languageId(for url: URL) -> String? {
+		let filename = url.lastPathComponent.lowercased()
+		if let byName = Self.filenameMap[filename] { return byName }
+
+		let ext = url.pathExtension.lowercased()
+		if !ext.isEmpty, let byExtension = Self.extensionMap[ext] { return byExtension }
+
+		// Files with no extension may still declare themselves via a shebang.
+		if url.pathExtension.isEmpty, let interpreter = Self.shebangLanguage(at: url) {
+			return interpreter
+		}
+		return nil
+	}
+
+	static let extensionMap: [String: String] = [
+		"swift": "swift",
+		"rs": "rust",
+		"ts": "typescript", "mts": "typescript", "cts": "typescript",
+		"tsx": "tsx", "jsx": "tsx",
+		"js": "javascript", "mjs": "javascript", "cjs": "javascript",
+		"py": "python", "pyi": "python",
+		"go": "go",
+		"json": "json", "jsonc": "json",
+		"sh": "bash", "bash": "bash", "zsh": "bash", "command": "bash",
+		"c": "c", "h": "c",
+		"cpp": "cpp", "cc": "cpp", "cxx": "cpp", "hpp": "cpp", "hh": "cpp", "hxx": "cpp",
+		"java": "java",
+		"html": "html", "htm": "html", "xhtml": "html", "vue": "html",
+		"css": "css", "scss": "css", "sass": "css",
+		"yaml": "yaml", "yml": "yaml",
+		"toml": "toml",
+		"md": "markdown", "markdown": "markdown", "mdx": "markdown",
+		"svelte": "svelte",
+		"scad": "openscad",
+	]
+
+	static let filenameMap: [String: String] = [
+		"dockerfile": "bash",
+		"makefile": "bash",
+		".bashrc": "bash", ".bash_profile": "bash", ".zshrc": "bash", ".profile": "bash",
+		".gitconfig": "toml",
+		"cargo.lock": "toml",
+		"package.json": "json", "tsconfig.json": "json",
+	]
+
+	private static func shebangLanguage(at url: URL) -> String? {
+		guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+		defer { try? handle.close() }
+		guard let data = try? handle.read(upToCount: 128),
+		      let line = String(data: data, encoding: .utf8)?
+			      .split(separator: "\n", maxSplits: 1).first,
+		      line.hasPrefix("#!")
+		else { return nil }
+
+		if line.contains("python") { return "python" }
+		if line.contains("bash") || line.contains("/sh") || line.contains("zsh") { return "bash" }
+		if line.contains("node") { return "javascript" }
+		return nil
+	}
+
+	// MARK: - Loading
+
+	public func displayName(for languageId: String) -> String {
+		definitions[languageId]?.displayName ?? languageId
+	}
+
+	/// Loads and caches a language's parser and queries.
+	///
+	/// A grammar whose query bundle is missing still returns a configuration —
+	/// the file parses and folds structurally, it just is not coloured — which
+	/// is far better than refusing to open it.
+	public func configuration(for languageId: String) -> LanguageConfiguration? {
+		lock.lock()
+		defer { lock.unlock() }
+
+		if let cached = loaded[languageId] { return cached }
+		guard let definition = definitions[languageId] else { return nil }
+
+		let language = Language(definition.parser())
+		let configuration: LanguageConfiguration
+
+		// The queries directory is resolved here rather than via
+		// LanguageConfiguration's bundleName initialiser, which only looks under
+		// `Contents/Resources/`. `swift build` emits flat bundles, so that lookup
+		// silently finds nothing and every file renders uncoloured.
+		if let queriesURL = Self.queriesDirectory(bundleName: definition.bundleName),
+		   let loadedConfiguration = try? LanguageConfiguration(
+			   language,
+			   name: definition.displayName,
+			   queriesURL: queriesURL
+		   ) {
+			configuration = loadedConfiguration
+		} else {
+			// Still usable: the file parses and folds structurally, just without
+			// colour. Better than refusing to open it.
+			configuration = LanguageConfiguration(language, name: definition.displayName, queries: [:])
+		}
+
+		loaded[languageId] = configuration
+		return configuration
+	}
+
+	/// The grammar's `folds.scm`, when it ships one.
+	public func foldQuery(for languageId: String) -> Query? {
+		lock.lock()
+		defer { lock.unlock() }
+
+		if let cached = foldQueries[languageId] { return cached }
+		guard let definition = definitions[languageId] else { return nil }
+
+		var result: Query?
+		if let directory = Self.queriesDirectory(bundleName: definition.bundleName) {
+			let url = directory.appendingPathComponent("folds.scm")
+			if FileManager.default.isReadableFile(atPath: url.path) {
+				let language = Language(definition.parser())
+				result = try? Query(language: language, url: url)
+			}
+		}
+		foldQueries[languageId] = result
+		return result
+	}
+
+	/// Anchor for locating this module's own bundle, which is what makes
+	/// resource lookup work under XCTest as well as in the app.
+	private final class BundleAnchor {}
+
+	/// Directories that may contain the grammar resource bundles.
+	///
+	/// Three contexts have to work and they disagree about where resources sit:
+	/// a packaged `.app` (main bundle resources), a bare `swift run` executable
+	/// (the directory next to the binary), and an XCTest run (where `Bundle.main`
+	/// is the *test runner*, not this code). Rather than branch on which one we
+	/// are in, try each candidate and take the first that actually has the file.
+	private static let searchDirectories: [URL] = {
+		var candidates: [URL] = []
+		if let resources = Bundle.main.resourceURL { candidates.append(resources) }
+		candidates.append(Bundle.main.bundleURL)
+
+		let own = Bundle(for: BundleAnchor.self)
+		if let resources = own.resourceURL { candidates.append(resources) }
+		// SPM places dependency bundles beside the test bundle, one level up.
+		candidates.append(own.bundleURL.deletingLastPathComponent())
+
+		return candidates
+	}()
+
+	/// Locates a grammar's `queries/` directory.
+	///
+	/// Both bundle layouts must work: `swift build` emits flat bundles
+	/// (`X.bundle/queries`), while a packaged `.app` carries the wrapped form
+	/// (`X.bundle/Contents/Resources/queries`).
+	private static func queriesDirectory(bundleName: String) -> URL? {
+		for base in searchDirectories {
+			let bundle = base.appendingPathComponent("\(bundleName).bundle", isDirectory: true)
+			for layout in ["Contents/Resources/queries", "queries"] {
+				let directory = bundle.appendingPathComponent(layout, isDirectory: true)
+				if FileManager.default.fileExists(atPath: directory.path) { return directory }
+			}
+		}
+		return nil
+	}
+}

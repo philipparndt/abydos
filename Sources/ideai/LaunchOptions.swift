@@ -1,0 +1,79 @@
+import AppKit
+
+/// Command-line options.
+///
+/// `--screenshot` exists so the UI can be verified during development without
+/// Screen Recording permission: the window renders itself into a bitmap
+/// in-process, which exercises exactly the same drawing code the display uses.
+struct LaunchOptions {
+	var projectPath: String?
+	var filePath: String?
+	var screenshotPath: String?
+	/// Seconds to wait before capturing, so async parse/git work settles.
+	var screenshotDelay: TimeInterval = 1.5
+	var expandNavigator = false
+	/// Text typed into the editor before capture, for verifying the edit path.
+	var typeText: String?
+	/// Collapse every fold before capture, for verifying folding.
+	var collapseFolds = false
+	/// Opened as a provisional tab, as a single click in the tree would.
+	var previewPath: String?
+
+	static func parse(_ arguments: [String] = CommandLine.arguments) -> LaunchOptions {
+		var options = LaunchOptions()
+		var index = 1
+		while index < arguments.count {
+			let argument = arguments[index]
+			func next() -> String? {
+				guard index + 1 < arguments.count else { return nil }
+				index += 1
+				return arguments[index]
+			}
+
+			switch argument {
+			case "--open":       options.projectPath = next()
+			case "--file":       options.filePath = next()
+			case "--screenshot": options.screenshotPath = next()
+			case "--delay":      options.screenshotDelay = next().flatMap(Double.init) ?? 1.5
+			case "--expand":     options.expandNavigator = true
+			case "--type":       options.typeText = next()
+			case "--collapse":   options.collapseFolds = true
+			case "--preview":    options.previewPath = next()
+			default:
+				// A bare path is treated as the project to open.
+				if !argument.hasPrefix("-"), options.projectPath == nil {
+					options.projectPath = argument
+				}
+			}
+			index += 1
+		}
+		return options
+	}
+
+	var isScreenshotRun: Bool { screenshotPath != nil }
+}
+
+enum WindowCapture {
+	/// Renders a window to a PNG.
+	///
+	/// Draws the theme frame when reachable so the capture includes the titlebar
+	/// and its pills; otherwise falls back to the content view.
+	@discardableResult
+	static func write(window: NSWindow, to path: String) -> Bool {
+		guard let contentView = window.contentView else { return false }
+		let target = contentView.superview ?? contentView
+
+		target.layoutSubtreeIfNeeded()
+		guard let rep = target.bitmapImageRepForCachingDisplay(in: target.bounds) else { return false }
+		target.cacheDisplay(in: target.bounds, to: rep)
+
+		guard let data = rep.representation(using: .png, properties: [:]) else { return false }
+		do {
+			try data.write(to: URL(fileURLWithPath: path))
+			return true
+		} catch {
+			FileHandle.standardError.write(Data("screenshot write failed: \(error)\n".utf8))
+			return false
+		}
+	}
+}

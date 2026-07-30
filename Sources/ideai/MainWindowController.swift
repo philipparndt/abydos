@@ -1,0 +1,356 @@
+import AppKit
+import IdeaiKit
+
+/// The project window: titlebar pills, the left tool strip, the navigator, and
+/// the editor area.
+final class MainWindowController: NSWindowController, NSWindowDelegate {
+	private(set) var project: Project?
+	var onClose: (() -> Void)?
+
+	private let navigator = ProjectNavigatorViewController()
+	private let editor = EditorViewController()
+	private let toolStrip = ToolWindowBar()
+
+	private var splitView: NSSplitView!
+	private var navigatorContainer: NSView!
+	private var projectPill: ProjectPillButton!
+	private var branchPill: BranchPillButton!
+	private var titlebarContainer: NSView?
+
+	private var navigatorWidth: CGFloat = 260
+
+	// MARK: - Init
+
+	init() {
+		let window = NSWindow(
+			contentRect: NSRect(x: 0, y: 0, width: 1280, height: 820),
+			// fullSizeContentView lets the split view run up behind the titlebar,
+			// which is what makes the sidebar meet the toolbar the way IDEA's does.
+			styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+			backing: .buffered,
+			defer: false
+		)
+		window.titleVisibility = .hidden
+		window.titlebarAppearsTransparent = false
+		window.backgroundColor = Theme.current.windowBackground
+		window.tabbingMode = .disallowed
+		window.setFrameAutosaveName("IdeaiMainWindow")
+
+		super.init(window: window)
+		window.delegate = self
+
+		buildContent()
+		buildToolbar()
+	}
+
+	required init?(coder: NSCoder) { fatalError("not used") }
+
+	// MARK: - Layout
+
+	private func buildContent() {
+		let root = ColoredView(color: Theme.current.windowBackground)
+
+		toolStrip.onToggleNavigator = { [weak self] in self?.toggleNavigator(nil) }
+
+		navigatorContainer = ColoredView(color: Theme.current.sidebarBackground)
+		navigatorContainer.addSubview(navigator.view)
+		navigator.view.translatesAutoresizingMaskIntoConstraints = false
+		NSLayoutConstraint.activate([
+			navigator.view.topAnchor.constraint(equalTo: navigatorContainer.topAnchor),
+			navigator.view.bottomAnchor.constraint(equalTo: navigatorContainer.bottomAnchor),
+			navigator.view.leadingAnchor.constraint(equalTo: navigatorContainer.leadingAnchor),
+			navigator.view.trailingAnchor.constraint(equalTo: navigatorContainer.trailingAnchor),
+		])
+
+		splitView = ThinDividerSplitView()
+		splitView.isVertical = true
+		splitView.dividerStyle = .thin
+		splitView.addArrangedSubview(navigatorContainer)
+		splitView.addArrangedSubview(editor.view)
+		splitView.autosaveName = "IdeaiSplit"
+
+		root.addSubview(toolStrip)
+		root.addSubview(splitView)
+		toolStrip.translatesAutoresizingMaskIntoConstraints = false
+		splitView.translatesAutoresizingMaskIntoConstraints = false
+
+		NSLayoutConstraint.activate([
+			toolStrip.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+			toolStrip.topAnchor.constraint(equalTo: root.topAnchor),
+			toolStrip.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+			toolStrip.widthAnchor.constraint(equalToConstant: ToolWindowBar.width),
+
+			splitView.leadingAnchor.constraint(equalTo: toolStrip.trailingAnchor),
+			splitView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+			splitView.topAnchor.constraint(equalTo: root.topAnchor),
+			splitView.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+		])
+
+		window?.contentView = root
+
+		// A click in the tree opens provisionally and keeps focus in the tree;
+		// Return or a double-click pins the tab and moves focus to the editor.
+		navigator.onSelectFile = { [weak self] url, focusEditor in
+			self?.editor.open(fileURL: url, focusEditor: focusEditor, preview: !focusEditor)
+		}
+		// Switching tabs moves the tree's selection to match.
+		editor.onActiveFileChanged = { [weak self] url in
+			guard let url else { return }
+			self?.navigator.selectWithoutOpening(url: url)
+		}
+
+		DispatchQueue.main.async { [weak self] in
+			guard let self else { return }
+			self.splitView.setPosition(self.navigatorWidth, ofDividerAt: 0)
+		}
+	}
+
+	// MARK: - Titlebar
+
+	/// Puts the pills in a real `NSToolbar`.
+	///
+	/// macOS 26 draws a rounded capsule behind custom-view toolbar items and
+	/// there is no opt-out — `NSToolbarItemStyle` offers only plain and
+	/// prominent. The alternatives are worse: a titlebar accessory has no
+	/// capsule but the window then falls back to the old, smaller corner radius,
+	/// and an *empty* toolbar plus an accessory reserves a second titlebar row.
+	/// Keeping the toolbar keeps the modern window shape and a single row, so
+	/// the capsule is the accepted cost.
+	private func buildToolbar() {
+		let toolbar = NSToolbar(identifier: "IdeaiToolbar")
+		toolbar.delegate = self
+		toolbar.displayMode = .iconOnly
+		toolbar.allowsUserCustomization = false
+		window?.toolbar = toolbar
+		// .unified keeps the items on the traffic-light row rather than in a
+		// second bar below it — the arrangement in the reference screenshot.
+		window?.toolbarStyle = .unified
+	}
+
+	/// Re-measures the pills after their content changes, so the toolbar item
+	/// grows to fit a longer project name or a branch that arrived late.
+	private func layoutTitlebarPills() {
+		projectPill?.invalidateIntrinsicContentSize()
+		branchPill?.invalidateIntrinsicContentSize()
+	}
+
+	/// Pushes the measured titlebar height down to the navigator and editor.
+	///
+	/// The window uses `fullSizeContentView`, so its content view runs up behind
+	/// the titlebar and every child must inset itself. The height differs with
+	/// and without a toolbar and changes in full screen, so it is measured rather
+	/// than assumed — guessing it is what clipped the tab bar.
+	private func updateTopInsets() {
+		guard let window, let contentView = window.contentView else { return }
+		let layoutRect = window.contentLayoutRect
+		let inset = max(0, contentView.bounds.height - layoutRect.height - layoutRect.origin.y)
+
+		navigator.setTopInset(inset)
+		editor.setTopInset(inset)
+		toolStrip.setTopInset(inset)
+	}
+
+	// MARK: - Loading
+
+	func load(project: Project) {
+		self.project = project
+		window?.title = project.name
+
+		projectPill?.configure(
+			name: project.name,
+			colorIndex: RecentProjects.shared.entries.first { $0.path == project.root.path }?.colorIndex
+		)
+		branchPill?.setBranch(nil)
+		layoutTitlebarPills()
+
+		navigator.load(project: project)
+		editor.setProject(project)
+
+		// Deferred: the titlebar has no measurable height until the window has
+		// laid out at least once.
+		DispatchQueue.main.async { [weak self] in
+			self?.updateTopInsets()
+			// The tree takes focus on open, so arrow keys work without clicking.
+			self?.navigator.focusTree()
+		}
+
+		Task { @MainActor in
+			await project.loadGit()
+			let branch = await project.git?.currentBranch()
+			self.branchPill?.setBranch(branch)
+			// The branch pill only gets a width once it has a name to show.
+			self.layoutTitlebarPills()
+			self.navigator.refreshGitStatus()
+		}
+	}
+
+	/// Opens a file as a permanent tab and selects it in the tree.
+	func openFile(at url: URL) {
+		editor.open(fileURL: url, focusEditor: true, preview: false)
+		navigator.selectWithoutOpening(url: url)
+	}
+
+	/// Opens a file provisionally, as a single click in the tree would.
+	func previewFile(at url: URL) {
+		editor.open(fileURL: url, focusEditor: false, preview: true)
+		navigator.selectWithoutOpening(url: url)
+	}
+
+	/// Gives the project tree keyboard focus.
+	func focusNavigator() {
+		navigator.focusTree()
+	}
+
+	@objc func closeTab(_ sender: Any?) {
+		// Falls back to closing the window when nothing is open, matching ⌘W.
+		if editor.hasOpenFiles {
+			editor.closeActiveTab()
+		} else {
+			window?.performClose(nil)
+		}
+	}
+
+	@objc func selectNextTab(_ sender: Any?) { editor.selectNextTab(offset: 1) }
+	@objc func selectPreviousTab(_ sender: Any?) { editor.selectNextTab(offset: -1) }
+
+	/// Expands the first level of the tree, used by capture runs and after
+	/// opening a project so the navigator is not just a single root row.
+	func expandNavigatorTree() {
+		navigator.expandTopLevel()
+	}
+
+	/// Drives the editor's real text-input path, so a capture run exercises the
+	/// same code a keystroke does rather than poking the buffer directly.
+	func simulateTyping(_ text: String) {
+		editor.simulateTyping(text)
+	}
+
+	// MARK: - Actions
+
+	@objc func toggleNavigator(_ sender: Any?) {
+		guard let navigatorContainer else { return }
+		let collapsed = splitView.isSubviewCollapsed(navigatorContainer)
+		if collapsed {
+			splitView.setPosition(navigatorWidth, ofDividerAt: 0)
+			navigatorContainer.isHidden = false
+		} else {
+			navigatorWidth = max(180, navigatorContainer.frame.width)
+			navigatorContainer.isHidden = true
+		}
+		toolStrip.setNavigatorSelected(collapsed)
+		splitView.adjustSubviews()
+	}
+
+	@objc func saveDocument(_ sender: Any?) {
+		editor.save()
+	}
+
+	@objc func collapseAllFolds(_ sender: Any?) {
+		editor.collapseAllFolds()
+	}
+
+	@objc func expandAllFolds(_ sender: Any?) {
+		editor.expandAllFolds()
+	}
+
+	@objc func showProjectSwitcher(_ sender: Any?) {
+		guard let pill = projectPill else { return }
+		ProjectSwitcherPopover.show(relativeTo: pill, currentProject: project)
+	}
+
+	// MARK: - NSWindowDelegate
+
+	func windowDidResize(_ notification: Notification) {
+		// Entering or leaving full screen changes the titlebar height.
+		updateTopInsets()
+	}
+
+	func windowDidEnterFullScreen(_ notification: Notification) { updateTopInsets() }
+	func windowDidExitFullScreen(_ notification: Notification) { updateTopInsets() }
+
+	func windowWillClose(_ notification: Notification) {
+		editor.windowWillClose()
+		navigator.windowWillClose()
+		onClose?()
+	}
+}
+
+// MARK: - Toolbar items
+
+extension MainWindowController: NSToolbarDelegate {
+	private static let projectItem = NSToolbarItem.Identifier("ideai.project")
+	private static let branchItem = NSToolbarItem.Identifier("ideai.branch")
+
+	func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+		[Self.projectItem, Self.branchItem, .flexibleSpace]
+	}
+
+	func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+		toolbarDefaultItemIdentifiers(toolbar)
+	}
+
+	func toolbar(
+		_ toolbar: NSToolbar,
+		itemForItemIdentifier identifier: NSToolbarItem.Identifier,
+		willBeInsertedIntoToolbar flag: Bool
+	) -> NSToolbarItem? {
+		switch identifier {
+		case Self.projectItem:
+			let item = NSToolbarItem(itemIdentifier: identifier)
+			let pill = ProjectPillButton()
+			pill.onClick = { [weak self] in self?.showProjectSwitcher(nil) }
+			if let project {
+				pill.configure(
+					name: project.name,
+					colorIndex: RecentProjects.shared.entries.first { $0.path == project.root.path }?.colorIndex
+				)
+			}
+			projectPill = pill
+			item.view = pill
+			return item
+
+		case Self.branchItem:
+			let item = NSToolbarItem(itemIdentifier: identifier)
+			let pill = BranchPillButton()
+			pill.onClick = { [weak self] in self?.showBranchMenu() }
+			branchPill = pill
+			item.view = pill
+			return item
+
+		default:
+			return nil
+		}
+	}
+
+	fileprivate func showBranchMenu() {
+		guard let project, let branchPill else { return }
+		BranchMenu.show(relativeTo: branchPill, project: project)
+	}
+}
+
+// MARK: - Small view helpers
+
+/// A view that fills itself with a flat colour. Used instead of relying on
+/// `NSBox` or vibrancy so the palette matches the theme exactly.
+final class ColoredView: NSView {
+	private let color: NSColor
+
+	init(color: NSColor) {
+		self.color = color
+		super.init(frame: .zero)
+		wantsLayer = true
+		layer?.backgroundColor = color.cgColor
+	}
+
+	required init?(coder: NSCoder) { fatalError("not used") }
+
+	override func updateLayer() {
+		layer?.backgroundColor = color.cgColor
+	}
+}
+
+/// Split view with a 1px themed divider instead of the system's.
+final class ThinDividerSplitView: NSSplitView {
+	override var dividerColor: NSColor { Theme.current.separator }
+	override var dividerThickness: CGFloat { 1 }
+}

@@ -1,0 +1,185 @@
+import AppKit
+import IdeaiKit
+
+final class AppDelegate: NSObject, NSApplicationDelegate {
+	private var windowControllers: [MainWindowController] = []
+
+	func applicationDidFinishLaunching(_ notification: Notification) {
+		NSApp.appearance = NSAppearance(named: .darkAqua)
+		buildMenu()
+
+		// On first launch there is no ideai history, so seed the switcher from
+		// JetBrains' own recent-projects list — the point is that the list in the
+		// titlebar is already populated with the projects the user cares about.
+		RecentProjects.shared.seedFromJetBrainsIfEmpty()
+
+		let options = LaunchOptions.parse()
+
+		let controller: MainWindowController?
+		if let path = options.projectPath {
+			controller = open(projectAt: URL(fileURLWithPath: path, isDirectory: true))
+		} else if let last = RecentProjects.shared.entries.first {
+			controller = open(projectAt: last.url)
+		} else if options.isScreenshotRun {
+			// A capture run must never block on a modal panel.
+			controller = nil
+		} else {
+			openProjectPanel(nil)
+			controller = windowControllers.first
+		}
+
+		if let filePath = options.filePath {
+			controller?.openFile(at: URL(fileURLWithPath: filePath))
+		}
+		if let previewPath = options.previewPath {
+			controller?.previewFile(at: URL(fileURLWithPath: previewPath))
+		}
+		if options.expandNavigator {
+			controller?.expandNavigatorTree()
+		}
+
+		NSApp.activate(ignoringOtherApps: true)
+
+		// Simulated input runs after the initial parse lands, so folds and
+		// highlights exist by the time it is exercised.
+		if options.typeText != nil || options.collapseFolds {
+			DispatchQueue.main.asyncAfter(deadline: .now() + max(0.5, options.screenshotDelay - 0.5)) {
+				if let text = options.typeText { controller?.simulateTyping(text) }
+				if options.collapseFolds { controller?.collapseAllFolds(nil) }
+			}
+		}
+
+		if let path = options.screenshotPath {
+			scheduleScreenshot(path: path, delay: options.screenshotDelay, controller: controller)
+		}
+	}
+
+	/// Captures the window after async work (git status, parsing, folds) settles,
+	/// then exits with a status reflecting whether the file was written.
+	private func scheduleScreenshot(path: String, delay: TimeInterval, controller: MainWindowController?) {
+		DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+			guard let window = controller?.window ?? NSApp.windows.first else {
+				FileHandle.standardError.write(Data("no window to capture\n".utf8))
+				exit(2)
+			}
+			let ok = WindowCapture.write(window: window, to: path)
+			exit(ok ? 0 : 3)
+		}
+	}
+
+	func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+		true
+	}
+
+	func application(_ application: NSApplication, open urls: [URL]) {
+		for url in urls where url.hasDirectoryPath {
+			open(projectAt: url)
+		}
+	}
+
+	// MARK: - Opening projects
+
+	@discardableResult
+	func open(projectAt url: URL) -> MainWindowController {
+		// Focus an existing window rather than opening the same project twice.
+		if let existing = windowControllers.first(where: { $0.project?.root.standardizedFileURL == url.standardizedFileURL }) {
+			existing.showWindow(nil)
+			return existing
+		}
+
+		let controller = MainWindowController()
+		controller.onClose = { [weak self, weak controller] in
+			guard let self, let controller else { return }
+			self.windowControllers.removeAll { $0 === controller }
+		}
+		windowControllers.append(controller)
+		controller.load(project: Project(root: url))
+		controller.showWindow(nil)
+		RecentProjects.shared.record(url: url)
+		return controller
+	}
+
+	var openProjectRoots: [URL] {
+		windowControllers.compactMap { $0.project?.root }
+	}
+
+	@objc func openProjectPanel(_ sender: Any?) {
+		let panel = NSOpenPanel()
+		panel.canChooseDirectories = true
+		panel.canChooseFiles = false
+		panel.allowsMultipleSelection = false
+		panel.prompt = "Open"
+		panel.message = "Choose a project directory"
+
+		guard panel.runModal() == .OK, let url = panel.url else {
+			// Nothing open and nothing chosen — there is no useful state to sit in.
+			if windowControllers.isEmpty { NSApp.terminate(nil) }
+			return
+		}
+		open(projectAt: url)
+	}
+
+	// MARK: - Menu
+
+	private func buildMenu() {
+		let mainMenu = NSMenu()
+
+		let appMenuItem = NSMenuItem()
+		let appMenu = NSMenu()
+		appMenu.addItem(withTitle: "About ideai", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+		appMenu.addItem(.separator())
+		appMenu.addItem(withTitle: "Hide ideai", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+		appMenu.addItem(withTitle: "Quit ideai", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+		appMenuItem.submenu = appMenu
+		mainMenu.addItem(appMenuItem)
+
+		let fileMenuItem = NSMenuItem()
+		let fileMenu = NSMenu(title: "File")
+		let openItem = NSMenuItem(title: "Open…", action: #selector(openProjectPanel(_:)), keyEquivalent: "o")
+		openItem.target = self
+		fileMenu.addItem(openItem)
+		fileMenu.addItem(.separator())
+		fileMenu.addItem(withTitle: "Save", action: #selector(MainWindowController.saveDocument(_:)), keyEquivalent: "s")
+		fileMenu.addItem(withTitle: "Close Tab", action: #selector(MainWindowController.closeTab(_:)), keyEquivalent: "w")
+		let closeWindow = NSMenuItem(title: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+		closeWindow.keyEquivalentModifierMask = [.command, .shift]
+		fileMenu.addItem(closeWindow)
+		fileMenuItem.submenu = fileMenu
+		mainMenu.addItem(fileMenuItem)
+
+		let editMenuItem = NSMenuItem()
+		let editMenu = NSMenu(title: "Edit")
+		editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+		let redo = NSMenuItem(title: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
+		redo.keyEquivalentModifierMask = [.command, .shift]
+		editMenu.addItem(redo)
+		editMenu.addItem(.separator())
+		editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+		editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+		editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+		editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+		editMenuItem.submenu = editMenu
+		mainMenu.addItem(editMenuItem)
+
+		let viewMenuItem = NSMenuItem()
+		let viewMenu = NSMenu(title: "View")
+		viewMenu.addItem(withTitle: "Toggle Project Navigator", action: #selector(MainWindowController.toggleNavigator(_:)), keyEquivalent: "1")
+		let foldAll = NSMenuItem(title: "Collapse All", action: #selector(MainWindowController.collapseAllFolds(_:)), keyEquivalent: "-")
+		foldAll.keyEquivalentModifierMask = [.command, .shift]
+		viewMenu.addItem(foldAll)
+		let unfoldAll = NSMenuItem(title: "Expand All", action: #selector(MainWindowController.expandAllFolds(_:)), keyEquivalent: "+")
+		unfoldAll.keyEquivalentModifierMask = [.command, .shift]
+		viewMenu.addItem(unfoldAll)
+		viewMenu.addItem(.separator())
+		let nextTab = NSMenuItem(title: "Next Tab", action: #selector(MainWindowController.selectNextTab(_:)), keyEquivalent: "]")
+		nextTab.keyEquivalentModifierMask = [.command, .shift]
+		viewMenu.addItem(nextTab)
+		let previousTab = NSMenuItem(title: "Previous Tab", action: #selector(MainWindowController.selectPreviousTab(_:)), keyEquivalent: "[")
+		previousTab.keyEquivalentModifierMask = [.command, .shift]
+		viewMenu.addItem(previousTab)
+		viewMenuItem.submenu = viewMenu
+		mainMenu.addItem(viewMenuItem)
+
+		NSApp.mainMenu = mainMenu
+	}
+}

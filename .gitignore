@@ -1,0 +1,16 @@
+# SPM build output
+.build/
+.swiftpm/
+
+# Assembled .app bundle (Scripts/bundle.sh)
+build/
+
+# Xcode
+*.xcodeproj
+*.xcworkspace
+DerivedData/
+
+.DS_Store
+
+# NOTE: Sources/Grammars/ is vendored on purpose and must stay committed.
+# See Package.swift and Scripts/vendor-grammars.sh for why.
