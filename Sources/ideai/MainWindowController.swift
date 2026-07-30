@@ -309,6 +309,26 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		bottomPanel.showTerminal()?.terminalView.send(text)
 	}
 
+	@objc func findInFile(_ sender: Any?) {
+		editor.showFind()
+	}
+
+	func setFindQuery(_ query: String) { editor.setFindQuery(query) }
+
+	func setProjectSearchQuery(_ query: String) {
+		setPanelVisible(true)
+		bottomPanel.showSearch(query: query)
+	}
+
+	@objc func findNext(_ sender: Any?) { editor.findNext() }
+	@objc func findPrevious(_ sender: Any?) { editor.findPrevious() }
+
+	@objc func findInProject(_ sender: Any?) {
+		setPanelVisible(true)
+		// Seed from the selection, which is what you usually want to search for.
+		bottomPanel.showSearch(query: editor.selectedTextForSearch())
+	}
+
 	/// Starts an agent review of this branch, reported over MCP.
 	@objc func reviewBranch(_ sender: Any?) {
 		setPanelVisible(true)

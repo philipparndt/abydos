@@ -47,6 +47,13 @@ final class EditorViewController: NSViewController {
 	private var tabs: [Tab] = []
 	private var activeIndex: Int?
 
+	private var findBar: FindBar!
+	private var findBarHeight: NSLayoutConstraint!
+	/// Matches in the active document, and the one currently selected.
+	private var searchMatches: [SearchMatch] = []
+	private var currentMatchIndex: Int?
+	private var findDebounce: DispatchWorkItem?
+
 	private var tabBar: EditorTabBar!
 	private var tabBarTopConstraint: NSLayoutConstraint!
 	private var tabBarHeightConstraint: NSLayoutConstraint!
@@ -71,12 +78,21 @@ final class EditorViewController: NSViewController {
 		contentArea = NSView()
 		statusBar = EditorStatusView()
 
+		findBar = FindBar()
+		findBar.isHidden = true
+		findBar.onQueryChanged = { [weak self] query, options in
+			self?.scheduleFind(query: query, options: options)
+		}
+		findBar.onNext = { [weak self] in self?.stepMatch(by: 1) }
+		findBar.onPrevious = { [weak self] in self?.stepMatch(by: -1) }
+		findBar.onClose = { [weak self] in self?.closeFind() }
+
 		placeholder = NSTextField(labelWithString: "Select a file to open")
 		placeholder.font = Theme.current.uiFont(13)
 		placeholder.textColor = Theme.current.gitIgnored
 		placeholder.alignment = .center
 
-		for subview in [tabBar, contentArea, statusBar, placeholder] as [NSView] {
+		for subview in [tabBar, findBar, contentArea, statusBar, placeholder] as [NSView] {
 			container.addSubview(subview)
 			subview.translatesAutoresizingMaskIntoConstraints = false
 		}
@@ -87,6 +103,8 @@ final class EditorViewController: NSViewController {
 		tabBarTopConstraint = tabBar.topAnchor.constraint(equalTo: container.topAnchor, constant: 40)
 		tabBarHeightConstraint = tabBar.heightAnchor.constraint(equalToConstant: EditorTabBar.height)
 		statusBarHeightConstraint = statusBar.heightAnchor.constraint(equalToConstant: Theme.current.scaled(24))
+		// Collapsed to zero rather than hidden, so the editor reclaims the space.
+		findBarHeight = findBar.heightAnchor.constraint(equalToConstant: 0)
 
 		NSLayoutConstraint.activate([
 			tabBarTopConstraint,
@@ -94,7 +112,12 @@ final class EditorViewController: NSViewController {
 			tabBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
 			tabBarHeightConstraint,
 
-			contentArea.topAnchor.constraint(equalTo: tabBar.bottomAnchor),
+			findBar.topAnchor.constraint(equalTo: tabBar.bottomAnchor),
+			findBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+			findBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+			findBarHeight,
+
+			contentArea.topAnchor.constraint(equalTo: findBar.bottomAnchor),
 			contentArea.leadingAnchor.constraint(equalTo: container.leadingAnchor),
 			contentArea.trailingAnchor.constraint(equalTo: container.trailingAnchor),
 			contentArea.bottomAnchor.constraint(equalTo: statusBar.topAnchor),
@@ -223,6 +246,89 @@ final class EditorViewController: NSViewController {
 		tab.sourceView = scrollView
 		return tab
 	}
+
+	/// A short selection, suitable for seeding a search field.
+	func selectedTextForSearch() -> String? {
+		guard let text = activeTab?.codeView?.selectedText(), !text.isEmpty, !text.contains("\n") else {
+			return nil
+		}
+		return text
+	}
+
+	// MARK: - Find in file
+
+	/// Opens the find bar, seeded with the selection when there is one.
+	func showFind() {
+		guard activeTab?.codeView != nil else { return }
+		findBar.isHidden = false
+		findBarHeight.constant = Theme.current.scaled(34)
+
+		if let selected = activeTab?.codeView?.selectedText(), !selected.isEmpty, !selected.contains("\n") {
+			findBar.setQuery(selected)
+		}
+		findBar.focusField()
+		runFind(query: findBar.query, options: findBar.options)
+	}
+
+	func setFindQuery(_ query: String) {
+		showFind()
+		findBar.setQuery(query)
+	}
+
+	func closeFind() {
+		findBar.isHidden = true
+		findBarHeight.constant = 0
+		searchMatches = []
+		currentMatchIndex = nil
+		activeTab?.codeView?.clearSearchMatches()
+		focusActiveEditor()
+	}
+
+	var isFindVisible: Bool { !findBar.isHidden }
+
+	/// Debounced so a search does not run on every keystroke of a long query.
+	private func scheduleFind(query: String, options: SearchOptions) {
+		findDebounce?.cancel()
+		let work = DispatchWorkItem { [weak self] in
+			self?.runFind(query: query, options: options)
+		}
+		findDebounce = work
+		DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: work)
+	}
+
+	private func runFind(query: String, options: SearchOptions) {
+		guard let tab = activeTab, let document = tab.document, let codeView = tab.codeView else { return }
+
+		guard !query.isEmpty else {
+			searchMatches = []
+			currentMatchIndex = nil
+			codeView.clearSearchMatches()
+			findBar.setStatus(matchCount: 0, currentIndex: nil)
+			return
+		}
+
+		searchMatches = TextSearch.matches(in: document.rope, query: query, options: options)
+		// Start from the match nearest the caret rather than the top of the file.
+		let caret = codeView.caretOffset
+		currentMatchIndex = searchMatches.firstIndex { $0.utf16Range.lowerBound >= caret }
+			?? (searchMatches.isEmpty ? nil : 0)
+
+		codeView.setSearchMatches(searchMatches, current: currentMatchIndex)
+		findBar.setStatus(matchCount: searchMatches.count, currentIndex: currentMatchIndex)
+	}
+
+	private func stepMatch(by delta: Int) {
+		guard !searchMatches.isEmpty else { return }
+		let current = currentMatchIndex ?? -1
+		// Wraps, which is what every find bar does at the ends.
+		let next = ((current + delta) % searchMatches.count + searchMatches.count) % searchMatches.count
+		currentMatchIndex = next
+		activeTab?.codeView?.setSearchMatches(searchMatches, current: next)
+		findBar.setStatus(matchCount: searchMatches.count, currentIndex: next)
+	}
+
+	func findNext() { stepMatch(by: 1) }
+	func findPrevious() { stepMatch(by: -1) }
 
 	/// Opens a file and jumps to a line — the target of review findings and
 	/// search results.
@@ -550,6 +656,8 @@ final class EditorViewController: NSViewController {
 		statusBarHeightConstraint.constant = Theme.current.scaled(24)
 		placeholder.font = Theme.current.uiFont(13)
 		tabBar.applyThemeChange()
+		findBar.applyThemeChange()
+		if !findBar.isHidden { findBarHeight.constant = Theme.current.scaled(34) }
 		statusBar.needsDisplay = true
 		for tab in tabs {
 			tab.codeView?.applyThemeChange()

@@ -16,6 +16,7 @@ final class BottomPanel: NSView {
 			/// A review keeps its agent terminal inside the pane, so switching to
 			/// the chat is a view change rather than a new process.
 			case review(ReviewPane, TerminalPane)
+			case search(SearchPane)
 		}
 
 		let title: String
@@ -34,14 +35,16 @@ final class BottomPanel: NSView {
 			switch kind {
 			case let .terminal(pane): return pane
 			case let .review(pane, _): return pane
+			case let .search(pane): return pane
 			}
 		}
 
-		/// The terminal behind this session, whichever kind it is.
-		var terminal: TerminalPane {
+		/// The terminal behind this session, if it has one.
+		var terminal: TerminalPane? {
 			switch kind {
 			case let .terminal(pane): return pane
 			case let .review(_, pane): return pane
+			case .search: return nil
 			}
 		}
 	}
@@ -50,7 +53,7 @@ final class BottomPanel: NSView {
 	private var activeIndex: Int?
 	private var workingDirectory: URL?
 
-	/// Forwarded when a review finding is activated.
+	/// Forwarded when a review finding or a search result is activated.
 	var onOpenFinding: ((URL, Int) -> Void)?
 
 	private var tabStrip: PanelTabStrip!
@@ -156,6 +159,33 @@ final class BottomPanel: NSView {
 		return pane
 	}
 
+	// MARK: - Search
+
+	/// Shows project search, reusing the existing pane if there is one.
+	@discardableResult
+	func showSearch(query: String? = nil) -> SearchPane? {
+		guard let root = workingDirectory else { return nil }
+
+		if let index = sessions.firstIndex(where: { if case .search = $0.kind { return true }; return false }),
+		   case let .search(pane) = sessions[index].kind {
+			activate(index: index, focus: false)
+			if let query { pane.setQuery(query) }
+			pane.focusField()
+			return pane
+		}
+
+		let pane = SearchPane(projectRoot: root)
+		pane.onOpenResult = { [weak self] url, line, _ in
+			self?.onOpenFinding?(url, line)
+		}
+		let session = Session(title: "Search", kind: .search(pane))
+		sessions.append(session)
+		activate(index: sessions.count - 1, focus: false)
+		if let query { pane.setQuery(query) }
+		pane.focusField()
+		return pane
+	}
+
 	// MARK: - Review
 
 	/// Starts an agent review of the working tree against `baseBranch`.
@@ -216,7 +246,8 @@ final class BottomPanel: NSView {
 	}
 
 	private func wire(_ session: Session) {
-		session.terminal.terminalView.onProcessExit = { [weak self, weak session] _ in
+		guard let terminal = session.terminal else { return }
+		terminal.terminalView.onProcessExit = { [weak self, weak session] _ in
 			guard let self, let session else { return }
 			session.hasExited = true
 			self.refreshTabs()
@@ -224,7 +255,7 @@ final class BottomPanel: NSView {
 		// A review's tab keeps its own name; only a shell borrows the command
 		// name from the title sequence.
 		guard case .terminal = session.kind else { return }
-		session.terminal.terminalView.onTitleChange = { [weak self, weak session] title in
+		terminal.terminalView.onTitleChange = { [weak self, weak session] title in
 			guard let self, let session else { return }
 			// A shell reports its running command via the title, which is the
 			// most useful label a terminal tab can carry.
@@ -253,7 +284,7 @@ final class BottomPanel: NSView {
 
 		placeholder.isHidden = true
 		refreshTabs()
-		if focus, case .terminal = session.kind { session.terminal.focus() }
+		if focus, case .terminal = session.kind { session.terminal?.focus() }
 	}
 
 	private func close(index: Int) {
@@ -262,7 +293,7 @@ final class BottomPanel: NSView {
 		if case let .review(pane, _) = session.kind {
 			pane.shutdown()
 		} else {
-			session.terminal.terminalView.terminateProcess()
+			session.terminal?.terminalView.terminateProcess()
 		}
 		session.view.removeFromSuperview()
 		sessions.remove(at: index)
@@ -290,7 +321,7 @@ final class BottomPanel: NSView {
 
 	func focusActive() {
 		guard let activeIndex, sessions.indices.contains(activeIndex) else { return }
-		sessions[activeIndex].terminal.focus()
+		sessions[activeIndex].terminal?.focus()
 	}
 
 	func applySettings() {
@@ -298,10 +329,10 @@ final class BottomPanel: NSView {
 		placeholder.font = Theme.current.uiFont(12)
 		tabStrip.applyThemeChange()
 		for session in sessions {
-			if case let .review(pane, _) = session.kind {
-				pane.applySettings()
-			} else {
-				session.terminal.terminalView.applyThemeChange()
+			switch session.kind {
+			case let .review(pane, _): pane.applySettings()
+			case let .search(pane): pane.applySettings()
+			case let .terminal(pane): pane.terminalView.applyThemeChange()
 			}
 		}
 	}
@@ -312,7 +343,7 @@ final class BottomPanel: NSView {
 			if case let .review(pane, _) = session.kind {
 				pane.shutdown()
 			} else {
-				session.terminal.terminalView.terminateProcess()
+				session.terminal?.terminalView.terminateProcess()
 			}
 		}
 		sessions.removeAll()

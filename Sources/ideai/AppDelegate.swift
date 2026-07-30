@@ -45,6 +45,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		// Simulated input runs after the initial parse lands, so folds and
 		// highlights exist by the time it is exercised.
+		if let query = options.findQuery {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+				controller?.findInFile(nil)
+				controller?.setFindQuery(query)
+			}
+		}
+		if let query = options.searchQuery {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+				controller?.findInProject(nil)
+				controller?.setProjectSearchQuery(query)
+			}
+		}
+
 		if options.startReview {
 			controller?.reviewBranch(nil)
 		}
@@ -214,6 +227,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 		editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
 		editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
 		editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+		editMenu.addItem(.separator())
+		editMenu.addItem(withTitle: "Find…", action: #selector(MainWindowController.findInFile(_:)), keyEquivalent: "f")
+		let findInProject = NSMenuItem(
+			title: "Find in Project…",
+			action: #selector(MainWindowController.findInProject(_:)),
+			keyEquivalent: "f"
+		)
+		findInProject.keyEquivalentModifierMask = [.command, .shift]
+		editMenu.addItem(findInProject)
+		editMenu.addItem(withTitle: "Find Next", action: #selector(MainWindowController.findNext(_:)), keyEquivalent: "g")
+		let findPrevious = NSMenuItem(
+			title: "Find Previous",
+			action: #selector(MainWindowController.findPrevious(_:)),
+			keyEquivalent: "g"
+		)
+		findPrevious.keyEquivalentModifierMask = [.command, .shift]
+		editMenu.addItem(findPrevious)
 		editMenuItem.submenu = editMenu
 		mainMenu.addItem(editMenuItem)
 

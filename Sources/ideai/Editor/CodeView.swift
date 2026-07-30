@@ -26,6 +26,10 @@ final class CodeView: NSView, NSTextInputClient {
 	var onCaretMoved: ((Int, Int) -> Void)?   // line, column (1-based)
 	var onDirtyChanged: ((Bool) -> Void)?
 
+	/// Search matches to highlight, and which one is current.
+	private var searchMatches: [SearchMatch] = []
+	private var currentMatchIndex: Int?
+
 	// MARK: - Metrics
 
 	private var font: NSFont = Theme.current.editorFont
@@ -212,6 +216,8 @@ final class CodeView: NSView, NSTextInputClient {
 				NSRect(x: scrollX + gutterWidth, y: y, width: bounds.width, height: lineHeight).fill()
 			}
 
+			drawSearchHighlights(docLine: docLine, rect: rowRect)
+
 			drawLine(
 				docLine: docLine,
 				rect: rowRect,
@@ -279,6 +285,41 @@ final class CodeView: NSView, NSTextInputClient {
 				at: NSPoint(x: textOriginX + textWidth + 6, y: rect.minY),
 				hiddenLines: folding.foldRange(startingAt: docLine)?.hiddenLineCount ?? 0
 			)
+		}
+	}
+
+	/// Paints match backgrounds for one line.
+	private func drawSearchHighlights(docLine: Int, rect: NSRect) {
+		guard !searchMatches.isEmpty, let document else { return }
+
+		let lineRange = document.rope.lineByteRange(docLine)
+		let lineStart = document.rope.utf16Offset(fromByte: lineRange.lowerBound)
+		let lineEnd = document.rope.utf16Offset(fromByte: lineRange.upperBound)
+
+		let text = document.rope.string(in: lineRange)
+		let ctLine = CTLineCreateWithAttributedString(attributedLine(
+			text: text,
+			lineStartUTF16: lineStart,
+			tokenIndex: TokenIndex(tokens: [])
+		))
+
+		for (index, match) in searchMatches.enumerated() {
+			// Matches are ordered, so stop once past this line.
+			guard match.utf16Range.lowerBound <= lineEnd else { break }
+			guard match.utf16Range.upperBound >= lineStart else { continue }
+
+			let from = max(match.utf16Range.lowerBound, lineStart) - lineStart
+			let to = min(match.utf16Range.upperBound, lineEnd) - lineStart
+			guard to > from else { continue }
+
+			let startX = textOriginX + CTLineGetOffsetForStringIndex(ctLine, from, nil)
+			let endX = textOriginX + CTLineGetOffsetForStringIndex(ctLine, to, nil)
+
+			// The current match is stronger, so it is findable at a glance among
+			// the others.
+			let isCurrent = index == currentMatchIndex
+			(isCurrent ? NSColor.hex(0xC77B3B) : NSColor.hex(0x5A4A2A)).setFill()
+			NSRect(x: startX, y: rect.minY, width: max(2, endX - startX), height: rect.height).fill()
 		}
 	}
 
@@ -471,6 +512,62 @@ final class CodeView: NSView, NSTextInputClient {
 		caretVisible = false
 		needsDisplay = true
 		return true
+	}
+
+	/// Current caret position, in UTF-16 offsets.
+	var caretOffset: Int { caret }
+
+	/// The selected text, if any — used to seed the find field.
+	func selectedText() -> String? {
+		guard let document else { return nil }
+		let selection = selectedUTF16Range()
+		guard !selection.isEmpty else { return nil }
+		let start = document.rope.byteOffset(fromUTF16: selection.lowerBound)
+		let end = document.rope.byteOffset(fromUTF16: selection.upperBound)
+		return document.rope.string(in: start..<end)
+	}
+
+	// MARK: - Search
+
+	/// Highlights matches. The current one is drawn more strongly and scrolled to.
+	func setSearchMatches(_ matches: [SearchMatch], current: Int?) {
+		searchMatches = matches
+		currentMatchIndex = current
+		if let current, matches.indices.contains(current) {
+			// Select the match so Escape leaves the caret somewhere sensible.
+			let range = matches[current].utf16Range
+			selectionAnchor = range.lowerBound
+			caret = range.upperBound
+			revealCurrentMatch()
+		}
+		needsDisplay = true
+	}
+
+	func clearSearchMatches() {
+		searchMatches = []
+		currentMatchIndex = nil
+		needsDisplay = true
+	}
+
+	private func revealCurrentMatch() {
+		guard let document, let index = currentMatchIndex, searchMatches.indices.contains(index) else { return }
+		let match = searchMatches[index]
+		let byte = document.rope.byteOffset(fromUTF16: match.utf16Range.lowerBound)
+		let line = document.rope.line(atByteOffset: byte)
+
+		folding.reveal(line: line)
+		updateFrameSize()
+
+		guard let point = caretPoint(), let scrollView = enclosingScrollView else { return }
+		let height = scrollView.contentSize.height
+		// Only scroll when the match is off screen, so stepping through nearby
+		// matches does not make the view jump on every step.
+		let visible = scrollView.contentView.bounds
+		if point.y < visible.minY + lineHeight || point.y > visible.maxY - lineHeight * 2 {
+			scrollView.contentView.scroll(to: NSPoint(x: 0, y: max(0, point.y - height / 2)))
+			scrollView.reflectScrolledClipView(scrollView.contentView)
+		}
+		needsDisplay = true
 	}
 
 	/// Moves the caret to a 1-based line and scrolls it into view.

@@ -30,6 +30,10 @@ struct LaunchOptions {
 	var terminalInput: String?
 	/// Start an agent review before capture.
 	var startReview = false
+	/// Query for the in-file find bar.
+	var findQuery: String?
+	/// Query for project-wide search.
+	var searchQuery: String?
 
 	static func parse(_ arguments: [String] = CommandLine.arguments) -> LaunchOptions {
 		var options = LaunchOptions()
@@ -57,6 +61,8 @@ struct LaunchOptions {
 			case "--terminal":   options.openTerminal = true
 			case "--run":        options.terminalInput = next()
 			case "--review":     options.startReview = true
+			case "--find":       options.findQuery = next()
+			case "--search":     options.searchQuery = next()
 			default:
 				// A bare path is treated as the project to open.
 				if !argument.hasPrefix("-"), options.projectPath == nil {
