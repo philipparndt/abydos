@@ -9,8 +9,10 @@ final class ToolWindowBar: NSView {
 	static var width: CGFloat { Theme.current.scaled(40) }
 
 	var onToggleNavigator: (() -> Void)?
+	var onToggleTerminal: (() -> Void)?
 
 	private var projectButton: StripButton!
+	private var terminalButton: StripButton!
 
 	override init(frame frameRect: NSRect) {
 		super.init(frame: frameRect)
@@ -39,6 +41,18 @@ final class ToolWindowBar: NSView {
 		stack.translatesAutoresizingMaskIntoConstraints = false
 		addSubview(stack)
 
+		// Bottom-docked tool windows get buttons at the bottom of the strip, which
+		// is where IDEA puts them and matches where the panel actually appears.
+		terminalButton = StripButton(symbol: "terminal", tooltip: "Terminal (⌘J)", enabled: true)
+		terminalButton.onClick = { [weak self] in self?.onToggleTerminal?() }
+
+		let bottomStack = NSStackView(views: [terminalButton])
+		bottomStack.orientation = .vertical
+		bottomStack.spacing = 4
+		bottomStack.alignment = .centerX
+		bottomStack.translatesAutoresizingMaskIntoConstraints = false
+		addSubview(bottomStack)
+
 		// Offset below the titlebar so the first icon lines up with the sidebar
 		// header rather than sitting behind it. Set from the measured titlebar
 		// height, which differs with and without a toolbar.
@@ -47,7 +61,16 @@ final class ToolWindowBar: NSView {
 			topConstraint,
 			stack.leadingAnchor.constraint(equalTo: leadingAnchor),
 			stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+
+			bottomStack.leadingAnchor.constraint(equalTo: leadingAnchor),
+			bottomStack.trailingAnchor.constraint(equalTo: trailingAnchor),
+			bottomStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
 		])
+	}
+
+	/// Lights the terminal button while the panel is showing.
+	func setTerminalSelected(_ selected: Bool) {
+		terminalButton.isSelected = selected
 	}
 
 	private var topConstraint: NSLayoutConstraint!
@@ -59,8 +82,10 @@ final class ToolWindowBar: NSView {
 
 	/// Re-measures the buttons after a zoom change.
 	func applySettings() {
-		for case let button as StripButton in (subviews.first as? NSStackView)?.arrangedSubviews ?? [] {
-			button.applyThemeChange()
+		for case let stack as NSStackView in subviews {
+			for case let button as StripButton in stack.arrangedSubviews {
+				button.applyThemeChange()
+			}
 		}
 		needsDisplay = true
 	}

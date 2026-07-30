@@ -36,6 +36,8 @@ struct LaunchOptions {
 	var searchQuery: String?
 	/// Turn soft wrap on before capture.
 	var wordWrap = false
+	/// Open the project switcher, optionally with a filter applied.
+	var switcherFilter: String?
 
 	static func parse(_ arguments: [String] = CommandLine.arguments) -> LaunchOptions {
 		var options = LaunchOptions()
@@ -66,6 +68,7 @@ struct LaunchOptions {
 			case "--find":       options.findQuery = next()
 			case "--search":     options.searchQuery = next()
 			case "--wrap":       options.wordWrap = true
+			case "--switcher":   options.switcherFilter = next()
 			default:
 				// A bare path is treated as the project to open.
 				if !argument.hasPrefix("-"), options.projectPath == nil {

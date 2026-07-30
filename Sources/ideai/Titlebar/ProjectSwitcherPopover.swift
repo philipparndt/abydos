@@ -5,6 +5,12 @@ import IdeaiKit
 /// projects, then recents — each with its badge and home-relative path.
 enum ProjectSwitcherPopover {
 	private static var active: NSPopover?
+	private static weak var activeController: SwitcherViewController?
+
+	/// Drives the filter from a capture run, so the filtered state can be seen.
+	static func applyFilterForTesting(_ text: String) {
+		activeController?.setFilter(text)
+	}
 
 	static func show(relativeTo pill: PillButton, currentProject: Project?) {
 		// Clicking the pill while open should dismiss rather than stack popovers.
@@ -28,6 +34,7 @@ enum ProjectSwitcherPopover {
 		}
 
 		active = popover
+		activeController = controller
 		popover.show(relativeTo: pill.bounds, of: pill, preferredEdge: .maxY)
 		// The table needs to be first responder for arrow keys to work immediately.
 		controller.focusTable()
@@ -89,9 +96,9 @@ private final class SwitcherViewController: NSViewController {
 	private let currentProject: Project?
 	private var rows: [Row] = []
 	private var tableView: NSTableView!
-	/// Accumulated keystrokes for type-to-jump, cleared after a short pause.
-	private var typeAheadBuffer = ""
-	private var typeAheadResetWork: DispatchWorkItem?
+	private var filterField: NSSearchField!
+	/// What the user has typed. Empty shows the full menu.
+	private var filterText = "" 
 
 	init(currentProject: Project?) {
 		self.currentProject = currentProject
@@ -125,21 +132,34 @@ private final class SwitcherViewController: NSViewController {
 		scrollView.drawsBackground = false
 		scrollView.autohidesScrollers = true
 
+		// A visible field, so what you type is on screen and obviously a filter,
+		// rather than an invisible jump-to-match you have to guess at.
+		let field = NSSearchField()
+		field.placeholderString = "Filter projects"
+		field.font = Theme.current.uiFont(12)
+		field.delegate = self
+		field.focusRingType = .none
+		filterField = field
+
 		let container = ColoredView(color: .hex(0x2B2D30))
+		container.addSubview(field)
 		container.addSubview(scrollView)
+		field.translatesAutoresizingMaskIntoConstraints = false
 		scrollView.translatesAutoresizingMaskIntoConstraints = false
+
 		NSLayoutConstraint.activate([
-			scrollView.topAnchor.constraint(equalTo: container.topAnchor, constant: 6),
+			field.topAnchor.constraint(equalTo: container.topAnchor, constant: 8),
+			field.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 8),
+			field.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
+
+			scrollView.topAnchor.constraint(equalTo: field.bottomAnchor, constant: 6),
 			scrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -6),
 			scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
 			scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
 		])
 
-		// Height tracks content up to a cap, so a short recents list yields a
-		// short menu instead of a mostly-empty panel.
-		let contentHeight = rows.reduce(0) { $0 + $1.height } + 12
 		view = container
-		preferredContentSize = NSSize(width: Theme.current.scaled(340), height: min(contentHeight, Theme.current.scaled(560)))
+		updatePreferredSize()
 	}
 
 	override func viewDidAppear() {
@@ -147,8 +167,25 @@ private final class SwitcherViewController: NSViewController {
 		selectFirstSelectableRow()
 	}
 
+	/// The field takes focus, so typing filters immediately. Arrow keys are
+	/// forwarded to the list from there.
 	func focusTable() {
-		view.window?.makeFirstResponder(tableView)
+		view.window?.makeFirstResponder(filterField)
+	}
+
+	/// Sets the filter programmatically, used by capture runs.
+	func setFilter(_ text: String) {
+		filterField.stringValue = text
+		applyFilter(text)
+	}
+
+	/// Height tracks content up to a cap, so a short list yields a short menu.
+	private func updatePreferredSize() {
+		let contentHeight = rows.reduce(0) { $0 + $1.height } + Theme.current.scaled(52)
+		preferredContentSize = NSSize(
+			width: Theme.current.scaled(340),
+			height: min(max(contentHeight, Theme.current.scaled(120)), Theme.current.scaled(560))
+		)
 	}
 
 	// MARK: - Rows
@@ -156,6 +193,14 @@ private final class SwitcherViewController: NSViewController {
 	private func buildRows() {
 		let delegate = NSApp.delegate as? AppDelegate
 		RecentProjects.shared.pruneMissing()
+
+		// While filtering, the list is only matching projects: the New/Open/Clone
+		// actions are not things a filter can match, and keeping them would push
+		// the results down.
+		guard filterText.isEmpty else {
+			buildFilteredRows(delegate: delegate)
+			return
+		}
 
 		rows = [
 			.action(title: "New Project…", symbol: "plus") { [weak self] in
@@ -193,6 +238,28 @@ private final class SwitcherViewController: NSViewController {
 				rows.append(.project(entry, isOpen: false))
 			}
 		}
+	}
+
+	/// Matches on both name and path, so "3d" finds everything under ~/dev/3d.
+	private func buildFilteredRows(delegate: AppDelegate?) {
+		let needle = filterText.lowercased()
+		let openPaths = Set((delegate?.openProjectRoots ?? []).map(\.path))
+
+		var candidates = RecentProjects.shared.entries
+		for root in delegate?.openProjectRoots ?? [] where !candidates.contains(where: { $0.path == root.path }) {
+			candidates.append(RecentProject(path: root.path, lastOpened: Date()))
+		}
+
+		rows = ProjectFilter.match(candidates, query: needle)
+			.map { .project($0, isOpen: openPaths.contains($0.path)) }
+	}
+
+	private func applyFilter(_ text: String) {
+		filterText = text.trimmingCharacters(in: .whitespaces)
+		buildRows()
+		tableView.reloadData()
+		updatePreferredSize()
+		selectFirstSelectableRow()
 	}
 
 	// MARK: - Actions
@@ -296,14 +363,8 @@ private final class SwitcherViewController: NSViewController {
 			moveSelection(by: -1)
 			return true
 		default:
-			// Letters jump to a matching project name.
-			guard let characters = event.charactersIgnoringModifiers,
-			      !characters.isEmpty,
-			      event.modifierFlags.isDisjoint(with: [.command, .control, .option]),
-			      characters.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" })
-			else { return false }
-			typeAhead(characters)
-			return true
+			// Everything else belongs to the filter field.
+			return false
 		}
 	}
 
@@ -319,32 +380,42 @@ private final class SwitcherViewController: NSViewController {
 		tableView.scrollRowToVisible(index)
 	}
 
-	private func typeAhead(_ characters: String) {
-		typeAheadBuffer += characters.lowercased()
-
-		// Reset the buffer after a pause so a later burst starts a fresh search.
-		typeAheadResetWork?.cancel()
-		let work = DispatchWorkItem { [weak self] in self?.typeAheadBuffer = "" }
-		typeAheadResetWork = work
-		DispatchQueue.main.asyncAfter(deadline: .now() + 0.9, execute: work)
-
-		let needle = typeAheadBuffer
-		let match = rows.firstIndex { row in
-			guard case let .project(entry, _) = row else { return false }
-			return entry.name.lowercased().hasPrefix(needle)
-		} ?? rows.firstIndex { row in
-			// Fall back to a substring match so "sonos" finds "mqtt-sonos".
-			guard case let .project(entry, _) = row else { return false }
-			return entry.name.lowercased().contains(needle)
-		}
-
-		guard let match else { return }
-		tableView.selectRowIndexes([match], byExtendingSelection: false)
-		tableView.scrollRowToVisible(match)
-	}
 }
 
 // MARK: - Table data
+
+extension SwitcherViewController: NSSearchFieldDelegate {
+	func controlTextDidChange(_ obj: Notification) {
+		applyFilter(filterField.stringValue)
+	}
+
+	/// Arrows and Return work while the field has focus, so filtering and
+	/// choosing are one continuous gesture.
+	func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+		switch selector {
+		case #selector(NSResponder.moveDown(_:)):
+			moveSelection(by: 1)
+			return true
+		case #selector(NSResponder.moveUp(_:)):
+			moveSelection(by: -1)
+			return true
+		case #selector(NSResponder.insertNewline(_:)):
+			activateRow(at: tableView.selectedRow)
+			return true
+		case #selector(NSResponder.cancelOperation(_:)):
+			// Escape clears the filter first, and only then closes.
+			if filterText.isEmpty {
+				onDismiss?()
+			} else {
+				filterField.stringValue = ""
+				applyFilter("")
+			}
+			return true
+		default:
+			return false
+		}
+	}
+}
 
 extension SwitcherViewController: NSTableViewDataSource, NSTableViewDelegate {
 	func numberOfRows(in tableView: NSTableView) -> Int { rows.count }

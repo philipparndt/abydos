@@ -64,6 +64,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		let root = ColoredView(color: Theme.current.windowBackground)
 
 		toolStrip.onToggleNavigator = { [weak self] in self?.toggleNavigator(nil) }
+		toolStrip.onToggleTerminal = { [weak self] in self?.toggleTerminal(nil) }
 
 		navigatorContainer = ColoredView(color: Theme.current.sidebarBackground)
 		navigatorContainer.addSubview(navigator.view)
@@ -279,6 +280,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
 	private func setPanelVisible(_ visible: Bool) {
 		guard visible != isPanelVisible else { return }
+
+		toolStrip.setTerminalSelected(visible)
 
 		if visible {
 			bottomPanel.isHidden = false

@@ -45,6 +45,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		// Simulated input runs after the initial parse lands, so folds and
 		// highlights exist by the time it is exercised.
+		if let filter = options.switcherFilter {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+				controller?.showProjectSwitcher(nil)
+				if !filter.isEmpty {
+					DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+						ProjectSwitcherPopover.applyFilterForTesting(filter)
+					}
+				}
+			}
+		}
 		if options.wordWrap {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
 				controller?.toggleWordWrap(nil)
