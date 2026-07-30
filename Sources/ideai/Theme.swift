@@ -38,9 +38,11 @@ struct Theme {
 	var foldPlaceholderText: NSColor
 	var indentGuide: NSColor
 
-	// Metrics
-	var fontSize: CGFloat = 12.5
-	var lineHeightMultiple: CGFloat = 1.4
+	// Metrics. Read from Settings rather than stored, so a preference change
+	// applies on the next redraw without a restart.
+	var fontSize: CGFloat { CGFloat(Settings.shared.editorFontSize) }
+	var lineHeightMultiple: CGFloat { CGFloat(Settings.shared.editorLineHeight) }
+	var tabWidth: Int { Settings.shared.tabWidth }
 
 	/// Renders an SF Symbol in a given colour.
 	///

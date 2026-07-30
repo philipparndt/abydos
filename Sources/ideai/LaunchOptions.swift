@@ -20,6 +20,8 @@ struct LaunchOptions {
 	var previewPath: String?
 	/// Show the markdown preview before capture.
 	var markdownPreview = false
+	/// Open the Settings window, and capture it instead of the project window.
+	var openSettings = false
 
 	static func parse(_ arguments: [String] = CommandLine.arguments) -> LaunchOptions {
 		var options = LaunchOptions()
@@ -42,6 +44,7 @@ struct LaunchOptions {
 			case "--collapse":   options.collapseFolds = true
 			case "--preview":    options.previewPath = next()
 			case "--markdown":   options.markdownPreview = true
+			case "--settings":   options.openSettings = true
 			default:
 				// A bare path is treated as the project to open.
 				if !argument.hasPrefix("-"), options.projectPath == nil {

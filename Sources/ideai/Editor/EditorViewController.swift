@@ -210,6 +210,10 @@ final class EditorViewController: NSViewController {
 			tab.isPreview = false
 			self?.refreshTabBar()
 		}
+		// Auto save clears the dirty marker without any further user action.
+		document.onAutoSaved = { [weak self] in
+			self?.refreshTabBar()
+		}
 
 		codeView.load(document: document)
 		tab.sourceView = scrollView
@@ -408,7 +412,11 @@ final class EditorViewController: NSViewController {
 		guard tabs.indices.contains(index) else { return }
 		let tab = tabs[index]
 
-		if tab.isDirty, !confirmDiscard(for: tab) { return }
+		// With auto save on, closing must not interrogate the user — it just
+		// writes, which is the whole point of the setting.
+		if tab.isDirty, tab.document?.autoSaveIfNeeded() != true, !confirmDiscard(for: tab) {
+			return
+		}
 
 		teardown(tab)
 		tabs.remove(at: index)
@@ -507,7 +515,23 @@ final class EditorViewController: NSViewController {
 		}
 	}
 
+	/// Flushes every dirty document, used on focus loss and quit.
+	func autoSaveAll() {
+		for tab in tabs {
+			tab.document?.autoSaveIfNeeded()
+		}
+		refreshTabBar()
+	}
+
+	/// Re-reads settings that affect the editor and repaints.
+	func applySettings() {
+		for tab in tabs {
+			tab.codeView?.applyThemeChange()
+		}
+	}
+
 	func windowWillClose() {
+		autoSaveAll()
 		for tab in tabs { teardown(tab) }
 		tabs.removeAll()
 		NotificationCenter.default.removeObserver(self)

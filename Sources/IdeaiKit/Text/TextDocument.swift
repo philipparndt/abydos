@@ -25,6 +25,15 @@ public final class TextDocument {
 	/// Fired when new highlights or folds are available and the view should redraw.
 	public var onSyntaxUpdated: (() -> Void)?
 
+	/// Fired after an automatic save, so the tab can drop its dirty marker.
+	public var onAutoSaved: (() -> Void)?
+
+	/// Injected rather than reaching for the singleton, so auto-save behaviour
+	/// can be tested against isolated preferences.
+	public var settings: Settings = .shared
+
+	private var autoSaveWork: DispatchWorkItem?
+
 	// MARK: Syntax state
 
 	/// Owned by `engineQueue`; never touched from the main thread.
@@ -200,8 +209,47 @@ public final class TextDocument {
 
 		redoStack.removeAll()
 		isDirty = true
+		scheduleAutoSave()
 
 		return rope.utf16Offset(fromByte: startByte + inserted.count)
+	}
+
+	// MARK: - Auto save
+
+	/// Writes the file after a pause in typing.
+	///
+	/// Debounced rather than written per keystroke: a save is a full serialise
+	/// plus an atomic file replace, which has no business running inside the edit
+	/// path of a multi-megabyte file.
+	private func scheduleAutoSave() {
+		autoSaveWork?.cancel()
+		guard settings.autoSaveEnabled else { return }
+
+		let work = DispatchWorkItem { [weak self] in
+			self?.autoSave()
+		}
+		autoSaveWork = work
+		DispatchQueue.main.asyncAfter(deadline: .now() + settings.autoSaveDelay, execute: work)
+	}
+
+	private func autoSave() {
+		guard isDirty, settings.autoSaveEnabled else { return }
+		// A failed automatic save must stay silent — the user did not ask for
+		// this write, so interrupting them with an alert would be wrong. The tab
+		// simply stays dirty and an explicit ⌘S will surface the error.
+		guard (try? save()) != nil else { return }
+		onAutoSaved?()
+	}
+
+	/// Writes immediately if there are unsaved changes and auto save is on.
+	/// Used when the app loses focus or a tab is closed.
+	@discardableResult
+	public func autoSaveIfNeeded() -> Bool {
+		guard settings.autoSaveEnabled, isDirty else { return false }
+		autoSaveWork?.cancel()
+		guard (try? save()) != nil else { return false }
+		onAutoSaved?()
+		return true
 	}
 
 	/// Applies an edit to the rope, then hands the reparse to the syntax queue.

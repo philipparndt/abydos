@@ -220,6 +220,22 @@ final class ProjectNavigatorViewController: NSViewController {
 		refreshGitStatus()
 	}
 
+	/// Re-reads the tree after a settings change.
+	///
+	/// Hiding or showing dotfiles changes which nodes exist, so cached children
+	/// have to be discarded rather than merely repainted.
+	func applySettings() {
+		guard let rootNode else { return }
+		let expanded = expandedPaths()
+		let selected = selectedPath()
+		rootNode.invalidate()
+		outlineView.reloadData()
+		outlineView.expandItem(rootNode)
+		restore(expandedPaths: expanded)
+		restoreSelection(path: selected)
+		refreshGitStatus()
+	}
+
 	private func reloadTree() {
 		guard let rootNode else { return }
 		let expanded = expandedPaths()

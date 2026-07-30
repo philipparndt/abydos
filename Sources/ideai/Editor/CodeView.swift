@@ -64,6 +64,14 @@ final class CodeView: NSView, NSTextInputClient {
 	override var isFlipped: Bool { true }
 	override var acceptsFirstResponder: Bool { true }
 
+	/// Re-reads font and spacing from the theme, then relays out. Called when
+	/// preferences change.
+	func applyThemeChange() {
+		updateMetrics()
+		updateFrameSize()
+		needsDisplay = true
+	}
+
 	private func updateMetrics() {
 		font = Theme.current.editorFont
 		let ascent = font.ascender
@@ -282,10 +290,11 @@ final class CodeView: NSView, NSTextInputClient {
 		let paragraph = NSMutableParagraphStyle()
 		// Explicit tab stops: CoreText otherwise collapses tabs to a default
 		// width that does not match the gutter-relative grid.
+		let tabColumns = CGFloat(Theme.current.tabWidth)
 		paragraph.tabStops = (1...64).map {
-			NSTextTab(textAlignment: .left, location: CGFloat($0) * charWidth * 4, options: [:])
+			NSTextTab(textAlignment: .left, location: CGFloat($0) * charWidth * tabColumns, options: [:])
 		}
-		paragraph.defaultTabInterval = charWidth * 4
+		paragraph.defaultTabInterval = charWidth * tabColumns
 
 		let attributed = NSMutableAttributedString(string: text, attributes: [
 			.font: font,

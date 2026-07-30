@@ -41,6 +41,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
 		buildContent()
 		buildToolbar()
+
+		// Preference changes apply live rather than on next launch.
+		NotificationCenter.default.addObserver(
+			forName: .ideaiSettingsChanged,
+			object: nil,
+			queue: .main
+		) { [weak self] _ in
+			self?.applySettings()
+		}
 	}
 
 	required init?(coder: NSCoder) { fatalError("not used") }
@@ -194,6 +203,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 	func previewFile(at url: URL) {
 		editor.open(fileURL: url, focusEditor: false, preview: true)
 		navigator.selectWithoutOpening(url: url)
+	}
+
+	/// Flushes every dirty document in this window.
+	func autoSaveAll() {
+		editor.autoSaveAll()
+	}
+
+	/// Applies changed preferences: editor metrics, and tree filters that change
+	/// which files exist at all.
+	private func applySettings() {
+		editor.applySettings()
+		navigator.applySettings()
 	}
 
 	/// Gives the project tree keyboard focus.

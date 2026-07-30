@@ -50,16 +50,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if options.openSettings {
+			SettingsWindowController.shared.show()
+		}
+
 		if let path = options.screenshotPath {
-			scheduleScreenshot(path: path, delay: options.screenshotDelay, controller: controller)
+			scheduleScreenshot(
+				path: path,
+				delay: options.screenshotDelay,
+				controller: controller,
+				// A capture run asking for Settings wants that window, not the project.
+				window: options.openSettings ? SettingsWindowController.shared.window : nil
+			)
 		}
 	}
 
 	/// Captures the window after async work (git status, parsing, folds) settles,
 	/// then exits with a status reflecting whether the file was written.
-	private func scheduleScreenshot(path: String, delay: TimeInterval, controller: MainWindowController?) {
+	private func scheduleScreenshot(
+		path: String,
+		delay: TimeInterval,
+		controller: MainWindowController?,
+		window explicitWindow: NSWindow? = nil
+	) {
 		DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-			guard let window = controller?.window ?? NSApp.windows.first else {
+			guard let window = explicitWindow ?? controller?.window ?? NSApp.windows.first else {
 				FileHandle.standardError.write(Data("no window to capture\n".utf8))
 				exit(2)
 			}
@@ -70,6 +85,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 	func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
 		true
+	}
+
+	@objc func showSettings(_ sender: Any?) {
+		SettingsWindowController.shared.show()
+	}
+
+	/// Flushes pending edits when the app goes to the background, so switching to
+	/// a terminal always finds the file on disk current.
+	func applicationDidResignActive(_ notification: Notification) {
+		guard Settings.shared.saveOnFocusLoss else { return }
+		for controller in windowControllers {
+			controller.autoSaveAll()
+		}
+	}
+
+	func applicationWillTerminate(_ notification: Notification) {
+		for controller in windowControllers {
+			controller.autoSaveAll()
+		}
 	}
 
 	func application(_ application: NSApplication, open urls: [URL]) {
@@ -128,6 +162,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 		let appMenuItem = NSMenuItem()
 		let appMenu = NSMenu()
 		appMenu.addItem(withTitle: "About ideai", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+		appMenu.addItem(.separator())
+		let settingsItem = NSMenuItem(title: "Settings…", action: #selector(showSettings(_:)), keyEquivalent: ",")
+		settingsItem.target = self
+		appMenu.addItem(settingsItem)
 		appMenu.addItem(.separator())
 		appMenu.addItem(withTitle: "Hide ideai", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
 		appMenu.addItem(withTitle: "Quit ideai", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")

@@ -23,14 +23,14 @@ public final class FileNode {
 	public var name: String { url.lastPathComponent }
 
 	/// Directories that hold build output rather than source. The navigator tints
-	/// these the way IDEA marks excluded roots.
-	public static let excludedDirectoryNames: Set<String> = [
+	/// these the way IDEA marks excluded roots. Editable in Settings.
+	public static let defaultExcludedDirectoryNames: Set<String> = [
 		"node_modules", ".build", "build", "dist", "out", "target",
 		"DerivedData", ".gradle", "__pycache__", ".venv", "venv", ".next",
 	]
 
 	public var isExcluded: Bool {
-		isDirectory && FileNode.excludedDirectoryNames.contains(name)
+		isDirectory && Set(Settings.shared.excludedDirectories).contains(name)
 	}
 
 	public var hasLoadedChildren: Bool { loadedChildren != nil }
@@ -76,10 +76,13 @@ public final class FileNode {
 			options: []
 		) else { return [] }
 
+		let showHidden = Settings.shared.showHiddenFiles
 		let nodes = entries.compactMap { url -> FileNode? in
+			let name = url.lastPathComponent
 			// `.git` itself is noise; its contents are never browsed.
-			if url.lastPathComponent == ".git" { return nil }
-			if url.lastPathComponent == ".DS_Store" { return nil }
+			if name == ".git" { return nil }
+			if name == ".DS_Store" { return nil }
+			if !showHidden && name.hasPrefix(".") { return nil }
 			let values = try? url.resourceValues(forKeys: Set(keys))
 			return FileNode(url: url, isDirectory: values?.isDirectory ?? false, parent: parent)
 		}
