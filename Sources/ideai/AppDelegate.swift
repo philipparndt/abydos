@@ -45,6 +45,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		// Simulated input runs after the initial parse lands, so folds and
 		// highlights exist by the time it is exercised.
+		if options.startReview {
+			controller?.reviewBranch(nil)
+		}
+
 		if options.openTerminal {
 			controller?.toggleTerminal(nil)
 			if let input = options.terminalInput {
@@ -212,6 +216,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 		editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
 		editMenuItem.submenu = editMenu
 		mainMenu.addItem(editMenuItem)
+
+		// Agent actions get their own menu: this is the part of the app that is
+		// meant to grow.
+		let agentMenuItem = NSMenuItem()
+		let agentMenu = NSMenu(title: "Agent")
+		let reviewItem = NSMenuItem(
+			title: "Review Branch…",
+			action: #selector(MainWindowController.reviewBranch(_:)),
+			keyEquivalent: "r"
+		)
+		reviewItem.keyEquivalentModifierMask = [.command, .shift]
+		agentMenu.addItem(reviewItem)
+		agentMenuItem.submenu = agentMenu
+		mainMenu.addItem(agentMenuItem)
 
 		let viewMenuItem = NSMenuItem()
 		let viewMenu = NSMenu(title: "View")

@@ -11,21 +11,47 @@ final class BottomPanel: NSView {
 	var onRequestHide: (() -> Void)?
 
 	private final class Session {
+		enum Kind {
+			case terminal(TerminalPane)
+			/// A review keeps its agent terminal inside the pane, so switching to
+			/// the chat is a view change rather than a new process.
+			case review(ReviewPane, TerminalPane)
+		}
+
 		let title: String
 		var displayTitle: String
-		let pane: TerminalPane
+		let kind: Kind
 		var hasExited = false
 
-		init(title: String, pane: TerminalPane) {
+		init(title: String, kind: Kind) {
 			self.title = title
 			self.displayTitle = title
-			self.pane = pane
+			self.kind = kind
+		}
+
+		/// The view installed in the content area.
+		var view: NSView {
+			switch kind {
+			case let .terminal(pane): return pane
+			case let .review(pane, _): return pane
+			}
+		}
+
+		/// The terminal behind this session, whichever kind it is.
+		var terminal: TerminalPane {
+			switch kind {
+			case let .terminal(pane): return pane
+			case let .review(_, pane): return pane
+			}
 		}
 	}
 
 	private var sessions: [Session] = []
 	private var activeIndex: Int?
 	private var workingDirectory: URL?
+
+	/// Forwarded when a review finding is activated.
+	var onOpenFinding: ((URL, Int) -> Void)?
 
 	private var tabStrip: PanelTabStrip!
 	private var contentArea: NSView!
@@ -97,13 +123,13 @@ final class BottomPanel: NSView {
 			return newTerminal()
 		}
 		activate(index: activeIndex ?? 0, focus: true)
-		return sessions[activeIndex ?? 0].pane
+		return sessions[activeIndex ?? 0].terminal
 	}
 
 	@discardableResult
 	func newTerminal() -> TerminalPane? {
 		let pane = TerminalPane(workingDirectory: workingDirectory)
-		let session = Session(title: "Local", pane: pane)
+		let session = Session(title: "Local", kind: .terminal(pane))
 		wire(session)
 
 		sessions.append(session)
@@ -122,7 +148,7 @@ final class BottomPanel: NSView {
 			workingDirectory: workingDirectory,
 			command: (executable: executable, arguments: arguments)
 		)
-		let session = Session(title: title, pane: pane)
+		let session = Session(title: title, kind: .terminal(pane))
 		wire(session)
 
 		sessions.append(session)
@@ -130,13 +156,75 @@ final class BottomPanel: NSView {
 		return pane
 	}
 
+	// MARK: - Review
+
+	/// Starts an agent review of the working tree against `baseBranch`.
+	///
+	/// The agent reports through this window's own MCP server, so findings
+	/// arrive as typed data rather than as text to be parsed out of a TUI.
+	@discardableResult
+	func startReview(baseBranch: String) -> Result<Void, ReviewStartError> {
+		guard let root = workingDirectory else { return .failure(.noProject) }
+		guard let executable = AgentLauncher.findClaudeExecutable() else {
+			return .failure(.claudeNotFound)
+		}
+
+		let reviewSession = ReviewSession(projectRoot: root)
+		let server = MCPServer()
+		for tool in reviewSession.makeTools() { server.register(tool) }
+
+		do {
+			try server.start()
+		} catch {
+			return .failure(.serverFailed)
+		}
+
+		let command = AgentLauncher.reviewCommand(
+			executable: executable,
+			server: server,
+			prompt: AgentLauncher.reviewPrompt(baseBranch: baseBranch)
+		)
+		let terminal = TerminalPane(
+			workingDirectory: root,
+			command: (executable: command.executable, arguments: command.arguments)
+		)
+		let reviewPane = ReviewPane(session: reviewSession, server: server, terminalPane: terminal)
+		reviewPane.onOpenFinding = { [weak self] url, line in
+			self?.onOpenFinding?(url, line)
+		}
+
+		let session = Session(title: "Review", kind: .review(reviewPane, terminal))
+		wire(session)
+		sessions.append(session)
+		activate(index: sessions.count - 1, focus: false)
+		return .success(())
+	}
+
+	enum ReviewStartError: Error {
+		case noProject
+		case claudeNotFound
+		case serverFailed
+
+		var message: String {
+			switch self {
+			case .noProject: return "Open a project first."
+			case .claudeNotFound:
+				return "Could not find the `claude` executable. Install Claude Code, or make sure it is in /opt/homebrew/bin or /usr/local/bin."
+			case .serverFailed: return "Could not start the local MCP server."
+			}
+		}
+	}
+
 	private func wire(_ session: Session) {
-		session.pane.terminalView.onProcessExit = { [weak self, weak session] _ in
+		session.terminal.terminalView.onProcessExit = { [weak self, weak session] _ in
 			guard let self, let session else { return }
 			session.hasExited = true
 			self.refreshTabs()
 		}
-		session.pane.terminalView.onTitleChange = { [weak self, weak session] title in
+		// A review's tab keeps its own name; only a shell borrows the command
+		// name from the title sequence.
+		guard case .terminal = session.kind else { return }
+		session.terminal.terminalView.onTitleChange = { [weak self, weak session] title in
 			guard let self, let session else { return }
 			// A shell reports its running command via the title, which is the
 			// most useful label a terminal tab can carry.
@@ -152,26 +240,31 @@ final class BottomPanel: NSView {
 		contentArea.subviews.forEach { $0.removeFromSuperview() }
 
 		activeIndex = index
-		let pane = sessions[index].pane
-		pane.translatesAutoresizingMaskIntoConstraints = false
-		contentArea.addSubview(pane)
+		let session = sessions[index]
+		let view = session.view
+		view.translatesAutoresizingMaskIntoConstraints = false
+		contentArea.addSubview(view)
 		NSLayoutConstraint.activate([
-			pane.topAnchor.constraint(equalTo: contentArea.topAnchor),
-			pane.bottomAnchor.constraint(equalTo: contentArea.bottomAnchor),
-			pane.leadingAnchor.constraint(equalTo: contentArea.leadingAnchor),
-			pane.trailingAnchor.constraint(equalTo: contentArea.trailingAnchor),
+			view.topAnchor.constraint(equalTo: contentArea.topAnchor),
+			view.bottomAnchor.constraint(equalTo: contentArea.bottomAnchor),
+			view.leadingAnchor.constraint(equalTo: contentArea.leadingAnchor),
+			view.trailingAnchor.constraint(equalTo: contentArea.trailingAnchor),
 		])
 
 		placeholder.isHidden = true
 		refreshTabs()
-		if focus { pane.focus() }
+		if focus, case .terminal = session.kind { session.terminal.focus() }
 	}
 
 	private func close(index: Int) {
 		guard sessions.indices.contains(index) else { return }
 		let session = sessions[index]
-		session.pane.terminalView.terminateProcess()
-		session.pane.removeFromSuperview()
+		if case let .review(pane, _) = session.kind {
+			pane.shutdown()
+		} else {
+			session.terminal.terminalView.terminateProcess()
+		}
+		session.view.removeFromSuperview()
 		sessions.remove(at: index)
 
 		if sessions.isEmpty {
@@ -197,7 +290,7 @@ final class BottomPanel: NSView {
 
 	func focusActive() {
 		guard let activeIndex, sessions.indices.contains(activeIndex) else { return }
-		sessions[activeIndex].pane.focus()
+		sessions[activeIndex].terminal.focus()
 	}
 
 	func applySettings() {
@@ -205,14 +298,22 @@ final class BottomPanel: NSView {
 		placeholder.font = Theme.current.uiFont(12)
 		tabStrip.applyThemeChange()
 		for session in sessions {
-			session.pane.terminalView.applyThemeChange()
+			if case let .review(pane, _) = session.kind {
+				pane.applySettings()
+			} else {
+				session.terminal.terminalView.applyThemeChange()
+			}
 		}
 	}
 
 	/// Terminates every session. Called when the window closes.
 	func shutdown() {
 		for session in sessions {
-			session.pane.terminalView.terminateProcess()
+			if case let .review(pane, _) = session.kind {
+				pane.shutdown()
+			} else {
+				session.terminal.terminalView.terminateProcess()
+			}
 		}
 		sessions.removeAll()
 	}

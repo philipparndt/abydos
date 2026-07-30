@@ -28,6 +28,8 @@ struct LaunchOptions {
 	var openTerminal = false
 	/// Text typed into the terminal before capture.
 	var terminalInput: String?
+	/// Start an agent review before capture.
+	var startReview = false
 
 	static func parse(_ arguments: [String] = CommandLine.arguments) -> LaunchOptions {
 		var options = LaunchOptions()
@@ -54,6 +56,7 @@ struct LaunchOptions {
 			case "--zoom":       options.zoom = next().flatMap(Double.init)
 			case "--terminal":   options.openTerminal = true
 			case "--run":        options.terminalInput = next()
+			case "--review":     options.startReview = true
 			default:
 				// A bare path is treated as the project to open.
 				if !argument.hasPrefix("-"), options.projectPath == nil {

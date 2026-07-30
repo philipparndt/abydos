@@ -224,6 +224,17 @@ final class EditorViewController: NSViewController {
 		return tab
 	}
 
+	/// Opens a file and jumps to a line — the target of review findings and
+	/// search results.
+	func open(fileURL: URL, atLine line: Int) {
+		open(fileURL: fileURL, focusEditor: true, preview: false)
+		// Deferred: a freshly opened document has not laid out yet, so scrolling
+		// now would compute against a zero-height view.
+		DispatchQueue.main.async { [weak self] in
+			self?.activeTab?.codeView?.reveal(line: line)
+		}
+	}
+
 	// MARK: - Markdown preview
 
 	/// Swaps the active markdown tab between source and rendered preview.

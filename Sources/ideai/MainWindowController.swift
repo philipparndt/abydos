@@ -92,6 +92,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		verticalSplitView.autosaveName = "IdeaiPanelSplit"
 
 		bottomPanel.onRequestHide = { [weak self] in self?.setPanelVisible(false) }
+		// A finding opens the file at its line, in the editor above the panel.
+		bottomPanel.onOpenFinding = { [weak self] url, line in
+			self?.editor.open(fileURL: url, atLine: line)
+		}
 		// Set synchronously, not deferred: anything that opens the panel during
 		// launch would otherwise be undone when the deferred block ran.
 		bottomPanel.isHidden = true
@@ -303,6 +307,44 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 	/// Writes text into the active terminal, as though typed.
 	func sendToTerminal(_ text: String) {
 		bottomPanel.showTerminal()?.terminalView.send(text)
+	}
+
+	/// Starts an agent review of this branch, reported over MCP.
+	@objc func reviewBranch(_ sender: Any?) {
+		setPanelVisible(true)
+
+		Task { @MainActor in
+			// Compare against the repository's default branch when we can tell
+			// what it is, rather than assuming "main".
+			let base = await defaultBaseBranch()
+			if case let .failure(error) = bottomPanel.startReview(baseBranch: base) {
+				let alert = NSAlert()
+				alert.messageText = "Could not start the review"
+				alert.informativeText = error.message
+				alert.runModal()
+			}
+		}
+	}
+
+	/// Best guess at the branch a review should compare against.
+	private func defaultBaseBranch() async -> String {
+		guard let project, let git = project.git else { return "main" }
+		let root = await git.root
+
+		// origin/HEAD names the default branch when the remote has been fetched.
+		let result = await GitRepository.run(["symbolic-ref", "refs/remotes/origin/HEAD"], in: root)
+		if result.exitCode == 0 {
+			let reference = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+			if let name = reference.split(separator: "/").last, !name.isEmpty {
+				return String(name)
+			}
+		}
+		// Otherwise prefer whichever of the usual names exists.
+		for candidate in ["main", "master"] {
+			let exists = await GitRepository.run(["rev-parse", "--verify", candidate], in: root)
+			if exists.exitCode == 0 { return candidate }
+		}
+		return "main"
 	}
 
 	@objc func newTerminal(_ sender: Any?) {

@@ -473,6 +473,31 @@ final class CodeView: NSView, NSTextInputClient {
 		return true
 	}
 
+	/// Moves the caret to a 1-based line and scrolls it into view.
+	/// Used when jumping to a review finding or a search result.
+	func reveal(line: Int, column: Int = 1) {
+		guard let document else { return }
+		let target = max(0, min(line - 1, document.lineCount - 1))
+		folding.reveal(line: target)
+
+		let lineRange = document.rope.lineByteRange(target)
+		let start = document.rope.utf16Offset(fromByte: lineRange.lowerBound)
+		let end = document.rope.utf16Offset(fromByte: lineRange.upperBound)
+		let offset = min(end, start + max(0, column - 1))
+
+		updateFrameSize()
+		setCaret(offset, extendingSelection: false)
+
+		// Centre the line rather than merely making it visible, so there is
+		// context around what was jumped to.
+		if let point = caretPoint(), let scrollView = enclosingScrollView {
+			let height = scrollView.contentSize.height
+			let y = max(0, point.y - height / 2)
+			scrollView.contentView.scroll(to: NSPoint(x: 0, y: y))
+			scrollView.reflectScrolledClipView(scrollView.contentView)
+		}
+	}
+
 	// MARK: - Selection helpers
 
 	private func selectedUTF16Range() -> Range<Int> {
