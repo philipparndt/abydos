@@ -40,6 +40,8 @@ struct LaunchOptions {
 	var breakpointLine: Int?
 	/// Show a sidebar tool before capture: project | changes | branches | structure.
 	var sidebarTool: String?
+	/// Invoke the gutter run action on this 1-based line before capture.
+	var runLine: Int?
 	/// Query for the in-file find bar.
 	var findQuery: String?
 	/// Query for project-wide search.
@@ -82,6 +84,7 @@ struct LaunchOptions {
 			case "--review-uncommitted": options.reviewUncommitted = true
 			case "--changes":    options.showChanges = true
 			case "--sidebar":    options.sidebarTool = next()
+			case "--run-line":   options.runLine = next().flatMap(Int.init)
 			case "--sidebar-cycle": options.sidebarCycle = true
 			case "--breakpoint": options.breakpointLine = next().flatMap(Int.init)
 			case "--find":       options.findQuery = next()

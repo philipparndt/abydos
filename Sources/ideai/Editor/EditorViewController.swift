@@ -226,6 +226,10 @@ final class EditorViewController: NSViewController {
 			guard let tab else { return }
 			self?.onToggleBreakpoint?(tab.url, line + 1)
 		}
+		tab.codeView?.onRunLine = { [weak self, weak tab] line in
+			guard let tab else { return }
+			self?.onRunLine?(tab.url, line)
+		}
 		tab.document?.onAutoSaved = { [weak self] in
 			self?.refreshTabBar()
 		}
@@ -457,6 +461,10 @@ final class EditorViewController: NSViewController {
 		codeView.onToggleBreakpoint = { [weak self] line in
 			// The gutter works in 0-based lines; everything outside is 1-based.
 			self?.onToggleBreakpoint?(fileURL, line + 1)
+		}
+		codeView.onRunLine = { [weak self] line in
+			// Already 1-based: the gutter converts before reporting a run.
+			self?.onRunLine?(fileURL, line)
 		}
 		codeView.load(document: document)
 		codeView.setWordWrap(Settings.shared.wordWrap)

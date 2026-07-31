@@ -97,6 +97,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let line = options.runLine {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+				controller?.runLineForTesting(line)
+			}
+		}
+
 		if let tool = options.sidebarTool {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
 				switch tool {

@@ -951,6 +951,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		toggleBreakpoint(file: url, line: line)
 	}
 
+	/// Invokes the gutter's run action, for verifying it end to end.
+	func runLineForTesting(_ line: Int) {
+		guard let url = editor.activeGroup.activeTabURL else { return }
+		runConfiguration(forFile: url, line: line)
+	}
+
 	func selectFirstChangeForTesting() {
 		changesPane?.selectFirstChangeForTesting()
 	}
