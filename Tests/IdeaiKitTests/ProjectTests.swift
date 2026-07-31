@@ -115,3 +115,43 @@ struct ProjectDiscoveryTests {
 		#expect(ProjectDiscovery.scan(roots: [URL(fileURLWithPath: "/no/such/place")], maxDepth: 3).isEmpty)
 	}
 }
+
+/// Naming a new folder. Checked before the file system is touched so a
+/// rejection reads as a sentence rather than a POSIX error.
+struct FolderNameTests {
+	private func problem(_ name: String, hidden: Bool = true) -> String? {
+		FolderName.problem(name, showingHiddenFiles: hidden)
+	}
+
+	@Test func ordinaryNamesAreFine() {
+		#expect(problem("Sources") == nil)
+		#expect(problem("my folder") == nil)
+		#expect(problem("v1.2-beta") == nil)
+	}
+
+	@Test func aNameIsRequired() {
+		#expect(problem("") != nil)
+	}
+
+	@Test func reservedNamesAreRejected() {
+		#expect(problem(".") != nil)
+		#expect(problem("..") != nil)
+	}
+
+	/// A slash would silently create something somewhere else, or fail.
+	@Test func pathSeparatorsAreRejected() {
+		#expect(problem("a/b") != nil)
+		#expect(problem("a:b") != nil)
+	}
+
+	/// Creating a hidden folder while dotfiles are hidden makes it appear to
+	/// vanish, so it is refused with an explanation rather than silently done.
+	@Test func hiddenNamesDependOnTheSetting() {
+		#expect(problem(".config", hidden: false) != nil)
+		#expect(problem(".config", hidden: true) == nil)
+	}
+
+	@Test func theMessageSaysWhatToDo() {
+		#expect(problem(".config", hidden: false)?.contains("Show hidden files") == true)
+	}
+}

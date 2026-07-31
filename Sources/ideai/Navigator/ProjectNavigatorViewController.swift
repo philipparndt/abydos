@@ -250,6 +250,12 @@ final class ProjectNavigatorViewController: NSViewController {
 		refreshGitStatus()
 	}
 
+	/// A path to select once the tree has caught up with the file system.
+	///
+	/// Creating a folder does not refresh the tree directly — the watcher does,
+	/// a moment later — so the selection has to wait for the node to exist.
+	private var pendingReveal: URL?
+
 	private func reloadTree() {
 		guard let rootNode else { return }
 		let expanded = expandedPaths()
@@ -257,7 +263,13 @@ final class ProjectNavigatorViewController: NSViewController {
 		rootNode.reloadPreservingIdentity()
 		outlineView.reloadData()
 		restore(expandedPaths: expanded)
-		restoreSelection(path: selected)
+
+		if let pending = pendingReveal, rootNode.node(for: pending) != nil {
+			pendingReveal = nil
+			selectWithoutOpening(url: pending)
+		} else {
+			restoreSelection(path: selected)
+		}
 		refreshGitStatus()
 	}
 
@@ -344,6 +356,8 @@ final class ProjectNavigatorViewController: NSViewController {
 			return item
 		}
 
+		menu.addItem(item("New Folder…", #selector(contextNewFolder)))
+		menu.addItem(.separator())
 		menu.addItem(item("Open", #selector(contextOpen)))
 		menu.addItem(item("Open Externally", #selector(contextOpenExternally)))
 		menu.addItem(.separator())
@@ -407,6 +421,75 @@ final class ProjectNavigatorViewController: NSViewController {
 			: path
 		NSPasteboard.general.clearContents()
 		NSPasteboard.general.setString(relative, forType: .string)
+	}
+
+	/// Creates a folder inside the clicked directory.
+	///
+	/// A file's parent rather than the file: right-clicking a file to make a
+	/// folder beside it is the same gesture, and the alternative — refusing
+	/// unless a directory was clicked — is a rule nobody would guess.
+	/// Creates a folder without the prompt, for verifying the action end to end.
+	func createFolderForTesting(named name: String) {
+		guard let root = project?.root else { return }
+		let destination = root.appendingPathComponent(name)
+		try? FileManager.default.createDirectory(at: destination, withIntermediateDirectories: false)
+		pendingReveal = destination
+	}
+
+	@objc private func contextNewFolder() {
+		let parent: URL
+		if let node = contextNode {
+			parent = node.isDirectory ? node.url : node.url.deletingLastPathComponent()
+		} else if let root = project?.root {
+			parent = root
+		} else {
+			return
+		}
+
+		let alert = NSAlert()
+		alert.messageText = "New Folder"
+		alert.informativeText = "Inside \(parent.lastPathComponent)."
+		alert.addButton(withTitle: "Create")
+		alert.addButton(withTitle: "Cancel")
+
+		let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+		field.placeholderString = "Folder name"
+		alert.accessoryView = field
+		alert.window.initialFirstResponder = field
+
+		guard alert.runModal() == .alertFirstButtonReturn else { return }
+		let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+
+		// Checked here so the failure is a sentence rather than a POSIX error.
+		if let problem = FolderName.problem(name, showingHiddenFiles: Settings.shared.showHiddenFiles) {
+			let failure = NSAlert()
+			failure.messageText = "Cannot create that folder"
+			failure.informativeText = problem
+			failure.runModal()
+			return
+		}
+
+		let destination = parent.appendingPathComponent(name)
+		guard !FileManager.default.fileExists(atPath: destination.path) else {
+			let failure = NSAlert()
+			failure.messageText = "Cannot create that folder"
+			failure.informativeText = "“\(name)” already exists here."
+			failure.runModal()
+			return
+		}
+
+		do {
+			try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: false)
+		} catch {
+			NSAlert(error: error).runModal()
+			return
+		}
+
+		// The watcher reloads the tree; the new folder is revealed once it has.
+		if let node = contextNode, node.isDirectory {
+			outlineView.expandItem(node)
+		}
+		pendingReveal = destination
 	}
 
 	@objc private func contextRename() {

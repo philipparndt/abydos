@@ -97,6 +97,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let name = options.newFolder {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+				controller?.createFolderForTesting(named: name)
+			}
+		}
+
 		if let line = options.runLine {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
 				controller?.invokeForTesting(line: line, debug: false)

@@ -44,6 +44,8 @@ struct LaunchOptions {
 	var runLine: Int?
 	/// Debug the configuration on this 1-based line before capture.
 	var debugLine: Int?
+	/// Create a folder at the project root before capture.
+	var newFolder: String?
 	/// Query for the in-file find bar.
 	var findQuery: String?
 	/// Query for project-wide search.
@@ -88,6 +90,7 @@ struct LaunchOptions {
 			case "--sidebar":    options.sidebarTool = next()
 			case "--run-line":   options.runLine = next().flatMap(Int.init)
 			case "--debug-line": options.debugLine = next().flatMap(Int.init)
+			case "--new-folder": options.newFolder = next()
 			case "--sidebar-cycle": options.sidebarCycle = true
 			case "--breakpoint": options.breakpointLine = next().flatMap(Int.init)
 			case "--find":       options.findQuery = next()

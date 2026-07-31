@@ -1095,6 +1095,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		if wantsDebug { debug(configuration) } else { run(configuration) }
 	}
 
+	func createFolderForTesting(named name: String) {
+		navigator.createFolderForTesting(named: name)
+	}
+
 	func selectFirstChangeForTesting() {
 		changesPane?.selectFirstChangeForTesting()
 	}
