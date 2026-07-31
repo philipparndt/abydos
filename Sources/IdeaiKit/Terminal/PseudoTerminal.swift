@@ -35,6 +35,14 @@ public final class PseudoTerminal {
 	private var childPID: pid_t = -1
 	private var readSource: DispatchSourceRead?
 	private let readQueue = DispatchQueue(label: "ideai.pty.read", qos: .userInitiated)
+	/// Whether reading is paused because the reader has a backlog.
+	///
+	/// Suspending the source leaves the bytes in the pty's own buffer, and once
+	/// that fills the process writing to it blocks. That back-pressure is the
+	/// whole mechanism by which a terminal stays responsive under a program that
+	/// can produce output faster than anyone can read it: without it, a fast
+	/// enough writer takes the reader's every cycle and nothing is ever drawn.
+	private var isReadingSuspended = false
 
 	public init() {}
 
@@ -143,17 +151,42 @@ public final class PseudoTerminal {
 		let source = DispatchSource.makeReadSource(fileDescriptor: masterDescriptor, queue: readQueue)
 		source.setEventHandler { [weak self] in
 			guard let self else { return }
-			var buffer = [UInt8](repeating: 0, count: 16 * 1024)
-			let count = read(self.masterDescriptor, &buffer, buffer.count)
-			guard count > 0 else { return }
 
-			let data = Data(buffer[0..<count])
+			// Gathered into one delivery rather than one per read. A program
+			// painting a whole screen produces its frame in many small writes,
+			// and handing each of them over separately was costing far more in
+			// hops between queues than the bytes themselves cost to parse.
+			var gathered = Data()
+			var buffer = [UInt8](repeating: 0, count: 64 * 1024)
+			while gathered.count < 512 * 1024 {
+				let count = read(self.masterDescriptor, &buffer, buffer.count)
+				guard count > 0 else { break }
+				gathered.append(contentsOf: buffer[0..<count])
+				if count < buffer.count { break }
+			}
+			guard !gathered.isEmpty else { return }
+
 			self.callbackQueue.async {
-				self.onOutput?(data)
+				self.onOutput?(gathered)
 			}
 		}
 		source.resume()
 		readSource = source
+	}
+
+	/// Stops or resumes taking bytes out of the pty.
+	///
+	/// While stopped the bytes stay in the pty's buffer and, once it is full,
+	/// the process writing to it blocks — which is how a terminal tells a
+	/// program that it is going faster than anyone can look at.
+	public func setReadingSuspended(_ suspended: Bool) {
+		readQueue.async { [weak self] in
+			guard let self, let source = self.readSource else { return }
+			guard suspended != self.isReadingSuspended else { return }
+			self.isReadingSuspended = suspended
+			// Balanced by construction: the flag changes only here, on one queue.
+			if suspended { source.suspend() } else { source.resume() }
+		}
 	}
 
 	public func write(_ data: Data) {

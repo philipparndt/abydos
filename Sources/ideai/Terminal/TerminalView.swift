@@ -36,6 +36,24 @@ final class TerminalView: NSView, NSTextInputClient {
 	private var isDropTarget = false
 	/// Where the cursor was last painted, so the cell it leaves is repainted.
 	private var lastDrawnCursorRow: Int?
+
+	/// Output read from the process but not yet parsed.
+	///
+	/// Parsed a little at a time rather than all at once. A program can produce
+	/// output faster than any terminal can show it — a full-screen animation
+	/// does exactly that — and parsing every byte the moment it arrives leaves
+	/// the main thread no time to draw or to listen, which reads as a freeze
+	/// however fast the parser is.
+	private var pending: [Data] = []
+	private var pendingBytes = 0
+	private var drainScheduled = false
+	private var isReadingSuspended = false
+
+	/// How long parsing may take before yielding so the screen can be drawn.
+	private static let parseBudget: TimeInterval = 0.006
+	/// Backlog at which the process is made to wait, and the one it resumes at.
+	private static let backlogHighWater = 4 << 20
+	private static let backlogLowWater = 1 << 20
 	/// Text selected with the mouse, in absolute rows. Nil when nothing is.
 	private var selection: TerminalSelection?
 	private var isSelecting = false
@@ -78,8 +96,7 @@ final class TerminalView: NSView, NSTextInputClient {
 		emulator.onBell = { NSSound.beep() }
 
 		pty.onOutput = { [weak self] data in
-			self?.emulator.write(data)
-			if let title = self?.emulator.title { self?.onTitleChange?(title) }
+			self?.enqueue(data)
 		}
 		pty.onExit = { [weak self] code in
 			self?.emulator.write("\r\n[process exited with status \(code)]\r\n")
@@ -150,6 +167,52 @@ final class TerminalView: NSView, NSTextInputClient {
 			}
 			self.startCursorBlink()
 		}
+	}
+
+	/// Takes output from the process and asks for it to be parsed soon.
+	private func enqueue(_ data: Data) {
+		pending.append(data)
+		pendingBytes += data.count
+
+		// Far enough behind that the process should wait for us.
+		if !isReadingSuspended, pendingBytes >= Self.backlogHighWater {
+			isReadingSuspended = true
+			pty.setReadingSuspended(true)
+		}
+		scheduleDrain()
+	}
+
+	private func scheduleDrain() {
+		guard !drainScheduled, !pending.isEmpty else { return }
+		drainScheduled = true
+		// A delay rather than an immediate hop: blocks queued on the main queue
+		// are all run before the display cycle, so re-queueing at once would
+		// starve drawing exactly as parsing everything inline did.
+		DispatchQueue.main.asyncAfter(deadline: .now() + 0.002) { [weak self] in
+			self?.drain()
+		}
+	}
+
+	/// Parses what has arrived, for as long as the budget allows.
+	private func drain() {
+		drainScheduled = false
+		let deadline = Date().addingTimeInterval(Self.parseBudget)
+
+		while !pending.isEmpty {
+			let chunk = pending.removeFirst()
+			pendingBytes -= chunk.count
+			emulator.write(chunk)
+			if Date() >= deadline { break }
+		}
+
+		if let title = emulator.title { onTitleChange?(title) }
+
+		// Caught up enough that the process may carry on.
+		if isReadingSuspended, pendingBytes <= Self.backlogLowWater {
+			isReadingSuspended = false
+			pty.setReadingSuspended(false)
+		}
+		scheduleDrain()
 	}
 
 	private func scheduleRedraw() {
@@ -1092,3 +1155,4 @@ private struct TerminalFaces {
 		}
 	}
 }
+
