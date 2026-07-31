@@ -79,7 +79,11 @@ public final class DebugSession {
 	}
 
 	public private(set) var state: State = .idle {
-		didSet { if state != oldValue { onStateChange?(state) } }
+		didSet {
+			guard state != oldValue else { return }
+			let current = state
+			onMain { [weak self] in self?.onStateChange?(current) }
+		}
 	}
 
 	/// Breakpoints by file, kept across runs so they survive restarting.
@@ -104,6 +108,25 @@ public final class DebugSession {
 	/// Bumped per launch so a stale watchdog cannot fire on a newer session.
 	private var launchGeneration = 0
 
+	/// Delivers a callback on the main thread.
+	///
+	/// The adapter's replies arrive on whatever executor the awaiting task
+	/// resumes on — a cooperative-pool thread, not the main one — and every one
+	/// of these callbacks ends up touching AppKit. Calling them from there
+	/// modifies the layout engine off the main thread, which aborts the process
+	/// rather than merely misbehaving.
+	private func onMainLaunchStalled(_ message: String) {
+		onMain { [weak self] in self?.onLaunchStalled?(message) }
+	}
+
+	private func onMain(_ body: @escaping @Sendable () -> Void) {
+		if Thread.isMainThread {
+			body()
+		} else {
+			DispatchQueue.main.async(execute: body)
+		}
+	}
+
 	public init(projectRoot: URL, client: DAPClient = DAPClient()) {
 		self.projectRoot = projectRoot
 		self.client = client
@@ -114,6 +137,8 @@ public final class DebugSession {
 
 	/// Toggles a breakpoint, syncing to the adapter when one is attached.
 	public func toggleBreakpoint(file: String, line: Int) {
+		// Keyed by the real path, which is how the adapter names files.
+		let file = FilePath.canonical(file)
 		var list = breakpoints[file] ?? []
 		if let index = list.firstIndex(where: { $0.line == line }) {
 			list.remove(at: index)
@@ -122,7 +147,7 @@ public final class DebugSession {
 			list.sort { $0.line < $1.line }
 		}
 		breakpoints[file] = list.isEmpty ? nil : list
-		onBreakpointsChanged?()
+		onMain { [weak self] in self?.onBreakpointsChanged?() }
 
 		if isActive { Task { await syncBreakpoints(for: file) } }
 	}
@@ -159,7 +184,7 @@ public final class DebugSession {
 			list[index].isVerified = entry["verified"] as? Bool ?? false
 		}
 		breakpoints[file] = list
-		onBreakpointsChanged?()
+		onMain { [weak self] in self?.onBreakpointsChanged?() }
 	}
 
 	// MARK: - Session
@@ -225,8 +250,10 @@ public final class DebugSession {
 		state = .terminated
 		stackFrames = []
 		scopes = []
-		onStackChanged?()
-		onVariablesChanged?()
+		onMain { [weak self] in
+			self?.onStackChanged?()
+			self?.onVariablesChanged?()
+		}
 	}
 
 	// MARK: - Execution control
@@ -282,8 +309,10 @@ public final class DebugSession {
 				self.state = .terminated
 				self.stackFrames = []
 				self.scopes = []
-				self.onStackChanged?()
-				self.onVariablesChanged?()
+				self.onMain {
+					self.onStackChanged?()
+					self.onVariablesChanged?()
+				}
 
 			default:
 				break
@@ -307,7 +336,7 @@ public final class DebugSession {
 			guard case .starting = self.state else { return }
 
 			self.state = .terminated
-			self.onLaunchStalled?("""
+			self.onMainLaunchStalled("""
 			The debugger built the program but never started it.
 
 			macOS asks for permission the first time a process is debugged, and 			holds the program until that is answered. If developer mode is off, 			it asks every time. Enabling it once removes the prompt:
@@ -347,12 +376,18 @@ public final class DebugSession {
 				line: frame["line"] as? Int ?? 0
 			)
 		}
-		onStackChanged?()
-
-		if let top = stackFrames.first {
-			if let file = top.file { onStoppedAt?(file, top.line) }
-			await selectFrame(id: top.id)
+		let top = stackFrames.first
+		onMain { [weak self] in
+			guard let self else { return }
+			self.onStackChanged?()
+			// Opening the file is AppKit work, so it belongs on this side of
+			// the hop with everything else.
+			if let file = top?.file, let line = top?.line {
+				self.onStoppedAt?(file, line)
+			}
 		}
+
+		if let top { await selectFrame(id: top.id) }
 	}
 
 	/// Loads the scopes and top-level variables for a frame.
@@ -375,7 +410,7 @@ public final class DebugSession {
 		}
 
 		scopes = loaded
-		onVariablesChanged?()
+		onMain { [weak self] in self?.onVariablesChanged?() }
 	}
 
 	/// Children of a variable container.
@@ -400,7 +435,7 @@ public final class DebugSession {
 		var scope = scopes[scopeIndex]
 		scope.variables = await toggle(in: scope.variables, path: path)
 		scopes[scopeIndex] = scope
-		onVariablesChanged?()
+		onMain { [weak self] in self?.onVariablesChanged?() }
 	}
 
 	private func toggle(in variables: [Variable], path: [Int]) async -> [Variable] {

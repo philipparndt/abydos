@@ -262,13 +262,8 @@ struct GitPartialStagingTests {
 			Issue.record("no addition in diff")
 			return
 		}
-		var index = 0
-		var flat = 0
-		for line in patch.hunks[0].lines {
-			if index == addition { break }
-			index += 1
-			flat += 1
-		}
+		// Flat index of that addition, counting from the start of the patch.
+		let flat = addition
 
 		let result = await GitWorkingCopy.stage(lines: [flat], ofDiff: diff, in: root)
 		#expect(result.exitCode == 0, "\(result.stderr)")

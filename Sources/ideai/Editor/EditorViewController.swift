@@ -499,7 +499,7 @@ final class EditorViewController: NSViewController {
 
 	private func applyDebugState(to tab: Tab) {
 		guard let codeView = tab.codeView else { return }
-		let path = tab.url.standardizedFileURL.path
+		let path = FilePath.canonical(tab.url)
 
 		// Breakpoints are stored the way a debug adapter numbers lines, from 1;
 		// the view draws rows, which start at 0. The execution line below has
@@ -512,9 +512,7 @@ final class EditorViewController: NSViewController {
 		// Keyed by the resolved path: /tmp is a symlink to /private/tmp, and a
 		// project reached through any symlinked directory would otherwise match
 		// nothing and silently show no play buttons.
-		codeView.setRunnableLines(
-			runnableLinesByFile[RunConfigurationDiscovery.canonicalPath(tab.url)] ?? []
-		)
+		codeView.setRunnableLines(runnableLinesByFile[path] ?? [])
 
 		// The marker belongs only in the file execution actually stopped in.
 		if let location = executionLocation, location.file == path {

@@ -409,7 +409,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 	private var pendingBreakpoints: [String: [Int: Bool]] = [:]
 
 	private func toggleBreakpoint(file: URL, line: Int) {
-		let path = file.standardizedFileURL.path
+		// The debugger reports files by their real path, so breakpoints are
+		// keyed the same way or they are set against a name nothing else uses.
+		let path = FilePath.canonical(file)
 
 		if let session = bottomPanel.activeDebugSession {
 			session.toggleBreakpoint(file: path, line: line)
@@ -481,14 +483,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 	/// Starts the native debugger and wires its state to the editor.
 	private func startNativeDebugger(delve: String, package: String) {
 		setPanelVisible(true)
-		guard let session = bottomPanel.startDebugging(delve: delve, package: package) else { return }
-
-		// Carry over anything set before the session existed.
-		for (file, lines) in pendingBreakpoints {
-			for line in lines.keys.sorted() {
-				session.toggleBreakpoint(file: file, line: line)
-			}
-		}
+		// Breakpoints go in with the session, not after it: the adapter only
+		// asks for them once, immediately after launch.
+		guard let session = bottomPanel.startDebugging(
+			delve: delve,
+			package: package,
+			breakpoints: pendingBreakpoints
+		) else { return }
 
 		session.onBreakpointsChanged = { [weak self, weak session] in
 			guard let self, let session else { return }

@@ -76,21 +76,8 @@ public struct RunConfiguration: Equatable, Sendable, Identifiable {
 /// what the Go commands used to do — is wrong for a large share of real
 /// projects.
 public enum RunConfigurationDiscovery {
-	/// A path that compares equal however it was reached, and that other tools
-	/// can be handed.
-	///
-	/// `realpath(3)` rather than `resolvingSymlinksInPath`: Foundation's version
-	/// has a documented special case that rewrites a leading `/private` *back*
-	/// to `/tmp`, which is the opposite of resolving. Two paths compared with it
-	/// still match each other, so the editor's own bookkeeping worked — but
-	/// handing the result to `go` produced a package path outside the module it
-	/// was building, and the build failed.
 	public static func canonicalPath(_ url: URL) -> String {
-		var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
-		guard realpath(url.path, &buffer) != nil else {
-			return url.standardizedFileURL.path
-		}
-		return String(cString: buffer)
+		FilePath.canonical(url)
 	}
 
 	/// How deep to look for modules and makefiles.

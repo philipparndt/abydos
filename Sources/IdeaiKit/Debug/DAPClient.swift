@@ -151,6 +151,16 @@ public final class DAPClient: @unchecked Sendable {
 			timeout: timeout
 		)
 
+		// Keep draining after the port is found. The debuggee's own stdout comes
+		// out here rather than as DAP output events, so leaving it unread both
+		// hides the program's output and risks filling the pipe.
+		output.fileHandleForReading.readabilityHandler = { [weak self] handle in
+			let data = handle.availableData
+			guard let self, !data.isEmpty else { return }
+			let text = String(decoding: data, as: UTF8.self)
+			self.callbackQueue.async { self.onOutput?("stdout", text) }
+		}
+
 		let connection = NWConnection(
 			host: NWEndpoint.Host(endpoint.host),
 			port: NWEndpoint.Port(integerLiteral: endpoint.port),

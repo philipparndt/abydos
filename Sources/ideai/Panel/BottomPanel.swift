@@ -233,7 +233,11 @@ final class BottomPanel: NSView {
 
 	/// Starts a native debug session for a Go package.
 	@discardableResult
-	func startDebugging(delve: String, package: String) -> DebugSession? {
+	func startDebugging(
+		delve: String,
+		package: String,
+		breakpoints: [String: [Int: Bool]] = [:]
+	) -> DebugSession? {
 		guard let root = workingDirectory else { return nil }
 
 		// One debug session at a time; a second would fight over breakpoints.
@@ -260,6 +264,16 @@ final class BottomPanel: NSView {
 			alert.messageText = "The debugger did not start"
 			alert.informativeText = message
 			if let window = self?.window { alert.beginSheetModal(for: window) } else { alert.runModal() }
+		}
+
+		// Registered before the launch starts, not after it. The adapter asks
+		// for breakpoints once, between `initialized` and `configurationDone`,
+		// and both arrive within milliseconds — anything added afterwards is
+		// simply too late, and the program runs to completion instead.
+		for (file, lines) in breakpoints {
+			for line in lines.keys.sorted() {
+				session.toggleBreakpoint(file: file, line: line)
+			}
 		}
 
 		let panelSession = Session(title: "Debug", kind: .debug(pane))
