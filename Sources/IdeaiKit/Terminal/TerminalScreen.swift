@@ -148,6 +148,43 @@ public struct TerminalScreen: Sendable {
 	/// needs to know by how much.
 	public private(set) var discardedLineCount = 0
 
+	/// Lines whose contents changed since the view last drew, as absolute
+	/// indices into scrollback-plus-grid.
+	///
+	/// Absolute rather than grid rows because a line keeps its place in the
+	/// document as history grows: scrolling adds a line at the bottom instead of
+	/// moving everything up, so printing a line dirties one row rather than all
+	/// of them. Nil means nothing changed; the whole document is marked when
+	/// something moves that cannot be described as a range.
+	public private(set) var dirtyRange: ClosedRange<Int>?
+
+	/// Marks grid rows as needing to be drawn again.
+	public mutating func markDirty(rows: ClosedRange<Int>) {
+		let base = scrollback.count
+		markDirty(absolute: (base + rows.lowerBound)...(base + rows.upperBound))
+	}
+
+	public mutating func markDirty(absolute range: ClosedRange<Int>) {
+		guard let existing = dirtyRange else {
+			dirtyRange = range
+			return
+		}
+		let low = Swift.min(existing.lowerBound, range.lowerBound)
+		let high = Swift.max(existing.upperBound, range.upperBound)
+		dirtyRange = low...high
+	}
+
+	/// Everything, for the changes that move lines rather than rewrite them.
+	public mutating func markAllDirty() {
+		markDirty(absolute: 0...Swift.max(0, totalLineCount))
+	}
+
+	/// Hands over what changed and starts again, which is what drawing does.
+	public mutating func takeDirtyRange() -> ClosedRange<Int>? {
+		defer { dirtyRange = nil }
+		return dirtyRange
+	}
+
 	/// How much history is kept. Changing it resizes the ring, dropping the
 	/// oldest lines if it shrank.
 	public var maximumScrollback: Int {
@@ -177,7 +214,10 @@ public struct TerminalScreen: Sendable {
 
 	public subscript(row: Int) -> TerminalLine {
 		get { lines[row] }
-		set { lines[row] = newValue }
+		set {
+			lines[row] = newValue
+			markDirty(rows: row...row)
+		}
 	}
 
 	// MARK: - Mutation
@@ -194,6 +234,7 @@ public struct TerminalScreen: Sendable {
 		attributes: TerminalAttributes
 	) {
 		guard row >= 0, row < rows, column >= 0, column + count <= columns else { return }
+		markDirty(rows: row...row)
 		lines[row].cells.withUnsafeMutableBufferPointer { cells in
 			for offset in 0..<count {
 				cells[column + offset] = TerminalCell(
@@ -206,6 +247,7 @@ public struct TerminalScreen: Sendable {
 
 	public mutating func setCell(row: Int, column: Int, cell: TerminalCell) {
 		guard row >= 0, row < rows, column >= 0, column < columns else { return }
+		markDirty(rows: row...row)
 		lines[row].cells[column] = cell
 	}
 
@@ -213,12 +255,24 @@ public struct TerminalScreen: Sendable {
 	/// scrollback when the region is the whole screen.
 	public mutating func scrollUp(top: Int, bottom: Int, attributes: TerminalAttributes) {
 		guard top >= 0, bottom < rows, top <= bottom else { return }
+		// A region that is not the whole screen moves its lines within the grid,
+		// so all of them have to be drawn again.
+		if !(top == 0 && bottom == rows - 1) { markDirty(rows: top...bottom) }
 
 		let retired = lines[top]
 		// Only a full-height region represents lines leaving the screen; a
 		// restricted scroll region is an application redrawing in place.
 		if top == 0 && bottom == rows - 1 {
-			if scrollback.append(retired) != nil { discardedLineCount += 1 }
+			if scrollback.append(retired) != nil {
+				discardedLineCount += 1
+				// Every absolute index just shifted by one, so nothing is where
+				// the view last drew it.
+				markAllDirty()
+			} else {
+				// The retired line keeps its index and its contents; only the
+				// blank line arriving at the bottom is new.
+				markDirty(absolute: (scrollback.count + rows - 1)...(scrollback.count + rows - 1))
+			}
 		}
 
 		for row in top..<bottom {
@@ -229,6 +283,7 @@ public struct TerminalScreen: Sendable {
 
 	public mutating func scrollDown(top: Int, bottom: Int, attributes: TerminalAttributes) {
 		guard top >= 0, bottom < rows, top <= bottom else { return }
+		markDirty(rows: top...bottom)
 		var row = bottom
 		while row > top {
 			lines[row] = lines[row - 1]
@@ -269,6 +324,7 @@ public struct TerminalScreen: Sendable {
 	/// unrelated output, which reads as duplicated content.
 	@discardableResult
 	public mutating func resize(rows newRows: Int, columns newColumns: Int, cursorRow: Int = 0) -> Int {
+		markAllDirty()
 		let newRows = max(1, newRows)
 		let newColumns = max(1, newColumns)
 		guard newRows != rows || newColumns != columns else { return 0 }

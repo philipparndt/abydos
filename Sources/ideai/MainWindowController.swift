@@ -71,6 +71,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		let perFrame = elapsed / Double(frames) * 1000
 		print("BENCH render: \(String(format: "%.2f", perFrame)) ms/frame "
 			+ "(\(String(format: "%.0f", 1000 / perFrame)) fps ceiling) at \(Int(bounds.width))x\(Int(bounds.height))")
+
+		// What a printed line actually costs now that only what changed is
+		// painted: one row rather than the whole screen.
+		let rowHeightPoints = bounds.height / 40
+		let rowRect = NSRect(x: 0, y: 0, width: bounds.width, height: rowHeightPoints)
+		guard let rowRep = terminal.bitmapImageRepForCachingDisplay(in: rowRect) else { return }
+		terminal.cacheDisplay(in: rowRect, to: rowRep)
+
+		let rowStart = Date()
+		for _ in 0..<frames { terminal.cacheDisplay(in: rowRect, to: rowRep) }
+		let rowElapsed = -rowStart.timeIntervalSinceNow
+		let perRow = rowElapsed / Double(frames) * 1000
+		print("BENCH render: \(String(format: "%.3f", perRow)) ms for one row "
+			+ "(\(String(format: "%.0f", perFrame / perRow))x cheaper than a full frame)")
 	}
 
 	/// Takes a tab dragged out of another window.

@@ -19,6 +19,12 @@ final class TerminalView: NSView, NSTextInputClient {
 	var onTitleChange: ((String) -> Void)?
 
 	private var font: NSFont = .monospacedSystemFont(ofSize: 12, weight: .regular)
+	/// The four faces a cell can ask for, worked out once per font change.
+	///
+	/// Deriving a bold or italic face goes through NSFontManager, which is not
+	/// cheap, and it was being asked for once per run of every frame — several
+	/// hundred times a frame on a busy screen.
+	private var faces = TerminalFaces(base: .monospacedSystemFont(ofSize: 12, weight: .regular))
 	private var cellWidth: CGFloat = 7
 	private var cellHeight: CGFloat = 16
 	private var baselineOffset: CGFloat = 4
@@ -26,9 +32,10 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// Follows output unless the user scrolls up to read history.
 	private var isPinnedToBottom = true
 
-	private var advanceCache: [String: CGFloat] = [:]
 	/// Highlighted while files are held over the view.
 	private var isDropTarget = false
+	/// Where the cursor was last painted, so the cell it leaves is repainted.
+	private var lastDrawnCursorRow: Int?
 	/// Text selected with the mouse, in absolute rows. Nil when nothing is.
 	private var selection: TerminalSelection?
 	private var isSelecting = false
@@ -159,8 +166,50 @@ final class TerminalView: NSView, NSTextInputClient {
 				self.updateFrameSize()
 				if self.isPinnedToBottom { self.scrollToBottom() }
 			}
-			self.needsDisplay = true
+			self.invalidateChangedRows()
 		}
+	}
+
+	/// Repaints the lines that changed, rather than the whole view.
+	///
+	/// Marking the whole view means AppKit cannot keep any of what it already
+	/// has, which matters most while output streams past: a printed line changes
+	/// one row, and the rest can be scrolled rather than drawn again.
+	private func invalidateChangedRows() {
+		guard let range = emulator.takeDirtyRange() else {
+			// The cursor may still have moved, which is a repaint of its own.
+			invalidateCursorRows()
+			return
+		}
+
+		// Beyond a certain share of the view, working out what to keep costs
+		// more than painting it.
+		let visibleRows = Int(ceil(visibleRect.height / max(1, cellHeight))) + 1
+		guard range.count < max(4, visibleRows / 2) else {
+			needsDisplay = true
+			return
+		}
+
+		setNeedsDisplay(rect(forAbsoluteRows: range))
+		invalidateCursorRows()
+	}
+
+	/// The cursor is drawn over a cell that is otherwise unchanged, so both the
+	/// row it left and the row it is on have to be repainted.
+	private func invalidateCursorRows() {
+		let row = emulator.screen.scrollback.count + emulator.cursorRow
+		guard row != lastDrawnCursorRow else { return }
+		if let previous = lastDrawnCursorRow {
+			setNeedsDisplay(rect(forAbsoluteRows: previous...previous))
+		}
+		setNeedsDisplay(rect(forAbsoluteRows: row...row))
+		lastDrawnCursorRow = row
+	}
+
+	private func rect(forAbsoluteRows range: ClosedRange<Int>) -> NSRect {
+		let top = Self.verticalInset + CGFloat(range.lowerBound) * cellHeight
+		let height = CGFloat(range.count) * cellHeight
+		return NSRect(x: 0, y: top - 1, width: bounds.width, height: height + 2)
 	}
 
 	// MARK: - Metrics
@@ -181,7 +230,8 @@ final class TerminalView: NSView, NSTextInputClient {
 		// on sub-pixel boundaries and leave hairline seams between them — visible
 		// as a step where a powerline separator meets the next segment. Whole-point
 		// cells make neighbouring fills abut exactly.
-		let advance = ("0" as NSString).size(withAttributes: [.font: font]).width
+		faces = TerminalFaces(base: font)
+		let advance = faces.advance
 		cellWidth = max(1, advance.rounded())
 		cellHeight = max(1, (font.ascender - font.descender + font.leading).rounded() + 2)
 		baselineOffset = (-font.descender + font.leading).rounded()
@@ -383,13 +433,7 @@ final class TerminalView: NSView, NSTextInputClient {
 		attributes: TerminalAttributes,
 		y: CGFloat
 	) {
-		var drawFont = font
-		if attributes.bold {
-			drawFont = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
-		}
-		if attributes.italic {
-			drawFont = NSFontManager.shared.convert(drawFont, toHaveTrait: .italicFontMask)
-		}
+		let drawFont = faces.face(bold: attributes.bold, italic: attributes.italic)
 
 		let resolved = attributes.resolved
 		var foreground = TerminalPalette.color(
@@ -403,7 +447,7 @@ final class TerminalView: NSView, NSTextInputClient {
 			.font: drawFont,
 			.foregroundColor: foreground,
 			// Pins each character to the next cell boundary.
-			.kern: cellWidth - advance(of: drawFont),
+			.kern: cellWidth - faces.advance(bold: attributes.bold, italic: attributes.italic),
 		]
 		if attributes.underline {
 			textAttributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
@@ -457,13 +501,6 @@ final class TerminalView: NSView, NSTextInputClient {
 
 	/// Width of one character in a font, cached: measuring is not free and the
 	/// same handful of fonts is asked for on every repaint.
-	private func advance(of font: NSFont) -> CGFloat {
-		let key = "\(font.fontName)-\(font.pointSize)"
-		if let cached = advanceCache[key] { return cached }
-		let measured = ("0" as NSString).size(withAttributes: [.font: font]).width
-		advanceCache[key] = measured
-		return measured
-	}
 
 	private func drawCursor() {
 		guard emulator.isCursorVisible, cursorVisible, window?.firstResponder === self else { return }
@@ -1006,5 +1043,54 @@ final class TerminalPane: NSView {
 
 	func focus() {
 		window?.makeFirstResponder(terminalView)
+	}
+}
+
+/// The four faces a terminal cell can ask for, and what each one advances by.
+///
+/// Derived once per font change. Asking NSFontManager to convert a font is
+/// slow enough to matter when it happens for every run of every frame, and the
+/// advance was being measured through a string-keyed cache that allocated its
+/// key on each lookup.
+private struct TerminalFaces {
+	let regular: NSFont
+	let bold: NSFont
+	let italic: NSFont
+	let boldItalic: NSFont
+	/// Advance of the regular face, which is what the cell grid is built on.
+	let advance: CGFloat
+
+	private let advances: (CGFloat, CGFloat, CGFloat, CGFloat)
+
+	init(base: NSFont) {
+		let manager = NSFontManager.shared
+		regular = base
+		bold = manager.convert(base, toHaveTrait: .boldFontMask)
+		italic = manager.convert(base, toHaveTrait: .italicFontMask)
+		boldItalic = manager.convert(bold, toHaveTrait: .italicFontMask)
+
+		func width(_ font: NSFont) -> CGFloat {
+			("0" as NSString).size(withAttributes: [.font: font]).width
+		}
+		advances = (width(regular), width(bold), width(italic), width(boldItalic))
+		advance = advances.0
+	}
+
+	func face(bold isBold: Bool, italic isItalic: Bool) -> NSFont {
+		switch (isBold, isItalic) {
+		case (false, false): return regular
+		case (true, false):  return bold
+		case (false, true):  return italic
+		case (true, true):   return boldItalic
+		}
+	}
+
+	func advance(bold isBold: Bool, italic isItalic: Bool) -> CGFloat {
+		switch (isBold, isItalic) {
+		case (false, false): return advances.0
+		case (true, false):  return advances.1
+		case (false, true):  return advances.2
+		case (true, true):   return advances.3
+		}
 	}
 }

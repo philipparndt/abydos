@@ -21,6 +21,13 @@ public final class TerminalEmulator {
 	/// Window title from OSC 0/2.
 	public private(set) var title: String?
 
+	/// What changed since the view last drew, as absolute line indices.
+	///
+	/// Taken rather than read, so the next redraw starts from nothing.
+	public func takeDirtyRange() -> ClosedRange<Int>? {
+		screen.takeDirtyRange()
+	}
+
 	/// Fired when the grid changed and the view should redraw.
 	public var onUpdate: (() -> Void)?
 	/// Replies the terminal must send back to the process (device status, etc).
