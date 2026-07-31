@@ -63,7 +63,11 @@ public extension TerminalLine {
 
 		var result = ""
 		for index in clamped where !cells[index].isWideTrailer {
-			result.append(cells[index].character)
+			if let combining = cells[index].combining {
+				result += combining
+			} else if let scalar = UnicodeScalar(cells[index].scalar) {
+				result.unicodeScalars.append(scalar)
+			}
 		}
 		while result.hasSuffix(" ") { result.removeLast() }
 		return result
@@ -79,8 +83,8 @@ public extension TerminalLine {
 
 	private func isWordCharacter(at index: Int) -> Bool {
 		guard cells.indices.contains(index) else { return false }
-		guard let scalar = cells[index].character.unicodeScalars.first,
-		      cells[index].character.unicodeScalars.count == 1
+		guard cells[index].combining == nil,
+		      let scalar = UnicodeScalar(cells[index].scalar)
 		else { return true }              // Anything exotic is treated as a word.
 		return Self.wordCharacters.contains(scalar)
 	}

@@ -206,6 +206,55 @@ struct TerminalEmulatorTests {
 		#expect(emulator.cursorColumn == 3, "the separator must advance the cursor")
 	}
 
+	/// Malformed UTF-8 is shown, not guessed at or allowed to stall the stream.
+	@Test func malformedUTF8BecomesAReplacement() {
+		// An overlong encoding of "A", which must not decode as one.
+		var emulator = TerminalEmulator(rows: 2, columns: 10)
+		emulator.write([0xC1, 0x81, 0x42])
+		#expect(row(emulator, 0).hasPrefix("\u{FFFD}"))
+		#expect(row(emulator, 0).contains("B"))
+
+		// An overlong three-byte encoding of "/".
+		emulator = TerminalEmulator(rows: 2, columns: 10)
+		emulator.write([0xE0, 0x80, 0xAF])
+		#expect(row(emulator, 0) == "\u{FFFD}")
+
+		// A surrogate half, which is not a scalar at all.
+		emulator = TerminalEmulator(rows: 2, columns: 10)
+		emulator.write([0xED, 0xA0, 0x80])
+		#expect(row(emulator, 0) == "\u{FFFD}")
+
+		// A stray continuation byte with nothing to continue.
+		emulator = TerminalEmulator(rows: 2, columns: 10)
+		emulator.write([0x80, 0x43])
+		#expect(row(emulator, 0) == "\u{FFFD}C")
+	}
+
+	/// A sequence cut short must not swallow what comes after it.
+	@Test func aTruncatedSequenceDoesNotEatTheNextCharacter() {
+		let emulator = TerminalEmulator(rows: 2, columns: 10)
+		// The lead byte of "é" followed by an ordinary letter.
+		emulator.write([0xC3, 0x44])
+		#expect(row(emulator, 0) == "\u{FFFD}D")
+	}
+
+	/// Four-byte sequences reach the planes where emoji live.
+	@Test func fourByteSequencesDecode() {
+		let emulator = TerminalEmulator(rows: 2, columns: 10)
+		emulator.write("\u{1F600}")
+		#expect(row(emulator, 0).hasPrefix("\u{1F600}"))
+	}
+
+	/// Split anywhere, not merely between characters.
+	@Test func handlesAFourByteCharacterSplitAcrossWrites() {
+		let emulator = TerminalEmulator(rows: 2, columns: 10)
+		let bytes = Array("\u{1F600}".utf8)
+		emulator.write(Array(bytes[0..<1]))
+		emulator.write(Array(bytes[1..<3]))
+		emulator.write(Array(bytes[3...]))
+		#expect(row(emulator, 0).hasPrefix("\u{1F600}"))
+	}
+
 	@Test func combiningMarksStillTakeNoColumn() {
 		// U+0301 combining acute — genuinely zero-width.
 		#expect(TerminalEmulator.displayWidth(of: "\u{0301}") == 0)

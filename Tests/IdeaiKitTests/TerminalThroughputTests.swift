@@ -14,21 +14,29 @@ import Testing
 ///     IDEAI_BENCH=1 swift test --filter TerminalThroughput
 @Suite(.enabled(if: ProcessInfo.processInfo.environment["IDEAI_BENCH"] != nil))
 struct TerminalThroughputTests {
+	/// Best of several passes.
+	///
+	/// The mean moves by a tenth between runs on a machine doing anything else,
+	/// which is enough to hide a real change or invent one. The best pass is the
+	/// one least interrupted, and it is far steadier.
 	private func throughput(_ name: String, bytes: [UInt8], rows: Int = 40, columns: Int = 100) {
 		let emulator = TerminalEmulator(rows: rows, columns: columns)
 		let megabytes = Double(bytes.count) / 1_048_576
 		let data = Data(bytes)
+		var best = 0.0
 
-		let start = Date()
-		var total = 0.0
-		var rounds = 0
-		while total < 0.25 {
-			emulator.write(data)
-			rounds += 1
-			total = -start.timeIntervalSinceNow
+		for _ in 0..<5 {
+			let start = Date()
+			var elapsed = 0.0
+			var rounds = 0
+			while elapsed < 0.1 {
+				emulator.write(data)
+				rounds += 1
+				elapsed = -start.timeIntervalSinceNow
+			}
+			best = max(best, megabytes * Double(rounds) / elapsed)
 		}
-		let mbPerSecond = megabytes * Double(rounds) / total
-		print("BENCH \(name): \(String(format: "%.1f", mbPerSecond)) MB/s")
+		print("BENCH \(name): \(String(format: "%.1f", best)) MB/s")
 	}
 
 	@Test func plainOutput() {
@@ -37,6 +45,26 @@ struct TerminalThroughputTests {
 			chunk += "\u{1B}[3\(i % 8)m[\(i)] some typical log line with words \u{1B}[0m\r\n"
 		}
 		throughput("plain log output", bytes: Array(chunk.utf8))
+	}
+
+	/// Splits the fire workload apart, so it is clear which half costs what.
+	@Test func fireComponents() {
+		var colours = ""
+		var glyphs = ""
+		var ascii = ""
+		for row in 0..<40 {
+			for column in 0..<100 {
+				colours += "\u{1B}[38;2;\((row * 6 + column) % 256);\((column * 3) % 256);0m"
+				glyphs += "\u{2580}"
+				ascii += "x"
+			}
+			colours += "\r\n"
+			glyphs += "\r\n"
+			ascii += "\r\n"
+		}
+		throughput("  colour changes only", bytes: Array(colours.utf8))
+		throughput("  wide-ish glyphs only", bytes: Array(glyphs.utf8))
+		throughput("  ascii only", bytes: Array(ascii.utf8))
 	}
 
 	/// What the DOOM fire benchmark does: a truecolour change on every cell and

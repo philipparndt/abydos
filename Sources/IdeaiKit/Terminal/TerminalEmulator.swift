@@ -98,7 +98,17 @@ public final class TerminalEmulator {
 	private var oscBytes: [UInt8] = []
 
 	/// Partial UTF-8 sequence carried between writes, since a read can split one.
-	private var utf8Buffer: [UInt8] = []
+	/// The UTF-8 sequence being assembled, decoded by hand.
+	///
+	/// A read can split a sequence, so this has to persist between writes. It
+	/// used to be an array run through the standard decoder once per byte —
+	/// three times over for a three-byte character, each building an iterator
+	/// and a decoder — which was most of what a non-ASCII character cost.
+	private var utf8Value: UInt32 = 0
+	private var utf8Remaining = 0
+	/// Smallest value this many bytes may legally encode, so an overlong
+	/// sequence is rejected rather than silently accepted.
+	private var utf8Minimum: UInt32 = 0
 
 	/// Widths already worked out, indexed by scalar value; -1 for not yet asked.
 	///
@@ -129,7 +139,7 @@ public final class TerminalEmulator {
 				// it a byte at a time, building a Character for each and asking
 				// the screen to store it, was the rest of the parser's cost once
 				// parameter parsing stopped being it.
-				if isGround, utf8Buffer.isEmpty, buffer[index] >= 0x20, buffer[index] < 0x7F {
+				if isGround, utf8Remaining == 0, buffer[index] >= 0x20, buffer[index] < 0x7F {
 					var end = index
 					while end < buffer.count, buffer[end] >= 0x20, buffer[end] < 0x7F { end += 1 }
 					putASCII(buffer, from: index, to: end)
@@ -208,18 +218,17 @@ public final class TerminalEmulator {
 	// MARK: - Ground
 
 	private func consumeGround(_ byte: UInt8) {
-		// A continuation byte only makes sense mid-sequence.
-		if !utf8Buffer.isEmpty {
-			utf8Buffer.append(byte)
-			if let scalar = Self.decodeUTF8(utf8Buffer) {
-				utf8Buffer.removeAll()
-				put(Character(scalar))
-			} else if utf8Buffer.count >= 4 {
-				// Malformed; drop it rather than stalling the stream.
-				utf8Buffer.removeAll()
-				put("\u{FFFD}")
+		if utf8Remaining > 0 {
+			if byte & 0xC0 == 0x80 {
+				utf8Value = (utf8Value << 6) | UInt32(byte & 0x3F)
+				utf8Remaining -= 1
+				if utf8Remaining == 0 { put(scalar: decodedScalar()) }
+				return
 			}
-			return
+			// Not a continuation, so the sequence is malformed. Show a
+			// replacement and read this byte as whatever it is instead.
+			utf8Remaining = 0
+			put(scalar: "\u{FFFD}")
 		}
 
 		switch byte {
@@ -231,28 +240,103 @@ public final class TerminalEmulator {
 		case 0x1B: state = .escape; resetParameters()
 		case 0x00...0x06, 0x0E...0x1A, 0x1C...0x1F:
 			break // Other C0 controls are not meaningful here.
-		case 0x20...0x7E:
-			put(Character(UnicodeScalar(byte)))
+		case 0x20...0x7F:
+			put(scalar: UnicodeScalar(byte))
+		// Lead bytes. 0xC0 and 0xC1 could only ever be overlong, and nothing
+		// past 0xF4 can reach a code point that exists.
+		case 0xC2...0xDF:
+			utf8Value = UInt32(byte & 0x1F); utf8Remaining = 1; utf8Minimum = 0x80
+		case 0xE0...0xEF:
+			utf8Value = UInt32(byte & 0x0F); utf8Remaining = 2; utf8Minimum = 0x800
+		case 0xF0...0xF4:
+			utf8Value = UInt32(byte & 0x07); utf8Remaining = 3; utf8Minimum = 0x1_0000
 		default:
-			// Start of a multi-byte UTF-8 sequence.
-			utf8Buffer = [byte]
-			if let scalar = Self.decodeUTF8(utf8Buffer) {
-				utf8Buffer.removeAll()
-				put(Character(scalar))
-			}
+			// A stray continuation byte, or a lead byte that cannot begin
+			// anything valid.
+			put(scalar: "\u{FFFD}")
 		}
 	}
 
-	private static func decodeUTF8(_ bytes: [UInt8]) -> UnicodeScalar? {
-		var decoder = UTF8()
-		var iterator = bytes.makeIterator()
-		switch decoder.decode(&iterator) {
-		case let .scalarValue(scalar): return scalar
-		default: return nil
+	/// The scalar just assembled, or a replacement if it is not a legal one.
+	///
+	/// Overlong encodings, surrogate halves and anything past the last plane are
+	/// all malformed. A terminal shows malformed input rather than guessing at
+	/// what was meant by it.
+	private func decodedScalar() -> UnicodeScalar {
+		guard utf8Value >= utf8Minimum, let scalar = UnicodeScalar(utf8Value) else {
+			return "\u{FFFD}"
+		}
+		return scalar
+	}
+
+	/// Writes a code point at the cursor, handling wrap and double-width glyphs.
+	///
+	/// The scalar is what the stream actually carries; assembling a Character
+	/// for it is only needed when marks are combined onto it, which is rare.
+	private func put(scalar: UnicodeScalar) {
+		if pendingWrap {
+			cursorColumn = 0
+			lineFeed()
+			pendingWrap = false
+		}
+
+		let width = displayWidth(of: scalar)
+		if width == 0 {
+			combine(scalar: scalar)
+			return
+		}
+
+		if width == 2, cursorColumn == screen.columns - 1 {
+			screen.setCell(
+				row: cursorRow,
+				column: cursorColumn,
+				cell: TerminalCell(scalar: 0x20, attributes: attributes)
+			)
+			cursorColumn = 0
+			lineFeed()
+		}
+
+		screen.setCell(
+			row: cursorRow,
+			column: cursorColumn,
+			cell: TerminalCell(scalar: scalar.value, attributes: attributes)
+		)
+		if width == 2 {
+			screen.setCell(
+				row: cursorRow,
+				column: cursorColumn + 1,
+				cell: TerminalCell(scalar: 0x20, attributes: attributes, isWideTrailer: true)
+			)
+		}
+
+		advanceCursor(by: width)
+	}
+
+	/// Attaches a zero-width mark to the cell before the cursor.
+	private func combine(scalar: UnicodeScalar) {
+		let target = max(0, cursorColumn - 1)
+		guard cursorRow < screen.rows, target < screen.columns else { return }
+
+		var cell = screen[cursorRow].cells[target]
+		// Rebuilt rather than edited: a grapheme cluster is not mutable in place.
+		var combined = cell.combining ?? String(UnicodeScalar(cell.scalar) ?? " ")
+		combined.unicodeScalars.append(scalar)
+		cell.character = combined.first ?? cell.character
+		screen.setCell(row: cursorRow, column: target, cell: cell)
+	}
+
+	private func advanceCursor(by width: Int) {
+		let advance = cursorColumn + width
+		if advance >= screen.columns {
+			// Defer the wrap; see `pendingWrap`.
+			cursorColumn = screen.columns - 1
+			pendingWrap = true
+		} else {
+			cursorColumn = advance
 		}
 	}
 
-	/// Writes a character at the cursor, handling wrap and double-width glyphs.
+	/// Writes a whole grapheme cluster, which only the tests hand over directly.
 	private func put(_ character: Character) {
 		if pendingWrap {
 			cursorColumn = 0
@@ -260,7 +344,7 @@ public final class TerminalEmulator {
 			pendingWrap = false
 		}
 
-		let width = Self.displayWidth(of: character)
+		let width = displayWidth(of: character)
 		if width == 0 {
 			// Combining mark: attach to the previous cell rather than advancing.
 			let target = max(0, cursorColumn - 1)
@@ -303,23 +387,29 @@ public final class TerminalEmulator {
 	}
 
 	/// Terminal column width, remembering what it has already worked out.
-	private func displayWidth(of character: Character) -> Int {
-		guard let scalar = character.unicodeScalars.first else { return 0 }
+	private func displayWidth(of scalar: UnicodeScalar) -> Int {
 		// Plain ASCII is one column and never a mark. It is most of everything a
-		// terminal ever shows, and it is not worth a table lookup to say so.
-		if scalar.value >= 0x20, scalar.value < 0x7F, character.unicodeScalars.count == 1 {
-			return 1
-		}
+		// terminal ever shows, and it is not worth a lookup to say so.
+		if scalar.value >= 0x20, scalar.value < 0x7F { return 1 }
+		guard scalar.value < 0x1_0000 else { return Self.displayWidth(of: Character(scalar)) }
 
-		guard scalar.value < 0x1_0000, character.unicodeScalars.count == 1 else {
-			return Self.displayWidth(of: character)
-		}
 		let cached = widthCache[Int(scalar.value)]
 		if cached >= 0 { return Int(cached) }
 
-		let width = Self.displayWidth(of: character)
+		let width = Self.displayWidth(of: Character(scalar))
 		widthCache[Int(scalar.value)] = Int8(width)
 		return width
+	}
+
+	/// A whole cluster's width, which is its base's.
+	private func displayWidth(of character: Character) -> Int {
+		// One pass: asking for the scalar count walks the grapheme, and doing
+		// that to decide whether the answer can be remembered costs as much as
+		// remembering it saves.
+		var scalars = character.unicodeScalars.makeIterator()
+		guard let scalar = scalars.next() else { return 0 }
+		guard scalars.next() == nil else { return Self.displayWidth(of: character) }
+		return displayWidth(of: scalar)
 	}
 
 	/// Terminal column width. Combining marks take none; CJK and emoji take two.

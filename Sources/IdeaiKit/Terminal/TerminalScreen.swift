@@ -30,20 +30,62 @@ public struct TerminalAttributes: Equatable, Sendable {
 
 /// One character cell.
 public struct TerminalCell: Equatable, Sendable {
-	/// The character shown. A space for empty cells.
-	public var character: Character
+	/// The code point shown; a space for an empty cell.
+	///
+	/// A number rather than a `Character`. Building a Character means building a
+	/// String, with the grapheme breaking that implies, and doing that once per
+	/// cell written was the largest single cost of filling the grid — non-ASCII
+	/// text ran at a third the speed of ASCII purely because of it.
+	public var scalar: UInt32
+	/// The whole grapheme cluster, on the rare cell that is more than its base
+	/// code point — a letter with a combining accent, an emoji sequence. Nil
+	/// everywhere else, which is almost everywhere.
+	public var combining: String?
 	public var attributes: TerminalAttributes
 	/// Second half of a double-width character; drawn as nothing, but occupies
 	/// a column so the grid stays aligned.
 	public var isWideTrailer: Bool
 
-	public init(character: Character = " ", attributes: TerminalAttributes = .init(), isWideTrailer: Bool = false) {
-		self.character = character
+	public init(
+		scalar: UInt32,
+		attributes: TerminalAttributes = .init(),
+		isWideTrailer: Bool = false
+	) {
+		self.scalar = scalar
+		self.combining = nil
 		self.attributes = attributes
 		self.isWideTrailer = isWideTrailer
 	}
 
-	public static let blank = TerminalCell()
+	public init(
+		character: Character = " ",
+		attributes: TerminalAttributes = .init(),
+		isWideTrailer: Bool = false
+	) {
+		self.attributes = attributes
+		self.isWideTrailer = isWideTrailer
+		self.scalar = 0
+		self.combining = nil
+		self.character = character
+	}
+
+	/// What to draw, assembled from the parts above.
+	public var character: Character {
+		get {
+			if let combining, let first = combining.first { return first }
+			guard let base = UnicodeScalar(scalar) else { return " " }
+			return Character(base)
+		}
+		set {
+			var scalars = newValue.unicodeScalars.makeIterator()
+			let base = scalars.next() ?? " "
+			scalar = base.value
+			// Only a cluster needs the string; a lone code point is the number.
+			combining = scalars.next() == nil ? nil : String(newValue)
+		}
+	}
+
+	public static let blank = TerminalCell(scalar: 0x20)
 }
 
 /// One row of cells.
@@ -74,7 +116,11 @@ public struct TerminalLine: Equatable, Sendable {
 	public var text: String {
 		var result = ""
 		for cell in cells where !cell.isWideTrailer {
-			result.append(cell.character)
+			if let combining = cell.combining {
+				result += combining
+			} else if let scalar = UnicodeScalar(cell.scalar) {
+				result.unicodeScalars.append(scalar)
+			}
 		}
 		while result.hasSuffix(" ") { result.removeLast() }
 		return result
@@ -145,7 +191,7 @@ public struct TerminalScreen: Sendable {
 		lines[row].cells.withUnsafeMutableBufferPointer { cells in
 			for offset in 0..<count {
 				cells[column + offset] = TerminalCell(
-					character: Character(UnicodeScalar(bytes[start + offset])),
+					scalar: UInt32(bytes[start + offset]),
 					attributes: attributes
 				)
 			}
