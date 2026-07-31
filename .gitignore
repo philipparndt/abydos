@@ -14,3 +14,6 @@ DerivedData/
 
 # NOTE: Sources/Grammars/ is vendored on purpose and must stay committed.
 # See Package.swift and Scripts/vendor-grammars.sh for why.
+
+# Intermediate for the .icns; the icns itself is committed.
+Resources/Icon/*.iconset/

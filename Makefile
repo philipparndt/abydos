@@ -50,6 +50,9 @@ shot: ## Render the window to a PNG without Screen Recording permission
 	@echo "==> build/screenshot.png"
 
 .PHONY: grammars
+icon: ## Regenerate the app icon from Scripts/make-icon.py
+	@python3 Scripts/make-icon.py
+
 grammars: ## Re-vendor the grammars whose upstream manifests are broken
 	@Scripts/vendor-grammars.sh
 
