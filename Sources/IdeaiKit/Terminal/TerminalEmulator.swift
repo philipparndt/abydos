@@ -100,6 +100,15 @@ public final class TerminalEmulator {
 	/// Partial UTF-8 sequence carried between writes, since a read can split one.
 	private var utf8Buffer: [UInt8] = []
 
+	/// Widths already worked out, indexed by scalar value; -1 for not yet asked.
+	///
+	/// Establishing a width means consulting the Unicode property tables, and
+	/// that was being done for every character written. A terminal writes the
+	/// same few hundred characters over and over, so one byte per code point of
+	/// the Basic Multilingual Plane buys all of them back. Per emulator rather
+	/// than shared, which keeps it off any thread but the one writing.
+	private var widthCache = [Int8](repeating: -1, count: 0x1_0000)
+
 	public init(rows: Int = 24, columns: Int = 80) {
 		screen = TerminalScreen(rows: rows, columns: columns)
 		scrollBottom = screen.rows - 1
@@ -112,8 +121,67 @@ public final class TerminalEmulator {
 	}
 
 	public func write(_ bytes: [UInt8]) {
-		for byte in bytes { consume(byte) }
+		bytes.withUnsafeBufferPointer { buffer in
+			var index = 0
+			while index < buffer.count {
+				// Plain text arrives in runs — words, lines, whole paragraphs —
+				// and the whole run can go into the grid at once. Stepping through
+				// it a byte at a time, building a Character for each and asking
+				// the screen to store it, was the rest of the parser's cost once
+				// parameter parsing stopped being it.
+				if isGround, utf8Buffer.isEmpty, buffer[index] >= 0x20, buffer[index] < 0x7F {
+					var end = index
+					while end < buffer.count, buffer[end] >= 0x20, buffer[end] < 0x7F { end += 1 }
+					putASCII(buffer, from: index, to: end)
+					index = end
+					continue
+				}
+				consume(buffer[index])
+				index += 1
+			}
+		}
 		onUpdate?()
+	}
+
+	private var isGround: Bool {
+		if case .ground = state { return true }
+		return false
+	}
+
+	/// Writes a run of printable ASCII, wrapping as it fills each row.
+	private func putASCII(_ bytes: UnsafeBufferPointer<UInt8>, from start: Int, to end: Int) {
+		var index = start
+		while index < end {
+			if pendingWrap {
+				cursorColumn = 0
+				lineFeed()
+				pendingWrap = false
+			}
+			guard cursorRow < screen.rows, cursorColumn < screen.columns else { return }
+
+			// Up to the end of the row; what is left goes on the next one.
+			let room = screen.columns - cursorColumn
+			let run = min(room, end - index)
+			screen.setASCII(
+				row: cursorRow,
+				column: cursorColumn,
+				bytes: bytes,
+				from: index,
+				count: run,
+				attributes: attributes
+			)
+			index += run
+
+			let advance = cursorColumn + run
+			if advance >= screen.columns {
+				// Deferred, exactly as a single character write defers it: the
+				// wrap happens when the next character arrives, not before.
+				cursorColumn = screen.columns - 1
+				pendingWrap = true
+			} else {
+				cursorColumn = advance
+			}
+		}
 	}
 
 	public func write(_ string: String) {
@@ -232,6 +300,26 @@ public final class TerminalEmulator {
 		} else {
 			cursorColumn = advance
 		}
+	}
+
+	/// Terminal column width, remembering what it has already worked out.
+	private func displayWidth(of character: Character) -> Int {
+		guard let scalar = character.unicodeScalars.first else { return 0 }
+		// Plain ASCII is one column and never a mark. It is most of everything a
+		// terminal ever shows, and it is not worth a table lookup to say so.
+		if scalar.value >= 0x20, scalar.value < 0x7F, character.unicodeScalars.count == 1 {
+			return 1
+		}
+
+		guard scalar.value < 0x1_0000, character.unicodeScalars.count == 1 else {
+			return Self.displayWidth(of: character)
+		}
+		let cached = widthCache[Int(scalar.value)]
+		if cached >= 0 { return Int(cached) }
+
+		let width = Self.displayWidth(of: character)
+		widthCache[Int(scalar.value)] = Int8(width)
+		return width
 	}
 
 	/// Terminal column width. Combining marks take none; CJK and emoji take two.

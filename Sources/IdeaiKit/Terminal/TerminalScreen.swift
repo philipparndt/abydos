@@ -130,6 +130,28 @@ public struct TerminalScreen: Sendable {
 
 	// MARK: - Mutation
 
+	/// Writes a run of printable ASCII into one row.
+	///
+	/// The run is known to fit: the caller has already cut it to the row.
+	public mutating func setASCII(
+		row: Int,
+		column: Int,
+		bytes: UnsafeBufferPointer<UInt8>,
+		from start: Int,
+		count: Int,
+		attributes: TerminalAttributes
+	) {
+		guard row >= 0, row < rows, column >= 0, column + count <= columns else { return }
+		lines[row].cells.withUnsafeMutableBufferPointer { cells in
+			for offset in 0..<count {
+				cells[column + offset] = TerminalCell(
+					character: Character(UnicodeScalar(bytes[start + offset])),
+					attributes: attributes
+				)
+			}
+		}
+	}
+
 	public mutating func setCell(row: Int, column: Int, cell: TerminalCell) {
 		guard row >= 0, row < rows, column >= 0, column < columns else { return }
 		lines[row].cells[column] = cell
