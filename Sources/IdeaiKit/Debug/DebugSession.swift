@@ -101,6 +101,8 @@ public final class DebugSession {
 	private let client: DAPClient
 	private let projectRoot: URL
 	private var currentThreadID: Int?
+	/// Bumped per launch so a stale watchdog cannot fire on a newer session.
+	private var launchGeneration = 0
 
 	public init(projectRoot: URL, client: DAPClient = DAPClient()) {
 		self.projectRoot = projectRoot
@@ -165,6 +167,7 @@ public final class DebugSession {
 	/// Launches `dlv dap` and runs the given package under it.
 	public func launch(delveExecutable: String, package: String) async throws {
 		state = .starting
+		launchGeneration += 1
 
 		// Delve builds the program with `go build`, and that only works from
 		// inside the module. A Go repository commonly keeps go.mod in a
@@ -198,6 +201,8 @@ public final class DebugSession {
 			"program": programPath,
 			"cwd": buildDirectory.path,
 		])
+
+		startLaunchWatchdog()
 	}
 
 	/// The directory a program path names, or its parent when it is a file.
@@ -283,6 +288,32 @@ public final class DebugSession {
 			default:
 				break
 			}
+		}
+	}
+
+	/// Reports a launch that never produced an event.
+	public var onLaunchStalled: ((String) -> Void)?
+
+	/// Gives up on a launch that has gone quiet.
+	///
+	/// The usual cause is macOS's developer-tools authorization: the debuggee
+	/// is held until the dialog is answered, and if it is dismissed or never
+	/// appears the adapter simply never reports anything. Sitting on "not
+	/// running" for ever tells the user nothing about that.
+	private func startLaunchWatchdog(timeout: TimeInterval = 25) {
+		let generation = launchGeneration
+		DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { [weak self] in
+			guard let self, self.launchGeneration == generation else { return }
+			guard case .starting = self.state else { return }
+
+			self.state = .terminated
+			self.onLaunchStalled?("""
+			The debugger built the program but never started it.
+
+			macOS asks for permission the first time a process is debugged, and 			holds the program until that is answered. If developer mode is off, 			it asks every time. Enabling it once removes the prompt:
+
+			    sudo DevToolsSecurity -enable
+			""")
 		}
 	}
 

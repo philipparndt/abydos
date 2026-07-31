@@ -249,6 +249,13 @@ final class BottomPanel: NSView {
 		session.onOutput = { [weak self] text in
 			self?.debugOutput?(text)
 		}
+		session.onLaunchStalled = { [weak self] message in
+			self?.debugOutput?("\n" + message + "\n")
+			let alert = NSAlert()
+			alert.messageText = "The debugger did not start"
+			alert.informativeText = message
+			if let window = self?.window { alert.beginSheetModal(for: window) } else { alert.runModal() }
+		}
 
 		let panelSession = Session(title: "Debug", kind: .debug(pane))
 		sessions.append(panelSession)
