@@ -110,6 +110,15 @@ private final class SwitcherViewController: NSViewController {
 	override func loadView() {
 		buildRows()
 
+		// The cached scan is shown immediately and refreshed behind it, so the
+		// popover never waits on the file system to appear.
+		DiscoveryCache.refresh { [weak self] in
+			guard let self, self.isViewLoaded else { return }
+			self.buildRows()
+			self.tableView.reloadData()
+			self.updatePreferredSize()
+		}
+
 		let table = SwitcherTableView()
 		table.headerView = nil
 		table.backgroundColor = .clear
@@ -188,6 +197,51 @@ private final class SwitcherViewController: NSViewController {
 		)
 	}
 
+	/// Checkouts found by scanning, refreshed in the background.
+	///
+	/// Cached on the type rather than the popover: the popover is rebuilt on
+	/// every open, and a fresh scan each time would make the first frame wait on
+	/// the file system.
+	private enum DiscoveryCache {
+		private static var projects: [RecentProject] = []
+		private static var isScanning = false
+
+		static var current: [RecentProject] { projects }
+
+		/// Rescans unless one is already in flight.
+		static func refresh(completion: @escaping () -> Void) {
+			guard !isScanning else { return }
+			isScanning = true
+
+			let paths = Settings.shared.projectSearchPaths
+			let depth = Settings.shared.projectSearchDepth
+
+			DispatchQueue.global(qos: .userInitiated).async {
+				let roots = ProjectDiscovery.resolve(searchPaths: paths)
+				let found = ProjectDiscovery.scan(roots: roots, maxDepth: depth)
+
+				// Presented as recents so every downstream rule — filtering,
+				// badges, row layout — applies unchanged. The date is when the
+				// checkout was last worked on rather than last opened here, which
+				// is the ordering the list wants anyway.
+				let converted = found.map {
+					RecentProject(path: $0.url.path, lastOpened: $0.lastActivity)
+				}
+
+				DispatchQueue.main.async {
+					projects = converted
+					isScanning = false
+					completion()
+				}
+			}
+		}
+	}
+
+	/// Discovered checkouts that are not already listed above.
+	private func discoveredProjects(excluding paths: Set<String>) -> [RecentProject] {
+		DiscoveryCache.current.filter { !paths.contains($0.path) }
+	}
+
 	// MARK: - Rows
 
 	private func buildRows() {
@@ -238,6 +292,19 @@ private final class SwitcherViewController: NSViewController {
 				rows.append(.project(entry, isOpen: false))
 			}
 		}
+
+		// Everything else found on disk. A switcher that lists only what has
+		// been opened before cannot help with the case it exists for: opening a
+		// project for the first time.
+		var listed = openPaths
+		listed.formUnion(recents.map(\.path))
+		let discovered = discoveredProjects(excluding: listed)
+		if !discovered.isEmpty {
+			rows.append(.header("All Projects"))
+			for entry in discovered {
+				rows.append(.project(entry, isOpen: false))
+			}
+		}
 	}
 
 	/// Matches on both name and path, so "3d" finds everything under ~/dev/3d.
@@ -249,6 +316,10 @@ private final class SwitcherViewController: NSViewController {
 		for root in delegate?.openProjectRoots ?? [] where !candidates.contains(where: { $0.path == root.path }) {
 			candidates.append(RecentProject(path: root.path, lastOpened: Date()))
 		}
+
+		// Typing searches everything on disk, not just what has been opened.
+		let known = Set(candidates.map(\.path))
+		candidates.append(contentsOf: discoveredProjects(excluding: known))
 
 		rows = ProjectFilter.match(candidates, query: needle)
 			.map { .project($0, isOpen: openPaths.contains($0.path)) }

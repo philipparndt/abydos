@@ -1,0 +1,117 @@
+import Testing
+import Foundation
+@testable import IdeaiKit
+
+/// Scanning for checkouts, the way tmuxctl finds them.
+struct ProjectDiscoveryTests {
+	/// Builds a directory tree; entries ending in "/.git" become checkouts.
+	private func makeTree(_ paths: [String]) throws -> URL {
+		let root = URL(fileURLWithPath: NSTemporaryDirectory())
+			.appendingPathComponent("ideai-discovery-\(UUID().uuidString)")
+		for path in paths {
+			try FileManager.default.createDirectory(
+				at: root.appendingPathComponent(path),
+				withIntermediateDirectories: true
+			)
+		}
+		return root
+	}
+
+	@Test func findsCheckoutsBelowARoot() throws {
+		let root = try makeTree(["alpha/.git", "beta/.git", "notaproject/src"])
+		let found = ProjectDiscovery.scan(roots: [root], maxDepth: 3)
+		#expect(Set(found.map(\.name)) == ["alpha", "beta"])
+	}
+
+	@Test func findsCheckoutsNestedUnderPlainDirectories() throws {
+		let root = try makeTree(["group/nested/.git"])
+		let found = ProjectDiscovery.scan(roots: [root], maxDepth: 3)
+		#expect(found.map(\.name) == ["nested"])
+	}
+
+	/// A repository's subdirectories are not themselves projects, and a monorepo
+	/// with submodules would otherwise flood the list.
+	@Test func doesNotDescendIntoACheckout() throws {
+		let root = try makeTree(["outer/.git", "outer/inner/.git"])
+		let found = ProjectDiscovery.scan(roots: [root], maxDepth: 3)
+		#expect(found.map(\.name) == ["outer"])
+	}
+
+	@Test func stopsAtTheDepthLimit() throws {
+		let root = try makeTree(["a/b/c/deep/.git"])
+		#expect(ProjectDiscovery.scan(roots: [root], maxDepth: 2).isEmpty)
+		#expect(ProjectDiscovery.scan(roots: [root], maxDepth: 5).map(\.name) == ["deep"])
+	}
+
+	/// node_modules alone can hold hundreds of vendored checkouts.
+	@Test func skipsDependencyAndOutputDirectories() throws {
+		let root = try makeTree([
+			"app/node_modules/dep/.git",
+			"app/vendor/lib/.git",
+			"app/target/thing/.git",
+			"app/real/.git",
+		])
+		#expect(ProjectDiscovery.scan(roots: [root], maxDepth: 4).map(\.name) == ["real"])
+	}
+
+	@Test func skipsHiddenDirectories() throws {
+		let root = try makeTree([".cache/hidden/.git", "shown/.git"])
+		#expect(ProjectDiscovery.scan(roots: [root], maxDepth: 3).map(\.name) == ["shown"])
+	}
+
+	/// A worktree's .git is a file, and a worktree is a project like any other.
+	@Test func aGitFileCountsAsACheckout() throws {
+		let root = try makeTree(["worktree"])
+		let marker = root.appendingPathComponent("worktree/.git")
+		try "gitdir: /elsewhere".write(to: marker, atomically: true, encoding: .utf8)
+		#expect(ProjectDiscovery.isProjectRoot(root.appendingPathComponent("worktree")))
+		#expect(ProjectDiscovery.scan(roots: [root], maxDepth: 3).map(\.name) == ["worktree"])
+	}
+
+	@Test func mostRecentlyWorkedOnComesFirst() throws {
+		let root = try makeTree(["old/.git", "new/.git"])
+		let now = Date()
+		for (name, age) in [("old", 5000.0), ("new", 10.0)] {
+			try FileManager.default.setAttributes(
+				[.modificationDate: now.addingTimeInterval(-age)],
+				ofItemAtPath: root.appendingPathComponent("\(name)/.git").path
+			)
+		}
+		#expect(ProjectDiscovery.scan(roots: [root], maxDepth: 3).map(\.name) == ["new", "old"])
+	}
+
+	/// Unreadable metadata all reports the same distant past, so the tie-breaks
+	/// have to keep the order stable rather than arbitrary.
+	@Test func tiesFallBackToDepthThenPath() {
+		let base = Date.distantPast
+		let deep = DiscoveredProject(url: URL(fileURLWithPath: "/a/b/c/z"), lastActivity: base)
+		let shallow = DiscoveredProject(url: URL(fileURLWithPath: "/a/z"), lastActivity: base)
+		let sibling = DiscoveredProject(url: URL(fileURLWithPath: "/a/a"), lastActivity: base)
+
+		let sorted = ProjectDiscovery.sorted([deep, shallow, sibling])
+		#expect(sorted.map(\.url.path) == ["/a/a", "/a/z", "/a/b/c/z"])
+	}
+
+	/// Two roots can reach the same checkout; a duplicate row is worse than none.
+	@Test func theSameCheckoutIsListedOnce() throws {
+		let root = try makeTree(["only/.git"])
+		let found = ProjectDiscovery.scan(roots: [root, root], maxDepth: 3)
+		#expect(found.count == 1)
+	}
+
+	@Test func resolveExpandsTildeAndDropsWhatIsNotThere() throws {
+		let root = try makeTree(["here"])
+		let resolved = ProjectDiscovery.resolve(searchPaths: [
+			root.appendingPathComponent("here").path,
+			root.appendingPathComponent("missing").path,
+			"~",
+		])
+		#expect(resolved.count == 2)
+		#expect(!resolved.contains { $0.path.contains("missing") })
+		#expect(resolved.contains { $0.path == NSHomeDirectory() })
+	}
+
+	@Test func aMissingRootIsNotAnError() {
+		#expect(ProjectDiscovery.scan(roots: [URL(fileURLWithPath: "/no/such/place")], maxDepth: 3).isEmpty)
+	}
+}

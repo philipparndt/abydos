@@ -40,6 +40,8 @@ public final class Settings {
 		static let uiScale = "uiScale"
 		static let terminalFontName = "terminalFontName"
 		static let wordWrap = "wordWrap"
+		static let projectSearchPaths = "projectSearchPaths"
+		static let projectSearchDepth = "projectSearchDepth"
 	}
 
 	// MARK: - Zoom
@@ -148,6 +150,25 @@ public final class Settings {
 	public var excludedDirectories: [String] {
 		get { defaults.stringArray(forKey: Key.excludedDirectories) ?? [] }
 		set { set(newValue, Key.excludedDirectories) }
+	}
+
+	/// Directories scanned for checkouts the switcher can offer.
+	public var projectSearchPaths: [String] {
+		get { defaults.stringArray(forKey: Key.projectSearchPaths) ?? ProjectDiscovery.defaultSearchPaths }
+		set { set(newValue, Key.projectSearchPaths) }
+	}
+
+	/// How far below a search path a checkout may sit.
+	///
+	/// Depth is the cost control: each level multiplies the directories to stat,
+	/// and checkouts more than a few levels down are usually vendored copies
+	/// rather than things anyone opens.
+	public var projectSearchDepth: Int {
+		get {
+			let stored = defaults.integer(forKey: Key.projectSearchDepth)
+			return stored > 0 ? stored : 3
+		}
+		set { set(max(1, newValue), Key.projectSearchDepth) }
 	}
 
 	// MARK: - Change notification
