@@ -403,14 +403,13 @@ final class TerminalView: NSView, NSTextInputClient {
 		)
 
 		for cellIndex in start..<end {
-			guard let scalar = line.cells[cellIndex].character.unicodeScalars.first,
-			      PowerlineGlyph.isSeparator(scalar.value)
-			else { continue }
+			let scalar = line.cells[cellIndex].scalar
+			guard PowerlineGlyph.isSeparator(scalar) else { continue }
 
 			let cellX = (Self.horizontalInset + CGFloat(cellIndex) * cellWidth).rounded()
 			let cellEnd = (Self.horizontalInset + CGFloat(cellIndex + 1) * cellWidth).rounded()
 			PowerlineGlyph.draw(
-				scalar: scalar.value,
+				scalar: scalar,
 				in: NSRect(x: cellX, y: y.rounded(), width: cellEnd - cellX, height: cellHeight),
 				color: colour
 			)
@@ -477,8 +476,7 @@ final class TerminalView: NSView, NSTextInputClient {
 
 			// Powerline separators are drawn as geometry by drawSeparators, so a
 			// space stands in for them here to keep the segment's spacing intact.
-			if let scalar = cell.character.unicodeScalars.first,
-			   PowerlineGlyph.isSeparator(scalar.value) {
+			if PowerlineGlyph.isSeparator(cell.scalar) {
 				if segment.isEmpty { segmentStart = cellIndex }
 				segment.append(" ")
 				continue

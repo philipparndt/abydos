@@ -63,12 +63,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		// One pass first, so one-off font and colour setup is not counted.
 		terminal.cacheDisplay(in: bounds, to: rep)
 
-		let frames = 60
-		let start = Date()
-		for _ in 0..<frames { terminal.cacheDisplay(in: bounds, to: rep) }
-		let elapsed = -start.timeIntervalSinceNow
-
-		let perFrame = elapsed / Double(frames) * 1000
+		// Best of several rounds. A machine doing anything else moves the mean
+		// by a factor of two, which is more than most of the changes worth
+		// measuring; the least interrupted round is far steadier.
+		let frames = 30
+		var perFrame = Double.greatestFiniteMagnitude
+		for _ in 0..<8 {
+			let start = Date()
+			for _ in 0..<frames { terminal.cacheDisplay(in: bounds, to: rep) }
+			perFrame = min(perFrame, -start.timeIntervalSinceNow / Double(frames) * 1000)
+		}
 		print("BENCH render: \(String(format: "%.2f", perFrame)) ms/frame "
 			+ "(\(String(format: "%.0f", 1000 / perFrame)) fps ceiling) at \(Int(bounds.width))x\(Int(bounds.height))")
 
@@ -79,10 +83,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		guard let rowRep = terminal.bitmapImageRepForCachingDisplay(in: rowRect) else { return }
 		terminal.cacheDisplay(in: rowRect, to: rowRep)
 
-		let rowStart = Date()
-		for _ in 0..<frames { terminal.cacheDisplay(in: rowRect, to: rowRep) }
-		let rowElapsed = -rowStart.timeIntervalSinceNow
-		let perRow = rowElapsed / Double(frames) * 1000
+		var perRow = Double.greatestFiniteMagnitude
+		for _ in 0..<8 {
+			let rowStart = Date()
+			for _ in 0..<frames { terminal.cacheDisplay(in: rowRect, to: rowRep) }
+			perRow = min(perRow, -rowStart.timeIntervalSinceNow / Double(frames) * 1000)
+		}
 		print("BENCH render: \(String(format: "%.3f", perRow)) ms for one row "
 			+ "(\(String(format: "%.0f", perFrame / perRow))x cheaper than a full frame)")
 	}
