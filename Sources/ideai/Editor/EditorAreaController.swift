@@ -296,17 +296,32 @@ final class EditorAreaController: NSViewController {
 	/// neighbour, not the titlebar, so giving it the same inset leaves a band of
 	/// empty space between the two.
 	private func updateGroupInsets() {
-		guard splitHost.bounds.height > 0 else {
-			for group in groups { group.setTopInset(topInset) }
-			return
-		}
-
 		for group in groups {
-			let frame = splitHost.convert(group.view.bounds, from: group.view)
-			// Non-flipped coordinates, so the top edge is the maximum y.
-			let touchesTop = abs(frame.maxY - splitHost.bounds.maxY) < 1
-			group.setTopInset(touchesTop ? topInset : 0)
+			group.setTopInset(touchesTop(group) ? topInset : 0)
 		}
+	}
+
+	/// Whether the titlebar is above this pane, rather than another pane.
+	///
+	/// Read from the split tree rather than by comparing frames. A pane's frame
+	/// can still be the old one while its parent has already taken the new size
+	/// — which is what a zoom change does, since the tool strip's width changes
+	/// and everything to its right resizes. A pane that does touch the top then
+	/// measures as though it does not, loses its inset, and tucks its tab bar
+	/// under the titlebar, with no later layout pass to put it right.
+	private func touchesTop(_ group: EditorViewController) -> Bool {
+		var view: NSView = group.view
+		while let parent = view.superview {
+			// Only a stacked split puts a pane below another. Side by side, both
+			// panes reach the top.
+			if let split = parent as? NSSplitView, !split.isVertical,
+			   split.arrangedSubviews.first !== view {
+				return false
+			}
+			if parent === splitHost { return true }
+			view = parent
+		}
+		return true
 	}
 
 	override func viewDidLayout() {

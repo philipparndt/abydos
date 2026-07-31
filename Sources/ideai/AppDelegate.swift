@@ -169,6 +169,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if options.zoomCycle {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+				controller?.zoomIn(nil)
+			}
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
+				controller?.zoomOut(nil)
+			}
+		}
+
 		if options.reviewUncommitted {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
 				controller?.reviewUncommittedChanges(nil)

@@ -36,6 +36,8 @@ struct LaunchOptions {
 	var showChanges = false
 	/// Switch to changes and back, to verify the sidebar tabs.
 	var sidebarCycle = false
+	/// Zooms in and back out again, to check what a live zoom change disturbs.
+	var zoomCycle = false
 	/// Toggle a breakpoint on this 1-based line before capture.
 	var breakpointLine: Int?
 	/// Show a sidebar tool before capture: project | changes | branches | structure.
@@ -101,6 +103,7 @@ struct LaunchOptions {
 			case "--send-bytes": options.terminalBytes = next()
 			case "--preview-mode": options.previewMode = next()
 			case "--sidebar-cycle": options.sidebarCycle = true
+			case "--zoom-cycle":  options.zoomCycle = true
 			case "--breakpoint": options.breakpointLine = next().flatMap(Int.init)
 			case "--find":       options.findQuery = next()
 			case "--search":     options.searchQuery = next()
