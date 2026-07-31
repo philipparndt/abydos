@@ -767,16 +767,28 @@ final class EditorViewController: NSViewController {
 	/// the window shows through as a different shade from the code beside it.
 	/// The container settles that without GoSTL having to know about it.
 	private func makeModelView(for fileURL: URL) -> NSView {
-		let container = ColoredView(color: Theme.current.editorBackground)
-		let hosting = NSHostingView(rootView: ContentView(fileURL: fileURL))
-		hosting.translatesAutoresizingMaskIntoConstraints = false
+		let container = ModelContainerView(color: Theme.current.editorBackground)
+		// The viewer sits in a pane rather than a window of its own: it takes the
+		// editor's background so the split reads as one surface, and keeps its
+		// menu panel folded away, since the panel is wider than the pane often is.
+		let hosting = NSHostingView(rootView: ContentView(
+			fileURL: fileURL,
+			embedding: ContentView.EmbeddingOptions(
+				backgroundColor: Theme.current.editorBackground,
+				showsMenuPanel: false
+			)
+		))
+
+		// Kept out of Auto Layout on purpose. NSHostingView publishes the
+		// SwiftUI view's size as constraints and invalidates them from inside
+		// the window's own constraint pass; splitting the editor re-parents the
+		// view during exactly that pass, and AppKit raises rather than
+		// re-entering it. The container sizes it directly instead, which is how
+		// the rest of the editor lays out anyway.
+		hosting.sizingOptions = []
+		hosting.translatesAutoresizingMaskIntoConstraints = true
+		hosting.frame = container.bounds
 		container.addSubview(hosting)
-		NSLayoutConstraint.activate([
-			hosting.topAnchor.constraint(equalTo: container.topAnchor),
-			hosting.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-			hosting.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-			hosting.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-		])
 		return container
 	}
 
@@ -1209,5 +1221,17 @@ final class EditorStatusView: NSView {
 			attributed.draw(at: origin)
 			x -= Theme.current.scaled(16)
 		}
+	}
+}
+
+/// Holds the 3D preview, sized by hand.
+///
+/// The preview is a SwiftUI view, and letting it size itself through Auto
+/// Layout puts it in the window's constraint pass — where re-parenting it, as
+/// splitting the editor does, raises.
+private final class ModelContainerView: ColoredView {
+	override func layout() {
+		super.layout()
+		for subview in subviews { subview.frame = bounds }
 	}
 }
