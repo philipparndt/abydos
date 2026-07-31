@@ -6,27 +6,25 @@ source and inside the built `.app`.
 
 ## Bundled font
 
-**Hack Nerd Font Mono** — `Resources/Fonts/`, licence in
-`Resources/Fonts/LICENSE-Hack.md`.
-
-Hack is a composite work with three licences, all permissive:
+**JetBrains Mono Nerd Font Mono** — `Resources/Fonts/`, licence in
+`Resources/Fonts/LICENSE-JetBrainsMono-OFL.txt`.
 
 | Component | Licence | Obligation |
 |---|---|---|
-| Hack | MIT (© 2018 Source Foundry Authors) | Include the notice |
-| Bitstream Vera Sans Mono | Bitstream Vera License (© 2003 Bitstream Inc.) | Include the notice; do not use the reserved names "Bitstream" or "Vera" in a derived font name |
-| DejaVu | Public domain | None |
+| JetBrains Mono | SIL Open Font License 1.1 (© 2020 The JetBrains Mono Project Authors) | Include the licence; do not sell the font on its own |
+| Nerd Fonts glyph patch | MIT | Include the notice |
 
-Two conditions worth stating explicitly, since both are satisfied here:
+The OFL permits bundling and redistribution inside a larger work, commercial or
+not. Two points worth stating, since both are satisfied here:
 
-- The Bitstream Vera License permits selling the font **as part of a larger
-  software package** but not on its own. Bundling it inside an application is
-  exactly the permitted case.
-- The reserved font names are only restricted for *derived fonts*. The font is
-  shipped unmodified under its own name, so nothing is renamed.
+- The font is **not** sold on its own; it ships as part of an application, which
+  is the permitted case.
+- JetBrains Mono declares **no Reserved Font Name**. The name is only restricted
+  for modified versions, and even that restriction is inactive here — the font
+  is redistributed unmodified under its own name.
 
-The Nerd Fonts patch adds glyphs and is itself MIT-licensed; the patched output
-keeps the upstream licences above.
+Using it does not require any relationship with JetBrains, and the OFL grants
+this independently of the fact that ideai is an alternative to their IDE.
 
 ## Parsing
 

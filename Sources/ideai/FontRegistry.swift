@@ -11,13 +11,12 @@ import CoreText
 /// Registration is process-scoped, so nothing is installed system-wide and
 /// nothing is left behind when the app quits.
 ///
-/// Hack was chosen for three reasons: its licence (MIT, plus Bitstream Vera and
-/// public-domain DejaVu components) clearly permits redistribution; it comes
-/// from a neutral source rather than from a vendor whose IDE this competes
-/// with; and it is drawn for source code with no ligatures.
+/// JetBrains Mono is SIL OFL 1.1, which permits bundling and redistribution,
+/// and declares no Reserved Font Name — so it ships unmodified under its own
+/// name with no further obligation beyond including the licence.
 enum FontRegistry {
 	/// Family name of the bundled font, once registered.
-	static let bundledMonospaceFamily = "Hack Nerd Font Mono"
+	static let bundledMonospaceFamily = "JetBrainsMono NFM"
 
 	private static var didRegister = false
 

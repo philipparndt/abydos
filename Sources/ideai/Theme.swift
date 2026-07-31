@@ -108,7 +108,7 @@ struct Theme {
 			FontRegistry.bundledMonospaceFamily,
 			"MesloLGS Nerd Font", "MesloLGS NF",
 			"RobotoMono Nerd Font",
-			"Hack Nerd Font", "JetBrainsMono Nerd Font", "FiraCode Nerd Font",
+			"JetBrainsMono Nerd Font", "Hack Nerd Font", "FiraCode Nerd Font",
 			"Meslo LG M for Powerline", "Meslo LG S for Powerline",
 			"DejaVu Sans Mono for Powerline",
 			"Menlo",
