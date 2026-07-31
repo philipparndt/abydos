@@ -23,6 +23,11 @@ struct PerformanceTests {
 		return out
 	}
 
+	/// Prints a derived figure alongside the timings.
+	static func report(_ label: String, _ value: String) {
+		print(String(format: "PERF %-38s %8s", (label as NSString).utf8String!, (value as NSString).utf8String!))
+	}
+
 	static func time(_ label: String, _ body: () -> Void) -> TimeInterval {
 		let start = DispatchTime.now().uptimeNanoseconds
 		body()
@@ -48,20 +53,34 @@ struct PerformanceTests {
 	// MARK: - Random access
 
 	@Test func lineLookupsAreLogarithmic() {
-		let rope = Rope(Self.makeLargeSource(lines: 200_000))
-
-		// 10k random line lookups. A linear implementation would take minutes.
-		var seed: UInt64 = 0x9E3779B97F4A7C15
-		var checksum = 0
-		let elapsed = Self.time("10k random line lookups") {
-			for _ in 0..<10_000 {
-				seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17
-				let line = Int(seed % UInt64(rope.lineCount))
-				checksum &+= rope.byteOffset(ofLine: line)
+		// Compared between two sizes rather than against a wall-clock limit.
+		// The claim is that lookup cost grows with the logarithm of the file,
+		// and a fixed threshold tests the machine's current load instead — this
+		// one failed under a parallel test run while passing on its own.
+		func lookupTime(lines: Int, label: String) -> TimeInterval {
+			let rope = Rope(Self.makeLargeSource(lines: lines))
+			var seed: UInt64 = 0x9E3779B97F4A7C15
+			var checksum = 0
+			let elapsed = Self.time(label) {
+				for _ in 0..<10_000 {
+					seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17
+					let line = Int(seed % UInt64(rope.lineCount))
+					checksum &+= rope.byteOffset(ofLine: line)
+				}
 			}
+			#expect(checksum != 0)
+			return elapsed
 		}
-		#expect(checksum != 0)
-		#expect(elapsed < 2.0, "line lookups took \(elapsed)s")
+
+		let small = lookupTime(lines: 2_000, label: "10k lookups (2k lines)")
+		let large = lookupTime(lines: 200_000, label: "10k lookups (200k lines)")
+
+		// A hundredfold more lines. Logarithmic growth is roughly 1.7x; linear
+		// would be a hundredfold. Anything under ten is comfortably not linear,
+		// and leaves room for the noise a shared machine adds.
+		let ratio = large / max(small, 0.000_001)
+		Self.report("lookup cost ratio (100x larger file)", "\(String(format: "%.1f", ratio))x")
+		#expect(ratio < 10, "lookups scaled \(ratio)x for a 100x larger file")
 	}
 
 	@Test func editsAreIndependentOfFileSize() {
