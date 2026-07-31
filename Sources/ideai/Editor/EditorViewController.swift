@@ -28,6 +28,10 @@ final class EditorViewController: NSViewController {
 		/// accumulating. Exactly one may exist at a time.
 		var isPreview: Bool
 
+		/// A diff tab shows a comparison rather than the file, so it is a
+		/// separate tab from the file itself and says so in its subtitle.
+		var isDiff = false
+
 		/// The source view, kept so the markdown preview can toggle back to it.
 		var sourceView: NSView?
 		var isShowingMarkdownPreview = false
@@ -226,6 +230,52 @@ final class EditorViewController: NSViewController {
 	/// Index of a tab by identity, for a drag that started here.
 	func indexOfTab(withPath path: String) -> Int? {
 		tabs.firstIndex { $0.url.path == path }
+	}
+
+	/// Shows a unified diff for a path, reusing the tab if it is already open.
+	///
+	/// A tab of its own rather than an overlay on the file: the diff and the
+	/// file are different things to look at, and staging usually means moving
+	/// between several of them.
+	func openDiff(for change: GitChange, root: URL, text: String) {
+		let url = root.appendingPathComponent(change.path)
+
+		if let index = tabs.firstIndex(where: { $0.isDiff && $0.url.path == url.path }) {
+			let existing = (tabs[index].contentView as? NSScrollView)?.documentView as? DiffView
+			existing?.setDiff(text, staged: change.isStaged)
+			activeIndex = nil
+			activate(index: index, focusEditor: false)
+			return
+		}
+
+		let view = DiffView()
+		view.setDiff(text, staged: change.isStaged)
+
+		let scrollView = NSScrollView()
+		scrollView.documentView = view
+		scrollView.hasVerticalScroller = true
+		scrollView.drawsBackground = true
+		scrollView.backgroundColor = Theme.current.editorBackground
+		view.translatesAutoresizingMaskIntoConstraints = false
+		NSLayoutConstraint.activate([
+			view.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
+			view.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
+			view.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
+		])
+
+		let tab = Tab(url: url, document: nil, codeView: nil, contentView: scrollView, isPreview: true)
+		tab.isDiff = true
+
+		// Replaces the outgoing provisional tab, so clicking down a list of
+		// changed files does not leave a tab behind for every one.
+		if let existing = tabs.firstIndex(where: { $0.isPreview }) {
+			tabs[existing].contentView.removeFromSuperview()
+			tabs.remove(at: existing)
+		}
+
+		tabs.append(tab)
+		activeIndex = nil
+		activate(index: tabs.count - 1, focusEditor: false)
 	}
 
 	/// Moves a tab within this group, for a reorder drop.
@@ -675,7 +725,7 @@ final class EditorViewController: NSViewController {
 				url: tab.url,
 				isDirty: tab.isDirty,
 				isPreview: tab.isPreview,
-				subtitle: relativeDirectory(for: tab.url)
+				subtitle: tab.isDiff ? "diff" : relativeDirectory(for: tab.url)
 			)
 		}
 		tabBar.setItems(items, activeIndex: activeIndex)

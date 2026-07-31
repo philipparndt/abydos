@@ -13,10 +13,12 @@ final class ToolWindowBar: NSView {
 	/// Asked to review; the strip presents the scope choice itself.
 	var onReviewBranch: (() -> Void)?
 	var onReviewUncommitted: (() -> Void)?
+	var onToggleChanges: (() -> Void)?
 
 	private var projectButton: StripButton!
 	private var terminalButton: StripButton!
 	private var reviewButton: StripButton!
+	private var commitButton: StripButton!
 
 	override init(frame frameRect: NSRect) {
 		super.init(frame: frameRect)
@@ -28,6 +30,12 @@ final class ToolWindowBar: NSView {
 	required init?(coder: NSCoder) { fatalError("not used") }
 
 	override var isFlipped: Bool { true }
+
+	/// Highlights whichever sidebar tool window is showing.
+	func setSidebarSelection(showingChanges: Bool) {
+		projectButton.isSelected = !showingChanges
+		commitButton.isSelected = showingChanges
+	}
 
 	private func showReviewMenu() {
 		let menu = NSMenu()
@@ -60,11 +68,12 @@ final class ToolWindowBar: NSView {
 		projectButton.isSelected = true
 		projectButton.onClick = { [weak self] in self?.onToggleNavigator?() }
 
-		let commit = StripButton(symbol: "arrow.up.circle", tooltip: "Commit — not implemented", enabled: false)
+		commitButton = StripButton(symbol: "arrow.up.circle", tooltip: "Commit (⌘2)", enabled: true)
+		commitButton.onClick = { [weak self] in self?.onToggleChanges?() }
 		let branches = StripButton(symbol: "arrow.trianglehead.branch", tooltip: "Git — not implemented", enabled: false)
 		let structure = StripButton(symbol: "list.bullet.indent", tooltip: "Structure — not implemented", enabled: false)
 
-		let stack = NSStackView(views: [projectButton, commit, branches, structure])
+		let stack = NSStackView(views: [projectButton, commitButton, branches, structure])
 		stack.orientation = .vertical
 		stack.spacing = 4
 		stack.alignment = .centerX

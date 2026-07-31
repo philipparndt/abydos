@@ -32,6 +32,8 @@ struct LaunchOptions {
 	var startReview = false
 	/// Start a review of the working tree instead of the branch.
 	var reviewUncommitted = false
+	/// Show the staging view in the sidebar before capture.
+	var showChanges = false
 	/// Query for the in-file find bar.
 	var findQuery: String?
 	/// Query for project-wide search.
@@ -72,6 +74,7 @@ struct LaunchOptions {
 			case "--run":        options.terminalInput = next()
 			case "--review":     options.startReview = true
 			case "--review-uncommitted": options.reviewUncommitted = true
+			case "--changes":    options.showChanges = true
 			case "--find":       options.findQuery = next()
 			case "--search":     options.searchQuery = next()
 			case "--wrap":       options.wordWrap = true

@@ -95,6 +95,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if options.showChanges {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+				controller?.toggleChanges(nil)
+			}
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
+				controller?.selectFirstChangeForTesting()
+			}
+		}
+
 		if options.reviewUncommitted {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
 				controller?.reviewUncommittedChanges(nil)

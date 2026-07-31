@@ -330,6 +330,10 @@ final class EditorAreaController: NSViewController {
 		activeGroup.open(fileURL: fileURL, focusEditor: focusEditor, preview: preview)
 	}
 
+	func openDiff(for change: GitChange, root: URL, text: String) {
+		activeGroup.openDiff(for: change, root: root, text: text)
+	}
+
 	func open(fileURL: URL, atLine line: Int) {
 		activeGroup.open(fileURL: fileURL, atLine: line)
 	}

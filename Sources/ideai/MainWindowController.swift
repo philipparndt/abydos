@@ -17,6 +17,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 	private var verticalSplitView: NSSplitView!
 	private var panelHeight: CGFloat = 260
 	private var navigatorContainer: NSView!
+	private var changesPane: ChangesPane?
+	private var changesPaneTop: NSLayoutConstraint?
 	private var projectPill: ProjectPillButton!
 	private var branchPill: BranchPillButton!
 	private var titlebarContainer: NSView?
@@ -68,6 +70,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		toolStrip.onToggleTerminal = { [weak self] in self?.toggleTerminal(nil) }
 		toolStrip.onReviewBranch = { [weak self] in self?.reviewBranch(nil) }
 		toolStrip.onReviewUncommitted = { [weak self] in self?.reviewUncommittedChanges(nil) }
+		toolStrip.onToggleChanges = { [weak self] in self?.toggleChanges(nil) }
 
 		navigatorContainer = ColoredView(color: Theme.current.sidebarBackground)
 		navigatorContainer.addSubview(navigator.view)
@@ -133,6 +136,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		navigator.onOpenTerminal = { [weak self] directory in
 			self?.openTerminal(in: directory)
 		}
+		navigator.onFilesChanged = { [weak self] in
+			self?.changesPane?.refresh()
+		}
 		// Switching tabs moves the tree's selection to match.
 		editor.onActiveFileChanged = { [weak self] url in
 			guard let url else { return }
@@ -192,6 +198,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		let inset = max(0, contentView.bounds.height - layoutRect.height - layoutRect.origin.y)
 
 		navigator.setTopInset(inset)
+		changesPaneTop?.constant = inset
 		editor.setTopInset(inset)
 		toolStrip.setTopInset(inset)
 	}
@@ -598,6 +605,85 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
 	func previewDropZone(_ zone: EditorTabDrag.Zone) {
 		editor.previewDropZoneForTesting(zone)
+	}
+
+	/// Swaps the sidebar between the file tree and the staging view.
+	///
+	/// They share the sidebar rather than stacking, the way IDEA's tool windows
+	/// do: both want the full height, and staging is something you do in a
+	/// session of its own rather than while browsing.
+	@objc func toggleChanges(_ sender: Any?) {
+		if changesPane != nil {
+			showNavigatorInSidebar()
+		} else {
+			showChangesInSidebar()
+		}
+	}
+
+	private func showChangesInSidebar() {
+		guard let project, project.git != nil else { return }
+		// The sidebar has to be open for a sidebar tool window to be seen.
+		if navigatorContainer.isHidden { toggleNavigator(nil) }
+
+		let pane = ChangesPane(root: project.root)
+		// The titlebar is drawn over the content view, so the sidebar's own
+		// content is inset by the same amount the navigator is.
+		let inset = navigator.view.frame.minY
+		pane.onSelectChange = { [weak self] change in
+			self?.showDiff(for: change)
+		}
+		pane.onWorkingCopyChanged = { [weak self] in
+			self?.navigator.refreshGitStatus()
+		}
+
+		navigator.view.removeFromSuperview()
+		pane.translatesAutoresizingMaskIntoConstraints = false
+		navigatorContainer.addSubview(pane)
+		let paneTop = pane.topAnchor.constraint(equalTo: navigatorContainer.topAnchor, constant: inset)
+		NSLayoutConstraint.activate([
+			paneTop,
+			pane.bottomAnchor.constraint(equalTo: navigatorContainer.bottomAnchor),
+			pane.leadingAnchor.constraint(equalTo: navigatorContainer.leadingAnchor),
+			pane.trailingAnchor.constraint(equalTo: navigatorContainer.trailingAnchor),
+		])
+
+		changesPane = pane
+		changesPaneTop = paneTop
+		toolStrip.setSidebarSelection(showingChanges: true)
+		updateTopInsets()
+	}
+
+	private func showNavigatorInSidebar() {
+		changesPane?.removeFromSuperview()
+		changesPane = nil
+		changesPaneTop = nil
+
+		navigator.view.translatesAutoresizingMaskIntoConstraints = false
+		navigatorContainer.addSubview(navigator.view)
+		NSLayoutConstraint.activate([
+			navigator.view.topAnchor.constraint(equalTo: navigatorContainer.topAnchor),
+			navigator.view.bottomAnchor.constraint(equalTo: navigatorContainer.bottomAnchor),
+			navigator.view.leadingAnchor.constraint(equalTo: navigatorContainer.leadingAnchor),
+			navigator.view.trailingAnchor.constraint(equalTo: navigatorContainer.trailingAnchor),
+		])
+		toolStrip.setSidebarSelection(showingChanges: false)
+	}
+
+	/// Opens the diff for a change as an editor tab.
+	private func showDiff(for change: GitChange) {
+		guard let project else { return }
+		Task { @MainActor in
+			let text = await GitWorkingCopy.diff(
+				for: change.path,
+				staged: change.isStaged,
+				in: project.root
+			)
+			editor.openDiff(for: change, root: project.root, text: text)
+		}
+	}
+
+	func selectFirstChangeForTesting() {
+		changesPane?.selectFirstChangeForTesting()
 	}
 
 	@objc func toggleWordWrap(_ sender: Any?) {

@@ -9,6 +9,8 @@ final class ProjectNavigatorViewController: NSViewController {
 	var onSelectFile: ((URL, _ focusEditor: Bool) -> Void)?
 	/// Asked to open a terminal in the given directory.
 	var onOpenTerminal: ((URL) -> Void)?
+	/// Something under the project root changed on disk.
+	var onFilesChanged: (() -> Void)?
 
 	/// True while the selection is being driven by the keyboard, so arrowing
 	/// through a directory does not open every file it passes over — matching
@@ -204,6 +206,11 @@ final class ProjectNavigatorViewController: NSViewController {
 	}
 
 	private func handleFilesystemChange(_ directories: [URL]) {
+		// Reported before the early return below: the staging view cares about
+		// any edit, not only ones in a directory the tree happens to have
+		// expanded.
+		onFilesChanged?()
+
 		guard let rootNode else { return }
 
 		// Only re-read directories the user has actually expanded.
