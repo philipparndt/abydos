@@ -128,6 +128,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		navigator.onSelectFile = { [weak self] url, focusEditor in
 			self?.editor.open(fileURL: url, focusEditor: focusEditor, preview: !focusEditor)
 		}
+		navigator.onOpenTerminal = { [weak self] directory in
+			self?.openTerminal(in: directory)
+		}
 		// Switching tabs moves the tree's selection to match.
 		editor.onActiveFileChanged = { [weak self] url in
 			guard let url else { return }
@@ -311,6 +314,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 			setPanelVisible(true)
 			bottomPanel.showTerminal()
 		}
+	}
+
+	/// Opens a shell in a specific directory, from the navigator's context menu.
+	func openTerminal(in directory: URL) {
+		setPanelVisible(true)
+		bottomPanel.newTerminal(in: directory)
 	}
 
 	/// Writes text into the active terminal, as though typed.

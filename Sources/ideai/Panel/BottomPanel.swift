@@ -131,10 +131,24 @@ final class BottomPanel: NSView {
 		return sessions[activeIndex ?? 0].terminal
 	}
 
+	/// Opens a shell rooted at a specific directory, for "Open Terminal Here".
+	///
+	/// Always a new session: the point is the directory, and reusing a shell that
+	/// is already somewhere else — possibly mid-command — would not honour it.
+	@discardableResult
+	func newTerminal(in directory: URL) -> TerminalPane? {
+		newTerminal(rootedAt: directory, title: directory.lastPathComponent)
+	}
+
 	@discardableResult
 	func newTerminal() -> TerminalPane? {
-		let pane = TerminalPane(workingDirectory: workingDirectory)
-		let session = Session(title: "Local", kind: .terminal(pane))
+		newTerminal(rootedAt: workingDirectory, title: "Local")
+	}
+
+	@discardableResult
+	private func newTerminal(rootedAt directory: URL?, title: String) -> TerminalPane? {
+		let pane = TerminalPane(workingDirectory: directory)
+		let session = Session(title: title, kind: .terminal(pane))
 		wire(session)
 
 		sessions.append(session)

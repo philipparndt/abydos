@@ -7,6 +7,8 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// `focusEditor` is true when the user committed to the file (Return or a
 	/// double-click) rather than merely highlighting it.
 	var onSelectFile: ((URL, _ focusEditor: Bool) -> Void)?
+	/// Asked to open a terminal in the given directory.
+	var onOpenTerminal: ((URL) -> Void)?
 
 	/// True while the selection is being driven by the keyboard, so arrowing
 	/// through a directory does not open every file it passes over — matching
@@ -338,6 +340,7 @@ final class ProjectNavigatorViewController: NSViewController {
 		menu.addItem(item("Open", #selector(contextOpen)))
 		menu.addItem(item("Open Externally", #selector(contextOpenExternally)))
 		menu.addItem(.separator())
+		menu.addItem(item("Open Terminal Here", #selector(contextOpenTerminal)))
 		menu.addItem(item("Reveal in Finder", #selector(contextRevealInFinder)))
 		menu.addItem(.separator())
 		menu.addItem(item("Copy Path", #selector(contextCopyPath)))
@@ -368,6 +371,14 @@ final class ProjectNavigatorViewController: NSViewController {
 	@objc private func contextOpenExternally() {
 		guard let node = contextNode else { return }
 		NSWorkspace.shared.open(node.url)
+	}
+
+	@objc private func contextOpenTerminal() {
+		guard let node = contextNode else { return }
+		// A file's directory is what you want to be in; the file itself is not a
+		// place a shell can start.
+		let directory = node.isDirectory ? node.url : node.url.deletingLastPathComponent()
+		onOpenTerminal?(directory)
 	}
 
 	@objc private func contextRevealInFinder() {
