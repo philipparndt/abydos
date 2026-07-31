@@ -66,6 +66,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
 		toolStrip.onToggleNavigator = { [weak self] in self?.toggleNavigator(nil) }
 		toolStrip.onToggleTerminal = { [weak self] in self?.toggleTerminal(nil) }
+		toolStrip.onReviewBranch = { [weak self] in self?.reviewBranch(nil) }
+		toolStrip.onReviewUncommitted = { [weak self] in self?.reviewUncommittedChanges(nil) }
 
 		navigatorContainer = ColoredView(color: Theme.current.sidebarBackground)
 		navigatorContainer.addSubview(navigator.view)

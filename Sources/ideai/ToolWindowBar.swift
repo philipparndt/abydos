@@ -10,9 +10,13 @@ final class ToolWindowBar: NSView {
 
 	var onToggleNavigator: (() -> Void)?
 	var onToggleTerminal: (() -> Void)?
+	/// Asked to review; the strip presents the scope choice itself.
+	var onReviewBranch: (() -> Void)?
+	var onReviewUncommitted: (() -> Void)?
 
 	private var projectButton: StripButton!
 	private var terminalButton: StripButton!
+	private var reviewButton: StripButton!
 
 	override init(frame frameRect: NSRect) {
 		super.init(frame: frameRect)
@@ -24,6 +28,32 @@ final class ToolWindowBar: NSView {
 	required init?(coder: NSCoder) { fatalError("not used") }
 
 	override var isFlipped: Bool { true }
+
+	private func showReviewMenu() {
+		let menu = NSMenu()
+
+		let branch = NSMenuItem(title: "Review Branch…", action: #selector(reviewBranchClicked), keyEquivalent: "r")
+		branch.keyEquivalentModifierMask = [.command, .shift]
+		branch.target = self
+		menu.addItem(branch)
+
+		let uncommitted = NSMenuItem(
+			title: "Review Uncommitted Changes…",
+			action: #selector(reviewUncommittedClicked),
+			keyEquivalent: "u"
+		)
+		uncommitted.keyEquivalentModifierMask = [.command, .shift]
+		uncommitted.target = self
+		menu.addItem(uncommitted)
+
+		// Beside the button rather than under the pointer, so the strip stays
+		// visible and the menu reads as belonging to it.
+		let origin = NSPoint(x: reviewButton.bounds.maxX + Theme.current.scaled(4), y: 0)
+		menu.popUp(positioning: nil, at: origin, in: reviewButton)
+	}
+
+	@objc private func reviewBranchClicked() { onReviewBranch?() }
+	@objc private func reviewUncommittedClicked() { onReviewUncommitted?() }
 
 	private func build() {
 		projectButton = StripButton(symbol: "folder", tooltip: "Project (⌘1)", enabled: true)
@@ -46,7 +76,14 @@ final class ToolWindowBar: NSView {
 		terminalButton = StripButton(symbol: "terminal", tooltip: "Terminal (⌘J)", enabled: true)
 		terminalButton.onClick = { [weak self] in self?.onToggleTerminal?() }
 
-		let bottomStack = NSStackView(views: [terminalButton])
+		// The agent review is the reason this app exists, so it gets a button
+		// rather than living only in a menu. Two scopes behind one control: they
+		// are the same action asked of different code, and a strip this narrow
+		// cannot carry two icons that would be told apart at a glance.
+		reviewButton = StripButton(symbol: "checkmark.seal", tooltip: "Review (⇧⌘R)", enabled: true)
+		reviewButton.onClick = { [weak self] in self?.showReviewMenu() }
+
+		let bottomStack = NSStackView(views: [reviewButton, terminalButton])
 		bottomStack.orientation = .vertical
 		bottomStack.spacing = 4
 		bottomStack.alignment = .centerX
