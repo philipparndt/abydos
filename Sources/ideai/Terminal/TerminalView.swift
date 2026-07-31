@@ -483,6 +483,25 @@ final class TerminalView: NSView, NSTextInputClient {
 
 	// MARK: - Input
 
+	/// Claims the ⌘ movement keys before the menu sees them.
+	///
+	/// A ⌘ combination is offered around as a key equivalent first, and one
+	/// that nothing claims never arrives as a keyDown. Only the three the
+	/// terminal has a meaning for are taken — ⌘C, ⌘V and the rest stay with the
+	/// menu, where they belong.
+	override func performKeyEquivalent(with event: NSEvent) -> Bool {
+		guard window?.firstResponder === self,
+		      event.modifierFlags.contains(.command),
+		      let key = TerminalKeys.Key(rawValue: event.keyCode),
+		      let sequence = TerminalKeys.editingSequence(for: key, option: false, command: true)
+		else { return super.performKeyEquivalent(with: event) }
+
+		isPinnedToBottom = true
+		pty.write(sequence)
+		scrollToBottom()
+		return true
+	}
+
 	override func keyDown(with event: NSEvent) {
 		guard let bytes = encode(event: event) else { return }
 		// Typing always jumps back to the prompt, as every terminal does.
@@ -500,6 +519,16 @@ final class TerminalView: NSView, NSTextInputClient {
 		// how ⌥Return came to send a bare carriage return, which submits the
 		// line instead of breaking it.
 		if let key = TerminalKeys.Key(rawValue: event.keyCode) {
+			// Modified navigation first: ⌥← is a word movement, not an arrow
+			// with a prefix, and ⌘← is the start of the line.
+			if let editing = TerminalKeys.editingSequence(
+				for: key,
+				option: flags.contains(.option),
+				command: flags.contains(.command)
+			) {
+				return editing
+			}
+
 			let base: String?
 			switch key {
 			case .upArrow:    base = emulator.encodeArrow(.up)

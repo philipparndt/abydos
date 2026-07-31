@@ -1141,3 +1141,53 @@ struct TerminalKeyEncodingTests {
 		#expect(TerminalKeys.Key(rawValue: 99) == nil)
 	}
 }
+
+/// Moving around a line, the way macOS users expect and every line editor
+/// understands.
+struct TerminalNavigationKeyTests {
+	private func sequence(_ key: TerminalKeys.Key, option: Bool = false, command: Bool = false) -> String? {
+		TerminalKeys.editingSequence(for: key, option: option, command: command)
+	}
+
+	/// ⌥← / ⌥→ move by word. Sent as meta-b and meta-f rather than a CSI with a
+	/// modifier parameter: a program has to opt into parsing the latter, while
+	/// every line editor has understood the former for decades.
+	@Test func optionArrowsMoveByWord() {
+		#expect(sequence(.leftArrow, option: true) == "\u{1B}b")
+		#expect(sequence(.rightArrow, option: true) == "\u{1B}f")
+	}
+
+	/// ⌘← / ⌘→ go to the ends of the line, matching every native text field.
+	@Test func commandArrowsGoToTheLineEnds() {
+		#expect(sequence(.leftArrow, command: true) == "\u{01}")
+		#expect(sequence(.rightArrow, command: true) == "\u{05}")
+	}
+
+	@Test func commandBackspaceClearsToTheStartOfTheLine() {
+		#expect(sequence(.backspace, command: true) == "\u{15}")
+	}
+
+	/// ⌥⌫ stays with the meta rule, where it becomes ESC DEL — one word, not
+	/// the whole line.
+	@Test func optionBackspaceIsLeftToTheMetaRule() {
+		#expect(sequence(.backspace, option: true) == nil)
+		#expect(TerminalKeys.takesMetaPrefix(.backspace))
+	}
+
+	/// Command wins when both are held, since it is the coarser movement.
+	@Test func commandTakesPrecedenceOverOption() {
+		#expect(sequence(.leftArrow, option: true, command: true) == "\u{01}")
+	}
+
+	/// An unmodified arrow still goes through the emulator, which knows the
+	/// cursor-key mode the program selected.
+	@Test func unmodifiedArrowsHaveNoEditingSequence() {
+		#expect(sequence(.leftArrow) == nil)
+		#expect(sequence(.rightArrow) == nil)
+	}
+
+	@Test func verticalArrowsAreNotRemapped() {
+		#expect(sequence(.upArrow, option: true) == nil)
+		#expect(sequence(.downArrow, command: true) == nil)
+	}
+}

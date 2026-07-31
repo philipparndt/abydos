@@ -48,6 +48,8 @@ struct LaunchOptions {
 	var newFolder: String?
 	/// Rewrite the open file externally after this many seconds.
 	var externalEdit: Double?
+	/// Raw bytes to send to the terminal, for verifying key encodings.
+	var terminalBytes: String?
 	/// Query for the in-file find bar.
 	var findQuery: String?
 	/// Query for project-wide search.
@@ -94,6 +96,7 @@ struct LaunchOptions {
 			case "--debug-line": options.debugLine = next().flatMap(Int.init)
 			case "--new-folder": options.newFolder = next()
 			case "--external-edit": options.externalEdit = next().flatMap(Double.init)
+			case "--send-bytes": options.terminalBytes = next()
 			case "--sidebar-cycle": options.sidebarCycle = true
 			case "--breakpoint": options.breakpointLine = next().flatMap(Int.init)
 			case "--find":       options.findQuery = next()

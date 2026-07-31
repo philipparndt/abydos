@@ -173,6 +173,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			controller?.reviewBranch(nil)
 		}
 
+		if let raw = options.terminalBytes {
+			// \e and \x01-style escapes, so a sequence can be given on the
+			// command line.
+			let decoded = raw
+				.replacingOccurrences(of: "\\e", with: "\u{1B}")
+				.replacingOccurrences(of: "\\x01", with: "\u{01}")
+				.replacingOccurrences(of: "\\x05", with: "\u{05}")
+				.replacingOccurrences(of: "\\r", with: "\r")
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+				controller?.sendToTerminal(decoded)
+			}
+		}
+
 		if options.openTerminal {
 			controller?.toggleTerminal(nil)
 			if let input = options.terminalInput {

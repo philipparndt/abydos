@@ -64,6 +64,36 @@ public enum TerminalKeys {
 		}
 	}
 
+	/// What a modified navigation key sends, or nil when the key has no special
+	/// meaning with that modifier.
+	///
+	/// These are the readline movements, which is what a shell and a terminal
+	/// UI both understand — not the CSI forms with a modifier parameter. A
+	/// program has to opt into parsing `ESC [ 1 ; 3 D`, while `ESC b` has meant
+	/// "back one word" since long before any of them, and every line editor
+	/// handles it.
+	///
+	/// The mapping is the one macOS users already have: ⌥ moves by word, ⌘ goes
+	/// to the ends of the line, matching every native text field.
+	public static func editingSequence(for key: Key, option: Bool, command: Bool) -> String? {
+		switch key {
+		case .leftArrow:
+			if command { return "\u{01}" }        // Ctrl-A, start of line
+			if option { return "\u{1B}b" }        // Meta-B, back one word
+			return nil
+		case .rightArrow:
+			if command { return "\u{05}" }        // Ctrl-E, end of line
+			if option { return "\u{1B}f" }        // Meta-F, forward one word
+			return nil
+		case .backspace:
+			// Ctrl-U, which clears to the start of the line. ⌥⌫ is left to the
+			// meta rule, where it becomes ESC DEL — delete one word.
+			return command ? "\u{15}" : nil
+		default:
+			return nil
+		}
+	}
+
 	/// Applies Option-as-Meta, which sends ESC before the sequence.
 	public static func applyingMeta(_ sequence: String, key: Key, optionHeld: Bool) -> String {
 		guard optionHeld, takesMetaPrefix(key) else { return sequence }
