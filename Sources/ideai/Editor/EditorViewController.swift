@@ -95,6 +95,8 @@ final class EditorViewController: NSViewController {
 	var onTabDroppedOnTabBar: ((_ payload: EditorTabDrag.Payload, _ index: Int, _ target: EditorViewController) -> Void)?
 	/// Fired when this group has no tabs left, so the area can collapse it.
 	var onBecameEmpty: ((EditorViewController) -> Void)?
+	/// A tab was dragged clear of every window; the index and where it landed.
+	var onTearOffTab: ((EditorViewController, Int, NSPoint) -> Void)?
 	/// Fired when this group takes focus, so the area knows which is active.
 	var onActivated: ((EditorViewController) -> Void)?
 
@@ -120,6 +122,10 @@ final class EditorViewController: NSViewController {
 		tabBar.onClose = { [weak self] index in self?.closeTab(at: index) }
 		tabBar.onPromote = { [weak self] index in self?.promoteToPermanent(index: index) }
 		tabBar.groupID = groupID
+		tabBar.onTearOff = { [weak self] index, screenPoint in
+			guard let self else { return }
+			onTearOffTab?(self, index, screenPoint)
+		}
 		tabBar.onPreviewModeChange = { [weak self] mode in
 			self?.setPreviewMode(mode)
 		}

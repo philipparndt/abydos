@@ -13,6 +13,44 @@ import IdeaiKit
 /// The window talks to this controller, which forwards to whichever group is
 /// active, so the rest of the app is unaware there is more than one.
 final class EditorAreaController: NSViewController {
+	/// A tab was pulled out of every window and wants one of its own.
+	var onTearOffTab: ((EditorViewController.Tab, NSPoint) -> Void)?
+	/// Every group here is empty, which for a torn-off window means it is done.
+	var onBecameEmpty: (() -> Void)?
+
+	init() {
+		super.init(nibName: nil, bundle: nil)
+		EditorAreas.register(self)
+	}
+
+	required init?(coder: NSCoder) { fatalError("not used") }
+
+	func group(withID id: UUID) -> EditorViewController? {
+		groups.first { $0.groupID == id }
+	}
+
+	/// Takes a tab into whichever group is active.
+	func adopt(_ tab: EditorViewController.Tab) {
+		guard let target = activeGroup ?? groups.first else { return }
+		target.adopt(tab)
+		activeGroup = target
+	}
+
+	/// The group a dragged tab came from, in this window or any other.
+	private func source(
+		for payload: EditorTabDrag.Payload
+	) -> (area: EditorAreaController, group: EditorViewController)? {
+		if let mine = group(withID: payload.groupID) { return (self, mine) }
+		return EditorAreas.owner(ofGroup: payload.groupID)
+	}
+
+	/// Called after a tab is taken out, since the window it left may now be an
+	/// empty one that only existed to hold it.
+	private func noteTabRemoved() {
+		guard groups.allSatisfy(\.isEmpty) else { return }
+		onBecameEmpty?()
+	}
+
 	private(set) var groups: [EditorViewController] = []
 	private(set) var activeGroup: EditorViewController! {
 		didSet { refreshStatus(from: activeGroup) }
@@ -104,6 +142,9 @@ final class EditorAreaController: NSViewController {
 		group.onActivated = { [weak self] activated in
 			self?.activeGroup = activated
 		}
+		group.onTearOffTab = { [weak self] group, index, screenPoint in
+			self?.tearOff(from: group, index: index, at: screenPoint)
+		}
 		group.onBecameEmpty = { [weak self] empty in
 			// The last group stays even when empty; it is the editor area itself.
 			self?.removeGroup(empty)
@@ -142,7 +183,7 @@ final class EditorAreaController: NSViewController {
 		zone: EditorTabDrag.Zone,
 		target: EditorViewController
 	) {
-		guard let source = groups.first(where: { $0.groupID == payload.groupID }) else { return }
+		guard let (sourceArea, source) = source(for: payload) else { return }
 
 		// Dropping a group's only tab back into itself would destroy and rebuild
 		// the same pane for no reason.
@@ -151,6 +192,7 @@ final class EditorAreaController: NSViewController {
 
 		let index = source.indexOfTab(withPath: payload.path) ?? payload.index
 		guard let tab = source.detachTab(at: index) else { return }
+		sourceArea.noteTabRemoved()
 
 		guard let splitsVertically = zone.splitsVertically else {
 			target.adopt(tab)
@@ -173,7 +215,7 @@ final class EditorAreaController: NSViewController {
 		index: Int,
 		target: EditorViewController
 	) {
-		guard let source = groups.first(where: { $0.groupID == payload.groupID }) else { return }
+		guard let (sourceArea, source) = source(for: payload) else { return }
 		let from = source.indexOfTab(withPath: payload.path) ?? payload.index
 
 		if source === target {
@@ -185,8 +227,10 @@ final class EditorAreaController: NSViewController {
 		}
 
 		guard let tab = source.detachTab(at: from) else { return }
+		sourceArea.noteTabRemoved()
 		target.adopt(tab, at: index)
 		activeGroup = target
+		view.window?.makeKeyAndOrderFront(nil)
 	}
 
 	/// Replaces `target`'s position in the tree with a split holding both panes.
@@ -238,6 +282,34 @@ final class EditorAreaController: NSViewController {
 	}
 
 	/// Removes an empty group and collapses the split that held it.
+	/// Pulls a tab out into a window of its own.
+	private func tearOff(from group: EditorViewController, index: Int, at screenPoint: NSPoint) {
+		// A window's only tab has nowhere to go: it would empty this window to
+		// fill an identical new one.
+		guard groups.count > 1 || group.tabCount > 1 else { return }
+		guard let tab = group.detachTab(at: index) else { return }
+		onTearOffTab?(tab, screenPoint)
+	}
+
+	// MARK: - Testing
+
+	/// The active group's identifier, for building a drag payload in a test run.
+	var activeGroupID: UUID? { (activeGroup ?? groups.first)?.groupID }
+
+	var activeTabCount: Int { (activeGroup ?? groups.first)?.tabCount ?? 0 }
+
+	/// Tears a tab off as a drag ending outside every window would.
+	func tearOffForTesting(index: Int, at screenPoint: NSPoint) {
+		guard let group = activeGroup ?? groups.first else { return }
+		tearOff(from: group, index: index, at: screenPoint)
+	}
+
+	/// Drops a tab from another window onto this area's strip, as a drag would.
+	func dropForTesting(payload: EditorTabDrag.Payload, at index: Int) {
+		guard let target = activeGroup ?? groups.first else { return }
+		handleTabBarDrop(payload: payload, index: index, target: target)
+	}
+
 	private func removeGroup(_ group: EditorViewController) {
 		// The last pane is the editor area itself; an empty one is the "no file
 		// open" state rather than something to remove.
@@ -344,6 +416,7 @@ final class EditorAreaController: NSViewController {
 	}
 
 	func windowWillClose() {
+		EditorAreas.unregister(self)
 		for group in groups { group.windowWillClose() }
 	}
 

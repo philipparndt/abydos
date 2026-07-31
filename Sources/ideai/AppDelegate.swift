@@ -178,6 +178,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let second = options.tearOffFile {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+				controller?.openForTesting(URL(fileURLWithPath: second))
+			}
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
+				controller?.tearOffForTesting(index: 1, at: NSPoint(x: 300, y: 600))
+				self.reportWindowsForTesting("torn off")
+			}
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) {
+				self.dragTornOffTabBackForTesting(into: controller)
+				self.reportWindowsForTesting("dragged back")
+			}
+		}
+
 		if options.reviewUncommitted {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
 				controller?.reviewUncommittedChanges(nil)
@@ -252,6 +266,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 		}
 	}
 
+	// MARK: - Testing
+
+	private func reportWindowsForTesting(_ stage: String) {
+		let described = windowControllers.map { controller in
+			"\(controller.isTornOff ? "torn" : "main")"
+				+ "(tabs=\(controller.tabCountForTesting)"
+				+ ",frame=\(controller.window?.frame ?? .zero))"
+		}
+		print("TEAROFF \(stage): windows=\(windowControllers.count) \(described.joined(separator: " "))")
+	}
+
+	/// Drops the torn-off window's tab back onto the original window's strip,
+	/// along the same path a drag between windows takes.
+	private func dragTornOffTabBackForTesting(into target: MainWindowController?) {
+		guard let target,
+		      let torn = windowControllers.first(where: { $0.isTornOff }),
+		      let groupID = torn.activeGroupIDForTesting
+		else { return }
+		target.dropForTesting(
+			payload: EditorTabDrag.Payload(groupID: groupID, index: 0, path: ""),
+			at: 0
+		)
+	}
+
 	func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
 		true
 	}
@@ -286,21 +324,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 	@discardableResult
 	func open(projectAt url: URL) -> MainWindowController {
 		// Focus an existing window rather than opening the same project twice.
-		if let existing = windowControllers.first(where: { $0.project?.root.standardizedFileURL == url.standardizedFileURL }) {
+		// Torn-off windows are skipped: opening a project should raise the window
+		// it was opened in, not one someone happened to drag a tab into.
+		if let existing = windowControllers.first(where: {
+			!$0.isTornOff && $0.project?.root.standardizedFileURL == url.standardizedFileURL
+		}) {
 			existing.showWindow(nil)
 			return existing
 		}
 
+		let controller = makeWindow()
+		controller.load(project: Project(root: url))
+		controller.showWindow(nil)
+		RecentProjects.shared.record(url: url)
+		return controller
+	}
+
+	private func makeWindow() -> MainWindowController {
 		let controller = MainWindowController()
 		controller.onClose = { [weak self, weak controller] in
 			guard let self, let controller else { return }
 			self.windowControllers.removeAll { $0 === controller }
 		}
+		controller.onTearOffTab = { [weak self] tab, screenPoint, source in
+			self?.tearOff(tab: tab, at: screenPoint, from: source)
+		}
 		windowControllers.append(controller)
-		controller.load(project: Project(root: url))
-		controller.showWindow(nil)
-		RecentProjects.shared.record(url: url)
 		return controller
+	}
+
+	/// Opens a window for a tab dragged out of `source`.
+	///
+	/// It lands where it was dropped, which is how it reaches a second display:
+	/// the screen is the one under the pointer, not the one the tab came from.
+	private func tearOff(tab: EditorViewController.Tab, at screenPoint: NSPoint, from source: MainWindowController) {
+		guard let project = source.project else { return }
+
+		let controller = makeWindow()
+		controller.markAsTornOff()
+		controller.load(project: project)
+
+		let screen = NSScreen.screens.first { $0.frame.contains(screenPoint) }
+			?? source.window?.screen
+			?? NSScreen.main
+		if let visible = screen?.visibleFrame {
+			let size = source.window?.frame.size ?? NSSize(width: 1100, height: 750)
+			controller.window?.setFrame(
+				TearOff.windowFrame(droppedAt: screenPoint, size: size, visibleFrame: visible),
+				display: true
+			)
+		}
+
+		controller.showWindow(nil)
+		controller.adopt(tab)
 	}
 
 	var openProjectRoots: [URL] {

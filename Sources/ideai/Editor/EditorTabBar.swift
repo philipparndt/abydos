@@ -26,6 +26,12 @@ final class EditorTabBar: NSView {
 	/// Identifies the group this strip belongs to, carried on the pasteboard so
 	/// a drop knows where the tab came from.
 	var groupID: UUID = UUID()
+	/// A tab was released clear of every window: the index, and where it landed
+	/// in screen coordinates.
+	var onTearOff: ((Int, NSPoint) -> Void)?
+	/// Which tab the running drag picked up, so the session can say what to do
+	/// with it if it ends nowhere.
+	private var draggedIndex: Int?
 	/// Asked for the URL of a tab about to be dragged, for the drag image.
 	var urlForIndex: ((Int) -> URL?)?
 	/// A tab was dropped on this strip, to land at the given position.
@@ -315,8 +321,11 @@ final class EditorTabBar: NSView {
 		let rect = frames[index]
 		dragItem.setDraggingFrame(rect, contents: snapshot(of: index))
 
+		draggedIndex = index
 		let session = beginDraggingSession(with: [dragItem], event: event, source: self)
-		session.animatesToStartingPositionsOnCancelOrFail = true
+		// A tab released outside the window becomes a window of its own, so
+		// sliding it back to where it started would contradict what happens.
+		session.animatesToStartingPositionsOnCancelOrFail = false
 	}
 
 	/// Renders the tab as the drag image, so what you picked up is what you see.
@@ -574,5 +583,20 @@ extension EditorTabBar: NSDraggingSource {
 	) -> NSDragOperation {
 		// Within the app only: a tab has no meaning dropped elsewhere.
 		context == .withinApplication ? .move : []
+	}
+
+	/// A tab let go where nothing wanted it becomes a window of its own.
+	func draggingSession(
+		_ session: NSDraggingSession,
+		endedAt screenPoint: NSPoint,
+		operation: NSDragOperation
+	) {
+		let index = draggedIndex
+		draggedIndex = nil
+
+		// Something accepted it — another group, this strip, an edge to split.
+		guard operation == [], let index, let frame = window?.frame else { return }
+		guard TearOff.tearsOff(dropPoint: screenPoint, sourceWindowFrame: frame) else { return }
+		onTearOff?(index, screenPoint)
 	}
 }

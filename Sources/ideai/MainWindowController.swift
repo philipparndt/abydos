@@ -5,6 +5,36 @@ import IdeaiKit
 /// the editor area.
 final class MainWindowController: NSWindowController, NSWindowDelegate {
 	private(set) var project: Project?
+
+	/// True for a window made by dragging a tab out of another one.
+	///
+	/// Such a window exists only to hold what was dragged into it, so it closes
+	/// once that is gone — dragging the last tab back should not leave an empty
+	/// window behind. It is also passed over when looking for the window that
+	/// already has a project open, so opening that project focuses the original.
+	private(set) var isTornOff = false
+
+	/// A tab was dragged clear of every window and needs one of its own.
+	var onTearOffTab: ((EditorViewController.Tab, NSPoint, MainWindowController) -> Void)?
+
+	func markAsTornOff() { isTornOff = true }
+
+	// MARK: - Testing
+
+	func openForTesting(_ url: URL) { editor.open(fileURL: url, focusEditor: true) }
+	func tearOffForTesting(index: Int, at screenPoint: NSPoint) {
+		editor.tearOffForTesting(index: index, at: screenPoint)
+	}
+	func dropForTesting(payload: EditorTabDrag.Payload, at index: Int) {
+		editor.dropForTesting(payload: payload, at: index)
+	}
+	var activeGroupIDForTesting: UUID? { editor.activeGroupID }
+	var tabCountForTesting: Int { editor.activeTabCount }
+
+	/// Takes a tab dragged out of another window.
+	func adopt(_ tab: EditorViewController.Tab) {
+		editor.adopt(tab)
+	}
 	var onClose: (() -> Void)?
 
 	private let navigator = ProjectNavigatorViewController()
@@ -172,6 +202,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 			self?.refreshRunConfigurations()
 		}
 		// Switching tabs moves the tree's selection to match.
+		editor.onTearOffTab = { [weak self] tab, screenPoint in
+			guard let self else { return }
+			onTearOffTab?(tab, screenPoint, self)
+		}
+		editor.onBecameEmpty = { [weak self] in
+			guard let self, isTornOff else { return }
+			// Nothing left in the window that was made to hold it.
+			window?.close()
+		}
 		editor.onActiveFileChanged = { [weak self] url in
 			// The outline belongs to the file in front, so it follows the tabs.
 			self?.refreshStructure()
