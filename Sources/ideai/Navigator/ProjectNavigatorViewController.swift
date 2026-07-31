@@ -9,6 +9,8 @@ final class ProjectNavigatorViewController: NSViewController {
 	var onSelectFile: ((URL, _ focusEditor: Bool) -> Void)?
 	/// Asked to open a terminal in the given directory.
 	var onOpenTerminal: ((URL) -> Void)?
+	/// Asked to show a 3D model in the external viewer.
+	var onPreviewModel: ((URL) -> Void)?
 	/// Something under the project root changed on disk.
 	var onFilesChanged: (() -> Void)?
 
@@ -360,6 +362,9 @@ final class ProjectNavigatorViewController: NSViewController {
 		menu.addItem(.separator())
 		menu.addItem(item("Open", #selector(contextOpen)))
 		menu.addItem(item("Open Externally", #selector(contextOpenExternally)))
+		// Built once and hidden per click: the menu exists long before anything
+		// has been right-clicked, so it cannot be decided here.
+		menu.addItem(item("Preview in GoSTL", #selector(contextPreviewModel)))
 		menu.addItem(.separator())
 		menu.addItem(item("Open Terminal Here", #selector(contextOpenTerminal)))
 		menu.addItem(item("Reveal in Finder", #selector(contextRevealInFinder)))
@@ -387,6 +392,11 @@ final class ProjectNavigatorViewController: NSViewController {
 		} else {
 			onSelectFile?(node.url, true)
 		}
+	}
+
+	@objc private func contextPreviewModel() {
+		guard let node = contextNode else { return }
+		onPreviewModel?(node.url)
 	}
 
 	@objc private func contextOpenExternally() {
@@ -690,6 +700,9 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 			switch item.action {
 			case #selector(contextOpenExternally):
 				item.isHidden = node?.isDirectory ?? true
+			case #selector(contextPreviewModel):
+				item.isHidden = !(node.map { ModelPreview.canPreview($0.url) } ?? false)
+					|| !ModelPreview.isAvailable
 			case #selector(contextRename), #selector(contextTrash):
 				item.isEnabled = node != nil && !isRoot
 			default:

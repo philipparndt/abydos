@@ -710,6 +710,7 @@ final class EditorViewController: NSViewController {
 		let tab = Tab(url: fileURL, document: nil, codeView: nil, contentView: notice, isPreview: preview)
 
 		notice.onOpenExternally = { NSWorkspace.shared.open(fileURL) }
+		notice.onPreviewModel = { MainWindowController.previewModel(at: fileURL) }
 		notice.onOpenHexEditor = { [weak self, weak tab] in
 			guard let self, let tab else { return }
 			self.showHexEditor(for: tab)

@@ -160,6 +160,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		navigator.onOpenTerminal = { [weak self] directory in
 			self?.openTerminal(in: directory)
 		}
+		navigator.onPreviewModel = { url in
+			MainWindowController.previewModel(at: url)
+		}
 		navigator.onFilesChanged = { [weak self] in
 			// Something wrote inside the project — possibly a file that is open.
 			self?.editor.reloadExternallyChangedFiles()
@@ -365,6 +368,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 			setPanelVisible(true)
 			bottomPanel.showTerminal()
 		}
+	}
+
+	/// Hands a model to GoSTL.
+	///
+	/// Launched rather than embedded: GoSTL's package vends an executable, and
+	/// an executable target cannot also be linked into another app. It watches
+	/// the file it is given, so editing a .scad here refreshes the preview
+	/// there on its own.
+	static func previewModel(at url: URL) {
+		guard let executable = ModelPreview.executable() else { return }
+		let process = Process()
+		process.executableURL = URL(fileURLWithPath: executable)
+		process.arguments = [url.path]
+		try? process.run()
 	}
 
 	/// Opens a shell in a specific directory, from the navigator's context menu.

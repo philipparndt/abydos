@@ -10,6 +10,7 @@ import IdeaiKit
 final class FileNoticeView: NSView {
 	var onOpenExternally: (() -> Void)?
 	var onOpenHexEditor: (() -> Void)?
+	var onPreviewModel: (() -> Void)?
 
 	private let url: URL
 	private let reason: String
@@ -50,7 +51,17 @@ final class FileNoticeView: NSView {
 			self?.onOpenExternally?()
 		}
 
-		let buttons = NSStackView(views: [hexButton, externalButton])
+		// A model file is far more often something to look at than to inspect
+		// byte by byte, so the preview leads when one is available.
+		var actions: [NSView] = []
+		if ModelPreview.canPreview(url), ModelPreview.isAvailable {
+			actions.append(makeButton(title: "Preview in GoSTL", symbol: "cube") { [weak self] in
+				self?.onPreviewModel?()
+			})
+		}
+		actions.append(contentsOf: [hexButton, externalButton])
+
+		let buttons = NSStackView(views: actions)
 		buttons.orientation = .horizontal
 		buttons.spacing = 10
 
