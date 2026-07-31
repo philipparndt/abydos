@@ -870,15 +870,9 @@ private final class NavigatorCellView: NSTableCellView {
 		let iconSize = Theme.current.scaled(16)
 
 		if let icon = FileIcon.image(for: node, isExpanded: isExpanded) {
-			// respectFlipped: this view is flipped, and without it every symbol
-			// draws upside down (folder tabs at the bottom, doc folds inverted).
-			icon.draw(
-				in: NSRect(x: x, y: bounds.midY - iconSize / 2, width: iconSize, height: iconSize),
-				from: .zero,
-				operation: .sourceOver,
-				fraction: 1.0,
-				respectFlipped: true,
-				hints: nil
+			draw(
+				icon: icon,
+				in: NSRect(x: x, y: bounds.midY - iconSize / 2, width: iconSize, height: iconSize)
 			)
 		}
 		x += iconSize + Theme.current.scaled(6)
@@ -893,20 +887,70 @@ private final class NavigatorCellView: NSTableCellView {
 			? Theme.current.uiFont(13, weight: .bold)
 			: Theme.current.uiFont(13)
 
+		// Truncated rather than run past the edge: a long name would otherwise
+		// draw straight over the row's rounded selection and out of the pane.
+		let paragraph = NSMutableParagraphStyle()
+		paragraph.lineBreakMode = .byTruncatingTail
 		let name = NSAttributedString(string: node.name, attributes: [
 			.font: nameFont,
 			.foregroundColor: nameColor,
+			.paragraphStyle: paragraph,
 		])
 		let nameSize = name.size()
-		name.draw(at: NSPoint(x: x, y: bounds.midY - nameSize.height / 2))
-		x += nameSize.width + Theme.current.scaled(8)
+		let trailing = Theme.current.scaled(8)
+		let available = max(0, bounds.width - x - trailing)
+		let nameWidth = min(ceil(nameSize.width), available)
+		name.draw(in: NSRect(
+			x: x,
+			y: bounds.midY - nameSize.height / 2,
+			width: nameWidth,
+			height: nameSize.height
+		))
+		x += nameWidth + trailing
 
 		if let subtitle {
 			let attributed = NSAttributedString(string: subtitle, attributes: [
 				.font: Theme.current.uiFont(11),
 				.foregroundColor: Theme.current.gitIgnored,
+				.paragraphStyle: paragraph,
 			])
-			attributed.draw(at: NSPoint(x: x, y: bounds.midY - attributed.size().height / 2))
+			let size = attributed.size()
+			attributed.draw(in: NSRect(
+				x: x,
+				y: bounds.midY - size.height / 2,
+				width: max(0, bounds.width - x - trailing),
+				height: size.height
+			))
 		}
+	}
+
+	/// Draws a symbol centred in a fixed slot, keeping its own proportions.
+	///
+	/// SF Symbols are not all the same shape — a box is nearly square, a
+	/// document is tall — so forcing each into a square slot stretches it and
+	/// moves where it appears to sit. Fitting instead puts every row's icon on
+	/// the same optical centre.
+	///
+	/// respectFlipped: this view is flipped, and without it every symbol draws
+	/// upside down (folder tabs at the bottom, doc folds inverted).
+	private func draw(icon: NSImage, in slot: NSRect) {
+		let size = icon.size
+		guard size.width > 0, size.height > 0 else { return }
+
+		let scale = min(slot.width / size.width, slot.height / size.height)
+		let fitted = NSSize(width: size.width * scale, height: size.height * scale)
+		icon.draw(
+			in: NSRect(
+				x: slot.midX - fitted.width / 2,
+				y: slot.midY - fitted.height / 2,
+				width: fitted.width,
+				height: fitted.height
+			),
+			from: .zero,
+			operation: .sourceOver,
+			fraction: 1.0,
+			respectFlipped: true,
+			hints: nil
+		)
 	}
 }
