@@ -47,22 +47,35 @@ public enum GitWorkingCopy {
 	// MARK: - Reading
 
 	public static func status(in root: URL) async -> GitWorkingCopyStatus {
+		// `-z` gives NUL-separated records with paths written out literally.
+		// Without it git escapes anything non-ASCII — "kühlschrank" comes back
+		// as "k\303\274hlschrank" inside quotes — and the escaped form is not a
+		// path any later command can find.
 		let result = await GitRepository.run(
-			["status", "--porcelain=v1", "-uall", "--no-renames"],
+			["status", "--porcelain=v1", "-uall", "--no-renames", "-z"],
 			in: root
 		)
 		guard result.exitCode == 0 else { return GitWorkingCopyStatus() }
-		return parse(porcelain: result.stdout)
+		return parse(porcelainZ: result.stdout)
 	}
 
-	/// Splits porcelain v1 output into the two sides of the index.
+	/// Splits NUL-separated porcelain output into the two sides of the index.
+	static func parse(porcelainZ output: String) -> GitWorkingCopyStatus {
+		parse(records: output.split(separator: "\0", omittingEmptySubsequences: true).map(String.init))
+	}
+
+	/// Splits newline-separated porcelain output. Paths may be quoted here.
 	///
 	/// Internal rather than private so the code table can be tested against
 	/// fixtures without a repository on disk.
 	static func parse(porcelain: String) -> GitWorkingCopyStatus {
+		parse(records: porcelain.split(separator: "\n", omittingEmptySubsequences: true).map(String.init))
+	}
+
+	private static func parse(records: [String]) -> GitWorkingCopyStatus {
 		var status = GitWorkingCopyStatus()
 
-		for line in porcelain.split(separator: "\n", omittingEmptySubsequences: true) {
+		for line in records {
 			guard line.count > 3 else { continue }
 
 			let index = line[line.startIndex]
@@ -117,12 +130,49 @@ public enum GitWorkingCopy {
 		}
 	}
 
-	/// Paths with unusual characters come back quoted and C-escaped.
+	/// Decodes a quoted, C-escaped path.
+	///
+	/// Only needed when git was not asked for `-z` output. Non-ASCII bytes are
+	/// escaped one octal triple each, so "ü" arrives as `\303\274` — decoding
+	/// those individually would produce two Latin-1 characters, not the
+	/// character they encode. The bytes are collected and decoded as UTF-8 at
+	/// the end instead.
 	static func unquote(_ path: String) -> String {
 		guard path.hasPrefix("\""), path.hasSuffix("\""), path.count >= 2 else { return path }
-		return String(path.dropFirst().dropLast())
-			.replacingOccurrences(of: "\\\"", with: "\"")
-			.replacingOccurrences(of: "\\\\", with: "\\")
+
+		var bytes: [UInt8] = []
+		let characters = Array(path.dropFirst().dropLast())
+		var index = 0
+
+		while index < characters.count {
+			guard characters[index] == "\\", index + 1 < characters.count else {
+				bytes.append(contentsOf: Array(String(characters[index]).utf8))
+				index += 1
+				continue
+			}
+
+			let next = characters[index + 1]
+			if let digit = next.wholeNumberValue, (0...7).contains(digit) {
+				let octal = String(characters[(index + 1)..<min(index + 4, characters.count)])
+				if let value = UInt8(octal, radix: 8) {
+					bytes.append(value)
+					index += 1 + octal.count
+					continue
+				}
+			}
+
+			switch next {
+			case "n": bytes.append(0x0A)
+			case "t": bytes.append(0x09)
+			case "r": bytes.append(0x0D)
+			case "\"": bytes.append(0x22)
+			case "\\": bytes.append(0x5C)
+			default: bytes.append(contentsOf: Array(String(next).utf8))
+			}
+			index += 2
+		}
+
+		return String(decoding: bytes, as: UTF8.self)
 	}
 
 	// MARK: - Staging

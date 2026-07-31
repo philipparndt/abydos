@@ -102,6 +102,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
 				controller?.selectFirstChangeForTesting()
 			}
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) {
+				controller?.selectDiffHunkForTesting(0)
+			}
 		}
 
 		if options.reviewUncommitted {

@@ -32,9 +32,12 @@ final class ToolWindowBar: NSView {
 	override var isFlipped: Bool { true }
 
 	/// Highlights whichever sidebar tool window is showing.
-	func setSidebarSelection(showingChanges: Bool) {
-		projectButton.isSelected = !showingChanges
-		commitButton.isSelected = showingChanges
+	///
+	/// Nothing is highlighted when the sidebar is closed, so the strip says
+	/// what is on screen rather than what was last picked.
+	func setSidebarSelection(visible: Bool, showingChanges: Bool) {
+		projectButton.isSelected = visible && !showingChanges
+		commitButton.isSelected = visible && showingChanges
 	}
 
 	private func showReviewMenu() {
@@ -136,9 +139,6 @@ final class ToolWindowBar: NSView {
 		needsDisplay = true
 	}
 
-	func setNavigatorSelected(_ selected: Bool) {
-		projectButton.isSelected = selected
-	}
 
 	override func draw(_ dirtyRect: NSRect) {
 		Theme.current.sidebarBackground.setFill()

@@ -63,7 +63,10 @@ public actor GitRepository {
 			// --porcelain=v1 is a stability-guaranteed format. -uall lists files
 			// inside untracked directories instead of collapsing to the directory,
 			// which the tree needs in order to colour individual rows.
-			["status", "--porcelain=v1", "-uall", "--ignored=matching", "--no-renames"],
+			// `-z` so paths arrive literally: without it anything non-ASCII comes
+			// back octal-escaped inside quotes, and the tree would then key its
+			// status by a name no row actually has.
+			["status", "--porcelain=v1", "-uall", "--ignored=matching", "--no-renames", "-z"],
 			in: root
 		)
 
@@ -81,19 +84,17 @@ public actor GitRepository {
 	/// Internal rather than private so the status rules can be unit-tested
 	/// against porcelain fixtures without needing a real repository.
 	func parse(porcelain: String) {
+		// Handles both separators: `-z` in production, newlines in the fixtures
+		// the status rules are tested against.
+		let separator: Character = porcelain.contains("\0") ? "\0" : "\n"
 		var files: [String: GitFileStatus] = [:]
 
-		for line in porcelain.split(separator: "\n", omittingEmptySubsequences: true) {
+		for line in porcelain.split(separator: separator, omittingEmptySubsequences: true) {
 			guard line.count > 3 else { continue }
 			let codes = line.prefix(2)
-			var path = String(line.dropFirst(3))
-
-			// Paths containing unusual characters come back quoted and escaped.
-			if path.hasPrefix("\"") && path.hasSuffix("\"") && path.count >= 2 {
-				path = String(path.dropFirst().dropLast())
-					.replacingOccurrences(of: "\\\"", with: "\"")
-					.replacingOccurrences(of: "\\\\", with: "\\")
-			}
+			// Quoted only when git was not asked for -z; the decoder handles the
+			// octal escapes either way.
+			var path = GitWorkingCopy.unquote(String(line.dropFirst(3)))
 			// Directory entries (ignored dirs) arrive with a trailing slash.
 			let isDirectory = path.hasSuffix("/")
 			if isDirectory { path = String(path.dropLast()) }
@@ -186,16 +187,20 @@ public actor GitRepository {
 
 	/// Runs a git subcommand. Exposed so UI code can drive clone and checkout
 	/// without duplicating the process plumbing.
-	public static func run(_ arguments: [String], in directory: URL) async -> ProcessResult {
+	public static func run(
+		_ arguments: [String],
+		in directory: URL,
+		input: Data? = nil
+	) async -> ProcessResult {
 		await withCheckedContinuation { continuation in
 			// Hop off the caller so a slow `git` never blocks the UI.
 			DispatchQueue.global(qos: .userInitiated).async {
-				continuation.resume(returning: runSync(arguments, in: directory))
+				continuation.resume(returning: runSync(arguments, in: directory, input: input))
 			}
 		}
 	}
 
-	static func runSync(_ arguments: [String], in directory: URL) -> ProcessResult {
+	static func runSync(_ arguments: [String], in directory: URL, input: Data? = nil) -> ProcessResult {
 		let process = Process()
 		process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
 		process.arguments = arguments
@@ -204,6 +209,11 @@ public actor GitRepository {
 		let out = Pipe(), err = Pipe()
 		process.standardOutput = out
 		process.standardError = err
+
+		// A patch arrives on stdin. Without a pipe here git would inherit ours
+		// and block reading from a terminal that is not there.
+		let stdin = Pipe()
+		if input != nil { process.standardInput = stdin }
 		// Keep git from consulting the terminal or a credential helper.
 		var env = ProcessInfo.processInfo.environment
 		env["GIT_TERMINAL_PROMPT"] = "0"
@@ -214,6 +224,12 @@ public actor GitRepository {
 			try process.run()
 		} catch {
 			return ProcessResult(stdout: "", stderr: "\(error)", exitCode: -1)
+		}
+
+		if let input {
+			// Written before the pipes are drained, and closed so git sees EOF.
+			stdin.fileHandleForWriting.write(input)
+			try? stdin.fileHandleForWriting.close()
 		}
 
 		// Read both pipes before waiting; a full pipe buffer would otherwise

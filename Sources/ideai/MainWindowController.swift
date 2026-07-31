@@ -66,11 +66,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 	private func buildContent() {
 		let root = ColoredView(color: Theme.current.windowBackground)
 
-		toolStrip.onToggleNavigator = { [weak self] in self?.toggleNavigator(nil) }
+		toolStrip.onToggleNavigator = { [weak self] in self?.showSidebarTool(.project) }
 		toolStrip.onToggleTerminal = { [weak self] in self?.toggleTerminal(nil) }
 		toolStrip.onReviewBranch = { [weak self] in self?.reviewBranch(nil) }
 		toolStrip.onReviewUncommitted = { [weak self] in self?.reviewUncommittedChanges(nil) }
-		toolStrip.onToggleChanges = { [weak self] in self?.toggleChanges(nil) }
+		toolStrip.onToggleChanges = { [weak self] in self?.showSidebarTool(.changes) }
 
 		navigatorContainer = ColoredView(color: Theme.current.sidebarBackground)
 		navigatorContainer.addSubview(navigator.view)
@@ -148,6 +148,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		// is remembered even when nothing is running yet.
 		editor.onToggleBreakpoint = { [weak self] url, line in
 			self?.toggleBreakpoint(file: url, line: line)
+		}
+		editor.onApplyDiffSelection = { [weak self] change, diff, selected in
+			self?.applyDiffSelection(change: change, diff: diff, lines: selected)
+		}
+		editor.onDiscardDiffSelection = { [weak self] change, diff, selected in
+			self?.discardDiffSelection(change: change, diff: diff, lines: selected)
 		}
 
 		DispatchQueue.main.async { [weak self] in
@@ -607,23 +613,47 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		editor.previewDropZoneForTesting(zone)
 	}
 
-	/// Swaps the sidebar between the file tree and the staging view.
+	/// Which tool window the sidebar is showing.
+	enum SidebarTool { case project, changes }
+
+	private var currentSidebarTool: SidebarTool {
+		changesPane == nil ? .project : .changes
+	}
+
+	/// Selects a sidebar tool window, the way a tab strip does.
 	///
-	/// They share the sidebar rather than stacking, the way IDEA's tool windows
-	/// do: both want the full height, and staging is something you do in a
-	/// session of its own rather than while browsing.
-	@objc func toggleChanges(_ sender: Any?) {
-		if changesPane != nil {
-			showNavigatorInSidebar()
-		} else {
-			showChangesInSidebar()
+	/// The strip buttons are tabs, not independent toggles: picking one shows
+	/// it, whatever was showing before. They used to be wired to "toggle the
+	/// sidebar", so clicking Project while the staging view was up collapsed
+	/// the sidebar instead of switching to the tree — and getting back meant
+	/// pressing the *other* button twice.
+	///
+	/// Clicking the tool that is already showing closes the sidebar, which is
+	/// what IDEA does and the only way to reclaim the space.
+	func showSidebarTool(_ tool: SidebarTool) {
+		let isCollapsed = navigatorContainer.isHidden
+
+		if !isCollapsed, tool == currentSidebarTool {
+			toggleNavigator(nil)
+			return
 		}
+
+		switch tool {
+		case .project: showNavigatorInSidebar()
+		case .changes: showChangesInSidebar()
+		}
+
+		if isCollapsed { toggleNavigator(nil) }
+		toolStrip.setSidebarSelection(visible: true, showingChanges: tool == .changes)
+	}
+
+	/// Kept for the menu item and the screenshot harness.
+	@objc func toggleChanges(_ sender: Any?) {
+		showSidebarTool(.changes)
 	}
 
 	private func showChangesInSidebar() {
 		guard let project, project.git != nil else { return }
-		// The sidebar has to be open for a sidebar tool window to be seen.
-		if navigatorContainer.isHidden { toggleNavigator(nil) }
 
 		let pane = ChangesPane(root: project.root)
 		// The titlebar is drawn over the content view, so the sidebar's own
@@ -649,7 +679,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
 		changesPane = pane
 		changesPaneTop = paneTop
-		toolStrip.setSidebarSelection(showingChanges: true)
 		updateTopInsets()
 	}
 
@@ -666,7 +695,68 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 			navigator.view.leadingAnchor.constraint(equalTo: navigatorContainer.leadingAnchor),
 			navigator.view.trailingAnchor.constraint(equalTo: navigatorContainer.trailingAnchor),
 		])
-		toolStrip.setSidebarSelection(showingChanges: false)
+	}
+
+	/// Moves the selected lines across the index, in whichever direction the
+	/// diff's side implies.
+	private func applyDiffSelection(change: GitChange, diff: String, lines: Set<Int>) {
+		guard let project, !lines.isEmpty else { return }
+		Task { @MainActor in
+			let result = change.isStaged
+				? await GitWorkingCopy.unstage(lines: lines, ofDiff: diff, in: project.root)
+				: await GitWorkingCopy.stage(lines: lines, ofDiff: diff, in: project.root)
+			finishDiffOperation(result, change: change)
+		}
+	}
+
+	private func discardDiffSelection(change: GitChange, diff: String, lines: Set<Int>) {
+		guard let project, !lines.isEmpty else { return }
+
+		// Discarding is the one operation here that destroys work, so it asks.
+		let alert = NSAlert()
+		alert.messageText = "Discard \(lines.count) line\(lines.count == 1 ? "" : "s")?"
+		alert.informativeText = "The change will be removed from \(change.name). This cannot be undone."
+		alert.addButton(withTitle: "Discard")
+		alert.addButton(withTitle: "Cancel")
+		alert.buttons.first?.hasDestructiveAction = true
+
+		let act: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+			guard response == .alertFirstButtonReturn, let self else { return }
+			Task { @MainActor in
+				// Reversing the patch against the work tree is the same operation
+				// as unstaging, just without --cached.
+				guard let patch = GitPatch.parse(diff).patch(selecting: lines, reverse: true) else { return }
+				let result = await GitRepository.run(
+					["apply", "--reverse", "--recount", "--whitespace=nowarn", "-"],
+					in: project.root,
+					input: Data(patch.utf8)
+				)
+				self.finishDiffOperation(result, change: change)
+			}
+		}
+
+		if let window {
+			alert.beginSheetModal(for: window, completionHandler: act)
+		} else {
+			act(alert.runModal())
+		}
+	}
+
+	private func finishDiffOperation(_ result: GitRepository.ProcessResult, change: GitChange) {
+		if result.exitCode != 0 {
+			let alert = NSAlert()
+			alert.messageText = "git reported a problem"
+			alert.informativeText = (result.stderr.isEmpty ? result.stdout : result.stderr)
+				.trimmingCharacters(in: .whitespacesAndNewlines)
+			if let window { alert.beginSheetModal(for: window) } else { alert.runModal() }
+			return
+		}
+
+		changesPane?.refresh()
+		navigator.refreshGitStatus()
+		// The diff on screen described the state before this ran, so it is
+		// re-read rather than left showing lines that have already moved.
+		showDiff(for: change)
 	}
 
 	/// Opens the diff for a change as an editor tab.
@@ -684,6 +774,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
 	func selectFirstChangeForTesting() {
 		changesPane?.selectFirstChangeForTesting()
+	}
+
+	func selectDiffHunkForTesting(_ hunk: Int) {
+		editor.selectDiffHunkForTesting(hunk)
 	}
 
 	@objc func toggleWordWrap(_ sender: Any?) {
@@ -721,7 +815,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 			navigatorWidth = max(180, navigatorContainer.frame.width)
 			navigatorContainer.isHidden = true
 		}
-		toolStrip.setNavigatorSelected(collapsed)
+		// Selection follows which tool is showing, not merely that one is: the
+		// strip is a tab strip now.
+		toolStrip.setSidebarSelection(
+			visible: collapsed,
+			showingChanges: currentSidebarTool == .changes
+		)
 		splitView.adjustSubviews()
 	}
 

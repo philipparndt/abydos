@@ -30,6 +30,8 @@ final class EditorAreaController: NSViewController {
 	// Forwarded from the active group.
 	var onActiveFileChanged: ((URL?) -> Void)?
 	var onToggleBreakpoint: ((URL, Int) -> Void)?
+	var onApplyDiffSelection: ((GitChange, String, Set<Int>) -> Void)?
+	var onDiscardDiffSelection: ((GitChange, String, Set<Int>) -> Void)?
 
 	override func loadView() {
 		let container = ColoredView(color: Theme.current.editorBackground)
@@ -87,6 +89,12 @@ final class EditorAreaController: NSViewController {
 		}
 		group.onToggleBreakpoint = { [weak self] url, line in
 			self?.onToggleBreakpoint?(url, line)
+		}
+		group.onApplyDiffSelection = { [weak self] change, diff, selected in
+			self?.onApplyDiffSelection?(change, diff, selected)
+		}
+		group.onDiscardDiffSelection = { [weak self] change, diff, selected in
+			self?.onDiscardDiffSelection?(change, diff, selected)
 		}
 		group.onActivated = { [weak self] activated in
 			self?.activeGroup = activated
@@ -328,6 +336,10 @@ final class EditorAreaController: NSViewController {
 
 	func open(fileURL: URL, focusEditor: Bool = false, preview: Bool = false) {
 		activeGroup.open(fileURL: fileURL, focusEditor: focusEditor, preview: preview)
+	}
+
+	func selectDiffHunkForTesting(_ hunk: Int) {
+		activeGroup.selectDiffHunkForTesting(hunk)
 	}
 
 	func openDiff(for change: GitChange, root: URL, text: String) {

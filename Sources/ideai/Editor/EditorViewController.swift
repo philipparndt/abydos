@@ -237,12 +237,29 @@ final class EditorViewController: NSViewController {
 	/// A tab of its own rather than an overlay on the file: the diff and the
 	/// file are different things to look at, and staging usually means moving
 	/// between several of them.
+	/// Selects a hunk in the visible diff, so the harness can capture the
+	/// selection styling without a click.
+	func selectDiffHunkForTesting(_ hunk: Int) {
+		guard let tab = activeTab, tab.isDiff else { return }
+		((tab.contentView as? NSScrollView)?.documentView as? DiffView)?.selectHunk(hunk)
+	}
+
+	/// Stage or unstage the lines selected in a diff tab.
+	var onApplyDiffSelection: ((GitChange, String, Set<Int>) -> Void)?
+	var onDiscardDiffSelection: ((GitChange, String, Set<Int>) -> Void)?
+
 	func openDiff(for change: GitChange, root: URL, text: String) {
 		let url = root.appendingPathComponent(change.path)
 
 		if let index = tabs.firstIndex(where: { $0.isDiff && $0.url.path == url.path }) {
 			let existing = (tabs[index].contentView as? NSScrollView)?.documentView as? DiffView
 			existing?.setDiff(text, staged: change.isStaged)
+			existing?.onApplySelection = { [weak self] selected in
+				self?.onApplyDiffSelection?(change, text, selected)
+			}
+			existing?.onDiscardSelection = { [weak self] selected in
+				self?.onDiscardDiffSelection?(change, text, selected)
+			}
 			activeIndex = nil
 			activate(index: index, focusEditor: false)
 			return
@@ -250,6 +267,12 @@ final class EditorViewController: NSViewController {
 
 		let view = DiffView()
 		view.setDiff(text, staged: change.isStaged)
+		view.onApplySelection = { [weak self] selected in
+			self?.onApplyDiffSelection?(change, text, selected)
+		}
+		view.onDiscardSelection = { [weak self] selected in
+			self?.onDiscardDiffSelection?(change, text, selected)
+		}
 
 		let scrollView = NSScrollView()
 		scrollView.documentView = view
