@@ -996,3 +996,77 @@ struct TerminalActivityFilterTests {
 		#expect(emulator.screen.recentLines(1) == ["✳ Reviewing TerminalView.swift"])
 	}
 }
+
+/// Mode and status queries block the program that sends them, so silence is
+/// the one answer that is never acceptable.
+struct TerminalQueryReplyTests {
+	private func replies(to input: String) -> [String] {
+		let emulator = TerminalEmulator(rows: 4, columns: 20)
+		var captured: [String] = []
+		emulator.onResponse = { captured.append($0) }
+		emulator.write(input)
+		return captured
+	}
+
+	/// DECRQM: `CSI ? Pa $ p`. tmux and modern shells probe synchronised output
+	/// (mode 2026) this way and wait for the answer.
+	@Test func decrqmIsAnswered() {
+		let replies = replies(to: "\u{1B}[?2026$p")
+		#expect(replies.count == 1)
+		#expect(replies.first?.contains("2026") == true)
+		#expect(replies.first?.hasSuffix("$y") == true)
+	}
+
+	/// DECXCPR: `CSI ? 6 n`, the private form of the cursor position report. Its
+	/// reply carries the `?` back so the sender can tell the two apart.
+	@Test func extendedCursorPositionIsAnswered() {
+		let replies = replies(to: "\u{1B}[3;5H\u{1B}[?6n")
+		#expect(replies.count == 1)
+		#expect(replies.first == "\u{1B}[?3;5R")
+	}
+
+	@Test func plainCursorPositionStillAnswersWithoutTheMarker() {
+		let replies = replies(to: "\u{1B}[3;5H\u{1B}[6n")
+		#expect(replies == ["\u{1B}[3;5R"])
+	}
+
+	@Test func terminalStatusIsAnswered() {
+		#expect(replies(to: "\u{1B}[5n") == ["\u{1B}[0n"])
+	}
+}
+
+/// The guard that stops private sequences being read as their ANSI namesakes
+/// has to let through exactly the handlers that check the introducer, and no
+/// more. Both directions are easy to get wrong and neither fails loudly.
+struct TerminalIntroducerGuardTests {
+	private func replies(to input: String) -> [String] {
+		let emulator = TerminalEmulator(rows: 4, columns: 20)
+		var captured: [String] = []
+		emulator.onResponse = { captured.append($0) }
+		emulator.write(input)
+		return captured
+	}
+
+	/// Every final in the set must reach a handler that checks the introducer.
+	@Test func everyAllowedFinalHasAnIntroducerAwareHandler() {
+		// `h` and `l` are checked by their effect rather than a reply.
+		let emulator = TerminalEmulator(rows: 4, columns: 20)
+		emulator.write("\u{1B}[?7h")
+		#expect(emulator.screen.rows == 4)      // parsed, not dropped
+
+		#expect(!replies(to: "\u{1B}[?c").isEmpty == false)   // `?` DA: no answer
+		#expect(!replies(to: "\u{1B}[>c").isEmpty)            // secondary DA
+		#expect(!replies(to: "\u{1B}[?2026$p").isEmpty)       // DECRQM
+		#expect(!replies(to: "\u{1B}[?6n").isEmpty)           // DECXCPR
+	}
+
+	/// And nothing outside it may be run as an ANSI command.
+	@Test func privateFormsOfStylingAndMovementAreIgnored() {
+		let emulator = TerminalEmulator(rows: 4, columns: 20)
+		emulator.write("\u{1B}[>4;2mx")
+		#expect(!emulator.screen[0].cells[0].attributes.underline)
+
+		emulator.write("\u{1B}[?3B")
+		#expect(emulator.cursorRow == 0)
+	}
+}

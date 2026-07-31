@@ -357,6 +357,15 @@ public final class TerminalEmulator {
 	/// recognised as private by one and read as ANSI by the other.
 	static let privateIntroducers: Set<Character> = ["?", ">", "<", "="]
 
+	/// Final bytes whose handlers inspect the introducer themselves.
+	///
+	/// - `h`/`l`: DEC private modes.
+	/// - `c`: primary, secondary and tertiary device attributes.
+	/// - `p`: DECRQM, a mode query — tmux and modern shells probe synchronised
+	///   output (mode 2026) with it and wait for the reply.
+	/// - `n`: DECXCPR, the private cursor position report.
+	static let introducerAwareFinals: Set<Character> = ["h", "l", "c", "p", "n"]
+
 	private func isPrivateIntroducer(_ character: Character?) -> Bool {
 		guard let character else { return false }
 		return Self.privateIntroducers.contains(character)
@@ -376,10 +385,14 @@ public final class TerminalEmulator {
 		// is XTMODKEYS, which Claude Code sends on startup — read as SGR it says
 		// "underline, dim", and every character after it came out underlined.
 		//
-		// Only the handlers that understand an introducer see one: DEC modes and
-		// device attributes. Everything else is ignored rather than run as its
-		// ANSI namesake.
-		if isPrivateIntroducer(parameterBuffer.first), !"hlc".contains(final) { return }
+		// Only the handlers that understand an introducer see one; everything
+		// else is ignored rather than run as its ANSI namesake. A final byte
+		// belongs in the set below once its handler checks the introducer
+		// itself — leaving one out silently drops a query the sender is
+		// blocking on, which is worse than the mis-parse this guard prevents.
+		if isPrivateIntroducer(parameterBuffer.first), !Self.introducerAwareFinals.contains(final) {
+			return
+		}
 
 		switch final {
 		case "A": moveCursor(row: cursorRow - parameter(0, default: 1), column: cursorColumn)
@@ -417,8 +430,12 @@ public final class TerminalEmulator {
 		case "n":
 			// Device status. A shell blocks on these, so they must be answered.
 			switch csiParameters.first ?? 0 {
-			case 5: onResponse?("\u{1B}[0n")   // terminal OK
-			case 6: onResponse?("\u{1B}[\(cursorRow + 1);\(cursorColumn + 1)R")
+			case 5 where !isPrivate: onResponse?("\u{1B}[0n")   // terminal OK
+			case 6:
+				// DECXCPR (`CSI ? 6 n`) carries the marker back, so a sender that
+				// issued both forms can tell the replies apart.
+				let marker = isPrivate ? "?" : ""
+				onResponse?("\u{1B}[\(marker)\(cursorRow + 1);\(cursorColumn + 1)R")
 			default: break
 			}
 		case "c":
