@@ -30,6 +30,7 @@ final class EditorAreaController: NSViewController {
 	// Forwarded from the active group.
 	var onActiveFileChanged: ((URL?) -> Void)?
 	var onToggleBreakpoint: ((URL, Int) -> Void)?
+	var onRunLine: ((URL, Int) -> Void)?
 	var onApplyDiffSelection: ((GitChange, String, Set<Int>) -> Void)?
 	var onDiscardDiffSelection: ((GitChange, String, Set<Int>) -> Void)?
 
@@ -90,6 +91,10 @@ final class EditorAreaController: NSViewController {
 		group.onToggleBreakpoint = { [weak self] url, line in
 			self?.onToggleBreakpoint?(url, line)
 		}
+		group.onRunLine = { [weak self] url, line in
+			self?.onRunLine?(url, line)
+		}
+		group.setRunnableLines(runnableLines)
 		group.onApplyDiffSelection = { [weak self] change, diff, selected in
 			self?.onApplyDiffSelection?(change, diff, selected)
 		}
@@ -326,6 +331,13 @@ final class EditorAreaController: NSViewController {
 	/// Debug state is window-wide: a breakpoint belongs to the file, not a pane.
 	func setBreakpoints(_ breakpoints: [String: [Int: Bool]]) {
 		for group in groups { group.setBreakpoints(breakpoints) }
+	}
+
+	private var runnableLines: [String: Set<Int>] = [:]
+
+	func setRunnableLines(_ lines: [String: Set<Int>]) {
+		runnableLines = lines
+		for group in groups { group.setRunnableLines(lines) }
 	}
 
 	func setExecutionLocation(file: String?, line: Int?) {

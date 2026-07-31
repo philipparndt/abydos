@@ -343,6 +343,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 		let goDebug = NSMenuItem(title: "Go Debug (Delve)", action: #selector(MainWindowController.goDebug(_:)), keyEquivalent: "d")
 		goDebug.keyEquivalentModifierMask = [.command, .control]
 		runMenu.addItem(goDebug)
+		let runItem = NSMenuItem(
+			title: "Run…",
+			action: #selector(MainWindowController.showRunConfigurations(_:)),
+			keyEquivalent: "r"
+		)
+		runItem.keyEquivalentModifierMask = [.control]
+		runMenu.addItem(runItem)
+		runMenu.addItem(.separator())
 		runMenu.addItem(withTitle: "Go Trace", action: #selector(MainWindowController.goTrace(_:)), keyEquivalent: "")
 		runMenu.addItem(withTitle: "Go CPU Profile", action: #selector(MainWindowController.goProfile(_:)), keyEquivalent: "")
 		runMenuItem.submenu = runMenu

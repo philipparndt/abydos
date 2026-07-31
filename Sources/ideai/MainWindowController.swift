@@ -158,6 +158,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		}
 		navigator.onFilesChanged = { [weak self] in
 			self?.changesPane?.refresh()
+			// A new main.go or Makefile target should get its play button
+			// without reopening the project.
+			self?.refreshRunConfigurations()
 		}
 		// Switching tabs moves the tree's selection to match.
 		editor.onActiveFileChanged = { [weak self] url in
@@ -170,6 +173,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		// is remembered even when nothing is running yet.
 		editor.onToggleBreakpoint = { [weak self] url, line in
 			self?.toggleBreakpoint(file: url, line: line)
+		}
+		editor.onRunLine = { [weak self] url, line in
+			self?.runConfiguration(forFile: url, line: line)
 		}
 		editor.onApplyDiffSelection = { [weak self] change, diff, selected in
 			self?.applyDiffSelection(change: change, diff: diff, lines: selected)
@@ -265,6 +271,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 			self.layoutTitlebarPills()
 			self.navigator.refreshGitStatus()
 		}
+		refreshRunConfigurations()
 	}
 
 	/// Opens a file as a permanent tab and selects it in the tree.
@@ -525,6 +532,123 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		alert.messageText = "Cannot run this Go command"
 		alert.informativeText = message
 		alert.runModal()
+	}
+
+	// MARK: - Running
+
+	/// What this project can run, refreshed off the main thread.
+	private(set) var runConfigurations: [RunConfiguration] = []
+
+	func refreshRunConfigurations() {
+		guard let project else { return }
+		let root = project.root
+		DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+			let found = RunConfigurationDiscovery.discover(in: root)
+			DispatchQueue.main.async {
+				guard let self else { return }
+				self.runConfigurations = found
+
+				// Group by file so the gutter can put a play button beside each
+				// entry point and each make target.
+				var byFile: [String: Set<Int>] = [:]
+				for configuration in found {
+					guard let file = configuration.file, let line = configuration.line else { continue }
+					byFile[file, default: []].insert(line)
+				}
+				self.editor.setRunnableLines(byFile)
+			}
+		}
+	}
+
+	/// Runs whatever belongs to a line the gutter's play button was clicked on.
+	private func runConfiguration(forFile url: URL, line: Int) {
+		let path = RunConfigurationDiscovery.canonicalPath(url)
+		let matching = runConfigurations.filter { $0.file == path && $0.line == line }
+		guard !matching.isEmpty else { return }
+
+		// One match runs; several — a main function that also has an IDEA
+		// configuration — asks which, rather than guessing.
+		guard matching.count > 1 else {
+			run(matching[0])
+			return
+		}
+
+		let menu = NSMenu()
+		menu.autoenablesItems = false
+		for configuration in matching {
+			let item = NSMenuItem(title: configuration.name, action: #selector(runMenuItem(_:)), keyEquivalent: "")
+			item.target = self
+			item.representedObject = configuration.id
+			menu.addItem(item)
+		}
+		menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+	}
+
+	@objc private func runMenuItem(_ sender: NSMenuItem) {
+		guard let id = sender.representedObject as? String,
+		      let configuration = runConfigurations.first(where: { $0.id == id })
+		else { return }
+		run(configuration)
+	}
+
+	/// Runs a configuration in a terminal session of its own.
+	///
+	/// A terminal rather than a captured-output pane: the thing being run is
+	/// usually interactive, or prints as it goes, and watching it in a real
+	/// shell is what makes it debuggable.
+	func run(_ configuration: RunConfiguration) {
+		setPanelVisible(true)
+		bottomPanel.runCommand(
+			title: configuration.name,
+			command: configuration.commandLine,
+			directory: URL(fileURLWithPath: configuration.workingDirectory),
+			environment: configuration.environment
+		)
+	}
+
+	/// Shows every configuration, for the Run menu.
+	@objc func showRunConfigurations(_ sender: Any?) {
+		guard !runConfigurations.isEmpty else {
+			let alert = NSAlert()
+			alert.messageText = "Nothing to run"
+			alert.informativeText = "No run configurations, makefiles or Go entry points were found in this project."
+			if let window { alert.beginSheetModal(for: window) } else { alert.runModal() }
+			return
+		}
+
+		let menu = NSMenu()
+		menu.autoenablesItems = false
+		var lastSource: RunConfiguration.Source?
+
+		for configuration in runConfigurations {
+			if configuration.source != lastSource {
+				if lastSource != nil { menu.addItem(.separator()) }
+				let header = NSMenuItem(title: title(for: configuration.source), action: nil, keyEquivalent: "")
+				header.isEnabled = false
+				menu.addItem(header)
+				lastSource = configuration.source
+			}
+
+			let item = NSMenuItem(title: configuration.name, action: #selector(runMenuItem(_:)), keyEquivalent: "")
+			item.target = self
+			item.representedObject = configuration.id
+			item.toolTip = configuration.commandLine
+			menu.addItem(item)
+		}
+
+		if let window {
+			let point = NSPoint(x: window.frame.midX, y: window.frame.midY)
+			menu.popUp(positioning: nil, at: window.convertPoint(fromScreen: point), in: window.contentView)
+		}
+	}
+
+	private func title(for source: RunConfiguration.Source) -> String {
+		switch source {
+		case .intelliJ: return "IntelliJ"
+		case .vscode:   return "VS Code"
+		case .make:     return "Make"
+		case .goModule: return "Go"
+		}
 	}
 
 	/// Starts an agent review of this branch, reported over MCP.

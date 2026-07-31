@@ -37,6 +37,11 @@ final class CodeView: NSView, NSTextInputClient {
 	/// Debugger state for this file: breakpoint lines and where execution stopped.
 	private var breakpointLines: [Int: Bool] = [:]   // line -> verified
 	private var executionLine: Int?
+	/// 1-based lines that have something runnable on them, and the click that
+	/// runs it.
+	private var runnableLines: Set<Int> = []
+	var onRunLine: ((Int) -> Void)?
+
 	/// Called when the gutter is clicked in the breakpoint column.
 	var onToggleBreakpoint: ((Int) -> Void)?
 
@@ -560,7 +565,14 @@ final class CodeView: NSView, NSTextInputClient {
 			let y = yPosition(forVisualLine: visual)
 
 			let isCurrent = docLine == caretLine
-			drawBreakpoint(docLine: docLine, y: y, scrollX: scrollX)
+			// A run marker takes the breakpoint column when the line has one:
+			// a `func main` is far more often something you want to run than
+			// something you want to stop inside, and both cannot fit in 18pt.
+			if runnableLines.contains(docLine + 1), breakpointLines[docLine] == nil {
+				drawRunMarker(y: y, scrollX: scrollX)
+			} else {
+				drawBreakpoint(docLine: docLine, y: y, scrollX: scrollX)
+			}
 
 			let number = NSAttributedString(string: "\(docLine + 1)", attributes: [
 				.font: font,
@@ -583,6 +595,21 @@ final class CodeView: NSView, NSTextInputClient {
 	}
 
 	/// Draws the breakpoint marker, and the arrow for the stopped line.
+	/// The play triangle beside a runnable line.
+	private func drawRunMarker(y: CGFloat, scrollX: CGFloat) {
+		let size = Theme.current.scaled(9)
+		let centre = NSPoint(x: scrollX + Self.breakpointColumnWidth / 2, y: y + lineHeight / 2)
+
+		let triangle = NSBezierPath()
+		triangle.move(to: NSPoint(x: centre.x - size / 2.6, y: centre.y - size / 2))
+		triangle.line(to: NSPoint(x: centre.x + size / 2, y: centre.y))
+		triangle.line(to: NSPoint(x: centre.x - size / 2.6, y: centre.y + size / 2))
+		triangle.close()
+
+		Theme.current.gitAdded.setFill()
+		triangle.fill()
+	}
+
 	private func drawBreakpoint(docLine: Int, y: CGFloat, scrollX: CGFloat) {
 		let size = Theme.current.scaled(9)
 		let centre = NSPoint(
@@ -736,6 +763,14 @@ final class CodeView: NSView, NSTextInputClient {
 	}
 
 	// MARK: - Debugging
+
+	/// Lines with a play button, given 1-based as the run configurations
+	/// report them.
+	func setRunnableLines(_ lines: Set<Int>) {
+		guard lines != runnableLines else { return }
+		runnableLines = lines
+		needsDisplay = true
+	}
 
 	/// Breakpoints to draw, keyed by 0-based line, with whether the adapter
 	/// verified each one.
@@ -942,10 +977,15 @@ final class CodeView: NSView, NSTextInputClient {
 		let visual = max(0, min(visibleLineCount - 1, Int(floor(point.y / lineHeight))))
 		let docLine = min(document.lineCount - 1, documentLine(forVisualRow: visual))
 
-		// The leftmost strip is the breakpoint column.
+		// The leftmost strip is the breakpoint column, or the run button when
+		// the line has one.
 		let scrollX = enclosingScrollView?.contentView.bounds.origin.x ?? 0
 		if point.x < scrollX + Self.breakpointColumnWidth {
-			onToggleBreakpoint?(docLine)
+			if runnableLines.contains(docLine + 1), breakpointLines[docLine] == nil {
+				onRunLine?(docLine + 1)
+			} else {
+				onToggleBreakpoint?(docLine)
+			}
 			return
 		}
 

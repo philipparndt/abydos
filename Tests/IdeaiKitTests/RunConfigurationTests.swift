@@ -1,0 +1,280 @@
+import Testing
+import Foundation
+@testable import IdeaiKit
+
+/// Makefile targets. The file format has more shapes that are *not* targets
+/// than shapes that are.
+struct MakefileParseTests {
+	private func targets(_ text: String) -> [String] {
+		RunConfigurationDiscovery
+			.parseMakefile(text, path: "/p/Makefile", directory: "/p")
+			.map(\.name)
+	}
+
+	@Test func findsPlainTargets() {
+		#expect(targets("build:\n\techo hi\nclean:\n\trm -rf x\n") == ["build", "clean"])
+	}
+
+	@Test func targetsWithPrerequisitesCount() {
+		#expect(targets("run: build\n\t./x\n") == ["run"])
+	}
+
+	/// .PHONY is a directive, not something to run.
+	@Test func directivesAreNotTargets() {
+		#expect(targets(".PHONY: build\nbuild:\n\techo\n") == ["build"])
+	}
+
+	@Test func variableAssignmentsAreNotTargets() {
+		#expect(targets("GO = go\nGOFLAGS := -v\nCONFIG ::= x\nbuild:\n\techo\n") == ["build"])
+	}
+
+	@Test func patternRulesAreSkipped() {
+		#expect(targets("%.o: %.c\n\tcc\nbuild:\n\techo\n") == ["build"])
+	}
+
+	@Test func recipeLinesAreNotTargets() {
+		// A recipe starts with a tab, and may well contain a colon.
+		#expect(targets("build:\n\tdocker run a:b\n") == ["build"])
+	}
+
+	@Test func commentsAreSkipped() {
+		#expect(targets("# note: this\nbuild:\n\techo\n") == ["build"])
+	}
+
+	@Test func duplicatesAreListedOnce() {
+		#expect(targets("build:\n\techo\nbuild: extra\n\techo\n") == ["build"])
+	}
+
+	@Test func theTargetLineIsRecorded() {
+		let found = RunConfigurationDiscovery.parseMakefile(
+			"# header\n\nbuild:\n\techo\n", path: "/p/Makefile", directory: "/p"
+		)
+		#expect(found.first?.line == 3)
+		#expect(found.first?.file == "/p/Makefile")
+	}
+
+	@Test func theCommandIsMakeTarget() {
+		let found = RunConfigurationDiscovery.parseMakefile(
+			"build:\n\techo\n", path: "/p/Makefile", directory: "/p"
+		)
+		#expect(found.first?.commandLine == "make build")
+		#expect(found.first?.workingDirectory == "/p")
+	}
+}
+
+/// Go entry points. `go run` needs the directory of a main package.
+struct GoMainDetectionTests {
+	@Test func findsMainInAMainPackage() {
+		#expect(RunConfigurationDiscovery.mainFunctionLine(in: """
+		package main
+
+		func main() {
+		}
+		""") == 3)
+	}
+
+	/// A `main` function in a library package is not an entry point.
+	@Test func ignoresMainOutsidePackageMain() {
+		#expect(RunConfigurationDiscovery.mainFunctionLine(in: """
+		package helper
+
+		func main() {
+		}
+		""") == nil)
+	}
+
+	@Test func ignoresIndentedMain() {
+		// A nested function is not the entry point.
+		#expect(RunConfigurationDiscovery.mainFunctionLine(in: """
+		package main
+
+		func wrapper() {
+			func main() {}
+		}
+		""") == nil)
+	}
+
+	@Test func aPackageWithNoMainHasNoEntryPoint() {
+		#expect(RunConfigurationDiscovery.mainFunctionLine(in: "package main\n\nfunc helper() {}\n") == nil)
+	}
+}
+
+/// launch.json is JSON with comments and trailing commas, which
+/// JSONSerialization rejects outright.
+struct JSONCommentStrippingTests {
+	private func strip(_ text: String) -> String {
+		RunConfigurationDiscovery.stripJSONComments(text)
+	}
+
+	@Test func removesLineComments() {
+		#expect(strip("{\n // note\n \"a\": 1\n}").contains("note") == false)
+	}
+
+	@Test func removesBlockComments() {
+		#expect(strip("{ /* note */ \"a\": 1 }").contains("note") == false)
+	}
+
+	/// The case a naive strip corrupts: a URL inside a string contains `//`.
+	@Test func leavesSlashesInsideStringsAlone() {
+		let text = "{ \"url\": \"https://example.com/x\" }"
+		#expect(strip(text) == text)
+	}
+
+	@Test func removesTrailingCommas() {
+		let stripped = strip("{ \"a\": [1, 2,], }")
+		#expect((try? JSONSerialization.jsonObject(with: Data(stripped.utf8))) != nil)
+	}
+
+	@Test func keepsOrdinaryCommas() {
+		let stripped = strip("{ \"a\": 1, \"b\": 2 }")
+		let object = (try? JSONSerialization.jsonObject(with: Data(stripped.utf8))) as? [String: Any]
+		#expect(object?.count == 2)
+	}
+}
+
+struct VSCodeLaunchTests {
+	private let root = URL(fileURLWithPath: "/proj")
+
+	@Test func readsAGoConfiguration() {
+		let json = """
+		{
+		  // launch config
+		  "version": "0.2.0",
+		  "configurations": [
+		    {
+		      "name": "Run app",
+		      "type": "go",
+		      "request": "launch",
+		      "program": "${workspaceFolder}/app",
+		      "args": ["--config", "${workspaceFolder}/c.json"],
+		      "cwd": "${workspaceFolder}/app",
+		      "env": { "LOG": "debug" },
+		    },
+		  ]
+		}
+		"""
+		let found = RunConfigurationDiscovery.parseLaunchJSON(Data(json.utf8), root: root)
+		#expect(found.count == 1)
+		#expect(found.first?.name == "Run app")
+		#expect(found.first?.workingDirectory == "/proj/app")
+		#expect(found.first?.arguments == ["run", "/proj/app", "--config", "/proj/c.json"])
+		#expect(found.first?.environment["LOG"] == "debug")
+	}
+
+	/// Only Go is understood; offering a configuration that cannot run is worse
+	/// than not listing it.
+	@Test func skipsTypesThatAreNotUnderstood() {
+		let json = """
+		{"configurations": [{"name": "node thing", "type": "node", "program": "x.js"}]}
+		"""
+		#expect(RunConfigurationDiscovery.parseLaunchJSON(Data(json.utf8), root: root).isEmpty)
+	}
+
+	@Test func malformedJSONIsNotACrash() {
+		#expect(RunConfigurationDiscovery.parseLaunchJSON(Data("{ not json".utf8), root: root).isEmpty)
+	}
+}
+
+struct ArgumentSplittingTests {
+	@Test func splitsOnWhitespace() {
+		#expect(RunConfigurationDiscovery.splitArguments("--a b  c") == ["--a", "b", "c"])
+	}
+
+	@Test func keepsQuotedRunsTogether() {
+		#expect(RunConfigurationDiscovery.splitArguments("--path \"/a b/c\"") == ["--path", "/a b/c"])
+		#expect(RunConfigurationDiscovery.splitArguments("'one two'") == ["one two"])
+	}
+
+	@Test func anEmptyStringIsNoArguments() {
+		#expect(RunConfigurationDiscovery.splitArguments("   ").isEmpty)
+	}
+}
+
+/// Against a project laid out the way real ones are: the module in a
+/// subdirectory, not at the root.
+struct RunDiscoveryIntegrationTests {
+	private func makeProject() throws -> URL {
+		let root = URL(fileURLWithPath: NSTemporaryDirectory())
+			.appendingPathComponent("ideai-run-\(UUID().uuidString)")
+		let app = root.appendingPathComponent("app")
+		try FileManager.default.createDirectory(at: app, withIntermediateDirectories: true)
+
+		try "module example.com/thing\n".write(
+			to: app.appendingPathComponent("go.mod"), atomically: true, encoding: .utf8)
+		try "package main\n\nfunc main() {\n}\n".write(
+			to: app.appendingPathComponent("main.go"), atomically: true, encoding: .utf8)
+		try "build:\n\techo build\nrun: build\n\t./x\n".write(
+			to: app.appendingPathComponent("Makefile"), atomically: true, encoding: .utf8)
+		return root
+	}
+
+	/// The case that used to report "this project has no go.mod at its root".
+	@Test func findsAModuleInASubdirectory() throws {
+		let root = try makeProject()
+		let found = RunConfigurationDiscovery.discover(in: root)
+		let go = found.filter { $0.source == .goModule }
+		#expect(go.count == 1)
+		#expect(go.first?.workingDirectory.hasSuffix("/app") == true)
+	}
+
+	@Test func findsMakeTargetsInASubdirectory() throws {
+		let root = try makeProject()
+		let make = RunConfigurationDiscovery.discover(in: root).filter { $0.source == .make }
+		#expect(Set(make.map(\.name)) == ["build", "run"])
+	}
+
+	@Test func aGoEntryPointCarriesItsFileAndLine() throws {
+		let root = try makeProject()
+		let go = RunConfigurationDiscovery.discover(in: root).first { $0.source == .goModule }
+		#expect(go?.file?.hasSuffix("app/main.go") == true)
+		#expect(go?.line == 3)
+	}
+
+	@Test func readsAnIntelliJWorkspaceConfiguration() throws {
+		let root = try makeProject()
+		let idea = root.appendingPathComponent(".idea")
+		try FileManager.default.createDirectory(at: idea, withIntermediateDirectories: true)
+		try """
+		<project version="4">
+		  <component name="RunManager">
+		    <configuration name="go build thing" type="GoApplicationRunConfiguration" factoryName="Go Application">
+		      <working_directory value="$PROJECT_DIR$/app" />
+		      <parameters value="$PROJECT_DIR$/production/config.json" />
+		      <kind value="PACKAGE" />
+		      <filePath value="$PROJECT_DIR$/app/main.go" />
+		    </configuration>
+		  </component>
+		</project>
+		""".write(to: idea.appendingPathComponent("workspace.xml"), atomically: true, encoding: .utf8)
+
+		let found = RunConfigurationDiscovery.discover(in: root).filter { $0.source == .intelliJ }
+		#expect(found.count == 1)
+		#expect(found.first?.name == "go build thing")
+		#expect(found.first?.workingDirectory.hasSuffix("/app") == true)
+		#expect(found.first?.arguments.contains { $0.hasSuffix("production/config.json") } == true)
+	}
+
+	@Test func nonGoIntelliJConfigurationsAreSkipped() throws {
+		let root = try makeProject()
+		let idea = root.appendingPathComponent(".idea")
+		try FileManager.default.createDirectory(at: idea, withIntermediateDirectories: true)
+		try """
+		<project version="4"><component name="RunManager">
+		  <configuration name="npm start" type="js.build_tools.npm" />
+		</component></project>
+		""".write(to: idea.appendingPathComponent("workspace.xml"), atomically: true, encoding: .utf8)
+
+		#expect(RunConfigurationDiscovery.discover(in: root).allSatisfy { $0.source != .intelliJ })
+	}
+
+	@Test func dependencyDirectoriesAreNotScanned() throws {
+		let root = try makeProject()
+		let vendored = root.appendingPathComponent("node_modules/dep")
+		try FileManager.default.createDirectory(at: vendored, withIntermediateDirectories: true)
+		try "build:\n\techo\n".write(
+			to: vendored.appendingPathComponent("Makefile"), atomically: true, encoding: .utf8)
+
+		let make = RunConfigurationDiscovery.discover(in: root).filter { $0.source == .make }
+		#expect(make.allSatisfy { !$0.workingDirectory.contains("node_modules") })
+	}
+}

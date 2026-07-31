@@ -78,6 +78,8 @@ final class EditorViewController: NSViewController {
 
 	/// Called when the breakpoint gutter is clicked, with a 1-based line.
 	var onToggleBreakpoint: ((URL, Int) -> Void)?
+	/// The gutter's play button was clicked, with a 1-based line.
+	var onRunLine: ((URL, Int) -> Void)?
 
 	/// Identifies this group when a tab is dragged between panes.
 	let groupID = UUID()
@@ -99,6 +101,7 @@ final class EditorViewController: NSViewController {
 
 	/// Breakpoints to draw, per absolute file path, with verification state.
 	private var breakpointsByFile: [String: [Int: Bool]] = [:]
+	private var runnableLinesByFile: [String: Set<Int>] = [:]
 	/// Where execution is currently stopped.
 	private var executionLocation: (file: String, line: Int)?
 
@@ -470,6 +473,12 @@ final class EditorViewController: NSViewController {
 		for tab in tabs { applyDebugState(to: tab) }
 	}
 
+	/// Lines with a play button, keyed by absolute file path.
+	func setRunnableLines(_ lines: [String: Set<Int>]) {
+		runnableLinesByFile = lines
+		for tab in tabs { applyDebugState(to: tab) }
+	}
+
 	/// Marks where execution stopped, clearing it elsewhere.
 	func setExecutionLocation(file: String?, line: Int?) {
 		if let file, let line {
@@ -491,6 +500,12 @@ final class EditorViewController: NSViewController {
 		let stored = breakpointsByFile[path] ?? [:]
 		codeView.setBreakpoints(
 			Dictionary(uniqueKeysWithValues: stored.map { ($0.key - 1, $0.value) })
+		)
+		// Keyed by the resolved path: /tmp is a symlink to /private/tmp, and a
+		// project reached through any symlinked directory would otherwise match
+		// nothing and silently show no play buttons.
+		codeView.setRunnableLines(
+			runnableLinesByFile[RunConfigurationDiscovery.canonicalPath(tab.url)] ?? []
 		)
 
 		// The marker belongs only in the file execution actually stopped in.

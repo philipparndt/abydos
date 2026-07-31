@@ -156,15 +156,42 @@ final class BottomPanel: NSView {
 		return pane
 	}
 
+	/// Runs a command in a new pane, in a directory of its own.
+	///
+	/// Through a login shell rather than exec'd directly: a run configuration
+	/// names `go` or `make`, and a GUI app's PATH does not have them — the
+	/// shell is what knows where the user's tools are.
+	@discardableResult
+	func runCommand(
+		title: String,
+		command: String,
+		directory: URL,
+		environment: [String: String] = [:]
+	) -> TerminalPane? {
+		let assignments = environment
+			.sorted { $0.key < $1.key }
+			.map { "\($0.key)=\($0.value.replacingOccurrences(of: "'", with: "'\\''"))" }
+			.joined(separator: " ")
+		let line = assignments.isEmpty ? command : "env \(assignments) \(command)"
+
+		return runCommand(
+			title: title,
+			executable: "/bin/sh",
+			arguments: ["-lc", line],
+			workingDirectory: directory
+		)
+	}
+
 	/// Runs a command in a new pane. The basis for "Run" and for agent sessions.
 	@discardableResult
 	func runCommand(
 		title: String,
 		executable: String,
-		arguments: [String]
+		arguments: [String],
+		workingDirectory: URL? = nil
 	) -> TerminalPane? {
 		let pane = TerminalPane(
-			workingDirectory: workingDirectory,
+			workingDirectory: workingDirectory ?? self.workingDirectory,
 			command: (executable: executable, arguments: arguments)
 		)
 		let session = Session(title: title, kind: .terminal(pane))
