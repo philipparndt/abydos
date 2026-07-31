@@ -251,3 +251,4 @@ private final class SymbolRowView: NSView {
 		}
 	}
 }
+

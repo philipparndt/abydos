@@ -659,19 +659,21 @@ final class EditorViewController: NSViewController {
 		guard mode != .source else { return source ?? tab.contentView }
 
 		let preview = makePreview(for: tab)
-		guard mode == .split, let source else { return preview }
+		guard mode.isSplit, let source else { return preview }
 
-		// Vertically split, source on the left: reading order, and the thing
-		// being edited stays where it was.
-		let split = ThinDividerSplitView()
-		split.isVertical = true
+		// Source first: reading order, and the thing being edited stays where
+		// it was whichever way the pane is divided.
+		let split = PreviewSplitView()
+		split.isVertical = mode.splitsSideBySide
 		split.dividerStyle = .thin
 		split.addArrangedSubview(source)
 		split.addArrangedSubview(preview)
 
 		DispatchQueue.main.async { [weak split] in
-			guard let split, split.bounds.width > 0 else { return }
-			split.setPosition(split.bounds.width / 2, ofDividerAt: 0)
+			guard let split else { return }
+			let total = mode.splitsSideBySide ? split.bounds.width : split.bounds.height
+			guard total > 0 else { return }
+			split.setPosition(total / 2, ofDividerAt: 0)
 		}
 		return split
 	}

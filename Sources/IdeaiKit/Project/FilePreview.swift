@@ -6,28 +6,38 @@ public enum PreviewMode: String, Sendable, CaseIterable {
 	case source
 	/// The rendered form only, filling the pane.
 	case preview
-	/// Both, side by side.
-	case split
+	/// Both, source on the left. Named for where the preview goes, matching the
+	/// editor's own Split Right and Split Down.
+	case splitRight
+	/// Both, source on top.
+	case splitDown
 
 	public var title: String {
 		switch self {
-		case .source:  return "Source"
-		case .preview: return "Preview"
-		case .split:   return "Split"
+		case .source:     return "Source"
+		case .preview:    return "Preview"
+		case .splitRight: return "Split Right"
+		case .splitDown:  return "Split Down"
 		}
 	}
 
 	/// SF Symbol for the tab bar's control.
 	public var symbolName: String {
 		switch self {
-		case .source:  return "doc.plaintext"
-		case .preview: return "eye"
-		case .split:   return "rectangle.split.2x1"
+		case .source:     return "doc.plaintext"
+		case .preview:    return "eye"
+		case .splitRight: return "rectangle.split.2x1"
+		case .splitDown:  return "rectangle.split.1x2"
 		}
 	}
 
 	public var showsSource: Bool { self != .preview }
 	public var showsPreview: Bool { self != .source }
+
+	public var isSplit: Bool { self == .splitRight || self == .splitDown }
+
+	/// Whether the divider runs vertically, putting the panes side by side.
+	public var splitsSideBySide: Bool { self == .splitRight }
 }
 
 /// What a file's rendered form is, when it has one.

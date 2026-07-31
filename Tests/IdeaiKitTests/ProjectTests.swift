@@ -193,6 +193,25 @@ struct FilePreviewTests {
 		#expect(FilePreview.availableModes(for: url("a.md")) == PreviewMode.allCases)
 	}
 
+	/// Both directions are offered, and named the way the editor's own splits
+	/// are — the preview goes where the name says.
+	@Test func bothSplitDirectionsAreAvailable() {
+		let modes = FilePreview.availableModes(for: url("a.md"))
+		#expect(modes.contains(.splitRight))
+		#expect(modes.contains(.splitDown))
+		#expect(PreviewMode.splitRight.splitsSideBySide)
+		#expect(!PreviewMode.splitDown.splitsSideBySide)
+	}
+
+	@Test func bothSplitsShowBothHalves() {
+		for mode in [PreviewMode.splitRight, .splitDown] {
+			#expect(mode.isSplit, "\(mode)")
+			#expect(mode.showsSource && mode.showsPreview, "\(mode)")
+		}
+		#expect(!PreviewMode.source.isSplit)
+		#expect(!PreviewMode.preview.isSplit)
+	}
+
 	@Test func aFileWithNoPreviewOffersNothing() {
 		#expect(FilePreview.availableModes(for: url("a.swift")).isEmpty)
 	}
@@ -200,6 +219,5 @@ struct FilePreviewTests {
 	@Test func modesSayWhichHalvesTheyShow() {
 		#expect(PreviewMode.source.showsSource && !PreviewMode.source.showsPreview)
 		#expect(!PreviewMode.preview.showsSource && PreviewMode.preview.showsPreview)
-		#expect(PreviewMode.split.showsSource && PreviewMode.split.showsPreview)
 	}
 }
