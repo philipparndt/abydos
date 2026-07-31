@@ -120,7 +120,7 @@ final class EditorTabBar: NSView {
 		// Pinned to the trailing edge. Tabs are free to run underneath when
 		// there are too many of them; the control stays on top and reachable,
 		// which matters more than a tab's last few characters.
-		let width = Theme.current.scaled(78)
+		let width = previewControlWidth()
 		let height = Theme.current.scaled(20)
 		previewButtonFrame = NSRect(
 			x: max(0, bounds.width - width - Theme.current.scaled(8)),
@@ -128,6 +128,28 @@ final class EditorTabBar: NSView {
 			width: width,
 			height: height
 		)
+	}
+
+	// Metrics for the preview control, shared by its measurement and its
+	// drawing. A fixed width fits "Source" and clips "Split Right".
+	private static var previewPadding: CGFloat { Theme.current.scaled(7) }
+	private static var previewIconSize: CGFloat { Theme.current.scaled(11) }
+	private static var previewChevronSize: CGFloat { Theme.current.scaled(8) }
+	private static var previewGap: CGFloat { Theme.current.scaled(5) }
+
+	private var previewLabel: NSAttributedString {
+		NSAttributedString(string: previewMode.title, attributes: [
+			.font: Theme.current.uiFont(11),
+			.foregroundColor: Theme.current.sidebarHeaderText,
+		])
+	}
+
+	/// Wide enough for whichever mode is showing.
+	private func previewControlWidth() -> CGFloat {
+		Self.previewPadding
+			+ Self.previewIconSize + Self.previewGap
+			+ ceil(previewLabel.size().width) + Self.previewGap
+			+ Self.previewChevronSize + Self.previewPadding
 	}
 
 	private func measuredWidth(for item: EditorTabItem) -> CGFloat {
@@ -353,11 +375,11 @@ final class EditorTabBar: NSView {
 		NSColor.white.withAlphaComponent(isPreviewHovered ? 0.14 : 0.07).setFill()
 		path.fill()
 
-		var x = previewButtonFrame.minX + Theme.current.scaled(7)
+		var x = previewButtonFrame.minX + Self.previewPadding
 		let colour = Theme.current.sidebarHeaderText
 
 		if let icon = Theme.symbol(previewMode.symbolName, size: 10 * Theme.current.scale, color: colour) {
-			let size = Theme.current.scaled(11)
+			let size = Self.previewIconSize
 			icon.draw(
 				in: NSRect(x: x, y: previewButtonFrame.midY - size / 2, width: size, height: size),
 				from: .zero,
@@ -366,21 +388,18 @@ final class EditorTabBar: NSView {
 				respectFlipped: true,
 				hints: nil
 			)
-			x += size + Theme.current.scaled(5)
+			x += size + Self.previewGap
 		}
 
-		let label = NSAttributedString(string: previewMode.title, attributes: [
-			.font: Theme.current.uiFont(11),
-			.foregroundColor: colour,
-		])
+		let label = previewLabel
 		label.draw(at: NSPoint(x: x, y: previewButtonFrame.midY - label.size().height / 2))
 
 		// A chevron, so it reads as a menu rather than a toggle.
 		if let chevron = Theme.symbol("chevron.down", size: 7 * Theme.current.scale, color: colour) {
-			let size = Theme.current.scaled(8)
+			let size = Self.previewChevronSize
 			chevron.draw(
 				in: NSRect(
-					x: previewButtonFrame.maxX - size - Theme.current.scaled(6),
+					x: previewButtonFrame.maxX - size - Self.previewPadding,
 					y: previewButtonFrame.midY - size / 2,
 					width: size,
 					height: size
