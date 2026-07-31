@@ -527,7 +527,7 @@ public final class TerminalEmulator {
 			intermediateBytes.append(byte)
 		case 0x40...0x7E: // final byte
 			pushParameter()
-			executeCSI(final: Character(UnicodeScalar(byte)))
+			executeCSI(final: byte)
 			state = .ground
 		default:
 			state = .ground
@@ -599,7 +599,7 @@ public final class TerminalEmulator {
 	/// - `p`: DECRQM, a mode query — tmux and modern shells probe synchronised
 	///   output (mode 2026) with it and wait for the reply.
 	/// - `n`: DECXCPR, the private cursor position report.
-	static let introducerAwareFinals: Set<Character> = ["h", "l", "c", "p", "n"]
+	static let introducerAwareFinals: Set<UInt8> = [0x68, 0x6C, 0x63, 0x70, 0x6E] // h l c p n
 
 	private func parameter(_ index: Int, default fallback: Int) -> Int {
 		guard index < componentCount else { return fallback }
@@ -607,7 +607,7 @@ public final class TerminalEmulator {
 		return value == 0 ? fallback : value
 	}
 
-	private func executeCSI(final: Character) {
+	private func executeCSI(final: UInt8) {
 		let isPrivate = introducer == 0x3F // ?
 
 		// A private-prefixed sequence is a different command that happens to end
@@ -625,27 +625,27 @@ public final class TerminalEmulator {
 		}
 
 		switch final {
-		case "A": moveCursor(row: cursorRow - parameter(0, default: 1), column: cursorColumn)
-		case "B": moveCursor(row: cursorRow + parameter(0, default: 1), column: cursorColumn)
-		case "C": moveCursor(row: cursorRow, column: cursorColumn + parameter(0, default: 1))
-		case "D": moveCursor(row: cursorRow, column: cursorColumn - parameter(0, default: 1))
-		case "E": moveCursor(row: cursorRow + parameter(0, default: 1), column: 0)
-		case "F": moveCursor(row: cursorRow - parameter(0, default: 1), column: 0)
-		case "G", "`": moveCursor(row: cursorRow, column: parameter(0, default: 1) - 1)
-		case "d": moveCursor(row: parameter(0, default: 1) - 1, column: cursorColumn)
-		case "H", "f":
+		case 0x41: moveCursor(row: cursorRow - parameter(0, default: 1), column: cursorColumn) // A
+		case 0x42: moveCursor(row: cursorRow + parameter(0, default: 1), column: cursorColumn) // B
+		case 0x43: moveCursor(row: cursorRow, column: cursorColumn + parameter(0, default: 1)) // C
+		case 0x44: moveCursor(row: cursorRow, column: cursorColumn - parameter(0, default: 1)) // D
+		case 0x45: moveCursor(row: cursorRow + parameter(0, default: 1), column: 0) // E
+		case 0x46: moveCursor(row: cursorRow - parameter(0, default: 1), column: 0) // F
+		case 0x47, 0x60: moveCursor(row: cursorRow, column: parameter(0, default: 1) - 1) // G `
+		case 0x64: moveCursor(row: parameter(0, default: 1) - 1, column: cursorColumn) // d
+		case 0x48, 0x66: // H f
 			moveCursor(row: parameter(0, default: 1) - 1, column: parameter(1, default: 1) - 1)
-		case "J": eraseInDisplay(mode: firstParameter)
-		case "K": eraseInLine(mode: firstParameter)
-		case "L": insertLines(parameter(0, default: 1))
-		case "M": deleteLines(parameter(0, default: 1))
-		case "P": deleteCharacters(parameter(0, default: 1))
-		case "@": insertCharacters(parameter(0, default: 1))
-		case "X": eraseCharacters(parameter(0, default: 1))
-		case "S": screen.scrollUp(top: scrollTop, bottom: scrollBottom, attributes: attributes)
-		case "T": screen.scrollDown(top: scrollTop, bottom: scrollBottom, attributes: attributes)
-		case "m": applySGR()
-		case "r":
+		case 0x4A: eraseInDisplay(mode: firstParameter) // J
+		case 0x4B: eraseInLine(mode: firstParameter) // K
+		case 0x4C: insertLines(parameter(0, default: 1)) // L
+		case 0x4D: deleteLines(parameter(0, default: 1)) // M
+		case 0x50: deleteCharacters(parameter(0, default: 1)) // P
+		case 0x40: insertCharacters(parameter(0, default: 1)) // @
+		case 0x58: eraseCharacters(parameter(0, default: 1)) // X
+		case 0x53: screen.scrollUp(top: scrollTop, bottom: scrollBottom, attributes: attributes) // S
+		case 0x54: screen.scrollDown(top: scrollTop, bottom: scrollBottom, attributes: attributes) // T
+		case 0x6D: applySGR() // m
+		case 0x72: // r
 			let top = parameter(0, default: 1) - 1
 			let bottom = componentCount > 1 ? parameter(1, default: screen.rows) - 1 : screen.rows - 1
 			if top < bottom, bottom < screen.rows {
@@ -653,11 +653,11 @@ public final class TerminalEmulator {
 				scrollBottom = bottom
 				moveCursor(row: scrollTop, column: 0)
 			}
-		case "h": setMode(enabled: true, isPrivate: isPrivate)
-		case "l": setMode(enabled: false, isPrivate: isPrivate)
-		case "s": savedCursor = (cursorRow, cursorColumn, attributes)
-		case "u": restoreCursor()
-		case "n":
+		case 0x68: setMode(enabled: true, isPrivate: isPrivate) // h
+		case 0x6C: setMode(enabled: false, isPrivate: isPrivate) // l
+		case 0x73: savedCursor = (cursorRow, cursorColumn, attributes) // s
+		case 0x75: restoreCursor() // u
+		case 0x6E: // n
 			// Device status. A shell blocks on these, so they must be answered.
 			switch firstParameter {
 			case 5 where !isPrivate: onResponse?("\u{1B}[0n")   // terminal OK
@@ -668,7 +668,7 @@ public final class TerminalEmulator {
 				onResponse?("\u{1B}[\(marker)\(cursorRow + 1);\(cursorColumn + 1)R")
 			default: break
 			}
-		case "c":
+		case 0x63: // c
 			// Primary and secondary device attributes are different questions and
 			// need different answers. Replying to a secondary query with a primary
 			// response is what made tmux and powerlevel10k leave `^[[?6c` on
@@ -686,7 +686,7 @@ public final class TerminalEmulator {
 				// Primary DA: VT220 with 132 columns, ANSI colour.
 				onResponse?("\u{1B}[?62;1;6;22c")
 			}
-		case "p":
+		case 0x70: // p
 			// DECRQM — a mode query. Answering "not recognised" is far better than
 			// silence, which leaves the program waiting.
 			if introducer == 0x3F, intermediateBytes.contains(0x24) { // ? and $
