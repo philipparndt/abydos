@@ -27,6 +27,8 @@ final class TerminalView: NSView, NSTextInputClient {
 	private var isPinnedToBottom = true
 
 	private var advanceCache: [String: CGFloat] = [:]
+	/// Highlighted while files are held over the view.
+	private var isDropTarget = false
 	/// Text selected with the mouse, in absolute rows. Nil when nothing is.
 	private var selection: TerminalSelection?
 	private var isSelecting = false
@@ -96,6 +98,9 @@ final class TerminalView: NSView, NSTextInputClient {
 		super.viewDidMoveToWindow()
 		guard window != nil, let launch = pendingLaunch else { return }
 		pendingLaunch = nil
+
+		// Files dropped from the tree, or from any app that offers URLs.
+		registerForDraggedTypes([.fileURL])
 
 		launchWhenSized(launch)
 	}
@@ -263,6 +268,7 @@ final class TerminalView: NSView, NSTextInputClient {
 		}
 
 		drawCursor()
+		drawDropHighlight()
 	}
 
 	/// Draws one row, batching neighbouring cells that share attributes.
@@ -304,6 +310,15 @@ final class TerminalView: NSView, NSTextInputClient {
 		}
 
 		drawSelection(on: line, atRow: index, y: y)
+	}
+
+	/// A border while files are held over the view, so the drop has a target.
+	private func drawDropHighlight() {
+		guard isDropTarget else { return }
+		let outline = NSBezierPath(rect: bounds.insetBy(dx: 1, dy: 1))
+		outline.lineWidth = 2
+		Theme.current.gitModified.setStroke()
+		outline.stroke()
 	}
 
 	/// Tints the selected cells.
@@ -503,6 +518,48 @@ final class TerminalView: NSView, NSTextInputClient {
 		pty.write(sequence)
 		scrollToBottom()
 		return true
+	}
+
+	// MARK: - Dropping files
+
+	/// Files dropped here are typed as paths.
+	///
+	/// What the terminal is running does not matter: the path arrives as
+	/// keystrokes, so it works at a shell prompt and equally in an agent's
+	/// prompt, which is the case this exists for.
+	override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+		guard !droppedURLs(from: sender).isEmpty else { return [] }
+		isDropTarget = true
+		needsDisplay = true
+		return .copy
+	}
+
+	override func draggingExited(_ sender: NSDraggingInfo?) {
+		isDropTarget = false
+		needsDisplay = true
+	}
+
+	override func draggingEnded(_ sender: NSDraggingInfo) {
+		isDropTarget = false
+		needsDisplay = true
+	}
+
+	override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+		isDropTarget = false
+		needsDisplay = true
+
+		let urls = droppedURLs(from: sender)
+		guard !urls.isEmpty else { return false }
+
+		window?.makeFirstResponder(self)
+		send(TerminalDrop.text(for: urls))
+		return true
+	}
+
+	private func droppedURLs(from sender: NSDraggingInfo) -> [URL] {
+		let options: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
+		let objects = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: options)
+		return (objects as? [URL]) ?? []
 	}
 
 	override func keyDown(with event: NSEvent) {

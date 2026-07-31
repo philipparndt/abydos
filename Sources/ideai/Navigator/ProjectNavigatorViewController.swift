@@ -61,6 +61,11 @@ final class ProjectNavigatorViewController: NSViewController {
 
 		outline.dataSource = self
 		outline.delegate = self
+		// Files drag out as URLs: onto the terminal, or into another app. Copy
+		// rather than move — dragging a file out of the tree should never be a
+		// way to lose it from the project.
+		outline.setDraggingSourceOperationMask(.copy, forLocal: true)
+		outline.setDraggingSourceOperationMask(.copy, forLocal: false)
 		outline.target = self
 		outline.doubleAction = #selector(rowDoubleClicked)
 		outline.onKeyDown = { [weak self] event in self?.handleKeyDown(event) ?? false }
@@ -692,6 +697,14 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 	/// Tailors the menu to the row it was opened on: directories cannot be
 	/// "opened externally" in a meaningful way, and the project root should not
 	/// offer to trash itself.
+	/// Files can be dragged out — onto the terminal, or into another app.
+	///
+	/// The URL is the whole payload: every receiver already knows what to do
+	/// with one, and the terminal turns it into a path.
+	func outlineView(_ outlineView: NSOutlineView, pasteboardWriterForItem item: Any) -> NSPasteboardWriting? {
+		(item as? FileNode)?.url as NSURL?
+	}
+
 	func menuNeedsUpdate(_ menu: NSMenu) {
 		let node = contextNode
 		let isRoot = node === rootNode

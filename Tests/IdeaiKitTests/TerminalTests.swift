@@ -1191,3 +1191,42 @@ struct TerminalNavigationKeyTests {
 		#expect(sequence(.downArrow, command: true) == nil)
 	}
 }
+
+/// Dropping files onto a terminal types their paths.
+struct TerminalDropTests {
+	@Test func anOrdinaryPathIsNotQuoted() {
+		#expect(TerminalDrop.quoted("/Users/x/dev/main.go") == "/Users/x/dev/main.go")
+	}
+
+	/// A shell would read these as syntax rather than as part of the name.
+	@Test func awkwardPathsAreQuoted() {
+		#expect(TerminalDrop.quoted("/a b/c.txt") == "'/a b/c.txt'")
+		#expect(TerminalDrop.quoted("/a$b") == "'/a$b'")
+		#expect(TerminalDrop.quoted("/a;rm -rf/") == "'/a;rm -rf/'")
+		#expect(TerminalDrop.quoted("/a*b") == "'/a*b'")
+	}
+
+	/// A single quote cannot appear inside a single-quoted string, so it is
+	/// closed, escaped and reopened.
+	@Test func embeddedSingleQuotesAreEscaped() {
+		#expect(TerminalDrop.quoted("/it's here") == "'/it'\\''s here'")
+	}
+
+	@Test func severalFilesAreSeparated() {
+		let text = TerminalDrop.text(for: [
+			URL(fileURLWithPath: "/a/one.txt"),
+			URL(fileURLWithPath: "/a/two.txt"),
+		])
+		#expect(text == "/a/one.txt /a/two.txt ")
+	}
+
+	/// The trailing space matters: whatever is typed or dropped next would
+	/// otherwise run into the last path.
+	@Test func theTextEndsWithASpace() {
+		#expect(TerminalDrop.text(for: [URL(fileURLWithPath: "/a/x")]).hasSuffix(" "))
+	}
+
+	@Test func droppingNothingTypesNothing() {
+		#expect(TerminalDrop.text(for: []).isEmpty)
+	}
+}
