@@ -84,6 +84,7 @@ public final class TextDocument {
 		self.engine = languageId.flatMap { SyntaxEngine(languageId: $0) }
 
 		startInitialParse()
+		recordDiskState()
 	}
 
 	public var displayLanguageName: String? {
@@ -410,5 +411,57 @@ public final class TextDocument {
 		let bytes = rope.bytes(in: 0..<rope.byteCount)
 		try Data(bytes).write(to: url, options: .atomic)
 		isDirty = false
+		recordDiskState()
+	}
+
+	// MARK: - External changes
+
+	/// What the file looked like when this document last agreed with it.
+	///
+	/// Size as well as date: an agent that rewrites a file twice in the same
+	/// second — which happens — would otherwise look unchanged.
+	private var diskModified: Date?
+	private var diskSize: Int?
+
+	private func recordDiskState() {
+		let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+		diskModified = attributes?[.modificationDate] as? Date
+		diskSize = attributes?[.size] as? Int
+	}
+
+	/// Whether the file on disk no longer matches what was last read or written.
+	public var hasChangedOnDisk: Bool {
+		guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path) else {
+			// Deleted or unreadable: not a change to reload, and treating it as
+			// one would replace the buffer with nothing.
+			return false
+		}
+		let modified = attributes[.modificationDate] as? Date
+		let size = attributes[.size] as? Int
+		return modified != diskModified || size != diskSize
+	}
+
+	/// Re-reads the file, replacing the buffer.
+	///
+	/// Returns false when there was nothing to do. The caller is responsible for
+	/// putting the caret back: offsets into the old text mean nothing in the new
+	/// one, and only the view knows where the user was looking.
+	@discardableResult
+	public func reloadFromDisk() throws -> Bool {
+		guard hasChangedOnDisk else { return false }
+
+		let data = try Data(contentsOf: url, options: .mappedIfSafe)
+		rope = Rope(data: data)
+		isDirty = false
+		recordDiskState()
+
+		// The tree describes text that no longer exists, so it is abandoned
+		// rather than edited: an incremental reparse needs to be told what
+		// changed, and an external writer does not say.
+		generation &+= 1
+		folds = []
+		startInitialParse()
+		onSyntaxUpdated?()
+		return true
 	}
 }

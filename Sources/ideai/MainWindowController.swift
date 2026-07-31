@@ -161,6 +161,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 			self?.openTerminal(in: directory)
 		}
 		navigator.onFilesChanged = { [weak self] in
+			// Something wrote inside the project — possibly a file that is open.
+			self?.editor.reloadExternallyChangedFiles()
 			self?.changesPane?.refresh()
 			// A new main.go or Makefile target should get its play button
 			// without reopening the project.
@@ -1179,6 +1181,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
 	func windowDidEnterFullScreen(_ notification: Notification) { updateTopInsets() }
 	func windowDidExitFullScreen(_ notification: Notification) { updateTopInsets() }
+
+	/// Coming back to the window is when an external edit is most likely to
+	/// have happened, and the file system watcher does not fire for a file
+	/// written while the app was in the background on every volume.
+	func windowDidBecomeKey(_ notification: Notification) {
+		editor.reloadExternallyChangedFiles()
+	}
 
 	func windowWillClose(_ notification: Notification) {
 		bottomPanel.shutdown()

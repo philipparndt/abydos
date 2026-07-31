@@ -46,6 +46,8 @@ struct LaunchOptions {
 	var debugLine: Int?
 	/// Create a folder at the project root before capture.
 	var newFolder: String?
+	/// Rewrite the open file externally after this many seconds.
+	var externalEdit: Double?
 	/// Query for the in-file find bar.
 	var findQuery: String?
 	/// Query for project-wide search.
@@ -91,6 +93,7 @@ struct LaunchOptions {
 			case "--run-line":   options.runLine = next().flatMap(Int.init)
 			case "--debug-line": options.debugLine = next().flatMap(Int.init)
 			case "--new-folder": options.newFolder = next()
+			case "--external-edit": options.externalEdit = next().flatMap(Double.init)
 			case "--sidebar-cycle": options.sidebarCycle = true
 			case "--breakpoint": options.breakpointLine = next().flatMap(Int.init)
 			case "--find":       options.findQuery = next()

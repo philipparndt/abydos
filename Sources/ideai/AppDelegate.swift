@@ -97,6 +97,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let delay = options.externalEdit, let path = options.filePath {
+			// Written by another process, the way an agent would.
+			DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+				let url = URL(fileURLWithPath: path)
+				guard var text = try? String(contentsOf: url, encoding: .utf8) else { return }
+				text = "// added by the agent\n" + text
+				try? text.write(to: url, atomically: true, encoding: .utf8)
+			}
+		}
+
 		if let name = options.newFolder {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
 				controller?.createFolderForTesting(named: name)

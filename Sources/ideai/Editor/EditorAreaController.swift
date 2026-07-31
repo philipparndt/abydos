@@ -314,6 +314,10 @@ final class EditorAreaController: NSViewController {
 		updateGroupInsets()
 	}
 
+	func reloadExternallyChangedFiles() {
+		for group in groups { group.reloadExternallyChangedFiles() }
+	}
+
 	func applySettings() {
 		statusBarHeightConstraint.constant = Theme.current.scaled(24)
 		statusBar.needsDisplay = true

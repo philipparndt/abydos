@@ -267,3 +267,116 @@ struct RopeDisplayWidthTests {
 		#expect(Rope("").longestLineDisplayColumns(tabWidth: 4) == 0)
 	}
 }
+
+/// Re-reading a file that something else wrote.
+struct ExternalChangeTests {
+	private func makeFile(_ contents: String) throws -> URL {
+		let url = URL(fileURLWithPath: NSTemporaryDirectory())
+			.appendingPathComponent("ideai-external-\(UUID().uuidString).txt")
+		try contents.write(to: url, atomically: true, encoding: .utf8)
+		return url
+	}
+
+	@Test func anUntouchedFileReportsNoChange() throws {
+		let document = try TextDocument(url: makeFile("one\ntwo\n"))
+		#expect(!document.hasChangedOnDisk)
+		#expect(try document.reloadFromDisk() == false)
+	}
+
+	@Test func aWrittenFileIsDetectedAndReloaded() throws {
+		let url = try makeFile("one\n")
+		let document = try TextDocument(url: url)
+
+		try "one\ntwo\nthree\n".write(to: url, atomically: true, encoding: .utf8)
+		#expect(document.hasChangedOnDisk)
+		#expect(try document.reloadFromDisk() == true)
+		#expect(document.lineCount == 4)
+		#expect(document.rope.lineText(1) == "two")
+	}
+
+	/// An agent that rewrites a file twice in the same second is not unusual,
+	/// and a date alone would call the second write unchanged.
+	@Test func aSameSecondRewriteOfADifferentLengthIsDetected() throws {
+		let url = try makeFile("aaaa\n")
+		let document = try TextDocument(url: url)
+
+		let date = try FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date
+		try "bb\n".write(to: url, atomically: true, encoding: .utf8)
+		try FileManager.default.setAttributes([.modificationDate: date as Any], ofItemAtPath: url.path)
+
+		#expect(document.hasChangedOnDisk)
+	}
+
+	/// Saving is agreement with the file, not a change to react to — otherwise
+	/// every save would trigger a reload of what was just written.
+	@Test func savingDoesNotLookLikeAnExternalChange() throws {
+		let document = try TextDocument(url: makeFile("one\n"))
+		document.replace(utf16Range: 0..<0, with: "new ", caretBefore: 0)
+		try document.save()
+		#expect(!document.hasChangedOnDisk)
+	}
+
+	/// A deleted file is not something to reload: doing so would replace the
+	/// buffer with nothing.
+	@Test func aDeletedFileIsNotAChange() throws {
+		let url = try makeFile("one\n")
+		let document = try TextDocument(url: url)
+		try FileManager.default.removeItem(at: url)
+		#expect(!document.hasChangedOnDisk)
+	}
+
+	@Test func reloadingClearsTheDirtyFlag() throws {
+		let url = try makeFile("one\n")
+		let document = try TextDocument(url: url)
+		document.replace(utf16Range: 0..<0, with: "local ", caretBefore: 0)
+		#expect(document.isDirty)
+
+		try "external\n".write(to: url, atomically: true, encoding: .utf8)
+		#expect(try document.reloadFromDisk() == true)
+		#expect(!document.isDirty)
+		#expect(document.rope.lineText(0) == "external")
+	}
+}
+
+/// The sequence that matters: an agent rewrites the file, then the user types.
+/// The saved result has to contain both, not one overwriting the other.
+struct ExternalChangeThenLocalEditTests {
+	@Test func aLocalEditLandsOnTopOfTheExternalOne() throws {
+		let url = URL(fileURLWithPath: NSTemporaryDirectory())
+			.appendingPathComponent("ideai-merge-\(UUID().uuidString).swift")
+		try "let a = 1\n".write(to: url, atomically: true, encoding: .utf8)
+
+		let document = try TextDocument(url: url)
+
+		// The agent writes while the file is open and unmodified.
+		try "// agent\nlet a = 1\n".write(to: url, atomically: true, encoding: .utf8)
+		#expect(try document.reloadFromDisk() == true)
+
+		// The user then types, and saves.
+        _ = document.replace(
+			utf16Range: document.rope.utf16Count..<document.rope.utf16Count,
+			with: "let b = 2\n",
+			caretBefore: document.rope.utf16Count
+		)
+		try document.save()
+
+		let saved = try String(contentsOf: url, encoding: .utf8)
+		#expect(saved == "// agent\nlet a = 1\nlet b = 2\n")
+	}
+
+	/// Without the reload, the buffer still holds the pre-agent text and saving
+	/// would write the agent's work away — which is the failure this exists to
+	/// prevent.
+	@Test func savingWithoutReloadingWouldDiscardTheExternalEdit() throws {
+		let url = URL(fileURLWithPath: NSTemporaryDirectory())
+			.appendingPathComponent("ideai-clobber-\(UUID().uuidString).swift")
+		try "let a = 1\n".write(to: url, atomically: true, encoding: .utf8)
+
+		let document = try TextDocument(url: url)
+		try "// agent\nlet a = 1\n".write(to: url, atomically: true, encoding: .utf8)
+
+		// No reload: save writes what the buffer still holds.
+		try document.save()
+		#expect(try String(contentsOf: url, encoding: .utf8) == "let a = 1\n")
+	}
+}

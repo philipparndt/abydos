@@ -935,6 +935,19 @@ final class EditorViewController: NSViewController {
 		refreshTabBar()
 	}
 
+	/// Re-reads any open file that something else has written.
+	///
+	/// A file with unsaved edits is left alone: replacing it would throw away
+	/// work the user has not seen saved, and the two versions cannot be merged
+	/// without asking. Auto-save is on by default, so that window is short.
+	func reloadExternallyChangedFiles() {
+		for tab in tabs {
+			guard let document = tab.document, !document.isDirty else { continue }
+			guard document.hasChangedOnDisk else { continue }
+			tab.codeView?.reloadFromDisk()
+		}
+	}
+
 	/// Re-reads settings that affect the editor and repaints.
 	func applySettings() {
 		tabBarHeightConstraint.constant = EditorTabBar.height

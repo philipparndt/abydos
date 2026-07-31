@@ -107,6 +107,56 @@ final class CodeView: NSView, NSTextInputClient {
 
 	// MARK: - Loading
 
+	/// Re-reads the file after something else wrote it, putting the user back
+	/// where they were.
+	///
+	/// Position is kept as a line and column rather than a character offset:
+	/// an offset into the old text names a different place in the new one, and
+	/// an agent editing a file above the caret would silently move it. Line and
+	/// column survive edits elsewhere in the file, which is the common case.
+	///
+	/// Returns false when the file had not actually changed.
+	@discardableResult
+	func reloadFromDisk() -> Bool {
+		guard let document else { return false }
+
+		let rope = document.rope
+		let caretByte = rope.byteOffset(fromUTF16: caret)
+		let caretLine = rope.line(atByteOffset: caretByte)
+		let caretColumn = caret - rope.utf16Offset(fromByte: rope.lineByteRange(caretLine).lowerBound)
+		let collapsed = folding.collapsed
+		let scrollOffset = enclosingScrollView?.contentView.bounds.origin ?? .zero
+
+		guard (try? document.reloadFromDisk()) == true else { return false }
+
+		// Folds are recomputed from the new parse; the ones that still exist at
+		// the same line stay closed.
+		folding = FoldingState()
+		folding.setAvailable(document.folds)
+		for line in collapsed where folding.isFoldable(line: line) {
+			folding.toggle(line: line)
+		}
+
+		let line = min(caretLine, max(0, document.lineCount - 1))
+		let lineRange = document.rope.lineByteRange(line)
+		let lineStart = document.rope.utf16Offset(fromByte: lineRange.lowerBound)
+		let lineLength = document.rope.utf16Offset(fromByte: lineRange.upperBound) - lineStart
+		caret = lineStart + min(caretColumn, max(0, lineLength))
+		selectionAnchor = caret
+
+		measureLongestLine()
+		rebuildWrapLayout()
+		updateFrameSize()
+		// Restored after the frame is resized, or the offset is clamped against
+		// a document that has not grown yet.
+		enclosingScrollView?.contentView.scroll(to: scrollOffset)
+		enclosingScrollView?.reflectScrolledClipView(enclosingScrollView!.contentView)
+
+		needsDisplay = true
+		reportCaretPosition()
+		return true
+	}
+
 	func load(document: TextDocument) {
 		self.document = document
 		caret = 0
