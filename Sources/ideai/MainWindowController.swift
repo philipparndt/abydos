@@ -497,13 +497,53 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 			// Compare against the repository's default branch when we can tell
 			// what it is, rather than assuming "main".
 			let base = await defaultBaseBranch()
-			if case let .failure(error) = bottomPanel.startReview(baseBranch: base) {
-				let alert = NSAlert()
-				alert.messageText = "Could not start the review"
-				alert.informativeText = error.message
-				alert.runModal()
-			}
+			startReview(scope: .branch(base: base))
 		}
+	}
+
+	/// Reviews what is in the working tree but not yet committed.
+	@objc func reviewUncommittedChanges(_ sender: Any?) {
+		Task { @MainActor in
+			// Checked first: starting an agent, waiting for it to look around and
+			// report nothing is a slow way to learn there was nothing to review.
+			if let project, let git = project.git {
+				let root = await git.root
+				let status = await GitRepository.run(["status", "--porcelain"], in: root)
+				if status.exitCode == 0,
+				   status.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+					presentReviewProblem(
+						title: "Nothing to review",
+						message: "The working tree is clean — there are no uncommitted changes."
+					)
+					return
+				}
+			}
+
+			setPanelVisible(true)
+			startReview(scope: .uncommitted)
+		}
+	}
+
+	private func startReview(scope: AgentLauncher.ReviewScope) {
+		if case let .failure(error) = bottomPanel.startReview(scope: scope) {
+			presentReviewProblem(title: "Could not start the review", message: error.message)
+		}
+	}
+
+	/// Reports a reason a review did not start.
+	///
+	/// A sheet rather than an application-modal alert: it is attached to the
+	/// window it concerns and does not stop the rest of the app, which matters
+	/// for something as ordinary as a clean working tree.
+	private func presentReviewProblem(title: String, message: String) {
+		let alert = NSAlert()
+		alert.messageText = title
+		alert.informativeText = message
+		guard let window else {
+			alert.runModal()
+			return
+		}
+		alert.beginSheetModal(for: window)
 	}
 
 	/// Best guess at the branch a review should compare against.

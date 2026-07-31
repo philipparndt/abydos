@@ -295,10 +295,49 @@ public enum AgentLauncher {
 		return Command(executable: executable, arguments: arguments)
 	}
 
-	/// The prompt used for a branch review.
-	public static func reviewPrompt(baseBranch: String) -> String {
-		"""
-		Review the changes on this branch compared to \(baseBranch).
+	/// What a review looks at.
+	///
+	/// Uncommitted work is the case you want most often — it is the code you are
+	/// still holding, before it is written down — but it is also the one a
+	/// branch diff cannot express: `git diff` against a base branch shows
+	/// committed history and says nothing about a working tree.
+	public enum ReviewScope: Equatable, Sendable {
+		/// Everything this branch adds on top of a base branch.
+		case branch(base: String)
+		/// Staged, unstaged and untracked changes in the working tree.
+		case uncommitted
+
+		public var title: String {
+			switch self {
+			case .branch: return "Review"
+			case .uncommitted: return "Review (uncommitted)"
+			}
+		}
+	}
+
+	/// The prompt used for a review.
+	public static func reviewPrompt(scope: ReviewScope) -> String {
+		let subject: String
+		switch scope {
+		case .branch(let base):
+			subject = """
+			Review the changes on this branch compared to \(base). Use `git diff \(base)...HEAD` \
+			to see them.
+			"""
+		case .uncommitted:
+			// Named explicitly because the three states live in different places:
+			// `git diff` misses staged work, `--cached` misses unstaged work, and
+			// neither shows a file that has never been added.
+			subject = """
+			Review the uncommitted changes in this working tree — staged, unstaged and \
+			untracked alike. Use `git status --porcelain` to see what has changed, \
+			`git diff` for unstaged edits, `git diff --cached` for staged ones, and read \
+			untracked files directly. Do not review anything that is already committed.
+			"""
+		}
+
+		return """
+		\(subject)
 
 		Report every issue you find by calling the report_review_findings tool \
 		rather than printing them — the results are displayed in a navigable UI. \
@@ -308,5 +347,10 @@ public enum AgentLauncher {
 		Focus on correctness bugs, then risky or unclear code. Be specific about \
 		file and line.
 		"""
+	}
+
+	/// The prompt used for a branch review.
+	public static func reviewPrompt(baseBranch: String) -> String {
+		reviewPrompt(scope: .branch(base: baseBranch))
 	}
 }

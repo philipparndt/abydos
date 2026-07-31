@@ -255,12 +255,12 @@ final class BottomPanel: NSView {
 
 	// MARK: - Review
 
-	/// Starts an agent review of the working tree against `baseBranch`.
+	/// Starts an agent review of whatever `scope` names.
 	///
 	/// The agent reports through this window's own MCP server, so findings
 	/// arrive as typed data rather than as text to be parsed out of a TUI.
 	@discardableResult
-	func startReview(baseBranch: String) -> Result<Void, ReviewStartError> {
+	func startReview(scope: AgentLauncher.ReviewScope) -> Result<Void, ReviewStartError> {
 		guard let root = workingDirectory else { return .failure(.noProject) }
 		guard let executable = AgentLauncher.findClaudeExecutable() else {
 			return .failure(.claudeNotFound)
@@ -279,7 +279,7 @@ final class BottomPanel: NSView {
 		let command = AgentLauncher.reviewCommand(
 			executable: executable,
 			server: server,
-			prompt: AgentLauncher.reviewPrompt(baseBranch: baseBranch)
+			prompt: AgentLauncher.reviewPrompt(scope: scope)
 		)
 		let terminal = TerminalPane(
 			workingDirectory: root,
@@ -290,7 +290,7 @@ final class BottomPanel: NSView {
 			self?.onOpenFinding?(url, line)
 		}
 
-		let session = Session(title: "Review", kind: .review(reviewPane, terminal))
+		let session = Session(title: scope.title, kind: .review(reviewPane, terminal))
 		wire(session)
 		sessions.append(session)
 		activate(index: sessions.count - 1, focus: false)

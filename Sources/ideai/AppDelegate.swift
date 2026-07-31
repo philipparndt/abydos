@@ -95,6 +95,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if options.reviewUncommitted {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+				controller?.reviewUncommittedChanges(nil)
+			}
+		}
+
 		if options.startReview {
 			controller?.reviewBranch(nil)
 		}
@@ -313,6 +319,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 		)
 		reviewItem.keyEquivalentModifierMask = [.command, .shift]
 		agentMenu.addItem(reviewItem)
+
+		let uncommittedItem = NSMenuItem(
+			title: "Review Uncommitted Changes…",
+			action: #selector(MainWindowController.reviewUncommittedChanges(_:)),
+			keyEquivalent: "u"
+		)
+		uncommittedItem.keyEquivalentModifierMask = [.command, .shift]
+		agentMenu.addItem(uncommittedItem)
 		agentMenuItem.submenu = agentMenu
 		mainMenu.addItem(agentMenuItem)
 

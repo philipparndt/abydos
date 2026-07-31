@@ -274,6 +274,46 @@ struct AgentLauncherTests {
 		#expect(prompt.contains("report_review_findings"))
 		#expect(prompt.contains("complete_review"))
 	}
+
+	/// Uncommitted work lives in three places at once, and each is invisible to
+	/// the command that shows the others.
+	@Test func uncommittedPromptNamesStagedUnstagedAndUntracked() {
+		let prompt = AgentLauncher.reviewPrompt(scope: .uncommitted)
+		#expect(prompt.contains("git diff --cached"))
+		#expect(prompt.contains("git status --porcelain"))
+		#expect(prompt.contains("untracked"))
+		// A base-branch diff would show committed history instead.
+		#expect(!prompt.contains("..."))
+	}
+
+	@Test func uncommittedPromptExcludesCommittedWork() {
+		let prompt = AgentLauncher.reviewPrompt(scope: .uncommitted)
+		#expect(prompt.contains("Do not review anything that is already committed"))
+	}
+
+	/// Both scopes still have to ask for the same reporting behaviour, or the
+	/// findings never reach the UI.
+	@Test func everyScopeAsksForToolReporting() {
+		for scope in [AgentLauncher.ReviewScope.branch(base: "main"), .uncommitted] {
+			let prompt = AgentLauncher.reviewPrompt(scope: scope)
+			#expect(prompt.contains("report_review_findings"), "\(scope)")
+			#expect(prompt.contains("report_review_status"), "\(scope)")
+			#expect(prompt.contains("complete_review"), "\(scope)")
+		}
+	}
+
+	/// The two sessions sit in the same tab strip and have to be tellable apart.
+	@Test func scopesHaveDistinctTitles() {
+		#expect(AgentLauncher.ReviewScope.branch(base: "main").title != AgentLauncher.ReviewScope.uncommitted.title)
+		#expect(AgentLauncher.ReviewScope.uncommitted.title.contains("uncommitted"))
+	}
+
+	@Test func branchScopeStillReachesThroughTheOlderEntryPoint() {
+		#expect(
+			AgentLauncher.reviewPrompt(baseBranch: "release")
+				== AgentLauncher.reviewPrompt(scope: .branch(base: "release"))
+		)
+	}
 }
 
 private final class Received: @unchecked Sendable {

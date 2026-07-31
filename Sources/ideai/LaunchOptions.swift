@@ -30,6 +30,8 @@ struct LaunchOptions {
 	var terminalInput: String?
 	/// Start an agent review before capture.
 	var startReview = false
+	/// Start a review of the working tree instead of the branch.
+	var reviewUncommitted = false
 	/// Query for the in-file find bar.
 	var findQuery: String?
 	/// Query for project-wide search.
@@ -69,6 +71,7 @@ struct LaunchOptions {
 			case "--terminal":   options.openTerminal = true
 			case "--run":        options.terminalInput = next()
 			case "--review":     options.startReview = true
+			case "--review-uncommitted": options.reviewUncommitted = true
 			case "--find":       options.findQuery = next()
 			case "--search":     options.searchQuery = next()
 			case "--wrap":       options.wordWrap = true
