@@ -1070,3 +1070,74 @@ struct TerminalIntroducerGuardTests {
 		#expect(emulator.cursorRow == 0)
 	}
 }
+
+/// Keys with a fixed sequence, and what Option does to them.
+struct TerminalKeyEncodingTests {
+	private func meta(_ key: TerminalKeys.Key) -> String? {
+		TerminalKeys.sequence(for: key).map {
+			TerminalKeys.applyingMeta($0, key: key, optionHeld: true)
+		}
+	}
+
+	private func plain(_ key: TerminalKeys.Key) -> String? {
+		TerminalKeys.sequence(for: key).map {
+			TerminalKeys.applyingMeta($0, key: key, optionHeld: false)
+		}
+	}
+
+	/// The one people notice: a prompt that submits on Return uses ESC Return
+	/// for "newline without submitting", so a bare CR sends the message the
+	/// user was trying to break in half.
+	@Test func optionReturnSendsEscapeThenReturn() {
+		#expect(plain(.Return) == "\r")
+		#expect(meta(.Return) == "\u{1B}\r")
+	}
+
+	/// Delete-word-backwards, which shells read as ESC DEL.
+	@Test func optionBackspaceSendsEscapeThenDelete() {
+		#expect(plain(.backspace) == "\u{7F}")
+		#expect(meta(.backspace) == "\u{1B}\u{7F}")
+	}
+
+	@Test func backspaceSendsDeleteNotBackspace() {
+		// BS (0x08) would move the cursor rather than delete.
+		#expect(plain(.backspace) == "\u{7F}")
+	}
+
+	/// Arrows spell the modifier inside their CSI sequence; prefixing one
+	/// produces ESC ESC [ D, which nothing parses.
+	@Test func arrowsDoNotTakeAMetaPrefix() {
+		for key in [TerminalKeys.Key.upArrow, .downArrow, .leftArrow, .rightArrow] {
+			#expect(!TerminalKeys.takesMetaPrefix(key), "\(key)")
+		}
+	}
+
+	@Test func navigationKeysDoNotTakeAMetaPrefix() {
+		for key in [TerminalKeys.Key.home, .end, .pageUp, .pageDown] {
+			#expect(!TerminalKeys.takesMetaPrefix(key), "\(key)")
+		}
+	}
+
+	/// Arrow encoding depends on the cursor-key mode, which only the emulator
+	/// tracks, so the table has nothing to say about them.
+	@Test func arrowsHaveNoFixedSequence() {
+		#expect(TerminalKeys.sequence(for: .leftArrow) == nil)
+	}
+
+	@Test func theFixedSequencesAreTheStandardOnes() {
+		#expect(plain(.home) == "\u{1B}[H")
+		#expect(plain(.end) == "\u{1B}[F")
+		#expect(plain(.pageUp) == "\u{1B}[5~")
+		#expect(plain(.pageDown) == "\u{1B}[6~")
+		#expect(plain(.forwardDelete) == "\u{1B}[3~")
+		#expect(plain(.tab) == "\t")
+		#expect(plain(.escape) == "\u{1B}")
+	}
+
+	@Test func keyCodesMatchTheOnesMacOSSends() {
+		#expect(TerminalKeys.Key(rawValue: 36) == .Return)
+		#expect(TerminalKeys.Key(rawValue: 51) == .backspace)
+		#expect(TerminalKeys.Key(rawValue: 123) == .leftArrow)
+		#expect(TerminalKeys.Key(rawValue: 99) == nil)
+	}
+}

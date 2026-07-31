@@ -495,21 +495,22 @@ final class TerminalView: NSView, NSTextInputClient {
 	private func encode(event: NSEvent) -> String? {
 		let flags = event.modifierFlags
 
-		switch event.keyCode {
-		case 126: return emulator.encodeArrow(.up)
-		case 125: return emulator.encodeArrow(.down)
-		case 124: return emulator.encodeArrow(.right)
-		case 123: return emulator.encodeArrow(.left)
-		case 115: return "\u{1B}[H"   // Home
-		case 119: return "\u{1B}[F"   // End
-		case 116: return "\u{1B}[5~"  // Page Up
-		case 121: return "\u{1B}[6~"  // Page Down
-		case 117: return "\u{1B}[3~"  // Forward delete
-		case 51:  return "\u{7F}"     // Backspace sends DEL, not BS
-		case 36:  return "\r"
-		case 48:  return "\t"
-		case 53:  return "\u{1B}"
-		default:  break
+		// Keys with a fixed sequence, and the Option-as-Meta rule that goes with
+		// them. Applied here rather than after the switch: returning early was
+		// how ⌥Return came to send a bare carriage return, which submits the
+		// line instead of breaking it.
+		if let key = TerminalKeys.Key(rawValue: event.keyCode) {
+			let base: String?
+			switch key {
+			case .upArrow:    base = emulator.encodeArrow(.up)
+			case .downArrow:  base = emulator.encodeArrow(.down)
+			case .rightArrow: base = emulator.encodeArrow(.right)
+			case .leftArrow:  base = emulator.encodeArrow(.left)
+			default:          base = TerminalKeys.sequence(for: key)
+			}
+
+			guard let base else { return nil }
+			return TerminalKeys.applyingMeta(base, key: key, optionHeld: flags.contains(.option))
 		}
 
 		guard var characters = event.charactersIgnoringModifiers, !characters.isEmpty else { return nil }
