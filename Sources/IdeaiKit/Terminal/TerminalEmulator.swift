@@ -76,8 +76,25 @@ public final class TerminalEmulator {
 	}
 
 	private var state = State.ground
-	private var parameterBuffer = ""
-	private var intermediates = ""
+
+	/// CSI parameters, folded into integers as their digits arrive.
+	///
+	/// Every number in the sequence in order, with `componentStarts` marking
+	/// where each `;`-separated component begins: its primary value first, then
+	/// any `:` subparameters.
+	///
+	/// This replaced a string that was split apart again on every read — and a
+	/// read happens several times per sequence. A truecolour SGR arrives for
+	/// every cell of a full-screen repaint, so that splitting cost more than
+	/// everything else the parser did put together.
+	private var parameterValues: [Int] = []
+	private var componentStarts: [Int] = []
+	private var pendingValue = 0
+	private var atComponentStart = true
+	/// The `?`, `>`, `<` or `=` marking a sequence as private rather than ANSI.
+	private var introducer: UInt8?
+	/// Intermediate bytes, such as the `$` that makes `CSI ? p` a mode query.
+	private var intermediateBytes: [UInt8] = []
 	private var oscBytes: [UInt8] = []
 
 	/// Partial UTF-8 sequence carried between writes, since a read can split one.
@@ -143,7 +160,7 @@ public final class TerminalEmulator {
 		case 0x09: tab()
 		case 0x0A, 0x0B, 0x0C: lineFeed()
 		case 0x0D: cursorColumn = 0; pendingWrap = false
-		case 0x1B: state = .escape; parameterBuffer = ""; intermediates = ""
+		case 0x1B: state = .escape; resetParameters()
 		case 0x00...0x06, 0x0E...0x1A, 0x1C...0x1F:
 			break // Other C0 controls are not meaningful here.
 		case 0x20...0x7E:
@@ -275,8 +292,7 @@ public final class TerminalEmulator {
 		switch byte {
 		case 0x5B: // [
 			state = .csi
-			parameterBuffer = ""
-			intermediates = ""
+			resetParameters()
 		case 0x5D: // ]
 			state = .osc
 			oscBytes = []
@@ -318,11 +334,21 @@ public final class TerminalEmulator {
 
 	private func consumeCSI(_ byte: UInt8) {
 		switch byte {
-		case 0x30...0x3F: // parameters, including ? and ;
-			parameterBuffer.append(Character(UnicodeScalar(byte)))
+		case 0x30...0x39: // digits
+			// Capped rather than allowed to overflow: no real sequence carries a
+			// value this large, and a stream of digits must not trap.
+			pendingValue = min(pendingValue * 10 + Int(byte - 0x30), 65_535)
+		case 0x3B: // ;  — next component
+			pushParameter()
+			atComponentStart = true
+		case 0x3A: // :  — next subparameter of this component
+			pushParameter()
+		case 0x3C...0x3F: // ? > < =
+			introducer = byte
 		case 0x20...0x2F: // intermediates
-			intermediates.append(Character(UnicodeScalar(byte)))
+			intermediateBytes.append(byte)
 		case 0x40...0x7E: // final byte
+			pushParameter()
 			executeCSI(final: Character(UnicodeScalar(byte)))
 			state = .ground
 		default:
@@ -330,25 +356,56 @@ public final class TerminalEmulator {
 		}
 	}
 
-	/// CSI parameters split into their primary value and any subparameters.
-	///
-	/// Colon subparameters (SGR `4:3` curly underline, `58:2::r:g:b` underline
-	/// colour) carry a variant after the primary value. Parsing the whole token
-	/// yields nil, which used to fall back to 0 — that is SGR "reset
-	/// everything", so a single styled run wiped all attributes.
-	private var csiComponents: [(value: Int, subparameters: [Int])] {
-		parameterBuffer
-			.drop(while: { Self.privateIntroducers.contains($0) || $0 == "!" })
-			.split(separator: ";", omittingEmptySubsequences: false)
-			.map { component in
-				let pieces = component.split(separator: ":", omittingEmptySubsequences: false)
-				let primary = Int(pieces.first ?? "") ?? 0
-				return (primary, pieces.dropFirst().map { Int($0) ?? 0 })
-			}
+	private func resetParameters() {
+		parameterValues.removeAll(keepingCapacity: true)
+		componentStarts.removeAll(keepingCapacity: true)
+		intermediateBytes.removeAll(keepingCapacity: true)
+		pendingValue = 0
+		atComponentStart = true
+		introducer = nil
 	}
 
-	private var csiParameters: [Int] {
-		csiComponents.map(\.value)
+	/// Closes off the number being read.
+	///
+	/// Called for the final byte too, so `CSI m` yields one component of 0 —
+	/// which is what SGR reset is, and what splitting an empty string used to
+	/// produce.
+	private func pushParameter() {
+		if atComponentStart {
+			componentStarts.append(parameterValues.count)
+			atComponentStart = false
+		}
+		parameterValues.append(pendingValue)
+		pendingValue = 0
+	}
+
+	/// How many `;`-separated components the sequence carried.
+	private var componentCount: Int { componentStarts.count }
+
+	/// A component's primary value, or 0 when it was not given.
+	private func componentValue(_ index: Int) -> Int {
+		guard index >= 0, index < componentStarts.count else { return 0 }
+		return parameterValues[componentStarts[index]]
+	}
+
+	/// The first component, which most sequences are entirely made of.
+	private var firstParameter: Int { componentValue(0) }
+
+	/// A component's `:` subparameters, which carry variants — SGR `4:3` for a
+	/// curly underline, `58:2::r:g:b` for its colour.
+	private func subparameter(_ index: Int, at position: Int) -> Int? {
+		guard index >= 0, index < componentStarts.count else { return nil }
+		let start = componentStarts[index] + 1 + position
+		let end = index + 1 < componentStarts.count
+			? componentStarts[index + 1]
+			: parameterValues.count
+		guard start < end else { return nil }
+		return parameterValues[start]
+	}
+
+	private var isPrivateSequence: Bool {
+		guard let introducer else { return false }
+		return (0x3C...0x3F).contains(introducer)
 	}
 
 	/// Parameter bytes that mark a sequence as private rather than ANSI.
@@ -366,19 +423,14 @@ public final class TerminalEmulator {
 	/// - `n`: DECXCPR, the private cursor position report.
 	static let introducerAwareFinals: Set<Character> = ["h", "l", "c", "p", "n"]
 
-	private func isPrivateIntroducer(_ character: Character?) -> Bool {
-		guard let character else { return false }
-		return Self.privateIntroducers.contains(character)
-	}
-
 	private func parameter(_ index: Int, default fallback: Int) -> Int {
-		let values = csiParameters
-		guard index < values.count else { return fallback }
-		return values[index] == 0 ? fallback : values[index]
+		guard index < componentCount else { return fallback }
+		let value = componentValue(index)
+		return value == 0 ? fallback : value
 	}
 
 	private func executeCSI(final: Character) {
-		let isPrivate = parameterBuffer.hasPrefix("?")
+		let isPrivate = introducer == 0x3F // ?
 
 		// A private-prefixed sequence is a different command that happens to end
 		// in the same byte, not a variant of the standard one. `CSI > 4 ; 2 m`
@@ -390,7 +442,7 @@ public final class TerminalEmulator {
 		// belongs in the set below once its handler checks the introducer
 		// itself — leaving one out silently drops a query the sender is
 		// blocking on, which is worse than the mis-parse this guard prevents.
-		if isPrivateIntroducer(parameterBuffer.first), !Self.introducerAwareFinals.contains(final) {
+		if isPrivateSequence, !Self.introducerAwareFinals.contains(final) {
 			return
 		}
 
@@ -405,8 +457,8 @@ public final class TerminalEmulator {
 		case "d": moveCursor(row: parameter(0, default: 1) - 1, column: cursorColumn)
 		case "H", "f":
 			moveCursor(row: parameter(0, default: 1) - 1, column: parameter(1, default: 1) - 1)
-		case "J": eraseInDisplay(mode: parameter(0, default: 0) == 0 ? csiParameters.first ?? 0 : parameter(0, default: 0))
-		case "K": eraseInLine(mode: csiParameters.first ?? 0)
+		case "J": eraseInDisplay(mode: firstParameter)
+		case "K": eraseInLine(mode: firstParameter)
 		case "L": insertLines(parameter(0, default: 1))
 		case "M": deleteLines(parameter(0, default: 1))
 		case "P": deleteCharacters(parameter(0, default: 1))
@@ -417,7 +469,7 @@ public final class TerminalEmulator {
 		case "m": applySGR()
 		case "r":
 			let top = parameter(0, default: 1) - 1
-			let bottom = csiParameters.count > 1 ? parameter(1, default: screen.rows) - 1 : screen.rows - 1
+			let bottom = componentCount > 1 ? parameter(1, default: screen.rows) - 1 : screen.rows - 1
 			if top < bottom, bottom < screen.rows {
 				scrollTop = max(0, top)
 				scrollBottom = bottom
@@ -429,7 +481,7 @@ public final class TerminalEmulator {
 		case "u": restoreCursor()
 		case "n":
 			// Device status. A shell blocks on these, so they must be answered.
-			switch csiParameters.first ?? 0 {
+			switch firstParameter {
 			case 5 where !isPrivate: onResponse?("\u{1B}[0n")   // terminal OK
 			case 6:
 				// DECXCPR (`CSI ? 6 n`) carries the marker back, so a sender that
@@ -444,10 +496,10 @@ public final class TerminalEmulator {
 			// response is what made tmux and powerlevel10k leave `^[[?6c` on
 			// screen: the reply was not what they were parsing, so it fell through
 			// to the shell, which echoed it as input.
-			if parameterBuffer.hasPrefix(">") {
+			if introducer == 0x3E { // >
 				// Secondary DA: terminal type 0, firmware version, cartridge 0.
 				onResponse?("\u{1B}[>0;95;0c")
-			} else if isPrivateIntroducer(parameterBuffer.first) {
+			} else if isPrivateSequence {
 				// Tertiary (`CSI = c`) and anything else private: a primary reply
 				// is not an answer to the question that was asked, and an
 				// unrecognised reply ends up echoed by the shell.
@@ -459,8 +511,8 @@ public final class TerminalEmulator {
 		case "p":
 			// DECRQM — a mode query. Answering "not recognised" is far better than
 			// silence, which leaves the program waiting.
-			if parameterBuffer.hasPrefix("?"), intermediates.contains("$") {
-				let mode = csiParameters.first ?? 0
+			if introducer == 0x3F, intermediateBytes.contains(0x24) { // ? and $
+				let mode = firstParameter
 				onResponse?("\u{1B}[?\(mode);0$y")
 			}
 		default:
@@ -480,8 +532,8 @@ public final class TerminalEmulator {
 
 	private func setMode(enabled: Bool, isPrivate: Bool) {
 		guard isPrivate else { return }
-		for value in csiParameters {
-			switch value {
+		for index in 0..<componentCount {
+			switch componentValue(index) {
 			case 1: applicationCursorKeys = enabled
 			case 25: isCursorVisible = enabled
 			case 1000: mouseTracking = enabled ? .click : .off
@@ -606,11 +658,10 @@ public final class TerminalEmulator {
 	// MARK: - SGR
 
 	private func applySGR() {
-		let components = csiComponents.isEmpty ? [(value: 0, subparameters: [Int]())] : csiComponents
-		let values = components.map(\.value)
+		let count = componentCount
 		var index = 0
-		while index < values.count {
-			let value = values[index]
+		while index < count {
+			let value = componentValue(index)
 			switch value {
 			case 0: attributes = TerminalAttributes()
 			case 1: attributes.bold = true
@@ -621,7 +672,7 @@ public final class TerminalEmulator {
 				// curly, dotted, dashed — is one. Treating the subparameter as
 				// decoration and keeping the 4 turned underline on for text that
 				// asked for it to be off, which underlines whole applications.
-				attributes.underline = components[index].subparameters.first != 0
+				attributes.underline = subparameter(index, at: 0) != 0
 			case 7: attributes.inverse = true
 			case 8: attributes.hidden = true
 			case 9: attributes.strikethrough = true
@@ -640,22 +691,22 @@ public final class TerminalEmulator {
 			case 38, 48:
 				// Extended colour: 5;n for the 256 palette, 2;r;g;b for true colour.
 				let isForeground = value == 38
-				guard index + 1 < values.count else { index = values.count; break }
-				let kind = values[index + 1]
-				if kind == 5, index + 2 < values.count {
-					let color = TerminalColor.indexed(UInt8(clamping: values[index + 2]))
+				guard index + 1 < count else { index = count; break }
+				let kind = componentValue(index + 1)
+				if kind == 5, index + 2 < count {
+					let color = TerminalColor.indexed(UInt8(clamping: componentValue(index + 2)))
 					if isForeground { attributes.foreground = color } else { attributes.background = color }
 					index += 2
-				} else if kind == 2, index + 4 < values.count {
+				} else if kind == 2, index + 4 < count {
 					let color = TerminalColor.rgb(
-						UInt8(clamping: values[index + 2]),
-						UInt8(clamping: values[index + 3]),
-						UInt8(clamping: values[index + 4])
+						UInt8(clamping: componentValue(index + 2)),
+						UInt8(clamping: componentValue(index + 3)),
+						UInt8(clamping: componentValue(index + 4))
 					)
 					if isForeground { attributes.foreground = color } else { attributes.background = color }
 					index += 4
 				} else {
-					index = values.count
+					index = count
 				}
 			default:
 				break

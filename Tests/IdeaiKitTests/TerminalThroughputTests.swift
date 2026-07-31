@@ -6,6 +6,13 @@ import Testing
 ///
 /// Numbers, not pass or fail: these print what the parser manages and assert
 /// only that it manages something.
+///
+/// Off unless asked for. They saturate a core for as long as they run, which is
+/// enough to make the timing-sensitive tests elsewhere fail when the suite runs
+/// them in parallel. Run with:
+///
+///     IDEAI_BENCH=1 swift test --filter TerminalThroughput
+@Suite(.enabled(if: ProcessInfo.processInfo.environment["IDEAI_BENCH"] != nil))
 struct TerminalThroughputTests {
 	private func throughput(_ name: String, bytes: [UInt8], rows: Int = 40, columns: Int = 100) {
 		let emulator = TerminalEmulator(rows: rows, columns: columns)
