@@ -278,3 +278,39 @@ struct RunDiscoveryIntegrationTests {
 		#expect(make.allSatisfy { !$0.workingDirectory.contains("node_modules") })
 	}
 }
+
+/// Paths handed to other processes have to be real, not merely comparable.
+struct CanonicalPathTests {
+	/// Foundation's resolvingSymlinksInPath rewrites a leading /private back to
+	/// /tmp, which is the opposite of resolving. Comparisons still matched, so
+	/// the bug only showed when the path reached `go`.
+	@Test func resolvesRatherThanRewriting() throws {
+		let directory = URL(fileURLWithPath: "/tmp")
+			.appendingPathComponent("ideai-canon-\(UUID().uuidString)")
+		try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+		defer { try? FileManager.default.removeItem(at: directory) }
+
+		let resolved = RunConfigurationDiscovery.canonicalPath(directory)
+		#expect(resolved.hasPrefix("/private/tmp/"))
+		#expect(FileManager.default.fileExists(atPath: resolved))
+	}
+
+	/// The same file reached two ways still compares equal.
+	@Test func twoRoutesToOneFileAgree() throws {
+		let name = "ideai-canon-\(UUID().uuidString)"
+		let viaTmp = URL(fileURLWithPath: "/tmp").appendingPathComponent(name)
+		try FileManager.default.createDirectory(at: viaTmp, withIntermediateDirectories: true)
+		defer { try? FileManager.default.removeItem(at: viaTmp) }
+
+		let viaPrivate = URL(fileURLWithPath: "/private/tmp").appendingPathComponent(name)
+		#expect(
+			RunConfigurationDiscovery.canonicalPath(viaTmp)
+				== RunConfigurationDiscovery.canonicalPath(viaPrivate)
+		)
+	}
+
+	@Test func aMissingPathIsReturnedUnchanged() {
+		let missing = URL(fileURLWithPath: "/no/such/place/at/all")
+		#expect(RunConfigurationDiscovery.canonicalPath(missing) == "/no/such/place/at/all")
+	}
+}

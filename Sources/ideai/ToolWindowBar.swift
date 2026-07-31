@@ -44,6 +44,10 @@ final class ToolWindowBar: NSView {
 	///
 	/// Nothing is highlighted when the sidebar is closed, so the strip says
 	/// what is on screen rather than what was last picked.
+	/// Highlights whichever sidebar tool window is showing.
+	///
+	/// Nothing is highlighted when the sidebar is closed, so the strip says
+	/// what is on screen rather than what was last picked.
 	func setSidebarSelection(visible: Bool, tool: SidebarToolKind) {
 		projectButton.isSelected = visible && tool == .project
 		commitButton.isSelected = visible && tool == .changes

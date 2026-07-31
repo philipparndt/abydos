@@ -166,10 +166,17 @@ public final class DebugSession {
 	public func launch(delveExecutable: String, package: String) async throws {
 		state = .starting
 
-		try client.start(
+		// Delve builds the program with `go build`, and that only works from
+		// inside the module. A Go repository commonly keeps go.mod in a
+		// subdirectory, so the package's own directory is the working directory
+		// — the project root often has no go.mod at all.
+		let programPath = absolutePackagePath(package)
+		let buildDirectory = Self.directory(containing: programPath) ?? projectRoot
+
+		try await client.startListening(
 			executable: delveExecutable,
-			arguments: ["dap"],
-			workingDirectory: projectRoot
+			arguments: ["dap", "--listen=127.0.0.1:0"],
+			workingDirectory: buildDirectory
 		)
 
 		_ = try await client.request("initialize", arguments: [
@@ -188,9 +195,17 @@ public final class DebugSession {
 		client.send("launch", arguments: [
 			"request": "launch",
 			"mode": "debug",
-			"program": absolutePackagePath(package),
-			"cwd": projectRoot.path,
+			"program": programPath,
+			"cwd": buildDirectory.path,
 		])
+	}
+
+	/// The directory a program path names, or its parent when it is a file.
+	static func directory(containing path: String) -> URL? {
+		var isDirectory: ObjCBool = false
+		guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) else { return nil }
+		let url = URL(fileURLWithPath: path)
+		return isDirectory.boolValue ? url : url.deletingLastPathComponent()
 	}
 
 	private func absolutePackagePath(_ package: String) -> String {

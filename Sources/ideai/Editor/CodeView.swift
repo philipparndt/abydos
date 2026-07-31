@@ -770,6 +770,35 @@ final class CodeView: NSView, NSTextInputClient {
 		guard lines != runnableLines else { return }
 		runnableLines = lines
 		needsDisplay = true
+		window?.invalidateCursorRects(for: self)
+	}
+
+	/// A pointing hand over each play button.
+	///
+	/// The rest of the gutter keeps the arrow: the breakpoint column responds to
+	/// a click too, but a play button is the only part that reads as a control,
+	/// and marking everything would say nothing.
+	override func resetCursorRects() {
+		super.resetCursorRects()
+		guard !runnableLines.isEmpty else { return }
+
+		let scrollX = enclosingScrollView?.contentView.bounds.origin.x ?? 0
+		let visible = enclosingScrollView?.contentView.bounds ?? bounds
+		for visual in visualLineRange(in: visible) {
+			let docLine = documentLine(forVisualRow: visual)
+			guard runnableLines.contains(docLine + 1), breakpointLines[docLine] == nil else { continue }
+			guard wrapSegment(forVisualRow: visual) == 0 else { continue }
+
+			addCursorRect(
+				NSRect(
+					x: scrollX,
+					y: yPosition(forVisualLine: visual),
+					width: Self.breakpointColumnWidth,
+					height: lineHeight
+				),
+				cursor: .pointingHand
+			)
+		}
 	}
 
 	/// Breakpoints to draw, keyed by 0-based line, with whether the adapter

@@ -1,4 +1,5 @@
 import Foundation
+import Network
 
 /// A Debug Adapter Protocol client.
 ///
@@ -9,10 +10,22 @@ import Foundation
 /// Messages are JSON framed with a `Content-Length` header over the adapter's
 /// stdio, the same framing LSP uses.
 public final class DAPClient {
-	public enum ClientError: Error {
+	public enum ClientError: Error, LocalizedError {
 		case notRunning
 		case timeout
+		case timedOut
+		case adapterExited
 		case adapterError(String)
+
+		public var errorDescription: String? {
+			switch self {
+			case .notRunning:    return "The debug adapter is not running."
+			case .timeout, .timedOut:
+				return "The debug adapter did not connect in time."
+			case .adapterExited: return "The debug adapter exited before connecting."
+			case .adapterError(let message): return message
+			}
+		}
 	}
 
 	/// Events pushed by the adapter, rather than replies to our requests.
@@ -28,6 +41,12 @@ public final class DAPClient {
 	private var inputPipe: Pipe?
 	private var outputPipe: Pipe?
 
+	/// Socket transport, used by adapters that speak DAP over TCP rather than
+	/// stdio. `dlv dap` is one: it is a server, and writing to its stdin
+	/// reaches nothing at all.
+	private var connection: NWConnection?
+	private var listener: NWListener?
+
 	private var nextSequence = 1
 	private var pending: [Int: (Result<[String: Any], Error>) -> Void] = [:]
 	private let lock = NSLock()
@@ -39,7 +58,10 @@ public final class DAPClient {
 		stop()
 	}
 
-	public var isRunning: Bool { process?.isRunning ?? false }
+	public var isRunning: Bool {
+		if let process { return process.isRunning }
+		return connection != nil
+	}
 
 	// MARK: - Lifecycle
 
@@ -77,15 +99,158 @@ public final class DAPClient {
 		self.outputPipe = output
 	}
 
+	/// Starts an adapter that listens on a TCP port, and connects to it.
+	///
+	/// `dlv dap` is a server, not a stdio adapter — writing to its stdin reaches
+	/// nothing. Its `--client-addr` mode, where the adapter dials back, builds
+	/// the program and then stalls, so this uses the mode VS Code uses: let it
+	/// pick a port, read the port out of its first line of output, and connect.
+	public func startListening(
+		executable: String,
+		arguments: [String],
+		workingDirectory: URL?,
+		environment: [String: String] = [:],
+		timeout: TimeInterval = 20
+	) async throws {
+		let process = Process()
+		process.executableURL = URL(fileURLWithPath: executable)
+		process.arguments = arguments
+		process.currentDirectoryURL = workingDirectory
+
+		// A GUI app's PATH does not include Homebrew or the Go toolchain, and
+		// the adapter shells out to `go build`.
+		var childEnvironment = ProcessInfo.processInfo.environment
+		let extraPaths = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/local/go/bin",
+		                  NSHomeDirectory() + "/go/bin"]
+		let existing = childEnvironment["PATH"] ?? ""
+		childEnvironment["PATH"] = (extraPaths + [existing]).joined(separator: ":")
+		for (key, value) in environment { childEnvironment[key] = value }
+		process.environment = childEnvironment
+
+		let output = Pipe()
+		process.standardOutput = output
+		process.standardError = Pipe()
+		process.terminationHandler = { [weak self] _ in
+			guard let self else { return }
+			self.failAllPending(with: ClientError.notRunning)
+			self.callbackQueue.async { self.onTerminated?() }
+		}
+		try process.run()
+		self.process = process
+		self.outputPipe = output
+
+		let endpoint = try await Self.readEndpoint(
+			from: output.fileHandleForReading,
+			process: process,
+			timeout: timeout
+		)
+
+		let connection = NWConnection(
+			host: NWEndpoint.Host(endpoint.host),
+			port: NWEndpoint.Port(integerLiteral: endpoint.port),
+			using: .tcp
+		)
+
+		try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+			let resumed = Connected()
+			connection.stateUpdateHandler = { state in
+				switch state {
+				case .ready:
+					guard resumed.claim() else { return }
+					continuation.resume()
+				case .failed(let error), .waiting(let error):
+					guard resumed.claim() else { return }
+					continuation.resume(throwing: error)
+				default:
+					break
+				}
+			}
+			connection.start(queue: .global(qos: .userInitiated))
+		}
+
+		self.connection = connection
+		receive(on: connection)
+	}
+
+	/// Reads `DAP server listening at: host:port` from the adapter's output.
+	private static func readEndpoint(
+		from handle: FileHandle,
+		process: Process,
+		timeout: TimeInterval
+	) async throws -> (host: String, port: UInt16) {
+		let deadline = Date().addingTimeInterval(timeout)
+		var text = ""
+
+		while Date() < deadline {
+			// availableData blocks until there is something, so the exit check
+			// happens between reads rather than instead of them.
+			let data = handle.availableData
+			if data.isEmpty {
+				if !process.isRunning { throw ClientError.adapterExited }
+				try await Task.sleep(nanoseconds: 20_000_000)
+				continue
+            }
+			text += String(decoding: data, as: UTF8.self)
+
+			guard let range = text.range(of: "listening at: ") else { continue }
+			let rest = text[range.upperBound...]
+			let address = rest.prefix { !$0.isNewline && !$0.isWhitespace }
+			guard let colon = address.lastIndex(of: ":"),
+			      let port = UInt16(address[address.index(after: colon)...])
+			else { continue }
+			return (String(address[address.startIndex..<colon]), port)
+		}
+		throw ClientError.timedOut
+	}
+
+	private func adopt(_ connection: NWConnection) {
+		connection.start(queue: .global(qos: .userInitiated))
+		self.connection = connection
+		receive(on: connection)
+	}
+
+	private func receive(on connection: NWConnection) {
+		connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) {
+			[weak self] data, _, isComplete, error in
+			guard let self else { return }
+			if let data, !data.isEmpty { self.consume(data) }
+			if isComplete || error != nil {
+				self.failAllPending(with: ClientError.notRunning)
+				self.callbackQueue.async { self.onTerminated?() }
+				return
+			}
+			self.receive(on: connection)
+		}
+	}
+
 	public func stop() {
 		outputPipe?.fileHandleForReading.readabilityHandler = nil
+		connection?.cancel()
+		listener?.cancel()
 		if process?.isRunning == true {
 			process?.terminate()
 		}
 		process = nil
 		inputPipe = nil
 		outputPipe = nil
+		connection = nil
+		listener = nil
 		failAllPending(with: ClientError.notRunning)
+	}
+
+	/// One-shot flag, so a second connection or a duplicate state callback
+	/// cannot resume a continuation twice.
+	private final class Connected: @unchecked Sendable {
+		private var taken = false
+		private let lock = NSLock()
+
+		func claim() -> Bool {
+			lock.lock()
+			defer { lock.unlock() }
+			if taken { return false }
+			taken = true
+			return true
+		}
 	}
 
 	private func failAllPending(with error: Error) {
@@ -104,7 +269,7 @@ public final class DAPClient {
 		arguments: [String: Any]? = nil,
 		completion: (((Result<[String: Any], Error>) -> Void))? = nil
 	) {
-		guard let inputPipe else {
+		guard inputPipe != nil || connection != nil else {
 			completion.map { handler in callbackQueue.async { handler(.failure(ClientError.notRunning)) } }
 			return
 		}
@@ -126,7 +291,11 @@ public final class DAPClient {
 		var framed = Data("Content-Length: \(payload.count)\r\n\r\n".utf8)
 		framed.append(payload)
 
-		inputPipe.fileHandleForWriting.write(framed)
+		if let connection {
+			connection.send(content: framed, completion: .contentProcessed { _ in })
+		} else {
+			inputPipe?.fileHandleForWriting.write(framed)
+		}
 	}
 
 	/// Async convenience, since most call sites want to await a reply.

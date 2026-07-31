@@ -28,6 +28,15 @@ public struct RunConfiguration: Equatable, Sendable, Identifiable {
 
 	public var id: String { "\(source.rawValue):\(name):\(workingDirectory)" }
 
+	/// Whether the native debugger can start on this.
+	///
+	/// Delve debugs a Go package, so anything that is not one — a make target
+	/// wrapping a build, a launch.json entry for another language — has nothing
+	/// to hand it.
+	public var isDebuggable: Bool {
+		executable == "go" && arguments.first == "run"
+	}
+
 	/// The command as a shell would show it, for the terminal and for tooltips.
 	public var commandLine: String {
 		([executable] + arguments).map(Self.quote).joined(separator: " ")
@@ -67,14 +76,21 @@ public struct RunConfiguration: Equatable, Sendable, Identifiable {
 /// what the Go commands used to do — is wrong for a large share of real
 /// projects.
 public enum RunConfigurationDiscovery {
-	/// A path that compares equal however it was reached.
+	/// A path that compares equal however it was reached, and that other tools
+	/// can be handed.
 	///
-	/// `standardizedFileURL` does not resolve symlinks, and on macOS /tmp is
-	/// one — so a file opened as /tmp/x and discovered as /private/tmp/x are
-	/// the same file with two names. Symlinked project directories are common
-	/// enough that keying on the raw path drops the match silently.
+	/// `realpath(3)` rather than `resolvingSymlinksInPath`: Foundation's version
+	/// has a documented special case that rewrites a leading `/private` *back*
+	/// to `/tmp`, which is the opposite of resolving. Two paths compared with it
+	/// still match each other, so the editor's own bookkeeping worked — but
+	/// handing the result to `go` produced a package path outside the module it
+	/// was building, and the build failed.
 	public static func canonicalPath(_ url: URL) -> String {
-		url.resolvingSymlinksInPath().standardizedFileURL.path
+		var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
+		guard realpath(url.path, &buffer) != nil else {
+			return url.standardizedFileURL.path
+		}
+		return String(cString: buffer)
 	}
 
 	/// How deep to look for modules and makefiles.
@@ -105,7 +121,7 @@ public enum RunConfigurationDiscovery {
 	}
 
 	/// Directories to search, root first.
-	static func searchDirectories(from root: URL, depth: Int = 0) -> [URL] {
+	public static func searchDirectories(from root: URL, depth: Int = 0) -> [URL] {
 		guard depth <= searchDepth else { return [] }
 		var result = [root]
 

@@ -19,8 +19,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 	private var navigatorContainer: NSView!
 	private var changesPane: ChangesPane?
 	private var structurePane: StructurePane?
-	private var sidebarToolView: NSView?
-	private var sidebarToolTop: NSLayoutConstraint?
+	private var primaryToolView: NSView?
+	private var primaryToolTop: NSLayoutConstraint?
+	private var primaryContainer: NSView!
 	private(set) var currentSidebarTool: SidebarToolKind = .project
 	/// Height the titlebar covers, applied to sidebar panes that do not inset
 	/// themselves.
@@ -93,14 +94,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		toolStrip.onToggleStructure = { [weak self] in self?.showSidebarTool(.structure) }
 
 		navigatorContainer = ColoredView(color: Theme.current.sidebarBackground)
-		navigatorContainer.addSubview(navigator.view)
+		primaryContainer = navigatorContainer
+
+		primaryContainer.addSubview(navigator.view)
 		navigator.view.translatesAutoresizingMaskIntoConstraints = false
 		NSLayoutConstraint.activate([
-			navigator.view.topAnchor.constraint(equalTo: navigatorContainer.topAnchor),
-			navigator.view.bottomAnchor.constraint(equalTo: navigatorContainer.bottomAnchor),
-			navigator.view.leadingAnchor.constraint(equalTo: navigatorContainer.leadingAnchor),
-			navigator.view.trailingAnchor.constraint(equalTo: navigatorContainer.trailingAnchor),
+			navigator.view.topAnchor.constraint(equalTo: primaryContainer.topAnchor),
+			navigator.view.bottomAnchor.constraint(equalTo: primaryContainer.bottomAnchor),
+			navigator.view.leadingAnchor.constraint(equalTo: primaryContainer.leadingAnchor),
+			navigator.view.trailingAnchor.constraint(equalTo: primaryContainer.trailingAnchor),
 		])
+		primaryToolView = navigator.view
 
 		splitView = ThinDividerSplitView()
 		splitView.isVertical = true
@@ -233,7 +237,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
 		navigator.setTopInset(inset)
 		sidebarTopInset = inset
-		sidebarToolTop?.constant = inset
+		primaryToolTop?.constant = inset
 		editor.setTopInset(inset)
 		toolStrip.setTopInset(inset)
 	}
@@ -433,10 +437,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
 	private func runGo(_ action: GoAction) {
 		guard let project else { return }
-		guard GoTooling.isGoModule(project.root) else {
-			presentGoError("This project has no go.mod at its root.")
-			return
-		}
+		// The module need not be at the project root — a Go repository commonly
+		// keeps go.mod in a subdirectory — so the modules found by discovery
+		// decide where these commands run.
+		guard let moduleRoot = chooseModuleRoot(in: project.root) else { return }
 		guard let go = GoTooling.findGoExecutable() else {
 			presentGoError("Could not find the `go` executable. Install Go, or make sure it is in /opt/homebrew/bin or /usr/local/go/bin.")
 			return
@@ -446,7 +450,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		switch action {
 		case .run, .build, .debug:
 			// These need a specific main package; ask when there is a choice.
-			guard let package = chooseMainPackage(in: project.root) else { return }
+			guard let package = chooseMainPackage(in: moduleRoot) else { return }
 			switch action {
 			case .run: command = GoTooling.runCommand(executable: go, package: package)
 			case .build: command = GoTooling.buildCommand(executable: go, package: package)
@@ -467,7 +471,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		bottomPanel.runCommand(
 			title: command.title,
 			executable: command.executable,
-			arguments: command.arguments
+			arguments: command.arguments,
+			// In the module, not the project root: `go test ./...` from a
+			// directory with no go.mod fails whatever the arguments say.
+			workingDirectory: moduleRoot
 		)
 	}
 
@@ -505,6 +512,42 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 	}
 
 	/// Picks the main package, prompting only when there is more than one.
+	/// The Go module these commands should act on.
+	///
+	/// The project root itself when it holds go.mod, otherwise whichever module
+	/// was found below it — asking only when there is genuinely a choice.
+	private func chooseModuleRoot(in root: URL) -> URL? {
+		if GoTooling.isGoModule(root) { return root }
+
+		let modules = RunConfigurationDiscovery
+			.searchDirectories(from: root)
+			.filter { GoTooling.isGoModule($0) }
+
+		if modules.isEmpty {
+			presentGoError("No go.mod was found in this project or below it.")
+			return nil
+		}
+		if modules.count == 1 { return modules[0] }
+
+		let alert = NSAlert()
+		alert.messageText = "Which module?"
+		alert.informativeText = "This project contains several Go modules."
+		alert.addButton(withTitle: "Choose")
+		alert.addButton(withTitle: "Cancel")
+
+		let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 340, height: 24))
+		popup.addItems(withTitles: modules.map { relativeDescription(of: $0, from: root) })
+		alert.accessoryView = popup
+
+		guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+		return modules[popup.indexOfSelectedItem]
+	}
+
+	private func relativeDescription(of url: URL, from root: URL) -> String {
+		guard url.path.hasPrefix(root.path + "/") else { return url.lastPathComponent }
+		return String(url.path.dropFirst(root.path.count + 1))
+	}
+
 	private func chooseMainPackage(in root: URL) -> String? {
 		let packages = GoTooling.findMainPackages(in: root)
 		if packages.isEmpty {
@@ -560,35 +603,106 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		}
 	}
 
-	/// Runs whatever belongs to a line the gutter's play button was clicked on.
+	/// Offers what can be done with the line the play button sits on.
+	///
+	/// A menu rather than running straight away: run and debug are both things
+	/// you want from the same marker, and a button that starts a process on a
+	/// single click with no way to say which is a button you learn to distrust.
 	private func runConfiguration(forFile url: URL, line: Int) {
 		let path = RunConfigurationDiscovery.canonicalPath(url)
 		let matching = runConfigurations.filter { $0.file == path && $0.line == line }
-		guard !matching.isEmpty else { return }
 
-		// One match runs; several — a main function that also has an IDEA
-		// configuration — asks which, rather than guessing.
-		guard matching.count > 1 else {
-			run(matching[0])
+		// The marker is drawn from the same list, so an empty match means the
+		// two have drifted — say so rather than appearing to do nothing.
+		guard !matching.isEmpty else {
+			presentNothingToRun(at: line, in: url)
 			return
 		}
 
 		let menu = NSMenu()
 		menu.autoenablesItems = false
-		for configuration in matching {
-			let item = NSMenuItem(title: configuration.name, action: #selector(runMenuItem(_:)), keyEquivalent: "")
-			item.target = self
-			item.representedObject = configuration.id
-			menu.addItem(item)
+
+		for (index, configuration) in matching.enumerated() {
+			if matching.count > 1 {
+				if index > 0 { menu.addItem(.separator()) }
+				let header = NSMenuItem(title: configuration.name, action: nil, keyEquivalent: "")
+				header.isEnabled = false
+				menu.addItem(header)
+			}
+
+			let runItem = NSMenuItem(
+				title: matching.count > 1 ? "Run" : "Run \(configuration.name)",
+				action: #selector(runMenuItem(_:)),
+				keyEquivalent: ""
+			)
+			runItem.target = self
+			runItem.representedObject = configuration.id
+			runItem.toolTip = configuration.commandLine
+			menu.addItem(runItem)
+
+			// Only Go can be debugged so far, and only through Delve. Listing a
+			// Debug that cannot start would be worse than leaving it out.
+			if configuration.isDebuggable {
+				let debugItem = NSMenuItem(
+					title: matching.count > 1 ? "Debug" : "Debug \(configuration.name)",
+					action: #selector(debugMenuItem(_:)),
+					keyEquivalent: ""
+				)
+				debugItem.target = self
+				debugItem.representedObject = configuration.id
+				menu.addItem(debugItem)
+			}
 		}
-		menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+
+		popUpAtPointer(menu)
+	}
+
+	/// Shows a menu where the pointer is, in this window's coordinates.
+	private func popUpAtPointer(_ menu: NSMenu) {
+		guard let contentView = window?.contentView, let window else {
+			menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+			return
+		}
+		let inWindow = window.convertPoint(fromScreen: NSEvent.mouseLocation)
+		menu.popUp(positioning: nil, at: contentView.convert(inWindow, from: nil), in: contentView)
+	}
+
+	private func presentNothingToRun(at line: Int, in url: URL) {
+		let alert = NSAlert()
+		alert.messageText = "Nothing to run here"
+		alert.informativeText = """
+		No run configuration was found for \(url.lastPathComponent):\(line). 		This is a bug — the marker is drawn from the same list.
+		"""
+		if let window { alert.beginSheetModal(for: window) } else { alert.runModal() }
 	}
 
 	@objc private func runMenuItem(_ sender: NSMenuItem) {
-		guard let id = sender.representedObject as? String,
-		      let configuration = runConfigurations.first(where: { $0.id == id })
-		else { return }
+		guard let configuration = configuration(for: sender) else { return }
 		run(configuration)
+	}
+
+	@objc private func debugMenuItem(_ sender: NSMenuItem) {
+		guard let configuration = configuration(for: sender) else { return }
+		debug(configuration)
+	}
+
+	private func configuration(for item: NSMenuItem) -> RunConfiguration? {
+		guard let id = item.representedObject as? String else { return nil }
+		return runConfigurations.first { $0.id == id }
+	}
+
+	/// Starts the native debugger on a configuration's package.
+	func debug(_ configuration: RunConfiguration) {
+		guard configuration.isDebuggable else { return }
+		guard let delve = GoTooling.findDelveExecutable() else {
+			let alert = NSAlert()
+			alert.messageText = "Delve is not installed"
+			alert.informativeText = "Install it with: go install github.com/go-delve/delve/cmd/dlv@latest"
+			if let window { alert.beginSheetModal(for: window) } else { alert.runModal() }
+			return
+		}
+		// Delve is told the directory, which is where the package lives.
+		startNativeDebugger(delve: delve, package: configuration.workingDirectory)
 	}
 
 	/// Runs a configuration in a terminal session of its own.
@@ -636,10 +750,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 			menu.addItem(item)
 		}
 
-		if let window {
-			let point = NSPoint(x: window.frame.midX, y: window.frame.midY)
-			menu.popUp(positioning: nil, at: window.convertPoint(fromScreen: point), in: window.contentView)
-		}
+		// Centred in the window: this is reached from the menu bar and from ⌃R,
+		// so the pointer is not where the user is looking. The previous version
+		// converted a screen point that was already in screen coordinates and
+		// placed the menu off the window entirely.
+		guard let contentView = window?.contentView else { return }
+		menu.popUp(
+			positioning: nil,
+			at: NSPoint(x: contentView.bounds.midX, y: contentView.bounds.midY),
+			in: contentView
+		)
 	}
 
 	private func title(for source: RunConfiguration.Source) -> String {
@@ -776,20 +896,26 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
 		install(tool: tool)
 		if isCollapsed { toggleNavigator(nil) }
-		toolStrip.setSidebarSelection(visible: true, tool: tool)
+		updateSidebarSelection()
 	}
 
-	/// Puts a tool's view in the sidebar, replacing whatever was there.
+	private func updateSidebarSelection() {
+		let visible = !navigatorContainer.isHidden
+		toolStrip.setSidebarSelection(visible: visible, tool: currentSidebarTool)
+	}
+
+	/// Puts a tool's view in the sidebar's primary pane, replacing what was
+	/// there.
 	///
 	/// The panes are built on demand rather than kept alive: each watches the
-	/// work tree or the open file, and three of them doing that while one is
-	/// visible is work nobody asked for.
+	/// work tree or the open file, and several doing that while one is visible
+	/// is work nobody asked for.
 	private func install(tool: SidebarToolKind) {
-		guard currentSidebarTool != tool || sidebarToolView == nil else { return }
+		guard currentSidebarTool != tool || primaryToolView == nil else { return }
 
-		sidebarToolView?.removeFromSuperview()
-		sidebarToolView = nil
-		sidebarToolTop = nil
+		primaryToolView?.removeFromSuperview()
+		primaryToolView = nil
+		primaryToolTop = nil
 		changesPane = nil
 		structurePane = nil
 		navigator.view.removeFromSuperview()
@@ -833,21 +959,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		}
 
 		view.translatesAutoresizingMaskIntoConstraints = false
-		navigatorContainer.addSubview(view)
+		primaryContainer.addSubview(view)
 
 		// The navigator insets itself for the titlebar; the other panes are
 		// plain views, so the container does it for them.
 		let inset = tool == .project ? 0 : sidebarTopInset
-		let top = view.topAnchor.constraint(equalTo: navigatorContainer.topAnchor, constant: inset)
+		let top = view.topAnchor.constraint(equalTo: primaryContainer.topAnchor, constant: inset)
 		NSLayoutConstraint.activate([
 			top,
-			view.bottomAnchor.constraint(equalTo: navigatorContainer.bottomAnchor),
-			view.leadingAnchor.constraint(equalTo: navigatorContainer.leadingAnchor),
-			view.trailingAnchor.constraint(equalTo: navigatorContainer.trailingAnchor),
+			view.bottomAnchor.constraint(equalTo: primaryContainer.bottomAnchor),
+			view.leadingAnchor.constraint(equalTo: primaryContainer.leadingAnchor),
+			view.trailingAnchor.constraint(equalTo: primaryContainer.trailingAnchor),
 		])
 
-		sidebarToolView = view
-		sidebarToolTop = tool == .project ? nil : top
+		primaryToolView = view
+		primaryToolTop = tool == .project ? nil : top
 		updateTopInsets()
 	}
 
@@ -955,6 +1081,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 	func runLineForTesting(_ line: Int) {
 		guard let url = editor.activeGroup.activeTabURL else { return }
 		runConfiguration(forFile: url, line: line)
+	}
+
+	/// Runs, or debugs, the configuration on a line without going through the
+	/// menu — which is a separate window the harness cannot reach.
+	func invokeForTesting(line: Int, debug wantsDebug: Bool) {
+		guard let url = editor.activeGroup.activeTabURL else { return }
+		let path = RunConfigurationDiscovery.canonicalPath(url)
+		guard let configuration = runConfigurations.first(where: {
+			$0.file == path && $0.line == line
+		}) else { return }
+		if wantsDebug { debug(configuration) } else { run(configuration) }
 	}
 
 	func selectFirstChangeForTesting() {
@@ -1128,3 +1265,4 @@ final class ThinDividerSplitView: NSSplitView {
 	override var dividerColor: NSColor { Theme.current.separator }
 	override var dividerThickness: CGFloat { 1 }
 }
+

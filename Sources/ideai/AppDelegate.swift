@@ -99,7 +99,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if let line = options.runLine {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-				controller?.runLineForTesting(line)
+				controller?.invokeForTesting(line: line, debug: false)
+			}
+		}
+
+		if let line = options.debugLine {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+				controller?.invokeForTesting(line: line, debug: true)
 			}
 		}
 
