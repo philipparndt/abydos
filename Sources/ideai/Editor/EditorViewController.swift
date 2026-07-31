@@ -1,5 +1,7 @@
 import AppKit
+import GoSTL
 import IdeaiKit
+import SwiftUI
 
 /// Hosts the open files: a tab strip on top, the active file's text below, and a
 /// status line showing position and language.
@@ -388,6 +390,12 @@ final class EditorViewController: NSViewController {
 		// Rendering a huge or binary blob as text helps nobody, but refusing to
 		// open it is not the answer either — the tab explains itself and offers
 		// the hex viewer instead.
+		// A model is shown rather than described. Checked before the size and
+		// binary tests, both of which an STL fails on its way to being useful.
+		if ModelPreview.isViewableModel(fileURL) {
+			return makeModelTab(for: fileURL, preview: preview)
+		}
+
 		let byteSize = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
 		if byteSize > 64 * 1024 * 1024 {
 			let formatted = ByteCountFormatter.string(fromByteCount: Int64(byteSize), countStyle: .file)
@@ -703,6 +711,16 @@ final class EditorViewController: NSViewController {
 	/// True when the active tab is markdown, so the UI can offer the toggle.
 	var canPreviewMarkdown: Bool { activeTab?.isMarkdown ?? false }
 	var isShowingMarkdownPreview: Bool { activeTab?.isShowingMarkdownPreview ?? false }
+
+	/// A tab showing a 3D model, hosted from GoSTL.
+	///
+	/// The viewer is a SwiftUI view from a package rather than a second
+	/// application, so it lives in a tab beside the code like any other file.
+	private func makeModelTab(for fileURL: URL, preview: Bool) -> Tab {
+		let hosting = NSHostingView(rootView: ContentView(fileURL: fileURL))
+		hosting.translatesAutoresizingMaskIntoConstraints = false
+		return Tab(url: fileURL, document: nil, codeView: nil, contentView: hosting, isPreview: preview)
+	}
 
 	/// A tab for a file that cannot be shown as text.
 	private func makeNoticeTab(for fileURL: URL, reason: String, preview: Bool) -> Tab {

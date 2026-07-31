@@ -1,18 +1,25 @@
 import Foundation
 
-/// Opening 3D models in GoSTL.
+/// Which files the 3D viewer handles.
 ///
-/// GoSTL is a separate application rather than a library — its Swift package
-/// vends an executable, and an executable target cannot also be linked into
-/// another app. Launching it is therefore the whole integration, and it costs
-/// nothing: it already watches the file it was given, so editing a .scad here
-/// updates the preview there without ideai doing anything further.
+/// GoSTL's package now vends a library as well as its application, so the
+/// viewer is hosted in a tab rather than launched as a second program. The
+/// standalone app is still offered for the cases a separate window suits
+/// better.
 public enum ModelPreview {
-	/// Extensions GoSTL can show.
+	/// Extensions the viewer can show.
 	public static let previewableExtensions: Set<String> = ["stl", "3mf", "scad"]
 
 	public static func canPreview(_ url: URL) -> Bool {
 		previewableExtensions.contains(url.pathExtension.lowercased())
+	}
+
+	/// Extensions that open *as* a model rather than as text.
+	///
+	/// OpenSCAD is left out: a .scad file is source, and editing it is the
+	/// point — its preview is a separate tab, opened deliberately.
+	public static func isViewableModel(_ url: URL) -> Bool {
+		["stl", "3mf"].contains(url.pathExtension.lowercased())
 	}
 
 	/// The installed GoSTL, or nil.

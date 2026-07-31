@@ -41,6 +41,30 @@ if [ "$COUNT" -eq 0 ]; then
 fi
 echo "    copied $COUNT grammar bundles"
 
+# GoSTL ships its shader as source and compiles it in its own Makefile, so a
+# build that only asks SwiftPM for the library gets a bundle without the
+# default.metallib the renderer looks for — and the 3D tab aborts on open.
+# The shader sits at the root of the SwiftPM bundle, not under
+# Contents/Resources — that layout is the one GoSTL's own installer produces.
+#
+# Written into the build directory's copy as well as the app's. `Bundle.module`
+# resolves to the build path whenever it still exists, which it does on the
+# machine that built the app, so shipping it only inside the .app leaves a
+# developer running a viewer that cannot find its shaders.
+GOSTL_SHADER=$(find "$CONTENTS/Resources" -name Shaders.metal -path "*GoSTL*" 2>/dev/null | head -1)
+if [ -n "$GOSTL_SHADER" ]; then
+	xcrun -sdk macosx metal -c "$GOSTL_SHADER" -o "$BIN_DIR/Shaders.air" \
+		&& xcrun -sdk macosx metallib "$BIN_DIR/Shaders.air" -o "$BIN_DIR/default.metallib" \
+		&& echo "    compiled the 3D viewer's shaders"
+
+	if [ -f "$BIN_DIR/default.metallib" ]; then
+		find "$CONTENTS/Resources" "$BIN_DIR" -type d -name "GoSTL_GoSTL.bundle" 2>/dev/null |
+			while read -r target; do
+				cp "$BIN_DIR/default.metallib" "$target/"
+			done
+	fi
+fi
+
 # Bundled fonts, registered at launch so powerline prompts render without the
 # user installing anything.
 if [ -d Resources/Fonts ]; then

@@ -461,13 +461,16 @@ final class TerminalView: NSView, NSTextInputClient {
 		NSRect(x: x, y: y, width: cellWidth, height: cellHeight).fill()
 	}
 
+	/// The cursor is drawn solid rather than blinking.
+	///
+	/// A blink repaints the whole view twice a second whatever the program is
+	/// doing, which on a busy screen is indistinguishable from the program
+	/// being slow — and there is nothing to gain from it: the cursor is already
+	/// the only filled block on the line.
 	private func startCursorBlink() {
 		cursorTimer?.invalidate()
-		cursorTimer = Timer.scheduledTimer(withTimeInterval: 0.55, repeats: true) { [weak self] _ in
-			guard let self else { return }
-			self.cursorVisible.toggle()
-			self.needsDisplay = true
-		}
+		cursorTimer = nil
+		cursorVisible = true
 	}
 
 	override func becomeFirstResponder() -> Bool {

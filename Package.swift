@@ -42,6 +42,9 @@ let package = Package(
 	],
 	dependencies: [
 		.package(url: "https://github.com/ChimeHQ/SwiftTreeSitter", from: "0.25.0"),
+		// The 3D viewer, hosted in an editor tab. A path dependency for now:
+		// see the note in README about what publishing it would take.
+		.package(path: "../3d/gostl/GoSTL-Swift"),
 	] + grammars.map { .package(url: $0.url, exact: $0.version) },
 	targets: [
 		// Editor engine: text storage, syntax, folding, git, project model.
@@ -63,7 +66,10 @@ let package = Package(
 		// AppKit shell: window, navigator, toolbar, code view.
 		.executableTarget(
 			name: "ideai",
-			dependencies: ["IdeaiKit"],
+			dependencies: [
+				"IdeaiKit",
+				.product(name: "GoSTLKit", package: "GoSTL-Swift"),
+			],
 			swiftSettings: [.swiftLanguageMode(.v5)]
 		),
 		.testTarget(
