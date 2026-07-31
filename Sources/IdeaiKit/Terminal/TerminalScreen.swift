@@ -139,7 +139,7 @@ public struct TerminalScreen: Sendable {
 	/// The active grid, `rows` tall.
 	public private(set) var lines: [TerminalLine]
 	/// Completed lines that scrolled off the top.
-	public private(set) var scrollback: [TerminalLine] = []
+	public private(set) var scrollback: ScrollbackBuffer
 
 	/// Lines dropped off the top of scrollback since the screen was created.
 	///
@@ -148,14 +148,20 @@ public struct TerminalScreen: Sendable {
 	/// needs to know by how much.
 	public private(set) var discardedLineCount = 0
 
-	public var maximumScrollback = 5_000
+	/// How much history is kept. Changing it resizes the ring, dropping the
+	/// oldest lines if it shrank.
+	public var maximumScrollback: Int {
+		get { scrollback.capacity }
+		set { scrollback.setCapacity(newValue) }
+	}
 
-	public init(rows: Int, columns: Int) {
+	public init(rows: Int, columns: Int, maximumScrollback: Int = 5_000) {
 		let clampedRows = max(1, rows)
 		let clampedColumns = max(1, columns)
 		self.rows = clampedRows
 		self.columns = clampedColumns
 		self.lines = (0..<clampedRows).map { _ in TerminalLine(columns: clampedColumns) }
+		self.scrollback = ScrollbackBuffer(capacity: maximumScrollback)
 	}
 
 	public var totalLineCount: Int { scrollback.count + lines.count }
@@ -212,12 +218,7 @@ public struct TerminalScreen: Sendable {
 		// Only a full-height region represents lines leaving the screen; a
 		// restricted scroll region is an application redrawing in place.
 		if top == 0 && bottom == rows - 1 {
-			scrollback.append(retired)
-			if scrollback.count > maximumScrollback {
-				let dropped = scrollback.count - maximumScrollback
-				scrollback.removeFirst(dropped)
-				discardedLineCount += dropped
-			}
+			if scrollback.append(retired) != nil { discardedLineCount += 1 }
 		}
 
 		for row in top..<bottom {
@@ -297,13 +298,10 @@ public struct TerminalScreen: Sendable {
 
 			let fromTop = excess - fromBottom
 			if fromTop > 0 {
-				scrollback.append(contentsOf: lines.prefix(fromTop))
-				lines.removeFirst(fromTop)
-				if scrollback.count > maximumScrollback {
-					let dropped = scrollback.count - maximumScrollback
-				scrollback.removeFirst(dropped)
-				discardedLineCount += dropped
+				for line in lines.prefix(fromTop) {
+					if scrollback.append(line) != nil { discardedLineCount += 1 }
 				}
+				lines.removeFirst(fromTop)
 				cursorDelta = -fromTop
 			}
 		} else if newRows > rows {
@@ -356,6 +354,6 @@ public struct TerminalScreen: Sendable {
 	}
 
 	public func allText() -> String {
-		(scrollback + lines).map(\.text).joined(separator: "\n")
+		(Array(scrollback) + lines).map(\.text).joined(separator: "\n")
 	}
 }

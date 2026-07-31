@@ -11,7 +11,14 @@ import Testing
 /// enough to make the timing-sensitive tests elsewhere fail when the suite runs
 /// them in parallel. Run with:
 ///
-///     IDEAI_BENCH=1 swift test --filter TerminalThroughput
+///     IDEAI_BENCH=1 swift test -c release --filter TerminalThroughput
+///
+/// In release, and it matters: a debug build spends its time in exclusivity
+/// checks and generic metadata lookups that the optimiser removes entirely, so
+/// debug numbers are roughly a tenth of the truth and point at the wrong costs.
+/// The app itself ships release.
+///
+/// IDEAI_BENCH_SECONDS lengthens each pass, for sampling under a profiler.
 @Suite(.enabled(if: ProcessInfo.processInfo.environment["IDEAI_BENCH"] != nil))
 struct TerminalThroughputTests {
 	/// Best of several passes.
@@ -19,17 +26,31 @@ struct TerminalThroughputTests {
 	/// The mean moves by a tenth between runs on a machine doing anything else,
 	/// which is enough to hide a real change or invent one. The best pass is the
 	/// one least interrupted, and it is far steadier.
-	private func throughput(_ name: String, bytes: [UInt8], rows: Int = 40, columns: Int = 100) {
+	private func throughput(
+		_ name: String,
+		bytes: [UInt8],
+		rows: Int = 40,
+		columns: Int = 100,
+		fillScrollback: Bool = false
+	) {
 		let emulator = TerminalEmulator(rows: rows, columns: columns)
+		if fillScrollback {
+			// A terminal that has been open a while sits with its history full,
+			// and what it costs to retire a line is only visible there.
+			emulator.write(String(repeating: "filler\r\n", count: 5_200))
+		}
 		let megabytes = Double(bytes.count) / 1_048_576
 		let data = Data(bytes)
 		var best = 0.0
+		// Long enough to sample under a profiler when asked for.
+		let seconds = ProcessInfo.processInfo.environment["IDEAI_BENCH_SECONDS"]
+			.flatMap(Double.init) ?? 0.1
 
 		for _ in 0..<5 {
 			let start = Date()
 			var elapsed = 0.0
 			var rounds = 0
-			while elapsed < 0.1 {
+			while elapsed < seconds {
 				emulator.write(data)
 				rounds += 1
 				elapsed = -start.timeIntervalSinceNow
@@ -65,6 +86,16 @@ struct TerminalThroughputTests {
 		throughput("  colour changes only", bytes: Array(colours.utf8))
 		throughput("  wide-ish glyphs only", bytes: Array(glyphs.utf8))
 		throughput("  ascii only", bytes: Array(ascii.utf8))
+	}
+
+	/// The same output once history is full, which is where a terminal spends
+	/// almost all of its life.
+	@Test func plainOutputWithFullScrollback() {
+		var chunk = ""
+		for i in 0..<2000 {
+			chunk += "\u{1B}[3\(i % 8)m[\(i)] some typical log line with words \u{1B}[0m\r\n"
+		}
+		throughput("plain, history full", bytes: Array(chunk.utf8), fillScrollback: true)
 	}
 
 	/// What the DOOM fire benchmark does: a truecolour change on every cell and
