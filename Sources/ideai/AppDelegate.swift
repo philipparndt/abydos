@@ -64,6 +64,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 				}
 			}
 		}
+		if let name = options.dropZone {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+				let zone: EditorTabDrag.Zone
+				switch name {
+				case "left":   zone = .left
+				case "right":  zone = .right
+				case "top":    zone = .top
+				case "bottom": zone = .bottom
+				default:       zone = .center
+				}
+				controller?.previewDropZone(zone)
+			}
+		}
 		if options.wordWrap {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
 				controller?.toggleWordWrap(nil)

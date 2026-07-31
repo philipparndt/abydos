@@ -28,6 +28,8 @@ final class EditorTabBar: NSView {
 	var groupID: UUID = UUID()
 	/// Asked for the URL of a tab about to be dragged, for the drag image.
 	var urlForIndex: ((Int) -> URL?)?
+	/// A tab was dropped on this strip, to land at the given position.
+	var onTabDropped: ((EditorTabDrag.Payload, Int) -> Void)?
 
 	private(set) var items: [EditorTabItem] = []
 	private var activeIndex: Int?
@@ -39,6 +41,9 @@ final class EditorTabBar: NSView {
 	/// Cached layout, recomputed whenever the tabs or bounds change.
 	private var frames: [NSRect] = []
 
+	/// Slot a dragged tab would land in, drawn as a caret while dragging.
+	private var dropIndex: Int?
+
 	// Design-time dimensions; every use goes through Theme.scaled so the strip
 	// zooms with the rest of the window.
 	static var height: CGFloat { Theme.current.scaled(34) }
@@ -49,6 +54,16 @@ final class EditorTabBar: NSView {
 	private static var minTabWidth: CGFloat { Theme.current.scaled(90) }
 
 	override var isFlipped: Bool { true }
+
+	override init(frame frameRect: NSRect) {
+		super.init(frame: frameRect)
+		// The strip is its own drop target, so dropping onto it reorders or moves
+		// a tab into this group rather than falling through to the pane beneath,
+		// which would read the tab bar as the pane's top edge and split.
+		registerForDraggedTypes([EditorTabDrag.pasteboardType])
+	}
+
+	required init?(coder: NSCoder) { fatalError("not used") }
 
 	override var intrinsicContentSize: NSSize {
 		NSSize(width: NSView.noIntrinsicMetric, height: Self.height)
@@ -237,6 +252,8 @@ final class EditorTabBar: NSView {
 			Theme.current.editorBackground.setFill()
 			NSRect(x: rect.minX, y: bounds.maxY - 1, width: rect.width, height: 1).fill()
 		}
+
+		drawDropCaret()
 	}
 
 	private func draw(item: EditorTabItem, in rect: NSRect, isActive: Bool, index: Int) {
@@ -314,6 +331,84 @@ final class EditorTabBar: NSView {
 	}
 }
 
+
+// MARK: - Drop destination
+
+extension EditorTabBar {
+	/// Slot index the pointer sits in: the gap the tab would be inserted into.
+	private func insertionIndex(for point: NSPoint) -> Int {
+		for (index, frame) in frames.enumerated() where point.x < frame.midX {
+			return index
+		}
+		return items.count
+	}
+
+	/// Left edge of a slot, for drawing the caret.
+	private func insertionX(for index: Int) -> CGFloat {
+		if let frame = frames[safe: index] { return frame.minX }
+		return frames.last.map(\.maxX) ?? 0
+	}
+
+	override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+		updateDropIndex(sender)
+		return .move
+	}
+
+	override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+		updateDropIndex(sender)
+		return .move
+	}
+
+	override func draggingExited(_ sender: NSDraggingInfo?) {
+		clearDropIndex()
+	}
+
+	override func draggingEnded(_ sender: NSDraggingInfo) {
+		clearDropIndex()
+	}
+
+	private func updateDropIndex(_ sender: NSDraggingInfo) {
+		guard EditorTabDrag.payload(from: sender.draggingPasteboard) != nil else { return }
+		let index = insertionIndex(for: convert(sender.draggingLocation, from: nil))
+		guard index != dropIndex else { return }
+		dropIndex = index
+		needsDisplay = true
+	}
+
+	private func clearDropIndex() {
+		guard dropIndex != nil else { return }
+		dropIndex = nil
+		needsDisplay = true
+	}
+
+	override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+		let index = dropIndex ?? insertionIndex(for: convert(sender.draggingLocation, from: nil))
+		clearDropIndex()
+		guard let payload = EditorTabDrag.payload(from: sender.draggingPasteboard) else { return false }
+		onTabDropped?(payload, index)
+		return true
+	}
+
+	/// The caret marking where the tab lands.
+	func drawDropCaret() {
+		guard let dropIndex else { return }
+		let width = Theme.current.scaled(2)
+		let inset = Theme.current.scaled(4)
+		Theme.current.gitModified.setFill()
+		NSRect(
+			x: insertionX(for: dropIndex) - width / 2,
+			y: inset,
+			width: width,
+			height: bounds.height - inset * 2
+		).fill()
+	}
+}
+
+private extension Array {
+	subscript(safe index: Int) -> Element? {
+		indices.contains(index) ? self[index] : nil
+	}
+}
 
 extension EditorTabBar: NSDraggingSource {
 	func draggingSession(

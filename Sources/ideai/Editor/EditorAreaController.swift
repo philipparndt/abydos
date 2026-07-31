@@ -3,8 +3,10 @@ import IdeaiKit
 
 /// Hosts one or more editor groups in a tree of splits.
 ///
-/// Each pane is a full editor group with its own tabs, find bar and status line,
-/// rather than a shared set of tabs shown twice. Splits are built from nested
+/// Each pane is a full editor group with its own tabs and find bar, rather than
+/// a shared set of tabs shown twice. The status line is the exception: there is
+/// one for the window, showing whichever pane is active, because caret position
+/// and language describe where you are working, and you work in one pane. Splits are built from nested
 /// two-child `NSSplitView`s, which keeps the arrangement recursive: any pane can
 /// be split again, horizontally or vertically, to any depth.
 ///
@@ -12,10 +14,18 @@ import IdeaiKit
 /// active, so the rest of the app is unaware there is more than one.
 final class EditorAreaController: NSViewController {
 	private(set) var groups: [EditorViewController] = []
-	private(set) var activeGroup: EditorViewController!
+	private(set) var activeGroup: EditorViewController! {
+		didSet { refreshStatus(from: activeGroup) }
+	}
 
 	private var project: Project?
 	private var topInset: CGFloat = 40
+
+	/// Holds the split tree. Separate from `view` so the status bar below it
+	/// survives the tree being rebuilt.
+	private var splitHost: NSView!
+	private var statusBar: EditorStatusView!
+	private var statusBarHeightConstraint: NSLayoutConstraint!
 
 	// Forwarded from the active group.
 	var onActiveFileChanged: ((URL?) -> Void)?
@@ -25,9 +35,39 @@ final class EditorAreaController: NSViewController {
 		let container = ColoredView(color: Theme.current.editorBackground)
 		view = container
 
+		splitHost = NSView()
+		statusBar = EditorStatusView()
+		for subview in [splitHost, statusBar] as [NSView] {
+			container.addSubview(subview)
+			subview.translatesAutoresizingMaskIntoConstraints = false
+		}
+
+		statusBarHeightConstraint = statusBar.heightAnchor.constraint(
+			equalToConstant: Theme.current.scaled(24)
+		)
+		NSLayoutConstraint.activate([
+			splitHost.topAnchor.constraint(equalTo: container.topAnchor),
+			splitHost.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+			splitHost.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+			splitHost.bottomAnchor.constraint(equalTo: statusBar.topAnchor),
+
+			statusBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+			statusBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+			statusBar.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+			statusBarHeightConstraint,
+		])
+
 		let first = makeGroup()
 		activeGroup = first
 		install(rootView: first.view)
+	}
+
+	/// Shows the active group's caret position and language.
+	private func refreshStatus(from group: EditorViewController?) {
+		guard let group, group === activeGroup else { return }
+		statusBar.isHidden = group.isEmpty
+		statusBar.setPosition(line: group.statusLine, column: group.statusColumn)
+		statusBar.setLanguage(group.statusLanguage)
 	}
 
 	// MARK: - Groups
@@ -52,8 +92,14 @@ final class EditorAreaController: NSViewController {
 			// The last group stays even when empty; it is the editor area itself.
 			self?.removeGroup(empty)
 		}
+		group.onStatusChanged = { [weak self] reporting in
+			self?.refreshStatus(from: reporting)
+		}
 		group.onTabDropped = { [weak self] payload, zone, target in
 			self?.handleDrop(payload: payload, zone: zone, target: target)
+		}
+		group.onTabDroppedOnTabBar = { [weak self] payload, index, target in
+			self?.handleTabBarDrop(payload: payload, index: index, target: target)
 		}
 
 		groups.append(group)
@@ -62,14 +108,14 @@ final class EditorAreaController: NSViewController {
 	}
 
 	private func install(rootView: NSView) {
-		view.subviews.forEach { $0.removeFromSuperview() }
+		splitHost.subviews.forEach { $0.removeFromSuperview() }
 		rootView.translatesAutoresizingMaskIntoConstraints = false
-		view.addSubview(rootView)
+		splitHost.addSubview(rootView)
 		NSLayoutConstraint.activate([
-			rootView.topAnchor.constraint(equalTo: view.topAnchor),
-			rootView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-			rootView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-			rootView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+			rootView.topAnchor.constraint(equalTo: splitHost.topAnchor),
+			rootView.bottomAnchor.constraint(equalTo: splitHost.bottomAnchor),
+			rootView.leadingAnchor.constraint(equalTo: splitHost.leadingAnchor),
+			rootView.trailingAnchor.constraint(equalTo: splitHost.trailingAnchor),
 		])
 	}
 
@@ -102,6 +148,31 @@ final class EditorAreaController: NSViewController {
 		activeGroup = newGroup
 	}
 
+	/// Moves a dropped tab into `target`'s strip at the slot it was released over.
+	///
+	/// Within one group this is a reorder; across groups it moves the tab, which
+	/// may leave the source group empty and collapse its split.
+	private func handleTabBarDrop(
+		payload: EditorTabDrag.Payload,
+		index: Int,
+		target: EditorViewController
+	) {
+		guard let source = groups.first(where: { $0.groupID == payload.groupID }) else { return }
+		let from = source.indexOfTab(withPath: payload.path) ?? payload.index
+
+		if source === target {
+			// The slot is measured against the strip as it looks now, with the tab
+			// still in it, so removing an earlier tab shifts every later slot left.
+			source.moveTab(from: from, to: index > from ? index - 1 : index)
+			activeGroup = target
+			return
+		}
+
+		guard let tab = source.detachTab(at: from) else { return }
+		target.adopt(tab, at: index)
+		activeGroup = target
+	}
+
 	/// Replaces `target`'s position in the tree with a split holding both panes.
 	private func split(
 		target: EditorViewController,
@@ -117,7 +188,7 @@ final class EditorAreaController: NSViewController {
 		split.dividerStyle = .thin
 
 		// Where the target sat, the split now sits.
-		let isRoot = (parent === view)
+		let isRoot = (parent === splitHost)
 		var indexInParent: Int?
 		if let parentSplit = parent as? NSSplitView {
 			indexInParent = parentSplit.arrangedSubviews.firstIndex(of: targetView)
@@ -142,10 +213,11 @@ final class EditorAreaController: NSViewController {
 		}
 
 		// Even halves, which is what a split gesture implies.
-		DispatchQueue.main.async { [weak split] in
+		DispatchQueue.main.async { [weak self, weak split] in
 			guard let split else { return }
 			let total = vertical ? split.bounds.width : split.bounds.height
 			split.setPosition(total / 2, ofDividerAt: 0)
+			self?.updateGroupInsets()
 		}
 	}
 
@@ -169,7 +241,7 @@ final class EditorAreaController: NSViewController {
 			let grandparent = parentSplit.superview
 			survivor.removeFromSuperview()
 
-			if grandparent === view {
+			if grandparent === splitHost {
 				install(rootView: survivor)
 			} else if let grandSplit = grandparent as? NSSplitView,
 			          let index = grandSplit.arrangedSubviews.firstIndex(of: parentSplit) {
@@ -182,6 +254,7 @@ final class EditorAreaController: NSViewController {
 		if activeGroup === group || activeGroup == nil {
 			activeGroup = groups.first
 		}
+		DispatchQueue.main.async { [weak self] in self?.updateGroupInsets() }
 	}
 
 	// MARK: - Forwarding
@@ -191,12 +264,43 @@ final class EditorAreaController: NSViewController {
 		for group in groups { group.setProject(project) }
 	}
 
+	func previewDropZoneForTesting(_ zone: EditorTabDrag.Zone) {
+		(activeGroup?.view as? EditorDropView)?.previewZoneForTesting(zone)
+	}
+
 	func setTopInset(_ inset: CGFloat) {
 		topInset = inset
-		for group in groups { group.setTopInset(inset) }
+		updateGroupInsets()
+	}
+
+	/// Applies the titlebar inset only to panes that actually touch the top.
+	///
+	/// The inset exists to clear the titlebar, which the window draws over the
+	/// content view. A pane below a horizontal split has the pane above it as a
+	/// neighbour, not the titlebar, so giving it the same inset leaves a band of
+	/// empty space between the two.
+	private func updateGroupInsets() {
+		guard splitHost.bounds.height > 0 else {
+			for group in groups { group.setTopInset(topInset) }
+			return
+		}
+
+		for group in groups {
+			let frame = splitHost.convert(group.view.bounds, from: group.view)
+			// Non-flipped coordinates, so the top edge is the maximum y.
+			let touchesTop = abs(frame.maxY - splitHost.bounds.maxY) < 1
+			group.setTopInset(touchesTop ? topInset : 0)
+		}
+	}
+
+	override func viewDidLayout() {
+		super.viewDidLayout()
+		updateGroupInsets()
 	}
 
 	func applySettings() {
+		statusBarHeightConstraint.constant = Theme.current.scaled(24)
+		statusBar.needsDisplay = true
 		for group in groups { group.applySettings() }
 	}
 

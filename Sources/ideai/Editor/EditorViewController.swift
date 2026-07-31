@@ -57,9 +57,16 @@ final class EditorViewController: NSViewController {
 	private var tabBar: EditorTabBar!
 	private var tabBarTopConstraint: NSLayoutConstraint!
 	private var tabBarHeightConstraint: NSLayoutConstraint!
-	private var statusBarHeightConstraint: NSLayoutConstraint!
 	private var contentArea: NSView!
-	private var statusBar: EditorStatusView!
+	/// Position and language of this group's active tab.
+	///
+	/// The window shows one status bar for the whole editor area, not one per
+	/// pane, so a group reports its state and the area controller displays
+	/// whichever group is active.
+	private(set) var statusLine = 1
+	private(set) var statusColumn = 1
+	private(set) var statusLanguage: String?
+	var onStatusChanged: ((EditorViewController) -> Void)?
 	private var placeholder: NSTextField!
 
 	/// Notifies the window when the active file changes, so the tree can follow.
@@ -73,6 +80,8 @@ final class EditorViewController: NSViewController {
 
 	/// Asked to move a dragged tab here, in the given zone.
 	var onTabDropped: ((_ payload: EditorTabDrag.Payload, _ zone: EditorTabDrag.Zone, _ target: EditorViewController) -> Void)?
+	/// A tab dropped on this group's strip, to land at the given slot.
+	var onTabDroppedOnTabBar: ((_ payload: EditorTabDrag.Payload, _ index: Int, _ target: EditorViewController) -> Void)?
 	/// Fired when this group has no tabs left, so the area can collapse it.
 	var onBecameEmpty: ((EditorViewController) -> Void)?
 	/// Fired when this group takes focus, so the area knows which is active.
@@ -98,13 +107,16 @@ final class EditorViewController: NSViewController {
 		tabBar.onClose = { [weak self] index in self?.closeTab(at: index) }
 		tabBar.onPromote = { [weak self] index in self?.promoteToPermanent(index: index) }
 		tabBar.groupID = groupID
+		tabBar.onTabDropped = { [weak self] payload, index in
+			guard let self else { return }
+			self.onTabDroppedOnTabBar?(payload, index, self)
+		}
 		tabBar.urlForIndex = { [weak self] index in
 			guard let self, self.tabs.indices.contains(index) else { return nil }
 			return self.tabs[index].url
 		}
 
 		contentArea = NSView()
-		statusBar = EditorStatusView()
 
 		findBar = FindBar()
 		findBar.isHidden = true
@@ -120,7 +132,7 @@ final class EditorViewController: NSViewController {
 		placeholder.textColor = Theme.current.gitIgnored
 		placeholder.alignment = .center
 
-		for subview in [tabBar, findBar, contentArea, statusBar, placeholder] as [NSView] {
+		for subview in [tabBar, findBar, contentArea, placeholder] as [NSView] {
 			container.addSubview(subview)
 			subview.translatesAutoresizingMaskIntoConstraints = false
 		}
@@ -130,7 +142,6 @@ final class EditorViewController: NSViewController {
 		// tab bar.
 		tabBarTopConstraint = tabBar.topAnchor.constraint(equalTo: container.topAnchor, constant: 40)
 		tabBarHeightConstraint = tabBar.heightAnchor.constraint(equalToConstant: EditorTabBar.height)
-		statusBarHeightConstraint = statusBar.heightAnchor.constraint(equalToConstant: Theme.current.scaled(24))
 		// Collapsed to zero rather than hidden, so the editor reclaims the space.
 		findBarHeight = findBar.heightAnchor.constraint(equalToConstant: 0)
 
@@ -148,12 +159,7 @@ final class EditorViewController: NSViewController {
 			contentArea.topAnchor.constraint(equalTo: findBar.bottomAnchor),
 			contentArea.leadingAnchor.constraint(equalTo: container.leadingAnchor),
 			contentArea.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-			contentArea.bottomAnchor.constraint(equalTo: statusBar.topAnchor),
-
-			statusBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-			statusBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-			statusBar.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-			statusBarHeightConstraint,
+			contentArea.bottomAnchor.constraint(equalTo: container.bottomAnchor),
 
 			placeholder.centerXAnchor.constraint(equalTo: container.centerXAnchor),
 			placeholder.centerYAnchor.constraint(equalTo: container.centerYAnchor),
@@ -189,18 +195,20 @@ final class EditorViewController: NSViewController {
 	}
 
 	/// Takes ownership of a tab detached from another group.
-	func adopt(_ tab: Tab, focus: Bool = true) {
+	func adopt(_ tab: Tab, at index: Int? = nil, focus: Bool = true) {
 		// Its callbacks still point at the old group, so they are re-bound.
 		rebindCallbacks(for: tab)
-		tabs.append(tab)
-		activate(index: tabs.count - 1, focusEditor: focus)
+		let slot = max(0, min(index ?? tabs.count, tabs.count))
+		tabs.insert(tab, at: slot)
+		activeIndex = nil
+		activate(index: slot, focusEditor: focus)
 		applyDebugState(to: tab)
 	}
 
 	private func rebindCallbacks(for tab: Tab) {
 		tab.codeView?.onCaretMoved = { [weak self, weak tab] line, column in
 			guard let self, let tab, self.activeTab === tab else { return }
-			self.statusBar.setPosition(line: line, column: column)
+			self.setStatus(line: line, column: column)
 		}
 		tab.codeView?.onDirtyChanged = { [weak self, weak tab] _ in
 			tab?.isPreview = false
@@ -230,12 +238,19 @@ final class EditorViewController: NSViewController {
 		activate(index: target, focusEditor: false)
 	}
 
+	private func setStatus(line: Int, column: Int) {
+		guard line != statusLine || column != statusColumn else { return }
+		statusLine = line
+		statusColumn = column
+		onStatusChanged?(self)
+	}
+
 	private func updateChrome() {
 		let hasTabs = !tabs.isEmpty
 		placeholder.isHidden = hasTabs
 		tabBar.isHidden = !hasTabs
-		statusBar.isHidden = !hasTabs
 		contentArea.isHidden = !hasTabs
+		onStatusChanged?(self)
 	}
 
 	/// Distance from the top of the window to the first row of content.
@@ -325,7 +340,7 @@ final class EditorViewController: NSViewController {
 
 		codeView.onCaretMoved = { [weak self] line, column in
 			guard let self, self.activeTab === tab else { return }
-			self.statusBar.setPosition(line: line, column: column)
+			self.setStatus(line: line, column: column)
 		}
 		codeView.onDirtyChanged = { [weak self] _ in
 			// Editing a provisional tab is a commitment to it, the same rule
@@ -626,7 +641,8 @@ final class EditorViewController: NSViewController {
 		])
 
 		// A binary tab has no language to report.
-		statusBar.setLanguage(tab.document?.displayLanguageName)
+		statusLanguage = tab.document?.displayLanguageName
+		onStatusChanged?(self)
 		updateChrome()
 		refreshTabBar()
 		onActivated?(self)
@@ -796,12 +812,10 @@ final class EditorViewController: NSViewController {
 	/// Re-reads settings that affect the editor and repaints.
 	func applySettings() {
 		tabBarHeightConstraint.constant = EditorTabBar.height
-		statusBarHeightConstraint.constant = Theme.current.scaled(24)
 		placeholder.font = Theme.current.uiFont(13)
 		tabBar.applyThemeChange()
 		findBar.applyThemeChange()
 		if !findBar.isHidden { findBarHeight.constant = Theme.current.scaled(34) }
-		statusBar.needsDisplay = true
 		for tab in tabs {
 			tab.codeView?.setWordWrap(Settings.shared.wordWrap)
 			tab.codeView?.applyThemeChange()
@@ -831,7 +845,7 @@ enum FileInspector {
 
 // MARK: - Status bar
 
-private final class EditorStatusView: NSView {
+final class EditorStatusView: NSView {
 	private var positionText = ""
 	private var languageText = ""
 

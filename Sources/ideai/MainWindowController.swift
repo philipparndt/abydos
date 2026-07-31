@@ -545,6 +545,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		editor.splitActiveGroup(vertical: false)
 	}
 
+	func previewDropZone(_ zone: EditorTabDrag.Zone) {
+		editor.previewDropZoneForTesting(zone)
+	}
+
 	@objc func toggleWordWrap(_ sender: Any?) {
 		editor.toggleWordWrap()
 	}
@@ -685,6 +689,9 @@ class ColoredView: NSView {
 		wantsLayer = true
 		layer?.backgroundColor = color.cgColor
 	}
+
+	/// Subclasses draw over their subviews, so drawing order matters to them.
+	override var wantsDefaultClipping: Bool { true }
 
 	required init?(coder: NSCoder) { fatalError("not used") }
 

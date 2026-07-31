@@ -40,6 +40,8 @@ struct LaunchOptions {
 	var switcherFilter: String?
 	/// Split the editor before capture: "right" or "down".
 	var split: String?
+	/// Draw a tab drop preview before capture, without a real drag.
+	var dropZone: String?
 
 	static func parse(_ arguments: [String] = CommandLine.arguments) -> LaunchOptions {
 		var options = LaunchOptions()
@@ -72,6 +74,7 @@ struct LaunchOptions {
 			case "--wrap":       options.wordWrap = true
 			case "--switcher":   options.switcherFilter = next()
 			case "--split":      options.split = next()
+			case "--dropzone":   options.dropZone = next()
 			default:
 				// A bare path is treated as the project to open.
 				if !argument.hasPrefix("-"), options.projectPath == nil {
