@@ -31,6 +31,48 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 	var activeGroupIDForTesting: UUID? { editor.activeGroupID }
 	var tabCountForTesting: Int { editor.activeTabCount }
 
+	/// Times a full terminal redraw, which is what every byte of output costs
+	/// once the screen has to be shown again.
+	func benchmarkTerminalRendering() {
+		setPanelVisible(true)
+		guard let terminal = bottomPanel.showTerminal()?.terminalView else {
+			print("BENCH render: no terminal")
+			return
+		}
+
+		// A screenful of coloured text, as a busy program produces.
+		var filler = ""
+		for row in 0..<40 {
+			filler += "\u{1B}[3\(row % 8)m"
+			filler += String(repeating: "abcdefghij ", count: 18)
+			filler += "\u{1B}[0m\r\n"
+		}
+		terminal.writeForTesting(filler)
+		terminal.layoutSubtreeIfNeeded()
+
+		// A fixed 40-row screenful, so the number means the same thing whatever
+		// height the panel happens to have been left at.
+		let rowHeight = terminal.bounds.height / CGFloat(max(1, terminal.totalRowsForTesting))
+		let bounds = NSRect(x: 0, y: 0, width: terminal.bounds.width, height: rowHeight * 40)
+        guard bounds.width > 1, bounds.height > 1,
+              let rep = terminal.bitmapImageRepForCachingDisplay(in: bounds) else {
+			print("BENCH render: no drawable size \(bounds)")
+			return
+		}
+
+		// One pass first, so one-off font and colour setup is not counted.
+		terminal.cacheDisplay(in: bounds, to: rep)
+
+		let frames = 60
+		let start = Date()
+		for _ in 0..<frames { terminal.cacheDisplay(in: bounds, to: rep) }
+		let elapsed = -start.timeIntervalSinceNow
+
+		let perFrame = elapsed / Double(frames) * 1000
+		print("BENCH render: \(String(format: "%.2f", perFrame)) ms/frame "
+			+ "(\(String(format: "%.0f", 1000 / perFrame)) fps ceiling) at \(Int(bounds.width))x\(Int(bounds.height))")
+	}
+
 	/// Takes a tab dragged out of another window.
 	func adopt(_ tab: EditorViewController.Tab) {
 		editor.adopt(tab)

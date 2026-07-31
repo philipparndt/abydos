@@ -520,6 +520,14 @@ final class TerminalView: NSView, NSTextInputClient {
 		return true
 	}
 
+	var totalRowsForTesting: Int { max(1, emulator.screen.totalLineCount) }
+
+	/// Feeds output straight to the emulator, bypassing the process.
+	func writeForTesting(_ text: String) {
+		emulator.write(text)
+		displayIfNeeded()
+	}
+
 	// MARK: - Dropping files
 
 	/// Files dropped here are typed as paths.

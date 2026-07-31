@@ -192,6 +192,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if options.benchRender {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+				controller?.benchmarkTerminalRendering()
+				exit(0)
+			}
+		}
+
 		if options.reviewUncommitted {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
 				controller?.reviewUncommittedChanges(nil)

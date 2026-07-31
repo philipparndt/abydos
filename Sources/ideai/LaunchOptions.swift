@@ -40,6 +40,8 @@ struct LaunchOptions {
 	var zoomCycle = false
 	/// A second file to open, then drag out into a window of its own and back.
 	var tearOffFile: String?
+	/// Times terminal redraws, to see what a frame costs.
+	var benchRender = false
 	/// Toggle a breakpoint on this 1-based line before capture.
 	var breakpointLine: Int?
 	/// Show a sidebar tool before capture: project | changes | branches | structure.
@@ -107,6 +109,7 @@ struct LaunchOptions {
 			case "--sidebar-cycle": options.sidebarCycle = true
 			case "--zoom-cycle":  options.zoomCycle = true
 			case "--tear-off":   options.tearOffFile = next()
+			case "--bench-render": options.benchRender = true
 			case "--breakpoint": options.breakpointLine = next().flatMap(Int.init)
 			case "--find":       options.findQuery = next()
 			case "--search":     options.searchQuery = next()
