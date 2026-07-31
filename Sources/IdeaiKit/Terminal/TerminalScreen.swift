@@ -62,6 +62,14 @@ public struct TerminalLine: Equatable, Sendable {
 		}
 	}
 
+	/// True when nothing has been written to the line.
+	///
+	/// Used by a resize to decide which end to take rows from: an untouched line
+	/// at the bottom can be discarded, real content at the top cannot.
+	public var isBlank: Bool {
+		cells.allSatisfy { $0 == .blank }
+	}
+
 	/// Trailing blanks trimmed, for text extraction and selection.
 	public var text: String {
 		var result = ""
@@ -170,10 +178,22 @@ public struct TerminalScreen: Sendable {
 	/// Growing taller pulls lines back out of scrollback rather than padding with
 	/// blanks, so widening a window does not leave a band of empty rows above
 	/// output that is still on screen.
-	public mutating func resize(rows newRows: Int, columns newColumns: Int) {
+	/// Resizes the grid, returning how far the cursor's row moved.
+	///
+	/// Rows are added and removed at whichever end preserves what is on screen.
+	/// Shrinking discards untouched lines below the cursor before retiring real
+	/// content off the top; growing pulls history back down from scrollback,
+	/// which pushes everything below it further down.
+	///
+	/// Both of those shift the cursor's row, and the caller **must** apply the
+	/// returned delta. A shell redraws its prompt at the cursor after SIGWINCH,
+	/// so a cursor left pointing at the wrong line writes the new prompt over
+	/// unrelated output, which reads as duplicated content.
+	@discardableResult
+	public mutating func resize(rows newRows: Int, columns newColumns: Int, cursorRow: Int = 0) -> Int {
 		let newRows = max(1, newRows)
 		let newColumns = max(1, newColumns)
-		guard newRows != rows || newColumns != columns else { return }
+		guard newRows != rows || newColumns != columns else { return 0 }
 
 		if newColumns != columns {
 			for index in lines.indices { lines[index].resize(to: newColumns) }
@@ -181,19 +201,38 @@ public struct TerminalScreen: Sendable {
 		}
 		columns = newColumns
 
+		var cursorDelta = 0
+
 		if newRows < rows {
-			// Retire lines from the top so the cursor's neighbourhood survives.
 			let excess = rows - newRows
-			scrollback.append(contentsOf: lines.prefix(excess))
-			lines.removeFirst(excess)
-			if scrollback.count > maximumScrollback {
-				scrollback.removeFirst(scrollback.count - maximumScrollback)
+
+			// Blank lines below the cursor are space the shell has not used yet,
+			// so they go first. Taking from the top instead would push the visible
+			// prompt — and everything above it — into scrollback, which is the
+			// "previous lines disappeared" case.
+			var fromBottom = 0
+			var index = lines.count - 1
+			while fromBottom < excess, index > cursorRow, lines[index].isBlank {
+				fromBottom += 1
+				index -= 1
+			}
+			lines.removeLast(fromBottom)
+
+			let fromTop = excess - fromBottom
+			if fromTop > 0 {
+				scrollback.append(contentsOf: lines.prefix(fromTop))
+				lines.removeFirst(fromTop)
+				if scrollback.count > maximumScrollback {
+					scrollback.removeFirst(scrollback.count - maximumScrollback)
+				}
+				cursorDelta = -fromTop
 			}
 		} else if newRows > rows {
 			var needed = newRows - rows
 			while needed > 0, let recovered = scrollback.popLast() {
 				lines.insert(recovered, at: 0)
 				needed -= 1
+				cursorDelta += 1
 			}
 			while needed > 0 {
 				lines.append(TerminalLine(columns: newColumns))
@@ -201,6 +240,7 @@ public struct TerminalScreen: Sendable {
 			}
 		}
 		rows = newRows
+		return cursorDelta
 	}
 
 	/// Plain text of the whole buffer, used for copy and for feeding an agent's

@@ -543,3 +543,110 @@ private final class Box<T> {
 	var value: T
     init(_ value: T) { self.value = value }
 }
+
+/// Resizing is where a terminal most visibly gets things wrong: rows have to be
+/// taken from whichever end holds nothing, and the cursor has to follow the
+/// content it was sitting on. A shell redraws its prompt at the cursor after
+/// SIGWINCH, so a cursor left on the wrong line duplicates output.
+struct TerminalResizeTests {
+	private func makeEmulator(rows: Int = 10, columns: Int = 20) -> TerminalEmulator {
+		TerminalEmulator(rows: rows, columns: columns)
+	}
+
+	private func row(_ emulator: TerminalEmulator, _ index: Int) -> String {
+		emulator.screen[index].text
+	}
+
+	/// The case the user hit: a short session, shrunk, lost its history.
+	@Test func shrinkingTakesUnusedRowsFromTheBottom() {
+		let emulator = makeEmulator(rows: 10)
+		emulator.write("one\r\ntwo\r\nthree\r\n$ ")
+		// Cursor sits on row 3; rows 4-9 were never written to.
+		#expect(emulator.cursorRow == 3)
+
+		emulator.resize(rows: 6, columns: 20)
+
+		#expect(row(emulator, 0) == "one")
+		#expect(row(emulator, 1) == "two")
+		#expect(row(emulator, 2) == "three")
+		#expect(emulator.screen.scrollback.count == 0)
+		// The prompt stays under the cursor, so the redraw overwrites itself.
+		#expect(emulator.cursorRow == 3)
+	}
+
+	/// Once the blank tail runs out, content does have to go — but the cursor
+	/// moves with it rather than being clamped.
+	@Test func shrinkingPastTheBlankTailRetiresFromTheTop() {
+		let emulator = makeEmulator(rows: 6)
+		emulator.write("a\r\nb\r\nc\r\nd\r\ne\r\nf")
+		#expect(emulator.cursorRow == 5)
+
+		emulator.resize(rows: 4, columns: 20)
+
+		#expect(row(emulator, 0) == "c")
+		#expect(row(emulator, 3) == "f")
+		#expect(emulator.screen.scrollback.count == 2)
+		#expect(emulator.cursorRow == 3)
+	}
+
+	/// Growing pulls history back down, which pushes the cursor down with it.
+	/// Without the shift the shell would redraw its prompt over recovered text.
+	@Test func growingRecoversScrollbackAndMovesTheCursorWithIt() {
+		let emulator = makeEmulator(rows: 3)
+		emulator.write("a\r\nb\r\nc\r\nd\r\ne")
+		// Two lines have scrolled off by now.
+		#expect(emulator.screen.scrollback.count == 2)
+		#expect(emulator.cursorRow == 2)
+
+		emulator.resize(rows: 5, columns: 20)
+
+		#expect(row(emulator, 0) == "a")
+		#expect(row(emulator, 4) == "e")
+		#expect(emulator.screen.scrollback.count == 0)
+		#expect(emulator.cursorRow == 4)
+	}
+
+	/// With no history to recover, new rows are appended and nothing moves.
+	@Test func growingWithoutScrollbackLeavesTheCursorAlone() {
+		let emulator = makeEmulator(rows: 4)
+		emulator.write("a\r\nb")
+		emulator.resize(rows: 8, columns: 20)
+
+		#expect(row(emulator, 0) == "a")
+		#expect(emulator.cursorRow == 1)
+	}
+
+	/// A resize inside tmux must also reshape the grid tmux will be handed back,
+	/// or leaving it restores a screen of the wrong size.
+	@Test func resizeAlsoReshapesTheSavedNormalScreen() {
+		let emulator = makeEmulator(rows: 6, columns: 20)
+		emulator.write("history\r\n$ ")
+		emulator.write("\u{1B}[?1049h")            // enter alternate screen
+		#expect(emulator.isAlternateScreen)
+
+		emulator.resize(rows: 9, columns: 30)
+		#expect(emulator.screen.rows == 9)
+
+		emulator.write("\u{1B}[?1049l")            // leave it again
+		#expect(!emulator.isAlternateScreen)
+		#expect(emulator.screen.rows == 9)
+		#expect(emulator.screen.columns == 30)
+		#expect(row(emulator, 0) == "history")
+	}
+
+	@Test func narrowingTruncatesRowsRatherThanLosingThem() {
+		let emulator = makeEmulator(rows: 4, columns: 20)
+		emulator.write("abcdefghij")
+		emulator.resize(rows: 4, columns: 5)
+		#expect(row(emulator, 0) == "abcde")
+		#expect(emulator.cursorColumn == 4)
+	}
+
+	@Test func resizeToTheSameSizeChangesNothing() {
+		let emulator = makeEmulator(rows: 5, columns: 20)
+		emulator.write("a\r\nb")
+		emulator.resize(rows: 5, columns: 20)
+		#expect(emulator.cursorRow == 1)
+		#expect(row(emulator, 0) == "a")
+	}
+}

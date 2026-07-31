@@ -215,13 +215,22 @@ final class TerminalView: NSView, NSTextInputClient {
 
 	/// Called by the container when the clip view's bounds change.
 	func viewportChanged() {
-		recomputeGridSize()
+		guard let scrollView = enclosingScrollView else {
+			recomputeGridSize()
+			return
+		}
 
-		guard let scrollView = enclosingScrollView else { return }
+		// Decided before the grid changes, not after. A resize moves the bottom
+		// of the document, so comparing the old offset against the new maximum
+		// unpins a view that was following the output — leaving the prompt off
+		// screen with stale lines showing in its place.
 		let offset = scrollView.contentView.bounds.origin.y
 		let maxY = max(0, frame.height - scrollView.contentSize.height)
-		// Re-pin once the user scrolls back to the bottom.
 		isPinnedToBottom = offset >= maxY - cellHeight
+
+		recomputeGridSize()
+
+		if isPinnedToBottom { scrollToBottom() }
 	}
 
 	// MARK: - Drawing

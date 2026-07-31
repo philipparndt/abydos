@@ -637,11 +637,24 @@ public final class TerminalEmulator {
 	// MARK: - Lifecycle
 
 	public func resize(rows: Int, columns: Int) {
-		screen.resize(rows: rows, columns: columns)
+		let delta = screen.resize(rows: rows, columns: columns, cursorRow: cursorRow)
+
+		// The grid moved under the cursor; without this the shell's post-SIGWINCH
+		// redraw lands on the wrong line and duplicates the prompt.
+		cursorRow = max(0, min(cursorRow + delta, screen.rows - 1))
+		cursorColumn = min(cursorColumn, screen.columns - 1)
+
+		// The saved normal screen has to track the new size too, or leaving a
+		// full-screen app after a resize restores a grid of the wrong shape.
+		if var saved = alternateSaved {
+			let savedDelta = saved.screen.resize(rows: rows, columns: columns, cursorRow: saved.row)
+			saved.row = max(0, min(saved.row + savedDelta, saved.screen.rows - 1))
+			saved.column = min(saved.column, saved.screen.columns - 1)
+			alternateSaved = saved
+		}
+
 		scrollTop = 0
 		scrollBottom = screen.rows - 1
-		cursorRow = min(cursorRow, screen.rows - 1)
-		cursorColumn = min(cursorColumn, screen.columns - 1)
 		pendingWrap = false
 		onUpdate?()
 	}
