@@ -107,6 +107,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let line = options.breakpointLine {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+				controller?.toggleBreakpointForTesting(line: line)
+			}
+		}
+
 		if options.sidebarCycle {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
 				controller?.showSidebarTool(.changes)

@@ -51,6 +51,7 @@ public final class LanguageRegistry {
 	private var definitions: [String: LanguageDefinition] = [:]
 	private var loaded: [String: LanguageConfiguration] = [:]
 	private var foldQueries: [String: Query?] = [:]
+	private var tagsQueries: [String: Query?] = [:]
 	private let lock = NSLock()
 
 	private init() {
@@ -269,6 +270,30 @@ public final class LanguageRegistry {
 			}
 		}
 		foldQueries[languageId] = result
+		return result
+	}
+
+	/// The `tags.scm` query, which names a grammar's declarations.
+	///
+	/// Written for ctags-style indexing rather than for an outline, but it is
+	/// the only query most grammars ship that says "this is a definition and
+	/// this is its name" — which is exactly what a structure view needs.
+	public func tagsQuery(for languageId: String) -> Query? {
+		lock.lock()
+		defer { lock.unlock() }
+
+		if let cached = tagsQueries[languageId] { return cached }
+		guard let definition = definitions[languageId] else { return nil }
+
+		var result: Query?
+		if let directory = Self.queriesDirectory(bundleName: definition.bundleName) {
+			let url = directory.appendingPathComponent("tags.scm")
+			if FileManager.default.isReadableFile(atPath: url.path) {
+				let language = Language(definition.parser())
+				result = try? Query(language: language, url: url)
+			}
+		}
+		tagsQueries[languageId] = result
 		return result
 	}
 

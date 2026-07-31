@@ -468,7 +468,14 @@ final class EditorViewController: NSViewController {
 		guard let codeView = tab.codeView else { return }
 		let path = tab.url.standardizedFileURL.path
 
-		codeView.setBreakpoints(breakpointsByFile[path] ?? [:])
+		// Breakpoints are stored the way a debug adapter numbers lines, from 1;
+		// the view draws rows, which start at 0. The execution line below has
+		// always converted — breakpoints did not, so every marker was drawn one
+		// line below the line it was set on.
+		let stored = breakpointsByFile[path] ?? [:]
+		codeView.setBreakpoints(
+			Dictionary(uniqueKeysWithValues: stored.map { ($0.key - 1, $0.value) })
+		)
 
 		// The marker belongs only in the file execution actually stopped in.
 		if let location = executionLocation, location.file == path {

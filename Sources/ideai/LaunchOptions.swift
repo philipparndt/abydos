@@ -36,6 +36,8 @@ struct LaunchOptions {
 	var showChanges = false
 	/// Switch to changes and back, to verify the sidebar tabs.
 	var sidebarCycle = false
+	/// Toggle a breakpoint on this 1-based line before capture.
+	var breakpointLine: Int?
 	/// Query for the in-file find bar.
 	var findQuery: String?
 	/// Query for project-wide search.
@@ -78,6 +80,7 @@ struct LaunchOptions {
 			case "--review-uncommitted": options.reviewUncommitted = true
 			case "--changes":    options.showChanges = true
 			case "--sidebar-cycle": options.sidebarCycle = true
+			case "--breakpoint": options.breakpointLine = next().flatMap(Int.init)
 			case "--find":       options.findQuery = next()
 			case "--search":     options.searchQuery = next()
 			case "--wrap":       options.wordWrap = true

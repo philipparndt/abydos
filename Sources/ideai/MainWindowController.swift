@@ -41,7 +41,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		window.titlebarAppearsTransparent = false
 		window.backgroundColor = Theme.current.windowBackground
 		window.tabbingMode = .disallowed
+
+		// Centred, then the autosaved frame restores over it if there is one.
+		// Setting the autosave name first would let AppKit place the window at
+		// the bottom-left default before any frame is restored, which is where
+		// a second window with no saved frame of its own would land.
+		window.center()
 		window.setFrameAutosaveName("IdeaiMainWindow")
+
+		// A second window must not sit exactly on top of the first, so AppKit
+		// steps it down and across from whatever is already open.
+		if NSApp.windows.contains(where: { $0.isVisible && $0 !== window }) {
+			window.setFrameOrigin(window.cascadeTopLeft(from: .zero))
+		}
 
 		super.init(window: window)
 		window.delegate = self
@@ -770,6 +782,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 			)
 			editor.openDiff(for: change, root: project.root, text: text)
 		}
+	}
+
+	/// Sets a breakpoint as a gutter click would, for verifying alignment.
+	func toggleBreakpointForTesting(line: Int) {
+		guard let url = editor.activeGroup.activeTabURL else { return }
+		toggleBreakpoint(file: url, line: line)
 	}
 
 	func selectFirstChangeForTesting() {
