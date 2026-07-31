@@ -155,3 +155,51 @@ struct FolderNameTests {
 		#expect(problem(".config", hidden: false)?.contains("Show hidden files") == true)
 	}
 }
+
+/// Which files have a rendered form, and how they open.
+struct FilePreviewTests {
+	private func url(_ name: String) -> URL { URL(fileURLWithPath: "/p/\(name)") }
+
+	@Test func markdownAndModelsHavePreviews() {
+		#expect(FilePreview.kind(for: url("a.md")) == .markdown)
+		#expect(FilePreview.kind(for: url("a.markdown")) == .markdown)
+		#expect(FilePreview.kind(for: url("a.scad")) == .model)
+		#expect(FilePreview.kind(for: url("a.stl")) == .model)
+		#expect(FilePreview.kind(for: url("a.3mf")) == .model)
+	}
+
+	@Test func ordinarySourceHasNone() {
+		#expect(FilePreview.kind(for: url("a.swift")) == nil)
+		#expect(!FilePreview.hasPreview(url("a.go")))
+	}
+
+	@Test func extensionMatchingIgnoresCase() {
+		#expect(FilePreview.kind(for: url("A.STL")) == .model)
+	}
+
+	/// A mesh has no source worth reading — an STL is a list of triangles — so
+	/// it opens rendered. Anything handwritten opens as what it is.
+	@Test func meshesOpenRenderedAndSourceOpensAsText() {
+		#expect(FilePreview.defaultMode(for: url("a.stl")) == .preview)
+		#expect(FilePreview.defaultMode(for: url("a.3mf")) == .preview)
+		#expect(FilePreview.defaultMode(for: url("a.scad")) == .source)
+		#expect(FilePreview.defaultMode(for: url("a.md")) == .source)
+	}
+
+	/// Offering "Source" for a binary mesh would show a screen of noise.
+	@Test func aMeshOffersOnlyThePreview() {
+		#expect(FilePreview.availableModes(for: url("a.stl")) == [.preview])
+		#expect(FilePreview.availableModes(for: url("a.scad")) == PreviewMode.allCases)
+		#expect(FilePreview.availableModes(for: url("a.md")) == PreviewMode.allCases)
+	}
+
+	@Test func aFileWithNoPreviewOffersNothing() {
+		#expect(FilePreview.availableModes(for: url("a.swift")).isEmpty)
+	}
+
+	@Test func modesSayWhichHalvesTheyShow() {
+		#expect(PreviewMode.source.showsSource && !PreviewMode.source.showsPreview)
+		#expect(!PreviewMode.preview.showsSource && PreviewMode.preview.showsPreview)
+		#expect(PreviewMode.split.showsSource && PreviewMode.split.showsPreview)
+	}
+}

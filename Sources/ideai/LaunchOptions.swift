@@ -50,6 +50,8 @@ struct LaunchOptions {
 	var externalEdit: Double?
 	/// Raw bytes to send to the terminal, for verifying key encodings.
 	var terminalBytes: String?
+	/// Preview mode to select before capture: source | preview | split.
+	var previewMode: String?
 	/// Query for the in-file find bar.
 	var findQuery: String?
 	/// Query for project-wide search.
@@ -97,6 +99,7 @@ struct LaunchOptions {
 			case "--new-folder": options.newFolder = next()
 			case "--external-edit": options.externalEdit = next().flatMap(Double.init)
 			case "--send-bytes": options.terminalBytes = next()
+			case "--preview-mode": options.previewMode = next()
 			case "--sidebar-cycle": options.sidebarCycle = true
 			case "--breakpoint": options.breakpointLine = next().flatMap(Int.init)
 			case "--find":       options.findQuery = next()

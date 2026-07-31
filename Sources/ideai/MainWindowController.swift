@@ -1131,6 +1131,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		toggleWordWrap(nil)
 	}
 
+	func setPreviewMode(_ mode: PreviewMode) {
+		editor.setPreviewMode(mode)
+	}
+
 	@objc func toggleWordWrap(_ sender: Any?) {
 		editor.toggleWordWrap()
 	}

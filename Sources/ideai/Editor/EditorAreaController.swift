@@ -373,6 +373,7 @@ final class EditorAreaController: NSViewController {
 	func expandAllFolds() { activeGroup.expandAllFolds() }
 	func toggleWordWrap() { for group in groups { group.toggleWordWrap() } }
 	func toggleMarkdownPreview() { activeGroup.toggleMarkdownPreview() }
+	func setPreviewMode(_ mode: PreviewMode) { activeGroup.setPreviewMode(mode) }
 	func focusActiveEditor() { activeGroup.focusActiveEditor() }
 	func simulateTyping(_ text: String) { activeGroup.simulateTyping(text) }
 

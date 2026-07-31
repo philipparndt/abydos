@@ -30,6 +30,8 @@ final class EditorTabBar: NSView {
 	var urlForIndex: ((Int) -> URL?)?
 	/// A tab was dropped on this strip, to land at the given position.
 	var onTabDropped: ((EditorTabDrag.Payload, Int) -> Void)?
+	/// A preview mode was chosen for the active tab.
+	var onPreviewModeChange: ((PreviewMode) -> Void)?
 
 	private(set) var items: [EditorTabItem] = []
 	private var activeIndex: Int?
@@ -43,6 +45,12 @@ final class EditorTabBar: NSView {
 
 	/// Slot a dragged tab would land in, drawn as a caret while dragging.
 	private var dropIndex: Int?
+
+	/// The preview control at the trailing edge, when the active tab has one.
+	private var previewModes: [PreviewMode] = []
+	private var previewMode: PreviewMode = .source
+	private var previewButtonFrame: NSRect = .zero
+	private var isPreviewHovered = false
 
 	// Design-time dimensions; every use goes through Theme.scaled so the strip
 	// zooms with the rest of the window.
@@ -78,6 +86,15 @@ final class EditorTabBar: NSView {
 
 	// MARK: - Model
 
+	/// Offers a preview control for the active tab. An empty list hides it.
+	func setPreview(modes: [PreviewMode], current: PreviewMode) {
+		guard modes != previewModes || current != previewMode else { return }
+		previewModes = modes
+		previewMode = current
+		recomputeFrames()
+		needsDisplay = true
+	}
+
 	func setItems(_ items: [EditorTabItem], activeIndex: Int?) {
 		self.items = items
 		self.activeIndex = activeIndex
@@ -95,6 +112,22 @@ final class EditorTabBar: NSView {
 			frames.append(NSRect(x: x, y: 0, width: width, height: bounds.height))
 			x += width
 		}
+
+		guard !previewModes.isEmpty else {
+			previewButtonFrame = .zero
+			return
+		}
+		// Pinned to the trailing edge. Tabs are free to run underneath when
+		// there are too many of them; the control stays on top and reachable,
+		// which matters more than a tab's last few characters.
+		let width = Theme.current.scaled(78)
+		let height = Theme.current.scaled(20)
+		previewButtonFrame = NSRect(
+			x: max(0, bounds.width - width - Theme.current.scaled(8)),
+			y: (bounds.height - height) / 2,
+			width: width,
+			height: height
+		)
 	}
 
 	private func measuredWidth(for item: EditorTabItem) -> CGFloat {
@@ -148,6 +181,13 @@ final class EditorTabBar: NSView {
 
 	override func mouseMoved(with event: NSEvent) {
 		let point = convert(event.locationInWindow, from: nil)
+
+		let overPreview = !previewModes.isEmpty && previewButtonFrame.contains(point)
+		if overPreview != isPreviewHovered {
+			isPreviewHovered = overPreview
+			needsDisplay = true
+		}
+
 		let index = index(at: point)
 		let overClose = index.map { closeRect(for: frames[$0]).contains(point) } ?? false
 
@@ -161,6 +201,7 @@ final class EditorTabBar: NSView {
 	override func mouseExited(with event: NSEvent) {
 		hoveredIndex = nil
 		hoveredClose = false
+		isPreviewHovered = false
 		needsDisplay = true
 	}
 
@@ -170,6 +211,14 @@ final class EditorTabBar: NSView {
 
 	override func mouseDown(with event: NSEvent) {
 		let point = convert(event.locationInWindow, from: nil)
+
+		// Checked before the tabs: the control sits over them when the strip is
+		// full, and a click there means the control.
+		if !previewModes.isEmpty, previewButtonFrame.contains(point) {
+			showPreviewMenu()
+			return
+		}
+
 		guard let index = index(at: point) else { return }
 
 		if closeRect(for: frames[index]).contains(point) {
@@ -187,6 +236,37 @@ final class EditorTabBar: NSView {
 
 	override func mouseUp(with event: NSEvent) {
 		pressedIndex = nil
+	}
+
+	private func showPreviewMenu() {
+		let menu = NSMenu()
+		menu.autoenablesItems = false
+
+		for mode in previewModes {
+			let item = NSMenuItem(title: mode.title, action: #selector(choosePreviewMode(_:)), keyEquivalent: "")
+			item.target = self
+			item.representedObject = mode.rawValue
+			item.state = mode == previewMode ? .on : .off
+			item.image = Theme.symbol(
+				mode.symbolName,
+				size: 11 * Theme.current.scale,
+				color: Theme.current.sidebarText
+			)
+			menu.addItem(item)
+		}
+
+		menu.popUp(
+			positioning: nil,
+			at: NSPoint(x: previewButtonFrame.minX, y: previewButtonFrame.maxY),
+			in: self
+		)
+	}
+
+	@objc private func choosePreviewMode(_ sender: NSMenuItem) {
+		guard let raw = sender.representedObject as? String,
+		      let mode = PreviewMode(rawValue: raw)
+		else { return }
+		onPreviewModeChange?(mode)
 	}
 
 	override func mouseDragged(with event: NSEvent) {
@@ -253,7 +333,65 @@ final class EditorTabBar: NSView {
 			NSRect(x: rect.minX, y: bounds.maxY - 1, width: rect.width, height: 1).fill()
 		}
 
+		drawPreviewControl()
 		drawDropCaret()
+	}
+
+	/// The mode control at the trailing edge.
+	private func drawPreviewControl() {
+		guard !previewModes.isEmpty, previewButtonFrame.width > 0 else { return }
+
+		// Opaque, because tabs are allowed to scroll underneath it.
+		Theme.current.sidebarBackground.setFill()
+		previewButtonFrame.insetBy(dx: -Theme.current.scaled(6), dy: -Theme.current.scaled(6)).fill()
+
+		let path = NSBezierPath(
+			roundedRect: previewButtonFrame,
+			xRadius: Theme.current.scaled(5),
+			yRadius: Theme.current.scaled(5)
+		)
+		NSColor.white.withAlphaComponent(isPreviewHovered ? 0.14 : 0.07).setFill()
+		path.fill()
+
+		var x = previewButtonFrame.minX + Theme.current.scaled(7)
+		let colour = Theme.current.sidebarHeaderText
+
+		if let icon = Theme.symbol(previewMode.symbolName, size: 10 * Theme.current.scale, color: colour) {
+			let size = Theme.current.scaled(11)
+			icon.draw(
+				in: NSRect(x: x, y: previewButtonFrame.midY - size / 2, width: size, height: size),
+				from: .zero,
+				operation: .sourceOver,
+				fraction: 1.0,
+				respectFlipped: true,
+				hints: nil
+			)
+			x += size + Theme.current.scaled(5)
+		}
+
+		let label = NSAttributedString(string: previewMode.title, attributes: [
+			.font: Theme.current.uiFont(11),
+			.foregroundColor: colour,
+		])
+		label.draw(at: NSPoint(x: x, y: previewButtonFrame.midY - label.size().height / 2))
+
+		// A chevron, so it reads as a menu rather than a toggle.
+		if let chevron = Theme.symbol("chevron.down", size: 7 * Theme.current.scale, color: colour) {
+			let size = Theme.current.scaled(8)
+			chevron.draw(
+				in: NSRect(
+					x: previewButtonFrame.maxX - size - Theme.current.scaled(6),
+					y: previewButtonFrame.midY - size / 2,
+					width: size,
+					height: size
+				),
+				from: .zero,
+				operation: .sourceOver,
+				fraction: 1.0,
+				respectFlipped: true,
+				hints: nil
+			)
+		}
 	}
 
 	private func draw(item: EditorTabItem, in rect: NSRect, isActive: Bool, index: Int) {

@@ -107,6 +107,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let raw = options.previewMode, let mode = PreviewMode(rawValue: raw) {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+				controller?.setPreviewMode(mode)
+			}
+		}
+
 		if let name = options.newFolder {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
 				controller?.createFolderForTesting(named: name)

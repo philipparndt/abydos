@@ -34,10 +34,13 @@ final class EditorViewController: NSViewController {
 		/// separate tab from the file itself and says so in its subtitle.
 		var isDiff = false
 
-		/// The source view, kept so the markdown preview can toggle back to it.
+		/// The source view, kept so the preview can be swapped in beside or over
+		/// it and swapped back.
 		var sourceView: NSView?
-		var isShowingMarkdownPreview = false
+		/// How this tab is currently showing a file that has both forms.
+		var previewMode: PreviewMode = .source
 		var isMarkdown: Bool { document?.languageId == "markdown" }
+		var isShowingMarkdownPreview: Bool { previewMode != .source && isMarkdown }
 
 		init(url: URL, document: TextDocument?, codeView: CodeView?, contentView: NSView, isPreview: Bool) {
 			self.url = url
@@ -117,6 +120,9 @@ final class EditorViewController: NSViewController {
 		tabBar.onClose = { [weak self] index in self?.closeTab(at: index) }
 		tabBar.onPromote = { [weak self] index in self?.promoteToPermanent(index: index) }
 		tabBar.groupID = groupID
+		tabBar.onPreviewModeChange = { [weak self] mode in
+			self?.setPreviewMode(mode)
+		}
 		tabBar.onTabDropped = { [weak self] payload, index in
 			guard let self else { return }
 			self.onTabDroppedOnTabBar?(payload, index, self)
@@ -390,9 +396,10 @@ final class EditorViewController: NSViewController {
 		// Rendering a huge or binary blob as text helps nobody, but refusing to
 		// open it is not the answer either — the tab explains itself and offers
 		// the hex viewer instead.
-		// A model is shown rather than described. Checked before the size and
-		// binary tests, both of which an STL fails on its way to being useful.
-		if ModelPreview.isViewableModel(fileURL) {
+		// A mesh has no source worth reading, so it opens rendered. Checked
+		// before the size and binary tests, both of which an STL fails on its
+		// way to being useful.
+		if FilePreview.defaultMode(for: fileURL) == .preview, FilePreview.hasPreview(fileURL) {
 			return makeModelTab(for: fileURL, preview: preview)
 		}
 
@@ -627,20 +634,56 @@ final class EditorViewController: NSViewController {
 	// MARK: - Markdown preview
 
 	/// Swaps the active markdown tab between source and rendered preview.
+	/// Cycles a markdown tab between source and preview, for the menu command.
 	func toggleMarkdownPreview() {
-		guard let tab = activeTab, tab.isMarkdown, let index = activeIndex else { return }
+		guard let tab = activeTab, tab.isMarkdown else { return }
+		setPreviewMode(tab.previewMode == .source ? .preview : .source)
+	}
 
-		if tab.isShowingMarkdownPreview {
-			guard let source = tab.sourceView else { return }
-			tab.contentView = source
-			tab.isShowingMarkdownPreview = false
-		} else {
-			tab.contentView = makePreviewView(for: tab)
-			tab.isShowingMarkdownPreview = true
-		}
+	/// Shows a file's source, its rendered form, or both.
+	func setPreviewMode(_ mode: PreviewMode) {
+		guard let tab = activeTab, let index = activeIndex else { return }
+		guard FilePreview.availableModes(for: tab.url).contains(mode) else { return }
+		guard mode != tab.previewMode else { return }
+
+		tab.previewMode = mode
+		tab.contentView = makeContentView(for: tab, mode: mode)
 
 		activeIndex = nil
-		activate(index: index, focusEditor: false)
+		activate(index: index, focusEditor: mode == .source)
+	}
+
+	/// The view for a tab in a given mode.
+	private func makeContentView(for tab: Tab, mode: PreviewMode) -> NSView {
+		let source = tab.sourceView
+		guard mode != .source else { return source ?? tab.contentView }
+
+		let preview = makePreview(for: tab)
+		guard mode == .split, let source else { return preview }
+
+		// Vertically split, source on the left: reading order, and the thing
+		// being edited stays where it was.
+		let split = ThinDividerSplitView()
+		split.isVertical = true
+		split.dividerStyle = .thin
+		split.addArrangedSubview(source)
+		split.addArrangedSubview(preview)
+
+		DispatchQueue.main.async { [weak split] in
+			guard let split, split.bounds.width > 0 else { return }
+			split.setPosition(split.bounds.width / 2, ofDividerAt: 0)
+		}
+		return split
+	}
+
+	/// The rendered form of a file, whichever kind it has.
+	private func makePreview(for tab: Tab) -> NSView {
+		switch FilePreview.kind(for: tab.url) {
+		case .model:
+			return makeModelView(for: tab.url)
+		case .markdown, .none:
+			return makePreviewView(for: tab)
+		}
 	}
 
 	private func makePreviewView(for tab: Tab) -> NSView {
@@ -716,10 +759,35 @@ final class EditorViewController: NSViewController {
 	///
 	/// The viewer is a SwiftUI view from a package rather than a second
 	/// application, so it lives in a tab beside the code like any other file.
-	private func makeModelTab(for fileURL: URL, preview: Bool) -> Tab {
+	/// Hosts the 3D viewer on the editor's own background.
+	///
+	/// A SwiftUI view leaves its unpainted regions transparent, which against
+	/// the window shows through as a different shade from the code beside it.
+	/// The container settles that without GoSTL having to know about it.
+	private func makeModelView(for fileURL: URL) -> NSView {
+		let container = ColoredView(color: Theme.current.editorBackground)
 		let hosting = NSHostingView(rootView: ContentView(fileURL: fileURL))
 		hosting.translatesAutoresizingMaskIntoConstraints = false
-		return Tab(url: fileURL, document: nil, codeView: nil, contentView: hosting, isPreview: preview)
+		container.addSubview(hosting)
+		NSLayoutConstraint.activate([
+			hosting.topAnchor.constraint(equalTo: container.topAnchor),
+			hosting.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+			hosting.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+			hosting.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+		])
+		return container
+	}
+
+	private func makeModelTab(for fileURL: URL, preview: Bool) -> Tab {
+		let tab = Tab(
+			url: fileURL,
+			document: nil,
+			codeView: nil,
+			contentView: makeModelView(for: fileURL),
+			isPreview: preview
+		)
+		tab.previewMode = .preview
+		return tab
 	}
 
 	/// A tab for a file that cannot be shown as text.
@@ -815,6 +883,17 @@ final class EditorViewController: NSViewController {
 			)
 		}
 		tabBar.setItems(items, activeIndex: activeIndex)
+
+		// The control belongs to the active tab: a file with no rendered form
+		// shows none, so the strip does not offer something that does nothing.
+		if let tab = activeTab, !tab.isDiff {
+			tabBar.setPreview(
+				modes: FilePreview.availableModes(for: tab.url),
+				current: tab.previewMode
+			)
+		} else {
+			tabBar.setPreview(modes: [], current: .source)
+		}
 	}
 
 	private func relativeDirectory(for url: URL) -> String {
