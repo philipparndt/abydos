@@ -17,3 +17,7 @@ DerivedData/
 
 # Intermediate for the .icns; the icns itself is committed.
 Resources/Icon/*.iconset/
+
+# The DOOM-fire benchmark binary, kept here to run against the terminal.
+# Built from github.com/const-void/DOOM-fire-zig; not ours to commit.
+DOOM-fire

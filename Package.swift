@@ -38,6 +38,8 @@ let package = Package(
 	platforms: [.macOS(.v14)],
 	products: [
 		.executable(name: "ideai", targets: ["ideai"]),
+		// A terminal stress test, run against the app's own terminal.
+		.executable(name: "firebench", targets: ["FireBench"]),
 		.library(name: "IdeaiKit", targets: ["IdeaiKit"]),
 	],
 	dependencies: [
@@ -47,6 +49,8 @@ let package = Package(
 		.package(path: "../3d/gostl/GoSTL-Swift"),
 	] + grammars.map { .package(url: $0.url, exact: $0.version) },
 	targets: [
+		// The DOOM fire terminal stress test, ported so it can run unattended.
+		.executableTarget(name: "FireBench", path: "Sources/FireBench"),
 		// Editor engine: text storage, syntax, folding, git, project model.
 		// Kept free of view code so it can be unit-tested without a window.
 		.target(
