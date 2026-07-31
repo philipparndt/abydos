@@ -27,13 +27,16 @@ public struct WrapLayout: Sendable {
 
 	/// Rebuilds the mapping.
 	///
-	/// `columnsForLine` returns a line's display width; the caller supplies it so
-	/// tab expansion stays in one place.
+	/// `rowsForLine` returns how many visual rows a line occupies. The caller
+	/// supplies it so the count and the slicing come from the same walk —
+	/// deriving it here as `ceil(width / columns)` disagrees whenever a tab has
+	/// to move to the next row whole, and a row the layout allocated with
+	/// nothing to put in it renders as a gap.
 	public mutating func rebuild(
 		documentLineCount: Int,
 		columns: Int?,
 		folding: FoldingState,
-		columnsForLine: (Int) -> Int
+		rowsForLine: (Int) -> Int
 	) {
 		self.columns = columns
 		self.documentLineCount = documentLineCount
@@ -48,7 +51,7 @@ public struct WrapLayout: Sendable {
 			guard !folding.isHidden(line: line) else { continue }
 			documentLines.append(Int32(line))
 			rowStarts.append(Int32(row))
-			row += rowCount(forLine: line, columns: columns, columnsForLine: columnsForLine)
+			row += columns == nil ? 1 : max(1, rowsForLine(line))
 		}
 		totalRows = max(1, row)
 	}
@@ -138,7 +141,30 @@ public struct WrapLayout: Sendable {
 		return segment
 	}
 
-	private func rowCount(forLine line: Int, columns: Int?, columnsForLine: (Int) -> Int) -> Int {
+	/// Rows a line occupies, by the same walk that slices it.
+	public static func rowCount(in text: String, columns: Int, tabWidth: Int) -> Int {
+		guard columns > 0 else { return 1 }
+
+		let units = Array(text.utf16)
+		var rows = 1
+		var column = 0
+		var index = 0
+		let tab = UInt16(0x09)
+
+		while index < units.count {
+			let width = units[index] == tab ? tabWidth - (column % tabWidth) : 1
+			if column + width > columns, column > 0 {
+				rows += 1
+				column = 0
+				continue
+			}
+			column += width
+			index += 1
+		}
+		return rows
+	}
+
+	private func unusedRowCount(forLine line: Int, columns: Int?, columnsForLine: (Int) -> Int) -> Int {
 		guard let columns, columns > 0 else { return 1 }
 		let width = columnsForLine(line)
 		// An empty line still occupies one row.

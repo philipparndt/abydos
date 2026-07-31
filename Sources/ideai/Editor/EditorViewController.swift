@@ -404,8 +404,23 @@ final class EditorViewController: NSViewController {
 		scrollView.autohidesScrollers = true
 		scrollView.drawsBackground = true
 		scrollView.backgroundColor = Theme.current.editorBackground
-		scrollView.scrollerStyle = .overlay
+		// Not forced to .overlay: that ignores "Show scroll bars: Always" in
+		// System Settings, so someone who asked for permanent scrollers never
+		// got them and had no way to tell there was anything to scroll to.
+		scrollView.scrollerStyle = NSScroller.preferredScrollerStyle
 		scrollView.contentView.postsBoundsChangedNotifications = true
+		// Soft wrap is measured against the viewport, so the layout has to be
+		// rebuilt when the viewport changes size — a window resize, a split, a
+		// divider drag. Bounds changes alone are scrolls, not resizes.
+		scrollView.contentView.postsFrameChangedNotifications = true
+
+		NotificationCenter.default.addObserver(
+			forName: NSView.frameDidChangeNotification,
+			object: scrollView.contentView,
+			queue: .main
+		) { [weak codeView] _ in
+			codeView?.viewportChanged()
+		}
 
 		// The gutter is drawn relative to the clip view, so a horizontal scroll
 		// has to repaint even though the document content did not change.

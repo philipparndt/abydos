@@ -12,8 +12,12 @@ struct WrapLayoutTests {
 		widths: [Int: Int] = [:]
 	) -> WrapLayout {
 		var layout = WrapLayout()
+		// The fixtures describe line widths; the layout now asks for row counts,
+		// so they are converted here rather than in every test.
 		layout.rebuild(documentLineCount: lineCount, columns: columns, folding: folding) { line in
-			widths[line] ?? 10
+			let width = widths[line] ?? 10
+			guard let columns, columns > 0 else { return 1 }
+			return max(1, (width + columns - 1) / columns)
 		}
 		return layout
 	}
@@ -186,6 +190,51 @@ struct WrapSegmentForOffsetTests {
 			// The offset must fall within the slice its segment names.
 			#expect(offset >= range.lowerBound, "offset \(offset)")
 			#expect(offset <= range.upperBound, "offset \(offset)")
+		}
+	}
+}
+
+/// The row count and the slicing have to come from the same walk. Where they
+/// disagree, the layout allocates a row with nothing to put in it and the
+/// editor shows a blank gap between wrapped lines.
+struct WrapRowCountTests {
+	@Test func plainTextDividesEvenly() {
+		#expect(WrapLayout.rowCount(in: "abcdef", columns: 3, tabWidth: 4) == 2)
+		#expect(WrapLayout.rowCount(in: "abcdefg", columns: 3, tabWidth: 4) == 3)
+	}
+
+	@Test func aShortLineIsOneRow() {
+		#expect(WrapLayout.rowCount(in: "ab", columns: 10, tabWidth: 4) == 1)
+		#expect(WrapLayout.rowCount(in: "", columns: 10, tabWidth: 4) == 1)
+	}
+
+	/// The case ceil(width / columns) gets wrong: a tab that cannot fit moves to
+	/// the next row whole, wasting the columns it left behind.
+	@Test func aMovedTabCostsAnExtraRow() {
+		// "abcd" fills 4 of 6 columns; the tab needs 4 more, so it moves.
+		#expect(WrapLayout.rowCount(in: "abcd\tx", columns: 6, tabWidth: 4) == 2)
+		// Display width is 4 + 4 + 1 = 9, and ceil(9 / 6) is 2 as well here —
+		// but the arithmetic agrees only by luck, which the next case shows.
+		#expect(WrapLayout.rowCount(in: "abcde\tx", columns: 6, tabWidth: 4) == 2)
+	}
+
+	/// Every row the layout allocates must have a slice with something in it.
+	@Test func everyCountedRowHasContent() {
+		for text in ["\tfunc thing() {", "abcd\tx\ty", "no tabs here at all", "\t\t\tdeep"] {
+			for columns in [4, 6, 9, 15] {
+				let rows = WrapLayout.rowCount(in: text, columns: columns, tabWidth: 4)
+				for segment in 0..<rows {
+					let range = WrapLayout.segmentRange(
+						in: text, segment: segment, columns: columns, tabWidth: 4
+					)
+					#expect(!range.isEmpty || text.isEmpty, "\(text) @\(columns) row \(segment)")
+				}
+				// And nothing is left over past the last row.
+				let past = WrapLayout.segmentRange(
+					in: text, segment: rows, columns: columns, tabWidth: 4
+				)
+				#expect(past.isEmpty, "\(text) @\(columns) has an unshown row")
+			}
 		}
 	}
 }

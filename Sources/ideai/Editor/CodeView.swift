@@ -153,12 +153,22 @@ final class CodeView: NSView, NSTextInputClient {
 		return folding.visibleLineCount(documentLineCount: document.lineCount)
 	}
 
-	/// Columns of text that fit, used as the wrap width.
-	private var wrapColumns: Int? {
+	/// Columns of text that currently fit. Used when building the layout.
+	private var availableColumns: Int? {
 		guard isWordWrapEnabled else { return nil }
 		let available = (enclosingScrollView?.contentSize.width ?? bounds.width)
 			- gutterWidth - Self.textLeftPadding - Theme.current.scaled(16)
 		return max(20, Int(available / max(1, charWidth)))
+	}
+
+	/// Columns the visible layout was built with.
+	///
+	/// Drawing reads this rather than measuring the viewport again. The two can
+	/// differ for a moment after a resize, and disagreeing about the width means
+	/// rows the layout allocated have no text to put in them — which is how a
+	/// resized window ended up with blank gaps between wrapped lines.
+	private var wrapColumns: Int? {
+		isWordWrapEnabled ? wrapLayout.columns : nil
 	}
 
 	/// Display width of a line in columns, expanding tabs.
@@ -181,12 +191,21 @@ final class CodeView: NSView, NSTextInputClient {
 
 	private func rebuildWrapLayout() {
 		guard let document, isWordWrapEnabled else { return }
+		// Built from what fits now, not from what the last layout used, and
+		// counted by the same walk that slices the rows.
+		let columns = availableColumns
+		let tabWidth = Theme.current.tabWidth
 		wrapLayout.rebuild(
 			documentLineCount: document.lineCount,
-			columns: wrapColumns,
+			columns: columns,
 			folding: folding
 		) { [weak self] line in
-			self?.displayColumns(ofLine: line) ?? 0
+			guard let self, let document = self.document, let columns else { return 1 }
+			return WrapLayout.rowCount(
+				in: document.rope.lineText(line),
+				columns: columns,
+				tabWidth: tabWidth
+			)
 		}
 	}
 
@@ -208,11 +227,12 @@ final class CodeView: NSView, NSTextInputClient {
 
 	/// Re-lays out after the pane's width changed.
 	///
-	/// Wrap width is derived from the viewport, so a split or a divider drag
-	/// changes how many columns fit. Without this the layout keeps the old width
-	/// and long lines are clipped at the new pane edge instead of wrapping.
+	/// Wrap width is derived from the viewport, so a window resize, a split or a
+	/// divider drag changes how many columns fit. Without this the layout keeps
+	/// the old width, and rows it allocated for a wider line have nothing left
+	/// to show.
 	func viewportChanged() {
-		guard isWordWrapEnabled else { return }
+		guard isWordWrapEnabled, availableColumns != wrapLayout.columns else { return }
 		updateFrameSize()
 		needsDisplay = true
 	}
