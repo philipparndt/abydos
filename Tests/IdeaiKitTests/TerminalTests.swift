@@ -650,3 +650,252 @@ struct TerminalResizeTests {
 		#expect(row(emulator, 0) == "a")
 	}
 }
+
+/// Selection is expressed over the whole buffer, scrollback included, so it is
+/// checked the same way: write output, scroll some of it off, select across it.
+struct TerminalSelectionTests {
+	private func makeEmulator(rows: Int = 4, columns: Int = 20) -> TerminalEmulator {
+		TerminalEmulator(rows: rows, columns: columns)
+	}
+
+	@Test func selectsWithinOneRow() {
+		let emulator = makeEmulator()
+		emulator.write("hello world")
+		let selection = TerminalSelection(
+			anchor: TerminalPosition(row: 0, column: 6),
+			head: TerminalPosition(row: 0, column: 11)
+		)
+		#expect(emulator.screen.text(in: selection) == "world")
+	}
+
+	@Test func selectsBackwardsAsThoughForwards() {
+		let emulator = makeEmulator()
+		emulator.write("hello world")
+		let selection = TerminalSelection(
+			anchor: TerminalPosition(row: 0, column: 11),
+			head: TerminalPosition(row: 0, column: 6)
+		)
+		#expect(emulator.screen.text(in: selection) == "world")
+	}
+
+	/// Middle rows run to the right edge, and trailing blanks are dropped so a
+	/// copied block does not carry a tail of spaces into the paste.
+	@Test func selectsAcrossRowsWithoutTrailingBlanks() {
+		let emulator = makeEmulator()
+		emulator.write("one\r\ntwo\r\nthree")
+		let selection = TerminalSelection(
+			anchor: TerminalPosition(row: 0, column: 0),
+			head: TerminalPosition(row: 2, column: 5)
+		)
+		#expect(emulator.screen.text(in: selection) == "one\ntwo\nthree")
+	}
+
+	@Test func selectionReachesIntoScrollback() {
+		let emulator = makeEmulator(rows: 2)
+		emulator.write("a\r\nb\r\nc\r\nd")
+		#expect(emulator.screen.scrollback.count == 2)
+
+		let selection = TerminalSelection(
+			anchor: TerminalPosition(row: 0, column: 0),
+			head: TerminalPosition(row: 3, column: 1)
+		)
+		#expect(emulator.screen.text(in: selection) == "a\nb\nc\nd")
+	}
+
+	@Test func emptySelectionCopiesNothing() {
+		let emulator = makeEmulator()
+		emulator.write("hello")
+		let point = TerminalPosition(row: 0, column: 2)
+		#expect(emulator.screen.text(in: TerminalSelection(anchor: point, head: point)).isEmpty)
+	}
+
+	/// A double-click in a terminal is nearly always aimed at a path, so the
+	/// word has to survive dots and slashes.
+	@Test func doubleClickSelectsAWholePath() {
+		let emulator = makeEmulator(columns: 40)
+		emulator.write("file ./Package.resolved here")
+		let selection = emulator.screen.wordSelection(atRow: 0, column: 8)
+		#expect(selection.map { emulator.screen.text(in: $0) } == "./Package.resolved")
+	}
+
+	@Test func doubleClickOnBlankSelectsNothing() {
+		let emulator = makeEmulator()
+		emulator.write("ab cd")
+		#expect(emulator.screen.wordSelection(atRow: 0, column: 2) == nil)
+	}
+
+	@Test func tripleClickTakesTheWholeRow() {
+		let emulator = makeEmulator()
+		emulator.write("one two\r\nthree")
+		let selection = emulator.screen.lineSelection(atRow: 0)
+		#expect(selection.map { emulator.screen.text(in: $0) } == "one two")
+	}
+
+	@Test func selectAllSpansScrollbackAndScreen() {
+		let emulator = makeEmulator(rows: 2)
+		emulator.write("a\r\nb\r\nc")
+		let selection = emulator.screen.fullSelection
+		#expect(selection.map { emulator.screen.text(in: $0) } == "a\nb\nc")
+	}
+
+	/// The highlight has to stop where the selection does on the last row, but
+	/// run to the edge on the rows above it.
+	@Test func highlightRunsToTheEdgeOnMiddleRows() {
+		let selection = TerminalSelection(
+			anchor: TerminalPosition(row: 1, column: 3),
+			head: TerminalPosition(row: 3, column: 4)
+		)
+		#expect(selection.columnRange(onRow: 0, columns: 20) == nil)
+		#expect(selection.columnRange(onRow: 1, columns: 20) == 3..<20)
+		#expect(selection.columnRange(onRow: 2, columns: 20) == 0..<20)
+		#expect(selection.columnRange(onRow: 3, columns: 20) == 0..<4)
+		#expect(selection.columnRange(onRow: 4, columns: 20) == nil)
+	}
+}
+
+/// Detection has to cope with extensions that are real but unknown, which is
+/// most of what a build system leaves lying around.
+struct LanguageDetectionTests {
+	private func write(_ contents: String, to name: String) throws -> URL {
+		let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+			.appendingPathComponent("ideai-detect-\(UUID().uuidString)")
+		try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+		let url = directory.appendingPathComponent(name)
+		try contents.write(to: url, atomically: true, encoding: .utf8)
+		return url
+	}
+
+	/// The case that prompted this: Package.resolved is JSON.
+	@Test func recognisesJSONBehindAnUnknownExtension() throws {
+		let url = try write("{\n  \"pins\" : [\n  ]\n}\n", to: "Package.resolved")
+		#expect(LanguageRegistry.shared.languageId(for: url) == "json")
+	}
+
+	@Test func recognisesAJSONArray() throws {
+		let url = try write("[\n  1, 2\n]\n", to: "data.unknownext")
+		#expect(LanguageRegistry.shared.languageId(for: url) == "json")
+	}
+
+	/// A brace also opens a C block, so a bare one is not enough evidence.
+	@Test func doesNotClaimEveryBraceIsJSON() throws {
+		let url = try write("{\n  int x = 1;\n}\n", to: "snippet.unknownext")
+		#expect(LanguageRegistry.shared.languageId(for: url) == nil)
+	}
+
+	@Test func recognisesXMLAndHTML() throws {
+		#expect(try LanguageRegistry.shared.languageId(
+			for: write("<?xml version=\"1.0\"?><root/>", to: "a.unknownext")
+		) == "html")
+		#expect(try LanguageRegistry.shared.languageId(
+			for: write("<!DOCTYPE html>\n<html></html>", to: "b.unknownext")
+		) == "html")
+	}
+
+	@Test func recognisesAYAMLDocumentMarker() throws {
+		let url = try write("---\nkey: value\n", to: "config.unknownext")
+		#expect(LanguageRegistry.shared.languageId(for: url) == "yaml")
+	}
+
+	@Test func shebangStillWinsForExtensionlessScripts() throws {
+		let url = try write("#!/usr/bin/env python3\nprint(1)\n", to: "runme")
+		#expect(LanguageRegistry.shared.languageId(for: url) == "python")
+	}
+
+	/// A known extension is trusted over the contents; a .md file that opens
+	/// with front matter is still Markdown.
+	@Test func extensionBeatsContent() throws {
+		let url = try write("---\ntitle: post\n---\n# Hello\n", to: "post.md")
+		#expect(LanguageRegistry.shared.languageId(for: url) == "markdown")
+	}
+
+	@Test func plainProseIsLeftAlone() throws {
+		let url = try write("just some notes\n", to: "notes.unknownext")
+		#expect(LanguageRegistry.shared.languageId(for: url) == nil)
+	}
+
+	/// The status bar's picker needs a stable, named list to offer.
+	@Test func selectableLanguagesAreNamedAndSorted() {
+		let languages = LanguageRegistry.shared.selectableLanguages
+		#expect(languages.count > 10)
+		#expect(languages.contains { $0.id == "json" })
+		#expect(languages.map(\.name) == languages.map(\.name).sorted {
+			$0.localizedCaseInsensitiveCompare($1) == .orderedAscending
+		})
+	}
+}
+
+/// Sequences that modern TUIs emit and older emulators never saw.
+struct TerminalModernSequenceTests {
+	private func makeEmulator() -> TerminalEmulator {
+		TerminalEmulator(rows: 4, columns: 40)
+	}
+
+	/// `4:0` is "no underline". Reading it as a plain 4 underlines everything
+	/// the application asked to be left alone.
+	@Test func underlineStyleZeroTurnsUnderlineOff() {
+		let emulator = makeEmulator()
+		emulator.write("\u{1B}[4ma\u{1B}[4:0mb")
+		#expect(emulator.screen[0].cells[0].attributes.underline)
+		#expect(!emulator.screen[0].cells[1].attributes.underline)
+	}
+
+	@Test func otherUnderlineStylesStillUnderline() {
+		for style in [1, 2, 3, 4, 5] {
+			let emulator = makeEmulator()
+			emulator.write("\u{1B}[4:\(style)mx")
+			#expect(emulator.screen[0].cells[0].attributes.underline, "4:\(style)")
+		}
+	}
+
+	/// Underline colour carries a doubled colon; it must not be read as a reset.
+	@Test func underlineColourIsIgnoredWithoutClearingAttributes() {
+		let emulator = makeEmulator()
+		emulator.write("\u{1B}[1m\u{1B}[58:2::255:0:0mx")
+		#expect(emulator.screen[0].cells[0].attributes.bold)
+	}
+
+	/// A title is arbitrary text and routinely holds an emoji.
+	@Test func titlesAreDecodedAsUTF8() {
+		let emulator = makeEmulator()
+		emulator.write("\u{1B}]0;⏳ building\u{07}")
+		#expect(emulator.title == "⏳ building")
+	}
+
+	@Test func titlesTerminatedByStringTerminatorAlsoDecode() {
+		let emulator = makeEmulator()
+		emulator.write("\u{1B}]2;héllo\u{1B}\\")
+		#expect(emulator.title == "héllo")
+	}
+}
+
+/// Private-prefixed CSI sequences share final bytes with standard ones.
+struct TerminalPrivateSequenceTests {
+	private func makeEmulator() -> TerminalEmulator {
+		TerminalEmulator(rows: 4, columns: 40)
+	}
+
+	/// XTMODKEYS, which Claude Code sends on startup. Read as SGR it means
+	/// "underline, dim", which underlines the entire application.
+	@Test func modifyOtherKeysIsNotStyling() {
+		let emulator = makeEmulator()
+		emulator.write("\u{1B}[>4;2mx")
+		let attributes = emulator.screen[0].cells[0].attributes
+		#expect(!attributes.underline)
+		#expect(!attributes.dim)
+	}
+
+	@Test func resettingModifyOtherKeysIsAlsoIgnored() {
+		let emulator = makeEmulator()
+		emulator.write("\u{1B}[1m\u{1B}[>4;mx")
+		// The private sequence must not reset the bold that preceded it either.
+		#expect(emulator.screen[0].cells[0].attributes.bold)
+	}
+
+	@Test func ordinarySGRStillApplies() {
+		let emulator = makeEmulator()
+		emulator.write("\u{1B}[4;2mx")
+		let attributes = emulator.screen[0].cells[0].attributes
+		#expect(attributes.underline)
+		#expect(attributes.dim)
+	}
+}

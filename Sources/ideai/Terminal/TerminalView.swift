@@ -23,6 +23,10 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// Follows output unless the user scrolls up to read history.
 	private var isPinnedToBottom = true
 
+	private var advanceCache: [String: CGFloat] = [:]
+	/// Text selected with the mouse, in absolute rows. Nil when nothing is.
+	private var selection: TerminalSelection?
+	private var isSelecting = false
 	private var cursorVisible = true
 	private var cursorTimer: Timer?
 
@@ -266,95 +270,175 @@ final class TerminalView: NSView, NSTextInputClient {
 				end += 1
 			}
 
-			var text = ""
-			// Powerline separators are drawn as geometry, not glyphs, so a space
-			// stands in for them here to keep the run's spacing intact.
-			var powerline: [(column: Int, scalar: UInt32)] = []
-
-			for cellIndex in column..<end {
-				let cell = line.cells[cellIndex]
-				// The trailing half of a wide glyph contributes no character; the
-				// leading half already advanced two columns.
-				if cell.isWideTrailer { continue }
-
-				if let scalar = cell.character.unicodeScalars.first,
-				   PowerlineGlyph.isSeparator(scalar.value) {
-					powerline.append((cellIndex, scalar.value))
-					text.append(" ")
-					continue
-				}
-				text.append(cell.character)
-			}
-
 			let x = (Self.horizontalInset + CGFloat(column) * cellWidth).rounded()
 			// Computed from the run's end rather than its length, so consecutive
 			// runs share an edge exactly instead of each rounding independently.
 			let endX = (Self.horizontalInset + CGFloat(end) * cellWidth).rounded()
-			let width = endX - x
 			let resolved = attributes.resolved
 
 			let background = TerminalPalette.color(for: resolved.background, isForeground: false, bold: false)
 			if resolved.background != .default {
 				background.setFill()
-				NSRect(x: x, y: y.rounded(), width: width, height: cellHeight).fill()
+				NSRect(x: x, y: y.rounded(), width: endX - x, height: cellHeight).fill()
 			}
 
 			// Separators are filled shapes in the run's foreground colour, sized to
 			// the cell exactly — which is what removes the seam and the height
 			// mismatch a font glyph leaves behind.
-			if !powerline.isEmpty {
-				let colour = TerminalPalette.color(
-					for: resolved.foreground,
-					isForeground: true,
-					bold: attributes.bold
-				)
-				for entry in powerline {
-					let cellX = (Self.horizontalInset + CGFloat(entry.column) * cellWidth).rounded()
-					let cellEnd = (Self.horizontalInset + CGFloat(entry.column + 1) * cellWidth).rounded()
-					PowerlineGlyph.draw(
-						scalar: entry.scalar,
-						in: NSRect(x: cellX, y: y.rounded(), width: cellEnd - cellX, height: cellHeight),
-						color: colour
-					)
-				}
-			}
+			drawSeparators(of: line, from: column, to: end, attributes: attributes, y: y)
 
-			guard !attributes.hidden, !text.trimmingCharacters(in: .whitespaces).isEmpty else {
-				column = end
-				continue
+			if !attributes.hidden {
+				drawText(of: line, from: column, to: end, attributes: attributes, y: y)
 			}
-
-			var foreground = TerminalPalette.color(
-				for: resolved.foreground,
-				isForeground: true,
-				bold: attributes.bold
-			)
-			if attributes.dim { foreground = foreground.withAlphaComponent(0.6) }
-
-			var drawFont = font
-			if attributes.bold {
-				drawFont = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
-			}
-			if attributes.italic {
-				drawFont = NSFontManager.shared.convert(drawFont, toHaveTrait: .italicFontMask)
-			}
-
-			var textAttributes: [NSAttributedString.Key: Any] = [
-				.font: drawFont,
-				.foregroundColor: foreground,
-			]
-			if attributes.underline {
-				textAttributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
-			}
-			if attributes.strikethrough {
-				textAttributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
-			}
-
-			NSAttributedString(string: text, attributes: textAttributes)
-				.draw(at: NSPoint(x: x, y: y))
 
 			column = end
 		}
+
+		drawSelection(on: line, atRow: index, y: y)
+	}
+
+	/// Tints the selected cells.
+	///
+	/// Drawn over the text rather than behind it, so the characters keep their
+	/// own colours — a terminal's palette carries meaning, and repainting a
+	/// selected region in system selection colours would throw that away.
+	private func drawSelection(on line: TerminalLine, atRow index: Int, y: CGFloat) {
+		guard let selection,
+		      let range = selection.columnRange(onRow: index, columns: line.cells.count)
+		else { return }
+
+		let x = (Self.horizontalInset + CGFloat(range.lowerBound) * cellWidth).rounded()
+		let endX = (Self.horizontalInset + CGFloat(range.upperBound) * cellWidth).rounded()
+
+		NSColor.selectedTextBackgroundColor.withAlphaComponent(0.35).setFill()
+		NSRect(x: x, y: y.rounded(), width: endX - x, height: cellHeight).fill()
+	}
+
+	/// Draws the powerline separators in a run as geometry filling their cells.
+	private func drawSeparators(
+		of line: TerminalLine,
+		from start: Int,
+		to end: Int,
+		attributes: TerminalAttributes,
+		y: CGFloat
+	) {
+		let colour = TerminalPalette.color(
+			for: attributes.resolved.foreground,
+			isForeground: true,
+			bold: attributes.bold
+		)
+
+		for cellIndex in start..<end {
+			guard let scalar = line.cells[cellIndex].character.unicodeScalars.first,
+			      PowerlineGlyph.isSeparator(scalar.value)
+			else { continue }
+
+			let cellX = (Self.horizontalInset + CGFloat(cellIndex) * cellWidth).rounded()
+			let cellEnd = (Self.horizontalInset + CGFloat(cellIndex + 1) * cellWidth).rounded()
+			PowerlineGlyph.draw(
+				scalar: scalar.value,
+				in: NSRect(x: cellX, y: y.rounded(), width: cellEnd - cellX, height: cellHeight),
+				color: colour
+			)
+		}
+	}
+
+	/// Draws one attribute run's characters, each on its own grid column.
+	///
+	/// Split into segments rather than drawn as one string. The cell width is a
+	/// whole number of points so run backgrounds abut exactly, but the font's
+	/// own advance is fractional — letting it lay out a whole run makes the text
+	/// creep away from the grid by a fraction of a pixel per character, which
+	/// reaches a full cell by the time a prompt and a command have been typed.
+	/// The cursor is drawn on the grid, so the text ends up sitting a character
+	/// away from it.
+	private func drawText(
+		of line: TerminalLine,
+		from start: Int,
+		to end: Int,
+		attributes: TerminalAttributes,
+		y: CGFloat
+	) {
+		var drawFont = font
+		if attributes.bold {
+			drawFont = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
+		}
+		if attributes.italic {
+			drawFont = NSFontManager.shared.convert(drawFont, toHaveTrait: .italicFontMask)
+		}
+
+		let resolved = attributes.resolved
+		var foreground = TerminalPalette.color(
+			for: resolved.foreground,
+			isForeground: true,
+			bold: attributes.bold
+		)
+		if attributes.dim { foreground = foreground.withAlphaComponent(0.6) }
+
+		var textAttributes: [NSAttributedString.Key: Any] = [
+			.font: drawFont,
+			.foregroundColor: foreground,
+			// Pins each character to the next cell boundary.
+			.kern: cellWidth - advance(of: drawFont),
+		]
+		if attributes.underline {
+			textAttributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
+		}
+		if attributes.strikethrough {
+			textAttributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
+		}
+
+		// A segment is a stretch of single-width characters, which is what the
+		// kerning above assumes. A double-width character advances two cells, so
+		// it ends the segment and is drawn on its own.
+		var segment = ""
+		var segmentStart = start
+
+		func flush() {
+			defer { segment = "" }
+			guard !segment.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+			let x = (Self.horizontalInset + CGFloat(segmentStart) * cellWidth).rounded()
+			NSAttributedString(string: segment, attributes: textAttributes).draw(at: NSPoint(x: x, y: y))
+		}
+
+		for cellIndex in start..<end {
+			let cell = line.cells[cellIndex]
+			// The trailing half of a wide glyph contributes no character; the
+			// leading half already advanced two columns.
+			if cell.isWideTrailer { continue }
+
+			// Powerline separators are drawn as geometry by drawSeparators, so a
+			// space stands in for them here to keep the segment's spacing intact.
+			if let scalar = cell.character.unicodeScalars.first,
+			   PowerlineGlyph.isSeparator(scalar.value) {
+				if segment.isEmpty { segmentStart = cellIndex }
+				segment.append(" ")
+				continue
+			}
+
+			let isWide = cellIndex + 1 < line.cells.count && line.cells[cellIndex + 1].isWideTrailer
+			if isWide {
+				flush()
+				segmentStart = cellIndex
+				segment.append(cell.character)
+				flush()
+				continue
+			}
+
+			if segment.isEmpty { segmentStart = cellIndex }
+			segment.append(cell.character)
+		}
+		flush()
+	}
+
+	/// Width of one character in a font, cached: measuring is not free and the
+	/// same handful of fonts is asked for on every repaint.
+	private func advance(of font: NSFont) -> CGFloat {
+		let key = "\(font.fontName)-\(font.pointSize)"
+		if let cached = advanceCache[key] { return cached }
+		let measured = ("0" as NSString).size(withAttributes: [.font: font]).width
+		advanceCache[key] = measured
+		return measured
 	}
 
 	private func drawCursor() {
@@ -451,6 +535,34 @@ final class TerminalView: NSView, NSTextInputClient {
 	// MARK: - Mouse
 
 	/// Grid position under a pointer event, 1-based as the protocol expects.
+	/// The cell under the pointer, in absolute rows including scrollback.
+	///
+	/// Rounded to the nearest boundary rather than truncated, so a drag that
+	/// ends halfway across a cell includes the half it covers — which is what
+	/// makes selecting up to the last character possible.
+	private func selectionPosition(for event: NSEvent) -> TerminalPosition {
+		let point = convert(event.locationInWindow, from: nil)
+		let row = Int(floor((point.y - Self.verticalInset) / max(1, cellHeight)))
+		let column = Int(((point.x - Self.horizontalInset) / max(1, cellWidth)).rounded())
+		let lastRow = max(0, emulator.screen.totalLineCount - 1)
+		return TerminalPosition(
+			row: max(0, min(row, lastRow)),
+			column: max(0, min(column, emulator.screen.columns))
+		)
+	}
+
+	/// Selection is for reading output, so a program that tracks the mouse gets
+	/// the events instead — unless Shift is held, the usual escape hatch.
+	private var mouseSelects: Bool {
+		emulator.mouseTracking == .off
+	}
+
+	private func setSelection(_ new: TerminalSelection?) {
+		guard new != selection else { return }
+		selection = new
+		needsDisplay = true
+	}
+
 	private func gridPosition(for event: NSEvent) -> (row: Int, column: Int) {
 		let point = convert(event.locationInWindow, from: nil)
 		let column = Int((point.x - Self.horizontalInset) / max(1, cellWidth)) + 1
@@ -495,23 +607,78 @@ final class TerminalView: NSView, NSTextInputClient {
 
 	override func mouseDown(with event: NSEvent) {
 		window?.makeFirstResponder(self)
-		_ = forwardMouse(event, button: .left, isRelease: false)
+
+		guard mouseSelects || event.modifierFlags.contains(.shift) else {
+			_ = forwardMouse(event, button: .left, isRelease: false)
+			return
+		}
+
+		let position = selectionPosition(for: event)
+		switch event.clickCount {
+		case 2:
+			setSelection(emulator.screen.wordSelection(atRow: position.row, column: position.column))
+		case 3...:
+			setSelection(emulator.screen.lineSelection(atRow: position.row))
+		default:
+			isSelecting = true
+			setSelection(TerminalSelection(anchor: position, head: position))
+		}
 	}
 
 	override func mouseUp(with event: NSEvent) {
+		if isSelecting {
+			isSelecting = false
+			// A click that never moved is a click, not an empty selection.
+			if selection?.isEmpty == true { setSelection(nil) }
+			return
+		}
 		_ = forwardMouse(event, button: .left, isRelease: true)
 	}
 
 	override func mouseDragged(with event: NSEvent) {
-		_ = forwardMouse(event, button: .left, isRelease: false, isDrag: true)
+		guard isSelecting else {
+			_ = forwardMouse(event, button: .left, isRelease: false, isDrag: true)
+			return
+		}
+		guard var updated = selection else { return }
+		updated.head = selectionPosition(for: event)
+		setSelection(updated)
+
+		// Dragging past an edge should keep going, the way it does in a list.
+		autoscroll(with: event)
 	}
 
 	override func rightMouseDown(with event: NSEvent) {
-		_ = forwardMouse(event, button: .right, isRelease: false)
+		guard mouseSelects else {
+			_ = forwardMouse(event, button: .right, isRelease: false)
+			return
+		}
+		NSMenu.popUpContextMenu(makeContextMenu(), with: event, for: self)
 	}
 
 	override func rightMouseUp(with event: NSEvent) {
-		_ = forwardMouse(event, button: .right, isRelease: true)
+		guard mouseSelects else {
+			_ = forwardMouse(event, button: .right, isRelease: true)
+			return
+		}
+	}
+
+	private func makeContextMenu() -> NSMenu {
+		let menu = NSMenu()
+
+		func item(_ title: String, _ selector: Selector, enabled: Bool = true) -> NSMenuItem {
+			let item = NSMenuItem(title: title, action: selector, keyEquivalent: "")
+			item.target = self
+			item.isEnabled = enabled
+			return item
+		}
+
+		menu.addItem(item("Copy", #selector(copy(_:)), enabled: selection != nil))
+		menu.addItem(item("Paste", #selector(paste(_:))))
+		menu.addItem(.separator())
+		menu.addItem(item("Select All", #selector(selectAll(_:))))
+		menu.addItem(item("Clear Selection", #selector(clearSelection), enabled: selection != nil))
+		return menu
 	}
 
 	override func scrollWheel(with event: NSEvent) {
@@ -548,9 +715,21 @@ final class TerminalView: NSView, NSTextInputClient {
 	// MARK: - Actions
 
 	@objc func copy(_ sender: Any?) {
-		let text = emulator.screen.allText()
+		// Only what is selected. Copying the entire buffer when nothing is
+		// selected is a surprise nobody wants pasted somewhere else.
+		guard let selection else { return }
+		let text = emulator.screen.text(in: selection)
+		guard !text.isEmpty else { return }
 		NSPasteboard.general.clearContents()
 		NSPasteboard.general.setString(text, forType: .string)
+	}
+
+	@objc override func selectAll(_ sender: Any?) {
+		setSelection(emulator.screen.fullSelection)
+	}
+
+	@objc private func clearSelection() {
+		setSelection(nil)
 	}
 
 	@objc func paste(_ sender: Any?) {

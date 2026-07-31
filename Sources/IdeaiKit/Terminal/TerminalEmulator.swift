@@ -78,7 +78,7 @@ public final class TerminalEmulator {
 	private var state = State.ground
 	private var parameterBuffer = ""
 	private var intermediates = ""
-	private var oscBuffer = ""
+	private var oscBytes: [UInt8] = []
 
 	/// Partial UTF-8 sequence carried between writes, since a read can split one.
 	private var utf8Buffer: [UInt8] = []
@@ -279,7 +279,7 @@ public final class TerminalEmulator {
 			intermediates = ""
 		case 0x5D: // ]
 			state = .osc
-			oscBuffer = ""
+			oscBytes = []
 		case 0x50, 0x58, 0x5E, 0x5F: // DCS, SOS, PM, APC — consumed to ST
 			state = .ignore(terminator: 0x5C)
 		case 0x37: // 7 — save cursor
@@ -330,19 +330,31 @@ public final class TerminalEmulator {
 		}
 	}
 
-	private var csiParameters: [Int] {
+	/// CSI parameters split into their primary value and any subparameters.
+	///
+	/// Colon subparameters (SGR `4:3` curly underline, `58:2::r:g:b` underline
+	/// colour) carry a variant after the primary value. Parsing the whole token
+	/// yields nil, which used to fall back to 0 — that is SGR "reset
+	/// everything", so a single styled run wiped all attributes.
+	private var csiComponents: [(value: Int, subparameters: [Int])] {
 		parameterBuffer
 			.drop(while: { $0 == "?" || $0 == ">" || $0 == "!" })
 			.split(separator: ";", omittingEmptySubsequences: false)
 			.map { component in
-				// Colon subparameters (SGR 4:3 curly underline, 58:2::r:g:b
-				// underline colour) carry a variant after the primary value.
-				// Parsing the whole token yields nil, which used to fall back to
-				// 0 — that is SGR "reset everything", so a single styled run
-				// wiped all attributes and left the rest of the screen wrong.
-				let primary = component.split(separator: ":", maxSplits: 1).first ?? ""
-				return Int(primary) ?? 0
+				let pieces = component.split(separator: ":", omittingEmptySubsequences: false)
+				let primary = Int(pieces.first ?? "") ?? 0
+				return (primary, pieces.dropFirst().map { Int($0) ?? 0 })
 			}
+	}
+
+	private var csiParameters: [Int] {
+		csiComponents.map(\.value)
+	}
+
+	/// Whether a parameter byte marks the sequence as private rather than ANSI.
+	private func isPrivateIntroducer(_ character: Character?) -> Bool {
+		guard let character else { return false }
+		return character == "?" || character == ">" || character == "<" || character == "="
 	}
 
 	private func parameter(_ index: Int, default fallback: Int) -> Int {
@@ -353,6 +365,12 @@ public final class TerminalEmulator {
 
 	private func executeCSI(final: Character) {
 		let isPrivate = parameterBuffer.hasPrefix("?")
+
+		// A private-prefixed sequence is a different command that happens to end
+		// in the same byte, not a variant of the standard one. `CSI > 4 ; 2 m`
+		// is XTMODKEYS, which Claude Code sends on startup — read as SGR it says
+		// "underline, dim", and every character after it came out underlined.
+		if isPrivateIntroducer(parameterBuffer.first), final == "m" { return }
 
 		switch final {
 		case "A": moveCursor(row: cursorRow - parameter(0, default: 1), column: cursorColumn)
@@ -557,7 +575,8 @@ public final class TerminalEmulator {
 	// MARK: - SGR
 
 	private func applySGR() {
-		let values = csiParameters.isEmpty ? [0] : csiParameters
+		let components = csiComponents.isEmpty ? [(value: 0, subparameters: [Int]())] : csiComponents
+		let values = components.map(\.value)
 		var index = 0
 		while index < values.count {
 			let value = values[index]
@@ -566,7 +585,12 @@ public final class TerminalEmulator {
 			case 1: attributes.bold = true
 			case 2: attributes.dim = true
 			case 3: attributes.italic = true
-			case 4: attributes.underline = true
+			case 4:
+				// `4:0` is *no* underline; every other style — single, double,
+				// curly, dotted, dashed — is one. Treating the subparameter as
+				// decoration and keeping the 4 turned underline on for text that
+				// asked for it to be off, which underlines whole applications.
+				attributes.underline = components[index].subparameters.first != 0
 			case 7: attributes.inverse = true
 			case 8: attributes.hidden = true
 			case 9: attributes.strikethrough = true
@@ -622,15 +646,19 @@ public final class TerminalEmulator {
 			finishOSC()
 			return
 		}
-		oscBuffer.append(Character(UnicodeScalar(byte)))
+		oscBytes.append(byte)
 	}
 
 	private func finishOSC() {
-		let parts = oscBuffer.split(separator: ";", maxSplits: 1, omittingEmptySubsequences: false)
+		// Decoded as UTF-8, not byte-per-character. A title is arbitrary text and
+		// routinely contains an emoji; treating each byte as a scalar turned
+		// "\u{23F3}" into "\u{00E2}\u{008F}\u{00B3}" and put mojibake in the tab.
+		let text = String(decoding: oscBytes, as: UTF8.self)
+		let parts = text.split(separator: ";", maxSplits: 1, omittingEmptySubsequences: false)
 		if parts.count == 2, let code = Int(parts[0]), code == 0 || code == 2 {
 			title = String(parts[1])
 		}
-		oscBuffer = ""
+		oscBytes = []
 		state = .ground
 	}
 
