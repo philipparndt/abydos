@@ -53,6 +53,91 @@ public struct WrapLayout: Sendable {
 		totalRows = max(1, row)
 	}
 
+	/// UTF-16 range of one wrapped segment of a line.
+	///
+	/// Cut by *display* width rather than by character count. A tab occupies up
+	/// to `tabWidth` columns on screen but one UTF-16 unit, so slicing by unit
+	/// count makes a row wider than the space it was measured for — the overflow
+	/// is then clipped away and those characters are never seen anywhere.
+	///
+	/// The row count above is derived from the same display width, so the two
+	/// have to agree or the last segment of a line goes missing.
+	public static func segmentRange(
+		in text: String,
+		segment: Int,
+		columns: Int,
+		tabWidth: Int
+	) -> Range<Int> {
+		guard columns > 0, segment >= 0 else { return 0..<0 }
+
+		let units = Array(text.utf16)
+		var start = 0
+		var column = 0
+		var index = 0
+		var currentSegment = 0
+
+		let tab = UInt16(0x09)
+
+		while index < units.count {
+			let width = units[index] == tab ? tabWidth - (column % tabWidth) : 1
+
+			// A tab that would straddle the edge moves to the next row whole,
+			// which is what the renderer does with it too.
+			if column + width > columns, column > 0 {
+				if currentSegment == segment { return start..<index }
+				currentSegment += 1
+				start = index
+				column = 0
+				continue
+			}
+
+			column += width
+			index += 1
+		}
+
+		return currentSegment == segment ? start..<units.count : units.count..<units.count
+	}
+
+	/// Which segment of a line a UTF-16 offset falls in.
+	///
+	/// Walks the same display widths `segmentRange` does, so the caret lands on
+	/// the row that actually shows it.
+	public static func segment(
+		forOffset offset: Int,
+		in text: String,
+		columns: Int,
+		tabWidth: Int
+	) -> Int {
+		guard columns > 0, offset > 0 else { return 0 }
+
+		let units = Array(text.utf16)
+		var column = 0
+		var index = 0
+		var segment = 0
+		let tab = UInt16(0x09)
+
+		let limit = min(offset, units.count)
+		while index < limit {
+			let width = units[index] == tab ? tabWidth - (column % tabWidth) : 1
+			if column + width > columns, column > 0 {
+				segment += 1
+				column = 0
+				continue
+			}
+			column += width
+			index += 1
+		}
+
+		// A break can fall exactly *at* the offset — the caret then belongs on
+		// the row that is about to start, not at the end of the one that just
+		// filled. Not applied at end of line: there is no next row there.
+		if index == offset, index < units.count, column > 0 {
+			let width = units[index] == tab ? tabWidth - (column % tabWidth) : 1
+			if column + width > columns { segment += 1 }
+		}
+		return segment
+	}
+
 	private func rowCount(forLine line: Int, columns: Int?, columnsForLine: (Int) -> Int) -> Int {
 		guard let columns, columns > 0 else { return 1 }
 		let width = columnsForLine(line)

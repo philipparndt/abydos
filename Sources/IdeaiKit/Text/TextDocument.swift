@@ -90,6 +90,29 @@ public final class TextDocument {
 		languageId.map { LanguageRegistry.shared.displayName(for: $0) }
 	}
 
+	/// The file's declarations, for the structure view.
+	///
+	/// Asynchronous because the tree belongs to the parser's queue, and running
+	/// the query over a whole large file is not something to do on the main
+	/// thread. The result is delivered there.
+	public func symbols(completion: @escaping ([DocumentSymbol]) -> Void) {
+		guard let engine else {
+			completion([])
+			return
+		}
+
+		let snapshot = rope
+		let currentGeneration = generation
+		engineQueue.async { [weak self] in
+			let symbols = engine.symbols(rope: snapshot)
+			DispatchQueue.main.async {
+				// A newer edit has landed; its own request will follow.
+				guard let self, self.generation == currentGeneration else { return }
+				completion(symbols)
+			}
+		}
+	}
+
 	/// Overrides the detected language, re-parsing from scratch.
 	///
 	/// Detection is a guess, and the file that defeats it is exactly the one

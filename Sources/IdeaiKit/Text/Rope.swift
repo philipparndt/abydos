@@ -441,6 +441,40 @@ public struct Rope: Sendable {
 	/// The view needs this to size its horizontal scroll range. It is one linear
 	/// pass over the chunks with no per-line lookups, so even a very large file
 	/// measures in a few milliseconds on a background queue.
+	/// Width of the widest line in display columns.
+	///
+	/// Byte length is the wrong unit for sizing a scroll range: a tab is one
+	/// byte and up to `tabWidth` columns, so a byte count leaves the document
+	/// too narrow to scroll to the end of tab-indented code, and a multi-byte
+	/// character makes it too wide. Continuation bytes are skipped so one
+	/// character counts once.
+	public func longestLineDisplayColumns(tabWidth: Int) -> Int {
+		let tabWidth = max(1, tabWidth)
+		var longest = 0
+		var current = 0
+		var offset = 0
+
+		while offset < byteCount {
+			guard let (chunkBytes, start) = chunk(containing: offset) else { break }
+			for byte in chunkBytes[(offset - start)...] {
+				switch byte {
+				case 0x0A:
+					longest = max(longest, current)
+					current = 0
+				case 0x09:
+					current += tabWidth - (current % tabWidth)
+				// UTF-8 continuation bytes belong to the character before them.
+				case 0x80...0xBF:
+					break
+				default:
+					current += 1
+				}
+			}
+			offset = start + chunkBytes.count
+		}
+		return max(longest, current)
+	}
+
 	public func longestLineByteLength() -> Int {
 		var longest = 0
 		var current = 0

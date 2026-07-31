@@ -233,3 +233,37 @@ struct RopeTests {
 		#expect(r.bytes(in: 100..<200) == [])
 	}
 }
+
+/// Sizing the horizontal scroll range. Byte length is the wrong unit: a tab is
+/// one byte and several columns, so measuring bytes leaves the document too
+/// narrow to scroll to the end of tab-indented code.
+struct RopeDisplayWidthTests {
+	@Test func plainLinesMeasureTheirLength() {
+		let rope = Rope("abc\nabcdef\nab\n")
+		#expect(rope.longestLineDisplayColumns(tabWidth: 4) == 6)
+	}
+
+	@Test func tabsExpandToTheNextStop() {
+		// One tab, then "x": 4 + 1 columns.
+		#expect(Rope("\tx\n").longestLineDisplayColumns(tabWidth: 4) == 5)
+		#expect(Rope("ab\tx\n").longestLineDisplayColumns(tabWidth: 4) == 5)
+	}
+
+	@Test func tabWidthIsRespected() {
+		#expect(Rope("\tx\n").longestLineDisplayColumns(tabWidth: 8) == 9)
+	}
+
+	/// A multi-byte character is one column, not one per byte.
+	@Test func multiByteCharactersCountOnce() {
+		#expect(Rope("über\n").longestLineDisplayColumns(tabWidth: 4) == 4)
+		#expect(Rope("日本語\n").longestLineDisplayColumns(tabWidth: 4) == 3)
+	}
+
+	@Test func theLastLineCountsWithoutATrailingNewline() {
+		#expect(Rope("a\nlongest").longestLineDisplayColumns(tabWidth: 4) == 7)
+	}
+
+	@Test func anEmptyRopeIsZeroWide() {
+		#expect(Rope("").longestLineDisplayColumns(tabWidth: 4) == 0)
+	}
+}

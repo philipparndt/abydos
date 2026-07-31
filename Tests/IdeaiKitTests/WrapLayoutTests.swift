@@ -89,3 +89,103 @@ struct WrapLayoutTests {
 		#expect(layout.position(forRow: 0).line == 0)
 	}
 }
+
+/// Cutting a wrapped line into rows. The row count is measured in display
+/// columns, so the slices have to be as well — a tab is one UTF-16 unit but up
+/// to four columns wide, and cutting by unit count makes a row wider than the
+/// space it was measured for. The overflow is then clipped and those characters
+/// appear nowhere at all.
+struct WrapSegmentRangeTests {
+	private func slices(_ text: String, columns: Int, tabWidth: Int = 4) -> [String] {
+		let units = Array(text.utf16)
+		var result: [String] = []
+		var segment = 0
+		while true {
+			let range = WrapLayout.segmentRange(
+				in: text, segment: segment, columns: columns, tabWidth: tabWidth
+			)
+			if range.isEmpty && segment > 0 { break }
+			result.append(String(decoding: units[range], as: UTF16.self))
+			if range.upperBound >= units.count { break }
+			segment += 1
+		}
+		return result
+	}
+
+	@Test func plainTextSplitsEveryColumns() {
+		#expect(slices("abcdefgh", columns: 3) == ["abc", "def", "gh"])
+	}
+
+	@Test func shortLinesAreOneSegment() {
+		#expect(slices("ab", columns: 10) == ["ab"])
+	}
+
+	/// Every character has to appear in exactly one slice; anything else is a
+	/// character the user cannot see anywhere.
+	@Test func slicesReconstructTheLine() {
+		for columns in [3, 5, 8, 20] {
+			let text = "\tfunc example(argument: String) -> Int {\t// trailing"
+			#expect(slices(text, columns: columns).joined() == text, "columns \(columns)")
+		}
+	}
+
+	/// A leading tab eats four columns, so fewer characters fit on that row.
+	@Test func aTabTakesItsDisplayWidth() {
+		// Tab (4 columns) + "abcd" would be 8 columns; only 6 fit.
+		#expect(slices("\tabcdef", columns: 6) == ["\tab", "cdef"])
+	}
+
+	@Test func tabsAdvanceToTheNextStop() {
+		// "ab" is 2 columns, the tab then fills to column 4.
+		#expect(slices("ab\tcd", columns: 4) == ["ab\t", "cd"])
+	}
+
+	/// A tab fills exactly to its stop, so one that reaches the edge still fits.
+	@Test func aTabThatEndsOnTheEdgeFits() {
+		#expect(slices("abc\tx", columns: 4) == ["abc\t", "x"])
+	}
+
+	/// One that would cross the edge moves whole, since it cannot be split.
+	@Test func aTabNeverStraddlesTheEdge() {
+		#expect(slices("abcd\tx", columns: 6) == ["abcd", "\tx"])
+	}
+
+	@Test func segmentsPastTheEndAreEmpty() {
+		let range = WrapLayout.segmentRange(in: "abc", segment: 9, columns: 2, tabWidth: 4)
+		#expect(range.isEmpty)
+	}
+
+	@Test func zeroColumnsIsNotADivideByZero() {
+		#expect(WrapLayout.segmentRange(in: "abc", segment: 0, columns: 0, tabWidth: 4).isEmpty)
+	}
+}
+
+/// Offsets have to land on the row that actually shows them, by the same rule.
+struct WrapSegmentForOffsetTests {
+	@Test func offsetsMapToTheirRow() {
+		#expect(WrapLayout.segment(forOffset: 0, in: "abcdefgh", columns: 3, tabWidth: 4) == 0)
+		#expect(WrapLayout.segment(forOffset: 2, in: "abcdefgh", columns: 3, tabWidth: 4) == 0)
+		#expect(WrapLayout.segment(forOffset: 3, in: "abcdefgh", columns: 3, tabWidth: 4) == 1)
+		#expect(WrapLayout.segment(forOffset: 7, in: "abcdefgh", columns: 3, tabWidth: 4) == 2)
+	}
+
+	/// The case a character count gets wrong: after one tab the caret is only
+	/// three units in but already on the second row.
+	@Test func tabsShiftWhichRowAnOffsetIsOn() {
+		let text = "\tabcdef"
+		#expect(WrapLayout.segment(forOffset: 2, in: text, columns: 6, tabWidth: 4) == 0)
+		#expect(WrapLayout.segment(forOffset: 4, in: text, columns: 6, tabWidth: 4) == 1)
+	}
+
+	@Test func theSliceAndTheOffsetAgree() {
+		let text = "\tlet value = compute(a, b)"
+		let columns = 10
+		for offset in 0...(text.utf16.count) {
+			let segment = WrapLayout.segment(forOffset: offset, in: text, columns: columns, tabWidth: 4)
+			let range = WrapLayout.segmentRange(in: text, segment: segment, columns: columns, tabWidth: 4)
+			// The offset must fall within the slice its segment names.
+			#expect(offset >= range.lowerBound, "offset \(offset)")
+			#expect(offset <= range.upperBound, "offset \(offset)")
+		}
+	}
+}

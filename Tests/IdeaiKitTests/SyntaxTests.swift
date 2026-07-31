@@ -189,3 +189,150 @@ struct SyntaxTests {
 		}
 	}
 }
+
+/// The structure view's data: declarations pulled from the grammar's tags
+/// query and nested by containment.
+struct SymbolOutlineTests {
+	@Test func captureNamesMapToKinds() {
+		#expect(SymbolOutline.kind(forCapture: "definition.class") == .type)
+		#expect(SymbolOutline.kind(forCapture: "definition.method") == .method)
+		#expect(SymbolOutline.kind(forCapture: "definition.interface") == .protocolType)
+		#expect(SymbolOutline.kind(forCapture: "definition.enum") == .enumeration)
+	}
+
+	/// An unrecognised definition still shows up; a symbol with a dull icon is
+	/// more useful than a missing one.
+	@Test func unknownDefinitionsFallThroughRatherThanVanish() {
+		#expect(SymbolOutline.kind(forCapture: "definition.wibble") == .other)
+	}
+
+	@Test func nonDefinitionCapturesAreIgnored() {
+		#expect(SymbolOutline.kind(forCapture: "name") == nil)
+		#expect(SymbolOutline.kind(forCapture: "reference.call") == nil)
+	}
+
+	private func symbol(_ name: String, _ range: Range<Int>, _ kind: DocumentSymbol.Kind = .other) -> DocumentSymbol {
+		DocumentSymbol(name: name, kind: kind, line: 0, byteRange: range)
+	}
+
+	/// A method's range sits inside its type's, which is the only relationship
+	/// the tags queries express.
+	@Test func containedSymbolsBecomeChildren() {
+		let nested = SymbolOutline.nest([
+			symbol("method", 10..<20),
+			symbol("Type", 0..<100),
+		])
+		#expect(nested.map(\.name) == ["Type"])
+		#expect(nested[0].children.map(\.name) == ["method"])
+	}
+
+	@Test func nestingGoesMoreThanOneDeep() {
+		let nested = SymbolOutline.nest([
+			symbol("Outer", 0..<100),
+			symbol("Inner", 10..<80),
+			symbol("deep", 20..<30),
+		])
+		#expect(nested[0].children[0].children.map(\.name) == ["deep"])
+	}
+
+	@Test func siblingsStayAtTheSameLevel() {
+		let nested = SymbolOutline.nest([
+			symbol("a", 0..<10),
+			symbol("b", 20..<30),
+		])
+		#expect(nested.map(\.name) == ["a", "b"])
+		#expect(nested.allSatisfy { $0.children.isEmpty })
+	}
+
+	@Test func resultsAreInSourceOrder() {
+		let nested = SymbolOutline.nest([
+			symbol("later", 50..<60),
+			symbol("earlier", 0..<10),
+		])
+		#expect(nested.map(\.name) == ["earlier", "later"])
+	}
+
+	/// The same declaration can be matched by more than one pattern in a
+	/// grammar's tags file.
+	@Test func duplicateCapturesAreCollapsed() {
+		let nested = SymbolOutline.nest([
+			symbol("thing", 0..<10),
+			symbol("thing", 0..<10),
+		])
+		#expect(nested.count == 1)
+	}
+
+	@Test func anEmptyOutlineIsEmpty() {
+		#expect(SymbolOutline.nest([]).isEmpty)
+	}
+}
+
+/// Against real grammars, since the capture vocabulary is theirs, not ours.
+struct SymbolExtractionTests {
+	private func symbols(_ source: String, named name: String) async -> [DocumentSymbol] {
+		let url = URL(fileURLWithPath: NSTemporaryDirectory())
+			.appendingPathComponent("ideai-symbols-\(UUID().uuidString)")
+			.appendingPathExtension((name as NSString).pathExtension)
+		try? source.write(to: url, atomically: true, encoding: .utf8)
+		guard let document = try? TextDocument(url: url) else { return [] }
+
+		// The initial parse is off-thread; the query runs behind it.
+		return await withCheckedContinuation { continuation in
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+				document.symbols { continuation.resume(returning: $0) }
+			}
+		}
+	}
+
+	@Test func findsGoFunctionsAndTypes() async {
+		let found = await symbols("""
+		package main
+
+		type Server struct {
+			port int
+		}
+
+		func (s *Server) Start() error {
+			return nil
+		}
+
+		func main() {
+			_ = Server{}
+		}
+		""", named: "x.go")
+
+		let names = flatten(found).map(\.name)
+		#expect(names.contains("Server"))
+		#expect(names.contains("Start"))
+		#expect(names.contains("main"))
+	}
+
+	@Test func findsSwiftTypesAndNestsTheirMethods() async {
+		let found = await symbols("""
+		struct Thing {
+			func act() {}
+		}
+		""", named: "x.swift")
+
+		#expect(found.map(\.name) == ["Thing"])
+		#expect(found.first?.children.map(\.name) == ["act"])
+	}
+
+	@Test func reportsTheDeclarationLine() async {
+		let found = await symbols("""
+		package main
+
+		func target() {}
+		""", named: "x.go")
+		#expect(flatten(found).first { $0.name == "target" }?.line == 2)
+	}
+
+	/// Plain text has no grammar, so there is nothing to outline.
+	@Test func aFileWithNoGrammarHasNoSymbols() async {
+		#expect(await symbols("just words\n", named: "x.unknownext").isEmpty)
+	}
+
+	private func flatten(_ symbols: [DocumentSymbol]) -> [DocumentSymbol] {
+		symbols.flatMap { [$0] + flatten($0.children) }
+	}
+}

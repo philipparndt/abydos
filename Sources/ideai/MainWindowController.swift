@@ -798,6 +798,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		editor.selectDiffHunkForTesting(hunk)
 	}
 
+	func setWordWrap(_ enabled: Bool) {
+		guard Settings.shared.wordWrap != enabled else { return }
+		toggleWordWrap(nil)
+	}
+
 	@objc func toggleWordWrap(_ sender: Any?) {
 		editor.toggleWordWrap()
 	}

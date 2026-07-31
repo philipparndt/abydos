@@ -78,8 +78,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 		if options.wordWrap {
+			// Set rather than toggled: the setting persists, so toggling made a
+			// capture depend on how the previous run left it.
 			DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-				controller?.toggleWordWrap(nil)
+				controller?.setWordWrap(true)
 			}
 		}
 		if let query = options.findQuery {

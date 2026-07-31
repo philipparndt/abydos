@@ -134,8 +134,9 @@ final class CodeView: NSView, NSTextInputClient {
 		let snapshot = document.rope
 		// Start with something reasonable so the view is usable immediately.
 		longestLineColumns = 120
+		let tabWidth = Theme.current.tabWidth
 		DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-			let longest = snapshot.longestLineByteLength()
+			let longest = snapshot.longestLineDisplayColumns(tabWidth: tabWidth)
 			DispatchQueue.main.async {
 				guard let self else { return }
 				self.longestLineColumns = max(40, longest)
@@ -355,11 +356,18 @@ final class CodeView: NSView, NSTextInputClient {
 		// offset keeps the highlight ranges valid without re-mapping them.
 		if isWordWrapEnabled, let columns = wrapColumns {
 			let ns = text as NSString
-			let start = min(ns.length, segment * columns)
-			let length = min(columns, ns.length - start)
-			guard length > 0 || segment == 0 else { return }
-			text = ns.substring(with: NSRange(location: start, length: max(0, length)))
-			lineStartUTF16 += start
+			let range = WrapLayout.segmentRange(
+				in: text,
+				segment: segment,
+				columns: columns,
+				tabWidth: Theme.current.tabWidth
+			)
+			guard !range.isEmpty || segment == 0 else { return }
+			text = ns.substring(with: NSRange(
+				location: range.lowerBound,
+				length: range.count
+			))
+			lineStartUTF16 += range.lowerBound
 		}
 
 		let attributed = attributedLine(
@@ -634,10 +642,14 @@ final class CodeView: NSView, NSTextInputClient {
 		var segmentText = text
 		if isWordWrapEnabled, let columns = wrapColumns {
 			let ns = text as NSString
-			let start = min(ns.length, wrapSegmentForOffset(caret, line: docLine) * columns)
-			let length = min(columns, ns.length - start)
-			segmentText = ns.substring(with: NSRange(location: start, length: max(0, length)))
-			segmentStart += start
+			let range = WrapLayout.segmentRange(
+				in: text,
+				segment: wrapSegmentForOffset(caret, line: docLine),
+				columns: columns,
+				tabWidth: Theme.current.tabWidth
+			)
+			segmentText = ns.substring(with: NSRange(location: range.lowerBound, length: range.count))
+			segmentStart += range.lowerBound
 		}
 
 		let ctLine = CTLineCreateWithAttributedString(attributedLine(
@@ -652,8 +664,14 @@ final class CodeView: NSView, NSTextInputClient {
 	/// Which wrapped segment an offset falls in.
 	private func wrapSegmentForOffset(_ offset: Int, line: Int) -> Int {
 		guard let document, let columns = wrapColumns, columns > 0 else { return 0 }
-		let lineStart = document.rope.utf16Offset(fromByte: document.rope.byteOffset(ofLine: line))
-		return max(0, (offset - lineStart) / columns)
+		let lineRange = document.rope.lineByteRange(line)
+		let lineStart = document.rope.utf16Offset(fromByte: lineRange.lowerBound)
+		return WrapLayout.segment(
+			forOffset: max(0, offset - lineStart),
+			in: document.rope.string(in: lineRange),
+			columns: columns,
+			tabWidth: Theme.current.tabWidth
+		)
 	}
 
 	private func restartCaretBlink() {
@@ -844,10 +862,14 @@ final class CodeView: NSView, NSTextInputClient {
 
 		if isWordWrapEnabled, let columns = wrapColumns {
 			let ns = text as NSString
-			let start = min(ns.length, segment * columns)
-			let length = min(columns, ns.length - start)
-			text = ns.substring(with: NSRange(location: start, length: max(0, length)))
-			lineStartUTF16 += start
+			let range = WrapLayout.segmentRange(
+				in: text,
+				segment: segment,
+				columns: columns,
+				tabWidth: Theme.current.tabWidth
+			)
+			text = ns.substring(with: NSRange(location: range.lowerBound, length: range.count))
+			lineStartUTF16 += range.lowerBound
 		}
 
 		let ctLine = CTLineCreateWithAttributedString(attributedLine(

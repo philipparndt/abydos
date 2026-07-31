@@ -171,6 +171,52 @@ public final class SyntaxEngine {
 	/// regions structurally from any multi-line node — which covers braces,
 	/// brackets and indentation blocks well enough that every language folds,
 	/// not just the handful with fold queries.
+	/// The file's declarations, nested by containment.
+	///
+	/// Driven by the grammar's `tags.scm`, which pairs a `@definition.<kind>`
+	/// capture covering the whole declaration with a `@name` capture inside it.
+	/// Runs over the whole tree rather than a viewport: an outline that only
+	/// listed what is on screen would be useless for navigating.
+	public func symbols(rope: Rope) -> [DocumentSymbol] {
+		guard let tree,
+		      let root = tree.rootNode,
+		      let query = LanguageRegistry.shared.tagsQuery(for: languageId)
+		else { return [] }
+
+		var flat: [DocumentSymbol] = []
+		let cursor = query.execute(node: root, in: tree)
+
+		while let match = cursor.next() {
+			var definition: (kind: DocumentSymbol.Kind, range: Range<Int>)?
+			var name: String?
+
+			for capture in match.captures {
+				guard let captureName = capture.name, !captureName.isEmpty else { continue }
+
+				// `.byteRange` rather than `.range`: SwiftTreeSitter halves byte
+				// offsets assuming UTF-16 input, and we parse UTF-8.
+				let bytes = capture.node.byteRange
+				let range = Int(bytes.lowerBound)..<Int(bytes.upperBound)
+
+				if captureName == "name" {
+					name = rope.string(in: range)
+				} else if let kind = SymbolOutline.kind(forCapture: captureName) {
+					definition = (kind, range)
+				}
+			}
+
+			guard let definition, let name, !name.isEmpty else { continue }
+			flat.append(DocumentSymbol(
+				name: name,
+				kind: definition.kind,
+				line: rope.line(atByteOffset: definition.range.lowerBound),
+				byteRange: definition.range
+			))
+		}
+
+		return SymbolOutline.nest(flat)
+	}
+
 	public func foldRanges(rope: Rope) -> [FoldRange] {
 		guard let tree, let root = tree.rootNode else { return [] }
 
