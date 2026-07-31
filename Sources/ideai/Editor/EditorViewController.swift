@@ -238,6 +238,15 @@ final class EditorViewController: NSViewController {
 		activate(index: target, focusEditor: false)
 	}
 
+	/// Applies a hand-picked language to the active tab and repaints it.
+	func setActiveLanguage(_ languageId: String?) {
+		guard let tab = activeTab, let document = tab.document else { return }
+		document.setLanguage(languageId)
+		statusLanguage = document.displayLanguageName
+		onStatusChanged?(self)
+		// The document fires onSyntaxUpdated, which refreshes folds and repaints.
+	}
+
 	private func setStatus(line: Int, column: Int) {
 		guard line != statusLine || column != statusColumn else { return }
 		statusLine = line
@@ -846,8 +855,14 @@ enum FileInspector {
 // MARK: - Status bar
 
 final class EditorStatusView: NSView {
+	/// A language was chosen by hand; nil means "no highlighting".
+	var onLanguageChosen: ((String?) -> Void)?
+
 	private var positionText = ""
 	private var languageText = ""
+	private var languageRect = NSRect.zero
+	private var isLanguageHovered = false
+	private var trackingArea: NSTrackingArea?
 
 	override var isFlipped: Bool { true }
 
@@ -860,6 +875,70 @@ final class EditorStatusView: NSView {
 		languageText = name ?? "Plain Text"
 		needsDisplay = true
 	}
+
+	// MARK: - The language control
+
+	override func updateTrackingAreas() {
+		super.updateTrackingAreas()
+		if let trackingArea { removeTrackingArea(trackingArea) }
+		let area = NSTrackingArea(
+			rect: bounds,
+			options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow],
+			owner: self
+		)
+		addTrackingArea(area)
+		trackingArea = area
+	}
+
+	override func mouseMoved(with event: NSEvent) {
+		let inside = languageRect.contains(convert(event.locationInWindow, from: nil))
+		guard inside != isLanguageHovered else { return }
+		isLanguageHovered = inside
+		needsDisplay = true
+	}
+
+	override func mouseExited(with event: NSEvent) {
+		guard isLanguageHovered else { return }
+		isLanguageHovered = false
+		needsDisplay = true
+	}
+
+	override func mouseDown(with event: NSEvent) {
+		let point = convert(event.locationInWindow, from: nil)
+		guard languageRect.contains(point) else { return }
+		showLanguageMenu(at: NSPoint(x: languageRect.minX, y: languageRect.maxY))
+	}
+
+	override func resetCursorRects() {
+		super.resetCursorRects()
+		addCursorRect(languageRect, cursor: .pointingHand)
+	}
+
+	private func showLanguageMenu(at point: NSPoint) {
+		let menu = NSMenu()
+
+		let plain = NSMenuItem(title: "Plain Text", action: #selector(chooseLanguage(_:)), keyEquivalent: "")
+		plain.target = self
+		plain.state = languageText == "Plain Text" ? .on : .off
+		menu.addItem(plain)
+		menu.addItem(.separator())
+
+		for language in LanguageRegistry.shared.selectableLanguages {
+			let item = NSMenuItem(title: language.name, action: #selector(chooseLanguage(_:)), keyEquivalent: "")
+			item.target = self
+			item.representedObject = language.id
+			item.state = language.name == languageText ? .on : .off
+			menu.addItem(item)
+		}
+
+		menu.popUp(positioning: nil, at: point, in: self)
+	}
+
+	@objc private func chooseLanguage(_ sender: NSMenuItem) {
+		onLanguageChosen?(sender.representedObject as? String)
+	}
+
+	// MARK: - Drawing
 
 	override func draw(_ dirtyRect: NSRect) {
 		Theme.current.sidebarBackground.setFill()
@@ -875,11 +954,29 @@ final class EditorStatusView: NSView {
 
 		// Right-aligned, position then language.
 		var x = bounds.width - Theme.current.scaled(12)
-		for text in [languageText, positionText] where !text.isEmpty {
+		for (index, text) in [languageText, positionText].enumerated() where !text.isEmpty {
 			let attributed = NSAttributedString(string: text, attributes: attributes)
 			let size = attributed.size()
 			x -= size.width
-			attributed.draw(at: NSPoint(x: x, y: bounds.midY - size.height / 2))
+			let origin = NSPoint(x: x, y: bounds.midY - size.height / 2)
+
+			// The language is a control, so it gets a hit area and a hover
+			// background — otherwise nothing suggests it can be clicked.
+			if index == 0 {
+				let padding = Theme.current.scaled(5)
+				languageRect = NSRect(
+					x: origin.x - padding,
+					y: bounds.midY - size.height / 2 - padding / 2,
+					width: size.width + padding * 2,
+					height: size.height + padding
+				)
+				if isLanguageHovered {
+					NSColor.white.withAlphaComponent(0.08).setFill()
+					NSBezierPath(roundedRect: languageRect, xRadius: 4, yRadius: 4).fill()
+				}
+			}
+
+			attributed.draw(at: origin)
 			x -= Theme.current.scaled(16)
 		}
 	}

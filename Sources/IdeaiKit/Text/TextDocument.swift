@@ -37,7 +37,7 @@ public final class TextDocument {
 	// MARK: Syntax state
 
 	/// Owned by `engineQueue`; never touched from the main thread.
-	private let engine: SyntaxEngine?
+	private var engine: SyntaxEngine?
 	private let engineQueue = DispatchQueue(label: "ideai.syntax", qos: .userInteractive)
 
 	/// Bumped on every edit. A background result carrying an older generation
@@ -88,6 +88,25 @@ public final class TextDocument {
 
 	public var displayLanguageName: String? {
 		languageId.map { LanguageRegistry.shared.displayName(for: $0) }
+	}
+
+	/// Overrides the detected language, re-parsing from scratch.
+	///
+	/// Detection is a guess, and the file that defeats it is exactly the one
+	/// worth reading with colour, so the guess has to be correctable. Passing
+	/// nil turns highlighting off.
+	public func setLanguage(_ newLanguageId: String?) {
+		guard newLanguageId != languageId else { return }
+		languageId = newLanguageId
+
+		// The old tree describes a different grammar, so nothing carries over:
+		// the generation bump abandons any parse still in flight.
+		generation &+= 1
+		folds = []
+		engine = newLanguageId.flatMap { SyntaxEngine(languageId: $0) }
+
+		startInitialParse()
+		onSyntaxUpdated?()
 	}
 
 	private func startInitialParse() {

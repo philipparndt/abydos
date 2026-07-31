@@ -91,8 +91,10 @@ public final class LanguageRegistry {
 
 	/// Language id for a file, or nil when nothing matches.
 	///
-	/// Extension-based with a filename table for the many dotfiles and build
-	/// files that carry no extension at all.
+	/// Name and extension first, then the contents. Sniffing matters more than
+	/// it looks: plenty of files carry an extension that is real but unknown —
+	/// `Package.resolved` is JSON, `*.lock` is usually TOML or YAML — and an
+	/// unknown extension is not evidence that the file is unstructured.
 	public func languageId(for url: URL) -> String? {
 		let filename = url.lastPathComponent.lowercased()
 		if let byName = Self.filenameMap[filename] { return byName }
@@ -100,11 +102,61 @@ public final class LanguageRegistry {
 		let ext = url.pathExtension.lowercased()
 		if !ext.isEmpty, let byExtension = Self.extensionMap[ext] { return byExtension }
 
-		// Files with no extension may still declare themselves via a shebang.
-		if url.pathExtension.isEmpty, let interpreter = Self.shebangLanguage(at: url) {
-			return interpreter
+		return Self.contentLanguage(at: url)
+	}
+
+	/// Sniffs the first few hundred bytes for a recognisable shape.
+	static func contentLanguage(at url: URL) -> String? {
+		guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+		defer { try? handle.close() }
+		guard let data = try? handle.read(upToCount: 1024) else { return nil }
+		return contentLanguage(ofPrefix: data)
+	}
+
+	/// Split out from the file read so it can be exercised directly.
+	///
+	/// Deliberately conservative: a wrong guess colours the whole file wrongly,
+	/// which is worse than no highlighting, so each rule needs a marker that
+	/// prose or code in another language would not begin with.
+	static func contentLanguage(ofPrefix data: Data) -> String? {
+		guard let text = String(data: data, encoding: .utf8) else { return nil }
+
+		if let interpreter = shebangLanguage(inFirstLine: text) { return interpreter }
+
+		let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard let first = trimmed.first else { return nil }
+
+		switch first {
+		case "{":
+			// A brace also opens a C block and a shell function body, so what
+			// settles it is a quoted key or an immediate close, not the brace.
+			let head = trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines)
+			return head.hasPrefix("\"") || head.hasPrefix("}") ? "json" : nil
+		case "[":
+			// A leading bracket is far less ambiguous — it opens a TOML table
+			// header, and otherwise a JSON array of any value type.
+			let head = trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines)
+			guard let next = head.first else { return nil }
+			if next == "\"" || next == "]" || next == "{" || next == "[" { return "json" }
+			if next.isNumber || next == "-" { return "json" }
+			if next == "t" && head.hasPrefix("true") { return "json" }
+			if next == "f" && head.hasPrefix("false") { return "json" }
+			if next == "n" && head.hasPrefix("null") { return "json" }
+			return nil
+		case "<":
+			let lowered = trimmed.lowercased()
+			if lowered.hasPrefix("<?xml") || lowered.hasPrefix("<!doctype html") || lowered.hasPrefix("<html") {
+				return "html"
+			}
+			return nil
+		case "-":
+			// A YAML document marker. Three dashes on their own line; a Markdown
+			// front-matter fence looks the same, but that file has an extension.
+			if trimmed.hasPrefix("---\n") || trimmed == "---" { return "yaml" }
+			return nil
+		default:
+			return nil
 		}
-		return nil
 	}
 
 	static let extensionMap: [String: String] = [
@@ -138,12 +190,8 @@ public final class LanguageRegistry {
 		"package.json": "json", "tsconfig.json": "json",
 	]
 
-	private static func shebangLanguage(at url: URL) -> String? {
-		guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
-		defer { try? handle.close() }
-		guard let data = try? handle.read(upToCount: 128),
-		      let line = String(data: data, encoding: .utf8)?
-			      .split(separator: "\n", maxSplits: 1).first,
+	private static func shebangLanguage(inFirstLine text: String) -> String? {
+		guard let line = text.split(separator: "\n", maxSplits: 1).first,
 		      line.hasPrefix("#!")
 		else { return nil }
 
@@ -152,6 +200,15 @@ public final class LanguageRegistry {
 		if line.contains("node") { return "javascript" }
 		return nil
 	}
+
+	/// Every language that can be chosen by hand, for the status bar's picker.
+	public var selectableLanguages: [(id: String, name: String)] {
+		Self.knownLanguageIds
+			.map { ($0, displayName(for: $0)) }
+			.sorted { $0.1.localizedCaseInsensitiveCompare($1.1) == .orderedAscending }
+	}
+
+	static let knownLanguageIds: [String] = Array(Set(extensionMap.values)).sorted()
 
 	// MARK: - Loading
 

@@ -42,6 +42,9 @@ final class EditorAreaController: NSViewController {
 			subview.translatesAutoresizingMaskIntoConstraints = false
 		}
 
+		statusBar.onLanguageChosen = { [weak self] languageId in
+			self?.activeGroup?.setActiveLanguage(languageId)
+		}
 		statusBarHeightConstraint = statusBar.heightAnchor.constraint(
 			equalToConstant: Theme.current.scaled(24)
 		)
