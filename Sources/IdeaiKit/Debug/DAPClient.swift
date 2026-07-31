@@ -9,7 +9,13 @@ import Network
 ///
 /// Messages are JSON framed with a `Content-Length` header over the adapter's
 /// stdio, the same framing LSP uses.
-public final class DAPClient {
+///
+/// `@unchecked Sendable` because the compiler cannot see the discipline: the
+/// shared mutable state — the pending-request table and the read buffer — is
+/// guarded by `lock`, and everything else is set once during start-up before
+/// any callback can run. Process and socket callbacks arrive on background
+/// queues and need to reach it.
+public final class DAPClient: @unchecked Sendable {
 	public enum ClientError: Error, LocalizedError {
 		case notRunning
 		case timeout

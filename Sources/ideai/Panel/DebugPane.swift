@@ -61,6 +61,17 @@ final class DebugPane: NSView {
 
 	override var isFlipped: Bool { true }
 
+	private var console: NSTextView!
+	private var consoleScroll: NSScrollView!
+	private var consoleHeight: NSLayoutConstraint!
+
+	/// Appends adapter or program output, keeping the newest visible.
+	func appendOutput(_ text: String) {
+		guard !text.isEmpty else { return }
+		console.string += text
+		console.scrollToEndOfDocument(nil)
+	}
+
 	private func build() {
 		toolbar = DebugToolbar()
 		toolbar.onContinue = { [weak self] in self?.session.resume() }
@@ -113,10 +124,33 @@ final class DebugPane: NSView {
 
 		addSubview(toolbar)
 		addSubview(split)
+
+		// The adapter's own output — build errors, the program's stdout, and
+		// anything that went wrong starting it. Without somewhere to put this,
+		// a failed launch looks identical to one that simply has not stopped
+		// yet.
+		console = NSTextView()
+		console.isEditable = false
+		console.drawsBackground = true
+		console.backgroundColor = Theme.current.editorBackground
+		console.textColor = Theme.current.sidebarText
+		console.font = Theme.terminalFont(size: Theme.current.fontSize - 1)
+		console.textContainerInset = NSSize(width: 6, height: 6)
+
+		consoleScroll = NSScrollView()
+		consoleScroll.documentView = console
+		consoleScroll.hasVerticalScroller = true
+		consoleScroll.drawsBackground = true
+		consoleScroll.backgroundColor = Theme.current.editorBackground
+		consoleScroll.scrollerStyle = NSScroller.preferredScrollerStyle
+		addSubview(consoleScroll)
+		consoleScroll.translatesAutoresizingMaskIntoConstraints = false
+
 		toolbar.translatesAutoresizingMaskIntoConstraints = false
 		split.translatesAutoresizingMaskIntoConstraints = false
 
 		toolbarHeight = toolbar.heightAnchor.constraint(equalToConstant: Theme.current.scaled(30))
+		consoleHeight = consoleScroll.heightAnchor.constraint(equalToConstant: Theme.current.scaled(110))
 		NSLayoutConstraint.activate([
 			toolbar.topAnchor.constraint(equalTo: topAnchor),
 			toolbar.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -126,7 +160,12 @@ final class DebugPane: NSView {
 			split.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
 			split.leadingAnchor.constraint(equalTo: leadingAnchor),
 			split.trailingAnchor.constraint(equalTo: trailingAnchor),
-			split.bottomAnchor.constraint(equalTo: bottomAnchor),
+			split.bottomAnchor.constraint(equalTo: consoleScroll.topAnchor),
+
+			consoleScroll.leadingAnchor.constraint(equalTo: leadingAnchor),
+			consoleScroll.trailingAnchor.constraint(equalTo: trailingAnchor),
+			consoleScroll.bottomAnchor.constraint(equalTo: bottomAnchor),
+			consoleHeight,
 		])
 
 		DispatchQueue.main.async { [weak split] in

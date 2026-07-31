@@ -1141,7 +1141,6 @@ final class CodeView: NSView, NSTextInputClient {
 
 		let targetVisual = max(0, min(visibleLineCount - 1, visual + delta))
 		guard targetVisual != visual else { return }
-		let targetLine = folding.documentLine(forVisualLine: targetVisual)
 
 		// Remember the x the caret started from so a run of ups and downs keeps
 		// returning to the same column.

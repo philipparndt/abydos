@@ -304,9 +304,10 @@ struct SymbolExtractionTests {
 		guard let document = try? TextDocument(url: url) else { return [] }
 
 		// The initial parse is off-thread; the query runs behind it.
+		let held = MainQueueBox(document)
 		return await withCheckedContinuation { continuation in
 			DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-				document.symbols { continuation.resume(returning: $0) }
+				held.value.symbols { continuation.resume(returning: $0) }
 			}
 		}
 	}
@@ -404,9 +405,10 @@ struct SymbolLocalFilteringTests {
 			.appendingPathExtension((name as NSString).pathExtension)
 		try? source.write(to: url, atomically: true, encoding: .utf8)
 		guard let document = try? TextDocument(url: url) else { return [] }
+		let held = MainQueueBox(document)
 		return await withCheckedContinuation { continuation in
 			DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-				document.symbols { continuation.resume(returning: $0) }
+				held.value.symbols { continuation.resume(returning: $0) }
 			}
 		}
 	}
@@ -451,4 +453,15 @@ struct SymbolLocalFilteringTests {
 		#expect(names.contains("run"))
 		#expect(!names.contains("inner"))
 	}
+}
+
+
+/// Carries a main-thread-only value across a `@Sendable` boundary.
+///
+/// `TextDocument` is not Sendable by design — it is owned by the main thread —
+/// and these tests only ever touch it there. The box says so explicitly rather
+/// than silencing the whole module with `@preconcurrency`.
+private final class MainQueueBox<Value>: @unchecked Sendable {
+	let value: Value
+	init(_ value: Value) { self.value = value }
 }

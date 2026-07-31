@@ -246,10 +246,15 @@ final class BottomPanel: NSView {
 		pane.onNavigate = { [weak self] url, line in
 			self?.onOpenFinding?(url, line)
 		}
-		session.onOutput = { [weak self] text in
+		// Straight to the pane's console: `debugOutput` was a hook nobody ever
+		// assigned, so every build error and every line the program printed was
+		// dropped on the floor.
+		session.onOutput = { [weak self, weak pane] text in
+			pane?.appendOutput(text)
 			self?.debugOutput?(text)
 		}
-		session.onLaunchStalled = { [weak self] message in
+		session.onLaunchStalled = { [weak self, weak pane] message in
+			pane?.appendOutput("\n" + message + "\n")
 			self?.debugOutput?("\n" + message + "\n")
 			let alert = NSAlert()
 			alert.messageText = "The debugger did not start"

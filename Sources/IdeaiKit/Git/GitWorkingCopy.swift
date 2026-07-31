@@ -197,7 +197,9 @@ public enum GitWorkingCopy {
 	/// Throws away work-tree changes to `paths`. Untracked files are removed.
 	@discardableResult
 	public static func discard(paths: [String], in root: URL) async -> GitRepository.ProcessResult {
-		await GitRepository.run(["clean", "-fd", "--"] + paths, in: root)
+		// Untracked files are removed first; its result is not the one to
+		// report, since a tree with nothing untracked makes it a no-op.
+		_ = await GitRepository.run(["clean", "-fd", "--"] + paths, in: root)
 		return await GitRepository.run(["checkout", "--"] + paths, in: root)
 	}
 

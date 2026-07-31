@@ -177,7 +177,7 @@ final class EditorViewController: NSViewController {
 		// The whole group is a drop target, so a tab can be dropped over the text
 		// as well as over the strip.
 		container.registerForDraggedTypes([EditorTabDrag.pasteboardType])
-		(container as? EditorDropView)?.owner = self
+		container.owner = self
 		updateChrome()
 	}
 
