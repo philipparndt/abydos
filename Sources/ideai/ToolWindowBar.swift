@@ -199,6 +199,18 @@ final class StripButton: NSView {
 	override func mouseEntered(with event: NSEvent) { if enabled { isHovered = true } }
 	override func mouseExited(with event: NSEvent) { isHovered = false }
 
+	/// Claims the click.
+	///
+	/// Without this, `NSResponder`'s default implementation passes the press up
+	/// the responder chain, and the matching `mouseUp` is not reliably
+	/// delivered here either — so the button fires only sometimes.
+	override func mouseDown(with event: NSEvent) {
+		guard enabled else {
+			super.mouseDown(with: event)
+			return
+		}
+	}
+
 	override func mouseUp(with event: NSEvent) {
 		guard enabled, bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
 		onClick?()

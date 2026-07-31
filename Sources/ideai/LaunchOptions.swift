@@ -34,6 +34,8 @@ struct LaunchOptions {
 	var reviewUncommitted = false
 	/// Show the staging view in the sidebar before capture.
 	var showChanges = false
+	/// Switch to changes and back, to verify the sidebar tabs.
+	var sidebarCycle = false
 	/// Query for the in-file find bar.
 	var findQuery: String?
 	/// Query for project-wide search.
@@ -75,6 +77,7 @@ struct LaunchOptions {
 			case "--review":     options.startReview = true
 			case "--review-uncommitted": options.reviewUncommitted = true
 			case "--changes":    options.showChanges = true
+			case "--sidebar-cycle": options.sidebarCycle = true
 			case "--find":       options.findQuery = next()
 			case "--search":     options.searchQuery = next()
 			case "--wrap":       options.wordWrap = true

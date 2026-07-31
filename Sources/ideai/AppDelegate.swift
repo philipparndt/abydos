@@ -107,6 +107,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if options.sidebarCycle {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+				controller?.showSidebarTool(.changes)
+			}
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
+				controller?.showSidebarTool(.project)
+			}
+		}
+
 		if options.reviewUncommitted {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
 				controller?.reviewUncommittedChanges(nil)
