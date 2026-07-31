@@ -97,6 +97,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let tool = options.sidebarTool {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+				switch tool {
+				case "changes":   controller?.showSidebarTool(.changes)
+				case "branches":  controller?.showSidebarTool(.branches)
+				case "structure": controller?.showSidebarTool(.structure)
+				default:          controller?.showSidebarTool(.project)
+				}
+			}
+		}
+
 		if options.showChanges {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
 				controller?.toggleChanges(nil)
@@ -361,7 +372,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		let viewMenuItem = NSMenuItem()
 		let viewMenu = NSMenu(title: "View")
-		viewMenu.addItem(withTitle: "Toggle Project Navigator", action: #selector(MainWindowController.toggleNavigator(_:)), keyEquivalent: "1")
+		viewMenu.addItem(withTitle: "Project", action: #selector(MainWindowController.showProjectView(_:)), keyEquivalent: "1")
+		viewMenu.addItem(withTitle: "Commit", action: #selector(MainWindowController.toggleChanges(_:)), keyEquivalent: "2")
+		viewMenu.addItem(withTitle: "Branches", action: #selector(MainWindowController.toggleBranchesView(_:)), keyEquivalent: "3")
+		viewMenu.addItem(withTitle: "Structure", action: #selector(MainWindowController.toggleStructureView(_:)), keyEquivalent: "4")
+		viewMenu.addItem(.separator())
 		let terminalItem = NSMenuItem(title: "Toggle Terminal", action: #selector(MainWindowController.toggleTerminal(_:)), keyEquivalent: "j")
 		viewMenu.addItem(terminalItem)
 		let newTerminalItem = NSMenuItem(title: "New Terminal", action: #selector(MainWindowController.newTerminal(_:)), keyEquivalent: "t")

@@ -28,22 +28,34 @@ public struct DocumentSymbol: Equatable, Sendable, Identifiable {
 	public let line: Int
 	/// Byte range of the whole declaration, used to nest symbols.
 	public let byteRange: Range<Int>
+	/// Byte range of just the name, which is where the symbol actually is.
+	public let nameRange: Range<Int>
 	public var children: [DocumentSymbol]
 
-	public var id: String { "\(byteRange.lowerBound):\(name)" }
+	public var id: String { "\(nameRange.lowerBound):\(name)" }
 
 	public init(
 		name: String,
 		kind: Kind,
 		line: Int,
 		byteRange: Range<Int>,
+		nameRange: Range<Int>? = nil,
 		children: [DocumentSymbol] = []
 	) {
 		self.name = name
 		self.kind = kind
 		self.line = line
 		self.byteRange = byteRange
+		self.nameRange = nameRange ?? byteRange
 		self.children = children
+	}
+
+	/// Whether this symbol can hold others.
+	var isContainer: Bool {
+		switch kind {
+		case .type, .protocolType, .enumeration, .module: return true
+		default: return false
+		}
 	}
 }
 
@@ -80,14 +92,19 @@ public enum SymbolOutline {
 		// The same declaration can be captured by more than one pattern; keep
 		// the first, which is the most specific the grammar offered.
 		var seen = Set<String>()
-		let unique = flat.filter { seen.insert("\($0.byteRange.lowerBound):\($0.byteRange.upperBound):\($0.name)").inserted }
+		let unique = flat.filter { seen.insert("\($0.nameRange.lowerBound):\($0.name)").inserted }
 
-		// Outermost first at each position, so a parent is always reached
-		// before the children it encloses.
+		// Ordered by where the *name* is, which is where the symbol reads as
+		// being. Ties go to the container, so a type is seen before the members
+		// that share its declaration range.
 		let sorted = unique.sorted {
-			$0.byteRange.lowerBound != $1.byteRange.lowerBound
-				? $0.byteRange.lowerBound < $1.byteRange.lowerBound
-				: $0.byteRange.upperBound > $1.byteRange.upperBound
+			if $0.nameRange.lowerBound != $1.nameRange.lowerBound {
+				return $0.nameRange.lowerBound < $1.nameRange.lowerBound
+			}
+			if $0.byteRange != $1.byteRange {
+				return $0.byteRange.upperBound > $1.byteRange.upperBound
+			}
+			return $0.isContainer && !$1.isContainer
 		}
 
 		var index = 0
@@ -104,16 +121,24 @@ public enum SymbolOutline {
 
 		while index < symbols.count {
 			let symbol = symbols[index]
-			if let parent, !contains(parent, symbol.byteRange) { break }
+			if let parent, !contains(parent, symbol.nameRange) { break }
 
 			index += 1
 			var node = symbol
-			node.children = build(symbols, &index, within: symbol.byteRange)
+			// Only a container adopts. Several grammars capture a type and every
+			// one of its members with the *same* declaration range, so treating
+			// any enclosing range as a parent chains the members into each other
+			// — one property nested inside the last, all the way down.
+			if symbol.isContainer {
+				node.children = build(symbols, &index, within: symbol.byteRange)
+			}
 			result.append(node)
 		}
 		return result
 	}
 
+	/// Whether a declaration's range holds a name, not counting the name of the
+	/// declaration itself.
 	private static func contains(_ outer: Range<Int>, _ inner: Range<Int>) -> Bool {
 		outer.lowerBound <= inner.lowerBound && outer.upperBound >= inner.upperBound
 	}

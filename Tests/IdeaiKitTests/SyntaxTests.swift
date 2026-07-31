@@ -211,16 +211,28 @@ struct SymbolOutlineTests {
 		#expect(SymbolOutline.kind(forCapture: "reference.call") == nil)
 	}
 
-	private func symbol(_ name: String, _ range: Range<Int>, _ kind: DocumentSymbol.Kind = .other) -> DocumentSymbol {
-		DocumentSymbol(name: name, kind: kind, line: 0, byteRange: range)
+	/// `at` is where the name is; `spanning` is the declaration it belongs to.
+	private func symbol(
+		_ name: String,
+		at nameStart: Int,
+		spanning range: Range<Int>,
+		_ kind: DocumentSymbol.Kind = .method
+	) -> DocumentSymbol {
+		DocumentSymbol(
+			name: name,
+			kind: kind,
+			line: 0,
+			byteRange: range,
+			nameRange: nameStart..<(nameStart + name.utf8.count)
+		)
 	}
 
-	/// A method's range sits inside its type's, which is the only relationship
-	/// the tags queries express.
-	@Test func containedSymbolsBecomeChildren() {
+	/// A member's name sits inside its type's declaration, which is the only
+	/// relationship the tags queries express.
+	@Test func membersBecomeChildrenOfTheirType() {
 		let nested = SymbolOutline.nest([
-			symbol("method", 10..<20),
-			symbol("Type", 0..<100),
+			symbol("method", at: 30, spanning: 0..<100),
+			symbol("Type", at: 5, spanning: 0..<100, .type),
 		])
 		#expect(nested.map(\.name) == ["Type"])
 		#expect(nested[0].children.map(\.name) == ["method"])
@@ -228,17 +240,32 @@ struct SymbolOutlineTests {
 
 	@Test func nestingGoesMoreThanOneDeep() {
 		let nested = SymbolOutline.nest([
-			symbol("Outer", 0..<100),
-			symbol("Inner", 10..<80),
-			symbol("deep", 20..<30),
+			symbol("Outer", at: 5, spanning: 0..<100, .type),
+			symbol("Inner", at: 20, spanning: 15..<80, .type),
+			symbol("deep", at: 40, spanning: 15..<80),
 		])
 		#expect(nested[0].children[0].children.map(\.name) == ["deep"])
 	}
 
+	/// The case that produced a chain of one property inside the last: several
+	/// grammars hang every member's definition capture on the enclosing type,
+	/// so all of them share one range. Only a container may adopt.
+	@Test func membersSharingOneRangeStaySiblings() {
+		let nested = SymbolOutline.nest([
+			symbol("Type", at: 5, spanning: 0..<100, .type),
+			symbol("first", at: 20, spanning: 0..<100, .property),
+			symbol("second", at: 40, spanning: 0..<100, .property),
+			symbol("third", at: 60, spanning: 0..<100, .property),
+		])
+		#expect(nested.map(\.name) == ["Type"])
+		#expect(nested[0].children.map(\.name) == ["first", "second", "third"])
+		#expect(nested[0].children.allSatisfy { $0.children.isEmpty })
+	}
+
 	@Test func siblingsStayAtTheSameLevel() {
 		let nested = SymbolOutline.nest([
-			symbol("a", 0..<10),
-			symbol("b", 20..<30),
+			symbol("a", at: 0, spanning: 0..<10),
+			symbol("b", at: 20, spanning: 20..<30),
 		])
 		#expect(nested.map(\.name) == ["a", "b"])
 		#expect(nested.allSatisfy { $0.children.isEmpty })
@@ -246,8 +273,8 @@ struct SymbolOutlineTests {
 
 	@Test func resultsAreInSourceOrder() {
 		let nested = SymbolOutline.nest([
-			symbol("later", 50..<60),
-			symbol("earlier", 0..<10),
+			symbol("later", at: 50, spanning: 50..<60),
+			symbol("earlier", at: 0, spanning: 0..<10),
 		])
 		#expect(nested.map(\.name) == ["earlier", "later"])
 	}
@@ -256,8 +283,8 @@ struct SymbolOutlineTests {
 	/// grammar's tags file.
 	@Test func duplicateCapturesAreCollapsed() {
 		let nested = SymbolOutline.nest([
-			symbol("thing", 0..<10),
-			symbol("thing", 0..<10),
+			symbol("thing", at: 0, spanning: 0..<10),
+			symbol("thing", at: 0, spanning: 0..<10),
 		])
 		#expect(nested.count == 1)
 	}
@@ -318,6 +345,38 @@ struct SymbolExtractionTests {
 		#expect(found.first?.children.map(\.name) == ["act"])
 	}
 
+	/// The shape that came out as a chain: a type with several members, each
+	/// captured against the type's own declaration range.
+	@Test func swiftMembersAreSiblingsNotAChain() async {
+		let found = await symbols("""
+		struct Holder {
+			func first() {}
+			func second() {}
+			func third() {}
+		}
+		""", named: "x.swift")
+
+		#expect(found.map(\.name) == ["Holder"])
+		#expect(found.first?.children.map(\.name) == ["first", "second", "third"])
+		#expect(found.first?.children.allSatisfy { $0.children.isEmpty } == true)
+	}
+
+	/// Every member reported the type's line when the definition capture was
+	/// used for position.
+	@Test func membersReportTheirOwnLine() async {
+		let found = await symbols("""
+		struct Holder {
+			func first() {}
+
+			func second() {}
+		}
+		""", named: "x.swift")
+
+		let children = found.first?.children ?? []
+		#expect(children.first { $0.name == "first" }?.line == 1)
+		#expect(children.first { $0.name == "second" }?.line == 3)
+	}
+
 	@Test func reportsTheDeclarationLine() async {
 		let found = await symbols("""
 		package main
@@ -334,5 +393,62 @@ struct SymbolExtractionTests {
 
 	private func flatten(_ symbols: [DocumentSymbol]) -> [DocumentSymbol] {
 		symbols.flatMap { [$0] + flatten($0.children) }
+	}
+}
+
+/// An outline listing every local variable is one nobody can read.
+struct SymbolLocalFilteringTests {
+	private func symbols(_ source: String, named name: String) async -> [DocumentSymbol] {
+		let url = URL(fileURLWithPath: NSTemporaryDirectory())
+			.appendingPathComponent("ideai-locals-\(UUID().uuidString)")
+			.appendingPathExtension((name as NSString).pathExtension)
+		try? source.write(to: url, atomically: true, encoding: .utf8)
+		guard let document = try? TextDocument(url: url) else { return [] }
+		return await withCheckedContinuation { continuation in
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+				document.symbols { continuation.resume(returning: $0) }
+			}
+		}
+	}
+
+	private func flatten(_ symbols: [DocumentSymbol]) -> [DocumentSymbol] {
+		symbols.flatMap { [$0] + flatten($0.children) }
+	}
+
+	@Test func localsInsideAFunctionAreNotListed() async {
+		let found = await symbols("""
+		struct Thing {
+			let member = 1
+
+			func work() {
+				let local = 2
+				var another = 3
+				_ = local + another
+			}
+		}
+		""", named: "x.swift")
+
+		let names = flatten(found).map(\.name)
+		#expect(names.contains("Thing"))
+		#expect(names.contains("member"))
+		#expect(names.contains("work"))
+		#expect(!names.contains("local"))
+		#expect(!names.contains("another"))
+	}
+
+	/// Go's tags query captures top-level vars, which are members and stay.
+	@Test func packageLevelDeclarationsAreKept() async {
+		let found = await symbols("""
+		package main
+
+		func run() {
+			inner := 1
+			_ = inner
+		}
+		""", named: "x.go")
+
+		let names = flatten(found).map(\.name)
+		#expect(names.contains("run"))
+		#expect(!names.contains("inner"))
 	}
 }

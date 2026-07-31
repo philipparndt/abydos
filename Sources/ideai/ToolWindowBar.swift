@@ -1,5 +1,10 @@
 import AppKit
 
+/// Which tool window the sidebar is showing.
+enum SidebarToolKind {
+	case project, changes, branches, structure
+}
+
 /// The narrow icon strip down the left edge, as in the reference screenshot.
 ///
 /// Only the project button is wired up; the rest are placeholders for tool
@@ -14,11 +19,15 @@ final class ToolWindowBar: NSView {
 	var onReviewBranch: (() -> Void)?
 	var onReviewUncommitted: (() -> Void)?
 	var onToggleChanges: (() -> Void)?
+	var onToggleBranches: (() -> Void)?
+	var onToggleStructure: (() -> Void)?
 
 	private var projectButton: StripButton!
 	private var terminalButton: StripButton!
 	private var reviewButton: StripButton!
 	private var commitButton: StripButton!
+	private var branchesButton: StripButton!
+	private var structureButton: StripButton!
 
 	override init(frame frameRect: NSRect) {
 		super.init(frame: frameRect)
@@ -35,9 +44,11 @@ final class ToolWindowBar: NSView {
 	///
 	/// Nothing is highlighted when the sidebar is closed, so the strip says
 	/// what is on screen rather than what was last picked.
-	func setSidebarSelection(visible: Bool, showingChanges: Bool) {
-		projectButton.isSelected = visible && !showingChanges
-		commitButton.isSelected = visible && showingChanges
+	func setSidebarSelection(visible: Bool, tool: SidebarToolKind) {
+		projectButton.isSelected = visible && tool == .project
+		commitButton.isSelected = visible && tool == .changes
+		branchesButton.isSelected = visible && tool == .branches
+		structureButton.isSelected = visible && tool == .structure
 	}
 
 	private func showReviewMenu() {
@@ -73,10 +84,12 @@ final class ToolWindowBar: NSView {
 
 		commitButton = StripButton(symbol: "arrow.up.circle", tooltip: "Commit (⌘2)", enabled: true)
 		commitButton.onClick = { [weak self] in self?.onToggleChanges?() }
-		let branches = StripButton(symbol: "arrow.trianglehead.branch", tooltip: "Git — not implemented", enabled: false)
-		let structure = StripButton(symbol: "list.bullet.indent", tooltip: "Structure — not implemented", enabled: false)
+		branchesButton = StripButton(symbol: "arrow.trianglehead.branch", tooltip: "Branches (⌘3)", enabled: true)
+		branchesButton.onClick = { [weak self] in self?.onToggleBranches?() }
+		structureButton = StripButton(symbol: "list.bullet.indent", tooltip: "Structure (⌘4)", enabled: true)
+		structureButton.onClick = { [weak self] in self?.onToggleStructure?() }
 
-		let stack = NSStackView(views: [projectButton, commitButton, branches, structure])
+		let stack = NSStackView(views: [projectButton, commitButton, branchesButton, structureButton])
 		stack.orientation = .vertical
 		stack.spacing = 4
 		stack.alignment = .centerX

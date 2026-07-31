@@ -95,6 +95,7 @@ final class EditorViewController: NSViewController {
 	var tabCount: Int { tabs.count }
 	var activeTabIndex: Int? { activeIndex }
 	var activeTabURL: URL? { activeTab?.url }
+	var activeDocument: TextDocument? { activeTab?.document }
 
 	/// Breakpoints to draw, per absolute file path, with verification state.
 	private var breakpointsByFile: [String: [Int: Bool]] = [:]

@@ -18,7 +18,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 	private var panelHeight: CGFloat = 260
 	private var navigatorContainer: NSView!
 	private var changesPane: ChangesPane?
-	private var changesPaneTop: NSLayoutConstraint?
+	private var structurePane: StructurePane?
+	private var sidebarToolView: NSView?
+	private var sidebarToolTop: NSLayoutConstraint?
+	private(set) var currentSidebarTool: SidebarToolKind = .project
+	/// Height the titlebar covers, applied to sidebar panes that do not inset
+	/// themselves.
+	private var sidebarTopInset: CGFloat = 0
 	private var projectPill: ProjectPillButton!
 	private var branchPill: BranchPillButton!
 	private var titlebarContainer: NSView?
@@ -83,6 +89,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		toolStrip.onReviewBranch = { [weak self] in self?.reviewBranch(nil) }
 		toolStrip.onReviewUncommitted = { [weak self] in self?.reviewUncommittedChanges(nil) }
 		toolStrip.onToggleChanges = { [weak self] in self?.showSidebarTool(.changes) }
+		toolStrip.onToggleBranches = { [weak self] in self?.showSidebarTool(.branches) }
+		toolStrip.onToggleStructure = { [weak self] in self?.showSidebarTool(.structure) }
 
 		navigatorContainer = ColoredView(color: Theme.current.sidebarBackground)
 		navigatorContainer.addSubview(navigator.view)
@@ -153,6 +161,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		}
 		// Switching tabs moves the tree's selection to match.
 		editor.onActiveFileChanged = { [weak self] url in
+			// The outline belongs to the file in front, so it follows the tabs.
+			self?.refreshStructure()
 			guard let url else { return }
 			self?.navigator.selectWithoutOpening(url: url)
 		}
@@ -216,7 +226,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		let inset = max(0, contentView.bounds.height - layoutRect.height - layoutRect.origin.y)
 
 		navigator.setTopInset(inset)
-		changesPaneTop?.constant = inset
+		sidebarTopInset = inset
+		sidebarToolTop?.constant = inset
 		editor.setTopInset(inset)
 		toolStrip.setTopInset(inset)
 	}
@@ -625,24 +636,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		editor.previewDropZoneForTesting(zone)
 	}
 
-	/// Which tool window the sidebar is showing.
-	enum SidebarTool { case project, changes }
-
-	private var currentSidebarTool: SidebarTool {
-		changesPane == nil ? .project : .changes
-	}
-
 	/// Selects a sidebar tool window, the way a tab strip does.
 	///
 	/// The strip buttons are tabs, not independent toggles: picking one shows
-	/// it, whatever was showing before. They used to be wired to "toggle the
-	/// sidebar", so clicking Project while the staging view was up collapsed
-	/// the sidebar instead of switching to the tree — and getting back meant
-	/// pressing the *other* button twice.
-	///
-	/// Clicking the tool that is already showing closes the sidebar, which is
-	/// what IDEA does and the only way to reclaim the space.
-	func showSidebarTool(_ tool: SidebarTool) {
+	/// it, whatever was showing before. Clicking the tool that is already
+	/// showing closes the sidebar, which is what IDEA does and the only way to
+	/// reclaim the space.
+	func showSidebarTool(_ tool: SidebarToolKind) {
 		let isCollapsed = navigatorContainer.isHidden
 
 		if !isCollapsed, tool == currentSidebarTool {
@@ -650,64 +650,101 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 			return
 		}
 
-		switch tool {
-		case .project: showNavigatorInSidebar()
-		case .changes: showChangesInSidebar()
-		}
-
+		install(tool: tool)
 		if isCollapsed { toggleNavigator(nil) }
-		toolStrip.setSidebarSelection(visible: true, showingChanges: tool == .changes)
+		toolStrip.setSidebarSelection(visible: true, tool: tool)
 	}
 
-	/// Kept for the menu item and the screenshot harness.
-	@objc func toggleChanges(_ sender: Any?) {
-		showSidebarTool(.changes)
-	}
+	/// Puts a tool's view in the sidebar, replacing whatever was there.
+	///
+	/// The panes are built on demand rather than kept alive: each watches the
+	/// work tree or the open file, and three of them doing that while one is
+	/// visible is work nobody asked for.
+	private func install(tool: SidebarToolKind) {
+		guard currentSidebarTool != tool || sidebarToolView == nil else { return }
 
-	private func showChangesInSidebar() {
-		guard let project, project.git != nil else { return }
-
-		let pane = ChangesPane(root: project.root)
-		// The titlebar is drawn over the content view, so the sidebar's own
-		// content is inset by the same amount the navigator is.
-		let inset = navigator.view.frame.minY
-		pane.onSelectChange = { [weak self] change in
-			self?.showDiff(for: change)
-		}
-		pane.onWorkingCopyChanged = { [weak self] in
-			self?.navigator.refreshGitStatus()
-		}
-
+		sidebarToolView?.removeFromSuperview()
+		sidebarToolView = nil
+		sidebarToolTop = nil
+		changesPane = nil
+		structurePane = nil
 		navigator.view.removeFromSuperview()
-		pane.translatesAutoresizingMaskIntoConstraints = false
-		navigatorContainer.addSubview(pane)
-		let paneTop = pane.topAnchor.constraint(equalTo: navigatorContainer.topAnchor, constant: inset)
+
+		currentSidebarTool = tool
+		let view: NSView
+
+		switch tool {
+		case .project:
+			view = navigator.view
+		case .changes:
+			guard let project, project.git != nil else { return }
+			let pane = ChangesPane(root: project.root)
+			pane.onSelectChange = { [weak self] change in self?.showDiff(for: change) }
+			pane.onWorkingCopyChanged = { [weak self] in self?.navigator.refreshGitStatus() }
+			changesPane = pane
+			view = pane
+		case .branches:
+			guard let project, project.git != nil else { return }
+			let pane = BranchesPane(root: project.root)
+			pane.onRepositoryChanged = { [weak self] in
+				guard let self else { return }
+				self.navigator.refreshGitStatus()
+				// The titlebar shows the branch, so a checkout has to reach it.
+				Task { @MainActor in
+					let branch = await self.project?.git?.currentBranch()
+					self.branchPill?.setBranch(branch)
+					self.layoutTitlebarPills()
+				}
+			}
+			view = pane
+		case .structure:
+			let pane = StructurePane()
+			pane.onSelectSymbol = { [weak self] line in
+				guard let url = self?.editor.activeGroup.activeTabURL else { return }
+				self?.editor.open(fileURL: url, atLine: line + 1)
+			}
+			structurePane = pane
+			view = pane
+			refreshStructure()
+		}
+
+		view.translatesAutoresizingMaskIntoConstraints = false
+		navigatorContainer.addSubview(view)
+
+		// The navigator insets itself for the titlebar; the other panes are
+		// plain views, so the container does it for them.
+		let inset = tool == .project ? 0 : sidebarTopInset
+		let top = view.topAnchor.constraint(equalTo: navigatorContainer.topAnchor, constant: inset)
 		NSLayoutConstraint.activate([
-			paneTop,
-			pane.bottomAnchor.constraint(equalTo: navigatorContainer.bottomAnchor),
-			pane.leadingAnchor.constraint(equalTo: navigatorContainer.leadingAnchor),
-			pane.trailingAnchor.constraint(equalTo: navigatorContainer.trailingAnchor),
+			top,
+			view.bottomAnchor.constraint(equalTo: navigatorContainer.bottomAnchor),
+			view.leadingAnchor.constraint(equalTo: navigatorContainer.leadingAnchor),
+			view.trailingAnchor.constraint(equalTo: navigatorContainer.trailingAnchor),
 		])
 
-		changesPane = pane
-		changesPaneTop = paneTop
+		sidebarToolView = view
+		sidebarToolTop = tool == .project ? nil : top
 		updateTopInsets()
 	}
 
-	private func showNavigatorInSidebar() {
-		changesPane?.removeFromSuperview()
-		changesPane = nil
-		changesPaneTop = nil
-
-		navigator.view.translatesAutoresizingMaskIntoConstraints = false
-		navigatorContainer.addSubview(navigator.view)
-		NSLayoutConstraint.activate([
-			navigator.view.topAnchor.constraint(equalTo: navigatorContainer.topAnchor),
-			navigator.view.bottomAnchor.constraint(equalTo: navigatorContainer.bottomAnchor),
-			navigator.view.leadingAnchor.constraint(equalTo: navigatorContainer.leadingAnchor),
-			navigator.view.trailingAnchor.constraint(equalTo: navigatorContainer.trailingAnchor),
-		])
+	/// Hands the active file's outline to the structure view.
+	func refreshStructure() {
+		guard let pane = structurePane else { return }
+		guard let document = editor.activeGroup.activeDocument else {
+			pane.setSymbols([], fileName: nil)
+			return
+		}
+		let name = editor.activeGroup.activeTabURL?.lastPathComponent
+		document.symbols { [weak pane] symbols in
+			pane?.setSymbols(symbols, fileName: name)
+		}
 	}
+
+	/// Kept for the menu items and the screenshot harness.
+	@objc func showProjectView(_ sender: Any?) { showSidebarTool(.project) }
+	@objc func toggleChanges(_ sender: Any?) { showSidebarTool(.changes) }
+	@objc func toggleBranchesView(_ sender: Any?) { showSidebarTool(.branches) }
+	@objc func toggleStructureView(_ sender: Any?) { showSidebarTool(.structure) }
 
 	/// Moves the selected lines across the index, in whichever direction the
 	/// diff's side implies.
@@ -840,10 +877,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		}
 		// Selection follows which tool is showing, not merely that one is: the
 		// strip is a tab strip now.
-		toolStrip.setSidebarSelection(
-			visible: collapsed,
-			showingChanges: currentSidebarTool == .changes
-		)
+		toolStrip.setSidebarSelection(visible: collapsed, tool: currentSidebarTool)
 		splitView.adjustSubviews()
 	}
 

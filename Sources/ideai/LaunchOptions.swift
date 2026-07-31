@@ -38,6 +38,8 @@ struct LaunchOptions {
 	var sidebarCycle = false
 	/// Toggle a breakpoint on this 1-based line before capture.
 	var breakpointLine: Int?
+	/// Show a sidebar tool before capture: project | changes | branches | structure.
+	var sidebarTool: String?
 	/// Query for the in-file find bar.
 	var findQuery: String?
 	/// Query for project-wide search.
@@ -79,6 +81,7 @@ struct LaunchOptions {
 			case "--review":     options.startReview = true
 			case "--review-uncommitted": options.reviewUncommitted = true
 			case "--changes":    options.showChanges = true
+			case "--sidebar":    options.sidebarTool = next()
 			case "--sidebar-cycle": options.sidebarCycle = true
 			case "--breakpoint": options.breakpointLine = next().flatMap(Int.init)
 			case "--find":       options.findQuery = next()

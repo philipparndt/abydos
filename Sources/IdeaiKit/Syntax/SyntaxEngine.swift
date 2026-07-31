@@ -189,6 +189,8 @@ public final class SyntaxEngine {
 		while let match = cursor.next() {
 			var definition: (kind: DocumentSymbol.Kind, range: Range<Int>)?
 			var name: String?
+			var nameRange: Range<Int>?
+			var nameNode: Node?
 
 			for capture in match.captures {
 				guard let captureName = capture.name, !captureName.isEmpty else { continue }
@@ -200,21 +202,64 @@ public final class SyntaxEngine {
 
 				if captureName == "name" {
 					name = rope.string(in: range)
+					nameRange = range
+					nameNode = capture.node
 				} else if let kind = SymbolOutline.kind(forCapture: captureName) {
 					definition = (kind, range)
 				}
 			}
 
-			guard let definition, let name, !name.isEmpty else { continue }
+			guard let definition, let name, let nameRange, !name.isEmpty else { continue }
+
+			// A `let` inside a function body is a local, not a member. Grammars
+			// capture both the same way, so the tree is what tells them apart —
+			// and an outline listing every local is one nobody can read.
+			if definition.kind == .property || definition.kind == .constant,
+			   let nameNode, isInsideFunctionBody(nameNode) {
+				continue
+			}
+
 			flat.append(DocumentSymbol(
 				name: name,
 				kind: definition.kind,
-				line: rope.line(atByteOffset: definition.range.lowerBound),
-				byteRange: definition.range
+				// The name's line, not the definition's. Several grammars —
+				// Swift's among them — hang `@definition.method` on the
+				// *enclosing* type, so the definition range starts at the type
+				// and every member would report the same line.
+				line: rope.line(atByteOffset: nameRange.lowerBound),
+				byteRange: definition.range,
+				nameRange: nameRange
 			))
 		}
 
 		return SymbolOutline.nest(flat)
+	}
+
+	/// Whether a node sits inside a callable's body rather than a type's.
+	///
+	/// Walks up until it reaches something that holds declarations: a function
+	/// on the way up means the node is a local.
+	private func isInsideFunctionBody(_ node: Node) -> Bool {
+		var current = node.parent
+		while let candidate = current {
+			guard let type = candidate.nodeType else {
+				current = candidate.parent
+				continue
+			}
+
+			// Reached a type body first, so it is a member.
+			if type.contains("class_body") || type.contains("enum_class_body")
+				|| type.contains("protocol_body") || type.contains("struct_type")
+				|| type.contains("declaration_list") || type.contains("field_declaration_list") {
+				return false
+			}
+			if type.contains("function") || type.contains("lambda")
+				|| type.contains("closure") || type.contains("method") {
+				return true
+			}
+			current = candidate.parent
+		}
+		return false
 	}
 
 	public func foldRanges(rope: Rope) -> [FoldRange] {
