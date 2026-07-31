@@ -37,16 +37,20 @@ public final class FileSystemWatcher {
 			copyDescription: nil
 		)
 
-		let callback: FSEventStreamCallback = { _, info, count, eventPaths, _, _ in
+		let callback: FSEventStreamCallback = { _, info, count, eventPaths, eventFlags, _ in
 			guard let info else { return }
 			let watcher = Unmanaged<FileSystemWatcher>.fromOpaque(info).takeUnretainedValue()
 			guard let paths = unsafeBitCast(eventPaths, to: NSArray.self) as? [String] else { return }
-			watcher.handle(paths: Array(paths.prefix(count)))
+			let flags = (0..<count).map { eventFlags[$0] }
+			watcher.handle(paths: Array(paths.prefix(count)), flags: flags)
 		}
 
 		let flags = UInt32(
 			kFSEventStreamCreateFlagUseCFTypes |
 			kFSEventStreamCreateFlagFileEvents |
+			// Without this, moving or renaming the project directory itself goes
+			// unreported and the tree keeps showing a path that no longer exists.
+			kFSEventStreamCreateFlagWatchRoot |
 			kFSEventStreamCreateFlagNoDefer
 		)
 
@@ -73,13 +77,29 @@ public final class FileSystemWatcher {
 		self.stream = nil
 	}
 
-	private func handle(paths: [String]) {
+	private func handle(paths: [String], flags: [FSEventStreamEventFlags]) {
 		// Report parent directories: what the tree needs to know is which
 		// directory listings became stale, not which individual files moved.
 		var directories = Set<URL>()
-		for path in paths {
+		for (index, path) in paths.enumerated() {
 			let url = URL(fileURLWithPath: path)
 			if path.contains("/.git/") || url.lastPathComponent == ".DS_Store" { continue }
+			let flag = index < flags.count ? flags[index] : 0
+
+			// A burst too large to describe file by file — a checkout, a build,
+			// an install — arrives as "this directory changed somehow, look
+			// again". Reporting the parent would miss everything underneath.
+			if flag & UInt32(kFSEventStreamEventFlagMustScanSubDirs) != 0 {
+				directories.insert(url.standardizedFileURL)
+				continue
+			}
+
+			// The project directory itself moved; the whole tree is suspect.
+			if flag & UInt32(kFSEventStreamEventFlagRootChanged) != 0 {
+				directories.insert(root)
+				continue
+			}
+
 			directories.insert(url.deletingLastPathComponent().standardizedFileURL)
 		}
 		guard !directories.isEmpty else { return }

@@ -1208,6 +1208,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 	/// written while the app was in the background on every volume.
 	func windowDidBecomeKey(_ notification: Notification) {
 		editor.reloadExternallyChangedFiles()
+		// The tree needs the same treatment: an agent or a checkout that adds
+		// files while the app is in the background should not leave the
+		// navigator showing yesterday's directory listing.
+		navigator.refreshFromDisk()
 	}
 
 	func windowWillClose(_ notification: Notification) {

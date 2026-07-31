@@ -263,6 +263,15 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// a moment later — so the selection has to wait for the node to exist.
 	private var pendingReveal: URL?
 
+	/// Re-reads every directory the tree has loaded.
+	///
+	/// Called when the window comes forward, since the watcher is not the only
+	/// way the tree goes stale — the app may have been asleep, or the events
+	/// may have been coalesced away.
+	func refreshFromDisk() {
+		reloadTree()
+	}
+
 	private func reloadTree() {
 		guard let rootNode else { return }
 		let expanded = expandedPaths()
