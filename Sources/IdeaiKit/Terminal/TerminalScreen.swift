@@ -95,6 +95,13 @@ public struct TerminalScreen: Sendable {
 	/// Completed lines that scrolled off the top.
 	public private(set) var scrollback: [TerminalLine] = []
 
+	/// Lines dropped off the top of scrollback since the screen was created.
+	///
+	/// Absolute row indices are stable while the buffer grows, but every
+	/// discarded line shifts them, and anything holding one — a selection —
+	/// needs to know by how much.
+	public private(set) var discardedLineCount = 0
+
 	public var maximumScrollback = 5_000
 
 	public init(rows: Int, columns: Int) {
@@ -139,7 +146,9 @@ public struct TerminalScreen: Sendable {
 		if top == 0 && bottom == rows - 1 {
 			scrollback.append(retired)
 			if scrollback.count > maximumScrollback {
-				scrollback.removeFirst(scrollback.count - maximumScrollback)
+				let dropped = scrollback.count - maximumScrollback
+				scrollback.removeFirst(dropped)
+				discardedLineCount += dropped
 			}
 		}
 
@@ -223,7 +232,9 @@ public struct TerminalScreen: Sendable {
 				scrollback.append(contentsOf: lines.prefix(fromTop))
 				lines.removeFirst(fromTop)
 				if scrollback.count > maximumScrollback {
-					scrollback.removeFirst(scrollback.count - maximumScrollback)
+					let dropped = scrollback.count - maximumScrollback
+				scrollback.removeFirst(dropped)
+				discardedLineCount += dropped
 				}
 				cursorDelta = -fromTop
 			}
@@ -245,6 +256,37 @@ public struct TerminalScreen: Sendable {
 
 	/// Plain text of the whole buffer, used for copy and for feeding an agent's
 	/// output to a parser.
+	/// The last few lines that say something.
+	///
+	/// Used to show that a long-running agent is alive without making the user
+	/// switch to its terminal: a status message it chooses to send is sparse,
+	/// but its output moves continuously.
+	///
+	/// Lines made only of frame — box drawing, rules, a bare prompt character —
+	/// are skipped. A full-screen TUI keeps its input box pinned to the bottom,
+	/// so the last non-blank lines are its borders, and a tail of those tells
+	/// you nothing about whether anything is happening.
+	public func recentLines(_ count: Int) -> [String] {
+		guard count > 0 else { return [] }
+		var result: [String] = []
+		var index = totalLineCount - 1
+		while index >= 0, result.count < count {
+			if let line = line(at: index) {
+				let text = line.text.trimmingCharacters(in: .whitespaces)
+				if Self.isSubstantive(text) { result.append(text) }
+			}
+			index -= 1
+		}
+		return result.reversed()
+	}
+
+	/// Whether a line carries words rather than decoration.
+	static func isSubstantive(_ text: String) -> Bool {
+		text.unicodeScalars.contains {
+			CharacterSet.alphanumerics.contains($0)
+		}
+	}
+
 	public func allText() -> String {
 		(scrollback + lines).map(\.text).joined(separator: "\n")
 	}

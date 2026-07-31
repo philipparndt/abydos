@@ -13,6 +13,9 @@ final class TerminalView: NSView, NSTextInputClient {
 
 	/// Fired when the process exits, so the panel can label the tab.
 	var onProcessExit: ((Int32) -> Void)?
+	/// Fired when output arrives, for views that summarise a session they are
+	/// not showing.
+	var onOutput: (() -> Void)?
 	var onTitleChange: ((String) -> Void)?
 
 	private var font: NSFont = .monospacedSystemFont(ofSize: 12, weight: .regular)
@@ -27,6 +30,7 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// Text selected with the mouse, in absolute rows. Nil when nothing is.
 	private var selection: TerminalSelection?
 	private var isSelecting = false
+	private var lastDiscardedLineCount = 0
 	private var cursorVisible = true
 	private var cursorTimer: Timer?
 
@@ -53,7 +57,9 @@ final class TerminalView: NSView, NSTextInputClient {
 		updateMetrics()
 
 		emulator.onUpdate = { [weak self] in
+			self?.realignSelectionForDiscardedLines()
 			self?.scheduleRedraw()
+			self?.onOutput?()
 		}
 		// Replies such as the cursor-position report must go back to the process,
 		// otherwise shells that ask for it hang.
@@ -193,6 +199,9 @@ final class TerminalView: NSView, NSTextInputClient {
 		let rows = max(4, Int(floor(usableHeight / max(1, cellHeight))))
 
 		guard rows != emulator.screen.rows || columns != emulator.screen.columns else { return }
+		// A resize reflows what the absolute rows mean, and there is no honest
+		// mapping from the old grid to the new one.
+		setSelection(nil)
 		emulator.resize(rows: rows, columns: columns)
 		pty.resize(rows: rows, columns: columns)
 		updateFrameSize()
@@ -284,10 +293,10 @@ final class TerminalView: NSView, NSTextInputClient {
 
 			// Separators are filled shapes in the run's foreground colour, sized to
 			// the cell exactly — which is what removes the seam and the height
-			// mismatch a font glyph leaves behind.
-			drawSeparators(of: line, from: column, to: end, attributes: attributes, y: y)
-
+			// mismatch a font glyph leaves behind. Hidden means hidden, so they
+			// are skipped along with the text.
 			if !attributes.hidden {
+				drawSeparators(of: line, from: column, to: end, attributes: attributes, y: y)
 				drawText(of: line, from: column, to: end, attributes: attributes, y: y)
 			}
 
@@ -541,9 +550,23 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// ends halfway across a cell includes the half it covers — which is what
 	/// makes selecting up to the last character possible.
 	private func selectionPosition(for event: NSEvent) -> TerminalPosition {
+		position(for: event, roundingToBoundary: true)
+	}
+
+	/// The character under the pointer, as opposed to the nearest gap.
+	///
+	/// A double-click on the right half of a cell rounds up to the next
+	/// boundary, which as a character index is the cell after the one that was
+	/// clicked — so the word picked was the one to its right.
+	private func characterPosition(for event: NSEvent) -> TerminalPosition {
+		position(for: event, roundingToBoundary: false)
+	}
+
+	private func position(for event: NSEvent, roundingToBoundary: Bool) -> TerminalPosition {
 		let point = convert(event.locationInWindow, from: nil)
 		let row = Int(floor((point.y - Self.verticalInset) / max(1, cellHeight)))
-		let column = Int(((point.x - Self.horizontalInset) / max(1, cellWidth)).rounded())
+		let exact = (point.x - Self.horizontalInset) / max(1, cellWidth)
+		let column = Int(roundingToBoundary ? exact.rounded() : exact.rounded(.down))
 		let lastRow = max(0, emulator.screen.totalLineCount - 1)
 		return TerminalPosition(
 			row: max(0, min(row, lastRow)),
@@ -555,6 +578,30 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// the events instead — unless Shift is held, the usual escape hatch.
 	private var mouseSelects: Bool {
 		emulator.mouseTracking == .off
+	}
+
+	/// Follows the selection when lines fall out of the top of scrollback.
+	///
+	/// Absolute rows are stable while the buffer only grows; once it is full,
+	/// every discarded line renumbers everything above the selection, and a
+	/// selection left alone would drift down the screen on its own.
+	private func realignSelectionForDiscardedLines() {
+		let discarded = emulator.screen.discardedLineCount
+		defer { lastDiscardedLineCount = discarded }
+
+		let shift = discarded - lastDiscardedLineCount
+		guard shift > 0, var updated = selection else { return }
+
+		updated.anchor.row -= shift
+		updated.head.row -= shift
+		// Scrolled off entirely; there is nothing left to keep highlighted.
+		guard max(updated.anchor.row, updated.head.row) >= 0 else {
+			setSelection(nil)
+			return
+		}
+		updated.anchor.row = max(0, updated.anchor.row)
+		updated.head.row = max(0, updated.head.row)
+		setSelection(updated)
 	}
 
 	private func setSelection(_ new: TerminalSelection?) {
@@ -613,13 +660,14 @@ final class TerminalView: NSView, NSTextInputClient {
 			return
 		}
 
-		let position = selectionPosition(for: event)
 		switch event.clickCount {
 		case 2:
+			let position = characterPosition(for: event)
 			setSelection(emulator.screen.wordSelection(atRow: position.row, column: position.column))
 		case 3...:
-			setSelection(emulator.screen.lineSelection(atRow: position.row))
+			setSelection(emulator.screen.lineSelection(atRow: characterPosition(for: event).row))
 		default:
+			let position = selectionPosition(for: event)
 			isSelecting = true
 			setSelection(TerminalSelection(anchor: position, head: position))
 		}
@@ -665,6 +713,9 @@ final class TerminalView: NSView, NSTextInputClient {
 
 	private func makeContextMenu() -> NSMenu {
 		let menu = NSMenu()
+		// AppKit recomputes isEnabled from the responder chain by default, which
+		// discards whatever the items were built with.
+		menu.autoenablesItems = false
 
 		func item(_ title: String, _ selector: Selector, enabled: Bool = true) -> NSMenuItem {
 			let item = NSMenuItem(title: title, action: selector, keyEquivalent: "")
@@ -754,6 +805,11 @@ final class TerminalView: NSView, NSTextInputClient {
 	}
 
 	var isProcessRunning: Bool { pty.isRunning }
+
+	/// The last few non-blank lines, for a progress summary elsewhere.
+	func recentOutput(_ count: Int) -> [String] {
+		emulator.screen.recentLines(count)
+	}
 
 	/// Writes text as though typed. Used to drive a session programmatically —
 	/// the same entry point an agent prompt will take.

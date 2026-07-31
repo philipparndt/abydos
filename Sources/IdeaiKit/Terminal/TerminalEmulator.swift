@@ -338,7 +338,7 @@ public final class TerminalEmulator {
 	/// everything", so a single styled run wiped all attributes.
 	private var csiComponents: [(value: Int, subparameters: [Int])] {
 		parameterBuffer
-			.drop(while: { $0 == "?" || $0 == ">" || $0 == "!" })
+			.drop(while: { Self.privateIntroducers.contains($0) || $0 == "!" })
 			.split(separator: ";", omittingEmptySubsequences: false)
 			.map { component in
 				let pieces = component.split(separator: ":", omittingEmptySubsequences: false)
@@ -351,10 +351,15 @@ public final class TerminalEmulator {
 		csiComponents.map(\.value)
 	}
 
-	/// Whether a parameter byte marks the sequence as private rather than ANSI.
+	/// Parameter bytes that mark a sequence as private rather than ANSI.
+	///
+	/// The same set the parameter parser strips, so a sequence cannot be
+	/// recognised as private by one and read as ANSI by the other.
+	static let privateIntroducers: Set<Character> = ["?", ">", "<", "="]
+
 	private func isPrivateIntroducer(_ character: Character?) -> Bool {
 		guard let character else { return false }
-		return character == "?" || character == ">" || character == "<" || character == "="
+		return Self.privateIntroducers.contains(character)
 	}
 
 	private func parameter(_ index: Int, default fallback: Int) -> Int {
@@ -370,7 +375,11 @@ public final class TerminalEmulator {
 		// in the same byte, not a variant of the standard one. `CSI > 4 ; 2 m`
 		// is XTMODKEYS, which Claude Code sends on startup — read as SGR it says
 		// "underline, dim", and every character after it came out underlined.
-		if isPrivateIntroducer(parameterBuffer.first), final == "m" { return }
+		//
+		// Only the handlers that understand an introducer see one: DEC modes and
+		// device attributes. Everything else is ignored rather than run as its
+		// ANSI namesake.
+		if isPrivateIntroducer(parameterBuffer.first), !"hlc".contains(final) { return }
 
 		switch final {
 		case "A": moveCursor(row: cursorRow - parameter(0, default: 1), column: cursorColumn)
@@ -421,6 +430,11 @@ public final class TerminalEmulator {
 			if parameterBuffer.hasPrefix(">") {
 				// Secondary DA: terminal type 0, firmware version, cartridge 0.
 				onResponse?("\u{1B}[>0;95;0c")
+			} else if isPrivateIntroducer(parameterBuffer.first) {
+				// Tertiary (`CSI = c`) and anything else private: a primary reply
+				// is not an answer to the question that was asked, and an
+				// unrecognised reply ends up echoed by the shell.
+				break
 			} else {
 				// Primary DA: VT220 with 132 columns, ANSI colour.
 				onResponse?("\u{1B}[?62;1;6;22c")
@@ -642,8 +656,11 @@ public final class TerminalEmulator {
 			return
 		}
 		if byte == 0x1B {
-			// Expect the backslash of ST; finishing here is close enough.
+			// The backslash of ST follows. Handing it back to the escape handler
+			// consumes it; finishing straight to ground left it to be printed as
+			// ordinary text.
 			finishOSC()
+			state = .escape
 			return
 		}
 		oscBytes.append(byte)

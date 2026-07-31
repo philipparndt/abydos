@@ -45,10 +45,13 @@ public struct TerminalSelection: Equatable, Sendable {
 		let (start, end) = ordered
 		guard row >= start.row, row <= end.row, !isEmpty else { return nil }
 
-		let from = row == start.row ? start.column : 0
-		let to = row == end.row ? end.column : columns
+		// Clamped before the range is formed, not after: a selection made while
+		// the grid was wider outlives the resize, and `from > columns` would
+		// otherwise build a range with its bounds the wrong way round and trap.
+		let from = min(max(0, row == start.row ? start.column : 0), columns)
+		let to = min(max(0, row == end.row ? end.column : columns), columns)
 		guard from < to else { return nil }
-		return max(0, from)..<min(columns, to)
+		return from..<to
 	}
 }
 

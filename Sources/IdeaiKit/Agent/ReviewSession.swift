@@ -201,6 +201,42 @@ public final class ReviewSession {
 		return added
 	}
 
+	// MARK: - Sharing findings
+
+	/// Findings as plain text, for the clipboard.
+	///
+	/// Formatted as `path:line` so the paste is useful in another tool: an
+	/// editor, a terminal, or an issue — all of which know how to follow it.
+	public func clipboardText(for findings: [ReviewFinding]) -> String {
+		findings.map { finding in
+			var block = "[\(finding.severity.rawValue)] \(finding.file):\(finding.line) — \(finding.title)"
+			if !finding.detail.isEmpty { block += "\n\(finding.detail)" }
+			if let suggestion = finding.suggestion, !suggestion.isEmpty {
+				block += "\n\nSuggested:\n\(suggestion)"
+			}
+			return block
+		}.joined(separator: "\n\n")
+	}
+
+	/// A message asking the agent about specific findings.
+	///
+	/// Sent into the same session that produced them, so the agent still has the
+	/// context it built while reviewing — which is the reason the session is kept
+	/// alive rather than being asked again from scratch.
+	///
+	/// Written as one line: the terminal treats a newline as "send", so a prompt
+	/// with real line breaks would arrive as several half-finished messages.
+	public func discussionPrompt(for findings: [ReviewFinding], visual: Bool) -> String {
+		let list = findings.map { "\($0.file):\($0.line) (\($0.title))" }.joined(separator: ", ")
+		let subject = findings.count == 1 ? "this finding" : "these findings"
+
+		if visual {
+			return "Explain \(subject) visually: \(list). Draw the flow that produces the problem — a mermaid diagram, or ASCII if that fits better. Show the path through the code, mark where it goes wrong, then say in a sentence or two what the diagram shows. Do not change any files."
+		}
+
+		return "Let's talk about \(subject): \(list). Explain what is actually wrong, how it fails in practice, and what you would change. Do not edit anything yet — I want to decide first."
+	}
+
 	public func reset() {
 		findings.removeAll()
 		statusMessage = nil

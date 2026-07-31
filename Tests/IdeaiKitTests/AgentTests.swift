@@ -283,3 +283,75 @@ private final class Received: @unchecked Sendable {
 private final class Counter {
 	var value = 0
 }
+
+/// What the findings list hands to the clipboard and to the live session.
+struct ReviewSharingTests {
+	private func makeSession() -> ReviewSession {
+		let session = ReviewSession(projectRoot: URL(fileURLWithPath: "/tmp/project"))
+		session.add(rawFindings: [
+			["file": "a.swift", "line": 12, "severity": "error", "title": "Boom", "detail": "why it fails"],
+			["file": "b.swift", "line": 3, "severity": "warning", "title": "Risky", "detail": ""],
+		])
+		return session
+	}
+
+	/// Formatted as path:line so the paste is useful wherever it lands.
+	@Test func clipboardTextCarriesLocationAndDetail() {
+		let session = makeSession()
+		let text = session.clipboardText(for: session.findings)
+		#expect(text.contains("[error] a.swift:12 — Boom"))
+		#expect(text.contains("why it fails"))
+		#expect(text.contains("[warning] b.swift:3 — Risky"))
+	}
+
+	@Test func clipboardTextOmitsAnEmptyDetail() {
+		let session = makeSession()
+		let text = session.clipboardText(for: [session.findings[1]])
+		#expect(text == "[warning] b.swift:3 — Risky")
+	}
+
+	@Test func clipboardTextIncludesASuggestionWhenThereIsOne() {
+		let session = ReviewSession(projectRoot: URL(fileURLWithPath: "/tmp/project"))
+		session.add(rawFindings: [[
+			"file": "a.swift", "line": 1, "severity": "info",
+			"title": "T", "detail": "D", "suggestion": "let x = 1",
+		]])
+		#expect(session.clipboardText(for: session.findings).contains("let x = 1"))
+	}
+
+	/// The prompt is sent into a terminal, where a newline means "send".
+	@Test func promptsAreASingleLine() {
+		let session = makeSession()
+		for visual in [true, false] {
+			let prompt = session.discussionPrompt(for: session.findings, visual: visual)
+			#expect(!prompt.contains("\n"))
+		}
+	}
+
+	@Test func promptNamesEveryFinding() {
+		let session = makeSession()
+		let prompt = session.discussionPrompt(for: session.findings, visual: false)
+		#expect(prompt.contains("a.swift:12"))
+		#expect(prompt.contains("b.swift:3"))
+		#expect(prompt.contains("these findings"))
+	}
+
+	@Test func singleFindingReadsAsOne() {
+		let session = makeSession()
+		let prompt = session.discussionPrompt(for: [session.findings[0]], visual: false)
+		#expect(prompt.contains("this finding"))
+	}
+
+	/// The visual variant has to actually ask for a diagram, and neither variant
+	/// should let the agent start editing.
+	@Test func visualPromptAsksForADiagramAndNeitherEdits() {
+		let session = makeSession()
+		let visual = session.discussionPrompt(for: session.findings, visual: true)
+		#expect(visual.lowercased().contains("diagram"))
+		#expect(visual.contains("Do not change any files"))
+
+		let plain = session.discussionPrompt(for: session.findings, visual: false)
+		#expect(!plain.lowercased().contains("diagram"))
+		#expect(plain.contains("Do not edit anything yet"))
+	}
+}

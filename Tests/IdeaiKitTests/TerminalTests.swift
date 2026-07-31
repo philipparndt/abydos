@@ -899,3 +899,100 @@ struct TerminalPrivateSequenceTests {
 		#expect(attributes.dim)
 	}
 }
+
+/// The progress tail the review pane shows while an agent is working.
+struct TerminalRecentLinesTests {
+	@Test func returnsTheLastNonBlankLinesInOrder() {
+		let emulator = TerminalEmulator(rows: 8, columns: 20)
+		emulator.write("one\r\ntwo\r\n\r\nthree\r\n\r\n")
+		#expect(emulator.screen.recentLines(2) == ["two", "three"])
+	}
+
+	@Test func asksForMoreLinesThanExist() {
+		let emulator = TerminalEmulator(rows: 8, columns: 20)
+		emulator.write("only\r\n")
+		#expect(emulator.screen.recentLines(5) == ["only"])
+	}
+
+	@Test func reachesBackIntoScrollback() {
+		let emulator = TerminalEmulator(rows: 2, columns: 20)
+		emulator.write("a\r\nb\r\nc\r\nd")
+		#expect(emulator.screen.recentLines(3) == ["b", "c", "d"])
+	}
+
+	@Test func anEmptyScreenHasNothingToShow() {
+		#expect(TerminalEmulator(rows: 4, columns: 20).screen.recentLines(3).isEmpty)
+	}
+}
+
+/// Regressions from the first agent review of this code.
+struct TerminalReviewRegressionTests {
+	@Test func stringTerminatorDoesNotLeaveABackslashOnScreen() {
+		let emulator = TerminalEmulator(rows: 4, columns: 20)
+		emulator.write("\u{1B}]0;title\u{1B}\\after")
+		#expect(emulator.title == "title")
+		#expect(emulator.screen[0].text == "after")
+	}
+
+	/// A selection made while the grid was wider outlives the resize.
+	@Test func columnRangeSurvivesTheGridNarrowing() {
+		let selection = TerminalSelection(
+			anchor: TerminalPosition(row: 0, column: 60),
+			head: TerminalPosition(row: 0, column: 90)
+		)
+		#expect(selection.columnRange(onRow: 0, columns: 20) == nil)
+	}
+
+	@Test func tertiaryDeviceAttributesGetNoPrimaryReply() {
+		let emulator = TerminalEmulator(rows: 4, columns: 20)
+		var replies: [String] = []
+		emulator.onResponse = { replies.append($0) }
+		emulator.write("\u{1B}[=c")
+		#expect(replies.isEmpty)
+	}
+
+	@Test func primaryAndSecondaryDeviceAttributesStillAnswer() {
+		let emulator = TerminalEmulator(rows: 4, columns: 20)
+		var replies: [String] = []
+		emulator.onResponse = { replies.append($0) }
+		emulator.write("\u{1B}[c\u{1B}[>c")
+		#expect(replies.count == 2)
+		#expect(replies[1].contains(">"))
+	}
+
+	/// Discarded lines renumber every absolute row above them.
+	@Test func discardedLineCountTracksTrimmedScrollback() {
+		var screen = TerminalScreen(rows: 2, columns: 10)
+		screen.maximumScrollback = 3
+		#expect(screen.discardedLineCount == 0)
+
+		for _ in 0..<10 { screen.scrollUp(top: 0, bottom: 1, attributes: TerminalAttributes()) }
+		#expect(screen.discardedLineCount > 0)
+		#expect(screen.scrollback.count <= 3)
+	}
+}
+
+/// The progress tail has to skip a TUI's frame, which is what sits at the
+/// bottom of the screen while the interesting output is above it.
+struct TerminalActivityFilterTests {
+	@Test func decorationOnlyLinesAreNotSubstantive() {
+		for frame in ["───────", "│   │", "╭──╮", "  ›  ", "···", "  "] {
+			#expect(!TerminalScreen.isSubstantive(frame), "\(frame)")
+		}
+	}
+
+	@Test func linesWithWordsOrNumbersAreSubstantive() {
+		for text in ["Thinking…", "✳ Herding (30s)", "12"] {
+			#expect(TerminalScreen.isSubstantive(text), "\(text)")
+		}
+	}
+
+	@Test func recentLinesSkipsTheInputBoxAndFindsTheStatus() {
+		let emulator = TerminalEmulator(rows: 8, columns: 40)
+		emulator.write("✳ Reviewing TerminalView.swift\r\n")
+		emulator.write("╭──────────────────╮\r\n")
+		emulator.write("│ >                │\r\n")
+		emulator.write("╰──────────────────╯\r\n")
+		#expect(emulator.screen.recentLines(1) == ["✳ Reviewing TerminalView.swift"])
+	}
+}
