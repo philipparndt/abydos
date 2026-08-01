@@ -1357,6 +1357,44 @@ final class EditorViewController: NSViewController {
 
 	/// Routes text through `NSTextInputClient.insertText`, the same entry point
 	/// a real keystroke takes.
+	/// Presses an arrow key with modifiers, the way a keyboard would.
+	///
+	/// Through `keyDown` rather than by calling the command directly: what is
+	/// being checked is that the system's key bindings reach the editor, not
+	/// that the editor has a method with the right name.
+	func simulateArrow(_ direction: String, modifiers: NSEvent.ModifierFlags) {
+		guard let tab = activeTab, let codeView = tab.codeView else { return }
+		view.window?.makeFirstResponder(codeView)
+
+		let keyCodes = ["left": 123, "right": 124, "down": 125, "up": 126]
+		let characters = [
+			"left": NSLeftArrowFunctionKey, "right": NSRightArrowFunctionKey,
+			"down": NSDownArrowFunctionKey, "up": NSUpArrowFunctionKey,
+		]
+		guard let code = keyCodes[direction], let character = characters[direction] else { return }
+		let text = String(UnicodeScalar(character)!)
+
+		guard let event = NSEvent.keyEvent(
+			with: .keyDown,
+			location: .zero,
+			modifierFlags: modifiers,
+			timestamp: ProcessInfo.processInfo.systemUptime,
+			windowNumber: view.window?.windowNumber ?? 0,
+			context: nil,
+			characters: text,
+			charactersIgnoringModifiers: text,
+			isARepeat: false,
+			keyCode: UInt16(code)
+		) else { return }
+		codeView.keyDown(with: event)
+	}
+
+	/// Where the caret is and what is selected, for checking a motion landed.
+	var caretReportForTesting: String {
+		guard let codeView = activeTab?.codeView else { return "no editor" }
+		return codeView.caretReportForTesting
+	}
+
 	func simulateTyping(_ text: String) {
 		guard let tab = activeTab, let codeView = tab.codeView else { return }
 		view.window?.makeFirstResponder(codeView)

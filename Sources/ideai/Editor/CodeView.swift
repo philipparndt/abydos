@@ -1279,6 +1279,18 @@ final class CodeView: NSView, NSTextInputClient {
 
 	// MARK: - Keyboard
 
+	/// Caret offset and selection, for checking that a motion landed.
+	var caretReportForTesting: String {
+		let selection = selectedUTF16Range()
+		let text = document.map { document -> String in
+			let range = selection.isEmpty ? caret..<caret : selection
+			let lower = document.rope.byteOffset(fromUTF16: range.lowerBound)
+			let upper = document.rope.byteOffset(fromUTF16: range.upperBound)
+			return document.rope.string(in: lower..<upper)
+		} ?? ""
+		return "caret=\(caret) selection=\(selection.lowerBound)..<\(selection.upperBound) “\(text)”"
+	}
+
 	override func keyDown(with event: NSEvent) {
 		// Routes through the input system so dead keys, IME, and the standard
 		// key bindings all behave as they do in a native text view.
@@ -1303,6 +1315,20 @@ final class CodeView: NSView, NSTextInputClient {
 			moveToLineEdge(start: true, extending: true)
 		case #selector(moveToEndOfLineAndModifySelection(_:)), #selector(moveToRightEndOfLineAndModifySelection(_:)):
 			moveToLineEdge(start: false, extending: true)
+		case #selector(moveWordLeft(_:)), #selector(moveWordBackward(_:)):
+			moveByWord(-1, extending: false)
+		case #selector(moveWordRight(_:)), #selector(moveWordForward(_:)):
+			moveByWord(1, extending: false)
+		case #selector(moveWordLeftAndModifySelection(_:)),
+		     #selector(moveWordBackwardAndModifySelection(_:)):
+			moveByWord(-1, extending: true)
+		case #selector(moveWordRightAndModifySelection(_:)),
+		     #selector(moveWordForwardAndModifySelection(_:)):
+			moveByWord(1, extending: true)
+		case #selector(deleteWordBackward(_:)):  deleteByWord(-1)
+		case #selector(deleteWordForward(_:)):   deleteByWord(1)
+		case #selector(deleteToBeginningOfLine(_:)): deleteToLineEdge(start: true)
+		case #selector(deleteToEndOfLine(_:)):   deleteToLineEdge(start: false)
 		case #selector(moveToBeginningOfDocument(_:)):   setCaret(0, extendingSelection: false)
 		case #selector(moveToEndOfDocument(_:)):
 			setCaret(document?.rope.utf16Count ?? 0, extendingSelection: false)
@@ -1342,6 +1368,76 @@ final class CodeView: NSView, NSTextInputClient {
 			offset = document.rope.utf16Offset(fromByte: byte)
 		}
 		setCaret(offset, extendingSelection: extending)
+	}
+
+	/// ⌥← and ⌥→.
+	///
+	/// The text either side of the caret is read as a window rather than the
+	/// whole document: a word is a few characters away, and asking a rope for a
+	/// megabyte to find the next space would make the arrow key slower the
+	/// longer the file got.
+	private func wordTarget(_ direction: Int) -> Int? {
+		guard let document else { return nil }
+		let total = document.rope.utf16Count
+
+		// Wide enough for any word anybody writes, and for the run of
+		// whitespace before it; grown once if the answer lands on the edge.
+		var span = 256
+		while true {
+			let lower = max(0, caret - (direction < 0 ? span : 0))
+			let upper = min(total, caret + (direction > 0 ? span : 0))
+			let lowerByte = document.rope.byteOffset(fromUTF16: lower)
+			let upperByte = document.rope.byteOffset(fromUTF16: upper)
+			let window = Array(document.rope.string(in: lowerByte..<upperByte).utf16)
+
+			let local = caret - lower
+			let target = direction < 0
+				? WordMotion.startOfWord(before: local, in: window)
+				: WordMotion.endOfWord(after: local, in: window)
+			let absolute = lower + target
+
+			// Landing on the edge of the window means the answer may be past it
+			// — unless the edge is the edge of the document.
+			let clipped = direction < 0 ? (absolute == lower && lower > 0) : (absolute == upper && upper < total)
+			guard clipped, span < 65_536 else { return absolute }
+			span *= 8
+		}
+	}
+
+	private func moveByWord(_ direction: Int, extending: Bool) {
+		desiredColumnX = nil
+		guard let target = wordTarget(direction) else { return }
+		setCaret(target, extendingSelection: extending)
+	}
+
+	/// ⌥⌫ and ⌥⌦: take the word, not the character.
+	private func deleteByWord(_ direction: Int) {
+		guard let document else { return }
+		let selection = selectedUTF16Range()
+		if !selection.isEmpty {
+			afterEdit(caret: document.replace(
+				utf16Range: selection, with: "", caretBefore: selection.upperBound
+			))
+			return
+		}
+
+		guard let target = wordTarget(direction), target != caret else { return }
+		let range = direction < 0 ? target..<caret : caret..<target
+		afterEdit(caret: document.replace(utf16Range: range, with: "", caretBefore: caret))
+	}
+
+	/// ⌘⌫ and ⌘⌦, which the same key mapping produces.
+	private func deleteToLineEdge(start: Bool) {
+		guard let document else { return }
+		let byteOffset = document.rope.byteOffset(fromUTF16: caret)
+		let line = document.rope.line(atByteOffset: byteOffset)
+		let lineRange = document.rope.lineByteRange(line)
+		let lineStart = document.rope.utf16Offset(fromByte: lineRange.lowerBound)
+		let lineEnd = document.rope.utf16Offset(fromByte: lineRange.upperBound)
+
+		let range = start ? lineStart..<caret : caret..<lineEnd
+		guard !range.isEmpty else { return }
+		afterEdit(caret: document.replace(utf16Range: range, with: "", caretBefore: caret))
 	}
 
 	private func moveVertically(_ delta: Int, extending: Bool) {

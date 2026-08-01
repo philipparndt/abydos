@@ -1482,6 +1482,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		}
 	}
 
+	/// Walks the caret by word and says where it landed at each step.
+	func exerciseWordNavigationForTesting() {
+		print("WORD: start \(editor.caretReportForTesting)")
+		editor.simulateArrow("right", modifiers: .option)
+		print("WORD: ⌥→ \(editor.caretReportForTesting)")
+		editor.simulateArrow("right", modifiers: .option)
+		print("WORD: ⌥→ \(editor.caretReportForTesting)")
+		editor.simulateArrow("right", modifiers: [.option, .shift])
+		print("WORD: ⇧⌥→ \(editor.caretReportForTesting)")
+		editor.simulateArrow("left", modifiers: .option)
+		print("WORD: ⌥← \(editor.caretReportForTesting)")
+		editor.simulateArrow("left", modifiers: .option)
+		print("WORD: ⌥← \(editor.caretReportForTesting)")
+	}
+
 	func openFirstScratchForTesting() {
 		scratchesPane?.openFirstForTesting()
 	}

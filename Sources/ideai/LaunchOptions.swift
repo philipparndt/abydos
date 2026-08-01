@@ -70,6 +70,8 @@ struct LaunchOptions {
 	var historyCommit: Int?
 	/// Underline made-up problems, to see how they are drawn.
 	var fakeDiagnostics = false
+	/// Exercise ⌥-arrow navigation and report where the caret ends up.
+	var wordNavigation = false
 	/// Wait this long before capturing, for a language server to answer.
 	var lspWait: Double?
 	/// Rewrite the open file externally after this many seconds.
@@ -129,6 +131,7 @@ struct LaunchOptions {
 			case "--open-scratch": options.openScratch = true
 			case "--history":    options.historyCommit = next().flatMap(Int.init) ?? 0
 			case "--fake-diagnostics": options.fakeDiagnostics = true
+			case "--word-nav":   options.wordNavigation = true
 			case "--lsp-wait":   options.lspWait = next().flatMap(Double.init)
 			case "--external-edit": options.externalEdit = next().flatMap(Double.init)
 			case "--send-bytes": options.terminalBytes = next()
