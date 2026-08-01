@@ -6,6 +6,11 @@ import IdeaiKit
 final class MainWindowController: NSWindowController, NSWindowDelegate {
 	private(set) var project: Project?
 
+	/// What each project had open, so going back to one looks as it was left.
+	private var sessions = ProjectSessions()
+	/// Whether the window follows the terminal's working directory.
+	private(set) var followsTerminal = false
+
 	/// True for a window made by dragging a tab out of another one.
 	///
 	/// Such a window exists only to hold what was dragged into it, so it closes
@@ -239,6 +244,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
 		bottomPanel.onRequestHide = { [weak self] in self?.setPanelVisible(false) }
 		bottomPanel.onToggleMaximize = { [weak self] in self?.togglePanelMaximized() }
+		bottomPanel.onToggleFollowProject = { [weak self] in self?.toggleFollowTerminal() }
+		bottomPanel.onWorkingDirectoryChanged = { [weak self] directory in
+			self?.terminalDirectoryChanged(to: directory)
+		}
 		// A finding opens the file at its line, in the editor above the panel.
 		bottomPanel.onOpenFinding = { [weak self] url, line in
 			self?.editor.open(fileURL: url, atLine: line)
@@ -375,7 +384,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
 	// MARK: - Loading
 
-	func load(project: Project) {
+	func load(project: Project, focusTree: Bool = true) {
 		self.project = project
 		window?.title = project.name
 
@@ -395,7 +404,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		DispatchQueue.main.async { [weak self] in
 			self?.updateTopInsets()
 			// The tree takes focus on open, so arrow keys work without clicking.
-			self?.navigator.focusTree()
+			// Not when the terminal is what moved us here: the user is typing in
+			// it, and taking the keyboard away mid-command would be worse than
+			// not following at all.
+			if focusTree { self?.navigator.focusTree() }
 		}
 
 		Task { @MainActor in
@@ -503,6 +515,47 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 	private func tellTerminalsTheySizeChanged() {
 		DispatchQueue.main.async { [weak self] in
 			self?.bottomPanel.viewportChanged()
+		}
+	}
+
+	// MARK: - Following the terminal
+
+	/// Turns following on or off.
+	@objc func toggleFollowTerminal(_ sender: Any? = nil) {
+		followsTerminal.toggle()
+		bottomPanel.isFollowingProject = followsTerminal
+		guard followsTerminal else { return }
+		// Catch up straight away rather than waiting for the shell to move.
+		bottomPanel.reportWorkingDirectory()
+	}
+
+	/// The terminal moved. Follow it, if the window was asked to.
+	///
+	/// Only whole projects: moving between directories inside one changes
+	/// nothing, which is what makes this bearable to leave switched on.
+	func terminalDirectoryChanged(to directory: URL) {
+		guard followsTerminal else { return }
+		guard let root = ProjectRoot.find(from: directory) else { return }
+		switchProject(to: root)
+	}
+
+	/// Swaps one project for another in place, keeping what each had open.
+	func switchProject(to root: URL) {
+		let root = root.standardizedFileURL
+		guard root.path != project?.root.standardizedFileURL.path else { return }
+
+		if let current = project?.root {
+			sessions.store(editor.captureSession(), for: current)
+		}
+
+		load(project: Project(root: root), focusTree: false)
+		RecentProjects.shared.record(url: root)
+
+		// Whatever was open here before, or nothing if this is the first visit.
+		if let previous = sessions.take(for: root) {
+			editor.restore(previous)
+		} else {
+			editor.closeAllTabs()
 		}
 	}
 

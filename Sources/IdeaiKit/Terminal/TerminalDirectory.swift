@@ -24,7 +24,9 @@ public enum TerminalDirectory {
 		// entirely, so the client in front of us is sitting wherever tmux was
 		// started and knows nothing about where the pane has been. The server
 		// does, and will say if asked about this particular client.
-		if let slaveName, processName(of: foreground)?.hasPrefix("tmux") == true {
+		let name = processName(of: foreground)
+
+		if let slaveName, name?.hasPrefix("tmux") == true {
 			return tmuxPaneDirectory(client: slaveName)
 		}
 
@@ -61,23 +63,30 @@ public enum TerminalDirectory {
 	/// panes gives a different answer straight away — which is the whole point
 	/// of following a terminal that has tmux in it.
 	static func tmuxPaneDirectory(client: String) -> URL? {
-		// Asked which client answered as well as where it is. Given a client it
-		// has never heard of, tmux does not refuse — it answers for whichever
-		// client it spoke to last, and following that would put the window into
-		// somebody else's pane. The answer is only taken if it is about the
-		// client that was asked for.
-		let output = run(
-			"/usr/bin/env",
-			["tmux", "display-message", "-p", "-c", client, "#{client_tty}\t#{pane_current_path}"]
-		)
+		// Listed and filtered rather than asked about directly. The obvious
+		// spelling — display-message -c <client> — chooses who the message would
+		// be shown to, not whose pane the format is about: asked about one
+		// client while another is current, tmux answers about the current one.
+		// Following that would put the window in somebody else's pane.
+		//
+		// list-clients evaluates its format once per client, so filtering it to
+		// this one gives this one's answer, and nothing at all when the client
+		// is not there.
+		let output = run("/usr/bin/env", [
+			"tmux", "list-clients",
+			"-F", "#{client_tty}\t#{pane_current_path}",
+			"-f", "#{==:#{client_tty},\(client)}",
+		])
 		guard let output else { return nil }
 
-		let parts = output.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: "\t")
-		guard parts.count == 2, String(parts[0]) == client else { return nil }
-
-		let path = String(parts[1])
-		guard !path.isEmpty else { return nil }
-		return URL(fileURLWithPath: path, isDirectory: true)
+		for line in output.split(separator: "\n") {
+			let parts = line.split(separator: "\t")
+			guard parts.count == 2, String(parts[0]) == client else { continue }
+			let path = String(parts[1])
+			guard !path.isEmpty else { continue }
+			return URL(fileURLWithPath: path, isDirectory: true)
+		}
+		return nil
 	}
 
 	private static func run(_ launchPath: String, _ arguments: [String]) -> String? {

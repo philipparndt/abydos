@@ -46,6 +46,8 @@ struct LaunchOptions {
 	var metalShot: String?
 	/// Gives the terminal the whole window.
 	var maximizeTerminal = false
+	/// Follows the terminal's project, for checking that it does.
+	var followTerminal = false
 	/// Toggle a breakpoint on this 1-based line before capture.
 	var breakpointLine: Int?
 	/// Show a sidebar tool before capture: project | changes | branches | structure.
@@ -116,6 +118,7 @@ struct LaunchOptions {
 			case "--bench-render": options.benchRender = true
 			case "--metal-shot": options.metalShot = next()
 			case "--maximize-terminal": options.maximizeTerminal = true
+			case "--follow-terminal": options.followTerminal = true
 			case "--breakpoint": options.breakpointLine = next().flatMap(Int.init)
 			case "--find":       options.findQuery = next()
 			case "--search":     options.searchQuery = next()

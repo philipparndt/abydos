@@ -352,6 +352,24 @@ final class EditorAreaController: NSViewController {
 		for group in groups { group.setProject(project) }
 	}
 
+	/// What is open across the area.
+	///
+	/// Flattened across split groups: the tabs come back, the arrangement they
+	/// were split into does not.
+	func captureSession() -> ProjectSession {
+		var files: [ProjectSession.OpenFile] = []
+		for group in groups { files += group.captureSession().files }
+		return ProjectSession(files: files, activePath: activeGroup?.captureSession().activePath)
+	}
+
+	func restore(_ session: ProjectSession) {
+		(activeGroup ?? groups.first)?.restore(session)
+	}
+
+	func closeAllTabs() {
+		for group in groups { group.closeAllTabs() }
+	}
+
 	func previewDropZoneForTesting(_ zone: EditorTabDrag.Zone) {
 		(activeGroup?.view as? EditorDropView)?.previewZoneForTesting(zone)
 	}

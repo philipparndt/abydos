@@ -832,6 +832,9 @@ final class TerminalView: NSView, NSTextInputClient {
 
 	var totalRowsForTesting: Int { max(1, emulator.screen.totalLineCount) }
 
+	/// Where the process in the foreground of this terminal is.
+	func currentDirectory() -> URL? { pty.currentDirectory() }
+
 	/// Draws what is on screen through Metal and writes it out as a PNG.
 	///
 	/// The same content the CoreGraphics path would draw, so the two can be put
@@ -1354,6 +1357,15 @@ final class TerminalPane: NSView {
 
 	/// The view inside, for the panel to pass a resize down to.
 	var terminalViewForTesting: TerminalView { terminalView }
+
+	/// Where the shell in this terminal currently is.
+	var currentDirectoryForTesting: URL? { terminalView.currentDirectory() }
+
+	/// Output arrived, which is the moment to check whether the shell has moved.
+	var onOutput: (() -> Void)? {
+		get { terminalView.onOutput }
+		set { terminalView.onOutput = newValue }
+	}
 
 	func focus() {
 		window?.makeFirstResponder(terminalView)

@@ -193,6 +193,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if options.followTerminal {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+				controller?.toggleFollowTerminal(nil)
+			}
+		}
+
 		if options.maximizeTerminal {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
 				controller?.togglePanelMaximized(nil)
@@ -543,6 +549,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 		let newTerminalItem = NSMenuItem(title: "New Terminal", action: #selector(MainWindowController.newTerminal(_:)), keyEquivalent: "t")
 		newTerminalItem.keyEquivalentModifierMask = [.command, .shift]
 		viewMenu.addItem(newTerminalItem)
+		let followTerminal = NSMenuItem(
+			title: "Follow Terminal Project",
+			action: #selector(MainWindowController.toggleFollowTerminal(_:)),
+			keyEquivalent: "f"
+		)
+		followTerminal.keyEquivalentModifierMask = [.command, .control]
+		viewMenu.addItem(followTerminal)
 		let maximizeTerminal = NSMenuItem(
 			title: "Maximize Terminal",
 			action: #selector(MainWindowController.togglePanelMaximized(_:)),

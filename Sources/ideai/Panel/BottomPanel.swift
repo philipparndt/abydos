@@ -11,6 +11,37 @@ final class BottomPanel: NSView {
 	var onRequestHide: (() -> Void)?
 	/// Asked to give the panel the whole window, or to hand it back.
 	var onToggleMaximize: (() -> Void)?
+	/// Asked to start or stop following the shell's project.
+	var onToggleFollowProject: (() -> Void)?
+	/// The shell moved to another directory.
+	var onWorkingDirectoryChanged: ((URL) -> Void)?
+
+	/// Whether the window is following the terminal, shown on the control.
+	var isFollowingProject: Bool {
+		get { tabStrip.isFollowingProject }
+		set {
+			tabStrip.isFollowingProject = newValue
+			lastReportedDirectory = nil
+		}
+	}
+
+	/// Where the active terminal was last seen, so only real moves are reported.
+	private var lastReportedDirectory: URL?
+	private var directoryCheckScheduled = false
+
+	/// Looks again shortly, and only once however much output arrives.
+	///
+	/// Reading the directory means asking the system about a process, and under
+	/// tmux asking the tmux server — neither of which is worth doing for every
+	/// chunk of output a build produces.
+	private func scheduleDirectoryCheck() {
+		guard isFollowingProject, !directoryCheckScheduled else { return }
+		directoryCheckScheduled = true
+		DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+			self?.directoryCheckScheduled = false
+			self?.reportWorkingDirectory()
+		}
+	}
 
 	/// Reflects the window's state on the control, so the arrows point the way
 	/// the next click would go.
@@ -89,6 +120,7 @@ final class BottomPanel: NSView {
 		tabStrip.onAdd = { [weak self] in self?.newTerminal() }
 		tabStrip.onHide = { [weak self] in self?.onRequestHide?() }
 		tabStrip.onToggleMaximize = { [weak self] in self?.onToggleMaximize?() }
+		tabStrip.onToggleFollowProject = { [weak self] in self?.onToggleFollowProject?() }
 
 		contentArea = NSView()
 
@@ -149,6 +181,28 @@ final class BottomPanel: NSView {
 	/// sends one, reads the size the pane had before, and leaves the process
 	/// believing it. tmux opened afterwards then draws for a window half the
 	/// height of the one it is in.
+	/// Looks at where the active terminal is, and says so if it has moved.
+	///
+	/// Driven by output rather than by a clock: a shell that changes directory
+	/// prints a prompt, and one that is sitting idle has not gone anywhere. An
+	/// idle terminal therefore costs nothing at all.
+	func reportWorkingDirectory() {
+		guard isFollowingProject else { return }
+		let index = activeIndex ?? 0
+		guard index >= 0, index < sessions.count, let terminal = sessions[index].terminal else { return }
+		guard let directory = terminal.currentDirectoryForTesting else { return }
+
+		guard directory.standardizedFileURL.path != lastReportedDirectory?.path else { return }
+		lastReportedDirectory = directory.standardizedFileURL
+		onWorkingDirectoryChanged?(directory)
+	}
+
+	/// Another terminal tab is another shell, quite possibly somewhere else.
+	func activeTerminalChanged() {
+		lastReportedDirectory = nil
+		reportWorkingDirectory()
+	}
+
 	func viewportChanged() {
 		for session in sessions {
 			session.terminal?.terminalViewForTesting.viewportChanged()
@@ -403,6 +457,11 @@ final class BottomPanel: NSView {
 
 	private func wire(_ session: Session) {
 		guard let terminal = session.terminal else { return }
+		// A shell that changes directory prints a prompt, so output is the cue
+		// to look. An idle terminal produces none and costs nothing.
+		terminal.terminalView.onOutput = { [weak self] in
+			self?.scheduleDirectoryCheck()
+		}
 		terminal.terminalView.onProcessExit = { [weak self, weak session] _ in
 			guard let self, let session else { return }
 			session.hasExited = true
@@ -441,6 +500,7 @@ final class BottomPanel: NSView {
 		placeholder.isHidden = true
 		refreshTabs()
 		if focus, case .terminal = session.kind { session.terminal?.focus() }
+		activeTerminalChanged()
 	}
 
 	private func close(index: Int) {
@@ -525,6 +585,10 @@ final class PanelTabStrip: NSView {
 	/// Whether the panel currently has the window to itself, which decides
 	/// which way the arrows point.
 	var isMaximized = false { didSet { needsDisplay = true } }
+	/// Asked to start or stop following the shell's project.
+	var onToggleFollowProject: (() -> Void)?
+	/// Whether the window is following the terminal, which the control shows.
+	var isFollowingProject = false { didSet { needsDisplay = true } }
 
 	private var items: [PanelTabItem] = []
 	private var activeIndex: Int?
@@ -532,6 +596,7 @@ final class PanelTabStrip: NSView {
 	private var addButtonFrame: NSRect = .zero
 	private var hideButtonFrame: NSRect = .zero
 	private var maximizeButtonFrame: NSRect = .zero
+	private var followButtonFrame: NSRect = .zero
 	private var hoveredIndex: Int?
 	private var trackingArea: NSTrackingArea?
 
@@ -582,6 +647,12 @@ final class PanelTabStrip: NSView {
 			width: Theme.current.scaled(24),
 			height: bounds.height
 		)
+		followButtonFrame = NSRect(
+			x: maximizeButtonFrame.minX - Theme.current.scaled(26),
+			y: 0,
+			width: Theme.current.scaled(24),
+			height: bounds.height
+		)
 	}
 
 	override func updateTrackingAreas() {
@@ -612,6 +683,7 @@ final class PanelTabStrip: NSView {
 		if addButtonFrame.contains(point) { onAdd?(); return }
 		if hideButtonFrame.contains(point) { onHide?(); return }
 		if maximizeButtonFrame.contains(point) { onToggleMaximize?(); return }
+		if followButtonFrame.contains(point) { onToggleFollowProject?(); return }
 
 		// Double-clicking the empty part of the strip does what the arrow does,
 		// the way double-clicking a window's title bar zooms it.
@@ -651,6 +723,13 @@ final class PanelTabStrip: NSView {
 			symbol: isMaximized
 				? "arrow.down.right.and.arrow.up.left"
 				: "arrow.up.left.and.arrow.down.right"
+		)
+		// Filled while it is on, so it is obvious at a glance that the window is
+		// no longer staying where it was put.
+		drawGlyph(
+			in: followButtonFrame,
+			symbol: isFollowingProject ? "link.circle.fill" : "link.circle",
+			tint: isFollowingProject ? Theme.current.gitAdded : nil
 		)
 	}
 
@@ -706,8 +785,12 @@ final class PanelTabStrip: NSView {
 		}
 	}
 
-	private func drawGlyph(in rect: NSRect, symbol: String) {
-		guard let image = Theme.symbol(symbol, size: 11 * Theme.current.scale, color: Theme.current.sidebarText) else {
+	private func drawGlyph(in rect: NSRect, symbol: String, tint: NSColor? = nil) {
+		guard let image = Theme.symbol(
+			symbol,
+			size: 11 * Theme.current.scale,
+			color: tint ?? Theme.current.sidebarText
+		) else {
 			return
 		}
 		let size = Theme.current.scaled(12)

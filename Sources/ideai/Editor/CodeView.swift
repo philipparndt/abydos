@@ -115,6 +115,16 @@ final class CodeView: NSView, NSTextInputClient {
 	/// an agent editing a file above the caret would silently move it. Line and
 	/// column survive edits elsewhere in the file, which is the common case.
 	///
+	/// The line the caret is on, counting from zero.
+	///
+	/// Read when a project is put away, so returning to it comes back to the
+	/// line that was being worked on rather than the top of the file.
+	var caretLine: Int {
+		guard let document else { return 0 }
+		let rope = document.rope
+		return rope.line(atByteOffset: rope.byteOffset(fromUTF16: caret))
+	}
+
 	/// Returns false when the file had not actually changed.
 	@discardableResult
 	func reloadFromDisk() -> Bool {

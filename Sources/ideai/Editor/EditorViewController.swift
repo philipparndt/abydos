@@ -1035,6 +1035,47 @@ final class EditorViewController: NSViewController {
 
 	var hasOpenFiles: Bool { !tabs.isEmpty }
 
+	/// What this group has open, as plain values.
+	func captureSession() -> ProjectSession {
+		ProjectSession(
+			files: tabs.map { tab in
+				ProjectSession.OpenFile(
+					path: tab.url.path,
+					line: (tab.codeView?.caretLine ?? 0) + 1,
+					isPreview: tab.isPreview
+				)
+			},
+			activePath: activeTab?.url.path
+		)
+	}
+
+	/// Puts back what a project had open, without disturbing anything else.
+	func restore(_ session: ProjectSession) {
+		closeAllTabs()
+		for file in session.files {
+			let url = URL(fileURLWithPath: file.path)
+			guard FileManager.default.fileExists(atPath: file.path) else { continue }
+			open(fileURL: url, focusEditor: false, preview: file.isPreview)
+			if file.line > 1 {
+				// Deferred: a document that has just been opened has not laid
+				// out, so scrolling to a line now would measure against nothing.
+				DispatchQueue.main.async { [weak self] in
+					self?.tabs.last(where: { $0.url.path == file.path })?
+						.codeView?.reveal(line: file.line - 1)
+				}
+			}
+		}
+		if let activePath = session.activePath,
+		   let index = tabs.firstIndex(where: { $0.url.path == activePath }) {
+			activate(index: index, focusEditor: false)
+		}
+	}
+
+	/// Closes every tab, for swapping one project's editors for another's.
+	func closeAllTabs() {
+		while !tabs.isEmpty { closeTab(at: tabs.count - 1) }
+	}
+
 	/// Routes text through `NSTextInputClient.insertText`, the same entry point
 	/// a real keystroke takes.
 	func simulateTyping(_ text: String) {
