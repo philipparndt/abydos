@@ -246,18 +246,11 @@ final class StripButton: NSView {
 		// Colour baked into the symbol configuration — see Theme.symbol.
 		guard let rendered = Theme.symbol(symbol, size: 15 * Theme.current.scale, color: tint) else { return }
 		// respectFlipped: this view is flipped; without it the glyph mirrors.
-		rendered.draw(
-			in: NSRect(
+		rendered.drawFitted(in: NSRect(
 				x: bounds.midX - Theme.current.scaled(8),
 				y: bounds.midY - Theme.current.scaled(8),
 				width: Theme.current.scaled(16),
 				height: Theme.current.scaled(16)
-			),
-			from: .zero,
-			operation: .sourceOver,
-			fraction: 1.0,
-			respectFlipped: true,
-			hints: nil
-		)
+			))
 	}
 }

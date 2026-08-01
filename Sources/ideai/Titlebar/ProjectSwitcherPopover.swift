@@ -618,14 +618,7 @@ private final class SwitcherActionCell: NSView {
 		// Colour baked into the symbol configuration — see Theme.symbol.
 		if let rendered = Theme.symbol(symbol, size: 12 * Theme.current.scale, color: tint) {
 			// respectFlipped: this view is flipped; without it the glyph mirrors.
-			rendered.draw(
-				in: NSRect(x: x, y: bounds.midY - 7, width: 14, height: 14),
-				from: .zero,
-				operation: .sourceOver,
-				fraction: 1.0,
-				respectFlipped: true,
-				hints: nil
-			)
+			rendered.drawFitted(in: NSRect(x: x, y: bounds.midY - 7, width: 14, height: 14))
 		}
 		x += 22
 

@@ -286,22 +286,14 @@ private final class SearchFileCell: NSView {
 			color: Theme.current.gitIgnored
 		) {
 			let size = Theme.current.scaled(10)
-			chevron.draw(
-				in: NSRect(x: x, y: bounds.midY - size / 2, width: size, height: size),
-				from: .zero, operation: .sourceOver, fraction: 1.0,
-				respectFlipped: true, hints: nil
-			)
+			chevron.drawFitted(in: NSRect(x: x, y: bounds.midY - size / 2, width: size, height: size))
 		}
 		x += Theme.current.scaled(14)
 
 		let node = FileNode(url: result.url, isDirectory: false)
 		if let icon = FileIcon.image(for: node, isExpanded: false) {
 			let size = Theme.current.scaled(13)
-			icon.draw(
-				in: NSRect(x: x, y: bounds.midY - size / 2, width: size, height: size),
-				from: .zero, operation: .sourceOver, fraction: 1.0,
-				respectFlipped: true, hints: nil
-			)
+			icon.drawFitted(in: NSRect(x: x, y: bounds.midY - size / 2, width: size, height: size))
 			x += size + Theme.current.scaled(5)
 		}
 

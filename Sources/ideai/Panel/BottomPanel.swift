@@ -711,13 +711,6 @@ final class PanelTabStrip: NSView {
 			return
 		}
 		let size = Theme.current.scaled(12)
-		image.draw(
-			in: NSRect(x: rect.midX - size / 2, y: rect.midY - size / 2, width: size, height: size),
-			from: .zero,
-			operation: .sourceOver,
-			fraction: 1.0,
-			respectFlipped: true,
-			hints: nil
-		)
+		image.drawFitted(in: NSRect(x: rect.midX - size / 2, y: rect.midY - size / 2, width: size, height: size))
 	}
 }

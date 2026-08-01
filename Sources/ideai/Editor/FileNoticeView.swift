@@ -144,14 +144,7 @@ private final class NoticeButton: NSButton {
 
 		var x: CGFloat = 10
 		if let icon = Theme.symbol(symbol, size: 12, color: Theme.current.sidebarText) {
-			icon.draw(
-				in: NSRect(x: x, y: bounds.midY - 7, width: 14, height: 14),
-				from: .zero,
-				operation: .sourceOver,
-				fraction: 1.0,
-				respectFlipped: true,
-				hints: nil
-			)
+			icon.drawFitted(in: NSRect(x: x, y: bounds.midY - 7, width: 14, height: 14))
 		}
 		x += 20
 

@@ -389,14 +389,7 @@ final class EditorTabBar: NSView {
 
 		if let icon = Theme.symbol(previewMode.symbolName, size: 10 * Theme.current.scale, color: colour) {
 			let size = Self.previewIconSize
-			icon.draw(
-				in: NSRect(x: x, y: previewButtonFrame.midY - size / 2, width: size, height: size),
-				from: .zero,
-				operation: .sourceOver,
-				fraction: 1.0,
-				respectFlipped: true,
-				hints: nil
-			)
+			icon.drawFitted(in: NSRect(x: x, y: previewButtonFrame.midY - size / 2, width: size, height: size))
 			x += size + Self.previewGap
 		}
 
@@ -406,19 +399,12 @@ final class EditorTabBar: NSView {
 		// A chevron, so it reads as a menu rather than a toggle.
 		if let chevron = Theme.symbol("chevron.down", size: 7 * Theme.current.scale, color: colour) {
 			let size = Self.previewChevronSize
-			chevron.draw(
-				in: NSRect(
+			chevron.drawFitted(in: NSRect(
 					x: previewButtonFrame.maxX - size - Self.previewPadding,
 					y: previewButtonFrame.midY - size / 2,
 					width: size,
 					height: size
-				),
-				from: .zero,
-				operation: .sourceOver,
-				fraction: 1.0,
-				respectFlipped: true,
-				hints: nil
-			)
+				))
 		}
 	}
 
@@ -444,14 +430,7 @@ final class EditorTabBar: NSView {
 
 		let node = FileNode(url: item.url, isDirectory: false)
 		if let icon = FileIcon.image(for: node, isExpanded: false) {
-			icon.draw(
-				in: NSRect(x: x, y: rect.midY - Self.iconSize / 2, width: Self.iconSize, height: Self.iconSize),
-				from: .zero,
-				operation: .sourceOver,
-				fraction: isActive ? 1.0 : 0.75,
-				respectFlipped: true,
-				hints: nil
-			)
+			icon.drawFitted(in: NSRect(x: x, y: rect.midY - Self.iconSize / 2, width: Self.iconSize, height: Self.iconSize), fraction: isActive ? 1.0 : 0.75)
 		}
 		x += Self.iconSize + Theme.current.scaled(6)
 

@@ -870,8 +870,7 @@ private final class NavigatorCellView: NSTableCellView {
 		let iconSize = Theme.current.scaled(16)
 
 		if let icon = FileIcon.image(for: node, isExpanded: isExpanded) {
-			draw(
-				icon: icon,
+			icon.drawFitted(
 				in: NSRect(x: x, y: bounds.midY - iconSize / 2, width: iconSize, height: iconSize)
 			)
 		}
@@ -924,33 +923,4 @@ private final class NavigatorCellView: NSTableCellView {
 		}
 	}
 
-	/// Draws a symbol centred in a fixed slot, keeping its own proportions.
-	///
-	/// SF Symbols are not all the same shape — a box is nearly square, a
-	/// document is tall — so forcing each into a square slot stretches it and
-	/// moves where it appears to sit. Fitting instead puts every row's icon on
-	/// the same optical centre.
-	///
-	/// respectFlipped: this view is flipped, and without it every symbol draws
-	/// upside down (folder tabs at the bottom, doc folds inverted).
-	private func draw(icon: NSImage, in slot: NSRect) {
-		let size = icon.size
-		guard size.width > 0, size.height > 0 else { return }
-
-		let scale = min(slot.width / size.width, slot.height / size.height)
-		let fitted = NSSize(width: size.width * scale, height: size.height * scale)
-		icon.draw(
-			in: NSRect(
-				x: slot.midX - fitted.width / 2,
-				y: slot.midY - fitted.height / 2,
-				width: fitted.width,
-				height: fitted.height
-			),
-			from: .zero,
-			operation: .sourceOver,
-			fraction: 1.0,
-			respectFlipped: true,
-			hints: nil
-		)
-	}
 }

@@ -402,14 +402,7 @@ private final class BranchRowView: NSView {
 		if branch.isCurrent,
 		   let tick = Theme.symbol("checkmark", size: 10 * Theme.current.scale, color: Theme.current.gitAdded) {
 			let size = Theme.current.scaled(11)
-			tick.draw(
-				in: NSRect(x: Theme.current.scaled(4), y: bounds.midY - size / 2, width: size, height: size),
-				from: .zero,
-				operation: .sourceOver,
-				fraction: 1.0,
-				respectFlipped: true,
-				hints: nil
-			)
+			tick.drawFitted(in: NSRect(x: Theme.current.scaled(4), y: bounds.midY - size / 2, width: size, height: size))
 		}
 
 		let colour = branch.isCurrent ? Theme.current.gitAdded : Theme.current.sidebarText

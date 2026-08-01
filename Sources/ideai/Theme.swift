@@ -211,3 +211,34 @@ extension NSColor {
 		)
 	}
 }
+
+extension NSImage {
+	/// Draws the image centred in `slot`, keeping its own proportions.
+	///
+	/// SF Symbols are not square. A folder is wider than it is tall, a chevron
+	/// wider still, a document taller than wide — and drawing one into a square
+	/// box stretches it to fit. Icons then look squeezed, and a chevron squeezed
+	/// horizontally stops reading as a chevron and starts reading as a letter v.
+	///
+	/// respectFlipped: these views are flipped, and without it every symbol
+	/// draws upside down.
+	func drawFitted(in slot: NSRect, fraction: CGFloat = 1.0) {
+		guard size.width > 0, size.height > 0, slot.width > 0, slot.height > 0 else { return }
+
+		let scale = min(slot.width / size.width, slot.height / size.height)
+		let fitted = NSSize(width: size.width * scale, height: size.height * scale)
+		draw(
+			in: NSRect(
+				x: slot.midX - fitted.width / 2,
+				y: slot.midY - fitted.height / 2,
+				width: fitted.width,
+				height: fitted.height
+			),
+			from: .zero,
+			operation: .sourceOver,
+			fraction: fraction,
+			respectFlipped: true,
+			hints: nil
+		)
+	}
+}

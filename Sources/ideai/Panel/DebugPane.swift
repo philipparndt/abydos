@@ -559,11 +559,7 @@ private final class DebugToolbar: NSView {
 
 		if let icon = Theme.symbol(symbol, size: 11 * Theme.current.scale, color: color) {
 			let glyph = Theme.current.scaled(13)
-			icon.draw(
-				in: NSRect(x: rect.midX - glyph / 2, y: rect.midY - glyph / 2, width: glyph, height: glyph),
-				from: .zero, operation: .sourceOver, fraction: 1.0,
-				respectFlipped: true, hints: nil
-			)
+			icon.drawFitted(in: NSRect(x: rect.midX - glyph / 2, y: rect.midY - glyph / 2, width: glyph, height: glyph))
 		}
 		if enabled { buttonFrames.append((rect, action)) }
 		x += size + Theme.current.scaled(2)

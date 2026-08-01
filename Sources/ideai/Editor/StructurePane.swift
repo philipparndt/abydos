@@ -210,14 +210,7 @@ private final class SymbolRowView: NSView {
 			size: 11 * Theme.current.scale,
 			color: colour(for: symbol.kind)
 		) {
-			icon.draw(
-				in: NSRect(x: x, y: bounds.midY - iconSize / 2, width: iconSize, height: iconSize),
-				from: .zero,
-				operation: .sourceOver,
-				fraction: 1.0,
-				respectFlipped: true,
-				hints: nil
-			)
+			icon.drawFitted(in: NSRect(x: x, y: bounds.midY - iconSize / 2, width: iconSize, height: iconSize))
 		}
 		x += iconSize + Theme.current.scaled(6)
 

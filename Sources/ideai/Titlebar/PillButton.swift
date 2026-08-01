@@ -193,8 +193,7 @@ final class BranchPillButton: PillButton {
 				height: Self.iconSize
 			)
 			// respectFlipped: this view is flipped; without it the glyph mirrors.
-			rendered.draw(in: iconRect, from: .zero, operation: .sourceOver,
-			              fraction: 1.0, respectFlipped: true, hints: nil)
+			rendered.drawFitted(in: iconRect)
 			x += Self.iconSize + Self.gap
 		}
 

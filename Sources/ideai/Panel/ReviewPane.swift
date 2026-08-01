@@ -335,14 +335,7 @@ private final class FindingCellView: NSView {
 
 		if let icon = Theme.symbol(severitySymbol, size: 12 * Theme.current.scale, color: severityColor) {
 			let size = Theme.current.scaled(14)
-			icon.draw(
-				in: NSRect(x: inset, y: Theme.current.scaled(10), width: size, height: size),
-				from: .zero,
-				operation: .sourceOver,
-				fraction: 1.0,
-				respectFlipped: true,
-				hints: nil
-			)
+			icon.drawFitted(in: NSRect(x: inset, y: Theme.current.scaled(10), width: size, height: size))
 		}
 
 		let textX = inset + Theme.current.scaled(22)
@@ -493,14 +486,7 @@ private final class ReviewHeaderView: NSView {
 
 		if !isComplete, let stop = Theme.symbol("stop.circle", size: 12 * Theme.current.scale, color: Theme.current.gitUnversioned) {
 			let size = Theme.current.scaled(14)
-			stop.draw(
-				in: NSRect(x: stopButtonFrame.midX - size / 2, y: stopButtonFrame.midY - size / 2, width: size, height: size),
-				from: .zero,
-				operation: .sourceOver,
-				fraction: 1.0,
-				respectFlipped: true,
-				hints: nil
-			)
+			stop.drawFitted(in: NSRect(x: stopButtonFrame.midX - size / 2, y: stopButtonFrame.midY - size / 2, width: size, height: size))
 		}
 	}
 
@@ -514,14 +500,7 @@ private final class ReviewHeaderView: NSView {
 
 		if let icon = Theme.symbol(symbol, size: 10 * Theme.current.scale, color: color) {
 			let size = Theme.current.scaled(11)
-			icon.draw(
-				in: NSRect(x: x, y: rect.midY - size / 2, width: size, height: size),
-				from: .zero,
-				operation: .sourceOver,
-				fraction: 1.0,
-				respectFlipped: true,
-				hints: nil
-			)
+			icon.drawFitted(in: NSRect(x: x, y: rect.midY - size / 2, width: size, height: size))
 			x += size + Theme.current.scaled(5)
 		}
 
