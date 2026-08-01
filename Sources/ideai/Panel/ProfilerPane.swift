@@ -14,6 +14,9 @@ final class ProfilerPane: NSView {
 
 	private let client = PprofClient()
 	private var endpoint: PprofEndpoint?
+	/// The tunnel to a pod, while one is open.
+	private var forward: PortForward?
+	private var picker: PodPicker?
 	private var kinds: [PprofEndpoint.Kind] = PprofEndpoint.standardKinds
 	private var graph: FlameGraph?
 	private var isBusy = false
@@ -24,6 +27,7 @@ final class ProfilerPane: NSView {
 	private var collectButton: NSButton!
 	private var statusLabel: NSTextField!
 	private var focusButton: NSButton!
+	private var podButton: NSButton!
 	private var flameScroll: NSScrollView!
 	private var flameView: FlameGraphView!
 	private var table: NSTableView!
@@ -60,6 +64,14 @@ final class ProfilerPane: NSView {
 		connectButton.bezelStyle = .rounded
 		connectButton.controlSize = .small
 
+		// The same profiler, pointed through a tunnel: a pod in a cluster is
+		// where the interesting profiles are, and it is one port-forward away.
+		podButton = NSButton(title: "Pod\u{2026}", target: self, action: #selector(choosePod))
+		podButton.bezelStyle = .rounded
+		podButton.controlSize = .small
+		podButton.toolTip = "Profile a pod in Kubernetes"
+		podButton.isEnabled = Kubernetes.isAvailable
+
 		kindPopUp = NSPopUpButton()
 		kindPopUp.controlSize = .small
 		kindPopUp.font = Theme.current.uiFont(11.5)
@@ -94,7 +106,7 @@ final class ProfilerPane: NSView {
 		focusButton.isHidden = true
 
 		let controls = NSStackView(views: [
-			addressField, connectButton, kindPopUp, secondsField, collectButton,
+			addressField, connectButton, podButton, kindPopUp, secondsField, collectButton,
 			statusLabel, NSView(), focusButton,
 		])
 		controls.orientation = .horizontal
@@ -271,6 +283,61 @@ final class ProfilerPane: NSView {
 		}
 	}
 
+	/// Opens the pod list, and profiles whatever is chosen.
+	@objc private func choosePod() {
+		let picker = PodPicker()
+		self.picker = picker
+		picker.onChoose = { [weak self] pod, context in
+			self?.picker = nil
+			self?.profile(pod: pod, context: context)
+		}
+		picker.show(over: window)
+	}
+
+	/// Forwards a local port to the pod and points the profiler at it.
+	private func profile(pod: PodTarget, context: String?) {
+		forward?.stop()
+		forward = nil
+		setStatus("Forwarding to \(pod.name):\(pod.port)…")
+
+		Task { @MainActor in
+			do {
+				let tunnel = try await PortForward.start(to: pod, context: context)
+				forward = tunnel
+				addressField.stringValue = "localhost:\(tunnel.localPort)"
+				setStatus("\(pod.namespace)/\(pod.name) via :\(tunnel.localPort)")
+				connect()
+			} catch {
+				setStatus(Self.describe(forwardFailure: error, pod: pod), failed: true)
+			}
+		}
+	}
+
+	private static func describe(forwardFailure error: any Error, pod: PodTarget) -> String {
+		guard let failure = error as? PortForward.Failure else { return error.localizedDescription }
+		switch failure {
+		case .noKubectl:
+			return "kubectl is not installed"
+		case .noFreePort:
+			return "No local port was free"
+		case .timedOut:
+			return "kubectl did not answer — is \(pod.name) running?"
+		case let .failed(reason):
+			// The port is the usual thing to be wrong, and the pod said
+			// nothing about it, so say so here rather than in a log.
+			let hint = pod.portSource == .convention
+				? " (:\(pod.port) was a guess)"
+				: ""
+			return reason.isEmpty ? "The forward failed\(hint)" : reason + hint
+		}
+	}
+
+	/// Closes the tunnel with the pane.
+	func shutdown() {
+		forward?.stop()
+		forward = nil
+	}
+
 	@objc private func resetFocus() {
 		flameView.resetFocus()
 	}
@@ -318,6 +385,28 @@ final class ProfilerPane: NSView {
 	}
 
 	var statusForTesting: String { statusLabel.stringValue }
+
+	func showPodPickerForTesting(filter: String, choose: Bool = false, kind: String? = nil) {
+		choosePod()
+		guard !filter.isEmpty else { return }
+		DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+			guard let self else { return }
+			self.picker?.filterForTesting(filter)
+			print("PODS: \(self.picker?.shownPodsForTesting.prefix(6) ?? [])")
+			guard choose else { return }
+			self.picker?.chooseFirstForTesting()
+
+			// After the forward is up and the index page has answered.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+				print("FORWARD: \(self.statusForTesting)")
+				guard let kind else { return }
+				self.collectForTesting(kind: kind, seconds: 3)
+				DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+					print("CLUSTER PROFILE: \(self.statusForTesting) top=\(self.topFunctionsForTesting)")
+				}
+			}
+		}
+	}
 
 	var topFunctionsForTesting: [String] { (graph?.functions.prefix(5).map(\.name)) ?? [] }
 }

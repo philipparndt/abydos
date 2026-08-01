@@ -112,6 +112,10 @@ struct LaunchOptions {
 	var profilerAddress: String?
 	/// Which profile to collect; defaults to the heap, which is instant.
 	var profilerKind: String?
+	/// Open the pod picker, filtered by this text.
+	var podFilter: String?
+	/// Profile the first pod the filter finds.
+	var podChoose = false
 	/// Open the list of launch configurations.
 	var launchMenu = false
 	/// Open the editor for the selected configuration.
@@ -182,6 +186,8 @@ struct LaunchOptions {
 			case "--pills":      options.highlightPills = true
 			case "--profile":    options.profilerAddress = next()
 			case "--profile-kind": options.profilerKind = next()
+			case "--pods":       options.podFilter = next()
+			case "--pod-profile": options.podChoose = true
 			case "--sidebar":    options.sidebarTool = next()
 			case "--run-line":   options.runLine = next().flatMap(Int.init)
 			case "--debug-line": options.debugLine = next().flatMap(Int.init)

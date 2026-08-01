@@ -3,10 +3,11 @@ import IdeaiKit
 
 /// A profile, drawn as a flame graph.
 ///
-/// One row per level of the stack, each frame as wide as the time spent in it.
-/// The shape is the point: a wide bar near the top is a function doing the
-/// work itself, and a tall narrow spike is a deep call chain that costs
-/// nothing. Neither is visible in a table of numbers.
+/// One row per level of the stack, each frame as wide as the time spent in it,
+/// growing upwards from what called everything. The shape is the point: a wide
+/// bar near the flame's tip is a function doing the work itself, and a tall
+/// narrow spike is a deep call chain that costs nothing. Neither is visible in
+/// a table of numbers.
 final class FlameGraphView: NSView {
 	/// Told which frame was clicked, so the pane can say more about it.
 	var onSelect: ((String) -> Void)?
@@ -40,6 +41,23 @@ final class FlameGraphView: NSView {
 		onFocusChanged?(nil)
 		invalidateIntrinsicContentSize()
 		needsDisplay = true
+		showRoot()
+	}
+
+	/// Scrolls so the root is in view.
+	///
+	/// The graph grows upwards from it, and a deep stack is taller than the
+	/// pane: without this, a recursive program opens showing the narrow tip of
+	/// itself and nothing that explains it.
+	private func showRoot() {
+		DispatchQueue.main.async { [weak self] in
+			guard let self else { return }
+			self.layoutSubtreeIfNeeded()
+			self.scrollToVisible(NSRect(
+				x: 0, y: self.bounds.maxY - Self.rowHeight,
+				width: 1, height: Self.rowHeight
+			))
+		}
 	}
 
 	/// Back to the whole profile.
@@ -47,7 +65,9 @@ final class FlameGraphView: NSView {
 		guard let graph else { return }
 		focus = graph.root
 		onFocusChanged?(nil)
+		invalidateIntrinsicContentSize()
 		needsDisplay = true
+		showRoot()
 	}
 
 	override var intrinsicContentSize: NSSize {
@@ -105,6 +125,7 @@ final class FlameGraphView: NSView {
 		onFocusChanged?(hit === graph?.root ? nil : hit.name)
 		invalidateIntrinsicContentSize()
 		needsDisplay = true
+		showRoot()
 	}
 
 	override func keyDown(with event: NSEvent) {
@@ -134,13 +155,16 @@ final class FlameGraphView: NSView {
 	}
 
 	private func draw(node: FlameGraph.Node, x: CGFloat, width: CGFloat, row: Int) {
+		// The root along the bottom and the stack growing upwards, which is
+		// the way a flame graph is read: the flames rise from what called
+		// everything towards what was actually running.
 		let rect = NSRect(
 			x: x,
-			y: CGFloat(row) * Self.rowHeight,
+			y: bounds.height - CGFloat(row + 1) * Self.rowHeight,
 			width: width,
 			height: Self.rowHeight - 1
 		)
-		guard rect.maxY <= bounds.height + Self.rowHeight, width >= 0.5 else { return }
+		guard rect.minY >= -Self.rowHeight, width >= 0.5 else { return }
 		frames.append((node, rect))
 
 		let colour = Self.colour(for: node.name, hovered: node === hovered)

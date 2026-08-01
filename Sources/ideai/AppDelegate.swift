@@ -335,6 +335,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let filter = options.podFilter {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+				controller?.showPodsForTesting(
+					filter: filter, choose: options.podChoose, kind: options.profilerKind
+				)
+			}
+		}
+
 		if let address = options.profilerAddress {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
 				controller?.profileForTesting(

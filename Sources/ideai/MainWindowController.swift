@@ -2044,6 +2044,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	func pushChangesForTesting() { changesPane?.pushForTesting() }
 
+	func showPodsForTesting(filter: String, choose: Bool, kind: String?) {
+		setPanelVisible(true)
+		bottomPanel.showProfiler(address: "localhost:6060")?
+			.showPodPickerForTesting(filter: filter, choose: choose, kind: kind)
+	}
+
 	func profileForTesting(address: String, kind: String) {
 		setPanelVisible(true)
 		guard let pane = bottomPanel.showProfiler(address: address) else { return }

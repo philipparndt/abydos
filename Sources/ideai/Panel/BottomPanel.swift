@@ -695,6 +695,7 @@ final class BottomPanel: NSView {
 		switch session.kind {
 		case let .review(pane, _): pane.shutdown()
 		case let .debug(pane): pane.shutdown()
+		case let .profiler(pane): pane.shutdown()
 		default: session.terminal?.terminalView.terminateProcess()
 		}
 		session.view.removeFromSuperview()
@@ -747,6 +748,7 @@ final class BottomPanel: NSView {
 			switch session.kind {
 			case let .review(pane, _): pane.shutdown()
 			case let .debug(pane): pane.shutdown()
+			case let .profiler(pane): pane.shutdown()
 			default: session.terminal?.terminalView.terminateProcess()
 			}
 		}

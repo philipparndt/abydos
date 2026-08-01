@@ -134,6 +134,11 @@ Go program's pprof endpoint — a port, a host and port, or a URL — and collec
 Nothing is installed into the program under study: it already serves this if
 it imports `net/http/pprof`.
 
+`Pod…` profiles a pod in Kubernetes instead: pick it from the cluster and a
+`kubectl port-forward` is opened to whichever port the pod declares — an
+annotation, a container port called `pprof`, or 6060 by convention, and the
+list says which of the three it is.
+
 ## Languages
 
 Swift, Rust, TypeScript, TSX, JavaScript, Python, Go, JSON, Shell, C, C++, Java,
