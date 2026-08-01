@@ -41,6 +41,31 @@ final class CodeView: NSView, NSTextInputClient {
 	/// runs it.
 	private var runnableLines: Set<Int> = []
 	var onRunLine: ((Int) -> Void)?
+	/// ⌘-clicked a symbol: go to where it is defined.
+	var onGoToDefinition: ((_ line: Int, _ character: Int) -> Void)?
+
+	/// What a language server says is wrong here, by zero-based line.
+	private var diagnosticsByLine: [Int: [LSPDiagnostic]] = [:]
+
+	/// Replaces what is underlined as a problem.
+	func setDiagnostics(_ diagnostics: [LSPDiagnostic]) {
+		var grouped: [Int: [LSPDiagnostic]] = [:]
+		for diagnostic in diagnostics {
+			// A problem spanning lines is marked on the line it starts at, which
+			// is where the cause is; underlining all of them buries it.
+			grouped[diagnostic.range.start.line, default: []].append(diagnostic)
+		}
+		guard grouped != diagnosticsByLine else { return }
+		diagnosticsByLine = grouped
+		needsDisplay = true
+	}
+
+	/// The problems on a line, worst first.
+	func diagnostics(onLine line: Int) -> [LSPDiagnostic] {
+		(diagnosticsByLine[line] ?? []).sorted { $0.severity < $1.severity }
+	}
+
+	var hasDiagnostics: Bool { !diagnosticsByLine.isEmpty }
 
 	/// Called when the gutter is clicked in the breakpoint column.
 	var onToggleBreakpoint: ((Int) -> Void)?
@@ -484,6 +509,8 @@ final class CodeView: NSView, NSTextInputClient {
 		context.textPosition = CGPoint(x: textOriginX, y: baseline)
 		CTLineDraw(ctLine, context)
 
+		drawDiagnostics(docLine: docLine, ctLine: ctLine, lineStartUTF16: lineStartUTF16, rect: rect)
+
 		// A collapsed region gets a "{…}" chip after its first line.
 		if folding.isCollapsed(line: docLine) {
 			let textWidth = CGFloat(CTLineGetTypographicBounds(ctLine, nil, nil, nil))
@@ -492,6 +519,121 @@ final class CodeView: NSView, NSTextInputClient {
 				hiddenLines: folding.foldRange(startingAt: docLine)?.hiddenLineCount ?? 0
 			)
 		}
+	}
+
+	/// Underlines what a language server objects to on this line.
+	///
+	/// A squiggle rather than a background: a problem is a property of a few
+	/// characters, and tinting the whole row would fight with the current-line
+	/// band, the selection and the search highlights, all of which are also
+	/// backgrounds and all of which mean something else.
+	private func drawDiagnostics(docLine: Int, ctLine: CTLine, lineStartUTF16: Int, rect: NSRect) {
+		let diagnostics = diagnosticsByLine[docLine] ?? []
+		guard !diagnostics.isEmpty else { return }
+		let length = CTLineGetStringRange(ctLine).length
+
+		for diagnostic in diagnostics.sorted(by: { $0.severity > $1.severity }) {
+			let start = diagnostic.range.start.character
+			// A range ending on a later line runs to the end of this one; a
+			// zero-width range still gets something to see and hover over.
+			let end = diagnostic.range.end.line > docLine
+				? length
+				: max(diagnostic.range.end.character, start + 1)
+
+			let from = max(0, min(start, length))
+			let to = max(from, min(end, length))
+			let startX = textOriginX + CTLineGetOffsetForStringIndex(ctLine, from, nil)
+			var endX = textOriginX + CTLineGetOffsetForStringIndex(ctLine, to, nil)
+			// An empty line, or a problem past its end, still needs a mark.
+			if endX <= startX { endX = startX + charWidth }
+
+			Self.color(for: diagnostic.severity).setStroke()
+			squiggle(from: startX, to: endX, y: rect.maxY - Theme.current.scaled(2)).stroke()
+		}
+	}
+
+	/// The wavy line, drawn as one path so it strokes in a single pass.
+	private func squiggle(from startX: CGFloat, to endX: CGFloat, y: CGFloat) -> NSBezierPath {
+		let path = NSBezierPath()
+		path.lineWidth = 1
+		let amplitude = Theme.current.scaled(1.4)
+		let period = Theme.current.scaled(4)
+
+		path.move(to: NSPoint(x: startX, y: y))
+		var x = startX
+		var up = true
+		while x < endX {
+			let next = min(x + period, endX)
+			path.line(to: NSPoint(x: next, y: y + (up ? -amplitude : amplitude)))
+			x = next
+			up.toggle()
+		}
+		return path
+	}
+
+	static func color(for severity: LSPDiagnostic.Severity) -> NSColor {
+		switch severity {
+		case .error: return .hex(0xE05252)
+		// Amber rather than the git blue: blue is what this window uses for
+		// "changed", and a warning is not a change.
+		case .warning: return .hex(0xD9A343)
+		case .information, .hint: return Theme.current.gitIgnored
+		}
+	}
+
+	// MARK: - Hovering
+
+	/// The tooltip follows the pointer, so an underline can say what is wrong.
+	override func updateTrackingAreas() {
+		super.updateTrackingAreas()
+		for area in trackingAreas where area.owner === self {
+			removeTrackingArea(area)
+		}
+		addTrackingArea(NSTrackingArea(
+			rect: bounds,
+			options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+			owner: self
+		))
+	}
+
+	override func mouseMoved(with event: NSEvent) {
+		super.mouseMoved(with: event)
+		guard hasDiagnostics, let document else {
+			if toolTip != nil { toolTip = nil }
+			return
+		}
+
+		let point = convert(event.locationInWindow, from: nil)
+		guard point.x > gutterWidth else {
+			toolTip = nil
+			return
+		}
+
+		let offset = self.offset(at: point)
+		let line = document.rope.line(atByteOffset: document.rope.byteOffset(fromUTF16: offset))
+		let lineStart = document.rope.utf16Offset(fromByte: document.rope.byteOffset(ofLine: line))
+		let column = offset - lineStart
+
+		// The worst problem covering the pointer, since a place with an error
+		// and a hint on it is somewhere the error is what matters.
+		let covering = diagnostics(onLine: line).first { diagnostic in
+			let start = diagnostic.range.start.character
+			let end = diagnostic.range.end.line > line
+				? Int.max
+				: max(diagnostic.range.end.character, start + 1)
+			return column >= start && column <= end
+		}
+
+		let text = covering.map { diagnostic -> String in
+			guard let source = diagnostic.source else { return diagnostic.message }
+			return "\(diagnostic.message)  (\(source))"
+		}
+		if text != toolTip { toolTip = text }
+	}
+
+	override func mouseExited(with event: NSEvent) {
+		super.mouseExited(with: event)
+		toolTip = nil
 	}
 
 	/// Paints match backgrounds for one line.
@@ -1044,6 +1186,16 @@ final class CodeView: NSView, NSTextInputClient {
 
 		desiredColumnX = nil
 		let offset = self.offset(at: point)
+
+		// ⌘-click follows a symbol, as it does in every other editor. The caret
+		// moves there first, so the place jumped from is where it was left.
+		if event.modifierFlags.contains(.command), let document {
+			setCaret(offset, extendingSelection: false)
+			let line = document.rope.line(atByteOffset: document.rope.byteOffset(fromUTF16: offset))
+			let lineStart = document.rope.utf16Offset(fromByte: document.rope.byteOffset(ofLine: line))
+			onGoToDefinition?(line, offset - lineStart)
+			return
+		}
 
 		switch event.clickCount {
 		case 2:

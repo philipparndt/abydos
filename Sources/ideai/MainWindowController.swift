@@ -1433,6 +1433,55 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		}
 	}
 
+	/// Underlines invented problems on the open file, so the drawing can be
+	/// looked at without a server having to agree to produce any.
+	func injectDiagnosticsForTesting() {
+		guard let url = editor.activeGroup?.activeTabURL else { return }
+		LanguageService.shared.injectForTesting([
+			LSPDiagnostic(
+				range: LSPRange(
+					start: LSPPosition(line: 4, character: 8),
+					end: LSPPosition(line: 4, character: 20)
+				),
+				severity: .error,
+				message: "cannot find 'nonesuch' in scope",
+				source: "swiftc"
+			),
+			LSPDiagnostic(
+				range: LSPRange(
+					start: LSPPosition(line: 6, character: 4),
+					end: LSPPosition(line: 6, character: 16)
+				),
+				severity: .warning,
+				message: "initialization of immutable value was never used",
+				source: "swiftc"
+			),
+			LSPDiagnostic(
+				range: LSPRange(
+					start: LSPPosition(line: 8, character: 0),
+					end: LSPPosition(line: 8, character: 30)
+				),
+				severity: .information,
+				message: "consider using a computed property",
+				source: "swiftlint"
+			),
+		], for: url)
+	}
+
+	/// Says what a real server had to say by the time this ran.
+	func reportDiagnosticsForTesting() {
+		let running = LanguageService.shared.runningNames
+		guard let url = editor.activeGroup?.activeTabURL else {
+			print("LSP: no file open (servers: \(running))")
+			return
+		}
+		let diagnostics = LanguageService.shared.diagnostics(for: url)
+		print("LSP: servers=\(running) diagnostics=\(diagnostics.count) for \(url.lastPathComponent)")
+		for diagnostic in diagnostics.prefix(5) {
+			print("LSP:   \(diagnostic.severity) line \(diagnostic.range.start.line + 1): \(diagnostic.message)")
+		}
+	}
+
 	func openFirstScratchForTesting() {
 		scratchesPane?.openFirstForTesting()
 	}

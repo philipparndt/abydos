@@ -68,6 +68,10 @@ struct LaunchOptions {
 	var openScratch = false
 	/// Show the history, and open the first file of the given commit row.
 	var historyCommit: Int?
+	/// Underline made-up problems, to see how they are drawn.
+	var fakeDiagnostics = false
+	/// Wait this long before capturing, for a language server to answer.
+	var lspWait: Double?
 	/// Rewrite the open file externally after this many seconds.
 	var externalEdit: Double?
 	/// Raw bytes to send to the terminal, for verifying key encodings.
@@ -124,6 +128,8 @@ struct LaunchOptions {
 			case "--scratches":  options.scratchSearch = next() ?? ""
 			case "--open-scratch": options.openScratch = true
 			case "--history":    options.historyCommit = next().flatMap(Int.init) ?? 0
+			case "--fake-diagnostics": options.fakeDiagnostics = true
+			case "--lsp-wait":   options.lspWait = next().flatMap(Double.init)
 			case "--external-edit": options.externalEdit = next().flatMap(Double.init)
 			case "--send-bytes": options.terminalBytes = next()
 			case "--preview-mode": options.previewMode = next()

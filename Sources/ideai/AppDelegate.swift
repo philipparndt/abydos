@@ -137,6 +137,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if options.fakeDiagnostics {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+				controller?.injectDiagnosticsForTesting()
+			}
+		}
+
+		if let wait = options.lspWait {
+			DispatchQueue.main.asyncAfter(deadline: .now() + wait) {
+				controller?.reportDiagnosticsForTesting()
+			}
+		}
+
 		if let row = options.historyCommit {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
 				controller?.showSidebarTool(.history)

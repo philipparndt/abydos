@@ -1,0 +1,290 @@
+import Foundation
+import Testing
+@testable import IdeaiKit
+
+/// Parsing what a language server says.
+struct LSPMessageTests {
+	@Test func readsAPosition() {
+		let position = LSPPosition(json: ["line": 4, "character": 12])
+		#expect(position == LSPPosition(line: 4, character: 12))
+		#expect(LSPPosition(json: ["line": 1]) == nil)
+		#expect(LSPPosition(json: "nonsense") == nil)
+	}
+
+	@Test func readsADiagnostic() {
+		let diagnostic = LSPDiagnostic(json: [
+			"range": ["start": ["line": 2, "character": 0], "end": ["line": 2, "character": 5]],
+			"severity": 2,
+			"message": "unused variable",
+			"source": "swiftc",
+			"code": 42,
+		])
+
+		#expect(diagnostic?.severity == .warning)
+		#expect(diagnostic?.message == "unused variable")
+		#expect(diagnostic?.source == "swiftc")
+		// A code can be a number or a string, and is wanted as text either way.
+		#expect(diagnostic?.code == "42")
+	}
+
+	/// A server that does not say how bad it is means an error, since that is
+	/// the assumption somebody looks at rather than ignores.
+	@Test func assumesAnErrorWhenSeverityIsMissing() {
+		let diagnostic = LSPDiagnostic(json: [
+			"range": ["start": ["line": 0, "character": 0], "end": ["line": 0, "character": 1]],
+			"message": "something",
+		])
+		#expect(diagnostic?.severity == .error)
+	}
+
+	@Test func ordersSeverities() {
+		#expect(LSPDiagnostic.Severity.error < .warning)
+		#expect(LSPDiagnostic.Severity.warning < .hint)
+	}
+
+	/// Three shapes mean the same thing, and all three are sent in practice.
+	@Test func readsEveryShapeOfLocation() {
+		let range: [String: Any] = ["start": ["line": 1, "character": 2], "end": ["line": 1, "character": 8]]
+
+		let plain = LSPLocation(json: ["uri": "file:///a.swift", "range": range])
+		#expect(plain?.uri == "file:///a.swift")
+
+		let link = LSPLocation(json: ["targetUri": "file:///b.swift", "targetSelectionRange": range])
+		#expect(link?.uri == "file:///b.swift")
+
+		// A link with only the wider range still says where to go.
+		let wide = LSPLocation(json: ["targetUri": "file:///c.swift", "targetRange": range])
+		#expect(wide?.uri == "file:///c.swift")
+	}
+
+	@Test func readsOneOrManyLocations() {
+		let range: [String: Any] = ["start": ["line": 0, "character": 0], "end": ["line": 0, "character": 1]]
+		let single: [String: Any] = ["uri": "file:///a.swift", "range": range]
+
+		#expect(LSPLocation.list(from: single).count == 1)
+		#expect(LSPLocation.list(from: [single, single]).count == 2)
+		#expect(LSPLocation.list(from: NSNull()).isEmpty)
+		#expect(LSPLocation.list(from: nil).isEmpty)
+	}
+
+	@Test func namesTheFileALocationPointsAt() {
+		let range: [String: Any] = ["start": ["line": 0, "character": 0], "end": ["line": 0, "character": 1]]
+		let location = LSPLocation(json: ["uri": "file:///tmp/a%20b.swift", "range": range])
+		#expect(location?.url?.path == "/tmp/a b.swift")
+	}
+
+	/// Servers send hover text in four different shapes.
+	@Test func flattensEveryShapeOfHover() {
+		#expect(LSPHover(json: ["contents": "plain text"])?.contents == "plain text")
+
+		#expect(LSPHover(json: [
+			"contents": ["kind": "markdown", "value": "**bold**"],
+		])?.contents == "**bold**")
+
+		// The deprecated MarkedString, which is still what some servers send.
+		#expect(LSPHover(json: [
+			"contents": ["language": "swift", "value": "func f()"],
+		])?.contents == "func f()")
+
+		#expect(LSPHover(json: [
+			"contents": ["one", ["kind": "plaintext", "value": "two"]],
+		])?.contents == "one\n\ntwo")
+	}
+
+	@Test func saysNothingRatherThanAnEmptyHover() {
+		#expect(LSPHover(json: ["contents": ""]) == nil)
+		#expect(LSPHover(json: ["contents": []]) == nil)
+		#expect(LSPHover(json: NSNull()) == nil)
+	}
+
+	@Test func readsCompletions() {
+		let items: [String: Any] = [
+			"isIncomplete": true,
+			"items": [
+				["label": "count", "kind": 5, "detail": "Int", "sortText": "0001"],
+				["label": "map(_:)", "insertText": "map(", "documentation": "Transforms."],
+			],
+		]
+		let completions = LSPCompletion.list(from: items)
+
+		#expect(completions.count == 2)
+		#expect(completions[0].insertText == "count")
+		#expect(completions[0].detail == "Int")
+		#expect(completions[1].insertText == "map(")
+		#expect(completions[1].documentation == "Transforms.")
+	}
+
+	/// A textEdit says exactly what to insert and beats insertText.
+	@Test func prefersTheEditOverTheHint() {
+		let completion = LSPCompletion(json: [
+			"label": "description",
+			"insertText": "desc",
+			"textEdit": ["newText": "description", "range": [
+				"start": ["line": 0, "character": 0], "end": ["line": 0, "character": 4],
+			]],
+		])
+		#expect(completion?.insertText == "description")
+	}
+
+	@Test func readsABareListOfCompletions() {
+		#expect(LSPCompletion.list(from: [["label": "a"], ["label": "b"]]).count == 2)
+		#expect(LSPCompletion.list(from: NSNull()).isEmpty)
+	}
+}
+
+/// The framing, which is where a protocol client usually goes wrong.
+struct LSPFramingTests {
+	private func framed(_ object: [String: Any]) -> Data {
+		let payload = try! JSONSerialization.data(withJSONObject: object)
+		var data = Data("Content-Length: \(payload.count)\r\n\r\n".utf8)
+		data.append(payload)
+		return data
+	}
+
+	@Test func readsAMessageArrivingInPieces() async {
+		let client = LSPClient()
+		client.callbackQueue = .main
+
+		let received = Received()
+		client.onDiagnostics = { uri, diagnostics in
+			received.record(uri: uri, count: diagnostics.count)
+		}
+
+		let message = framed([
+			"jsonrpc": "2.0",
+			"method": "textDocument/publishDiagnostics",
+			"params": [
+				"uri": "file:///a.swift",
+				"diagnostics": [[
+					"range": ["start": ["line": 0, "character": 0], "end": ["line": 0, "character": 3]],
+					"message": "bad",
+				]],
+			],
+		])
+
+		// Split anywhere, including through the header: a pipe delivers what it
+		// feels like, not what was written.
+		for index in stride(from: 0, to: message.count, by: 7) {
+			let end = min(index + 7, message.count)
+			client.consume(message.subdata(in: index..<end))
+		}
+
+		try? await Task.sleep(nanoseconds: 200_000_000)
+		#expect(received.uri == "file:///a.swift")
+		#expect(received.count == 1)
+	}
+
+	@Test func readsTwoMessagesFromOneRead() async {
+		let client = LSPClient()
+		let received = Received()
+		client.onMessage = { _, text in received.record(uri: text, count: received.count + 1) }
+
+		var data = framed(["jsonrpc": "2.0", "method": "window/logMessage", "params": ["message": "one", "type": 3]])
+		data.append(framed(["jsonrpc": "2.0", "method": "window/logMessage", "params": ["message": "two", "type": 3]]))
+		client.consume(data)
+
+		try? await Task.sleep(nanoseconds: 200_000_000)
+		#expect(received.count == 2)
+		#expect(received.uri == "two")
+	}
+
+	/// Rubbish in the stream must not wedge the reader for ever.
+	@Test func survivesAMessageItCannotParse() async {
+		let client = LSPClient()
+		let received = Received()
+		client.onMessage = { _, text in received.record(uri: text, count: 1) }
+
+		var data = Data("Content-Length: 5\r\n\r\nnot{}".utf8)
+		data.append(framed(["jsonrpc": "2.0", "method": "window/logMessage", "params": ["message": "after", "type": 3]]))
+		client.consume(data)
+
+		try? await Task.sleep(nanoseconds: 200_000_000)
+		#expect(received.uri == "after")
+	}
+
+	@Test func refusesToTalkToAServerThatIsNotRunning() async {
+		let client = LSPClient()
+		await #expect(throws: LSPClient.ClientError.self) {
+			try await client.request("textDocument/hover", nil)
+		}
+	}
+
+	/// Collects callbacks from whichever queue they arrive on.
+	private final class Received: @unchecked Sendable {
+		private let lock = NSLock()
+		private var _uri = ""
+		private var _count = 0
+
+		var uri: String { lock.lock(); defer { lock.unlock() }; return _uri }
+		var count: Int { lock.lock(); defer { lock.unlock() }; return _count }
+
+		func record(uri: String, count: Int) {
+			lock.lock()
+			_uri = uri
+			_count = count
+			lock.unlock()
+		}
+	}
+}
+
+/// Which server answers for which language.
+struct LanguageServerRegistryTests {
+	@Test func knowsAServerForTheUsualLanguages() {
+		#expect(LanguageServers.definition(forLanguage: "swift")?.command == "sourcekit-lsp")
+		#expect(LanguageServers.definition(forLanguage: "go")?.command == "gopls")
+		#expect(LanguageServers.definition(forLanguage: "typescript")?.arguments == ["--stdio"])
+		#expect(LanguageServers.definition(forLanguage: "cobol") == nil)
+	}
+
+	/// A stray file of some language does not mean the project is in it.
+	@Test func wantsToSeeAProjectItUnderstands() throws {
+		let root = URL(fileURLWithPath: NSTemporaryDirectory())
+			.appendingPathComponent("servers-\(UUID().uuidString)")
+		try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		let go = try #require(LanguageServers.definition(forLanguage: "go"))
+		#expect(!LanguageServers.suits(go, root: root))
+
+		try "module x\n".write(to: root.appendingPathComponent("go.mod"), atomically: true, encoding: .utf8)
+		#expect(LanguageServers.suits(go, root: root))
+	}
+
+	/// Swift projects are recognised by an extension as well as a file name.
+	@Test func matchesAMarkerByExtension() throws {
+		let root = URL(fileURLWithPath: NSTemporaryDirectory())
+			.appendingPathComponent("servers-\(UUID().uuidString)")
+		try FileManager.default.createDirectory(at: root.appendingPathComponent("App.xcodeproj"),
+			withIntermediateDirectories: true)
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		let swift = try #require(LanguageServers.definition(forLanguage: "swift"))
+		#expect(LanguageServers.suits(swift, root: root))
+	}
+
+	/// A server with nothing to look for is happy anywhere.
+	@Test func startsAnywhereWhenItHasNoMarkers() throws {
+		let root = URL(fileURLWithPath: NSTemporaryDirectory())
+		let json = try #require(LanguageServers.definition(forLanguage: "json"))
+		#expect(LanguageServers.suits(json, root: root))
+	}
+
+	/// A GUI app inherits almost nothing of a shell's PATH, so the usual homes
+	/// of these tools are searched whether or not it is set.
+	@Test func looksWhereToolsActuallyLive() {
+		let paths = LanguageServers.searchPaths
+		#expect(paths.contains("/opt/homebrew/bin"))
+		#expect(paths.contains("/usr/local/bin"))
+		#expect(paths.contains { $0.hasSuffix("/go/bin") })
+		// And never the same directory twice.
+		#expect(Set(paths).count == paths.count)
+	}
+
+	@Test func saysNothingAboutAServerThatIsNotInstalled() {
+		let missing = LanguageServerDefinition(
+			languageIds: ["x"], command: "definitely-not-installed-\(UUID().uuidString)",
+			installHint: "nowhere"
+		)
+		#expect(LanguageServers.executable(for: missing) == nil)
+	}
+}

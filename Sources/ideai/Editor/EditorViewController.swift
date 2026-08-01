@@ -64,6 +64,7 @@ final class EditorViewController: NSViewController {
 	private var searchMatches: [SearchMatch] = []
 	private var currentMatchIndex: Int?
 	private var findDebounce: DispatchWorkItem?
+	private var languageSyncWork: DispatchWorkItem?
 
 	private var tabBar: EditorTabBar!
 	private var tabBarTopConstraint: NSLayoutConstraint!
@@ -155,6 +156,13 @@ final class EditorViewController: NSViewController {
 		findBar.onNext = { [weak self] in self?.stepMatch(by: 1) }
 		findBar.onPrevious = { [weak self] in self?.stepMatch(by: -1) }
 		findBar.onClose = { [weak self] in self?.closeFind() }
+
+		NotificationCenter.default.addObserver(
+			self,
+			selector: #selector(diagnosticsChanged(_:)),
+			name: .ideaiDiagnosticsChanged,
+			object: nil
+		)
 
 		placeholder = NSTextField(labelWithString: "Select a file to open")
 		placeholder.font = Theme.current.uiFont(13)
@@ -656,10 +664,15 @@ final class EditorViewController: NSViewController {
 			// VS Code and IDEA use.
 			tab.isPreview = false
 			self?.refreshTabBar()
+			self?.scheduleLanguageSync(for: tab)
 		}
 		// Auto save clears the dirty marker without any further user action.
 		document.onAutoSaved = { [weak self] in
 			self?.refreshTabBar()
+			guard let self, let project = self.project, let languageId = document.languageId else { return }
+			LanguageService.shared.saved(
+				url: fileURL, languageId: languageId, text: self.text(of: document), project: project.root
+			)
 		}
 
 		codeView.onToggleBreakpoint = { [weak self] line in
@@ -670,11 +683,73 @@ final class EditorViewController: NSViewController {
 			// Already 1-based: the gutter converts before reporting a run.
 			self?.onRunLine?(fileURL, line)
 		}
+		codeView.onGoToDefinition = { [weak self] line, character in
+			self?.goToDefinition(from: tab, line: line, character: character)
+		}
 		codeView.load(document: document)
 		codeView.setWordWrap(Settings.shared.wordWrap)
 		applyDebugState(to: tab)
 		tab.sourceView = scrollView
+
+		// The server is told about the file as it is opened, and answers about
+		// it from then on.
+		if let project, let languageId = document.languageId {
+			LanguageService.shared.opened(
+				url: fileURL, languageId: languageId, text: text(of: document), project: project.root
+			)
+			codeView.setDiagnostics(LanguageService.shared.diagnostics(for: fileURL))
+		}
 		return tab
+	}
+
+	// MARK: - Language servers
+
+	/// Whole text of a document, which is what full synchronisation sends.
+	private func text(of document: TextDocument) -> String {
+		document.rope.string(in: 0..<document.rope.byteCount)
+	}
+
+	/// Tells the server what changed, once the typing pauses.
+	///
+	/// Debounced because a keystroke is not worth a round trip: a server asked
+	/// to reparse on every character spends its time on text nobody has
+	/// finished writing, and the diagnostics that come back are about a
+	/// half-typed line.
+	private func scheduleLanguageSync(for tab: Tab) {
+		languageSyncWork?.cancel()
+		let work = DispatchWorkItem { [weak self, weak tab] in
+			guard let self, let tab, let document = tab.document,
+			      let project = self.project, let languageId = document.languageId
+			else { return }
+			LanguageService.shared.changed(
+				url: tab.url, languageId: languageId, text: self.text(of: document), project: project.root
+			)
+		}
+		languageSyncWork = work
+		DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+	}
+
+	/// Follows a ⌘-click to wherever the symbol is defined.
+	private func goToDefinition(from tab: Tab, line: Int, character: Int) {
+		guard let project, let languageId = tab.document?.languageId else { return }
+		Task { @MainActor in
+			let locations = await LanguageService.shared.definition(
+				url: tab.url,
+				position: LSPPosition(line: line, character: character),
+				languageId: languageId,
+				project: project.root
+			)
+			guard let first = locations.first, let url = first.url else { return }
+			open(fileURL: url, atLine: first.range.start.line + 1)
+		}
+	}
+
+	/// Applies whatever a server last said about the files that are open.
+	@objc private func diagnosticsChanged(_ notification: Notification) {
+		guard let url = notification.object as? URL else { return }
+		for tab in tabs where tab.url.absoluteString == url.absoluteString {
+			tab.codeView?.setDiagnostics(LanguageService.shared.diagnostics(for: url))
+		}
 	}
 
 	// MARK: - Debugging
@@ -1130,6 +1205,14 @@ final class EditorViewController: NSViewController {
 	/// Takes a tab out and settles on what to show instead, asking nothing.
 	private func removeTab(at index: Int) {
 		guard tabs.indices.contains(index) else { return }
+
+		// A file nobody has open is one the server can stop thinking about.
+		let closing = tabs[index]
+		if let project, let languageId = closing.document?.languageId,
+		   !tabs.contains(where: { $0 !== closing && $0.url == closing.url }) {
+			LanguageService.shared.closed(url: closing.url, languageId: languageId, project: project.root)
+		}
+
 		teardown(tabs[index])
 		tabs.remove(at: index)
 
