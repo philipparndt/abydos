@@ -15,6 +15,8 @@ final class HistoryPane: NSView {
 	private let root: URL
 
 	private var commits: [GitCommit] = []
+	/// Commits that exist here and nowhere else yet.
+	private var unpushed: Set<String> = []
 	private var files: [GitCommitFile] = []
 	private var selectedCommit: GitCommit?
 	private var query = ""
@@ -194,6 +196,7 @@ final class HistoryPane: NSView {
 			guard scope == self.scopedPath, search == self.query else { return }
 
 			commits = loaded
+			unpushed = await GitHistory.unpushed(in: root)
 			hasMore = loaded.count == Self.pageSize
 			isLoading = false
 			commitTable.reloadData()
@@ -324,7 +327,8 @@ extension HistoryPane: NSTableViewDataSource, NSTableViewDelegate {
 	func tableView(_ tableView: NSTableView, viewFor column: NSTableColumn?, row: Int) -> NSView? {
 		if tableView === commitTable {
 			guard commits.indices.contains(row) else { return nil }
-			return CommitRowView(commit: commits[row])
+			let commit = commits[row]
+			return CommitRowView(commit: commit, isUnpushed: unpushed.contains(commit.hash))
 		}
 		guard files.indices.contains(row) else { return nil }
 		return CommitFileRowView(file: files[row])
@@ -378,12 +382,16 @@ private final class HistoryTableView: NSTableView {
 /// A commit: what it did, who did it, and when.
 private final class CommitRowView: NSView {
 	private let commit: GitCommit
+	private let isUnpushed: Bool
 	override var isFlipped: Bool { true }
 
-	init(commit: GitCommit) {
+	init(commit: GitCommit, isUnpushed: Bool = false) {
 		self.commit = commit
+		self.isUnpushed = isUnpushed
 		super.init(frame: .zero)
-		toolTip = [commit.shortHash, commit.subject, commit.body]
+		var lines = [commit.shortHash, commit.subject, commit.body]
+		if isUnpushed { lines.append("Not pushed yet") }
+		toolTip = lines
 			.filter { !$0.isEmpty }
 			.joined(separator: "\n\n")
 	}
@@ -409,6 +417,18 @@ private final class CommitRowView: NSView {
 			NSBezierPath(roundedRect: pill, xRadius: 3, yRadius: 3).fill()
 			label.draw(at: NSPoint(x: x + 4, y: top + 1))
 			x += pill.width + Theme.current.scaled(5)
+		}
+
+		// A commit only on this machine is the one worth spotting: it is the
+		// one a lost laptop takes with it.
+		if isUnpushed, let arrow = Theme.symbol(
+			"arrow.up", size: 9 * Theme.current.scale, color: Theme.current.gitModified
+		) {
+			let size = Theme.current.scaled(10)
+			arrow.drawFitted(in: NSRect(
+				x: x, y: top + Theme.current.scaled(2), width: size, height: size
+			))
+			x += size + Theme.current.scaled(4)
 		}
 
 		let subject = NSAttributedString(string: commit.subject, attributes: [

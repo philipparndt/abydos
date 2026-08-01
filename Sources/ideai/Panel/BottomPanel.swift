@@ -488,7 +488,7 @@ final class BottomPanel: NSView {
 
 		// One debug session at a time; a second would fight over breakpoints.
 		if let index = sessions.firstIndex(where: { if case .debug = $0.kind { return true }; return false }) {
-			close(index: index)
+			close(index: index, hidingWhenEmpty: false)
 		}
 
 		let session = DebugSession(projectRoot: root)
@@ -655,7 +655,12 @@ final class BottomPanel: NSView {
 		activeTerminalChanged()
 	}
 
-	private func close(index: Int) {
+	/// Closes a session, optionally without asking the panel to go away.
+	///
+	/// Replacing the only session would otherwise close the panel and open it
+	/// again, which from the outside looks exactly like pressing debug having
+	/// toggled it shut.
+	private func close(index: Int, hidingWhenEmpty: Bool = true) {
 		guard sessions.indices.contains(index) else { return }
 		let session = sessions[index]
 		switch session.kind {
@@ -671,7 +676,7 @@ final class BottomPanel: NSView {
 			contentArea.subviews.forEach { $0.removeFromSuperview() }
 			placeholder.isHidden = false
 			refreshTabs()
-			onRequestHide?()
+			if hidingWhenEmpty { onRequestHide?() }
 			return
 		}
 		activeIndex = nil

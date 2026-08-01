@@ -21,9 +21,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 		if carried > 0 { print("Moved \(carried) scratch file(s) to \(ScratchFiles.defaultRoot.path)") }
 
 		let options = LaunchOptions.parse()
-		// Glass renders blank in an offscreen capture, which would make every
-		// screenshot of a running program useless.
-		if options.isScreenshotRun { RunControl.usesGlass = false }
 		MetalProbe.start()
 		if let zoom = options.zoom { Settings.shared.uiScale = zoom }
 

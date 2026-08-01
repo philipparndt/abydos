@@ -163,6 +163,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// The terminal a launch configuration is running in, so the play button can
 	/// become a stop button that stops the right thing.
 	private weak var runningPane: TerminalPane?
+	/// Painted behind the toolbar, since the titlebar itself is transparent.
+	private var titlebarBackdrop: ColoredView?
+	private var titlebarBackdropHeight: NSLayoutConstraint?
 	/// Held while open: the panel is a child window and nothing else owns it.
 	private var configurationEditor: LaunchConfigurationEditor?
 	/// What the run control acts on, remembered per project.
@@ -236,7 +239,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			defer: false
 		)
 		window.titleVisibility = .hidden
-		window.titlebarAppearsTransparent = false
+		// Transparent so the titlebar shows what the content view paints there
+		// — which is a strip this app owns, and can colour while a program is
+		// running.
+		window.titlebarAppearsTransparent = true
 		window.backgroundColor = Theme.current.windowBackground
 		window.tabbingMode = .disallowed
 
@@ -258,6 +264,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 		buildContent()
 		buildToolbar()
+		buildTitlebarBackdrop()
 
 		// Preference changes apply live rather than on next launch.
 		NotificationCenter.default.addObserver(
@@ -465,6 +472,48 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// and an *empty* toolbar plus an accessory reserves a second titlebar row.
 	/// Keeping the toolbar keeps the modern window shape and a single row, so
 	/// the capsule is the accepted cost.
+	/// The strip the toolbar sits on.
+	///
+	/// The window is `fullSizeContentView`, so the area behind the titlebar is
+	/// ours to paint; with a transparent titlebar this is what shows there.
+	private func buildTitlebarBackdrop() {
+		guard let contentView = window?.contentView else { return }
+		// Hidden until something runs: when it is not saying anything, the
+		// titlebar should look exactly as it did before, with the sidebar's
+		// colour meeting the editor's underneath it.
+		let backdrop = ColoredView(color: Theme.current.toolbarBackground)
+		backdrop.isHidden = true
+		backdrop.translatesAutoresizingMaskIntoConstraints = false
+		contentView.addSubview(backdrop, positioned: .above, relativeTo: nil)
+
+		let height = backdrop.heightAnchor.constraint(equalToConstant: 0)
+		NSLayoutConstraint.activate([
+			backdrop.topAnchor.constraint(equalTo: contentView.topAnchor),
+			backdrop.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+			backdrop.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+			height,
+		])
+		titlebarBackdrop = backdrop
+		titlebarBackdropHeight = height
+	}
+
+	/// Green while something is running: the whole bar, not a badge on it.
+	private func setTitlebarRunning(_ running: Bool) {
+		guard let backdrop = titlebarBackdrop else { return }
+		backdrop.isHidden = !running
+		// Everything added since sits above it, so it is raised each time
+		// rather than once.
+		if running { backdrop.superview?.addSubview(backdrop, positioned: .above, relativeTo: nil) }
+
+		// Dark enough to keep the white pills legible, green enough to be
+		// unmistakable from across the room.
+		let colour = running
+			? Theme.current.gitAdded.blended(withFraction: 0.55, of: Theme.current.toolbarBackground)
+				?? Theme.current.toolbarBackground
+			: Theme.current.toolbarBackground
+		backdrop.setColor(colour)
+	}
+
 	private func buildToolbar() {
 		let toolbar = NSToolbar(identifier: "IdeaiToolbar")
 		toolbar.delegate = self
@@ -494,6 +543,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		let layoutRect = window.contentLayoutRect
 		let inset = max(0, contentView.bounds.height - layoutRect.height - layoutRect.origin.y)
 
+		titlebarBackdropHeight?.constant = inset
 		navigator.setTopInset(inset)
 		sidebarTopInset = inset
 		if isPanelMaximized { bottomPanel.setTopInset(inset) }
@@ -2742,6 +2792,9 @@ extension MainWindowController: NSToolbarDelegate {
 			control.onChooseConfiguration = { [weak self] point in
 				self?.showConfigurationMenu(at: point, in: control)
 			}
+			control.onBusyChanged = { [weak self] running in
+				self?.setTitlebarRunning(running)
+			}
 			runControl = control
 			item.view = control
 			refreshRunControl()
@@ -2771,7 +2824,15 @@ extension MainWindowController: NSToolbarDelegate {
 /// A view that fills itself with a flat colour. Used instead of relying on
 /// `NSBox` or vibrancy so the palette matches the theme exactly.
 class ColoredView: NSView {
-	private let color: NSColor
+	private var color: NSColor
+
+	/// Repaints in another colour, for a strip that means something by it.
+	func setColor(_ colour: NSColor) {
+		guard colour != color else { return }
+		color = colour
+		layer?.backgroundColor = colour.cgColor
+		needsDisplay = true
+	}
 
 	init(color: NSColor) {
 		self.color = color

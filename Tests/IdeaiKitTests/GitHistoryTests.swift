@@ -160,3 +160,64 @@ struct GitHistoryTests {
 		#expect(await GitHistory.count(in: empty) == 0)
 	}
 }
+
+/// Which commits have not left the machine.
+struct GitUnpushedTests {
+	/// Builds a repository with two commits and returns it.
+	private func makeRepository() throws -> URL {
+		let root = URL(fileURLWithPath: NSTemporaryDirectory())
+			.appendingPathComponent("unpushed-\(UUID().uuidString)")
+		try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+		func git(_ arguments: [String]) {
+			_ = GitRepository.runSync(arguments, in: root)
+		}
+		git(["init", "-q", "-b", "main", "."])
+		git(["config", "user.email", "tester@example.com"])
+		git(["config", "user.name", "A Tester"])
+
+		try "one\n".write(to: root.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
+		git(["add", "-A"])
+		git(["commit", "-qm", "first"])
+		return root
+	}
+
+	private func head(of root: URL) -> String {
+		GitRepository.runSync(["rev-parse", "HEAD"], in: root).stdout
+			.trimmingCharacters(in: .whitespacesAndNewlines)
+	}
+
+	/// A repository with no remote at all has everything unpushed: there is
+	/// nowhere it could have gone.
+	@Test func reportsEverythingWhenThereIsNoRemote() async throws {
+		let root = try makeRepository()
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		let unpushed = await GitHistory.unpushed(in: root)
+		#expect(unpushed == [head(of: root)])
+	}
+
+	/// What a remote already has is not unpushed, whatever the local branch's
+	/// upstream happens to be set to.
+	@Test func excludesWhatARemoteAlreadyHas() async throws {
+		let root = try makeRepository()
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		let remote = URL(fileURLWithPath: NSTemporaryDirectory())
+			.appendingPathComponent("remote-\(UUID().uuidString).git")
+		defer { try? FileManager.default.removeItem(at: remote) }
+		_ = GitRepository.runSync(["init", "-q", "--bare", remote.path], in: root)
+		_ = GitRepository.runSync(["remote", "add", "origin", remote.path], in: root)
+		_ = GitRepository.runSync(["push", "-q", "origin", "main"], in: root)
+
+		let pushed = head(of: root)
+		try "two\n".write(to: root.appendingPathComponent("b.txt"), atomically: true, encoding: .utf8)
+		_ = GitRepository.runSync(["add", "-A"], in: root)
+		_ = GitRepository.runSync(["commit", "-qm", "second"], in: root)
+		let local = head(of: root)
+
+		let unpushed = await GitHistory.unpushed(in: root)
+		#expect(unpushed == [local])
+		#expect(!unpushed.contains(pushed))
+	}
+}

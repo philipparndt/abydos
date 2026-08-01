@@ -8,10 +8,6 @@ import IdeaiKit
 /// space at all, which for something looked at constantly and pressed
 /// occasionally is the right trade.
 final class RunControl: NSView {
-	/// Turned off for capture runs: an offscreen render of a window containing
-	/// glass comes back blank, which would make every screenshot useless.
-	static var usesGlass = true
-
 	var onRun: (() -> Void)?
 	var onDebug: (() -> Void)?
 	var onStop: (() -> Void)?
@@ -29,37 +25,12 @@ final class RunControl: NSView {
 	private var debugRect: NSRect = .zero
 	private var schemeRect: NSRect = .zero
 	private var toolTips: [NSView.ToolTipTag: String] = [:]
-	/// The toolbar's own glass, tinted while something is running.
-	private var glass: NSView?
+	/// Told when a run starts or ends, so the titlebar can take the colour.
+	var onBusyChanged: ((Bool) -> Void)?
 
 	override init(frame frameRect: NSRect) {
 		super.init(frame: frameRect)
 		wantsLayer = true
-		makeGlass()
-	}
-
-	/// A pane of glass behind everything, so the whole strip can take a colour
-	/// rather than wearing a rectangle drawn on top of it.
-	///
-	/// The toolbar already puts glass behind its items; this sits in the same
-	/// place at the same size, and the only thing it adds is a tint.
-	private func makeGlass() {
-		guard #available(macOS 26.0, *), Self.usesGlass else { return }
-		let view = NSGlassEffectView()
-		view.autoresizingMask = [.width, .height]
-		view.frame = bounds
-		view.isHidden = true
-		addSubview(view, positioned: .below, relativeTo: nil)
-		glass = view
-	}
-
-	private func updateGlass() {
-		guard #available(macOS 26.0, *), let glass = glass as? NSGlassEffectView else { return }
-		glass.isHidden = !isBusy
-		glass.cornerRadius = bounds.height / 2
-		// Green while it runs, red once it has failed: the two states worth
-		// seeing without reading anything.
-		glass.tintColor = isBusy ? Theme.current.gitAdded.withAlphaComponent(0.55) : nil
 	}
 
 	required init?(coder: NSCoder) { fatalError("not used") }
@@ -83,9 +54,11 @@ final class RunControl: NSView {
 		isBusy = busy
 		self.failed = failed
 		needsDisplay = true
-		updateGlass()
 		// The run button is a stop button while busy, and says so.
-		if wasBusy != busy { rebuildToolTips() }
+		if wasBusy != busy {
+			rebuildToolTips()
+			onBusyChanged?(busy)
+		}
 	}
 
 	// MARK: - Layout
@@ -119,7 +92,6 @@ final class RunControl: NSView {
 	override func layout() {
 		super.layout()
 		rebuildToolTips()
-		updateGlass()
 	}
 
 	override func mouseDown(with event: NSEvent) {
@@ -140,9 +112,9 @@ final class RunControl: NSView {
 	override func draw(_ dirtyRect: NSRect) {
 		layoutParts()
 
-		// Nothing is drawn for "running": the glass behind the whole strip
-		// carries it, which is one colour rather than a shape on top of a
-		// shape.
+		// Nothing is drawn for "running": the titlebar behind the whole strip
+		// takes the colour instead, which is one flat area rather than a shape
+		// sitting on top of another shape.
 
 		// Stop replaces run while something is running, as it does everywhere:
 		// the two are the same question asked at different moments.
