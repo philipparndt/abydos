@@ -94,8 +94,16 @@ public final class TerminalEmulator {
 	/// read happens several times per sequence. A truecolour SGR arrives for
 	/// every cell of a full-screen repaint, so that splitting cost more than
 	/// everything else the parser did put together.
-	private var parameterValues: [Int] = []
-	private var componentStarts: [Int] = []
+	/// Storage of its own rather than arrays. A sequence arrives for every cell
+	/// of a screen repaint, and an array checks that it is uniquely referenced
+	/// on every single write — which came to more than reading the digits did.
+	/// The capacity is fixed: no sequence anyone sends carries thirty-two
+	/// components, and anything longer is dropped rather than grown into.
+	private static let parameterCapacity = 32
+	private let parameterValues: UnsafeMutablePointer<Int32>
+	private let componentStarts: UnsafeMutablePointer<Int32>
+	private var parameterCount = 0
+	private var componentTotal = 0
 	private var pendingValue = 0
 	private var atComponentStart = true
 	/// The `?`, `>`, `<` or `=` marking a sequence as private rather than ANSI.
@@ -127,8 +135,15 @@ public final class TerminalEmulator {
 	private var widthCache = [Int8](repeating: -1, count: 0x1_0000)
 
 	public init(rows: Int = 24, columns: Int = 80) {
+		parameterValues = .allocate(capacity: Self.parameterCapacity)
+		componentStarts = .allocate(capacity: Self.parameterCapacity)
 		screen = TerminalScreen(rows: rows, columns: columns)
 		scrollBottom = screen.rows - 1
+	}
+
+	deinit {
+		parameterValues.deallocate()
+		componentStarts.deallocate()
 	}
 
 	// MARK: - Input
@@ -542,9 +557,11 @@ public final class TerminalEmulator {
 	}
 
 	private func resetParameters() {
-		parameterValues.removeAll(keepingCapacity: true)
-		componentStarts.removeAll(keepingCapacity: true)
-		intermediateBytes.removeAll(keepingCapacity: true)
+		parameterCount = 0
+		componentTotal = 0
+		// Checked rather than cleared: intermediates are rare, and this runs for
+		// every escape sequence that arrives.
+		if !intermediateBytes.isEmpty { intermediateBytes.removeAll(keepingCapacity: true) }
 		pendingValue = 0
 		atComponentStart = true
 		introducer = nil
@@ -556,21 +573,25 @@ public final class TerminalEmulator {
 	/// which is what SGR reset is, and what splitting an empty string used to
 	/// produce.
 	private func pushParameter() {
+		defer { pendingValue = 0 }
+		guard parameterCount < Self.parameterCapacity else { return }
+
 		if atComponentStart {
-			componentStarts.append(parameterValues.count)
+			componentStarts[componentTotal] = Int32(parameterCount)
+			componentTotal += 1
 			atComponentStart = false
 		}
-		parameterValues.append(pendingValue)
-		pendingValue = 0
+		parameterValues[parameterCount] = Int32(pendingValue)
+		parameterCount += 1
 	}
 
 	/// How many `;`-separated components the sequence carried.
-	private var componentCount: Int { componentStarts.count }
+	private var componentCount: Int { componentTotal }
 
 	/// A component's primary value, or 0 when it was not given.
 	private func componentValue(_ index: Int) -> Int {
-		guard index >= 0, index < componentStarts.count else { return 0 }
-		return parameterValues[componentStarts[index]]
+		guard index >= 0, index < componentTotal else { return 0 }
+		return Int(parameterValues[Int(componentStarts[index])])
 	}
 
 	/// The first component, which most sequences are entirely made of.
@@ -579,13 +600,13 @@ public final class TerminalEmulator {
 	/// A component's `:` subparameters, which carry variants — SGR `4:3` for a
 	/// curly underline, `58:2::r:g:b` for its colour.
 	private func subparameter(_ index: Int, at position: Int) -> Int? {
-		guard index >= 0, index < componentStarts.count else { return nil }
-		let start = componentStarts[index] + 1 + position
-		let end = index + 1 < componentStarts.count
-			? componentStarts[index + 1]
-			: parameterValues.count
+		guard index >= 0, index < componentTotal else { return nil }
+		let start = Int(componentStarts[index]) + 1 + position
+		let end = index + 1 < componentTotal
+			? Int(componentStarts[index + 1])
+			: parameterCount
 		guard start < end else { return nil }
-		return parameterValues[start]
+		return Int(parameterValues[start])
 	}
 
 	private var isPrivateSequence: Bool {
