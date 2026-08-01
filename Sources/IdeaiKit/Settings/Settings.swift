@@ -27,6 +27,7 @@ public final class Settings {
 			Key.wordWrap: false,
 			Key.terminalGPURendering: false,
 			Key.terminalScheme: "blue",
+			Key.terminalBellStyle: "sound",
 		])
 	}
 
@@ -44,6 +45,7 @@ public final class Settings {
 		static let wordWrap = "wordWrap"
 		static let terminalGPURendering = "terminalGPURendering"
 		static let terminalScheme = "terminalScheme"
+		static let terminalBellStyle = "terminalBellStyle"
 		static let projectSearchPaths = "projectSearchPaths"
 		static let projectSearchDepth = "projectSearchDepth"
 	}
@@ -150,6 +152,16 @@ public final class Settings {
 		set { set(newValue, Key.terminalScheme) }
 	}
 
+	/// What the terminal does when a program rings the bell.
+	///
+	/// `sound` is the system beep, `vhs` shakes the text and splits its colours
+	/// like a worn tape, `none` ignores it. The visual one needs the GPU
+	/// renderer: it is a shader, and the CoreGraphics path cannot do it.
+	public var terminalBellStyle: String {
+		get { defaults.string(forKey: Key.terminalBellStyle) ?? "sound" }
+		set { set(newValue, Key.terminalBellStyle) }
+	}
+
 	/// Draw the terminal on the GPU rather than through CoreGraphics.
 	///
 	/// Off by default while it is new. The two paths draw the same screen; the
@@ -208,7 +220,7 @@ public final class Settings {
 			Key.editorFontSize, Key.editorLineHeight, Key.tabWidth,
 			Key.showHiddenFiles, Key.excludedDirectories,
 			Key.uiScale, Key.terminalFontName, Key.wordWrap,
-			Key.terminalScheme, Key.terminalGPURendering,
+			Key.terminalScheme, Key.terminalGPURendering, Key.terminalBellStyle,
 		] {
 			defaults.removeObject(forKey: key)
 		}

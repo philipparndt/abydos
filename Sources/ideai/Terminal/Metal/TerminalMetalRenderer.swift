@@ -18,6 +18,10 @@ struct CellInstance {
 
 private struct Uniforms {
 	var viewport: SIMD2<Float>
+	/// How much of the bell is left to show, 1 down to 0.
+	var bell: Float = 0
+	/// Seconds since it rang, which keeps the wobble moving as it fades.
+	var bellTime: Float = 0
 }
 
 /// Draws the terminal grid on the GPU.
@@ -254,6 +258,9 @@ final class TerminalMetalRenderer {
 	///
 	/// `viewport` is in points, the same units the instances were built in; the
 	/// texture may be larger, and normalised coordinates do not care.
+	/// How the bell is showing right now: strength, and how long it has been.
+	var bell: (strength: Float, elapsed: Float) = (0, 0)
+
 	func render(
 		to target: MTLTexture,
 		clear: SIMD4<Float>,
@@ -275,7 +282,7 @@ final class TerminalMetalRenderer {
 		      let encoder = commands.makeRenderCommandEncoder(descriptor: pass)
 		else { return }
 
-		var uniforms = Uniforms(viewport: viewport)
+		var uniforms = Uniforms(viewport: viewport, bell: bell.strength, bellTime: bell.elapsed)
 		encoder.setRenderPipelineState(pipeline)
 		encoder.setVertexBuffer(instanceBuffer, offset: 0, index: 0)
 		encoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)

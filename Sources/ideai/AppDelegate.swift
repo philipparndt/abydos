@@ -264,6 +264,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 		}
 
 		if let path = options.metalShot {
+			// The bell is rung a moment before the frame is taken, so what is
+			// captured is the effect part-way through rather than at rest.
+			if let before = options.bellBefore {
+				DispatchQueue.main.asyncAfter(deadline: .now() + options.screenshotDelay - before) {
+					controller?.ringTerminalBellForTesting()
+				}
+			}
 			DispatchQueue.main.asyncAfter(deadline: .now() + options.screenshotDelay) {
 				controller?.renderTerminalWithMetal(to: path)
 				exit(0)

@@ -36,6 +36,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 	var activeGroupIDForTesting: UUID? { editor.activeGroupID }
 	var tabCountForTesting: Int { editor.activeTabCount }
 
+	/// Rings the bell, as a program printing \u{07} would.
+	func ringTerminalBellForTesting() {
+		setPanelVisible(true)
+		bottomPanel.showTerminal()?.terminalView.writeForTesting("\u{07}")
+	}
+
 	/// Draws the terminal through Metal and writes the result out.
 	func renderTerminalWithMetal(to path: String) {
 		setPanelVisible(true)

@@ -74,6 +74,8 @@ struct LaunchOptions {
 	var wordNavigation = false
 	/// Type this at the end of the file and leave the completion list showing.
 	var completeText: String?
+	/// Ring the terminal bell this many seconds before the Metal capture.
+	var bellBefore: Double?
 	/// Wait this long before capturing, for a language server to answer.
 	var lspWait: Double?
 	/// Rewrite the open file externally after this many seconds.
@@ -135,6 +137,7 @@ struct LaunchOptions {
 			case "--fake-diagnostics": options.fakeDiagnostics = true
 			case "--word-nav":   options.wordNavigation = true
 			case "--complete":   options.completeText = next()
+			case "--bell":       options.bellBefore = next().flatMap(Double.init) ?? 0.15
 			case "--lsp-wait":   options.lspWait = next().flatMap(Double.init)
 			case "--external-edit": options.externalEdit = next().flatMap(Double.init)
 			case "--send-bytes": options.terminalBytes = next()

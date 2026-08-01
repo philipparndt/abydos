@@ -106,7 +106,7 @@ final class TerminalView: NSView, NSTextInputClient {
 		emulator.onResponse = { [weak self] response in
 			self?.pty.write(response)
 		}
-		emulator.onBell = { NSSound.beep() }
+		emulator.onBell = { [weak self] in self?.ringBell() }
 
 		pty.onOutput = { [weak self] data in
 			self?.enqueue(data)
@@ -327,6 +327,10 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// was being sent waited for the screen. Nothing is gained by it: the
 	/// display shows sixty frames a second whatever we do.
 	@objc private func renderIfNeeded() {
+		// While the bell is showing, every frame differs from the last even
+		// though nothing was printed, so the usual "only when something
+		// changed" rule has to be suspended for its duration.
+		if isBellShowing { needsRender = true }
 		guard needsRender, metal != nil else { return }
 
 		// A program part-way through rewriting the screen has said so, and what
@@ -346,6 +350,56 @@ final class TerminalView: NSView, NSTextInputClient {
 		renderMetal()
 	}
 
+	// MARK: - Bell
+
+	/// When the bell last rang, or nil if it is not showing.
+	private var bellRangAt: Date?
+
+	/// How long the picture takes to settle again.
+	///
+	/// Long enough to read as a fault in the tape rather than a glitch in the
+	/// app, short enough that a program which rings twice in a second does not
+	/// leave the screen permanently swimming.
+	private static let bellDuration: TimeInterval = 0.65
+
+	private func ringBell() {
+		switch Settings.shared.terminalBellStyle {
+		case "none":
+			return
+		case "vhs":
+			// The visual bell is a shader. With the GPU renderer off there is
+			// nothing to run it, so the beep stands in rather than the bell
+			// doing nothing at all.
+			guard metal != nil else {
+				NSSound.beep()
+				return
+			}
+			bellRangAt = Date()
+			repaint()
+		default:
+			NSSound.beep()
+		}
+	}
+
+	/// How much of the bell is left to show, and how long it has been going.
+	private func bellState() -> (strength: Float, elapsed: Float) {
+		guard let bellRangAt else { return (0, 0) }
+		let elapsed = -bellRangAt.timeIntervalSinceNow
+		guard elapsed < Self.bellDuration else {
+			self.bellRangAt = nil
+			return (0, 0)
+		}
+
+		// Decays as a curve rather than a line: most of the movement happens
+		// early, which is how a tape settles, and the last of it fades out
+		// instead of stopping.
+		let remaining = Float(1 - elapsed / Self.bellDuration)
+		return (remaining * remaining, Float(elapsed))
+	}
+
+	/// Whether the picture is still moving and needs another frame.
+	private var isBellShowing: Bool { bellRangAt != nil }
+
 	/// When the current frame was first held back, if it was.
 	private var heldFrameSince: Date?
 	/// How long to believe a program that says it is mid-repaint.
@@ -354,6 +408,7 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// Draws what is on screen.
 	private func renderMetal() {
 		guard let metal, !isPositioningMetalView else { return }
+		metal.renderer.bell = bellState()
 		let probing = MetalProbe.enabled
 		positionMetalView()
 
@@ -924,6 +979,9 @@ final class TerminalView: NSView, NSTextInputClient {
 				colour: TerminalPalette.cursor.components
 			)
 		)
+		// Whatever the bell is doing right now, since that is usually the
+		// reason for taking one of these offscreen.
+		renderer.bell = bellState()
 		return renderer.writePNG(
 			to: path,
 			points: SIMD2(Float(width), Float(height)),

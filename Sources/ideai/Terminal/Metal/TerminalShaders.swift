@@ -29,6 +29,14 @@ enum TerminalShaders {
 
 	struct Uniforms {
 		float2 viewport;    // drawable size in pixels
+		// How much of the bell is left, 1 at the moment it rang and 0 once it
+		// has faded. Everything below is scaled by it, so the effect arrives at
+		// full strength and leaves without a seam.
+		float bell;
+		// Seconds since the bell, which drives the wobble's movement. Kept
+		// separate from the decay so the wobble keeps travelling while fading
+		// rather than freezing as it dims.
+		float bellTime;
 	};
 
 	struct Varying {
@@ -41,6 +49,18 @@ enum TerminalShaders {
 		float4 background;
 		float hasGlyph;
 		float isColour;
+		float bell;
+		// How far apart to sample the three channels, in atlas coordinates.
+		// Worked out here because only the vertex stage knows how wide this
+		// glyph is in the atlas; a fixed offset would fringe a wide glyph
+		// barely at all and a narrow one into mush.
+		float uvShift;
+		// The glyph's own slot in the atlas. Samples are held inside it: the
+		// atlas is packed tight, so a sample that wanders outside picks up
+		// whichever letter happens to be next door, and one that wanders off
+		// the edge comes back empty and takes the whole channel with it.
+		float2 uvMin;
+		float2 uvMax;
 	};
 
 	// Two triangles from six vertex ids, so nothing has to be uploaded per
@@ -68,6 +88,16 @@ enum TerminalShaders {
 			: cell.origin + cell.size;
 		float2 pixel = mix(origin, far, corner);
 
+		// A tracking error: rows slip sideways by an amount that varies down
+		// the screen and crawls upward, the way a worn tape does. Cheap here —
+		// the geometry moves, so nothing has to be re-sampled to make it.
+		if (uniforms.bell > 0.0) {
+			float wobble =
+				sin(pixel.y * 0.055 + uniforms.bellTime * 9.0) * 1.6
+				+ sin(pixel.y * 0.013 - uniforms.bellTime * 3.0) * 2.6;
+			pixel.x += wobble * uniforms.bell;
+		}
+
 		Varying out;
 		// Pixels to clip space, with y running down the screen as the grid does.
 		float2 unit = pixel / uniforms.viewport;
@@ -76,6 +106,10 @@ enum TerminalShaders {
 		out.background = cell.background;
 		out.hasGlyph = hasGlyph;
 		out.isColour = cell.isColour;
+		out.bell = uniforms.bell;
+		out.uvShift = cell.uvSize.x * 0.035 * uniforms.bell;
+		out.uvMin = cell.uvOrigin;
+		out.uvMax = cell.uvOrigin + cell.uvSize;
 
 		// The quad covers the cell and the glyph together, so some of it lies
 		// outside the glyph. Those pixels must not be sampled: they would land
@@ -103,6 +137,29 @@ enum TerminalShaders {
 			float4 glyph = colourAtlas.sample(atlasSampler, in.uv);
 			float3 blended = glyph.rgb + in.background.rgb * (1.0 - glyph.a);
 			return float4(blended, max(in.background.a, glyph.a));
+		}
+
+		// Chromatic aberration: the three channels are sampled a little apart,
+		// so the glyph fringes red on one side and blue on the other. Done on
+		// the coverage rather than on a finished image — each channel gets its
+		// own idea of where the ink is, which is what the lens error actually
+		// looks like, and it costs two extra samples instead of a second pass.
+		if (hasGlyph && in.bell > 0.0) {
+			float2 offset = float2(in.uvShift, 0.0);
+			float2 uvR = clamp(in.uv + offset, in.uvMin, in.uvMax);
+			float2 uvB = clamp(in.uv - offset, in.uvMin, in.uvMax);
+			float coverageR = coverageAtlas.sample(atlasSampler, uvR).r;
+			float coverageG = coverageAtlas.sample(atlasSampler, in.uv).r;
+			float coverageB = coverageAtlas.sample(atlasSampler, uvB).r;
+
+			float alpha = in.foreground.a;
+			float3 colour = float3(
+				mix(in.background.r, in.foreground.r, coverageR * alpha),
+				mix(in.background.g, in.foreground.g, coverageG * alpha),
+				mix(in.background.b, in.foreground.b, coverageB * alpha)
+			);
+			float coverage = max(coverageR, max(coverageG, coverageB));
+			return float4(colour, max(in.background.a, coverage * alpha));
 		}
 
 		float coverage = hasGlyph ? coverageAtlas.sample(atlasSampler, in.uv).r : 0.0;

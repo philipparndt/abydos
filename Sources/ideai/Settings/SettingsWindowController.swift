@@ -285,6 +285,13 @@ final class SettingsPaneController: NSViewController {
 				get: { Settings.shared.terminalScheme },
 				set: { Settings.shared.terminalScheme = $0 }
 			),
+			.choice(
+				title: "Terminal bell",
+				help: "VHS shakes the picture and splits its colours, like a worn tape. Needs GPU rendering.",
+				options: [("Sound", "sound"), ("VHS", "vhs"), ("Ignore", "none")],
+				get: { Settings.shared.terminalBellStyle },
+				set: { Settings.shared.terminalBellStyle = $0 }
+			),
 			.toggle(
 				title: "GPU terminal rendering",
 				help: "Draw the terminal with Metal. Faster when a program repaints the whole screen; still new.",
