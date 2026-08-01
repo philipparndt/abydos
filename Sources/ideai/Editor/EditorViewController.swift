@@ -469,7 +469,9 @@ final class EditorViewController: NSViewController {
 		let size = (try? tab.url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
 		guard size == 0 else { return }
 
-		try? FileManager.default.removeItem(at: tab.url)
+		// To the Trash even though it is empty: nothing here is certain enough
+		// to be worth an unrecoverable delete.
+		_ = try? ScratchFiles.moveToTrash(tab.url)
 		NotificationCenter.default.post(name: .ideaiScratchesChanged, object: nil)
 	}
 

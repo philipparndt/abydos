@@ -284,13 +284,13 @@ final class ScratchesPane: NSView {
 		guard let match = selectedMatch else { return }
 		let url = match.entry.url
 
-		// Always asked, even for an empty one. A scratch is the only copy of
-		// what is in it, and this is the single place it can be lost from.
+		// Always asked, even for an empty one, and even though it goes to the
+		// Trash: a scratch is the only copy of what is in it.
 		let alert = NSAlert()
 		alert.messageText = "Delete “\(match.entry.title)”?"
 		alert.informativeText = match.entry.isEmpty
-			? "It is empty."
-			: "What is written in it is not kept anywhere else."
+			? "It is empty. It goes to the Trash."
+			: "It goes to the Trash, so it can be put back."
 		alert.addButton(withTitle: "Delete")
 		alert.addButton(withTitle: "Cancel")
 		alert.buttons.first?.hasDestructiveAction = true

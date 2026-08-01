@@ -15,6 +15,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 		// titlebar is already populated with the projects the user cares about.
 		RecentProjects.shared.seedFromJetBrainsIfEmpty()
 
+		// Notes written before scratches moved to ~/.config, carried over. Ahead
+		// of anything that reads them, so no window ever sees the old place.
+		let carried = ScratchFiles.migrateLegacyStore()
+		if carried > 0 { print("Moved \(carried) scratch file(s) to \(ScratchFiles.defaultRoot.path)") }
+
 		let options = LaunchOptions.parse()
 		MetalProbe.start()
 		if let zoom = options.zoom { Settings.shared.uiScale = zoom }

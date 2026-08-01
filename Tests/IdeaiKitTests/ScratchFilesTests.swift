@@ -93,19 +93,26 @@ struct ScratchFilesTests {
 		#expect(ScratchFiles.title(for: URL(fileURLWithPath: "/x/notes.md")) == "notes")
 	}
 
+	/// Removing takes it out of the collection — via the Trash, so it can be
+	/// put back. This is the only place a note can leave from.
 	@Test func removesOnlyItsOwn() throws {
 		let root = makeRoot()
 		defer { try? FileManager.default.removeItem(at: root) }
 		let scratches = ScratchFiles(projectRoot: URL(fileURLWithPath: "/projects/a"), root: root)
 
 		let file = try scratches.create()
-		try scratches.remove(file)
-		#expect(scratches.all().isEmpty)
+		let trashed = try scratches.remove(file)
+		defer { if let trashed { try? FileManager.default.removeItem(at: trashed) } }
 
-		// A file somewhere else is left alone rather than deleted.
+		#expect(scratches.all().isEmpty)
+		#expect(!FileManager.default.fileExists(atPath: file.path))
+		// Wherever it went, it still exists — unless the volume has no Trash.
+		if let trashed { #expect(FileManager.default.fileExists(atPath: trashed.path)) }
+
+		// A file somewhere else is left alone rather than removed.
 		let outsider = root.appendingPathComponent("keep-me.txt")
 		try Data().write(to: outsider)
-		try scratches.remove(outsider)
+		#expect(try scratches.remove(outsider) == nil)
 		#expect(FileManager.default.fileExists(atPath: outsider.path))
 	}
 }
@@ -359,5 +366,67 @@ struct OpenScratchesTests {
 			store.record(["/x/one.md"], forProject: URL(fileURLWithPath: "/dev/a/"))
 			#expect(store.paths(forProject: URL(fileURLWithPath: "/dev/a")) == ["/x/one.md"])
 		}
+	}
+}
+
+/// Scratches written before the store moved to ~/.config.
+struct ScratchMigrationTests {
+	private func makeDirectory(_ prefix: String) -> URL {
+		let url = URL(fileURLWithPath: NSTemporaryDirectory())
+			.appendingPathComponent("\(prefix)-\(UUID().uuidString)")
+		try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+		return url
+	}
+
+	@Test func carriesEveryCollectionOver() throws {
+		let old = makeDirectory("legacy")
+		let new = makeDirectory("config")
+		defer {
+			try? FileManager.default.removeItem(at: old)
+			try? FileManager.default.removeItem(at: new)
+		}
+
+		let project = URL(fileURLWithPath: "/dev/a")
+		try "project note\n".write(to: try ScratchFiles(projectRoot: project, root: old).create(),
+			atomically: true, encoding: .utf8)
+		try "global note\n".write(to: try ScratchFiles.global(root: old).create(),
+			atomically: true, encoding: .utf8)
+
+		#expect(ScratchFiles.migrateLegacyStore(from: old, to: new) == 2)
+
+		let moved = ScratchLibrary(root: new)
+		#expect(moved.collections().count == 2)
+		#expect(moved.search("global note").count == 1)
+		// Which project each folder belongs to travels with it.
+		#expect(moved.collections().contains { $0.projectRoot?.path == project.path })
+		// And the old place is gone, so it cannot be migrated twice.
+		#expect(!FileManager.default.fileExists(atPath: old.path))
+	}
+
+	/// A note already at the destination is never written over.
+	@Test func leavesCollisionsAlone() throws {
+		let old = makeDirectory("legacy")
+		let new = makeDirectory("config")
+		defer {
+			try? FileManager.default.removeItem(at: old)
+			try? FileManager.default.removeItem(at: new)
+		}
+
+		let project = URL(fileURLWithPath: "/dev/a")
+		try "the old one\n".write(to: try ScratchFiles(projectRoot: project, root: old).create(),
+			atomically: true, encoding: .utf8)
+		let existing = try ScratchFiles(projectRoot: project, root: new).create()
+		try "the new one\n".write(to: existing, atomically: true, encoding: .utf8)
+
+		#expect(ScratchFiles.migrateLegacyStore(from: old, to: new) == 0)
+		#expect(try String(contentsOf: existing, encoding: .utf8) == "the new one\n")
+	}
+
+	@Test func doesNothingWhenThereIsNothingToMove() {
+		let new = makeDirectory("config")
+		defer { try? FileManager.default.removeItem(at: new) }
+		let missing = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+
+		#expect(ScratchFiles.migrateLegacyStore(from: missing, to: new) == 0)
 	}
 }

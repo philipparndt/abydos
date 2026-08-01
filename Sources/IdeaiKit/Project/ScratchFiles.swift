@@ -41,10 +41,75 @@ public struct ScratchFiles {
 
 	public var isGlobal: Bool { projectRoot == nil }
 
+	/// Where scratches live: `~/.config/ideai/scratch`.
+	///
+	/// Not Application Support, where macOS would put them. A scratch is the
+	/// only copy of what is in it, and the thing that keeps such a file alive is
+	/// somebody knowing where it is — a path you already back up, already have
+	/// in a dotfiles repository, and can reach with `cd`. A folder nobody visits
+	/// is a folder nobody notices going missing.
 	public static var defaultRoot: URL {
+		configurationDirectory.appendingPathComponent("ideai/scratch", isDirectory: true)
+	}
+
+	/// `$XDG_CONFIG_HOME`, or `~/.config` when it is not set.
+	public static var configurationDirectory: URL {
+		if let xdg = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"], !xdg.isEmpty {
+			return URL(fileURLWithPath: xdg, isDirectory: true)
+		}
+		return FileManager.default.homeDirectoryForCurrentUser
+			.appendingPathComponent(".config", isDirectory: true)
+	}
+
+	/// Where they used to live, before the move to `~/.config`.
+	public static var legacyRoot: URL {
 		let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
 			?? URL(fileURLWithPath: NSTemporaryDirectory())
 		return base.appendingPathComponent("ideai/scratch", isDirectory: true)
+	}
+
+	/// Moves scratches written before the move, once.
+	///
+	/// Every collection is carried over; anything that would collide is left
+	/// where it is rather than overwritten, and the old directory is only
+	/// removed once it is empty. Nothing here deletes a note.
+	@discardableResult
+	public static func migrateLegacyStore(from legacy: URL? = nil, to destination: URL? = nil) -> Int {
+		let legacy = legacy ?? legacyRoot
+		let destination = destination ?? defaultRoot
+		let manager = FileManager.default
+
+		guard manager.fileExists(atPath: legacy.path), legacy.path != destination.path else { return 0 }
+		let collections = (try? manager.contentsOfDirectory(
+			at: legacy,
+			includingPropertiesForKeys: [.isDirectoryKey],
+			options: []
+		)) ?? []
+
+		var moved = 0
+		for collection in collections {
+			guard (try? collection.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { continue }
+			let target = destination.appendingPathComponent(collection.lastPathComponent, isDirectory: true)
+			try? manager.createDirectory(at: target, withIntermediateDirectories: true)
+
+			let files = (try? manager.contentsOfDirectory(
+				at: collection,
+				includingPropertiesForKeys: nil,
+				options: []
+			)) ?? []
+			for file in files {
+				let landing = target.appendingPathComponent(file.lastPathComponent)
+				guard !manager.fileExists(atPath: landing.path) else { continue }
+				guard (try? manager.moveItem(at: file, to: landing)) != nil else { continue }
+				// The marker travels with them but is not one of them; the count
+				// is what gets reported, and it should mean notes.
+				if !file.lastPathComponent.hasPrefix(".") { moved += 1 }
+			}
+			// Only when nothing is left in it.
+			try? manager.removeItem(at: collection)
+		}
+		try? manager.removeItem(at: legacy)
+		return moved
 	}
 
 	/// The name of the directory holding a project's scratches.
@@ -167,9 +232,31 @@ public struct ScratchFiles {
 		return "Scratch \(number)"
 	}
 
-	public func remove(_ url: URL) throws {
-		guard contains(url) else { return }
-		try FileManager.default.removeItem(at: url)
+	/// Puts a scratch in the Trash, rather than deleting it.
+	///
+	/// Whatever asks for this — a menu item, a tab closing on something that
+	/// turned out not to be empty, a mistake — the answer to "where did my note
+	/// go" should be somewhere it can be got back from.
+	@discardableResult
+	public func remove(_ url: URL) throws -> URL? {
+		guard contains(url) else { return nil }
+		return try Self.moveToTrash(url)
+	}
+
+	/// Puts a scratch in the Trash, and says where it landed.
+	///
+	/// Nil when there was no Trash to use and it had to be removed outright —
+	/// which is the answer on volumes that have none, not the normal path.
+	@discardableResult
+	public static func moveToTrash(_ url: URL) throws -> URL? {
+		var landed: NSURL?
+		do {
+			try FileManager.default.trashItem(at: url, resultingItemURL: &landed)
+			return landed as URL?
+		} catch {
+			try FileManager.default.removeItem(at: url)
+			return nil
+		}
 	}
 
 	/// Gives a scratch a name of its own, keeping it where it is.
