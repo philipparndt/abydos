@@ -65,6 +65,13 @@ final class EditorViewController: NSViewController {
 	private var currentMatchIndex: Int?
 	private var findDebounce: DispatchWorkItem?
 	private var languageSyncWork: DispatchWorkItem?
+	/// The list of completions, shared by every tab in this group: only one can
+	/// be typing at a time.
+	private let completions = CompletionPopup()
+	private var completionWork: DispatchWorkItem?
+	/// How much of the word the visible list was built for, so committing one
+	/// replaces exactly what was typed.
+	private var completionPrefixLength = 0
 
 	private var tabBar: EditorTabBar!
 	private var tabBarTopConstraint: NSLayoutConstraint!
@@ -686,6 +693,16 @@ final class EditorViewController: NSViewController {
 		codeView.onGoToDefinition = { [weak self] line, character in
 			self?.goToDefinition(from: tab, line: line, character: character)
 		}
+		codeView.onRequestCompletions = { [weak self] prefix, _ in
+			self?.scheduleCompletions(for: tab, prefix: prefix)
+		}
+		codeView.onDismissCompletions = { [weak self] in
+			self?.completionWork?.cancel()
+			self?.completions.hide()
+		}
+		codeView.completionKeyHandler = { [weak self] selector in
+			self?.handleCompletionKey(selector) ?? false
+		}
 		codeView.load(document: document)
 		codeView.setWordWrap(Settings.shared.wordWrap)
 		applyDebugState(to: tab)
@@ -727,6 +744,103 @@ final class EditorViewController: NSViewController {
 		}
 		languageSyncWork = work
 		DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+	}
+
+	// MARK: - Completion
+
+	/// Asks for completions a moment after typing stops.
+	///
+	/// Debounced, and never on the first character of a word: a list offered
+	/// after one letter is mostly noise, and asking a language server on every
+	/// keystroke is asking it to answer about text nobody has finished writing.
+	private func scheduleCompletions(for tab: Tab, prefix: String) {
+		completionWork?.cancel()
+		guard prefix.count >= 2 else {
+			completions.hide()
+			return
+		}
+
+		let work = DispatchWorkItem { [weak self, weak tab] in
+			guard let self, let tab else { return }
+			Task { @MainActor in await self.showCompletions(for: tab, prefix: prefix) }
+		}
+		completionWork = work
+		DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
+	}
+
+	@MainActor
+	private func showCompletions(for tab: Tab, prefix: String) async {
+		guard activeTab === tab, let codeView = tab.codeView, let document = tab.document else { return }
+
+		// The prefix may have moved on while this was being asked for.
+		guard codeView.currentWordPrefix() == prefix else { return }
+
+		var items: [CompletionItem] = []
+		if let project, let languageId = document.languageId {
+			let line = document.rope.line(atByteOffset: document.rope.byteOffset(fromUTF16: codeView.caretOffset))
+			let lineStart = document.rope.utf16Offset(fromByte: document.rope.byteOffset(ofLine: line))
+			let character = codeView.caretOffset - lineStart
+
+			let fromServer = await LanguageService.shared.completions(
+				url: tab.url,
+				position: LSPPosition(line: line, character: character),
+				languageId: languageId,
+				project: project.root
+			)
+			// A server answers about types and scope; the words in the file
+			// cannot, so anything it says is worth more than anything they do.
+			items = fromServer
+				.filter { $0.label.lowercased().hasPrefix(prefix.lowercased()) }
+				.prefix(20)
+				.map(CompletionItem.init)
+		}
+
+		if items.isEmpty {
+			let text = document.rope.string(in: 0..<document.rope.byteCount)
+			items = WordCompletions
+				.candidates(matching: prefix, in: text, near: codeView.caretOffset)
+				.map { CompletionItem(label: $0, isFromServer: false) }
+		}
+
+		guard !items.isEmpty, codeView.currentWordPrefix() == prefix else {
+			completions.hide()
+			return
+		}
+
+		completionPrefixLength = prefix.utf16.count
+		completions.onCommit = { [weak codeView, weak self] item in
+			guard let self else { return }
+			codeView?.applyCompletion(item.insertText, replacingPrefixOfLength: self.completionPrefixLength)
+		}
+		guard let point = codeView.caretScreenPoint() else { return }
+		completions.show(
+			items: items,
+			below: point,
+			lineHeight: codeView.lineHeightForTesting,
+			parent: view.window
+		)
+	}
+
+	/// The keys the list takes before the document sees them.
+	private func handleCompletionKey(_ selector: Selector) -> Bool {
+		guard completions.isVisible else { return false }
+		switch selector {
+		case #selector(NSResponder.moveUp(_:)):     return completions.moveSelection(by: -1)
+		case #selector(NSResponder.moveDown(_:)):   return completions.moveSelection(by: 1)
+		case #selector(NSResponder.insertNewline(_:)), #selector(NSResponder.insertTab(_:)):
+			return completions.commitSelection()
+		case #selector(NSResponder.cancelOperation(_:)):
+			completions.hide()
+			return true
+		default:
+			// Arrow keys sideways, or anything else, simply put it away: the
+			// caret has left the word the list was built for.
+			if selector == #selector(NSResponder.moveLeft(_:))
+				|| selector == #selector(NSResponder.moveRight(_:)) {
+				completions.hide()
+			}
+			return false
+		}
 	}
 
 	/// Follows a ⌘-click to wherever the symbol is defined.
@@ -1387,6 +1501,32 @@ final class EditorViewController: NSViewController {
 			keyCode: UInt16(code)
 		) else { return }
 		codeView.keyDown(with: event)
+	}
+
+	/// What the completion list is showing.
+	var completionReportForTesting: String {
+		guard completions.isVisible else { return "no list" }
+		let frame = completions.frameForTesting
+		let caret = activeTab?.codeView?.caretScreenPoint() ?? .zero
+		return "\(completions.labelsForTesting.count) items: "
+			+ completions.labelsForTesting.prefix(6).joined(separator: ", ")
+			+ String(format: " | list at (%.0f, %.0f) %.0fx%.0f, caret at (%.0f, %.0f)",
+				frame.minX, frame.minY, frame.width, frame.height, caret.x, caret.y)
+	}
+
+	/// Chooses from the list as pressing return would.
+	func commitCompletionForTesting() -> Bool {
+		completions.commitSelection()
+	}
+
+	func moveCompletionSelectionForTesting(by delta: Int) {
+		completions.moveSelection(by: delta)
+	}
+
+	func moveCaretToEndForTesting() {
+		guard let codeView = activeTab?.codeView, let document = activeTab?.document else { return }
+		view.window?.makeFirstResponder(codeView)
+		codeView.setCaretForTesting(document.rope.utf16Count)
 	}
 
 	/// Where the caret is and what is selected, for checking a motion landed.

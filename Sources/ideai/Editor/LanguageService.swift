@@ -95,6 +95,16 @@ final class LanguageService {
 		return try? await server.client.hover(uri: url.absoluteString, position: position)
 	}
 
+	func completions(
+		url: URL,
+		position: LSPPosition,
+		languageId: String,
+		project: URL
+	) async -> [LSPCompletion] {
+		guard let server = servers[key(project: project, languageId: languageId)] else { return [] }
+		return (try? await server.client.completion(uri: url.absoluteString, position: position)) ?? []
+	}
+
 	func diagnostics(for url: URL) -> [LSPDiagnostic] {
 		diagnostics[url.absoluteString] ?? []
 	}

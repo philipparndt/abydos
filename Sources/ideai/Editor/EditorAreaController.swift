@@ -405,6 +405,23 @@ final class EditorAreaController: NSViewController {
 		(activeGroup ?? groups.first)?.simulateArrow(direction, modifiers: modifiers)
 	}
 
+	var completionReportForTesting: String {
+		(activeGroup ?? groups.first)?.completionReportForTesting ?? "none"
+	}
+
+	@discardableResult
+	func commitCompletionForTesting() -> Bool {
+		(activeGroup ?? groups.first)?.commitCompletionForTesting() ?? false
+	}
+
+	func moveCompletionSelectionForTesting(by delta: Int) {
+		(activeGroup ?? groups.first)?.moveCompletionSelectionForTesting(by: delta)
+	}
+
+	func moveCaretToEndForTesting() {
+		(activeGroup ?? groups.first)?.moveCaretToEndForTesting()
+	}
+
 	var caretReportForTesting: String {
 		(activeGroup ?? groups.first)?.caretReportForTesting ?? "no editor"
 	}

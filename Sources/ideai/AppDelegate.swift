@@ -137,6 +137,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let typed = options.completeText {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+				controller?.exerciseCompletionForTesting(typing: typed)
+			}
+		}
+
 		if options.wordNavigation {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
 				controller?.exerciseWordNavigationForTesting()

@@ -43,6 +43,12 @@ final class CodeView: NSView, NSTextInputClient {
 	var onRunLine: ((Int) -> Void)?
 	/// ⌘-clicked a symbol: go to where it is defined.
 	var onGoToDefinition: ((_ line: Int, _ character: Int) -> Void)?
+	/// The text changed and the caret is in a word: offer completions for it.
+	var onRequestCompletions: ((_ prefix: String, _ caret: NSPoint) -> Void)?
+	/// A key the completion list wants first. Returns true if it took it.
+	var completionKeyHandler: ((Selector) -> Bool)?
+	/// Nothing to complete any more.
+	var onDismissCompletions: (() -> Void)?
 
 	/// What a language server says is wrong here, by zero-based line.
 	private var diagnosticsByLine: [Int: [LSPDiagnostic]] = [:]
@@ -1298,6 +1304,12 @@ final class CodeView: NSView, NSTextInputClient {
 	}
 
 	override func doCommand(by selector: Selector) {
+		// The list is on screen and these keys belong to it: up and down move
+		// the highlight, return takes the highlighted one, escape puts it away.
+		// Everything else keeps going into the document, so the list narrows as
+		// typing continues rather than swallowing it.
+		if completionKeyHandler?(selector) == true { return }
+
 		switch selector {
 		case #selector(moveLeft(_:)):            moveHorizontally(-1, extending: false)
 		case #selector(moveRight(_:)):           moveHorizontally(1, extending: false)
@@ -1504,6 +1516,66 @@ final class CodeView: NSView, NSTextInputClient {
 
 		let newCaret = document.replace(utf16Range: range, with: text, caretBefore: range.lowerBound)
 		afterEdit(caret: newCaret)
+		requestCompletionsIfTyping(text)
+	}
+
+	/// Offers completions for whatever word the caret is now in.
+	///
+	/// Only after typing something a word can be made of. A newline, a bracket
+	/// or a space ends the word rather than continuing it, and a list that
+	/// stayed up through those would be in the way of the next thing typed.
+	private func requestCompletionsIfTyping(_ typed: String) {
+		guard let document else { return }
+		guard typed.count == 1, let character = typed.first,
+		      character.isLetter || character.isNumber || character == "_" || character == "."
+		else {
+			onDismissCompletions?()
+			return
+		}
+
+		let prefix = currentWordPrefix()
+		guard !prefix.isEmpty || character == "." else {
+			onDismissCompletions?()
+			return
+		}
+
+		guard let point = caretPoint() else {
+			onDismissCompletions?()
+			return
+		}
+		onRequestCompletions?(prefix, point)
+		_ = document
+	}
+
+	/// The identifier being typed immediately before the caret.
+	func currentWordPrefix() -> String {
+		guard let document else { return "" }
+		let lower = max(0, caret - 128)
+		let lowerByte = document.rope.byteOffset(fromUTF16: lower)
+		let caretByte = document.rope.byteOffset(fromUTF16: caret)
+		let window = Array(document.rope.string(in: lowerByte..<caretByte).utf16)
+		return WordMotion.prefix(before: window.count, in: window)
+	}
+
+	/// Replaces the word being typed with what was chosen.
+	func applyCompletion(_ text: String, replacingPrefixOfLength length: Int) {
+		guard let document else { return }
+		let start = max(0, caret - length)
+		let newCaret = document.replace(utf16Range: start..<caret, with: text, caretBefore: caret)
+		afterEdit(caret: newCaret)
+	}
+
+	/// Where the caret is on screen, for putting the list under it.
+	func caretScreenPoint() -> NSPoint? {
+		guard let point = caretPoint(), let window else { return nil }
+		let inWindow = convert(NSPoint(x: point.x, y: point.y), to: nil)
+		return window.convertPoint(toScreen: inWindow)
+	}
+
+	var lineHeightForTesting: CGFloat { lineHeight }
+
+	func setCaretForTesting(_ offset: Int) {
+		setCaret(offset, extendingSelection: false)
 	}
 
 	private func deleteBackward() {

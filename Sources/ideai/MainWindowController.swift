@@ -1482,6 +1482,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		}
 	}
 
+	/// Types at the end of the file and leaves the completion list up.
+	func exerciseCompletionForTesting(typing text: String) {
+		editor.moveCaretToEndForTesting()
+		editor.simulateTyping("\n")
+		editor.simulateTyping(text)
+		DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+			guard let self else { return }
+			print("COMPLETE: \(self.editor.completionReportForTesting)")
+
+			// Down once, then take it, so what lands in the document is the
+			// second suggestion rather than whatever was highlighted first.
+			self.editor.moveCompletionSelectionForTesting(by: 1)
+			let committed = self.editor.commitCompletionForTesting()
+			print("COMMIT: \(committed) → \(self.editor.caretReportForTesting)")
+		}
+	}
+
 	/// Walks the caret by word and says where it landed at each step.
 	func exerciseWordNavigationForTesting() {
 		print("WORD: start \(editor.caretReportForTesting)")
