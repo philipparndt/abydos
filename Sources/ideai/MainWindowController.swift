@@ -3,7 +3,7 @@ import IdeaiKit
 
 /// The project window: titlebar pills, the left tool strip, the navigator, and
 /// the editor area.
-final class MainWindowController: NSWindowController, NSWindowDelegate {
+final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuItemValidation {
 	private(set) var project: Project?
 
 	/// What each project had open, so going back to one looks as it was left.
@@ -498,6 +498,69 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		if !editor.clickScratchPlaceholderForTesting() { newScratchFile(nil) }
 	}
 
+	// MARK: - Debugging
+
+	/// The session the debug commands act on, if one is running.
+	private var debugSession: DebugSession? { bottomPanel.activeDebugSession }
+
+	/// Where execution is stopped, for saying so.
+	private var executionMarker: (file: String, line: Int)?
+
+	@objc func debugContinue(_ sender: Any?) { debugSession?.resume() }
+	@objc func debugPause(_ sender: Any?) { debugSession?.pause() }
+	@objc func debugStepOver(_ sender: Any?) { debugSession?.stepOver() }
+	@objc func debugStepInto(_ sender: Any?) { debugSession?.stepInto() }
+	@objc func debugStepOut(_ sender: Any?) { debugSession?.stepOut() }
+	@objc func debugStop(_ sender: Any?) { debugSession?.stop() }
+
+	/// Greys out the debug commands when nothing is being debugged.
+	///
+	/// A menu full of commands that do nothing is worse than one that says so.
+	func validateMenuItem(_ item: NSMenuItem) -> Bool {
+		switch item.action {
+		case #selector(debugContinue(_:)), #selector(debugPause(_:)),
+		     #selector(debugStepOver(_:)), #selector(debugStepInto(_:)),
+		     #selector(debugStepOut(_:)), #selector(debugStop(_:)):
+			return debugSession?.isActive ?? false
+		default:
+			return true
+		}
+	}
+
+	/// Walks the debugger a step at a time, saying where it stopped.
+	func reportDebugStepForTesting(step: Int) {
+		guard let session = debugSession else {
+			print("DEBUG: no session yet (step \(step))")
+			return
+		}
+		let where_ = executionMarker.map { "\(($0.file as NSString).lastPathComponent):\($0.line)" }
+			?? "not stopped"
+		print("DEBUG: step \(step) state=\(session.isActive ? "active" : "inactive") at \(where_)")
+
+		// Menu commands, the same ones the function keys send.
+		switch step {
+		case 0, 1: debugStepOver(nil)
+		case 2: debugStepInto(nil)
+		case 3: debugStepOut(nil)
+		default: debugStop(nil)
+		}
+	}
+
+	/// Steps as the keyboard would, for checking the commands are connected.
+	func debugCommandForTesting(_ name: String) -> String {
+		guard let session = debugSession else { return "no session" }
+		switch name {
+		case "over": session.stepOver()
+		case "into": session.stepInto()
+		case "out": session.stepOut()
+		case "continue": session.resume()
+		case "pause": session.pause()
+		case "stop": session.stop()
+		default: return "unknown command"
+		}
+		return "sent \(name), active=\(session.isActive)"
+	}
+
 	/// Every state this file has been in, including abandoned branches.
 	@objc func showFileHistory(_ sender: Any?) {
 		editor.toggleFileHistory()
@@ -788,6 +851,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		}
 		session.onStoppedAt = { [weak self] file, line in
 			guard let self else { return }
+			self.executionMarker = (file, line)
 			self.editor.open(fileURL: URL(fileURLWithPath: file), atLine: line)
 			self.editor.setExecutionLocation(file: file, line: line)
 		}
@@ -795,6 +859,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 			// The marker must go when execution resumes or the process ends.
 			switch state {
 			case .running, .terminated, .idle:
+				self?.executionMarker = nil
 				self?.editor.setExecutionLocation(file: nil, line: nil)
 			default:
 				break

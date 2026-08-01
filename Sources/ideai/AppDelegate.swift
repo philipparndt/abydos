@@ -137,6 +137,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if options.debugSteps {
+			// After the breakpoint has been set, which is scheduled at 1.0.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+				controller?.goDebug(nil)
+			}
+			// Delve builds the program first, which takes a moment.
+			for (index, delay) in [6.0, 7.5, 9.0, 10.5, 12.0].enumerated() {
+				DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+					controller?.reportDebugStepForTesting(step: index)
+				}
+			}
+		}
+
 		if options.undoTree {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
 				controller?.exerciseUndoTreeForTesting()
@@ -594,6 +607,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 		)
 		runItem.keyEquivalentModifierMask = [.control]
 		runMenu.addItem(runItem)
+		runMenu.addItem(.separator())
+
+		// The function keys IDEA and Xcode both use, so the fingers that
+		// already know them do not have to learn anything.
+		let resume = NSMenuItem(
+			title: "Continue", action: #selector(MainWindowController.debugContinue(_:)), keyEquivalent: "\u{F70C}"
+		)
+		resume.keyEquivalentModifierMask = []
+		runMenu.addItem(resume)
+
+		let pause = NSMenuItem(
+			title: "Pause", action: #selector(MainWindowController.debugPause(_:)), keyEquivalent: ""
+		)
+		runMenu.addItem(pause)
+
+		let stepOver = NSMenuItem(
+			title: "Step Over", action: #selector(MainWindowController.debugStepOver(_:)), keyEquivalent: "\u{F70B}"
+		)
+		stepOver.keyEquivalentModifierMask = []
+		runMenu.addItem(stepOver)
+
+		let stepInto = NSMenuItem(
+			title: "Step Into", action: #selector(MainWindowController.debugStepInto(_:)), keyEquivalent: "\u{F70A}"
+		)
+		stepInto.keyEquivalentModifierMask = []
+		runMenu.addItem(stepInto)
+
+		let stepOut = NSMenuItem(
+			title: "Step Out", action: #selector(MainWindowController.debugStepOut(_:)), keyEquivalent: "\u{F70B}"
+		)
+		stepOut.keyEquivalentModifierMask = [.shift]
+		runMenu.addItem(stepOut)
+
+		let stopDebugging = NSMenuItem(
+			title: "Stop", action: #selector(MainWindowController.debugStop(_:)), keyEquivalent: "\u{F709}"
+		)
+		stopDebugging.keyEquivalentModifierMask = [.command]
+		runMenu.addItem(stopDebugging)
+
 		runMenu.addItem(.separator())
 		runMenu.addItem(withTitle: "Go Trace", action: #selector(MainWindowController.goTrace(_:)), keyEquivalent: "")
 		runMenu.addItem(withTitle: "Go CPU Profile", action: #selector(MainWindowController.goProfile(_:)), keyEquivalent: "")

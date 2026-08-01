@@ -238,10 +238,17 @@ public final class DebugSession {
 		return isDirectory.boolValue ? url : url.deletingLastPathComponent()
 	}
 
+	/// Where a package sits, as a path go will accept.
+	///
+	/// Canonical, because go compares the directory it is asked to build
+	/// against the module it resolved and refuses when they are spelled
+	/// differently: a project opened as `/tmp/x` inside a module go knows as
+	/// `/private/tmp/x` fails with "outside main module", which reads as a
+	/// problem with the project and is not one.
 	private func absolutePackagePath(_ package: String) -> String {
-		if package.hasPrefix("/") { return package }
+		if package.hasPrefix("/") { return FilePath.canonical(URL(fileURLWithPath: package)) }
 		let trimmed = package.hasPrefix("./") ? String(package.dropFirst(2)) : package
-		return projectRoot.appendingPathComponent(trimmed).path
+		return FilePath.canonical(projectRoot.appendingPathComponent(trimmed))
 	}
 
 	public func stop() {
