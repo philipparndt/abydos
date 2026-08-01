@@ -474,7 +474,10 @@ struct TerminalEmulatorTests {
 @Suite(.serialized)
 struct PseudoTerminalTests {
 	/// Waits for a condition on the main queue, with a timeout.
-	private func wait(timeout: TimeInterval = 5, until condition: @escaping () -> Bool) async -> Bool {
+	/// Generous, because this waits on a real process: the whole suite runs in
+	/// parallel, and a machine with every core busy can take seconds to get
+	/// round to a `/bin/echo` that normally answers instantly.
+	private func wait(timeout: TimeInterval = 20, until condition: @escaping () -> Bool) async -> Bool {
 		let deadline = Date().addingTimeInterval(timeout)
 		while Date() < deadline {
 			if condition() { return true }
