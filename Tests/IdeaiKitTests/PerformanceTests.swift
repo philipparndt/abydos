@@ -36,6 +36,25 @@ struct PerformanceTests {
 		return elapsed
 	}
 
+	/// How much processor the work took, rather than how long it waited.
+	///
+	/// Wall-clock is what a user feels, but it also measures every other test
+	/// running beside this one: the same query that takes 38ms alone measures
+	/// 66ms with the suite around it, which is a fact about the machine and not
+	/// about the code. Processor time is what changes when the code does.
+	static func cpuTime(_ label: String, _ body: () -> Void) -> TimeInterval {
+		var start = timespec()
+		var end = timespec()
+		clock_gettime(CLOCK_THREAD_CPUTIME_ID, &start)
+		body()
+		clock_gettime(CLOCK_THREAD_CPUTIME_ID, &end)
+
+		let elapsed = Double(end.tv_sec - start.tv_sec)
+			+ Double(end.tv_nsec - start.tv_nsec) / 1_000_000_000
+		print(String(format: "PERF %-38s %8.2f ms cpu", (label as NSString).utf8String!, elapsed * 1000))
+		return elapsed
+	}
+
 	// MARK: - Loading
 
 	@Test func buildsLargeRopeQuickly() {
@@ -128,16 +147,9 @@ struct PerformanceTests {
 		let start = rope.byteOffset(ofLine: 50_000)
 		let end = rope.byteOffset(ofLine: 50_080)
 
-		// Best of several, for the same reason the keystroke measurement is:
-		// the rest of the suite runs alongside this one, and a busy machine
-		// moves the number by more than any regression worth catching.
 		var tokens: [HighlightToken] = []
-		var elapsed = Double.greatestFiniteMagnitude
-		for round in 0..<5 {
-			let round = Self.time("highlight 80-line viewport, round \(round + 1)") {
-				tokens = engine.highlights(rope: rope, byteRange: start..<end)
-			}
-			elapsed = min(elapsed, round)
+		let elapsed = Self.cpuTime("highlight 80-line viewport") {
+			tokens = engine.highlights(rope: rope, byteRange: start..<end)
 		}
 
 		#expect(!tokens.isEmpty, "viewport produced no tokens")
@@ -163,19 +175,12 @@ struct PerformanceTests {
 
 		var caret = document.rope.utf16Offset(fromByte: document.rope.byteOffset(ofLine: 50_000))
 
-		// Best of several rounds. The rest of the suite runs alongside this one,
-		// and a machine doing other work moves the mean by three times or more —
-		// which is far more than any change worth catching here. The least
-		// interrupted round is what the typing path actually costs.
-		var perKeystroke = Double.greatestFiniteMagnitude
-		for round in 0..<5 {
-			let elapsed = Self.time("500 keystrokes via TextDocument (100k lines), round \(round + 1)") {
-				for _ in 0..<500 {
-					caret = document.replace(utf16Range: caret..<caret, with: "x", caretBefore: caret)
-				}
+		let elapsed = Self.cpuTime("500 keystrokes via TextDocument (100k lines)") {
+			for _ in 0..<500 {
+				caret = document.replace(utf16Range: caret..<caret, with: "x", caretBefore: caret)
 			}
-			perKeystroke = min(perKeystroke, elapsed / 500)
 		}
+		let perKeystroke = elapsed / 500
 		print(String(format: "PERF per keystroke (main thread): %.4f ms", perKeystroke * 1000))
 		// A 60fps frame is 16ms; typing should not consume a measurable slice of it.
 		#expect(perKeystroke < 0.002, "keystroke cost \(perKeystroke * 1000)ms on the main thread")
