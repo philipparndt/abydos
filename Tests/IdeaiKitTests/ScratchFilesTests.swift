@@ -19,8 +19,9 @@ struct ScratchFilesTests {
 		let first = try scratches.create()
 		let second = try scratches.create()
 
-		#expect(first.lastPathComponent == "scratch-1.txt")
-		#expect(second.lastPathComponent == "scratch-2.txt")
+		#expect(first.lastPathComponent == "scratch-1.md")
+		// Markdown by default: notes with code in them, not code with notes.
+		#expect(second.lastPathComponent == "scratch-2.md")
 		#expect(scratches.all().count == 2)
 	}
 
@@ -36,7 +37,7 @@ struct ScratchFilesTests {
 
 		// A different instance, as a later launch would be.
 		let later = ScratchFiles(projectRoot: project, root: root)
-		#expect(later.all().map(\.lastPathComponent) == ["scratch-1.txt", "scratch-2.txt"])
+		#expect(later.all().map(\.lastPathComponent) == ["scratch-1.md", "scratch-2.md"])
 	}
 
 	/// One project's scratches are not another's.
@@ -82,7 +83,7 @@ struct ScratchFilesTests {
 
 		let file = try scratches.create()
 		#expect(scratches.contains(file))
-		#expect(!scratches.contains(URL(fileURLWithPath: "/elsewhere/scratch-1.txt")))
+		#expect(!scratches.contains(URL(fileURLWithPath: "/elsewhere/scratch-1.md")))
 	}
 
 	@Test func namesThemForTheTab() {

@@ -54,12 +54,19 @@ public struct ScratchFiles {
 		}
 	}
 
+	/// What a scratch is unless something says otherwise.
+	///
+	/// Markdown: a scratch is usually notes with a bit of code in it, and
+	/// Markdown is the format that highlights both — fenced blocks keep their
+	/// own language, and prose does not come out looking like a broken program.
+	public static let defaultExtension = "md"
+
 	/// Makes an empty scratch and returns where it went.
 	///
 	/// Numbered from one and counting past whatever is already there, so the
 	/// name matches what the tab says and two scratches never collide.
 	@discardableResult
-	public func create(extension fileExtension: String = "txt") throws -> URL {
+	public func create(extension fileExtension: String = defaultExtension) throws -> URL {
 		try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
 		var number = all().count + 1
