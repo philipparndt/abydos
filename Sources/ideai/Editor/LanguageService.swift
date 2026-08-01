@@ -105,6 +105,25 @@ final class LanguageService {
 		return (try? await server.client.completion(uri: url.absoluteString, position: position)) ?? []
 	}
 
+	/// Symbols anywhere in the project, from whichever servers are running.
+	///
+	/// Every language at once, because "where is that thing called X" does not
+	/// know or care which language X is written in.
+	func workspaceSymbols(matching query: String, project: URL) async -> [LSPSymbol] {
+		let prefix = project.standardizedFileURL.path + "#"
+		var found: [LSPSymbol] = []
+		for (key, server) in servers where key.hasPrefix(prefix) {
+			guard let symbols = try? await server.client.workspaceSymbols(query: query) else { continue }
+			found += symbols
+		}
+		return found
+	}
+
+	func documentSymbols(url: URL, languageId: String, project: URL) async -> [LSPSymbol] {
+		guard let server = servers[key(project: project, languageId: languageId)] else { return [] }
+		return (try? await server.client.documentSymbols(uri: url.absoluteString)) ?? []
+	}
+
 	func diagnostics(for url: URL) -> [LSPDiagnostic] {
 		diagnostics[url.absoluteString] ?? []
 	}

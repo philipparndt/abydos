@@ -47,7 +47,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			controller?.expandNavigatorTree()
 		}
 
-		NSApp.activate(ignoringOtherApps: true)
+		// A capture run never takes the keyboard.
+		//
+		// The screenshot is drawn straight from the view hierarchy, so it needs
+		// no focus at all — and an app that steals it while somebody is typing
+		// somewhere else does not merely interrupt them: their next keystrokes
+		// arrive in whatever this window has open, and get saved there.
+		if options.isScreenshotRun || options.metalShot != nil {
+			NSApp.setActivationPolicy(.accessory)
+		} else {
+			NSApp.activate(ignoringOtherApps: true)
+		}
 
 		// Simulated input runs after the initial parse lands, so folds and
 		// highlights exist by the time it is exercised.
@@ -154,6 +164,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			// set: while writing the code, not while stopped in it.
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
 				controller?.setBreakpointConditionForTesting(line: line, condition: condition)
+			}
+		}
+
+		if let query = options.symbolQuery {
+			// After the language server has had time to index.
+			DispatchQueue.main.asyncAfter(deadline: .now() + (options.lspWait ?? 12)) {
+				controller?.exerciseSymbolPaletteForTesting(query, project: options.symbolProject)
 			}
 		}
 
@@ -614,6 +631,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 		editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
 		editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
 		editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+		editMenu.addItem(.separator())
+		let symbolInFile = NSMenuItem(
+			title: "Go to Declaration\u{2026}",
+			action: #selector(MainWindowController.goToSymbolInFile(_:)),
+			keyEquivalent: "o"
+		)
+		symbolInFile.keyEquivalentModifierMask = [.command, .shift]
+		editMenu.addItem(symbolInFile)
+
+		let symbolInProject = NSMenuItem(
+			title: "Go to Symbol\u{2026}",
+			action: #selector(MainWindowController.goToSymbolInProject(_:)),
+			keyEquivalent: "o"
+		)
+		symbolInProject.keyEquivalentModifierMask = [.command, .option]
+		editMenu.addItem(symbolInProject)
 		editMenu.addItem(.separator())
 		editMenu.addItem(withTitle: "Find…", action: #selector(MainWindowController.findInFile(_:)), keyEquivalent: "f")
 		let findInProject = NSMenuItem(

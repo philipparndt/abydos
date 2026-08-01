@@ -178,6 +178,113 @@ public struct LSPHover: Equatable, Sendable {
 	}
 }
 
+/// A symbol a server knows about: a function, a type, a variable.
+public struct LSPSymbol: Equatable, Sendable {
+	/// What the protocol calls the kinds, which are numbers on the wire.
+	public enum Kind: Int, Sendable {
+		case file = 1, module, namespace, package, `class`, method, property, field,
+		     constructor, `enum`, interface, function, variable, constant, string,
+		     number, boolean, array, object, key, null, enumMember, `struct`,
+		     event, `operator`, typeParameter
+
+		/// A word for it, for showing beside the name.
+		public var label: String {
+			switch self {
+			case .class: return "class"
+			case .struct: return "struct"
+			case .enum: return "enum"
+			case .interface: return "interface"
+			case .function: return "func"
+			case .method: return "method"
+			case .constructor: return "init"
+			case .property, .field: return "property"
+			case .variable: return "var"
+			case .constant: return "const"
+			case .enumMember: return "case"
+			case .module, .namespace, .package: return "module"
+			case .typeParameter: return "type"
+			default: return ""
+			}
+		}
+	}
+
+	public var name: String
+	public var kind: Kind
+	/// Where it is.
+	public var location: LSPLocation
+	/// What it belongs to — the type a method is on, usually.
+	public var container: String?
+
+	public init(name: String, kind: Kind, location: LSPLocation, container: String? = nil) {
+		self.name = name
+		self.kind = kind
+		self.location = location
+		self.container = container
+	}
+
+	public init?(json: Any?) {
+		guard let dictionary = json as? [String: Any],
+		      let name = dictionary["name"] as? String
+		else { return nil }
+
+		let kind = (dictionary["kind"] as? Int).flatMap(Kind.init(rawValue:)) ?? .variable
+
+		// Two shapes again: SymbolInformation carries a location, while
+		// WorkspaceSymbol may carry only a uri and fill the range in later.
+		if let location = LSPLocation(json: dictionary["location"]) {
+			self.init(
+				name: name, kind: kind, location: location,
+				container: dictionary["containerName"] as? String
+			)
+			return
+		}
+		guard let uri = (dictionary["location"] as? [String: Any])?["uri"] as? String else { return nil }
+		self.init(
+			name: name,
+			kind: kind,
+			location: LSPLocation(
+				uri: uri,
+				range: LSPRange(
+					start: LSPPosition(line: 0, character: 0),
+					end: LSPPosition(line: 0, character: 0)
+				)
+			),
+			container: dictionary["containerName"] as? String
+		)
+	}
+
+	/// Symbols from a reply, flattening the nested `DocumentSymbol` shape.
+	///
+	/// A document's symbols come back as a tree, and a list of everything in
+	/// the file is what a "go to" needs — nesting is for an outline.
+	public static func list(from result: Any?, uri: String) -> [LSPSymbol] {
+		guard let array = result as? [Any] else { return [] }
+		var symbols: [LSPSymbol] = []
+
+		for entry in array {
+			guard let dictionary = entry as? [String: Any] else { continue }
+
+			// The nested shape has a selectionRange rather than a location.
+			if let range = LSPRange(json: dictionary["selectionRange"])
+				?? LSPRange(json: dictionary["range"]),
+				dictionary["location"] == nil {
+				guard let name = dictionary["name"] as? String else { continue }
+				let kind = (dictionary["kind"] as? Int).flatMap(Kind.init(rawValue:)) ?? .variable
+				symbols.append(LSPSymbol(
+					name: name,
+					kind: kind,
+					location: LSPLocation(uri: uri, range: range),
+					container: dictionary["detail"] as? String
+				))
+				symbols += list(from: dictionary["children"], uri: uri)
+			} else if let symbol = LSPSymbol(json: dictionary) {
+				symbols.append(symbol)
+			}
+		}
+		return symbols
+	}
+}
+
 /// A completion a server offers.
 public struct LSPCompletion: Equatable, Sendable {
 	public var label: String

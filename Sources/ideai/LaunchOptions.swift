@@ -92,6 +92,10 @@ struct LaunchOptions {
 	var debugBinary: String?
 	/// Raise a toast, to see what one looks like.
 	var showToast = false
+	/// Open the symbol palette with this query and report what came back.
+	var symbolQuery: String?
+	/// Search the whole project rather than the open file.
+	var symbolProject = false
 	/// Wait this long before capturing, for a language server to answer.
 	var lspWait: Double?
 	/// Rewrite the open file externally after this many seconds.
@@ -162,6 +166,8 @@ struct LaunchOptions {
 			case "--debug-inspect": options.debugInspect = true
 			case "--debug-binary": options.debugBinary = next()
 			case "--toast":      options.showToast = true
+			case "--symbols":    options.symbolQuery = next() ?? ""
+			case "--symbols-project": options.symbolProject = true
 			case "--lsp-wait":   options.lspWait = next().flatMap(Double.init)
 			case "--external-edit": options.externalEdit = next().flatMap(Double.init)
 			case "--send-bytes": options.terminalBytes = next()

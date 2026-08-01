@@ -161,6 +161,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	private var navigatorWidth: CGFloat = 260
 
+	/// Go to a symbol by name.
+	private lazy var symbolPalette: SymbolPalette = {
+		let palette = SymbolPalette()
+		palette.provider = { [weak self] query, scope in
+			await self?.symbols(matching: query, scope: scope) ?? []
+		}
+		palette.onOpen = { [weak self] location in
+			guard let url = location.url else { return }
+			self?.editor.open(fileURL: url, atLine: location.range.start.line + 1)
+		}
+		return palette
+	}()
+
 	/// Where news the user did not ask for goes.
 	private lazy var toasts = ToastPresenter(window: window)
 
@@ -1553,6 +1566,84 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	@objc func newTerminal(_ sender: Any?) {
 		setPanelVisible(true)
 		bottomPanel.newTerminal()
+	}
+
+	/// Opens the palette, types a query, and says what came back.
+	func exerciseSymbolPaletteForTesting(_ query: String, project: Bool) {
+		symbolPalette.show(scope: project ? .workspace : .document, over: window)
+		symbolPalette.setQueryForTesting(query)
+
+		DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
+			guard let self else { return }
+			let results = self.symbolPalette.resultsForTesting
+			print("SYMBOLS: \(results.count) for “\(query)”")
+			for result in results.prefix(6) { print("SYMBOL: \(result)") }
+
+			self.symbolPalette.openFirstForTesting()
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+				print("SYMBOLS: opened \(self.editor.activeGroup?.activeTabURL?.lastPathComponent ?? "nothing")")
+			}
+		}
+	}
+
+	/// Everything in this file, or everything in the project.
+	@objc func goToSymbolInFile(_ sender: Any?) {
+		symbolPalette.show(scope: .document, over: window)
+	}
+
+	@objc func goToSymbolInProject(_ sender: Any?) {
+		symbolPalette.show(scope: .workspace, over: window)
+	}
+
+	private func symbols(matching query: String, scope: SymbolPalette.Scope) async -> [LSPSymbol] {
+		guard let project else { return [] }
+
+		switch scope {
+		case .workspace:
+			// An empty query would ask the server for every symbol it knows,
+			// which for a large project is a great deal of nothing useful.
+			guard !query.isEmpty else { return [] }
+			return await LanguageService.shared
+				.workspaceSymbols(matching: query, project: project.root)
+				.sorted { better($0, than: $1, for: query) }
+				.prefix(200)
+				.map { $0 }
+
+		case .document:
+			guard let url = editor.activeGroup?.activeTabURL,
+			      let languageId = editor.activeGroup?.activeDocument?.languageId
+			else { return [] }
+
+			let all = await LanguageService.shared
+				.documentSymbols(url: url, languageId: languageId, project: project.root)
+			guard !query.isEmpty else { return all }
+			return all
+				.filter { $0.name.localizedCaseInsensitiveContains(query) }
+				.sorted { better($0, than: $1, for: query) }
+		}
+	}
+
+	/// Exact match first, then prefix, then merely containing it.
+	///
+	/// Servers match loosely — sourcekit-lsp will happily return a five-hundred
+	/// character initialiser for a three-letter query — so the sort has to put
+	/// what was actually asked for at the top. Ties go to the shorter name,
+	/// which is nearly always the one meant.
+	private func better(_ left: LSPSymbol, than right: LSPSymbol, for query: String) -> Bool {
+		let leftRank = rank(left, for: query)
+		let rightRank = rank(right, for: query)
+		if leftRank != rightRank { return leftRank < rightRank }
+		if left.name.count != right.name.count { return left.name.count < right.name.count }
+		return left.name < right.name
+	}
+
+	private func rank(_ symbol: LSPSymbol, for query: String) -> Int {
+		let name = symbol.name.lowercased()
+		let needle = query.lowercased()
+		if name == needle { return 0 }
+		if name.hasPrefix(needle) { return 1 }
+		if name.contains(needle) { return 2 }
+		return 3
 	}
 
 	/// Brings the debug panel forward.

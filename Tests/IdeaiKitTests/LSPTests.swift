@@ -288,3 +288,110 @@ struct LanguageServerRegistryTests {
 		#expect(LanguageServers.executable(for: missing) == nil)
 	}
 }
+
+/// Symbols, in both shapes servers send them.
+struct LSPSymbolTests {
+	private let range: [String: Any] = [
+		"start": ["line": 4, "character": 2],
+		"end": ["line": 4, "character": 12],
+	]
+
+	/// `workspace/symbol` answers with SymbolInformation, which has a location.
+	@Test func readsAFlatSymbol() {
+		let symbol = LSPSymbol(json: [
+			"name": "WordMotion",
+			"kind": 10,
+			"location": ["uri": "file:///a.swift", "range": range],
+			"containerName": "IdeaiKit",
+		])
+		#expect(symbol?.name == "WordMotion")
+		#expect(symbol?.kind == .enum)
+		#expect(symbol?.container == "IdeaiKit")
+		#expect(symbol?.location.range.start.line == 4)
+	}
+
+	/// `textDocument/documentSymbol` answers with a tree, and a "go to" wants
+	/// every one of them rather than the outline.
+	@Test func flattensTheNestedShape() {
+		let symbols = LSPSymbol.list(from: [[
+			"name": "WordMotion",
+			"kind": 10,
+			"range": range,
+			"selectionRange": range,
+			"children": [
+				["name": "Class", "kind": 10, "range": range, "selectionRange": range, "children": []],
+				["name": "classify(_:)", "kind": 6, "range": range, "selectionRange": range,
+				 "children": [
+					["name": "inner", "kind": 13, "range": range, "selectionRange": range, "children": []],
+				 ]],
+			],
+		]], uri: "file:///a.swift")
+
+		#expect(symbols.map(\.name) == ["WordMotion", "Class", "classify(_:)", "inner"])
+		#expect(symbols.allSatisfy { $0.location.uri == "file:///a.swift" })
+	}
+
+	/// The selection range is the name itself; the range covers the whole
+	/// declaration. Jumping to the name is what somebody wants.
+	@Test func prefersTheNameOverTheWholeDeclaration() {
+		let symbols = LSPSymbol.list(from: [[
+			"name": "run",
+			"kind": 6,
+			"range": ["start": ["line": 10, "character": 0], "end": ["line": 20, "character": 1]],
+			"selectionRange": ["start": ["line": 10, "character": 9], "end": ["line": 10, "character": 12]],
+			"children": [],
+		]], uri: "file:///a.swift")
+
+		#expect(symbols.first?.location.range.start.line == 10)
+		#expect(symbols.first?.location.range.start.character == 9)
+	}
+
+	@Test func namesEachKindInAWordSomebodyWouldUse() {
+		#expect(LSPSymbol.Kind.function.label == "func")
+		#expect(LSPSymbol.Kind.struct.label == "struct")
+		#expect(LSPSymbol.Kind.enumMember.label == "case")
+		#expect(LSPSymbol.Kind.file.label == "")
+	}
+
+	@Test func survivesRepliesItCannotRead() {
+		#expect(LSPSymbol.list(from: NSNull(), uri: "file:///a").isEmpty)
+		#expect(LSPSymbol.list(from: ["nonsense"], uri: "file:///a").isEmpty)
+		#expect(LSPSymbol(json: ["kind": 6]) == nil)
+	}
+}
+
+/// Nothing may be sent before the handshake lands.
+struct LSPHandshakeOrderTests {
+	/// A server rejects everything that arrives before `initialize`, quietly:
+	/// the document is never registered, and every later question about it
+	/// comes back "no language service for this file".
+	@Test func holdsNotificationsUntilInitialized() async throws {
+		let root = URL(fileURLWithPath: #filePath)
+			.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+		guard let server = LanguageServers.resolve(languageId: "swift", root: root) else { return }
+
+		let client = LSPClient()
+		defer { client.stop() }
+		try client.start(
+			executable: server.executable,
+			arguments: server.definition.arguments,
+			workingDirectory: root
+		)
+
+		// Sent immediately, before the handshake is even asked for — which is
+		// exactly what the editor does when a file is already open at launch.
+		let file = root.appendingPathComponent("Sources/IdeaiKit/Text/WordMotion.swift")
+		let text = try String(contentsOf: file, encoding: .utf8)
+		client.didOpen(uri: file.absoluteString, languageId: "swift", version: 1, text: text)
+
+		_ = try await client.initialize(rootURL: root)
+		try? await Task.sleep(nanoseconds: 3_000_000_000)
+
+		// The server knows the document, so it can answer about it.
+		let symbols = try await client.documentSymbols(uri: file.absoluteString)
+		#expect(!symbols.isEmpty)
+		#expect(symbols.contains { $0.name == "WordMotion" })
+
+		await client.shutdown()
+	}
+}

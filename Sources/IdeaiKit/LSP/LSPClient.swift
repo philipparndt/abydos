@@ -45,6 +45,17 @@ public final class LSPClient: @unchecked Sendable {
 	/// What the server said it can do, from the initialize reply.
 	public private(set) var capabilities: [String: Any] = [:]
 
+	/// Whether the handshake has finished.
+	private var isInitialized = false
+	/// Notifications sent before it did.
+	///
+	/// A server rejects everything that arrives before `initialize` — quietly,
+	/// so what actually happens is that the document is never registered and
+	/// every later question about it comes back "no language service for this
+	/// file". Holding them until the handshake lands costs a few milliseconds
+	/// once and removes the whole class of race.
+	private var queuedNotifications: [(String, [String: Any]?)] = []
+
 	public init() {}
 
 	/// Runs `body` holding the lock.
@@ -125,7 +136,17 @@ public final class LSPClient: @unchecked Sendable {
 		let capabilities = (result as? [String: Any])?["capabilities"] as? [String: Any] ?? [:]
 		locked { self.capabilities = capabilities }
 
-		notify("initialized", [:])
+		// `initialized` goes first, then whatever was waiting behind it, in the
+		// order it was asked for — a `didChange` before its `didOpen` is as
+		// broken as no `didOpen` at all.
+		write(["jsonrpc": "2.0", "method": "initialized", "params": [:]])
+		let queued = locked { () -> [(String, [String: Any]?)] in
+			isInitialized = true
+			let pending = queuedNotifications
+			queuedNotifications = []
+			return pending
+		}
+		for (method, parameters) in queued { send(notification: method, parameters) }
 		return capabilities
 	}
 
@@ -140,11 +161,12 @@ public final class LSPClient: @unchecked Sendable {
 			"publishDiagnostics": ["relatedInformation": false],
 			"hover": ["contentFormat": ["plaintext", "markdown"]],
 			"definition": ["linkSupport": true],
+			"documentSymbol": ["hierarchicalDocumentSymbolSupport": true],
 			"completion": [
 				"completionItem": ["snippetSupport": false, "documentationFormat": ["plaintext"]],
 			],
 		],
-		"workspace": ["workspaceFolders": true],
+		"workspace": ["workspaceFolders": true, "symbol": ["dynamicRegistration": false]],
 	]
 
 	/// Asks the server to stop, and makes sure it does.
@@ -165,6 +187,8 @@ public final class LSPClient: @unchecked Sendable {
 		let process = self.process
 		self.process = nil
 		self.inputPipe = nil
+		isInitialized = false
+		queuedNotifications = []
 		lock.unlock()
 
 		process?.terminationHandler = nil
@@ -234,6 +258,21 @@ public final class LSPClient: @unchecked Sendable {
 		return LSPCompletion.list(from: result)
 	}
 
+	/// Symbols anywhere in the project, matching a query.
+	public func workspaceSymbols(query: String) async throws -> [LSPSymbol] {
+		let result = try await request("workspace/symbol", ["query": query])
+		guard let array = result as? [Any] else { return [] }
+		return array.compactMap { LSPSymbol(json: $0) }
+	}
+
+	/// What is declared in one file.
+	public func documentSymbols(uri: String) async throws -> [LSPSymbol] {
+		let result = try await request("textDocument/documentSymbol", [
+			"textDocument": ["uri": uri],
+		])
+		return LSPSymbol.list(from: result, uri: uri)
+	}
+
 	public func references(uri: String, position: LSPPosition) async throws -> [LSPLocation] {
 		let result = try await request("textDocument/references", [
 			"textDocument": ["uri": uri],
@@ -246,6 +285,18 @@ public final class LSPClient: @unchecked Sendable {
 	// MARK: - Sending
 
 	public func notify(_ method: String, _ parameters: [String: Any]?) {
+		let ready = locked { () -> Bool in
+			guard isInitialized else {
+				queuedNotifications.append((method, parameters))
+				return false
+			}
+			return true
+		}
+		guard ready else { return }
+		send(notification: method, parameters)
+	}
+
+	private func send(notification method: String, _ parameters: [String: Any]?) {
 		var message: [String: Any] = ["jsonrpc": "2.0", "method": method]
 		if let parameters { message["params"] = parameters }
 		write(message)
