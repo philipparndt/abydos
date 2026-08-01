@@ -47,6 +47,19 @@ public final class LSPClient: @unchecked Sendable {
 
 	public init() {}
 
+	/// Runs `body` holding the lock.
+	///
+	/// Synchronous on purpose, and every caller keeps it that way: taking a
+	/// lock in an async function and holding it across a suspension point is
+	/// how a client like this deadlocks, and Swift 6 makes it an error rather
+	/// than a warning. Wrapping it means the critical sections stay short
+	/// enough to see, which is the actual guarantee wanted here.
+	private func locked<T>(_ body: () -> T) -> T {
+		lock.lock()
+		defer { lock.unlock() }
+		return body()
+	}
+
 	public var isRunning: Bool {
 		lock.lock()
 		defer { lock.unlock() }
@@ -110,9 +123,7 @@ public final class LSPClient: @unchecked Sendable {
 		])
 
 		let capabilities = (result as? [String: Any])?["capabilities"] as? [String: Any] ?? [:]
-		lock.lock()
-		self.capabilities = capabilities
-		lock.unlock()
+		locked { self.capabilities = capabilities }
 
 		notify("initialized", [:])
 		return capabilities
@@ -145,9 +156,7 @@ public final class LSPClient: @unchecked Sendable {
 		notify("exit", nil)
 
 		try? await Task.sleep(nanoseconds: 200_000_000)
-		lock.lock()
-		let process = self.process
-		lock.unlock()
+		let process = locked { self.process }
 		if process?.isRunning == true { process?.terminate() }
 	}
 
@@ -250,10 +259,11 @@ public final class LSPClient: @unchecked Sendable {
 	) async throws -> Any? {
 		guard isRunning else { throw ClientError.notRunning }
 
-		lock.lock()
-		let id = nextID
-		nextID += 1
-		lock.unlock()
+		let id = locked { () -> Int in
+			let id = nextID
+			nextID += 1
+			return id
+		}
 
 		return try await withTimeout(seconds: timeout, describing: method) {
 			try await withCheckedThrowingContinuation { continuation in
