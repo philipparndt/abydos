@@ -192,6 +192,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if options.maximizeTerminal {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+				controller?.togglePanelMaximized(nil)
+			}
+		}
+
 		if let path = options.metalShot {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
 				controller?.renderTerminalWithMetal(to: path)
@@ -536,6 +542,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 		let newTerminalItem = NSMenuItem(title: "New Terminal", action: #selector(MainWindowController.newTerminal(_:)), keyEquivalent: "t")
 		newTerminalItem.keyEquivalentModifierMask = [.command, .shift]
 		viewMenu.addItem(newTerminalItem)
+		let maximizeTerminal = NSMenuItem(
+			title: "Maximize Terminal",
+			action: #selector(MainWindowController.togglePanelMaximized(_:)),
+			keyEquivalent: "j"
+		)
+		maximizeTerminal.keyEquivalentModifierMask = [.command, .shift]
+		viewMenu.addItem(maximizeTerminal)
 		let foldAll = NSMenuItem(title: "Collapse All", action: #selector(MainWindowController.collapseAllFolds(_:)), keyEquivalent: "-")
 		foldAll.keyEquivalentModifierMask = [.command, .shift]
 		viewMenu.addItem(foldAll)

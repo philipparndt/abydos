@@ -9,6 +9,15 @@ import IdeaiKit
 final class BottomPanel: NSView {
 	/// Fired when the panel wants to be hidden, so the window can collapse it.
 	var onRequestHide: (() -> Void)?
+	/// Asked to give the panel the whole window, or to hand it back.
+	var onToggleMaximize: (() -> Void)?
+
+	/// Reflects the window's state on the control, so the arrows point the way
+	/// the next click would go.
+	var isMaximized: Bool {
+		get { tabStrip.isMaximized }
+		set { tabStrip.isMaximized = newValue }
+	}
 
 	private final class Session {
 		enum Kind {
@@ -79,6 +88,7 @@ final class BottomPanel: NSView {
 		tabStrip.onClose = { [weak self] index in self?.close(index: index) }
 		tabStrip.onAdd = { [weak self] in self?.newTerminal() }
 		tabStrip.onHide = { [weak self] in self?.onRequestHide?() }
+		tabStrip.onToggleMaximize = { [weak self] in self?.onToggleMaximize?() }
 
 		contentArea = NSView()
 
@@ -93,8 +103,10 @@ final class BottomPanel: NSView {
 
 		tabStripHeight = tabStrip.heightAnchor.constraint(equalToConstant: Theme.current.scaled(30))
 
+		tabStripTop = tabStrip.topAnchor.constraint(equalTo: topAnchor)
+
 		NSLayoutConstraint.activate([
-			tabStrip.topAnchor.constraint(equalTo: topAnchor),
+			tabStripTop,
 			tabStrip.leadingAnchor.constraint(equalTo: leadingAnchor),
 			tabStrip.trailingAnchor.constraint(equalTo: trailingAnchor),
 			tabStripHeight,
@@ -110,6 +122,16 @@ final class BottomPanel: NSView {
 	}
 
 	private var tabStripHeight: NSLayoutConstraint!
+	private var tabStripTop: NSLayoutConstraint!
+
+	/// Height the titlebar covers.
+	///
+	/// Zero while the panel sits at the bottom, where nothing is above it. Given
+	/// the whole window it reaches the top, and the window draws under its own
+	/// titlebar — so without this the tabs end up behind it.
+	func setTopInset(_ inset: CGFloat) {
+		tabStripTop.constant = inset
+	}
 
 	// MARK: - Project
 
@@ -484,12 +506,18 @@ final class PanelTabStrip: NSView {
 	var onClose: ((Int) -> Void)?
 	var onAdd: (() -> Void)?
 	var onHide: (() -> Void)?
+	/// Asked to give the panel the whole window, or to give it back.
+	var onToggleMaximize: (() -> Void)?
+	/// Whether the panel currently has the window to itself, which decides
+	/// which way the arrows point.
+	var isMaximized = false { didSet { needsDisplay = true } }
 
 	private var items: [PanelTabItem] = []
 	private var activeIndex: Int?
 	private var frames: [NSRect] = []
 	private var addButtonFrame: NSRect = .zero
 	private var hideButtonFrame: NSRect = .zero
+	private var maximizeButtonFrame: NSRect = .zero
 	private var hoveredIndex: Int?
 	private var trackingArea: NSTrackingArea?
 
@@ -532,6 +560,14 @@ final class PanelTabStrip: NSView {
 			width: Theme.current.scaled(24),
 			height: bounds.height
 		)
+		// Beside the one that puts it away, since they are the same kind of
+		// thing: how much room the panel gets.
+		maximizeButtonFrame = NSRect(
+			x: hideButtonFrame.minX - Theme.current.scaled(26),
+			y: 0,
+			width: Theme.current.scaled(24),
+			height: bounds.height
+		)
 	}
 
 	override func updateTrackingAreas() {
@@ -561,6 +597,7 @@ final class PanelTabStrip: NSView {
 
 		if addButtonFrame.contains(point) { onAdd?(); return }
 		if hideButtonFrame.contains(point) { onHide?(); return }
+		if maximizeButtonFrame.contains(point) { onToggleMaximize?(); return }
 
 		guard let index = frames.firstIndex(where: { $0.contains(point) }) else { return }
 		let closeRect = NSRect(
@@ -588,6 +625,12 @@ final class PanelTabStrip: NSView {
 
 		drawGlyph(in: addButtonFrame, symbol: "plus")
 		drawGlyph(in: hideButtonFrame, symbol: "chevron.down")
+		drawGlyph(
+			in: maximizeButtonFrame,
+			symbol: isMaximized
+				? "arrow.down.right.and.arrow.up.left"
+				: "arrow.up.left.and.arrow.down.right"
+		)
 	}
 
 	private func draw(item: PanelTabItem, in rect: NSRect, isActive: Bool, isHovered: Bool) {

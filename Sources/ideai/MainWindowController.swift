@@ -238,6 +238,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		verticalSplitView.autosaveName = "IdeaiPanelSplit"
 
 		bottomPanel.onRequestHide = { [weak self] in self?.setPanelVisible(false) }
+		bottomPanel.onToggleMaximize = { [weak self] in self?.togglePanelMaximized() }
 		// A finding opens the file at its line, in the editor above the panel.
 		bottomPanel.onOpenFinding = { [weak self] url, line in
 			self?.editor.open(fileURL: url, atLine: line)
@@ -366,6 +367,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
 		navigator.setTopInset(inset)
 		sidebarTopInset = inset
+		if isPanelMaximized { bottomPanel.setTopInset(inset) }
 		primaryToolTop?.constant = inset
 		editor.setTopInset(inset)
 		toolStrip.setTopInset(inset)
@@ -460,6 +462,40 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
 	private var isPanelVisible: Bool { !bottomPanel.isHidden }
 
+	/// Whether the panel has the window to itself, and what to restore.
+	private var isPanelMaximized = false
+	private var heightBeforeMaximize: CGFloat?
+
+	/// Gives the panel the whole window, or hands it back.
+	///
+	/// Everything above it goes: the tree, the editors and their tabs. The
+	/// panel's own tabs stay, since they are how you get between terminals.
+	@objc func togglePanelMaximized(_ sender: Any? = nil) {
+		if isPanelMaximized {
+			isPanelMaximized = false
+			bottomPanel.isMaximized = false
+			splitView.isHidden = false
+			bottomPanel.setTopInset(0)
+			verticalSplitView.adjustSubviews()
+			let total = verticalSplitView.bounds.height
+			let restored = heightBeforeMaximize ?? panelHeight
+			if total > 200 { verticalSplitView.setPosition(total - restored, ofDividerAt: 0) }
+			return
+		}
+
+		setPanelVisible(true)
+		isPanelMaximized = true
+		bottomPanel.isMaximized = true
+		heightBeforeMaximize = max(160, bottomPanel.frame.height)
+		// Hidden rather than resized to nothing: a split view will not put a
+		// pane fully away, and a sliver of editor left showing is not what
+		// "give the terminal the window" means.
+		splitView.isHidden = true
+		bottomPanel.setTopInset(sidebarTopInset)
+		verticalSplitView.adjustSubviews()
+		verticalSplitView.setPosition(0, ofDividerAt: 0)
+	}
+
 	private func setPanelVisible(_ visible: Bool) {
 		guard visible != isPanelVisible else { return }
 
@@ -477,6 +513,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 				self.verticalSplitView.setPosition(total - self.panelHeight, ofDividerAt: 0)
 			}
 		} else {
+			if isPanelMaximized {
+				isPanelMaximized = false
+				bottomPanel.isMaximized = false
+				bottomPanel.setTopInset(0)
+				splitView.isHidden = false
+			}
 			// Remember the height so reopening restores the same size.
 			panelHeight = max(160, bottomPanel.frame.height)
 			bottomPanel.isHidden = true
