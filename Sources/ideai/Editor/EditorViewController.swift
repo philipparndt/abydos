@@ -590,6 +590,14 @@ final class EditorViewController: NSViewController {
 	/// - Already-open files are activated rather than reopened, which is what
 	///   makes clicking a file in the tree select its existing tab.
 	func open(fileURL: URL, focusEditor: Bool = false, preview: Bool = false) {
+		let departure = currentPlace
+		defer {
+			DispatchQueue.main.async { [weak self] in
+				guard let self, let arrival = self.currentPlace else { return }
+				self.reportNavigation(from: departure, to: arrival)
+			}
+		}
+
 		if let existing = tabs.firstIndex(where: { $0.url == fileURL }) {
 			// Committing to a file that is currently provisional pins it.
 			if !preview { tabs[existing].isPreview = false }
@@ -1091,7 +1099,14 @@ final class EditorViewController: NSViewController {
 	/// Opens a file and jumps to a line — the target of review findings and
 	/// search results.
 	func open(fileURL: URL, atLine line: Int) {
+		let departure = currentPlace
+		isReportingSuppressed += 1
 		open(fileURL: fileURL, focusEditor: true, preview: false)
+		isReportingSuppressed -= 1
+		reportNavigation(
+			from: departure,
+			to: (fileURL, line)
+		)
 		// Deferred: a freshly opened document has not laid out yet, so scrolling
 		// now would compute against a zero-height view.
 		DispatchQueue.main.async { [weak self] in
@@ -1513,6 +1528,30 @@ final class EditorViewController: NSViewController {
 	func expandAllFolds() { activeTab?.codeView?.expandAllFolds() }
 
 	var hasOpenFiles: Bool { !tabs.isEmpty }
+
+	/// Told where the editor went, and where it stood before.
+	var onNavigated: ((NavigationHistory.Place?, NavigationHistory.Place) -> Void)?
+	/// Raised while an outer open reports the jump itself, with the line it
+	/// asked for rather than the one the file happened to open at.
+	private var isReportingSuppressed = 0
+
+	private func reportNavigation(
+		from departure: (url: URL, line: Int)?,
+		to arrival: (url: URL, line: Int)
+	) {
+		guard isReportingSuppressed == 0 else { return }
+		onNavigated?(
+			departure.map { NavigationHistory.Place(file: $0.url, line: $0.line) },
+			NavigationHistory.Place(file: arrival.url, line: arrival.line)
+		)
+	}
+
+	/// The file and line the caret is in, for recording where you were before
+	/// jumping somewhere else.
+	var currentPlace: (url: URL, line: Int)? {
+		guard let tab = activeTab else { return nil }
+		return (tab.url, (tab.codeView?.caretLine ?? 0) + 1)
+	}
 
 	/// What this group has open, as plain values.
 	func captureSession() -> ProjectSession {

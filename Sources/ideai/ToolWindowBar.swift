@@ -153,12 +153,28 @@ final class ToolWindowBar: NSView {
 		historyButton = StripButton(symbol: "clock.arrow.circlepath", tooltip: "History (⌘6)", enabled: true)
 		historyButton.onClick = { [weak self] in self?.onToggleHistory?() }
 
+		// Commit, branches and history are three views of one repository, and
+		// they were scattered between the file tree and the notes. Grouped and
+		// fenced off, the strip reads as three things rather than six.
+		let gitSeparator = StripSeparator()
+		let toolSeparator = StripSeparator()
+
 		let stack = NSStackView(views: [
-			projectButton, commitButton, branchesButton, structureButton, historyButton, scratchesButton,
+			projectButton,
+			gitSeparator,
+			commitButton, branchesButton, historyButton,
+			toolSeparator,
+			structureButton, scratchesButton,
 		])
 		stack.orientation = .vertical
 		stack.spacing = 4
 		stack.alignment = .centerX
+		// A little more air around the rules than between the icons they
+		// separate, or the grouping reads as an accident.
+		stack.setCustomSpacing(7, after: projectButton)
+		stack.setCustomSpacing(7, after: gitSeparator)
+		stack.setCustomSpacing(7, after: historyButton)
+		stack.setCustomSpacing(7, after: toolSeparator)
 		stack.translatesAutoresizingMaskIntoConstraints = false
 		addSubview(stack)
 
@@ -325,5 +341,17 @@ final class StripButton: NSView {
 				width: Theme.current.scaled(16),
 				height: Theme.current.scaled(16)
 			))
+	}
+}
+
+/// A hairline between groups of buttons in the strip.
+private final class StripSeparator: NSView {
+	override var intrinsicContentSize: NSSize {
+		NSSize(width: Theme.current.scaled(16), height: 1)
+	}
+
+	override func draw(_ dirtyRect: NSRect) {
+		Theme.current.separator.setFill()
+		bounds.fill()
 	}
 }

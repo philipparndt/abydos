@@ -126,6 +126,10 @@ final class EditorAreaController: NSViewController {
 		group.onActiveFileChanged = { [weak self] url in
 			self?.onActiveFileChanged?(url)
 		}
+		group.onNavigated = { [weak self] departure, arrival in
+			guard let self, self.recordsNavigation else { return }
+			self.onNavigated?(departure, arrival)
+		}
 		group.onToggleBreakpoint = { [weak self] url, line in
 			self?.onToggleBreakpoint?(url, line)
 		}
@@ -367,7 +371,11 @@ final class EditorAreaController: NSViewController {
 	}
 
 	func restore(_ session: ProjectSession) {
+		recordsNavigation = false
 		rearranging { (activeGroup ?? groups.first)?.restore(session) }
+		// After the opens have settled, since each reports itself a runloop
+		// turn later.
+		DispatchQueue.main.async { [weak self] in self?.recordsNavigation = true }
 	}
 
 	/// Reopens the project's scratches, in whichever group is in front.
@@ -605,6 +613,18 @@ final class EditorAreaController: NSViewController {
 	}
 
 	var hasOpenFiles: Bool { groups.contains { !$0.isEmpty } }
+
+	var currentPlace: (url: URL, line: Int)? { activeGroup.currentPlace }
+
+	/// Told where the editor went, and where it was standing before.
+	///
+	/// Both halves matter: going back should return to the line somebody was
+	/// reading, which is not where they arrived at that file.
+	var onNavigated: ((NavigationHistory.Place?, NavigationHistory.Place) -> Void)?
+
+	/// Suspended while a session is restored, or opening yesterday's twelve
+	/// tabs would fill the history before anybody navigated anywhere.
+	var recordsNavigation = true
 
 	func open(fileURL: URL, focusEditor: Bool = false, preview: Bool = false) {
 		activeGroup.open(fileURL: fileURL, focusEditor: focusEditor, preview: preview)

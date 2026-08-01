@@ -100,6 +100,8 @@ struct LaunchOptions {
 	var debugConsole = false
 	/// Press push in the commit view.
 	var pushChanges = false
+	/// Walk the navigation history: "back", "forward", or both.
+	var navigateSteps: String?
 	/// Open the list of launch configurations.
 	var launchMenu = false
 	/// Open the editor for the selected configuration.
@@ -164,6 +166,7 @@ struct LaunchOptions {
 			case "--review-uncommitted": options.reviewUncommitted = true
 			case "--changes":    options.showChanges = true
 			case "--push":       options.pushChanges = true
+			case "--navigate":   options.navigateSteps = next()
 			case "--sidebar":    options.sidebarTool = next()
 			case "--run-line":   options.runLine = next().flatMap(Int.init)
 			case "--debug-line": options.debugLine = next().flatMap(Int.init)

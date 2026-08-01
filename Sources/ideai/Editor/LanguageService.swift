@@ -86,20 +86,34 @@ final class LanguageService {
 		return (running, missing)
 	}
 
+	/// How a file is named when talking to a language server.
+	///
+	/// The real path, always: a server resolves a module or a package by
+	/// realpath, and a workspace given as `/tmp/x` then does not contain the
+	/// module it just found at `/private/tmp/x` — gopls says as much and
+	/// answers nothing about any symbol in it.
+	private func canonical(_ url: URL) -> URL {
+		URL(fileURLWithPath: FilePath.canonical(url), isDirectory: true)
+	}
+
+	private func uri(for url: URL) -> String {
+		URL(fileURLWithPath: FilePath.canonical(url)).absoluteString
+	}
+
 	// MARK: - Documents
 
 	/// A file was opened. Starts a server for it if this is the first of its
 	/// language, and hands it the text.
 	func opened(url: URL, languageId: String, text: String, project: URL) {
 		guard let server = server(for: languageId, project: project) else { return }
-		let uri = url.absoluteString
+		let uri = uri(for: url)
 		openDocuments[uri] = 1
 		server.client.didOpen(uri: uri, languageId: languageId, version: 1, text: text)
 	}
 
 	func changed(url: URL, languageId: String, text: String, project: URL) {
 		guard let server = servers[key(project: project, languageId: languageId)] else { return }
-		let uri = url.absoluteString
+		let uri = uri(for: url)
 		let version = (openDocuments[uri] ?? 0) + 1
 		openDocuments[uri] = version
 		server.client.didChange(uri: uri, version: version, text: text)
@@ -107,12 +121,12 @@ final class LanguageService {
 
 	func saved(url: URL, languageId: String, text: String, project: URL) {
 		guard let server = servers[key(project: project, languageId: languageId)] else { return }
-		server.client.didSave(uri: url.absoluteString, text: text)
+		server.client.didSave(uri: uri(for: url), text: text)
 	}
 
 	func closed(url: URL, languageId: String, project: URL) {
 		guard let server = servers[key(project: project, languageId: languageId)] else { return }
-		let uri = url.absoluteString
+		let uri = uri(for: url)
 		openDocuments.removeValue(forKey: uri)
 		server.client.didClose(uri: uri)
 
@@ -126,12 +140,12 @@ final class LanguageService {
 
 	func definition(url: URL, position: LSPPosition, languageId: String, project: URL) async -> [LSPLocation] {
 		guard let server = servers[key(project: project, languageId: languageId)] else { return [] }
-		return (try? await server.client.definition(uri: url.absoluteString, position: position)) ?? []
+		return (try? await server.client.definition(uri: uri(for: url), position: position)) ?? []
 	}
 
 	func hover(url: URL, position: LSPPosition, languageId: String, project: URL) async -> LSPHover? {
 		guard let server = servers[key(project: project, languageId: languageId)] else { return nil }
-		return try? await server.client.hover(uri: url.absoluteString, position: position)
+		return try? await server.client.hover(uri: uri(for: url), position: position)
 	}
 
 	func completions(
@@ -141,7 +155,7 @@ final class LanguageService {
 		project: URL
 	) async -> [LSPCompletion] {
 		guard let server = servers[key(project: project, languageId: languageId)] else { return [] }
-		return (try? await server.client.completion(uri: url.absoluteString, position: position)) ?? []
+		return (try? await server.client.completion(uri: uri(for: url), position: position)) ?? []
 	}
 
 	/// Symbols anywhere in the project, from whichever servers are running.
@@ -160,7 +174,7 @@ final class LanguageService {
 
 	func documentSymbols(url: URL, languageId: String, project: URL) async -> [LSPSymbol] {
 		guard let server = servers[key(project: project, languageId: languageId)] else { return [] }
-		return (try? await server.client.documentSymbols(uri: url.absoluteString)) ?? []
+		return (try? await server.client.documentSymbols(uri: uri(for: url))) ?? []
 	}
 
 	func references(
@@ -170,11 +184,11 @@ final class LanguageService {
 		project: URL
 	) async -> [LSPLocation] {
 		guard let server = servers[key(project: project, languageId: languageId)] else { return [] }
-		return (try? await server.client.references(uri: url.absoluteString, position: position)) ?? []
+		return (try? await server.client.references(uri: uri(for: url), position: position)) ?? []
 	}
 
 	func diagnostics(for url: URL) -> [LSPDiagnostic] {
-		diagnostics[url.absoluteString] ?? []
+		diagnostics[uri(for: url)] ?? []
 	}
 
 	// MARK: - Servers
@@ -223,7 +237,7 @@ final class LanguageService {
 			try client.start(
 				executable: resolved.executable,
 				arguments: resolved.definition.arguments,
-				workingDirectory: resolved.root
+				workingDirectory: canonical(resolved.root)
 			)
 		} catch {
 			unavailable.insert(key)
@@ -237,7 +251,7 @@ final class LanguageService {
 			// The handshake has to finish before anything else is sent, but
 			// nothing waits on it: notifications queue up on the pipe in order,
 			// and the first answers simply arrive a moment later.
-			_ = try? await client.initialize(rootURL: resolved.root)
+			_ = try? await client.initialize(rootURL: canonical(resolved.root))
 			runningNames.append(resolved.definition.command)
 			missingHints.removeValue(forKey: languageId)
 			NotificationCenter.default.post(name: .ideaiLanguageServersChanged, object: nil)
@@ -273,7 +287,7 @@ final class LanguageService {
 	/// Puts diagnostics in as though a server had sent them, so the drawing and
 	/// the navigation can be exercised without one installed.
 	func injectForTesting(_ diagnostics: [LSPDiagnostic], for url: URL) {
-		self.diagnostics[url.absoluteString] = diagnostics
+		self.diagnostics[uri(for: url)] = diagnostics
 		NotificationCenter.default.post(name: .ideaiDiagnosticsChanged, object: url)
 	}
 }

@@ -335,6 +335,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let steps = options.navigateSteps {
+			DispatchQueue.main.asyncAfter(deadline: .now() + max(1, options.screenshotDelay - 1.5)) {
+				controller?.navigateForTesting(steps)
+			}
+		}
+
 		if options.pushChanges {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.6) {
 				controller?.pushChangesForTesting()
@@ -692,6 +698,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 		)
 		symbolInProject.keyEquivalentModifierMask = [.command, .option]
 		editMenu.addItem(symbolInProject)
+
+		// IDEA's shortcuts on macOS, since that is where the muscle memory
+		// comes from.
+		let back = NSMenuItem(
+			title: "Back",
+			action: #selector(MainWindowController.navigateBack(_:)),
+			keyEquivalent: "["
+		)
+		back.keyEquivalentModifierMask = [.command]
+		editMenu.addItem(back)
+
+		let forward = NSMenuItem(
+			title: "Forward",
+			action: #selector(MainWindowController.navigateForward(_:)),
+			keyEquivalent: "]"
+		)
+		forward.keyEquivalentModifierMask = [.command]
+		editMenu.addItem(forward)
 		editMenu.addItem(.separator())
 		editMenu.addItem(withTitle: "Find…", action: #selector(MainWindowController.findInFile(_:)), keyEquivalent: "f")
 		let findInProject = NSMenuItem(

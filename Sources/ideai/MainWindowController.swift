@@ -164,6 +164,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// become a stop button that stops the right thing.
 	private weak var runningPane: TerminalPane?
 	/// Painted behind the toolbar, since the titlebar itself is transparent.
+	/// Everywhere the editor has been, and where in it we are.
+	private var navigation = NavigationHistory()
+	/// Set while going back or forward, so retracing steps is not itself a step.
+	private var isNavigatingHistory = false
+
 	/// Watches `.git` so a commit made in a terminal shows up here.
 	private var repositoryWatcher: RepositoryWatcher?
 	private var titlebarBackdrop: ColoredView?
@@ -267,6 +272,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		buildContent()
 		buildToolbar()
 		buildTitlebarBackdrop()
+
+		editor.onNavigated = { [weak self] departure, arrival in
+			guard let self, !self.isNavigatingHistory else { return }
+			// The place being left is recorded first, and at the line the caret
+			// was actually on — otherwise going back returns to wherever that
+			// file happened to open, which is rarely where you were reading.
+			if let departure { self.navigation.record(departure) }
+			self.navigation.record(arrival)
+		}
 
 		// Preference changes apply live rather than on next launch.
 		NotificationCenter.default.addObserver(
@@ -808,6 +822,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			return debugSession?.isActive ?? false
 		case #selector(newTerminalTab(_:)):
 			return bottomPanel.hasKeyboardFocus
+		case #selector(navigateBack(_:)):
+			return canNavigateBack
+		case #selector(navigateForward(_:)):
+			return canNavigateForward
 		default:
 			return true
 		}
@@ -2001,6 +2019,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	func pushChangesForTesting() { changesPane?.pushForTesting() }
 
+	/// Walks the history and reports where each step landed.
+	func navigateForTesting(_ steps: String) {
+		for step in steps.split(separator: ",") {
+			switch step {
+			case "back": navigateBack(nil)
+			case "forward": navigateForward(nil)
+			default: continue
+			}
+			let place = editor.currentPlace
+			print("NAV \(step): \(place.map { "\($0.url.lastPathComponent):\($0.line)" } ?? "nowhere")")
+		}
+	}
+
 	func showDebugConsoleForTesting() {
 		bottomPanel.showDebugConsoleForTesting()
 	}
@@ -2024,6 +2055,33 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		refreshRunControl()
 		presentConfigurationEditor(configuration, isNew: false)
 	}
+
+	// MARK: - Navigation history
+
+	@objc func navigateBack(_ sender: Any?) {
+		guard let place = navigation.back() else { return }
+		go(to: place)
+	}
+
+	@objc func navigateForward(_ sender: Any?) {
+		guard let place = navigation.forward() else { return }
+		go(to: place)
+	}
+
+	private func go(to place: NavigationHistory.Place) {
+		// A file that has been deleted since is dropped rather than reopened
+		// empty, and the step is taken again so the shortcut still moves.
+		guard FileManager.default.fileExists(atPath: place.file.path) else {
+			navigation.forget(file: place.file)
+			return
+		}
+		isNavigatingHistory = true
+		editor.open(fileURL: place.file, atLine: place.line)
+		DispatchQueue.main.async { [weak self] in self?.isNavigatingHistory = false }
+	}
+
+	var canNavigateBack: Bool { navigation.canGoBack }
+	var canNavigateForward: Bool { navigation.canGoForward }
 
 	@objc func runSelected(_ sender: Any?) { runSelectedConfiguration(debug: false) }
 	@objc func debugSelected(_ sender: Any?) { runSelectedConfiguration(debug: true) }
