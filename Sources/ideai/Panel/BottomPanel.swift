@@ -58,6 +58,7 @@ final class BottomPanel: NSView {
 			case review(ReviewPane, TerminalPane)
 			case search(SearchPane)
 			case debug(DebugPane)
+			case profiler(ProfilerPane)
 		}
 
 		let title: String
@@ -78,6 +79,7 @@ final class BottomPanel: NSView {
 			case let .review(pane, _): return pane
 			case let .search(pane): return pane
 			case let .debug(pane): return pane
+			case let .profiler(pane): return pane
 			}
 		}
 
@@ -86,7 +88,7 @@ final class BottomPanel: NSView {
 			switch kind {
 			case let .terminal(pane): return pane
 			case let .review(_, pane): return pane
-			case .search, .debug: return nil
+			case .search, .debug, .profiler: return nil
 			}
 		}
 	}
@@ -383,6 +385,33 @@ final class BottomPanel: NSView {
 	// MARK: - Search
 
 	/// Shows project search, reusing the existing pane if there is one.
+	/// Opens the profiler, reusing the one that is already there.
+	///
+	/// One at a time: a second would be a second connection to the same
+	/// program, and the question "which of these is the live one" is not worth
+	/// asking.
+	@discardableResult
+	func showProfiler(address: String) -> ProfilerPane? {
+		if let index = sessions.firstIndex(where: {
+			if case .profiler = $0.kind { return true }; return false
+		}), case let .profiler(pane) = sessions[index].kind {
+			activate(index: index, focus: true)
+			return pane
+		}
+
+		let pane = ProfilerPane(defaultAddress: address)
+		pane.onOpenFunction = { [weak self] name in
+			self?.onOpenSymbol?(name)
+		}
+		let session = Session(title: "Profiler", kind: .profiler(pane))
+		sessions.append(session)
+		activate(index: sessions.count - 1, focus: true)
+		return pane
+	}
+
+	/// Asked to find a function by name, for a frame somebody clicked.
+	var onOpenSymbol: ((String) -> Void)?
+
 	@discardableResult
 	func showSearch(query: String? = nil) -> SearchPane? {
 		guard let root = workingDirectory else { return nil }
@@ -707,6 +736,7 @@ final class BottomPanel: NSView {
 			case let .search(pane): pane.applySettings()
 			case let .debug(pane): pane.applySettings()
 			case let .terminal(pane): pane.terminalView.applyThemeChange()
+			case .profiler: break
 			}
 		}
 	}

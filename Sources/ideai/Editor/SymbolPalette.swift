@@ -218,6 +218,14 @@ final class SymbolPalette: NSObject {
 
 	@objc private func rowDoubleClicked() { openSelected() }
 
+	/// Opens with a query already typed, for arriving from somewhere that
+	/// knows what it is looking for — a flame graph frame, say.
+	func show(scope: Scope, query: String, over parent: NSWindow?) {
+		show(scope: scope, over: parent)
+		field?.stringValue = query
+		search(query)
+	}
+
 	// MARK: - Testing
 
 	func setQueryForTesting(_ query: String) {

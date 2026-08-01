@@ -386,6 +386,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			self?.terminalDirectoryChanged(to: directory)
 		}
 		// A finding opens the file at its line, in the editor above the panel.
+		bottomPanel.onOpenSymbol = { [weak self] frame in
+			guard let self else { return }
+			// The profiler knows a name, not a place; the symbol search is what
+			// turns one into the other.
+			self.symbolPalette.show(
+				scope: .workspace,
+				query: ProfileFrame.symbolName(in: frame),
+				over: self.window
+			)
+		}
 		bottomPanel.onOpenFinding = { [weak self] url, line in
 			self?.editor.open(fileURL: url, atLine: line)
 		}
@@ -1813,6 +1823,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		symbolPalette.show(scope: .workspace, over: window)
 	}
 
+	/// Opens the profiler on the bottom panel.
+	@objc func showProfiler(_ sender: Any?) {
+		setPanelVisible(true)
+		bottomPanel.showProfiler(address: Self.lastProfilerAddress)
+	}
+
+	/// Remembered for the session: the same program is usually profiled more
+	/// than once in a sitting.
+	static var lastProfilerAddress = "localhost:6060"
+
 	/// Puts a view in the sidebar, under whichever tool is showing.
 	///
 	/// Results are worth keeping beside the code rather than on top of it: a
@@ -2023,6 +2043,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	}
 
 	func pushChangesForTesting() { changesPane?.pushForTesting() }
+
+	func profileForTesting(address: String, kind: String) {
+		setPanelVisible(true)
+		guard let pane = bottomPanel.showProfiler(address: address) else { return }
+		pane.connectForTesting(address: address)
+		// After the index page has answered, since the kind list comes from it.
+		DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+			pane.collectForTesting(kind: kind, seconds: 2)
+			DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+				print("PROFILER: \(pane.statusForTesting) top=\(pane.topFunctionsForTesting)")
+			}
+		}
+	}
 
 	var editorForTesting: EditorAreaController { editor }
 

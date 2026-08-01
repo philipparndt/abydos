@@ -175,3 +175,41 @@ public enum ProfileValue {
 		return share > 0 ? "<1%" : "0%"
 	}
 }
+
+/// Reading a Go frame's name.
+public enum ProfileFrame {
+	/// The part of a frame worth searching the project for.
+	///
+	/// A frame is `pkg.Function`, `pkg.(*Type).Method`, or one of those with
+	/// `.func1` on the end for a closure. The symbol somebody can actually
+	/// jump to is the last named thing in it — and for a closure, the function
+	/// that contains it.
+	public static func symbolName(in frame: String) -> String {
+		// The receiver is parenthesised — `main.(*Server).Handle` — so the
+		// parentheses come out rather than the name being cut at the first
+		// one, which would leave `main`.
+		var stripped = ""
+		var depth = 0
+		for character in frame {
+			switch character {
+			case "(": depth += 1
+			case ")": depth = max(0, depth - 1)
+			default: if depth == 0 { stripped.append(character) }
+			}
+		}
+
+		var parts = stripped
+			.split(separator: ".")
+			.map(String.init)
+			.filter { !$0.isEmpty }
+
+		// `main.run.func1` is a closure inside `run`, and `run` is what the
+		// project has a declaration for.
+		while let last = parts.last, last.hasPrefix("func"), Int(last.dropFirst(4)) != nil {
+			parts.removeLast()
+		}
+		// A method on a pointer receiver loses its `(*Type)` above, leaving
+		// `pkg`, `Type`, `Method` — the method is what to look for.
+		return parts.last ?? frame
+	}
+}

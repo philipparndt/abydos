@@ -108,6 +108,10 @@ struct LaunchOptions {
 	var attachFilter: String?
 	/// Light the titlebar pills, to see their highlight against the toolbar.
 	var highlightPills = false
+	/// Open the profiler on this address and collect from it.
+	var profilerAddress: String?
+	/// Which profile to collect; defaults to the heap, which is instant.
+	var profilerKind: String?
 	/// Open the list of launch configurations.
 	var launchMenu = false
 	/// Open the editor for the selected configuration.
@@ -176,6 +180,8 @@ struct LaunchOptions {
 			case "--cmd-hover":  options.commandHoverAt = next()
 			case "--attach-picker": options.attachFilter = next()
 			case "--pills":      options.highlightPills = true
+			case "--profile":    options.profilerAddress = next()
+			case "--profile-kind": options.profilerKind = next()
 			case "--sidebar":    options.sidebarTool = next()
 			case "--run-line":   options.runLine = next().flatMap(Int.init)
 			case "--debug-line": options.debugLine = next().flatMap(Int.init)

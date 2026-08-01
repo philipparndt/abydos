@@ -144,3 +144,28 @@ struct ProfileValueTests {
 		#expect(ProfileValue.percentage(5, of: 0) == "0%")
 	}
 }
+
+/// Turning a frame's name into something a symbol search can find.
+struct ProfileFrameTests {
+	@Test func findsAPlainFunction() {
+		#expect(ProfileFrame.symbolName(in: "main.run") == "run")
+		#expect(ProfileFrame.symbolName(in: "github.com/x/y/pkg.Serve") == "Serve")
+	}
+
+	@Test func findsAMethod() {
+		#expect(ProfileFrame.symbolName(in: "main.(*Server).Handle") == "Handle")
+		#expect(ProfileFrame.symbolName(in: "net/http.(*conn).serve") == "serve")
+	}
+
+	/// A closure is not declared anywhere by that name; the function holding
+	/// it is.
+	@Test func findsTheFunctionAroundAClosure() {
+		#expect(ProfileFrame.symbolName(in: "main.run.func1") == "run")
+		#expect(ProfileFrame.symbolName(in: "main.(*Server).Handle.func2") == "Handle")
+	}
+
+	@Test func leavesSomethingUnrecognisableAlone() {
+		#expect(ProfileFrame.symbolName(in: "runtime.mallocgc") == "mallocgc")
+		#expect(ProfileFrame.symbolName(in: "<unknown>") == "<unknown>")
+	}
+}

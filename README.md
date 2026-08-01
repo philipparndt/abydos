@@ -121,6 +121,19 @@ ideai --open <project-dir> [--file <path>] [--expand]
       [--type <text>] [--collapse]
 ```
 
+### Profiling
+
+`Run ▸ Profile…` (⌃⇧P) opens the profiler on the bottom panel. Point it at a
+Go program's pprof endpoint — a port, a host and port, or a URL — and collect:
+
+- CPU over a window, or heap, goroutine, block, mutex and allocation snapshots
+- a flame graph, click a frame to zoom into it
+- the functions as a table, sorted by what they cost
+- clicking a frame searches the project for that function
+
+Nothing is installed into the program under study: it already serves this if
+it imports `net/http/pprof`.
+
 ## Languages
 
 Swift, Rust, TypeScript, TSX, JavaScript, Python, Go, JSON, Shell, C, C++, Java,

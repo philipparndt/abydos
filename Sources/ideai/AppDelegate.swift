@@ -335,6 +335,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let address = options.profilerAddress {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+				controller?.profileForTesting(
+					address: address, kind: options.profilerKind ?? "heap"
+				)
+			}
+		}
+
 		if options.highlightPills {
 			DispatchQueue.main.asyncAfter(deadline: .now() + max(0.5, options.screenshotDelay - 1)) {
 				controller?.highlightPillsForTesting()
@@ -800,6 +808,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 		)
 		debugSelected.keyEquivalentModifierMask = [.control]
 		runMenu.addItem(debugSelected)
+		runMenu.addItem(.separator())
+
+		let profiler = NSMenuItem(
+			title: "Profile\u{2026}",
+			action: #selector(MainWindowController.showProfiler(_:)),
+			keyEquivalent: "p"
+		)
+		profiler.keyEquivalentModifierMask = [.control, .shift]
+		runMenu.addItem(profiler)
 		runMenu.addItem(.separator())
 
 		let debugExecutable = NSMenuItem(
