@@ -24,6 +24,10 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// Set up only when the setting asks for it, so the CoreGraphics path stays
 	/// exactly as it was for anyone who has not.
 	private var metal: (renderer: TerminalMetalRenderer, view: TerminalMetalView)?
+	/// Something changed and the screen has not been drawn since.
+	private var needsRender = false
+	/// Drives drawing at the rate the display actually refreshes.
+	private var displayLink: CADisplayLink?
 	/// Distance from the top of a cell to the baseline the text sits on.
 	private var baselineFromTop: CGFloat = 12
 	/// The four faces a cell can ask for, worked out once per font change.
@@ -116,6 +120,7 @@ final class TerminalView: NSView, NSTextInputClient {
 	required init?(coder: NSCoder) { fatalError("not used") }
 
 	deinit {
+		displayLink?.invalidate()
 		cursorTimer?.invalidate()
 		pty.terminate()
 	}
@@ -127,6 +132,7 @@ final class TerminalView: NSView, NSTextInputClient {
 
 	override func viewDidMoveToWindow() {
 		super.viewDidMoveToWindow()
+		updateDisplayLink()
 		guard window != nil, let launch = pendingLaunch else { return }
 		pendingLaunch = nil
 
@@ -210,7 +216,9 @@ final class TerminalView: NSView, NSTextInputClient {
 		while !pending.isEmpty {
 			let chunk = pending.removeFirst()
 			pendingBytes -= chunk.count
+			let parseStart = MetalProbe.enabled ? Date() : nil
 			emulator.write(chunk)
+			if let parseStart { MetalProbe.parseSeconds += -parseStart.timeIntervalSinceNow }
 			if Date() >= deadline { break }
 		}
 
@@ -250,7 +258,10 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// draws when it is told to.
 	private func repaint() {
 		if metal != nil {
-			renderMetal()
+			// Only noted, not drawn. Asking for a drawable waits for the
+			// display, and doing that here would make everything that produced
+			// the change wait with it.
+			needsRender = true
 		} else {
 			needsDisplay = true
 		}
@@ -270,6 +281,7 @@ final class TerminalView: NSView, NSTextInputClient {
 			existing.view.removeFromSuperview()
 			metal = nil
 		}
+		updateDisplayLink()
 		repaint()
 	}
 
@@ -285,9 +297,36 @@ final class TerminalView: NSView, NSTextInputClient {
 		metal.renderer.scale = window?.backingScaleFactor ?? 2
 	}
 
+	/// Starts and stops the clock that drawing runs on.
+	private func updateDisplayLink() {
+		let wanted = metal != nil && window != nil
+		if wanted, displayLink == nil {
+			let link = displayLink(target: self, selector: #selector(renderIfNeeded))
+			link.add(to: .main, forMode: .common)
+			displayLink = link
+		} else if !wanted, let link = displayLink {
+			link.invalidate()
+			displayLink = nil
+		}
+	}
+
+	/// Draws, at most once per refresh of the display.
+	///
+	/// Asking for a drawable waits until the display has finished with the last
+	/// one. Measured inline, that wait was sixty per cent of the main thread —
+	/// and since output was parsed on the same thread, everything the terminal
+	/// was being sent waited for the screen. Nothing is gained by it: the
+	/// display shows sixty frames a second whatever we do.
+	@objc private func renderIfNeeded() {
+		guard needsRender, metal != nil else { return }
+		needsRender = false
+		renderMetal()
+	}
+
 	/// Draws what is on screen.
 	private func renderMetal() {
 		guard let metal else { return }
+		let probing = MetalProbe.enabled
 		positionMetalView()
 
 		let visible = visibleRect
@@ -328,6 +367,7 @@ final class TerminalView: NSView, NSTextInputClient {
 		}
 
 		let background = Theme.current.editorBackground.components
+		let buildStart = probing ? Date() : nil
 		metal.renderer.build(
 			rows: rows,
 			frame: .init(
@@ -341,13 +381,22 @@ final class TerminalView: NSView, NSTextInputClient {
 			overlays: overlays
 		)
 
+		if let buildStart { MetalProbe.buildSeconds += -buildStart.timeIntervalSinceNow }
+
+		let drawableStart = probing ? Date() : nil
 		guard let drawable = metal.view.nextDrawable() else { return }
+		if let drawableStart { MetalProbe.drawableSeconds += -drawableStart.timeIntervalSinceNow }
+
+		let encodeStart = probing ? Date() : nil
 		metal.renderer.render(
 			to: drawable.texture,
 			clear: background,
 			viewport: SIMD2(Float(visible.width), Float(visible.height)),
 			drawable: drawable
 		)
+		if let encodeStart { MetalProbe.encodeSeconds += -encodeStart.timeIntervalSinceNow }
+		MetalProbe.renders += 1
+		MetalProbe.cells += metal.renderer.instanceCount
 	}
 
 	/// Repaints the lines that changed, rather than the whole view.
@@ -360,7 +409,7 @@ final class TerminalView: NSView, NSTextInputClient {
 			// Nothing to work out: the GPU redraws what is on screen, and what
 			// that costs does not depend on how much of it changed.
 			_ = emulator.takeDirtyRange()
-			renderMetal()
+			needsRender = true
 			return
 		}
 
@@ -491,7 +540,7 @@ final class TerminalView: NSView, NSTextInputClient {
 		isPinnedToBottom = offset >= maxY - cellHeight
 
 		recomputeGridSize()
-		if metal != nil { renderMetal() }
+		if metal != nil { needsRender = true }
 
 		if isPinnedToBottom { scrollToBottom() }
 	}
@@ -1422,5 +1471,30 @@ private final class GlyphCache {
 		      glyphs[0] != 0
 		else { return nil }
 		return CachedGlyph(glyph: glyphs[0], font: fallback)
+	}
+}
+
+/// Temporary: splits a GPU frame into where its time actually goes.
+enum MetalProbe {
+	static let enabled = ProcessInfo.processInfo.environment["IDEAI_METAL_PROBE"] != nil
+	nonisolated(unsafe) static var buildSeconds = 0.0
+	nonisolated(unsafe) static var drawableSeconds = 0.0
+	nonisolated(unsafe) static var encodeSeconds = 0.0
+	nonisolated(unsafe) static var parseSeconds = 0.0
+	nonisolated(unsafe) static var renders = 0
+	nonisolated(unsafe) static var cells = 0
+
+	static func start() {
+		guard enabled else { return }
+		Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
+			let ms = { (value: Double) in String(format: "%.0f", value * 1000) }
+			FileHandle.standardError.write(Data((
+				"METALPROBE renders=\(renders) cells/render=\(renders > 0 ? cells / renders : 0) "
+					+ "parse=\(ms(parseSeconds))ms build=\(ms(buildSeconds))ms "
+					+ "drawable=\(ms(drawableSeconds))ms encode=\(ms(encodeSeconds))ms\n"
+			).utf8))
+			buildSeconds = 0; drawableSeconds = 0; encodeSeconds = 0; parseSeconds = 0
+			renders = 0; cells = 0
+		}
 	}
 }

@@ -16,6 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 		RecentProjects.shared.seedFromJetBrainsIfEmpty()
 
 		let options = LaunchOptions.parse()
+		MetalProbe.start()
 		if let zoom = options.zoom { Settings.shared.uiScale = zoom }
 
 		let controller: MainWindowController?
