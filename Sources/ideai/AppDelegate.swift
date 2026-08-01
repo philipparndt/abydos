@@ -179,6 +179,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			let parts = spec.split(separator: ":").compactMap { Int($0) }
 			DispatchQueue.main.asyncAfter(deadline: .now() + (options.lspWait ?? 12)) {
 				guard parts.count == 2 else { return }
+				controller?.shouldDockUsagesForTesting = options.dockUsages
 				controller?.exerciseFindUsagesForTesting(line: parts[0] - 1, character: parts[1])
 			}
 		}

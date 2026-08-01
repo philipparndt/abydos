@@ -102,7 +102,7 @@ final class SymbolPalette: NSObject {
 		}
 	}
 
-	private func openSelected() {
+	fileprivate func openSelected() {
 		let row = table.selectedRow
 		guard symbols.indices.contains(row) else { return }
 		let symbol = symbols[row]
@@ -153,8 +153,10 @@ final class SymbolPalette: NSObject {
 		scroll.translatesAutoresizingMaskIntoConstraints = false
 		status.translatesAutoresizingMaskIntoConstraints = false
 
+		// Below the titlebar, whose buttons are drawn over the content when the
+		// window fills its own frame.
 		NSLayoutConstraint.activate([
-			field.topAnchor.constraint(equalTo: container.topAnchor, constant: 12),
+			field.topAnchor.constraint(equalTo: container.topAnchor, constant: 34),
 			field.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
 			field.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
 
@@ -207,7 +209,7 @@ final class SymbolPalette: NSObject {
 		}
 	}
 
-	private func move(by delta: Int) {
+	fileprivate func move(by delta: Int) {
 		guard !symbols.isEmpty else { return }
 		let next = max(0, min(symbols.count - 1, table.selectedRow + delta))
 		table.selectRowIndexes(IndexSet(integer: next), byExtendingSelection: false)
@@ -239,6 +241,35 @@ final class SymbolPalette: NSObject {
 extension SymbolPalette: NSSearchFieldDelegate {
 	func controlTextDidChange(_ notification: Notification) {
 		search(field.stringValue.trimmingCharacters(in: .whitespaces))
+	}
+
+	/// The keys that drive the list, taken from the field.
+	///
+	/// A search field handles the arrow keys itself — they open its list of
+	/// recent searches — so they never reach the window and the list below
+	/// never moves. Nothing else can intercept them either: this is the only
+	/// place they are still on their way somewhere.
+	func control(
+		_ control: NSControl,
+		textView: NSTextView,
+		doCommandBy selector: Selector
+	) -> Bool {
+		switch selector {
+		case #selector(NSResponder.moveDown(_:)):
+			move(by: 1)
+			return true
+		case #selector(NSResponder.moveUp(_:)):
+			move(by: -1)
+			return true
+		case #selector(NSResponder.insertNewline(_:)):
+			openSelected()
+			return true
+		case #selector(NSResponder.cancelOperation(_:)):
+			hide()
+			return true
+		default:
+			return false
+		}
 	}
 }
 

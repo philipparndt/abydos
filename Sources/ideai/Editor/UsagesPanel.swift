@@ -10,11 +10,15 @@ import IdeaiKit
 @MainActor
 final class UsagesPanel: NSObject {
 	var onOpen: ((LSPLocation) -> Void)?
+	/// Asked to move into the sidebar instead of floating over the code.
+	var onDock: ((NSView, String) -> Void)?
 
 	private var window: NSPanel?
 	private var table: NSTableView!
 	private var heading: NSTextField!
+	private var dockButton: NSButton!
 	private var rows: [Row] = []
+	private var lastTitle = "Usages"
 
 	private enum Row {
 		case file(String, count: Int)
@@ -25,9 +29,14 @@ final class UsagesPanel: NSObject {
 		guard let parent else { return }
 		rows = Self.rows(from: locations)
 
+		// A window whose content was docked has none left, so it is built afresh.
+		if window?.contentView == nil { window = nil }
 		let window = self.window ?? makeWindow()
 		self.window = window
-		heading.stringValue = "\(locations.count) usages in \(Self.fileCount(rows)) files"
+		let files = Self.fileCount(rows)
+		lastTitle = "\(locations.count) usage\(locations.count == 1 ? "" : "s") "
+			+ "in \(files) file\(files == 1 ? "" : "s")"
+		heading.stringValue = lastTitle
 		table.reloadData()
 
 		let frame = parent.frame
@@ -115,16 +124,31 @@ final class UsagesPanel: NSObject {
 		scroll.backgroundColor = Theme.current.sidebarBackground
 		scroll.scrollerStyle = .overlay
 
+		// A list of usages is something you work through, so it can be moved out
+		// of the way of the code it is about rather than floating over it.
+		dockButton = NSButton(title: "Dock", target: self, action: #selector(dockClicked))
+		dockButton.bezelStyle = .rounded
+		dockButton.controlSize = .small
+		dockButton.font = Theme.current.uiFont(11)
+		dockButton.toolTip = "Show these in the sidebar instead"
+
 		let container = ColoredView(color: Theme.current.sidebarBackground)
 		container.addSubview(heading)
+		container.addSubview(dockButton)
 		container.addSubview(scroll)
 		heading.translatesAutoresizingMaskIntoConstraints = false
+		dockButton.translatesAutoresizingMaskIntoConstraints = false
 		scroll.translatesAutoresizingMaskIntoConstraints = false
 
 		NSLayoutConstraint.activate([
 			heading.topAnchor.constraint(equalTo: container.topAnchor, constant: 12),
 			heading.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 14),
-			heading.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -14),
+
+			dockButton.centerYAnchor.constraint(equalTo: heading.centerYAnchor),
+			dockButton.leadingAnchor.constraint(
+				greaterThanOrEqualTo: heading.trailingAnchor, constant: 12
+			),
+			dockButton.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -14),
 
 			scroll.topAnchor.constraint(equalTo: heading.bottomAnchor, constant: 8),
 			scroll.leadingAnchor.constraint(equalTo: container.leadingAnchor),
@@ -132,18 +156,32 @@ final class UsagesPanel: NSObject {
 			scroll.bottomAnchor.constraint(equalTo: container.bottomAnchor),
 		])
 
+		// No full-size content: the heading would be drawn under the titlebar,
+		// on top of the title and the traffic lights.
 		let window = UsagesWindow(
 			contentRect: NSRect(x: 0, y: 0, width: 760, height: 520),
-			styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
+			styleMask: [.titled, .closable, .resizable],
 			backing: .buffered,
 			defer: true
 		)
 		window.title = "Usages"
-		window.titlebarAppearsTransparent = true
 		window.backgroundColor = Theme.current.sidebarBackground
 		window.contentView = container
 		window.onClose = { [weak self] in self?.hide() }
 		return window
+	}
+
+	/// Hands the list to the window, and closes the panel it was floating in.
+	///
+	/// The same table moves across rather than being rebuilt, so the scroll
+	/// position and the selection survive the move.
+	@objc private func dockClicked() {
+		guard let content = window?.contentView else { return }
+		heading.isHidden = true
+		dockButton.isHidden = true
+		content.removeFromSuperview()
+		hide()
+		onDock?(content, lastTitle)
 	}
 
 	@objc private func rowClicked() {
@@ -153,6 +191,8 @@ final class UsagesPanel: NSObject {
 	}
 
 	// MARK: - Testing
+
+	func dockForTesting() { dockClicked() }
 
 	var rowsForTesting: [String] {
 		rows.map { row in

@@ -150,6 +150,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	private var primaryToolView: NSView?
 	private var primaryToolTop: NSLayoutConstraint?
 	private var primaryContainer: NSView!
+	/// The pane below the sidebar's tool, for anything docked there.
+	private var dockContainer: ColoredView!
+	private var sidebarSplit: NSSplitView!
+	/// What is docked, so it can be swapped or sent back to a window.
+	private var dockedView: NSView?
 	private(set) var currentSidebarTool: SidebarToolKind = .project
 	/// Height the titlebar covers, applied to sidebar panes that do not inset
 	/// themselves.
@@ -183,6 +188,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		panel.onOpen = { [weak self] location in
 			guard let url = location.url else { return }
 			self?.editor.open(fileURL: url, atLine: location.range.start.line + 1)
+		}
+		panel.onDock = { [weak self] view, title in
+			self?.dockInSidebar(view, title: title)
 		}
 		return panel
 	}()
@@ -287,7 +295,30 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		toolStrip.onAttachToProcess = { [weak self] in self?.attachToProcess(nil) }
 
 		navigatorContainer = ColoredView(color: Theme.current.sidebarBackground)
-		primaryContainer = navigatorContainer
+
+		// The sidebar is two stacked panes: the tool on top, and whatever has
+		// been docked underneath it. The lower one takes no room until
+		// something is in it.
+		let sidebarSplit = ThinDividerSplitView()
+		sidebarSplit.isVertical = false
+		sidebarSplit.dividerStyle = .thin
+		sidebarSplit.translatesAutoresizingMaskIntoConstraints = false
+		navigatorContainer.addSubview(sidebarSplit)
+		NSLayoutConstraint.activate([
+			sidebarSplit.topAnchor.constraint(equalTo: navigatorContainer.topAnchor),
+			sidebarSplit.bottomAnchor.constraint(equalTo: navigatorContainer.bottomAnchor),
+			sidebarSplit.leadingAnchor.constraint(equalTo: navigatorContainer.leadingAnchor),
+			sidebarSplit.trailingAnchor.constraint(equalTo: navigatorContainer.trailingAnchor),
+		])
+
+		let toolContainer = ColoredView(color: Theme.current.sidebarBackground)
+		dockContainer = ColoredView(color: Theme.current.sidebarBackground)
+		dockContainer.isHidden = true
+		sidebarSplit.addArrangedSubview(toolContainer)
+		sidebarSplit.addArrangedSubview(dockContainer)
+		self.sidebarSplit = sidebarSplit
+
+		primaryContainer = toolContainer
 
 		primaryContainer.addSubview(navigator.view)
 		navigator.view.translatesAutoresizingMaskIntoConstraints = false
@@ -1607,6 +1638,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			let rows = self.usagesPanel.rowsForTesting
 			print("USAGES: \(rows.count) rows")
 			for row in rows.prefix(8) { print("USAGE: \(row)") }
+
+			if self.shouldDockUsagesForTesting {
+				self.usagesPanel.dockForTesting()
+				print("USAGES: docked=\(self.hasDockedPaneForTesting)")
+			}
 		}
 	}
 
@@ -1636,6 +1672,58 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	@objc func goToSymbolInProject(_ sender: Any?) {
 		symbolPalette.show(scope: .workspace, over: window)
 	}
+
+	/// Puts a view in the sidebar, under whichever tool is showing.
+	///
+	/// Results are worth keeping beside the code rather than on top of it: a
+	/// list of usages is something you work through, and a window that covers
+	/// what you are reading is in the way by the second one.
+	func dockInSidebar(_ view: NSView, title: String) {
+		dockedView?.removeFromSuperview()
+
+		let host = DockedPane(title: title, content: view)
+		host.onClose = { [weak self] in self?.undockFromSidebar() }
+		host.translatesAutoresizingMaskIntoConstraints = false
+		dockContainer.addSubview(host)
+		NSLayoutConstraint.activate([
+			host.topAnchor.constraint(equalTo: dockContainer.topAnchor),
+			host.bottomAnchor.constraint(equalTo: dockContainer.bottomAnchor),
+			host.leadingAnchor.constraint(equalTo: dockContainer.leadingAnchor),
+			host.trailingAnchor.constraint(equalTo: dockContainer.trailingAnchor),
+		])
+		dockedView = host
+
+		dockContainer.isHidden = false
+		if navigatorContainer.isHidden { toggleNavigator(nil) }
+
+		// The tool keeps the larger share the first time, and the divider can be
+		// dragged to whatever suits after that. Positioned once the split has a
+		// height: asking before it has laid out sets a divider in a view that
+		// is still zero tall, which leaves the docked pane filling everything.
+		placeDockDivider(attemptsLeft: 20)
+	}
+
+	private func placeDockDivider(attemptsLeft: Int) {
+		navigatorContainer.layoutSubtreeIfNeeded()
+		let height = sidebarSplit.bounds.height
+		guard height > 200 else {
+			guard attemptsLeft > 0 else { return }
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+				self?.placeDockDivider(attemptsLeft: attemptsLeft - 1)
+			}
+			return
+		}
+		sidebarSplit.setPosition(height * 0.6, ofDividerAt: 0)
+	}
+
+	func undockFromSidebar() {
+		dockedView?.removeFromSuperview()
+		dockedView = nil
+		dockContainer.isHidden = true
+	}
+
+	var hasDockedPaneForTesting: Bool { dockedView != nil }
+	var shouldDockUsagesForTesting = false
 
 	/// Everywhere the symbol at a position is used.
 	///

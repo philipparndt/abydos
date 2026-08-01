@@ -100,6 +100,8 @@ struct LaunchOptions {
 	var usagesAt: String?
 	/// Jump to the definition of the symbol at line:character (1-based line).
 	var definitionAt: String?
+	/// Dock the usages list into the sidebar after finding them.
+	var dockUsages = false
 	/// Wait this long before capturing, for a language server to answer.
 	var lspWait: Double?
 	/// Rewrite the open file externally after this many seconds.
@@ -174,6 +176,7 @@ struct LaunchOptions {
 			case "--symbols-project": options.symbolProject = true
 			case "--usages":     options.usagesAt = next()
 			case "--definition": options.definitionAt = next()
+			case "--dock-usages": options.dockUsages = true
 			case "--lsp-wait":   options.lspWait = next().flatMap(Double.init)
 			case "--external-edit": options.externalEdit = next().flatMap(Double.init)
 			case "--send-bytes": options.terminalBytes = next()
