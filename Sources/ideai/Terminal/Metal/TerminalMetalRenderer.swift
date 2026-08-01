@@ -96,12 +96,18 @@ final class TerminalMetalRenderer {
 	///
 	/// `rows` are the lines to draw with the absolute index each one sits at, so
 	/// a line keeps its place whatever is above it.
+	/// A block of colour laid over the cells, for the cursor and the selection.
+	struct Overlay {
+		var row: Int
+		var columns: Range<Int>
+		var colour: SIMD4<Float>
+	}
+
 	func build(
 		rows: [(index: Int, line: TerminalLine)],
 		frame: Frame,
 		faces: TerminalFaces,
-		selection: (row: Int, columns: Range<Int>)? = nil,
-		cursor: (row: Int, column: Int)? = nil
+		overlays: [Overlay] = []
 	) {
 		instances.removeAll(keepingCapacity: true)
 
@@ -160,6 +166,28 @@ final class TerminalMetalRenderer {
 				instances.append(instance)
 			}
 		}
+
+		// After the cells, so they land on top of them: the selection tints what
+		// is underneath rather than replacing it, and the cursor is a block the
+		// character shows through.
+		for overlay in overlays {
+			let y = Float(frame.inset.y + CGFloat(overlay.row) * frame.cellSize.height - frame.origin.y)
+			let x = Float(
+				frame.inset.x + CGFloat(overlay.columns.lowerBound) * frame.cellSize.width - frame.origin.x
+			)
+			let width = Float(CGFloat(overlay.columns.count) * frame.cellSize.width)
+			instances.append(CellInstance(
+				origin: SIMD2(x, y),
+				size: SIMD2(width, Float(frame.cellSize.height)),
+				glyphOrigin: .zero,
+				glyphSize: .zero,
+				uvOrigin: .zero,
+				uvSize: .zero,
+				foreground: overlay.colour,
+				background: overlay.colour,
+				isColour: 0
+			))
+		}
 	}
 
 	var instanceCount: Int { instances.count }
@@ -170,7 +198,12 @@ final class TerminalMetalRenderer {
 	///
 	/// `viewport` is in points, the same units the instances were built in; the
 	/// texture may be larger, and normalised coordinates do not care.
-	func render(to target: MTLTexture, clear: SIMD4<Float>, viewport: SIMD2<Float>) {
+	func render(
+		to target: MTLTexture,
+		clear: SIMD4<Float>,
+		viewport: SIMD2<Float>,
+		drawable: CAMetalDrawable? = nil
+	) {
 		guard !instances.isEmpty else { return }
 		upload()
 
@@ -196,8 +229,11 @@ final class TerminalMetalRenderer {
 			type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: instances.count
 		)
 		encoder.endEncoding()
+		if let drawable { commands.present(drawable) }
 		commands.commit()
-		commands.waitUntilCompleted()
+		// Waited on only when there is no drawable, which means someone is about
+		// to read the pixels back. On screen the GPU is left to get on with it.
+		if drawable == nil { commands.waitUntilCompleted() }
 	}
 
 	/// Renders one frame into a texture and writes it out as a PNG.

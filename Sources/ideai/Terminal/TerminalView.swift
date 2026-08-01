@@ -21,6 +21,9 @@ final class TerminalView: NSView, NSTextInputClient {
 	private var font: NSFont = .monospacedSystemFont(ofSize: 12, weight: .regular)
 	/// Glyphs already looked up, thrown away when the font changes.
 	private let glyphs = GlyphCache()
+	/// Set up only when the setting asks for it, so the CoreGraphics path stays
+	/// exactly as it was for anyone who has not.
+	private var metal: (renderer: TerminalMetalRenderer, view: TerminalMetalView)?
 	/// Distance from the top of a cell to the baseline the text sits on.
 	private var baselineFromTop: CGFloat = 12
 	/// The four faces a cell can ask for, worked out once per font change.
@@ -130,6 +133,8 @@ final class TerminalView: NSView, NSTextInputClient {
 		// Files dropped from the tree, or from any app that offers URLs.
 		registerForDraggedTypes([.fileURL])
 
+		updateMetalEnabled()
+
 		launchWhenSized(launch)
 	}
 
@@ -237,12 +242,127 @@ final class TerminalView: NSView, NSTextInputClient {
 		}
 	}
 
+	// MARK: - GPU
+
+	/// Asks for the screen to be drawn again, whichever renderer is in use.
+	///
+	/// Marking the view for display reaches CoreGraphics only; the GPU path
+	/// draws when it is told to.
+	private func repaint() {
+		if metal != nil {
+			renderMetal()
+		} else {
+			needsDisplay = true
+		}
+	}
+
+	/// Turns the GPU path on or off to match the setting.
+	func updateMetalEnabled() {
+		let wanted = Settings.shared.terminalGPURendering
+		if wanted, metal == nil {
+			let scale = window?.backingScaleFactor ?? 2
+			guard let renderer = TerminalMetalRenderer(scale: scale) else { return }
+			let view = TerminalMetalView(device: renderer.device)
+			view.scale = scale
+			addSubview(view)
+			metal = (renderer, view)
+		} else if !wanted, let existing = metal {
+			existing.view.removeFromSuperview()
+			metal = nil
+		}
+		repaint()
+	}
+
+	/// Keeps the drawable over the part of the document that is on screen.
+	///
+	/// The view spans every line of history, which no drawable can, so the layer
+	/// rides on top of the visible window and is told where that is.
+	private func positionMetalView() {
+		guard let metal else { return }
+		let visible = visibleRect
+		if metal.view.frame != visible { metal.view.frame = visible }
+		metal.view.scale = window?.backingScaleFactor ?? 2
+		metal.renderer.scale = window?.backingScaleFactor ?? 2
+	}
+
+	/// Draws what is on screen.
+	private func renderMetal() {
+		guard let metal else { return }
+		positionMetalView()
+
+		let visible = visibleRect
+		guard visible.width >= 1, visible.height >= 1 else { return }
+
+		let screen = emulator.screen
+		let first = max(0, Int(floor((visible.minY - Self.verticalInset) / cellHeight)))
+		let last = min(screen.totalLineCount, Int(ceil((visible.maxY - Self.verticalInset) / cellHeight)) + 1)
+		guard last > first else { return }
+
+		var rows: [(index: Int, line: TerminalLine)] = []
+		rows.reserveCapacity(last - first)
+		for index in first..<last {
+			guard let line = screen.line(at: index) else { continue }
+			rows.append((index, line))
+		}
+
+		var overlays: [TerminalMetalRenderer.Overlay] = []
+		if let selection {
+			for index in first..<last {
+				guard let line = screen.line(at: index),
+				      let range = selection.columnRange(onRow: index, columns: line.cells.count)
+				else { continue }
+				overlays.append(.init(
+					row: index,
+					columns: range,
+					colour: NSColor.selectedTextBackgroundColor.withAlphaComponent(0.35).components
+				))
+			}
+		}
+		if emulator.isCursorVisible, cursorVisible, window?.firstResponder === self {
+			let row = screen.scrollback.count + emulator.cursorRow
+			overlays.append(.init(
+				row: row,
+				columns: emulator.cursorColumn..<(emulator.cursorColumn + 1),
+				colour: Theme.current.caret.withAlphaComponent(0.8).components
+			))
+		}
+
+		let background = Theme.current.editorBackground.components
+		metal.renderer.build(
+			rows: rows,
+			frame: .init(
+				cellSize: CGSize(width: cellWidth, height: cellHeight),
+				inset: CGPoint(x: Self.horizontalInset, y: Self.verticalInset),
+				origin: visible.origin,
+				background: background
+			),
+			faces: faces,
+			overlays: overlays
+		)
+
+		guard let drawable = metal.view.nextDrawable() else { return }
+		metal.renderer.render(
+			to: drawable.texture,
+			clear: background,
+			viewport: SIMD2(Float(visible.width), Float(visible.height)),
+			drawable: drawable
+		)
+	}
+
 	/// Repaints the lines that changed, rather than the whole view.
 	///
 	/// Marking the whole view means AppKit cannot keep any of what it already
 	/// has, which matters most while output streams past: a printed line changes
 	/// one row, and the rest can be scrolled rather than drawn again.
 	private func invalidateChangedRows() {
+		if metal != nil {
+			// Nothing to work out: the GPU redraws what is on screen, and what
+			// that costs does not depend on how much of it changed.
+			_ = emulator.takeDirtyRange()
+			renderMetal()
+			return
+		}
+
 		guard let range = emulator.takeDirtyRange() else {
 			// The cursor may still have moved, which is a repaint of its own.
 			invalidateCursorRows()
@@ -253,7 +373,7 @@ final class TerminalView: NSView, NSTextInputClient {
 		// more than painting it.
 		let visibleRows = Int(ceil(visibleRect.height / max(1, cellHeight))) + 1
 		guard range.count < max(4, visibleRows / 2) else {
-			needsDisplay = true
+			repaint()
 			return
 		}
 
@@ -310,8 +430,10 @@ final class TerminalView: NSView, NSTextInputClient {
 
 	func applyThemeChange() {
 		updateMetrics()
+		metal?.renderer.clearGlyphs()
+		updateMetalEnabled()
 		recomputeGridSize()
-		needsDisplay = true
+		repaint()
 	}
 
 	/// Derives rows and columns from the pane size and tells both the emulator
@@ -368,6 +490,7 @@ final class TerminalView: NSView, NSTextInputClient {
 		isPinnedToBottom = offset >= maxY - cellHeight
 
 		recomputeGridSize()
+		if metal != nil { renderMetal() }
 
 		if isPinnedToBottom { scrollToBottom() }
 	}
@@ -627,12 +750,12 @@ final class TerminalView: NSView, NSTextInputClient {
 
 	override func becomeFirstResponder() -> Bool {
 		cursorVisible = true
-		needsDisplay = true
+		repaint()
 		return true
 	}
 
 	override func resignFirstResponder() -> Bool {
-		needsDisplay = true
+		repaint()
 		return true
 	}
 
@@ -712,23 +835,23 @@ final class TerminalView: NSView, NSTextInputClient {
 	override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
 		guard !droppedURLs(from: sender).isEmpty else { return [] }
 		isDropTarget = true
-		needsDisplay = true
+		repaint()
 		return .copy
 	}
 
 	override func draggingExited(_ sender: NSDraggingInfo?) {
 		isDropTarget = false
-		needsDisplay = true
+		repaint()
 	}
 
 	override func draggingEnded(_ sender: NSDraggingInfo) {
 		isDropTarget = false
-		needsDisplay = true
+		repaint()
 	}
 
 	override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
 		isDropTarget = false
-		needsDisplay = true
+		repaint()
 
 		let urls = droppedURLs(from: sender)
 		guard !urls.isEmpty else { return false }
@@ -879,7 +1002,7 @@ final class TerminalView: NSView, NSTextInputClient {
 	private func setSelection(_ new: TerminalSelection?) {
 		guard new != selection else { return }
 		selection = new
-		needsDisplay = true
+		repaint()
 	}
 
 	private func gridPosition(for event: NSEvent) -> (row: Int, column: Int) {
