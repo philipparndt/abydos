@@ -79,6 +79,9 @@ let package = Package(
 		.testTarget(
 			name: "IdeaiKitTests",
 			dependencies: ["IdeaiKit"],
+			// Real profiles, written by Go: the decoder is only worth anything
+			// if it reads what the runtime actually produces.
+			resources: [.copy("Fixtures")],
 			swiftSettings: [.swiftLanguageMode(.v5)]
 		),
 	] + vendoredGrammars.map { name in
