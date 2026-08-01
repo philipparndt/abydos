@@ -31,6 +31,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 	var activeGroupIDForTesting: UUID? { editor.activeGroupID }
 	var tabCountForTesting: Int { editor.activeTabCount }
 
+	/// Draws the terminal through Metal and writes the result out.
+	func renderTerminalWithMetal(to path: String) {
+		setPanelVisible(true)
+		guard let terminal = bottomPanel.showTerminal()?.terminalView else {
+			print("METAL: no terminal")
+			return
+		}
+		terminal.layoutSubtreeIfNeeded()
+		let ok = terminal.renderWithMetalForTesting(to: path)
+		print("METAL: \(ok ? "wrote \(path)" : "failed")")
+	}
+
 	/// Times a full terminal redraw, which is what every byte of output costs
 	/// once the screen has to be shown again.
 	func benchmarkTerminalRendering() {

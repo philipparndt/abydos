@@ -659,6 +659,43 @@ final class TerminalView: NSView, NSTextInputClient {
 
 	var totalRowsForTesting: Int { max(1, emulator.screen.totalLineCount) }
 
+	/// Draws what is on screen through Metal and writes it out as a PNG.
+	///
+	/// The same content the CoreGraphics path would draw, so the two can be put
+	/// side by side.
+	func renderWithMetalForTesting(to path: String) -> Bool {
+		let scale = window?.backingScaleFactor ?? 2
+		guard let renderer = TerminalMetalRenderer(scale: scale) else { return false }
+
+		// A screenful, laid out as the view would.
+		let rows = 40
+		let width = max(bounds.width, 400)
+		let height = CGFloat(rows) * cellHeight + Self.verticalInset * 2
+		let screen = emulator.screen
+		var lines: [(index: Int, line: TerminalLine)] = []
+		for row in 0..<rows {
+			guard let line = screen.line(at: row) else { continue }
+			lines.append((row, line))
+		}
+
+		let background = Theme.current.editorBackground.components
+		renderer.build(
+			rows: lines,
+			frame: .init(
+				cellSize: CGSize(width: cellWidth, height: cellHeight),
+				inset: CGPoint(x: Self.horizontalInset, y: Self.verticalInset),
+				origin: .zero,
+				background: background
+			),
+			faces: faces
+		)
+		return renderer.writePNG(
+			to: path,
+			points: SIMD2(Float(width), Float(height)),
+			clear: background
+		)
+	}
+
 	/// Feeds output straight to the emulator, bypassing the process.
 	func writeForTesting(_ text: String) {
 		emulator.write(text)
@@ -1152,13 +1189,15 @@ final class TerminalPane: NSView {
 /// slow enough to matter when it happens for every run of every frame, and the
 /// advance was being measured through a string-keyed cache that allocated its
 /// key on each lookup.
-private struct TerminalFaces {
+struct TerminalFaces {
 	let regular: NSFont
 	let bold: NSFont
 	let italic: NSFont
 	let boldItalic: NSFont
 	/// Advance of the regular face, which is what the cell grid is built on.
 	let advance: CGFloat
+	/// Distance from the top of a cell down to the baseline.
+	let baselineFromTop: CGFloat
 
 	private let advances: (CGFloat, CGFloat, CGFloat, CGFloat)
 
@@ -1174,6 +1213,7 @@ private struct TerminalFaces {
 		}
 		advances = (width(regular), width(bold), width(italic), width(boldItalic))
 		advance = advances.0
+		baselineFromTop = (base.ascender + base.leading).rounded()
 	}
 
 	/// Which of the four faces a pair of flags asks for.

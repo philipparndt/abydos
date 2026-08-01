@@ -192,6 +192,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let path = options.metalShot {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+				controller?.renderTerminalWithMetal(to: path)
+				exit(0)
+			}
+		}
+
 		if options.benchRender {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
 				controller?.benchmarkTerminalRendering()

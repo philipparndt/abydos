@@ -42,6 +42,8 @@ struct LaunchOptions {
 	var tearOffFile: String?
 	/// Times terminal redraws, to see what a frame costs.
 	var benchRender = false
+	/// Renders the terminal through Metal, straight to a PNG.
+	var metalShot: String?
 	/// Toggle a breakpoint on this 1-based line before capture.
 	var breakpointLine: Int?
 	/// Show a sidebar tool before capture: project | changes | branches | structure.
@@ -110,6 +112,7 @@ struct LaunchOptions {
 			case "--zoom-cycle":  options.zoomCycle = true
 			case "--tear-off":   options.tearOffFile = next()
 			case "--bench-render": options.benchRender = true
+			case "--metal-shot": options.metalShot = next()
 			case "--breakpoint": options.breakpointLine = next().flatMap(Int.init)
 			case "--find":       options.findQuery = next()
 			case "--search":     options.searchQuery = next()
