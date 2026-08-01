@@ -41,10 +41,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		}
 
 		// A screenful of coloured text, as a busy program produces.
+		// Two shapes of screen. Ordinary output holds a colour for a whole line,
+		// so a row is a handful of runs; the fire benchmark changes colour on
+		// every cell, so a row is as many runs as it has columns. Whether that
+		// distinction costs anything is the question.
+		let fireLike = ProcessInfo.processInfo.environment["IDEAI_BENCH_FIRE"] != nil
 		var filler = ""
 		for row in 0..<40 {
-			filler += "\u{1B}[3\(row % 8)m"
-			filler += String(repeating: "abcdefghij ", count: 18)
+			if fireLike {
+				for column in 0..<198 {
+					filler += "\u{1B}[38;5;\((row * 7 + column) % 256);48;5;\((column * 3) % 256)m▀"
+				}
+			} else {
+				filler += "\u{1B}[3\(row % 8)m"
+				filler += String(repeating: "abcdefghij ", count: 18)
+			}
 			filler += "\u{1B}[0m\r\n"
 		}
 		terminal.writeForTesting(filler)

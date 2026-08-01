@@ -19,6 +19,10 @@ final class TerminalView: NSView, NSTextInputClient {
 	var onTitleChange: ((String) -> Void)?
 
 	private var font: NSFont = .monospacedSystemFont(ofSize: 12, weight: .regular)
+	/// Glyphs already looked up, thrown away when the font changes.
+	private let glyphs = GlyphCache()
+	/// Distance from the top of a cell to the baseline the text sits on.
+	private var baselineFromTop: CGFloat = 12
 	/// The four faces a cell can ask for, worked out once per font change.
 	///
 	/// Deriving a bold or italic face goes through NSFontManager, which is not
@@ -294,10 +298,14 @@ final class TerminalView: NSView, NSTextInputClient {
 		// as a step where a powerline separator meets the next segment. Whole-point
 		// cells make neighbouring fills abut exactly.
 		faces = TerminalFaces(base: font)
+		glyphs.clear()
 		let advance = faces.advance
 		cellWidth = max(1, advance.rounded())
 		cellHeight = max(1, (font.ascender - font.descender + font.leading).rounded() + 2)
 		baselineOffset = (-font.descender + font.leading).rounded()
+		// Where NSAttributedString would have put the baseline had it laid the
+		// line out itself, which is what the glyphs have to line up with.
+		baselineFromTop = (font.ascender + font.leading).rounded()
 	}
 
 	func applyThemeChange() {
@@ -495,6 +503,7 @@ final class TerminalView: NSView, NSTextInputClient {
 		attributes: TerminalAttributes,
 		y: CGFloat
 	) {
+		let faceIndex = TerminalFaces.index(bold: attributes.bold, italic: attributes.italic)
 		let drawFont = faces.face(bold: attributes.bold, italic: attributes.italic)
 
 		let resolved = attributes.resolved
@@ -505,63 +514,88 @@ final class TerminalView: NSView, NSTextInputClient {
 		)
 		if attributes.dim { foreground = foreground.withAlphaComponent(0.6) }
 
-		var textAttributes: [NSAttributedString.Key: Any] = [
-			.font: drawFont,
-			.foregroundColor: foreground,
-			// Pins each character to the next cell boundary.
-			.kern: cellWidth - faces.advance(bold: attributes.bold, italic: attributes.italic),
-		]
-		if attributes.underline {
-			textAttributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
-		}
-		if attributes.strikethrough {
-			textAttributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
-		}
+		guard let context = NSGraphicsContext.current?.cgContext else { return }
+		context.saveGState()
+		// The view is flipped, so the glyphs would come out upside down without
+		// undoing that for the text alone.
+		context.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
+		context.setFillColor(foreground.cgColor)
 
-		// A segment is a stretch of single-width characters, which is what the
-		// kerning above assumes. A double-width character advances two cells, so
-		// it ends the segment and is drawn on its own.
-		var segment = ""
-		var segmentStart = start
+		let baseline = y + baselineFromTop
+		var runGlyphs: [CGGlyph] = []
+		var runPositions: [CGPoint] = []
+		var runFont: CTFont?
 
+		// Glyphs are drawn in batches sharing a font. Almost every batch is the
+		// whole run; a batch ends only where a character had to come from a
+		// fallback face, which is rare enough to be worth not checking for.
 		func flush() {
-			defer { segment = "" }
-			guard !segment.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-			let x = (Self.horizontalInset + CGFloat(segmentStart) * cellWidth).rounded()
-			NSAttributedString(string: segment, attributes: textAttributes).draw(at: NSPoint(x: x, y: y))
+			guard let font = runFont, !runGlyphs.isEmpty else {
+				runGlyphs.removeAll(keepingCapacity: true)
+				runPositions.removeAll(keepingCapacity: true)
+				return
+			}
+			CTFontDrawGlyphs(font, runGlyphs, runPositions, runGlyphs.count, context)
+			runGlyphs.removeAll(keepingCapacity: true)
+			runPositions.removeAll(keepingCapacity: true)
+			runFont = nil
 		}
 
 		for cellIndex in start..<end {
 			let cell = line.cells[cellIndex]
-			// The trailing half of a wide glyph contributes no character; the
-			// leading half already advanced two columns.
+			// The trailing half of a wide glyph carries no character of its own.
 			if cell.isWideTrailer { continue }
+			// Blanks have nothing to draw, and separators are drawn as geometry.
+			if cell.scalar == 0x20 || cell.scalar == 0 { continue }
+			if PowerlineGlyph.isSeparator(cell.scalar) { continue }
 
-			// Powerline separators are drawn as geometry by drawSeparators, so a
-			// space stands in for them here to keep the segment's spacing intact.
-			if PowerlineGlyph.isSeparator(cell.scalar) {
-				if segment.isEmpty { segmentStart = cellIndex }
-				segment.append(" ")
+			guard let found = glyphs.glyph(for: cell.scalar, face: drawFont, faceIndex: faceIndex) else {
 				continue
 			}
+			if let current = runFont, current !== found.font { flush() }
+			runFont = found.font
 
-			let isWide = cellIndex + 1 < line.cells.count && line.cells[cellIndex + 1].isWideTrailer
-			if isWide {
-				flush()
-				segmentStart = cellIndex
-				segment.append(cell.character)
-				flush()
-				continue
-			}
-
-			if segment.isEmpty { segmentStart = cellIndex }
-			segment.append(cell.character)
+			// Each glyph sits on its own column rather than following the one
+			// before it. The cell width is a whole number of points while the
+			// font's advance is fractional, and letting the text lay itself out
+			// makes it creep off the grid by a fraction of a pixel per
+			// character — a whole cell by the end of a typed command, which
+			// leaves the text sitting a character away from the cursor.
+			let x = (Self.horizontalInset + CGFloat(cellIndex) * cellWidth).rounded()
+			runGlyphs.append(found.glyph)
+			runPositions.append(CGPoint(x: x, y: -baseline))
 		}
 		flush()
+		context.restoreGState()
+
+		if attributes.underline || attributes.strikethrough {
+			drawTextDecoration(from: start, to: end, y: y, colour: foreground, attributes: attributes)
+		}
 	}
 
-	/// Width of one character in a font, cached: measuring is not free and the
-	/// same handful of fonts is asked for on every repaint.
+	/// Underlines and strikethroughs, which the glyphs no longer carry with them.
+	private func drawTextDecoration(
+		from start: Int,
+		to end: Int,
+		y: CGFloat,
+		colour: NSColor,
+		attributes: TerminalAttributes
+	) {
+		let x = (Self.horizontalInset + CGFloat(start) * cellWidth).rounded()
+		let endX = (Self.horizontalInset + CGFloat(end) * cellWidth).rounded()
+		let thickness = max(1, (cellHeight / 14).rounded())
+		colour.setFill()
+
+		if attributes.underline {
+			// Just below the baseline, where a font would put it.
+			let underlineY = (y + baselineFromTop + thickness).rounded()
+			NSRect(x: x, y: underlineY, width: endX - x, height: thickness).fill()
+		}
+		if attributes.strikethrough {
+			let strikeY = (y + baselineFromTop - cellHeight / 4).rounded()
+			NSRect(x: x, y: strikeY, width: endX - x, height: thickness).fill()
+		}
+	}
 
 	private func drawCursor() {
 		guard emulator.isCursorVisible, cursorVisible, window?.firstResponder === self else { return }
@@ -1137,6 +1171,11 @@ private struct TerminalFaces {
 		advance = advances.0
 	}
 
+	/// Which of the four faces a pair of flags asks for.
+	static func index(bold isBold: Bool, italic isItalic: Bool) -> UInt8 {
+		(isBold ? 1 : 0) | (isItalic ? 2 : 0)
+	}
+
 	func face(bold isBold: Bool, italic isItalic: Bool) -> NSFont {
 		switch (isBold, isItalic) {
 		case (false, false): return regular
@@ -1156,3 +1195,59 @@ private struct TerminalFaces {
 	}
 }
 
+
+/// A glyph for one code point, together with the font that actually has it.
+///
+/// Looked up once and kept. Turning a character into a glyph means asking
+/// CoreText, and asking it for a font that can draw one means asking the whole
+/// fallback cascade — neither is something to do sixty times a second for every
+/// cell on the screen.
+private struct CachedGlyph {
+	let glyph: CGGlyph
+	let font: CTFont
+}
+
+private struct GlyphKey: Hashable {
+	let scalar: UInt32
+	/// Which of the four faces asked for it.
+	let face: UInt8
+}
+
+/// Glyphs by code point and face.
+///
+/// Kept on the view rather than shared, so changing the font throws away the
+/// glyphs that went with it.
+private final class GlyphCache {
+	private var entries: [GlyphKey: CachedGlyph?] = [:]
+
+	func clear() { entries.removeAll(keepingCapacity: true) }
+
+	/// The glyph to draw for a code point, or nil when nothing can draw it.
+	fileprivate func glyph(for scalar: UInt32, face: NSFont, faceIndex: UInt8) -> CachedGlyph? {
+		let key = GlyphKey(scalar: scalar, face: faceIndex)
+		if let known = entries[key] { return known }
+
+		let found = Self.lookUp(scalar: scalar, in: face)
+		entries[key] = found
+		return found
+	}
+
+	fileprivate static func lookUp(scalar: UInt32, in face: NSFont) -> CachedGlyph? {
+		guard let unicode = UnicodeScalar(scalar) else { return nil }
+		var utf16 = Array(String(unicode).utf16)
+		var glyphs = [CGGlyph](repeating: 0, count: utf16.count)
+
+		let ctFace = face as CTFont
+		if CTFontGetGlyphsForCharacters(ctFace, &utf16, &glyphs, utf16.count), glyphs[0] != 0 {
+			return CachedGlyph(glyph: glyphs[0], font: ctFace)
+		}
+
+		// The terminal's own face has no glyph for it — emoji, CJK and the
+		// powerline range all come from somewhere else. CoreText knows where.
+		let fallback = CTFontCreateForString(ctFace, String(unicode) as CFString, CFRange(location: 0, length: utf16.count))
+		if CTFontGetGlyphsForCharacters(fallback, &utf16, &glyphs, utf16.count), glyphs[0] != 0 {
+			return CachedGlyph(glyph: glyphs[0], font: fallback)
+		}
+		return nil
+	}
+}
