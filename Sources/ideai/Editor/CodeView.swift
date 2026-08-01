@@ -41,6 +41,17 @@ final class CodeView: NSView, NSTextInputClient {
 	/// runs it.
 	private var runnableLines: Set<Int> = []
 	var onRunLine: ((Int) -> Void)?
+	/// Right-clicked a breakpoint: edit what it does. Zero-based line.
+	var onEditBreakpoint: ((Int) -> Void)?
+	/// Which lines have a breakpoint that does more than stop every time.
+	private var conditionalBreakpointLines: Set<Int> = []
+
+	func setConditionalBreakpoints(_ lines: Set<Int>) {
+		guard lines != conditionalBreakpointLines else { return }
+		conditionalBreakpointLines = lines
+		needsDisplay = true
+	}
+
 	/// ⌘-clicked a symbol: go to where it is defined.
 	var onGoToDefinition: ((_ line: Int, _ character: Int) -> Void)?
 	/// The text changed and the caret is in a word: offer completions for it.
@@ -838,6 +849,19 @@ final class CodeView: NSView, NSTextInputClient {
 				path.lineWidth = 1.5
 				path.stroke()
 			}
+
+			// A conditional breakpoint is marked, because "why did it not
+			// stop" and "why did it stop" are both answered by remembering
+			// that this one has a condition on it.
+			if conditionalBreakpointLines.contains(docLine) {
+				let tick = NSBezierPath()
+				tick.lineWidth = 1.6
+				tick.move(to: NSPoint(x: rect.minX + 1.5, y: rect.midY + 1))
+				tick.line(to: NSPoint(x: rect.midX, y: rect.maxY - 1.5))
+				tick.line(to: NSPoint(x: rect.maxX - 1, y: rect.minY + 1.5))
+				(verified ? NSColor.hex(0x2B2B2B) : NSColor.hex(0xD16969)).setStroke()
+				tick.stroke()
+			}
 		}
 
 		guard docLine == executionLine else { return }
@@ -1213,6 +1237,21 @@ final class CodeView: NSView, NSTextInputClient {
 		}
 	}
 
+	override func rightMouseDown(with event: NSEvent) {
+		let point = convert(event.locationInWindow, from: nil)
+		let scrollX = enclosingScrollView?.contentView.bounds.origin.x ?? 0
+
+		// A right-click in the breakpoint column edits that breakpoint. It is
+		// where the breakpoint is, so it is where somebody aims to change it.
+		if point.x < scrollX + Self.breakpointColumnWidth, let document {
+			let visual = max(0, min(visibleLineCount - 1, Int(floor(point.y / lineHeight))))
+			let docLine = min(document.lineCount - 1, documentLine(forVisualRow: visual))
+			onEditBreakpoint?(docLine)
+			return
+		}
+		super.rightMouseDown(with: event)
+	}
+
 	override func mouseDragged(with event: NSEvent) {
 		let point = convert(event.locationInWindow, from: nil)
 		guard point.x >= gutterWidth || caret != selectionAnchor else { return }
@@ -1235,6 +1274,7 @@ final class CodeView: NSView, NSTextInputClient {
 			}
 			return
 		}
+
 
 		guard folding.isFoldable(line: docLine) else { return }
 

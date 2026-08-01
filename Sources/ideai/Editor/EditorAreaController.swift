@@ -129,6 +129,8 @@ final class EditorAreaController: NSViewController {
 		group.onToggleBreakpoint = { [weak self] url, line in
 			self?.onToggleBreakpoint?(url, line)
 		}
+		group.onEditBreakpoint = onEditBreakpoint
+		group.setConditionalBreakpoints(conditionalBreakpoints)
 		group.onRunLine = { [weak self] url, line in
 			self?.onRunLine?(url, line)
 		}
@@ -568,6 +570,18 @@ final class EditorAreaController: NSViewController {
 	/// Debug state is window-wide: a breakpoint belongs to the file, not a pane.
 	func setBreakpoints(_ breakpoints: [String: [Int: Bool]]) {
 		for group in groups { group.setBreakpoints(breakpoints) }
+	}
+
+	/// Which breakpoints do more than stop every time, so they can be marked.
+	func setConditionalBreakpoints(_ lines: [String: Set<Int>]) {
+		conditionalBreakpoints = lines
+		for group in groups { group.setConditionalBreakpoints(lines) }
+	}
+
+	private var conditionalBreakpoints: [String: Set<Int>] = [:]
+
+	var onEditBreakpoint: ((URL, Int) -> Void)? {
+		didSet { for group in groups { group.onEditBreakpoint = onEditBreakpoint } }
 	}
 
 	private var runnableLines: [String: Set<Int>] = [:]

@@ -327,6 +327,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 		// Clicking the breakpoint gutter reaches the running debug session, and
 		// is remembered even when nothing is running yet.
+		editor.onEditBreakpoint = { [weak self] url, line in
+			self?.editBreakpoint(file: url, line: line)
+		}
 		editor.onToggleBreakpoint = { [weak self] url, line in
 			self?.toggleBreakpoint(file: url, line: line)
 		}
@@ -584,6 +587,24 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 	}
 
+	/// Looks at where the debugger stopped, without moving it.
+	func inspectDebugStateForTesting() {
+		let stoppedAt = executionMarker.map { "\(($0.file as NSString).lastPathComponent):\($0.line)" }
+			?? "not stopped"
+		print("INSPECT: stopped at \(stoppedAt)")
+		bottomPanel.exerciseDebugExtrasForTesting()
+	}
+
+	/// Puts a condition on a breakpoint before the program runs.
+	func setBreakpointConditionForTesting(line: Int, condition: String) {
+		guard let url = editor.activeGroup?.activeTabURL else { return }
+		setBreakpointOptions(
+			file: FilePath.canonical(url), line: line,
+			condition: condition, hitCondition: nil, logMessage: nil
+		)
+		print("COND: \(condition) on line \(line)")
+	}
+
 	/// Walks the debugger a step at a time, saying where it stopped.
 	func reportDebugStepForTesting(step: Int) {
 		guard let session = debugSession else {
@@ -596,7 +617,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 		if step == 0 {
 			bottomPanel.writeDebugToolbarImageForTesting(to: "build/debug-toolbar.png")
-			print("TIPS: \(bottomPanel.debugToolTipsForTesting)")
 		}
 
 		// Menu commands, the same ones the function keys send.
@@ -822,7 +842,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	@objc func goDebug(_ sender: Any?) { runGo(.debug) }
 
 	/// Breakpoints set before a session exists, so they survive between runs.
-	private var pendingBreakpoints: [String: [Int: Bool]] = [:]
+	/// Breakpoints set before a session exists, with whatever conditions they
+	/// were given. Whole breakpoints rather than line numbers, or a condition
+	/// put on one before launching — which is when somebody actually sets them
+	/// — would be dropped on the way in.
+	private var pendingBreakpoints: [String: [Breakpoint]] = [:]
 
 	private func toggleBreakpoint(file: URL, line: Int) {
 		// The debugger reports files by their real path, so breakpoints are
@@ -836,19 +860,131 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 
 		// No session yet: remember it, and hand the set over when one starts.
-		var lines = pendingBreakpoints[path] ?? [:]
-		if lines.removeValue(forKey: line) == nil { lines[line] = false }
-		pendingBreakpoints[path] = lines.isEmpty ? nil : lines
-		editor.setBreakpoints(pendingBreakpoints)
+		var list = pendingBreakpoints[path] ?? []
+		if let index = list.firstIndex(where: { $0.line == line }) {
+			list.remove(at: index)
+		} else {
+			list.append(Breakpoint(file: path, line: line))
+			list.sort { $0.line < $1.line }
+		}
+		pendingBreakpoints[path] = list.isEmpty ? nil : list
+		publishPendingBreakpoints()
+	}
+
+	/// Draws the breakpoints that exist before anything is running.
+	private func publishPendingBreakpoints() {
+		var mapped: [String: [Int: Bool]] = [:]
+		var conditional: [String: Set<Int>] = [:]
+		for (file, list) in pendingBreakpoints {
+			mapped[file] = Dictionary(uniqueKeysWithValues: list.map { ($0.line, $0.isVerified) })
+			conditional[file] = Set(list.filter(\.isConditional).map(\.line))
+		}
+		editor.setBreakpoints(mapped)
+		editor.setConditionalBreakpoints(conditional)
 	}
 
 	private func syncBreakpointsToEditor(from session: DebugSession) {
 		var mapped: [String: [Int: Bool]] = [:]
+		var conditional: [String: Set<Int>] = [:]
 		for (file, list) in session.breakpoints {
 			mapped[file] = Dictionary(uniqueKeysWithValues: list.map { ($0.line, $0.isVerified) })
+			conditional[file] = Set(list.filter(\.isConditional).map(\.line))
 		}
-		pendingBreakpoints = mapped
+		// Kept, so they survive the session ending and are there for the next
+		// one — conditions included.
+		pendingBreakpoints = session.breakpoints
 		editor.setBreakpoints(mapped)
+		editor.setConditionalBreakpoints(conditional)
+	}
+
+	/// Applies breakpoint options, to the session if there is one and to the
+	/// pending set either way.
+	func setBreakpointOptions(
+		file path: String,
+		line: Int,
+		condition: String?,
+		hitCondition: String?,
+		logMessage: String?
+	) {
+		if let session = bottomPanel.activeDebugSession {
+			session.setBreakpointOptions(
+				file: path, line: line,
+				condition: condition, hitCondition: hitCondition, logMessage: logMessage
+			)
+			syncBreakpointsToEditor(from: session)
+			return
+		}
+
+		var list = pendingBreakpoints[path] ?? []
+		if let index = list.firstIndex(where: { $0.line == line }) {
+			list[index].condition = condition?.isEmpty == true ? nil : condition
+			list[index].hitCondition = hitCondition?.isEmpty == true ? nil : hitCondition
+			list[index].logMessage = logMessage?.isEmpty == true ? nil : logMessage
+			pendingBreakpoints[path] = list
+			publishPendingBreakpoints()
+		}
+	}
+
+	/// Asks what a breakpoint should do, and tells the session.
+	///
+	/// A breakpoint you have to sit and press Continue at four hundred times
+	/// because the interesting case is the last one is not much of a
+	/// breakpoint; a condition is what makes it one.
+	private func editBreakpoint(file: URL, line: Int) {
+		let path = FilePath.canonical(file)
+
+		// Works whether or not anything is running: conditions are nearly always
+		// set while writing the code, before the first launch.
+		let session = bottomPanel.activeDebugSession
+		let existing = session?.breakpoint(file: path, line: line)
+			?? pendingBreakpoints[path]?.first { $0.line == line }
+			?? {
+				// Right-clicking a line with no breakpoint sets one there
+				// first: it is plainly what was meant.
+				toggleBreakpoint(file: file, line: line)
+				return session?.breakpoint(file: path, line: line)
+					?? pendingBreakpoints[path]?.first { $0.line == line }
+					?? Breakpoint(file: path, line: line)
+			}()
+
+		let alert = NSAlert()
+		alert.messageText = "Breakpoint on line \(line)"
+		alert.informativeText = "Leave a field empty to drop that part."
+		alert.addButton(withTitle: "Apply")
+		alert.addButton(withTitle: "Cancel")
+
+		let width: CGFloat = 320
+		let container = NSView(frame: NSRect(x: 0, y: 0, width: width, height: 96))
+
+		func field(_ placeholder: String, _ value: String?, y: CGFloat) -> NSTextField {
+			let label = NSTextField(labelWithString: placeholder)
+			label.font = .systemFont(ofSize: 10)
+			label.textColor = .secondaryLabelColor
+			label.frame = NSRect(x: 0, y: y + 20, width: width, height: 14)
+			container.addSubview(label)
+
+			let input = NSTextField(frame: NSRect(x: 0, y: y, width: width, height: 22))
+			input.stringValue = value ?? ""
+			container.addSubview(input)
+			return input
+		}
+
+		let logInput = field("Log this and carry on, e.g. i is {i}", existing.logMessage, y: 0)
+		let hitInput = field("Stop after this many hits, e.g. > 5", existing.hitCondition, y: 36)
+		let conditionInput = field("Stop only when true, e.g. i > 5", existing.condition, y: 72)
+		alert.accessoryView = container
+
+		let apply: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+			guard response == .alertFirstButtonReturn, let self else { return }
+			self.setBreakpointOptions(
+				file: path,
+				line: line,
+				condition: conditionInput.stringValue,
+				hitCondition: hitInput.stringValue,
+				logMessage: logInput.stringValue
+			)
+		}
+		if let window { alert.beginSheetModal(for: window, completionHandler: apply) } else { apply(alert.runModal()) }
 	}
 
 	private enum GoAction { case run, build, test, trace, profile, debug }

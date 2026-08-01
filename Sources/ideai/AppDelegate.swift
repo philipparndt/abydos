@@ -149,6 +149,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let condition = options.breakpointCondition, let line = options.breakpointLine {
+			// Before anything is running, which is when conditions are really
+			// set: while writing the code, not while stopped in it.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
+				controller?.setBreakpointConditionForTesting(line: line, condition: condition)
+			}
+		}
+
+		if options.debugInspect {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+				controller?.goDebug(nil)
+			}
+			// Once it has built and stopped, look at what is there — and do not
+			// step, or the values belong to somewhere else.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 7.0) {
+				controller?.inspectDebugStateForTesting()
+			}
+		}
+
 		if options.debugSteps {
 			// After the breakpoint has been set, which is scheduled at 1.0.
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {

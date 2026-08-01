@@ -9,11 +9,88 @@ public struct Breakpoint: Equatable, Hashable, Sendable {
 	/// hollow, because a filled marker where execution can never stop is a lie.
 	public var isVerified: Bool
 
-	public init(file: String, line: Int, isEnabled: Bool = true, isVerified: Bool = false) {
+	/// An expression that must be true to stop here.
+	///
+	/// The difference between a breakpoint you can use and one you have to sit
+	/// and press Continue at four hundred times because the interesting case is
+	/// the last one.
+	public var condition: String?
+
+	/// Stop only after this many hits — `> 5`, or just `5` meaning the same.
+	public var hitCondition: String?
+
+	/// Print this and carry on rather than stopping.
+	///
+	/// A print statement that needs no rebuild and leaves no mess behind.
+	public var logMessage: String?
+
+	/// Whether this breakpoint does anything beyond stopping every time.
+	public var isConditional: Bool {
+		condition?.isEmpty == false || hitCondition?.isEmpty == false || logMessage?.isEmpty == false
+	}
+
+	public init(
+		file: String,
+		line: Int,
+		isEnabled: Bool = true,
+		isVerified: Bool = false,
+		condition: String? = nil,
+		hitCondition: String? = nil,
+		logMessage: String? = nil
+	) {
 		self.file = file
 		self.line = line
 		self.isEnabled = isEnabled
 		self.isVerified = isVerified
+		self.condition = condition
+		self.hitCondition = hitCondition
+		self.logMessage = logMessage
+	}
+
+	/// How the protocol wants it.
+	public var wireFormat: [String: Any] {
+		var entry: [String: Any] = ["line": line]
+		if let condition, !condition.isEmpty { entry["condition"] = condition }
+		if let hitCondition, !hitCondition.isEmpty { entry["hitCondition"] = hitCondition }
+		if let logMessage, !logMessage.isEmpty { entry["logMessage"] = logMessage }
+		return entry
+	}
+}
+
+/// One goroutine, or one thread in anything that is not Go.
+public struct DebugThread: Equatable, Sendable, Identifiable {
+	public let id: Int
+	public let name: String
+
+	public init(id: Int, name: String) {
+		self.id = id
+		self.name = name
+	}
+}
+
+/// An expression being watched, and what it last came to.
+public struct WatchExpression: Equatable, Sendable, Identifiable {
+	public let id: UUID
+	public var expression: String
+	/// What it evaluated to where execution is now, or the error if it could
+	/// not be evaluated there.
+	public var value: String?
+	public var failed: Bool
+	/// Set when the value can be opened up, as a struct or a slice can.
+	public var variablesReference: Int
+
+	public init(
+		id: UUID = UUID(),
+		expression: String,
+		value: String? = nil,
+		failed: Bool = false,
+		variablesReference: Int = 0
+	) {
+		self.id = id
+		self.expression = expression
+		self.value = value
+		self.failed = failed
+		self.variablesReference = variablesReference
 	}
 }
 
@@ -171,6 +248,33 @@ public final class DebugSession {
 		if isActive { Task { await syncBreakpoints(for: file) } }
 	}
 
+	/// Gives a breakpoint a condition, a hit count, or a message to log.
+	///
+	/// Passing nil for everything makes it an ordinary breakpoint again.
+	public func setBreakpointOptions(
+		file: String,
+		line: Int,
+		condition: String?,
+		hitCondition: String?,
+		logMessage: String?
+	) {
+		let file = FilePath.canonical(file)
+		guard var list = breakpoints[file], let index = list.firstIndex(where: { $0.line == line })
+		else { return }
+
+		list[index].condition = condition?.isEmpty == true ? nil : condition
+		list[index].hitCondition = hitCondition?.isEmpty == true ? nil : hitCondition
+		list[index].logMessage = logMessage?.isEmpty == true ? nil : logMessage
+		breakpoints[file] = list
+		onMain { [weak self] in self?.onBreakpointsChanged?() }
+
+		if isActive { Task { await syncBreakpoints(for: file) } }
+	}
+
+	public func breakpoint(file: String, line: Int) -> Breakpoint? {
+		breakpoints[FilePath.canonical(file)]?.first { $0.line == line }
+	}
+
 	public func breakpoints(inFile file: String) -> [Breakpoint] {
 		breakpoints[file] ?? []
 	}
@@ -189,7 +293,7 @@ public final class DebugSession {
 	/// Sends the breakpoints for one file. DAP replaces the whole set per file,
 	/// so they are always sent together rather than incrementally.
 	private func syncBreakpoints(for file: String) async {
-		let lines = (breakpoints[file] ?? []).filter(\.isEnabled).map { ["line": $0.line] }
+		let lines = (breakpoints[file] ?? []).filter(\.isEnabled).map(\.wireFormat)
 		let response = try? await client.request("setBreakpoints", arguments: [
 			"source": ["path": file],
 			"breakpoints": lines,
@@ -380,12 +484,113 @@ public final class DebugSession {
 		state = .running
 	}
 
+	// MARK: - Threads
+
+	/// The goroutines, or threads in anything that is not Go.
+	public private(set) var threads: [DebugThread] = []
+	/// Which one the stack is being shown for.
+	public private(set) var selectedThreadID: Int?
+
+	public var onThreadsChanged: (() -> Void)?
+
+	/// Re-reads the list of goroutines.
+	///
+	/// Go programs have thousands of them and the interesting one is rarely the
+	/// one that happened to hit the breakpoint — a deadlock is a question about
+	/// the others.
+	public func refreshThreads() async {
+		let response = try? await client.request("threads", arguments: [:])
+		let entries = (response?["threads"] as? [[String: Any]]) ?? []
+		threads = entries.map {
+			DebugThread(id: $0["id"] as? Int ?? 0, name: $0["name"] as? String ?? "?")
+		}
+		onMain { [weak self] in self?.onThreadsChanged?() }
+	}
+
+	/// Shows another goroutine's stack.
+	public func selectThread(id: Int) async {
+		guard id != selectedThreadID else { return }
+		selectedThreadID = id
+		await refreshStack(thread: id, reportStop: false)
+	}
+
+	// MARK: - Watches
+
+	/// Expressions being watched, in the order they were added.
+	public private(set) var watches: [WatchExpression] = []
+	public var onWatchesChanged: (() -> Void)?
+
+	public func addWatch(_ expression: String) {
+		let trimmed = expression.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !trimmed.isEmpty else { return }
+		watches.append(WatchExpression(expression: trimmed))
+		onMain { [weak self] in self?.onWatchesChanged?() }
+		Task { await refreshWatches() }
+	}
+
+	public func removeWatch(id: UUID) {
+		watches.removeAll { $0.id == id }
+		onMain { [weak self] in self?.onWatchesChanged?() }
+	}
+
+	public func removeAllWatches() {
+		watches.removeAll()
+		onMain { [weak self] in self?.onWatchesChanged?() }
+	}
+
+	/// Re-evaluates every watch in the selected frame.
+	///
+	/// After every stop and every frame change, because a watch that still
+	/// shows the value from two stops ago is worse than no watch at all.
+	public func refreshWatches() async {
+		guard !watches.isEmpty else { return }
+		guard let frame = selectedFrameID else {
+			for index in watches.indices {
+				watches[index].value = nil
+				watches[index].failed = false
+			}
+			onMain { [weak self] in self?.onWatchesChanged?() }
+			return
+		}
+
+		for index in watches.indices {
+			let response = try? await client.request("evaluate", arguments: [
+				"expression": watches[index].expression,
+				"frameId": frame,
+				"context": "watch",
+			])
+			if let result = response?["result"] as? String {
+				watches[index].value = result
+				watches[index].failed = false
+				watches[index].variablesReference = response?["variablesReference"] as? Int ?? 0
+			} else {
+				// An expression that does not compile here is not an error to
+				// report; it is simply out of scope in this frame, which is
+				// worth saying quietly rather than clearing the row.
+				watches[index].failed = true
+				watches[index].value = "not available here"
+				watches[index].variablesReference = 0
+			}
+		}
+		onMain { [weak self] in self?.onWatchesChanged?() }
+	}
+
 	// MARK: - Stack and variables
 
 	/// Re-reads the stack after a stop, then the top frame's variables.
 	private func refreshStack() async {
 		guard let thread = currentThreadID else { return }
+		selectedThreadID = thread
+		await refreshThreads()
+		await refreshStack(thread: thread, reportStop: true)
+	}
 
+	/// Reads one thread's stack.
+	///
+	/// `reportStop` is false when the user picked another goroutine: the editor
+	/// should follow the stack, but nothing has stopped, so the execution
+	/// marker must not move as though it had.
+	private func refreshStack(thread: Int, reportStop: Bool) async {
 		let response = try? await client.request("stackTrace", arguments: [
 			"threadId": thread,
 			"startFrame": 0,
@@ -408,7 +613,7 @@ public final class DebugSession {
 			self.onStackChanged?()
 			// Opening the file is AppKit work, so it belongs on this side of
 			// the hop with everything else.
-			if let file = top?.file, let line = top?.line {
+			if reportStop, let file = top?.file, let line = top?.line {
 				for observer in self.stoppedObservers { observer(file, line) }
 			}
 		}
@@ -419,6 +624,9 @@ public final class DebugSession {
 	/// Loads the scopes and top-level variables for a frame.
 	public func selectFrame(id: Int) async {
 		selectedFrameID = id
+		// A watch means something different in each frame, so it is re-read
+		// whenever the frame changes rather than only when execution stops.
+		defer { Task { await refreshWatches() } }
 
 		let response = try? await client.request("scopes", arguments: ["frameId": id])
 		let raw = (response?["scopes"] as? [[String: Any]]) ?? []

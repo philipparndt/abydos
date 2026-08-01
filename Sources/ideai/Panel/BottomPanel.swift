@@ -234,6 +234,45 @@ final class BottomPanel: NSView {
 		return false
 	}
 
+	/// Exercises watches, goroutines, conditions and copying, and says what
+	/// each produced.
+	func exerciseDebugExtrasForTesting() {
+		guard let session = activeDebugSession else {
+			print("EXTRAS: no session")
+			return
+		}
+
+		session.addWatch("number")
+		session.addWatch("numbers")
+		session.addWatch("answer * 2")
+		session.addWatch("nonesuch")
+
+		Task { @MainActor in
+			try? await Task.sleep(nanoseconds: 900_000_000)
+			for watch in session.watches {
+				print("WATCH: \(watch.expression) = \(watch.value ?? "nil") failed=\(watch.failed)")
+			}
+			print("THREADS: \(session.threads.count) goroutines, showing \(session.selectedThreadID ?? -1)")
+			for thread in session.threads.prefix(4) {
+				print("THREAD: \(thread.id) \(thread.name)")
+			}
+
+			// Another goroutine's stack, without moving the execution marker.
+			if let other = session.threads.first(where: { $0.id != session.selectedThreadID }) {
+				await session.selectThread(id: other.id)
+				print("THREADS: switched to \(other.id), stack has \(session.stackFrames.count) frames")
+			}
+
+			for pane in self.debugPanesForTesting {
+				print("COPY: \(pane.copyFirstVariableForTesting())")
+			}
+		}
+	}
+
+	var debugPanesForTesting: [DebugPane] {
+		sessions.compactMap { if case let .debug(pane) = $0.kind { return pane } else { return nil } }
+	}
+
 	var debugToolTipsForTesting: [String] {
 		for session in sessions {
 			if case let .debug(pane) = session.kind { return pane.toolbarToolTipsForTesting }
@@ -369,7 +408,7 @@ final class BottomPanel: NSView {
 	func startDebugging(
 		delve: String,
 		package: String,
-		breakpoints: [String: [Int: Bool]] = [:]
+		breakpoints: [String: [Breakpoint]] = [:]
 	) -> DebugSession? {
 		guard let root = workingDirectory else { return nil }
 
@@ -405,9 +444,19 @@ final class BottomPanel: NSView {
 		// for breakpoints once, between `initialized` and `configurationDone`,
 		// and both arrive within milliseconds — anything added afterwards is
 		// simply too late, and the program runs to completion instead.
-		for (file, lines) in breakpoints {
-			for line in lines.keys.sorted() {
-				session.toggleBreakpoint(file: file, line: line)
+		for (file, list) in breakpoints {
+			for breakpoint in list.sorted(by: { $0.line < $1.line }) {
+				session.toggleBreakpoint(file: file, line: breakpoint.line)
+				guard breakpoint.isConditional else { continue }
+				// The condition goes on before the program starts, which is the
+				// only moment it can: the adapter asks for breakpoints once.
+				session.setBreakpointOptions(
+					file: file,
+					line: breakpoint.line,
+					condition: breakpoint.condition,
+					hitCondition: breakpoint.hitCondition,
+					logMessage: breakpoint.logMessage
+				)
 			}
 		}
 

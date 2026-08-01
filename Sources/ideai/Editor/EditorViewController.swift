@@ -97,6 +97,22 @@ final class EditorViewController: NSViewController {
 
 	/// Called when the breakpoint gutter is clicked, with a 1-based line.
 	var onToggleBreakpoint: ((URL, Int) -> Void)?
+	/// Right-clicked a breakpoint: edit what it does. 1-based line.
+	var onEditBreakpoint: ((URL, Int) -> Void)?
+	/// Which lines have a breakpoint that does more than stop, per file.
+	private var conditionalBreakpoints: [String: Set<Int>] = [:]
+
+	func setConditionalBreakpoints(_ lines: [String: Set<Int>]) {
+		conditionalBreakpoints = lines
+		for tab in tabs { applyConditionalBreakpoints(to: tab) }
+	}
+
+	private func applyConditionalBreakpoints(to tab: Tab) {
+		let path = FilePath.canonical(tab.url)
+		// The gutter counts from zero and everything else from one.
+		let lines = Set((conditionalBreakpoints[path] ?? []).map { $0 - 1 })
+		tab.codeView?.setConditionalBreakpoints(lines)
+	}
 	/// The gutter's play button was clicked, with a 1-based line.
 	var onRunLine: ((URL, Int) -> Void)?
 
@@ -688,6 +704,9 @@ final class EditorViewController: NSViewController {
 			// The gutter works in 0-based lines; everything outside is 1-based.
 			self?.onToggleBreakpoint?(fileURL, line + 1)
 		}
+		codeView.onEditBreakpoint = { [weak self] line in
+			self?.onEditBreakpoint?(fileURL, line + 1)
+		}
 		codeView.onRunLine = { [weak self] line in
 			// Already 1-based: the gutter converts before reporting a run.
 			self?.onRunLine?(fileURL, line)
@@ -708,6 +727,7 @@ final class EditorViewController: NSViewController {
 		codeView.load(document: document)
 		codeView.setWordWrap(Settings.shared.wordWrap)
 		applyDebugState(to: tab)
+		applyConditionalBreakpoints(to: tab)
 		tab.sourceView = scrollView
 
 		// The server is told about the file as it is opened, and answers about

@@ -34,6 +34,12 @@ final class DebugPane: NSView {
 		}
 	}
 
+	/// A watched expression in the tree, above the scopes.
+	private final class WatchNode {
+		let watch: WatchExpression
+		init(watch: WatchExpression) { self.watch = watch }
+	}
+
 	private final class ScopeNode {
 		let scope: Scope
 		let index: Int
@@ -46,6 +52,9 @@ final class DebugPane: NSView {
 	}
 
 	private var scopeNodes: [ScopeNode] = []
+	private var watchNodes: [WatchNode] = []
+	private var watchField: NSTextField!
+	private var threadPopUp: NSPopUpButton!
 
 	init(session: DebugSession, projectRoot: URL) {
 		self.session = session
@@ -86,6 +95,7 @@ final class DebugPane: NSView {
 		let showsConsole = sideTabs.selectedSegment == 1
 		consoleScroll.isHidden = !showsConsole
 		variablesScroll.isHidden = showsConsole
+		watchField.isHidden = showsConsole
 		if showsConsole {
 			hasUnreadOutput = false
 			sideTabs.setLabel("Console", forSegment: 1)
@@ -101,6 +111,20 @@ final class DebugPane: NSView {
 	}
 
 	var toolbarToolTipsForTesting: [String] { toolbar.toolTipsForTesting() }
+
+	/// Copies the first variable row the way the menu does, and says what
+	/// landed on the pasteboard.
+	func copyFirstVariableForTesting() -> String {
+		for row in 0..<variablesOutline.numberOfRows {
+			guard let node = variablesOutline.item(atRow: row) as? VariableNode else { continue }
+			NSPasteboard.general.clearContents()
+			NSPasteboard.general.setString(
+				"\(node.variable.name) = \(node.variable.value)", forType: .string
+			)
+			return NSPasteboard.general.string(forType: .string) ?? "nothing"
+		}
+		return "no variable rows"
+	}
 
 	@discardableResult
 	func writeToolbarImageForTesting(to path: String) -> Bool {
@@ -149,22 +173,48 @@ final class DebugPane: NSView {
 		variables.outlineTableColumn = column
 		variables.delegate = self
 		variables.dataSource = self
+		variables.menu = makeVariablesMenu()
 		variablesOutline = variables
+
+		// A goroutine picker above the stack: the one that hit the breakpoint is
+		// rarely the only one worth looking at, and a deadlock is a question
+		// about the others.
+		threadPopUp = NSPopUpButton()
+		threadPopUp.controlSize = .small
+		threadPopUp.font = Theme.current.uiFont(10.5)
+		threadPopUp.target = self
+		threadPopUp.action = #selector(threadChosen)
+		threadPopUp.isEnabled = false
+
+		// A watch field under it: an expression is the thing you actually want
+		// the value of, and hunting for it in a tree of locals is not the same.
+		watchField = NSTextField()
+		watchField.placeholderString = "Watch an expression…"
+		watchField.font = Theme.current.uiFont(11)
+		watchField.controlSize = .small
+		watchField.focusRingType = .none
+		watchField.target = self
+		watchField.action = #selector(watchEntered)
 
 		let stackScroll = makeScrollView(document: stack)
 		let variablesScroll = makeScrollView(document: variables)
 		self.variablesScroll = variablesScroll
 
+		let leftSide = NSView()
+		leftSide.addSubview(threadPopUp)
+		leftSide.addSubview(stackScroll)
+
 		let split = ThinDividerSplitView()
 		split.isVertical = true
 		split.dividerStyle = .thin
-		split.addArrangedSubview(stackScroll)
+		split.addArrangedSubview(leftSide)
 
 		// Variables and the log share the right-hand side rather than the log
 		// taking a permanent strip along the bottom. It is worth looking at
 		// when something has gone wrong and worth nothing the rest of the time,
 		// which is exactly what a tab is for.
 		let rightSide = NSView()
+		rightSide.addSubview(watchField)
 		rightSide.addSubview(variablesScroll)
 		split.addArrangedSubview(rightSide)
 		self.rightSide = rightSide
@@ -202,7 +252,8 @@ final class DebugPane: NSView {
 		sideTabs.font = Theme.current.uiFont(10.5)
 		addSubview(sideTabs)
 
-		for view in [consoleScroll, variablesScroll, sideTabs] as [NSView] {
+		for view in [consoleScroll, variablesScroll, sideTabs, threadPopUp, watchField, stackScroll]
+			as [NSView] {
 			view.translatesAutoresizingMaskIntoConstraints = false
 		}
 		toolbar.translatesAutoresizingMaskIntoConstraints = false
@@ -226,14 +277,31 @@ final class DebugPane: NSView {
 			split.bottomAnchor.constraint(equalTo: bottomAnchor),
 		])
 
-		for view in [variablesScroll, consoleScroll] as [NSView] {
-			NSLayoutConstraint.activate([
-				view.topAnchor.constraint(equalTo: rightSide.topAnchor),
-				view.leadingAnchor.constraint(equalTo: rightSide.leadingAnchor),
-				view.trailingAnchor.constraint(equalTo: rightSide.trailingAnchor),
-				view.bottomAnchor.constraint(equalTo: rightSide.bottomAnchor),
-			])
-		}
+		let inset = Theme.current.scaled(6)
+		NSLayoutConstraint.activate([
+			threadPopUp.topAnchor.constraint(equalTo: leftSide.topAnchor, constant: inset / 2),
+			threadPopUp.leadingAnchor.constraint(equalTo: leftSide.leadingAnchor, constant: inset),
+			threadPopUp.trailingAnchor.constraint(equalTo: leftSide.trailingAnchor, constant: -inset),
+
+			stackScroll.topAnchor.constraint(equalTo: threadPopUp.bottomAnchor, constant: inset / 2),
+			stackScroll.leadingAnchor.constraint(equalTo: leftSide.leadingAnchor),
+			stackScroll.trailingAnchor.constraint(equalTo: leftSide.trailingAnchor),
+			stackScroll.bottomAnchor.constraint(equalTo: leftSide.bottomAnchor),
+
+			watchField.topAnchor.constraint(equalTo: rightSide.topAnchor, constant: inset / 2),
+			watchField.leadingAnchor.constraint(equalTo: rightSide.leadingAnchor, constant: inset),
+			watchField.trailingAnchor.constraint(equalTo: rightSide.trailingAnchor, constant: -inset),
+
+			variablesScroll.topAnchor.constraint(equalTo: watchField.bottomAnchor, constant: inset / 2),
+			variablesScroll.leadingAnchor.constraint(equalTo: rightSide.leadingAnchor),
+			variablesScroll.trailingAnchor.constraint(equalTo: rightSide.trailingAnchor),
+			variablesScroll.bottomAnchor.constraint(equalTo: rightSide.bottomAnchor),
+
+			consoleScroll.topAnchor.constraint(equalTo: rightSide.topAnchor),
+			consoleScroll.leadingAnchor.constraint(equalTo: rightSide.leadingAnchor),
+			consoleScroll.trailingAnchor.constraint(equalTo: rightSide.trailingAnchor),
+			consoleScroll.bottomAnchor.constraint(equalTo: rightSide.bottomAnchor),
+		])
 
 		DispatchQueue.main.async { [weak split] in
 			guard let split else { return }
@@ -266,6 +334,12 @@ final class DebugPane: NSView {
 		session.onVariablesChanged = { [weak self] in
 			self?.rebuildVariableTree()
 		}
+		session.onWatchesChanged = { [weak self] in
+			self?.rebuildWatches()
+		}
+		session.onThreadsChanged = { [weak self] in
+			self?.rebuildThreads()
+		}
 		session.observeStopped { [weak self] file, line in
 			self?.onNavigate?(URL(fileURLWithPath: file), line)
 		}
@@ -282,6 +356,112 @@ final class DebugPane: NSView {
 
 	func shutdown() {
 		session.stop()
+	}
+
+	// MARK: - Copying
+
+	private func makeVariablesMenu() -> NSMenu {
+		let menu = NSMenu()
+		menu.autoenablesItems = false
+		menu.delegate = self
+		return menu
+	}
+
+	/// The row the menu was opened on, whichever kind it is.
+	private var clickedRowItem: Any? {
+		let row = variablesOutline.clickedRow >= 0
+			? variablesOutline.clickedRow
+			: variablesOutline.selectedRow
+		guard row >= 0 else { return nil }
+		return variablesOutline.item(atRow: row)
+	}
+
+	private func copy(_ text: String) {
+		NSPasteboard.general.clearContents()
+		NSPasteboard.general.setString(text, forType: .string)
+	}
+
+	@objc private func copyValue() {
+		switch clickedRowItem {
+		case let node as VariableNode: copy(node.variable.value)
+		case let node as WatchNode: copy(node.watch.value ?? "")
+		default: break
+		}
+	}
+
+	@objc private func copyName() {
+		switch clickedRowItem {
+		case let node as VariableNode: copy(node.variable.name)
+		case let node as WatchNode: copy(node.watch.expression)
+		default: break
+		}
+	}
+
+	/// Copies `name: value`, which is what goes into a note or a message.
+	@objc private func copyBoth() {
+		switch clickedRowItem {
+		case let node as VariableNode: copy("\(node.variable.name) = \(node.variable.value)")
+		case let node as WatchNode: copy("\(node.watch.expression) = \(node.watch.value ?? "")")
+		default: break
+		}
+	}
+
+	/// Watches whatever was clicked, so a local can be followed across frames.
+	@objc private func watchClicked() {
+		switch clickedRowItem {
+		case let node as VariableNode: session.addWatch(node.variable.name)
+		case let node as WatchNode: session.addWatch(node.watch.expression)
+		default: break
+		}
+	}
+
+	@objc private func removeClickedWatch() {
+		guard let node = clickedRowItem as? WatchNode else { return }
+		session.removeWatch(id: node.watch.id)
+	}
+
+	@objc private func removeAllWatches() {
+		session.removeAllWatches()
+	}
+
+	// MARK: - Watches and threads
+
+	@objc private func watchEntered() {
+		let expression = watchField.stringValue
+		guard !expression.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+		session.addWatch(expression)
+		watchField.stringValue = ""
+	}
+
+	@objc private func threadChosen() {
+		let index = threadPopUp.indexOfSelectedItem
+		guard session.threads.indices.contains(index) else { return }
+		let thread = session.threads[index]
+		Task { await session.selectThread(id: thread.id) }
+	}
+
+	private func rebuildThreads() {
+		threadPopUp.removeAllItems()
+		let threads = session.threads
+		threadPopUp.isEnabled = threads.count > 1
+
+		guard !threads.isEmpty else {
+			threadPopUp.addItem(withTitle: "No goroutines")
+			return
+		}
+		for thread in threads {
+			threadPopUp.addItem(withTitle: thread.name.isEmpty ? "Thread \(thread.id)" : thread.name)
+		}
+		if let selected = session.selectedThreadID,
+		   let index = threads.firstIndex(where: { $0.id == selected }) {
+			threadPopUp.selectItem(at: index)
+		}
+	}
+
+	private func rebuildWatches() {
+		watchNodes = session.watches.map { WatchNode(watch: $0) }
+		variablesOutline.reloadData()
+		for node in scopeNodes { variablesOutline.expandItem(node) }
 	}
 
 	// MARK: - Variables
@@ -352,9 +532,43 @@ extension DebugPane: NSTableViewDataSource, NSTableViewDelegate {
 
 // MARK: - Variables
 
+extension DebugPane: NSMenuDelegate {
+	func menuNeedsUpdate(_ menu: NSMenu) {
+		menu.removeAllItems()
+
+		func item(_ title: String, _ selector: Selector) -> NSMenuItem {
+			let entry = NSMenuItem(title: title, action: selector, keyEquivalent: "")
+			entry.target = self
+			return entry
+		}
+
+		let clicked = clickedRowItem
+		guard clicked is VariableNode || clicked is WatchNode else {
+			if !session.watches.isEmpty {
+				menu.addItem(item("Remove All Watches", #selector(removeAllWatches)))
+			}
+			return
+		}
+
+		menu.addItem(item("Copy Value", #selector(copyValue)))
+		menu.addItem(item("Copy Name", #selector(copyName)))
+		menu.addItem(item("Copy Name and Value", #selector(copyBoth)))
+		menu.addItem(.separator())
+
+		if clicked is WatchNode {
+			menu.addItem(item("Remove Watch", #selector(removeClickedWatch)))
+			menu.addItem(item("Remove All Watches", #selector(removeAllWatches)))
+		} else {
+			menu.addItem(item("Add to Watches", #selector(watchClicked)))
+		}
+	}
+}
+
 extension DebugPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 	func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
-		if item == nil { return scopeNodes.count }
+		// Watches first, then the scopes: what you asked to see before what you
+		// were given.
+		if item == nil { return watchNodes.count + scopeNodes.count }
 		if let scope = item as? ScopeNode { return scope.children.count }
 		if let variable = item as? VariableNode {
 			// Report one child before loading, so the triangle appears and can be
@@ -366,7 +580,9 @@ extension DebugPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 	}
 
 	func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
-		if item == nil { return scopeNodes[index] }
+		if item == nil {
+			return index < watchNodes.count ? watchNodes[index] : scopeNodes[index - watchNodes.count]
+		}
 		if let scope = item as? ScopeNode { return scope.children[index] }
 		if let variable = item as? VariableNode {
 			if variable.children.isEmpty && variable.variable.isExpandable {
@@ -401,6 +617,17 @@ extension DebugPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 	}
 
 	func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
+		if let watch = item as? WatchNode {
+			return VariableCell(
+				variable: Variable(
+					name: watch.watch.expression,
+					value: watch.watch.value ?? "…",
+					type: nil,
+					variablesReference: watch.watch.variablesReference
+				),
+				isFaded: watch.watch.failed
+			)
+		}
 		if let scope = item as? ScopeNode {
 			return ScopeCell(name: scope.scope.name)
 		}
@@ -494,9 +721,13 @@ private final class ScopeCell: NSView {
 
 private final class VariableCell: NSView {
 	private let variable: Variable
+	/// A watch that could not be evaluated in this frame is drawn quietly: it
+	/// is out of scope here, not wrong.
+	private let isFaded: Bool
 
-	init(variable: Variable) {
+	init(variable: Variable, isFaded: Bool = false) {
 		self.variable = variable
+		self.isFaded = isFaded
 		super.init(frame: .zero)
 	}
 
@@ -527,9 +758,12 @@ private final class VariableCell: NSView {
 			x += typeString.size().width + Theme.current.scaled(8)
 		}
 
+		let valueColour = isFaded
+			? Theme.current.gitIgnored
+			: (isSelected ? NSColor.hex(0xE8EAED) : Theme.current.gitAdded)
 		let value = NSAttributedString(string: variable.value, attributes: [
 			.font: font,
-			.foregroundColor: isSelected ? NSColor.hex(0xE8EAED) : Theme.current.gitAdded,
+			.foregroundColor: valueColour,
 		])
 		value.draw(in: NSRect(
 			x: x,
