@@ -514,10 +514,7 @@ final class ProjectNavigatorViewController: NSViewController {
 	}
 
 	private func report(problem: String, kind: EntryName.Kind) {
-		let failure = NSAlert()
-		failure.messageText = "Cannot create that \(kind == .file ? "file" : "folder")"
-		failure.informativeText = problem
-		failure.runModal()
+		Toast.post("Cannot create that \(kind == .file ? "file" : "folder")", detail: problem)
 	}
 
 	@objc private func contextNewFile() {
@@ -535,7 +532,7 @@ final class ProjectNavigatorViewController: NSViewController {
 			}
 			try Data().write(to: destination, options: .withoutOverwriting)
 		} catch {
-			NSAlert(error: error).runModal()
+			Toast.post("Could not create the folder", detail: error.localizedDescription)
 			return
 		}
 
@@ -571,26 +568,20 @@ final class ProjectNavigatorViewController: NSViewController {
 
 		// Checked here so the failure is a sentence rather than a POSIX error.
 		if let problem = FolderName.problem(name, showingHiddenFiles: Settings.shared.showHiddenFiles) {
-			let failure = NSAlert()
-			failure.messageText = "Cannot create that folder"
-			failure.informativeText = problem
-			failure.runModal()
+			Toast.post("Cannot create that folder", detail: problem)
 			return
 		}
 
 		let destination = parent.appendingPathComponent(name)
 		guard !FileManager.default.fileExists(atPath: destination.path) else {
-			let failure = NSAlert()
-			failure.messageText = "Cannot create that folder"
-			failure.informativeText = "“\(name)” already exists here."
-			failure.runModal()
+			Toast.post("Cannot create that folder", detail: "“\(name)” already exists here.")
 			return
 		}
 
 		do {
 			try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: false)
 		} catch {
-			NSAlert(error: error).runModal()
+			Toast.post("Could not create the folder", detail: error.localizedDescription)
 			return
 		}
 
@@ -623,7 +614,7 @@ final class ProjectNavigatorViewController: NSViewController {
 			try FileManager.default.moveItem(at: node.url, to: destination)
 			// The filesystem watcher refreshes the tree on its own.
 		} catch {
-			NSAlert(error: error).runModal()
+			Toast.post("Could not create the folder", detail: error.localizedDescription)
 		}
 	}
 
@@ -632,7 +623,9 @@ final class ProjectNavigatorViewController: NSViewController {
 		// Trash rather than delete: recoverable, and no confirmation needed.
 		NSWorkspace.shared.recycle([node.url]) { _, error in
 			guard let error else { return }
-			DispatchQueue.main.async { NSAlert(error: error).runModal() }
+			DispatchQueue.main.async {
+				Toast.post("Could not rename that", detail: error.localizedDescription)
+			}
 		}
 	}
 

@@ -23,7 +23,17 @@ final class ToolWindowBar: NSView {
 	var onToggleStructure: (() -> Void)?
 	var onToggleScratches: (() -> Void)?
 	var onToggleHistory: (() -> Void)?
+	/// Bring an existing session forward, when there is one.
 	var onToggleDebug: (() -> Void)?
+	/// Whether anything is being debugged, which decides whether the button
+	/// shows the panel or offers ways to start.
+	var isDebugRunning: (() -> Bool)?
+	var onDebugGoPackage: (() -> Void)?
+	var onDebugExecutable: (() -> Void)?
+	var onAttachToProcess: (() -> Void)?
+	/// Whether this project looks like a Go module, so the Go entry is offered
+	/// first rather than at all times.
+	var isGoProject: (() -> Bool)?
 
 	private var projectButton: StripButton!
 	private var terminalButton: StripButton!
@@ -86,6 +96,40 @@ final class ToolWindowBar: NSView {
 		menu.popUp(positioning: nil, at: origin, in: reviewButton)
 	}
 
+	/// A running session is brought forward; otherwise the button offers the
+	/// ways to start one.
+	///
+	/// It used to start a Go session outright, which in a project that is not
+	/// Go produced an error about a missing go.mod — an answer to a question
+	/// nobody asked.
+	private func debugButtonPressed() {
+		if isDebugRunning?() == true {
+			onToggleDebug?()
+			return
+		}
+
+		let menu = NSMenu()
+		func item(_ title: String, _ selector: Selector) -> NSMenuItem {
+			let entry = NSMenuItem(title: title, action: selector, keyEquivalent: "")
+			entry.target = self
+			return entry
+		}
+
+		// Go first where the project is Go, since that is then the likely one.
+		if isGoProject?() == true {
+			menu.addItem(item("Debug Go Package", #selector(debugGoClicked)))
+		}
+		menu.addItem(item("Debug Executable\u{2026}", #selector(debugExecutableClicked)))
+		menu.addItem(item("Attach to Process\u{2026}", #selector(attachClicked)))
+
+		let origin = NSPoint(x: debugButton.bounds.maxX + Theme.current.scaled(4), y: 0)
+		menu.popUp(positioning: nil, at: origin, in: debugButton)
+	}
+
+	@objc private func debugGoClicked() { onDebugGoPackage?() }
+	@objc private func debugExecutableClicked() { onDebugExecutable?() }
+	@objc private func attachClicked() { onAttachToProcess?() }
+
 	@objc private func reviewBranchClicked() { onReviewBranch?() }
 	@objc private func reviewUncommittedClicked() { onReviewUncommitted?() }
 
@@ -133,7 +177,7 @@ final class ToolWindowBar: NSView {
 		// Bottom-docked, beside the terminal: the debugger is a panel down
 		// there too, and this is where somebody looks for it.
 		debugButton = StripButton(symbol: "ladybug", tooltip: "Debug", enabled: true)
-		debugButton.onClick = { [weak self] in self?.onToggleDebug?() }
+		debugButton.onClick = { [weak self] in self?.debugButtonPressed() }
 
 		let bottomStack = NSStackView(views: [reviewButton, debugButton, terminalButton])
 		bottomStack.orientation = .vertical

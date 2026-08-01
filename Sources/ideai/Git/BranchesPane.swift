@@ -356,10 +356,10 @@ final class BranchesPane: NSView {
 	}
 
 	private func presentFailure(_ message: String) {
-		let alert = NSAlert()
-		alert.messageText = "git reported a problem"
-		alert.informativeText = message.trimmingCharacters(in: .whitespacesAndNewlines)
-		if let window { alert.beginSheetModal(for: window) } else { alert.runModal() }
+		Toast.post(
+			"git reported a problem",
+			detail: message.trimmingCharacters(in: .whitespacesAndNewlines)
+		)
 	}
 
 	func applyThemeChange() {

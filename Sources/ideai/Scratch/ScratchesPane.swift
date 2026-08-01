@@ -309,11 +309,7 @@ final class ScratchesPane: NSView {
 	}
 
 	private func present(_ error: Error, doing what: String) {
-		let alert = NSAlert()
-		alert.messageText = "Could not \(what)."
-		alert.informativeText = error.localizedDescription
-		alert.alertStyle = .warning
-		if let window { alert.beginSheetModal(for: window) } else { alert.runModal() }
+		Toast.post("Could not \(what)", detail: error.localizedDescription)
 	}
 
 	private func makeMenu() -> NSMenu {

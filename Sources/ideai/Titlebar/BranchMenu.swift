@@ -115,10 +115,7 @@ enum ForkIntegration {
 		) { _, error in
 			guard let error else { return }
 			DispatchQueue.main.async {
-				let alert = NSAlert()
-				alert.messageText = "Could not open Fork"
-				alert.informativeText = error.localizedDescription
-				alert.runModal()
+				Toast.post("Could not open Fork", detail: error.localizedDescription)
 			}
 		}
 	}
@@ -140,13 +137,12 @@ private final class BranchMenuTarget: NSObject {
 			if result.exitCode != 0 {
 				// Most often a dirty work tree; git's own message is the clearest
 				// explanation we could show.
-				let alert = NSAlert()
-				alert.alertStyle = .warning
-				alert.messageText = "Could not switch to \(request.branch)"
-				alert.informativeText = result.stderr.isEmpty
-					? "git exited with code \(result.exitCode)."
-					: result.stderr
-				alert.runModal()
+				Toast.post(
+					"Could not switch to \(request.branch)",
+					detail: result.stderr.isEmpty
+						? "git exited with code \(result.exitCode)."
+						: result.stderr
+				)
 				return
 			}
 			// The working tree changed underneath every open window on this repo.

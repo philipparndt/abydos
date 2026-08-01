@@ -161,6 +161,27 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	private var navigatorWidth: CGFloat = 260
 
+	/// Where news the user did not ask for goes.
+	private lazy var toasts = ToastPresenter(window: window)
+
+	/// Says something without stopping anything.
+	///
+	/// Automatic modals are banned here: they take the keyboard and demand
+	/// dismissal for news as small as "no go.mod in this project". A toast
+	/// says it in the corner and opens the details if it turns out to matter.
+	func notify(_ title: String, detail: String? = nil, kind: Toast.Kind = .error) {
+		toasts.show(Toast(kind: kind, title: title, detail: detail))
+	}
+
+	/// Shows a toast raised from somewhere with no window of its own.
+	///
+	/// Only the key window, so a message does not appear three times on a
+	/// machine with three of them open.
+	@objc private func toastPosted(_ notification: Notification) {
+		guard window?.isKeyWindow == true, let toast = notification.userInfo?["toast"] as? Toast else { return }
+		toasts.show(toast)
+	}
+
 	// MARK: - Init
 
 	init() {
@@ -222,7 +243,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		toolStrip.onToggleStructure = { [weak self] in self?.showSidebarTool(.structure) }
 		toolStrip.onToggleScratches = { [weak self] in self?.showSidebarTool(.scratches) }
 		toolStrip.onToggleHistory = { [weak self] in self?.showSidebarTool(.history) }
+		NotificationCenter.default.addObserver(
+			self, selector: #selector(toastPosted(_:)), name: .ideaiToast, object: nil
+		)
+
 		toolStrip.onToggleDebug = { [weak self] in self?.showDebugPanel(nil) }
+		toolStrip.isDebugRunning = { [weak self] in self?.bottomPanel.activeDebugSession != nil }
+		toolStrip.isGoProject = { [weak self] in
+			guard let root = self?.project?.root else { return false }
+			return GoTooling.isGoModule(root) || !RunConfigurationDiscovery
+				.searchDirectories(from: root)
+				.filter(GoTooling.isGoModule)
+				.isEmpty
+		}
+		toolStrip.onDebugGoPackage = { [weak self] in self?.goDebug(nil) }
+		toolStrip.onDebugExecutable = { [weak self] in self?.debugExecutable(nil) }
+		toolStrip.onAttachToProcess = { [weak self] in self?.attachToProcess(nil) }
 
 		navigatorContainer = ColoredView(color: Theme.current.sidebarBackground)
 		primaryContainer = navigatorContainer
@@ -509,7 +545,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// The other half of "Go Debug": a native executable is debugged by LLDB,
 	/// which speaks the same protocol, so nothing above the adapter changes.
 	@objc func debugExecutable(_ sender: Any?) {
-		guard let project else { return }
+		// Works with no project open: a binary is a thing you can debug on its
+		// own, and needing a project first would be a rule for its own sake.
+		let root = project?.root ?? FileManager.default.homeDirectoryForCurrentUser
 
 		let panel = NSOpenPanel()
 		panel.title = "Debug an executable"
@@ -517,11 +555,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		panel.canChooseDirectories = false
 		panel.canChooseFiles = true
 		panel.allowsMultipleSelection = false
-		panel.directoryURL = project.root
+		panel.directoryURL = root
 
 		let start: (NSApplication.ModalResponse) -> Void = { [weak self] response in
 			guard response == .OK, let url = panel.url, let self else { return }
-			let adapter = DebugAdapters.adapter(forProgramAt: url.path, projectRoot: project.root)
+			// Judged from where the binary is when there is no project to judge
+			// from — a Go binary sitting next to a go.mod is still Go's.
+			let adapter = DebugAdapters.adapter(
+				forProgramAt: url.path,
+				projectRoot: self.project?.root ?? url.deletingLastPathComponent()
+			)
 			guard let executable = DebugAdapters.executable(for: adapter) else {
 				self.presentGoError("Could not find `\(adapter.command)`. \(adapter.installHint)")
 				return
@@ -543,7 +586,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// The case launching cannot cover: a server that is already up, or a
 	/// process that only misbehaves after an hour of work.
 	@objc func attachToProcess(_ sender: Any?) {
-		guard let project else { return }
 		let processes = RunningProcesses.list()
 		guard !processes.isEmpty else {
 			presentGoError("No processes to attach to.")
@@ -563,7 +605,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		let attach: (NSApplication.ModalResponse) -> Void = { [weak self] response in
 			guard response == .alertFirstButtonReturn, let self else { return }
 			let chosen = processes[popup.indexOfSelectedItem]
-			let adapter = DebugAdapters.adapter(forProgramAt: chosen.path, projectRoot: project.root)
+			let adapter = DebugAdapters.adapter(
+				forProgramAt: chosen.path,
+				projectRoot: self.project?.root ?? URL(fileURLWithPath: chosen.path).deletingLastPathComponent()
+			)
 			guard let executable = DebugAdapters.executable(for: adapter) else {
 				self.presentGoError("Could not find `\(adapter.command)`. \(adapter.installHint)")
 				return
@@ -1238,10 +1283,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	}
 
 	private func presentGoError(_ message: String) {
-		let alert = NSAlert()
-		alert.messageText = "Cannot run this Go command"
-		alert.informativeText = message
-		alert.runModal()
+		// The first line is what fits in the corner; the rest is behind it.
+		let firstLine = message.split(separator: "\n").first.map(String.init) ?? message
+		notify(firstLine, detail: message.count > firstLine.count ? message : nil)
 	}
 
 	// MARK: - Running
@@ -1335,12 +1379,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	}
 
 	private func presentNothingToRun(at line: Int, in url: URL) {
-		let alert = NSAlert()
-		alert.messageText = "Nothing to run here"
-		alert.informativeText = """
+		notify("Nothing to run here", detail: """
 		No run configuration was found for \(url.lastPathComponent):\(line). 		This is a bug — the marker is drawn from the same list.
-		"""
-		if let window { alert.beginSheetModal(for: window) } else { alert.runModal() }
+		""")
 	}
 
 	@objc private func runMenuItem(_ sender: NSMenuItem) {
@@ -1362,10 +1403,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	func debug(_ configuration: RunConfiguration) {
 		guard configuration.isDebuggable else { return }
 		guard let delve = GoTooling.findDelveExecutable() else {
-			let alert = NSAlert()
-			alert.messageText = "Delve is not installed"
-			alert.informativeText = "Install it with: go install github.com/go-delve/delve/cmd/dlv@latest"
-			if let window { alert.beginSheetModal(for: window) } else { alert.runModal() }
+			notify(
+				"Delve is not installed",
+				detail: "Install it with: go install github.com/go-delve/delve/cmd/dlv@latest"
+			)
 			return
 		}
 		// Delve is told the directory, which is where the package lives.
@@ -1390,10 +1431,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// Shows every configuration, for the Run menu.
 	@objc func showRunConfigurations(_ sender: Any?) {
 		guard !runConfigurations.isEmpty else {
-			let alert = NSAlert()
-			alert.messageText = "Nothing to run"
-			alert.informativeText = "No run configurations, makefiles or Go entry points were found in this project."
-			if let window { alert.beginSheetModal(for: window) } else { alert.runModal() }
+			notify(
+				"Nothing to run",
+				detail: "No run configurations, makefiles or Go entry points were found in this project."
+			)
 			return
 		}
 
@@ -1485,14 +1526,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// window it concerns and does not stop the rest of the app, which matters
 	/// for something as ordinary as a clean working tree.
 	private func presentReviewProblem(title: String, message: String) {
-		let alert = NSAlert()
-		alert.messageText = title
-		alert.informativeText = message
-		guard let window else {
-			alert.runModal()
-			return
-		}
-		alert.beginSheetModal(for: window)
+		notify(title, detail: message)
 	}
 
 	/// Best guess at the branch a review should compare against.
@@ -1521,13 +1555,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		bottomPanel.newTerminal()
 	}
 
-	/// Brings the debug panel forward, or starts a session if there is none.
+	/// Brings the debug panel forward.
 	///
-	/// The strip's button is a way in, not only a way to look: pressing it with
-	/// nothing running is a reasonable way to say "debug this".
+	/// Only that: what to start when nothing is running is a question with more
+	/// than one answer, and the strip's button asks it rather than guessing.
 	@objc func showDebugPanel(_ sender: Any?) {
 		setPanelVisible(true)
-		if bottomPanel.showDebug() == nil { goDebug(nil) }
+		bottomPanel.showDebug()
 	}
 
 	/// ⌘T while the keyboard is in the terminal: another tab.
@@ -1761,11 +1795,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	private func finishDiffOperation(_ result: GitRepository.ProcessResult, change: GitChange) {
 		if result.exitCode != 0 {
-			let alert = NSAlert()
-			alert.messageText = "git reported a problem"
-			alert.informativeText = (result.stderr.isEmpty ? result.stdout : result.stderr)
-				.trimmingCharacters(in: .whitespacesAndNewlines)
-			if let window { alert.beginSheetModal(for: window) } else { alert.runModal() }
+			notify(
+				"git reported a problem",
+				detail: (result.stderr.isEmpty ? result.stdout : result.stderr)
+					.trimmingCharacters(in: .whitespacesAndNewlines)
+			)
 			return
 		}
 

@@ -364,7 +364,7 @@ private final class SwitcherViewController: NSViewController {
 			try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
 			(NSApp.delegate as? AppDelegate)?.open(projectAt: url)
 		} catch {
-			NSAlert(error: error).runModal()
+			Toast.post("Could not open that folder", detail: error.localizedDescription)
 		}
 	}
 
@@ -400,11 +400,12 @@ private final class SwitcherViewController: NSViewController {
 				if result.exitCode == 0 {
 					(NSApp.delegate as? AppDelegate)?.open(projectAt: destination)
 				} else {
-					let alert = NSAlert()
-					alert.alertStyle = .warning
-					alert.messageText = "Clone failed"
-					alert.informativeText = result.stderr.isEmpty ? "git exited with code \(result.exitCode)." : result.stderr
-					alert.runModal()
+					Toast.post(
+						"Clone failed",
+						detail: result.stderr.isEmpty
+							? "git exited with code \(result.exitCode)."
+							: result.stderr
+					)
 				}
 			}
 		}

@@ -157,6 +157,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if options.showToast {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+				controller?.notify(
+					"Cannot run this Go command",
+					detail: "No go.mod was found in this project or below it."
+				)
+			}
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
+				controller?.notify("Saved 3 files", kind: .information)
+			}
+		}
+
 		if options.debugInspect {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
 				if let binary = options.debugBinary {

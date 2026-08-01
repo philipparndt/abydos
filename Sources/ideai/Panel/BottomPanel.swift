@@ -412,7 +412,17 @@ final class BottomPanel: NSView {
 		start: DebugStart,
 		breakpoints: [String: [Breakpoint]] = [:]
 	) -> DebugSession? {
-		guard let session = makeDebugSession(breakpoints: breakpoints) else { return nil }
+		// With no project open there is no working directory, and the program's
+		// own is the sensible stand-in — debugging a binary should not require
+		// having opened a folder first.
+		let fallback: URL? = {
+			if case let .launch(program, _) = start {
+				return URL(fileURLWithPath: program).deletingLastPathComponent()
+			}
+			return FileManager.default.homeDirectoryForCurrentUser
+		}()
+		guard let session = makeDebugSession(breakpoints: breakpoints, fallbackRoot: fallback)
+		else { return nil }
 
 		Task {
 			do {
@@ -427,10 +437,7 @@ final class BottomPanel: NSView {
 				}
 			} catch {
 				await MainActor.run {
-					let alert = NSAlert()
-					alert.messageText = "Could not start the debugger"
-					alert.informativeText = error.localizedDescription
-					alert.runModal()
+					Toast.post("Could not start the debugger", detail: error.localizedDescription)
 				}
 			}
 		}
@@ -461,8 +468,11 @@ final class BottomPanel: NSView {
 	///
 	/// Everything a session needs regardless of which debugger is behind it or
 	/// whether it launches a program or attaches to one.
-	private func makeDebugSession(breakpoints: [String: [Breakpoint]]) -> DebugSession? {
-		guard let root = workingDirectory else { return nil }
+	private func makeDebugSession(
+		breakpoints: [String: [Breakpoint]],
+		fallbackRoot: URL? = nil
+	) -> DebugSession? {
+		guard let root = workingDirectory ?? fallbackRoot else { return nil }
 
 		// One debug session at a time; a second would fight over breakpoints.
 		if let index = sessions.firstIndex(where: { if case .debug = $0.kind { return true }; return false }) {
@@ -486,10 +496,9 @@ final class BottomPanel: NSView {
 			// Nothing started, so the log is the only thing worth looking at.
 			pane?.showConsole()
 			self?.debugOutput?("\n" + message + "\n")
-			let alert = NSAlert()
-			alert.messageText = "The debugger did not start"
-			alert.informativeText = message
-			if let window = self?.window { alert.beginSheetModal(for: window) } else { alert.runModal() }
+			// The console already has the whole story, so the corner only has
+			// to say that there is one.
+			Toast.post("The debugger did not start", detail: message)
 		}
 
 		// Registered before the launch starts, not after it. The adapter asks

@@ -573,15 +573,7 @@ final class EditorViewController: NSViewController {
 	}
 
 	private func presentScratchFailure(_ error: Error) {
-		let alert = NSAlert()
-		alert.messageText = "Could not create a scratch file."
-		alert.informativeText = error.localizedDescription
-		alert.alertStyle = .warning
-		if let window = view.window {
-			alert.beginSheetModal(for: window)
-		} else {
-			alert.runModal()
-		}
+		Toast.post("Could not create a scratch file", detail: error.localizedDescription)
 	}
 
 	// MARK: - Opening
@@ -1446,7 +1438,7 @@ final class EditorViewController: NSViewController {
 				try tab.document?.save()
 				return true
 			} catch {
-				NSAlert(error: error).runModal()
+				Toast.post("Could not save \(tab.url.lastPathComponent)", detail: error.localizedDescription)
 				return false
 			}
 		case .alertSecondButtonReturn:
@@ -1465,11 +1457,7 @@ final class EditorViewController: NSViewController {
 	}
 
 	private func presentUnopenable(_ url: URL, reason: String) {
-		let alert = NSAlert()
-		alert.alertStyle = .informational
-		alert.messageText = "Cannot open \(url.lastPathComponent)"
-		alert.informativeText = reason
-		alert.runModal()
+		Toast.post("Cannot open \(url.lastPathComponent)", detail: reason, kind: .warning)
 	}
 
 	// MARK: - Commands
@@ -1480,7 +1468,7 @@ final class EditorViewController: NSViewController {
 			try tab.document?.save()
 			refreshTabBar()
 		} catch {
-			NSAlert(error: error).runModal()
+			Toast.post("Could not save \(tab.url.lastPathComponent)", detail: error.localizedDescription)
 		}
 	}
 

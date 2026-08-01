@@ -277,14 +277,10 @@ final class ChangesPane: NSView {
 	}
 
 	private func presentFailure(_ message: String) {
-		let alert = NSAlert()
-		alert.messageText = "git reported a problem"
-		alert.informativeText = message.trimmingCharacters(in: .whitespacesAndNewlines)
-		guard let window else {
-			alert.runModal()
-			return
-		}
-		alert.beginSheetModal(for: window)
+		Toast.post(
+			"git reported a problem",
+			detail: message.trimmingCharacters(in: .whitespacesAndNewlines)
+		)
 	}
 
 	/// Selects the first unstaged change, so the screenshot harness can verify

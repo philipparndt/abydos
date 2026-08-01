@@ -90,6 +90,8 @@ struct LaunchOptions {
 	var debugInspect = false
 	/// Debug this binary with whichever adapter suits it.
 	var debugBinary: String?
+	/// Raise a toast, to see what one looks like.
+	var showToast = false
 	/// Wait this long before capturing, for a language server to answer.
 	var lspWait: Double?
 	/// Rewrite the open file externally after this many seconds.
@@ -159,6 +161,7 @@ struct LaunchOptions {
 			case "--bp-condition": options.breakpointCondition = next()
 			case "--debug-inspect": options.debugInspect = true
 			case "--debug-binary": options.debugBinary = next()
+			case "--toast":      options.showToast = true
 			case "--lsp-wait":   options.lspWait = next().flatMap(Double.init)
 			case "--external-edit": options.externalEdit = next().flatMap(Double.init)
 			case "--send-bytes": options.terminalBytes = next()
