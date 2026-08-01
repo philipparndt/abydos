@@ -527,11 +527,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// ours to paint; with a transparent titlebar this is what shows there.
 	private func buildTitlebarBackdrop() {
 		guard let contentView = window?.contentView else { return }
-		// Hidden until something runs: when it is not saying anything, the
-		// titlebar should look exactly as it did before, with the sidebar's
-		// colour meeting the editor's underneath it.
-		let backdrop = ColoredView(color: Theme.current.toolbarBackground)
-		backdrop.isHidden = true
+		// Always drawn, so the titlebar is one strip across the whole window:
+		// the panes below run up behind it and their edges would otherwise
+		// show through, with the sidebar's colour meeting the editor's part
+		// way along a row that belongs to neither.
+		let backdrop = ColoredView(color: Theme.current.windowBackground)
 		backdrop.translatesAutoresizingMaskIntoConstraints = false
 		contentView.addSubview(backdrop, positioned: .above, relativeTo: nil)
 
@@ -549,17 +549,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// Green while something is running: the whole bar, not a badge on it.
 	private func setTitlebarRunning(_ running: Bool) {
 		guard let backdrop = titlebarBackdrop else { return }
-		backdrop.isHidden = !running
 		// Everything added since sits above it, so it is raised each time
 		// rather than once.
-		if running { backdrop.superview?.addSubview(backdrop, positioned: .above, relativeTo: nil) }
+		backdrop.superview?.addSubview(backdrop, positioned: .above, relativeTo: nil)
 
-		// Dark enough to keep the white pills legible, green enough to be
-		// unmistakable from across the room.
+		// The darker of the two backgrounds when nothing is running, so the bar
+		// reads as its own strip rather than as more sidebar. Green when
+		// something is: dark enough to keep the pills legible, green enough to
+		// be unmistakable from across the room.
 		let colour = running
 			? Theme.current.gitAdded.blended(withFraction: 0.55, of: Theme.current.toolbarBackground)
-				?? Theme.current.toolbarBackground
-			: Theme.current.toolbarBackground
+				?? Theme.current.windowBackground
+			: Theme.current.windowBackground
 		backdrop.setColor(colour)
 	}
 
@@ -593,6 +594,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		let inset = max(0, contentView.bounds.height - layoutRect.height - layoutRect.origin.y)
 
 		titlebarBackdropHeight?.constant = inset
+		// Views added after it would otherwise cover it.
+		if let backdrop = titlebarBackdrop {
+			backdrop.superview?.addSubview(backdrop, positioned: .above, relativeTo: nil)
+		}
 		navigator.setTopInset(inset)
 		sidebarTopInset = inset
 		if isPanelMaximized { bottomPanel.setTopInset(inset) }
