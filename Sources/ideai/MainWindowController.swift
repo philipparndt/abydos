@@ -3059,7 +3059,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	@objc func showProjectSwitcher(_ sender: Any?) {
 		guard let pill = projectPill else { return }
-		ProjectSwitcherPopover.show(relativeTo: pill, currentProject: project)
+		ProjectSwitcherPopover.show(relativeTo: pill, currentProject: project, owner: self)
 	}
 
 	// MARK: - NSWindowDelegate

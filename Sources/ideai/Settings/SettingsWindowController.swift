@@ -343,6 +343,12 @@ final class SettingsPaneController: NSViewController {
 	static func navigatorRows() -> [Row] {
 		[
 			.toggle(
+				title: "Open projects in a new window",
+				help: "Off, choosing another project changes this window. On, it opens beside it.",
+				get: { Settings.shared.opensProjectsInNewWindow },
+				set: { Settings.shared.opensProjectsInNewWindow = $0 }
+			),
+			.toggle(
 				title: "Show hidden files",
 				help: "Files and folders beginning with a dot.",
 				get: { Settings.shared.showHiddenFiles },

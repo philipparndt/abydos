@@ -12,7 +12,11 @@ enum ProjectSwitcherPopover {
 		activeController?.setFilter(text)
 	}
 
-	static func show(relativeTo pill: PillButton, currentProject: Project?) {
+	static func show(
+		relativeTo pill: PillButton,
+		currentProject: Project?,
+		owner: MainWindowController? = nil
+	) {
 		// Clicking the pill while open should dismiss rather than stack popovers.
 		if let active, active.isShown {
 			active.close()
@@ -20,7 +24,7 @@ enum ProjectSwitcherPopover {
 			return
 		}
 
-		let controller = SwitcherViewController(currentProject: currentProject)
+		let controller = SwitcherViewController(currentProject: currentProject, owner: owner)
 		let popover = NSPopover()
 		popover.contentViewController = controller
 		popover.behavior = .transient
@@ -94,14 +98,18 @@ private final class SwitcherViewController: NSViewController {
 	var onDismiss: (() -> Void)?
 
 	private let currentProject: Project?
+	/// The window the choice was made in, which is the one that changes
+	/// project unless the setting says to open another.
+	private weak var owner: MainWindowController?
 	private var rows: [Row] = []
 	private var tableView: NSTableView!
 	private var filterField: NSSearchField!
 	/// What the user has typed. Empty shows the full menu.
 	private var filterText = "" 
 
-	init(currentProject: Project?) {
+	init(currentProject: Project?, owner: MainWindowController?) {
 		self.currentProject = currentProject
+		self.owner = owner
 		super.init(nibName: nil, bundle: nil)
 	}
 
@@ -348,7 +356,7 @@ private final class SwitcherViewController: NSViewController {
 			break
 		case let .project(entry, _):
 			onDismiss?()
-			(NSApp.delegate as? AppDelegate)?.open(projectAt: entry.url)
+			(NSApp.delegate as? AppDelegate)?.open(projectAt: entry.url, from: owner)
 		}
 	}
 
@@ -362,7 +370,7 @@ private final class SwitcherViewController: NSViewController {
 		guard panel.runModal() == .OK, let url = panel.url else { return }
 		do {
 			try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-			(NSApp.delegate as? AppDelegate)?.open(projectAt: url)
+			(NSApp.delegate as? AppDelegate)?.open(projectAt: url, from: owner)
 		} catch {
 			Toast.post("Could not open that folder", detail: error.localizedDescription)
 		}
@@ -398,7 +406,7 @@ private final class SwitcherViewController: NSViewController {
 			let result = await GitRepository.run(["clone", remote, destination.path], in: parent)
 			await MainActor.run {
 				if result.exitCode == 0 {
-					(NSApp.delegate as? AppDelegate)?.open(projectAt: destination)
+					(NSApp.delegate as? AppDelegate)?.open(projectAt: destination, from: owner)
 				} else {
 					Toast.post(
 						"Clone failed",

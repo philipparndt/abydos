@@ -28,6 +28,7 @@ public final class Settings {
 			Key.terminalGPURendering: false,
 			Key.terminalScheme: "blue",
 			Key.terminalBellStyle: "sound",
+			Key.opensProjectsInNewWindow: false,
 		])
 	}
 
@@ -39,6 +40,7 @@ public final class Settings {
 		static let editorLineHeight = "editorLineHeight"
 		static let tabWidth = "tabWidth"
 		static let showHiddenFiles = "showHiddenFiles"
+		static let opensProjectsInNewWindow = "opensProjectsInNewWindow"
 		static let excludedDirectories = "excludedDirectories"
 		static let uiScale = "uiScale"
 		static let terminalFontName = "terminalFontName"
@@ -186,6 +188,17 @@ public final class Settings {
 	public var showHiddenFiles: Bool {
 		get { defaults.bool(forKey: Key.showHiddenFiles) }
 		set { set(newValue, Key.showHiddenFiles) }
+	}
+
+	/// Whether choosing another project opens a window or replaces this one.
+	///
+	/// Replacing by default: the window is where you were working, and a
+	/// second one for the same task is a window to close later. Somebody with
+	/// two projects open side by side wants the opposite, which is what the
+	/// setting is for.
+	public var opensProjectsInNewWindow: Bool {
+		get { defaults.bool(forKey: Key.opensProjectsInNewWindow) }
+		set { set(newValue, Key.opensProjectsInNewWindow) }
 	}
 
 	/// Directory names treated as build output and tinted accordingly.

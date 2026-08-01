@@ -225,3 +225,22 @@ struct AutoSaveTests {
 		#expect(String(decoding: data, as: UTF8.self) == "xalpha\r\nbeta\r\n")
 	}
 }
+
+/// Whether choosing a project takes over the window or opens another.
+struct ProjectWindowSettingTests {
+	private func settings() -> Settings {
+		let defaults = UserDefaults(suiteName: "ideai.tests.\(UUID().uuidString)")!
+		return Settings(defaults: defaults)
+	}
+
+	/// Switching in place is the default: the window is where the work was.
+	@Test func switchesInPlaceByDefault() {
+		#expect(settings().opensProjectsInNewWindow == false)
+	}
+
+	@Test func remembersTheChoice() {
+		let settings = settings()
+		settings.opensProjectsInNewWindow = true
+		#expect(settings.opensProjectsInNewWindow)
+	}
+}

@@ -598,8 +598,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 	// MARK: - Opening projects
 
+	/// Opens a project, in this window or another.
+	///
+	/// - `from`: the window the choice was made in. Unless the setting says
+	///   otherwise, that window changes project rather than a second one
+	///   appearing — the window is where you were working, and a new one for
+	///   the same task is a window to close later.
 	@discardableResult
-	func open(projectAt url: URL) -> MainWindowController {
+	func open(projectAt url: URL, from source: MainWindowController? = nil) -> MainWindowController {
 		// Focus an existing window rather than opening the same project twice.
 		// Torn-off windows are skipped: opening a project should raise the window
 		// it was opened in, not one someone happened to drag a tab into.
@@ -608,6 +614,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 		}) {
 			existing.showWindow(nil)
 			return existing
+		}
+
+		// A torn-off window holds one file on purpose; switching a project in
+		// it would take that away.
+		let reusable = source ?? windowControllers.first { !$0.isTornOff }
+		if !Settings.shared.opensProjectsInNewWindow,
+		   let target = reusable, !target.isTornOff {
+			target.load(project: Project(root: url))
+			target.showWindow(nil)
+			RecentProjects.shared.record(url: url)
+			return target
 		}
 
 		let controller = makeWindow()

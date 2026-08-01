@@ -35,8 +35,33 @@ final class RunControl: NSView {
 
 	required init?(coder: NSCoder) { fatalError("not used") }
 
+	/// The same air on both sides of what is drawn.
+	private static var margin: CGFloat { Theme.current.scaled(8) }
+
 	override var intrinsicContentSize: NSSize {
-		NSSize(width: 420, height: Theme.current.scaled(30))
+		// Sized to its contents rather than to a fixed width: with nothing to
+		// say about the last run, a fixed width leaves all the spare room on
+		// the right and the strip sits off-centre in its own frame.
+		NSSize(width: contentWidth, height: Theme.current.scaled(30))
+	}
+
+	/// Everything drawn, plus a margin at each end.
+	private var contentWidth: CGFloat {
+		let button = Theme.current.scaled(26)
+		var width = Self.margin
+			+ button + Theme.current.scaled(4) + button
+			+ Theme.current.scaled(10) + Theme.current.scaled(190)
+		if !status.isEmpty {
+			width += Theme.current.scaled(12) + ceil(statusText.size().width)
+		}
+		return width + Self.margin
+	}
+
+	private var statusText: NSAttributedString {
+		NSAttributedString(string: status, attributes: [
+			.font: Theme.current.uiFont(11),
+			.foregroundColor: failed ? NSColor.hex(0xE05252) : Theme.current.gitIgnored,
+		])
 	}
 
 	func setConfiguration(_ name: String?) {
@@ -54,6 +79,9 @@ final class RunControl: NSView {
 		isBusy = busy
 		self.failed = failed
 		needsDisplay = true
+		// The strip is as wide as what it says, so saying something else
+		// changes its width.
+		invalidateIntrinsicContentSize()
 		// The run button is a stop button while busy, and says so.
 		if wasBusy != busy {
 			rebuildToolTips()
@@ -68,7 +96,7 @@ final class RunControl: NSView {
 		let button = Theme.current.scaled(26)
 		let y = (height - button) / 2
 
-		runRect = NSRect(x: Theme.current.scaled(2), y: y, width: button, height: button)
+		runRect = NSRect(x: Self.margin, y: y, width: button, height: button)
 		debugRect = NSRect(x: runRect.maxX + Theme.current.scaled(4), y: y, width: button, height: button)
 
 		let schemeStart = debugRect.maxX + Theme.current.scaled(10)
@@ -155,16 +183,13 @@ final class RunControl: NSView {
 		}
 
 		guard !status.isEmpty else { return }
-		let statusText = NSAttributedString(string: status, attributes: [
-			.font: Theme.current.uiFont(11),
-			.foregroundColor: failed ? NSColor.hex(0xE05252) : Theme.current.gitIgnored,
-		])
+		let text = statusText
 		let x = schemeRect.maxX + Theme.current.scaled(12)
-		statusText.draw(in: NSRect(
+		text.draw(in: NSRect(
 			x: x,
-			y: bounds.midY - statusText.size().height / 2,
-			width: max(0, bounds.width - x),
-			height: statusText.size().height
+			y: bounds.midY - text.size().height / 2,
+			width: max(0, bounds.width - x - Self.margin),
+			height: text.size().height
 		))
 	}
 
