@@ -480,6 +480,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 			let total = verticalSplitView.bounds.height
 			let restored = heightBeforeMaximize ?? panelHeight
 			if total > 200 { verticalSplitView.setPosition(total - restored, ofDividerAt: 0) }
+			tellTerminalsTheySizeChanged()
 			return
 		}
 
@@ -494,6 +495,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		bottomPanel.setTopInset(sidebarTopInset)
 		verticalSplitView.adjustSubviews()
 		verticalSplitView.setPosition(0, ofDividerAt: 0)
+		tellTerminalsTheySizeChanged()
+	}
+
+	/// Once layout has settled, so the size read is the one the pane ended up
+	/// with rather than the one it had.
+	private func tellTerminalsTheySizeChanged() {
+		DispatchQueue.main.async { [weak self] in
+			self?.bottomPanel.viewportChanged()
+		}
 	}
 
 	private func setPanelVisible(_ visible: Bool) {

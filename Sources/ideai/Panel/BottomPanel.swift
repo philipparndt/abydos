@@ -141,6 +141,20 @@ final class BottomPanel: NSView {
 
 	var hasSessions: Bool { !sessions.isEmpty }
 
+	/// Tells the terminals their pane changed size.
+	///
+	/// A resize normally arrives through layout, but layout reads the scroll
+	/// view's clip before the scroll view has laid it out. Dragging a divider
+	/// sends a stream of those and the last one is right; a jump — maximising —
+	/// sends one, reads the size the pane had before, and leaves the process
+	/// believing it. tmux opened afterwards then draws for a window half the
+	/// height of the one it is in.
+	func viewportChanged() {
+		for session in sessions {
+			session.terminal?.terminalViewForTesting.viewportChanged()
+		}
+	}
+
 	// MARK: - Sessions
 
 	/// Opens a shell, or focuses the existing one if there already is a terminal.
@@ -598,6 +612,13 @@ final class PanelTabStrip: NSView {
 		if addButtonFrame.contains(point) { onAdd?(); return }
 		if hideButtonFrame.contains(point) { onHide?(); return }
 		if maximizeButtonFrame.contains(point) { onToggleMaximize?(); return }
+
+		// Double-clicking the empty part of the strip does what the arrow does,
+		// the way double-clicking a window's title bar zooms it.
+		if event.clickCount == 2, !frames.contains(where: { $0.contains(point) }) {
+			onToggleMaximize?()
+			return
+		}
 
 		guard let index = frames.firstIndex(where: { $0.contains(point) }) else { return }
 		let closeRect = NSRect(

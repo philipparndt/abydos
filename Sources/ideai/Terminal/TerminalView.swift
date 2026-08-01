@@ -1178,6 +1178,9 @@ final class TerminalPane: NSView {
 		terminalView.viewportChanged()
 	}
 
+	/// The view inside, for the panel to pass a resize down to.
+	var terminalViewForTesting: TerminalView { terminalView }
+
 	func focus() {
 		window?.makeFirstResponder(terminalView)
 	}
