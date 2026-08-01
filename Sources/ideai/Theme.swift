@@ -4,7 +4,7 @@ import IdeaiKit
 /// Colours and metrics matching JetBrains' "New UI" dark theme, which is what the
 /// reference screenshots show.
 struct Theme {
-	static var current = Theme.darcula
+	static var current = Theme.dusk
 
 	// Surfaces
 	var windowBackground: NSColor
@@ -124,64 +124,77 @@ struct Theme {
 			?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
 	}
 
-	static let darcula = Theme(
-		windowBackground: .hex(0x1E1F22),
-		sidebarBackground: .hex(0x2B2D30),
-		editorBackground: .hex(0x1E1F22),
-		toolbarBackground: .hex(0x2B2D30),
-		separator: .hex(0x393B40),
+	/// The one theme, and ours rather than borrowed.
+	///
+	/// It started as IDEA's palette value for value, which is a fine place to
+	/// learn from and a poor place to stay: those colours are that product's
+	/// signature. The shape of the scheme is kept — dark and quiet chrome, one
+	/// warm colour for keywords, green for text you wrote, blue for things
+	/// that are called — while every value is our own: the greys carry a
+	/// little more blue, and the syntax hues are pulled apart so that keyword,
+	/// type and call read as three colours rather than three shades.
+	static let dusk = Theme(
+		windowBackground: .hex(0x1A1C21),
+		sidebarBackground: .hex(0x24272E),
+		editorBackground: .hex(0x1A1C21),
+		toolbarBackground: .hex(0x24272E),
+		separator: .hex(0x343842),
 
-		sidebarText: .hex(0xBCBEC4),
-		sidebarHeaderText: .hex(0xDFE1E5),
-		selectionActive: .hex(0x3C5596),
-		selectionInactive: .hex(0x393B40),
-		excludedDirectoryTint: .hex(0x4A3A22),
+		sidebarText: .hex(0xC2C6D0),
+		sidebarHeaderText: .hex(0xE3E6EC),
+		selectionActive: .hex(0x3A5691),
+		selectionInactive: .hex(0x343842),
+		excludedDirectoryTint: .hex(0x4A3B24),
 
-		gitAdded: .hex(0x6AAB73),
-		gitModified: .hex(0x3592C4),
-		gitUnversioned: .hex(0xC7756B),
-		gitIgnored: .hex(0x6E7175),
-		gitConflict: .hex(0xD16969),
+		gitAdded: .hex(0x71B382),
+		gitModified: .hex(0x4E9ED4),
+		gitUnversioned: .hex(0xCE7C6E),
+		gitIgnored: .hex(0x6C7383),
+		gitConflict: .hex(0xD6706E),
 
-		editorText: .hex(0xBCBEC4),
-		gutterText: .hex(0x606366),
-		gutterCurrentLineText: .hex(0xA1A3AB),
-		currentLineBackground: .hex(0x26282E),
-		caret: .hex(0xCED0D6),
-		selectionBackground: .hex(0x2E436E),
-		foldPlaceholderBackground: .hex(0x3A3D42),
-		foldPlaceholderText: .hex(0x9DA0A8),
-		indentGuide: .hex(0x33353A)
+		editorText: .hex(0xC2C6D0),
+		gutterText: .hex(0x5C6270),
+		gutterCurrentLineText: .hex(0xA7ACBA),
+		currentLineBackground: .hex(0x22252C),
+		caret: .hex(0xD4D8E2),
+		selectionBackground: .hex(0x2C4269),
+		foldPlaceholderBackground: .hex(0x363A45),
+		foldPlaceholderText: .hex(0xA0A5B3),
+		indentGuide: .hex(0x2F323B)
 	)
 
 	/// Maps a syntax token to a colour. `HighlightKind` is produced by IdeaiKit
 	/// from tree-sitter capture names, so the theme never sees grammar details.
 	func color(for kind: HighlightKind) -> NSColor {
 		switch kind {
-		case .keyword:      return .hex(0xCF8E6D)
-		case .type:         return .hex(0xB5B6E3)
-		case .function:     return .hex(0x56A8F5)
-		case .method:       return .hex(0x56A8F5)
-		case .property:     return .hex(0xC77DBB)
-		case .variable:     return .hex(0xBCBEC4)
-		case .parameter:    return .hex(0xBCBEC4)
-		case .constant:     return .hex(0xC77DBB)
-		case .string:       return .hex(0x6AAB73)
-		case .escape:       return .hex(0xCF8E6D)
-		case .number:       return .hex(0x2AACB8)
-		case .boolean:      return .hex(0xCF8E6D)
-		case .comment:      return .hex(0x7A7E85)
-		case .documentation:return .hex(0x5F826B)
-		case .operatorToken:return .hex(0xBCBEC4)
-		case .punctuation:  return .hex(0xBCBEC4)
-		case .tag:          return .hex(0xE8BF6A)
-		case .attribute:    return .hex(0xBABABA)
-		case .label:        return .hex(0xC77DBB)
-		case .namespace:    return .hex(0xBCBEC4)
-		case .heading:      return .hex(0xE8BF6A)
-		case .link:         return .hex(0x548AF7)
-		case .emphasis:     return .hex(0xBCBEC4)
-		case .error:        return .hex(0xD16969)
+		// Keyword warm, string green, call blue: the arrangement every dark
+		// scheme has settled on, in our own values. Parameters are tinted
+		// away from plain text — they are the one identifier whose meaning
+		// comes from where it sits rather than from what it says.
+		case .keyword:      return .hex(0xD8926B)
+		case .type:         return .hex(0xAFB3EC)
+		case .function:     return .hex(0x62B4F0)
+		case .method:       return .hex(0x62B4F0)
+		case .property:     return .hex(0xC983C5)
+		case .variable:     return editorText
+		case .parameter:    return .hex(0xB6BDD0)
+		case .constant:     return .hex(0xC983C5)
+		case .string:       return .hex(0x7FB98C)
+		case .escape:       return .hex(0xE0A87E)
+		case .number:       return .hex(0x46BDB6)
+		case .boolean:      return .hex(0xD8926B)
+		case .comment:      return .hex(0x71798B)
+		case .documentation:return .hex(0x6B8F84)
+		case .operatorToken:return .hex(0xB6BDD0)
+		case .punctuation:  return .hex(0x9BA2B2)
+		case .tag:          return .hex(0xE5BE72)
+		case .attribute:    return .hex(0xB6BDD0)
+		case .label:        return .hex(0xC983C5)
+		case .namespace:    return .hex(0xA9B4C6)
+		case .heading:      return .hex(0xE5BE72)
+		case .link:         return .hex(0x6E97F0)
+		case .emphasis:     return .hex(0xC2C6D0)
+		case .error:        return .hex(0xD6706E)
 		case .plain:        return editorText
 		}
 	}
