@@ -385,13 +385,13 @@ final class TerminalView: NSView, NSTextInputClient {
 				))
 			}
 		}
+		var cursor: TerminalMetalRenderer.Cursor?
 		if emulator.isCursorVisible, cursorVisible, window?.firstResponder === self {
-			let row = screen.scrollback.count + emulator.cursorRow
-			overlays.append(.init(
-				row: row,
-				columns: emulator.cursorColumn..<(emulator.cursorColumn + 1),
-				colour: Theme.current.caret.withAlphaComponent(0.8).components
-			))
+			cursor = .init(
+				row: screen.scrollback.count + emulator.cursorRow,
+				column: emulator.cursorColumn,
+				colour: Theme.current.caret.components
+			)
 		}
 
 		let background = Theme.current.editorBackground.components
@@ -406,7 +406,8 @@ final class TerminalView: NSView, NSTextInputClient {
 				foreground: Theme.current.editorText.components
 			),
 			faces: faces,
-			overlays: overlays
+			overlays: overlays,
+			cursor: cursor
 		)
 
 		if let buildStart { MetalProbe.buildSeconds += -buildStart.timeIntervalSinceNow }
@@ -803,15 +804,35 @@ final class TerminalView: NSView, NSTextInputClient {
 		}
 	}
 
+	/// Draws the block cursor, turning the cell under it inside out.
+	///
+	/// The block is the cursor's colour and the character is cut out of it in
+	/// the colour behind. Laying a translucent block over the character instead
+	/// leaves it the same colour as what is now behind it, which is how it
+	/// becomes unreadable exactly where you are looking.
 	private func drawCursor() {
 		guard emulator.isCursorVisible, cursorVisible, window?.firstResponder === self else { return }
 
-		let row = emulator.screen.scrollback.count + emulator.cursorRow
-		let x = Self.horizontalInset + CGFloat(emulator.cursorColumn) * cellWidth
-		let y = Self.verticalInset + CGFloat(row) * cellHeight
+		let screen = emulator.screen
+		let row = screen.scrollback.count + emulator.cursorRow
+		let column = emulator.cursorColumn
+		let x = (Self.horizontalInset + CGFloat(column) * cellWidth).rounded()
+		let endX = (Self.horizontalInset + CGFloat(column + 1) * cellWidth).rounded()
+		let y = (Self.verticalInset + CGFloat(row) * cellHeight).rounded()
 
-		Theme.current.caret.withAlphaComponent(0.8).setFill()
-		NSRect(x: x, y: y, width: cellWidth, height: cellHeight).fill()
+		Theme.current.caret.setFill()
+		NSRect(x: x, y: y, width: endX - x, height: cellHeight).fill()
+
+		// The character again, in the colour of what is now behind it.
+		guard let line = screen.line(at: row), column < line.cells.count else { return }
+		let cell = line.cells[column]
+		guard cell.scalar != 0x20, cell.scalar != 0, !cell.attributes.hidden else { return }
+
+		var attributes = cell.attributes
+		attributes.foreground = .default
+		attributes.background = .default
+		attributes.inverse = true
+		drawText(of: line, from: column, to: column + 1, attributes: attributes, y: y)
 	}
 
 	/// The cursor is drawn solid rather than blinking.
@@ -892,7 +913,14 @@ final class TerminalView: NSView, NSTextInputClient {
 				background: background,
 				foreground: Theme.current.editorText.components
 			),
-			faces: faces
+			faces: faces,
+			// Drawn whatever has focus: a window rendered offscreen has none,
+			// and the cursor is one of the things worth being able to look at.
+			cursor: .init(
+				row: screen.scrollback.count + emulator.cursorRow,
+				column: emulator.cursorColumn,
+				colour: Theme.current.caret.components
+			)
 		)
 		return renderer.writePNG(
 			to: path,

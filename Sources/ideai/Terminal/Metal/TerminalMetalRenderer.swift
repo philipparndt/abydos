@@ -104,11 +104,19 @@ final class TerminalMetalRenderer {
 		var colour: SIMD4<Float>
 	}
 
+	/// Where the block cursor is, and what colour it is.
+	struct Cursor {
+		var row: Int
+		var column: Int
+		var colour: SIMD4<Float>
+	}
+
 	func build(
 		rows: [(index: Int, line: TerminalLine)],
 		frame: Frame,
 		faces: TerminalFaces,
-		overlays: [Overlay] = []
+		overlays: [Overlay] = [],
+		cursor: Cursor? = nil
 	) {
 		instances.removeAll(keepingCapacity: true)
 		atlas.setCellMetrics(size: frame.cellSize, baselineFromTop: faces.baselineFromTop)
@@ -145,13 +153,23 @@ final class TerminalMetalRenderer {
 				// Dimming is the alpha the CoreGraphics path uses, done here as
 				// arithmetic rather than by asking for another colour.
 				if cell.attributes.dim { foreground.w *= 0.6 }
-				let background = TerminalPalette.components(
+				var background = TerminalPalette.components(
 					for: resolved.background,
 					isForeground: false,
 					bold: false,
 					defaultForeground: frame.foreground,
 					defaultBackground: frame.background
 				)
+
+				// The cell under a block cursor is turned inside out: the block
+				// is the cursor's colour and the character is cut out of it in
+				// the colour behind. Laying a block over the character instead
+				// leaves it the same colour as what is now behind it, which is
+				// how it becomes unreadable exactly where you are looking.
+				if let cursor, cursor.row == index, cursor.column == column {
+					background = cursor.colour
+					foreground = frame.background
+				}
 
 				let x = columnEdge(column)
 				let isWide = column + 1 < line.cells.count && line.cells[column + 1].isWideTrailer
