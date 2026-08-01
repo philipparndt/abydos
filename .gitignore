@@ -21,3 +21,6 @@ Resources/Icon/*.iconset/
 # The DOOM-fire benchmark binary, kept here to run against the terminal.
 # Built from github.com/const-void/DOOM-fire-zig; not ours to commit.
 DOOM-fire
+
+# Benchmark output.
+build/firebench.*
