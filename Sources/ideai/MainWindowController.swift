@@ -1230,6 +1230,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		case .branches:
 			guard let project, project.git != nil else { return }
 			let pane = BranchesPane(root: project.root)
+			// A worktree is a project in its own right, so opening one is
+			// switching to it rather than checking anything out.
+			pane.onOpenWorktree = { [weak self] path in
+				self?.switchProject(to: path)
+			}
 			pane.onRepositoryChanged = { [weak self] in
 				guard let self else { return }
 				self.navigator.refreshGitStatus()

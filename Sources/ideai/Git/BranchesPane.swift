@@ -10,10 +10,13 @@ import IdeaiKit
 final class BranchesPane: NSView {
 	/// Something changed the repository: refresh the rest of the window.
 	var onRepositoryChanged: (() -> Void)?
+	/// Open a worktree as a project, which is the point of having one.
+	var onOpenWorktree: ((URL) -> Void)?
 
 	private let root: URL
 
 	private var branches: [GitBranch] = []
+	private var worktrees: [GitWorktree] = []
 	private var rows: [Row] = []
 	private var filterText = ""
 
@@ -23,10 +26,11 @@ final class BranchesPane: NSView {
 	private enum Row {
 		case header(String)
 		case branch(GitBranch)
+		case worktree(GitWorktree)
 
 		var isSelectable: Bool {
-			if case .branch = self { return true }
-			return false
+			if case .header = self { return false }
+			return true
 		}
 	}
 
@@ -110,8 +114,13 @@ final class BranchesPane: NSView {
 	@objc func refresh() {
 		Task { @MainActor in
 			let fresh = await GitBranches.list(in: root)
-			guard fresh != branches else { return }
+			// Only the repository's own checkouts, and only when there is more
+			// than one: a repository nobody has added a worktree to should not
+			// carry a section explaining that it has one.
+			let trees = await GitWorktrees.list(in: root)
+			guard fresh != branches || trees != worktrees else { return }
 			branches = fresh
+			worktrees = trees
 			rebuildRows()
 		}
 	}
@@ -138,6 +147,17 @@ final class BranchesPane: NSView {
 
 		appendSection("Tags", matching.filter { $0.kind == .tag })
 
+		// Worktrees last: they are places, not refs, and the list is short.
+		let matchingTrees = needle.isEmpty
+			? worktrees
+			: worktrees.filter {
+				$0.name.lowercased().contains(needle) || ($0.branch ?? "").lowercased().contains(needle)
+			}
+		if matchingTrees.count > 1 || (matchingTrees.count == 1 && !matchingTrees[0].isPrimary) {
+			rows.append(.header("Worktrees"))
+			rows += matchingTrees.map { Row.worktree($0) }
+		}
+
 		tableView.reloadData()
 	}
 
@@ -160,6 +180,13 @@ final class BranchesPane: NSView {
 		return branch
 	}
 
+	private var selectedWorktree: GitWorktree? {
+		let clicked = tableView.clickedRow
+		let row = clicked >= 0 ? clicked : tableView.selectedRow
+		guard rows.indices.contains(row), case let .worktree(worktree) = rows[row] else { return nil }
+		return worktree
+	}
+
 	// MARK: - Actions
 
 	private func makeMenu() -> NSMenu {
@@ -170,8 +197,68 @@ final class BranchesPane: NSView {
 	}
 
 	private func checkoutSelected() {
+		// A worktree is opened rather than checked out: it is already a
+		// checkout, which is the whole reason it exists.
+		if let worktree = selectedWorktree {
+			guard !worktree.isMissing else { return }
+			onOpenWorktree?(worktree.path)
+			return
+		}
 		guard let branch = selectedBranch, !branch.isCurrent else { return }
 		run { await GitBranches.checkout(branch, in: self.root) }
+	}
+
+	// MARK: - Worktrees
+
+	@objc private func openWorktree() {
+		guard let worktree = selectedWorktree, !worktree.isMissing else { return }
+		onOpenWorktree?(worktree.path)
+	}
+
+	@objc private func addWorktree() {
+		let branch = selectedBranch
+		let suggested = branch?.name ?? ""
+
+        promptForName(
+			title: "New Worktree",
+			message: branch.map { "Checks out \($0.name) in a directory of its own." }
+				?? "A second checkout of this repository, on a branch of its own.",
+			defaultValue: suggested.isEmpty ? "worktree" : suggested
+		) { [weak self] name in
+			guard let self else { return }
+			let path = GitWorktrees.suggestedPath(for: name, root: self.root)
+			// An existing branch is checked out; anything else is created.
+			let exists = self.branches.contains { $0.kind == .local && $0.name == name }
+			self.run {
+				await GitWorktrees.add(
+					at: path, branch: name, createBranch: !exists, in: self.root
+				)
+			}
+		}
+	}
+
+	@objc private func removeWorktree() {
+		guard let worktree = selectedWorktree, !worktree.isPrimary else { return }
+
+		let alert = NSAlert()
+		alert.messageText = "Remove the worktree “\(worktree.name)”?"
+		alert.informativeText = worktree.isMissing
+			? "Its directory is already gone; this forgets it."
+			: "The directory and anything uncommitted in it are removed. The branch stays."
+		alert.addButton(withTitle: "Remove")
+		alert.addButton(withTitle: "Cancel")
+		alert.buttons.first?.hasDestructiveAction = true
+
+		let act: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+			guard response == .alertFirstButtonReturn, let self else { return }
+			self.run { await GitWorktrees.remove(worktree, force: true, in: self.root) }
+		}
+		if let window { alert.beginSheetModal(for: window, completionHandler: act) } else { act(alert.runModal()) }
+	}
+
+	@objc private func revealWorktree() {
+		guard let worktree = selectedWorktree else { return }
+		NSWorkspace.shared.activateFileViewerSelecting([worktree.path])
 	}
 
 	@objc private func contextCheckout() { checkoutSelected() }
@@ -302,6 +389,7 @@ extension BranchesPane: NSTableViewDataSource, NSTableViewDelegate {
 		switch rows[row] {
 		case .header(let title): return BranchSectionView(title: title)
 		case .branch(let branch): return BranchRowView(branch: branch)
+		case .worktree(let worktree): return WorktreeRowView(worktree: worktree)
 		}
 	}
 }
@@ -309,13 +397,26 @@ extension BranchesPane: NSTableViewDataSource, NSTableViewDelegate {
 extension BranchesPane: NSMenuDelegate {
 	func menuNeedsUpdate(_ menu: NSMenu) {
 		menu.removeAllItems()
-		guard let branch = selectedBranch else { return }
 
 		func item(_ title: String, _ selector: Selector, enabled: Bool = true) -> NSMenuItem {
 			let item = NSMenuItem(title: title, action: selector, keyEquivalent: "")
 			item.target = self
 			item.isEnabled = enabled
 			return item
+		}
+
+		if let worktree = selectedWorktree {
+			menu.addItem(item("Open", #selector(openWorktree), enabled: !worktree.isMissing))
+			menu.addItem(item("Reveal in Finder", #selector(revealWorktree), enabled: !worktree.isMissing))
+			menu.addItem(.separator())
+			menu.addItem(item("New Worktree…", #selector(addWorktree)))
+			menu.addItem(item("Remove…", #selector(removeWorktree), enabled: !worktree.isPrimary))
+			return
+		}
+
+		guard let branch = selectedBranch else {
+			menu.addItem(item("New Worktree…", #selector(addWorktree)))
+			return
 		}
 
 		menu.addItem(item("Checkout", #selector(contextCheckout), enabled: !branch.isCurrent))
@@ -328,6 +429,7 @@ extension BranchesPane: NSMenuDelegate {
 		))
 		menu.addItem(.separator())
 		menu.addItem(item("Copy Name", #selector(copyBranchName)))
+		menu.addItem(item("New Worktree from Here…", #selector(addWorktree)))
 
 		if case .local = branch.kind {
 			menu.addItem(item("Delete…", #selector(deleteBranch), enabled: !branch.isCurrent))
@@ -429,5 +531,57 @@ private final class BranchRowView: NSView {
 			.foregroundColor: Theme.current.gitModified,
 		])
 		counts.draw(at: NSPoint(x: x, y: bounds.midY - counts.size().height / 2))
+	}
+}
+
+/// A worktree: where it is, what is checked out there, and whether it is still
+/// on disk.
+private final class WorktreeRowView: NSView {
+	private let worktree: GitWorktree
+	override var isFlipped: Bool { true }
+
+	init(worktree: GitWorktree) {
+		self.worktree = worktree
+		super.init(frame: .zero)
+		toolTip = worktree.path.path
+	}
+
+	required init?(coder: NSCoder) { fatalError("not used") }
+
+	override func draw(_ dirtyRect: NSRect) {
+		var x = Theme.current.scaled(18)
+
+		// The one the repository was cloned into is marked, since it is the one
+		// that cannot be removed.
+		let symbol = worktree.isPrimary ? "house" : (worktree.isMissing ? "questionmark.circle" : "folder")
+		let tint = worktree.isMissing ? Theme.current.gitUnversioned : Theme.current.gitIgnored
+		if let icon = Theme.symbol(symbol, size: 10 * Theme.current.scale, color: tint) {
+			let size = Theme.current.scaled(11)
+			icon.drawFitted(in: NSRect(
+				x: Theme.current.scaled(4), y: bounds.midY - size / 2, width: size, height: size
+			))
+		}
+
+		let name = NSAttributedString(string: worktree.name, attributes: [
+			.font: Theme.current.uiFont(12),
+			.foregroundColor: worktree.isMissing ? Theme.current.gitIgnored : Theme.current.sidebarText,
+		])
+		name.draw(at: NSPoint(x: x, y: bounds.midY - name.size().height / 2))
+		x += name.size().width + Theme.current.scaled(6)
+
+		var note = worktree.branch ?? "detached"
+		if worktree.isMissing { note += " · missing" }
+		if worktree.isLocked { note += " · locked" }
+
+		let detail = NSAttributedString(string: note, attributes: [
+			.font: Theme.current.uiFont(10),
+			.foregroundColor: worktree.isMissing ? Theme.current.gitUnversioned : Theme.current.gitIgnored,
+		])
+		detail.draw(in: NSRect(
+			x: x,
+			y: bounds.midY - detail.size().height / 2,
+			width: max(0, bounds.width - x - Theme.current.scaled(8)),
+			height: detail.size().height
+		))
 	}
 }
