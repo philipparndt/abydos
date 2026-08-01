@@ -51,7 +51,13 @@ public actor GitRepository {
 		guard result.exitCode == 0 else { return nil }
 		let path = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
 		guard !path.isEmpty else { return nil }
-		return GitRepository(root: URL(fileURLWithPath: path, isDirectory: true))
+		// Standardized, as the project's own root is: git answers with the real
+		// path — `/private/tmp/...` — where the tree holds `/tmp/...`, and every
+		// file in the tree then failed to match its own repository and was drawn
+		// as if git had never heard of it.
+		return GitRepository(
+			root: URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
+		)
 	}
 
 	public func currentBranch() -> String? { branchName }

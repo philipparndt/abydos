@@ -137,7 +137,29 @@ final class ProjectNavigatorViewController: NSViewController {
 	func refreshGitStatus() {
 		guard let project, let git = project.git, let rootNode else { return }
 
+		// One `git status` at a time, with at most one more queued behind it.
+		// The tree asks for this on every watcher event, and a project being
+		// built produces a great many of those.
+		guard !isReadingGitStatus else {
+			wantsAnotherGitStatus = true
+			return
+		}
+		isReadingGitStatus = true
+
 		Task { @MainActor in
+			defer {
+				isReadingGitStatus = false
+				if wantsAnotherGitStatus {
+					wantsAnotherGitStatus = false
+					refreshGitStatus()
+				}
+			}
+
+			// Re-read it: the cache was filled when the project opened, so a
+			// file written since — a build's output, or the binary a debugger
+			// leaves behind — had no status at all and was drawn as if it were
+			// tracked and unmodified.
+			await git.refresh()
 			let repoRoot = await git.root
 			gitRoot = repoRoot
 
@@ -163,6 +185,10 @@ final class ProjectNavigatorViewController: NSViewController {
 			redrawVisibleRows()
 		}
 	}
+
+	private var isReadingGitStatus = false
+	private var wantsAnotherGitStatus = false
+	private var hasScheduledGitStatusRefresh = false
 
 	/// Repaints rows in place. Cells read `node.gitStatus` when they draw, so
 	/// marking them dirty is enough to pick up new version-control state.
@@ -802,7 +828,30 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 	func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
 		guard let item else { return rootNode == nil ? 0 : 1 }
 		guard let node = item as? FileNode, node.isDirectory else { return 0 }
-		return node.children.count
+
+		// Children are read the first time the outline view asks for them,
+		// which may be long after the last status refresh — and rows that
+		// appeared since would be drawn as though everything about them were
+		// unremarkable. Asking again is cheap; the refresh coalesces.
+		let wasLoaded = node.hasLoadedChildren
+		let count = node.children.count
+		if !wasLoaded { scheduleGitStatusRefresh() }
+		return count
+	}
+
+	/// Asks for a status refresh once the current run of layout is over.
+	///
+	/// Not immediately: this is called from inside the outline view's own data
+	/// source, and reloading rows from there is how a table ends up drawing
+	/// stale geometry.
+	private func scheduleGitStatusRefresh() {
+		guard !hasScheduledGitStatusRefresh else { return }
+		hasScheduledGitStatusRefresh = true
+		DispatchQueue.main.async { [weak self] in
+			guard let self else { return }
+			self.hasScheduledGitStatusRefresh = false
+			self.refreshGitStatus()
+		}
 	}
 
 	func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
