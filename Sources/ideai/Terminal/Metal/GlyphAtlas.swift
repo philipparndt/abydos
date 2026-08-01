@@ -267,9 +267,16 @@ final class GlyphAtlas {
 
 		// Placed so the glyph's own bounding box lands inside the bitmap, with
 		// the margin around it. CoreGraphics has y running up here.
+		//
+		// Rounded to a whole pixel first. A bearing is fractional and differs
+		// per character, so drawing at it rasterises every glyph at a different
+		// fraction of a pixel — and no amount of care about where the bitmap
+		// then goes can undo that. Letters come out looking as though they sit
+		// on slightly different lines, which is what "m and a look offset"
+		// means. Rounding here puts every glyph on the same phase.
 		var position = CGPoint(
-			x: -bounds.minX + margin / scale,
-			y: -bounds.minY + margin / scale
+			x: ((-bounds.minX * scale).rounded() + margin) / scale,
+			y: ((-bounds.minY * scale).rounded() + margin) / scale
 		)
 		CTFontDrawGlyphs(ctFont, &glyph, &position, 1, context)
 
@@ -285,11 +292,13 @@ final class GlyphAtlas {
 		return AtlasEntry(
 			uvOrigin: SIMD2(Float(slot.x) / side, Float(slot.y) / side),
 			uvSize: SIMD2(Float(pixelWidth) / side, Float(pixelHeight) / side),
-			// The glyph's top in the view's coordinates, where y runs down: the
-			// bounding box is measured up from the baseline.
+			// Where the bitmap's top-left sits relative to the pen, in the
+			// view's coordinates where y runs down. Derived from where the
+			// glyph was actually drawn rather than from its bounds, so the
+			// rounding above is accounted for rather than fought.
 			offset: CGPoint(
-				x: bounds.minX - margin / scale,
-				y: -bounds.maxY - margin / scale
+				x: -position.x,
+				y: position.y - CGFloat(pixelHeight) / scale
 			),
 			size: CGSize(width: CGFloat(pixelWidth) / scale, height: CGFloat(pixelHeight) / scale),
 			isColour: isColour
