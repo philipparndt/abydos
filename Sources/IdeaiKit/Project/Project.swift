@@ -29,6 +29,19 @@ public final class Project {
 		git = repo
 	}
 
+	/// The project a file belongs to.
+	///
+	/// The repository around it, since that is what anybody means by "the
+	/// project"; failing that, the directory the file sits in, which is at
+	/// least something to show a tree of. What `ideai path/to/file.go` opens.
+	public static func root(containing file: URL) -> URL {
+		var directory = file.standardizedFileURL
+		if !((try? directory.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false) {
+			directory = directory.deletingLastPathComponent()
+		}
+		return ProjectRoot.find(from: directory) ?? directory
+	}
+
 	/// Path relative to the git root, which is what `git status` output is keyed by.
 	/// Note this is the *git* root, which may sit above the project root.
 	public func gitRelativePath(for url: URL, gitRoot: URL) -> String {

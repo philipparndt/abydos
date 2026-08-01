@@ -550,8 +550,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 	}
 
 	func application(_ application: NSApplication, open urls: [URL]) {
-		for url in urls where url.hasDirectoryPath {
-			open(projectAt: url)
+		for url in urls {
+			if url.hasDirectoryPath {
+				open(projectAt: url)
+				continue
+			}
+			// A file: the project is whatever encloses it, and the file itself
+			// is what somebody wanted to look at.
+			let controller = open(projectAt: Project.root(containing: url))
+			controller.openForTesting(url)
 		}
 	}
 

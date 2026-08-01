@@ -67,6 +67,12 @@ install: build ## Copy the app into /Applications
 	@cp -R $(APP) /Applications/
 	@echo "==> Installed /Applications/ideai.app"
 
+.PHONY: install-cli
+install-cli: ## Put the `ideai` command on the PATH (PREFIX=/usr/local)
+	@mkdir -p $(or $(PREFIX),/usr/local)/bin
+	@install -m 755 Scripts/ideai $(or $(PREFIX),/usr/local)/bin/ideai
+	@echo "==> Installed $(or $(PREFIX),/usr/local)/bin/ideai"
+
 .PHONY: clean
 clean: ## Remove build output
 	@rm -rf .build build

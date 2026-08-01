@@ -122,3 +122,51 @@ struct ProjectRootTests {
 		#expect(ProjectRoot.find(from: URL(fileURLWithPath: "/")) == nil)
 	}
 }
+
+/// What `ideai <path>` opens.
+struct ProjectForAPathTests {
+	private func makeRepository() throws -> URL {
+		let base = URL(fileURLWithPath: NSTemporaryDirectory())
+			.appendingPathComponent("cli-\(UUID().uuidString)")
+		let source = base.appendingPathComponent("cmd/app")
+		try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+		try FileManager.default.createDirectory(
+			at: base.appendingPathComponent(".git"), withIntermediateDirectories: true
+		)
+		try "package main\n".write(
+			to: source.appendingPathComponent("main.go"), atomically: true, encoding: .utf8
+		)
+		return base
+	}
+
+	/// Naming a file deep in a repository opens the repository, not the folder
+	/// the file happens to sit in.
+	@Test func aFileOpensTheRepositoryAroundIt() throws {
+		let base = try makeRepository()
+		defer { try? FileManager.default.removeItem(at: base) }
+
+		let file = base.appendingPathComponent("cmd/app/main.go")
+		#expect(Project.root(containing: file).path == base.standardizedFileURL.path)
+	}
+
+	@Test func aDirectoryInsideARepositoryOpensTheRepository() throws {
+		let base = try makeRepository()
+		defer { try? FileManager.default.removeItem(at: base) }
+
+		#expect(Project.root(containing: base.appendingPathComponent("cmd")).path
+			== base.standardizedFileURL.path)
+	}
+
+	/// A file with no repository around it still opens something: the folder
+	/// it is in.
+	@Test func aLooseFileOpensItsOwnFolder() throws {
+		let base = URL(fileURLWithPath: NSTemporaryDirectory())
+			.appendingPathComponent("loose-\(UUID().uuidString)")
+		try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+		defer { try? FileManager.default.removeItem(at: base) }
+
+		let file = base.appendingPathComponent("notes.txt")
+		try "hello\n".write(to: file, atomically: true, encoding: .utf8)
+		#expect(Project.root(containing: file).path == base.standardizedFileURL.path)
+	}
+}

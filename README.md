@@ -87,6 +87,7 @@ make dev        # debug build, run in foreground with logs
 make test       # 159 tests
 make perf       # performance suite with timings
 make install    # copy to /Applications
+make install-cli # put the `ideai` command on the PATH
 make help       # all targets
 ```
 
@@ -97,6 +98,17 @@ swift build
 swift test
 Scripts/bundle.sh [debug|release]   # assembles build/ideai.app
 ```
+
+### Opening from a terminal
+
+```sh
+ideai                  # this directory
+ideai ~/dev/thing      # that project
+ideai cmd/app/main.go  # that file, in the repository around it
+```
+
+An instance that is already running takes the path and raises its window
+rather than starting a second copy.
 
 ### Command-line options
 
