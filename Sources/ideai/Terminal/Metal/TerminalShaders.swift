@@ -55,10 +55,10 @@ enum TerminalShaders {
 		// glyph is in the atlas; a fixed offset would fringe a wide glyph
 		// barely at all and a narrow one into mush.
 		float uvShift;
-		// The glyph's own slot in the atlas. Samples are held inside it: the
-		// atlas is packed tight, so a sample that wanders outside picks up
-		// whichever letter happens to be next door, and one that wanders off
-		// the edge comes back empty and takes the whole channel with it.
+		// The glyph's own slot in the atlas. A sample outside it reads as no
+		// ink at all rather than being pulled back to the edge: the channel is
+		// supposed to slide off the glyph, and clamping instead smears the
+		// edge pixel sideways, which looks like nothing much.
 		float2 uvMin;
 		float2 uvMax;
 	};
@@ -107,7 +107,7 @@ enum TerminalShaders {
 		out.hasGlyph = hasGlyph;
 		out.isColour = cell.isColour;
 		out.bell = uniforms.bell;
-		out.uvShift = cell.uvSize.x * 0.035 * uniforms.bell;
+		out.uvShift = cell.uvSize.x * 0.22 * uniforms.bell;
 		out.uvMin = cell.uvOrigin;
 		out.uvMax = cell.uvOrigin + cell.uvSize;
 
@@ -145,12 +145,19 @@ enum TerminalShaders {
 		// own idea of where the ink is, which is what the lens error actually
 		// looks like, and it costs two extra samples instead of a second pass.
 		if (hasGlyph && in.bell > 0.0) {
+			// Each channel reads the glyph from a slightly different place, and
+			// reads nothing where that lands outside the glyph — which is what
+			// makes the letter separate into red and blue ghosts rather than
+			// merely blurring.
 			float2 offset = float2(in.uvShift, 0.0);
-			float2 uvR = clamp(in.uv + offset, in.uvMin, in.uvMax);
-			float2 uvB = clamp(in.uv - offset, in.uvMin, in.uvMax);
-			float coverageR = coverageAtlas.sample(atlasSampler, uvR).r;
+			float2 uvR = in.uv + offset;
+			float2 uvB = in.uv - offset;
+			float insideR = all(uvR >= in.uvMin) && all(uvR <= in.uvMax) ? 1.0 : 0.0;
+			float insideB = all(uvB >= in.uvMin) && all(uvB <= in.uvMax) ? 1.0 : 0.0;
+
+			float coverageR = coverageAtlas.sample(atlasSampler, uvR).r * insideR;
 			float coverageG = coverageAtlas.sample(atlasSampler, in.uv).r;
-			float coverageB = coverageAtlas.sample(atlasSampler, uvB).r;
+			float coverageB = coverageAtlas.sample(atlasSampler, uvB).r * insideB;
 
 			float alpha = in.foreground.a;
 			float3 colour = float3(

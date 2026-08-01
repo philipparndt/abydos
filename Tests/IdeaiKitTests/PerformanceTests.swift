@@ -128,9 +128,16 @@ struct PerformanceTests {
 		let start = rope.byteOffset(ofLine: 50_000)
 		let end = rope.byteOffset(ofLine: 50_080)
 
+		// Best of several, for the same reason the keystroke measurement is:
+		// the rest of the suite runs alongside this one, and a busy machine
+		// moves the number by more than any regression worth catching.
 		var tokens: [HighlightToken] = []
-		let elapsed = Self.time("highlight 80-line viewport") {
-			tokens = engine.highlights(rope: rope, byteRange: start..<end)
+		var elapsed = Double.greatestFiniteMagnitude
+		for round in 0..<5 {
+			let round = Self.time("highlight 80-line viewport, round \(round + 1)") {
+				tokens = engine.highlights(rope: rope, byteRange: start..<end)
+			}
+			elapsed = min(elapsed, round)
 		}
 
 		#expect(!tokens.isEmpty, "viewport produced no tokens")

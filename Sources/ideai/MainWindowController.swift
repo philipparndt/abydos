@@ -498,6 +498,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		if !editor.clickScratchPlaceholderForTesting() { newScratchFile(nil) }
 	}
 
+	/// Every state this file has been in, including abandoned branches.
+	@objc func showFileHistory(_ sender: Any?) {
+		editor.toggleFileHistory()
+	}
+
 	@objc func closeTab(_ sender: Any?) {
 		// Falls back to closing the window when nothing is open, matching ⌘W.
 		if editor.hasOpenFiles {
@@ -1485,6 +1490,36 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		print("LSP: servers=\(running) diagnostics=\(diagnostics.count) for \(url.lastPathComponent)")
 		for diagnostic in diagnostics.prefix(5) {
 			print("LSP:   \(diagnostic.severity) line \(diagnostic.range.start.line + 1): \(diagnostic.message)")
+		}
+	}
+
+	/// Types, undoes, types something else, and shows the history.
+	///
+	/// The sequence a plain undo stack cannot survive: the first attempt is
+	/// destroyed the moment the second is typed.
+	func exerciseUndoTreeForTesting() {
+		editor.moveCaretToEndForTesting()
+		editor.simulateTyping("\n// first attempt\n")
+		print("UNDO: after first  \(editor.fileHistoryReportForTesting)")
+
+		editor.undoForTesting()
+		print("UNDO: after undo   \(editor.fileHistoryReportForTesting)")
+
+		editor.simulateTyping("\n// second attempt\n")
+		print("UNDO: after second \(editor.fileHistoryReportForTesting)")
+
+		editor.toggleFileHistory()
+		print("UNDO: states       \(editor.historySummariesForTesting)")
+
+		// Back to the abandoned branch, which no amount of redo would reach.
+		DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+			guard let self else { return }
+			let summaries = self.editor.historySummariesForTesting
+			if let index = summaries.firstIndex(where: { $0.contains("first attempt") }) {
+				self.editor.travelToHistoryRowForTesting(index)
+				print("UNDO: travelled to the first attempt")
+			}
+			print("UNDO: text tail    \(self.editor.textTailForTesting)")
 		}
 	}
 

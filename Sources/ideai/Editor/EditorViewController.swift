@@ -72,6 +72,8 @@ final class EditorViewController: NSViewController {
 	/// How much of the word the visible list was built for, so committing one
 	/// replaces exactly what was typed.
 	private var completionPrefixLength = 0
+	/// The list of states this file has been in.
+	private let historyPopup = HistoryPopup()
 
 	private var tabBar: EditorTabBar!
 	private var tabBarTopConstraint: NSLayoutConstraint!
@@ -744,6 +746,49 @@ final class EditorViewController: NSViewController {
 		}
 		languageSyncWork = work
 		DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+	}
+
+	// MARK: - History
+
+	/// Shows every state the file has been in, including the ones undo cannot
+	/// reach because something else was typed after them.
+	func toggleFileHistory() {
+		guard let tab = activeTab, let document = tab.document, let codeView = tab.codeView else { return }
+		historyPopup.onTravel = { [weak self] state in
+			guard let restored = document.travel(to: state) else { return }
+			codeView.setCaretForTesting(restored)
+			codeView.reloadAfterHistoryTravel()
+			self?.refreshTabBar()
+		}
+		historyPopup.toggle(history: document.history, over: codeView)
+	}
+
+	func undoForTesting() {
+		activeTab?.codeView?.undo(nil)
+	}
+
+	/// The last line or two of the file, for checking what a jump produced.
+	var textTailForTesting: String {
+		guard let document = activeTab?.document else { return "no file" }
+		let text = document.rope.string(in: 0..<document.rope.byteCount)
+		return text.split(separator: "\n").suffix(2).joined(separator: " / ")
+	}
+
+	var fileHistoryReportForTesting: String {
+		guard let document = activeTab?.document else { return "no file" }
+		let history = document.history
+		return "\(history.count) states, at \(history.current), "
+			+ "\(history.futures.count) way(s) forward"
+	}
+
+	func showFileHistoryForTesting() {
+		toggleFileHistory()
+	}
+
+	var historySummariesForTesting: [String] { historyPopup.summariesForTesting }
+
+	func travelToHistoryRowForTesting(_ index: Int) {
+		historyPopup.travelToRowForTesting(index)
 	}
 
 	// MARK: - Completion

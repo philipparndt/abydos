@@ -426,6 +426,30 @@ final class EditorAreaController: NSViewController {
 		(activeGroup ?? groups.first)?.caretReportForTesting ?? "no editor"
 	}
 
+	func toggleFileHistory() {
+		(activeGroup ?? groups.first)?.toggleFileHistory()
+	}
+
+	func undoForTesting() {
+		(activeGroup ?? groups.first)?.undoForTesting()
+	}
+
+	var textTailForTesting: String {
+		(activeGroup ?? groups.first)?.textTailForTesting ?? "no file"
+	}
+
+	var fileHistoryReportForTesting: String {
+		(activeGroup ?? groups.first)?.fileHistoryReportForTesting ?? "no file"
+	}
+
+	var historySummariesForTesting: [String] {
+		(activeGroup ?? groups.first)?.historySummariesForTesting ?? []
+	}
+
+	func travelToHistoryRowForTesting(_ index: Int) {
+		(activeGroup ?? groups.first)?.travelToHistoryRowForTesting(index)
+	}
+
 	func newScratch() {
 		(activeGroup ?? groups.first)?.newScratch()
 	}

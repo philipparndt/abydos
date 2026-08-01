@@ -1578,6 +1578,20 @@ final class CodeView: NSView, NSTextInputClient {
 		setCaret(offset, extendingSelection: false)
 	}
 
+	/// The document jumped to another state: everything measured from its text
+	/// has to be worked out again.
+	func reloadAfterHistoryTravel() {
+		guard let document else { return }
+		folding.setAvailable(document.folds)
+		caret = min(caret, document.rope.utf16Count)
+		selectionAnchor = caret
+		updateFrameSize()
+		scrollCaretToVisible()
+		needsDisplay = true
+		reportCaretPosition()
+		onDirtyChanged?(document.isDirty)
+	}
+
 	private func deleteBackward() {
 		guard let document else { return }
 		let selection = selectedUTF16Range()

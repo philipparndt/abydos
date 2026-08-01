@@ -60,17 +60,14 @@ public final class TextDocument {
 
 	// MARK: Undo
 
-	private var undoStack: [EditRecord] = []
-	private var redoStack: [EditRecord] = []
+	/// Every state this document has been in.
+	///
+	/// A tree rather than two stacks: typing after an undo used to throw away
+	/// what had been undone, which is the one place editing destroys work
+	/// without saying so.
+	public private(set) var history = UndoTree()
 	private var lastEditTime: Date = .distantPast
 	private var lastEditEnd: Int = -1
-
-	/// The inverse of an applied edit, for undo.
-	private struct EditRecord {
-		var byteRange: Range<Int>      // range in the *new* text
-		var replacedBytes: [UInt8]     // what used to be there
-		var utf16CaretBefore: Int
-	}
 
 	// MARK: - Loading
 
@@ -240,20 +237,27 @@ public final class TextDocument {
 			&& startByte == lastEditEnd
 			&& now.timeIntervalSince(lastEditTime) < 0.6
 
-		if isContiguousTyping, var last = undoStack.last {
-			last.byteRange = last.byteRange.lowerBound..<(last.byteRange.upperBound + inserted.count)
-			undoStack[undoStack.count - 1] = last
+		if isContiguousTyping, history.currentNode.edit != nil {
+			history.extendCurrent(
+				inserted: inserted,
+				summary: Self.summary(removed: [], inserted: inserted, extending: history.currentNode.summary),
+				time: now
+			)
 		} else {
-			undoStack.append(EditRecord(
-				byteRange: startByte..<(startByte + inserted.count),
-				replacedBytes: replaced,
-				utf16CaretBefore: caretBefore
-			))
+			history.record(
+				UndoTree.Edit(
+					byteRange: startByte..<endByte,
+					removed: replaced,
+					inserted: inserted,
+					caretBefore: rope.byteOffset(fromUTF16: caretBefore)
+				),
+				summary: Self.summary(removed: replaced, inserted: inserted, extending: nil),
+				time: now
+			)
 		}
 		lastEditTime = now
 		lastEditEnd = startByte + inserted.count
 
-		redoStack.removeAll()
 		isDirty = true
 		scheduleAutoSave()
 
@@ -337,53 +341,8 @@ public final class TextDocument {
 		return Point(row: line, column: offset - lineStart)
 	}
 
-	// MARK: - Undo
-
-	public var canUndo: Bool { !undoStack.isEmpty }
-	public var canRedo: Bool { !redoStack.isEmpty }
-
-	/// Returns the caret position to restore, or nil if there was nothing to undo.
-	@discardableResult
-	public func undo() -> Int? {
-		guard let record = undoStack.popLast() else { return nil }
-
-		let current = rope.bytes(in: record.byteRange)
-		applyEdit(byteRange: record.byteRange, newBytes: record.replacedBytes)
-
-		redoStack.append(EditRecord(
-			byteRange: record.byteRange.lowerBound..<(record.byteRange.lowerBound + record.replacedBytes.count),
-			replacedBytes: current,
-			utf16CaretBefore: record.utf16CaretBefore
-		))
-
-		isDirty = true
-		// Break the coalescing run so the next keystroke starts a fresh entry.
-		lastEditEnd = -1
-		return record.utf16CaretBefore
-	}
-
-	@discardableResult
-	public func redo() -> Int? {
-		guard let record = redoStack.popLast() else { return nil }
-
-		let current = rope.bytes(in: record.byteRange)
-		applyEdit(byteRange: record.byteRange, newBytes: record.replacedBytes)
-
-		undoStack.append(EditRecord(
-			byteRange: record.byteRange.lowerBound..<(record.byteRange.lowerBound + record.replacedBytes.count),
-			replacedBytes: current,
-			utf16CaretBefore: record.utf16CaretBefore
-		))
-
-		isDirty = true
-		lastEditEnd = -1
-		return rope.utf16Offset(fromByte: record.byteRange.lowerBound + record.replacedBytes.count)
-	}
-
-	// MARK: - Folding
-
-	/// Folds cover the whole document, so they are debounced and computed off the
-	/// main thread — a burst of keystrokes recomputes them once, after a pause.
+	/// Folds are recomputed after typing settles rather than on every keystroke:
+	/// the whole file is scanned for them, and nobody folds mid-word.
 	private func scheduleFoldRecompute() {
 		pendingFoldWork?.cancel()
 		let work = DispatchWorkItem { [weak self] in
@@ -405,6 +364,68 @@ public final class TextDocument {
 				self.folds = computed
 				self.onSyntaxUpdated?()
 			}
+		}
+	}
+
+	// MARK: - Undo
+
+	public var canUndo: Bool { history.canUndo }
+	public var canRedo: Bool { history.canRedo }
+
+	/// Returns the caret position to restore, or nil if there was nothing to undo.
+	@discardableResult
+	public func undo() -> Int? {
+		guard let target = history.undoTarget else { return nil }
+		return travel(to: target)
+	}
+
+	@discardableResult
+	public func redo() -> Int? {
+		guard let target = history.redoTarget else { return nil }
+		return travel(to: target)
+	}
+
+	/// Goes to any state the document has been in.
+	///
+	/// The same machinery undo and redo use: they are only this with the target
+	/// worked out for you.
+	@discardableResult
+	public func travel(to state: Int) -> Int? {
+		let route = history.route(to: state)
+		guard !route.undo.isEmpty || !route.apply.isEmpty else { return nil }
+
+		for edit in route.undo {
+			applyEdit(byteRange: edit.appliedRange, newBytes: edit.removed)
+		}
+		for edit in route.apply {
+			applyEdit(byteRange: edit.byteRange, newBytes: edit.inserted)
+		}
+		history.moveTo(state)
+
+		// A run of typing must not coalesce onto whatever state was landed on.
+		lastEditEnd = -1
+		lastEditTime = .distantPast
+
+		isDirty = true
+		scheduleAutoSave()
+		return route.caret.map { rope.utf16Offset(fromByte: min($0, rope.byteCount)) }
+	}
+
+	/// A few words about what an edit did, for a list of states.
+	static func summary(removed: [UInt8], inserted: [UInt8], extending: String?) -> String {
+		if let extending, extending.hasPrefix("Typed") {
+			return extending
+		}
+		let insertedText = String(decoding: inserted.prefix(24), as: UTF8.self)
+			.replacingOccurrences(of: "\n", with: "⏎")
+		let removedText = String(decoding: removed.prefix(24), as: UTF8.self)
+			.replacingOccurrences(of: "\n", with: "⏎")
+
+		switch (removed.isEmpty, inserted.isEmpty) {
+		case (true, false): return "Typed “\(insertedText)”"
+		case (false, true): return "Deleted “\(removedText)”"
+		case (false, false): return "Replaced “\(removedText)” with “\(insertedText)”"
+		case (true, true): return "No change"
 		}
 	}
 

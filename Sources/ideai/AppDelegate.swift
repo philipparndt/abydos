@@ -137,6 +137,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if options.undoTree {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+				controller?.exerciseUndoTreeForTesting()
+			}
+		}
+
 		if let typed = options.completeText {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
 				controller?.exerciseCompletionForTesting(typing: typed)
@@ -536,6 +542,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 		let redo = NSMenuItem(title: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
 		redo.keyEquivalentModifierMask = [.command, .shift]
 		editMenu.addItem(redo)
+		let localHistory = NSMenuItem(
+			title: "File History…",
+			action: #selector(MainWindowController.showFileHistory(_:)),
+			keyEquivalent: "z"
+		)
+		localHistory.keyEquivalentModifierMask = [.command, .option]
+		editMenu.addItem(localHistory)
 		editMenu.addItem(.separator())
 		editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
 		editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
