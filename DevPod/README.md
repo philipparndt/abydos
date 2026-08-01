@@ -73,6 +73,31 @@ which is what ideai's debugger does.
 Bodies may be gzipped (`Content-Encoding: gzip`) — worth it over anything
 slower than a LAN, and not worth it on the same machine.
 
+## Publishing it
+
+Off by default — a development pod that puts itself on a hostname by accident
+is worse than one you have to ask. Turned on, the kind of object is worked out
+from what the cluster has:
+
+```sh
+helm upgrade --install dev chart/ideai-devpod -n devpod \
+  --set ingress.enabled=true --set ingress.host=my-service.dev.example.com
+```
+
+| the cluster has | what you get |
+|---|---|
+| Gateway API, and `ingress.gateway.name` set | `HTTPRoute` |
+| Traefik's CRDs | `IngressRoute`, with entrypoints and middlewares |
+| neither | `Ingress`, which every controller understands |
+
+A Gateway API route without a parent gateway routes nothing, which is why
+naming one is what selects it. `ingress.mode` forces any of `gateway`,
+`traefik`, `ingress` when the guess is wrong.
+
+If the point is to take over an existing hostname rather than add one, leave
+this off and set `podLabels` to the real workload's selector labels: its
+Service — and therefore whatever already routes to it — sends traffic here.
+
 ## Speed, measured
 
 On this machine against a local k3s cluster, for a small Go service:

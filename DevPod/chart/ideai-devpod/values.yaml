@@ -67,6 +67,42 @@ affinity: {}
 podSecurityContext: {}
 securityContext: {}
 
+# Publishing the pod outside the cluster.
+#
+# Off unless asked: a development pod that puts itself on a hostname by
+# accident is worse than one you have to ask to publish. When it is on, the
+# kind of object is worked out from what the cluster actually has —
+# `helm template` sees the API groups — and can be forced with `mode`.
+ingress:
+  enabled: false
+  # auto | gateway | traefik | ingress
+  #
+  # auto prefers a Gateway API route when a parent gateway is named (a route
+  # without one routes nothing), then Traefik's own CRD where the cluster has
+  # it, and otherwise a plain Ingress, which every controller understands.
+  mode: auto
+  host: ""
+  path: /
+  pathType: Prefix
+  # Which of app.ports the traffic goes to.
+  port: http
+  className: ""
+  annotations: {}
+  tls:
+    enabled: false
+    secretName: ""
+  # Gateway API. Without a name there is nothing to attach a route to, which
+  # is why auto falls through to the others.
+  gateway:
+    name: ""
+    namespace: ""
+    sectionName: ""
+  # Traefik's IngressRoute.
+  traefik:
+    entryPoints: [websecure]
+    middlewares: []
+    tlsSecretName: ""
+
 # Where the pushed binary lives.
 #
 # An emptyDir by default. On a cluster running on the same machine as the
