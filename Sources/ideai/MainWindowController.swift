@@ -1915,6 +1915,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		debugStop(nil)
 	}
 
+	func showDebugConsoleForTesting() {
+		bottomPanel.showDebugConsoleForTesting()
+	}
+
 	func echoDebugOutputForTesting() {
 		bottomPanel.debugOutput = { text in
 			FileHandle.standardError.write(Data("[debug] \(text)".utf8))

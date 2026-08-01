@@ -96,6 +96,8 @@ struct LaunchOptions {
 	var launchRun = false
 	/// Press the debug button beside it.
 	var launchDebug = false
+	/// Show the debugger's console rather than its variables.
+	var debugConsole = false
 	/// Open the list of launch configurations.
 	var launchMenu = false
 	/// Open the editor for the selected configuration.
@@ -182,6 +184,7 @@ struct LaunchOptions {
 			case "--toast":      options.showToast = true
 			case "--launch-run":    options.launchRun = true
 			case "--launch-debug":  options.launchDebug = true
+			case "--debug-console": options.debugConsole = true
 			case "--launch-menu":   options.launchMenu = true
 			case "--launch-editor": options.launchEditor = true
 			case "--symbols":    options.symbolQuery = next() ?? ""

@@ -161,6 +161,26 @@ public enum GitHistory {
 	/// A merge is shown against its first parent — the difference it made to
 	/// the branch it landed on, which is the question being asked when somebody
 	/// clicks one.
+	/// The commits that exist here and nowhere else yet.
+	///
+	/// Measured against every remote-tracking ref rather than the current
+	/// branch's upstream: a branch may have no upstream set and still have been
+	/// pushed under another name, and a commit that is on some remote is not
+	/// one you can lose by dropping this machine in a river.
+	public static func unpushed(in root: URL, limit: Int = 500) async -> Set<String> {
+		let result = await GitRepository.run(
+			["rev-list", "--max-count=\(max(1, limit))", "HEAD", "--not", "--remotes"],
+			in: root
+		)
+		guard result.exitCode == 0 else { return [] }
+		return Set(
+			result.stdout
+				.components(separatedBy: .newlines)
+				.map { $0.trimmingCharacters(in: .whitespaces) }
+				.filter { !$0.isEmpty }
+		)
+	}
+
 	public static func files(of hash: String, in root: URL) async -> [GitCommitFile] {
 		let result = await GitRepository.run([
 			"show", "--name-status", "--find-renames", "--format=", "-m", "--first-parent", hash,

@@ -211,6 +211,10 @@ final class BottomPanel: NSView {
 
 	// MARK: - Sessions
 
+	func showDebugConsoleForTesting() {
+		showDebug()?.showConsole()
+	}
+
 	/// Brings an existing debug session forward, or says there is none.
 	@discardableResult
 	func showDebug() -> DebugPane? {

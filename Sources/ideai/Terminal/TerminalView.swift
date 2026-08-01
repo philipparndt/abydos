@@ -87,7 +87,20 @@ final class TerminalView: NSView, NSTextInputClient {
 
 	// MARK: - Init
 
-	init(workingDirectory: URL?, command: (executable: String, arguments: [String])? = nil) {
+	/// A view that shows output but runs nothing.
+	///
+	/// The debug console is a terminal in every way that matters — the program
+	/// under the debugger prints the same escape sequences it would anywhere
+	/// else — except that nothing types into it and no shell belongs behind it.
+	static func forOutput() -> TerminalView {
+		TerminalView(workingDirectory: nil, command: nil, startsProcess: false)
+	}
+
+	init(
+		workingDirectory: URL?,
+		command: (executable: String, arguments: [String])? = nil,
+		startsProcess: Bool = true
+	) {
 		emulator = TerminalEmulator(rows: 24, columns: 80)
 		pty = PseudoTerminal()
 		super.init(frame: .zero)
@@ -116,7 +129,8 @@ final class TerminalView: NSView, NSTextInputClient {
 			self?.onProcessExit?(code)
 		}
 
-		self.pendingLaunch = (workingDirectory, command)
+		self.pendingLaunch = startsProcess ? (workingDirectory, command) : nil
+		self.runsProcess = startsProcess
 	}
 
 	required init?(coder: NSCoder) { fatalError("not used") }
@@ -128,14 +142,21 @@ final class TerminalView: NSView, NSTextInputClient {
 	}
 
 	private var pendingLaunch: (URL?, (executable: String, arguments: [String])?)?
+	/// False for a view that only displays output; there is nothing to type at.
+	private var runsProcess = true
 
 	override var isFlipped: Bool { true }
-	override var acceptsFirstResponder: Bool { true }
+	override var acceptsFirstResponder: Bool { runsProcess }
 
 	override func viewDidMoveToWindow() {
 		super.viewDidMoveToWindow()
 		updateDisplayLink()
-		guard window != nil, let launch = pendingLaunch else { return }
+		guard window != nil else { return }
+		guard let launch = pendingLaunch else {
+			updateMetalEnabled()
+			viewportChanged()
+			return
+		}
 		pendingLaunch = nil
 
 		// Files dropped from the tree, or from any app that offers URLs.
@@ -995,6 +1016,17 @@ final class TerminalView: NSView, NSTextInputClient {
 		displayIfNeeded()
 	}
 
+	/// Shows text that came from somewhere other than a pty.
+	func append(_ text: String) {
+		enqueue(Data(text.utf8))
+	}
+
+	/// Empties the screen and the scrollback, for a session starting again.
+	func clear() {
+		emulator.write("\u{1B}c")
+		scheduleRedraw()
+	}
+
 	// MARK: - Dropping files
 
 	/// Files dropped here are typed as paths.
@@ -1421,8 +1453,17 @@ final class TerminalPane: NSView {
 	let terminalView: TerminalView
 	private let scrollView = NSScrollView()
 
-	init(workingDirectory: URL?, command: (executable: String, arguments: [String])? = nil) {
-		terminalView = TerminalView(workingDirectory: workingDirectory, command: command)
+	/// A pane that shows output and runs nothing.
+	convenience init(readOnly: Void) {
+		self.init(terminalView: TerminalView.forOutput())
+	}
+
+	convenience init(workingDirectory: URL?, command: (executable: String, arguments: [String])? = nil) {
+		self.init(terminalView: TerminalView(workingDirectory: workingDirectory, command: command))
+	}
+
+	private init(terminalView: TerminalView) {
+		self.terminalView = terminalView
 		super.init(frame: .zero)
 
 		scrollView.documentView = terminalView

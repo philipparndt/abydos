@@ -182,6 +182,9 @@ public final class DebugSession {
 	/// replaced the first, and the toolbar sat greyed out while the program was
 	/// plainly stopped with a stack on screen.
 	private var stateObservers: [(State) -> Void] = []
+	/// Which stream the last output came from, and whether it ended a line.
+	private var lastOutputCategory: String?
+	private var outputAtLineStart = true
 
 	public func observeState(_ observer: @escaping (State) -> Void) {
 		stateObservers.append(observer)
@@ -517,12 +520,24 @@ public final class DebugSession {
 	}
 
 	private func wireEvents() {
-		client.onOutput = { [weak self] _, text in
+		client.onOutput = { [weak self] category, text in
+			guard let self else { return }
+			// Delve ends "Building <path>" without a newline, so its next
+			// message continued the same line and read as one word. A change of
+			// category mid-line is a change of speaker, and gets a line of its
+			// own.
+			var text = text
+			if let last = self.lastOutputCategory, last != category, !self.outputAtLineStart {
+				text = "\n" + text
+			}
+			self.lastOutputCategory = category
+			self.outputAtLineStart = text.hasSuffix("\n")
+
 			// Delve reports the exit status as a sentence rather than in the
 			// `exited` event, which it never sends — the same place VS Code
 			// reads it from.
-			self?.noteExitCode(inOutput: text)
-			self?.onOutput?(text)
+			self.noteExitCode(inOutput: text)
+			self.onOutput?(text)
 		}
 		client.onTerminated = { [weak self] in
 			self?.state = .terminated

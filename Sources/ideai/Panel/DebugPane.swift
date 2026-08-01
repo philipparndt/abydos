@@ -70,8 +70,7 @@ final class DebugPane: NSView {
 
 	override var isFlipped: Bool { true }
 
-	private var console: NSTextView!
-	private var consoleScroll: NSScrollView!
+	private var console: TerminalPane!
 	private var variablesScroll: NSScrollView!
 	private var rightSide: NSView!
 	private var sideTabs: NSSegmentedControl!
@@ -81,25 +80,30 @@ final class DebugPane: NSView {
 	/// Appends adapter or program output, keeping the newest visible.
 	func appendOutput(_ text: String) {
 		guard !text.isEmpty else { return }
-		console.string += text
-		console.scrollToEndOfDocument(nil)
+		// A debug adapter hands over whole lines without the carriage return a
+		// terminal expects, which would otherwise staircase down the screen.
+		// Normalised first, or output that already ends its lines properly gets
+		// a second carriage return and a blank line between every line.
+		let lines = text
+			.replacingOccurrences(of: "\r\n", with: "\n")
+			.replacingOccurrences(of: "\n", with: "\r\n")
+		console.terminalView.append(lines)
 
 		// A hidden log has to say when it has something, or a build error is
 		// invisible behind a tab nobody had a reason to press.
-		guard consoleScroll.isHidden else { return }
+		guard console.isHidden else { return }
 		hasUnreadOutput = true
 		sideTabs.setLabel("Console •", forSegment: 1)
 	}
 
 	@objc private func sideTabChanged() {
 		let showsConsole = sideTabs.selectedSegment == 1
-		consoleScroll.isHidden = !showsConsole
+		console.isHidden = !showsConsole
 		variablesScroll.isHidden = showsConsole
 		watchField.isHidden = showsConsole
 		if showsConsole {
 			hasUnreadOutput = false
 			sideTabs.setLabel("Console", forSegment: 1)
-			console.scrollToEndOfDocument(nil)
 		}
 	}
 
@@ -131,7 +135,7 @@ final class DebugPane: NSView {
 		toolbar.writeImageForTesting(to: path, state: session.state, exitCode: session.exitCode)
 	}
 
-	var showsConsoleForTesting: Bool { !consoleScroll.isHidden }
+	var showsConsoleForTesting: Bool { !console.isHidden }
 	var consoleTabLabelForTesting: String { sideTabs.label(forSegment: 1) ?? "" }
 
 	private func build() {
@@ -226,22 +230,12 @@ final class DebugPane: NSView {
 		// anything that went wrong starting it. Without somewhere to put this,
 		// a failed launch looks identical to one that simply has not stopped
 		// yet.
-		console = NSTextView()
-		console.isEditable = false
-		console.drawsBackground = true
-		console.backgroundColor = Theme.current.editorBackground
-		console.textColor = Theme.current.sidebarText
-		console.font = Theme.terminalFont(size: Theme.current.fontSize - 1)
-		console.textContainerInset = NSSize(width: 6, height: 6)
-
-		consoleScroll = NSScrollView()
-		consoleScroll.documentView = console
-		consoleScroll.hasVerticalScroller = true
-		consoleScroll.drawsBackground = true
-		consoleScroll.backgroundColor = Theme.current.editorBackground
-		consoleScroll.scrollerStyle = NSScroller.preferredScrollerStyle
-		consoleScroll.isHidden = true
-		rightSide.addSubview(consoleScroll)
+		// The same terminal the panel runs commands in, minus the shell: a
+		// program under the debugger prints the colours it always prints, and
+		// anything else would show them as escape sequences.
+		console = TerminalPane(readOnly: ())
+		console.isHidden = true
+		rightSide.addSubview(console)
 
 		sideTabs = NSSegmentedControl(
 			labels: ["Variables", "Console"], trackingMode: .selectOne,
@@ -252,7 +246,7 @@ final class DebugPane: NSView {
 		sideTabs.font = Theme.current.uiFont(10.5)
 		addSubview(sideTabs)
 
-		for view in [consoleScroll, variablesScroll, sideTabs, threadPopUp, watchField, stackScroll]
+		for view in [console, variablesScroll, sideTabs, threadPopUp, watchField, stackScroll]
 			as [NSView] {
 			view.translatesAutoresizingMaskIntoConstraints = false
 		}
@@ -297,10 +291,10 @@ final class DebugPane: NSView {
 			variablesScroll.trailingAnchor.constraint(equalTo: rightSide.trailingAnchor),
 			variablesScroll.bottomAnchor.constraint(equalTo: rightSide.bottomAnchor),
 
-			consoleScroll.topAnchor.constraint(equalTo: rightSide.topAnchor),
-			consoleScroll.leadingAnchor.constraint(equalTo: rightSide.leadingAnchor),
-			consoleScroll.trailingAnchor.constraint(equalTo: rightSide.trailingAnchor),
-			consoleScroll.bottomAnchor.constraint(equalTo: rightSide.bottomAnchor),
+			console.topAnchor.constraint(equalTo: rightSide.topAnchor),
+			console.leadingAnchor.constraint(equalTo: rightSide.leadingAnchor),
+			console.trailingAnchor.constraint(equalTo: rightSide.trailingAnchor),
+			console.bottomAnchor.constraint(equalTo: rightSide.bottomAnchor),
 		])
 
 		DispatchQueue.main.async { [weak split] in
