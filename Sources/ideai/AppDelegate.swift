@@ -159,7 +159,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if options.debugInspect {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-				controller?.goDebug(nil)
+				if let binary = options.debugBinary {
+					controller?.debugBinaryForTesting(binary)
+				} else {
+					controller?.goDebug(nil)
+				}
 			}
 			// Once it has built and stopped, look at what is there — and do not
 			// step, or the values belong to somewhere else.
@@ -638,6 +642,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 		)
 		runItem.keyEquivalentModifierMask = [.control]
 		runMenu.addItem(runItem)
+		let debugExecutable = NSMenuItem(
+			title: "Debug Executable\u{2026}",
+			action: #selector(MainWindowController.debugExecutable(_:)),
+			keyEquivalent: ""
+		)
+		runMenu.addItem(debugExecutable)
+		let attachItem = NSMenuItem(
+			title: "Attach to Process\u{2026}",
+			action: #selector(MainWindowController.attachToProcess(_:)),
+			keyEquivalent: ""
+		)
+		runMenu.addItem(attachItem)
 		runMenu.addItem(.separator())
 
 		// The function keys IDEA and Xcode both use, so the fingers that

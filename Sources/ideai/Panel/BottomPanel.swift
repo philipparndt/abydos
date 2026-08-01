@@ -404,12 +404,64 @@ final class BottomPanel: NSView {
 	// MARK: - Debugging
 
 	/// Starts a native debug session for a Go package.
+	/// Starts a session on any adapter, however it is to begin.
+	@discardableResult
+	func startDebugging(
+		adapter: DebugAdapter,
+		executable: String,
+		start: DebugStart,
+		breakpoints: [String: [Breakpoint]] = [:]
+	) -> DebugSession? {
+		guard let session = makeDebugSession(breakpoints: breakpoints) else { return nil }
+
+		Task {
+			do {
+				switch start {
+				case let .launch(program, arguments):
+					try await session.launch(
+						adapter: adapter, executable: executable,
+						program: program, arguments: arguments
+					)
+				case let .attach(pid):
+					try await session.attach(adapter: adapter, executable: executable, pid: pid)
+				}
+			} catch {
+				await MainActor.run {
+					let alert = NSAlert()
+					alert.messageText = "Could not start the debugger"
+					alert.informativeText = error.localizedDescription
+					alert.runModal()
+				}
+			}
+		}
+		return session
+	}
+
+	/// How a session begins.
+	enum DebugStart {
+		case launch(program: String, arguments: [String])
+		case attach(pid: Int)
+	}
+
 	@discardableResult
 	func startDebugging(
 		delve: String,
 		package: String,
 		breakpoints: [String: [Breakpoint]] = [:]
 	) -> DebugSession? {
+		startDebugging(
+			adapter: DebugAdapters.delve,
+			executable: delve,
+			start: .launch(program: package, arguments: []),
+			breakpoints: breakpoints
+		)
+	}
+
+	/// Builds a session and its pane, wired up but not yet started.
+	///
+	/// Everything a session needs regardless of which debugger is behind it or
+	/// whether it launches a program or attaches to one.
+	private func makeDebugSession(breakpoints: [String: [Breakpoint]]) -> DebugSession? {
 		guard let root = workingDirectory else { return nil }
 
 		// One debug session at a time; a second would fight over breakpoints.
@@ -448,8 +500,6 @@ final class BottomPanel: NSView {
 			for breakpoint in list.sorted(by: { $0.line < $1.line }) {
 				session.toggleBreakpoint(file: file, line: breakpoint.line)
 				guard breakpoint.isConditional else { continue }
-				// The condition goes on before the program starts, which is the
-				// only moment it can: the adapter asks for breakpoints once.
 				session.setBreakpointOptions(
 					file: file,
 					line: breakpoint.line,
@@ -463,19 +513,6 @@ final class BottomPanel: NSView {
 		let panelSession = Session(title: "Debug", kind: .debug(pane))
 		sessions.append(panelSession)
 		activate(index: sessions.count - 1, focus: false)
-
-		Task {
-			do {
-				try await session.launch(delveExecutable: delve, package: package)
-			} catch {
-				await MainActor.run {
-					let alert = NSAlert()
-					alert.messageText = "Could not start the debugger"
-					alert.informativeText = error.localizedDescription
-					alert.runModal()
-				}
-			}
-		}
 		return session
 	}
 

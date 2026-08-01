@@ -88,6 +88,8 @@ struct LaunchOptions {
 	var breakpointCondition: String?
 	/// Start the debugger and inspect where it stopped, without stepping.
 	var debugInspect = false
+	/// Debug this binary with whichever adapter suits it.
+	var debugBinary: String?
 	/// Wait this long before capturing, for a language server to answer.
 	var lspWait: Double?
 	/// Rewrite the open file externally after this many seconds.
@@ -156,6 +158,7 @@ struct LaunchOptions {
 			case "--type-block": options.typeBlock = true
 			case "--bp-condition": options.breakpointCondition = next()
 			case "--debug-inspect": options.debugInspect = true
+			case "--debug-binary": options.debugBinary = next()
 			case "--lsp-wait":   options.lspWait = next().flatMap(Double.init)
 			case "--external-edit": options.externalEdit = next().flatMap(Double.init)
 			case "--send-bytes": options.terminalBytes = next()

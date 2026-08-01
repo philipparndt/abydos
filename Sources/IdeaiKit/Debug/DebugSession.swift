@@ -201,6 +201,8 @@ public final class DebugSession {
 	private let client: DAPClient
 	private let projectRoot: URL
 	private var currentThreadID: Int?
+	/// Which debugger is behind this session, once one has been started.
+	public private(set) var adapter: DebugAdapter?
 	/// Bumped per launch so a stale watchdog cannot fire on a newer session.
 	private var launchGeneration = 0
 
@@ -313,44 +315,102 @@ public final class DebugSession {
 	// MARK: - Session
 
 	/// Launches `dlv dap` and runs the given package under it.
+	/// Starts Delve on a Go package. Kept for the Go menu items.
 	public func launch(delveExecutable: String, package: String) async throws {
+		try await launch(
+			adapter: DebugAdapters.delve,
+			executable: delveExecutable,
+			program: absolutePackagePath(package)
+		)
+	}
+
+	/// Starts any adapter on any program.
+	///
+	/// The protocol is the same whichever debugger is behind it, so this is the
+	/// same sequence for all of them: start it however it wants to be spoken
+	/// to, shake hands, and send the request. What differs is a handful of
+	/// strings, which the adapter itself supplies.
+	public func launch(
+		adapter: DebugAdapter,
+		executable: String,
+		program: String,
+		arguments: [String] = []
+	) async throws {
 		state = .starting
 		launchGeneration += 1
+		self.adapter = adapter
 
-		// Delve builds the program with `go build`, and that only works from
-		// inside the module. A Go repository commonly keeps go.mod in a
-		// subdirectory, so the package's own directory is the working directory
-		// — the project root often has no go.mod at all.
-		let programPath = absolutePackagePath(package)
-		let buildDirectory = Self.directory(containing: programPath) ?? projectRoot
+		// The program's own directory: a build only works from inside its
+		// module or its package, and the project root often is neither.
+		let workingDirectory = Self.directory(containing: program) ?? projectRoot
 
-		try await client.startListening(
-			executable: delveExecutable,
-			arguments: ["dap", "--listen=127.0.0.1:0"],
-			workingDirectory: buildDirectory
-		)
+		switch adapter.transport {
+		case .socket:
+			try await client.startListening(
+				executable: executable,
+				arguments: adapter.arguments,
+				workingDirectory: workingDirectory
+			)
+		case .standardIO:
+			try client.start(
+				executable: executable,
+				arguments: adapter.arguments,
+				workingDirectory: workingDirectory
+			)
+		}
 
+		try await handshake(with: adapter)
+
+		// Launch is sent before waiting for `initialized`; the adapter replies
+		// to it once configuration is done, which is why it is not awaited.
+		client.send("launch", arguments: DebugAdapters.launchArguments(
+			for: adapter,
+			program: program,
+			workingDirectory: workingDirectory.path,
+			arguments: arguments
+		))
+
+		startLaunchWatchdog()
+	}
+
+	/// Attaches to a process that is already running.
+	///
+	/// The case launching cannot cover: a server that is already up, something
+	/// started by a script, or a process that only misbehaves after an hour.
+	public func attach(adapter: DebugAdapter, executable: String, pid: Int) async throws {
+		state = .starting
+		launchGeneration += 1
+		self.adapter = adapter
+
+		switch adapter.transport {
+		case .socket:
+			try await client.startListening(
+				executable: executable, arguments: adapter.arguments, workingDirectory: projectRoot
+			)
+		case .standardIO:
+			try client.start(
+				executable: executable, arguments: adapter.arguments, workingDirectory: projectRoot
+			)
+		}
+
+		try await handshake(with: adapter)
+		client.send("attach", arguments: DebugAdapters.attachArguments(for: adapter, pid: pid))
+		startLaunchWatchdog()
+	}
+
+	/// The initialize request, which is the same for every adapter but for the
+	/// name each one expects to be called.
+	private func handshake(with adapter: DebugAdapter) async throws {
 		_ = try await client.request("initialize", arguments: [
 			"clientID": "ideai",
 			"clientName": "ideai",
-			"adapterID": "go",
+			"adapterID": adapter.adapterID,
 			"pathFormat": "path",
 			"linesStartAt1": true,
 			"columnsStartAt1": true,
 			"supportsVariableType": true,
 			"supportsRunInTerminalRequest": false,
 		])
-
-		// Launch is sent before waiting for `initialized`; the adapter replies to
-		// it once configuration is done, which is why it is not awaited here.
-		client.send("launch", arguments: [
-			"request": "launch",
-			"mode": "debug",
-			"program": programPath,
-			"cwd": buildDirectory.path,
-		])
-
-		startLaunchWatchdog()
 	}
 
 	/// The directory a program path names, or its parent when it is a file.

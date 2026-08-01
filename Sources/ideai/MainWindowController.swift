@@ -502,6 +502,84 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		if !editor.clickScratchPlaceholderForTesting() { newScratchFile(nil) }
 	}
 
+	// MARK: - Debugging anything
+
+	/// Debugs a binary, whatever produced it.
+	///
+	/// The other half of "Go Debug": a native executable is debugged by LLDB,
+	/// which speaks the same protocol, so nothing above the adapter changes.
+	@objc func debugExecutable(_ sender: Any?) {
+		guard let project else { return }
+
+		let panel = NSOpenPanel()
+		panel.title = "Debug an executable"
+		panel.message = "Pick a compiled program. It is debugged as it is, and not rebuilt."
+		panel.canChooseDirectories = false
+		panel.canChooseFiles = true
+		panel.allowsMultipleSelection = false
+		panel.directoryURL = project.root
+
+		let start: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+			guard response == .OK, let url = panel.url, let self else { return }
+			let adapter = DebugAdapters.adapter(forProgramAt: url.path, projectRoot: project.root)
+			guard let executable = DebugAdapters.executable(for: adapter) else {
+				self.presentGoError("Could not find `\(adapter.command)`. \(adapter.installHint)")
+				return
+			}
+			self.setPanelVisible(true)
+			guard let session = self.bottomPanel.startDebugging(
+				adapter: adapter,
+				executable: executable,
+				start: .launch(program: FilePath.canonical(url), arguments: []),
+				breakpoints: self.pendingBreakpoints
+			) else { return }
+			self.wire(session)
+		}
+		if let window { panel.beginSheetModal(for: window, completionHandler: start) } else { start(panel.runModal()) }
+	}
+
+	/// Attaches to something already running.
+	///
+	/// The case launching cannot cover: a server that is already up, or a
+	/// process that only misbehaves after an hour of work.
+	@objc func attachToProcess(_ sender: Any?) {
+		guard let project else { return }
+		let processes = RunningProcesses.list()
+		guard !processes.isEmpty else {
+			presentGoError("No processes to attach to.")
+			return
+		}
+
+		let alert = NSAlert()
+		alert.messageText = "Attach to a process"
+		alert.informativeText = "The debugger stops it where it is."
+		alert.addButton(withTitle: "Attach")
+		alert.addButton(withTitle: "Cancel")
+
+		let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 380, height: 24))
+		popup.addItems(withTitles: processes.map { "\($0.pid)  \($0.name)" })
+		alert.accessoryView = popup
+
+		let attach: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+			guard response == .alertFirstButtonReturn, let self else { return }
+			let chosen = processes[popup.indexOfSelectedItem]
+			let adapter = DebugAdapters.adapter(forProgramAt: chosen.path, projectRoot: project.root)
+			guard let executable = DebugAdapters.executable(for: adapter) else {
+				self.presentGoError("Could not find `\(adapter.command)`. \(adapter.installHint)")
+				return
+			}
+			self.setPanelVisible(true)
+			guard let session = self.bottomPanel.startDebugging(
+				adapter: adapter,
+				executable: executable,
+				start: .attach(pid: chosen.pid),
+				breakpoints: self.pendingBreakpoints
+			) else { return }
+			self.wire(session)
+		}
+		if let window { alert.beginSheetModal(for: window, completionHandler: attach) } else { attach(alert.runModal()) }
+	}
+
 	// MARK: - Debugging
 
 	/// The session the debug commands act on, if one is running.
@@ -585,6 +663,25 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				print("TAB: after ⌘T   sessions=\(self.terminalSessionCountForTesting)")
 			}
 		}
+	}
+
+	/// Debugs a binary, choosing the adapter the way the menu item does.
+	func debugBinaryForTesting(_ path: String) {
+		guard let project else { return }
+		let adapter = DebugAdapters.adapter(forProgramAt: path, projectRoot: project.root)
+		guard let executable = DebugAdapters.executable(for: adapter) else {
+			print("BINARY: no \(adapter.command) installed")
+			return
+		}
+		print("BINARY: \(adapter.name) at \(executable)")
+		setPanelVisible(true)
+		guard let session = bottomPanel.startDebugging(
+			adapter: adapter,
+			executable: executable,
+			start: .launch(program: FilePath.canonical(URL(fileURLWithPath: path)), arguments: []),
+			breakpoints: pendingBreakpoints
+		) else { return }
+		wire(session)
 	}
 
 	/// Looks at where the debugger stopped, without moving it.
@@ -1047,7 +1144,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			package: package,
 			breakpoints: pendingBreakpoints
 		) else { return }
+		wire(session)
+	}
 
+	/// Connects a session to the window, whichever debugger is behind it.
+	///
+	/// Every way of starting one goes through here. Wiring it at the Go entry
+	/// point instead meant a session started any other way ran perfectly and
+	/// told the editor nothing: no execution marker, no breakpoint state.
+	func wire(_ session: DebugSession) {
 		session.onBreakpointsChanged = { [weak self, weak session] in
 			guard let self, let session else { return }
 			self.syncBreakpointsToEditor(from: session)
