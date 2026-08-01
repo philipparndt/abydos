@@ -1,4 +1,5 @@
 import AppKit
+import IdeaiKit
 
 /// Renders Markdown to an attributed string for the preview pane.
 ///
@@ -60,9 +61,32 @@ enum MarkdownRenderer {
 		// Runs carrying the same intent identity belong to the same block.
 		var previousBlockID: [Int]?
 
-		for run in parsed.runs {
+		let runs = Array(parsed.runs)
+		var index = 0
+		while index < runs.count {
+			let run = runs[index]
 			let intent = run.presentationIntent
 			let blockID = intent?.components.map(\.identity)
+
+			// A fenced block is highlighted as a whole: a string or a comment
+			// can span lines, and colouring one run at a time would end them at
+			// every newline.
+			if let language = Self.fenceLanguage(of: intent) {
+				var text = String(parsed[run.range].characters)
+				var next = index + 1
+				while next < runs.count,
+				      runs[next].presentationIntent?.components.map(\.identity) == blockID {
+					text += String(parsed[runs[next].range].characters)
+					next += 1
+				}
+				if previousBlockID != nil { output.append(NSAttributedString(string: "\n")) }
+				previousBlockID = blockID
+				output.append(highlightedCode(text, languageId: language))
+				index = next
+				continue
+			}
+
+			index += 1
 			let text = String(parsed[run.range].characters)
 
 			// A block's marker belongs on its first run only. Inline styling
@@ -77,6 +101,48 @@ enum MarkdownRenderer {
 			output.append(styled(text: text, run: run, intent: intent, isBlockStart: isBlockStart))
 		}
 
+		return output
+	}
+
+	/// The language a fenced block claims, when a grammar is loaded for it.
+	private static func fenceLanguage(of intent: PresentationIntent?) -> String? {
+		for component in intent?.components ?? [] {
+			guard case let .codeBlock(hint) = component.kind else { continue }
+			guard let hint else { return nil }
+			return LanguageRegistry.shared.languageId(forFenceInfo: hint)
+		}
+		return nil
+	}
+
+	/// A code block, coloured by its own grammar.
+	private static func highlightedCode(_ text: String, languageId: String) -> NSAttributedString {
+		let paragraph = NSMutableParagraphStyle()
+		paragraph.lineSpacing = 2
+		paragraph.paragraphSpacing = 8
+		paragraph.firstLineHeadIndent = 12
+		paragraph.headIndent = 12
+
+		let output = NSMutableAttributedString(string: text, attributes: [
+			.font: monoFont,
+			.foregroundColor: Theme.current.editorText,
+			.paragraphStyle: paragraph,
+		])
+
+		guard let engine = SyntaxEngine(languageId: languageId) else { return output }
+		let rope = Rope(text)
+		engine.parse(rope: rope)
+
+		let length = (text as NSString).length
+		for token in engine.highlights(rope: rope, byteRange: 0..<rope.byteCount) {
+			let start = max(0, min(token.range.lowerBound, length))
+			let end = max(start, min(token.range.upperBound, length))
+			guard end > start else { continue }
+			output.addAttribute(
+				.foregroundColor,
+				value: Theme.current.color(for: token.kind),
+				range: NSRange(location: start, length: end - start)
+			)
+		}
 		return output
 	}
 

@@ -145,6 +145,16 @@ public final class SyntaxEngine {
 			for i in clampedStart..<clampedEnd { canvas[i] = kind }
 		}
 
+		// Code inside a fence is a different language, and painted on top: the
+		// markdown grammar can only say "this is code", which would leave a
+		// whole block one flat colour.
+		for token in injectedHighlights(rope: rope, byteRange: lo..<hi) {
+			let clampedStart = max(startUTF16, token.range.lowerBound) - startUTF16
+			let clampedEnd = min(endUTF16, token.range.upperBound) - startUTF16
+			guard clampedStart < clampedEnd, clampedStart >= 0, clampedEnd <= width else { continue }
+			for i in clampedStart..<clampedEnd { canvas[i] = token.kind }
+		}
+
 		// Coalesce equal neighbours into runs so the renderer sets far fewer
 		// attribute spans than there are characters.
 		var tokens: [HighlightToken] = []
@@ -161,6 +171,100 @@ public final class SyntaxEngine {
 			tokens.append(HighlightToken(range: (startUTF16 + runStart)..<(startUTF16 + width), kind: runKind))
 		}
 		return tokens
+	}
+
+	// MARK: - Injections
+
+	/// Engines for the languages found inside fences, kept between draws.
+	///
+	/// Building a parser is the expensive part and the same handful of
+	/// languages appear over and over in one document; the parse itself is a
+	/// few hundred bytes and costs nothing.
+	private var injected: [String: SyntaxEngine] = [:]
+
+	/// Highlights for code inside fenced blocks, in document coordinates.
+	private func injectedHighlights(rope: Rope, byteRange: Range<Int>) -> [HighlightToken] {
+		guard languageId == "markdown", let tree, let root = tree.rootNode else { return [] }
+
+		infoProvider = { range in rope.string(in: range) }
+		defer { infoProvider = nil }
+
+		var tokens: [HighlightToken] = []
+		for fence in fences(under: root, byteRange: byteRange) {
+			guard let language = LanguageRegistry.shared.languageId(forFenceInfo: fence.info),
+			      language != "markdown"
+			else { continue }
+
+			let engine: SyntaxEngine
+			if let existing = injected[language] {
+				engine = existing
+			} else {
+				guard let created = SyntaxEngine(languageId: language) else { continue }
+				injected[language] = created
+				engine = created
+			}
+
+			// The block's own text, parsed on its own: tree-sitter has no
+			// notion of "parse this language starting at byte 4000".
+			let text = rope.string(in: fence.content)
+			guard !text.isEmpty else { continue }
+			let inner = Rope(text)
+			engine.parse(rope: inner)
+
+			let offset = rope.utf16Offset(fromByte: fence.content.lowerBound)
+			for token in engine.highlights(rope: inner, byteRange: 0..<inner.byteCount) {
+				tokens.append(HighlightToken(
+					range: (token.range.lowerBound + offset)..<(token.range.upperBound + offset),
+					kind: token.kind
+				))
+			}
+		}
+		return tokens
+	}
+
+	/// The fenced code blocks overlapping a byte range, with what they claim to
+	/// contain.
+	private func fences(under root: Node, byteRange: Range<Int>) -> [(info: String, content: Range<Int>)] {
+		var found: [(String, Range<Int>)] = []
+
+		func walk(_ node: Node) {
+			let start = Int(node.byteRange.lowerBound)
+			let end = Int(node.byteRange.upperBound)
+			guard end > byteRange.lowerBound, start < byteRange.upperBound else { return }
+
+			if node.nodeType == "fenced_code_block" {
+				var info = ""
+				var content: Range<Int>?
+				for index in 0..<node.childCount {
+					guard let child = node.child(at: index) else { continue }
+					switch child.nodeType {
+					case "info_string":
+						info = infoText(of: child)
+					case "code_fence_content":
+						content = Int(child.byteRange.lowerBound)..<Int(child.byteRange.upperBound)
+					default:
+						break
+					}
+				}
+				if let content { found.append((info, content)) }
+				return
+			}
+
+			for index in 0..<node.childCount {
+				guard let child = node.child(at: index) else { continue }
+				walk(child)
+			}
+		}
+		walk(root)
+		return found
+	}
+
+	/// Set by the caller before walking, since a node cannot read its own text.
+	private var infoProvider: ((Range<Int>) -> String)?
+
+	private func infoText(of node: Node) -> String {
+		let range = Int(node.byteRange.lowerBound)..<Int(node.byteRange.upperBound)
+		return infoProvider?(range) ?? ""
 	}
 
 	// MARK: - Folding

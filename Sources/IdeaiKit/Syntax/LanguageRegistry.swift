@@ -106,6 +106,38 @@ public final class LanguageRegistry {
 		return Self.contentLanguage(at: url)
 	}
 
+	/// The language a fenced code block names after its backticks.
+	///
+	/// The same names people type there — `sh`, `js`, `c++` — rather than the
+	/// ids used internally, and nil for a fence with no language or one no
+	/// grammar is loaded for, which is left as plain text.
+	public func languageId(forFenceInfo info: String) -> String? {
+		// "```swift title=x" and "```{.python}" both name a language first.
+		let word = info
+			.trimmingCharacters(in: .whitespaces)
+			.lowercased()
+			.split(whereSeparator: { " \t{},".contains($0) })
+			.first
+			.map(String.init)?
+			.trimmingCharacters(in: CharacterSet(charactersIn: ".`"))
+
+		guard let word, !word.isEmpty else { return nil }
+		if let byExtension = Self.extensionMap[word] { return byExtension }
+		if let byAlias = Self.fenceAliases[word] { return byAlias }
+		return definitions[word] != nil ? word : nil
+	}
+
+	/// Names that appear after backticks and match no file extension.
+	static let fenceAliases: [String: String] = [
+		"shell": "bash", "console": "bash", "shell-session": "bash", "terminal": "bash",
+		"c++": "cpp", "objective-c": "c", "objc": "c",
+		"golang": "go",
+		"node": "javascript", "es6": "javascript",
+		"yml": "yaml",
+		"jsonc": "json", "json5": "json",
+		"html5": "html", "xml": "html",
+	]
+
 	/// Sniffs the first few hundred bytes for a recognisable shape.
 	static func contentLanguage(at url: URL) -> String? {
 		guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
