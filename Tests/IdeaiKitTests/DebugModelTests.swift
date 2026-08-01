@@ -139,3 +139,45 @@ struct WatchExpressionTests {
 		#expect(session.watches.first?.failed == false)
 	}
 }
+
+/// How a program ended.
+@MainActor
+struct ExitCodeTests {
+	private func makeSession() -> DebugSession {
+		DebugSession(projectRoot: URL(fileURLWithPath: NSTemporaryDirectory()))
+	}
+
+	/// Delve never sends an `exited` event; it says it in a sentence, which is
+	/// the same place VS Code reads it from.
+	@Test func readsAStatusOutOfTheAdaptersOwnWords() {
+		let session = makeSession()
+		session.noteExitCode(inOutput: "Process 4242 has exited with status 3\n")
+		#expect(session.exitCode == 3)
+	}
+
+	@Test func readsAZeroAndANegative() {
+		let clean = makeSession()
+		clean.noteExitCode(inOutput: "Process 1 has exited with status 0\n")
+		#expect(clean.exitCode == 0)
+
+		let signalled = makeSession()
+		signalled.noteExitCode(inOutput: "Process 1 has exited with status -1\n")
+		#expect(signalled.exitCode == -1)
+	}
+
+	/// An adapter that reports it properly is believed over anything found in
+	/// prose, so the first answer stands.
+	@Test func doesNotOverwriteWhatWasAlreadyKnown() {
+		let session = makeSession()
+		session.noteExitCode(inOutput: "Process 1 has exited with status 0\n")
+		session.noteExitCode(inOutput: "Process 1 has exited with status 7\n")
+		#expect(session.exitCode == 0)
+	}
+
+	@Test func ignoresOutputThatSaysNothingAboutExiting() {
+		let session = makeSession()
+		session.noteExitCode(inOutput: "Building /tmp/app\n")
+		session.noteExitCode(inOutput: "has exited with status banana\n")
+		#expect(session.exitCode == nil)
+	}
+}

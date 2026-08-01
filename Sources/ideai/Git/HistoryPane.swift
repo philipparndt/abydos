@@ -27,7 +27,7 @@ final class HistoryPane: NSView {
 	private static let pageSize = 150
 
 	private var searchField: NSSearchField!
-	private var scopeButton: NSButton!
+	private var scopeControl: NSSegmentedControl!
 	private var commitTable: HistoryTableView!
 	private var fileTable: HistoryTableView!
 	private var detailLabel: NSTextField!
@@ -74,11 +74,19 @@ final class HistoryPane: NSView {
 		searchField.delegate = self
 		searchField.sendsWholeSearchString = false
 
-		scopeButton = NSButton(title: "This File", target: self, action: #selector(toggleScope))
-		scopeButton.bezelStyle = .rounded
-		scopeButton.controlSize = .small
-		scopeButton.font = Theme.current.uiFont(11)
-		scopeButton.setButtonType(.pushOnPushOff)
+		// Both choices visible with the active one lit, rather than one button
+		// naming the other state: "Only main.go" and "Whole Repository" each
+		// read as a description of what is showing, so a single button cannot
+		// say which it is.
+		scopeControl = NSSegmentedControl(
+			labels: ["Whole Repository", "This File"],
+			trackingMode: .selectOne,
+			target: self,
+			action: #selector(scopeChanged)
+		)
+		scopeControl.controlSize = .small
+		scopeControl.font = Theme.current.uiFont(11)
+		scopeControl.selectedSegment = 0
 
 		commitTable = makeTable(rowHeight: Theme.current.scaled(40))
 		commitTable.onSelectionChange = { [weak self] in self?.commitSelected() }
@@ -103,7 +111,7 @@ final class HistoryPane: NSView {
 		let commitScroll = scrollView(around: commitTable)
 		let fileScroll = scrollView(around: fileTable)
 
-		for view in [searchField, scopeButton, commitScroll, detailLabel, fileScroll] as [NSView] {
+		for view in [searchField, scopeControl, commitScroll, detailLabel, fileScroll] as [NSView] {
 			addSubview(view)
 			view.translatesAutoresizingMaskIntoConstraints = false
 		}
@@ -114,10 +122,11 @@ final class HistoryPane: NSView {
 			searchField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
 			searchField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
 
-			scopeButton.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: inset / 2),
-			scopeButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
+			scopeControl.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: inset / 2),
+			scopeControl.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
+			scopeControl.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -inset),
 
-			commitScroll.topAnchor.constraint(equalTo: scopeButton.bottomAnchor, constant: inset / 2),
+			commitScroll.topAnchor.constraint(equalTo: scopeControl.bottomAnchor, constant: inset / 2),
 			commitScroll.leadingAnchor.constraint(equalTo: leadingAnchor),
 			commitScroll.trailingAnchor.constraint(equalTo: trailingAnchor),
 
@@ -163,14 +172,12 @@ final class HistoryPane: NSView {
 		return scroll
 	}
 
-	/// The button says what pressing it will do, not what is on screen.
+	/// Both options say what they show; the lit one is what is showing.
 	private func updateScopeButton() {
 		let name = (scopedPath ?? offeredPath).map { ($0 as NSString).lastPathComponent }
-		scopeButton.title = scopedPath == nil
-			? name.map { "Only \($0)" } ?? "Whole Repository"
-			: "Whole Repository"
-		scopeButton.isEnabled = scopedPath != nil || offeredPath != nil
-		scopeButton.state = scopedPath == nil ? .off : .on
+		scopeControl.setLabel(name ?? "This File", forSegment: 1)
+		scopeControl.setEnabled(name != nil, forSegment: 1)
+		scopeControl.selectedSegment = scopedPath == nil ? 0 : 1
 	}
 
 	// MARK: - Loading
@@ -252,8 +259,8 @@ final class HistoryPane: NSView {
 
 	// MARK: - Actions
 
-	@objc private func toggleScope() {
-		setScope(path: scopedPath == nil ? offeredPath : nil)
+	@objc private func scopeChanged() {
+		setScope(path: scopeControl.selectedSegment == 1 ? offeredPath : nil)
 	}
 
 	private func makeCommitMenu() -> NSMenu {

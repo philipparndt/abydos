@@ -128,7 +128,7 @@ final class DebugPane: NSView {
 
 	@discardableResult
 	func writeToolbarImageForTesting(to path: String) -> Bool {
-		toolbar.writeImageForTesting(to: path, state: .stopped(reason: "breakpoint"))
+		toolbar.writeImageForTesting(to: path, state: session.state, exitCode: session.exitCode)
 	}
 
 	var showsConsoleForTesting: Bool { !consoleScroll.isHidden }
@@ -322,8 +322,8 @@ final class DebugPane: NSView {
 	}
 
 	private func wireSession() {
-		session.observeState { [weak self] state in
-			self?.toolbar.update(state: state)
+		session.observeState { [weak self, weak session] state in
+			self?.toolbar.update(state: state, exitCode: session?.exitCode)
 		}
 		session.onStackChanged = { [weak self] in
 			self?.stackTable.reloadData()
@@ -807,6 +807,7 @@ private final class DebugToolbar: NSView {
 	}
 
 	private var state: DebugSession.State = .idle
+	private var exitCode: Int?
 	private var buttons: [Button] = []
 	private var labelOrigin: CGFloat = 0
 	/// Tooltip text by the tag AppKit handed back for it.
@@ -814,9 +815,10 @@ private final class DebugToolbar: NSView {
 
 	override var isFlipped: Bool { true }
 
-	func update(state: DebugSession.State) {
-		guard state != self.state else { return }
+	func update(state: DebugSession.State, exitCode: Int? = nil) {
+		guard state != self.state || exitCode != self.exitCode else { return }
 		self.state = state
+		self.exitCode = exitCode
 		rebuild()
 	}
 
@@ -906,9 +908,10 @@ private final class DebugToolbar: NSView {
 			draw(kind: button.kind, in: button.rect, colour: colour)
 		}
 
+		let failed = state == .terminated && (exitCode ?? 0) != 0
 		let label = NSAttributedString(string: statusText, attributes: [
 			.font: Theme.current.uiFont(11),
-			.foregroundColor: Theme.current.sidebarText,
+			.foregroundColor: failed ? NSColor.hex(0xE05252) : Theme.current.sidebarText,
 		])
 		label.draw(at: NSPoint(x: labelOrigin, y: bounds.midY - label.size().height / 2))
 	}
@@ -1014,9 +1017,10 @@ private final class DebugToolbar: NSView {
 
 	/// Draws the toolbar to a PNG, so the glyphs can be looked at.
 	@discardableResult
-	func writeImageForTesting(to path: String, state: DebugSession.State) -> Bool {
-		frame = NSRect(x: 0, y: 0, width: 320, height: 30)
+	func writeImageForTesting(to path: String, state: DebugSession.State, exitCode: Int? = nil) -> Bool {
+		frame = NSRect(x: 0, y: 0, width: 360, height: 30)
 		self.state = state
+		self.exitCode = exitCode
 		rebuild()
 		guard let rep = bitmapImageRepForCachingDisplay(in: bounds) else { return false }
 		cacheDisplay(in: bounds, to: rep)
@@ -1030,7 +1034,9 @@ private final class DebugToolbar: NSView {
 		case .starting: return "Starting\u{2026}"
 		case .running: return "Running"
 		case let .stopped(reason): return "Paused \u{2014} \(reason)"
-		case .terminated: return "Finished"
+		case .terminated:
+			guard let exitCode else { return "Finished" }
+			return exitCode == 0 ? "Finished — exit code 0" : "Failed — exit code \(exitCode)"
 		}
 	}
 }

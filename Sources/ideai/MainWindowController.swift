@@ -792,6 +792,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		wire(session)
 	}
 
+	/// Lets it run to the end and reports how it exited.
+	func reportExitForTesting() {
+		debugContinue(nil)
+		DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+			guard let self else { return }
+			self.bottomPanel.writeDebugToolbarImageForTesting(to: "build/exit-toolbar.png")
+			let state = self.debugSession.map { String(describing: $0.state) } ?? "none"
+			print("EXIT: code=\(self.debugSession?.exitCode.map(String.init) ?? "none") state=\(state)")
+		}
+	}
+
 	/// Looks at where the debugger stopped, without moving it.
 	func inspectDebugStateForTesting() {
 		let stoppedAt = executionMarker.map { "\(($0.file as NSString).lastPathComponent):\($0.line)" }
@@ -829,7 +840,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		case 0, 1: debugStepOver(nil)
 		case 2: debugStepInto(nil)
 		case 3: debugStepOut(nil)
-		default: debugStop(nil)
+		// The last step lets it run to the end, so there is an exit code to
+		// report rather than one we killed before it had one.
+		default: debugContinue(nil)
+		}
+
+		if step >= 3 {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+				guard let self else { return }
+				self.bottomPanel.writeDebugToolbarImageForTesting(to: "build/exit-toolbar.png")
+				let state = self.debugSession.map { String(describing: $0.state) } ?? "none"
+				print("EXIT: code=\(self.debugSession?.exitCode.map(String.init) ?? "none") state=\(state)")
+			}
 		}
 	}
 

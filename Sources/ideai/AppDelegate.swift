@@ -216,6 +216,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 7.0) {
 				controller?.inspectDebugStateForTesting()
 			}
+			// Then let it finish, so there is an exit code to report.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 9.0) {
+				controller?.reportExitForTesting()
+			}
 		}
 
 		if options.debugSteps {

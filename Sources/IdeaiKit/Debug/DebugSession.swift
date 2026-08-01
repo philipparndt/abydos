@@ -203,6 +203,12 @@ public final class DebugSession {
 	private var currentThreadID: Int?
 	/// Which debugger is behind this session, once one has been started.
 	public private(set) var adapter: DebugAdapter?
+
+	/// What the program exited with, once it has.
+	///
+	/// "Finished" is the same word for a clean run and a crash, which is the
+	/// one thing you want to know without reading the log.
+	public private(set) var exitCode: Int?
 	/// Bumped per launch so a stale watchdog cannot fire on a newer session.
 	private var launchGeneration = 0
 
@@ -338,11 +344,20 @@ public final class DebugSession {
 	) async throws {
 		state = .starting
 		launchGeneration += 1
+		exitCode = nil
 		self.adapter = adapter
+
+		// Resolved against the project before anything is done with it. A
+		// package is named relatively — "." or "cmd/server" — and resolving
+		// that against the *app's* working directory pointed the debugger at
+		// wherever ideai itself was started from, where the build failed with
+		// nothing said about it.
+		let program = absolutePackagePath(program)
 
 		// The program's own directory: a build only works from inside its
 		// module or its package, and the project root often is neither.
 		let workingDirectory = Self.directory(containing: program) ?? projectRoot
+
 
 		switch adapter.transport {
 		case .socket:
@@ -380,6 +395,7 @@ public final class DebugSession {
 	public func attach(adapter: DebugAdapter, executable: String, pid: Int) async throws {
 		state = .starting
 		launchGeneration += 1
+		exitCode = nil
 		self.adapter = adapter
 
 		switch adapter.transport {
@@ -471,8 +487,27 @@ public final class DebugSession {
 
 	// MARK: - Events
 
+	/// Picks an exit status out of an adapter's own message.
+	///
+	/// Only when the events did not carry one: an adapter that reports it
+	/// properly is believed over anything found in prose. Delve never sends an
+	/// `exited` event and says it in a sentence instead, which is the same
+	/// place VS Code reads it from.
+	func noteExitCode(inOutput text: String) {
+		guard exitCode == nil else { return }
+		guard let range = text.range(of: "has exited with status ") else { return }
+
+		let digits = text[range.upperBound...].prefix { $0.isNumber || $0 == "-" }
+		guard let code = Int(digits) else { return }
+		exitCode = code
+	}
+
 	private func wireEvents() {
 		client.onOutput = { [weak self] _, text in
+			// Delve reports the exit status as a sentence rather than in the
+			// `exited` event, which it never sends — the same place VS Code
+			// reads it from.
+			self?.noteExitCode(inOutput: text)
 			self?.onOutput?(text)
 		}
 		client.onTerminated = { [weak self] in
@@ -496,6 +531,10 @@ public final class DebugSession {
 				self.state = .running
 
 			case "terminated", "exited":
+				// `exited` carries the code; `terminated` only says it is over,
+				// and the two arrive in either order. Whichever came with a
+				// code is the one that knows how it went.
+				if let code = body["exitCode"] as? Int { self.exitCode = code }
 				self.state = .terminated
 				self.stackFrames = []
 				self.scopes = []
