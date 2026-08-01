@@ -15,8 +15,20 @@ public final class FileSystemWatcher {
 	/// refresh instead of hundreds.
 	private let latency: CFTimeInterval = 0.25
 
-	public init(root: URL, onChange: @escaping ([URL]) -> Void) {
+	/// Whether `.git` is reported like anything else.
+	///
+	/// Off for the tree, which would otherwise redraw itself every time git
+	/// touched an index; on for the watcher that exists precisely to notice
+	/// that somebody committed from a terminal.
+	private let includesGitDirectory: Bool
+
+	public init(
+		root: URL,
+		includesGitDirectory: Bool = false,
+		onChange: @escaping ([URL]) -> Void
+	) {
 		self.root = root.standardizedFileURL
+		self.includesGitDirectory = includesGitDirectory
 		self.onChange = onChange
 	}
 
@@ -83,7 +95,8 @@ public final class FileSystemWatcher {
 		var directories = Set<URL>()
 		for (index, path) in paths.enumerated() {
 			let url = URL(fileURLWithPath: path)
-			if path.contains("/.git/") || url.lastPathComponent == ".DS_Store" { continue }
+			if !includesGitDirectory, path.contains("/.git/") { continue }
+			if url.lastPathComponent == ".DS_Store" { continue }
 			let flag = index < flags.count ? flags[index] : 0
 
 			// A burst too large to describe file by file — a checkout, a build,

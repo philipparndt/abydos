@@ -25,6 +25,9 @@ final class ChangesPane: NSView {
 	private var bodyView: NSTextView!
 	private var amendCheckbox: NSButton!
 	private var commitButton: NSButton!
+	private var pushButton: NSButton!
+	/// Where the branch stands against its remote, for what push should say.
+	private var pushState: GitPush.State?
 
 	/// Guards against a refresh landing while a git command is still running and
 	/// showing a half-applied state.
@@ -102,7 +105,17 @@ final class ChangesPane: NSView {
 		commitButton.controlSize = .small
 		commitButton.keyEquivalent = "\r"
 
-		let commitRow = NSStackView(views: [amendCheckbox, NSView(), commitButton])
+		// Beside commit rather than inside it: "commit and push" is one gesture
+		// people want, but pushing what somebody else committed is a different
+		// decision from making a commit, and hiding it in a split button makes
+		// it hard to do on its own.
+		pushButton = NSButton(title: "Push", target: self, action: #selector(push))
+		pushButton.bezelStyle = .rounded
+		pushButton.controlSize = .small
+		pushButton.isEnabled = false
+
+		let commitRow = NSStackView(views: [amendCheckbox, NSView(), pushButton, commitButton])
+		commitRow.spacing = Theme.current.scaled(6)
 		commitRow.orientation = .horizontal
 		commitRow.distribution = .fill
 
@@ -177,6 +190,10 @@ final class ChangesPane: NSView {
 
 	func refresh() {
 		guard !isBusy else { return }
+		// Outside the comparison below: a clean working copy produces the same
+		// status every time, and the branch can still have moved ahead of its
+		// remote since the last look.
+		refreshPushState()
 		Task { @MainActor in
 			let fresh = await GitWorkingCopy.status(in: root)
 			guard fresh != status else { return }
@@ -204,6 +221,58 @@ final class ChangesPane: NSView {
 		commitButton.title = count > 0
 			? "Commit \(count) File\(count == 1 ? "" : "s")"
 			: (isAmending ? "Amend" : "Commit")
+
+		pushButton.title = pushState?.buttonTitle ?? "Push"
+		pushButton.isEnabled = !isBusy && pushState?.canPush == true
+		pushButton.toolTip = pushTooltip
+	}
+
+	private var pushTooltip: String {
+		guard let pushState else { return "Push this branch" }
+		guard pushState.hasRemote else { return "This repository has no remote" }
+		guard let upstream = pushState.upstream else {
+			return "Push “\(pushState.branch)” to origin and track it"
+		}
+		if pushState.ahead == 0 { return "Nothing to push to \(upstream)" }
+		return "Push \(pushState.ahead) commit\(pushState.ahead == 1 ? "" : "s") to \(upstream)"
+	}
+
+	/// Re-reads where the branch stands, and says so on the button.
+	private func refreshPushState() {
+		Task { @MainActor in
+			pushState = await GitPush.state(in: root)
+			updateCommitButton()
+		}
+	}
+
+	@objc private func push() {
+		guard let state = pushState, state.canPush else { return }
+		let setsUpstream = state.upstream == nil
+
+		isBusy = true
+		updateCommitButton()
+		Task { @MainActor in
+			let result = await GitPush.push(in: root, setUpstream: setsUpstream)
+			isBusy = false
+
+			if result.exitCode == 0 {
+				// git reports a push on stderr, which is where the branch and
+				// the range it sent are named.
+				let summary = result.stderr.isEmpty ? result.stdout : result.stderr
+				Toast.post(
+					"Pushed \(state.branch)",
+					detail: summary.trimmingCharacters(in: .whitespacesAndNewlines),
+					kind: .information
+				)
+			} else {
+				presentFailure(result.stderr.isEmpty ? result.stdout : result.stderr)
+			}
+
+			refreshPushState()
+			// The history and the branch list both show what has been pushed.
+			NotificationCenter.default.post(name: .ideaiRepositoryChanged, object: root)
+			onWorkingCopyChanged?()
+		}
 	}
 
 	// MARK: - Actions
@@ -385,6 +454,8 @@ final class ChangesPane: NSView {
 			detail: message.trimmingCharacters(in: .whitespacesAndNewlines)
 		)
 	}
+
+	func pushForTesting() { push() }
 
 	/// Selects the first unstaged change, so the screenshot harness can verify
 	/// the diff without a click.

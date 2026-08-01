@@ -164,6 +164,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// become a stop button that stops the right thing.
 	private weak var runningPane: TerminalPane?
 	/// Painted behind the toolbar, since the titlebar itself is transparent.
+	/// Watches `.git` so a commit made in a terminal shows up here.
+	private var repositoryWatcher: RepositoryWatcher?
 	private var titlebarBackdrop: ColoredView?
 	private var titlebarBackdropHeight: NSLayoutConstraint?
 	/// Held while open: the panel is a child window and nothing else owns it.
@@ -472,6 +474,37 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// and an *empty* toolbar plus an accessory reserves a second titlebar row.
 	/// Keeping the toolbar keeps the modern window shape and a single row, so
 	/// the capsule is the accepted cost.
+	/// Watches the repository behind a project, and tells the views that show
+	/// it when it moves.
+	private func startWatchingRepository(at root: URL) {
+		repositoryWatcher?.stop()
+		repositoryWatcher = nil
+
+		Task { @MainActor in
+			guard let directory = await RepositoryWatcher.directory(forRepositoryAt: root),
+			      // Another project may have been opened while this was asked.
+			      self.project?.root == root
+			else { return }
+
+			let watcher = RepositoryWatcher(gitDirectory: directory) { [weak self] in
+				guard let self, let current = self.project else { return }
+				NotificationCenter.default.post(
+					name: .ideaiRepositoryChanged, object: current.root
+				)
+				self.navigator.refreshGitStatus()
+				// The branch itself may be what changed — a checkout in a
+				// terminal is exactly the case this watcher exists for.
+				Task { @MainActor in
+					await current.loadGit()
+					self.branchPill?.setBranch(await current.git?.currentBranch())
+					self.layoutTitlebarPills()
+				}
+			}
+			watcher.start()
+			self.repositoryWatcher = watcher
+		}
+	}
+
 	/// The strip the toolbar sits on.
 	///
 	/// The window is `fullSizeContentView`, so the area behind the titlebar is
@@ -572,6 +605,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		LanguageService.shared.warmUp(project: project.root)
 		selectedConfigurationName = nil
 		refreshRunControl()
+		startWatchingRepository(at: project.root)
 		scratchesPane?.setProject(project.root)
 		bottomPanel.setWorkingDirectory(project.root)
 
@@ -1964,6 +1998,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 		debugStop(nil)
 	}
+
+	func pushChangesForTesting() { changesPane?.pushForTesting() }
 
 	func showDebugConsoleForTesting() {
 		bottomPanel.showDebugConsoleForTesting()

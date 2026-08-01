@@ -196,21 +196,32 @@ public actor GitRepository {
 	public static func run(
 		_ arguments: [String],
 		in directory: URL,
-		input: Data? = nil
+		input: Data? = nil,
+		environment: [String: String] = [:]
 	) async -> ProcessResult {
 		await withCheckedContinuation { continuation in
 			// Hop off the caller so a slow `git` never blocks the UI.
 			DispatchQueue.global(qos: .userInitiated).async {
-				continuation.resume(returning: runSync(arguments, in: directory, input: input))
+				continuation.resume(returning: runSync(
+					arguments, in: directory, input: input, environment: environment
+				))
 			}
 		}
 	}
 
-	static func runSync(_ arguments: [String], in directory: URL, input: Data? = nil) -> ProcessResult {
+	static func runSync(
+		_ arguments: [String],
+		in directory: URL,
+		input: Data? = nil,
+		environment: [String: String] = [:]
+	) -> ProcessResult {
 		let process = Process()
 		process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
 		process.arguments = arguments
 		process.currentDirectoryURL = directory
+		if !environment.isEmpty {
+			process.environment = ProcessInfo.processInfo.environment.merging(environment) { _, new in new }
+		}
 
 		let out = Pipe(), err = Pipe()
 		process.standardOutput = out

@@ -98,6 +98,8 @@ struct LaunchOptions {
 	var launchDebug = false
 	/// Show the debugger's console rather than its variables.
 	var debugConsole = false
+	/// Press push in the commit view.
+	var pushChanges = false
 	/// Open the list of launch configurations.
 	var launchMenu = false
 	/// Open the editor for the selected configuration.
@@ -161,6 +163,7 @@ struct LaunchOptions {
 			case "--review":     options.startReview = true
 			case "--review-uncommitted": options.reviewUncommitted = true
 			case "--changes":    options.showChanges = true
+			case "--push":       options.pushChanges = true
 			case "--sidebar":    options.sidebarTool = next()
 			case "--run-line":   options.runLine = next().flatMap(Int.init)
 			case "--debug-line": options.debugLine = next().flatMap(Int.init)

@@ -335,6 +335,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if options.pushChanges {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.6) {
+				controller?.pushChangesForTesting()
+			}
+		}
+
 		if let line = options.breakpointLine {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
 				controller?.toggleBreakpointForTesting(line: line)
