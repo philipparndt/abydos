@@ -203,9 +203,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
-		if options.launchRun || options.launchMenu || options.launchEditor {
+		if options.launchRun || options.launchDebug || options.launchMenu || options.launchEditor {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+				// Echoed so a capture run can be read from a terminal: what the
+				// adapter says is half of what is being checked.
+				controller?.echoDebugOutputForTesting()
 				if options.launchRun { controller?.runSelected(nil) }
+				if options.launchDebug { controller?.debugSelected(nil) }
 				if options.launchMenu { controller?.showConfigurationMenuForTesting() }
 				if options.launchEditor { controller?.editConfigurationForTesting() }
 			}

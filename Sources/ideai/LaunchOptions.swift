@@ -94,6 +94,8 @@ struct LaunchOptions {
 	var showToast = false
 	/// Press play, as if from the titlebar.
 	var launchRun = false
+	/// Press the debug button beside it.
+	var launchDebug = false
 	/// Open the list of launch configurations.
 	var launchMenu = false
 	/// Open the editor for the selected configuration.
@@ -179,6 +181,7 @@ struct LaunchOptions {
 			case "--debug-binary": options.debugBinary = next()
 			case "--toast":      options.showToast = true
 			case "--launch-run":    options.launchRun = true
+			case "--launch-debug":  options.launchDebug = true
 			case "--launch-menu":   options.launchMenu = true
 			case "--launch-editor": options.launchEditor = true
 			case "--symbols":    options.symbolQuery = next() ?? ""

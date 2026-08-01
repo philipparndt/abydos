@@ -506,6 +506,14 @@ public final class DebugSession {
 		let digits = text[range.upperBound...].prefix { $0.isNumber || $0 == "-" }
 		guard let code = Int(digits) else { return }
 		exitCode = code
+
+		// The status usually arrives after the session is already over, so the
+		// state that carried "no code" has to be published a second time.
+		guard state == .terminated else { return }
+		onMain { [weak self] in
+			guard let self else { return }
+			for observer in self.stateObservers { observer(.terminated) }
+		}
 	}
 
 	private func wireEvents() {
@@ -542,6 +550,13 @@ public final class DebugSession {
 				// code is the one that knows how it went.
 				if let code = body["exitCode"] as? Int { self.exitCode = code }
 				self.state = .terminated
+				// Delve sends neither `exited` nor a code, and only says how the
+				// program went when asked to disconnect — which is where VS Code
+				// gets it from too. Asking costs nothing: the session is over
+				// either way.
+				if self.exitCode == nil {
+					self.client.send("disconnect", arguments: ["terminateDebuggee": true])
+				}
 				self.stackFrames = []
 				self.scopes = []
 				self.onMain {

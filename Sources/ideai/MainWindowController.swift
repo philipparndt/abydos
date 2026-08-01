@@ -1891,7 +1891,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				return
 			}
 			runControl?.setStatus(
-				code == 0 ? "Finished" : "Failed — exit code \(code)", failed: code != 0
+				code == 0 ? "Finished — exit code 0" : "Failed — exit code \(code)",
+				failed: code != 0
 			)
 		case .idle:
 			runControl?.setStatus("")
@@ -1912,6 +1913,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			return
 		}
 		debugStop(nil)
+	}
+
+	func echoDebugOutputForTesting() {
+		bottomPanel.debugOutput = { text in
+			FileHandle.standardError.write(Data("[debug] \(text)".utf8))
+		}
 	}
 
 	func showConfigurationMenuForTesting() {
@@ -1995,7 +2002,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				guard let self, self.runningPane === pane else { return }
 				self.runningPane = nil
 				self.runControl?.setStatus(
-					code == 0 ? "Finished" : "Failed — exit code \(code)", failed: code != 0
+					code == 0 ? "Finished — exit code 0" : "Failed — exit code \(code)",
+				failed: code != 0
 				)
 			}
 		}
