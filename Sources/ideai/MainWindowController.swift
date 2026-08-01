@@ -2026,6 +2026,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	var editorForTesting: EditorAreaController { editor }
 
+	func highlightPillsForTesting() {
+		projectPill?.isMenuOpen = true
+		branchPill?.isMenuOpen = true
+	}
+
 	func showAttachPickerForTesting(filter: String) {
 		attachToProcess(nil)
 		guard !filter.isEmpty else { return }

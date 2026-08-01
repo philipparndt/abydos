@@ -106,6 +106,8 @@ struct LaunchOptions {
 	var commandHoverAt: String?
 	/// Open the attach-to-process picker, filtered by this text.
 	var attachFilter: String?
+	/// Light the titlebar pills, to see their highlight against the toolbar.
+	var highlightPills = false
 	/// Open the list of launch configurations.
 	var launchMenu = false
 	/// Open the editor for the selected configuration.
@@ -173,6 +175,7 @@ struct LaunchOptions {
 			case "--navigate":   options.navigateSteps = next()
 			case "--cmd-hover":  options.commandHoverAt = next()
 			case "--attach-picker": options.attachFilter = next()
+			case "--pills":      options.highlightPills = true
 			case "--sidebar":    options.sidebarTool = next()
 			case "--run-line":   options.runLine = next().flatMap(Int.init)
 			case "--debug-line": options.debugLine = next().flatMap(Int.init)

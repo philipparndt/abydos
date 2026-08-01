@@ -335,6 +335,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if options.highlightPills {
+			DispatchQueue.main.asyncAfter(deadline: .now() + max(0.5, options.screenshotDelay - 1)) {
+				controller?.highlightPillsForTesting()
+			}
+		}
+
 		if let filter = options.attachFilter {
 			DispatchQueue.main.asyncAfter(deadline: .now() + max(1, options.screenshotDelay - 1.5)) {
 				controller?.showAttachPickerForTesting(filter: filter)

@@ -59,18 +59,31 @@ class PillButton: NSView {
 
 	// MARK: - Drawing
 
-	override func draw(_ dirtyRect: NSRect) {
-		let radius: CGFloat = 6
-		let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0, dy: 1), xRadius: radius, yRadius: radius)
+	/// How far the pill's own shape sits inside the space it is given.
+	///
+	/// The toolbar draws a rounded background of its own behind each item, and
+	/// a highlight that runs to the very edge of it reads as two frames drawn
+	/// on top of each other rather than as one pill being pointed at.
+	static var inset: CGFloat { Theme.current.scaled(4) }
 
+	override func draw(_ dirtyRect: NSRect) {
+		let radius: CGFloat = 7
+		let path = NSBezierPath(
+			roundedRect: bounds.insetBy(dx: Self.inset, dy: Self.inset),
+			xRadius: radius,
+			yRadius: radius
+		)
+
+		// Darkening rather than lightening: the toolbar draws its items on a
+		// pale background of its own, and white over white says nothing.
 		if isMenuOpen || isPressed {
-			NSColor.white.withAlphaComponent(0.14).setFill()
+			NSColor.black.withAlphaComponent(0.16).setFill()
 			path.fill()
-			Theme.current.separator.setStroke()
+			NSColor.black.withAlphaComponent(0.22).setStroke()
 			path.lineWidth = 1
 			path.stroke()
 		} else if isHovered {
-			NSColor.white.withAlphaComponent(0.08).setFill()
+			NSColor.black.withAlphaComponent(0.08).setFill()
 			path.fill()
 		}
 
@@ -116,13 +129,14 @@ final class ProjectPillButton: PillButton {
 	override var intrinsicContentSize: NSSize {
 		let textWidth = (name as NSString).size(withAttributes: [.font: Self.labelFont]).width
 		return NSSize(
-			width: Self.horizontalPadding * 2 + Self.badgeSize + Self.gap + ceil(textWidth) + Self.gap + Theme.current.scaled(9),
-			height: Theme.current.scaled(28)
+			width: PillButton.inset * 2 + Self.horizontalPadding * 2 + Self.badgeSize
+				+ Self.gap + ceil(textWidth) + Self.gap + Theme.current.scaled(9),
+			height: Theme.current.scaled(30)
 		)
 	}
 
 	override func drawContent(in rect: NSRect) {
-		var x = Self.horizontalPadding
+		var x = Self.horizontalPadding + PillButton.inset
 
 		if let badge {
 			badge.draw(in: NSRect(
@@ -173,14 +187,15 @@ final class BranchPillButton: PillButton {
 		guard let branch else { return NSSize(width: 1, height: Theme.current.scaled(28)) }
 		let textWidth = (branch as NSString).size(withAttributes: [.font: PillButton.labelFont]).width
 		return NSSize(
-			width: Self.horizontalPadding * 2 + Self.iconSize + Self.gap + ceil(textWidth) + Self.gap + Theme.current.scaled(9),
-			height: Theme.current.scaled(28)
+			width: PillButton.inset * 2 + Self.horizontalPadding * 2 + Self.iconSize
+				+ Self.gap + ceil(textWidth) + Self.gap + Theme.current.scaled(9),
+			height: Theme.current.scaled(30)
 		)
 	}
 
 	override func drawContent(in rect: NSRect) {
 		guard let branch else { return }
-		var x = Self.horizontalPadding
+		var x = Self.horizontalPadding + PillButton.inset
 
 		let tint = Theme.current.sidebarText
 		// Colour baked into the symbol configuration — see Theme.symbol.
