@@ -417,6 +417,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 			// The branch pill only gets a width once it has a name to show.
 			self.layoutTitlebarPills()
 			self.navigator.refreshGitStatus()
+
+			// Changes and branches are built around one repository and hold on
+			// to it, so a different project needs them built again. Done here
+			// rather than when the project is set, because until git has been
+			// read there is no repository to build them around.
+			if self.currentSidebarTool == .changes || self.currentSidebarTool == .branches {
+				self.install(tool: self.currentSidebarTool, force: true)
+			}
 		}
 		refreshRunConfigurations()
 	}
@@ -1159,8 +1167,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 	/// The panes are built on demand rather than kept alive: each watches the
 	/// work tree or the open file, and several doing that while one is visible
 	/// is work nobody asked for.
-	private func install(tool: SidebarToolKind) {
-		guard currentSidebarTool != tool || primaryToolView == nil else { return }
+	private func install(tool: SidebarToolKind, force: Bool = false) {
+		guard force || currentSidebarTool != tool || primaryToolView == nil else { return }
 
 		primaryToolView?.removeFromSuperview()
 		primaryToolView = nil
