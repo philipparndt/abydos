@@ -206,7 +206,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 		}
 
 		if let path = options.metalShot {
-			DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+			DispatchQueue.main.asyncAfter(deadline: .now() + options.screenshotDelay) {
 				controller?.renderTerminalWithMetal(to: path)
 				exit(0)
 			}

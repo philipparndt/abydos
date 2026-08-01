@@ -108,7 +108,12 @@ enum TerminalShaders {
 		float coverage = hasGlyph ? coverageAtlas.sample(atlasSampler, in.uv).r : 0.0;
 		// Otherwise the glyph is coverage, not colour: the cell's own colours
 		// show through it, which is what keeps a palette meaning what it says.
-		float4 colour = mix(in.background, in.foreground, coverage);
+		//
+		// The foreground's own alpha counts too. Dim text is drawn by asking for
+		// a faded foreground, and ignoring that here made it identical to
+		// ordinary text — which is how an editor's greyed-out suggestion came
+		// out as bright as what had been typed.
+		float4 colour = mix(in.background, in.foreground, coverage * in.foreground.a);
 		return float4(colour.rgb, max(in.background.a, coverage * in.foreground.a));
 	}
 	"""
