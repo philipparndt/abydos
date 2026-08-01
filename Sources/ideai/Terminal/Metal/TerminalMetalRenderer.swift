@@ -110,9 +110,25 @@ final class TerminalMetalRenderer {
 		overlays: [Overlay] = []
 	) {
 		instances.removeAll(keepingCapacity: true)
+		atlas.setCellSize(frame.cellSize)
+
+		let pixel = Float(scale)
+		func snap(_ value: Float) -> Float { (value * pixel).rounded() / pixel }
+
+		// Every edge lands on a whole point, and each cell's far edge is the
+		// next cell's near edge rather than its own width rounded separately.
+		// Otherwise neighbouring backgrounds miss each other by a fraction of a
+		// pixel and a dark seam runs between the segments of a prompt.
+		func columnEdge(_ column: Int) -> Float {
+			Float((frame.inset.x + CGFloat(column) * frame.cellSize.width - frame.origin.x).rounded())
+		}
+		func rowEdge(_ row: Int) -> Float {
+			Float((frame.inset.y + CGFloat(row) * frame.cellSize.height - frame.origin.y).rounded())
+		}
 
 		for (index, line) in rows {
-			let y = Float(frame.inset.y + CGFloat(index) * frame.cellSize.height - frame.origin.y)
+			let y = rowEdge(index)
+			let rowHeight = rowEdge(index + 1) - y
 
 			for (column, cell) in line.cells.enumerated() {
 				if cell.isWideTrailer { continue }
@@ -128,13 +144,13 @@ final class TerminalMetalRenderer {
 						for: resolved.background, isForeground: false, bold: false
 					).components
 
-				let x = Float(frame.inset.x + CGFloat(column) * frame.cellSize.width - frame.origin.x)
+				let x = columnEdge(column)
 				let isWide = column + 1 < line.cells.count && line.cells[column + 1].isWideTrailer
-				let width = Float(frame.cellSize.width) * (isWide ? 2 : 1)
+				let width = columnEdge(column + (isWide ? 2 : 1)) - x
 
 				var instance = CellInstance(
 					origin: SIMD2(x, y),
-					size: SIMD2(width, Float(frame.cellSize.height)),
+					size: SIMD2(width, rowHeight),
 					glyphOrigin: .zero,
 					glyphSize: .zero,
 					uvOrigin: .zero,
@@ -150,11 +166,20 @@ final class TerminalMetalRenderer {
 					)
 					let face = faces.face(bold: cell.attributes.bold, italic: cell.attributes.italic)
 					if let entry = atlas.entry(for: cell.scalar, font: face, faceIndex: faceIndex) {
-						// The glyph hangs off the baseline, which sits a fixed
-						// distance down the cell.
-						let baseline = y + Float(faces.baselineFromTop)
+						// A glyph hangs off the baseline, which sits a fixed
+						// distance down the cell; a separator is the cell.
+						let anchor = PowerlineGlyph.isSeparator(cell.scalar)
+							? y
+							: y + Float(faces.baselineFromTop)
+						// Snapped to whole pixels. The glyph was rasterised at
+						// one position inside its bitmap, so landing it on a
+						// fraction of a pixel resamples it — by a different
+						// fraction for each cell, since a bearing is fractional
+						// and a cell edge is not. Letters then sit unevenly
+						// however exactly the cells themselves line up.
 						instance.glyphOrigin = SIMD2(
-							x + Float(entry.offset.x), baseline + Float(entry.offset.y)
+							snap(x + Float(entry.offset.x)),
+							snap(anchor + Float(entry.offset.y))
 						)
 						instance.glyphSize = SIMD2(Float(entry.size.width), Float(entry.size.height))
 						instance.uvOrigin = entry.uvOrigin
@@ -171,14 +196,14 @@ final class TerminalMetalRenderer {
 		// is underneath rather than replacing it, and the cursor is a block the
 		// character shows through.
 		for overlay in overlays {
-			let y = Float(frame.inset.y + CGFloat(overlay.row) * frame.cellSize.height - frame.origin.y)
-			let x = Float(
-				frame.inset.x + CGFloat(overlay.columns.lowerBound) * frame.cellSize.width - frame.origin.x
-			)
-			let width = Float(CGFloat(overlay.columns.count) * frame.cellSize.width)
+			let y = rowEdge(overlay.row)
+			let x = columnEdge(overlay.columns.lowerBound)
 			instances.append(CellInstance(
 				origin: SIMD2(x, y),
-				size: SIMD2(width, Float(frame.cellSize.height)),
+				size: SIMD2(
+					columnEdge(overlay.columns.upperBound) - x,
+					rowEdge(overlay.row + 1) - y
+				),
 				glyphOrigin: .zero,
 				glyphSize: .zero,
 				uvOrigin: .zero,

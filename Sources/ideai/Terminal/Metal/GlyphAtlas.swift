@@ -94,6 +94,12 @@ final class GlyphAtlas {
 
 	private var entries: [Key: AtlasEntry?] = [:]
 
+	/// The cell the separators are drawn to fill.
+	///
+	/// They are geometry rather than glyphs, so their size is the cell's, not
+	/// the font's — and a cell of a different size means drawing them again.
+	private var cellSize: CGSize = .zero
+
 	private struct Key: Hashable {
 		let scalar: UInt32
 		let face: UInt8
@@ -122,13 +128,82 @@ final class GlyphAtlas {
 	///
 	/// Returns nil for anything with nothing to draw — a space, or a character
 	/// no font on the machine has a glyph for.
+	/// Tells the atlas how big a cell is, since the separators are drawn to fill
+	/// one exactly.
+	func setCellSize(_ size: CGSize) {
+		guard size != cellSize else { return }
+		cellSize = size
+		removeAll()
+	}
+
 	func entry(for scalar: UInt32, font: NSFont, faceIndex: UInt8) -> AtlasEntry? {
 		let key = Key(scalar: scalar, face: faceIndex)
 		if let known = entries[key] { return known }
 
-		let made = rasterise(scalar: scalar, font: font)
+		let made = PowerlineGlyph.isSeparator(scalar)
+			? rasteriseSeparator(scalar: scalar)
+			: rasterise(scalar: scalar, font: font)
 		entries[key] = made
 		return made
+	}
+
+	/// Draws a powerline separator as the shape it is, filling the cell.
+	///
+	/// The same geometry the CoreGraphics path draws, for the same reason: a
+	/// font glyph is sized to the font's metrics and never quite fills the cell,
+	/// which leaves a seam where one prompt segment meets the next. Rasterised
+	/// once at cell size and then stamped like any other glyph.
+	private func rasteriseSeparator(scalar: UInt32) -> AtlasEntry? {
+		guard cellSize.width > 0, cellSize.height > 0 else { return nil }
+
+		let pixelWidth = Int((cellSize.width * scale).rounded())
+		let pixelHeight = Int((cellSize.height * scale).rounded())
+		guard pixelWidth > 0, pixelHeight > 0,
+		      let slot = coverage.allocate(width: pixelWidth, height: pixelHeight),
+		      let context = CGContext(
+				data: nil,
+				width: pixelWidth,
+				height: pixelHeight,
+				bitsPerComponent: 8,
+				bytesPerRow: pixelWidth,
+				space: CGColorSpaceCreateDeviceGray(),
+				bitmapInfo: CGImageAlphaInfo.none.rawValue
+			)
+		else { return nil }
+
+		context.setFillColor(gray: 0, alpha: 1)
+		context.fill(CGRect(x: 0, y: 0, width: pixelWidth, height: pixelHeight))
+		context.scaleBy(x: scale, y: scale)
+
+		// White, because what is stored is coverage: the cell's own foreground
+		// is what actually shows through it.
+		let graphics = NSGraphicsContext(cgContext: context, flipped: false)
+		NSGraphicsContext.saveGraphicsState()
+		NSGraphicsContext.current = graphics
+		PowerlineGlyph.draw(
+			scalar: scalar,
+			in: NSRect(origin: .zero, size: cellSize),
+			color: .white
+		)
+		NSGraphicsContext.restoreGraphicsState()
+
+		guard let pixels = context.data else { return nil }
+		coverage.texture.replace(
+			region: MTLRegionMake2D(slot.x, slot.y, pixelWidth, pixelHeight),
+			mipmapLevel: 0,
+			withBytes: pixels,
+			bytesPerRow: pixelWidth
+		)
+
+		let side = Float(coverage.texture.width)
+		return AtlasEntry(
+			uvOrigin: SIMD2(Float(slot.x) / side, Float(slot.y) / side),
+			uvSize: SIMD2(Float(pixelWidth) / side, Float(pixelHeight) / side),
+			// It fills the cell, so it starts where the cell does.
+			offset: .zero,
+			size: cellSize,
+			isColour: false
+		)
 	}
 
 	private func rasterise(scalar: UInt32, font: NSFont) -> AtlasEntry? {
