@@ -399,6 +399,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		editor.setProject(project)
 		bottomPanel.setWorkingDirectory(project.root)
 
+		// Scratches come back with the project. Only when the window is empty:
+		// following a terminal into a project puts back what it had open, and
+		// that already includes whichever scratches were among it.
+		if !editor.hasOpenFiles { editor.restoreScratches() }
+
 		// Deferred: the titlebar has no measurable height until the window has
 		// laid out at least once.
 		DispatchQueue.main.async { [weak self] in
@@ -467,6 +472,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 	/// Gives the project tree keyboard focus.
 	func focusNavigator() {
 		navigator.focusTree()
+	}
+
+	/// Also reachable by double-clicking the empty part of the tab strip.
+	@objc func newScratchFile(_ sender: Any?) {
+		editor.newScratch()
 	}
 
 	@objc func closeTab(_ sender: Any?) {
@@ -564,6 +574,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 			editor.restore(previous)
 		} else {
 			editor.closeAllTabs()
+			editor.restoreScratches()
 		}
 	}
 
@@ -1353,6 +1364,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
 	func createFolderForTesting(named name: String) {
 		navigator.createFolderForTesting(named: name)
+	}
+
+	func createFileForTesting(named name: String) {
+		navigator.createFileForTesting(named: name)
 	}
 
 	func selectFirstChangeForTesting() {

@@ -58,6 +58,10 @@ struct LaunchOptions {
 	var debugLine: Int?
 	/// Create a folder at the project root before capture.
 	var newFolder: String?
+	/// Create a file at the project root before capture.
+	var newFile: String?
+	/// Open a scratch file before capture.
+	var newScratch: Bool = false
 	/// Rewrite the open file externally after this many seconds.
 	var externalEdit: Double?
 	/// Raw bytes to send to the terminal, for verifying key encodings.
@@ -109,6 +113,8 @@ struct LaunchOptions {
 			case "--run-line":   options.runLine = next().flatMap(Int.init)
 			case "--debug-line": options.debugLine = next().flatMap(Int.init)
 			case "--new-folder": options.newFolder = next()
+			case "--new-file":   options.newFile = next()
+			case "--scratch":    options.newScratch = true
 			case "--external-edit": options.externalEdit = next().flatMap(Double.init)
 			case "--send-bytes": options.terminalBytes = next()
 			case "--preview-mode": options.previewMode = next()

@@ -366,6 +366,15 @@ final class EditorAreaController: NSViewController {
 		(activeGroup ?? groups.first)?.restore(session)
 	}
 
+	/// Reopens the project's scratches, in whichever group is in front.
+	func restoreScratches() {
+		(activeGroup ?? groups.first)?.restoreScratches()
+	}
+
+	func newScratch() {
+		(activeGroup ?? groups.first)?.newScratch()
+	}
+
 	func closeAllTabs() {
 		for group in groups { group.closeAllTabs() }
 	}

@@ -372,6 +372,7 @@ final class ProjectNavigatorViewController: NSViewController {
 			return item
 		}
 
+		menu.addItem(item("New File…", #selector(contextNewFile)))
 		menu.addItem(item("New Folder…", #selector(contextNewFolder)))
 		menu.addItem(.separator())
 		menu.addItem(item("Open", #selector(contextOpen)))
@@ -458,6 +459,90 @@ final class ProjectNavigatorViewController: NSViewController {
 		let destination = root.appendingPathComponent(name)
 		try? FileManager.default.createDirectory(at: destination, withIntermediateDirectories: false)
 		pendingReveal = destination
+	}
+
+	func createFileForTesting(named name: String) {
+		guard let root = project?.root else { return }
+		let destination = root.appendingPathComponent(name)
+		try? FileManager.default.createDirectory(
+			at: destination.deletingLastPathComponent(),
+			withIntermediateDirectories: true
+		)
+		try? Data().write(to: destination, options: .withoutOverwriting)
+		pendingReveal = destination
+		onSelectFile?(destination, true)
+	}
+
+	/// Where a new entry from the context menu goes.
+	///
+	/// Beside the file that was clicked, or inside the folder — which is what
+	/// "new file here" means when the thing under the pointer is a file.
+	private var contextParentDirectory: URL? {
+		if let node = contextNode {
+			return node.isDirectory ? node.url : node.url.deletingLastPathComponent()
+		}
+		return project?.root
+	}
+
+	/// Asks for a name, saying why one is refused rather than failing silently.
+	private func askForName(kind: EntryName.Kind, in parent: URL) -> String? {
+		let alert = NSAlert()
+		alert.messageText = kind == .file ? "New File" : "New Folder"
+		alert.informativeText = "Inside \(parent.lastPathComponent)."
+		alert.addButton(withTitle: "Create")
+		alert.addButton(withTitle: "Cancel")
+
+		let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+		field.placeholderString = kind == .file ? "File name" : "Folder name"
+		alert.accessoryView = field
+		alert.window.initialFirstResponder = field
+
+		guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+		let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+
+		if let problem = EntryName.problem(
+			name, kind: kind, showingHiddenFiles: Settings.shared.showHiddenFiles
+		) {
+			report(problem: problem, kind: kind)
+			return nil
+		}
+		guard !FileManager.default.fileExists(atPath: parent.appendingPathComponent(name).path) else {
+			report(problem: "“\(name)” already exists here.", kind: kind)
+			return nil
+		}
+		return name
+	}
+
+	private func report(problem: String, kind: EntryName.Kind) {
+		let failure = NSAlert()
+		failure.messageText = "Cannot create that \(kind == .file ? "file" : "folder")"
+		failure.informativeText = problem
+		failure.runModal()
+	}
+
+	@objc private func contextNewFile() {
+		guard let parent = contextParentDirectory,
+		      let name = askForName(kind: .file, in: parent)
+		else { return }
+
+		let destination = parent.appendingPathComponent(name)
+		// Intermediate folders as well, so "src/new/thing.swift" works the way
+		// anyone typing that would expect.
+		let enclosing = destination.deletingLastPathComponent()
+		do {
+			if !FileManager.default.fileExists(atPath: enclosing.path) {
+				try FileManager.default.createDirectory(at: enclosing, withIntermediateDirectories: true)
+			}
+			try Data().write(to: destination, options: .withoutOverwriting)
+		} catch {
+			NSAlert(error: error).runModal()
+			return
+		}
+
+		if let node = contextNode, node.isDirectory { outlineView.expandItem(node) }
+		pendingReveal = destination
+		// Opened straight away: a new file is made in order to write in it.
+		onSelectFile?(destination, true)
 	}
 
 	@objc private func contextNewFolder() {

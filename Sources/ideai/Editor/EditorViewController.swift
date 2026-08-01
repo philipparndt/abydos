@@ -121,6 +121,7 @@ final class EditorViewController: NSViewController {
 		tabBar.onSelect = { [weak self] index in self?.activate(index: index, focusEditor: true) }
 		tabBar.onClose = { [weak self] index in self?.closeTab(at: index) }
 		tabBar.onPromote = { [weak self] index in self?.promoteToPermanent(index: index) }
+		tabBar.onNewScratch = { [weak self] in self?.newScratch() }
 		tabBar.groupID = groupID
 		tabBar.onTearOff = { [weak self] index, screenPoint in
 			guard let self else { return }
@@ -366,6 +367,59 @@ final class EditorViewController: NSViewController {
 
 	func setProject(_ project: Project) {
 		self.project = project
+	}
+
+	// MARK: - Scratch files
+
+	/// Somewhere to put something that is not part of the project.
+	///
+	/// A real file, so it highlights, folds and searches like anything else —
+	/// but one kept outside the repository, where it cannot end up in a commit.
+	func newScratch() {
+		guard let root = project?.root else { return }
+		do {
+			let url = try ScratchFiles(projectRoot: root).create()
+			open(fileURL: url, focusEditor: true)
+		} catch {
+			presentScratchFailure(error)
+		}
+	}
+
+	/// Reopens the scratches this project was left with.
+	///
+	/// They are the one kind of tab worth restoring unasked: nothing else holds
+	/// what is in them, and a scratch nobody can find again is a lost note.
+	func restoreScratches() {
+		guard let root = project?.root else { return }
+		for url in ScratchFiles(projectRoot: root).all() where !tabs.contains(where: { $0.url == url }) {
+			open(fileURL: url, focusEditor: false)
+		}
+	}
+
+	/// Throws away a scratch that was closed with nothing in it.
+	///
+	/// Without this every stray double-click would come back at the next open,
+	/// for ever. One with something in it is kept: nobody else has that text.
+	private func discardIfEmptyScratch(_ url: URL) {
+		// Not asked which project it belongs to: closing everything to swap
+		// projects happens once the window has already taken the new one, and
+		// the tabs going away are still the old one's.
+		guard ScratchFiles.isScratch(url) else { return }
+		let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+		guard size == 0 else { return }
+		try? FileManager.default.removeItem(at: url)
+	}
+
+	private func presentScratchFailure(_ error: Error) {
+		let alert = NSAlert()
+		alert.messageText = "Could not create a scratch file."
+		alert.informativeText = error.localizedDescription
+		alert.alertStyle = .warning
+		if let window = view.window {
+			alert.beginSheetModal(for: window)
+		} else {
+			alert.runModal()
+		}
 	}
 
 	// MARK: - Opening
@@ -895,11 +949,16 @@ final class EditorViewController: NSViewController {
 
 	private func refreshTabBar() {
 		let items = tabs.map { tab in
-			EditorTabItem(
+			let scratch = ScratchFiles.isScratch(tab.url)
+			return EditorTabItem(
 				url: tab.url,
-				isDirty: tab.isDirty,
+				title: scratch ? ScratchFiles.title(for: tab.url) : tab.url.lastPathComponent,
+				// A scratch keeps its dot whether or not it is written out. It
+				// has nowhere in the project it belongs to, and the dot is what
+				// says so — the same mark Sublime and Zed leave on one.
+				isDirty: tab.isDirty || scratch,
 				isPreview: tab.isPreview,
-				subtitle: tab.isDiff ? "diff" : relativeDirectory(for: tab.url)
+				subtitle: tab.isDiff ? "diff" : (scratch ? "scratch" : relativeDirectory(for: tab.url))
 			)
 		}
 		tabBar.setItems(items, activeIndex: activeIndex)
@@ -936,6 +995,7 @@ final class EditorViewController: NSViewController {
 
 		teardown(tab)
 		tabs.remove(at: index)
+		discardIfEmptyScratch(tab.url)
 
 		if tabs.isEmpty {
 			activeIndex = nil

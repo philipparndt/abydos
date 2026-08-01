@@ -4,6 +4,9 @@ import IdeaiKit
 /// One tab's display state.
 struct EditorTabItem {
 	let url: URL
+	/// What the tab says. Usually the filename, but a scratch has no name of
+	/// its own and is called by its number instead.
+	var title: String
 	var isDirty: Bool
 	/// A preview tab is the single provisional slot: opened by a click in the
 	/// tree, reused by the next click, and replaced rather than accumulated.
@@ -23,6 +26,8 @@ final class EditorTabBar: NSView {
 	var onClose: ((Int) -> Void)?
 	/// Double-click promotes a preview tab to a permanent one.
 	var onPromote: ((Int) -> Void)?
+	/// The empty part of the strip was double-clicked: make a scratch.
+	var onNewScratch: (() -> Void)?
 	/// Identifies the group this strip belongs to, carried on the pasteboard so
 	/// a drop knows where the tab came from.
 	var groupID: UUID = UUID()
@@ -159,7 +164,7 @@ final class EditorTabBar: NSView {
 	}
 
 	private func measuredWidth(for item: EditorTabItem) -> CGFloat {
-		let name = item.url.lastPathComponent
+		let name = item.title
 		let textWidth = (name as NSString).size(withAttributes: [.font: font(for: item)]).width
 		let raw = Self.horizontalPadding * 2 + Self.iconSize + Theme.current.scaled(6) + ceil(textWidth) + Theme.current.scaled(8) + Self.closeSize
 		return min(Self.maxTabWidth, max(Self.minTabWidth, raw))
@@ -247,7 +252,12 @@ final class EditorTabBar: NSView {
 			return
 		}
 
-		guard let index = index(at: point) else { return }
+		guard let index = index(at: point) else {
+			// Double-clicking the empty part of the strip opens a scratch, the
+			// way it does in the editors people arrive from.
+			if event.clickCount == 2 { onNewScratch?() }
+			return
+		}
 
 		if closeRect(for: frames[index]).contains(point) {
 			onClose?(index)
@@ -438,7 +448,7 @@ final class EditorTabBar: NSView {
 		let labelLimit = rect.maxX - Self.horizontalPadding - Self.closeSize - Theme.current.scaled(6) - x
 
 		let color = isActive ? Theme.current.sidebarHeaderText : Theme.current.sidebarText.withAlphaComponent(0.75)
-		let label = NSAttributedString(string: item.url.lastPathComponent, attributes: [
+		let label = NSAttributedString(string: item.title, attributes: [
 			.font: font(for: item),
 			.foregroundColor: color,
 		])

@@ -120,6 +120,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let name = options.newFile {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+				controller?.createFileForTesting(named: name)
+			}
+		}
+
+		if options.newScratch {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+				controller?.newScratchFile(nil)
+			}
+		}
+
 		if let line = options.runLine {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
 				controller?.invokeForTesting(line: line, debug: false)
@@ -449,6 +461,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 		let openItem = NSMenuItem(title: "Open…", action: #selector(openProjectPanel(_:)), keyEquivalent: "o")
 		openItem.target = self
 		fileMenu.addItem(openItem)
+		let scratchItem = NSMenuItem(
+			title: "New Scratch File",
+			action: #selector(MainWindowController.newScratchFile(_:)),
+			keyEquivalent: "n"
+		)
+		scratchItem.keyEquivalentModifierMask = [.command, .shift]
+		fileMenu.addItem(scratchItem)
 		fileMenu.addItem(.separator())
 		fileMenu.addItem(withTitle: "Save", action: #selector(MainWindowController.saveDocument(_:)), keyEquivalent: "s")
 		fileMenu.addItem(withTitle: "Close Tab", action: #selector(MainWindowController.closeTab(_:)), keyEquivalent: "w")
