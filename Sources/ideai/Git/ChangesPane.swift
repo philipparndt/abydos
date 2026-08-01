@@ -66,8 +66,10 @@ final class ChangesPane: NSView {
 
 		unstagedTable = makeTable()
 		unstagedTable.onActivate = { [weak self] in self?.stageSelected() }
+		unstagedTable.menu = makeChangeMenu()
 		stagedTable = makeTable()
 		stagedTable.onActivate = { [weak self] in self?.unstageSelected() }
+		stagedTable.menu = makeChangeMenu()
 
 		let unstagedScroll = makeScrollView(for: unstagedTable)
 		let stagedScroll = makeScrollView(for: stagedTable)
@@ -206,9 +208,110 @@ final class ChangesPane: NSView {
 
 	// MARK: - Actions
 
+	private func makeChangeMenu() -> NSMenu {
+		let menu = NSMenu()
+		menu.autoenablesItems = false
+		menu.delegate = self
+		return menu
+	}
+
+	/// The change the menu was opened on, whichever list it is in.
+	private var clickedChange: (change: GitChange, isStaged: Bool)? {
+		for table in [unstagedTable, stagedTable] {
+			guard let table else { continue }
+			let row = table.clickedRow >= 0 ? table.clickedRow : -1
+			guard row >= 0 else { continue }
+			let source = table === stagedTable ? status.staged : status.unstaged
+			guard source.indices.contains(row) else { continue }
+			return (source[row], table === stagedTable)
+		}
+		return nil
+	}
+
+	@objc private func revealClicked() {
+		guard let clicked = clickedChange else { return }
+		NSWorkspace.shared.activateFileViewerSelecting([root.appendingPathComponent(clicked.change.path)])
+	}
+
+	@objc private func copyClickedPath() {
+		guard let clicked = clickedChange else { return }
+		NSPasteboard.general.clearContents()
+		NSPasteboard.general.setString(clicked.change.path, forType: .string)
+	}
+
+	/// Offers a pattern for this file and writes it once it is agreed.
+	///
+	/// Offered rather than imposed: "ignore this" can mean this exact file,
+	/// anything with this name, or everything this build step produces, and
+	/// guessing wrong writes a line into a tracked file somebody else has to
+	/// notice and undo.
+	@objc private func ignoreClicked() {
+		guard let clicked = clickedChange else { return }
+		let path = clicked.change.path
+		let isDirectory = (try? root.appendingPathComponent(path)
+			.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+		let suggestions = GitIgnore.suggestions(for: path, isDirectory: isDirectory)
+
+		let alert = NSAlert()
+		alert.messageText = "Ignore \((path as NSString).lastPathComponent)"
+		alert.informativeText = "The pattern is written to .gitignore. Edit it if it is not quite right."
+		alert.addButton(withTitle: "Ignore")
+		alert.addButton(withTitle: "Cancel")
+
+		let container = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 54))
+		let popup = NSPopUpButton(frame: NSRect(x: 0, y: 30, width: 360, height: 24))
+		popup.addItems(withTitles: suggestions.map { "\($0.pattern)   —   \($0.explanation)" })
+		container.addSubview(popup)
+
+		let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
+		field.stringValue = suggestions.first?.pattern ?? path
+		field.font = Theme.terminalFont(size: 12)
+		container.addSubview(field)
+
+		// Choosing from the list fills the field, which stays editable: the
+		// suggestions are a starting point, not the only answers.
+		popup.target = self
+		popup.action = #selector(ignorePatternChosen)
+		ignoreSuggestions = suggestions
+		ignoreField = field
+
+		alert.accessoryView = container
+		let apply: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+			guard response == .alertFirstButtonReturn, let self else { return }
+			let pattern = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+			guard !pattern.isEmpty else { return }
+			do {
+				try GitIgnore.add(pattern, toRepositoryAt: self.root)
+				self.refresh()
+				NotificationCenter.default.post(name: .ideaiRepositoryChanged, object: self.root)
+			} catch {
+				Toast.post("Could not write .gitignore", detail: error.localizedDescription)
+			}
+		}
+		if let window { alert.beginSheetModal(for: window, completionHandler: apply) } else { apply(alert.runModal()) }
+	}
+
+	private var ignoreSuggestions: [GitIgnore.Suggestion] = []
+	private weak var ignoreField: NSTextField?
+
+	@objc private func ignorePatternChosen(_ sender: NSPopUpButton) {
+		guard ignoreSuggestions.indices.contains(sender.indexOfSelectedItem) else { return }
+		ignoreField?.stringValue = ignoreSuggestions[sender.indexOfSelectedItem].pattern
+	}
+
 	private func selectedChanges(in table: NSTableView) -> [GitChange] {
 		let source = table === stagedTable ? status.staged : status.unstaged
 		return table.selectedRowIndexes.compactMap { source.indices.contains($0) ? source[$0] : nil }
+	}
+
+	@objc private func stageClicked() {
+		guard let clicked = clickedChange else { return }
+		run { await GitWorkingCopy.stage(paths: [clicked.change.path], in: self.root) }
+	}
+
+	@objc private func unstageClicked() {
+		guard let clicked = clickedChange else { return }
+		run { await GitWorkingCopy.unstage(paths: [clicked.change.path], in: self.root) }
 	}
 
 	private func stageSelected() {
@@ -300,6 +403,30 @@ final class ChangesPane: NSView {
 }
 
 // MARK: - Table
+
+extension ChangesPane: NSMenuDelegate {
+	func menuNeedsUpdate(_ menu: NSMenu) {
+		menu.removeAllItems()
+		guard let clicked = clickedChange else { return }
+
+		func item(_ title: String, _ selector: Selector) -> NSMenuItem {
+			let entry = NSMenuItem(title: title, action: selector, keyEquivalent: "")
+			entry.target = self
+			return entry
+		}
+
+		menu.addItem(item(clicked.isStaged ? "Unstage" : "Stage", clicked.isStaged
+			? #selector(unstageClicked) : #selector(stageClicked)))
+		menu.addItem(.separator())
+		// Only for something git is not already tracking: ignoring a tracked
+		// file does nothing, which is a confusing thing to offer.
+		if clicked.change.kind == .untracked {
+			menu.addItem(item("Add to .gitignore\u{2026}", #selector(ignoreClicked)))
+		}
+		menu.addItem(item("Reveal in Finder", #selector(revealClicked)))
+		menu.addItem(item("Copy Path", #selector(copyClickedPath)))
+	}
+}
 
 extension ChangesPane: NSTableViewDataSource, NSTableViewDelegate {
 	func numberOfRows(in tableView: NSTableView) -> Int {

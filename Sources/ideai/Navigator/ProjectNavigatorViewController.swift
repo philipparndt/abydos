@@ -385,6 +385,8 @@ final class ProjectNavigatorViewController: NSViewController {
 		menu.addItem(item("Reveal in Finder", #selector(contextRevealInFinder)))
 		menu.addItem(.separator())
 		menu.addItem(item("Copy Path", #selector(contextCopyPath)))
+		menu.addItem(.separator())
+		menu.addItem(item("Add to .gitignore\u{2026}", #selector(contextIgnore)))
 		menu.addItem(item("Copy Relative Path", #selector(contextCopyRelativePath)))
 		menu.addItem(.separator())
 		menu.addItem(item("Rename…", #selector(contextRename)))
@@ -511,6 +513,72 @@ final class ProjectNavigatorViewController: NSViewController {
 			return nil
 		}
 		return name
+	}
+
+	/// Offers a pattern for whatever was right-clicked, and writes it once it
+	/// is agreed.
+	@objc private func contextIgnore() {
+		guard let node = contextNode, let project else { return }
+		let root = gitRoot ?? project.root
+		let path = node.url.path
+		guard path.hasPrefix(root.path + "/") else {
+			Toast.post("Not in this repository", detail: "\(node.name) is outside \(root.lastPathComponent).")
+			return
+		}
+		let relative = String(path.dropFirst(root.path.count + 1))
+		presentIgnoreDialog(relativePath: relative, isDirectory: node.isDirectory, root: root)
+	}
+
+	private func presentIgnoreDialog(relativePath: String, isDirectory: Bool, root: URL) {
+		let suggestions = GitIgnore.suggestions(for: relativePath, isDirectory: isDirectory)
+
+		let alert = NSAlert()
+		alert.messageText = "Ignore \((relativePath as NSString).lastPathComponent)"
+		alert.informativeText = "The pattern is written to .gitignore. Edit it if it is not quite right."
+		alert.addButton(withTitle: "Ignore")
+		alert.addButton(withTitle: "Cancel")
+
+		let container = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 54))
+		let popup = NSPopUpButton(frame: NSRect(x: 0, y: 30, width: 360, height: 24))
+		popup.addItems(withTitles: suggestions.map { "\($0.pattern)   —   \($0.explanation)" })
+		container.addSubview(popup)
+
+		let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
+		field.stringValue = suggestions.first?.pattern ?? relativePath
+		field.font = Theme.terminalFont(size: 12)
+		container.addSubview(field)
+
+		ignoreSuggestions = suggestions
+		ignoreField = field
+		popup.target = self
+		popup.action = #selector(ignorePatternChosen)
+		alert.accessoryView = container
+
+		let apply: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+			guard response == .alertFirstButtonReturn else { return }
+			let pattern = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+			guard !pattern.isEmpty else { return }
+			do {
+				try GitIgnore.add(pattern, toRepositoryAt: root)
+				self?.refreshGitStatus()
+				NotificationCenter.default.post(name: .ideaiRepositoryChanged, object: root)
+			} catch {
+				Toast.post("Could not write .gitignore", detail: error.localizedDescription)
+			}
+		}
+		if let window = view.window {
+			alert.beginSheetModal(for: window, completionHandler: apply)
+		} else {
+			apply(alert.runModal())
+		}
+	}
+
+	private var ignoreSuggestions: [GitIgnore.Suggestion] = []
+	private weak var ignoreField: NSTextField?
+
+	@objc private func ignorePatternChosen(_ sender: NSPopUpButton) {
+		guard ignoreSuggestions.indices.contains(sender.indexOfSelectedItem) else { return }
+		ignoreField?.stringValue = ignoreSuggestions[sender.indexOfSelectedItem].pattern
 	}
 
 	private func report(problem: String, kind: EntryName.Kind) {
