@@ -223,6 +223,24 @@ final class BottomPanel: NSView {
 		return nil
 	}
 
+	/// Draws the debug toolbar to a PNG, if there is one.
+	@discardableResult
+	func writeDebugToolbarImageForTesting(to path: String) -> Bool {
+		for session in sessions {
+			if case let .debug(pane) = session.kind {
+				return pane.writeToolbarImageForTesting(to: path)
+			}
+		}
+		return false
+	}
+
+	var debugToolTipsForTesting: [String] {
+		for session in sessions {
+			if case let .debug(pane) = session.kind { return pane.toolbarToolTipsForTesting }
+		}
+		return []
+	}
+
 	/// Whether the keyboard is in this panel.
 	///
 	/// Asked by ⌘T, which means "another terminal tab" while typing in one and

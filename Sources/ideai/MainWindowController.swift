@@ -594,6 +594,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			?? "not stopped"
 		print("DEBUG: step \(step) state=\(session.isActive ? "active" : "inactive") at \(where_)")
 
+		if step == 0 {
+			bottomPanel.writeDebugToolbarImageForTesting(to: "build/debug-toolbar.png")
+			print("TIPS: \(bottomPanel.debugToolTipsForTesting)")
+		}
+
 		// Menu commands, the same ones the function keys send.
 		switch step {
 		case 0, 1: debugStepOver(nil)

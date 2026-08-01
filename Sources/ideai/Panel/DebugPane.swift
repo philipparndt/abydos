@@ -100,6 +100,13 @@ final class DebugPane: NSView {
 		sideTabChanged()
 	}
 
+	var toolbarToolTipsForTesting: [String] { toolbar.toolTipsForTesting() }
+
+	@discardableResult
+	func writeToolbarImageForTesting(to path: String) -> Bool {
+		toolbar.writeImageForTesting(to: path, state: .stopped(reason: "breakpoint"))
+	}
+
 	var showsConsoleForTesting: Bool { !consoleScroll.isHidden }
 	var consoleTabLabelForTesting: String { sideTabs.label(forSegment: 1) ?? "" }
 
@@ -543,23 +550,112 @@ private final class DebugToolbar: NSView {
 	var onStepOut: (() -> Void)?
 	var onStop: (() -> Void)?
 
+	/// What a button is, which decides its glyph, its name and what it does.
+	private enum Kind {
+		case play, pause, stepOver, stepInto, stepOut, stop
+
+		var tooltip: String {
+			switch self {
+			case .play: return "Continue (F9)"
+			case .pause: return "Pause"
+			case .stepOver: return "Step Over (F8)"
+			case .stepInto: return "Step Into (F7)"
+			case .stepOut: return "Step Out (\u{21E7}F8)"
+			case .stop: return "Stop (\u{2318}F2)"
+			}
+		}
+	}
+
+	private struct Button {
+		let rect: NSRect
+		let kind: Kind
+		let isEnabled: Bool
+	}
+
 	private var state: DebugSession.State = .idle
-	private var buttonFrames: [(NSRect, () -> Void)] = []
+	private var buttons: [Button] = []
+	private var labelOrigin: CGFloat = 0
+	/// Tooltip text by the tag AppKit handed back for it.
+	private var toolTipsByTag: [NSView.ToolTipTag: String] = [:]
 
 	override var isFlipped: Bool { true }
 
 	func update(state: DebugSession.State) {
+		guard state != self.state else { return }
 		self.state = state
+		rebuild()
+	}
+
+	override func layout() {
+		super.layout()
+		rebuild()
+	}
+
+	// MARK: - Layout
+
+	/// Works out where the buttons are, and registers their tooltips.
+	///
+	/// Deliberately not done while drawing: registering a tooltip mutates
+	/// tracking state, which is not something to do from inside `draw`.
+	private func rebuild() {
+		let isStopped: Bool
+		if case .stopped = state { isStopped = true } else { isStopped = false }
+		let isRunning = state == .running
+		let canStop = state != .idle && state != .terminated
+
+		let size = Theme.current.scaled(22)
+		let gap = Theme.current.scaled(2)
+		let y = bounds.midY - size / 2
+		var x = Theme.current.scaled(10)
+
+		func place(_ kind: Kind, enabled: Bool, extraGap: CGFloat = 0) -> Button {
+			x += extraGap
+			let button = Button(
+				rect: NSRect(x: x, y: y, width: size, height: size), kind: kind, isEnabled: enabled
+			)
+			x += size + gap
+			return button
+		}
+
+		// Continue and pause occupy the same slot, as in every debugger.
+		buttons = [
+			isRunning ? place(.pause, enabled: true) : place(.play, enabled: isStopped),
+			place(.stepOver, enabled: isStopped),
+			place(.stepInto, enabled: isStopped),
+			place(.stepOut, enabled: isStopped),
+			place(.stop, enabled: canStop, extraGap: Theme.current.scaled(8)),
+		]
+		labelOrigin = x + Theme.current.scaled(10)
+
+		removeAllToolTips()
+		toolTipsByTag = [:]
+		for button in buttons {
+			// Owned by the view, with the text kept here. Passing a bridged
+			// string as the owner instead crashes on hover: AppKit does not
+			// retain it, so by the time somebody points at the button the
+			// string it reads back has been freed.
+			let tag = addToolTip(button.rect, owner: self, userData: nil)
+			toolTipsByTag[tag] = button.kind.tooltip
+		}
 		needsDisplay = true
 	}
 
 	override func mouseDown(with event: NSEvent) {
 		let point = convert(event.locationInWindow, from: nil)
-		for (rect, action) in buttonFrames where rect.contains(point) {
-			action()
-			return
+		guard let button = buttons.first(where: { $0.isEnabled && $0.rect.contains(point) })
+		else { return }
+
+		switch button.kind {
+		case .play: onContinue?()
+		case .pause: onPause?()
+		case .stepOver: onStepOver?()
+		case .stepInto: onStepInto?()
+		case .stepOut: onStepOut?()
+		case .stop: onStop?()
 		}
 	}
+
+	// MARK: - Drawing
 
 	override func draw(_ dirtyRect: NSRect) {
 		Theme.current.sidebarBackground.setFill()
@@ -567,87 +663,151 @@ private final class DebugToolbar: NSView {
 		Theme.current.separator.setFill()
 		NSRect(x: 0, y: bounds.maxY - 1, width: bounds.width, height: 1).fill()
 
-		buttonFrames = []
-		removeAllToolTips()
-		var x = Theme.current.scaled(10)
-		let size = Theme.current.scaled(22)
-		let y = bounds.midY - size / 2
+		if buttons.isEmpty { rebuild() }
 
-		let isStopped: Bool
-		if case .stopped = state { isStopped = true } else { isStopped = false }
-		let isRunning = state == .running
-
-		// Continue and pause occupy the same slot, as in every debugger.
-		if isRunning {
-			addButton(
-				at: &x, y: y, size: size, symbol: "pause.fill",
-				tooltip: "Pause", enabled: true, action: { self.onPause?() }
-			)
-		} else {
-			addButton(
-				at: &x, y: y, size: size, symbol: "play.fill",
-				tooltip: "Continue (F9)", enabled: isStopped, action: { self.onContinue?() }
-			)
+		for button in buttons {
+			let colour = button.isEnabled
+				? Theme.current.sidebarHeaderText
+				: Theme.current.gitIgnored.withAlphaComponent(0.4)
+			draw(kind: button.kind, in: button.rect, colour: colour)
 		}
-
-		// Over, into, out — the arc goes over the call, the arrow points into
-		// it, the arrow points back out of it.
-		addButton(
-			at: &x, y: y, size: size, symbol: "arrow.turn.up.right",
-			tooltip: "Step Over (F8)", enabled: isStopped, action: { self.onStepOver?() }
-		)
-		addButton(
-			at: &x, y: y, size: size, symbol: "arrow.down.to.line",
-			tooltip: "Step Into (F7)", enabled: isStopped, action: { self.onStepInto?() }
-		)
-		addButton(
-			at: &x, y: y, size: size, symbol: "arrow.up.to.line",
-			tooltip: "Step Out (⇧F8)", enabled: isStopped, action: { self.onStepOut?() }
-		)
-		x += Theme.current.scaled(8)
-		addButton(
-			at: &x, y: y, size: size, symbol: "stop.fill",
-			tooltip: "Stop (⌘F2)", enabled: state != .idle && state != .terminated,
-			action: { self.onStop?() }
-		)
 
 		let label = NSAttributedString(string: statusText, attributes: [
 			.font: Theme.current.uiFont(11),
 			.foregroundColor: Theme.current.sidebarText,
 		])
-		label.draw(at: NSPoint(x: x + Theme.current.scaled(10), y: bounds.midY - label.size().height / 2))
+		label.draw(at: NSPoint(x: labelOrigin, y: bounds.midY - label.size().height / 2))
+	}
+
+	/// The three stepping glyphs are drawn rather than borrowed.
+	///
+	/// No SF Symbol says "step over": the nearest are corner arrows that read
+	/// as "into" or "out" just as readily, which is no use on a row of three
+	/// buttons differing only in that. Drawn, they say what every debugger has
+	/// said for twenty years — an arc hopping over the call, an arrow down
+	/// into it, an arrow back up out of it, with the call itself as a dot.
+	private func draw(kind: Kind, in rect: NSRect, colour: NSColor) {
+		let glyph = Theme.current.scaled(14)
+		let box = NSRect(
+			x: rect.midX - glyph / 2, y: rect.midY - glyph / 2, width: glyph, height: glyph
+		)
+
+		switch kind {
+		case .play, .pause, .stop:
+			let symbol = kind == .play ? "play.fill" : (kind == .pause ? "pause.fill" : "stop.fill")
+			Theme.symbol(symbol, size: 11 * Theme.current.scale, color: colour)?.drawFitted(in: box)
+
+		case .stepOver:
+			// Curves rather than arc angles: this view is flipped, and angles
+			// measured the usual way come out mirrored in it.
+			colour.setStroke()
+			let arc = NSBezierPath()
+			arc.lineWidth = Theme.current.scaled(1.5)
+			let left = NSPoint(x: box.minX + box.width * 0.04, y: box.maxY - box.height * 0.34)
+			let right = NSPoint(x: box.maxX - box.width * 0.16, y: box.maxY - box.height * 0.38)
+			arc.move(to: left)
+			arc.curve(
+				to: right,
+				controlPoint1: NSPoint(x: box.minX + box.width * 0.08, y: box.minY),
+				controlPoint2: NSPoint(x: box.maxX - box.width * 0.12, y: box.minY)
+			)
+			arc.stroke()
+			arrowhead(
+				at: NSPoint(x: right.x + box.width * 0.06, y: right.y + box.height * 0.26),
+				pointing: .down, size: box.width * 0.34, colour: colour
+			)
+			callDot(in: box, colour: colour)
+
+		case .stepInto:
+			colour.setStroke()
+			let into = NSBezierPath()
+			into.lineWidth = Theme.current.scaled(1.5)
+			into.move(to: NSPoint(x: box.midX, y: box.minY))
+			into.line(to: NSPoint(x: box.midX, y: box.midY + box.height * 0.02))
+			into.stroke()
+			arrowhead(
+				at: NSPoint(x: box.midX, y: box.midY + box.height * 0.26),
+				pointing: .down, size: box.width * 0.4, colour: colour
+			)
+			callDot(in: box, colour: colour)
+
+		case .stepOut:
+			colour.setStroke()
+			let out = NSBezierPath()
+			out.lineWidth = Theme.current.scaled(1.5)
+			out.move(to: NSPoint(x: box.midX, y: box.midY + box.height * 0.18))
+			out.line(to: NSPoint(x: box.midX, y: box.minY + box.height * 0.28))
+			out.stroke()
+			arrowhead(
+				at: NSPoint(x: box.midX, y: box.minY),
+				pointing: .up, size: box.width * 0.4, colour: colour
+			)
+			callDot(in: box, colour: colour)
+		}
+	}
+
+	/// The call being stepped over, into or out of.
+	private func callDot(in box: NSRect, colour: NSColor) {
+		let size = box.width * 0.26
+		colour.withAlphaComponent(0.8).setFill()
+		NSBezierPath(ovalIn: NSRect(
+			x: box.midX - size / 2, y: box.maxY - size, width: size, height: size
+		)).fill()
+	}
+
+	private enum Direction { case up, down }
+
+	/// A filled triangle. The view is flipped, so a downward arrow's base sits
+	/// at a smaller y than its tip.
+	private func arrowhead(at tip: NSPoint, pointing: Direction, size: CGFloat, colour: NSColor) {
+		let path = NSBezierPath()
+		let half = size / 2
+		let back = pointing == .down ? tip.y - size * 0.85 : tip.y + size * 0.85
+		path.move(to: tip)
+		path.line(to: NSPoint(x: tip.x - half, y: back))
+		path.line(to: NSPoint(x: tip.x + half, y: back))
+		path.close()
+		colour.setFill()
+		path.fill()
+	}
+
+	/// Asks for each tooltip the way AppKit does when somebody hovers.
+	func toolTipsForTesting() -> [String] {
+		toolTipsByTag.keys.sorted().map {
+			view(self, stringForToolTip: $0, point: .zero, userData: nil)
+		}
+	}
+
+	/// Draws the toolbar to a PNG, so the glyphs can be looked at.
+	@discardableResult
+	func writeImageForTesting(to path: String, state: DebugSession.State) -> Bool {
+		frame = NSRect(x: 0, y: 0, width: 320, height: 30)
+		self.state = state
+		rebuild()
+		guard let rep = bitmapImageRepForCachingDisplay(in: bounds) else { return false }
+		cacheDisplay(in: bounds, to: rep)
+		guard let data = rep.representation(using: .png, properties: [:]) else { return false }
+		return (try? data.write(to: URL(fileURLWithPath: path))) != nil
 	}
 
 	private var statusText: String {
 		switch state {
 		case .idle: return "Not running"
-		case .starting: return "Starting…"
+		case .starting: return "Starting\u{2026}"
 		case .running: return "Running"
-		case let .stopped(reason): return "Paused — \(reason)"
+		case let .stopped(reason): return "Paused \u{2014} \(reason)"
 		case .terminated: return "Finished"
 		}
 	}
+}
 
-	private func addButton(
-		at x: inout CGFloat,
-		y: CGFloat,
-		size: CGFloat,
-		symbol: String,
-		tooltip: String,
-		enabled: Bool,
-		action: @escaping () -> Void
-	) {
-		let rect = NSRect(x: x, y: y, width: size, height: size)
-		// Named, because these are five small arrows that mean quite different
-		// things and no icon set has ever made that obvious.
-		addToolTip(rect, owner: tooltip as NSString, userData: nil)
-		let color = enabled ? Theme.current.sidebarHeaderText : Theme.current.gitIgnored.withAlphaComponent(0.4)
-
-		if let icon = Theme.symbol(symbol, size: 11 * Theme.current.scale, color: color) {
-			let glyph = Theme.current.scaled(13)
-			icon.drawFitted(in: NSRect(x: rect.midX - glyph / 2, y: rect.midY - glyph / 2, width: glyph, height: glyph))
-		}
-		if enabled { buttonFrames.append((rect, action)) }
-		x += size + Theme.current.scaled(2)
+extension DebugToolbar: NSViewToolTipOwner {
+	func view(
+		_ view: NSView,
+		stringForToolTip tag: NSView.ToolTipTag,
+		point: NSPoint,
+		userData: UnsafeMutableRawPointer?
+	) -> String {
+		toolTipsByTag[tag] ?? ""
 	}
 }
