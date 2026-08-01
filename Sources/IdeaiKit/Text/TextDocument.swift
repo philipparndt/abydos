@@ -237,10 +237,17 @@ public final class TextDocument {
 			&& startByte == lastEditEnd
 			&& now.timeIntervalSince(lastEditTime) < 0.6
 
-		if isContiguousTyping, history.currentNode.edit != nil {
+		if isContiguousTyping, let existing = history.currentNode.edit {
+			// Summarised from the whole run rather than from the character that
+			// started it: a state described as “Typed ⏎” because the run began
+			// with a newline says nothing about the line that followed it.
 			history.extendCurrent(
 				inserted: inserted,
-				summary: Self.summary(removed: [], inserted: inserted, extending: history.currentNode.summary),
+				summary: Self.summary(
+					removed: existing.removed,
+					inserted: existing.inserted + inserted,
+					extending: nil
+				),
 				time: now
 			)
 		} else {
@@ -412,18 +419,22 @@ public final class TextDocument {
 	}
 
 	/// A few words about what an edit did, for a list of states.
-	static func summary(removed: [UInt8], inserted: [UInt8], extending: String?) -> String {
-		if let extending, extending.hasPrefix("Typed") {
-			return extending
-		}
-		let insertedText = String(decoding: inserted.prefix(24), as: UTF8.self)
+	///
+	/// The text is trimmed and its newlines shown, since a summary is read in a
+	/// list one line high and most edits begin or end with one.
+	static func summary(removed: [UInt8], inserted: [UInt8], extending: String? = nil) -> String {
+		let insertedText = String(decoding: inserted.prefix(32), as: UTF8.self)
+			.trimmingCharacters(in: .whitespacesAndNewlines)
 			.replacingOccurrences(of: "\n", with: "⏎")
-		let removedText = String(decoding: removed.prefix(24), as: UTF8.self)
+		let removedText = String(decoding: removed.prefix(32), as: UTF8.self)
+			.trimmingCharacters(in: .whitespacesAndNewlines)
 			.replacingOccurrences(of: "\n", with: "⏎")
 
 		switch (removed.isEmpty, inserted.isEmpty) {
-		case (true, false): return "Typed “\(insertedText)”"
-		case (false, true): return "Deleted “\(removedText)”"
+		case (true, false):
+			return insertedText.isEmpty ? "Typed a new line" : "Typed “\(insertedText)”"
+		case (false, true):
+			return removedText.isEmpty ? "Deleted a new line" : "Deleted “\(removedText)”"
 		case (false, false): return "Replaced “\(removedText)” with “\(insertedText)”"
 		case (true, true): return "No change"
 		}
