@@ -47,6 +47,45 @@ final class LanguageService {
 		"\(project.standardizedFileURL.path)#\(languageId)"
 	}
 
+	/// Starts the servers a project evidently needs, without waiting for a file
+	/// of that language to be opened.
+	///
+	/// Otherwise nothing knows anything until a file is opened, and "go to a
+	/// symbol" answers with an empty list in a project full of them — which
+	/// reads as broken rather than as not-started-yet.
+	func warmUp(project: URL) {
+		for definition in LanguageServers.known where !definition.rootMarkers.isEmpty {
+			// Markers only. A server that names none of them — the JSON one —
+			// fits every project on earth, and starting it everywhere both
+			// wastes a process and drowns out the language the project is
+			// actually written in when it turns out not to be installed.
+			guard LanguageServers.suits(definition, root: project) else { continue }
+			guard let languageId = definition.languageIds.first else { continue }
+			_ = server(for: languageId, project: project)
+		}
+	}
+
+	/// Which languages have a server running for this project, and which are
+	/// missing one, so a search can say why it found nothing.
+	func serverStatus(project: URL) -> (running: [String], missing: [(language: String, hint: String)]) {
+		let prefix = project.standardizedFileURL.path + "#"
+		var running: [String] = []
+		var missing: [(String, String)] = []
+
+		for definition in LanguageServers.known where !definition.rootMarkers.isEmpty {
+			guard LanguageServers.suits(definition, root: project),
+			      let languageId = definition.languageIds.first
+			else { continue }
+
+			if servers[prefix + languageId] != nil {
+				running.append(definition.command)
+			} else if LanguageServers.executable(for: definition) == nil {
+				missing.append((definition.languageIds.first ?? "?", definition.installHint))
+			}
+		}
+		return (running, missing)
+	}
+
 	// MARK: - Documents
 
 	/// A file was opened. Starts a server for it if this is the first of its
@@ -124,6 +163,16 @@ final class LanguageService {
 		return (try? await server.client.documentSymbols(uri: url.absoluteString)) ?? []
 	}
 
+	func references(
+		url: URL,
+		position: LSPPosition,
+		languageId: String,
+		project: URL
+	) async -> [LSPLocation] {
+		guard let server = servers[key(project: project, languageId: languageId)] else { return [] }
+		return (try? await server.client.references(uri: url.absoluteString, position: position)) ?? []
+	}
+
 	func diagnostics(for url: URL) -> [LSPDiagnostic] {
 		diagnostics[url.absoluteString] ?? []
 	}
@@ -168,10 +217,13 @@ final class LanguageService {
 		}
 
 		do {
+			// Rooted where the manifest is, which is not always the project
+			// root: a server pointed at a directory with no manifest in it
+			// answers nothing and says nothing about why.
 			try client.start(
 				executable: resolved.executable,
 				arguments: resolved.definition.arguments,
-				workingDirectory: project
+				workingDirectory: resolved.root
 			)
 		} catch {
 			unavailable.insert(key)
@@ -185,7 +237,7 @@ final class LanguageService {
 			// The handshake has to finish before anything else is sent, but
 			// nothing waits on it: notifications queue up on the pipe in order,
 			// and the first answers simply arrive a moment later.
-			_ = try? await client.initialize(rootURL: project)
+			_ = try? await client.initialize(rootURL: resolved.root)
 			runningNames.append(resolved.definition.command)
 			missingHints.removeValue(forKey: languageId)
 			NotificationCenter.default.post(name: .ideaiLanguageServersChanged, object: nil)

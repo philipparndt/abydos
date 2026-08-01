@@ -54,6 +54,8 @@ final class CodeView: NSView, NSTextInputClient {
 
 	/// ⌘-clicked a symbol: go to where it is defined.
 	var onGoToDefinition: ((_ line: Int, _ character: Int) -> Void)?
+	/// Asked for everywhere the symbol under the caret is used.
+	var onFindUsages: ((_ line: Int, _ character: Int) -> Void)?
 	/// The text changed and the caret is in a word: offer completions for it.
 	var onRequestCompletions: ((_ prefix: String, _ caret: NSPoint) -> Void)?
 	/// A key the completion list wants first. Returns true if it took it.
@@ -1249,7 +1251,53 @@ final class CodeView: NSView, NSTextInputClient {
 			onEditBreakpoint?(docLine)
 			return
 		}
+
+		// The menu acts on what was pointed at, so the caret goes there first —
+		// otherwise "find usages" answers about wherever the caret happened to
+		// be left.
+		if selectedUTF16Range().isEmpty {
+			setCaret(offset(at: point), extendingSelection: false)
+		}
 		super.rightMouseDown(with: event)
+	}
+
+	override func menu(for event: NSEvent) -> NSMenu? {
+		guard document != nil else { return nil }
+		let menu = NSMenu()
+
+		func item(_ title: String, _ selector: Selector) -> NSMenuItem {
+			let entry = NSMenuItem(title: title, action: selector, keyEquivalent: "")
+			entry.target = self
+			return entry
+		}
+
+		menu.addItem(item("Go to Definition", #selector(goToDefinitionFromMenu)))
+		menu.addItem(item("Find Usages", #selector(findUsagesFromMenu)))
+		menu.addItem(.separator())
+		menu.addItem(item("Cut", #selector(NSText.cut(_:))))
+		menu.addItem(item("Copy", #selector(NSText.copy(_:))))
+		menu.addItem(item("Paste", #selector(NSText.paste(_:))))
+		menu.addItem(.separator())
+		menu.addItem(item("Select All", #selector(NSText.selectAll(_:))))
+		return menu
+	}
+
+	/// Where the caret is, as the protocol counts.
+	private func caretPositionForRequest() -> (line: Int, character: Int)? {
+		guard let document else { return nil }
+		let line = document.rope.line(atByteOffset: document.rope.byteOffset(fromUTF16: caret))
+		let lineStart = document.rope.utf16Offset(fromByte: document.rope.byteOffset(ofLine: line))
+		return (line, caret - lineStart)
+	}
+
+	@objc private func goToDefinitionFromMenu() {
+		guard let position = caretPositionForRequest() else { return }
+		onGoToDefinition?(position.line, position.character)
+	}
+
+	@objc private func findUsagesFromMenu() {
+		guard let position = caretPositionForRequest() else { return }
+		onFindUsages?(position.line, position.character)
 	}
 
 	override func mouseDragged(with event: NSEvent) {

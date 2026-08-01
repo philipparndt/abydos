@@ -15,8 +15,8 @@ final class SymbolPalette: NSObject {
 
 		var placeholder: String {
 			switch self {
-			case .document: return "Go to a declaration in this file"
-			case .workspace: return "Go to a symbol in this project"
+			case .document: return "Go to a declaration in this file — esc to close"
+			case .workspace: return "Go to a symbol in this project — esc to close"
 			}
 		}
 	}
@@ -25,12 +25,15 @@ final class SymbolPalette: NSObject {
 	var onOpen: ((LSPLocation) -> Void)?
 	/// Asked for the symbols to show; nil query means everything.
 	var provider: ((_ query: String, _ scope: Scope) async -> [LSPSymbol])?
+	/// Asked why there is nothing to show, when there is nothing to show.
+	var emptyReason: ((_ query: String, _ scope: Scope) -> String)?
 
 	private var window: NSPanel?
 	private var field: NSSearchField!
 	private var table: NSTableView!
 	private var symbols: [LSPSymbol] = []
 	private var scope: Scope = .document
+	private var status: NSTextField!
 	private var searchWork: Task<Void, Never>?
 
 	func show(scope: Scope, over parent: NSWindow?) {
@@ -90,6 +93,12 @@ final class SymbolPalette: NSObject {
 			if !found.isEmpty {
 				table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
 			}
+
+			// An empty list has to say why. "Nothing here" and "no server for
+			// this language" look identical otherwise, and one of them is
+			// something the user can fix.
+			status.stringValue = found.isEmpty ? (emptyReason?(query, scope) ?? "") : ""
+			status.isHidden = !found.isEmpty
 		}
 	}
 
@@ -129,11 +138,20 @@ final class SymbolPalette: NSObject {
 		scroll.backgroundColor = Theme.current.sidebarBackground
 		scroll.scrollerStyle = .overlay
 
+		status = NSTextField(labelWithString: "")
+		status.font = Theme.current.uiFont(12)
+		status.textColor = Theme.current.gitIgnored
+		status.alignment = .center
+		status.maximumNumberOfLines = 3
+		status.isHidden = true
+
 		let container = ColoredView(color: Theme.current.sidebarBackground)
 		container.addSubview(field)
 		container.addSubview(scroll)
+		container.addSubview(status)
 		field.translatesAutoresizingMaskIntoConstraints = false
 		scroll.translatesAutoresizingMaskIntoConstraints = false
+		status.translatesAutoresizingMaskIntoConstraints = false
 
 		NSLayoutConstraint.activate([
 			field.topAnchor.constraint(equalTo: container.topAnchor, constant: 12),
@@ -144,6 +162,10 @@ final class SymbolPalette: NSObject {
 			scroll.leadingAnchor.constraint(equalTo: container.leadingAnchor),
 			scroll.trailingAnchor.constraint(equalTo: container.trailingAnchor),
 			scroll.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+
+			status.topAnchor.constraint(equalTo: scroll.topAnchor, constant: 24),
+			status.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 24),
+			status.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -24),
 		])
 
 		let window = SymbolPanel(
@@ -158,6 +180,10 @@ final class SymbolPalette: NSObject {
 		window.backgroundColor = Theme.current.sidebarBackground
 		window.contentView = container
 		window.onKey = { [weak self] event in self?.handle(event) ?? false }
+		// Clicking anywhere else puts it away, which is what every palette does
+		// and what somebody tries after pressing escape has not occurred to
+		// them.
+		window.onResignKey = { [weak self] in self?.hide() }
 		return window
 	}
 
@@ -228,12 +254,24 @@ extension SymbolPalette: NSTableViewDataSource, NSTableViewDelegate {
 /// A panel that hands its key events to the palette first.
 private final class SymbolPanel: NSPanel {
 	var onKey: ((NSEvent) -> Bool)?
+	var onResignKey: (() -> Void)?
 
 	override var canBecomeKey: Bool { true }
 
 	override func keyDown(with event: NSEvent) {
 		guard onKey?(event) != true else { return }
 		super.keyDown(with: event)
+	}
+
+	/// Escape reaches here even when the search field has the keyboard, since
+	/// a field swallows it as "stop editing" rather than passing it on.
+	override func cancelOperation(_ sender: Any?) {
+		onResignKey?()
+	}
+
+	override func resignKey() {
+		super.resignKey()
+		onResignKey?()
 	}
 }
 

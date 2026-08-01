@@ -99,6 +99,8 @@ final class EditorViewController: NSViewController {
 	var onToggleBreakpoint: ((URL, Int) -> Void)?
 	/// Right-clicked a breakpoint: edit what it does. 1-based line.
 	var onEditBreakpoint: ((URL, Int) -> Void)?
+	/// Asked for everywhere a symbol is used, at a zero-based position.
+	var onFindUsages: ((URL, Int, Int) -> Void)?
 	/// Which lines have a breakpoint that does more than stop, per file.
 	private var conditionalBreakpoints: [String: Set<Int>] = [:]
 
@@ -709,6 +711,9 @@ final class EditorViewController: NSViewController {
 		codeView.onGoToDefinition = { [weak self] line, character in
 			self?.goToDefinition(from: tab, line: line, character: character)
 		}
+		codeView.onFindUsages = { [weak self] line, character in
+			self?.onFindUsages?(tab.url, line, character)
+		}
 		codeView.onRequestCompletions = { [weak self] prefix, _ in
 			self?.scheduleCompletions(for: tab, prefix: prefix)
 		}
@@ -796,6 +801,11 @@ final class EditorViewController: NSViewController {
 		let text = document.rope.string(in: 0..<document.rope.byteCount)
 		let lines: [String] = text.components(separatedBy: "\n")
 		return Array(lines.suffix(count))
+	}
+
+	func goToDefinitionForTesting(line: Int, character: Int) {
+		guard let tab = activeTab else { return }
+		goToDefinition(from: tab, line: line, character: character)
 	}
 
 	func undoForTesting() {

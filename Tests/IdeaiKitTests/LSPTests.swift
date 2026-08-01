@@ -395,3 +395,74 @@ struct LSPHandshakeOrderTests {
 		await client.shutdown()
 	}
 }
+
+/// Finding the directory a server should be rooted at.
+struct LanguageServerRootTests {
+	private func makeTree(_ paths: [String]) throws -> URL {
+		let root = URL(fileURLWithPath: NSTemporaryDirectory())
+			.appendingPathComponent("roots-\(UUID().uuidString)")
+		for path in paths {
+			let url = root.appendingPathComponent(path)
+			try FileManager.default.createDirectory(
+				at: url.deletingLastPathComponent(), withIntermediateDirectories: true
+			)
+			try "x".write(to: url, atomically: true, encoding: .utf8)
+		}
+		return root
+	}
+
+	@Test func findsAManifestAtTheRoot() throws {
+		let root = try makeTree(["go.mod", "main.go"])
+		defer { try? FileManager.default.removeItem(at: root) }
+		let go = try #require(LanguageServers.definition(forLanguage: "go"))
+		#expect(LanguageServers.markerDirectory(for: go, in: root) == root)
+	}
+
+	/// A repository commonly keeps its manifest a level down — `app/go.mod` —
+	/// and a server rooted at the directory above it answers nothing at all.
+	@Test func findsAManifestBelowTheRoot() throws {
+		let root = try makeTree(["README.md", "app/go.mod", "app/main.go"])
+		defer { try? FileManager.default.removeItem(at: root) }
+		let go = try #require(LanguageServers.definition(forLanguage: "go"))
+
+		let found = LanguageServers.markerDirectory(for: go, in: root)
+		#expect(found?.lastPathComponent == "app")
+		#expect(LanguageServers.suits(go, root: root))
+	}
+
+	@Test func findsOneTwoLevelsDown() throws {
+		let root = try makeTree(["services/api/go.mod"])
+		defer { try? FileManager.default.removeItem(at: root) }
+		let go = try #require(LanguageServers.definition(forLanguage: "go"))
+		#expect(LanguageServers.markerDirectory(for: go, in: root)?.lastPathComponent == "api")
+	}
+
+	/// Vendored copies are not the project.
+	@Test func ignoresVendoredManifests() throws {
+		let root = try makeTree(["vendor/other/go.mod", "node_modules/thing/package.json"])
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		let go = try #require(LanguageServers.definition(forLanguage: "go"))
+		#expect(LanguageServers.markerDirectory(for: go, in: root) == nil)
+
+		let ts = try #require(LanguageServers.definition(forLanguage: "typescript"))
+		#expect(LanguageServers.markerDirectory(for: ts, in: root) == nil)
+	}
+
+	@Test func saysNoWhenThereIsNoManifestAnywhere() throws {
+		let root = try makeTree(["notes.txt", "docs/readme.md"])
+		defer { try? FileManager.default.removeItem(at: root) }
+		let go = try #require(LanguageServers.definition(forLanguage: "go"))
+		#expect(LanguageServers.markerDirectory(for: go, in: root) == nil)
+		#expect(!LanguageServers.suits(go, root: root))
+	}
+
+	/// The resolved root is what the server is started in, and it is the
+	/// manifest's directory rather than the project's.
+	@Test func resolvesToTheManifestDirectory() throws {
+		let root = try makeTree(["app/go.mod"])
+		defer { try? FileManager.default.removeItem(at: root) }
+		guard let resolved = LanguageServers.resolve(languageId: "go", root: root) else { return }
+		#expect(resolved.root.lastPathComponent == "app")
+	}
+}

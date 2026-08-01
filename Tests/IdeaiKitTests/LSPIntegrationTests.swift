@@ -9,7 +9,7 @@ import Testing
 /// there, this is the only test that proves the client actually speaks the
 /// protocol rather than merely parsing what it expects to be sent.
 struct LSPIntegrationTests {
-	private var swiftServer: (definition: LanguageServerDefinition, executable: String)? {
+	private var swiftServer: (definition: LanguageServerDefinition, executable: String, root: URL)? {
 		LanguageServers.resolve(languageId: "swift", root: packageRoot)
 	}
 

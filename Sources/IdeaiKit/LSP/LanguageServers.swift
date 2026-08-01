@@ -159,15 +159,57 @@ public enum LanguageServers {
 	/// see at least one of them, so opening a repository that happens to
 	/// contain a stray `.py` file does not start a Python server for it.
 	public static func suits(_ definition: LanguageServerDefinition, root: URL) -> Bool {
-		guard !definition.rootMarkers.isEmpty else { return true }
-		let manager = FileManager.default
+		markerDirectory(for: definition, in: root) != nil
+	}
 
+	/// Where this server should be rooted, or nil if the project is not one it
+	/// understands.
+	///
+	/// Not only the project root. A repository commonly keeps its manifest a
+	/// level or two down — `app/go.mod`, `backend/Cargo.toml` — and rooting a
+	/// server at a directory with no manifest in it gets nothing: no symbols,
+	/// no diagnostics, no go-to-definition, and no explanation either.
+	public static func markerDirectory(
+		for definition: LanguageServerDefinition,
+		in root: URL,
+		maxDepth: Int = 2
+	) -> URL? {
+		guard !definition.rootMarkers.isEmpty else { return root }
+		if holdsMarker(definition, at: root) { return root }
+		guard maxDepth > 0 else { return nil }
+
+		let manager = FileManager.default
+		let skipped: Set<String> = ["node_modules", "vendor", ".build", ".git", "target", "dist"]
+		let contents = (try? manager.contentsOfDirectory(
+			at: root, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]
+		)) ?? []
+
+		// Breadth first, so a manifest one level down wins over one three
+		// levels down inside an example.
+		let directories = contents.filter {
+			(try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+				&& !skipped.contains($0.lastPathComponent)
+		}
+		for directory in directories.sorted(by: { $0.lastPathComponent < $1.lastPathComponent })
+		where holdsMarker(definition, at: directory) {
+			return directory
+		}
+		for directory in directories.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+			if let found = markerDirectory(for: definition, in: directory, maxDepth: maxDepth - 1) {
+				return found
+			}
+		}
+		return nil
+	}
+
+	private static func holdsMarker(_ definition: LanguageServerDefinition, at directory: URL) -> Bool {
+		let manager = FileManager.default
 		for marker in definition.rootMarkers {
 			if marker.hasPrefix("*.") {
 				let suffix = String(marker.dropFirst(1))
-				let contents = (try? manager.contentsOfDirectory(atPath: root.path)) ?? []
+				let contents = (try? manager.contentsOfDirectory(atPath: directory.path)) ?? []
 				if contents.contains(where: { $0.hasSuffix(suffix) }) { return true }
-			} else if manager.fileExists(atPath: root.appendingPathComponent(marker).path) {
+			} else if manager.fileExists(atPath: directory.appendingPathComponent(marker).path) {
 				return true
 			}
 		}
@@ -176,14 +218,16 @@ public enum LanguageServers {
 
 	/// The server to start for a language in a project, if there is one and it
 	/// is installed.
+	/// The server to start for a language in a project: which one, where it
+	/// lives, and which directory to root it at.
 	public static func resolve(
 		languageId: String,
 		root: URL
-	) -> (definition: LanguageServerDefinition, executable: String)? {
+	) -> (definition: LanguageServerDefinition, executable: String, root: URL)? {
 		guard let definition = definition(forLanguage: languageId),
-		      suits(definition, root: root),
+		      let serverRoot = markerDirectory(for: definition, in: root),
 		      let executable = executable(for: definition)
 		else { return nil }
-		return (definition, executable)
+		return (definition, executable, serverRoot)
 	}
 }

@@ -96,6 +96,10 @@ struct LaunchOptions {
 	var symbolQuery: String?
 	/// Search the whole project rather than the open file.
 	var symbolProject = false
+	/// Find usages of the symbol at line:character (1-based line).
+	var usagesAt: String?
+	/// Jump to the definition of the symbol at line:character (1-based line).
+	var definitionAt: String?
 	/// Wait this long before capturing, for a language server to answer.
 	var lspWait: Double?
 	/// Rewrite the open file externally after this many seconds.
@@ -168,6 +172,8 @@ struct LaunchOptions {
 			case "--toast":      options.showToast = true
 			case "--symbols":    options.symbolQuery = next() ?? ""
 			case "--symbols-project": options.symbolProject = true
+			case "--usages":     options.usagesAt = next()
+			case "--definition": options.definitionAt = next()
 			case "--lsp-wait":   options.lspWait = next().flatMap(Double.init)
 			case "--external-edit": options.externalEdit = next().flatMap(Double.init)
 			case "--send-bytes": options.terminalBytes = next()

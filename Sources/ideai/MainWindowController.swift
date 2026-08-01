@@ -167,11 +167,24 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		palette.provider = { [weak self] query, scope in
 			await self?.symbols(matching: query, scope: scope) ?? []
 		}
+		palette.emptyReason = { [weak self] query, scope in
+			self?.reasonForNoSymbols(query: query, scope: scope) ?? ""
+		}
 		palette.onOpen = { [weak self] location in
 			guard let url = location.url else { return }
 			self?.editor.open(fileURL: url, atLine: location.range.start.line + 1)
 		}
 		return palette
+	}()
+
+	/// Where everywhere-this-is-used is listed.
+	private lazy var usagesPanel: UsagesPanel = {
+		let panel = UsagesPanel()
+		panel.onOpen = { [weak self] location in
+			guard let url = location.url else { return }
+			self?.editor.open(fileURL: url, atLine: location.range.start.line + 1)
+		}
+		return panel
 	}()
 
 	/// Where news the user did not ask for goes.
@@ -376,6 +389,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 		// Clicking the breakpoint gutter reaches the running debug session, and
 		// is remembered even when nothing is running yet.
+		editor.onFindUsages = { [weak self] url, line, character in
+			self?.findUsages(in: url, line: line, character: character)
+		}
 		editor.onEditBreakpoint = { [weak self] url, line in
 			self?.editBreakpoint(file: url, line: line)
 		}
@@ -462,6 +478,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 		navigator.load(project: project)
 		editor.setProject(project)
+		// Started now rather than when a file of that language is first opened,
+		// so asking for a symbol straight after opening a project works.
+		LanguageService.shared.warmUp(project: project.root)
 		scratchesPane?.setProject(project.root)
 		bottomPanel.setWorkingDirectory(project.root)
 
@@ -1568,6 +1587,29 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		bottomPanel.newTerminal()
 	}
 
+	/// Follows ⌘-click, through the same path the click takes.
+	func exerciseGoToDefinitionForTesting(line: Int, character: Int) {
+		let before = editor.activeGroup?.activeTabURL?.lastPathComponent ?? "nothing"
+		editor.goToDefinitionForTesting(line: line, character: character)
+		DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+			guard let self else { return }
+			let after = self.editor.activeGroup?.activeTabURL?.lastPathComponent ?? "nothing"
+			print("DEFINITION: \(before) → \(after) \(self.editor.caretReportForTesting)")
+		}
+	}
+
+	/// Right-clicks in the editor and finds usages of whatever is at the caret.
+	func exerciseFindUsagesForTesting(line: Int, character: Int) {
+		guard let url = editor.activeGroup?.activeTabURL else { return }
+		findUsages(in: url, line: line, character: character)
+		DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+			guard let self else { return }
+			let rows = self.usagesPanel.rowsForTesting
+			print("USAGES: \(rows.count) rows")
+			for row in rows.prefix(8) { print("USAGE: \(row)") }
+		}
+	}
+
 	/// Opens the palette, types a query, and says what came back.
 	func exerciseSymbolPaletteForTesting(_ query: String, project: Bool) {
 		symbolPalette.show(scope: project ? .workspace : .document, over: window)
@@ -1576,7 +1618,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
 			guard let self else { return }
 			let results = self.symbolPalette.resultsForTesting
-			print("SYMBOLS: \(results.count) for “\(query)”")
+			print("SYMBOLS: \(results.count) for “\(query)” reason=“\(self.reasonForNoSymbols(query: query, scope: project ? .workspace : .document))”")
 			for result in results.prefix(6) { print("SYMBOL: \(result)") }
 
 			self.symbolPalette.openFirstForTesting()
@@ -1593,6 +1635,53 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	@objc func goToSymbolInProject(_ sender: Any?) {
 		symbolPalette.show(scope: .workspace, over: window)
+	}
+
+	/// Everywhere the symbol at a position is used.
+	///
+	/// The server's answer rather than a text search: it knows a `Close` on one
+	/// type from a `Close` on another, which grep never will.
+	private func findUsages(in url: URL, line: Int, character: Int) {
+		guard let project, let languageId = editor.activeGroup?.activeDocument?.languageId else { return }
+
+		Task { @MainActor in
+			let locations = await LanguageService.shared.references(
+				url: url,
+				position: LSPPosition(line: line, character: character),
+				languageId: languageId,
+				project: project.root
+			)
+			guard !locations.isEmpty else {
+				notify("No usages found", kind: .information)
+				return
+			}
+			// One result is not a list; it is the place to go.
+			if locations.count == 1, let only = locations.first, let target = only.url {
+				editor.open(fileURL: target, atLine: only.range.start.line + 1)
+				return
+			}
+			usagesPanel.show(locations: locations, over: window)
+		}
+	}
+
+	/// Why the symbol list is empty, in a sentence somebody can act on.
+	private func reasonForNoSymbols(query: String, scope: SymbolPalette.Scope) -> String {
+		guard let project else { return "No project is open." }
+		let status = LanguageService.shared.serverStatus(project: project.root)
+
+		if let missing = status.missing.first {
+			return "No language server for \(missing.language).\n\(missing.hint)"
+		}
+		if status.running.isEmpty {
+			return "No language server is running for this project."
+		}
+		if scope == .workspace, query.isEmpty {
+			return "Type to search \(status.running.joined(separator: ", "))."
+		}
+		if scope == .document, editor.activeGroup?.activeTabURL == nil {
+			return "Open a file to see what it declares."
+		}
+		return query.isEmpty ? "Nothing to show." : "Nothing matching “\(query)”."
 	}
 
 	private func symbols(matching query: String, scope: SymbolPalette.Scope) async -> [LSPSymbol] {

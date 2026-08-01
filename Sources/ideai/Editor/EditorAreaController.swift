@@ -130,6 +130,7 @@ final class EditorAreaController: NSViewController {
 			self?.onToggleBreakpoint?(url, line)
 		}
 		group.onEditBreakpoint = onEditBreakpoint
+		group.onFindUsages = onFindUsages
 		group.setConditionalBreakpoints(conditionalBreakpoints)
 		group.onRunLine = { [weak self] url, line in
 			self?.onRunLine?(url, line)
@@ -451,6 +452,10 @@ final class EditorAreaController: NSViewController {
 		(activeGroup ?? groups.first)?.textTailLinesForTesting(count) ?? []
 	}
 
+	func goToDefinitionForTesting(line: Int, character: Int) {
+		(activeGroup ?? groups.first)?.goToDefinitionForTesting(line: line, character: character)
+	}
+
 	func undoForTesting() {
 		(activeGroup ?? groups.first)?.undoForTesting()
 	}
@@ -582,6 +587,10 @@ final class EditorAreaController: NSViewController {
 
 	var onEditBreakpoint: ((URL, Int) -> Void)? {
 		didSet { for group in groups { group.onEditBreakpoint = onEditBreakpoint } }
+	}
+
+	var onFindUsages: ((URL, Int, Int) -> Void)? {
+		didSet { for group in groups { group.onFindUsages = onFindUsages } }
 	}
 
 	private var runnableLines: [String: Set<Int>] = [:]

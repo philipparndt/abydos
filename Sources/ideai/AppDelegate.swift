@@ -167,6 +167,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let spec = options.definitionAt {
+			let parts = spec.split(separator: ":").compactMap { Int($0) }
+			DispatchQueue.main.asyncAfter(deadline: .now() + (options.lspWait ?? 12)) {
+				guard parts.count == 2 else { return }
+				controller?.exerciseGoToDefinitionForTesting(line: parts[0] - 1, character: parts[1])
+			}
+		}
+
+		if let spec = options.usagesAt {
+			let parts = spec.split(separator: ":").compactMap { Int($0) }
+			DispatchQueue.main.asyncAfter(deadline: .now() + (options.lspWait ?? 12)) {
+				guard parts.count == 2 else { return }
+				controller?.exerciseFindUsagesForTesting(line: parts[0] - 1, character: parts[1])
+			}
+		}
+
 		if let query = options.symbolQuery {
 			// After the language server has had time to index.
 			DispatchQueue.main.asyncAfter(deadline: .now() + (options.lspWait ?? 12)) {
