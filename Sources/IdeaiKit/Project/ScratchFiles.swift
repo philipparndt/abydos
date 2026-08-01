@@ -1,7 +1,7 @@
 import CryptoKit
 import Foundation
 
-/// Unnamed buffers belonging to a project.
+/// Unnamed buffers, belonging to a project or to nothing in particular.
 ///
 /// Somewhere to try something out that is not worth a file in the repository —
 /// a query, a snippet, a paste from somewhere else. They keep syntax
@@ -15,13 +15,31 @@ import Foundation
 public struct ScratchFiles {
 	/// Where every project's scratches live.
 	public let root: URL
-	/// The project these belong to.
-	public let projectRoot: URL
+	/// The project these belong to, or nil for the ones that belong to no
+	/// project — notes about a language, a machine, a way of doing something,
+	/// which outlive whichever checkout they were first written in.
+	public let projectRoot: URL?
 
-	public init(projectRoot: URL, root: URL? = nil) {
-		self.projectRoot = projectRoot.standardizedFileURL
+	public init(projectRoot: URL?, root: URL? = nil) {
+		self.projectRoot = projectRoot.map(Self.canonical)
 		self.root = root ?? Self.defaultRoot
 	}
+
+	/// One spelling of a project's path.
+	///
+	/// Symlinks resolved as well as standardised: `/tmp` and `/private/tmp` are
+	/// the same directory, and a project reached by each spelling must not end
+	/// up with two piles of notes that cannot see one another.
+	public static func canonical(_ url: URL) -> URL {
+		url.standardizedFileURL.resolvingSymlinksInPath()
+	}
+
+	/// The collection that belongs to no project.
+	public static func global(root: URL? = nil) -> ScratchFiles {
+		ScratchFiles(projectRoot: nil, root: root)
+	}
+
+	public var isGlobal: Bool { projectRoot == nil }
 
 	public static var defaultRoot: URL {
 		let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
@@ -29,17 +47,63 @@ public struct ScratchFiles {
 		return base.appendingPathComponent("ideai/scratch", isDirectory: true)
 	}
 
-	/// The directory holding this project's scratches.
+	/// The name of the directory holding a project's scratches.
 	///
-	/// Named for a digest of the project's path rather than the path itself: a
-	/// path can be long, contain anything, and is not a legal file name.
+	/// A digest of the project's path rather than the path itself: a path can be
+	/// long, contain anything, and is not a legal file name. Sixteen hex
+	/// characters, so it can never be mistaken for the global one.
+	public static func directoryName(for projectRoot: URL) -> String {
+		let digest = SHA256.hash(data: Data(canonical(projectRoot).path.utf8))
+		return digest.prefix(8).map { String(format: "%02x", $0) }.joined()
+	}
+
+	/// Whether two paths name the same project.
+	public static func isSameProject(_ left: URL?, _ right: URL?) -> Bool {
+		switch (left, right) {
+		case (nil, nil): return true
+		case let (left?, right?): return canonical(left).path == canonical(right).path
+		default: return false
+		}
+	}
+
+	/// What the global collection's directory is called.
+	public static let globalDirectoryName = "global"
+
+	/// The directory holding these scratches.
 	public var directory: URL {
-		let digest = SHA256.hash(data: Data(projectRoot.path.utf8))
-		let name = digest.prefix(8).map { String(format: "%02x", $0) }.joined()
+		let name = projectRoot.map(Self.directoryName(for:)) ?? Self.globalDirectoryName
 		return root.appendingPathComponent(name, isDirectory: true)
 	}
 
-	/// The scratches of this project, oldest first.
+	/// Records which project a digest belongs to, since a digest cannot be read
+	/// backwards and a list of anonymous folders would be no list at all.
+	static let markerName = ".project"
+
+	/// The project a scratch directory was made for, or nil if it is the global
+	/// one or was never marked.
+	public static func projectRoot(ofDirectory directory: URL) -> URL? {
+		guard directory.lastPathComponent != globalDirectoryName else { return nil }
+		guard let path = try? String(
+			contentsOf: directory.appendingPathComponent(markerName),
+			encoding: .utf8
+		) else { return nil }
+		let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+		return trimmed.isEmpty ? nil : URL(fileURLWithPath: trimmed, isDirectory: true)
+	}
+
+	/// Makes the directory, leaving behind which project it is for.
+	private func prepareDirectory() throws {
+		try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+		guard let projectRoot else { return }
+		let marker = directory.appendingPathComponent(Self.markerName)
+		let existing = try? String(contentsOf: marker, encoding: .utf8)
+		guard existing?.trimmingCharacters(in: .whitespacesAndNewlines) != projectRoot.path else { return }
+		try? projectRoot.path.write(to: marker, atomically: true, encoding: .utf8)
+	}
+
+	/// These scratches, oldest first.
+	///
+	/// Hidden files are skipped, which is also what keeps the marker out.
 	public func all() -> [URL] {
 		let contents = try? FileManager.default.contentsOfDirectory(
 			at: directory,
@@ -67,7 +131,7 @@ public struct ScratchFiles {
 	/// name matches what the tab says and two scratches never collide.
 	@discardableResult
 	public func create(extension fileExtension: String = defaultExtension) throws -> URL {
-		try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+		try prepareDirectory()
 
 		var number = all().count + 1
 		var destination = directory.appendingPathComponent("scratch-\(number).\(fileExtension)")
@@ -85,7 +149,7 @@ public struct ScratchFiles {
 		url.standardizedFileURL.deletingLastPathComponent().path == directory.path
 	}
 
-	/// Whether a file is any project's scratch.
+	/// Whether a file is a scratch of any project, or a global one.
 	public static func isScratch(_ url: URL, root: URL? = nil) -> Bool {
 		let root = (root ?? defaultRoot).standardizedFileURL.path
 		return url.standardizedFileURL.path.hasPrefix(root + "/")
@@ -93,7 +157,8 @@ public struct ScratchFiles {
 
 	/// What a scratch is called on its tab.
 	///
-	/// Numbered rather than named: it has no name, and that is the point of it.
+	/// Numbered until it is renamed: it has no name, and that is the point of
+	/// it. Once somebody gives it one, that is what it is called.
 	public static func title(for url: URL) -> String {
 		let stem = url.deletingPathExtension().lastPathComponent
 		guard stem.hasPrefix("scratch-"), let number = Int(stem.dropFirst("scratch-".count)) else {
@@ -105,5 +170,47 @@ public struct ScratchFiles {
 	public func remove(_ url: URL) throws {
 		guard contains(url) else { return }
 		try FileManager.default.removeItem(at: url)
+	}
+
+	/// Gives a scratch a name of its own, keeping it where it is.
+	///
+	/// The extension is kept unless the new name carries one, so renaming does
+	/// not silently turn Markdown into plain text.
+	@discardableResult
+	public func rename(_ url: URL, to name: String) throws -> URL {
+		guard contains(url) else { return url }
+		let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !trimmed.isEmpty else { return url }
+
+		var destination = directory.appendingPathComponent(trimmed)
+		if destination.pathExtension.isEmpty {
+			destination = destination.appendingPathExtension(url.pathExtension)
+		}
+		guard destination.path != url.path else { return url }
+		try FileManager.default.moveItem(at: url, to: destination)
+		return destination
+	}
+
+	/// Moves a scratch into another collection, keeping its contents.
+	///
+	/// What a note is about outlives where it was written: something learned
+	/// while in one checkout is often worth keeping when the checkout is gone.
+	@discardableResult
+	public func move(_ url: URL, to other: ScratchFiles) throws -> URL {
+		guard contains(url) else { return url }
+		try other.prepareDirectory()
+
+		var destination = other.directory.appendingPathComponent(url.lastPathComponent)
+		var attempt = 2
+		while FileManager.default.fileExists(atPath: destination.path) {
+			let stem = url.deletingPathExtension().lastPathComponent
+			destination = other.directory
+				.appendingPathComponent("\(stem)-\(attempt)")
+				.appendingPathExtension(url.pathExtension)
+			attempt += 1
+		}
+
+		try FileManager.default.moveItem(at: url, to: destination)
+		return destination
 	}
 }

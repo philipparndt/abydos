@@ -101,6 +101,8 @@ final class EditorViewController: NSViewController {
 	var onTearOffTab: ((EditorViewController, Int, NSPoint) -> Void)?
 	/// Fired when this group takes focus, so the area knows which is active.
 	var onActivated: ((EditorViewController) -> Void)?
+	/// Fired whenever the set of open tabs changes.
+	var onTabsChanged: (() -> Void)?
 
 	var isEmpty: Bool { tabs.isEmpty }
 	var tabCount: Int { tabs.count }
@@ -417,6 +419,7 @@ final class EditorViewController: NSViewController {
 		do {
 			let url = try ScratchFiles(projectRoot: root).create()
 			open(fileURL: url, focusEditor: true)
+			NotificationCenter.default.post(name: .ideaiScratchesChanged, object: nil)
 		} catch {
 			presentScratchFailure(error)
 		}
@@ -424,27 +427,67 @@ final class EditorViewController: NSViewController {
 
 	/// Reopens the scratches this project was left with.
 	///
-	/// They are the one kind of tab worth restoring unasked: nothing else holds
-	/// what is in them, and a scratch nobody can find again is a lost note.
+	/// The ones that were open, not every one it has: after a few weeks those
+	/// are different numbers, and a window full of old notes is not a restored
+	/// workspace. Anything not reopened is still in the Scratches pane — this
+	/// decides which tabs come back, never which notes exist.
 	func restoreScratches() {
 		guard let root = project?.root else { return }
-		for url in ScratchFiles(projectRoot: root).all() where !tabs.contains(where: { $0.url == url }) {
+
+		// No record yet — the first launch after this was added, or a project
+		// only ever opened before it. What it has is the best guess at what it
+		// had open.
+		let remembered = OpenScratches().existing(forProject: root)
+			?? ScratchFiles(projectRoot: root).all()
+
+		for url in remembered where !tabs.contains(where: { $0.url == url }) {
 			open(fileURL: url, focusEditor: false)
 		}
+	}
+
+	/// The scratches open in this group, in tab order.
+	var openScratchURLs: [URL] {
+		tabs.map(\.url).filter { ScratchFiles.isScratch($0) }
 	}
 
 	/// Throws away a scratch that was closed with nothing in it.
 	///
 	/// Without this every stray double-click would come back at the next open,
 	/// for ever. One with something in it is kept: nobody else has that text.
-	private func discardIfEmptyScratch(_ url: URL) {
+	private func discardIfEmptyScratch(_ tab: Tab) {
 		// Not asked which project it belongs to: closing everything to swap
 		// projects happens once the window has already taken the new one, and
 		// the tabs going away are still the old one's.
-		guard ScratchFiles.isScratch(url) else { return }
-		let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+		guard ScratchFiles.isScratch(tab.url) else { return }
+
+		// Empty on disk and empty in the editor. Both, because a document that
+		// still holds text the disk does not is exactly the case where throwing
+		// the file away would lose something — whether the write failed or the
+		// text was never written at all. A scratch is the only copy of what is
+		// in it, so anything short of certainly-nothing is kept.
+		if let document = tab.document, !document.isEmptyText { return }
+		let size = (try? tab.url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
 		guard size == 0 else { return }
-		try? FileManager.default.removeItem(at: url)
+
+		try? FileManager.default.removeItem(at: tab.url)
+		NotificationCenter.default.post(name: .ideaiScratchesChanged, object: nil)
+	}
+
+	/// Writes an open scratch out before something else moves it.
+	///
+	/// A rename that left unsaved text behind would either lose it or write it
+	/// back to the name the file no longer has.
+	func saveIfOpen(_ url: URL) {
+		guard let tab = tabs.first(where: { $0.url == url }), tab.isDirty else { return }
+		try? tab.document?.save()
+	}
+
+	/// A scratch was renamed, moved, or thrown away: follow it.
+	func scratchMoved(from: URL, to destination: URL?) {
+		guard let index = tabs.firstIndex(where: { $0.url == from }) else { return }
+		let wasActive = activeIndex == index
+		removeTab(at: index)
+		if let destination { open(fileURL: destination, focusEditor: wasActive) }
 	}
 
 	private func presentScratchFailure(_ error: Error) {
@@ -999,6 +1042,7 @@ final class EditorViewController: NSViewController {
 			)
 		}
 		tabBar.setItems(items, activeIndex: activeIndex)
+		onTabsChanged?()
 
 		// The control belongs to the active tab: a file with no rendered form
 		// shows none, so the strip does not offer something that does nothing.
@@ -1030,9 +1074,15 @@ final class EditorViewController: NSViewController {
 			return
 		}
 
-		teardown(tab)
+		removeTab(at: index)
+		discardIfEmptyScratch(tab)
+	}
+
+	/// Takes a tab out and settles on what to show instead, asking nothing.
+	private func removeTab(at index: Int) {
+		guard tabs.indices.contains(index) else { return }
+		teardown(tabs[index])
 		tabs.remove(at: index)
-		discardIfEmptyScratch(tab.url)
 
 		if tabs.isEmpty {
 			activeIndex = nil

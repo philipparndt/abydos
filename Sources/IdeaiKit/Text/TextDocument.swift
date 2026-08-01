@@ -155,6 +155,9 @@ public final class TextDocument {
 
 	public var lineCount: Int { rope.lineCount }
 
+	/// Whether there is nothing in this document at all.
+	public var isEmptyText: Bool { rope.byteCount == 0 }
+
 	public func lineText(_ line: Int) -> String { rope.lineText(line) }
 
 	/// Highlights for a line range.

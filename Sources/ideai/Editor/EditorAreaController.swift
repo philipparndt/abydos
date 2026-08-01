@@ -149,6 +149,7 @@ final class EditorAreaController: NSViewController {
 			// The last group stays even when empty; it is the editor area itself.
 			self?.removeGroup(empty)
 		}
+		group.onTabsChanged = { [weak self] in self?.recordOpenScratches() }
 		group.onStatusChanged = { [weak self] reporting in
 			self?.refreshStatus(from: reporting)
 		}
@@ -363,24 +364,62 @@ final class EditorAreaController: NSViewController {
 	}
 
 	func restore(_ session: ProjectSession) {
-		(activeGroup ?? groups.first)?.restore(session)
+		rearranging { (activeGroup ?? groups.first)?.restore(session) }
 	}
 
 	/// Reopens the project's scratches, in whichever group is in front.
 	func restoreScratches() {
-		(activeGroup ?? groups.first)?.restoreScratches()
+		rearranging { (activeGroup ?? groups.first)?.restoreScratches() }
+	}
+
+	/// Writes down which scratches are open, across every pane.
+	///
+	/// Called on any tab change rather than at quit: a window that never gets
+	/// to say goodbye — a crash, a force quit — should still come back right.
+	private func recordOpenScratches() {
+		guard let project, !isClosing, suppressedRecording == 0 else { return }
+		let open = groups.flatMap(\.openScratchURLs).map(\.path)
+		OpenScratches().record(open, forProject: project.root)
+	}
+
+	/// Emptying and refilling the window is not the user closing tabs.
+	///
+	/// Clearing first would otherwise record "nothing is open" and then read
+	/// that back as what to restore, so swapping projects would quietly lose
+	/// every scratch tab. Recorded once, when the dust has settled.
+	private var suppressedRecording = 0
+	private var isClosing = false
+
+	private func rearranging(record: Bool = true, _ body: () -> Void) {
+		suppressedRecording += 1
+		body()
+		suppressedRecording -= 1
+		if record { recordOpenScratches() }
 	}
 
 	func newScratch() {
 		(activeGroup ?? groups.first)?.newScratch()
 	}
 
+	/// Every group follows a scratch that moved; only one of them has it open.
+	func scratchMoved(from: URL, to destination: URL?) {
+		for group in groups { group.scratchMoved(from: from, to: destination) }
+	}
+
+	func saveIfOpen(_ url: URL) {
+		for group in groups { group.saveIfOpen(url) }
+	}
+
 	func clickScratchPlaceholderForTesting() -> Bool {
 		(activeGroup ?? groups.first)?.clickScratchPlaceholderForTesting() ?? false
 	}
 
+	/// Empties the window, for swapping one project's editors for another's.
+	///
+	/// Deliberately leaves the record alone: this is always half of a swap, and
+	/// what is restored a moment later is read from it.
 	func closeAllTabs() {
-		for group in groups { group.closeAllTabs() }
+		rearranging(record: false) { for group in groups { group.closeAllTabs() } }
 	}
 
 	func previewDropZoneForTesting(_ zone: EditorTabDrag.Zone) {
@@ -447,6 +486,9 @@ final class EditorAreaController: NSViewController {
 	}
 
 	func windowWillClose() {
+		// What was open stays recorded: closing the window is not closing the
+		// tabs, and this is exactly the state to come back to.
+		isClosing = true
 		EditorAreas.unregister(self)
 		for group in groups { group.windowWillClose() }
 	}

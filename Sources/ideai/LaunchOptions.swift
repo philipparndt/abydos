@@ -62,6 +62,10 @@ struct LaunchOptions {
 	var newFile: String?
 	/// Open a scratch file before capture.
 	var newScratch: Bool = false
+	/// Show the scratches pane, optionally with something typed into its search.
+	var scratchSearch: String?
+	/// Open the first scratch listed, as clicking it would.
+	var openScratch = false
 	/// Rewrite the open file externally after this many seconds.
 	var externalEdit: Double?
 	/// Raw bytes to send to the terminal, for verifying key encodings.
@@ -115,6 +119,8 @@ struct LaunchOptions {
 			case "--new-folder": options.newFolder = next()
 			case "--new-file":   options.newFile = next()
 			case "--scratch":    options.newScratch = true
+			case "--scratches":  options.scratchSearch = next() ?? ""
+			case "--open-scratch": options.openScratch = true
 			case "--external-edit": options.externalEdit = next().flatMap(Double.init)
 			case "--send-bytes": options.terminalBytes = next()
 			case "--preview-mode": options.previewMode = next()

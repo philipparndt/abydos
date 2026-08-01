@@ -2,7 +2,7 @@ import AppKit
 
 /// Which tool window the sidebar is showing.
 enum SidebarToolKind {
-	case project, changes, branches, structure
+	case project, changes, branches, structure, scratches
 }
 
 /// The narrow icon strip down the left edge, as in the reference screenshot.
@@ -21,6 +21,7 @@ final class ToolWindowBar: NSView {
 	var onToggleChanges: (() -> Void)?
 	var onToggleBranches: (() -> Void)?
 	var onToggleStructure: (() -> Void)?
+	var onToggleScratches: (() -> Void)?
 
 	private var projectButton: StripButton!
 	private var terminalButton: StripButton!
@@ -28,6 +29,7 @@ final class ToolWindowBar: NSView {
 	private var commitButton: StripButton!
 	private var branchesButton: StripButton!
 	private var structureButton: StripButton!
+	private var scratchesButton: StripButton!
 
 	override init(frame frameRect: NSRect) {
 		super.init(frame: frameRect)
@@ -53,6 +55,7 @@ final class ToolWindowBar: NSView {
 		commitButton.isSelected = visible && tool == .changes
 		branchesButton.isSelected = visible && tool == .branches
 		structureButton.isSelected = visible && tool == .structure
+		scratchesButton.isSelected = visible && tool == .scratches
 	}
 
 	private func showReviewMenu() {
@@ -93,7 +96,14 @@ final class ToolWindowBar: NSView {
 		structureButton = StripButton(symbol: "list.bullet.indent", tooltip: "Structure (⌘4)", enabled: true)
 		structureButton.onClick = { [weak self] in self?.onToggleStructure?() }
 
-		let stack = NSStackView(views: [projectButton, commitButton, branchesButton, structureButton])
+		// Notes are not part of the project, so the icon is a page rather than
+		// anything filed: what it opens is the pile you keep beside the work.
+		scratchesButton = StripButton(symbol: "note.text", tooltip: "Scratches (⌘5)", enabled: true)
+		scratchesButton.onClick = { [weak self] in self?.onToggleScratches?() }
+
+		let stack = NSStackView(views: [
+			projectButton, commitButton, branchesButton, structureButton, scratchesButton,
+		])
 		stack.orientation = .vertical
 		stack.spacing = 4
 		stack.alignment = .centerX

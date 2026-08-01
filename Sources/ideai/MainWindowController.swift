@@ -139,6 +139,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 	private var navigatorContainer: NSView!
 	private var changesPane: ChangesPane?
 	private var structurePane: StructurePane?
+	private var scratchesPane: ScratchesPane?
 	private var primaryToolView: NSView?
 	private var primaryToolTop: NSLayoutConstraint?
 	private var primaryContainer: NSView!
@@ -212,6 +213,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		toolStrip.onToggleChanges = { [weak self] in self?.showSidebarTool(.changes) }
 		toolStrip.onToggleBranches = { [weak self] in self?.showSidebarTool(.branches) }
 		toolStrip.onToggleStructure = { [weak self] in self?.showSidebarTool(.structure) }
+		toolStrip.onToggleScratches = { [weak self] in self?.showSidebarTool(.scratches) }
 
 		navigatorContainer = ColoredView(color: Theme.current.sidebarBackground)
 		primaryContainer = navigatorContainer
@@ -397,6 +399,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
 		navigator.load(project: project)
 		editor.setProject(project)
+		scratchesPane?.setProject(project.root)
 		bottomPanel.setWorkingDirectory(project.root)
 
 		// Scratches come back with the project. Only when the window is empty:
@@ -1192,6 +1195,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		primaryToolTop = nil
 		changesPane = nil
 		structurePane = nil
+		scratchesPane = nil
 		navigator.view.removeFromSuperview()
 
 		currentSidebarTool = tool
@@ -1220,6 +1224,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 					self.layoutTitlebarPills()
 				}
 			}
+			view = pane
+		case .scratches:
+			let pane = ScratchesPane(projectRoot: project?.root)
+			pane.onOpen = { [weak self] url, preview in
+				self?.editor.open(fileURL: url, focusEditor: !preview, preview: preview)
+			}
+			pane.onMoved = { [weak self] from, to in
+				self?.editor.scratchMoved(from: from, to: to)
+			}
+			pane.onWillModify = { [weak self] url in self?.editor.saveIfOpen(url) }
+			scratchesPane = pane
 			view = pane
 		case .structure:
 			let pane = StructurePane()
@@ -1269,6 +1284,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 	@objc func toggleChanges(_ sender: Any?) { showSidebarTool(.changes) }
 	@objc func toggleBranchesView(_ sender: Any?) { showSidebarTool(.branches) }
 	@objc func toggleStructureView(_ sender: Any?) { showSidebarTool(.structure) }
+	@objc func toggleScratchesView(_ sender: Any?) { showSidebarTool(.scratches) }
 
 	/// Moves the selected lines across the index, in whichever direction the
 	/// diff's side implies.
@@ -1370,6 +1386,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
 	func createFolderForTesting(named name: String) {
 		navigator.createFolderForTesting(named: name)
+	}
+
+	func searchScratchesForTesting(_ query: String) {
+		if !query.isEmpty { scratchesPane?.setQueryForTesting(query) }
+	}
+
+	func openFirstScratchForTesting() {
+		scratchesPane?.openFirstForTesting()
 	}
 
 	func createFileForTesting(named name: String) {

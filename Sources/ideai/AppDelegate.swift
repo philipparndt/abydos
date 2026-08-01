@@ -132,6 +132,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let search = options.scratchSearch {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+				controller?.showSidebarTool(.scratches)
+				controller?.searchScratchesForTesting(search)
+				if options.openScratch { controller?.openFirstScratchForTesting() }
+			}
+		}
+
 		if let line = options.runLine {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
 				controller?.invokeForTesting(line: line, debug: false)
@@ -562,6 +570,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 		viewMenu.addItem(withTitle: "Commit", action: #selector(MainWindowController.toggleChanges(_:)), keyEquivalent: "2")
 		viewMenu.addItem(withTitle: "Branches", action: #selector(MainWindowController.toggleBranchesView(_:)), keyEquivalent: "3")
 		viewMenu.addItem(withTitle: "Structure", action: #selector(MainWindowController.toggleStructureView(_:)), keyEquivalent: "4")
+		viewMenu.addItem(withTitle: "Scratches", action: #selector(MainWindowController.toggleScratchesView(_:)), keyEquivalent: "5")
 		viewMenu.addItem(.separator())
 		let terminalItem = NSMenuItem(title: "Toggle Terminal", action: #selector(MainWindowController.toggleTerminal(_:)), keyEquivalent: "j")
 		viewMenu.addItem(terminalItem)
