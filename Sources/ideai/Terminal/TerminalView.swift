@@ -28,6 +28,8 @@ final class TerminalView: NSView, NSTextInputClient {
 	private var needsRender = false
 	/// Drives drawing at the rate the display actually refreshes.
 	private var displayLink: CADisplayLink?
+	/// Guards the resize callback against the redraw that caused it.
+	private var isPositioningMetalView = false
 	/// Distance from the top of a cell to the baseline the text sits on.
 	private var baselineFromTop: CGFloat = 12
 	/// The four faces a cell can ask for, worked out once per font change.
@@ -275,6 +277,7 @@ final class TerminalView: NSView, NSTextInputClient {
 			guard let renderer = TerminalMetalRenderer(scale: scale) else { return }
 			let view = TerminalMetalView(device: renderer.device)
 			view.scale = scale
+			view.onResize = { [weak self] in self?.renderMetal() }
 			addSubview(view)
 			metal = (renderer, view)
 		} else if !wanted, let existing = metal {
@@ -292,7 +295,13 @@ final class TerminalView: NSView, NSTextInputClient {
 	private func positionMetalView() {
 		guard let metal else { return }
 		let visible = visibleRect
-		if metal.view.frame != visible { metal.view.frame = visible }
+		// Resizing the view asks for a redraw, and this is called from one — so
+		// the request is noted and answered by the redraw already under way.
+		if metal.view.frame != visible {
+			isPositioningMetalView = true
+			metal.view.frame = visible
+			isPositioningMetalView = false
+		}
 		metal.view.scale = window?.backingScaleFactor ?? 2
 		metal.renderer.scale = window?.backingScaleFactor ?? 2
 	}
@@ -325,7 +334,7 @@ final class TerminalView: NSView, NSTextInputClient {
 
 	/// Draws what is on screen.
 	private func renderMetal() {
-		guard let metal else { return }
+		guard let metal, !isPositioningMetalView else { return }
 		let probing = MetalProbe.enabled
 		positionMetalView()
 

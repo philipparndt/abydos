@@ -99,6 +99,7 @@ final class GlyphAtlas {
 	/// They are geometry rather than glyphs, so their size is the cell's, not
 	/// the font's — and a cell of a different size means drawing them again.
 	private var cellSize: CGSize = .zero
+	private var baselineFromTop: CGFloat = 0
 
 	private struct Key: Hashable {
 		let scalar: UInt32
@@ -128,32 +129,51 @@ final class GlyphAtlas {
 	///
 	/// Returns nil for anything with nothing to draw — a space, or a character
 	/// no font on the machine has a glyph for.
-	/// Tells the atlas how big a cell is, since the separators are drawn to fill
+	/// Tells the atlas the shape of a cell, since some glyphs are drawn to fill
 	/// one exactly.
-	func setCellSize(_ size: CGSize) {
-		guard size != cellSize else { return }
+	func setCellMetrics(size: CGSize, baselineFromTop: CGFloat) {
+		guard size != cellSize || baselineFromTop != self.baselineFromTop else { return }
 		cellSize = size
+		self.baselineFromTop = baselineFromTop
 		removeAll()
+	}
+
+	/// Characters that are meant to tile: box drawing and block elements.
+	///
+	/// They are drawn to join their neighbours — a rule across the screen, the
+	/// border of a tmux pane — and the join is the whole point of them.
+	static func tiles(_ scalar: UInt32) -> Bool {
+		(0x2500...0x259F).contains(scalar)
 	}
 
 	func entry(for scalar: UInt32, font: NSFont, faceIndex: UInt8) -> AtlasEntry? {
 		let key = Key(scalar: scalar, face: faceIndex)
 		if let known = entries[key] { return known }
 
-		let made = PowerlineGlyph.isSeparator(scalar)
-			? rasteriseSeparator(scalar: scalar)
-			: rasterise(scalar: scalar, font: font)
+		let made: AtlasEntry?
+		if PowerlineGlyph.isSeparator(scalar) {
+			made = rasteriseCellShape(scalar: scalar) { rect in
+				PowerlineGlyph.draw(scalar: scalar, in: rect, color: .white)
+			}
+		} else if BoxDrawing.draws(scalar) {
+			made = rasteriseCellShape(scalar: scalar) { rect in
+				BoxDrawing.draw(scalar: scalar, in: rect, color: .white)
+			}
+		} else if Self.tiles(scalar), let tiled = rasteriseTiling(scalar: scalar, font: font) {
+			made = tiled
+		} else {
+			made = rasterise(scalar: scalar, font: font)
+		}
 		entries[key] = made
 		return made
 	}
 
-	/// Draws a powerline separator as the shape it is, filling the cell.
+	/// Draws a shape into a cell-sized slot of the atlas.
 	///
-	/// The same geometry the CoreGraphics path draws, for the same reason: a
-	/// font glyph is sized to the font's metrics and never quite fills the cell,
-	/// which leaves a seam where one prompt segment meets the next. Rasterised
-	/// once at cell size and then stamped like any other glyph.
-	private func rasteriseSeparator(scalar: UInt32) -> AtlasEntry? {
+	/// For the characters drawn rather than taken from a font: powerline
+	/// separators and box drawing. Both exist to meet their neighbours exactly,
+	/// which a glyph sized to a font's metrics cannot be relied on to do.
+	private func rasteriseCellShape(scalar: UInt32, draw: (NSRect) -> Void) -> AtlasEntry? {
 		guard cellSize.width > 0, cellSize.height > 0 else { return nil }
 
 		let pixelWidth = Int((cellSize.width * scale).rounded())
@@ -161,11 +181,8 @@ final class GlyphAtlas {
 		guard pixelWidth > 0, pixelHeight > 0,
 		      let slot = coverage.allocate(width: pixelWidth, height: pixelHeight),
 		      let context = CGContext(
-				data: nil,
-				width: pixelWidth,
-				height: pixelHeight,
-				bitsPerComponent: 8,
-				bytesPerRow: pixelWidth,
+				data: nil, width: pixelWidth, height: pixelHeight,
+				bitsPerComponent: 8, bytesPerRow: pixelWidth,
 				space: CGColorSpaceCreateDeviceGray(),
 				bitmapInfo: CGImageAlphaInfo.none.rawValue
 			)
@@ -180,19 +197,13 @@ final class GlyphAtlas {
 		let graphics = NSGraphicsContext(cgContext: context, flipped: false)
 		NSGraphicsContext.saveGraphicsState()
 		NSGraphicsContext.current = graphics
-		PowerlineGlyph.draw(
-			scalar: scalar,
-			in: NSRect(origin: .zero, size: cellSize),
-			color: .white
-		)
+		draw(NSRect(origin: .zero, size: cellSize))
 		NSGraphicsContext.restoreGraphicsState()
 
 		guard let pixels = context.data else { return nil }
 		coverage.texture.replace(
 			region: MTLRegionMake2D(slot.x, slot.y, pixelWidth, pixelHeight),
-			mipmapLevel: 0,
-			withBytes: pixels,
-			bytesPerRow: pixelWidth
+			mipmapLevel: 0, withBytes: pixels, bytesPerRow: pixelWidth
 		)
 
 		let side = Float(coverage.texture.width)
@@ -302,6 +313,86 @@ final class GlyphAtlas {
 			),
 			size: CGSize(width: CGFloat(pixelWidth) / scale, height: CGFloat(pixelHeight) / scale),
 			isColour: isColour
+		)
+	}
+
+
+	/// Draws a tiling character scaled to the cell it has to fill.
+	///
+	/// These are designed to join their neighbours — a rule across the screen,
+	/// the border of a pane — and a cell is a whole number of points while a
+	/// font's advance is not. Drawn at its natural size, a rule leaves a
+	/// fraction of a point of background between one cell and the next, which
+	/// reads as a dashed line where a solid one was meant.
+	///
+	/// The font's own box is mapped onto the cell: its advance to the cell's
+	/// width, its line height to the cell's height. Every character in the set
+	/// is treated the same way, which is what keeps a corner meeting the rule
+	/// that runs into it — stretching each one by how much of its cell it
+	/// happened to cover pulled them apart instead.
+	private func rasteriseTiling(scalar: UInt32, font: NSFont) -> AtlasEntry? {
+		guard cellSize.width > 0, cellSize.height > 0 else { return nil }
+		guard let unicode = UnicodeScalar(scalar) else { return nil }
+
+		var utf16 = Array(String(unicode).utf16)
+		var glyphs = [CGGlyph](repeating: 0, count: utf16.count)
+		let ctFont = font as CTFont
+		guard CTFontGetGlyphsForCharacters(ctFont, &utf16, &glyphs, utf16.count), glyphs[0] != 0 else {
+			// Only the terminal's own face is stretched this way; a character it
+			// does not have is drawn as any other fallback glyph.
+			return nil
+		}
+
+		var glyph = glyphs[0]
+		var advance = CGSize.zero
+		CTFontGetAdvancesForGlyphs(ctFont, .horizontal, &glyph, &advance, 1)
+		let lineHeight = font.ascender - font.descender + font.leading
+		guard advance.width > 0, lineHeight > 0 else { return nil }
+
+		let pixelWidth = Int((cellSize.width * scale).rounded())
+		let pixelHeight = Int((cellSize.height * scale).rounded())
+		guard pixelWidth > 0, pixelHeight > 0,
+		      let slot = coverage.allocate(width: pixelWidth, height: pixelHeight),
+		      let context = CGContext(
+				data: nil, width: pixelWidth, height: pixelHeight,
+				bitsPerComponent: 8, bytesPerRow: pixelWidth,
+				space: CGColorSpaceCreateDeviceGray(),
+				bitmapInfo: CGImageAlphaInfo.none.rawValue
+			)
+		else { return nil }
+
+		context.setFillColor(gray: 0, alpha: 1)
+		context.fill(CGRect(x: 0, y: 0, width: pixelWidth, height: pixelHeight))
+		context.setFillColor(gray: 1, alpha: 1)
+		context.scaleBy(x: scale, y: scale)
+
+		let stretchX = cellSize.width / advance.width
+		let stretchY = cellSize.height / lineHeight
+		context.scaleBy(x: stretchX, y: stretchY)
+
+		// The pen goes on the baseline, in the space the scaling just set up.
+		// CoreGraphics has y running up, so the baseline is measured from the
+		// bottom of the cell.
+		var position = CGPoint(
+			x: 0,
+			y: (cellSize.height - baselineFromTop) / stretchY
+		)
+		CTFontDrawGlyphs(ctFont, &glyph, &position, 1, context)
+
+		guard let pixels = context.data else { return nil }
+		coverage.texture.replace(
+			region: MTLRegionMake2D(slot.x, slot.y, pixelWidth, pixelHeight),
+			mipmapLevel: 0, withBytes: pixels, bytesPerRow: pixelWidth
+		)
+
+		let side = Float(coverage.texture.width)
+		return AtlasEntry(
+			uvOrigin: SIMD2(Float(slot.x) / side, Float(slot.y) / side),
+			uvSize: SIMD2(Float(pixelWidth) / side, Float(pixelHeight) / side),
+			// It is the cell, so it starts where the cell does.
+			offset: .zero,
+			size: cellSize,
+			isColour: false
 		)
 	}
 

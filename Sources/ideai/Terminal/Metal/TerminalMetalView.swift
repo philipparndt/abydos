@@ -37,6 +37,13 @@ final class TerminalMetalView: NSView {
 		didSet { updateDrawableSize() }
 	}
 
+	/// The drawable changed size and holds nothing that fits it any more.
+	///
+	/// Waiting for the next tick of the display link would show whatever the
+	/// layer had — stretched, or nothing at all — which is what makes a resize
+	/// flicker.
+	var onResize: (() -> Void)?
+
 	override func setFrameSize(_ newSize: NSSize) {
 		super.setFrameSize(newSize)
 		updateDrawableSize()
@@ -47,6 +54,7 @@ final class TerminalMetalView: NSView {
 		let size = CGSize(width: bounds.width * scale, height: bounds.height * scale)
 		guard size.width >= 1, size.height >= 1, size != metalLayer.drawableSize else { return }
 		metalLayer.drawableSize = size
+		onResize?()
 	}
 
 	/// The next surface to draw into, or nil when there is nothing to draw on.

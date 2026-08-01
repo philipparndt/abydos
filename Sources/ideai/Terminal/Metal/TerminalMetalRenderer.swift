@@ -111,7 +111,7 @@ final class TerminalMetalRenderer {
 		overlays: [Overlay] = []
 	) {
 		instances.removeAll(keepingCapacity: true)
-		atlas.setCellSize(frame.cellSize)
+		atlas.setCellMetrics(size: frame.cellSize, baselineFromTop: faces.baselineFromTop)
 
 		let pixel = Float(scale)
 		func snap(_ value: Float) -> Float { (value * pixel).rounded() / pixel }
@@ -177,9 +177,12 @@ final class TerminalMetalRenderer {
 					if let entry = atlas.entry(for: cell.scalar, font: face, faceIndex: faceIndex) {
 						// A glyph hangs off the baseline, which sits a fixed
 						// distance down the cell; a separator is the cell.
-						let anchor = PowerlineGlyph.isSeparator(cell.scalar)
-							? y
-							: y + Float(faces.baselineFromTop)
+						// A separator or a tiling character is the cell; anything
+						// else hangs off the baseline.
+						let fillsCell = PowerlineGlyph.isSeparator(cell.scalar)
+							|| BoxDrawing.draws(cell.scalar)
+							|| GlyphAtlas.tiles(cell.scalar)
+						let anchor = fillsCell ? y : y + Float(faces.baselineFromTop)
 						// Snapped to whole pixels. The glyph was rasterised at
 						// one position inside its bitmap, so landing it on a
 						// fraction of a pixel resamples it — by a different
