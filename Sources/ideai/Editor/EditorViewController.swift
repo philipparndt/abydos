@@ -77,6 +77,8 @@ final class EditorViewController: NSViewController {
 	private(set) var statusLanguage: String?
 	var onStatusChanged: ((EditorViewController) -> Void)?
 	private var placeholder: NSTextField!
+	/// The one thing an empty window can offer to do.
+	private var scratchButton: NSButton!
 
 	/// Notifies the window when the active file changes, so the tree can follow.
 	var onActiveFileChanged: ((URL?) -> Void)?
@@ -155,7 +157,15 @@ final class EditorViewController: NSViewController {
 		placeholder.textColor = Theme.current.gitIgnored
 		placeholder.alignment = .center
 
-		for subview in [tabBar, findBar, contentArea, placeholder] as [NSView] {
+		// The other route to a scratch is double-clicking the tab strip, and an
+		// empty window has no tab strip to double-click. Offered here so the
+		// window is never a dead end.
+		scratchButton = NSButton(title: "New Scratch File", target: self, action: #selector(newScratchFromPlaceholder))
+		scratchButton.isBordered = false
+		scratchButton.bezelStyle = .inline
+		styleScratchButton()
+
+		for subview in [tabBar, findBar, contentArea, placeholder, scratchButton] as [NSView] {
 			container.addSubview(subview)
 			subview.translatesAutoresizingMaskIntoConstraints = false
 		}
@@ -186,6 +196,9 @@ final class EditorViewController: NSViewController {
 
 			placeholder.centerXAnchor.constraint(equalTo: container.centerXAnchor),
 			placeholder.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+
+			scratchButton.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+			scratchButton.topAnchor.constraint(equalTo: placeholder.bottomAnchor, constant: 10),
 		])
 
 		view = container
@@ -350,9 +363,33 @@ final class EditorViewController: NSViewController {
 		onStatusChanged?(self)
 	}
 
+	/// Quiet enough to ignore, and the only coloured thing on an empty page —
+	/// which is what makes it findable without shouting.
+	private func styleScratchButton() {
+		scratchButton.attributedTitle = NSAttributedString(
+			string: "New Scratch File",
+			attributes: [
+				.font: Theme.current.uiFont(13),
+				.foregroundColor: Theme.current.gitModified,
+			]
+		)
+	}
+
+	@objc private func newScratchFromPlaceholder() {
+		newScratch()
+	}
+
+	/// Presses the empty page's button, rather than calling what it calls.
+	func clickScratchPlaceholderForTesting() -> Bool {
+		guard !scratchButton.isHidden else { return false }
+		scratchButton.performClick(nil)
+		return true
+	}
+
 	private func updateChrome() {
 		let hasTabs = !tabs.isEmpty
 		placeholder.isHidden = hasTabs
+		scratchButton.isHidden = hasTabs
 		tabBar.isHidden = !hasTabs
 		contentArea.isHidden = !hasTabs
 		onStatusChanged?(self)
@@ -1171,6 +1208,7 @@ final class EditorViewController: NSViewController {
 	func applySettings() {
 		tabBarHeightConstraint.constant = EditorTabBar.height
 		placeholder.font = Theme.current.uiFont(13)
+		styleScratchButton()
 		tabBar.applyThemeChange()
 		findBar.applyThemeChange()
 		if !findBar.isHidden { findBarHeight.constant = Theme.current.scaled(34) }

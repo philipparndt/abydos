@@ -375,6 +375,10 @@ final class EditorAreaController: NSViewController {
 		(activeGroup ?? groups.first)?.newScratch()
 	}
 
+	func clickScratchPlaceholderForTesting() -> Bool {
+		(activeGroup ?? groups.first)?.clickScratchPlaceholderForTesting() ?? false
+	}
+
 	func closeAllTabs() {
 		for group in groups { group.closeAllTabs() }
 	}

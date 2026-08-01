@@ -479,6 +479,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		editor.newScratch()
 	}
 
+	/// Uses the empty page's button when there is one, so the capture exercises
+	/// the control rather than what it happens to call.
+	func newScratchForTesting() {
+		if !editor.clickScratchPlaceholderForTesting() { newScratchFile(nil) }
+	}
+
 	@objc func closeTab(_ sender: Any?) {
 		// Falls back to closing the window when nothing is open, matching ⌘W.
 		if editor.hasOpenFiles {

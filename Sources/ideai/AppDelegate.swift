@@ -128,7 +128,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if options.newScratch {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-				controller?.newScratchFile(nil)
+				controller?.newScratchForTesting()
 			}
 		}
 
