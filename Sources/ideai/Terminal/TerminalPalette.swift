@@ -8,28 +8,56 @@ import IdeaiKit
 /// of clashing with it. The 240 extended slots follow the standard xterm cube,
 /// which programs assume exactly.
 enum TerminalPalette {
-	/// ANSI 0–15, tuned to match the editor theme.
-	static let named: [NSColor] = [
-		.hex(0x2B2D30), // 0 black
-		.hex(0xC7756B), // 1 red
-		.hex(0x6AAB73), // 2 green
-		.hex(0xB58A2B), // 3 yellow
-		.hex(0x3592C4), // 4 blue
-		.hex(0xC77DBB), // 5 magenta
-		.hex(0x2AACB8), // 6 cyan
-		.hex(0xBCBEC4), // 7 white
-		.hex(0x5A5D63), // 8 bright black
-		.hex(0xE06C60), // 9 bright red
-		.hex(0x7FCC89), // 10 bright green
-		.hex(0xE8BF6A), // 11 bright yellow
-		.hex(0x56A8F5), // 12 bright blue
-		.hex(0xE18FD8), // 13 bright magenta
-		.hex(0x4BD4E0), // 14 bright cyan
-		.hex(0xDFE1E5), // 15 bright white
-	]
+	/// The scheme the tables below were built for.
+	///
+	/// Rebuilt when it changes rather than looked up per cell: a screen repaint
+	/// asks for two colours for every cell on it.
+	@MainActor private static var builtFor: TerminalScheme?
 
-	/// Full 256-entry table, built once.
-	private static let extended: [NSColor] = {
+	/// ANSI 0–15, from the chosen scheme.
+	@MainActor static var named: [NSColor] {
+		rebuildIfNeeded()
+		return namedStorage
+	}
+
+	@MainActor private static var namedStorage: [NSColor] = TerminalScheme.default.named
+	@MainActor private static var extendedStorage: [NSColor] = []
+
+	/// How much of a colour is left when a cell asks to be faint.
+	///
+	/// Blended towards what is behind it rather than towards black, so faint
+	/// text stays faint against any background. Ghostty takes a colour down by
+	/// about half and this matches it: at 0.6 the dimmed status line a
+	/// full-screen tool draws was barely distinguishable from ordinary text.
+	static let dimAmount: CGFloat = 0.45
+
+	/// What a cell with no colour of its own sits on, and is written in.
+	@MainActor static var background: NSColor { TerminalScheme.current.background }
+	@MainActor static var foreground: NSColor { TerminalScheme.current.foreground }
+	@MainActor static var cursor: NSColor { TerminalScheme.current.cursor }
+
+	@MainActor private static func rebuildIfNeeded() {
+		let scheme = TerminalScheme.current
+		guard builtFor != scheme else { return }
+		builtFor = scheme
+		namedStorage = scheme.named
+		extendedStorage = Self.buildExtended(from: namedStorage)
+		componentsStorage = extendedStorage.map { color in
+			let srgb = color.usingColorSpace(.sRGB) ?? color
+			return SIMD4(
+				Float(srgb.redComponent), Float(srgb.greenComponent),
+				Float(srgb.blueComponent), Float(srgb.alphaComponent)
+			)
+		}
+	}
+
+	/// Full 256-entry table.
+	@MainActor private static var extended: [NSColor] {
+		rebuildIfNeeded()
+		return extendedStorage
+	}
+
+	private static func buildExtended(from named: [NSColor]) -> [NSColor] {
 		var colors = named
 
 		// 16–231: a 6×6×6 cube. The level table is the xterm standard; an even
@@ -54,22 +82,17 @@ enum TerminalPalette {
 			colors.append(NSColor(srgbRed: value, green: value, blue: value, alpha: 1))
 		}
 		return colors
-	}()
+	}
 
 	/// The 256 palette entries as the shaders want them, worked out once.
 	///
 	/// Going through NSColor for this meant a colour-space conversion for every
 	/// cell of every frame — two, counting the background — which on a screen
 	/// of ten thousand cells is more work than drawing them.
-	private static let components: [SIMD4<Float>] = extended.map { color in
-		let srgb = color.usingColorSpace(.sRGB) ?? color
-		return SIMD4(
-			Float(srgb.redComponent), Float(srgb.greenComponent),
-			Float(srgb.blueComponent), Float(srgb.alphaComponent)
-		)
-	}
+	@MainActor private static var componentsStorage: [SIMD4<Float>] = []
 
 	/// A cell's colour, without building an NSColor for it.
+	@MainActor
 	static func components(
 		for terminalColor: TerminalColor,
 		isForeground: Bool,
@@ -81,13 +104,15 @@ enum TerminalPalette {
 		case .default:
 			return isForeground ? defaultForeground : defaultBackground
 		case let .indexed(index):
+			rebuildIfNeeded()
 			let resolved = (bold && index < 8) ? Int(index) + 8 : Int(index)
-			return components[min(resolved, components.count - 1)]
+			return componentsStorage[min(resolved, componentsStorage.count - 1)]
 		case let .rgb(red, green, blue):
 			return SIMD4(Float(red) / 255, Float(green) / 255, Float(blue) / 255, 1)
 		}
 	}
 
+	@MainActor
 	static func color(
 		for terminalColor: TerminalColor,
 		isForeground: Bool,
@@ -95,7 +120,7 @@ enum TerminalPalette {
 	) -> NSColor {
 		switch terminalColor {
 		case .default:
-			return isForeground ? Theme.current.editorText : Theme.current.editorBackground
+			return isForeground ? foreground : background
 		case let .indexed(index):
 			// Bold has historically brightened the first eight colours, and
 			// prompts still rely on that for their highlight colour.

@@ -27,6 +27,7 @@ private struct Uniforms {
 /// work but the count of it — ten thousand rectangle fills and ten thousand
 /// glyph draws for a screen where every cell has its own colour. The GPU does
 /// not care how many cells differ.
+@MainActor
 final class TerminalMetalRenderer {
 	let device: MTLDevice
 	private let queue: MTLCommandQueue
@@ -152,7 +153,7 @@ final class TerminalMetalRenderer {
 				)
 				// Dimming is the alpha the CoreGraphics path uses, done here as
 				// arithmetic rather than by asking for another colour.
-				if cell.attributes.dim { foreground.w *= 0.6 }
+				if cell.attributes.dim { foreground.w *= Float(TerminalPalette.dimAmount) }
 				var background = TerminalPalette.components(
 					for: resolved.background,
 					isForeground: false,

@@ -67,6 +67,9 @@ final class SettingsPaneController: NSViewController {
 		case stepper(title: String, help: String?, range: ClosedRange<Int>,
 		             get: () -> Int, set: (Int) -> Void)
 		case text(title: String, help: String?, get: () -> String, set: (String) -> Void)
+		/// One of a fixed set, each with a label and the value it stands for.
+		case choice(title: String, help: String?, options: [(label: String, value: String)],
+		            get: () -> String, set: (String) -> Void)
 		case button(title: String, label: String, action: () -> Void)
 	}
 
@@ -212,6 +215,25 @@ final class SettingsPaneController: NSViewController {
 			refreshHandlers.append { field.stringValue = get() }
 			return (title, field, help)
 
+		case let .choice(title, help, options, get, set):
+			let popUp = NSPopUpButton()
+			popUp.addItems(withTitles: options.map(\.label))
+			popUp.widthAnchor.constraint(equalToConstant: 200).isActive = true
+
+			func select(_ value: String) {
+				let index = options.firstIndex { $0.value == value } ?? 0
+				popUp.selectItem(at: index)
+			}
+			select(get())
+
+			popUp.onAction = {
+				let index = popUp.indexOfSelectedItem
+				guard options.indices.contains(index) else { return }
+				set(options[index].value)
+			}
+			refreshHandlers.append { select(get()) }
+			return (title, popUp, help)
+
 		case let .button(title, label, action):
 			let button = NSButton(title: label, target: nil, action: nil)
 			button.bezelStyle = .rounded
@@ -255,6 +277,13 @@ final class SettingsPaneController: NSViewController {
 				help: "Soft-wrap long lines instead of scrolling sideways (⌥⌘Z).",
 				get: { Settings.shared.wordWrap },
 				set: { Settings.shared.wordWrap = $0 }
+			),
+			.choice(
+				title: "Terminal colours",
+				help: "Blue is the palette Ghostty ships with. Dark matches the editor.",
+				options: TerminalScheme.allCases.map { ($0.title, $0.rawValue) },
+				get: { Settings.shared.terminalScheme },
+				set: { Settings.shared.terminalScheme = $0 }
 			),
 			.toggle(
 				title: "GPU terminal rendering",

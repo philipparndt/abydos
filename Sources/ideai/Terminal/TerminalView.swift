@@ -93,7 +93,7 @@ final class TerminalView: NSView, NSTextInputClient {
 		super.init(frame: .zero)
 
 		wantsLayer = true
-		layer?.backgroundColor = Theme.current.editorBackground.cgColor
+		layer?.backgroundColor = TerminalPalette.background.cgColor
 		updateMetrics()
 
 		emulator.onUpdate = { [weak self] in
@@ -390,11 +390,11 @@ final class TerminalView: NSView, NSTextInputClient {
 			cursor = .init(
 				row: screen.scrollback.count + emulator.cursorRow,
 				column: emulator.cursorColumn,
-				colour: Theme.current.caret.components
+				colour: TerminalPalette.cursor.components
 			)
 		}
 
-		let background = Theme.current.editorBackground.components
+		let background = TerminalPalette.background.components
 		let buildStart = probing ? Date() : nil
 		metal.renderer.build(
 			rows: rows,
@@ -403,7 +403,7 @@ final class TerminalView: NSView, NSTextInputClient {
 				inset: CGPoint(x: Self.horizontalInset, y: Self.verticalInset),
 				origin: visible.origin,
 				background: background,
-				foreground: Theme.current.editorText.components
+				foreground: TerminalPalette.foreground.components
 			),
 			faces: faces,
 			overlays: overlays,
@@ -509,6 +509,8 @@ final class TerminalView: NSView, NSTextInputClient {
 
 	func applyThemeChange() {
 		updateMetrics()
+		layer?.backgroundColor = TerminalPalette.background.cgColor
+		enclosingScrollView?.backgroundColor = TerminalPalette.background
 		metal?.renderer.clearGlyphs()
 		updateMetalEnabled()
 		recomputeGridSize()
@@ -577,7 +579,7 @@ final class TerminalView: NSView, NSTextInputClient {
 	// MARK: - Drawing
 
 	override func draw(_ dirtyRect: NSRect) {
-		Theme.current.editorBackground.setFill()
+		TerminalPalette.background.setFill()
 		dirtyRect.fill()
 
 		let screen = emulator.screen
@@ -714,7 +716,7 @@ final class TerminalView: NSView, NSTextInputClient {
 			isForeground: true,
 			bold: attributes.bold
 		)
-		if attributes.dim { foreground = foreground.withAlphaComponent(0.6) }
+		if attributes.dim { foreground = foreground.withAlphaComponent(TerminalPalette.dimAmount) }
 
 		guard let context = NSGraphicsContext.current?.cgContext else { return }
 		context.saveGState()
@@ -820,7 +822,7 @@ final class TerminalView: NSView, NSTextInputClient {
 		let endX = (Self.horizontalInset + CGFloat(column + 1) * cellWidth).rounded()
 		let y = (Self.verticalInset + CGFloat(row) * cellHeight).rounded()
 
-		Theme.current.caret.setFill()
+		TerminalPalette.cursor.setFill()
 		NSRect(x: x, y: y, width: endX - x, height: cellHeight).fill()
 
 		// The character again, in the colour of what is now behind it.
@@ -903,7 +905,7 @@ final class TerminalView: NSView, NSTextInputClient {
 			lines.append((row, line))
 		}
 
-		let background = Theme.current.editorBackground.components
+		let background = TerminalPalette.background.components
 		renderer.build(
 			rows: lines,
 			frame: .init(
@@ -911,7 +913,7 @@ final class TerminalView: NSView, NSTextInputClient {
 				inset: CGPoint(x: Self.horizontalInset, y: Self.verticalInset),
 				origin: .zero,
 				background: background,
-				foreground: Theme.current.editorText.components
+				foreground: TerminalPalette.foreground.components
 			),
 			faces: faces,
 			// Drawn whatever has focus: a window rendered offscreen has none,
@@ -919,7 +921,7 @@ final class TerminalView: NSView, NSTextInputClient {
 			cursor: .init(
 				row: screen.scrollback.count + emulator.cursorRow,
 				column: emulator.cursorColumn,
-				colour: Theme.current.caret.components
+				colour: TerminalPalette.cursor.components
 			)
 		)
 		return renderer.writePNG(
@@ -1370,7 +1372,7 @@ final class TerminalPane: NSView {
 		scrollView.hasHorizontalScroller = false
 		scrollView.autohidesScrollers = true
 		scrollView.drawsBackground = true
-		scrollView.backgroundColor = Theme.current.editorBackground
+		scrollView.backgroundColor = TerminalPalette.background
 		scrollView.scrollerStyle = .overlay
 		scrollView.contentView.postsBoundsChangedNotifications = true
 

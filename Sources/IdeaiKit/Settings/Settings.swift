@@ -26,6 +26,7 @@ public final class Settings {
 			Key.terminalFontName: "",
 			Key.wordWrap: false,
 			Key.terminalGPURendering: false,
+			Key.terminalScheme: "blue",
 		])
 	}
 
@@ -42,6 +43,7 @@ public final class Settings {
 		static let terminalFontName = "terminalFontName"
 		static let wordWrap = "wordWrap"
 		static let terminalGPURendering = "terminalGPURendering"
+		static let terminalScheme = "terminalScheme"
 		static let projectSearchPaths = "projectSearchPaths"
 		static let projectSearchDepth = "projectSearchDepth"
 	}
@@ -139,6 +141,15 @@ public final class Settings {
 		set { set(newValue, Key.wordWrap) }
 	}
 
+	/// Which set of colours the terminal uses.
+	///
+	/// Its own setting rather than the editor's theme: a terminal's palette is
+	/// a language of its own, and people arrive with one they already know.
+	public var terminalScheme: String {
+		get { defaults.string(forKey: Key.terminalScheme) ?? "blue" }
+		set { set(newValue, Key.terminalScheme) }
+	}
+
 	/// Draw the terminal on the GPU rather than through CoreGraphics.
 	///
 	/// Off by default while it is new. The two paths draw the same screen; the
@@ -197,6 +208,7 @@ public final class Settings {
 			Key.editorFontSize, Key.editorLineHeight, Key.tabWidth,
 			Key.showHiddenFiles, Key.excludedDirectories,
 			Key.uiScale, Key.terminalFontName, Key.wordWrap,
+			Key.terminalScheme, Key.terminalGPURendering,
 		] {
 			defaults.removeObject(forKey: key)
 		}
