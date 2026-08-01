@@ -11,6 +11,24 @@ final class EditorDropView: ColoredView {
 	private var activeZone: EditorTabDrag.Zone?
 	private let overlay = DropHighlightOverlay()
 
+	/// How much of the top of this view lies under the window's titlebar.
+	///
+	/// The window draws its content full height, so this view starts behind the
+	/// titlebar. Anything painted at y = 0 — the top edge of the drop outline —
+	/// is therefore covered by it, which is what made the frame look open at
+	/// the top.
+	var topInset: CGFloat = 0 {
+		didSet {
+			guard topInset != oldValue else { return }
+			needsLayout = true
+		}
+	}
+
+	/// The part of this view somebody can actually see.
+	private var visibleRegion: NSRect {
+		NSRect(x: 0, y: topInset, width: bounds.width, height: max(0, bounds.height - topInset))
+	}
+
 	override init(color: NSColor) {
 		super.init(color: color)
 		// The preview must sit above the tab bar and the text, so it lives in its
@@ -30,7 +48,7 @@ final class EditorDropView: ColoredView {
 
 	override func layout() {
 		super.layout()
-		overlay.frame = bounds
+		overlay.frame = visibleRegion
 		// Subviews added later would otherwise cover it.
 		if subviews.last !== overlay {
 			overlay.removeFromSuperview()
@@ -59,12 +77,16 @@ final class EditorDropView: ColoredView {
 	}
 
 	private func updateZone(_ sender: NSDraggingInfo) {
+		// Zones are worked out in the same region they are drawn in, so what is
+		// highlighted is what the pointer is actually over.
 		let point = convert(sender.draggingLocation, from: nil)
-		let zone = EditorTabDrag.zone(for: point, in: bounds)
+		let region = visibleRegion
+		let local = NSPoint(x: point.x - region.minX, y: point.y - region.minY)
+		let zone = EditorTabDrag.zone(for: local, in: NSRect(origin: .zero, size: region.size))
 		guard zone != activeZone else { return }
 
 		activeZone = zone
-		overlay.frame = bounds
+		overlay.frame = region
 		overlay.zone = zone
 		overlay.isHidden = false
 		if subviews.last !== overlay {
@@ -77,7 +99,7 @@ final class EditorDropView: ColoredView {
 	/// that the overlay actually paints above the tab bar and the text.
 	func previewZoneForTesting(_ zone: EditorTabDrag.Zone) {
 		activeZone = nil
-		overlay.frame = bounds
+		overlay.frame = visibleRegion
 		overlay.zone = zone
 		overlay.isHidden = false
 		overlay.removeFromSuperview()
@@ -128,8 +150,13 @@ private final class DropHighlightOverlay: NSView {
 		// Outlining the whole target region rather than marking one edge: the
 		// region is the answer to "where does this land", and an outline reads the
 		// same whichever side the new pane takes.
+		//
+		// Inset by the full thickness rather than half of it, so the stroke
+		// lands entirely inside the region: half of it would fall outside the
+		// view at the edges and be clipped away, leaving a frame that looks
+		// open on whichever sides touch them.
 		let thickness = Theme.current.scaled(2.5)
-		let outline = NSBezierPath(rect: rect.insetBy(dx: thickness / 2, dy: thickness / 2))
+		let outline = NSBezierPath(rect: rect.insetBy(dx: thickness, dy: thickness))
 		outline.lineWidth = thickness
 		accent.setStroke()
 		outline.stroke()

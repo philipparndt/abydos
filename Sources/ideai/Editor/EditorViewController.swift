@@ -480,6 +480,9 @@ final class EditorViewController: NSViewController {
 	/// Distance from the top of the window to the first row of content.
 	func setTopInset(_ inset: CGFloat) {
 		tabBarTopConstraint.constant = inset
+		// The drop preview is drawn over this whole view, which begins behind
+		// the titlebar; without the same inset its top edge is covered by it.
+		(view as? EditorDropView)?.topInset = inset
 	}
 
 	// MARK: - Project
