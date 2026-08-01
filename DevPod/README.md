@@ -49,6 +49,32 @@ Point `app.envFrom` at the real ConfigMaps and Secrets, `app.ports` at the
 ports the service serves, and `podLabels` at the real workload's selector
 labels if you want its Service to route here.
 
+## From the editor
+
+A launch configuration with one extra key runs in the cluster instead of here:
+
+```json
+{
+  "name": "in the cluster",
+  "type": "go",
+  "request": "launch",
+  "program": "${workspaceFolder}/app",
+  "args": ["/etc/config.json"],
+  "ideai.devPod": { "context": "k3c-demo1", "namespace": "devpod" }
+}
+```
+
+Press run and ideai asks the cluster what its nodes are, cross-compiles for
+that, opens a port-forward, pushes the binary and starts it — the pod's output
+arrives in a panel tab. Press debug and the pod starts `dlv dap` instead; the
+editor attaches through a second forward and stops on your breakpoints, in
+your source, because the binary was compiled here and its debug info names
+these files.
+
+The configuration editor has a **Type** at the top — Go package, executable,
+or dev pod — and a dev pod configuration also asks for the cluster, the
+namespace and a kubeconfig when it is not the default one.
+
 ## Using it
 
 The pod starts empty — that is a healthy state, not a failure.

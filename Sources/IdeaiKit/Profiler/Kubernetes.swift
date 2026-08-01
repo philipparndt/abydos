@@ -91,8 +91,8 @@ public enum Kubernetes {
 
 	// MARK: - Discovery
 
-	public static func contexts() async -> [String] {
-		let result = await run(["config", "get-contexts", "-o", "name"])
+	public static func contexts(kubeconfig: String? = nil) async -> [String] {
+		let result = await run(["config", "get-contexts", "-o", "name"], kubeconfig: kubeconfig)
 		guard result.exitCode == 0 else { return [] }
 		return result.stdout
 			.split(separator: "\n")
@@ -115,7 +115,11 @@ public enum Kubernetes {
 	}
 
 	/// The pods in a namespace, or in all of them.
-	public static func pods(context: String?, namespace: String?) async -> [PodTarget] {
+	public static func pods(
+		context: String?,
+		namespace: String?,
+		kubeconfig: String? = nil
+	) async -> [PodTarget] {
 		var arguments = ["get", "pods", "-o", "json"]
 		if let namespace, !namespace.isEmpty {
 			arguments += ["-n", namespace]
@@ -123,7 +127,7 @@ public enum Kubernetes {
 			arguments.append("--all-namespaces")
 		}
 
-		let result = await run(arguments, context: context)
+		let result = await run(arguments, context: context, kubeconfig: kubeconfig)
 		guard result.exitCode == 0 else { return [] }
 		return parsePods(result.stdout)
 	}
@@ -217,12 +221,21 @@ public enum Kubernetes {
 		public let stderr: String
 	}
 
-	static func run(_ arguments: [String], context: String? = nil) async -> Result {
+	static func run(
+		_ arguments: [String],
+		context: String? = nil,
+		kubeconfig: String? = nil
+	) async -> Result {
 		guard let executable else {
 			return Result(exitCode: 127, stdout: "", stderr: "kubectl is not installed")
 		}
 		var full = arguments
-		if let context, !context.isEmpty { full = ["--context", context] + arguments }
+		if let context, !context.isEmpty { full = ["--context", context] + full }
+		// A cluster that lives in a file of its own — a k3d cluster on a remote
+		// machine, a customer's kubeconfig — rather than in the merged default.
+		if let kubeconfig, !kubeconfig.isEmpty {
+			full = ["--kubeconfig", (kubeconfig as NSString).expandingTildeInPath] + full
+		}
 
 		return await withCheckedContinuation { continuation in
 			DispatchQueue.global(qos: .userInitiated).async {
@@ -297,18 +310,27 @@ public final class PortForward: @unchecked Sendable {
 	public static func start(
 		to target: PodTarget,
 		context: String?,
+		remotePort: Int? = nil,
+		kubeconfig: String? = nil,
 		timeout: TimeInterval = 15
 	) async throws -> PortForward {
 		guard let executable = Kubernetes.executable else { throw Failure.noKubectl }
 		guard let localPort = freePort() else { throw Failure.noFreePort }
+		// A pod may be reached on more than one port at once — a control port
+		// and a debugger's — so the caller can say which rather than the
+		// target's one.
+		let port = remotePort ?? target.port
 
 		var arguments: [String] = []
+		if let kubeconfig, !kubeconfig.isEmpty {
+			arguments += ["--kubeconfig", (kubeconfig as NSString).expandingTildeInPath]
+		}
 		if let context, !context.isEmpty { arguments += ["--context", context] }
 		arguments += [
 			"port-forward",
 			"-n", target.namespace,
 			"pod/\(target.name)",
-			"\(localPort):\(target.port)",
+			"\(localPort):\(port)",
 		]
 
 		let process = Process()

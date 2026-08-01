@@ -397,6 +397,40 @@ public final class DebugSession {
 		startLaunchWatchdog()
 	}
 
+	/// Starts a session on a debugger that is already running somewhere else.
+	///
+	/// The pod's supervisor has `dlv dap` up and a forwarded port leads to it,
+	/// so there is nothing to spawn: connect, shake hands, and say what to
+	/// launch — which is a binary already sitting in the pod.
+	public func launchRemotely(
+		host: String,
+		port: Int,
+		program: String,
+		arguments: [String] = [],
+		workingDirectory: String? = nil,
+		environment: [String: String] = [:]
+	) async throws {
+		state = .starting
+		launchGeneration += 1
+		exitCode = nil
+		adapter = DebugAdapters.delve
+
+		try await client.connect(host: host, port: port)
+		try await handshake(with: DebugAdapters.delve)
+
+		var request: [String: Any] = [
+			"request": "launch",
+			"mode": "exec",
+			"program": program,
+		]
+		if !arguments.isEmpty { request["args"] = arguments }
+		if let workingDirectory { request["cwd"] = workingDirectory }
+		if !environment.isEmpty { request["env"] = environment }
+		client.send("launch", arguments: request)
+
+		startLaunchWatchdog()
+	}
+
 	/// Attaches to a process that is already running.
 	///
 	/// The case launching cannot cover: a server that is already up, something

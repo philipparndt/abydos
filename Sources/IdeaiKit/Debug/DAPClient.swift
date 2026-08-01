@@ -161,9 +161,19 @@ public final class DAPClient: @unchecked Sendable {
 			self.callbackQueue.async { self.onOutput?("stdout", text) }
 		}
 
+		try await connect(host: endpoint.host, port: Int(endpoint.port))
+	}
+
+	/// Connects to an adapter somebody else started.
+	///
+	/// A debugger inside a pod is the case this exists for: it is already
+	/// running, reached through a forwarded port, and nothing here starts or
+	/// owns the process. Everything after the socket is identical, which is
+	/// the point — a session in a cluster is a session.
+	public func connect(host: String, port: Int) async throws {
 		let connection = NWConnection(
-			host: NWEndpoint.Host(endpoint.host),
-			port: NWEndpoint.Port(integerLiteral: endpoint.port),
+			host: NWEndpoint.Host(host),
+			port: NWEndpoint.Port(integerLiteral: UInt16(port)),
 			using: .tcp
 		)
 

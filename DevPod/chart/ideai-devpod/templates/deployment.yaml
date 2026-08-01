@@ -13,6 +13,9 @@ spec:
     metadata:
       labels:
         {{- include "ideai-devpod.selectorLabels" . | nindent 8 }}
+        # On the pod, not only on the Deployment: this is what the editor
+        # looks for, and it looks at pods.
+        ideai.dev/devpod: "true"
         {{- with .Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

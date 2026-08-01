@@ -385,6 +385,34 @@ final class BottomPanel: NSView {
 	// MARK: - Search
 
 	/// Shows project search, reusing the existing pane if there is one.
+	/// Shows what a program in a cluster is printing.
+	///
+	/// In a terminal pane with nothing behind it, so the output is coloured
+	/// the way the program coloured it — a service's logs are the same logs
+	/// wherever the service happens to be running.
+	func showDevPodOutput(_ text: String, from pod: String) {
+		let title = "☸ \(pod.split(separator: "/").last.map(String.init) ?? pod)"
+		let pane: TerminalPane
+		if let index = sessions.firstIndex(where: { $0.title == title }),
+		   case let .terminal(existing) = sessions[index].kind {
+			pane = existing
+			activate(index: index, focus: false)
+		} else {
+			pane = TerminalPane(readOnly: ())
+			let session = Session(title: title, kind: .terminal(pane))
+			sessions.append(session)
+			activate(index: sessions.count - 1, focus: false)
+		}
+
+		// Replaced rather than appended: the supervisor hands back a tail, and
+		// appending it would repeat every line each time it is asked.
+		pane.terminalView.clear()
+		pane.terminalView.append(
+			text.replacingOccurrences(of: "\r\n", with: "\n")
+				.replacingOccurrences(of: "\n", with: "\r\n")
+		)
+	}
+
 	/// Opens the profiler, reusing the one that is already there.
 	///
 	/// One at a time: a second would be a second connection to the same
@@ -454,6 +482,7 @@ final class BottomPanel: NSView {
 			if case let .launch(program, _, directory, _) = start {
 				return directory ?? URL(fileURLWithPath: program).deletingLastPathComponent()
 			}
+			if case .remote = start { return workingDirectory }
 			return FileManager.default.homeDirectoryForCurrentUser
 		}()
 		guard let session = makeDebugSession(breakpoints: breakpoints, fallbackRoot: fallback)
@@ -470,6 +499,12 @@ final class BottomPanel: NSView {
 					)
 				case let .attach(pid):
 					try await session.attach(adapter: adapter, executable: executable, pid: pid)
+				case let .remote(host, port, program, arguments, directory, environment):
+					try await session.launchRemotely(
+						host: host, port: port, program: program,
+						arguments: arguments, workingDirectory: directory,
+						environment: environment
+					)
 				}
 			} catch {
 				await MainActor.run {
@@ -489,6 +524,15 @@ final class BottomPanel: NSView {
 			environment: [String: String] = [:]
 		)
 		case attach(pid: Int)
+		/// A debugger already running somewhere else, reached on a local port.
+		case remote(
+			host: String,
+			port: Int,
+			program: String,
+			arguments: [String],
+			workingDirectory: String?,
+			environment: [String: String]
+		)
 	}
 
 	@discardableResult

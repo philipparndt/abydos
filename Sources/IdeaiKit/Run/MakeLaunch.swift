@@ -416,9 +416,10 @@ public enum ShellEnvironment {
 		return (values, failures)
 	}
 
-	static func run(
+	public static func run(
 		_ line: String,
-		in directory: URL
+		in directory: URL,
+		environment: [String: String] = [:]
 	) async -> (exitCode: Int32, output: String, error: String) {
 		await withCheckedContinuation { continuation in
 			DispatchQueue.global(qos: .userInitiated).async {
@@ -426,6 +427,10 @@ public enum ShellEnvironment {
 				process.executableURL = URL(fileURLWithPath: "/bin/sh")
 				process.arguments = ["-lc", line]
 				process.currentDirectoryURL = directory
+				if !environment.isEmpty {
+					process.environment = ProcessInfo.processInfo.environment
+						.merging(environment) { _, new in new }
+				}
 
 				let out = Pipe(), err = Pipe()
 				process.standardOutput = out

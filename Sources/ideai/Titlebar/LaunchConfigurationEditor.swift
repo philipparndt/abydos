@@ -18,6 +18,33 @@ final class LaunchConfigurationEditor: NSObject {
 	private let isNew: Bool
 
 	private var nameInput: NSTextField!
+	private var kindPopUp: NSPopUpButton!
+	private var kindHint: NSTextField!
+	private var contextPopUp: NSPopUpButton!
+	private var namespaceInput: NSTextField!
+	private var kubeconfigInput: NSTextField!
+	/// A row of the form, kept so it can be collapsed.
+	@MainActor
+	private struct Row {
+		let label: NSTextField
+		let field: NSView
+		let top: NSLayoutConstraint
+		let gap: NSLayoutConstraint
+		let height: NSLayoutConstraint
+		let naturalHeight: CGFloat
+
+		func setVisible(_ visible: Bool) {
+			label.isHidden = !visible
+			field.isHidden = !visible
+			top.constant = visible ? 14 : 0
+			gap.constant = visible ? 5 : 0
+			height.constant = visible ? naturalHeight : 0
+		}
+	}
+
+	/// The rows only a cluster configuration needs.
+	private var clusterRows: [Row] = []
+	private var contexts: [String] = []
 	private var programInput: NSTextField!
 	private var argumentsInput: NSTextField!
 	private var directoryInput: NSTextField!
@@ -88,7 +115,12 @@ final class LaunchConfigurationEditor: NSObject {
 		}
 
 		/// Stacks a captioned field below whatever came before it.
-		func row(_ text: String, _ field: NSView, height: CGFloat) {
+		///
+		/// The pieces are kept so a row can be collapsed rather than merely
+		/// hidden: a hidden view still holds its place, and a dialog with a
+		/// hole in the middle looks broken.
+		@discardableResult
+		func row(_ text: String, _ field: NSView, height: CGFloat) -> Row {
 			let label = caption(text)
 			for view in [label, field] {
 				view.translatesAutoresizingMaskIntoConstraints = false
@@ -98,15 +130,16 @@ final class LaunchConfigurationEditor: NSObject {
 					view.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -18),
 				])
 			}
-			NSLayoutConstraint.activate([
-				label.topAnchor.constraint(
-					equalTo: previous?.bottomAnchor ?? content.topAnchor,
-					constant: previous == nil ? 18 : 14
-				),
-				field.topAnchor.constraint(equalTo: label.bottomAnchor, constant: 5),
-				field.heightAnchor.constraint(equalToConstant: height),
-			])
+			let top = label.topAnchor.constraint(
+				equalTo: previous?.bottomAnchor ?? content.topAnchor,
+				constant: previous == nil ? 18 : 14
+			)
+			let gap = field.topAnchor.constraint(equalTo: label.bottomAnchor, constant: 5)
+			let tall = field.heightAnchor.constraint(equalToConstant: height)
+			NSLayoutConstraint.activate([top, gap, tall])
 			previous = field
+
+			return Row(label: label, field: field, top: top, gap: gap, height: tall, naturalHeight: height)
 		}
 
 		nameInput = input(original.name)
@@ -114,10 +147,55 @@ final class LaunchConfigurationEditor: NSObject {
 		argumentsInput = input(ArgumentLine.join(original.arguments), monospaced: true)
 		directoryInput = input(original.workingDirectory, monospaced: true)
 
+		// What this starts, said in the terms somebody chooses between rather
+		// than the ones the file stores.
+		kindPopUp = NSPopUpButton()
+		kindPopUp.controlSize = .regular
+		kindPopUp.font = Theme.current.uiFont(12)
+		kindPopUp.addItems(withTitles: LaunchConfiguration.Kind.allCases.map(\.rawValue))
+		kindPopUp.selectItem(withTitle: original.kind.rawValue)
+		kindPopUp.target = self
+		kindPopUp.action = #selector(kindChanged)
+
 		row("Name", nameInput, height: 24)
+		row("Type", kindPopUp, height: 24)
+
+		kindHint = caption(original.kind.explanation)
+		kindHint.translatesAutoresizingMaskIntoConstraints = false
+		content.addSubview(kindHint)
+		NSLayoutConstraint.activate([
+			kindHint.topAnchor.constraint(equalTo: kindPopUp.bottomAnchor, constant: 4),
+			kindHint.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 18),
+			kindHint.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -18),
+		])
+		previous = kindHint
+
 		row(original.type == "go" ? "Package" : "Program", programInput, height: 24)
 		row("Arguments", argumentsInput, height: 24)
 		row("Working directory", directoryInput, height: 24)
+
+		// Where the cluster is. Empty context means whichever kubectl would
+		// use, which is what somebody who has one cluster expects.
+		let settings = original.devPod ?? LaunchConfiguration.DevPodSettings()
+		contextPopUp = NSPopUpButton()
+		contextPopUp.controlSize = .regular
+		contextPopUp.font = Theme.current.uiFont(12)
+		contextPopUp.addItem(withTitle: "Current context")
+		if !settings.context.isEmpty { contextPopUp.addItem(withTitle: settings.context) }
+		contextPopUp.selectItem(at: settings.context.isEmpty ? 0 : 1)
+
+		namespaceInput = input(settings.namespace, monospaced: true)
+		namespaceInput.placeholderString = "Every namespace"
+		kubeconfigInput = input(settings.kubeconfig, monospaced: true)
+		kubeconfigInput.placeholderString = "~/.kube/config"
+
+		clusterRows = [
+			row("Cluster", contextPopUp, height: 24),
+			row("Namespace", namespaceInput, height: 24),
+			row("Kubeconfig", kubeconfigInput, height: 24),
+		]
+		updateKindRows()
+		loadContexts(selecting: settings.context)
 
 		// Environment as `KEY=value` lines: it is how everybody writes them, and
 		// a table with two rows in it would be worse to use.
@@ -213,6 +291,51 @@ final class LaunchConfigurationEditor: NSObject {
 		return container
 	}
 
+	@objc private func kindChanged() {
+		let kind = LaunchConfiguration.Kind.allCases[max(0, kindPopUp.indexOfSelectedItem)]
+		kindHint.stringValue = kind.explanation
+		updateKindRows()
+	}
+
+	private func updateKindRows() {
+		let showsCluster = LaunchConfiguration.Kind
+			.allCases[max(0, kindPopUp.indexOfSelectedItem)] == .devPod
+		for row in clusterRows { row.setVisible(showsCluster) }
+
+		// The panel is as tall as what it shows.
+		guard let window, let content = window.contentView else { return }
+		content.layoutSubtreeIfNeeded()
+		let height = content.fittingSize.height
+		guard height > 0, abs(window.frame.height - height) > 1 else { return }
+		var frame = window.frame
+		frame.origin.y += frame.height - height
+		frame.size.height = height
+		window.setFrame(frame, display: true, animate: false)
+	}
+
+	/// Fills the cluster list from kubectl, keeping whatever was already set.
+	private func loadContexts(selecting current: String) {
+		guard Kubernetes.isAvailable else { return }
+		Task { @MainActor in
+			contexts = await Kubernetes.contexts()
+			guard !contexts.isEmpty else { return }
+
+			contextPopUp.removeAllItems()
+			contextPopUp.addItem(withTitle: "Current context")
+			contextPopUp.addItems(withTitles: contexts)
+			if let index = contexts.firstIndex(of: current) {
+				contextPopUp.selectItem(at: index + 1)
+			} else {
+				contextPopUp.selectItem(at: 0)
+			}
+		}
+	}
+
+	private var chosenContext: String {
+		let index = contextPopUp.indexOfSelectedItem - 1
+		return contexts.indices.contains(index) ? contexts[index] : ""
+	}
+
 	// MARK: - Actions
 
 	@objc private func apply() {
@@ -227,6 +350,15 @@ final class LaunchConfigurationEditor: NSObject {
 
 		var updated = original
 		updated.name = name
+		updated.kind = LaunchConfiguration.Kind.allCases[max(0, kindPopUp.indexOfSelectedItem)]
+		if updated.kind == .devPod {
+			updated.devPod = LaunchConfiguration.DevPodSettings(
+				context: chosenContext,
+				namespace: namespaceInput.stringValue.trimmingCharacters(in: .whitespaces),
+				pod: original.devPod?.pod ?? "",
+				kubeconfig: kubeconfigInput.stringValue.trimmingCharacters(in: .whitespaces)
+			)
+		}
 		updated.program = programInput.stringValue.trimmingCharacters(in: .whitespaces)
 		updated.arguments = ArgumentLine.split(argumentsInput.stringValue)
 		updated.workingDirectory = directoryInput.stringValue.trimmingCharacters(in: .whitespaces)

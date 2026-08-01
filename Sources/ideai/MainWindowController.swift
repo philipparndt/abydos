@@ -2033,6 +2033,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// information to answer before the first run.
 	/// Stops whichever of the two is running.
 	private func stopRunning() {
+		if devPodClient != nil {
+			stopDevPod()
+			return
+		}
 		if let pane = runningPane {
 			runningPane = nil
 			pane.terminalView.terminateProcess()
@@ -2277,7 +2281,207 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	private func runConfiguration(_ configuration: LaunchConfiguration, in root: URL) {
 		prepare(configuration, in: root) { [weak self] environment in
-			self?.startRun(configuration, in: root, environment: environment)
+			guard let self else { return }
+			if configuration.devPod != nil {
+				self.runInCluster(configuration, in: root, environment: environment, debug: false)
+			} else {
+				self.startRun(configuration, in: root, environment: environment)
+			}
+		}
+	}
+
+	// MARK: - Running in a cluster
+
+	/// The tunnel and the debugger's tunnel, while a dev pod session is on.
+	private var devPodForwards: [PortForward] = []
+	/// The pod running something of ours, so stop can tell it to stop.
+	private var devPodClient: DevPodClient?
+
+	/// Builds for the cluster, pushes the binary into a pod, and starts it.
+	///
+	/// The same configuration as any other: the package, the arguments and the
+	/// environment do not change because the machine does. What changes is
+	/// where the binary lands and who runs it.
+	private func runInCluster(
+		_ configuration: LaunchConfiguration,
+		in root: URL,
+		environment: [String: String],
+		debug: Bool
+	) {
+		guard let settings = configuration.devPod else { return }
+		stopDevPodForwards()
+		setPanelVisible(true)
+		runControl?.setStatus("Looking for a pod…", busy: true)
+
+		Task { @MainActor in
+			do {
+				let context = settings.context.isEmpty ? nil : settings.context
+				let kubeconfig = settings.kubeconfig.isEmpty ? nil : settings.kubeconfig
+
+				let pods = await DevPods.list(
+					context: context,
+					namespace: settings.namespace.isEmpty ? nil : settings.namespace,
+					kubeconfig: kubeconfig
+				).filter { $0.isRunning }
+
+				guard let pod = pods.first(where: { settings.pod.isEmpty || $0.name == settings.pod })
+					?? pods.first
+				else {
+					throw DevPodClient.Failure.unreachable(
+						"No development pod is running there. Install the chart in DevPod/chart."
+					)
+				}
+
+				// The node decides what the binary has to be: a laptop is arm64
+				// and a shared cluster usually is not.
+				let architecture = await DevPods.architecture(context: context, kubeconfig: kubeconfig)
+					?? "amd64"
+				runControl?.setStatus("Building for linux/\(architecture)…", busy: true)
+
+				let directory = URL(fileURLWithPath: configuration.expandedWorkingDirectory(root: root))
+				let output = FileManager.default.temporaryDirectory
+					.appendingPathComponent("ideai-devpod-\(configuration.name.replacingOccurrences(of: " ", with: "-"))")
+				let binary = try await DevPodBuild.build(
+					package: configuration.expandedProgram(root: root),
+					in: directory,
+					architecture: architecture,
+					output: output
+				)
+
+				runControl?.setStatus("Sending to \(pod.name)…", busy: true)
+				let control = try await PortForward.start(
+					to: PodTarget(
+						namespace: pod.namespace, name: pod.name, phase: pod.phase,
+						containers: [], port: pod.controlPort, portSource: .containerPort
+					),
+					context: context,
+					remotePort: pod.controlPort,
+					kubeconfig: kubeconfig
+				)
+				devPodForwards.append(control)
+
+				let client = DevPodClient(localPort: control.localPort)
+				let status = try await client.push(binary: binary, mode: debug ? "debug" : "run")
+				guard status.architecture.isEmpty || status.architecture == architecture else {
+					throw DevPodClient.Failure.wrongArchitecture(
+						binary: architecture, pod: status.architecture
+					)
+				}
+
+				if debug {
+					try await attachDebugger(
+						to: pod, context: context, kubeconfig: kubeconfig,
+						configuration: configuration, root: root, environment: environment
+					)
+				} else {
+					// Busy: the program is up in the cluster until somebody
+					// stops it, and the strip is where that is said and done.
+					runControl?.setStatus(
+						"Running in \(pod.namespace)/\(pod.name)", busy: true
+					)
+					devPodClient = client
+					followDevPodLogs(client, pod: pod)
+				}
+			} catch {
+				stopDevPodForwards()
+				runControl?.setStatus(Self.describe(devPod: error), failed: true)
+				notify("Could not run in the cluster", detail: Self.describe(devPod: error))
+			}
+		}
+	}
+
+	/// Connects the debugger to the `dlv dap` the pod is now running.
+	private func attachDebugger(
+		to pod: DevPodTarget,
+		context: String?,
+		kubeconfig: String?,
+		configuration: LaunchConfiguration,
+		root: URL,
+		environment: [String: String]
+	) async throws {
+		let debugForward = try await PortForward.start(
+			to: PodTarget(
+				namespace: pod.namespace, name: pod.name, phase: pod.phase,
+				containers: [], port: pod.debugPort, portSource: .containerPort
+			),
+			context: context,
+			remotePort: pod.debugPort,
+			kubeconfig: kubeconfig
+		)
+		devPodForwards.append(debugForward)
+
+		runControl?.setStatus("Debugging in \(pod.name)…", busy: true)
+		guard let session = bottomPanel.startDebugging(
+			adapter: DebugAdapters.delve,
+			executable: "",
+			start: .remote(
+				host: "127.0.0.1",
+				port: debugForward.localPort,
+				// The path inside the pod, which is where the supervisor put it.
+				program: "/app/current",
+				arguments: configuration.expandedArguments(root: root),
+				workingDirectory: "/app",
+				environment: environment
+			),
+			breakpoints: pendingBreakpoints
+		) else { return }
+		wire(session)
+	}
+
+	/// Shows what the program in the pod is printing.
+	private func followDevPodLogs(_ client: DevPodClient, pod: DevPodTarget) {
+		Task { @MainActor in
+			// A poll rather than a stream: the supervisor keeps a tail, the
+			// interesting output arrives in the first seconds, and a websocket
+			// for this would be a protocol to maintain.
+			for _ in 0..<20 {
+				try? await Task.sleep(nanoseconds: 1_000_000_000)
+				guard let text = try? await client.logs(tail: 200), !text.isEmpty else { continue }
+				bottomPanel.showDevPodOutput(text, from: "\(pod.namespace)/\(pod.name)")
+			}
+		}
+	}
+
+	private func stopDevPodForwards() {
+		for forward in devPodForwards { forward.stop() }
+		devPodForwards = []
+	}
+
+	/// Stops a program running in a cluster, and closes the tunnels to it.
+	private func stopDevPod() {
+		guard let client = devPodClient else { return }
+		devPodClient = nil
+		runControl?.setStatus("Stopping…", busy: true)
+		Task { @MainActor in
+			try? await client.stop()
+			stopDevPodForwards()
+			runControl?.setStatus("Stopped")
+		}
+	}
+
+	private static func describe(devPod error: any Error) -> String {
+		switch error {
+		case let failure as DevPodClient.Failure:
+			switch failure {
+			case let .unreachable(reason): return reason
+			case let .refused(code, body): return "The pod answered \(code): \(body)"
+			case let .wrongArchitecture(binary, pod):
+				return "Built for \(binary), but the pod runs \(pod)"
+			}
+		case let failure as DevPodBuild.Failure:
+			switch failure {
+			case .noToolchain: return "No Go toolchain was found"
+			case let .failed(output): return output
+			}
+		case let failure as PortForward.Failure:
+			switch failure {
+			case .noKubectl: return "kubectl is not installed"
+			case .noFreePort: return "No local port was free"
+			case .timedOut: return "kubectl did not answer"
+			case let .failed(reason): return reason
+			}
+		default:
+			return error.localizedDescription
 		}
 	}
 
@@ -2328,7 +2532,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	private func debugConfiguration(_ configuration: LaunchConfiguration, in root: URL) {
 		prepare(configuration, in: root) { [weak self] environment in
-			self?.startDebug(configuration, in: root, environment: environment)
+			guard let self else { return }
+			if configuration.devPod != nil {
+				self.runInCluster(configuration, in: root, environment: environment, debug: true)
+			} else {
+				self.startDebug(configuration, in: root, environment: environment)
+			}
 		}
 	}
 
