@@ -23,6 +23,7 @@ final class ToolWindowBar: NSView {
 	var onToggleStructure: (() -> Void)?
 	var onToggleScratches: (() -> Void)?
 	var onToggleHistory: (() -> Void)?
+	var onToggleDebug: (() -> Void)?
 
 	private var projectButton: StripButton!
 	private var terminalButton: StripButton!
@@ -32,6 +33,7 @@ final class ToolWindowBar: NSView {
 	private var structureButton: StripButton!
 	private var scratchesButton: StripButton!
 	private var historyButton: StripButton!
+	private var debugButton: StripButton!
 
 	override init(frame frameRect: NSRect) {
 		super.init(frame: frameRect)
@@ -128,7 +130,12 @@ final class ToolWindowBar: NSView {
 		reviewButton = StripButton(symbol: "checkmark.seal", tooltip: "Review (⇧⌘R)", enabled: true)
 		reviewButton.onClick = { [weak self] in self?.showReviewMenu() }
 
-		let bottomStack = NSStackView(views: [reviewButton, terminalButton])
+		// Bottom-docked, beside the terminal: the debugger is a panel down
+		// there too, and this is where somebody looks for it.
+		debugButton = StripButton(symbol: "ladybug", tooltip: "Debug", enabled: true)
+		debugButton.onClick = { [weak self] in self?.onToggleDebug?() }
+
+		let bottomStack = NSStackView(views: [reviewButton, debugButton, terminalButton])
 		bottomStack.orientation = .vertical
 		bottomStack.spacing = 4
 		bottomStack.alignment = .centerX
@@ -153,6 +160,12 @@ final class ToolWindowBar: NSView {
 	/// Lights the terminal button while the panel is showing.
 	func setTerminalSelected(_ selected: Bool) {
 		terminalButton.isSelected = selected
+	}
+
+	/// Lights the debug button while a session is running, so the strip says
+	/// something is being debugged even when the panel is closed.
+	func setDebugRunning(_ running: Bool) {
+		debugButton.isSelected = running
 	}
 
 	private var topConstraint: NSLayoutConstraint!

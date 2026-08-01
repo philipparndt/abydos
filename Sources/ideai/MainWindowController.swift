@@ -222,6 +222,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		toolStrip.onToggleStructure = { [weak self] in self?.showSidebarTool(.structure) }
 		toolStrip.onToggleScratches = { [weak self] in self?.showSidebarTool(.scratches) }
 		toolStrip.onToggleHistory = { [weak self] in self?.showSidebarTool(.history) }
+		toolStrip.onToggleDebug = { [weak self] in self?.showDebugPanel(nil) }
 
 		navigatorContainer = ColoredView(color: Theme.current.sidebarBackground)
 		primaryContainer = navigatorContainer
@@ -890,7 +891,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			self.editor.open(fileURL: URL(fileURLWithPath: file), atLine: line)
 			self.editor.setExecutionLocation(file: file, line: line)
 		}
+		toolStrip.setDebugRunning(true)
 		session.observeState { [weak self] state in
+			self?.toolStrip.setDebugRunning(state != .idle && state != .terminated)
 			// The marker must go when execution resumes or the process ends.
 			switch state {
 			case .running, .terminated, .idle:
@@ -1244,6 +1247,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	@objc func newTerminal(_ sender: Any?) {
 		setPanelVisible(true)
 		bottomPanel.newTerminal()
+	}
+
+	/// Brings the debug panel forward, or starts a session if there is none.
+	///
+	/// The strip's button is a way in, not only a way to look: pressing it with
+	/// nothing running is a reasonable way to say "debug this".
+	@objc func showDebugPanel(_ sender: Any?) {
+		setPanelVisible(true)
+		if bottomPanel.showDebug() == nil { goDebug(nil) }
 	}
 
 	/// ⌘T while the keyboard is in the terminal: another tab.

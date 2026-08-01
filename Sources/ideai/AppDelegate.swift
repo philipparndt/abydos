@@ -647,7 +647,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 		runMenu.addItem(stepOut)
 
 		let stopDebugging = NSMenuItem(
-			title: "Stop", action: #selector(MainWindowController.debugStop(_:)), keyEquivalent: "\u{F709}"
+			title: "Stop", action: #selector(MainWindowController.debugStop(_:)), keyEquivalent: "\u{F705}"
 		)
 		stopDebugging.keyEquivalentModifierMask = [.command]
 		runMenu.addItem(stopDebugging)

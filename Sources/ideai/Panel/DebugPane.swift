@@ -568,6 +568,7 @@ private final class DebugToolbar: NSView {
 		NSRect(x: 0, y: bounds.maxY - 1, width: bounds.width, height: 1).fill()
 
 		buttonFrames = []
+		removeAllToolTips()
 		var x = Theme.current.scaled(10)
 		let size = Theme.current.scaled(22)
 		let y = bounds.midY - size / 2
@@ -578,16 +579,37 @@ private final class DebugToolbar: NSView {
 
 		// Continue and pause occupy the same slot, as in every debugger.
 		if isRunning {
-			addButton(at: &x, y: y, size: size, symbol: "pause.fill", enabled: true, action: { self.onPause?() })
+			addButton(
+				at: &x, y: y, size: size, symbol: "pause.fill",
+				tooltip: "Pause", enabled: true, action: { self.onPause?() }
+			)
 		} else {
-			addButton(at: &x, y: y, size: size, symbol: "play.fill", enabled: isStopped, action: { self.onContinue?() })
+			addButton(
+				at: &x, y: y, size: size, symbol: "play.fill",
+				tooltip: "Continue (F9)", enabled: isStopped, action: { self.onContinue?() }
+			)
 		}
 
-		addButton(at: &x, y: y, size: size, symbol: "arrow.turn.down.right", enabled: isStopped, action: { self.onStepOver?() })
-		addButton(at: &x, y: y, size: size, symbol: "arrow.down.to.line", enabled: isStopped, action: { self.onStepInto?() })
-		addButton(at: &x, y: y, size: size, symbol: "arrow.up.to.line", enabled: isStopped, action: { self.onStepOut?() })
+		// Over, into, out — the arc goes over the call, the arrow points into
+		// it, the arrow points back out of it.
+		addButton(
+			at: &x, y: y, size: size, symbol: "arrow.turn.up.right",
+			tooltip: "Step Over (F8)", enabled: isStopped, action: { self.onStepOver?() }
+		)
+		addButton(
+			at: &x, y: y, size: size, symbol: "arrow.down.to.line",
+			tooltip: "Step Into (F7)", enabled: isStopped, action: { self.onStepInto?() }
+		)
+		addButton(
+			at: &x, y: y, size: size, symbol: "arrow.up.to.line",
+			tooltip: "Step Out (⇧F8)", enabled: isStopped, action: { self.onStepOut?() }
+		)
 		x += Theme.current.scaled(8)
-		addButton(at: &x, y: y, size: size, symbol: "stop.fill", enabled: state != .idle && state != .terminated, action: { self.onStop?() })
+		addButton(
+			at: &x, y: y, size: size, symbol: "stop.fill",
+			tooltip: "Stop (⌘F2)", enabled: state != .idle && state != .terminated,
+			action: { self.onStop?() }
+		)
 
 		let label = NSAttributedString(string: statusText, attributes: [
 			.font: Theme.current.uiFont(11),
@@ -611,10 +633,14 @@ private final class DebugToolbar: NSView {
 		y: CGFloat,
 		size: CGFloat,
 		symbol: String,
+		tooltip: String,
 		enabled: Bool,
 		action: @escaping () -> Void
 	) {
 		let rect = NSRect(x: x, y: y, width: size, height: size)
+		// Named, because these are five small arrows that mean quite different
+		// things and no icon set has ever made that obvious.
+		addToolTip(rect, owner: tooltip as NSString, userData: nil)
 		let color = enabled ? Theme.current.sidebarHeaderText : Theme.current.gitIgnored.withAlphaComponent(0.4)
 
 		if let icon = Theme.symbol(symbol, size: 11 * Theme.current.scale, color: color) {

@@ -211,6 +211,18 @@ final class BottomPanel: NSView {
 
 	// MARK: - Sessions
 
+	/// Brings an existing debug session forward, or says there is none.
+	@discardableResult
+	func showDebug() -> DebugPane? {
+		for (index, session) in sessions.enumerated() {
+			if case let .debug(pane) = session.kind {
+				activate(index: index, focus: true)
+				return pane
+			}
+		}
+		return nil
+	}
+
 	/// Whether the keyboard is in this panel.
 	///
 	/// Asked by ⌘T, which means "another terminal tab" while typing in one and
