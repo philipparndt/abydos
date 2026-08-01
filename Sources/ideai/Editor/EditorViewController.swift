@@ -768,6 +768,21 @@ final class EditorViewController: NSViewController {
 		view.window?.makeFirstResponder(codeView)
 	}
 
+	/// Presses return, through the same command a key press produces.
+	func simulateReturn() {
+		guard let codeView = activeTab?.codeView else { return }
+		view.window?.makeFirstResponder(codeView)
+		codeView.doCommand(by: #selector(NSResponder.insertNewline(_:)))
+	}
+
+	/// The last few lines of the file, for looking at what typing produced.
+	func textTailLinesForTesting(_ count: Int) -> [String] {
+		guard let document = activeTab?.document else { return [] }
+		let text = document.rope.string(in: 0..<document.rope.byteCount)
+		let lines: [String] = text.components(separatedBy: "\n")
+		return Array(lines.suffix(count))
+	}
+
 	func undoForTesting() {
 		activeTab?.codeView?.undo(nil)
 	}

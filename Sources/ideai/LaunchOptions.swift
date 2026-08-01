@@ -82,6 +82,8 @@ struct LaunchOptions {
 	var debugSteps = false
 	/// Press ⌘T in the editor and again in the terminal, and report both.
 	var terminalTabKey = false
+	/// Type a block with returns in it and print what came out.
+	var typeBlock = false
 	/// Wait this long before capturing, for a language server to answer.
 	var lspWait: Double?
 	/// Rewrite the open file externally after this many seconds.
@@ -147,6 +149,7 @@ struct LaunchOptions {
 			case "--undo-tree":  options.undoTree = true
 			case "--debug-steps": options.debugSteps = true
 			case "--terminal-tab-key": options.terminalTabKey = true
+			case "--type-block": options.typeBlock = true
 			case "--lsp-wait":   options.lspWait = next().flatMap(Double.init)
 			case "--external-edit": options.externalEdit = next().flatMap(Double.init)
 			case "--send-bytes": options.terminalBytes = next()

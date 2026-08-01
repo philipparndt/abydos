@@ -1348,7 +1348,7 @@ final class CodeView: NSView, NSTextInputClient {
 		case #selector(scrollPageDown(_:)), #selector(pageDown(_:)): movePage(1, extending: false)
 		case #selector(deleteBackward(_:)):      deleteBackward()
 		case #selector(deleteForward(_:)):       deleteForward()
-		case #selector(insertNewline(_:)):       insertTextAtCaret("\n")
+		case #selector(insertNewline(_:)):       insertNewlineWithIndent()
 		case #selector(insertTab(_:)):           insertTextAtCaret("\t")
 		case #selector(selectAll(_:)):           selectAllText()
 		case #selector(insertLineBreak(_:)):     insertTextAtCaret("\n")
@@ -1509,6 +1509,82 @@ final class CodeView: NSView, NSTextInputClient {
 
 	// MARK: Editing
 
+	/// Return: keep the indent, add a level after an opening, and put a closing
+	/// brace on its own line when splitting a pair.
+	private func insertNewlineWithIndent() {
+		guard let document else { return }
+		let selection = selectedUTF16Range()
+		let range = selection.isEmpty ? caret..<caret : selection
+
+		// The line as it will be once the selection is gone: what is left of
+		// the caret and what is right of it.
+		let line = document.rope.line(atByteOffset: document.rope.byteOffset(fromUTF16: range.lowerBound))
+		let lineRange = document.rope.lineByteRange(line)
+		let lineStart = document.rope.utf16Offset(fromByte: lineRange.lowerBound)
+		let lineEnd = document.rope.utf16Offset(fromByte: lineRange.upperBound)
+		let text = document.rope.string(in: lineRange) as NSString
+
+		let before = text.substring(
+			with: NSRange(location: 0, length: max(0, min(range.lowerBound - lineStart, text.length)))
+		)
+		let afterStart = max(0, min(range.upperBound - lineStart, text.length))
+		let after = text.substring(from: afterStart)
+			.trimmingCharacters(in: CharacterSet(charactersIn: "\n"))
+		_ = lineEnd
+
+		let result = ReturnIndent.result(
+			before: before,
+			after: after,
+			usesTabs: usesTabsForIndent,
+			indentWidth: Theme.current.tabWidth
+		)
+
+		let newCaret = document.replace(
+			utf16Range: range, with: result.text, caretBefore: range.lowerBound
+		)
+		// The caret lands where the result says, which for a split pair is the
+		// blank line between the halves rather than after the closing one.
+		afterEdit(caret: range.lowerBound + result.caretOffset)
+		_ = newCaret
+	}
+
+	/// A closing brace typed on an otherwise blank line moves out a level, so
+	/// it lines up with whatever opened the block instead of with its contents.
+	private func dedentIfClosingBrace(_ typed: String) {
+		guard let document, typed.count == 1, let character = typed.first else { return }
+
+		let line = document.rope.line(atByteOffset: document.rope.byteOffset(fromUTF16: caret))
+		let lineRange = document.rope.lineByteRange(line)
+		let lineStart = document.rope.utf16Offset(fromByte: lineRange.lowerBound)
+		let text = document.rope.string(in: lineRange) as NSString
+
+		// Everything before the brace that was just typed.
+		let beforeLength = max(0, min(caret - lineStart - 1, text.length))
+		let before = text.substring(with: NSRange(location: 0, length: beforeLength))
+		guard ReturnIndent.shouldDedent(afterTyping: character, lineBefore: before) else { return }
+
+		let dedented = ReturnIndent.dedented(
+			before, usesTabs: usesTabsForIndent, indentWidth: Theme.current.tabWidth
+		)
+		guard dedented != before else { return }
+
+		let newCaret = document.replace(
+			utf16Range: lineStart..<(lineStart + beforeLength),
+			with: dedented,
+			caretBefore: caret
+		)
+		afterEdit(caret: newCaret + 1)
+	}
+
+	/// Whether this file indents with tabs, judged by what it already does.
+	private var usesTabsForIndent: Bool {
+		guard let document else { return false }
+		// A window of the top of the file: enough to see the habit, cheap on a
+		// file of any size.
+		let sample = document.rope.string(in: 0..<min(document.rope.byteCount, 8192))
+		return ReturnIndent.usesTabs(in: sample, default: false)
+	}
+
 	private func insertTextAtCaret(_ text: String) {
 		guard let document else { return }
 		let selection = selectedUTF16Range()
@@ -1516,6 +1592,7 @@ final class CodeView: NSView, NSTextInputClient {
 
 		let newCaret = document.replace(utf16Range: range, with: text, caretBefore: range.lowerBound)
 		afterEdit(caret: newCaret)
+		dedentIfClosingBrace(text)
 		requestCompletionsIfTyping(text)
 	}
 

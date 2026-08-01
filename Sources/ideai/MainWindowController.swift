@@ -530,6 +530,32 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 	}
 
+	/// Types a small block the way somebody would, and prints the result.
+	///
+	/// Through the editor's own insertion path, so what is measured is what
+	/// return actually does rather than what the indent rules would say.
+	func exerciseReturnIndentForTesting() {
+		editor.moveCaretToEndForTesting()
+		editor.simulateTyping("\n")
+
+		// A function, its body, and a nested block — typed exactly as somebody
+		// would, with no manual indentation at all.
+		editor.simulateTyping("func demo() {")
+		editor.simulateReturn()
+		editor.simulateTyping("if ready {")
+		editor.simulateReturn()
+		editor.simulateTyping("run()")
+		editor.simulateReturn()
+		editor.simulateTyping("}")
+		editor.simulateReturn()
+		editor.simulateTyping("}")
+
+		print("RETURN:")
+		for line in editor.textTailLinesForTesting(6) {
+			print("RETURN: |\(line)|")
+		}
+	}
+
 	/// Presses ⌘T in the editor and then in the terminal.
 	///
 	/// Through the menu's own validation and action, which is what the key

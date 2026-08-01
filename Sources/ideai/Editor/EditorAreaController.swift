@@ -441,6 +441,14 @@ final class EditorAreaController: NSViewController {
 		group.focusForTesting()
 	}
 
+	func simulateReturn() {
+		(activeGroup ?? groups.first)?.simulateReturn()
+	}
+
+	func textTailLinesForTesting(_ count: Int) -> [String] {
+		(activeGroup ?? groups.first)?.textTailLinesForTesting(count) ?? []
+	}
+
 	func undoForTesting() {
 		(activeGroup ?? groups.first)?.undoForTesting()
 	}

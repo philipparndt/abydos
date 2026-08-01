@@ -137,6 +137,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if options.typeBlock {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+				controller?.exerciseReturnIndentForTesting()
+			}
+		}
+
 		if options.terminalTabKey {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
 				controller?.exerciseTerminalTabKeyForTesting()
