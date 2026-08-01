@@ -335,6 +335,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let filter = options.attachFilter {
+			DispatchQueue.main.asyncAfter(deadline: .now() + max(1, options.screenshotDelay - 1.5)) {
+				controller?.showAttachPickerForTesting(filter: filter)
+			}
+		}
+
 		if let spec = options.commandHoverAt {
 			let parts = spec.split(separator: ":").compactMap { Int($0) }
 			DispatchQueue.main.asyncAfter(deadline: .now() + max(1, options.screenshotDelay - 1)) {

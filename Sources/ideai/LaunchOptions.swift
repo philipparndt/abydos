@@ -104,6 +104,8 @@ struct LaunchOptions {
 	var navigateSteps: String?
 	/// Hover the editor at line:character with ⌘ held.
 	var commandHoverAt: String?
+	/// Open the attach-to-process picker, filtered by this text.
+	var attachFilter: String?
 	/// Open the list of launch configurations.
 	var launchMenu = false
 	/// Open the editor for the selected configuration.
@@ -170,6 +172,7 @@ struct LaunchOptions {
 			case "--push":       options.pushChanges = true
 			case "--navigate":   options.navigateSteps = next()
 			case "--cmd-hover":  options.commandHoverAt = next()
+			case "--attach-picker": options.attachFilter = next()
 			case "--sidebar":    options.sidebarTool = next()
 			case "--run-line":   options.runLine = next().flatMap(Int.init)
 			case "--debug-line": options.debugLine = next().flatMap(Int.init)

@@ -175,6 +175,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	private var titlebarBackdropHeight: NSLayoutConstraint?
 	/// Held while open: the panel is a child window and nothing else owns it.
 	private var configurationEditor: LaunchConfigurationEditor?
+	/// Held while open, for the same reason.
+	private var processPicker: ProcessPicker?
 	/// What the run control acts on, remembered per project.
 	private var selectedConfigurationName: String?
 	private var projectPill: ProjectPillButton!
@@ -759,41 +761,39 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	@objc func attachToProcess(_ sender: Any?) {
 		let processes = RunningProcesses.list()
 		guard !processes.isEmpty else {
-			presentGoError("No processes to attach to.")
+			notify("Nothing to attach to", detail: "No running processes were found.")
 			return
 		}
 
-		let alert = NSAlert()
-		alert.messageText = "Attach to a process"
-		alert.informativeText = "The debugger stops it where it is."
-		alert.addButton(withTitle: "Attach")
-		alert.addButton(withTitle: "Cancel")
-
-		let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 380, height: 24))
-		popup.addItems(withTitles: processes.map { "\($0.pid)  \($0.name)" })
-		alert.accessoryView = popup
-
-		let attach: (NSApplication.ModalResponse) -> Void = { [weak self] response in
-			guard response == .alertFirstButtonReturn, let self else { return }
-			let chosen = processes[popup.indexOfSelectedItem]
-			let adapter = DebugAdapters.adapter(
-				forProgramAt: chosen.path,
-				projectRoot: self.project?.root ?? URL(fileURLWithPath: chosen.path).deletingLastPathComponent()
-			)
-			guard let executable = DebugAdapters.executable(for: adapter) else {
-				self.presentGoError("Could not find `\(adapter.command)`. \(adapter.installHint)")
-				return
-			}
-			self.setPanelVisible(true)
-			guard let session = self.bottomPanel.startDebugging(
-				adapter: adapter,
-				executable: executable,
-				start: .attach(pid: chosen.pid),
-				breakpoints: self.pendingBreakpoints
-			) else { return }
-			self.wire(session)
+		let picker = ProcessPicker()
+		processPicker = picker
+		picker.onAttach = { [weak self] chosen in
+			guard let self else { return }
+			self.processPicker = nil
+			self.attach(to: chosen)
 		}
-		if let window { alert.beginSheetModal(for: window, completionHandler: attach) } else { attach(alert.runModal()) }
+		picker.show(processes: processes, over: window)
+	}
+
+	/// Starts a session on a process that is already running.
+	private func attach(to process: RunningProcess) {
+		let adapter = DebugAdapters.adapter(
+			forProgramAt: process.path,
+			projectRoot: project?.root ?? URL(fileURLWithPath: process.path).deletingLastPathComponent()
+		)
+		guard let executable = DebugAdapters.executable(for: adapter) else {
+			notify("\(adapter.name) is not installed", detail: adapter.installHint)
+			return
+		}
+
+		setPanelVisible(true)
+		guard let session = bottomPanel.startDebugging(
+			adapter: adapter,
+			executable: executable,
+			start: .attach(pid: process.pid),
+			breakpoints: pendingBreakpoints
+		) else { return }
+		wire(session)
 	}
 
 	// MARK: - Debugging
@@ -2020,6 +2020,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	func pushChangesForTesting() { changesPane?.pushForTesting() }
 
 	var editorForTesting: EditorAreaController { editor }
+
+	func showAttachPickerForTesting(filter: String) {
+		attachToProcess(nil)
+		guard !filter.isEmpty else { return }
+		processPicker?.filterForTesting(filter)
+		print("ATTACH: \(processPicker?.shownNamesForTesting.prefix(5).joined(separator: ", ") ?? "none")")
+	}
 
 	/// Walks the history and reports where each step landed.
 	func navigateForTesting(_ steps: String) {
