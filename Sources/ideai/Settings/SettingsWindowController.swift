@@ -256,6 +256,12 @@ final class SettingsPaneController: NSViewController {
 				get: { Settings.shared.wordWrap },
 				set: { Settings.shared.wordWrap = $0 }
 			),
+			.toggle(
+				title: "GPU terminal rendering",
+				help: "Draw the terminal with Metal. Faster when a program repaints the whole screen; still new.",
+				get: { Settings.shared.terminalGPURendering },
+				set: { Settings.shared.terminalGPURendering = $0 }
+			),
 			.text(
 				title: "Terminal font",
 				help: "Leave empty to choose automatically. Powerline prompts need a Nerd Font.",

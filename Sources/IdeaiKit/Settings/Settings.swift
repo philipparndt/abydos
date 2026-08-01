@@ -25,6 +25,7 @@ public final class Settings {
 			Key.uiScale: 1.0,
 			Key.terminalFontName: "",
 			Key.wordWrap: false,
+			Key.terminalGPURendering: false,
 		])
 	}
 
@@ -40,6 +41,7 @@ public final class Settings {
 		static let uiScale = "uiScale"
 		static let terminalFontName = "terminalFontName"
 		static let wordWrap = "wordWrap"
+		static let terminalGPURendering = "terminalGPURendering"
 		static let projectSearchPaths = "projectSearchPaths"
 		static let projectSearchDepth = "projectSearchDepth"
 	}
@@ -135,6 +137,16 @@ public final class Settings {
 	public var wordWrap: Bool {
 		get { defaults.bool(forKey: Key.wordWrap) }
 		set { set(newValue, Key.wordWrap) }
+	}
+
+	/// Draw the terminal on the GPU rather than through CoreGraphics.
+	///
+	/// Off by default while it is new. The two paths draw the same screen; the
+	/// GPU one costs the same whether every cell has its own colour or none do,
+	/// which is what a full-screen program repainting constantly asks for.
+	public var terminalGPURendering: Bool {
+		get { defaults.bool(forKey: Key.terminalGPURendering) }
+		set { set(newValue, Key.terminalGPURendering) }
 	}
 
 	// MARK: - Navigator

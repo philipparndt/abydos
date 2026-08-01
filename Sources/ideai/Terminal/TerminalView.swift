@@ -1292,10 +1292,10 @@ private final class GlyphCache {
 
 		// The terminal's own face has no glyph for it — emoji, CJK and the
 		// powerline range all come from somewhere else. CoreText knows where.
-		let fallback = CTFontCreateForString(ctFace, String(unicode) as CFString, CFRange(location: 0, length: utf16.count))
-		if CTFontGetGlyphsForCharacters(fallback, &utf16, &glyphs, utf16.count), glyphs[0] != 0 {
-			return CachedGlyph(glyph: glyphs[0], font: fallback)
-		}
-		return nil
+		guard let fallback = GlyphFallback.font(for: unicode, from: ctFace),
+		      CTFontGetGlyphsForCharacters(fallback, &utf16, &glyphs, utf16.count),
+		      glyphs[0] != 0
+		else { return nil }
+		return CachedGlyph(glyph: glyphs[0], font: fallback)
 	}
 }

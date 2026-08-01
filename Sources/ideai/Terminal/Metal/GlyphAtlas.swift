@@ -140,9 +140,8 @@ final class GlyphAtlas {
 		if !CTFontGetGlyphsForCharacters(ctFont, &utf16, &glyphs, utf16.count) || glyphs[0] == 0 {
 			// Nothing in the terminal's own face — emoji, CJK and the powerline
 			// range all live elsewhere, and CoreText knows where.
-			ctFont = CTFontCreateForString(
-				ctFont, String(unicode) as CFString, CFRange(location: 0, length: utf16.count)
-			)
+			guard let fallback = GlyphFallback.font(for: unicode, from: ctFont) else { return nil }
+			ctFont = fallback
 			guard CTFontGetGlyphsForCharacters(ctFont, &utf16, &glyphs, utf16.count), glyphs[0] != 0 else {
 				return nil
 			}
