@@ -16,6 +16,8 @@ final class DiffView: NSView {
 
 	private var patch = GitPatch()
 	private(set) var isStaged = false
+	/// A diff of something already committed: there is nothing to stage in it.
+	var isReadOnly = false
 	/// Syntax tokens per patch line, when the file is in a language we parse.
 	private var highlights: [Int: [HighlightToken]] = [:]
 
@@ -197,6 +199,10 @@ final class DiffView: NSView {
 	}
 
 	override func menu(for event: NSEvent) -> NSMenu? {
+		// A commit's diff has nothing to stage or throw away; it has already
+		// happened, and offering to undo part of it here would be a lie.
+		guard !isReadOnly else { return nil }
+
 		// Right-clicking outside the selection moves it there first, so the
 		// command acts on what was aimed at.
 		if let row = row(at: convert(event.locationInWindow, from: nil)) {

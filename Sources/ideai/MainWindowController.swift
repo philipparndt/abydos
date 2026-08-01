@@ -140,6 +140,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 	private var changesPane: ChangesPane?
 	private var structurePane: StructurePane?
 	private var scratchesPane: ScratchesPane?
+	private var historyPane: HistoryPane?
 	private var primaryToolView: NSView?
 	private var primaryToolTop: NSLayoutConstraint?
 	private var primaryContainer: NSView!
@@ -214,6 +215,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		toolStrip.onToggleBranches = { [weak self] in self?.showSidebarTool(.branches) }
 		toolStrip.onToggleStructure = { [weak self] in self?.showSidebarTool(.structure) }
 		toolStrip.onToggleScratches = { [weak self] in self?.showSidebarTool(.scratches) }
+		toolStrip.onToggleHistory = { [weak self] in self?.showSidebarTool(.history) }
 
 		navigatorContainer = ColoredView(color: Theme.current.sidebarBackground)
 		primaryContainer = navigatorContainer
@@ -311,6 +313,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		editor.onActiveFileChanged = { [weak self] url in
 			// The outline belongs to the file in front, so it follows the tabs.
 			self?.refreshStructure()
+			// The history offers to narrow itself to whatever is in front.
+			self?.historyPane?.offerScope(path: self?.relativePathOfActiveFile())
 			guard let url else { return }
 			self?.navigator.selectWithoutOpening(url: url)
 		}
@@ -1196,6 +1200,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		changesPane = nil
 		structurePane = nil
 		scratchesPane = nil
+		historyPane = nil
 		navigator.view.removeFromSuperview()
 
 		currentSidebarTool = tool
@@ -1224,6 +1229,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 					self.layoutTitlebarPills()
 				}
 			}
+			view = pane
+		case .history:
+			guard let project, project.git != nil else { return }
+			let pane = HistoryPane(root: project.root)
+			pane.offerScope(path: relativePathOfActiveFile())
+			pane.onSelectFile = { [weak self] commit, file in
+				self?.showCommitDiff(commit: commit, file: file)
+			}
+			historyPane = pane
 			view = pane
 		case .scratches:
 			let pane = ScratchesPane(projectRoot: project?.root)
@@ -1285,6 +1299,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 	@objc func toggleBranchesView(_ sender: Any?) { showSidebarTool(.branches) }
 	@objc func toggleStructureView(_ sender: Any?) { showSidebarTool(.structure) }
 	@objc func toggleScratchesView(_ sender: Any?) { showSidebarTool(.scratches) }
+	@objc func toggleHistoryView(_ sender: Any?) { showSidebarTool(.history) }
 
 	/// Moves the selected lines across the index, in whichever direction the
 	/// diff's side implies.
@@ -1361,6 +1376,24 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 		}
 	}
 
+	/// Opens the diff a commit made to one of its files.
+	private func showCommitDiff(commit: GitCommit, file: GitCommitFile) {
+		guard let project else { return }
+		Task { @MainActor in
+			let text = await GitHistory.diff(of: commit.hash, path: file.path, in: project.root)
+			editor.openCommitDiff(commit: commit, file: file, root: project.root, text: text)
+		}
+	}
+
+	/// What the editor has open, relative to the project — the file a history
+	/// view offers to narrow itself to.
+	private func relativePathOfActiveFile() -> String? {
+		guard let project, let url = editor.activeGroup?.activeTabURL else { return nil }
+		let root = project.root.standardizedFileURL.path
+		guard url.path.hasPrefix(root + "/") else { return nil }
+		return String(url.path.dropFirst(root.count + 1))
+	}
+
 	/// Sets a breakpoint as a gutter click would, for verifying alignment.
 	func toggleBreakpointForTesting(line: Int) {
 		guard let url = editor.activeGroup.activeTabURL else { return }
@@ -1390,6 +1423,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
 	func searchScratchesForTesting(_ query: String) {
 		if !query.isEmpty { scratchesPane?.setQueryForTesting(query) }
+	}
+
+	func selectHistoryForTesting(commit: Int, file: Int) {
+		historyPane?.selectCommitForTesting(commit)
+		// The files of a commit are read after it is selected.
+		DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+			self?.historyPane?.selectFileForTesting(file)
+		}
 	}
 
 	func openFirstScratchForTesting() {

@@ -33,6 +33,8 @@ final class EditorViewController: NSViewController {
 		/// A diff tab shows a comparison rather than the file, so it is a
 		/// separate tab from the file itself and says so in its subtitle.
 		var isDiff = false
+		/// Which commit this diff is of, when it came from the history.
+		var diffCommit: String?
 
 		/// The source view, kept so the preview can be swapped in beside or over
 		/// it and swapped back.
@@ -329,6 +331,51 @@ final class EditorViewController: NSViewController {
 
 		// Replaces the outgoing provisional tab, so clicking down a list of
 		// changed files does not leave a tab behind for every one.
+		if let existing = tabs.firstIndex(where: { $0.isPreview }) {
+			tabs[existing].contentView.removeFromSuperview()
+			tabs.remove(at: existing)
+		}
+
+		tabs.append(tab)
+		activeIndex = nil
+		activate(index: tabs.count - 1, focusEditor: false)
+	}
+
+	/// Shows what one commit did to one file.
+	///
+	/// Read-only, unlike a working-copy diff: there is nothing to stage in a
+	/// commit that has already happened, and the subtitle says which commit it
+	/// is rather than "diff".
+	func openCommitDiff(commit: GitCommit, file: GitCommitFile, root: URL, text: String) {
+		let url = root.appendingPathComponent(file.path)
+
+		if let index = tabs.firstIndex(where: { $0.diffCommit == commit.shortHash && $0.url.path == url.path }) {
+			activeIndex = nil
+			activate(index: index, focusEditor: false)
+			return
+		}
+
+		let view = DiffView()
+		view.setDiff(text, staged: true, url: url)
+		view.isReadOnly = true
+
+		let scrollView = NSScrollView()
+		scrollView.documentView = view
+		scrollView.hasVerticalScroller = true
+		scrollView.drawsBackground = true
+		scrollView.backgroundColor = Theme.current.editorBackground
+		view.translatesAutoresizingMaskIntoConstraints = false
+		NSLayoutConstraint.activate([
+			view.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
+			view.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
+			view.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
+		])
+
+		let tab = Tab(url: url, document: nil, codeView: nil, contentView: scrollView, isPreview: true)
+		tab.isDiff = true
+		tab.diffCommit = commit.shortHash
+
+		// Clicking down a list of files leaves one tab behind, not twenty.
 		if let existing = tabs.firstIndex(where: { $0.isPreview }) {
 			tabs[existing].contentView.removeFromSuperview()
 			tabs.remove(at: existing)
@@ -1040,7 +1087,7 @@ final class EditorViewController: NSViewController {
 				// says so — the same mark Sublime and Zed leave on one.
 				isDirty: tab.isDirty || scratch,
 				isPreview: tab.isPreview,
-				subtitle: tab.isDiff ? "diff" : (scratch ? "scratch" : relativeDirectory(for: tab.url))
+				subtitle: tab.diffCommit ?? (tab.isDiff ? "diff" : (scratch ? "scratch" : relativeDirectory(for: tab.url)))
 			)
 		}
 		tabBar.setItems(items, activeIndex: activeIndex)

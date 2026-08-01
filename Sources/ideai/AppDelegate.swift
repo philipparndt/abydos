@@ -137,6 +137,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let row = options.historyCommit {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+				controller?.showSidebarTool(.history)
+			}
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+				controller?.selectHistoryForTesting(commit: row, file: 0)
+			}
+		}
+
 		if let search = options.scratchSearch {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
 				controller?.showSidebarTool(.scratches)
@@ -576,6 +585,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 		viewMenu.addItem(withTitle: "Branches", action: #selector(MainWindowController.toggleBranchesView(_:)), keyEquivalent: "3")
 		viewMenu.addItem(withTitle: "Structure", action: #selector(MainWindowController.toggleStructureView(_:)), keyEquivalent: "4")
 		viewMenu.addItem(withTitle: "Scratches", action: #selector(MainWindowController.toggleScratchesView(_:)), keyEquivalent: "5")
+		viewMenu.addItem(withTitle: "History", action: #selector(MainWindowController.toggleHistoryView(_:)), keyEquivalent: "6")
 		viewMenu.addItem(.separator())
 		let terminalItem = NSMenuItem(title: "Toggle Terminal", action: #selector(MainWindowController.toggleTerminal(_:)), keyEquivalent: "j")
 		viewMenu.addItem(terminalItem)

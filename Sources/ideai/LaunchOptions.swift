@@ -66,6 +66,8 @@ struct LaunchOptions {
 	var scratchSearch: String?
 	/// Open the first scratch listed, as clicking it would.
 	var openScratch = false
+	/// Show the history, and open the first file of the given commit row.
+	var historyCommit: Int?
 	/// Rewrite the open file externally after this many seconds.
 	var externalEdit: Double?
 	/// Raw bytes to send to the terminal, for verifying key encodings.
@@ -121,6 +123,7 @@ struct LaunchOptions {
 			case "--scratch":    options.newScratch = true
 			case "--scratches":  options.scratchSearch = next() ?? ""
 			case "--open-scratch": options.openScratch = true
+			case "--history":    options.historyCommit = next().flatMap(Int.init) ?? 0
 			case "--external-edit": options.externalEdit = next().flatMap(Double.init)
 			case "--send-bytes": options.terminalBytes = next()
 			case "--preview-mode": options.previewMode = next()

@@ -2,7 +2,7 @@ import AppKit
 
 /// Which tool window the sidebar is showing.
 enum SidebarToolKind {
-	case project, changes, branches, structure, scratches
+	case project, changes, branches, structure, scratches, history
 }
 
 /// The narrow icon strip down the left edge, as in the reference screenshot.
@@ -22,6 +22,7 @@ final class ToolWindowBar: NSView {
 	var onToggleBranches: (() -> Void)?
 	var onToggleStructure: (() -> Void)?
 	var onToggleScratches: (() -> Void)?
+	var onToggleHistory: (() -> Void)?
 
 	private var projectButton: StripButton!
 	private var terminalButton: StripButton!
@@ -30,6 +31,7 @@ final class ToolWindowBar: NSView {
 	private var branchesButton: StripButton!
 	private var structureButton: StripButton!
 	private var scratchesButton: StripButton!
+	private var historyButton: StripButton!
 
 	override init(frame frameRect: NSRect) {
 		super.init(frame: frameRect)
@@ -56,6 +58,7 @@ final class ToolWindowBar: NSView {
 		branchesButton.isSelected = visible && tool == .branches
 		structureButton.isSelected = visible && tool == .structure
 		scratchesButton.isSelected = visible && tool == .scratches
+		historyButton.isSelected = visible && tool == .history
 	}
 
 	private func showReviewMenu() {
@@ -101,8 +104,11 @@ final class ToolWindowBar: NSView {
 		scratchesButton = StripButton(symbol: "note.text", tooltip: "Scratches (⌘5)", enabled: true)
 		scratchesButton.onClick = { [weak self] in self?.onToggleScratches?() }
 
+		historyButton = StripButton(symbol: "clock.arrow.circlepath", tooltip: "History (⌘6)", enabled: true)
+		historyButton.onClick = { [weak self] in self?.onToggleHistory?() }
+
 		let stack = NSStackView(views: [
-			projectButton, commitButton, branchesButton, structureButton, scratchesButton,
+			projectButton, commitButton, branchesButton, structureButton, historyButton, scratchesButton,
 		])
 		stack.orientation = .vertical
 		stack.spacing = 4

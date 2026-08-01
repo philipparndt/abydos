@@ -397,6 +397,10 @@ final class EditorAreaController: NSViewController {
 		if record { recordOpenScratches() }
 	}
 
+	func openCommitDiff(commit: GitCommit, file: GitCommitFile, root: URL, text: String) {
+		(activeGroup ?? groups.first)?.openCommitDiff(commit: commit, file: file, root: root, text: text)
+	}
+
 	func newScratch() {
 		(activeGroup ?? groups.first)?.newScratch()
 	}
