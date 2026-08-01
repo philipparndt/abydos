@@ -42,19 +42,9 @@ perf: ## Run the performance suite in release and print timings
 	@swift test -c release --filter PerformanceTests 2>&1 | grep -E '^PERF|Test run with'
 
 .PHONY: fire
-fire: ## Run the DOOM fire benchmark in the app's terminal (SECONDS=20)
-	@$(MAKE) build
+fire: ## Burn the DOOM fire in this terminal, whichever it is (SECONDS=20)
 	@swift build -c release --product firebench
-	@mkdir -p build
-	@rm -f build/firebench.txt
-	@echo "==> Burning for $(or $(SECONDS),20)s"
-	@$(BINARY) --open $(or $(PROJECT),$(CURDIR)) --terminal \
-		--run "$(CURDIR)/.build/release/firebench --seconds $(or $(SECONDS),20) --report $(CURDIR)/build/firebench.txt" \
-		--screenshot build/firebench.png --delay $$(( $(or $(SECONDS),20) + 7 )) 2>/dev/null || true
-	@cat build/firebench.txt 2>/dev/null || echo "no result — see build/firebench.png"
-	@echo "==> build/firebench.png"
-	@echo "    For a full-screen figure, run it in a maximised terminal yourself:"
-	@echo "    .build/release/firebench --seconds 20"
+	@.build/release/firebench --seconds $(or $(SECONDS),20)
 
 .PHONY: shot
 shot: ## Render the window to a PNG without Screen Recording permission
