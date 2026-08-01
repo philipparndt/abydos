@@ -140,7 +140,8 @@ public enum DebugAdapters {
 		for adapter: DebugAdapter,
 		program: String,
 		workingDirectory: String,
-		arguments: [String] = []
+		arguments: [String] = [],
+		environment: [String: String] = [:]
 	) -> [String: Any] {
 		var request: [String: Any] = [
 			"request": "launch",
@@ -151,6 +152,9 @@ public enum DebugAdapters {
 
 		switch adapter.id {
 		case delve.id:
+			// Delve takes an object; lldb-dap takes `KEY=VALUE` lines, and
+			// hands anything else straight back as an error.
+			if !environment.isEmpty { request["env"] = environment }
 			// Delve builds what it is pointed at, so `program` is a package
 			// directory and the mode says to compile it first.
 			request["mode"] = "debug"
@@ -158,6 +162,9 @@ public enum DebugAdapters {
 			// LLDB debugs a binary that already exists, and stopping at the
 			// entry point would strand somebody in the C runtime.
 			request["stopOnEntry"] = false
+			if !environment.isEmpty {
+				request["env"] = environment.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }
+			}
 		default:
 			break
 		}

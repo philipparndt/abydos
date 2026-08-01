@@ -98,9 +98,14 @@ public struct LaunchConfiguration: Equatable, Sendable, Identifiable {
 	}
 
 	public static func expand(_ value: String, root: URL) -> String {
-		value
-			.replacingOccurrences(of: "${workspaceFolder}", with: root.path)
-			.replacingOccurrences(of: "${workspaceRoot}", with: root.path)
+		// The real path, not the one the project was opened by: a root spelled
+		// `/tmp/...` expands to a package `go` then calls outside the module it
+		// just found at `/private/tmp/...`, and the run fails with nothing that
+		// points at the cause.
+		let path = FilePath.canonical(root)
+		return value
+			.replacingOccurrences(of: "${workspaceFolder}", with: path)
+			.replacingOccurrences(of: "${workspaceRoot}", with: path)
 			.replacingOccurrences(of: "${userHome}", with: NSHomeDirectory())
 	}
 

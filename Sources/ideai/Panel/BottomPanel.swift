@@ -342,7 +342,9 @@ final class BottomPanel: NSView {
 	) -> TerminalPane? {
 		let assignments = environment
 			.sorted { $0.key < $1.key }
-			.map { "\($0.key)=\($0.value.replacingOccurrences(of: "'", with: "'\\''"))" }
+			// Quoted, not merely escaped: a value with a space in it becomes a
+			// second word to `env`, which then tries to run it.
+			.map { "\($0.key)='\($0.value.replacingOccurrences(of: "'", with: "'\\''"))'" }
 			.joined(separator: " ")
 		let line = assignments.isEmpty ? command : "env \(assignments) \(command)"
 
@@ -416,8 +418,8 @@ final class BottomPanel: NSView {
 		// own is the sensible stand-in — debugging a binary should not require
 		// having opened a folder first.
 		let fallback: URL? = {
-			if case let .launch(program, _) = start {
-				return URL(fileURLWithPath: program).deletingLastPathComponent()
+			if case let .launch(program, _, directory, _) = start {
+				return directory ?? URL(fileURLWithPath: program).deletingLastPathComponent()
 			}
 			return FileManager.default.homeDirectoryForCurrentUser
 		}()
@@ -427,10 +429,11 @@ final class BottomPanel: NSView {
 		Task {
 			do {
 				switch start {
-				case let .launch(program, arguments):
+				case let .launch(program, arguments, directory, environment):
 					try await session.launch(
 						adapter: adapter, executable: executable,
-						program: program, arguments: arguments
+						program: program, arguments: arguments,
+						workingDirectory: directory, environment: environment
 					)
 				case let .attach(pid):
 					try await session.attach(adapter: adapter, executable: executable, pid: pid)
@@ -446,7 +449,12 @@ final class BottomPanel: NSView {
 
 	/// How a session begins.
 	enum DebugStart {
-		case launch(program: String, arguments: [String])
+		case launch(
+			program: String,
+			arguments: [String],
+			workingDirectory: URL? = nil,
+			environment: [String: String] = [:]
+		)
 		case attach(pid: Int)
 	}
 

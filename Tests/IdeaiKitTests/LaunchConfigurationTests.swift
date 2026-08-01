@@ -219,3 +219,74 @@ struct LaunchConfigurationTests {
 		#expect(LaunchFile.read(in: root).isEmpty)
 	}
 }
+
+/// What a configuration's environment and directory turn into on the wire.
+struct LaunchRequestTests {
+	/// Delve takes an object; lldb-dap takes lines. Sending either the wrong
+	/// one is rejected, so the shape matters more than the content.
+	@Test func delveTakesTheEnvironmentAsAnObject() {
+		let request = DebugAdapters.launchArguments(
+			for: DebugAdapters.delve,
+			program: "/tmp/pkg",
+			workingDirectory: "/tmp/pkg",
+			environment: ["LOG": "debug"]
+		)
+		#expect(request["env"] as? [String: String] == ["LOG": "debug"])
+		#expect(request["mode"] as? String == "debug")
+	}
+
+	@Test func lldbTakesTheEnvironmentAsLines() {
+		let request = DebugAdapters.launchArguments(
+			for: DebugAdapters.lldb,
+			program: "/tmp/a.out",
+			workingDirectory: "/tmp",
+			environment: ["B": "2", "A": "1"]
+		)
+		// Sorted, so two runs of the same configuration send the same request.
+		#expect(request["env"] as? [String] == ["A=1", "B=2"])
+	}
+
+	/// An empty environment must not appear at all: some adapters treat an
+	/// empty `env` as "run with nothing set" rather than "inherit".
+	@Test func omitsAnEmptyEnvironment() {
+		let request = DebugAdapters.launchArguments(
+			for: DebugAdapters.delve, program: "/tmp/pkg", workingDirectory: "/tmp/pkg"
+		)
+		#expect(request["env"] == nil)
+	}
+}
+
+/// Expansion, where the paths are the whole point.
+struct LaunchExpansionTests {
+	/// A project opened through a symlinked path must still expand to the path
+	/// the tools themselves see, or `go run` reports the package as being
+	/// outside the module it is sitting in.
+	@Test func expandsToTheRealPath() throws {
+		let base = URL(fileURLWithPath: NSTemporaryDirectory())
+			.appendingPathComponent("expand-\(UUID().uuidString)")
+		try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+		defer { try? FileManager.default.removeItem(at: base) }
+
+		let real = base.appendingPathComponent("real")
+		try FileManager.default.createDirectory(at: real, withIntermediateDirectories: true)
+		let link = base.appendingPathComponent("link")
+		try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
+
+		let expanded = LaunchConfiguration.expand("${workspaceFolder}/cmd", root: link)
+		#expect(expanded == FilePath.canonical(real) + "/cmd")
+	}
+
+	@Test func expandsEverythingAConfigurationCarries() {
+		let root = URL(fileURLWithPath: "/usr")
+		let configuration = LaunchConfiguration(
+			name: "app",
+			program: "${workspaceFolder}/cmd/app",
+			arguments: ["--config", "${workspaceFolder}/dev.yaml"],
+			workingDirectory: "${workspaceFolder}",
+			environment: ["DATA": "${workspaceFolder}/data"]
+		)
+		#expect(configuration.expandedArguments(root: root) == ["--config", "/usr/dev.yaml"])
+		#expect(configuration.expandedEnvironment(root: root) == ["DATA": "/usr/data"])
+		#expect(configuration.expandedProgram(root: root) == "/usr/cmd/app")
+	}
+}

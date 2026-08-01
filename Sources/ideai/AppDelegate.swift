@@ -203,6 +203,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if options.launchRun || options.launchMenu || options.launchEditor {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+				if options.launchRun { controller?.runSelected(nil) }
+				if options.launchMenu { controller?.showConfigurationMenuForTesting() }
+				if options.launchEditor { controller?.editConfigurationForTesting() }
+			}
+		}
+
 		if options.debugInspect {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
 				if let binary = options.debugBinary {
@@ -708,6 +716,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 		)
 		runItem.keyEquivalentModifierMask = [.control]
 		runMenu.addItem(runItem)
+		let runSelected = NSMenuItem(
+			title: "Run",
+			action: #selector(MainWindowController.runSelected(_:)),
+			keyEquivalent: "r"
+		)
+		runSelected.keyEquivalentModifierMask = [.control]
+		runMenu.addItem(runSelected)
+
+		let debugSelected = NSMenuItem(
+			title: "Debug",
+			action: #selector(MainWindowController.debugSelected(_:)),
+			keyEquivalent: "d"
+		)
+		debugSelected.keyEquivalentModifierMask = [.control]
+		runMenu.addItem(debugSelected)
+		runMenu.addItem(.separator())
+
 		let debugExecutable = NSMenuItem(
 			title: "Debug Executable\u{2026}",
 			action: #selector(MainWindowController.debugExecutable(_:)),

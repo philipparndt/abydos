@@ -92,6 +92,12 @@ struct LaunchOptions {
 	var debugBinary: String?
 	/// Raise a toast, to see what one looks like.
 	var showToast = false
+	/// Press play, as if from the titlebar.
+	var launchRun = false
+	/// Open the list of launch configurations.
+	var launchMenu = false
+	/// Open the editor for the selected configuration.
+	var launchEditor = false
 	/// Open the symbol palette with this query and report what came back.
 	var symbolQuery: String?
 	/// Search the whole project rather than the open file.
@@ -172,6 +178,9 @@ struct LaunchOptions {
 			case "--debug-inspect": options.debugInspect = true
 			case "--debug-binary": options.debugBinary = next()
 			case "--toast":      options.showToast = true
+			case "--launch-run":    options.launchRun = true
+			case "--launch-menu":   options.launchMenu = true
+			case "--launch-editor": options.launchEditor = true
 			case "--symbols":    options.symbolQuery = next() ?? ""
 			case "--symbols-project": options.symbolProject = true
 			case "--usages":     options.usagesAt = next()
@@ -216,6 +225,20 @@ enum WindowCapture {
 	/// and its pills; otherwise falls back to the content view.
 	@discardableResult
 	static func write(window: NSWindow, to path: String) -> Bool {
+		// A child window is a window of its own, so it is nowhere in the frame
+		// drawn below it. Each is written beside the capture instead.
+		for (index, child) in window.childWindows?.enumerated() ?? [NSWindow]().enumerated() {
+			let beside = (path as NSString).deletingPathExtension + "-child\(index).png"
+			write(window: child, to: beside)
+		}
+
+		// A sheet is a window of its own, so it is nowhere in the frame that
+		// gets drawn below it. It is written beside the capture instead.
+		if let sheet = window.attachedSheet {
+			let beside = (path as NSString).deletingPathExtension + "-sheet.png"
+			write(window: sheet, to: beside)
+		}
+
 		guard let contentView = window.contentView else { return false }
 		let target = contentView.superview ?? contentView
 

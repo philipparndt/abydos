@@ -340,7 +340,9 @@ public final class DebugSession {
 		adapter: DebugAdapter,
 		executable: String,
 		program: String,
-		arguments: [String] = []
+		arguments: [String] = [],
+		workingDirectory directoryOverride: URL? = nil,
+		environment: [String: String] = [:]
 	) async throws {
 		state = .starting
 		launchGeneration += 1
@@ -354,9 +356,12 @@ public final class DebugSession {
 		// nothing said about it.
 		let program = absolutePackagePath(program)
 
-		// The program's own directory: a build only works from inside its
-		// module or its package, and the project root often is neither.
-		let workingDirectory = Self.directory(containing: program) ?? projectRoot
+		// A configuration may say where to run; otherwise the program's own
+		// directory, because a build only works from inside its module or its
+		// package and the project root often is neither.
+		let workingDirectory = directoryOverride
+			?? Self.directory(containing: program)
+			?? projectRoot
 
 
 		switch adapter.transport {
@@ -382,7 +387,8 @@ public final class DebugSession {
 			for: adapter,
 			program: program,
 			workingDirectory: workingDirectory.path,
-			arguments: arguments
+			arguments: arguments,
+			environment: environment
 		))
 
 		startLaunchWatchdog()

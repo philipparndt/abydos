@@ -159,6 +159,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// Height the titlebar covers, applied to sidebar panes that do not inset
 	/// themselves.
 	private var sidebarTopInset: CGFloat = 0
+	private var runControl: RunControl?
+	/// The terminal a launch configuration is running in, so the play button can
+	/// become a stop button that stops the right thing.
+	private weak var runningPane: TerminalPane?
+	/// Held while open: the panel is a child window and nothing else owns it.
+	private var configurationEditor: LaunchConfigurationEditor?
+	/// What the run control acts on, remembered per project.
+	private var selectedConfigurationName: String?
 	private var projectPill: ProjectPillButton!
 	private var branchPill: BranchPillButton!
 	private var titlebarContainer: NSView?
@@ -512,6 +520,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// Started now rather than when a file of that language is first opened,
 		// so asking for a symbol straight after opening a project works.
 		LanguageService.shared.warmUp(project: project.root)
+		selectedConfigurationName = nil
+		refreshRunControl()
 		scratchesPane?.setProject(project.root)
 		bottomPanel.setWorkingDirectory(project.root)
 
@@ -1294,8 +1304,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			self.editor.setExecutionLocation(file: file, line: line)
 		}
 		toolStrip.setDebugRunning(true)
-		session.observeState { [weak self] state in
+		session.observeState { [weak self, weak session] state in
 			self?.toolStrip.setDebugRunning(state != .idle && state != .terminated)
+			self?.updateRunControl(for: state, session: session)
 			// The marker must go when execution resumes or the process ends.
 			switch state {
 			case .running, .terminated, .idle:
@@ -1843,6 +1854,286 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		if name.hasPrefix(needle) { return 1 }
 		if name.contains(needle) { return 2 }
 		return 3
+	}
+
+	// MARK: - Launch configurations
+
+	/// What the project defines, plus a suggestion when it defines nothing.
+	private var launchConfigurations: [LaunchConfiguration] {
+		guard let project else { return [] }
+		return LaunchFile.read(in: project.root)
+	}
+
+	private var selectedConfiguration: LaunchConfiguration? {
+		let all = launchConfigurations
+		if let name = selectedConfigurationName, let found = all.first(where: { $0.name == name }) {
+			return found
+		}
+		return all.first
+	}
+
+	func refreshRunControl() {
+		runControl?.setConfiguration(selectedConfiguration?.name)
+	}
+
+	/// Keeps the titlebar saying what the session is doing.
+	private func updateRunControl(for state: DebugSession.State, session: DebugSession?) {
+		switch state {
+		case .starting:
+			runControl?.setStatus("Starting…", busy: true)
+		case .running:
+			runControl?.setStatus("Running", busy: true)
+		case let .stopped(reason):
+			runControl?.setStatus("Paused — \(reason)", busy: true)
+		case .terminated:
+			guard let code = session?.exitCode else {
+				runControl?.setStatus("Finished")
+				return
+			}
+			runControl?.setStatus(
+				code == 0 ? "Finished" : "Failed — exit code \(code)", failed: code != 0
+			)
+		case .idle:
+			runControl?.setStatus("")
+		}
+	}
+
+	/// Runs or debugs what is selected.
+	///
+	/// A project with nothing configured gets one written for it from what is
+	/// actually there, rather than a dialog asking a question nobody has the
+	/// information to answer before the first run.
+	/// Stops whichever of the two is running.
+	private func stopRunning() {
+		if let pane = runningPane {
+			runningPane = nil
+			pane.terminalView.terminateProcess()
+			runControl?.setStatus("Stopped")
+			return
+		}
+		debugStop(nil)
+	}
+
+	func showConfigurationMenuForTesting() {
+		guard let control = runControl else { return }
+		showConfigurationMenu(at: NSPoint(x: 0, y: control.bounds.height), in: control)
+	}
+
+	/// Opens the editor on the selected configuration, making one if there is
+	/// none yet — what pressing play would have done first.
+	func editConfigurationForTesting() {
+		guard let configuration = selectedConfiguration ?? createSuggestedConfiguration() else { return }
+		selectedConfigurationName = configuration.name
+		refreshRunControl()
+		presentConfigurationEditor(configuration, isNew: false)
+	}
+
+	@objc func runSelected(_ sender: Any?) { runSelectedConfiguration(debug: false) }
+	@objc func debugSelected(_ sender: Any?) { runSelectedConfiguration(debug: true) }
+
+	private func runSelectedConfiguration(debug: Bool) {
+		guard let project else { return }
+
+		guard let configuration = selectedConfiguration ?? createSuggestedConfiguration() else {
+			notify(
+				"Nothing to run",
+				detail: "No launch configuration, and nothing recognisable to make one from."
+			)
+			return
+		}
+		selectedConfigurationName = configuration.name
+		refreshRunControl()
+
+		if debug {
+			debugConfiguration(configuration, in: project.root)
+		} else {
+			runConfiguration(configuration, in: project.root)
+		}
+	}
+
+	/// Writes a configuration for a project that has none, and says so.
+	private func createSuggestedConfiguration() -> LaunchConfiguration? {
+		guard let project, let suggestion = LaunchFile.suggestion(for: project.root) else { return nil }
+		do {
+			_ = try LaunchFile.save(suggestion, in: project.root)
+			notify(
+				"Created a launch configuration",
+				detail: "Written to .vscode/launch.json as “\(suggestion.name)”. Edit it from the run menu.",
+				kind: .information
+			)
+			return suggestion
+		} catch {
+			notify("Could not write launch.json", detail: error.localizedDescription)
+			return nil
+		}
+	}
+
+	private func runConfiguration(_ configuration: LaunchConfiguration, in root: URL) {
+		let program = configuration.expandedProgram(root: root)
+		let directory = configuration.expandedWorkingDirectory(root: root)
+		let arguments = configuration.expandedArguments(root: root)
+
+		setPanelVisible(true)
+		runControl?.setStatus("Running \(configuration.name)…", busy: true)
+
+		// A Go configuration names a package, which is `go run`'s argument; any
+		// other names a binary, which is simply executed.
+		let words = configuration.type == "go"
+			? ["go", "run", program] + arguments
+			: [program] + arguments
+		let pane = bottomPanel.runCommand(
+			title: configuration.name,
+			command: words.map(Self.shellQuoted).joined(separator: " "),
+			directory: URL(fileURLWithPath: directory),
+			environment: configuration.expandedEnvironment(root: root)
+		)
+		runningPane = pane
+		// The shell reports what the program exited with, which is the one thing
+		// worth saying in the titlebar once it is over.
+		pane?.terminalView.onProcessExit = { [weak self, weak pane] code in
+			MainActor.assumeIsolated {
+				guard let self, self.runningPane === pane else { return }
+				self.runningPane = nil
+				self.runControl?.setStatus(
+					code == 0 ? "Finished" : "Failed — exit code \(code)", failed: code != 0
+				)
+			}
+		}
+	}
+
+	/// A word the shell will pass through as it was written.
+	private static func shellQuoted(_ word: String) -> String {
+		guard word.contains(where: { !$0.isLetter && !$0.isNumber && !"-_./=:@".contains($0) })
+		else { return word }
+		return "'" + word.replacingOccurrences(of: "'", with: "'\\''") + "'"
+	}
+
+	private func debugConfiguration(_ configuration: LaunchConfiguration, in root: URL) {
+		let adapter = DebugAdapters.adapter(id: configuration.adapterID) ?? DebugAdapters.lldb
+		guard let executable = DebugAdapters.executable(for: adapter) else {
+			notify("\(adapter.name) is not installed", detail: adapter.installHint)
+			return
+		}
+
+		setPanelVisible(true)
+		runControl?.setStatus("Debugging \(configuration.name)…", busy: true)
+		guard let session = bottomPanel.startDebugging(
+			adapter: adapter,
+			executable: executable,
+			start: .launch(
+				program: configuration.expandedProgram(root: root),
+				arguments: configuration.expandedArguments(root: root),
+				workingDirectory: URL(
+					fileURLWithPath: configuration.expandedWorkingDirectory(root: root)
+				),
+				environment: configuration.expandedEnvironment(root: root)
+			),
+			breakpoints: pendingBreakpoints
+		) else { return }
+		wire(session)
+	}
+
+	/// The list of configurations, and the ways to change them.
+	private func showConfigurationMenu(at point: NSPoint, in view: NSView) {
+		let menu = NSMenu()
+		let all = launchConfigurations
+
+		for configuration in all {
+			let item = NSMenuItem(
+				title: configuration.name, action: #selector(configurationChosen(_:)), keyEquivalent: ""
+			)
+			item.target = self
+			item.representedObject = configuration.name
+			item.state = configuration.name == selectedConfiguration?.name ? .on : .off
+			menu.addItem(item)
+		}
+		if all.isEmpty {
+			let empty = NSMenuItem(title: "No configurations yet", action: nil, keyEquivalent: "")
+			empty.isEnabled = false
+			menu.addItem(empty)
+		}
+
+		menu.addItem(.separator())
+		let edit = NSMenuItem(
+			title: "Edit\u{2026}", action: #selector(editSelectedConfiguration), keyEquivalent: ""
+		)
+		edit.target = self
+		edit.isEnabled = selectedConfiguration != nil
+		menu.addItem(edit)
+
+		let add = NSMenuItem(title: "New\u{2026}", action: #selector(addConfiguration), keyEquivalent: "")
+		add.target = self
+		menu.addItem(add)
+
+		let reveal = NSMenuItem(
+			title: "Open launch.json", action: #selector(openLaunchFile), keyEquivalent: ""
+		)
+		reveal.target = self
+		menu.addItem(reveal)
+
+		menu.popUp(positioning: nil, at: point, in: view)
+	}
+
+	@objc private func configurationChosen(_ sender: NSMenuItem) {
+		selectedConfigurationName = sender.representedObject as? String
+		refreshRunControl()
+	}
+
+	@objc private func openLaunchFile() {
+		guard let project else { return }
+		let file = LaunchFile.url(in: project.root)
+		guard FileManager.default.fileExists(atPath: file.path) else {
+			notify("No launch.json yet", detail: "Press run once and one will be written.", kind: .information)
+			return
+		}
+		editor.open(fileURL: file, focusEditor: true)
+	}
+
+	@objc private func addConfiguration() {
+		guard let project else { return }
+		let suggestion = LaunchFile.suggestion(for: project.root)
+			?? LaunchConfiguration(name: project.name, type: "lldb", program: "${workspaceFolder}")
+		presentConfigurationEditor(suggestion, isNew: true)
+	}
+
+	@objc private func editSelectedConfiguration() {
+		guard let configuration = selectedConfiguration else { return }
+		presentConfigurationEditor(configuration, isNew: false)
+	}
+
+	/// Asks for the parts of a configuration worth changing by hand.
+	///
+	/// Arguments, working directory and environment — the three that differ
+	/// between one run and the next. Everything else in the entry is left
+	/// alone, including keys this app knows nothing about.
+	private func presentConfigurationEditor(_ configuration: LaunchConfiguration, isNew: Bool) {
+		guard let project else { return }
+
+		let editor = LaunchConfigurationEditor(configuration: configuration, isNew: isNew)
+		configurationEditor = editor
+		editor.onApply = { [weak self] updated in
+			guard let self else { return }
+			self.configurationEditor = nil
+
+			guard let updated else {
+				_ = try? LaunchFile.remove(named: configuration.name, in: project.root)
+				self.selectedConfigurationName = nil
+				self.refreshRunControl()
+				return
+			}
+			do {
+				// Renaming replaces rather than duplicating.
+				if updated.name != configuration.name, !isNew {
+					_ = try LaunchFile.remove(named: configuration.name, in: project.root)
+				}
+				_ = try LaunchFile.save(updated, in: project.root)
+				self.selectedConfigurationName = updated.name
+				self.refreshRunControl()
+			} catch {
+				self.notify("Could not write launch.json", detail: error.localizedDescription)
+			}
+		}
+		editor.show(over: window)
 	}
 
 	/// Brings the debug panel forward.
@@ -2400,9 +2691,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 extension MainWindowController: NSToolbarDelegate {
 	private static let projectItem = NSToolbarItem.Identifier("ideai.project")
 	private static let branchItem = NSToolbarItem.Identifier("ideai.branch")
+	private static let runItem = NSToolbarItem.Identifier("ideai.run")
 
 	func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-		[Self.projectItem, Self.branchItem, .flexibleSpace]
+		[Self.projectItem, Self.branchItem, .flexibleSpace, Self.runItem]
 	}
 
 	func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -2427,6 +2719,20 @@ extension MainWindowController: NSToolbarDelegate {
 			}
 			projectPill = pill
 			item.view = pill
+			return item
+
+		case Self.runItem:
+			let item = NSToolbarItem(itemIdentifier: identifier)
+			let control = RunControl()
+			control.onRun = { [weak self] in self?.runSelectedConfiguration(debug: false) }
+			control.onDebug = { [weak self] in self?.runSelectedConfiguration(debug: true) }
+			control.onStop = { [weak self] in self?.stopRunning() }
+			control.onChooseConfiguration = { [weak self] point in
+				self?.showConfigurationMenu(at: point, in: control)
+			}
+			runControl = control
+			item.view = control
+			refreshRunControl()
 			return item
 
 		case Self.branchItem:
