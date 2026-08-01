@@ -526,6 +526,11 @@ final class TerminalView: NSView, NSTextInputClient {
 		var runPositions: [CGPoint] = []
 		var runFont: CTFont?
 
+		// One glyph per cell, deliberately: no ligatures. A terminal is a grid,
+		// and shaping a run as a whole so `->` becomes an arrow also lets the
+		// text drift off that grid. Not wanted here, and drawing per cell is
+		// what makes a screen of individually coloured cells affordable.
+		//
 		// Glyphs are drawn in batches sharing a font. Almost every batch is the
 		// whole run; a batch ends only where a character had to come from a
 		// fallback face, which is rare enough to be worth not checking for.
