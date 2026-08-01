@@ -291,7 +291,7 @@ final class EditorViewController: NSViewController {
 
 		if let index = tabs.firstIndex(where: { $0.isDiff && $0.url.path == url.path }) {
 			let existing = (tabs[index].contentView as? NSScrollView)?.documentView as? DiffView
-			existing?.setDiff(text, staged: change.isStaged)
+			existing?.setDiff(text, staged: change.isStaged, url: url)
 			existing?.onApplySelection = { [weak self] selected in
 				self?.onApplyDiffSelection?(change, text, selected)
 			}
@@ -304,7 +304,7 @@ final class EditorViewController: NSViewController {
 		}
 
 		let view = DiffView()
-		view.setDiff(text, staged: change.isStaged)
+		view.setDiff(text, staged: change.isStaged, url: url)
 		view.onApplySelection = { [weak self] selected in
 			self?.onApplyDiffSelection?(change, text, selected)
 		}

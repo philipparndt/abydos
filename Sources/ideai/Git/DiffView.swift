@@ -16,6 +16,8 @@ final class DiffView: NSView {
 
 	private var patch = GitPatch()
 	private(set) var isStaged = false
+	/// Syntax tokens per patch line, when the file is in a language we parse.
+	private var highlights: [Int: [HighlightToken]] = [:]
 
 	/// Flat rows: hunk headers and lines interleaved, as drawn.
 	private var rows: [Row] = []
@@ -62,14 +64,29 @@ final class DiffView: NSView {
 
 	// MARK: - Content
 
-	func setDiff(_ text: String, staged: Bool) {
+	func setDiff(_ text: String, staged: Bool, url: URL? = nil) {
 		isStaged = staged
 		patch = GitPatch.parse(text)
 		selection = []
 		anchorRow = nil
 		rebuildRows()
+		highlights = Self.highlights(for: patch, url: url)
 		invalidateIntrinsicContentSize()
 		needsDisplay = true
+	}
+
+	/// Above this many changed lines the colours are not worth the parse.
+	///
+	/// A diff that size is a lockfile or a generated file, which nobody reads
+	/// line by line — and reconstructing both sides of it costs more than the
+	/// whole view is meant to.
+	private static let highlightLineLimit = 5000
+
+	private static func highlights(for patch: GitPatch, url: URL?) -> [Int: [HighlightToken]] {
+		guard let url, let languageId = LanguageRegistry.shared.languageId(for: url) else { return [:] }
+		let lines = patch.hunks.reduce(0) { $0 + $1.lines.count }
+		guard lines <= highlightLineLimit else { return [:] }
+		return DiffHighlighter.highlight(patch, languageId: languageId)
 	}
 
 	private func rebuildRows() {
@@ -281,10 +298,44 @@ final class DiffView: NSView {
 				NSRect(x: 0, y: y, width: Theme.current.scaled(3), height: lineHeight).fill()
 			}
 
-			let text = line.marker + line.text
-			guard !text.isEmpty else { return }
-			text.draw(at: NSPoint(x: textX, y: y), font: font, color: color(for: line.kind))
+			guard !line.marker.isEmpty || !line.text.isEmpty else { return }
+
+			// The marker keeps the diff's own colour — it is what the line does,
+			// not what it says — and the text is coloured as code. Which side a
+			// line is on is carried by the tint behind it, the way it is in a
+			// review: reading a diff is reading code, and code that is all one
+			// colour is the thing syntax highlighting exists to fix.
+			line.marker.draw(at: NSPoint(x: textX, y: y), font: font, color: color(for: line.kind))
+			let markerWidth = line.marker.size(withAttributes: [.font: font]).width
+			drawText(line, index: index, at: NSPoint(x: textX + markerWidth, y: y))
 		}
+	}
+
+	/// Draws a line's text, in syntax colours where there are any.
+	private func drawText(_ line: GitPatch.Line, index: Int, at origin: NSPoint) {
+		guard !line.text.isEmpty else { return }
+		let fallback = color(for: line.kind)
+
+		guard let tokens = highlights[index], !tokens.isEmpty else {
+			line.text.draw(at: origin, font: font, color: fallback)
+			return
+		}
+
+		let attributed = NSMutableAttributedString(string: line.text, attributes: [
+			.font: font,
+			.foregroundColor: fallback,
+		])
+		for token in tokens {
+			let lower = max(0, token.range.lowerBound)
+			let upper = min(attributed.length, token.range.upperBound)
+			guard upper > lower else { continue }
+			attributed.addAttribute(
+				.foregroundColor,
+				value: Theme.current.color(for: token.kind),
+				range: NSRange(location: lower, length: upper - lower)
+			)
+		}
+		attributed.draw(at: origin)
 	}
 
 	private func background(for kind: GitPatch.Line.Kind) -> NSColor? {
