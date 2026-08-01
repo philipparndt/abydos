@@ -32,6 +32,11 @@ public final class PseudoTerminal {
 	public var onExit: ((Int32) -> Void)?
 
 	private var masterDescriptor: Int32 = -1
+	/// The terminal's own device, as the child sees it.
+	///
+	/// Kept because it is how the tmux server is asked about the client running
+	/// here, rather than about whichever client it last spoke to.
+	public private(set) var slaveName: String?
 	private var childPID: pid_t = -1
 	private var readSource: DispatchSourceRead?
 	private let readQueue = DispatchQueue(label: "ideai.pty.read", qos: .userInitiated)
@@ -116,6 +121,7 @@ public final class PseudoTerminal {
 		}
 
 		masterDescriptor = master
+		slaveName = String(validatingCString: ptsname(master)) ?? nil
 		childPID = pid
 		state = .running(pid: pid)
 
@@ -179,6 +185,11 @@ public final class PseudoTerminal {
 	/// While stopped the bytes stay in the pty's buffer and, once it is full,
 	/// the process writing to it blocks — which is how a terminal tells a
 	/// program that it is going faster than anyone can look at.
+	/// Where the process in the foreground of this terminal currently is.
+	public func currentDirectory() -> URL? {
+		TerminalDirectory.current(masterDescriptor: masterDescriptor, slaveName: slaveName)
+	}
+
 	public func setReadingSuspended(_ suspended: Bool) {
 		readQueue.async { [weak self] in
 			guard let self, let source = self.readSource else { return }
