@@ -362,6 +362,8 @@ final class BottomPanel: NSView {
 		}
 		session.onLaunchStalled = { [weak self, weak pane] message in
 			pane?.appendOutput("\n" + message + "\n")
+			// Nothing started, so the log is the only thing worth looking at.
+			pane?.showConsole()
 			self?.debugOutput?("\n" + message + "\n")
 			let alert = NSAlert()
 			alert.messageText = "The debugger did not start"

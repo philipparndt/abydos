@@ -63,14 +63,45 @@ final class DebugPane: NSView {
 
 	private var console: NSTextView!
 	private var consoleScroll: NSScrollView!
-	private var consoleHeight: NSLayoutConstraint!
+	private var variablesScroll: NSScrollView!
+	private var rightSide: NSView!
+	private var sideTabs: NSSegmentedControl!
+	/// Output arrived while the console was not the one showing.
+	private var hasUnreadOutput = false
 
 	/// Appends adapter or program output, keeping the newest visible.
 	func appendOutput(_ text: String) {
 		guard !text.isEmpty else { return }
 		console.string += text
 		console.scrollToEndOfDocument(nil)
+
+		// A hidden log has to say when it has something, or a build error is
+		// invisible behind a tab nobody had a reason to press.
+		guard consoleScroll.isHidden else { return }
+		hasUnreadOutput = true
+		sideTabs.setLabel("Console •", forSegment: 1)
 	}
+
+	@objc private func sideTabChanged() {
+		let showsConsole = sideTabs.selectedSegment == 1
+		consoleScroll.isHidden = !showsConsole
+		variablesScroll.isHidden = showsConsole
+		if showsConsole {
+			hasUnreadOutput = false
+			sideTabs.setLabel("Console", forSegment: 1)
+			console.scrollToEndOfDocument(nil)
+		}
+	}
+
+	/// Shows the log, for when something has gone wrong and it is the only
+	/// thing worth looking at.
+	func showConsole() {
+		sideTabs.selectedSegment = 1
+		sideTabChanged()
+	}
+
+	var showsConsoleForTesting: Bool { !consoleScroll.isHidden }
+	var consoleTabLabelForTesting: String { sideTabs.label(forSegment: 1) ?? "" }
 
 	private func build() {
 		toolbar = DebugToolbar()
@@ -115,12 +146,21 @@ final class DebugPane: NSView {
 
 		let stackScroll = makeScrollView(document: stack)
 		let variablesScroll = makeScrollView(document: variables)
+		self.variablesScroll = variablesScroll
 
 		let split = ThinDividerSplitView()
 		split.isVertical = true
 		split.dividerStyle = .thin
 		split.addArrangedSubview(stackScroll)
-		split.addArrangedSubview(variablesScroll)
+
+		// Variables and the log share the right-hand side rather than the log
+		// taking a permanent strip along the bottom. It is worth looking at
+		// when something has gone wrong and worth nothing the rest of the time,
+		// which is exactly what a tab is for.
+		let rightSide = NSView()
+		rightSide.addSubview(variablesScroll)
+		split.addArrangedSubview(rightSide)
+		self.rightSide = rightSide
 
 		addSubview(toolbar)
 		addSubview(split)
@@ -143,30 +183,50 @@ final class DebugPane: NSView {
 		consoleScroll.drawsBackground = true
 		consoleScroll.backgroundColor = Theme.current.editorBackground
 		consoleScroll.scrollerStyle = NSScroller.preferredScrollerStyle
-		addSubview(consoleScroll)
-		consoleScroll.translatesAutoresizingMaskIntoConstraints = false
+		consoleScroll.isHidden = true
+		rightSide.addSubview(consoleScroll)
 
+		sideTabs = NSSegmentedControl(
+			labels: ["Variables", "Console"], trackingMode: .selectOne,
+			target: self, action: #selector(sideTabChanged)
+		)
+		sideTabs.selectedSegment = 0
+		sideTabs.controlSize = .small
+		sideTabs.font = Theme.current.uiFont(10.5)
+		addSubview(sideTabs)
+
+		for view in [consoleScroll, variablesScroll, sideTabs] as [NSView] {
+			view.translatesAutoresizingMaskIntoConstraints = false
+		}
 		toolbar.translatesAutoresizingMaskIntoConstraints = false
 		split.translatesAutoresizingMaskIntoConstraints = false
 
 		toolbarHeight = toolbar.heightAnchor.constraint(equalToConstant: Theme.current.scaled(30))
-		consoleHeight = consoleScroll.heightAnchor.constraint(equalToConstant: Theme.current.scaled(110))
 		NSLayoutConstraint.activate([
 			toolbar.topAnchor.constraint(equalTo: topAnchor),
 			toolbar.leadingAnchor.constraint(equalTo: leadingAnchor),
 			toolbar.trailingAnchor.constraint(equalTo: trailingAnchor),
 			toolbarHeight,
 
+			// In the toolbar's own row, at the far end: it belongs to the pane
+			// rather than to the row of stepping buttons.
+			sideTabs.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
+			sideTabs.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Theme.current.scaled(10)),
+
 			split.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
 			split.leadingAnchor.constraint(equalTo: leadingAnchor),
 			split.trailingAnchor.constraint(equalTo: trailingAnchor),
-			split.bottomAnchor.constraint(equalTo: consoleScroll.topAnchor),
-
-			consoleScroll.leadingAnchor.constraint(equalTo: leadingAnchor),
-			consoleScroll.trailingAnchor.constraint(equalTo: trailingAnchor),
-			consoleScroll.bottomAnchor.constraint(equalTo: bottomAnchor),
-			consoleHeight,
+			split.bottomAnchor.constraint(equalTo: bottomAnchor),
 		])
+
+		for view in [variablesScroll, consoleScroll] as [NSView] {
+			NSLayoutConstraint.activate([
+				view.topAnchor.constraint(equalTo: rightSide.topAnchor),
+				view.leadingAnchor.constraint(equalTo: rightSide.leadingAnchor),
+				view.trailingAnchor.constraint(equalTo: rightSide.trailingAnchor),
+				view.bottomAnchor.constraint(equalTo: rightSide.bottomAnchor),
+			])
+		}
 
 		DispatchQueue.main.async { [weak split] in
 			guard let split else { return }
