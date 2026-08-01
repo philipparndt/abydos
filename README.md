@@ -121,6 +121,21 @@ ideai --open <project-dir> [--file <path>] [--expand]
       [--type <text>] [--collapse]
 ```
 
+### Make goals
+
+The run menu lists the goals of the project's Makefiles that start a Go
+program. Choosing one writes a launch configuration that:
+
+- runs everything the goal builds **except** the Go binary, through make
+- lets the debugger build the Go package itself, since a binary linked with
+  `-ldflags "-s -w"` has no symbols to debug
+- passes the arguments the recipe passes, and sets the environment it sets —
+  including `VAR=$(...)` assignments, which are evaluated in a login shell at
+  launch, so a password out of `sops` still reaches the program
+
+The extra keys are `ideai.make` and `ideai.envCommands`; anything else reading
+`launch.json` ignores them.
+
 ### Profiling
 
 `Run ▸ Profile…` (⌃⇧P) opens the profiler on the bottom panel. Point it at a

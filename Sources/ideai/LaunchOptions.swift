@@ -116,6 +116,10 @@ struct LaunchOptions {
 	var podFilter: String?
 	/// Profile the first pod the filter finds.
 	var podChoose = false
+	/// Derive a launch configuration from this make goal, then run or debug it.
+	var makeGoal: String?
+	/// Debug rather than run the derived configuration.
+	var makeDebug = false
 	/// Open the list of launch configurations.
 	var launchMenu = false
 	/// Open the editor for the selected configuration.
@@ -188,6 +192,8 @@ struct LaunchOptions {
 			case "--profile-kind": options.profilerKind = next()
 			case "--pods":       options.podFilter = next()
 			case "--pod-profile": options.podChoose = true
+			case "--make-goal":  options.makeGoal = next()
+			case "--make-debug": options.makeDebug = true
 			case "--sidebar":    options.sidebarTool = next()
 			case "--run-line":   options.runLine = next().flatMap(Int.init)
 			case "--debug-line": options.debugLine = next().flatMap(Int.init)

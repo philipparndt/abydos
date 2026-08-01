@@ -2044,6 +2044,32 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	func pushChangesForTesting() { changesPane?.pushForTesting() }
 
+	/// Derives a configuration from a make goal and starts it.
+	func runMakeGoalForTesting(_ goal: String, debug: Bool) {
+		guard let project else { return }
+		let goals = debuggableMakeGoals()
+		print("MAKE GOALS: \(goals.map(\.name))")
+
+		guard let found = goals.first(where: { $0.name == goal }),
+		      let configuration = MakeLaunch.configuration(
+		          for: goal, in: found.makefile, projectRoot: project.root
+		      )
+		else {
+			print("MAKE: no plan for \(goal)")
+			return
+		}
+		_ = try? LaunchFile.save(configuration, in: project.root)
+		selectedConfigurationName = configuration.name
+		refreshRunControl()
+
+		print("MAKE CONFIG: \(configuration.json)")
+		if debug {
+			debugConfiguration(configuration, in: project.root)
+		} else {
+			runConfiguration(configuration, in: project.root)
+		}
+	}
+
 	func showPodsForTesting(filter: String, choose: Bool, kind: String?) {
 		setPanelVisible(true)
 		bottomPanel.showProfiler(address: "localhost:6060")?
@@ -2181,7 +2207,85 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 	}
 
+	/// Runs the build and produces the environment a configuration needs, then
+	/// hands both to whatever starts it.
+	///
+	/// Both steps are skipped by configurations that declare neither, which is
+	/// every one written by hand — this is the price of a configuration
+	/// derived from a Makefile, and only those pay it.
+	private func prepare(
+		_ configuration: LaunchConfiguration,
+		in root: URL,
+		then start: @escaping ([String: String]) -> Void
+	) {
+		let evaluate = { [weak self] in
+			guard let self else { return }
+			let commands = configuration.environmentCommands
+			guard !commands.isEmpty else {
+				start(configuration.expandedEnvironment(root: root))
+				return
+			}
+
+			self.runControl?.setStatus("Reading \(configuration.name)'s environment…", busy: true)
+			Task { @MainActor in
+				let directory = URL(
+					fileURLWithPath: configuration.expandedWorkingDirectory(root: root)
+				)
+				let produced = await ShellEnvironment.evaluate(commands, in: directory)
+				if !produced.failures.isEmpty {
+					// Started anyway: the program is the one that knows whether
+					// it can do without, and it says so better than a guess.
+					self.notify(
+						"Some environment could not be read",
+						detail: produced.failures
+							.map { "\($0.key): \($0.value.isEmpty ? "produced nothing" : $0.value)" }
+							.sorted()
+							.joined(separator: "\n")
+					)
+				}
+				start(configuration.expandedEnvironment(root: root).merging(produced.values) { _, new in new })
+			}
+		}
+
+		guard let step = configuration.makeStep else {
+			evaluate()
+			return
+		}
+
+		setPanelVisible(true)
+		runControl?.setStatus("Building \(configuration.name)…", busy: true)
+		let pane = bottomPanel.runCommand(
+			title: "make",
+			command: step.commandLine(root: root),
+			directory: root
+		)
+		runningPane = pane
+		pane?.terminalView.onProcessExit = { [weak self, weak pane] code in
+			MainActor.assumeIsolated {
+				guard let self, self.runningPane === pane else { return }
+				self.runningPane = nil
+				guard code == 0 else {
+					// Nothing starts on a failed build: what would run is the
+					// last binary that built, which is the wrong one.
+					self.runControl?.setStatus("Build failed — exit code \(code)", failed: true)
+					return
+				}
+				evaluate()
+			}
+		}
+	}
+
 	private func runConfiguration(_ configuration: LaunchConfiguration, in root: URL) {
+		prepare(configuration, in: root) { [weak self] environment in
+			self?.startRun(configuration, in: root, environment: environment)
+		}
+	}
+
+	private func startRun(
+		_ configuration: LaunchConfiguration,
+		in root: URL,
+		environment: [String: String]
+	) {
 		let program = configuration.expandedProgram(root: root)
 		let directory = configuration.expandedWorkingDirectory(root: root)
 		let arguments = configuration.expandedArguments(root: root)
@@ -2198,7 +2302,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			title: configuration.name,
 			command: words.map(Self.shellQuoted).joined(separator: " "),
 			directory: URL(fileURLWithPath: directory),
-			environment: configuration.expandedEnvironment(root: root)
+			environment: environment
 		)
 		runningPane = pane
 		// The shell reports what the program exited with, which is the one thing
@@ -2223,6 +2327,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	}
 
 	private func debugConfiguration(_ configuration: LaunchConfiguration, in root: URL) {
+		prepare(configuration, in: root) { [weak self] environment in
+			self?.startDebug(configuration, in: root, environment: environment)
+		}
+	}
+
+	private func startDebug(
+		_ configuration: LaunchConfiguration,
+		in root: URL,
+		environment: [String: String]
+	) {
 		let adapter = DebugAdapters.adapter(id: configuration.adapterID) ?? DebugAdapters.lldb
 		guard let executable = DebugAdapters.executable(for: adapter) else {
 			notify("\(adapter.name) is not installed", detail: adapter.installHint)
@@ -2240,7 +2354,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				workingDirectory: URL(
 					fileURLWithPath: configuration.expandedWorkingDirectory(root: root)
 				),
-				environment: configuration.expandedEnvironment(root: root)
+				environment: environment
 			),
 			breakpoints: pendingBreakpoints
 		) else { return }
@@ -2267,6 +2381,28 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			menu.addItem(empty)
 		}
 
+		// The goals a Makefile already defines, so a project that says how to
+		// run itself does not have to be told a second time.
+		let goals = debuggableMakeGoals()
+		if !goals.isEmpty {
+			menu.addItem(.separator())
+			let heading = NSMenuItem(title: "From the Makefile", action: nil, keyEquivalent: "")
+			heading.isEnabled = false
+			menu.addItem(heading)
+
+			for goal in goals where !all.contains(where: { $0.name == "make \(goal.name)" }) {
+				let item = NSMenuItem(
+					title: "make \(goal.name)",
+					action: #selector(makeGoalChosen(_:)),
+					keyEquivalent: ""
+				)
+				item.target = self
+				item.representedObject = [goal.makefile.path.path, goal.name]
+				item.toolTip = goal.summary.isEmpty ? nil : goal.summary
+				menu.addItem(item)
+			}
+		}
+
 		menu.addItem(.separator())
 		let edit = NSMenuItem(
 			title: "Edit\u{2026}", action: #selector(editSelectedConfiguration), keyEquivalent: ""
@@ -2286,6 +2422,61 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		menu.addItem(reveal)
 
 		menu.popUp(positioning: nil, at: point, in: view)
+	}
+
+	/// The goals in the project's Makefiles that start a Go program.
+	///
+	/// Read fresh each time the menu opens: a Makefile is edited while the
+	/// project is open, and a stale list would offer goals that no longer
+	/// exist and hide the ones just added.
+	private func debuggableMakeGoals() -> [(makefile: Makefile, name: String, summary: String)] {
+		guard let project else { return [] }
+		var found: [(Makefile, String, String)] = []
+
+		for url in Makefile.find(in: project.root) {
+			guard let makefile = Makefile.read(at: url) else { continue }
+			for target in makefile.targets where MakeLaunch.plan(for: target.name, in: makefile) != nil {
+				found.append((makefile, target.name, target.summary))
+			}
+		}
+		return found
+	}
+
+	@objc private func makeGoalChosen(_ sender: NSMenuItem) {
+		guard let project,
+		      let parts = sender.representedObject as? [String], parts.count == 2,
+		      let makefile = Makefile.read(at: URL(fileURLWithPath: parts[0])),
+		      let configuration = MakeLaunch.configuration(
+		          for: parts[1], in: makefile, projectRoot: project.root
+		      )
+		else { return }
+
+		do {
+			_ = try LaunchFile.save(configuration, in: project.root)
+			selectedConfigurationName = configuration.name
+			refreshRunControl()
+			notify(
+				"Added “\(configuration.name)”",
+				detail: Self.describe(configuration, root: project.root),
+				kind: .information
+			)
+		} catch {
+			notify("Could not write launch.json", detail: error.localizedDescription)
+		}
+	}
+
+	/// What a derived configuration will actually do, in a sentence or three.
+	private static func describe(_ configuration: LaunchConfiguration, root: URL) -> String {
+		var lines: [String] = []
+		if let step = configuration.makeStep {
+			lines.append("Builds with make \(step.targets.joined(separator: " ")) first.")
+		}
+		lines.append("Debugs \(configuration.program) with the arguments the recipe passes.")
+		if !configuration.environmentCommands.isEmpty {
+			let names = configuration.environmentCommands.keys.sorted().joined(separator: ", ")
+			lines.append("\(names) come from the shell each time it starts.")
+		}
+		return lines.joined(separator: "\n")
 	}
 
 	@objc private func configurationChosen(_ sender: NSMenuItem) {

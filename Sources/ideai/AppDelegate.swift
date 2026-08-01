@@ -335,6 +335,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let goal = options.makeGoal {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+				controller?.runMakeGoalForTesting(goal, debug: options.makeDebug)
+			}
+		}
+
 		if let filter = options.podFilter {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
 				controller?.showPodsForTesting(
