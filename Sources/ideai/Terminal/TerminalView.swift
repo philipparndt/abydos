@@ -334,7 +334,8 @@ final class TerminalView: NSView, NSTextInputClient {
 				cellSize: CGSize(width: cellWidth, height: cellHeight),
 				inset: CGPoint(x: Self.horizontalInset, y: Self.verticalInset),
 				origin: visible.origin,
-				background: background
+				background: background,
+				foreground: Theme.current.editorText.components
 			),
 			faces: faces,
 			overlays: overlays
@@ -808,7 +809,8 @@ final class TerminalView: NSView, NSTextInputClient {
 				cellSize: CGSize(width: cellWidth, height: cellHeight),
 				inset: CGPoint(x: Self.horizontalInset, y: Self.verticalInset),
 				origin: .zero,
-				background: background
+				background: background,
+				foreground: Theme.current.editorText.components
 			),
 			faces: faces
 		)

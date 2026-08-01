@@ -56,6 +56,38 @@ enum TerminalPalette {
 		return colors
 	}()
 
+	/// The 256 palette entries as the shaders want them, worked out once.
+	///
+	/// Going through NSColor for this meant a colour-space conversion for every
+	/// cell of every frame — two, counting the background — which on a screen
+	/// of ten thousand cells is more work than drawing them.
+	private static let components: [SIMD4<Float>] = extended.map { color in
+		let srgb = color.usingColorSpace(.sRGB) ?? color
+		return SIMD4(
+			Float(srgb.redComponent), Float(srgb.greenComponent),
+			Float(srgb.blueComponent), Float(srgb.alphaComponent)
+		)
+	}
+
+	/// A cell's colour, without building an NSColor for it.
+	static func components(
+		for terminalColor: TerminalColor,
+		isForeground: Bool,
+		bold: Bool,
+		defaultForeground: SIMD4<Float>,
+		defaultBackground: SIMD4<Float>
+	) -> SIMD4<Float> {
+		switch terminalColor {
+		case .default:
+			return isForeground ? defaultForeground : defaultBackground
+		case let .indexed(index):
+			let resolved = (bold && index < 8) ? Int(index) + 8 : Int(index)
+			return components[min(resolved, components.count - 1)]
+		case let .rgb(red, green, blue):
+			return SIMD4(Float(red) / 255, Float(green) / 255, Float(blue) / 255, 1)
+		}
+	}
+
 	static func color(
 		for terminalColor: TerminalColor,
 		isForeground: Bool,

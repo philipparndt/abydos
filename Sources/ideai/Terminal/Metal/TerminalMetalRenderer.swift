@@ -90,6 +90,7 @@ final class TerminalMetalRenderer {
 		/// Where the visible window starts within the document.
 		var origin: CGPoint
 		var background: SIMD4<Float>
+		var foreground: SIMD4<Float>
 	}
 
 	/// Turns rows of cells into instances.
@@ -134,15 +135,23 @@ final class TerminalMetalRenderer {
 				if cell.isWideTrailer { continue }
 
 				let resolved = cell.attributes.resolved
-				var foreground = TerminalPalette.color(
-					for: resolved.foreground, isForeground: true, bold: cell.attributes.bold
+				var foreground = TerminalPalette.components(
+					for: resolved.foreground,
+					isForeground: true,
+					bold: cell.attributes.bold,
+					defaultForeground: frame.foreground,
+					defaultBackground: frame.background
 				)
-				if cell.attributes.dim { foreground = foreground.withAlphaComponent(0.6) }
-				let background = resolved.background == .default
-					? frame.background
-					: TerminalPalette.color(
-						for: resolved.background, isForeground: false, bold: false
-					).components
+				// Dimming is the alpha the CoreGraphics path uses, done here as
+				// arithmetic rather than by asking for another colour.
+				if cell.attributes.dim { foreground.w *= 0.6 }
+				let background = TerminalPalette.components(
+					for: resolved.background,
+					isForeground: false,
+					bold: false,
+					defaultForeground: frame.foreground,
+					defaultBackground: frame.background
+				)
 
 				let x = columnEdge(column)
 				let isWide = column + 1 < line.cells.count && line.cells[column + 1].isWideTrailer
@@ -155,7 +164,7 @@ final class TerminalMetalRenderer {
 					glyphSize: .zero,
 					uvOrigin: .zero,
 					uvSize: .zero,
-					foreground: cell.attributes.hidden ? background : foreground.components,
+					foreground: cell.attributes.hidden ? background : foreground,
 					background: background,
 					isColour: 0
 				)
