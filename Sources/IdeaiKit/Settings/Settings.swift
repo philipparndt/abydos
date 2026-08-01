@@ -15,7 +15,7 @@ public final class Settings {
 		self.defaults = defaults
 		defaults.register(defaults: [
 			Key.autoSaveEnabled: true,
-			Key.autoSaveDelay: 1.0,
+			Key.autoSaveDelay: 15.0,
 			Key.saveOnFocusLoss: true,
 			Key.editorFontSize: 12.5,
 			Key.editorLineHeight: 1.4,
@@ -98,8 +98,15 @@ public final class Settings {
 	}
 
 	/// Idle time before an edited file is written, in seconds.
+	///
+	/// Fifteen, which is what IDEA uses, and for the reason IDEA uses it: a
+	/// file on disk is watched by other things — a test runner, a bundler, a
+	/// preview — and writing it a second after every pause in typing sets all
+	/// of them off on text that is half-written. The save that matters is the
+	/// one before you switch away or run something, and both of those happen
+	/// regardless of this timer.
 	public var autoSaveDelay: TimeInterval {
-		get { max(0.2, min(30, defaults.double(forKey: Key.autoSaveDelay))) }
+		get { max(0.2, min(600, defaults.double(forKey: Key.autoSaveDelay))) }
 		set { set(newValue, Key.autoSaveDelay) }
 	}
 

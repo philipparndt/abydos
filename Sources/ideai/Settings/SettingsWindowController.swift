@@ -324,9 +324,10 @@ final class SettingsPaneController: NSViewController {
 			),
 			.slider(
 				title: "Delay",
-				help: "How long to wait after the last keystroke.",
-				range: 0.5...5.0, step: 0.5,
-				format: { String(format: "%.1f s", $0) },
+				help: "Idle time before writing. Long, so file watchers are not set off mid-word; "
+					+ "switching away and running both save regardless.",
+				range: 1...60, step: 1,
+				format: { String(format: "%.0f s", $0) },
 				get: { Settings.shared.autoSaveDelay },
 				set: { Settings.shared.autoSaveDelay = $0 }
 			),

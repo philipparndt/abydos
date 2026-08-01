@@ -802,6 +802,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			return
 		}
 
+		// Whatever is about to read these files reads them from disk, so what
+		// is in the editor has to be there first. IDEA does the same before a
+		// run, and it is what makes a long idle timer safe.
+		autoSaveAll()
+
 		let command: GoTooling.Command
 		switch action {
 		case .run, .build, .debug:

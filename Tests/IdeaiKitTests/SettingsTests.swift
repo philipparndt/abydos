@@ -16,7 +16,9 @@ struct SettingsTests {
 		defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
 
 		#expect(settings.autoSaveEnabled, "auto save must default to on")
-		#expect(settings.autoSaveDelay == 1.0)
+		// Long by default, so writing a file does not set off everything
+		// watching it while somebody is still typing the line.
+		#expect(settings.autoSaveDelay == 15.0)
 		#expect(settings.saveOnFocusLoss)
 	}
 
