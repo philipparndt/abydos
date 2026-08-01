@@ -430,6 +430,12 @@ final class EditorAreaController: NSViewController {
 		(activeGroup ?? groups.first)?.toggleFileHistory()
 	}
 
+	func focusForTesting() {
+		guard let group = activeGroup ?? groups.first, let codeView = group.view.window else { return }
+		_ = codeView
+		group.focusForTesting()
+	}
+
 	func undoForTesting() {
 		(activeGroup ?? groups.first)?.undoForTesting()
 	}

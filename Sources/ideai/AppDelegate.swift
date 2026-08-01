@@ -137,6 +137,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if options.terminalTabKey {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+				controller?.exerciseTerminalTabKeyForTesting()
+			}
+		}
+
 		if options.debugSteps {
 			// After the breakpoint has been set, which is scheduled at 1.0.
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
@@ -688,6 +694,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 		let newTerminalItem = NSMenuItem(title: "New Terminal", action: #selector(MainWindowController.newTerminal(_:)), keyEquivalent: "t")
 		newTerminalItem.keyEquivalentModifierMask = [.command, .shift]
 		viewMenu.addItem(newTerminalItem)
+
+		// The same thing on ⌘T, but only while the terminal has the keyboard —
+		// where that is the key everybody's fingers already reach for.
+		let terminalTabItem = NSMenuItem(
+			title: "New Terminal Tab",
+			action: #selector(MainWindowController.newTerminalTab(_:)),
+			keyEquivalent: "t"
+		)
+		terminalTabItem.keyEquivalentModifierMask = [.command]
+		viewMenu.addItem(terminalTabItem)
 		let followTerminal = NSMenuItem(
 			title: "Follow Terminal Project",
 			action: #selector(MainWindowController.toggleFollowTerminal(_:)),

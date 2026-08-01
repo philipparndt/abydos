@@ -763,6 +763,11 @@ final class EditorViewController: NSViewController {
 		historyPopup.toggle(history: document.history, over: codeView)
 	}
 
+	func focusForTesting() {
+		guard let codeView = activeTab?.codeView else { return }
+		view.window?.makeFirstResponder(codeView)
+	}
+
 	func undoForTesting() {
 		activeTab?.codeView?.undo(nil)
 	}

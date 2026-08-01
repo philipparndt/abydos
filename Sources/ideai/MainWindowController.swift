@@ -522,8 +522,38 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		     #selector(debugStepOver(_:)), #selector(debugStepInto(_:)),
 		     #selector(debugStepOut(_:)), #selector(debugStop(_:)):
 			return debugSession?.isActive ?? false
+		case #selector(newTerminalTab(_:)):
+			return bottomPanel.hasKeyboardFocus
 		default:
 			return true
+		}
+	}
+
+	/// Presses ⌘T in the editor and then in the terminal.
+	///
+	/// Through the menu's own validation and action, which is what the key
+	/// press does — checking the method exists would prove nothing about
+	/// whether the shortcut reaches it or is enabled at the right moment.
+	func exerciseTerminalTabKeyForTesting() {
+		let item = NSMenuItem(
+			title: "New Terminal Tab", action: #selector(newTerminalTab(_:)), keyEquivalent: "t"
+		)
+
+		editor.focusForTesting()
+		print("TAB: in editor   focused=\(isTerminalFocused) enabled=\(validateMenuItem(item)) "
+			+ "sessions=\(terminalSessionCountForTesting)")
+		if validateMenuItem(item) { newTerminalTab(nil) }
+
+		toggleTerminal(nil)
+		DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+			guard let self else { return }
+			print("TAB: in terminal focused=\(self.isTerminalFocused) "
+				+ "enabled=\(self.validateMenuItem(item)) sessions=\(self.terminalSessionCountForTesting)")
+			if self.validateMenuItem(item) { self.newTerminalTab(nil) }
+
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+				print("TAB: after ⌘T   sessions=\(self.terminalSessionCountForTesting)")
+			}
 		}
 	}
 
@@ -1215,6 +1245,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		setPanelVisible(true)
 		bottomPanel.newTerminal()
 	}
+
+	/// ⌘T while the keyboard is in the terminal: another tab.
+	///
+	/// Enabled only there, so the shortcut belongs to the terminal the way it
+	/// does in a terminal application, and is not taken away from anything
+	/// else that might want it elsewhere in the window.
+	@objc func newTerminalTab(_ sender: Any?) {
+		guard bottomPanel.hasKeyboardFocus else { return }
+		bottomPanel.newTerminal()
+	}
+
+	var isTerminalFocused: Bool { bottomPanel.hasKeyboardFocus }
+	var terminalSessionCountForTesting: Int { bottomPanel.sessionCountForTesting }
 
 	// MARK: - Zoom
 

@@ -211,6 +211,19 @@ final class BottomPanel: NSView {
 
 	// MARK: - Sessions
 
+	/// Whether the keyboard is in this panel.
+	///
+	/// Asked by ⌘T, which means "another terminal tab" while typing in one and
+	/// nothing at all anywhere else — the same key doing two jobs depending on
+	/// where you are is exactly what makes it feel native.
+	var hasKeyboardFocus: Bool {
+		guard !isHidden, let responder = window?.firstResponder as? NSView else { return false }
+		return responder === self || responder.isDescendant(of: self)
+	}
+
+	/// How many sessions are open, for checking a new tab arrived.
+	var sessionCountForTesting: Int { sessions.count }
+
 	/// Opens a shell, or focuses the existing one if there already is a terminal.
 	@discardableResult
 	func showTerminal() -> TerminalPane? {
