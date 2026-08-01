@@ -328,9 +328,28 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// display shows sixty frames a second whatever we do.
 	@objc private func renderIfNeeded() {
 		guard needsRender, metal != nil else { return }
+
+		// A program part-way through rewriting the screen has said so, and what
+		// is on the grid meanwhile is half-drawn. Waiting for it to finish is
+		// the difference between a pane resize that redraws and one that
+		// flickers.
+		if emulator.isSynchronizingOutput {
+			let now = Date()
+			if heldFrameSince == nil { heldFrameSince = now }
+			// Unless it has been holding too long. A program that sets the mode
+			// and then stops — or is killed — must not freeze the screen.
+			if now.timeIntervalSince(heldFrameSince ?? now) < Self.longestHeldFrame { return }
+		}
+		heldFrameSince = nil
+
 		needsRender = false
 		renderMetal()
 	}
+
+	/// When the current frame was first held back, if it was.
+	private var heldFrameSince: Date?
+	/// How long to believe a program that says it is mid-repaint.
+	private static let longestHeldFrame: TimeInterval = 0.1
 
 	/// Draws what is on screen.
 	private func renderMetal() {

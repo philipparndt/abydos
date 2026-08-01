@@ -266,11 +266,20 @@ final class TerminalMetalRenderer {
 			type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: instances.count
 		)
 		encoder.endEncoding()
-		if let drawable { commands.present(drawable) }
 		commands.commit()
-		// Waited on only when there is no drawable, which means someone is about
-		// to read the pixels back. On screen the GPU is left to get on with it.
-		if drawable == nil { commands.waitUntilCompleted() }
+
+		guard let drawable else {
+			// No drawable means someone is about to read the pixels back.
+			commands.waitUntilCompleted()
+			return
+		}
+
+		// The layer presents with the transaction, so the frame has to be handed
+		// over here rather than by the command buffer: waited until the GPU has
+		// the work, then presented, so the new contents and the new size become
+		// visible together.
+		commands.waitUntilScheduled()
+		drawable.present()
 	}
 
 	/// Renders one frame into a texture and writes it out as a PNG.

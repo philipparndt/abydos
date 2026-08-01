@@ -1279,3 +1279,51 @@ struct TerminalDropTests {
 		#expect(TerminalDrop.text(for: []).isEmpty)
 	}
 }
+
+/// Synchronised output: a program saying "I am part-way through a repaint".
+struct SynchronisedOutputTests {
+	@Test func modeIsTrackedBothWays() {
+		let emulator = TerminalEmulator(rows: 4, columns: 20)
+		#expect(!emulator.isSynchronizingOutput)
+
+		emulator.write("\u{1B}[?2026h")
+		#expect(emulator.isSynchronizingOutput)
+
+		emulator.write("\u{1B}[?2026l")
+		#expect(!emulator.isSynchronizingOutput)
+	}
+
+	/// A program only uses the mode if the terminal says it has it, so the
+	/// query has to answer properly rather than plead ignorance.
+	@Test func theModeQueryReportsWhetherItIsSet() {
+		let emulator = TerminalEmulator(rows: 4, columns: 20)
+		var replies: [String] = []
+		emulator.onResponse = { replies.append($0) }
+
+		emulator.write("\u{1B}[?2026$p")
+		#expect(replies.last == "\u{1B}[?2026;2$y", "reset")
+
+		emulator.write("\u{1B}[?2026h")
+		emulator.write("\u{1B}[?2026$p")
+		#expect(replies.last == "\u{1B}[?2026;1$y", "set")
+	}
+
+	/// Anything else is still answered, so nothing is left waiting.
+	@Test func anUnknownModeIsStillAnswered() {
+		let emulator = TerminalEmulator(rows: 4, columns: 20)
+		var replies: [String] = []
+		emulator.onResponse = { replies.append($0) }
+
+		emulator.write("\u{1B}[?9999$p")
+		#expect(replies.last == "\u{1B}[?9999;0$y")
+	}
+
+	/// The screen keeps being written while the mode is on; only showing it
+	/// waits.
+	@Test func outputStillArrivesWhileSynchronised() {
+		let emulator = TerminalEmulator(rows: 4, columns: 20)
+		emulator.write("\u{1B}[?2026h")
+		emulator.write("hello")
+		#expect(emulator.screen.lines[0].text.hasPrefix("hello"))
+	}
+}

@@ -53,6 +53,13 @@ public final class TerminalEmulator {
 	public var applicationCursorKeys = false
 	public var bracketedPaste = false
 
+	/// Whether a program is part-way through rewriting the screen.
+	///
+	/// Set by mode 2026 and cleared when the program says it has finished. What
+	/// is on the grid in between is half-drawn — a pane erased but not yet
+	/// filled in — and drawing it is what makes a repaint flicker.
+	public private(set) var isSynchronizingOutput = false
+
 	/// How the program wants pointer events reported, if at all.
 	public enum MouseTracking: Equatable, Sendable {
 		case off
@@ -719,7 +726,15 @@ public final class TerminalEmulator {
 			// silence, which leaves the program waiting.
 			if introducer == 0x3F, intermediateBytes.contains(0x24) { // ? and $
 				let mode = firstParameter
-				onResponse?("\u{1B}[?\(mode);0$y")
+				// 1 means set, 2 reset, 0 not recognised. A program only uses
+				// synchronised output if the terminal says it has it, so this
+				// one has to answer properly rather than plead ignorance.
+				let state: Int
+				switch mode {
+				case 2026: state = isSynchronizingOutput ? 1 : 2
+				default: state = 0
+				}
+				onResponse?("\u{1B}[?\(mode);\(state)$y")
 			}
 		default:
 			break
@@ -749,6 +764,12 @@ public final class TerminalEmulator {
 			case 1049, 1047, 47:
 				setAlternateScreen(enabled)
 			case 2004: bracketedPaste = enabled
+			case 2026:
+				// Synchronised output. A program that is about to rewrite a lot
+				// of the screen says so first, and says when it has finished:
+				// what is shown in between is half-drawn, and showing it is what
+				// makes a repaint flicker. tmux and full-screen tools use it.
+				isSynchronizingOutput = enabled
 			default: break
 			}
 		}

@@ -20,8 +20,11 @@ final class TerminalMetalView: NSView {
 		metalLayer.pixelFormat = .bgra8Unorm
 		metalLayer.framebufferOnly = false
 		metalLayer.isOpaque = true
-		// Drawn on demand, as output arrives, rather than on a clock.
-		metalLayer.presentsWithTransaction = false
+		// The frame is handed over as part of the same layout change that
+		// resized the layer, rather than whenever the GPU gets round to it.
+		// Otherwise a resize shows the old contents stretched to the new size
+		// until the next frame arrives, which is what flickers.
+		metalLayer.presentsWithTransaction = true
 		metalLayer.autoresizingMask = []
 	}
 
