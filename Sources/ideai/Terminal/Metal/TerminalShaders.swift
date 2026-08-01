@@ -22,6 +22,9 @@ enum TerminalShaders {
 		float2 uvSize;
 		float4 foreground;
 		float4 background;
+		// Whether the glyph carries its own colours, as an emoji does, rather
+		// than coverage for the foreground to show through.
+		float isColour;
 	};
 
 	struct Uniforms {
@@ -37,6 +40,7 @@ enum TerminalShaders {
 		float4 foreground;
 		float4 background;
 		float hasGlyph;
+		float isColour;
 	};
 
 	// Two triangles from six vertex ids, so nothing has to be uploaded per
@@ -71,6 +75,7 @@ enum TerminalShaders {
 		out.foreground = cell.foreground;
 		out.background = cell.background;
 		out.hasGlyph = hasGlyph;
+		out.isColour = cell.isColour;
 
 		// The quad covers the cell and the glyph together, so some of it lies
 		// outside the glyph. Those pixels must not be sampled: they would land
@@ -84,17 +89,25 @@ enum TerminalShaders {
 
 	fragment float4 cellFragment(
 		Varying in [[stage_in]],
-		texture2d<float> atlas [[texture(0)]]
+		texture2d<float> coverageAtlas [[texture(0)]],
+		texture2d<float> colourAtlas [[texture(1)]]
 	) {
 		constexpr sampler atlasSampler(filter::nearest, address::clamp_to_zero);
 
-		float coverage = 0.0;
 		bool insideGlyph = all(in.withinGlyph >= 0.0) && all(in.withinGlyph <= 1.0);
-		if (in.hasGlyph > 0 && insideGlyph) {
-			coverage = atlas.sample(atlasSampler, in.uv).r;
+		bool hasGlyph = in.hasGlyph > 0 && insideGlyph;
+
+		if (hasGlyph && in.isColour > 0) {
+			// An emoji brings its colours with it, already multiplied by its
+			// own alpha, and sits on top of whatever the cell is painted.
+			float4 glyph = colourAtlas.sample(atlasSampler, in.uv);
+			float3 blended = glyph.rgb + in.background.rgb * (1.0 - glyph.a);
+			return float4(blended, max(in.background.a, glyph.a));
 		}
-		// The glyph is coverage, not colour: the cell's own colours show through
-		// it, which is what keeps a terminal's palette meaning what it says.
+
+		float coverage = hasGlyph ? coverageAtlas.sample(atlasSampler, in.uv).r : 0.0;
+		// Otherwise the glyph is coverage, not colour: the cell's own colours
+		// show through it, which is what keeps a palette meaning what it says.
 		float4 colour = mix(in.background, in.foreground, coverage);
 		return float4(colour.rgb, max(in.background.a, coverage * in.foreground.a));
 	}

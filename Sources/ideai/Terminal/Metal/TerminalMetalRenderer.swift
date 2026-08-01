@@ -13,6 +13,7 @@ struct CellInstance {
 	var uvSize: SIMD2<Float>
 	var foreground: SIMD4<Float>
 	var background: SIMD4<Float>
+	var isColour: Float
 }
 
 private struct Uniforms {
@@ -133,7 +134,8 @@ final class TerminalMetalRenderer {
 					uvOrigin: .zero,
 					uvSize: .zero,
 					foreground: cell.attributes.hidden ? background : foreground.components,
-					background: background
+					background: background,
+					isColour: 0
 				)
 
 				if !cell.attributes.hidden, cell.scalar != 0x20, cell.scalar != 0 {
@@ -151,6 +153,7 @@ final class TerminalMetalRenderer {
 						instance.glyphSize = SIMD2(Float(entry.size.width), Float(entry.size.height))
 						instance.uvOrigin = entry.uvOrigin
 						instance.uvSize = entry.uvSize
+						instance.isColour = entry.isColour ? 1 : 0
 					}
 				}
 
@@ -187,7 +190,8 @@ final class TerminalMetalRenderer {
 		encoder.setRenderPipelineState(pipeline)
 		encoder.setVertexBuffer(instanceBuffer, offset: 0, index: 0)
 		encoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
-		encoder.setFragmentTexture(atlas.texture, index: 0)
+		encoder.setFragmentTexture(atlas.coverageTexture, index: 0)
+		encoder.setFragmentTexture(atlas.colourTexture, index: 1)
 		encoder.drawPrimitives(
 			type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: instances.count
 		)
