@@ -529,6 +529,7 @@ final class CodeView: NSView, NSTextInputClient {
 		CTLineDraw(ctLine, context)
 
 		drawDiagnostics(docLine: docLine, ctLine: ctLine, lineStartUTF16: lineStartUTF16, rect: rect)
+		drawNavigableWord(docLine: docLine, ctLine: ctLine, lineStartUTF16: lineStartUTF16, rect: rect)
 
 		// A collapsed region gets a "{…}" chip after its first line.
 		if folding.isCollapsed(line: docLine) {
@@ -538,6 +539,105 @@ final class CodeView: NSView, NSTextInputClient {
 				hiddenLines: folding.foldRange(startingAt: docLine)?.hiddenLineCount ?? 0
 			)
 		}
+	}
+
+	/// The word under the pointer while ⌘ is held, in line-relative UTF-16.
+	private var navigableWord: (line: Int, range: Range<Int>)?
+
+	/// Underlines the word ⌘-clicking would follow.
+	///
+	/// The same affordance a link has, for the same reason: the pointer is
+	/// already over the word, and something has to say that pressing here goes
+	/// somewhere rather than putting the caret down.
+	private func drawNavigableWord(docLine: Int, ctLine: CTLine, lineStartUTF16: Int, rect: NSRect) {
+		guard let word = navigableWord, word.line == docLine else { return }
+		let length = CTLineGetStringRange(ctLine).length
+
+		// Line-relative, like a diagnostic's columns: a word in a later wrapped
+		// segment falls outside the piece being drawn and is skipped.
+		let from = word.range.lowerBound
+		guard from >= 0, from < length else { return }
+		let to = min(word.range.upperBound, length)
+		guard to > from else { return }
+
+		let startX = textOriginX + CTLineGetOffsetForStringIndex(ctLine, from, nil)
+		let endX = textOriginX + CTLineGetOffsetForStringIndex(ctLine, to, nil)
+
+		Theme.current.color(for: HighlightKind.function).setStroke()
+		let underline = NSBezierPath()
+		underline.lineWidth = 1
+		let y = rect.maxY - Theme.current.scaled(2.5)
+		underline.move(to: NSPoint(x: startX, y: y))
+		underline.line(to: NSPoint(x: endX, y: y))
+		underline.stroke()
+	}
+
+	/// Works out what ⌘ would follow at this point, and repaints if it changed.
+	private func updateNavigableWord(at point: NSPoint?, commandHeld: Bool) {
+		let found: (line: Int, range: Range<Int>)? = {
+			guard commandHeld, let point, let document, point.x > gutterWidth else { return nil }
+
+			let offset = self.offset(at: point)
+			let byte = document.rope.byteOffset(fromUTF16: offset)
+			let line = document.rope.line(atByteOffset: byte)
+			let lineRange = document.rope.lineByteRange(line)
+			let lineStart = document.rope.utf16Offset(fromByte: lineRange.lowerBound)
+			let text = document.rope.string(in: lineRange) as NSString
+
+			func isWordCharacter(_ index: Int) -> Bool {
+				guard index >= 0, index < text.length else { return false }
+				let unit = text.character(at: index)
+				guard let scalar = Unicode.Scalar(unit) else { return false }
+				return CharacterSet.alphanumerics.contains(scalar)
+					|| unit == UInt16(UnicodeScalar("_").value)
+			}
+
+			var start = max(0, min(offset - lineStart, text.length))
+			var end = start
+			// Pointing just past a word counts as pointing at it; pointing at
+			// whitespace does not.
+			if !isWordCharacter(start), isWordCharacter(start - 1) { start -= 1; end = start }
+			guard isWordCharacter(start) else { return nil }
+
+			while isWordCharacter(start - 1) { start -= 1 }
+			while isWordCharacter(end) { end += 1 }
+			return (line, start..<end)
+		}()
+
+		let changed = found?.line != navigableWord?.line || found?.range != navigableWord?.range
+		guard changed else { return }
+		navigableWord = found
+		// The pointer says the same thing the underline does.
+		if found != nil { NSCursor.pointingHand.set() } else { NSCursor.iBeam.set() }
+		needsDisplay = true
+	}
+
+	/// Pretends the pointer is at a line and column with ⌘ held.
+	func hoverWithCommandForTesting(line: Int, character: Int) {
+		guard let document else { return }
+		let lineStart = document.rope.utf16Offset(fromByte: document.rope.byteOffset(ofLine: line))
+		let point = pointForTesting(offset: lineStart + character, line: line)
+		updateNavigableWord(at: point, commandHeld: true)
+	}
+
+	private func pointForTesting(offset: Int, line: Int) -> NSPoint {
+		let row = firstVisualRow(forDocumentLine: line)
+		return NSPoint(
+			x: textOriginX + CGFloat(offset - document!.rope.utf16Offset(
+				fromByte: document!.rope.byteOffset(ofLine: line)
+			)) * charWidth + charWidth / 2,
+			y: CGFloat(row) * lineHeight + lineHeight / 2
+		)
+	}
+
+	override func flagsChanged(with event: NSEvent) {
+		super.flagsChanged(with: event)
+		guard let window else { return }
+		let point = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+		updateNavigableWord(
+			at: bounds.contains(point) ? point : nil,
+			commandHeld: event.modifierFlags.contains(.command)
+		)
 	}
 
 	/// Underlines what a language server objects to on this line.
@@ -617,6 +717,12 @@ final class CodeView: NSView, NSTextInputClient {
 
 	override func mouseMoved(with event: NSEvent) {
 		super.mouseMoved(with: event)
+		let hoverPoint = convert(event.locationInWindow, from: nil)
+		updateNavigableWord(
+			at: hoverPoint,
+			commandHeld: event.modifierFlags.contains(.command)
+		)
+
 		guard hasDiagnostics, let document else {
 			if toolTip != nil { toolTip = nil }
 			return
@@ -653,6 +759,7 @@ final class CodeView: NSView, NSTextInputClient {
 	override func mouseExited(with event: NSEvent) {
 		super.mouseExited(with: event)
 		toolTip = nil
+		updateNavigableWord(at: nil, commandHeld: false)
 	}
 
 	/// Paints match backgrounds for one line.
@@ -1222,6 +1329,7 @@ final class CodeView: NSView, NSTextInputClient {
 		// ⌘-click follows a symbol, as it does in every other editor. The caret
 		// moves there first, so the place jumped from is where it was left.
 		if event.modifierFlags.contains(.command), let document {
+			updateNavigableWord(at: nil, commandHeld: false)
 			setCaret(offset, extendingSelection: false)
 			let line = document.rope.line(atByteOffset: document.rope.byteOffset(fromUTF16: offset))
 			let lineStart = document.rope.utf16Offset(fromByte: document.rope.byteOffset(ofLine: line))

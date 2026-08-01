@@ -464,6 +464,10 @@ final class EditorAreaController: NSViewController {
 		(activeGroup ?? groups.first)?.goToDefinitionForTesting(line: line, character: character)
 	}
 
+	func hoverWithCommandForTesting(line: Int, character: Int) {
+		(activeGroup ?? groups.first)?.hoverWithCommandForTesting(line: line, character: character)
+	}
+
 	func undoForTesting() {
 		(activeGroup ?? groups.first)?.undoForTesting()
 	}

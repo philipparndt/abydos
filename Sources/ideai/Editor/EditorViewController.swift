@@ -816,6 +816,10 @@ final class EditorViewController: NSViewController {
 		goToDefinition(from: tab, line: line, character: character)
 	}
 
+	func hoverWithCommandForTesting(line: Int, character: Int) {
+		activeTab?.codeView?.hoverWithCommandForTesting(line: line, character: character)
+	}
+
 	func undoForTesting() {
 		activeTab?.codeView?.undo(nil)
 	}

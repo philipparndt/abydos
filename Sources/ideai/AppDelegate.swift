@@ -335,6 +335,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let spec = options.commandHoverAt {
+			let parts = spec.split(separator: ":").compactMap { Int($0) }
+			DispatchQueue.main.asyncAfter(deadline: .now() + max(1, options.screenshotDelay - 1)) {
+				guard parts.count == 2 else { return }
+				controller?.editorForTesting.hoverWithCommandForTesting(
+					line: parts[0] - 1, character: parts[1]
+				)
+			}
+		}
+
 		if let steps = options.navigateSteps {
 			DispatchQueue.main.asyncAfter(deadline: .now() + max(1, options.screenshotDelay - 1.5)) {
 				controller?.navigateForTesting(steps)

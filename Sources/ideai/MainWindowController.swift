@@ -2019,6 +2019,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	func pushChangesForTesting() { changesPane?.pushForTesting() }
 
+	var editorForTesting: EditorAreaController { editor }
+
 	/// Walks the history and reports where each step landed.
 	func navigateForTesting(_ steps: String) {
 		for step in steps.split(separator: ",") {
