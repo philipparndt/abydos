@@ -187,7 +187,7 @@ final class DebugPane: NSView {
 	}
 
 	private func wireSession() {
-		session.onStateChange = { [weak self] state in
+		session.observeState { [weak self] state in
 			self?.toolbar.update(state: state)
 		}
 		session.onStackChanged = { [weak self] in
@@ -199,7 +199,7 @@ final class DebugPane: NSView {
 		session.onVariablesChanged = { [weak self] in
 			self?.rebuildVariableTree()
 		}
-		session.onStoppedAt = { [weak self] file, line in
+		session.observeStopped { [weak self] file, line in
 			self?.onNavigate?(URL(fileURLWithPath: file), line)
 		}
 	}

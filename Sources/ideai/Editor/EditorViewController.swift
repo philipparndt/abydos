@@ -1564,6 +1564,11 @@ final class EditorViewController: NSViewController {
 				frame.minX, frame.minY, frame.width, frame.height, caret.x, caret.y)
 	}
 
+	@discardableResult
+	func writeCompletionImageForTesting(to path: String) -> Bool {
+		completions.writeImageForTesting(to: path)
+	}
+
 	/// Chooses from the list as pressing return would.
 	func commitCompletionForTesting() -> Bool {
 		completions.commitSelection()

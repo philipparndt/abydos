@@ -884,13 +884,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			guard let self, let session else { return }
 			self.syncBreakpointsToEditor(from: session)
 		}
-		session.onStoppedAt = { [weak self] file, line in
+		session.observeStopped { [weak self] file, line in
 			guard let self else { return }
 			self.executionMarker = (file, line)
 			self.editor.open(fileURL: URL(fileURLWithPath: file), atLine: line)
 			self.editor.setExecutionLocation(file: file, line: line)
 		}
-		session.onStateChange = { [weak self] state in
+		session.observeState { [weak self] state in
 			// The marker must go when execution resumes or the process ends.
 			switch state {
 			case .running, .terminated, .idle:
@@ -1649,6 +1649,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
 			guard let self else { return }
 			print("COMPLETE: \(self.editor.completionReportForTesting)")
+
+			self.editor.writeCompletionImageForTesting(to: "build/completion-list.png")
 
 			// Down once, then take it, so what lands in the document is the
 			// second suggestion rather than whatever was highlighted first.

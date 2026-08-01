@@ -47,7 +47,7 @@ final class CompletionPopup: NSObject {
 	var isVisible: Bool { window?.isVisible ?? false }
 	var selectedItem: CompletionItem? { items.indices.contains(selection) ? items[selection] : nil }
 
-	private static let rowHeight: CGFloat = 20
+	private static var rowHeight: CGFloat { Theme.current.scaled(22) }
 	private static let maximumVisibleRows = 9
 
 	override init() { super.init() }
@@ -69,12 +69,15 @@ final class CompletionPopup: NSObject {
 		let width = Self.width(for: items)
 		let height = Self.rowHeight * CGFloat(min(items.count, Self.maximumVisibleRows)) + 2
 
-		// Below the caret, unless that would run off the bottom of the screen,
-		// in which case above it — where a menu would go.
+		// Clear of the line it belongs to. `point` is the top of the caret, so
+		// the line's bottom is a line-height below it; a list placed straight
+		// under the point covers the very text being completed.
+		let lineBottom = point.y - lineHeight
 		let screen = parent.screen ?? NSScreen.main
-		var origin = NSPoint(x: point.x, y: point.y - height - 2)
+		var origin = NSPoint(x: point.x, y: lineBottom - height - 4)
 		if let frame = screen?.visibleFrame, origin.y < frame.minY {
-			origin.y = point.y + lineHeight + 2
+			// No room underneath: above the line, where a menu would go.
+			origin.y = point.y + 4
 		}
 
 		window.setFrame(NSRect(origin: origin, size: NSSize(width: width, height: height)), display: true)
@@ -112,7 +115,7 @@ final class CompletionPopup: NSObject {
 
 	private static func width(for items: [CompletionItem]) -> CGFloat {
 		let font = Theme.current.uiFont(12)
-		let widest = items.reduce(CGFloat(120)) { widest, item in
+		let widest = items.reduce(CGFloat(200)) { widest, item in
 			var text = item.label
 			if let detail = item.detail { text += "   \(detail)" }
 			let size = (text as NSString).size(withAttributes: [.font: font])
@@ -129,6 +132,10 @@ final class CompletionPopup: NSObject {
 		table.intercellSpacing = .zero
 		table.gridStyleMask = []
 		table.selectionHighlightStyle = .regular
+		// Plain, or AppKit insets every row and draws the selection as a
+		// rounded capsule floating inside it — which in a list this small is
+		// most of the popup, and clips the text it is meant to be showing.
+		table.style = .plain
 		table.addTableColumn(NSTableColumn(identifier: NSUserInterfaceItemIdentifier("completion")))
 		table.dataSource = self
 		table.delegate = self
@@ -142,6 +149,9 @@ final class CompletionPopup: NSObject {
 		scroll.drawsBackground = true
 		scroll.backgroundColor = Theme.current.sidebarBackground
 		scroll.autohidesScrollers = true
+		// Overlay, so a scroller does not take a strip out of a list that is
+		// only a couple of hundred points wide.
+		scroll.scrollerStyle = .overlay
 
 		let window = NSPanel(
 			contentRect: NSRect(x: 0, y: 0, width: 260, height: 120),
@@ -172,6 +182,18 @@ final class CompletionPopup: NSObject {
 	}
 
 	// MARK: - Testing
+
+	/// Draws the list to a PNG, since a child window is invisible to a capture
+	/// of the main one.
+	@discardableResult
+	func writeImageForTesting(to path: String) -> Bool {
+		guard let view = window?.contentView else { return false }
+		view.layoutSubtreeIfNeeded()
+		guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return false }
+		view.cacheDisplay(in: view.bounds, to: rep)
+		guard let data = rep.representation(using: .png, properties: [:]) else { return false }
+		return (try? data.write(to: URL(fileURLWithPath: path))) != nil
+	}
 
 	var labelsForTesting: [String] { items.map(\.label) }
 	var selectedIndexForTesting: Int { selection }

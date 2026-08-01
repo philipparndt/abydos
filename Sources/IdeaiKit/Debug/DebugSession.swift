@@ -82,7 +82,10 @@ public final class DebugSession {
 		didSet {
 			guard state != oldValue else { return }
 			let current = state
-			onMain { [weak self] in self?.onStateChange?(current) }
+			onMain { [weak self] in
+				guard let self else { return }
+				for observer in self.stateObservers { observer(current) }
+			}
 		}
 	}
 
@@ -94,13 +97,29 @@ public final class DebugSession {
 	/// Frame whose variables are shown.
 	public private(set) var selectedFrameID: Int?
 
-	public var onStateChange: ((State) -> Void)?
+	/// Told whenever the state changes.
+	///
+	/// A list rather than one closure, because more than one thing genuinely
+	/// needs to know: the pane enables its toolbar, the window clears the
+	/// execution marker. With a single property the second assignment silently
+	/// replaced the first, and the toolbar sat greyed out while the program was
+	/// plainly stopped with a stack on screen.
+	private var stateObservers: [(State) -> Void] = []
+
+	public func observeState(_ observer: @escaping (State) -> Void) {
+		stateObservers.append(observer)
+	}
 	public var onStackChanged: (() -> Void)?
 	public var onVariablesChanged: (() -> Void)?
 	public var onBreakpointsChanged: (() -> Void)?
 	public var onOutput: ((String) -> Void)?
 	/// Fired when execution stops somewhere with a source location.
-	public var onStoppedAt: ((_ file: String, _ line: Int) -> Void)?
+	/// Told where execution stopped. A list, for the same reason as above.
+	private var stoppedObservers: [(String, Int) -> Void] = []
+
+	public func observeStopped(_ observer: @escaping (String, Int) -> Void) {
+		stoppedObservers.append(observer)
+	}
 
 	private let client: DAPClient
 	private let projectRoot: URL
@@ -390,7 +409,7 @@ public final class DebugSession {
 			// Opening the file is AppKit work, so it belongs on this side of
 			// the hop with everything else.
 			if let file = top?.file, let line = top?.line {
-				self.onStoppedAt?(file, line)
+				for observer in self.stoppedObservers { observer(file, line) }
 			}
 		}
 
