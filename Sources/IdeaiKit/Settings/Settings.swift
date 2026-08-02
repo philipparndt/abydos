@@ -30,6 +30,7 @@ public final class Settings {
 			Key.terminalBellStyle: "sound",
 			Key.opensProjectsInNewWindow: false,
 			Key.showsInlineDiagnostics: true,
+			Key.agentPermissions: "acceptEdits",
 		])
 	}
 
@@ -43,6 +44,7 @@ public final class Settings {
 		static let showHiddenFiles = "showHiddenFiles"
 		static let opensProjectsInNewWindow = "opensProjectsInNewWindow"
 		static let showsInlineDiagnostics = "showsInlineDiagnostics"
+		static let agentPermissions = "agentPermissions"
 		static let excludedDirectories = "excludedDirectories"
 		static let uiScale = "uiScale"
 		static let terminalFontName = "terminalFontName"
@@ -201,6 +203,17 @@ public final class Settings {
 	public var opensProjectsInNewWindow: Bool {
 		get { defaults.bool(forKey: Key.opensProjectsInNewWindow) }
 		set { set(newValue, Key.opensProjectsInNewWindow) }
+	}
+
+	/// How much an agent may do without being asked.
+	///
+	/// `acceptEdits` by default: an agent asked to fix one problem that then
+	/// stops to ask whether it may edit the file is an agent that has not been
+	/// asked anything. `ask` is the tool's own behaviour, and `full` is
+	/// everything, including commands.
+	public var agentPermissions: String {
+		get { defaults.string(forKey: Key.agentPermissions) ?? "acceptEdits" }
+		set { set(newValue, Key.agentPermissions) }
 	}
 
 	/// Whether a problem's message is written beside the line it is on.

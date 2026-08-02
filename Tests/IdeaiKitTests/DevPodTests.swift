@@ -521,3 +521,21 @@ struct DevPodUpgradeTests {
 		#expect(DevPodInstall.upgradeNeeded(desired: ["ingress.enabled=true"], deployed: "{}"))
 	}
 }
+
+/// What an agent is allowed to do without stopping to ask.
+struct AgentPermissionTests {
+	@Test func acceptingEditsIsTheDefault() {
+		#expect(AgentLauncher.permissionArguments("acceptEdits") == ["--permission-mode", "acceptEdits"])
+		#expect(AgentLauncher.permissionArguments("anything else") == ["--permission-mode", "acceptEdits"])
+	}
+
+	/// An agent asked to fix one problem that stops to ask whether it may edit
+	/// the file has not been asked anything.
+	@Test func askingIsTheToolsOwnBehaviour() {
+		#expect(AgentLauncher.permissionArguments("ask").isEmpty)
+	}
+
+	@Test func everythingSkipsThePromptsEntirely() {
+		#expect(AgentLauncher.permissionArguments("full") == ["--dangerously-skip-permissions"])
+	}
+}

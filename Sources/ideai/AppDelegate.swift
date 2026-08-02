@@ -237,6 +237,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if options.launchProfile {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+				controller?.profileSelectedForTesting()
+			}
+		}
+
 		if options.launchRun || options.launchDebug || options.launchMenu || options.launchEditor {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
 				// Echoed so a capture run can be read from a terminal: what the

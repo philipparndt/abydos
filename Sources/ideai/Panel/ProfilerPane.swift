@@ -57,10 +57,10 @@ final class ProfilerPane: NSView {
 		addressField.bezelStyle = .roundedBezel
 		addressField.focusRingType = .none
 		addressField.target = self
-		addressField.action = #selector(connect)
+		addressField.action = #selector(connectFromControl)
 		addressField.toolTip = "A port, a host and port, or a URL"
 
-		let connectButton = NSButton(title: "Connect", target: self, action: #selector(connect))
+		let connectButton = NSButton(title: "Connect", target: self, action: #selector(connectFromControl))
 		connectButton.bezelStyle = .rounded
 		connectButton.controlSize = .small
 
@@ -232,7 +232,9 @@ final class ProfilerPane: NSView {
 		secondsField.isHidden = selectedKind?.isTimed != true
 	}
 
-	@objc private func connect() {
+	@objc private func connectFromControl() { connectNow() }
+
+	private func connectNow() {
 		guard let endpoint = PprofEndpoint(text: addressField.stringValue) else {
 			setStatus("That is not an address", failed: true)
 			return
@@ -253,7 +255,7 @@ final class ProfilerPane: NSView {
 
 	@objc private func collect() {
 		guard let endpoint else {
-			connect()
+			connectNow()
 			return
 		}
 		guard let kind = selectedKind, !isBusy else { return }
@@ -306,7 +308,7 @@ final class ProfilerPane: NSView {
 				forward = tunnel
 				addressField.stringValue = "localhost:\(tunnel.localPort)"
 				setStatus("\(pod.namespace)/\(pod.name) via :\(tunnel.localPort)")
-				connect()
+				connectNow()
 			} catch {
 				setStatus(Self.describe(forwardFailure: error, pod: pod), failed: true)
 			}
@@ -370,9 +372,15 @@ final class ProfilerPane: NSView {
 
 	// MARK: - Testing
 
-	func connectForTesting(address: String) {
+	/// Points the profiler at an address and connects, without waiting to be
+	/// asked. Used when a run has just put something profilable somewhere.
+	func connect(to address: String) {
 		addressField.stringValue = address
-		connect()
+		connectNow()
+	}
+
+	func connectForTesting(address: String) {
+		connect(to: address)
 	}
 
 	func collectForTesting(kind: String, seconds: Int? = nil) {

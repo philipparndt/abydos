@@ -284,6 +284,7 @@ public enum AgentLauncher {
 		var arguments: [String] = [prompt]
 		arguments += ["--mcp-config", server.configurationJSON()]
 		arguments += ["--strict-mcp-config"]
+		arguments += permissionArguments()
 
 		// Pre-allow only our reporting tools, so the review is not interrupted by
 		// a permission prompt for the thing it was asked to do.
@@ -293,6 +294,21 @@ public enum AgentLauncher {
 		}
 
 		return Command(executable: executable, arguments: arguments)
+	}
+
+	/// What the agent may do without stopping to ask.
+	///
+	/// An agent handed one job that then asks whether it may edit the file, or
+	/// whether this folder is to be trusted, is an agent nobody asked anything
+	/// — the question was already answered by pressing the button.
+	public static func permissionArguments(
+		_ mode: String = Settings.shared.agentPermissions
+	) -> [String] {
+		switch mode {
+		case "full": return ["--dangerously-skip-permissions"]
+		case "ask": return []
+		default: return ["--permission-mode", "acceptEdits"]
+		}
 	}
 
 	/// What a review looks at.

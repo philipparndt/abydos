@@ -492,7 +492,10 @@ final class BottomPanel: NSView {
 		if let index = sessions.firstIndex(where: { $0.title == title }),
 		   case let .terminal(existing) = sessions[index].kind {
 			pane = existing
-			activate(index: index, focus: false)
+			// Brought forward when a launch begins, and not again: a log that
+			// pulls itself in front on every line is a log that cannot be
+			// looked away from.
+			if reset { activate(index: index, focus: false) }
 		} else {
 			pane = TerminalPane(readOnly: ())
 			sessions.append(Session(title: title, kind: .terminal(pane)))
@@ -511,8 +514,10 @@ final class BottomPanel: NSView {
 		let pane: TerminalPane
 		if let index = sessions.firstIndex(where: { $0.title == title }),
 		   case let .terminal(existing) = sessions[index].kind {
+			// Not activated: this arrives once a second while a program runs in
+			// a cluster, and a tab that pulls itself to the front every second
+			// is a tab nothing else can be looked at beside.
 			pane = existing
-			activate(index: index, focus: false)
 		} else {
 			pane = TerminalPane(readOnly: ())
 			let session = Session(title: title, kind: .terminal(pane))
@@ -535,11 +540,14 @@ final class BottomPanel: NSView {
 	/// program, and the question "which of these is the live one" is not worth
 	/// asking.
 	@discardableResult
-	func showProfiler(address: String) -> ProfilerPane? {
+	func showProfiler(address: String, connecting: Bool = false) -> ProfilerPane? {
 		if let index = sessions.firstIndex(where: {
 			if case .profiler = $0.kind { return true }; return false
 		}), case let .profiler(pane) = sessions[index].kind {
 			activate(index: index, focus: true)
+			// The one that is already open is pointed at the new address: a
+			// profiler showing the last run's port is worse than none.
+			if connecting { pane.connect(to: address) }
 			return pane
 		}
 
@@ -550,6 +558,7 @@ final class BottomPanel: NSView {
 		let session = Session(title: "Profiler", kind: .profiler(pane))
 		sessions.append(session)
 		activate(index: sessions.count - 1, focus: true)
+		if connecting { pane.connect(to: address) }
 		return pane
 	}
 
@@ -795,7 +804,10 @@ final class BottomPanel: NSView {
 
 		let pane = TerminalPane(
 			workingDirectory: root,
-			command: (executable: executable, arguments: [prompt])
+			command: (
+				executable: executable,
+				arguments: [prompt] + AgentLauncher.permissionArguments()
+			)
 		)
 		let session = Session(title: title, kind: .terminal(pane))
 		wire(session)

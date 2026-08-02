@@ -17,8 +17,13 @@ final class LaunchConfigurationsPage: NSView {
 	/// when a rename means the old file has to go.
 	var onSave: ((LaunchConfiguration, String?) -> Void)?
 	var onDelete: ((String) -> Void)?
-	/// Runs what is on screen, so a change can be tried without leaving.
-	var onRun: ((LaunchConfiguration, Bool) -> Void)?
+	/// Starts what is on screen, so a change can be tried without leaving.
+	var onStart: ((LaunchConfiguration, StartMode) -> Void)?
+
+	/// The ways of starting a configuration.
+	enum StartMode {
+		case run, debug, profile, coverage
+	}
 
 	private var configurations: [LaunchConfiguration] = []
 	private var selected: Int?
@@ -328,10 +333,17 @@ final class LaunchConfigurationsPage: NSView {
 		headerTitle.textColor = Theme.current.sidebarHeaderText
 		headerTitle.lineBreakMode = .byTruncatingTail
 
-		let run = actionButton("play.fill", "Run", #selector(runSelected))
-		let debug = actionButton("ladybug.fill", "Debug", #selector(debugSelected))
-
-		let stack = NSStackView(views: [headerTitle, NSView(), run, debug])
+		// All four here rather than behind a chevron: the titlebar is short of
+		// room and this page is not, and this is the place where somebody is
+		// deciding what a configuration should do.
+		let stack = NSStackView(views: [
+			headerTitle,
+			NSView(),
+			actionButton("play.fill", "Run", #selector(runSelected)),
+			actionButton("ladybug.fill", "Debug", #selector(debugSelected)),
+			actionButton("gauge.with.needle", "Profile", #selector(profileSelected)),
+			actionButton("checkmark.seal", "Cover", #selector(coverSelected)),
+		])
 		stack.orientation = .horizontal
 		stack.spacing = Theme.current.scaled(8)
 		stack.alignment = .centerY
@@ -634,16 +646,15 @@ final class LaunchConfigurationsPage: NSView {
 		select(configurations.isEmpty ? nil : min(index, configurations.count - 1))
 	}
 
-	@objc private func runSelected() {
-		commit()
-		guard let index = selected, configurations.indices.contains(index) else { return }
-		onRun?(configurations[index], false)
-	}
+	@objc private func runSelected() { start(.run) }
+	@objc private func debugSelected() { start(.debug) }
+	@objc private func profileSelected() { start(.profile) }
+	@objc private func coverSelected() { start(.coverage) }
 
-	@objc private func debugSelected() {
+	private func start(_ mode: StartMode) {
 		commit()
 		guard let index = selected, configurations.indices.contains(index) else { return }
-		onRun?(configurations[index], true)
+		onStart?(configurations[index], mode)
 	}
 }
 

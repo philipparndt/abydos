@@ -286,6 +286,14 @@ final class SettingsPaneController: NSViewController {
 				set: { Settings.shared.wordWrap = $0 }
 			),
 			.choice(
+				title: "What an agent may do",
+				help: "A review or a fix runs Claude Code. Accepting edits keeps it from stopping "
+					+ "to ask whether it may change the file it was asked to change.",
+				options: [("Accept edits", "acceptEdits"), ("Ask", "ask"), ("Everything", "full")],
+				get: { Settings.shared.agentPermissions },
+				set: { Settings.shared.agentPermissions = $0 }
+			),
+			.choice(
 				title: "Terminal colours",
 				help: "Blue is the palette Ghostty ships with. Dark matches the editor.",
 				options: TerminalScheme.allCases.map { ($0.title, $0.rawValue) },

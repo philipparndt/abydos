@@ -1766,7 +1766,18 @@ final class EditorViewController: NSViewController {
 		for tab in tabs {
 			guard let document = tab.document, !document.isDirty else { continue }
 			guard document.hasChangedOnDisk else { continue }
-			tab.codeView?.reloadFromDisk()
+			guard tab.codeView?.reloadFromDisk() == true else { continue }
+
+			// And tell the language server, or its diagnostics go on describing
+			// the file as it was — which after something else has just fixed
+			// one of them is the wrong answer written in red.
+			guard let project, let languageId = document.languageId else { continue }
+			LanguageService.shared.changed(
+				url: tab.url, languageId: languageId, text: text(of: document), project: project.root
+			)
+			LanguageService.shared.saved(
+				url: tab.url, languageId: languageId, text: text(of: document), project: project.root
+			)
 		}
 	}
 

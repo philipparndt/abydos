@@ -2272,6 +2272,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	func pushChangesForTesting() { changesPane?.pushForTesting() }
 
+	/// Runs the selected configuration and puts the profiler on it.
+	func profileSelectedForTesting() { profileSelectedConfiguration() }
+
 	/// Opens two terminals side by side, as dropping one tab on the other's
 	/// edge does.
 	func splitTerminalsForTesting() {
@@ -2823,6 +2826,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 					devPodClient = client
 					followDevPodLogs(client, pod: pod)
 					await openServicePort(settings: settings, pod: pod, context: context, kubeconfig: kubeconfig)
+
+					if profileAfterRun {
+						profileAfterRun = false
+						await openProfiler(on: pod, context: context, kubeconfig: kubeconfig)
+					}
 				}
 			} catch is CancellationError {
 				stopDevPodForwards()
@@ -2934,44 +2942,27 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			return
 		}
 
+		// Asked for now, done when there is something to profile. A cluster run
+		// opens the profiler on the pod it just started; a local one waits for
+		// the program to be listening.
+		profileAfterRun = true
 		runSelectedConfiguration(debug: false)
 
-		// After it is up: a profiler pointed at a program that has not started
-		// listening yet finds nothing and says the wrong thing about why.
-		let isCluster = configuration.devPod != nil
+		guard configuration.devPod == nil else { return }
 		Task { @MainActor in
-			try? await Task.sleep(nanoseconds: 2_500_000_000)
-			if isCluster {
-				await profileRunningPod(configuration)
-			} else {
-				setPanelVisible(true)
-				bottomPanel.showProfiler(address: Self.lastProfilerAddress)
-			}
+			try? await Task.sleep(nanoseconds: 1_500_000_000)
+			guard profileAfterRun else { return }
+			profileAfterRun = false
+			setPanelVisible(true)
+			bottomPanel.showProfiler(address: Self.lastProfilerAddress, connecting: true)
 		}
 	}
 
-	/// The pod this configuration is running in, through a forward to its pprof
-	/// port.
-	private func profileRunningPod(_ configuration: LaunchConfiguration) async {
-		guard let settings = configuration.devPod, let root = project?.root else { return }
+	/// Set while a run is on its way to being profiled.
+	private var profileAfterRun = false
 
-		let current = settings.followsCurrentContext
-			? await Kubernetes.currentContext(kubeconfig: settings.kubeconfig)
-			: nil
-		guard case let .success(context) = settings.resolve(current: current) else { return }
-		let kubeconfig = settings.kubeconfig.isEmpty ? nil : settings.kubeconfig
-
-		let release = DevPodInstall.releaseName(for: root)
-		let pods = await DevPods.list(
-			context: context,
-			namespace: settings.namespace.isEmpty ? nil : settings.namespace,
-			kubeconfig: kubeconfig
-		).filter { $0.isRunning && $0.name.hasPrefix(release) }
-
-		guard let pod = pods.first else {
-			notify("Nothing to profile", detail: "No development pod is running there.")
-			return
-		}
+	/// The profiler, on the pod this run just started.
+	private func openProfiler(on pod: DevPodTarget, context: String?, kubeconfig: String?) async {
 		do {
 			let forward = try await PortForward.start(
 				to: PodTarget(
@@ -2984,10 +2975,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			)
 			devPodForwards.append(forward)
 			setPanelVisible(true)
-			bottomPanel.showProfiler(address: "localhost:\(forward.localPort)")
+			bottomPanel.showProfiler(address: "localhost:\(forward.localPort)", connecting: true)
 			clusterLog("profiling through localhost:\(forward.localPort)")
 		} catch {
-			notify("Could not reach the pod's profiler", detail: error.localizedDescription)
+			clusterLog("no profiler on port 6060: \(error.localizedDescription)")
+			notify(
+				"Could not reach the pod's profiler",
+				detail: "Nothing answered on port 6060 in \(pod.name). A Go service serves "
+					+ "pprof there when it imports net/http/pprof.\n\n"
+					+ error.localizedDescription
+			)
 		}
 	}
 
@@ -3617,11 +3614,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			if self.selectedConfigurationName == name { self.selectedConfigurationName = nil }
 			self.refreshRunControl()
 		}
-		page.onRun = { [weak self] configuration, debug in
+		page.onStart = { [weak self] configuration, mode in
 			guard let self else { return }
 			self.selectedConfigurationName = configuration.name
 			self.refreshRunControl()
-			self.runSelectedConfiguration(debug: debug)
+			switch mode {
+			case .run: self.runSelectedConfiguration(debug: false)
+			case .debug: self.runSelectedConfiguration(debug: true)
+			case .profile: self.profileSelectedConfiguration()
+			case .coverage: self.runSelectedWithCoverage()
+			}
 		}
 
 		group.openPage(page, title: "Launch Configurations", identifier: "launch", symbol: "play.square")

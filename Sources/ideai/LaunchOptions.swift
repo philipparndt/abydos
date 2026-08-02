@@ -150,6 +150,8 @@ struct LaunchOptions {
 	var findQuery: String?
 	/// Query for project-wide search.
 	var searchQuery: String?
+	/// Profile the selected configuration before capture.
+	var launchProfile = false
 	/// Turn soft wrap on before capture.
 	var wordWrap = false
 	/// Open the project switcher, optionally with a filter applied.
@@ -234,6 +236,7 @@ struct LaunchOptions {
 			case "--toast":      options.showToast = true
 			case "--launch-run":    options.launchRun = true
 			case "--launch-debug":  options.launchDebug = true
+			case "--launch-profile": options.launchProfile = true
 			case "--debug-console": options.debugConsole = true
 			case "--launch-menu":   options.launchMenu = true
 			case "--launch-editor": options.launchEditor = true
