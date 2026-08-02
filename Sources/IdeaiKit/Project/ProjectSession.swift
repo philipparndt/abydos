@@ -20,16 +20,46 @@ public struct ProjectSession: Equatable, Sendable {
 		}
 	}
 
+	/// A terminal that was open, and what it was called.
+	///
+	/// The shell itself is not saved — a process cannot be — but where it was
+	/// and what it was named can be, and starting one there again is what
+	/// "my terminals are still here" means in practice.
+	public struct OpenTerminal: Equatable, Sendable {
+		public var name: String
+		/// Where the shell starts, or nil for the project.
+		public var directory: String?
+		/// Whether the person named this one, in which case the shell's own
+		/// title must not take the name back.
+		public var isRenamed: Bool
+
+		public init(name: String, directory: String? = nil, isRenamed: Bool = false) {
+			self.name = name
+			self.directory = directory
+			self.isRenamed = isRenamed
+		}
+	}
+
 	public var files: [OpenFile]
 	/// Which one was in front.
 	public var activePath: String?
+	public var terminals: [OpenTerminal]
+	/// Whether the panel the terminals live in was showing.
+	public var isPanelVisible: Bool
 
-	public init(files: [OpenFile] = [], activePath: String? = nil) {
+	public init(
+		files: [OpenFile] = [],
+		activePath: String? = nil,
+		terminals: [OpenTerminal] = [],
+		isPanelVisible: Bool = false
+	) {
 		self.files = files
 		self.activePath = activePath
+		self.terminals = terminals
+		self.isPanelVisible = isPanelVisible
 	}
 
-	public var isEmpty: Bool { files.isEmpty }
+	public var isEmpty: Bool { files.isEmpty && terminals.isEmpty }
 }
 
 /// What was open in each project, for as long as the app is running.

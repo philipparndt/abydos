@@ -132,10 +132,10 @@ public enum LaunchStore {
 public enum SessionStore {
 	public static func read(in root: URL) -> ProjectSession? {
 		guard let data = try? Data(contentsOf: IdeaiFolder.sessionFile(in: root)),
-		      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-		      let files = object["files"] as? [[String: Any]]
+		      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
 		else { return nil }
 
+		let files = object["files"] as? [[String: Any]] ?? []
 		let open = files.compactMap { entry -> ProjectSession.OpenFile? in
 			guard let path = entry["path"] as? String else { return nil }
 			return ProjectSession.OpenFile(
@@ -144,8 +144,24 @@ public enum SessionStore {
 				isPreview: entry["preview"] as? Bool ?? false
 			)
 		}
-		guard !open.isEmpty else { return nil }
-		return ProjectSession(files: open, activePath: object["active"] as? String)
+
+		let terminals = (object["terminals"] as? [[String: Any]] ?? [])
+			.compactMap { entry -> ProjectSession.OpenTerminal? in
+				guard let name = entry["name"] as? String else { return nil }
+				return ProjectSession.OpenTerminal(
+					name: name,
+					directory: entry["directory"] as? String,
+					isRenamed: entry["renamed"] as? Bool ?? false
+				)
+			}
+
+		let session = ProjectSession(
+			files: open,
+			activePath: object["active"] as? String,
+			terminals: terminals,
+			isPanelVisible: object["panel"] as? Bool ?? false
+		)
+		return session.isEmpty ? nil : session
 	}
 
 	/// Writes what is open, or removes the file when nothing is.
@@ -165,6 +181,15 @@ public enum SessionStore {
 			},
 		]
 		if let active = session.activePath { object["active"] = active }
+		if session.isPanelVisible { object["panel"] = true }
+		if !session.terminals.isEmpty {
+			object["terminals"] = session.terminals.map { terminal -> [String: Any] in
+				var entry: [String: Any] = ["name": terminal.name]
+				if let directory = terminal.directory { entry["directory"] = directory }
+				if terminal.isRenamed { entry["renamed"] = true }
+				return entry
+			}
+		}
 
 		let data = try JSONSerialization.data(
 			withJSONObject: object, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]

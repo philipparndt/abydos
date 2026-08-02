@@ -9,6 +9,8 @@ import IdeaiKit
 final class BottomPanel: NSView {
 	/// Fired when the panel wants to be hidden, so the window can collapse it.
 	var onRequestHide: (() -> Void)?
+	/// Told when the set of terminals changes, so it can be written down.
+	var onTerminalsChanged: (() -> Void)?
 	/// Asked to give the panel the whole window, or to hand it back.
 	var onToggleMaximize: (() -> Void)?
 	/// Asked to start or stop following the shell's project.
@@ -65,6 +67,12 @@ final class BottomPanel: NSView {
 		var displayTitle: String
 		let kind: Kind
 		var hasExited = false
+		/// Where the shell was started, so the same terminal can be opened
+		/// again next time.
+		var directory: URL?
+		/// A name somebody typed. The shell reports its running command as a
+		/// title, which is a good default and a bad override.
+		var isRenamed = false
 
 		init(title: String, kind: Kind) {
 			self.title = title
@@ -121,6 +129,7 @@ final class BottomPanel: NSView {
 		tabStrip.onClose = { [weak self] index in self?.close(index: index) }
 		tabStrip.onAdd = { [weak self] in self?.newTerminal() }
 		tabStrip.onHide = { [weak self] in self?.onRequestHide?() }
+		tabStrip.onRename = { [weak self] index, name in self?.rename(index: index, to: name) }
 		tabStrip.onToggleMaximize = { [weak self] in self?.onToggleMaximize?() }
 		tabStrip.onToggleFollowProject = { [weak self] in self?.onToggleFollowProject?() }
 
@@ -324,13 +333,19 @@ final class BottomPanel: NSView {
 	}
 
 	@discardableResult
-	private func newTerminal(rootedAt directory: URL?, title: String) -> TerminalPane? {
+	private func newTerminal(
+		rootedAt directory: URL?,
+		title: String,
+		focus: Bool = true
+	) -> TerminalPane? {
 		let pane = TerminalPane(workingDirectory: directory)
 		let session = Session(title: title, kind: .terminal(pane))
+		session.directory = directory
 		wire(session)
 
 		sessions.append(session)
-		activate(index: sessions.count - 1, focus: true)
+		activate(index: sessions.count - 1, focus: focus)
+		onTerminalsChanged?()
 		return pane
 	}
 
@@ -724,6 +739,7 @@ final class BottomPanel: NSView {
 			guard let self, let session else { return }
 			// A shell reports its running command via the title, which is the
 			// most useful label a terminal tab can carry.
+			guard !session.isRenamed else { return }
 			let trimmed = title.split(separator: " ").first.map(String.init) ?? title
 			guard !trimmed.isEmpty, session.displayTitle != trimmed else { return }
 			session.displayTitle = trimmed
@@ -780,11 +796,83 @@ final class BottomPanel: NSView {
 		}
 		activeIndex = nil
 		activate(index: min(index, sessions.count - 1), focus: false)
+		onTerminalsChanged?()
+	}
+
+	/// Renames a tab.
+	///
+	/// An empty name gives it back to the shell, which is the only way to undo
+	/// a rename without knowing what the shell would have called it.
+	func rename(index: Int, to name: String) {
+		guard sessions.indices.contains(index) else { return }
+		let trimmed = name.trimmingCharacters(in: .whitespaces)
+		let session = sessions[index]
+
+		if trimmed.isEmpty {
+			session.isRenamed = false
+			session.displayTitle = session.title
+		} else {
+			session.isRenamed = true
+			session.displayTitle = trimmed
+		}
+		refreshTabs()
+		onTerminalsChanged?()
+	}
+
+	/// Renames whichever tab is in front, for the capture harness.
+	func renameActiveForTesting(to name: String) {
+		guard let activeIndex else { return }
+		rename(index: activeIndex, to: name)
+	}
+
+	/// The terminals that are open, to be opened again next time.
+	///
+	/// Only plain terminals: a debugger, a profiler or a review is attached to
+	/// something that is not running any more, and reopening one would be
+	/// reopening a window onto nothing.
+	func captureTerminals() -> [ProjectSession.OpenTerminal] {
+		sessions.compactMap { session in
+			guard case .terminal = session.kind, !session.hasExited else { return nil }
+			return ProjectSession.OpenTerminal(
+				name: session.displayTitle,
+				directory: session.directory?.path,
+				isRenamed: session.isRenamed
+			)
+		}
+	}
+
+	/// Opens the terminals a project had, with fresh shells in the same places.
+	func restoreTerminals(_ terminals: [ProjectSession.OpenTerminal]) {
+		for terminal in terminals {
+			let directory = terminal.directory.map { URL(fileURLWithPath: $0) } ?? workingDirectory
+			// Not focused: this happens while a project is opening, and the
+			// keyboard belongs to whatever the person opened it for.
+			guard let pane = newTerminal(rootedAt: directory, title: terminal.name, focus: false)
+			else { continue }
+			guard let session = sessions.last, session.terminal === pane else { continue }
+			session.isRenamed = terminal.isRenamed
+			session.displayTitle = terminal.name
+		}
+		refreshTabs()
+	}
+
+	/// Closes every plain terminal, for a window that is changing project.
+	func closeTerminals() {
+		for index in sessions.indices.reversed() {
+			guard case .terminal = sessions[index].kind else { continue }
+			close(index: index, hidingWhenEmpty: false)
+		}
 	}
 
 	private func refreshTabs() {
 		tabStrip.setItems(
-			sessions.map { PanelTabItem(title: $0.displayTitle, hasExited: $0.hasExited) },
+			sessions.map {
+				PanelTabItem(
+					title: $0.displayTitle,
+					hasExited: $0.hasExited,
+					canRename: { if case .terminal = $0.kind { return true } else { return false } }($0)
+				)
+			},
 			activeIndex: activeIndex
 		)
 	}
@@ -830,12 +918,16 @@ final class BottomPanel: NSView {
 struct PanelTabItem {
 	let title: String
 	let hasExited: Bool
+	/// Only a terminal is named by the person using it.
+	var canRename = false
 }
 
 /// Compact tab strip with add and hide affordances.
 final class PanelTabStrip: NSView {
 	var onSelect: ((Int) -> Void)?
 	var onClose: ((Int) -> Void)?
+	/// A tab renamed in place. An empty name gives it back to the shell.
+	var onRename: ((Int, String) -> Void)?
 	var onAdd: (() -> Void)?
 	var onHide: (() -> Void)?
 	/// Asked to give the panel the whole window, or to give it back.
@@ -913,6 +1005,45 @@ final class PanelTabStrip: NSView {
 		)
 	}
 
+	// MARK: - Renaming in place
+
+	private var renameField: NSTextField?
+	private var renamingIndex: Int?
+
+	func beginRenaming(_ index: Int) {
+		guard frames.indices.contains(index) else { return }
+		endRenaming(commit: true)
+
+		let field = NSTextField(string: items[index].title)
+		field.font = font
+		field.textColor = Theme.current.sidebarHeaderText
+		field.backgroundColor = Theme.current.editorBackground
+		field.drawsBackground = true
+		field.isBordered = false
+		field.isBezeled = false
+		field.focusRingType = .none
+		field.delegate = self
+		field.frame = frames[index].insetBy(dx: Theme.current.scaled(4), dy: Theme.current.scaled(5))
+		field.wantsLayer = true
+		field.layer?.cornerRadius = 3
+
+		addSubview(field)
+		renameField = field
+		renamingIndex = index
+		window?.makeFirstResponder(field)
+		field.currentEditor()?.selectAll(nil)
+	}
+
+	private func endRenaming(commit: Bool) {
+		guard let field = renameField, let index = renamingIndex else { return }
+		renameField = nil
+		renamingIndex = nil
+
+		let name = field.stringValue
+		field.removeFromSuperview()
+		if commit { onRename?(index, name) }
+	}
+
 	override func updateTrackingAreas() {
 		super.updateTrackingAreas()
 		if let trackingArea { removeTrackingArea(trackingArea) }
@@ -947,6 +1078,14 @@ final class PanelTabStrip: NSView {
 		// the way double-clicking a window's title bar zooms it.
 		if event.clickCount == 2, !frames.contains(where: { $0.contains(point) }) {
 			onToggleMaximize?()
+			return
+		}
+
+		// Double-clicking a tab renames it, in place: the name is a label on a
+		// tab, and typing it anywhere else means finding the tab again after.
+		if event.clickCount == 2, let index = frames.firstIndex(where: { $0.contains(point) }),
+		   items.indices.contains(index), items[index].canRename {
+			beginRenaming(index)
 			return
 		}
 
@@ -1053,5 +1192,27 @@ final class PanelTabStrip: NSView {
 		}
 		let size = Theme.current.scaled(12)
 		image.drawFitted(in: NSRect(x: rect.midX - size / 2, y: rect.midY - size / 2, width: size, height: size))
+	}
+}
+
+
+/// Committing a rename: return keeps it, escape drops it, and clicking away
+/// keeps it too — the same as renaming a file in the Finder.
+extension PanelTabStrip: NSTextFieldDelegate {
+	func controlTextDidEndEditing(_ notification: Notification) {
+		endRenaming(commit: true)
+	}
+
+	func control(_ control: NSControl, textView: NSTextView, doCommandBy command: Selector) -> Bool {
+		switch command {
+		case #selector(NSResponder.cancelOperation(_:)):
+			endRenaming(commit: false)
+			return true
+		case #selector(NSResponder.insertNewline(_:)):
+			endRenaming(commit: true)
+			return true
+		default:
+			return false
+		}
 	}
 }

@@ -380,6 +380,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 		bottomPanel.onRequestHide = { [weak self] in self?.setPanelVisible(false) }
 		bottomPanel.onToggleMaximize = { [weak self] in self?.togglePanelMaximized() }
+		// Written when they change rather than only on the way out: a terminal
+		// that survives a restart has to survive the kind of exit nobody plans.
+		bottomPanel.onTerminalsChanged = { [weak self] in self?.rememberOpenEditors() }
 		bottomPanel.onToggleFollowProject = { [weak self] in self?.toggleFollowTerminal() }
 		bottomPanel.onWorkingDirectoryChanged = { [weak self] directory in
 			self?.terminalDirectoryChanged(to: directory)
@@ -1119,7 +1122,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		guard root.path != project?.root.standardizedFileURL.path else { return }
 
 		if let current = project?.root {
-			let session = editor.captureSession()
+			var session = editor.captureSession()
+			session.terminals = bottomPanel.captureTerminals()
+			session.isPanelVisible = isPanelVisible
 			sessions.store(session, for: current)
 			// And beside the project, so tomorrow's window opens on today's
 			// files: what was open is a property of the project, not of the
@@ -1127,15 +1132,29 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			try? SessionStore.write(session, in: current)
 		}
 
+		// Read before anything is loaded: opening a project touches the editor
+		// and the panel, and anything that writes the session on the way past
+		// would overwrite the very thing being restored.
+		let previous = sessions.take(for: root) ?? SessionStore.read(in: root)
+
 		load(project: Project(root: root), focusTree: false)
 		RecentProjects.shared.record(url: root)
 
-		// Whatever was open here before, from this run or the last one.
-		if let previous = sessions.take(for: root) ?? SessionStore.read(in: root) {
+		if let previous {
 			editor.restore(previous)
 		} else {
 			editor.closeAllTabs()
 			editor.restoreScratches()
+		}
+
+		// The terminals too: a project's shells are as much a part of where
+		// somebody left off as the files they had open.
+		bottomPanel.closeTerminals()
+		if let previous, !previous.terminals.isEmpty {
+			bottomPanel.restoreTerminals(previous.terminals)
+			// And the panel itself, if it was showing: terminals that came back
+			// behind a closed panel look like terminals that did not.
+			if previous.isPanelVisible { setPanelVisible(true) }
 		}
 	}
 
@@ -1143,7 +1162,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// where this one left off.
 	func rememberOpenEditors() {
 		guard let root = project?.root, !isTornOff else { return }
-		try? SessionStore.write(editor.captureSession(), in: root)
+		var session = editor.captureSession()
+		session.terminals = bottomPanel.captureTerminals()
+		session.isPanelVisible = isPanelVisible
+		try? SessionStore.write(session, in: root)
 	}
 
 	private func setPanelVisible(_ visible: Bool) {
@@ -2190,6 +2212,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	}
 
 	func pushChangesForTesting() { changesPane?.pushForTesting() }
+
+	/// Renames the terminal in front, the way a double-click on its tab does.
+	func renameActiveTerminalForTesting(to name: String) {
+		setPanelVisible(true)
+		bottomPanel.renameActiveForTesting(to: name)
+	}
 
 	/// What the toolbar is showing, and what it has put away.
 	func reportToolbarForTesting() {

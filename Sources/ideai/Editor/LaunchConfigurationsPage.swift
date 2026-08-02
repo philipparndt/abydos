@@ -115,6 +115,14 @@ final class LaunchConfigurationsPage: NSView {
 			addSubview(view)
 		}
 
+		// A form is not a reason to make the editor area wider: the sidebar and
+		// the navigator beside it were the size somebody chose, and opening a
+		// page should not move them.
+		for view in [sidebar, scroll, self] as [NSView] {
+			view.setContentCompressionResistancePriority(.defaultLow - 1, for: .horizontal)
+			view.setContentHuggingPriority(.defaultLow - 1, for: .horizontal)
+		}
+
 		NSLayoutConstraint.activate([
 			sidebar.leadingAnchor.constraint(equalTo: leadingAnchor),
 			sidebar.topAnchor.constraint(equalTo: topAnchor),
@@ -270,8 +278,17 @@ final class LaunchConfigurationsPage: NSView {
 		hint.textColor = Theme.current.gitIgnored
 		form.addArrangedSubview(hint)
 
+		// Wide enough to read, and no wider: a text field the width of a big
+		// display is harder to take in than one the width of a paragraph.
 		for view in form.arrangedSubviews {
-			view.widthAnchor.constraint(equalTo: form.widthAnchor, constant: -Theme.current.scaled(56)).isActive = true
+			let full = view.widthAnchor.constraint(
+				equalTo: form.widthAnchor, constant: -Theme.current.scaled(56)
+			)
+			full.priority = .defaultHigh
+			full.isActive = true
+			view.widthAnchor.constraint(
+				lessThanOrEqualToConstant: Theme.current.scaled(720)
+			).isActive = true
 		}
 	}
 
@@ -372,6 +389,9 @@ final class LaunchConfigurationsPage: NSView {
 		input.delegate = self
 		input.target = self
 		input.action = #selector(fieldChanged)
+		input.setContentCompressionResistancePriority(.defaultLow - 1, for: .horizontal)
+		input.cell?.isScrollable = true
+		input.cell?.wraps = false
 		fields[key] = input
 		return labelled(label, input)
 	}
@@ -394,6 +414,7 @@ final class LaunchConfigurationsPage: NSView {
 
 	private func popUp(_ titles: [String], action: Selector) -> NSPopUpButton {
 		let button = NSPopUpButton()
+		button.setContentCompressionResistancePriority(.defaultLow - 1, for: .horizontal)
 		button.font = Theme.current.uiFont(12)
 		button.addItems(withTitles: titles)
 		button.target = self

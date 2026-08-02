@@ -157,6 +157,8 @@ struct LaunchOptions {
 	/// Switch this window to another project before capture, the way the
 	/// switcher does.
 	var switchTo: String?
+	/// Rename the terminal tab before capture, as a double-click does.
+	var renameTerminal: String?
 	/// Split the editor before capture: "right" or "down".
 	var split: String?
 	/// Draw a tab drop preview before capture, without a real drag.
@@ -251,6 +253,7 @@ struct LaunchOptions {
 			case "--wrap":       options.wordWrap = true
 			case "--switcher":   options.switcherFilter = next()
 			case "--switch-to":  options.switchTo = next()
+			case "--rename-terminal": options.renameTerminal = next()
 			case "--split":      options.split = next()
 			case "--dropzone":   options.dropZone = next()
 			default:

@@ -61,6 +61,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		// Simulated input runs after the initial parse lands, so folds and
 		// highlights exist by the time it is exercised.
+		if let name = options.renameTerminal {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+				controller?.renameActiveTerminalForTesting(to: name)
+			}
+		}
+
 		if let path = options.switchTo {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
 				self.open(projectAt: URL(fileURLWithPath: (path as NSString).expandingTildeInPath))

@@ -294,3 +294,70 @@ struct TestConfigurationTests {
 		))
 	}
 }
+
+/// Terminals are part of where somebody left off.
+struct SessionTerminalTests {
+	private func project() throws -> URL {
+		let root = FileManager.default.temporaryDirectory
+			.appendingPathComponent("session-\(UUID().uuidString)")
+		try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+		return root
+	}
+
+	@Test func terminalsSurviveBeingWrittenDown() throws {
+		let root = try project()
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		let session = ProjectSession(
+			files: [ProjectSession.OpenFile(path: root.appendingPathComponent("a.go").path)],
+			terminals: [
+				ProjectSession.OpenTerminal(name: "build box", directory: root.path, isRenamed: true),
+				ProjectSession.OpenTerminal(name: "Local"),
+			],
+			isPanelVisible: true
+		)
+		try SessionStore.write(session, in: root)
+
+		let read = try #require(SessionStore.read(in: root))
+		#expect(read.terminals == session.terminals)
+		#expect(read.isPanelVisible)
+	}
+
+	/// A window with terminals and no files open still has something to
+	/// remember — writing nothing would lose them.
+	@Test func aSessionOfNothingButTerminalsIsStillASession() throws {
+		let root = try project()
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		try SessionStore.write(
+			ProjectSession(terminals: [ProjectSession.OpenTerminal(name: "Local")]), in: root
+		)
+		let read = try #require(SessionStore.read(in: root))
+		#expect(read.files.isEmpty)
+		#expect(read.terminals.count == 1)
+	}
+
+	/// A name the shell chose is not a name somebody typed, and only the second
+	/// one has to survive the shell changing its mind.
+	@Test func onlyARenamedTerminalSaysSo() throws {
+		let root = try project()
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		try SessionStore.write(
+			ProjectSession(terminals: [ProjectSession.OpenTerminal(name: "vim")]), in: root
+		)
+		let read = try #require(SessionStore.read(in: root))
+		#expect(read.terminals.first?.isRenamed == false)
+	}
+
+	@Test func anEmptySessionRemovesTheFile() throws {
+		let root = try project()
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		try SessionStore.write(
+			ProjectSession(terminals: [ProjectSession.OpenTerminal(name: "Local")]), in: root
+		)
+		try SessionStore.write(ProjectSession(), in: root)
+		#expect(SessionStore.read(in: root) == nil)
+	}
+}
