@@ -1440,6 +1440,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// Starts the native debugger and wires its state to the editor.
 	private func startNativeDebugger(delve: String, package: String) {
 		setPanelVisible(true)
+		// The titlebar follows the session from here on — `wire` reports every
+		// state change to it — but the gap before the adapter answers is worth
+		// filling, or pressing debug looks like it did nothing.
+		runControl?.setStatus("Starting…", busy: true)
 		// Breakpoints go in with the session, not after it: the adapter only
 		// asks for them once, immediately after launch.
 		guard let session = bottomPanel.startDebugging(
@@ -1725,12 +1729,33 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// shell is what makes it debuggable.
 	func run(_ configuration: RunConfiguration) {
 		setPanelVisible(true)
-		bottomPanel.runCommand(
+		// Through the same reporting as anything else started here: a run from
+		// the gutter is a run, and it should colour the titlebar, offer a stop
+		// button, and say how it went.
+		runControl?.setStatus("Running \(configuration.name)…", busy: true)
+
+		let pane = bottomPanel.runCommand(
 			title: configuration.name,
 			command: configuration.commandLine,
 			directory: URL(fileURLWithPath: configuration.workingDirectory),
 			environment: configuration.environment
 		)
+		followRunningPane(pane)
+	}
+
+	/// Watches a pane's process, so the titlebar says what became of it.
+	private func followRunningPane(_ pane: TerminalPane?) {
+		runningPane = pane
+		pane?.terminalView.onProcessExit = { [weak self, weak pane] code in
+			MainActor.assumeIsolated {
+				guard let self, self.runningPane === pane else { return }
+				self.runningPane = nil
+				self.runControl?.setStatus(
+					code == 0 ? "Finished — exit code 0" : "Failed — exit code \(code)",
+					failed: code != 0
+				)
+			}
+		}
 	}
 
 	/// Shows every configuration, for the Run menu.
@@ -2710,19 +2735,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			directory: URL(fileURLWithPath: directory),
 			environment: environment
 		)
-		runningPane = pane
 		// The shell reports what the program exited with, which is the one thing
 		// worth saying in the titlebar once it is over.
-		pane?.terminalView.onProcessExit = { [weak self, weak pane] code in
-			MainActor.assumeIsolated {
-				guard let self, self.runningPane === pane else { return }
-				self.runningPane = nil
-				self.runControl?.setStatus(
-					code == 0 ? "Finished — exit code 0" : "Failed — exit code \(code)",
-				failed: code != 0
-				)
-			}
-		}
+		followRunningPane(pane)
 	}
 
 	/// A word the shell will pass through as it was written.
