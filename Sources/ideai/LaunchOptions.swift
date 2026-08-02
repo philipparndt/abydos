@@ -156,6 +156,10 @@ struct LaunchOptions {
 	var subproject: String?
 	/// Which settings section to show.
 	var settingsSection: String?
+	/// Print where the development pod's chart was found.
+	var reportChart = false
+	/// Press the window's zoom button before capture.
+	var zoomWindow = false
 	/// A tab close command to run: "others:1", "left:2", "right:0", "all:0".
 	var closeTabs: String?
 	/// Which launch configuration to select first.
@@ -257,6 +261,8 @@ struct LaunchOptions {
 			case "--launch-profile": options.launchProfile = true
 			case "--launch-config": options.launchConfiguration = next()
 			case "--close-tabs": options.closeTabs = next()
+			case "--zoom-window": options.zoomWindow = true
+			case "--chart-path": options.reportChart = true
 			case "--debug-console": options.debugConsole = true
 			case "--launch-menu":   options.launchMenu = true
 			case "--launch-editor": options.launchEditor = true

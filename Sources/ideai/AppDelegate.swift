@@ -406,6 +406,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if options.reportChart {
+			let chart = MainWindowController.bundledChart
+			print("CHART: \(chart?.path ?? "not found")")
+		}
+
+		if options.zoomWindow {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+				guard let window = controller?.window else { return }
+				window.zoom(nil)
+				DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+					print("ZOOM: got \(window.frame) screen \(window.screen?.visibleFrame ?? .zero)")
+				}
+			}
+		}
+
 		if let width = options.windowWidth {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
 				guard let window = controller?.window else { return }

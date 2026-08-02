@@ -190,9 +190,6 @@ final class SettingsPage: NSView {
 			)
 			full.priority = .defaultHigh
 			full.isActive = true
-			view.widthAnchor.constraint(
-				lessThanOrEqualToConstant: Theme.current.scaled(660)
-			).isActive = true
 		}
 	}
 

@@ -3014,24 +3014,45 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	/// The chart that travels with the app.
 	///
-	/// `Bundle.module` rather than `Bundle.main`: a resource declared by a
-	/// package target lands in a bundle of its own beside the executable, and
-	/// looking for it in the application bundle finds nothing — which is what
-	/// "the chart is missing from this build" was really saying.
-	static var bundledChart: URL? {
-		let candidates = [
-			Bundle.module.url(forResource: "devpod-chart", withExtension: nil),
-			Bundle.main.url(forResource: "devpod-chart", withExtension: nil),
-			// Running from the repository, where the source is the chart.
+	/// Looked for by hand in every place it could be: inside the resource
+	/// bundle a package target produces, beside the executable, inside the
+	/// application bundle, and in the repository when running from a checkout.
+		static var bundledChart: URL? {
+		// `Bundle.module` is not used here. Its generated accessor calls
+		// `fatalError` when it cannot find the resource bundle, so a build that
+		// shipped without one does not fall back — it takes the app down, which
+		// is what happened when somebody pressed run in a cluster.
+		let resource = "ideai_ideai.bundle"
+		var candidates: [URL] = []
+
+		if let main = Bundle.main.resourceURL {
+			candidates.append(main.appendingPathComponent(resource))
+			candidates.append(main)
+		}
+		// Beside the executable, which is where a plain `swift build` puts it.
+		let beside = Bundle.main.bundleURL.deletingLastPathComponent()
+		candidates.append(beside.appendingPathComponent(resource))
+		candidates.append(Bundle.main.bundleURL.appendingPathComponent(resource))
+		// Running from the repository, where the source is the chart.
+		candidates.append(
 			URL(fileURLWithPath: #filePath)
 				.deletingLastPathComponent()
 				.deletingLastPathComponent()
 				.deletingLastPathComponent()
-				.appendingPathComponent("DevPod/chart/ideai-devpod"),
-		]
-		return candidates.compactMap { $0 }.first {
-			FileManager.default.fileExists(atPath: $0.appendingPathComponent("Chart.yaml").path)
+				.appendingPathComponent("DevPod")
+		)
+
+		let manager = FileManager.default
+		for candidate in candidates {
+			for chart in [
+				candidate.appendingPathComponent("devpod-chart"),
+				candidate.appendingPathComponent("Contents/Resources/devpod-chart"),
+				candidate.appendingPathComponent("chart/ideai-devpod"),
+			] where manager.fileExists(atPath: chart.appendingPathComponent("Chart.yaml").path) {
+				return chart
+			}
 		}
+		return nil
 	}
 
 	/// Puts a development pod in the cluster for this project.

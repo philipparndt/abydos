@@ -402,13 +402,7 @@ final class LaunchConfigurationsPage: NSView {
 		// that reaches the page would make the whole editor area refuse to be
 		// wider than a form, and the split view would hand the difference to
 		// the project tree.
-		let full = card.widthAnchor.constraint(equalTo: group.widthAnchor)
-		full.priority = .defaultHigh
-		full.isActive = true
-		NSLayoutConstraint.activate([
-			card.widthAnchor.constraint(lessThanOrEqualTo: group.widthAnchor),
-			card.widthAnchor.constraint(lessThanOrEqualToConstant: Theme.current.scaled(720)),
-		])
+		card.widthAnchor.constraint(equalTo: group.widthAnchor).isActive = true
 
 		if let caption {
 			let text = NSTextField(labelWithString: caption)
