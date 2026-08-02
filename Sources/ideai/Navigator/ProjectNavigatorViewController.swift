@@ -445,8 +445,8 @@ final class ProjectNavigatorViewController: NSViewController {
 		menu.addItem(item("Move to Trash", #selector(contextTrash)))
 		menu.addItem(.separator())
 		// The same two the header offers, for anybody who looks for them here.
-		menu.addItem(item("Collapse All", #selector(contextCollapseAll)))
 		menu.addItem(item("Select Opened File", #selector(contextSelectOpenFile)))
+		menu.addItem(item("Collapse All", #selector(contextCollapseAll)))
 		return menu
 	}
 
@@ -1120,7 +1120,8 @@ private final class NavigatorHeaderView: NSView {
 	private func layoutButtons() {
 		let size = Theme.current.scaled(20)
 		var x = bounds.maxX - Theme.current.scaled(8) - size
-		for view in [collapseButton, locateButton] {
+		// Rightmost first.
+		for view in [locateButton, collapseButton] {
 			view.frame = NSRect(x: x, y: (bounds.height - size) / 2, width: size, height: size)
 			x -= size + Theme.current.scaled(2)
 		}
