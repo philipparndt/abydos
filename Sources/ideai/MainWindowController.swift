@@ -141,6 +141,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	private var splitView: NSSplitView!
 	private var verticalSplitView: NSSplitView!
+	/// How wide the tree is, kept as a constraint so nothing else decides.
+	private var navigatorWidthConstraint: NSLayoutConstraint!
 	private var panelHeight: CGFloat = 260
 	private var navigatorContainer: NSView!
 	private var changesPane: ChangesPane?
@@ -368,6 +370,31 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		splitView.addArrangedSubview(navigatorContainer)
 		splitView.addArrangedSubview(editor.view)
 		splitView.autosaveName = "IdeaiSplit"
+		// The tree keeps the width it was given; the editor takes the rest.
+		// Without this the split view re-divides whenever what is in the editor
+		// changes shape — and opening a page of controls made the tree jump
+		// wider, which is not what opening a page means.
+		splitView.setHoldingPriority(.defaultLow, forSubviewAt: 0)
+		splitView.setHoldingPriority(.defaultLow + 10, forSubviewAt: 1)
+
+		// The tree is as wide as it was left, said as a constraint rather than
+		// left to the split view to work out. Whatever is in the editor changes
+		// shape — a page of controls, a wide file, a diff — and every time it
+		// did, the split view re-divided the window and the tree jumped.
+		navigatorWidthConstraint = navigatorContainer.widthAnchor
+			.constraint(equalToConstant: navigatorWidth)
+		navigatorWidthConstraint.priority = .defaultHigh
+		navigatorWidthConstraint.isActive = true
+		splitView.delegate = self
+
+		// The tree's own contents must not be able to demand a width. A row
+		// showing a long path has an enormous natural size, and any layout pass
+		// that consults it — such as the one that happens when a page opens in
+		// the editor — would widen the tree to fit a path that is meant to be
+		// truncated.
+		for view in [navigatorContainer, navigator.view] as [NSView] {
+			view.setContentCompressionResistancePriority(.defaultLow - 1, for: .horizontal)
+		}
 
 		// The panel spans the full width below both the tree and the editor,
 		// which is where IDEA puts its tool windows.
@@ -2235,7 +2262,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// Renames the terminal in front, the way a double-click on its tab does.
 	func renameActiveTerminalForTesting(to name: String) {
 		setPanelVisible(true)
-		bottomPanel.renameActiveForTesting(to: name)
+		// An empty name opens the editor and leaves it there, which is how the
+		// field itself gets captured.
+		if name.isEmpty {
+			bottomPanel.beginRenameActiveForTesting()
+		} else {
+			bottomPanel.renameActiveForTesting(to: name)
+		}
 	}
 
 	/// What the toolbar is showing, and what it has put away.
@@ -3206,7 +3239,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			)
 			var stored = configuration
 			stored.name = free
-			try? LaunchStore.save(stored, in: project.root)
+			do {
+				_ = try LaunchStore.save(stored, in: project.root)
+			} catch {
+				notify("Could not write the configuration", detail: error.localizedDescription)
+				return
+			}
 			selectedConfigurationName = free
 			refreshRunControl()
 			showLaunchConfigurations(selecting: free)
@@ -3255,6 +3293,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 
 		group.openPage(page, title: "Launch Configurations", identifier: "launch", symbol: "play.square")
+
 		page.load(
 			LaunchStore.read(in: project.root),
 			root: project.root,
@@ -3763,6 +3802,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		guard let navigatorContainer else { return }
 		let collapsed = splitView.isSubviewCollapsed(navigatorContainer)
 		if collapsed {
+			navigatorWidthConstraint.constant = navigatorWidth
 			splitView.setPosition(navigatorWidth, ofDividerAt: 0)
 			navigatorContainer.isHidden = false
 		} else {
@@ -3982,3 +4022,24 @@ final class ThinDividerSplitView: NSSplitView {
 	override var dividerThickness: CGFloat { 1 }
 }
 
+
+
+/// Keeping the tree the width it was dragged to.
+///
+/// The constraint is what decides the width, and only dragging the divider
+/// changes the constraint. Left to itself the split view re-divides the window
+/// whenever what is in the editor changes shape — a page of controls, a wide
+/// file — and the tree jumps for reasons that have nothing to do with the tree.
+extension MainWindowController: NSSplitViewDelegate {
+	func splitView(
+		_ splitView: NSSplitView,
+		constrainSplitPosition proposedPosition: CGFloat,
+		ofSubviewAt dividerIndex: Int
+	) -> CGFloat {
+		guard splitView === self.splitView, dividerIndex == 0 else { return proposedPosition }
+		let width = max(140, min(proposedPosition, splitView.bounds.width - 260))
+		navigatorWidthConstraint.constant = width
+		navigatorWidth = width
+		return width
+	}
+}

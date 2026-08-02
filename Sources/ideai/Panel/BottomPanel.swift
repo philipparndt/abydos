@@ -969,6 +969,12 @@ final class BottomPanel: NSView {
 		rename(index: activeIndex, to: name)
 	}
 
+	/// Opens the in-place editor and leaves it open, so a capture shows it.
+	func beginRenameActiveForTesting() {
+		guard let activeIndex else { return }
+		tabStrip.beginRenaming(activeIndex)
+	}
+
 	/// The terminals that are open, to be opened again next time.
 	///
 	/// Only plain terminals: a debugger, a profiler or a review is attached to
@@ -1243,7 +1249,7 @@ final class PanelTabStrip: NSView {
 		guard frames.indices.contains(index) else { return }
 		endRenaming(commit: true)
 
-		let field = NSTextField(string: items[index].title)
+		let field = CenteredTextField(string: items[index].title)
 		field.font = font
 		field.textColor = Theme.current.sidebarHeaderText
 		field.backgroundColor = Theme.current.editorBackground
@@ -1252,7 +1258,16 @@ final class PanelTabStrip: NSView {
 		field.isBezeled = false
 		field.focusRingType = .none
 		field.delegate = self
-		field.frame = frames[index].insetBy(dx: Theme.current.scaled(4), dy: Theme.current.scaled(5))
+		// The height a line of this font actually needs, centred in the tab: a
+		// field the height of the tab puts its text against the top.
+		let height = ceil(font.ascender - font.descender + font.leading) + Theme.current.scaled(6)
+		let tab = frames[index]
+		field.frame = NSRect(
+			x: tab.minX + Theme.current.scaled(4),
+			y: tab.midY - height / 2,
+			width: tab.width - Theme.current.scaled(8),
+			height: height
+		)
 		field.wantsLayer = true
 		field.layer?.cornerRadius = 3
 
@@ -1590,5 +1605,41 @@ extension PanelTabStrip {
 		let point = convert(sender.draggingLocation, from: nil)
 		onMove?(payload.index, insertionIndex(at: point))
 		return true
+	}
+}
+
+
+/// A text field whose text sits in the middle of it.
+///
+/// A tab is taller than a line, and a field left to itself puts its text at
+/// the top of the box — which beside the tabs either side of it reads as
+/// crooked.
+private final class CenteredTextField: NSTextField {
+	override class var cellClass: AnyClass? {
+		get { CenteredTextFieldCell.self }
+		set { super.cellClass = newValue }
+	}
+}
+
+private final class CenteredTextFieldCell: NSTextFieldCell {
+	private func centered(_ rect: NSRect) -> NSRect {
+		let height = ceil(font?.boundingRectForFont.height ?? rect.height)
+		guard height < rect.height else { return rect }
+		return NSRect(
+			x: rect.minX + 3, y: rect.minY + (rect.height - height) / 2,
+			width: rect.width - 6, height: height
+		)
+	}
+
+	override func drawingRect(forBounds rect: NSRect) -> NSRect {
+		super.drawingRect(forBounds: centered(rect))
+	}
+
+	override func edit(withFrame rect: NSRect, in view: NSView, editor: NSText, delegate: Any?, event: NSEvent?) {
+		super.edit(withFrame: centered(rect), in: view, editor: editor, delegate: delegate, event: event)
+	}
+
+	override func select(withFrame rect: NSRect, in view: NSView, editor: NSText, delegate: Any?, start: Int, length: Int) {
+		super.select(withFrame: centered(rect), in: view, editor: editor, delegate: delegate, start: start, length: length)
 	}
 }

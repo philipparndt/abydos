@@ -118,7 +118,7 @@ final class LaunchConfigurationsPage: NSView {
 		// A form is not a reason to make the editor area wider: the sidebar and
 		// the navigator beside it were the size somebody chose, and opening a
 		// page should not move them.
-		for view in [sidebar, scroll, self] as [NSView] {
+		for view in [sidebar, scroll] as [NSView] {
 			view.setContentCompressionResistancePriority(.defaultLow - 1, for: .horizontal)
 			view.setContentHuggingPriority(.defaultLow - 1, for: .horizontal)
 		}
@@ -278,16 +278,9 @@ final class LaunchConfigurationsPage: NSView {
 		hint.textColor = Theme.current.gitIgnored
 		form.addArrangedSubview(hint)
 
-		// Wide enough to read, and no wider: a text field the width of a big
-		// display is harder to take in than one the width of a paragraph.
 		for view in form.arrangedSubviews {
-			let full = view.widthAnchor.constraint(
-				equalTo: form.widthAnchor, constant: -Theme.current.scaled(56)
-			)
-			full.priority = .defaultHigh
-			full.isActive = true
 			view.widthAnchor.constraint(
-				lessThanOrEqualToConstant: Theme.current.scaled(720)
+				equalTo: form.widthAnchor, constant: -Theme.current.scaled(56)
 			).isActive = true
 		}
 	}
@@ -357,7 +350,20 @@ final class LaunchConfigurationsPage: NSView {
 		group.orientation = .vertical
 		group.alignment = .leading
 		group.spacing = Theme.current.scaled(7)
-		card.widthAnchor.constraint(equalTo: group.widthAnchor).isActive = true
+
+		// Wide enough to read and no wider: a text field the width of a big
+		// display is harder to take in than one the width of a paragraph. The
+		// cap is on the card alone — putting a maximum anywhere in the chain
+		// that reaches the page would make the whole editor area refuse to be
+		// wider than a form, and the split view would hand the difference to
+		// the project tree.
+		let full = card.widthAnchor.constraint(equalTo: group.widthAnchor)
+		full.priority = .defaultHigh
+		full.isActive = true
+		NSLayoutConstraint.activate([
+			card.widthAnchor.constraint(lessThanOrEqualTo: group.widthAnchor),
+			card.widthAnchor.constraint(lessThanOrEqualToConstant: Theme.current.scaled(720)),
+		])
 
 		if let caption {
 			let text = NSTextField(labelWithString: caption)
@@ -662,12 +668,15 @@ final class FileDropList: NSView {
 		add.translatesAutoresizingMaskIntoConstraints = false
 		addSubview(add)
 
+		// The hint sits under the list rather than at the bottom of the box: a
+		// box that grows with the files in it would otherwise print the hint
+		// straight through the last of them.
 		NSLayoutConstraint.activate([
 			rows.topAnchor.constraint(equalTo: topAnchor, constant: Theme.current.scaled(6)),
 			rows.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Theme.current.scaled(8)),
 			rows.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Theme.current.scaled(30)),
-			rows.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -Theme.current.scaled(6)),
 
+			hint.topAnchor.constraint(equalTo: rows.bottomAnchor, constant: Theme.current.scaled(4)),
 			hint.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Theme.current.scaled(10)),
 			hint.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Theme.current.scaled(7)),
 
