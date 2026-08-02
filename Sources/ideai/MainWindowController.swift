@@ -2651,6 +2651,30 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 					).filter { $0.isRunning && (settings.pod.isEmpty ? $0.name.hasPrefix(release) : true) }
 				}
 
+				// A pod that is running is not necessarily a pod that is
+				// published. What the chart was installed with is compared
+				// against what this configuration asks for, and the release is
+				// upgraded when they have drifted apart.
+				if !candidates.isEmpty, settings.allowInstall {
+					let desired = DevPodFiles.helmValues(for: settings)
+					let release = DevPodInstall.releaseName(for: root)
+					let deployed = await DevPodInstall.deployedValues(
+						release: release,
+						namespace: settings.namespace.isEmpty ? "ideai-dev" : settings.namespace,
+						context: context,
+						kubeconfig: kubeconfig
+					)
+					if DevPodInstall.upgradeNeeded(desired: desired, deployed: deployed) {
+						clusterLog("the pod is not set up the way this configuration asks for")
+						try await installDevPod(settings: settings, context: context, root: root)
+						candidates = await DevPods.list(
+							context: context,
+							namespace: settings.namespace.isEmpty ? nil : settings.namespace,
+							kubeconfig: kubeconfig
+						).filter { $0.isRunning && (settings.pod.isEmpty ? $0.name.hasPrefix(release) : true) }
+					}
+				}
+
 				guard let pod = candidates.first(where: { settings.pod.isEmpty || $0.name == settings.pod })
 					?? candidates.first
 				else {
@@ -2753,6 +2777,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 					clusterLog("running in \(pod.namespace)/\(pod.name)")
 					devPodClient = client
 					followDevPodLogs(client, pod: pod)
+					await openServicePort(settings: settings, pod: pod, context: context, kubeconfig: kubeconfig)
 				}
 			} catch is CancellationError {
 				stopDevPodForwards()
@@ -2826,6 +2851,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 					context: context,
 					kubeconfig: kubeconfig,
 					image: settings.image.isEmpty ? nil : settings.image,
+					// What the chart has to publish, and on which port.
+					values: DevPodFiles.helmValues(for: settings),
 					progress: { line in
 						Task { @MainActor in self?.clusterLog(line) }
 					}
@@ -2846,6 +2873,42 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			detail: "\(release) in \(namespace). Remove it with: helm uninstall \(release) -n \(namespace)",
 			kind: .information
 		)
+	}
+
+	/// Makes what the program serves reachable from here.
+	///
+	/// A microservice is tested by talking to it, and a pod in a cluster is not
+	/// somewhere a browser can reach. A forward to the port it listens on costs
+	/// nothing and turns "it is running" into a link. The ingress, when the
+	/// configuration asks for one, is the other way in — and the one that other
+	/// people can use.
+	private func openServicePort(
+		settings: LaunchConfiguration.DevPodSettings,
+		pod: DevPodTarget,
+		context: String?,
+		kubeconfig: String?
+	) async {
+		if !settings.ingressHost.isEmpty {
+			clusterLog("published at http://\(settings.ingressHost)")
+		}
+
+		let port = settings.port > 0 ? settings.port : 8080
+		do {
+			let forward = try await PortForward.start(
+				to: PodTarget(
+					namespace: pod.namespace, name: pod.name, phase: pod.phase,
+					containers: [], port: port, portSource: .containerPort
+				),
+				context: context,
+				remotePort: port,
+				kubeconfig: kubeconfig
+			)
+			devPodForwards.append(forward)
+			clusterLog("reachable at http://localhost:\(forward.localPort) (pod port \(port))")
+		} catch {
+			// Not a failure: plenty of programs serve nothing at all.
+			clusterLog("no forward to port \(port): \(error.localizedDescription)")
+		}
 	}
 
 	/// Reports what the cluster is doing with the pods an install just asked

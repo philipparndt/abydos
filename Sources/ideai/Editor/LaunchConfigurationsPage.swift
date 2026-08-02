@@ -269,6 +269,11 @@ final class LaunchConfigurationsPage: NSView {
 			field("Namespace", key: "namespace", monospaced: true, placeholder: "ideai-dev"),
 			field("Kubeconfig", key: "kubeconfig", monospaced: true, placeholder: "~/.kube/config"),
 			field("Pod image", key: "image", monospaced: true, placeholder: "pharndt/ideai-devpod:dev"),
+			field("Service port", key: "port", monospaced: true, placeholder: "8080"),
+			field(
+				"Published at", key: "ingressHost", monospaced: true,
+				placeholder: "lamarzocco.dev.example.com — empty for none"
+			),
 			labelled("Files to send", filesList),
 		])
 		form.addArrangedSubview(clusterSection)
@@ -452,6 +457,8 @@ final class LaunchConfigurationsPage: NSView {
 		fields["namespace"]?.stringValue = settings.namespace
 		fields["kubeconfig"]?.stringValue = settings.kubeconfig
 		fields["image"]?.stringValue = settings.image
+		fields["port"]?.stringValue = settings.port > 0 ? String(settings.port) : ""
+		fields["ingressHost"]?.stringValue = settings.ingressHost
 		filesList.files = settings.files
 		fillContexts(selecting: settings.context)
 
@@ -490,7 +497,9 @@ final class LaunchConfigurationsPage: NSView {
 				allowedContexts: fields["allowed"]?.stringValue.trimmingCharacters(in: .whitespaces) ?? "",
 				allowInstall: original.devPod?.allowInstall ?? true,
 				files: filesList.files,
-				image: fields["image"]?.stringValue.trimmingCharacters(in: .whitespaces) ?? ""
+				image: fields["image"]?.stringValue.trimmingCharacters(in: .whitespaces) ?? "",
+				ingressHost: fields["ingressHost"]?.stringValue.trimmingCharacters(in: .whitespaces) ?? "",
+				port: Int(fields["port"]?.stringValue.trimmingCharacters(in: .whitespaces) ?? "") ?? 0
 			)
 		}
 		return updated

@@ -413,6 +413,15 @@ public extension LaunchConfiguration {
 		/// A kubeconfig other than the default, for a cluster that lives in a
 		/// file of its own.
 		public var kubeconfig: String
+		/// A hostname to publish the service on, or empty for none.
+		///
+		/// A microservice with no chart of its own still has to be reachable to
+		/// be tested. The development pod's chart can publish one — through
+		/// whichever of Gateway API, Traefik or a plain Ingress the cluster
+		/// has — and this is the name it answers to.
+		public var ingressHost: String
+		/// The port the program listens on, or 0 for the chart's default.
+		public var port: Int
 		/// The image the pod runs, for a cluster that has to pull one.
 		///
 		/// Empty means the chart's own default, which is the image imported by
@@ -447,7 +456,9 @@ public extension LaunchConfiguration {
 			allowedContexts: String = "",
 			allowInstall: Bool = true,
 			files: [String] = [],
-			image: String = ""
+			image: String = "",
+			ingressHost: String = "",
+			port: Int = 0
 		) {
 			self.context = context
 			self.namespace = namespace
@@ -457,6 +468,8 @@ public extension LaunchConfiguration {
 			self.allowInstall = allowInstall
 			self.files = files
 			self.image = image
+			self.ingressHost = ingressHost
+			self.port = port
 		}
 
 		/// What `context` means when it is not a name.
@@ -496,6 +509,8 @@ public extension LaunchConfiguration {
 			if !allowInstall { fields["allowInstall"] = .bool(false) }
 			if !files.isEmpty { fields["files"] = .array(files.map(JSONValue.string)) }
 			if !image.isEmpty { fields["image"] = .string(image) }
+			if !ingressHost.isEmpty { fields["ingressHost"] = .string(ingressHost) }
+			if port > 0 { fields["port"] = .number(Double(port)) }
 			return .object(fields)
 		}
 
@@ -524,7 +539,12 @@ public extension LaunchConfiguration {
 				allowedContexts: string("allowedContexts"),
 				allowInstall: allowInstall,
 				files: files,
-				image: string("image")
+				image: string("image"),
+				ingressHost: string("ingressHost"),
+				port: {
+					guard case let .number(value)? = fields["port"] else { return 0 }
+					return Int(value)
+				}()
 			)
 		}
 
@@ -602,6 +622,25 @@ public enum DevPodFiles {
 			self.local = local
 			self.remote = remote
 		}
+	}
+
+	/// What the chart has to be told to publish this service.
+	///
+	/// Kept here rather than built where helm is called, so the one place that
+	/// knows the chart's value names is the one place that has to change when
+	/// the chart does.
+	public static func helmValues(for settings: LaunchConfiguration.DevPodSettings) -> [String] {
+		var values: [String] = []
+		if !settings.ingressHost.isEmpty {
+			values += ["ingress.enabled=true", "ingress.host=" + settings.ingressHost]
+		}
+		if settings.port > 0 {
+			values += ["app.ports[0].name=http", "app.ports[0].containerPort=\(settings.port)"]
+		}
+		if !settings.image.isEmpty {
+			values.append("image.repository=" + settings.image)
+		}
+		return values
 	}
 
 	/// How a file is written down in a configuration.

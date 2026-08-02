@@ -824,14 +824,13 @@ final class BottomPanel: NSView {
 			payload.panelID == self.panelID || TerminalDragSources.source(for: payload.panelID) != nil
 		}
 
-		overlay.translatesAutoresizingMaskIntoConstraints = false
+		// Framed rather than constrained: the drag starts in the same breath as
+		// this call, and a view whose layout has not run yet is a view of zero
+		// size — which no drop can land on.
+		overlay.translatesAutoresizingMaskIntoConstraints = true
+		overlay.frame = contentArea.frame
+		overlay.autoresizingMask = [.width, .height]
 		addSubview(overlay, positioned: .above, relativeTo: nil)
-		NSLayoutConstraint.activate([
-			overlay.topAnchor.constraint(equalTo: contentArea.topAnchor),
-			overlay.bottomAnchor.constraint(equalTo: contentArea.bottomAnchor),
-			overlay.leadingAnchor.constraint(equalTo: contentArea.leadingAnchor),
-			overlay.trailingAnchor.constraint(equalTo: contentArea.trailingAnchor),
-		])
 		dropTarget = overlay
 	}
 
@@ -1246,6 +1245,12 @@ final class PanelTabStrip: NSView {
 	var canDrag: ((Int) -> Bool)?
 	/// The panel this strip belongs to, so a drag is recognised as its own.
 	var panelID = UUID()
+	/// Whether the panel's own controls belong here.
+	///
+	/// They do not in a torn-off terminal window: there is no panel to hide, no
+	/// panel to maximise, and following the shell's project belongs to the
+	/// window that has a project in it.
+	var showsPanelControls = true { didSet { recomputeLayout(); needsDisplay = true } }
 	var onAdd: (() -> Void)?
 	var onHide: (() -> Void)?
 	/// Asked to give the panel the whole window, or to give it back.
@@ -1304,6 +1309,14 @@ final class PanelTabStrip: NSView {
 			frames.append(NSRect(x: x, y: 0, width: ceil(width), height: bounds.height))
 			x += ceil(width) + Theme.current.scaled(2)
 		}
+		guard showsPanelControls else {
+			addButtonFrame = .zero
+			hideButtonFrame = .zero
+			maximizeButtonFrame = .zero
+			followButtonFrame = .zero
+			return
+		}
+
 		addButtonFrame = NSRect(x: x + Theme.current.scaled(4), y: 0, width: Theme.current.scaled(24), height: bounds.height)
 		hideButtonFrame = NSRect(
 			x: bounds.width - Theme.current.scaled(30),
@@ -1507,6 +1520,8 @@ final class PanelTabStrip: NSView {
 		for (index, item) in items.enumerated() where index < frames.count {
 			draw(item: item, in: frames[index], isActive: index == activeIndex, isHovered: index == hoveredIndex)
 		}
+
+		guard showsPanelControls else { return }
 
 		drawGlyph(in: addButtonFrame, symbol: "plus")
 		drawGlyph(in: hideButtonFrame, symbol: "chevron.down")

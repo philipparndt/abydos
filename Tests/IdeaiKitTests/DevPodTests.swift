@@ -436,3 +436,88 @@ struct DevPodFileEntryTests {
 		#expect(DevPodFiles.entry(for: file, in: root) == "thing.json")
 	}
 }
+
+/// Publishing a microservice that has no chart of its own.
+struct DevPodIngressTests {
+	@Test func theHostAndPortSurviveBeingWrittenDown() throws {
+		var configuration = LaunchConfiguration(name: "lamarzocco", type: "go")
+		configuration.devPod = LaunchConfiguration.DevPodSettings(
+			context: "k3c-demo1",
+			ingressHost: "lamarzocco.dev.example.com",
+			port: 9000
+		)
+		let read = try #require(LaunchConfiguration(json: configuration.json))
+		#expect(read.devPod?.ingressHost == "lamarzocco.dev.example.com")
+		#expect(read.devPod?.port == 9000)
+	}
+
+	@Test func aHostTurnsTheChartsIngressOn() {
+		let values = DevPodFiles.helmValues(for: .init(ingressHost: "thing.example.com"))
+		#expect(values.contains("ingress.enabled=true"))
+		#expect(values.contains("ingress.host=thing.example.com"))
+	}
+
+	/// The chart serves 8080 by default, which is not every service's port.
+	@Test func aPortReplacesTheChartsFirstOne() {
+		let values = DevPodFiles.helmValues(for: .init(port: 9000))
+		#expect(values.contains("app.ports[0].containerPort=9000"))
+		#expect(values.contains("app.ports[0].name=http"))
+	}
+
+	/// Nothing asked for, nothing set: a configuration that says none of this
+	/// must not start publishing hostnames.
+	@Test func sayingNothingSetsNothing() {
+		#expect(DevPodFiles.helmValues(for: .init()).isEmpty)
+	}
+
+	@Test func theImageComesThroughToo() {
+		let values = DevPodFiles.helmValues(for: .init(image: "pharndt/ideai-devpod:v2"))
+		#expect(values == ["image.repository=pharndt/ideai-devpod:v2"])
+	}
+}
+
+/// Noticing that the pod in the cluster is not what the configuration asks for.
+struct DevPodUpgradeTests {
+	private let deployed = """
+	{"image": {"repository": "pharndt/ideai-devpod"},
+	 "ingress": {"enabled": true, "host": "thing.example.com"},
+	 "app": {"ports": [{"name": "http", "containerPort": 9000}]}}
+	"""
+
+	@Test func nothingAskedForIsNothingToDo() {
+		#expect(!DevPodInstall.upgradeNeeded(desired: [], deployed: deployed))
+	}
+
+	@Test func whatIsAlreadyDeployedNeedsNothing() {
+		#expect(!DevPodInstall.upgradeNeeded(
+			desired: ["ingress.enabled=true", "ingress.host=thing.example.com"],
+			deployed: deployed
+		))
+	}
+
+	/// The case this exists for: a configuration that has gained an ingress
+	/// since the pod was installed.
+	@Test func aNewHostNeedsAnUpgrade() {
+		#expect(DevPodInstall.upgradeNeeded(
+			desired: ["ingress.enabled=true", "ingress.host=other.example.com"],
+			deployed: deployed
+		))
+	}
+
+	@Test func anIndexedPathIsFollowedIntoTheList() {
+		#expect(!DevPodInstall.upgradeNeeded(
+			desired: ["app.ports[0].containerPort=9000"], deployed: deployed
+		))
+		#expect(DevPodInstall.upgradeNeeded(
+			desired: ["app.ports[0].containerPort=8080"], deployed: deployed
+		))
+	}
+
+	/// A release with no values at all, and one helm could not be asked about,
+	/// both mean "install it".
+	@Test func nothingDeployedMeansUpgrade() {
+		#expect(DevPodInstall.upgradeNeeded(desired: ["ingress.enabled=true"], deployed: ""))
+		#expect(DevPodInstall.upgradeNeeded(desired: ["ingress.enabled=true"], deployed: "null"))
+		#expect(DevPodInstall.upgradeNeeded(desired: ["ingress.enabled=true"], deployed: "{}"))
+	}
+}

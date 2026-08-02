@@ -61,6 +61,7 @@ final class TerminalWindowController: NSWindowController, NSWindowDelegate {
 		// there for good, which makes tearing one off a decision rather than a
 		// gesture.
 		strip.panelID = sourceID
+		strip.showsPanelControls = false
 		strip.setUpTabDropping()
 		strip.canDrag = { _ in true }
 		strip.setItems([PanelTabItem(title: title, hasExited: false, canRename: true, isShowing: true)], activeIndex: 0)

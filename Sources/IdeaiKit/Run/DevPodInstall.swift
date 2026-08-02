@@ -60,6 +60,7 @@ public enum DevPodInstall {
 		context: String?,
 		kubeconfig: String?,
 		image: String? = nil,
+		values: [String] = [],
 		timeout: TimeInterval = 120,
 		progress: (@Sendable (String) -> Void)? = nil
 	) async throws {
@@ -79,6 +80,9 @@ public enum DevPodInstall {
 		if let image, !image.isEmpty {
 			arguments += ["--set", "image.repository=" + image]
 		}
+		for value in values {
+			arguments += ["--set", value]
+		}
 
 		progress?("$ helm " + arguments.joined(separator: " "))
 		let result = await run(helm, arguments, timeout: timeout + 30, progress: progress)
@@ -92,6 +96,90 @@ public enum DevPodInstall {
 				(result.error.isEmpty ? result.output : result.error)
 					.trimmingCharacters(in: .whitespacesAndNewlines)
 			)
+		}
+	}
+
+	/// What the release was installed with, as helm reports it.
+	public static func deployedValues(
+		release: String,
+		namespace: String,
+		context: String?,
+		kubeconfig: String?
+	) async -> String {
+		guard let helm else { return "" }
+		var arguments = ["get", "values", release, "--namespace", namespace, "-o", "json"]
+		if let context, !context.isEmpty { arguments += ["--kube-context", context] }
+		if let kubeconfig, !kubeconfig.isEmpty {
+			arguments += ["--kubeconfig", (kubeconfig as NSString).expandingTildeInPath]
+		}
+		let result = await run(helm, arguments, timeout: 20)
+		return result.exitCode == 0 ? result.output : ""
+	}
+
+	/// Whether what the configuration asks for is already what is deployed.
+	///
+	/// A pod that is running is not necessarily a pod that is published: the
+	/// hostname, the port and the image are decided at install time, and a
+	/// configuration that has since gained an ingress would otherwise be
+	/// ignored until somebody deleted the release by hand.
+	public static func upgradeNeeded(desired: [String], deployed json: String) -> Bool {
+		guard !desired.isEmpty else { return false }
+		guard let data = json.data(using: .utf8),
+		      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+		else { return true }
+
+		for setting in desired {
+			guard let (path, wanted) = split(setting) else { continue }
+			guard let found = value(at: path, in: object) else { return true }
+			guard describe(found) == wanted else { return true }
+		}
+		return false
+	}
+
+	/// `a.b[0].c=value` into its path and its value.
+	private static func split(_ setting: String) -> (path: [String], value: String)? {
+		guard let equals = setting.firstIndex(of: "=") else { return nil }
+		let path = String(setting[setting.startIndex..<equals])
+		let value = String(setting[setting.index(after: equals)...])
+
+		var parts: [String] = []
+		for piece in path.split(separator: ".") {
+			// `ports[0]` is a key and an index, which is two steps.
+			if let bracket = piece.firstIndex(of: "[") {
+				parts.append(String(piece[piece.startIndex..<bracket]))
+				let inside = piece[piece.index(after: bracket)...].dropLast()
+				parts.append(String(inside))
+			} else {
+				parts.append(String(piece))
+			}
+		}
+		return (parts, value)
+	}
+
+	private static func value(at path: [String], in object: Any) -> Any? {
+		var current: Any? = object
+		for step in path {
+			if let dictionary = current as? [String: Any] {
+				current = dictionary[step]
+			} else if let array = current as? [Any], let index = Int(step), array.indices.contains(index) {
+				current = array[index]
+			} else {
+				return nil
+			}
+			if current == nil { return nil }
+		}
+		return current
+	}
+
+	/// How helm would have written the value back.
+	private static func describe(_ value: Any) -> String {
+		switch value {
+		case let text as String: return text
+		case let flag as Bool: return flag ? "true" : "false"
+		case let number as NSNumber:
+			let double = number.doubleValue
+			return double == double.rounded() ? String(Int(double)) : String(double)
+		default: return String(describing: value)
 		}
 	}
 
