@@ -576,3 +576,94 @@ struct HelmPendingTests {
 		#expect(DevPodInstall.statusName(fromJSON: "not json").isEmpty)
 	}
 }
+
+/// Working out how to build a project for the pod.
+struct DevPodBuildStrategyTests {
+	private func project(_ files: [String]) throws -> URL {
+		let root = FileManager.default.temporaryDirectory
+			.appendingPathComponent("build-\(UUID().uuidString)")
+		for file in files {
+			let url = root.appendingPathComponent(file)
+			try FileManager.default.createDirectory(
+				at: url.deletingLastPathComponent(), withIntermediateDirectories: true
+			)
+			try "".write(to: url, atomically: true, encoding: .utf8)
+		}
+		return root
+	}
+
+	@Test func aGoModuleIsBuiltWithGo() throws {
+		let root = try project(["go.mod", "main.go"])
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		var configuration = LaunchConfiguration(name: "cluster", type: "go")
+		configuration.program = "${workspaceFolder}"
+		guard case .go = DevPodBuild.strategy(for: configuration, root: root) else {
+			Issue.record("expected a Go build")
+			return
+		}
+	}
+
+	/// The project's own build wins: a Makefile that already cross-compiles
+	/// knows things this cannot.
+	@Test func aMakeStepIsUsedWhateverTheLanguage() throws {
+		let root = try project(["go.mod", "Makefile"])
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		var configuration = LaunchConfiguration(name: "cluster", type: "go")
+		configuration.program = "${workspaceFolder}/build/thing"
+		configuration.extras["ideai.make"] = .object([
+			"targets": .array([.string("linux")]),
+			"directory": .string("${workspaceFolder}"),
+		])
+
+		guard case let .make(targets, _, artefact) = DevPodBuild.strategy(for: configuration, root: root)
+		else {
+			Issue.record("expected a make build")
+			return
+		}
+		#expect(targets == ["linux"])
+		#expect(artefact == "${workspaceFolder}/build/thing")
+	}
+
+	@Test func anOdinProjectIsRecognised() throws {
+		let root = try project(["src/main.odin"])
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		var configuration = LaunchConfiguration(name: "cluster", type: "lldb")
+		configuration.program = "${workspaceFolder}/build/odin-hello"
+		guard case .odin = DevPodBuild.strategy(for: configuration, root: root) else {
+			Issue.record("expected an Odin build")
+			return
+		}
+	}
+
+	@Test func aZigProjectIsRecognised() throws {
+		let root = try project(["build.zig", "src/main.zig"])
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		var configuration = LaunchConfiguration(name: "cluster", type: "lldb")
+		configuration.program = "${workspaceFolder}/zig-out/bin/thing"
+		guard case .zig = DevPodBuild.strategy(for: configuration, root: root) else {
+			Issue.record("expected a Zig build")
+			return
+		}
+	}
+
+	/// Nothing recognised and no build of its own: better to say so than to
+	/// run `go build` in a project with no Go in it, which is what used to
+	/// happen — and what the Go error nobody could explain came from.
+	@Test func somethingUnrecognisedIsNotGuessedAt() throws {
+		let root = try project(["CMakeLists.txt", "main.c"])
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		var configuration = LaunchConfiguration(name: "cluster", type: "lldb")
+		configuration.program = "${workspaceFolder}/build/thing"
+		#expect(DevPodBuild.strategy(for: configuration, root: root) == nil)
+	}
+
+	@Test func architecturesAreNamedTheWayCompilersNameThem() {
+		#expect(DevPodBuild.machine("arm64") == "aarch64")
+		#expect(DevPodBuild.machine("amd64") == "x86_64")
+	}
+}

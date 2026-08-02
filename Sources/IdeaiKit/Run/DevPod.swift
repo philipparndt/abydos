@@ -353,14 +353,149 @@ public enum DevPodBuild {
 	public enum Failure: Error, Equatable {
 		case noToolchain
 		case failed(String)
+		case unsupported(String)
 	}
 
-	/// Cross-compiles a package for the cluster, keeping what a debugger needs.
+	/// How a project is built for the pod.
+	///
+	/// The pod runs Linux and this machine does not, so something has to
+	/// cross-compile. Which something depends on the language, and one of them
+	/// — the project's own build — beats every guess this app could make.
+	public enum Strategy: Equatable {
+		/// The project says how: a make target, given the target system.
+		case make(targets: [String], directory: String, artefact: String)
+		case go(package: String)
+		case zig(directory: String)
+		/// Odin's linker cannot make a Linux binary on a Mac, but it will emit
+		/// the objects, and zig's linker will take them.
+		case odin(directory: String)
+	}
+
+	/// Works out how to build a configuration for the cluster.
+	///
+	/// The project's own build first: a Makefile that already cross-compiles
+	/// knows things this cannot, and a project in a language nothing here
+	/// handles still works if it has one.
+	public static func strategy(
+		for configuration: LaunchConfiguration,
+		root: URL
+	) -> Strategy? {
+		if let step = configuration.makeStep {
+			return .make(
+				targets: step.targets,
+				directory: step.directory,
+				artefact: configuration.program
+			)
+		}
+
+		let program = configuration.expandedProgram(root: root)
+		let directory = URL(fileURLWithPath: program).hasDirectoryPath
+			? URL(fileURLWithPath: program)
+			: URL(fileURLWithPath: program).deletingLastPathComponent()
+		let manager = FileManager.default
+
+		if configuration.type == "go" || manager.fileExists(atPath: root.appendingPathComponent("go.mod").path) {
+			return .go(package: program)
+		}
+		if manager.fileExists(atPath: root.appendingPathComponent("build.zig").path) {
+			return .zig(directory: root.path)
+		}
+		if hasSource(withExtension: "odin", in: directory) || hasSource(withExtension: "odin", in: root) {
+			return .odin(directory: directory.path)
+		}
+		return nil
+	}
+
+	private static func hasSource(withExtension ext: String, in directory: URL) -> Bool {
+		let contents = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+		if contents.contains(where: { ($0 as NSString).pathExtension == ext }) { return true }
+		// One level down, since `src/` is where most projects put it.
+		for entry in contents {
+			let child = directory.appendingPathComponent(entry)
+			var isDirectory: ObjCBool = false
+			guard FileManager.default.fileExists(atPath: child.path, isDirectory: &isDirectory),
+			      isDirectory.boolValue, !entry.hasPrefix(".")
+			else { continue }
+			let inside = (try? FileManager.default.contentsOfDirectory(atPath: child.path)) ?? []
+			if inside.contains(where: { ($0 as NSString).pathExtension == ext }) { return true }
+		}
+		return false
+	}
+
+	/// Builds whatever the configuration is for, for the cluster.
+	public static func build(
+		configuration: LaunchConfiguration,
+		root: URL,
+		architecture: String,
+		output: URL,
+		progress: (@Sendable (String) -> Void)? = nil
+	) async throws -> URL {
+		guard let strategy = strategy(for: configuration, root: root) else {
+			throw Failure.unsupported(
+				"""
+				Nothing here knows how to build this for linux/\(architecture).
+
+				Go, Zig and Odin are built directly. For anything else, give the \
+				configuration a make step that cross-compiles and points at the \
+				binary it produces — make is told the target system:
+
+				    IDEAI_TARGET_OS=linux IDEAI_TARGET_ARCH=\(architecture)
+				"""
+			)
+		}
+
+		switch strategy {
+		case let .make(targets, directory, artefact):
+			return try await buildWithMake(
+				targets: targets,
+				directory: URL(fileURLWithPath: LaunchConfiguration.expand(directory, root: root)),
+				artefact: URL(fileURLWithPath: LaunchConfiguration.expand(artefact, root: root)),
+				architecture: architecture,
+				progress: progress
+			)
+		case let .go(package):
+			return try await buildGo(
+				package: package,
+				in: URL(fileURLWithPath: package).hasDirectoryPath
+					? URL(fileURLWithPath: package)
+					: root,
+				architecture: architecture,
+				output: output
+			)
+		case let .zig(directory):
+			return try await buildZig(
+				in: URL(fileURLWithPath: directory),
+				architecture: architecture,
+				output: output,
+				progress: progress
+			)
+		case let .odin(directory):
+			return try await buildOdin(
+				in: URL(fileURLWithPath: directory),
+				architecture: architecture,
+				output: output,
+				progress: progress
+			)
+		}
+	}
+
+	/// Cross-compiles a Go package, keeping what a debugger needs.
 	///
 	/// Static, because the image the pod runs has no libc in it; unoptimised
 	/// and un-inlined, because otherwise a breakpoint lands on a line the
 	/// compiler moved and a variable reads `<optimized out>`.
 	public static func build(
+		package: String,
+		in directory: URL,
+		architecture: String,
+		output: URL
+	) async throws -> URL {
+		try await buildGo(
+			package: package, in: directory, architecture: architecture, output: output
+		)
+	}
+
+	private static func buildGo(
 		package: String,
 		in directory: URL,
 		architecture: String,
@@ -383,11 +518,170 @@ public enum DevPodBuild {
 			]
 		)
 		guard result.exitCode == 0 else {
-			throw Failure.failed(
-				result.error.isEmpty ? result.output : result.error
-			)
+			throw Failure.failed(result.error.isEmpty ? result.output : result.error)
 		}
 		return output
+	}
+
+	/// Runs the project's own build, told what it is building for.
+	private static func buildWithMake(
+		targets: [String],
+		directory: URL,
+		artefact: URL,
+		architecture: String,
+		progress: (@Sendable (String) -> Void)?
+	) async throws -> URL {
+		let command = (["make"] + targets).map(shellQuoted).joined(separator: " ")
+		progress?("$ " + command + "  (in \(directory.lastPathComponent))")
+
+		let result = await ShellEnvironment.run(
+			command,
+			in: directory,
+			environment: [
+				// What the project needs in order to cross-compile, in the
+				// terms each toolchain uses.
+				"IDEAI_TARGET_OS": "linux",
+				"IDEAI_TARGET_ARCH": architecture,
+				"GOOS": "linux",
+				"GOARCH": architecture,
+				"CGO_ENABLED": "0",
+			]
+		)
+		guard result.exitCode == 0 else {
+			throw Failure.failed(result.error.isEmpty ? result.output : result.error)
+		}
+		guard FileManager.default.fileExists(atPath: artefact.path) else {
+			throw Failure.failed(
+				"The build finished but \(artefact.path) is not there. "
+					+ "The configuration's program is what gets pushed into the pod, so it has "
+					+ "to be the binary the build produces."
+			)
+		}
+		return artefact
+	}
+
+	/// Zig cross-compiles out of the box, which is most of why it is here.
+	private static func buildZig(
+		in directory: URL,
+		architecture: String,
+		output: URL,
+		progress: (@Sendable (String) -> Void)?
+	) async throws -> URL {
+		guard let zig = tool("zig") else {
+			throw Failure.unsupported("This looks like a Zig project, but `zig` is not installed.")
+		}
+		let triple = "\(machine(architecture))-linux-musl"
+		progress?("$ zig build -Dtarget=\(triple)")
+
+		let result = await ShellEnvironment.run(
+			[shellQuoted(zig), "build", "-Dtarget=" + triple].joined(separator: " "),
+			in: directory
+		)
+		guard result.exitCode == 0 else {
+			throw Failure.failed(result.error.isEmpty ? result.output : result.error)
+		}
+
+		// Whatever it put in zig-out/bin, which is where `zig build` installs.
+		let binaries = directory.appendingPathComponent("zig-out/bin")
+		let produced = ((try? FileManager.default.contentsOfDirectory(atPath: binaries.path)) ?? [])
+			.map { binaries.appendingPathComponent($0) }
+		guard let binary = produced.first else {
+			throw Failure.failed("zig build produced nothing in zig-out/bin.")
+		}
+		try? FileManager.default.removeItem(at: output)
+		try FileManager.default.copyItem(at: binary, to: output)
+		return output
+	}
+
+	/// Odin, in two steps.
+	///
+	/// Its own linker refuses to make a Linux binary on a Mac — "linking for
+	/// cross compilation for this platform is not yet supported" — but it will
+	/// emit the objects, and zig ships a linker that takes them.
+	private static func buildOdin(
+		in directory: URL,
+		architecture: String,
+		output: URL,
+		progress: (@Sendable (String) -> Void)?
+	) async throws -> URL {
+		guard let odin = tool("odin") else {
+			throw Failure.unsupported("This looks like an Odin project, but `odin` is not installed.")
+		}
+		guard let zig = tool("zig") else {
+			throw Failure.unsupported(
+				"""
+				Odin's linker cannot make a Linux binary on a Mac, so zig's is used instead — \
+				and `zig` is not installed.
+
+				    brew install zig
+				"""
+			)
+		}
+
+		let objects = output.deletingLastPathComponent()
+			.appendingPathComponent(output.lastPathComponent + "-objects")
+		try? FileManager.default.removeItem(at: objects)
+		try FileManager.default.createDirectory(at: objects, withIntermediateDirectories: true)
+
+		let source = FileManager.default.fileExists(atPath: directory.appendingPathComponent("src").path)
+			? directory.appendingPathComponent("src")
+			: directory
+		let target = "linux_\(architecture == "arm64" ? "arm64" : "amd64")"
+		progress?("$ odin build \(source.lastPathComponent) -build-mode:obj -target:\(target)")
+
+		let compiled = await ShellEnvironment.run(
+			[
+				shellQuoted(odin), "build", shellQuoted(source.path),
+				"-build-mode:obj", "-debug",
+				"-out:" + shellQuoted(objects.appendingPathComponent("out").path),
+				"-target:" + target,
+			].joined(separator: " "),
+			in: directory
+		)
+		guard compiled.exitCode == 0 else {
+			throw Failure.failed(compiled.error.isEmpty ? compiled.output : compiled.error)
+		}
+
+		let produced = ((try? FileManager.default.contentsOfDirectory(atPath: objects.path)) ?? [])
+			.filter { $0.hasSuffix(".obj") || $0.hasSuffix(".o") }
+			.sorted()
+		guard !produced.isEmpty else {
+			throw Failure.failed("Odin produced no object files to link.")
+		}
+
+		let triple = "\(machine(architecture))-linux-musl"
+		progress?("$ zig cc -target \(triple) \(produced.count) objects")
+		let linked = await ShellEnvironment.run(
+			([shellQuoted(zig), "cc", "-target", triple]
+				+ produced.map { shellQuoted(objects.appendingPathComponent($0).path) }
+				+ ["-o", shellQuoted(output.path)]).joined(separator: " "),
+			in: directory
+		)
+		guard linked.exitCode == 0 else {
+			throw Failure.failed(linked.error.isEmpty ? linked.output : linked.error)
+		}
+		try? FileManager.default.removeItem(at: objects)
+		return output
+	}
+
+	/// `arm64` as a compiler spells it.
+	static func machine(_ architecture: String) -> String {
+		architecture == "arm64" ? "aarch64" : "x86_64"
+	}
+
+	private static func tool(_ name: String) -> String? {
+		let candidates = [
+			"/opt/homebrew/bin/" + name,
+			"/usr/local/bin/" + name,
+			"/usr/bin/" + name,
+		]
+		if let path = ProcessInfo.processInfo.environment["PATH"] {
+			for directory in path.split(separator: ":") {
+				let candidate = String(directory) + "/" + name
+				if FileManager.default.isExecutableFile(atPath: candidate) { return candidate }
+			}
+		}
+		return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
 	}
 
 	private static func shellQuoted(_ word: String) -> String {

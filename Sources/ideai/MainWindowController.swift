@@ -2904,14 +2904,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				runControl?.setStatus("Building for linux/\(architecture)…", busy: true)
 				clusterLog("building for linux/\(architecture)")
 
-				let directory = URL(fileURLWithPath: configuration.expandedWorkingDirectory(root: root))
 				let output = FileManager.default.temporaryDirectory
 					.appendingPathComponent("ideai-devpod-\(configuration.name.replacingOccurrences(of: " ", with: "-"))")
+				// The project, not the working directory: what a build needs to
+				// know — where go.mod is, where build.zig is, where make runs —
+				// hangs off the project, and `cwd` is where the program runs.
 				let binary = try await DevPodBuild.build(
-					package: configuration.expandedProgram(root: root),
-					in: directory,
+					configuration: configuration,
+					root: root,
 					architecture: architecture,
-					output: output
+					output: output,
+					progress: { line in Task { @MainActor in self.clusterLog(line) } }
 				)
 
 				let attributes = try? FileManager.default.attributesOfItem(atPath: binary.path)
@@ -3471,6 +3474,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			switch failure {
 			case .noToolchain: return "No Go toolchain was found"
 			case let .failed(output): return output
+			case let .unsupported(reason): return reason
 			}
 		case let failure as DevPodInstall.Failure:
 			switch failure {

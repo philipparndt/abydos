@@ -214,6 +214,19 @@ a pod at roughly 60 MB/s, so the loop stays near a second for a real service.
 - Delve in the image must be new enough for the Go that built the binary.
   `DELVE=v1.26.2 make image` pins it.
 
+## What gets built
+
+The pod runs Linux and the machine does not, so something has to
+cross-compile. In order:
+
+| the project has | what runs |
+|---|---|
+| a make step in the configuration | `make <targets>`, with `IDEAI_TARGET_OS=linux`, `IDEAI_TARGET_ARCH`, `GOOS` and `GOARCH` set — and the configuration's program is the binary it must produce |
+| `go.mod` | `go build` for linux, static, with the flags a debugger needs |
+| `build.zig` | `zig build -Dtarget=<arch>-linux-musl` |
+| `.odin` sources | `odin build -build-mode:obj -target:linux_<arch>`, then `zig cc` to link — Odin's own linker cannot cross-link, zig's can |
+| none of these | it says so, rather than running `go build` in a project with no Go in it |
+
 ## Other languages
 
 The transport carries a file and restarts a process, so anything that compiles
