@@ -23,6 +23,7 @@ final class LaunchConfigurationEditor: NSObject {
 	private var contextPopUp: NSPopUpButton!
 	private var namespaceInput: NSTextField!
 	private var kubeconfigInput: NSTextField!
+	private var allowedInput: NSTextField!
 	/// A row of the form, kept so it can be collapsed.
 	@MainActor
 	private struct Row {
@@ -181,16 +182,21 @@ final class LaunchConfigurationEditor: NSObject {
 		contextPopUp.controlSize = .regular
 		contextPopUp.font = Theme.current.uiFont(12)
 		contextPopUp.addItem(withTitle: "Current context")
-		if !settings.context.isEmpty { contextPopUp.addItem(withTitle: settings.context) }
-		contextPopUp.selectItem(at: settings.context.isEmpty ? 0 : 1)
+		if !settings.followsCurrentContext { contextPopUp.addItem(withTitle: settings.context) }
+		contextPopUp.selectItem(at: settings.followsCurrentContext ? 0 : 1)
 
 		namespaceInput = input(settings.namespace, monospaced: true)
 		namespaceInput.placeholderString = "Every namespace"
 		kubeconfigInput = input(settings.kubeconfig, monospaced: true)
 		kubeconfigInput.placeholderString = "~/.kube/config"
+		allowedInput = input(settings.allowedContexts, monospaced: true)
+		allowedInput.placeholderString = "*-local, k3c-*"
+		allowedInput.toolTip = "Contexts this may run on. Empty allows any."
+
 
 		clusterRows = [
 			row("Cluster", contextPopUp, height: 24),
+			row("Only run on contexts matching", allowedInput, height: 24),
 			row("Namespace", namespaceInput, height: 24),
 			row("Kubeconfig", kubeconfigInput, height: 24),
 		]
@@ -356,7 +362,8 @@ final class LaunchConfigurationEditor: NSObject {
 				context: chosenContext,
 				namespace: namespaceInput.stringValue.trimmingCharacters(in: .whitespaces),
 				pod: original.devPod?.pod ?? "",
-				kubeconfig: kubeconfigInput.stringValue.trimmingCharacters(in: .whitespaces)
+				kubeconfig: kubeconfigInput.stringValue.trimmingCharacters(in: .whitespaces),
+				allowedContexts: allowedInput.stringValue.trimmingCharacters(in: .whitespaces)
 			)
 		}
 		updated.program = programInput.stringValue.trimmingCharacters(in: .whitespaces)

@@ -100,8 +100,8 @@ public enum Kubernetes {
 			.filter { !$0.isEmpty }
 	}
 
-	public static func currentContext() async -> String? {
-		let result = await run(["config", "current-context"])
+	public static func currentContext(kubeconfig: String? = nil) async -> String? {
+		let result = await run(["config", "current-context"], kubeconfig: kubeconfig)
 		let name = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
 		return result.exitCode == 0 && !name.isEmpty ? name : nil
 	}

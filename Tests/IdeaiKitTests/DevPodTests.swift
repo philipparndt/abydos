@@ -105,3 +105,84 @@ struct GzipTests {
 		#expect(Gzip.crc32(Data("The quick brown fox jumps over the lazy dog".utf8)) == 0x414F_A339)
 	}
 }
+
+/// Which cluster a shared configuration is allowed to run on.
+struct ContextPatternTests {
+	@Test func matchesTheWayAShellWould() {
+		#expect(ContextPattern.matches("philipp-local", "*-local"))
+		#expect(ContextPattern.matches("k3c-demo1", "k3c-*"))
+		#expect(ContextPattern.matches("anything", "*"))
+		#expect(!ContextPattern.matches("prod-eu", "*-local"))
+		#expect(!ContextPattern.matches("local-prod", "*-local"))
+	}
+
+	@Test func matchesOneCharacterWithAQuestionMark() {
+		#expect(ContextPattern.matches("dev1", "dev?"))
+		#expect(!ContextPattern.matches("dev12", "dev?"))
+	}
+
+	/// Case is not what anybody means by a different cluster.
+	@Test func ignoresCase() {
+		#expect(ContextPattern.matches("My-Local", "*-local"))
+	}
+
+	@Test func readsAListOfPatterns() {
+		#expect(ContextPattern.list("*-local, k3c-*") == ["*-local", "k3c-*"])
+		#expect(ContextPattern.list("  ").isEmpty)
+	}
+}
+
+/// Following the current context, but only so far.
+struct DevPodContextTests {
+	@Test func followsWhicheverContextIsCurrent() {
+		let settings = LaunchConfiguration.DevPodSettings(allowedContexts: "*-local")
+		#expect(try! settings.resolve(current: "philipp-local").get() == "philipp-local")
+	}
+
+	/// The whole point: a configuration everybody shares must not follow one
+	/// of them onto production.
+	@Test func refusesAContextThatIsNotAllowed() {
+		let settings = LaunchConfiguration.DevPodSettings(allowedContexts: "*-local")
+		guard case let .failure(refusal) = settings.resolve(current: "prod-eu") else {
+			Issue.record("ran on production")
+			return
+		}
+		#expect(refusal.message.contains("prod-eu"))
+		#expect(refusal.message.contains("*-local"))
+	}
+
+	@Test func allowsAnythingWhenNothingIsSaid() {
+		let settings = LaunchConfiguration.DevPodSettings()
+		#expect(try! settings.resolve(current: "prod-eu").get() == "prod-eu")
+	}
+
+	/// A context named outright is still checked: writing one down is not a
+	/// way around the rule.
+	@Test func checksAContextThatWasNamed() {
+		let settings = LaunchConfiguration.DevPodSettings(
+			context: "prod-eu", allowedContexts: "*-local"
+		)
+		guard case .failure = settings.resolve(current: "mine-local") else {
+			Issue.record("ran on production")
+			return
+		}
+	}
+
+	@Test func saysWhenThereIsNoCurrentContext() {
+		let settings = LaunchConfiguration.DevPodSettings()
+		guard case let .failure(refusal) = settings.resolve(current: nil) else {
+			Issue.record("resolved to nothing")
+			return
+		}
+		#expect(refusal == .noCurrentContext)
+	}
+
+	/// `${currentContext}` says out loud what an empty field means.
+	@Test func acceptsTheVariableSpelling() {
+		let settings = LaunchConfiguration.DevPodSettings(
+			context: "${currentContext}", allowedContexts: "*-local"
+		)
+		#expect(settings.followsCurrentContext)
+		#expect(try! settings.resolve(current: "mine-local").get() == "mine-local")
+	}
+}

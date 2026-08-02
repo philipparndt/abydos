@@ -172,6 +172,72 @@ public actor DevPodClient {
 	}
 }
 
+/// Why a cluster was refused.
+public enum ContextRefusal: Error, Equatable, Sendable {
+	case noCurrentContext
+	case notAllowed(context: String, patterns: String)
+
+	/// What to say, in the words of the person who set the rule.
+	public var message: String {
+		switch self {
+		case .noCurrentContext:
+			return "kubectl has no current context, and this configuration follows it."
+		case let .notAllowed(context, patterns):
+			return "The current context is “\(context)”, and this configuration only runs on "
+				+ "\(patterns). Switch context, or change what it allows."
+		}
+	}
+}
+
+/// Matching context names against what a configuration allows.
+public enum ContextPattern {
+	/// `*-local, k3c-*` — a list, because a team has more than one kind of
+	/// cluster it is safe to run on.
+	public static func list(_ text: String) -> [String] {
+		text
+			.split(whereSeparator: { $0 == "," || $0 == " " })
+			.map { String($0).trimmingCharacters(in: .whitespaces) }
+			.filter { !$0.isEmpty }
+	}
+
+	/// Glob matching: `*` for any run of characters, `?` for one.
+	///
+	/// Not a regular expression: a pattern in a configuration file is written
+	/// by somebody thinking about shell globs, and `*-local` should mean what
+	/// it looks like rather than "anything at all".
+	public static func matches(_ name: String, _ pattern: String) -> Bool {
+		matches(Array(name.lowercased()), Array(pattern.lowercased()))
+	}
+
+	private static func matches(_ name: [Character], _ pattern: [Character]) -> Bool {
+		var nameIndex = 0
+		var patternIndex = 0
+		// Where to resume after the last `*`, so backtracking costs nothing.
+		var starPattern = -1
+		var starName = 0
+
+		while nameIndex < name.count {
+			if patternIndex < pattern.count,
+			   pattern[patternIndex] == "?" || pattern[patternIndex] == name[nameIndex] {
+				nameIndex += 1
+				patternIndex += 1
+			} else if patternIndex < pattern.count, pattern[patternIndex] == "*" {
+				starPattern = patternIndex
+				starName = nameIndex
+				patternIndex += 1
+			} else if starPattern >= 0 {
+				patternIndex = starPattern + 1
+				starName += 1
+				nameIndex = starName
+			} else {
+				return false
+			}
+		}
+		while patternIndex < pattern.count, pattern[patternIndex] == "*" { patternIndex += 1 }
+		return patternIndex == pattern.count
+	}
+}
+
 /// Finding development pods.
 public enum DevPods {
 	/// The label the chart puts on every pod it makes.
@@ -315,12 +381,51 @@ public extension LaunchConfiguration {
 		/// A kubeconfig other than the default, for a cluster that lives in a
 		/// file of its own.
 		public var kubeconfig: String
+		/// Which contexts this may run on, as patterns: `*-local`, `k3c-*`.
+		///
+		/// The point is a configuration that is shared. Everybody's cluster is
+		/// called something different, so the context cannot be written down —
+		/// but "anything ending in -local" can, and then the configuration
+		/// follows whoever runs it without following them onto production.
+		public var allowedContexts: String
 
-		public init(context: String = "", namespace: String = "", pod: String = "", kubeconfig: String = "") {
+		public init(
+			context: String = "",
+			namespace: String = "",
+			pod: String = "",
+			kubeconfig: String = "",
+			allowedContexts: String = ""
+		) {
 			self.context = context
 			self.namespace = namespace
 			self.pod = pod
 			self.kubeconfig = kubeconfig
+			self.allowedContexts = allowedContexts
+		}
+
+		/// What `context` means when it is not a name.
+		public static let currentContext = "${currentContext}"
+
+		/// Whether this runs on whichever context kubectl is pointed at.
+		public var followsCurrentContext: Bool {
+			context.isEmpty || context == Self.currentContext
+		}
+
+		/// The context to use, and whether it is allowed.
+		///
+		/// Refusing is the whole point: a shared configuration that follows
+		/// the current context follows it everywhere, and everybody has a
+		/// production cluster in their kubeconfig.
+		public func resolve(current: String?) -> Result<String, ContextRefusal> {
+			let chosen = followsCurrentContext ? (current ?? "") : context
+			guard !chosen.isEmpty else { return .failure(.noCurrentContext) }
+
+			let patterns = ContextPattern.list(allowedContexts)
+			guard patterns.isEmpty || patterns.contains(where: { ContextPattern.matches(chosen, $0) })
+			else {
+				return .failure(.notAllowed(context: chosen, patterns: allowedContexts))
+			}
+			return .success(chosen)
 		}
 
 		public var json: JSONValue {
@@ -329,6 +434,7 @@ public extension LaunchConfiguration {
 			if !namespace.isEmpty { fields["namespace"] = .string(namespace) }
 			if !pod.isEmpty { fields["pod"] = .string(pod) }
 			if !kubeconfig.isEmpty { fields["kubeconfig"] = .string(kubeconfig) }
+			if !allowedContexts.isEmpty { fields["allowedContexts"] = .string(allowedContexts) }
 			return .object(fields)
 		}
 
@@ -342,13 +448,14 @@ public extension LaunchConfiguration {
 				context: string("context"),
 				namespace: string("namespace"),
 				pod: string("pod"),
-				kubeconfig: string("kubeconfig")
+				kubeconfig: string("kubeconfig"),
+				allowedContexts: string("allowedContexts")
 			)
 		}
 
 		/// How a person would describe where this runs.
 		public var summary: String {
-			let place = [context.isEmpty ? "current context" : context, namespace]
+			let place = [followsCurrentContext ? "current context" : context, namespace]
 				.filter { !$0.isEmpty }
 				.joined(separator: "/")
 			return pod.isEmpty ? place : place + " · " + pod

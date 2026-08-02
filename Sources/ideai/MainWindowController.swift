@@ -2439,7 +2439,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 		Task { @MainActor in
 			do {
-				let context = settings.context.isEmpty ? nil : settings.context
+				// Which cluster, and whether this configuration is allowed on
+				// it: one that follows the current context follows it
+				// everywhere, and everybody has a production cluster in their
+				// kubeconfig.
+				let current = settings.followsCurrentContext
+					? await Kubernetes.currentContext(kubeconfig: settings.kubeconfig)
+					: nil
+				let context: String?
+				switch settings.resolve(current: current) {
+				case let .success(name):
+					context = name
+				case let .failure(refusal):
+					throw refusal
+				}
 				let kubeconfig = settings.kubeconfig.isEmpty ? nil : settings.kubeconfig
 
 				let pods = await DevPods.list(
@@ -2639,6 +2652,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	private static func describe(devPod error: any Error) -> String {
 		switch error {
+		case let refusal as ContextRefusal:
+			return refusal.message
 		case let failure as DevPodClient.Failure:
 			switch failure {
 			case let .unreachable(reason): return reason
