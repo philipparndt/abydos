@@ -30,6 +30,13 @@ final class EditorViewController: NSViewController {
 		/// accumulating. Exactly one may exist at a time.
 		var isPreview: Bool
 
+		/// A page is not a file: the launch configurations, and whatever else
+		/// the app puts in a tab of its own. It is named by this rather than by
+		/// its URL, which exists only so a tab can be told apart.
+		var pageTitle: String?
+		/// What it is marked with in the tab bar.
+		var pageSymbol: String?
+
 		/// A diff tab shows a comparison rather than the file, so it is a
 		/// separate tab from the file itself and says so in its subtitle.
 		var isDiff = false
@@ -1279,6 +1286,36 @@ final class EditorViewController: NSViewController {
 		return container
 	}
 
+	/// Shows a view of the app's own in a tab, or brings back the one that is
+	/// already open.
+	///
+	/// The URL is a name rather than a file: two pages must not collide, and a
+	/// tab is found by it.
+	@discardableResult
+	func openPage(_ view: NSView, title: String, identifier: String, symbol: String = "square.grid.2x2") -> NSView {
+		let url = URL(fileURLWithPath: "/ideai/page/" + identifier)
+		if let index = tabs.firstIndex(where: { $0.pageTitle != nil && $0.url == url }) {
+			activeIndex = nil
+			activate(index: index, focusEditor: false)
+			return tabs[index].contentView
+		}
+
+		let tab = Tab(url: url, document: nil, codeView: nil, contentView: view, isPreview: false)
+		tab.pageTitle = title
+		tab.pageSymbol = symbol
+		tabs.append(tab)
+		activeIndex = nil
+		activate(index: tabs.count - 1, focusEditor: false)
+		refreshTabBar()
+		return view
+	}
+
+	/// The open page with this identifier, if it is open.
+	func page(identifier: String) -> NSView? {
+		let url = URL(fileURLWithPath: "/ideai/page/" + identifier)
+		return tabs.first { $0.pageTitle != nil && $0.url == url }?.contentView
+	}
+
 	private func makeModelTab(for fileURL: URL, preview: Bool) -> Tab {
 		let tab = Tab(
 			url: fileURL,
@@ -1379,14 +1416,18 @@ final class EditorViewController: NSViewController {
 			let scratch = ScratchFiles.isScratch(tab.url)
 			return EditorTabItem(
 				url: tab.url,
-				title: scratch ? ScratchFiles.title(for: tab.url) : tab.url.lastPathComponent,
+				title: tab.pageTitle
+					?? (scratch ? ScratchFiles.title(for: tab.url) : tab.url.lastPathComponent),
 				// A scratch keeps its dot whether or not it is written out. It
 				// has nowhere in the project it belongs to, and the dot is what
 				// says so — the same mark Sublime and Zed leave on one.
 				isDirty: tab.isDirty || scratch,
 				isPreview: tab.isPreview,
-				subtitle: tab.diffCommit ?? (tab.isDiff ? "diff" : (scratch ? "scratch" : relativeDirectory(for: tab.url))),
-				isExternal: !scratch && !tab.isDiff && isOutsideProject(tab.url)
+				subtitle: tab.pageTitle != nil
+					? ""
+					: tab.diffCommit ?? (tab.isDiff ? "diff" : (scratch ? "scratch" : relativeDirectory(for: tab.url))),
+				pageSymbol: tab.pageSymbol,
+				isExternal: tab.pageTitle == nil && !scratch && !tab.isDiff && isOutsideProject(tab.url)
 			)
 		}
 		tabBar.setItems(items, activeIndex: activeIndex)
@@ -1582,8 +1623,10 @@ final class EditorViewController: NSViewController {
 
 	/// What this group has open, as plain values.
 	func captureSession() -> ProjectSession {
+		// Pages are left out: they are the app's own views, not files, and a
+		// path like /ideai/page/launch is nothing to reopen.
 		ProjectSession(
-			files: tabs.map { tab in
+			files: tabs.filter { $0.pageTitle == nil }.map { tab in
 				ProjectSession.OpenFile(
 					path: tab.url.path,
 					line: (tab.codeView?.caretLine ?? 0) + 1,

@@ -1,0 +1,14 @@
+{
+  "args" : [
+    "-push",
+    "pharndt/ideai-devpod:dev",
+    "$(foreach",
+    "-env",
+    "IDEAI_BINARY=/app/current,IDEAI_WORKDIR=/app,IDEAI_CONTROL_ADDR=:7999,IDEAI_DEBUG_ADDR=:2345,IDEAI_DLV=/usr/local/bin/dlv,SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt"
+  ],
+  "cwd" : "${workspaceFolder}/DevPod",
+  "name" : "make publish",
+  "program" : "${workspaceFolder}/DevPod",
+  "request" : "launch",
+  "type" : "go"
+}

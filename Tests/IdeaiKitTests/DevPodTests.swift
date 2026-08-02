@@ -388,3 +388,51 @@ struct BundledChartTests {
 		}
 	}
 }
+
+/// Writing a dropped file down in a configuration.
+struct DevPodFileEntryTests {
+	@Test func aFileInTheProjectIsRelativeToIt() throws {
+		let root = FileManager.default.temporaryDirectory
+			.appendingPathComponent("entry-\(UUID().uuidString)")
+		try FileManager.default.createDirectory(
+			at: root.appendingPathComponent("config"), withIntermediateDirectories: true
+		)
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		let file = root.appendingPathComponent("config/dev.json")
+		try "{}".write(to: file, atomically: true, encoding: .utf8)
+
+		// A shared configuration cannot hold one person's home directory.
+		#expect(DevPodFiles.entry(for: file, in: root) == "config/dev.json")
+	}
+
+	@Test func aFileFromSomewhereElseKeepsItsPath() throws {
+		let root = FileManager.default.temporaryDirectory
+			.appendingPathComponent("entry-\(UUID().uuidString)")
+		try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		let elsewhere = FileManager.default.temporaryDirectory
+			.appendingPathComponent("outside-\(UUID().uuidString).json")
+		try "{}".write(to: elsewhere, atomically: true, encoding: .utf8)
+		defer { try? FileManager.default.removeItem(at: elsewhere) }
+
+		let entry = DevPodFiles.entry(for: elsewhere, in: root)
+		#expect(entry.hasPrefix("/"))
+		#expect(entry.hasSuffix(elsewhere.lastPathComponent))
+	}
+
+	/// The project root arrives as `/tmp/...` and the file as `/private/tmp/...`
+	/// often enough that not resolving both is a bug that only shows up on a
+	/// Mac.
+	@Test func theSymlinkedTemporaryDirectoryIsStillTheProject() throws {
+		let root = URL(fileURLWithPath: "/tmp/entry-\(UUID().uuidString)")
+		try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		let file = URL(fileURLWithPath: "/private" + root.path + "/thing.json")
+		try "{}".write(to: file, atomically: true, encoding: .utf8)
+
+		#expect(DevPodFiles.entry(for: file, in: root) == "thing.json")
+	}
+}

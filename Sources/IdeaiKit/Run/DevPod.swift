@@ -604,6 +604,19 @@ public enum DevPodFiles {
 		}
 	}
 
+	/// How a file is written down in a configuration.
+	///
+	/// Relative to the project when it is in the project, because a
+	/// configuration is shared and `/Users/somebody/...` is not; absolute
+	/// otherwise, because that is the only thing that would find it.
+	public static func entry(for file: URL, in root: URL?) -> String {
+		let path = FilePath.canonical(file)
+		guard let root else { return path }
+		let base = FilePath.canonical(root)
+		guard path.hasPrefix(base + "/") else { return path }
+		return String(path.dropFirst(base.count + 1))
+	}
+
 	/// The default place for something sent along: beside the program.
 	public static let directory = "/app/files"
 

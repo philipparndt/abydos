@@ -14,6 +14,8 @@ struct EditorTabItem {
 	var isPreview: Bool
 	/// Directory shown after the filename, relative to the project root.
 	var subtitle: String
+	/// The symbol a page is marked with, in place of a file icon.
+	var pageSymbol: String?
 	/// A file from outside the project.
 	///
 	/// Marked, because nothing else about the tab says so: a file opened from
@@ -445,9 +447,17 @@ final class EditorTabBar: NSView {
 
 		var x = rect.minX + Self.horizontalPadding
 
-		let node = FileNode(url: item.url, isDirectory: false)
-		if let icon = FileIcon.image(for: node, isExpanded: false) {
-			icon.drawFitted(in: NSRect(x: x, y: rect.midY - Self.iconSize / 2, width: Self.iconSize, height: Self.iconSize), fraction: isActive ? 1.0 : 0.75)
+		let iconRect = NSRect(
+			x: x, y: rect.midY - Self.iconSize / 2, width: Self.iconSize, height: Self.iconSize
+		)
+		if let symbol = item.pageSymbol {
+			Theme.symbol(
+				symbol,
+				size: 12 * Theme.current.scale,
+				color: Theme.current.sidebarText.withAlphaComponent(isActive ? 0.95 : 0.7)
+			)?.drawFitted(in: iconRect)
+		} else if let icon = FileIcon.image(for: FileNode(url: item.url, isDirectory: false), isExpanded: false) {
+			icon.drawFitted(in: iconRect, fraction: isActive ? 1.0 : 0.75)
 		}
 		x += Self.iconSize + Theme.current.scaled(6)
 

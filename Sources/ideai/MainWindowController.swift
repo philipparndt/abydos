@@ -174,7 +174,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	private var titlebarBackdrop: ColoredView?
 	private var titlebarBackdropHeight: NSLayoutConstraint?
 	/// Held while open: the panel is a child window and nothing else owns it.
-	private var configurationEditor: LaunchConfigurationEditor?
 	/// Held while open, for the same reason.
 	private var processPicker: ProcessPicker?
 	/// What the run control acts on, remembered per project.
@@ -2034,7 +2033,24 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		guard let project else { return "No project is open." }
 		let status = LanguageService.shared.serverStatus(project: project.root)
 
-		if let missing = status.missing.first {
+		// About the file that is open, not about the project. A project with
+		// Go and TypeScript in it is missing the TypeScript server whether or
+		// not that has anything to do with the Go file on screen — and being
+		// told to install a TypeScript server while looking at main.go reads
+		// like the editor has lost track of what it is showing.
+		if scope == .document {
+			guard let languageId = editor.activeGroup?.activeDocument?.languageId else {
+				return "Open a file to see what it declares."
+			}
+			if let missing = status.missing.first(where: { $0.language == languageId }) {
+				return "No language server for \(missing.language).\n\(missing.hint)"
+			}
+			return query.isEmpty
+				? "Nothing declared in this file, or the language server is still starting."
+				: "Nothing matching \u{201C}\(query)\u{201D}."
+		}
+
+		if status.running.isEmpty, let missing = status.missing.first {
 			return "No language server for \(missing.language).\n\(missing.hint)"
 		}
 		if status.running.isEmpty {
@@ -3134,31 +3150,78 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	private func presentConfigurationEditor(_ configuration: LaunchConfiguration, isNew: Bool) {
 		guard let project else { return }
 
-		let editor = LaunchConfigurationEditor(configuration: configuration, isNew: isNew)
-		configurationEditor = editor
-		editor.onApply = { [weak self] updated in
-			guard let self else { return }
-			self.configurationEditor = nil
+		// A configuration that is not written down yet is written now, so the
+		// page has something to select. Nothing is lost by it: an unwanted one
+		// is deleted with the same button that deletes any other.
+		if isNew {
+			let free = LaunchNames.free(
+				like: configuration.name, avoiding: launchConfigurations.map(\.name)
+			)
+			var stored = configuration
+			stored.name = free
+			try? LaunchStore.save(stored, in: project.root)
+			selectedConfigurationName = free
+			refreshRunControl()
+			showLaunchConfigurations(selecting: free)
+			return
+		}
+		showLaunchConfigurations(selecting: configuration.name)
+	}
 
-			guard let updated else {
-				_ = try? LaunchStore.remove(named: configuration.name, in: project.root)
-				self.selectedConfigurationName = nil
-				self.refreshRunControl()
-				return
-			}
+	/// Opens the launch configurations as a page in the editor.
+	///
+	/// A page rather than a dialog: a configuration is edited while looking at
+	/// the code it runs, and a modal panel takes the project away for as long
+	/// as it is open.
+	func showLaunchConfigurations(selecting name: String? = nil) {
+		guard let project, let group = editor.activeGroup else { return }
+
+		let page = (group.page(identifier: "launch") as? LaunchConfigurationsPage)
+			?? LaunchConfigurationsPage()
+		page.onSave = { [weak self] updated, previousName in
+			guard let self else { return }
 			do {
 				// Renaming replaces rather than duplicating.
-				if updated.name != configuration.name, !isNew {
-					_ = try LaunchStore.remove(named: configuration.name, in: project.root)
+				if let previousName, previousName != updated.name {
+					_ = try LaunchStore.remove(named: previousName, in: project.root)
+					if self.selectedConfigurationName == previousName {
+						self.selectedConfigurationName = updated.name
+					}
 				}
 				_ = try LaunchStore.save(updated, in: project.root)
-				self.selectedConfigurationName = updated.name
 				self.refreshRunControl()
 			} catch {
-				self.notify("Could not write launch.json", detail: error.localizedDescription)
+				self.notify("Could not write the configuration", detail: error.localizedDescription)
 			}
 		}
-		editor.show(over: window)
+		page.onDelete = { [weak self] name in
+			guard let self else { return }
+			_ = try? LaunchStore.remove(named: name, in: project.root)
+			if self.selectedConfigurationName == name { self.selectedConfigurationName = nil }
+			self.refreshRunControl()
+		}
+		page.onRun = { [weak self] configuration, debug in
+			guard let self else { return }
+			self.selectedConfigurationName = configuration.name
+			self.refreshRunControl()
+			self.runSelectedConfiguration(debug: debug)
+		}
+
+		group.openPage(page, title: "Launch Configurations", identifier: "launch", symbol: "play.square")
+		page.load(
+			LaunchStore.read(in: project.root),
+			root: project.root,
+			selecting: name ?? selectedConfigurationName
+		)
+
+		// The clusters this machine knows about, once kubectl has answered:
+		// asking takes a moment and the rest of the page should not wait.
+		if Kubernetes.isAvailable {
+			Task { @MainActor [weak page] in
+				let contexts = await Kubernetes.contexts()
+				page?.setContexts(contexts)
+			}
+		}
 	}
 
 	/// Brings the debug panel forward.
