@@ -62,7 +62,8 @@ public enum DevPodInstall {
 		image: String? = nil,
 		values: [String] = [],
 		timeout: TimeInterval = 120,
-		progress: (@Sendable (String) -> Void)? = nil
+		progress: (@Sendable (String) -> Void)? = nil,
+		recovering: Bool = false
 	) async throws {
 		guard let helm else { throw Failure.noHelm }
 		guard FileManager.default.fileExists(atPath: chart.appendingPathComponent("Chart.yaml").path)
@@ -92,11 +93,116 @@ public enum DevPodInstall {
 			))
 		}
 		guard result.exitCode == 0 else {
-			throw Failure.failed(
-				(result.error.isEmpty ? result.output : result.error)
-					.trimmingCharacters(in: .whitespacesAndNewlines)
-			)
+			let output = (result.error.isEmpty ? result.output : result.error)
+				.trimmingCharacters(in: .whitespacesAndNewlines)
+
+			// A release left half-done — by a crash, a cancelled run, a laptop
+			// closing — refuses every later attempt with "another operation is
+			// in progress" and stays that way until somebody clears it by hand.
+			// This is our own chart in a development cluster: nothing here is
+			// worth keeping, so it is cleared and the install tried again.
+			if isPendingOperation(output), !recovering {
+				let recovered = await recoverPending(
+					release: release,
+					namespace: namespace,
+					context: context,
+					kubeconfig: kubeconfig,
+					progress: progress
+				)
+				if recovered {
+					try await install(
+						chart: chart,
+						release: release,
+						namespace: namespace,
+						context: context,
+						kubeconfig: kubeconfig,
+						image: image,
+						values: values,
+						timeout: timeout,
+						progress: progress,
+						recovering: true
+					)
+					return
+				}
+			}
+			throw Failure.failed(output)
 		}
+	}
+
+	/// Whether helm is refusing because a previous operation never finished.
+	public static func isPendingOperation(_ output: String) -> Bool {
+		output.contains("another operation (install/upgrade/rollback) is in progress")
+	}
+
+	/// What to do about a release stuck mid-operation.
+	public enum Recovery: Equatable {
+		/// Nothing was ever deployed, so there is nothing to go back to.
+		case uninstall
+		/// A working revision came before this one.
+		case rollback
+		/// Not stuck.
+		case none
+	}
+
+	/// Read from what `helm status -o json` says the release is.
+	public static func recovery(forStatus status: String) -> Recovery {
+		switch status {
+		case "pending-install": return .uninstall
+		case "pending-upgrade", "pending-rollback": return .rollback
+		default: return .none
+		}
+	}
+
+	/// Clears a release that a previous run left half-done.
+	static func recoverPending(
+		release: String,
+		namespace: String,
+		context: String?,
+		kubeconfig: String?,
+		progress: (@Sendable (String) -> Void)?
+	) async -> Bool {
+		guard let helm else { return false }
+
+		func arguments(_ command: [String]) -> [String] {
+			var full = command + ["--namespace", namespace]
+			if let context, !context.isEmpty { full += ["--kube-context", context] }
+			if let kubeconfig, !kubeconfig.isEmpty {
+				full += ["--kubeconfig", (kubeconfig as NSString).expandingTildeInPath]
+			}
+			return full
+		}
+
+		let status = await run(helm, arguments(["status", release, "-o", "json"]), timeout: 30)
+		let state = statusName(fromJSON: status.output)
+		progress?("the release is \(state.isEmpty ? "stuck" : state) from an earlier attempt")
+
+		switch recovery(forStatus: state) {
+		case .rollback:
+			progress?("$ helm rollback \(release)")
+			let rolled = await run(helm, arguments(["rollback", release]), timeout: 120, progress: progress)
+			if rolled.exitCode == 0 { return true }
+			// A rollback that cannot find a revision to go back to leaves the
+			// same lock in place; removing the release does not.
+			fallthrough
+		case .uninstall:
+			progress?("$ helm uninstall \(release)")
+			let removed = await run(
+				helm, arguments(["uninstall", release, "--wait"]), timeout: 120, progress: progress
+			)
+			return removed.exitCode == 0
+		case .none:
+			return false
+		}
+	}
+
+	/// `helm status -o json` → `.info.status`.
+	static func statusName(fromJSON json: String) -> String {
+		guard let data = json.data(using: .utf8),
+		      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+		      let info = object["info"] as? [String: Any],
+		      let status = info["status"] as? String
+		else { return "" }
+		return status
 	}
 
 	/// What the release was installed with, as helm reports it.

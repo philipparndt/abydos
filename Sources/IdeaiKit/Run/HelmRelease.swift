@@ -128,6 +128,24 @@ public enum HelmRelease {
 					"""
 				)
 			}
+			// A release left half-done refuses every later attempt. For the
+			// development pod's own chart this app clears it; for a project's
+			// chart it says what to do instead — removing a release somebody
+			// else owns is not this app's decision to make.
+			if DevPodInstall.isPendingOperation(output) {
+				throw Failure(
+					"""
+					A previous helm operation on \(settings.release) never finished, so this one \
+					was refused.
+
+					Put it back to the last working revision, or take it away:
+					    helm rollback \(settings.release) --namespace \(namespace)
+					    helm uninstall \(settings.release) --namespace \(namespace)
+
+					\(output)
+					"""
+				)
+			}
 			throw Failure(output.isEmpty ? "helm failed." : output)
 		}
 	}

@@ -539,3 +539,40 @@ struct AgentPermissionTests {
 		#expect(AgentLauncher.permissionArguments("full") == ["--dangerously-skip-permissions"])
 	}
 }
+
+/// A release that a crash or a cancelled run left half-done.
+struct HelmPendingTests {
+	private let refusal = """
+	Error: UPGRADE FAILED: another operation (install/upgrade/rollback) is in progress
+	"""
+
+	@Test func theRefusalIsRecognised() {
+		#expect(DevPodInstall.isPendingOperation(refusal))
+		#expect(!DevPodInstall.isPendingOperation("Error: UPGRADE FAILED: timed out waiting"))
+		#expect(!DevPodInstall.isPendingOperation(""))
+	}
+
+	/// Nothing was ever deployed by a pending install, so there is nothing to
+	/// roll back to — it has to go.
+	@Test func aPendingInstallIsRemoved() {
+		#expect(DevPodInstall.recovery(forStatus: "pending-install") == .uninstall)
+	}
+
+	@Test func aPendingUpgradeGoesBackToWhatWorked() {
+		#expect(DevPodInstall.recovery(forStatus: "pending-upgrade") == .rollback)
+		#expect(DevPodInstall.recovery(forStatus: "pending-rollback") == .rollback)
+	}
+
+	@Test func aHealthyReleaseIsLeftAlone() {
+		#expect(DevPodInstall.recovery(forStatus: "deployed") == .none)
+		#expect(DevPodInstall.recovery(forStatus: "") == .none)
+	}
+
+	@Test func theStatusIsReadFromHelmsOwnJSON() {
+		let json = """
+		{"name":"ideai-thing","info":{"status":"pending-upgrade","description":"Preparing upgrade"}}
+		"""
+		#expect(DevPodInstall.statusName(fromJSON: json) == "pending-upgrade")
+		#expect(DevPodInstall.statusName(fromJSON: "not json").isEmpty)
+	}
+}

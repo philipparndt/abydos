@@ -24,6 +24,10 @@ final class RunControl: NSView {
 	private var isBusy = false
 	/// Set when the last run failed, so the line reads as bad news.
 	private var failed = false
+	/// A stop already asked for: pressing it again does nothing but confuse.
+	private var isStopping = false
+	/// The button being pressed, drawn lit for a moment.
+	private var pressedRect: NSRect?
 
 	/// Rects of the things that can be pressed, worked out while drawing.
 	private var runRect: NSRect = .zero
@@ -121,6 +125,7 @@ final class RunControl: NSView {
 		guard text != status || busy != isBusy || failed != self.failed else { return }
 		let wasBusy = isBusy
 		status = text
+		if !busy { isStopping = false }
 		rebuildToolTips()
 		isBusy = busy
 		self.failed = failed
@@ -189,13 +194,47 @@ final class RunControl: NSView {
 		if !status.isEmpty, clearRect.insetBy(dx: -4, dy: -4).contains(point) {
 			setStatus("")
 		} else if runRect.contains(point) {
-			isBusy ? onStop?() : onRun?()
+			// Said before anything is done. Starting a program means building
+			// it, and stopping one in a cluster means asking a pod on the other
+			// side of a network — both take long enough that a button which
+			// says nothing looks like a button that missed the click.
+			if isBusy {
+				guard !isStopping else { return }
+				isStopping = true
+				// The titlebar's colour answers the click straight away, while
+				// the button goes on saying "stop" until the program has
+				// actually stopped. Starting means building, and stopping in a
+				// cluster means asking a pod on the other side of a network:
+				// both are long enough that silence reads as a missed click.
+				onBusyChanged?(false)
+				setStatus("Stopping\u{2026}", busy: true)
+				onStop?()
+			} else {
+				press(runRect)
+				onBusyChanged?(true)
+				setStatus("Starting\u{2026}", busy: true)
+				onRun?()
+			}
 		} else if debugMenuRect.contains(point) {
 			showStartMenu()
 		} else if debugRect.contains(point) {
+			press(debugRect)
+			onBusyChanged?(true)
+			setStatus("Starting\u{2026}", busy: true)
 			onDebug?()
 		} else if schemeRect.contains(point) {
 			onChooseConfiguration?(NSPoint(x: schemeRect.minX, y: schemeRect.maxY))
+		}
+	}
+
+	/// Lights a button for a moment, so a press is visible even when what it
+	/// starts takes a while to say anything.
+	private func press(_ rect: NSRect) {
+		pressedRect = rect
+		needsDisplay = true
+		DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { [weak self] in
+			self?.pressedRect = nil
+			self?.needsDisplay = true
 		}
 	}
 
@@ -234,10 +273,22 @@ final class RunControl: NSView {
 
 		// Stop replaces run while something is running, as it does everywhere:
 		// the two are the same question asked at different moments.
+		if let pressedRect {
+			let path = NSBezierPath(
+				roundedRect: pressedRect.insetBy(dx: Theme.current.scaled(1), dy: Theme.current.scaled(1)),
+				xRadius: Theme.current.scaled(6),
+				yRadius: Theme.current.scaled(6)
+			)
+			NSColor.white.withAlphaComponent(0.14).setFill()
+			path.fill()
+		}
+
 		drawButton(
 			in: runRect,
 			symbol: isBusy ? "stop.fill" : "play.fill",
-			tint: isBusy ? .hex(0xE05252) : Theme.current.gitAdded
+			tint: isBusy
+				? .hex(isStopping ? 0x9A6060 : 0xE05252)
+				: Theme.current.gitAdded
 		)
 		drawButton(in: debugRect, symbol: "ladybug.fill", tint: Theme.current.gitModified)
 		if let chevron = Theme.symbol(
