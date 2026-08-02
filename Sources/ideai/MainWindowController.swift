@@ -2419,6 +2419,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 	}
 
+	/// One terminal, then "put it beside" — which is what somebody does first
+	/// and what used to do nothing at all.
+	func splitActiveForTesting() {
+		setPanelVisible(true)
+		bottomPanel.newTerminal()
+		DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+			self?.bottomPanel.splitActiveBesideForTesting()
+		}
+	}
+
 	/// Shows the split preview a drag would show.
 	func previewTerminalDropForTesting() {
 		setPanelVisible(true)

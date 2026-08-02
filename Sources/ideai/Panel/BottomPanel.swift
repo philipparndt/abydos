@@ -20,9 +20,10 @@ final class BottomPanel: NSView {
 
 	/// Whether the window is following the terminal, shown on the control.
 	var isFollowingProject: Bool {
-		get { tabStrip.isFollowingProject }
+		get { columnViews.first?.strip.isFollowingProject ?? storedFollowing }
 		set {
-			tabStrip.isFollowingProject = newValue
+			storedFollowing = newValue
+			for view in columnViews { view.strip.isFollowingProject = newValue }
 			lastReportedDirectory = nil
 		}
 	}
@@ -48,8 +49,11 @@ final class BottomPanel: NSView {
 	/// Reflects the window's state on the control, so the arrows point the way
 	/// the next click would go.
 	var isMaximized: Bool {
-		get { tabStrip.isMaximized }
-		set { tabStrip.isMaximized = newValue }
+		get { columnViews.first?.strip.isMaximized ?? storedMaximized }
+		set {
+			storedMaximized = newValue
+			for view in columnViews { view.strip.isMaximized = newValue }
+		}
 	}
 
 	private final class Session {
@@ -73,6 +77,10 @@ final class BottomPanel: NSView {
 		/// A name somebody typed. The shell reports its running command as a
 		/// title, which is a good default and a bad override.
 		var isRenamed = false
+		/// Which side of the panel its tab is on. Zero unless the panel is
+		/// split, which is the whole of what a split is: some tabs over here
+		/// and some over there.
+		var column = 0
 
 		init(title: String, kind: Kind) {
 			self.title = title
@@ -102,8 +110,35 @@ final class BottomPanel: NSView {
 	}
 
 	private var sessions: [Session] = []
-	private var activeIndex: Int?
+	/// What is in front in each column.
+	private var activeByColumn: [Int: Session] = [:]
+	/// Which column a new pane appears in, and which one a click last landed on.
+	private var focusedColumn = 0
 	private var workingDirectory: URL?
+
+	/// How many columns there are: two once anything has been put beside
+	/// something, one otherwise.
+	private var columnCount: Int { sessions.contains { $0.column == 1 } ? 2 : 1 }
+
+	/// The tabs in a column, in order.
+	private func sessions(in column: Int) -> [Session] {
+		sessions.filter { $0.column == column }
+	}
+
+	private func session(at index: Int, in column: Int) -> Session? {
+		let list = sessions(in: column)
+		return list.indices.contains(index) ? list[index] : nil
+	}
+
+	/// The pane in front, wherever the focus is.
+	private var activeSession: Session? {
+		activeByColumn[focusedColumn] ?? sessions(in: focusedColumn).last ?? sessions.last
+	}
+
+	private var activeIndex: Int? {
+		guard let session = activeSession else { return nil }
+		return sessions.firstIndex { $0 === session }
+	}
 
 	/// Forwarded when a review finding or a search result is activated.
 	var onOpenFinding: ((URL, Int) -> Void)?
@@ -120,11 +155,14 @@ final class BottomPanel: NSView {
 	/// reason for splitting a terminal area.
 	private var columns: [Session] = []
 
-	private var tabStrip: PanelTabStrip!
-	private var contentArea: PanelContentView!
-	private var columnSplit: NSSplitView?
-	/// Up only while a tab is being dragged.
-	private var dropTarget: PanelContentView?
+	/// Where the columns live.
+	private var columnsHost: NSView!
+	private var columnViews: [PanelColumn] = []
+	private var columnsSplit: ColumnSplitView?
+	/// Whether the panel's own controls belong in this panel's strips.
+	private var showsPanelControls = true
+	private var storedFollowing = false
+	private var storedMaximized = false
 	private var placeholder: NSTextField!
 
 	override init(frame frameRect: NSRect) {
@@ -139,90 +177,102 @@ final class BottomPanel: NSView {
 	override var isFlipped: Bool { true }
 
 	private func build() {
-		tabStrip = PanelTabStrip()
-		tabStrip.onSelect = { [weak self] index in self?.activate(index: index, focus: true) }
-		tabStrip.onClose = { [weak self] index in self?.close(index: index) }
-		tabStrip.onAdd = { [weak self] in self?.newTerminal() }
-		tabStrip.onHide = { [weak self] in self?.onRequestHide?() }
-		tabStrip.onRename = { [weak self] index, name in self?.rename(index: index, to: name) }
-		tabStrip.panelID = panelID
-		tabStrip.setUpTabDropping()
-		// Anything in the panel can be moved: a profiler beside the terminal
-		// that produced the load is the arrangement somebody wants, and a
-		// debugger beside its program is another.
-		tabStrip.canDrag = { [weak self] index in
-			self?.sessions.indices.contains(index) ?? false
-		}
-		tabStrip.onMove = { [weak self] from, to in self?.move(from: from, to: to) }
-		tabStrip.onTearOff = { [weak self] index, point in self?.tearOff(index: index, at: point) }
-		// The pane is covered by whatever is running in it, and a drop has to
-		// land somewhere that is certain to see it. A sheet of glass over the
-		// pane for the length of the drag is that somewhere — and it is also
-		// where the preview of the split is drawn.
-		tabStrip.onDragStarted = { [weak self] in self?.showDropTarget() }
-		tabStrip.onDragEnded = { [weak self] in self?.hideDropTarget() }
-		tabStrip.onDragMoved = { [weak self] point in self?.previewDrop(at: point) }
-		tabStrip.onSplit = { [weak self] index, zone in
-			guard let self else { return }
-			self.handleDrop(TerminalTabDrag.Payload(panelID: self.panelID, index: index), zone: zone)
-		}
-		tabStrip.onUnsplit = { [weak self] in
-			guard let self, let activeIndex = self.activeIndex else { return }
-			self.activate(index: activeIndex, focus: false)
-		}
-		tabStrip.isSplit = { [weak self] in (self?.columns.count ?? 0) > 1 }
-		tabStrip.onDragEndedAt = { [weak self] index, point in
-			self?.finishDrag(index: index, at: point)
-		}
-		tabStrip.acceptsForeign = { payload in
-			TerminalDragSources.source(for: payload.panelID) != nil
-		}
-		tabStrip.onAdopt = { [weak self] payload in
-			guard let self,
-			      let source = TerminalDragSources.source(for: payload.panelID),
-			      let detached = source.detachTerminal(at: payload.index)
-			else { return }
-			self.adopt(detached, zone: .center)
-		}
-		TerminalDragSources.register(self, as: panelID)
-		tabStrip.onToggleMaximize = { [weak self] in self?.onToggleMaximize?() }
-		tabStrip.onToggleFollowProject = { [weak self] in self?.onToggleFollowProject?() }
-
-		contentArea = PanelContentView()
-		contentArea.onDrop = { [weak self] payload, zone in
-			self?.handleDrop(payload, zone: zone)
-		}
-		contentArea.acceptsDrag = { payload in
-			payload.panelID == self.panelID || TerminalDragSources.source(for: payload.panelID) != nil
-		}
-
 		placeholder = NSTextField(labelWithString: "No terminal open")
 		placeholder.font = Theme.current.uiFont(12)
 		placeholder.textColor = Theme.current.gitIgnored
 
-		for subview in [tabStrip, contentArea, placeholder] as [NSView] {
+		columnsHost = NSView()
+
+		for subview in [columnsHost, placeholder] as [NSView] {
 			addSubview(subview)
 			subview.translatesAutoresizingMaskIntoConstraints = false
 		}
 
-		tabStripHeight = tabStrip.heightAnchor.constraint(equalToConstant: Theme.current.scaled(30))
-
-		tabStripTop = tabStrip.topAnchor.constraint(equalTo: topAnchor)
-
+		tabStripTop = columnsHost.topAnchor.constraint(equalTo: topAnchor)
 		NSLayoutConstraint.activate([
 			tabStripTop,
-			tabStrip.leadingAnchor.constraint(equalTo: leadingAnchor),
-			tabStrip.trailingAnchor.constraint(equalTo: trailingAnchor),
-			tabStripHeight,
+			columnsHost.leadingAnchor.constraint(equalTo: leadingAnchor),
+			columnsHost.trailingAnchor.constraint(equalTo: trailingAnchor),
+			columnsHost.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-			contentArea.topAnchor.constraint(equalTo: tabStrip.bottomAnchor),
-			contentArea.leadingAnchor.constraint(equalTo: leadingAnchor),
-			contentArea.trailingAnchor.constraint(equalTo: trailingAnchor),
-			contentArea.bottomAnchor.constraint(equalTo: bottomAnchor),
-
-			placeholder.centerXAnchor.constraint(equalTo: contentArea.centerXAnchor),
-			placeholder.centerYAnchor.constraint(equalTo: contentArea.centerYAnchor),
+			placeholder.centerXAnchor.constraint(equalTo: columnsHost.centerXAnchor),
+			placeholder.centerYAnchor.constraint(equalTo: columnsHost.centerYAnchor),
 		])
+
+		TerminalDragSources.register(self, as: panelID)
+		rebuildColumns()
+	}
+
+	/// A side of the panel: its own tabs, its own pane.
+	///
+	/// The editor splits this way and a panel has to as well. One strip across
+	/// two panes cannot say which side a tab belongs to, so every question —
+	/// which tab is showing, where a new terminal goes, what a click means —
+	/// had to be answered by guessing.
+	private func makeColumn(_ column: Int) -> PanelColumn {
+		let view = PanelColumn(column: column)
+		let strip = view.strip
+
+		strip.panelID = panelID
+		strip.setUpTabDropping()
+		strip.onSelect = { [weak self] index in
+			guard let self, let session = self.session(at: index, in: column) else { return }
+			self.activate(session, focus: true)
+		}
+		strip.onClose = { [weak self] index in
+			guard let self, let session = self.session(at: index, in: column) else { return }
+			self.close(session)
+		}
+		strip.onAdd = { [weak self] in
+			self?.focusedColumn = column
+			self?.newTerminal()
+		}
+		strip.onHide = { [weak self] in self?.onRequestHide?() }
+		strip.onRename = { [weak self] index, name in
+			guard let self, let session = self.session(at: index, in: column) else { return }
+			self.rename(session, to: name)
+		}
+		// Anything in the panel can be moved: a profiler beside the terminal
+		// that produced the load is the arrangement somebody wants, and a
+		// debugger beside its program is another.
+		strip.canDrag = { [weak self] index in self?.session(at: index, in: column) != nil }
+		strip.onMove = { [weak self] from, to in self?.move(from: from, to: to, in: column) }
+		strip.onTearOff = { [weak self] index, point in
+			guard let self, let session = self.session(at: index, in: column) else { return }
+			self.tearOff(session, at: point)
+		}
+		strip.onDragStarted = { [weak self] in self?.showDropTargets() }
+		strip.onDragEnded = { [weak self] in self?.hideDropTargets() }
+		strip.onDragMoved = { [weak self] point in self?.previewDrop(at: point) }
+		strip.onDragEndedAt = { [weak self] index, point in
+			guard let self, let session = self.session(at: index, in: column) else { return }
+			self.finishDrag(session, at: point)
+		}
+		strip.onSplit = { [weak self] index, zone in
+			guard let self, let session = self.session(at: index, in: column) else { return }
+			self.putBeside(session, on: zone)
+		}
+		strip.onUnsplit = { [weak self] in self?.unsplit() }
+		strip.isSplit = { [weak self] in (self?.columnCount ?? 1) > 1 }
+		strip.acceptsForeign = { payload in
+			TerminalDragSources.source(for: payload.panelID) != nil
+		}
+		strip.onAdopt = { [weak self] payload in
+			guard let self,
+			      let source = TerminalDragSources.source(for: payload.panelID),
+			      let detached = source.detachTerminal(at: payload.index)
+			else { return }
+			self.focusedColumn = column
+			self.adopt(detached, zone: .center)
+		}
+		strip.onToggleMaximize = { [weak self] in self?.onToggleMaximize?() }
+		strip.onToggleFollowProject = { [weak self] in self?.onToggleFollowProject?() }
+		strip.isFollowingProject = isFollowingProject
+		strip.isMaximized = isMaximized
+		// The panel's own controls belong to one strip, not to each of them:
+		// there is one panel to hide however many columns it holds.
+		strip.showsPanelControls = showsPanelControls && column == 0
+		return view
 	}
 
 	private var tabStripHeight: NSLayoutConstraint!
@@ -244,8 +294,11 @@ final class BottomPanel: NSView {
 	/// chrome of a panel that can be hidden, maximised, or made to follow a
 	/// project the window does not have.
 	func becomeTerminalWindow() {
-		tabStrip.showsPanelControls = false
-		tabStrip.showsAddButton = true
+		showsPanelControls = false
+		for view in columnViews {
+			view.strip.showsPanelControls = false
+			view.strip.showsAddButton = true
+		}
 	}
 
 	/// Takes in a terminal dragged here from somewhere else.
@@ -317,7 +370,7 @@ final class BottomPanel: NSView {
 	func showDebug() -> DebugPane? {
 		for (index, session) in sessions.enumerated() {
 			if case let .debug(pane) = session.kind {
-				activate(index: index, focus: true)
+				activate(sessions[index], focus: true)
 				return pane
 			}
 		}
@@ -400,7 +453,7 @@ final class BottomPanel: NSView {
 		if sessions.isEmpty {
 			return newTerminal()
 		}
-		activate(index: activeIndex ?? 0, focus: true)
+		activate(sessions[activeIndex ?? 0], focus: true)
 		return sessions[activeIndex ?? 0].terminal
 	}
 
@@ -429,8 +482,9 @@ final class BottomPanel: NSView {
 		session.directory = directory
 		wire(session)
 
+		session.column = focusedColumn
 		sessions.append(session)
-		activate(index: sessions.count - 1, focus: focus)
+		activate(session, focus: focus)
 		onTerminalsChanged?()
 		return pane
 	}
@@ -479,7 +533,7 @@ final class BottomPanel: NSView {
 		wire(session)
 
 		sessions.append(session)
-		activate(index: sessions.count - 1, focus: true)
+		activate(session, focus: true)
 		return pane
 	}
 
@@ -505,11 +559,13 @@ final class BottomPanel: NSView {
 			// Brought forward when a launch begins, and not again: a log that
 			// pulls itself in front on every line is a log that cannot be
 			// looked away from.
-			if reset { activate(index: index, focus: false) }
+			if reset { activate(sessions[index], focus: false) }
 		} else {
 			pane = TerminalPane(readOnly: ())
-			sessions.append(Session(title: title, kind: .terminal(pane)))
-			activate(index: sessions.count - 1, focus: false)
+			let session = Session(title: title, kind: .terminal(pane))
+			session.column = focusedColumn
+			sessions.append(session)
+			activate(session, focus: false)
 		}
 
 		if reset { pane.terminalView.clear() }
@@ -532,7 +588,7 @@ final class BottomPanel: NSView {
 			pane = TerminalPane(readOnly: ())
 			let session = Session(title: title, kind: .terminal(pane))
 			sessions.append(session)
-			activate(index: sessions.count - 1, focus: false)
+			activate(session, focus: false)
 		}
 
 		// Replaced rather than appended: the supervisor hands back a tail, and
@@ -554,7 +610,7 @@ final class BottomPanel: NSView {
 		if let index = sessions.firstIndex(where: {
 			if case .profiler = $0.kind { return true }; return false
 		}), case let .profiler(pane) = sessions[index].kind {
-			activate(index: index, focus: true)
+			activate(sessions[index], focus: true)
 			// The one that is already open is pointed at the new address: a
 			// profiler showing the last run's port is worse than none.
 			if connecting { pane.connect(to: address) }
@@ -567,7 +623,7 @@ final class BottomPanel: NSView {
 		}
 		let session = Session(title: "Profiler", kind: .profiler(pane))
 		sessions.append(session)
-		activate(index: sessions.count - 1, focus: true)
+		activate(session, focus: true)
 		if connecting { pane.connect(to: address) }
 		return pane
 	}
@@ -581,7 +637,7 @@ final class BottomPanel: NSView {
 
 		if let index = sessions.firstIndex(where: { if case .search = $0.kind { return true }; return false }),
 		   case let .search(pane) = sessions[index].kind {
-			activate(index: index, focus: false)
+			activate(sessions[index], focus: false)
 			if let query { pane.setQuery(query) }
 			pane.focusField()
 			return pane
@@ -593,7 +649,7 @@ final class BottomPanel: NSView {
 		}
 		let session = Session(title: "Search", kind: .search(pane))
 		sessions.append(session)
-		activate(index: sessions.count - 1, focus: false)
+		activate(session, focus: false)
 		if let query { pane.setQuery(query) }
 		pane.focusField()
 		return pane
@@ -740,8 +796,9 @@ final class BottomPanel: NSView {
 		}
 
 		let panelSession = Session(title: "Debug", kind: .debug(pane))
+		panelSession.column = focusedColumn
 		sessions.append(panelSession)
-		activate(index: sessions.count - 1, focus: false)
+		activate(panelSession, focus: false)
 		return session
 	}
 
@@ -796,7 +853,7 @@ final class BottomPanel: NSView {
 		let session = Session(title: scope.title, kind: .review(reviewPane, terminal))
 		wire(session)
 		sessions.append(session)
-		activate(index: sessions.count - 1, focus: false)
+		activate(session, focus: false)
 		return .success(())
 	}
 
@@ -822,7 +879,7 @@ final class BottomPanel: NSView {
 		let session = Session(title: title, kind: .terminal(pane))
 		wire(session)
 		sessions.append(session)
-		activate(index: sessions.count - 1, focus: true)
+		activate(session, focus: true)
 		return .success(())
 	}
 
@@ -868,145 +925,137 @@ final class BottomPanel: NSView {
 		}
 	}
 
-	private func activate(index: Int, focus: Bool) {
-		guard sessions.indices.contains(index) else { return }
-		let session = sessions[index]
-		activeIndex = index
+	/// Shows a pane in its own column and gives it the focus.
+	private func activate(_ session: Session, focus: Bool) {
+		guard sessions.contains(where: { $0 === session }) else { return }
+		focusedColumn = session.column
+		activeByColumn[session.column] = session
 
-		// A split survives until it is undone. Whatever is activated — a tab
-		// clicked, a terminal opened, a debugger started — takes the column
-		// that has the focus, and the other column goes on showing what it was
-		// showing. Anything else means a split lasts until the next thing
-		// happens, which is how it was: it collapsed on the first new terminal
-		// and looked like a feature that does not work.
-		if let position = columns.firstIndex(where: { $0 === session }) {
-			focusedColumn = position
-		} else if columns.count > 1 {
-			columns[min(focusedColumn, columns.count - 1)] = session
-		} else {
-			columns = [session]
-			focusedColumn = 0
-		}
-		layoutColumns()
-
+		rebuildColumns()
 		placeholder.isHidden = true
-		refreshTabs()
 		if focus, case .terminal = session.kind { session.terminal?.focus() }
 		activeTerminalChanged()
 	}
 
-	/// Which column a newly shown pane appears in.
-	private var focusedColumn = 0
-
-	private func showDropTarget() {
-		guard dropTarget == nil else { return }
-		// A sheet of glass that only draws. Where the drop lands is decided by
-		// the strip from the pointer's own position, because a destination view
-		// under a terminal is at the mercy of a hit test through whatever the
-		// program is drawing — which is why the preview appeared and the drop
-		// did nothing.
-		let overlay = PanelContentView()
-
-		// Framed rather than constrained: the drag starts in the same breath as
-		// this call, and a view whose layout has not run yet is a view of zero
-		// size — which no drop can land on.
-		overlay.translatesAutoresizingMaskIntoConstraints = true
-		overlay.frame = contentArea.frame
-		overlay.autoresizingMask = [.width, .height]
-		addSubview(overlay, positioned: .above, relativeTo: nil)
-		dropTarget = overlay
-	}
-
-	/// The point in this panel's coordinates, or nil when it is elsewhere.
-	private func local(_ screenPoint: NSPoint) -> NSPoint? {
-		guard let window, window.frame.contains(screenPoint) else { return nil }
-		let inWindow = window.convertPoint(fromScreen: screenPoint)
-		return convert(inWindow, from: nil)
-	}
-
-	/// Draws where a dragged tab would land as it moves.
-	private func previewDrop(at screenPoint: NSPoint) {
-		guard let point = local(screenPoint), contentArea.frame.contains(point) else {
-			dropTarget?.previewZone(nil)
+	/// Puts a pane on one side, with whatever was showing on the other.
+	///
+	/// Always two panes, including when the tab asked about is the one already
+	/// showing — which is the tab somebody naturally reaches for. What goes
+	/// beside it is whatever else is showing, or the pane used before this one,
+	/// or a new terminal when the panel holds nothing else.
+	private func putBeside(_ session: Session, on zone: TerminalTabDrag.Zone) {
+		guard zone != .center else {
+			activate(session, focus: true)
 			return
 		}
-		let inside = convert(point, to: contentArea)
-		dropTarget?.previewZone(TerminalTabDrag.zone(for: inside, in: contentArea.bounds))
+		let side = zone.insertsBefore ? 0 : 1
+		let otherSide = 1 - side
+
+		let other = sessions.first { $0 !== session && $0.column != session.column }
+			?? previouslyActive.flatMap { previous in sessions.first { $0 === previous && $0 !== session } }
+			?? sessions.last { $0 !== session }
+			?? makeTerminalSession()
+
+		session.column = side
+		other.column = otherSide
+		activeByColumn[side] = session
+		activeByColumn[otherSide] = other
+		focusedColumn = side
+
+		rebuildColumns()
+		placeholder.isHidden = true
+		session.terminal?.focus()
+		activeTerminalChanged()
 	}
 
-	/// A drag nothing else took: the pane, the strip, or a window of its own.
-	private func finishDrag(index: Int, at screenPoint: NSPoint) {
-		defer { hideDropTarget() }
+	/// Back to one column, with everything's tab in it.
+	private func unsplit() {
+		let showing = activeSession
+		for session in sessions { session.column = 0 }
+		activeByColumn = [0: showing ?? sessions.first].compactMapValues { $0 }
+		focusedColumn = 0
+		rebuildColumns()
+	}
 
-		guard let point = local(screenPoint) else {
-			// Outside the window altogether, which is what makes a window.
-			tearOff(index: index, at: screenPoint)
-			return
+	/// What was in front before whatever is in front now.
+	private weak var previouslyActive: Session?
+
+	/// A terminal to put beside something, for a panel that holds nothing else.
+	private func makeTerminalSession() -> Session {
+		let pane = TerminalPane(workingDirectory: workingDirectory)
+		let session = Session(title: "Local", kind: .terminal(pane))
+		session.directory = workingDirectory
+		wire(session)
+		sessions.append(session)
+		onTerminalsChanged?()
+		return session
+	}
+
+	/// Builds the columns and puts each one's active pane in it.
+	private func rebuildColumns() {
+		// A column with no tabs is not a column. Everything falls back to one.
+		if columnCount == 2, sessions(in: 0).isEmpty {
+			for session in sessions { session.column = 0 }
 		}
-		if contentArea.frame.contains(point) {
-			let inside = convert(point, to: contentArea)
-			handleDrop(
-				TerminalTabDrag.Payload(panelID: panelID, index: index),
-				zone: TerminalTabDrag.zone(for: inside, in: contentArea.bounds)
+		let count = columnCount
+		focusedColumn = min(focusedColumn, count - 1)
+
+		if columnViews.count != count {
+			columnsHost.subviews.forEach { $0.removeFromSuperview() }
+			columnViews = (0..<count).map { makeColumn($0) }
+			columnsSplit = nil
+
+			let content: NSView
+			if count == 1 {
+				content = columnViews[0]
+			} else {
+				let split = ColumnSplitView()
+				split.fraction = splitFraction
+				split.isVertical = true
+				split.dividerStyle = .thin
+				for view in columnViews {
+					view.translatesAutoresizingMaskIntoConstraints = true
+					split.addArrangedSubview(view)
+				}
+				columnsSplit = split
+				content = split
+				watchDivider(split)
+			}
+
+			content.translatesAutoresizingMaskIntoConstraints = false
+			columnsHost.addSubview(content)
+			NSLayoutConstraint.activate([
+				content.topAnchor.constraint(equalTo: columnsHost.topAnchor),
+				content.bottomAnchor.constraint(equalTo: columnsHost.bottomAnchor),
+				content.leadingAnchor.constraint(equalTo: columnsHost.leadingAnchor),
+				content.trailingAnchor.constraint(equalTo: columnsHost.trailingAnchor),
+			])
+		}
+
+		for (index, view) in columnViews.enumerated() {
+			let list = sessions(in: index)
+			var showing = activeByColumn[index]
+			if showing == nil || !list.contains(where: { $0 === showing }) {
+				showing = list.last
+				activeByColumn[index] = showing
+			}
+			view.show(showing?.view)
+			view.strip.setItems(
+				list.map { session in
+					PanelTabItem(
+						title: session.displayTitle,
+						hasExited: session.hasExited,
+						isTerminal: { if case .terminal = session.kind { return true } else { return false } }(),
+						isShowing: session === showing
+					)
+				},
+				activeIndex: list.firstIndex { $0 === showing }
 			)
-			return
 		}
-		if tabStrip.frame.contains(point) {
-			move(from: index, to: tabStrip.insertionIndex(at: convert(point, to: tabStrip)))
-		}
+		placeholder.isHidden = !sessions.isEmpty
 	}
 
-	private func hideDropTarget() {
-		dropTarget?.removeFromSuperview()
-		dropTarget = nil
-	}
-
-	/// Installs whatever is in `columns`, side by side.
-	private func layoutColumns() {
-		contentArea.subviews.forEach { $0.removeFromSuperview() }
-		columnSplit = nil
-		columns.removeAll { session in !sessions.contains { $0 === session } }
-		guard !columns.isEmpty else { return }
-
-		let content: NSView
-		if columns.count == 1 {
-			content = columns[0].view
-		} else {
-			let split = NSSplitView()
-			split.isVertical = true
-			split.dividerStyle = .thin
-			for session in columns {
-				let view = session.view
-				view.translatesAutoresizingMaskIntoConstraints = true
-				split.addArrangedSubview(view)
-			}
-			columnSplit = split
-			content = split
-		}
-
-		content.translatesAutoresizingMaskIntoConstraints = false
-		contentArea.addSubview(content)
-		NSLayoutConstraint.activate([
-			content.topAnchor.constraint(equalTo: contentArea.topAnchor),
-			content.bottomAnchor.constraint(equalTo: contentArea.bottomAnchor),
-			content.leadingAnchor.constraint(equalTo: contentArea.leadingAnchor),
-			content.trailingAnchor.constraint(equalTo: contentArea.trailingAnchor),
-		])
-
-		if let split = columnSplit {
-			// Where it was left, or down the middle the first time. Changing
-			// what a column shows rebuilds the split view, and a divider that
-			// jumps back to the middle every time is a divider nobody can move.
-			let fraction = splitFraction
-			DispatchQueue.main.async { [weak self, weak split] in
-				guard let split, split.arrangedSubviews.count > 1 else { return }
-				split.setPosition(split.bounds.width * fraction, ofDividerAt: 0)
-				self?.watchDivider(split)
-			}
-		}
-	}
-
-	/// How the width is shared, so it survives the rebuild.
+	/// How the width is shared, so it survives a rebuild.
 	private var splitFraction: CGFloat = 0.5
 
 	/// Remembers where the divider is put.
@@ -1025,6 +1074,70 @@ final class BottomPanel: NSView {
 		}
 	}
 
+	private func showDropTargets() {}
+
+	private func hideDropTargets() {
+		for view in columnViews { view.content.previewZone(nil) }
+	}
+
+	/// The point in this panel's coordinates, or nil when it is elsewhere.
+	private func local(_ screenPoint: NSPoint) -> NSPoint? {
+		guard let window, window.frame.contains(screenPoint) else { return nil }
+		return convert(window.convertPoint(fromScreen: screenPoint), from: nil)
+	}
+
+	/// Draws where a dragged tab would land as it moves.
+	private func previewDrop(at screenPoint: NSPoint) {
+		guard let point = local(screenPoint) else {
+			hideDropTargets()
+			return
+		}
+		for view in columnViews {
+			let frame = view.content.convert(view.content.bounds, to: self)
+			guard frame.contains(point) else {
+				view.content.previewZone(nil)
+				continue
+			}
+			let inside = view.content.convert(point, from: self)
+			view.content.previewZone(TerminalTabDrag.zone(for: inside, in: view.content.bounds))
+		}
+	}
+
+	/// Where a drag ended that nothing else took: a column, a strip, or a
+	/// window of its own.
+	///
+	/// The pointer decides, rather than a view under the pane: a destination
+	/// beneath a terminal is at the mercy of a hit test through whatever the
+	/// program is drawing.
+	private func finishDrag(_ session: Session, at screenPoint: NSPoint) {
+		defer { hideDropTargets() }
+
+		guard let point = local(screenPoint) else {
+			tearOff(session, at: screenPoint)
+			return
+		}
+		for view in columnViews {
+			if view.content.convert(view.content.bounds, to: self).contains(point) {
+				let inside = view.content.convert(point, from: self)
+				let zone = TerminalTabDrag.zone(for: inside, in: view.content.bounds)
+				if zone == .center {
+					session.column = view.column
+					activate(session, focus: true)
+				} else {
+					focusedColumn = view.column
+					putBeside(session, on: zone)
+				}
+				return
+			}
+			if view.strip.convert(view.strip.bounds, to: self).contains(point) {
+				// Into that column's tabs, wherever along them it was dropped.
+				session.column = view.column
+				activate(session, focus: true)
+				return
+			}
+		}
+	}
+
 	/// A tab dropped onto the pane: shown alone, or put beside what is there.
 	private func handleDrop(_ payload: TerminalTabDrag.Payload, zone: TerminalTabDrag.Zone) {
 		// From somewhere else — a window it had been pulled out into. Take it
@@ -1037,27 +1150,14 @@ final class BottomPanel: NSView {
 			return
 		}
 		guard sessions.indices.contains(payload.index) else { return }
-		let session = sessions[payload.index]
+		drop(sessions[payload.index], zone: zone)
+	}
 
+	/// A pane dropped somewhere: shown where it landed, or put beside.
+	private func drop(_ session: Session, zone: TerminalTabDrag.Zone) {
 		switch zone {
-		case .center:
-			activate(index: payload.index, focus: true)
-		case .left, .right:
-			guard !columns.contains(where: { $0 === session }) else {
-				activate(index: payload.index, focus: true)
-				return
-			}
-			// Two at a time: a pane narrower than half a window is a pane
-			// nothing fits in.
-			if columns.count >= 2 { columns.remove(at: zone.insertsBefore ? 1 : 0) }
-			columns.insert(session, at: zone.insertsBefore ? 0 : columns.count)
-			focusedColumn = zone.insertsBefore ? 0 : columns.count - 1
-			activeIndex = payload.index
-			layoutColumns()
-			placeholder.isHidden = true
-			refreshTabs()
-			session.terminal?.focus()
-			activeTerminalChanged()
+		case .center: activate(session, focus: true)
+		case .left, .right: putBeside(session, on: zone)
 		}
 	}
 
@@ -1067,52 +1167,58 @@ final class BottomPanel: NSView {
 		session.directory = detached.directory
 		session.isRenamed = detached.isRenamed
 		session.displayTitle = detached.title
+		session.column = focusedColumn
 		wire(session)
 
 		sessions.append(session)
-		let index = sessions.count - 1
-		switch zone {
-		case .center:
-			activate(index: index, focus: true)
-		case .left, .right:
-			if columns.count >= 2 { columns.removeLast() }
-			columns.insert(session, at: zone.insertsBefore ? 0 : columns.count)
-			activeIndex = index
-			layoutColumns()
-			refreshTabs()
-			session.terminal?.focus()
-			activeTerminalChanged()
-		}
+		drop(session, zone: zone)
 		placeholder.isHidden = true
 		onTerminalsChanged?()
 	}
 
-	/// Reorders the tabs.
-	private func move(from: Int, to: Int) {
-		guard sessions.indices.contains(from) else { return }
-		let session = sessions.remove(at: from)
-		let target = max(0, min(to > from ? to - 1 : to, sessions.count))
-		sessions.insert(session, at: target)
+	/// Reorders the tabs within one column.
+	private func move(from: Int, to: Int, in column: Int) {
+		let list = sessions(in: column)
+		guard list.indices.contains(from) else { return }
+		let session = list[from]
 
-		activeIndex = sessions.firstIndex { $0 === session } ?? activeIndex
-		refreshTabs()
+		// Ordered by their place in the panel's own list, so moving a tab is
+		// moving it there, among the tabs of its own column.
+		guard let source = sessions.firstIndex(where: { $0 === session }) else { return }
+		sessions.remove(at: source)
+
+		let remaining = sessions(in: column)
+		let clamped = max(0, min(to > from ? to - 1 : to, remaining.count))
+		if clamped >= remaining.count {
+			// After the last tab of this column, which may be before tabs of
+			// the other one.
+			let after = remaining.last.flatMap { last in sessions.firstIndex { $0 === last } }
+			sessions.insert(session, at: after.map { $0 + 1 } ?? sessions.count)
+		} else if let index = sessions.firstIndex(where: { $0 === remaining[clamped] }) {
+			sessions.insert(session, at: index)
+		} else {
+			sessions.append(session)
+		}
+
+		rebuildColumns()
 		onTerminalsChanged?()
 	}
 
 	/// Takes a terminal out of the panel and hands it over to be a window.
-	private func tearOff(index: Int, at screenPoint: NSPoint) {
-		guard let detached = detachTerminal(at: index) else { return }
+	private func tearOff(_ session: Session, at screenPoint: NSPoint) {
+		guard let index = sessions.firstIndex(where: { $0 === session }),
+		      let detached = detachTerminal(at: index)
+		else { return }
 		onTearOffTerminal?(detached, screenPoint)
 	}
 
-	/// Closes a session, optionally without asking the panel to go away.
+	/// Closes a pane, optionally without asking the panel to go away.
 	///
 	/// Replacing the only session would otherwise close the panel and open it
 	/// again, which from the outside looks exactly like pressing debug having
 	/// toggled it shut.
-	private func close(index: Int, hidingWhenEmpty: Bool = true) {
-		guard sessions.indices.contains(index) else { return }
-		let session = sessions[index]
+	private func close(_ session: Session, hidingWhenEmpty: Bool = true) {
+		guard let index = sessions.firstIndex(where: { $0 === session }) else { return }
 		switch session.kind {
 		case let .review(pane, _): pane.shutdown()
 		case let .debug(pane): pane.shutdown()
@@ -1121,31 +1227,33 @@ final class BottomPanel: NSView {
 		}
 		session.view.removeFromSuperview()
 		sessions.remove(at: index)
-		columns.removeAll { $0 === session }
-		focusedColumn = min(focusedColumn, max(0, columns.count - 1))
+		for (column, showing) in activeByColumn where showing === session {
+			activeByColumn[column] = nil
+		}
 
 		if sessions.isEmpty {
-			activeIndex = nil
-			contentArea.subviews.forEach { $0.removeFromSuperview() }
+			activeByColumn = [:]
+			focusedColumn = 0
+			rebuildColumns()
 			placeholder.isHidden = false
-			refreshTabs()
 			if hidingWhenEmpty { onRequestHide?() }
 			return
 		}
-		activeIndex = nil
-		activate(index: min(index, sessions.count - 1), focus: false)
+		rebuildColumns()
 		onTerminalsChanged?()
+	}
+
+	private func close(index: Int, hidingWhenEmpty: Bool = true) {
+		guard sessions.indices.contains(index) else { return }
+		close(sessions[index], hidingWhenEmpty: hidingWhenEmpty)
 	}
 
 	/// Renames a tab.
 	///
 	/// An empty name gives it back to the shell, which is the only way to undo
 	/// a rename without knowing what the shell would have called it.
-	func rename(index: Int, to name: String) {
-		guard sessions.indices.contains(index) else { return }
+	private func rename(_ session: Session, to name: String) {
 		let trimmed = name.trimmingCharacters(in: .whitespaces)
-		let session = sessions[index]
-
 		if trimmed.isEmpty {
 			session.isRenamed = false
 			session.displayTitle = session.title
@@ -1153,13 +1261,24 @@ final class BottomPanel: NSView {
 			session.isRenamed = true
 			session.displayTitle = trimmed
 		}
-		refreshTabs()
+		rebuildColumns()
 		onTerminalsChanged?()
+	}
+
+	func rename(index: Int, to name: String) {
+		guard sessions.indices.contains(index) else { return }
+		rename(sessions[index], to: name)
+	}
+
+	/// The strip of the column in front, so the harness can run what its menu
+	/// runs.
+	var tabStripForTesting: PanelTabStrip? {
+		columnViews.indices.contains(focusedColumn) ? columnViews[focusedColumn].strip : columnViews.first?.strip
 	}
 
 	/// Clicks a tab, for the capture harness.
 	func selectTabForTesting(_ index: Int) {
-		activate(index: index, focus: false)
+		activate(sessions[index], focus: false)
 	}
 
 	/// Puts the first tab beside whatever is showing, as the menu does.
@@ -1167,10 +1286,19 @@ final class BottomPanel: NSView {
 		handleDrop(TerminalTabDrag.Payload(panelID: panelID, index: 0), zone: .left)
 	}
 
+	/// The case somebody actually reaches for: the tab in front, told to sit
+	/// beside. Exercises the menu's own path.
+	func splitActiveBesideForTesting() {
+		guard let session = activeSession,
+		      let index = sessions(in: session.column).firstIndex(where: { $0 === session })
+		else { return }
+		tabStripForTesting?.onSplit?(index, .right)
+	}
+
 	/// Shows where a dropped tab would land, as the drag does. For the harness.
 	func previewDropForTesting() {
-		showDropTarget()
-		dropTarget?.previewForTesting(.right)
+		showDropTargets()
+		columnViews.first?.content.previewZone(.right)
 	}
 
 	/// Puts the last terminal beside the first, as dragging its tab to the edge
@@ -1187,8 +1315,8 @@ final class BottomPanel: NSView {
 	/// Takes the terminal in front out into a window, as dragging its tab
 	/// outside does. For the capture harness.
 	func tearOffForTesting(at point: NSPoint) {
-		guard let activeIndex else { return }
-		tearOff(index: activeIndex, at: point)
+		guard let session = activeSession else { return }
+		tearOff(session, at: point)
 	}
 
 	/// Renames whichever tab is in front, for the capture harness.
@@ -1199,8 +1327,10 @@ final class BottomPanel: NSView {
 
 	/// Opens the in-place editor and leaves it open, so a capture shows it.
 	func beginRenameActiveForTesting() {
-		guard let activeIndex else { return }
-		tabStrip.beginRenaming(activeIndex)
+		guard let session = activeSession,
+		      let index = sessions(in: session.column).firstIndex(where: { $0 === session })
+		else { return }
+		tabStripForTesting?.beginRenaming(index)
 	}
 
 	/// The terminals that are open, to be opened again next time.
@@ -1249,17 +1379,7 @@ final class BottomPanel: NSView {
 
 	private func refreshTabs() {
 		onActiveTerminalChanged?()
-		tabStrip.setItems(
-			sessions.map { session in
-				PanelTabItem(
-					title: session.displayTitle,
-					hasExited: session.hasExited,
-					isTerminal: { if case .terminal = session.kind { return true } else { return false } }(),
-					isShowing: columns.contains { $0 === session }
-				)
-			},
-			activeIndex: activeIndex
-		)
+		rebuildColumns()
 	}
 
 	// MARK: - Commands
@@ -1270,9 +1390,8 @@ final class BottomPanel: NSView {
 	}
 
 	func applySettings() {
-		tabStripHeight.constant = Theme.current.scaled(30)
 		placeholder.font = Theme.current.uiFont(12)
-		tabStrip.applyThemeChange()
+		for view in columnViews { view.applyThemeChange() }
 		for session in sessions {
 			switch session.kind {
 			case let .review(pane, _): pane.applySettings()
@@ -2008,19 +2127,13 @@ extension BottomPanel: TerminalDragSource {
 		guard case let .terminal(pane) = session.kind else { return nil }
 
 		sessions.remove(at: index)
-		columns.removeAll { $0 === session }
-		focusedColumn = min(focusedColumn, max(0, columns.count - 1))
+		for (column, showing) in activeByColumn where showing === session {
+			activeByColumn[column] = nil
+		}
 		pane.removeFromSuperview()
 
-		if sessions.isEmpty {
-			activeIndex = nil
-			contentArea.subviews.forEach { $0.removeFromSuperview() }
-			placeholder.isHidden = false
-			refreshTabs()
-		} else {
-			activeIndex = nil
-			activate(index: min(index, sessions.count - 1), focus: false)
-		}
+		rebuildColumns()
+		if sessions.isEmpty { placeholder.isHidden = false }
 		onTerminalsChanged?()
 
 		return DetachedTerminal(
@@ -2029,5 +2142,89 @@ extension BottomPanel: TerminalDragSource {
 			isRenamed: session.isRenamed,
 			directory: session.directory
 		)
+	}
+}
+
+
+/// A split view that shares its width the way it was last shared.
+///
+/// The position has to be set when there is a width to set it against. A panel
+/// that has just been shown, or a column whose contents have just changed, has
+/// not been laid out yet — and a position set against zero collapses a column
+/// to nothing, which looks like a split that never happened.
+private final class ColumnSplitView: NSSplitView {
+	var fraction: CGFloat = 0.5
+	private var placed = false
+
+	override var dividerColor: NSColor { Theme.current.separator }
+	override var dividerThickness: CGFloat { 1 }
+
+	override func layout() {
+		super.layout()
+		guard !placed, bounds.width > 1, arrangedSubviews.count > 1 else { return }
+		placed = true
+		setPosition(bounds.width * fraction, ofDividerAt: 0)
+	}
+}
+
+
+/// One side of the panel: a strip of tabs and the pane they show.
+///
+/// A panel splits the way the editor does — each side keeps its own tabs —
+/// because one strip across two panes cannot say which side a tab belongs to,
+/// and every question after that has to be answered by guessing.
+@MainActor
+final class PanelColumn: NSView {
+	let strip = PanelTabStrip()
+	let content = PanelContentView()
+	let column: Int
+
+	private var stripHeight: NSLayoutConstraint!
+
+	init(column: Int) {
+		self.column = column
+		super.init(frame: .zero)
+
+		for view in [strip, content] as [NSView] {
+			view.translatesAutoresizingMaskIntoConstraints = false
+			addSubview(view)
+		}
+		stripHeight = strip.heightAnchor.constraint(equalToConstant: Theme.current.scaled(30))
+		NSLayoutConstraint.activate([
+			strip.topAnchor.constraint(equalTo: topAnchor),
+			strip.leadingAnchor.constraint(equalTo: leadingAnchor),
+			strip.trailingAnchor.constraint(equalTo: trailingAnchor),
+			stripHeight,
+
+			content.topAnchor.constraint(equalTo: strip.bottomAnchor),
+			content.leadingAnchor.constraint(equalTo: leadingAnchor),
+			content.trailingAnchor.constraint(equalTo: trailingAnchor),
+			content.bottomAnchor.constraint(equalTo: bottomAnchor),
+		])
+	}
+
+	required init?(coder: NSCoder) { fatalError("not used") }
+
+	override var isFlipped: Bool { true }
+
+	func applyThemeChange() {
+		stripHeight.constant = Theme.current.scaled(30)
+		strip.applyThemeChange()
+	}
+
+	/// Puts a pane in, taking whatever was there out.
+	func show(_ view: NSView?) {
+		guard content.subviews.first !== view else { return }
+		content.subviews.forEach { $0.removeFromSuperview() }
+		guard let view else { return }
+
+		view.translatesAutoresizingMaskIntoConstraints = false
+		content.addSubview(view)
+		NSLayoutConstraint.activate([
+			view.topAnchor.constraint(equalTo: content.topAnchor),
+			view.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+			view.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+			view.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+		])
 	}
 }

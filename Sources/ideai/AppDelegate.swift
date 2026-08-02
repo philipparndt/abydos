@@ -61,6 +61,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		// Simulated input runs after the initial parse lands, so folds and
 		// highlights exist by the time it is exercised.
+		if options.splitActive {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+				controller?.splitActiveForTesting()
+			}
+		}
 		if options.splitThenDisturb {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
 				controller?.splitThenDisturbForTesting()
