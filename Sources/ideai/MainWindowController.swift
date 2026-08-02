@@ -183,10 +183,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	private var projectPill: ProjectPillButton!
 	private var branchPill: BranchPillButton!
 	private var subprojectPill: SubprojectPillButton!
-	/// The branch as last read. The toolbar builds its items when it feels like
-	/// it, and in a small repository git answers first — so the pill has to be
-	/// able to catch up rather than only be told.
-	private var lastBranch: String?
+	/// Reading the repository, as a job rather than an answer.
+	///
+	/// The toolbar builds its items when it chooses, and in a repository small
+	/// enough git answers first — so a pill that is only ever *told* the branch
+	/// misses it. Anything that needs the branch awaits this instead, whenever
+	/// it happens to come into existence.
+	private var branchRead: Task<String?, Never>?
 	private var titlebarContainer: NSView?
 	private var toolStripWidthConstraint: NSLayoutConstraint!
 
@@ -724,10 +727,36 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		applyScope()
 	}
 
-	/// Remembers the branch and shows it, whenever the pill turns up.
-	private func setBranch(_ branch: String?) {
-		lastBranch = branch
-		branchPill?.setBranch(branch)
+	/// Reads the repository for the current scope, and tells the window.
+	///
+	/// One task, kept: it is what the branch pill awaits when the toolbar gets
+	/// around to building it.
+	@discardableResult
+	private func readGit() -> Task<String?, Never> {
+		branchRead?.cancel()
+		let read = Task { @MainActor [weak self] () -> String? in
+			guard let self, let project = self.project else { return nil }
+			await project.loadGit()
+			return await project.git?.currentBranch()
+		}
+		branchRead = read
+
+		Task { @MainActor [weak self] in
+			let branch = await read.value
+			guard let self, !Task.isCancelled else { return }
+			self.branchPill?.setBranch(branch)
+			// The pill only gets a width once it has a name to show.
+			self.layoutTitlebarPills()
+			self.navigator.refreshGitStatus()
+
+			// Changes, history and branches hold on to one repository, so a
+			// different work tree needs them built again.
+			if self.currentSidebarTool == .changes || self.currentSidebarTool == .branches {
+				self.install(tool: self.currentSidebarTool, force: true)
+			}
+			self.refreshRunConfigurations()
+		}
+		return read
 	}
 
 	/// Points everything scoped at the current scope.
@@ -753,19 +782,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 		// Git is per work tree, and a subproject may be its own repository — a
 		// checkout of several is the case this exists for.
-		Task { @MainActor in
-			await project.loadGit()
-			let branch = await project.git?.currentBranch()
-			self.setBranch(branch)
-			self.layoutTitlebarPills()
-			self.navigator.refreshGitStatus()
-			// Changes and branches hold on to one repository, so a different
-			// work tree needs them built again.
-			if self.currentSidebarTool == .changes || self.currentSidebarTool == .branches {
-				self.install(tool: self.currentSidebarTool, force: true)
-			}
-			self.refreshRunConfigurations()
-		}
+		readGit()
 	}
 
 	func load(project: Project, focusTree: Bool = true) {
@@ -778,7 +795,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			name: project.name,
 			colorIndex: RecentProjects.shared.entries.first { $0.path == project.root.path }?.colorIndex
 		)
-		setBranch(nil)
+		branchPill?.setBranch(nil)
 		layoutTitlebarPills()
 
 		navigator.load(project: project)
@@ -829,22 +846,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			if focusTree { self?.navigator.focusTree() }
 		}
 
-		Task { @MainActor in
-			await project.loadGit()
-			let branch = await project.git?.currentBranch()
-			self.setBranch(branch)
-			// The branch pill only gets a width once it has a name to show.
-			self.layoutTitlebarPills()
-			self.navigator.refreshGitStatus()
-
-			// Changes and branches are built around one repository and hold on
-			// to it, so a different project needs them built again. Done here
-			// rather than when the project is set, because until git has been
-			// read there is no repository to build them around.
-			if self.currentSidebarTool == .changes || self.currentSidebarTool == .branches {
-				self.install(tool: self.currentSidebarTool, force: true)
-			}
-		}
+		readGit()
 		refreshRunConfigurations()
 	}
 
@@ -2310,7 +2312,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	/// What the project defines, plus a suggestion when it defines nothing.
 	private var launchConfigurations: [LaunchConfiguration] {
-		guard let project else { return [] }
+		guard project != nil else { return [] }
 		return LaunchStore.read(in: launchRoot)
 	}
 
@@ -2584,7 +2586,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	@objc func debugSelected(_ sender: Any?) { runSelectedConfiguration(debug: true) }
 
 	private func runSelectedConfiguration(debug: Bool) {
-		guard let project else { return }
+		guard project != nil else { return }
 
 		guard let configuration = selectedConfiguration ?? createSuggestedConfiguration() else {
 			notify(
@@ -3672,7 +3674,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// between one run and the next. Everything else in the entry is left
 	/// alone, including keys this app knows nothing about.
 	private func presentConfigurationEditor(_ configuration: LaunchConfiguration, isNew: Bool) {
-		guard let project else { return }
+		guard project != nil else { return }
 
 		// A configuration that is not written down yet is written now, so the
 		// page has something to select. Nothing is lost by it: an unwanted one
@@ -3885,14 +3887,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				self?.switchProject(to: path)
 			}
 			pane.onRepositoryChanged = { [weak self] in
-				guard let self else { return }
-				self.navigator.refreshGitStatus()
-				// The titlebar shows the branch, so a checkout has to reach it.
-				Task { @MainActor in
-					let branch = await self.project?.git?.currentBranch()
-					self.setBranch(branch)
-					self.layoutTitlebarPills()
-				}
+				// A checkout changes the branch the titlebar shows, so the
+				// repository is read again — the same read everything else
+				// awaits.
+				self?.readGit()
 			}
 			view = pane
 		case .history:
@@ -4418,7 +4416,11 @@ extension MainWindowController: NSToolbarDelegate {
 			let item = NSToolbarItem(itemIdentifier: identifier)
 			let pill = BranchPillButton()
 			pill.onClick = { [weak self] in self?.showBranchMenu() }
-			pill.setBranch(lastBranch)
+			// Whatever the current read of the repository says, whenever it
+			// says it: this item may be built before or after git answers.
+			if let read = branchRead {
+				Task { @MainActor in pill.setBranch(await read.value) }
+			}
 			branchPill = pill
 			item.view = pill
 			item.menuFormRepresentation = menuItem("Branch", #selector(showBranchMenuItem(_:)))

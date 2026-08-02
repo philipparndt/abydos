@@ -15,6 +15,12 @@ enum FileIcon {
 	/// Keyed by spec *and* scale, so zooming does not serve stale small icons.
 	private static var cache: [String: NSImage] = [:]
 
+	/// The folder being worked on: the same glyph, in the colour the app uses
+	/// for the thing in hand.
+	static func subprojectFolder() -> NSImage? {
+		render(key: "dir.subproject", spec: Spec(symbol: "folder.fill", color: .hex(0x6B9BD8)))
+	}
+
 	static func image(for node: FileNode, isExpanded: Bool) -> NSImage? {
 		let key: String
 		let spec: Spec

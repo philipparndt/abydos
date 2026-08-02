@@ -1107,7 +1107,13 @@ private final class NavigatorCellView: NSTableCellView {
 		var x = Theme.current.scaled(2)
 		let iconSize = Theme.current.scaled(16)
 
-		if let icon = FileIcon.image(for: node, isExpanded: isExpanded) {
+		// The folder being worked on is tinted rather than decorated: a mark
+		// beside the name reads as a status — modified, added — and this is not
+		// a status. It is which folder everything is pointed at.
+		let icon = isSubproject
+			? FileIcon.subprojectFolder()
+			: FileIcon.image(for: node, isExpanded: isExpanded)
+		if let icon {
 			icon.drawFitted(
 				in: NSRect(x: x, y: bounds.midY - iconSize / 2, width: iconSize, height: iconSize)
 			)
@@ -1117,9 +1123,14 @@ private final class NavigatorCellView: NSTableCellView {
 		// On a selected row the VCS colour would fight the blue behind it, so the
 		// label goes near-white — the treatment IDEA uses.
 		let isSelected = (superview as? NSTableRowView)?.isSelected ?? false
+		// The subproject is written the way the project above it is — bold and
+		// bright — because that is what it is here: the project everything is
+		// pointed at. The blue folder says which of the two.
 		let nameColor: NSColor = isSelected
 			? .hex(0xE8EAED)
-			: (isRoot ? Theme.current.sidebarHeaderText : Theme.current.color(for: node.gitStatus))
+			: (isRoot || isSubproject
+				? Theme.current.sidebarHeaderText
+				: Theme.current.color(for: node.gitStatus))
 		let nameFont = isRoot || isSubproject
 			? Theme.current.uiFont(13, weight: .bold)
 			: Theme.current.uiFont(13)
@@ -1144,20 +1155,6 @@ private final class NavigatorCellView: NSTableCellView {
 			height: nameSize.height
 		))
 		x += nameWidth + trailing
-
-		// A dot after the folder being worked on. Bold alone reads as "this is
-		// selected"; the mark says it is the one everything is pointed at.
-		if isSubproject {
-			let dot = NSBezierPath(ovalIn: NSRect(
-				x: x - trailing + Theme.current.scaled(2),
-				y: bounds.midY - Theme.current.scaled(2.5),
-				width: Theme.current.scaled(5),
-				height: Theme.current.scaled(5)
-			))
-			Theme.current.gitAdded.setFill()
-			dot.fill()
-			x += Theme.current.scaled(9)
-		}
 
 		if let subtitle {
 			let attributed = NSAttributedString(string: subtitle, attributes: [
