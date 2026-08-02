@@ -16,11 +16,18 @@ final class ProjectNavigatorViewController: NSViewController {
 	var onPreviewModel: ((URL) -> Void)?
 	/// Something under the project root changed on disk.
 	var onFilesChanged: (() -> Void)?
+	/// What the editor is showing, so the tree can be asked to find its way back
+	/// to it after browsing somewhere else.
+	var currentEditorFile: (() -> URL?)?
 
-	/// True while the selection is being driven by the keyboard, so arrowing
-	/// through a directory does not open every file it passes over — matching
-	/// IDEA, where Return opens and arrow keys only move.
-	private var isKeyboardNavigating = false
+	/// True while the tree is moving its own selection — restoring it after a
+	/// reload, or following the editor's tab — so it does not call back and
+	/// reopen the file it was just told about.
+	///
+	/// Everything else opens: arrowing through the tree shows each file it lands
+	/// on, provisionally, the way a click does. Moving the highlight without
+	/// showing anything is what made the tree look broken.
+	private var isSelectingSilently = false
 
 	private var project: Project?
 	private var rootNode: FileNode?
@@ -29,6 +36,7 @@ final class ProjectNavigatorViewController: NSViewController {
 	private(set) var subprojectRoot: URL?
 	private var watcher: FileSystemWatcher?
 	private var outlineView: NSOutlineView!
+	private var headerView: NavigatorHeaderView!
 	private var headerTopConstraint: NSLayoutConstraint!
 	private var headerHeightConstraint: NSLayoutConstraint!
 	private var gitRoot: URL?
@@ -44,6 +52,9 @@ final class ProjectNavigatorViewController: NSViewController {
 		let container = ColoredView(color: Theme.current.sidebarBackground)
 
 		let header = NavigatorHeaderView()
+		header.onCollapseAll = { [weak self] in self?.collapseAll() }
+		header.onSelectOpenFile = { [weak self] in self?.selectFileInEditor() }
+		headerView = header
 		let outline = NavigatorOutlineView()
 		outline.headerView = nil
 		outline.backgroundColor = Theme.current.sidebarBackground
@@ -76,9 +87,6 @@ final class ProjectNavigatorViewController: NSViewController {
 		outline.doubleAction = #selector(rowDoubleClicked)
 		outline.onKeyDown = { [weak self] event in self?.handleKeyDown(event) ?? false }
 		outline.menu = makeContextMenu()
-		// Arrow keys only move the selection; a mouse click also opens the file.
-		// The subclass clears this on mouseDown so the two paths stay distinct.
-		outline.onMouseDown = { [weak self] in self?.isKeyboardNavigating = false }
 		outlineView = outline
 
 		let scrollView = NSScrollView()
@@ -286,6 +294,7 @@ final class ProjectNavigatorViewController: NSViewController {
 		outlineView.rowHeight = Theme.current.scaled(24)
 		outlineView.indentationPerLevel = Theme.current.scaled(14)
 		headerHeightConstraint.constant = Theme.current.scaled(30)
+		headerView.restyle()
 		guard let rootNode else { return }
 		let expanded = expandedPaths()
 		let selected = selectedPath()
@@ -343,12 +352,12 @@ final class ProjectNavigatorViewController: NSViewController {
 		let row = outlineView.row(forItem: node)
 		guard row >= 0 else { return }
 
-		// Restoring must not be mistaken for a user click, which would reopen
-		// the file in the editor.
-		let wasKeyboardNavigating = isKeyboardNavigating
-		isKeyboardNavigating = true
+		// Restoring must not be mistaken for somebody choosing the file, which
+		// would reopen it in the editor.
+		let wasSilent = isSelectingSilently
+		isSelectingSilently = true
 		outlineView.selectRowIndexes([row], byExtendingSelection: false)
-		isKeyboardNavigating = wasKeyboardNavigating
+		isSelectingSilently = wasSilent
 	}
 
 	// MARK: - Expansion state
@@ -434,8 +443,15 @@ final class ProjectNavigatorViewController: NSViewController {
 		menu.addItem(.separator())
 		menu.addItem(item("Rename…", #selector(contextRename)))
 		menu.addItem(item("Move to Trash", #selector(contextTrash)))
+		menu.addItem(.separator())
+		// The same two the header offers, for anybody who looks for them here.
+		menu.addItem(item("Collapse All", #selector(contextCollapseAll)))
+		menu.addItem(item("Select Opened File", #selector(contextSelectOpenFile)))
 		return menu
 	}
+
+	@objc private func contextCollapseAll() { collapseAll() }
+	@objc private func contextSelectOpenFile() { selectFileInEditor() }
 
 	@objc private func contextOpenSubproject() {
 		guard let node = contextNode, node.isDirectory else { return }
@@ -754,19 +770,16 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// Returns true when the event was consumed.
 	///
 	/// Up/Down/Left/Right are left to `NSOutlineView`, which already moves the
-	/// selection and expands or collapses rows correctly; this only flags that
-	/// the keyboard is driving so selection does not open files.
+	/// selection and expands or collapses rows correctly — and moving the
+	/// selection is what shows the file, so there is nothing to add to them.
 	private func handleKeyDown(_ event: NSEvent) -> Bool {
 		switch event.keyCode {
 		case 36, 76: // Return, Keypad Enter
 			openSelection(focusEditor: true)
 			return true
-		case 49: // Space — preview without leaving the tree
+		case 49: // Space — the same provisional open, for a row already selected
 			openSelection(focusEditor: false)
 			return true
-		case 125, 126, 123, 124, 115, 119, 116, 121: // arrows, home/end, page up/down
-			isKeyboardNavigating = true
-			return false
 		default:
 			return false
 		}
@@ -796,6 +809,44 @@ final class ProjectNavigatorViewController: NSViewController {
 		}
 	}
 
+	/// Folds the whole tree away, leaving the root.
+	///
+	/// Not the root itself: collapsing that would leave one row and nothing to
+	/// click, which is a worse place to start again from than the top level.
+	func collapseAll() {
+		guard let rootNode else { return }
+		let selected = (outlineView.item(atRow: outlineView.selectedRow) as? FileNode)?.url
+
+		// Backwards, because collapsing a row removes the rows under it and the
+		// indices of everything after them.
+		for row in stride(from: outlineView.numberOfRows - 1, through: 0, by: -1) {
+			guard let node = outlineView.item(atRow: row) as? FileNode, node !== rootNode else { continue }
+			outlineView.collapseItem(node)
+		}
+		outlineView.expandItem(rootNode)
+
+		// Whatever was selected is probably inside something that just folded up,
+		// so the selection moves to the folder it went into. Losing it entirely
+		// would send the next arrow key back to the top of the tree.
+		guard var url = selected else { return }
+		while outlineView.row(forItem: rootNode.node(for: url)) < 0 {
+			let parent = url.deletingLastPathComponent()
+			guard parent.path != url.path, parent.path.hasPrefix(rootNode.url.path) else { return }
+			url = parent
+		}
+		selectWithoutOpening(url: url)
+	}
+
+	/// Finds the file the editor is showing.
+	///
+	/// The tree already follows along when tabs change; this is for after
+	/// somebody has browsed away from it and wants to know where they were.
+	func selectFileInEditor() {
+		guard let url = currentEditorFile?() else { return }
+		selectWithoutOpening(url: url)
+		view.window?.makeFirstResponder(outlineView)
+	}
+
 	/// Expands the root's immediate children, matching how IDEA shows a freshly
 	/// opened project rather than a single collapsed row.
 	func expandTopLevel() {
@@ -811,10 +862,44 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// Used when the editor switches tabs: the tree should follow along, but
 	/// must not call back and reopen the file it was just told about.
 	func selectWithoutOpening(url: URL) {
-		let wasKeyboardNavigating = isKeyboardNavigating
-		isKeyboardNavigating = true
+		let wasSilent = isSelectingSilently
+		isSelectingSilently = true
 		reveal(url: url)
-		isKeyboardNavigating = wasKeyboardNavigating
+		isSelectingSilently = wasSilent
+	}
+
+	// MARK: - Verification
+
+	/// Sends a key to the tree as the keyboard would, so what arrowing through
+	/// it actually does can be checked from outside.
+	func pressKeyForTesting(_ keyCode: UInt16) {
+		view.window?.makeFirstResponder(outlineView)
+		// The characters matter: `interpretKeyEvents` maps those, not the key
+		// code, and an event with none does nothing at all.
+		let characters: String
+		switch keyCode {
+		case 126: characters = String(UnicodeScalar(NSUpArrowFunctionKey)!)
+		case 125: characters = String(UnicodeScalar(NSDownArrowFunctionKey)!)
+		case 123: characters = String(UnicodeScalar(NSLeftArrowFunctionKey)!)
+		case 124: characters = String(UnicodeScalar(NSRightArrowFunctionKey)!)
+		case 36: characters = "\r"
+		case 49: characters = " "
+		default: characters = ""
+		}
+		guard let event = NSEvent.keyEvent(
+			with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+			windowNumber: view.window?.windowNumber ?? 0, context: nil,
+			characters: characters, charactersIgnoringModifiers: characters,
+			isARepeat: false, keyCode: keyCode
+		) else { return }
+		outlineView.keyDown(with: event)
+	}
+
+	/// What the tree has highlighted, and how many rows it is showing.
+	var selectionForTesting: (name: String, rows: Int) {
+		let row = outlineView.selectedRow
+		let node = row >= 0 ? outlineView.item(atRow: row) as? FileNode : nil
+		return ("\(node?.name ?? "nothing")@\(row)", outlineView.numberOfRows)
 	}
 
 	/// Selects and scrolls to a file, expanding ancestors as needed.
@@ -915,13 +1000,14 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 	}
 
 	func outlineViewSelectionDidChange(_ notification: Notification) {
-		// Keyboard selection only moves the highlight; Return or Space opens.
-		guard !isKeyboardNavigating else { return }
+		// Unless the tree is moving its own selection to follow something else.
+		guard !isSelectingSilently else { return }
 
 		let row = outlineView.selectedRow
 		guard row >= 0, let node = outlineView.item(atRow: row) as? FileNode, !node.isDirectory else { return }
-		// A single click opens the file but leaves focus in the tree, so the
-		// arrow keys keep working straight afterwards.
+		// Provisionally, and without taking focus: a click or an arrow key shows
+		// the file while the tree keeps the keyboard, so the next arrow works.
+		// Return, or a double-click, is what pins the tab and moves focus.
 		onSelectFile?(node.url, false)
 	}
 
@@ -955,6 +1041,12 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 				item.isHidden = subprojectRoot == nil
 			case #selector(contextRename), #selector(contextTrash):
 				item.isEnabled = node != nil && !isRoot
+			case #selector(contextCollapseAll):
+				// About the tree, not about a row: right-clicking empty space
+				// still offers it.
+				item.isEnabled = rootNode != nil
+			case #selector(contextSelectOpenFile):
+				item.isEnabled = currentEditorFile?() != nil
 			default:
 				item.isEnabled = node != nil
 			}
@@ -978,6 +1070,79 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 /// The "Project ⌄" strip above the tree.
 private final class NavigatorHeaderView: NSView {
 	override var isFlipped: Bool { true }
+
+	/// The two things a tree this size needs and cannot do by itself: fold
+	/// everything away, and find its way back to whatever the editor is showing.
+	var onCollapseAll: (() -> Void)?
+	var onSelectOpenFile: (() -> Void)?
+
+	private lazy var collapseButton = button(
+		symbol: "arrow.down.right.and.arrow.up.left",
+		tooltip: "Collapse all",
+		action: #selector(collapseAll)
+	)
+	private lazy var locateButton = button(
+		symbol: "scope",
+		tooltip: "Select the file in the editor",
+		action: #selector(selectOpenFile)
+	)
+
+	override init(frame frameRect: NSRect) {
+		super.init(frame: frameRect)
+		for view in [locateButton, collapseButton] { addSubview(view) }
+		layoutButtons()
+	}
+
+	@available(*, unavailable)
+	required init?(coder: NSCoder) { fatalError("not from a nib") }
+
+	private func button(symbol: String, tooltip: String, action: Selector) -> NSButton {
+		let button = NSButton(image: NSImage(), target: self, action: action)
+		button.image = Theme.symbol(
+			symbol, size: Theme.current.scaled(11),
+			color: Theme.current.sidebarHeaderText, weight: .medium
+		)
+		button.isBordered = false
+		button.bezelStyle = .shadowlessSquare
+		button.imagePosition = .imageOnly
+		button.toolTip = tooltip
+		// Nothing here should take focus from the tree, which is the point of
+		// the buttons: the keyboard stays where it was.
+		button.refusesFirstResponder = true
+		return button
+	}
+
+	override func layout() {
+		super.layout()
+		layoutButtons()
+	}
+
+	private func layoutButtons() {
+		let size = Theme.current.scaled(20)
+		var x = bounds.maxX - Theme.current.scaled(8) - size
+		for view in [collapseButton, locateButton] {
+			view.frame = NSRect(x: x, y: (bounds.height - size) / 2, width: size, height: size)
+			x -= size + Theme.current.scaled(2)
+		}
+	}
+
+	/// Redrawn on a theme or zoom change, since the symbols carry their colour
+	/// and their size in the image itself.
+	func restyle() {
+		collapseButton.image = Theme.symbol(
+			"arrow.down.right.and.arrow.up.left", size: Theme.current.scaled(11),
+			color: Theme.current.sidebarHeaderText, weight: .medium
+		)
+		locateButton.image = Theme.symbol(
+			"scope", size: Theme.current.scaled(11),
+			color: Theme.current.sidebarHeaderText, weight: .medium
+		)
+		layoutButtons()
+		needsDisplay = true
+	}
+
+	@objc private func collapseAll() { onCollapseAll?() }
+	@objc private func selectOpenFile() { onSelectOpenFile?() }
 
 	override func draw(_ dirtyRect: NSRect) {
 		Theme.current.sidebarBackground.setFill()
@@ -1005,22 +1170,15 @@ private final class NavigatorHeaderView: NSView {
 
 // MARK: - Rows
 
-/// Outline view that reports key and mouse events so the controller can tell
-/// keyboard navigation from clicking.
+/// Outline view that hands key events to the controller before acting on them.
 final class NavigatorOutlineView: NSOutlineView {
 	var onKeyDown: ((NSEvent) -> Bool)?
-	var onMouseDown: (() -> Void)?
 
 	override var acceptsFirstResponder: Bool { true }
 
 	override func keyDown(with event: NSEvent) {
 		if onKeyDown?(event) == true { return }
 		super.keyDown(with: event)
-	}
-
-	override func mouseDown(with event: NSEvent) {
-		onMouseDown?()
-		super.mouseDown(with: event)
 	}
 
 	/// Redraw selected rows when focus moves, so the highlight dims correctly.

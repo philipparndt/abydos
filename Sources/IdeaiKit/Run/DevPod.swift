@@ -348,6 +348,68 @@ public enum DevPods {
 	}
 }
 
+/// Which image a development pod runs.
+///
+/// The image carries a debugger, and a pod only ever debugs one language, so
+/// there are three of them: Delve for Go, gdbserver for a native binary, and
+/// one with both for when this cannot tell. Choosing the right one halves what
+/// the cluster pulls — 13 MB against 32 — without anybody having to know that
+/// the tags exist.
+public enum DevPodImage {
+	public static let repository = "pharndt/ideai-devpod"
+	public static let version = "dev"
+
+	/// The full image: both debuggers, and what an unrecognised project gets.
+	public static var `default`: String { "\(repository):\(version)" }
+
+	/// The image for a project, unless the configuration names one itself.
+	///
+	/// What somebody typed always wins. A cluster that mirrors one tag, or a
+	/// pod image built in-house, is not something to be clever about — and the
+	/// field is only empty when nobody has expressed a preference at all.
+	public static func resolved(
+		_ chosen: String,
+		for configuration: LaunchConfiguration,
+		root: URL
+	) -> String {
+		let named = chosen.trimmingCharacters(in: .whitespaces)
+		guard named.isEmpty else { return named }
+
+		switch DevPodBuild.debugger(for: configuration, root: root) {
+		case .delve: return "\(repository):\(version)-go"
+		case .gdbserver: return "\(repository):\(version)-native"
+		case nil: return `default`
+		}
+	}
+
+	/// An image reference split into the chart's two values.
+	///
+	/// The chart writes `{{ .Values.image.repository }}:{{ .Values.image.tag }}`,
+	/// so setting the repository to something with a tag on it produces
+	/// `repo:tag:dev` — an image nothing can pull, and a pod stuck on
+	/// ImagePullBackOff for a reason nobody can see from the outside.
+	public static func values(for reference: String) -> [String] {
+		guard !reference.isEmpty else { return [] }
+		let (repository, tag) = split(reference)
+		var values = ["image.repository=" + repository]
+		if let tag { values.append("image.tag=" + tag) }
+		return values
+	}
+
+	/// The repository and the tag, if there is one.
+	///
+	/// The last colon, but only after the last slash: `localhost:5000/thing` is
+	/// a registry with a port and no tag at all.
+	public static func split(_ reference: String) -> (repository: String, tag: String?) {
+		let afterSlash = reference.lastIndex(of: "/").map(reference.index(after:))
+			?? reference.startIndex
+		guard let colon = reference[afterSlash...].lastIndex(of: ":") else {
+			return (reference, nil)
+		}
+		return (String(reference[..<colon]), String(reference[reference.index(after: colon)...]))
+	}
+}
+
 /// Building a Go package for a pod.
 public enum DevPodBuild {
 	public enum Failure: Error, Equatable {
@@ -375,6 +437,32 @@ public enum DevPodBuild {
 		/// Rust needs its own standard library for the target, which only
 		/// rustup can install.
 		case rust(directory: String)
+	}
+
+	/// Which debugger has to be in the pod for this project.
+	///
+	/// Delve debugs Go and nothing else; everything that compiles to a native
+	/// binary is held by gdbserver instead. `nil` means this cannot tell — a
+	/// make step builds whatever it likes — and the caller should assume it
+	/// needs both rather than guess wrong.
+	public enum Debugger: Equatable {
+		case delve
+		case gdbserver
+	}
+
+	public static func debugger(for configuration: LaunchConfiguration, root: URL) -> Debugger? {
+		switch strategy(for: configuration, root: root) {
+		case .go: return .delve
+		case .zig, .odin, .clang, .rust: return .gdbserver
+		case .make, nil:
+			// Nothing was recognised, so the only evidence left is what the
+			// configuration calls itself.
+			switch configuration.type {
+			case "go": return .delve
+			case "lldb", "cppdbg", "codelldb": return .gdbserver
+			default: return nil
+			}
+		}
 	}
 
 	/// Works out how to build a configuration for the cluster.
@@ -1235,7 +1323,12 @@ public enum DevPodFiles {
 	/// Kept here rather than built where helm is called, so the one place that
 	/// knows the chart's value names is the one place that has to change when
 	/// the chart does.
-	public static func helmValues(for settings: LaunchConfiguration.DevPodSettings) -> [String] {
+	/// - Parameter image: the image the pod should run, when it has been worked
+	///   out from the project rather than typed into the configuration.
+	public static func helmValues(
+		for settings: LaunchConfiguration.DevPodSettings,
+		image: String? = nil
+	) -> [String] {
 		var values: [String] = []
 		if !settings.ingressHost.isEmpty {
 			values += ["ingress.enabled=true", "ingress.host=" + settings.ingressHost]
@@ -1243,9 +1336,7 @@ public enum DevPodFiles {
 		if settings.port > 0 {
 			values += ["app.ports[0].name=http", "app.ports[0].containerPort=\(settings.port)"]
 		}
-		if !settings.image.isEmpty {
-			values.append("image.repository=" + settings.image)
-		}
+		values += DevPodImage.values(for: image ?? settings.image)
 		return values
 	}
 

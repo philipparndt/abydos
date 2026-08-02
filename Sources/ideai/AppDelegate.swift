@@ -491,6 +491,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let steps = options.treeSteps {
+			DispatchQueue.main.asyncAfter(deadline: .now() + max(1, options.screenshotDelay - 1.5)) {
+				controller?.treeStepsForTesting(steps)
+			}
+		}
+
 		if options.pushChanges {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.6) {
 				controller?.pushChangesForTesting()

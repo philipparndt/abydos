@@ -276,7 +276,7 @@ final class LaunchConfigurationsPage: NSView {
 			field("Only run on contexts matching", key: "allowed", monospaced: true, placeholder: "*-local, k3c-*"),
 			field("Namespace", key: "namespace", monospaced: true, placeholder: "ideai-dev"),
 			field("Kubeconfig", key: "kubeconfig", monospaced: true, placeholder: "~/.kube/config"),
-			field("Pod image", key: "image", monospaced: true, placeholder: "pharndt/ideai-devpod:dev"),
+			field("Pod image", key: "image", monospaced: true, placeholder: DevPodImage.default),
 			field("Service port", key: "port", monospaced: true, placeholder: "8080"),
 			field(
 				"Published at", key: "ingressHost", monospaced: true,
@@ -498,6 +498,11 @@ final class LaunchConfigurationsPage: NSView {
 		fields["namespace"]?.stringValue = settings.namespace
 		fields["kubeconfig"]?.stringValue = settings.kubeconfig
 		fields["image"]?.stringValue = settings.image
+		// Empty means the image is chosen from the language, so the placeholder
+		// says which one that is rather than leaving somebody to wonder.
+		fields["image"]?.placeholderString = DevPodImage.resolved(
+			"", for: configuration, root: root ?? URL(fileURLWithPath: ".")
+		)
 		fields["port"]?.stringValue = settings.port > 0 ? String(settings.port) : ""
 		fields["ingressHost"]?.stringValue = settings.ingressHost
 		filesList.files = settings.files

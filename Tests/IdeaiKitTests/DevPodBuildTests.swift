@@ -205,3 +205,122 @@ struct DevPodBuildStrategyTests {
 		#expect(DevPodBuild.sources(withExtension: "c", in: root).isEmpty)
 	}
 }
+
+/// Which image a development pod runs.
+///
+/// The image carries a debugger and a pod only ever debugs one language, so
+/// there is a small one for Go, a small one for native binaries, and a full one
+/// for when this cannot tell. Getting it wrong is not subtle — the pod comes up
+/// without the debugger the editor is about to ask for — so each case is here.
+struct DevPodImageTests {
+	private func project(_ files: [String]) throws -> URL {
+		let root = FileManager.default.temporaryDirectory
+			.appendingPathComponent("image-\(UUID().uuidString)")
+		for file in files {
+			let url = root.appendingPathComponent(file)
+			try FileManager.default.createDirectory(
+				at: url.deletingLastPathComponent(), withIntermediateDirectories: true
+			)
+			try "".write(to: url, atomically: true, encoding: .utf8)
+		}
+		return root
+	}
+
+	private func configuration(_ program: String, type: String = "lldb") -> LaunchConfiguration {
+		var configuration = LaunchConfiguration(name: "in the cluster", type: type)
+		configuration.program = program
+		return configuration
+	}
+
+	// MARK: - Which image
+
+	@Test func aGoProjectGetsTheImageWithDelveInIt() throws {
+		let root = try project(["go.mod", "main.go"])
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		#expect(DevPodImage.resolved(
+			"", for: configuration("${workspaceFolder}", type: "go"), root: root
+		) == "pharndt/ideai-devpod:dev-go")
+	}
+
+	@Test func nativeProjectsGetTheImageWithGdbserverInIt() throws {
+		for files in [
+			["build.zig", "src/main.zig"],
+			["Cargo.toml", "src/main.rs"],
+			["src/main.odin"],
+			["src/main.c"],
+			["src/main.cpp"],
+		] {
+			let root = try project(files)
+			defer { try? FileManager.default.removeItem(at: root) }
+
+			#expect(DevPodImage.resolved(
+				"", for: configuration("${workspaceFolder}/build/thing"), root: root
+			) == "pharndt/ideai-devpod:dev-native", "\(files)")
+		}
+	}
+
+	/// A make step builds whatever it likes, and a configuration that says
+	/// nothing about its language says nothing about its debugger either. The
+	/// full image has both, so an unrecognised project still works.
+	@Test func somethingUnrecognisedGetsTheImageWithBoth() throws {
+		let root = try project(["CMakeLists.txt"])
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		var configuration = configuration("${workspaceFolder}/build/thing", type: "custom")
+		configuration.extras["ideai.make"] = .object([
+			"targets": .array([.string("linux")]),
+			"directory": .string("${workspaceFolder}"),
+		])
+		#expect(DevPodImage.resolved("", for: configuration, root: root) == DevPodImage.default)
+		#expect(DevPodImage.default == "pharndt/ideai-devpod:dev")
+	}
+
+	/// A make step in a project whose language is still readable from the
+	/// configuration: `type` is the last piece of evidence, and it is enough.
+	@Test func aMakeStepStillFollowsWhatTheConfigurationCallsItself() throws {
+		let root = try project(["Makefile"])
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		var go = configuration("${workspaceFolder}/build/thing", type: "go")
+		go.extras["ideai.make"] = .object(["targets": .array([.string("linux")])])
+		#expect(DevPodImage.resolved("", for: go, root: root) == "pharndt/ideai-devpod:dev-go")
+
+		var native = configuration("${workspaceFolder}/build/thing", type: "lldb")
+		native.extras["ideai.make"] = .object(["targets": .array([.string("linux")])])
+		#expect(DevPodImage.resolved("", for: native, root: root) == "pharndt/ideai-devpod:dev-native")
+	}
+
+	/// Somebody who has typed an image has said what they want — a cluster that
+	/// mirrors one tag, a pod image built in-house — and no guess should beat
+	/// it.
+	@Test func whatSomebodyTypedIsNotOverruled() throws {
+		let root = try project(["go.mod", "main.go"])
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		#expect(DevPodImage.resolved(
+			"registry.internal/dev:2026", for: configuration("${workspaceFolder}", type: "go"), root: root
+		) == "registry.internal/dev:2026")
+	}
+
+	// MARK: - Repository and tag
+
+	@Test func aReferenceIsSplitIntoWhatTheChartWants() {
+		#expect(DevPodImage.values(for: "pharndt/ideai-devpod:dev-native")
+			== ["image.repository=pharndt/ideai-devpod", "image.tag=dev-native"])
+	}
+
+	/// A registry with a port in it is not a tag: `localhost:5000/thing` would
+	/// otherwise become the repository `localhost` at the tag `5000/thing`.
+	@Test func aPortInTheRegistryIsNotATag() {
+		let (repository, tag) = DevPodImage.split("localhost:5000/ideai-devpod")
+		#expect(repository == "localhost:5000/ideai-devpod")
+		#expect(tag == nil)
+
+		#expect(DevPodImage.split("localhost:5000/ideai-devpod:dev").tag == "dev")
+	}
+
+	@Test func nothingSaidSetsNothing() {
+		#expect(DevPodImage.values(for: "").isEmpty)
+	}
+}

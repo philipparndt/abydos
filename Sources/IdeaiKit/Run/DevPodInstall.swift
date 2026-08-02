@@ -78,8 +78,8 @@ public enum DevPodInstall {
 		if let kubeconfig, !kubeconfig.isEmpty {
 			arguments += ["--kubeconfig", (kubeconfig as NSString).expandingTildeInPath]
 		}
-		if let image, !image.isEmpty {
-			arguments += ["--set", "image.repository=" + image]
+		for value in DevPodImage.values(for: image ?? "") {
+			arguments += ["--set", value]
 		}
 		for value in values {
 			arguments += ["--set", value]

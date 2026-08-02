@@ -104,6 +104,9 @@ struct LaunchOptions {
 	var pushChanges = false
 	/// Walk the navigation history: "back", "forward", or both.
 	var navigateSteps: String?
+	/// A comma-separated script for the project tree: `down`, `up`, `right`,
+	/// `left`, `collapse`, `locate`.
+	var treeSteps: String?
 	/// Hover the editor at line:character with ⌘ held.
 	var commandHoverAt: String?
 	/// Open the attach-to-process picker, filtered by this text.
@@ -224,6 +227,7 @@ struct LaunchOptions {
 			case "--changes":    options.showChanges = true
 			case "--push":       options.pushChanges = true
 			case "--navigate":   options.navigateSteps = next()
+			case "--tree":       options.treeSteps = next()
 			case "--cmd-hover":  options.commandHoverAt = next()
 			case "--attach-picker": options.attachFilter = next()
 			case "--pills":      options.highlightPills = true

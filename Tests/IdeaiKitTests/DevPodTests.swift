@@ -470,9 +470,21 @@ struct DevPodIngressTests {
 		#expect(DevPodFiles.helmValues(for: .init()).isEmpty)
 	}
 
-	@Test func theImageComesThroughToo() {
+	/// The chart joins the repository and the tag, so a reference with a tag on
+	/// it has to arrive as two values — otherwise the pod is asked to pull
+	/// `pharndt/ideai-devpod:v2:dev`, which exists nowhere.
+	@Test func theImageComesThroughAsARepositoryAndATag() {
 		let values = DevPodFiles.helmValues(for: .init(image: "pharndt/ideai-devpod:v2"))
-		#expect(values == ["image.repository=pharndt/ideai-devpod:v2"])
+		#expect(values == ["image.repository=pharndt/ideai-devpod", "image.tag=v2"])
+	}
+
+	/// What the project needs, when nobody has said: the pod for a Zig project
+	/// holds gdbserver and not Delve.
+	@Test func anImageWorkedOutFromTheProjectWinsOverAnEmptyField() {
+		let values = DevPodFiles.helmValues(
+			for: .init(), image: "pharndt/ideai-devpod:dev-native"
+		)
+		#expect(values == ["image.repository=pharndt/ideai-devpod", "image.tag=dev-native"])
 	}
 }
 

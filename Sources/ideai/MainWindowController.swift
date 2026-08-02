@@ -477,6 +477,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		navigator.onPreviewModel = { url in
 			MainWindowController.previewModel(at: url)
 		}
+		navigator.currentEditorFile = { [weak self] in self?.editor.activeGroup?.activeTabURL }
 		navigator.onFilesChanged = { [weak self] in
 			// Something wrote inside the project — possibly a file that is open.
 			self?.editor.reloadExternallyChangedFiles()
@@ -2576,6 +2577,29 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 	}
 
+	/// Drives the project tree and reports what the editor did about it.
+	///
+	/// Arrowing through the tree is supposed to show each file it lands on, and
+	/// that is a claim about two views at once — which is why this prints both.
+	func treeStepsForTesting(_ steps: String) {
+		for step in steps.split(separator: ",") {
+			switch step {
+			case "focus": navigator.focusTree()
+			case "down": navigator.pressKeyForTesting(125)
+			case "up": navigator.pressKeyForTesting(126)
+			case "right": navigator.pressKeyForTesting(124)
+			case "left": navigator.pressKeyForTesting(123)
+			case "return": navigator.pressKeyForTesting(36)
+			case "collapse": navigator.collapseAll()
+			case "locate": navigator.selectFileInEditor()
+			default: continue
+			}
+			let selection = navigator.selectionForTesting
+			let showing = editor.activeGroup?.activeTabURL?.lastPathComponent ?? "nothing"
+			print("TREE \(step): selected=\(selection.name) rows=\(selection.rows) editor=\(showing)")
+		}
+	}
+
 	func showDebugConsoleForTesting() {
 		bottomPanel.showDebugConsoleForTesting()
 	}
@@ -2815,6 +2839,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				if let chart = configuration.helm {
 					try await prepareChart(
 						chart,
+						configuration: configuration,
 						settings: settings,
 						context: context,
 						kubeconfig: kubeconfig,
@@ -2855,7 +2880,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 								+ ", and this configuration does not install one."
 						)
 					}
-					try await installDevPod(settings: settings, context: context, root: root)
+					try await installDevPod(
+							configuration: configuration, settings: settings,
+							context: context, root: root
+						)
 					candidates = await DevPods.list(
 						context: context,
 						namespace: settings.namespace.isEmpty ? nil : settings.namespace,
@@ -2868,7 +2896,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				// against what this configuration asks for, and the release is
 				// upgraded when they have drifted apart.
 				if !candidates.isEmpty, settings.allowInstall, configuration.helm == nil {
-					let desired = DevPodFiles.helmValues(for: settings)
+					let desired = DevPodFiles.helmValues(
+							for: settings,
+							image: DevPodImage.resolved(settings.image, for: configuration, root: root)
+						)
 					let release = DevPodInstall.releaseName(for: root)
 					let deployed = await DevPodInstall.deployedValues(
 						release: release,
@@ -2878,7 +2909,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 					)
 					if DevPodInstall.upgradeNeeded(desired: desired, deployed: deployed) {
 						clusterLog("the pod is not set up the way this configuration asks for")
-						try await installDevPod(settings: settings, context: context, root: root)
+						try await installDevPod(
+							configuration: configuration, settings: settings,
+							context: context, root: root
+						)
 						candidates = await DevPods.list(
 							context: context,
 							namespace: settings.namespace.isEmpty ? nil : settings.namespace,
@@ -2959,11 +2993,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 				// Delve debugs Go; everything else is held by gdbserver and
 				// driven by the LLDB on this machine.
-				let isGo = { if case .go = DevPodBuild.strategy(for: configuration, root: root) {
-					return true
-				} else {
-					return configuration.type == "go"
-				} }()
+				// Nothing recognised means the full image is in the pod, which has
+				// both; gdbserver is the one that works on a binary from anywhere.
+				let isGo = DevPodBuild.debugger(for: configuration, root: root) == .delve
 				let mode = debug ? (isGo ? "debug" : "native-debug") : "run"
 
 				try Task.checkCancellation()
@@ -3074,6 +3106,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// would overwrite each other's binary, and the name is what somebody sees
 	/// in `helm list` when they wonder what this is.
 	private func installDevPod(
+		configuration: LaunchConfiguration,
 		settings: LaunchConfiguration.DevPodSettings,
 		context: String?,
 		root: URL
@@ -3083,8 +3116,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		let release = DevPodInstall.releaseName(for: root)
 		let namespace = settings.namespace.isEmpty ? "ideai-dev" : settings.namespace
 		let kubeconfig = settings.kubeconfig.isEmpty ? nil : settings.kubeconfig
+		// The slim image for whatever this project is written in, unless the
+		// configuration names one itself: a pod that only ever debugs Go has no
+		// use for gdbserver, and one that never sees Go has none for Delve.
+		let image = DevPodImage.resolved(settings.image, for: configuration, root: root)
 		runControl?.setStatus("Installing \(release) in \(namespace)…", busy: true)
-		clusterLog("installing \(release) in \(namespace)")
+		clusterLog("installing \(release) in \(namespace), image \(image)")
 
 		// The install and a watch on what it produces, side by side. helm waits
 		// in silence and then reports its own deadline — "context deadline
@@ -3101,9 +3138,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 					// may say `${currentContext}`, which is not a cluster.
 					context: context,
 					kubeconfig: kubeconfig,
-					image: settings.image.isEmpty ? nil : settings.image,
+					image: image,
 					// What the chart has to publish, and on which port.
-					values: DevPodFiles.helmValues(for: settings),
+					values: DevPodFiles.helmValues(for: settings, image: image),
 					progress: { line in
 						Task { @MainActor in self?.clusterLog(line) }
 					}
@@ -3112,7 +3149,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			group.addTask { @MainActor [weak self] in
 				try await self?.watchInstall(
 					release: release, namespace: namespace,
-					context: context, kubeconfig: kubeconfig, image: settings.image
+					context: context, kubeconfig: kubeconfig, image: image
 				)
 			}
 
@@ -3271,6 +3308,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// The pod keeps everything else the chart gave it.
 	private func prepareChart(
 		_ chart: LaunchConfiguration.HelmSettings,
+		configuration: LaunchConfiguration,
 		settings: LaunchConfiguration.DevPodSettings,
 		context: String?,
 		kubeconfig: String?,
@@ -3315,7 +3353,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			)
 		}
 
-		let image = settings.image.isEmpty ? "pharndt/ideai-devpod:dev" : settings.image
+		let image = DevPodImage.resolved(settings.image, for: configuration, root: root)
 		let container = chart.container.isEmpty
 			? (deployments.first { $0.name == deployment }?.containers.first ?? "app")
 			: chart.container
