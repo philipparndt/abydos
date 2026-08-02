@@ -173,6 +173,8 @@ struct LaunchOptions {
 	var tearOffTerminal = false
 	/// Put two different panes side by side before capture.
 	var splitPanes = false
+	/// Split, then do what used to collapse a split.
+	var splitThenDisturb = false
 	/// Show the terminal drop preview before capture.
 	var previewTerminalDrop = false
 	/// Split the editor before capture: "right" or "down".
@@ -276,6 +278,7 @@ struct LaunchOptions {
 			case "--rename-terminal": options.renameTerminal = next()
 			case "--split-terminals": options.splitTerminals = true
 			case "--split-panes": options.splitPanes = true
+			case "--split-disturb": options.splitThenDisturb = true
 			case "--tearoff-terminal": options.tearOffTerminal = true
 			case "--terminal-drop-preview": options.previewTerminalDrop = true
 			case "--split":      options.split = next()

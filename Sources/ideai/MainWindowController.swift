@@ -2409,6 +2409,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		bottomPanel.splitFirstBesideForTesting()
 	}
 
+	/// Splits, then does the things that used to collapse a split: opens a
+	/// terminal, and activates another tab.
+	func splitThenDisturbForTesting() {
+		splitPanesForTesting()
+		DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+			self?.bottomPanel.newTerminal()
+			self?.bottomPanel.selectTabForTesting(0)
+		}
+	}
+
 	/// Shows the split preview a drag would show.
 	func previewTerminalDropForTesting() {
 		setPanelVisible(true)

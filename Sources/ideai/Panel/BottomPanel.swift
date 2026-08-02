@@ -871,12 +871,22 @@ final class BottomPanel: NSView {
 	private func activate(index: Int, focus: Bool) {
 		guard sessions.indices.contains(index) else { return }
 		let session = sessions[index]
-
-		// Selecting a tab shows that one alone. A split is something asked for
-		// by dragging, and clicking through the tabs should not keep whatever
-		// was beside the last one.
 		activeIndex = index
-		columns = [session]
+
+		// A split survives until it is undone. Whatever is activated — a tab
+		// clicked, a terminal opened, a debugger started — takes the column
+		// that has the focus, and the other column goes on showing what it was
+		// showing. Anything else means a split lasts until the next thing
+		// happens, which is how it was: it collapsed on the first new terminal
+		// and looked like a feature that does not work.
+		if let position = columns.firstIndex(where: { $0 === session }) {
+			focusedColumn = position
+		} else if columns.count > 1 {
+			columns[min(focusedColumn, columns.count - 1)] = session
+		} else {
+			columns = [session]
+			focusedColumn = 0
+		}
 		layoutColumns()
 
 		placeholder.isHidden = true
@@ -884,6 +894,9 @@ final class BottomPanel: NSView {
 		if focus, case .terminal = session.kind { session.terminal?.focus() }
 		activeTerminalChanged()
 	}
+
+	/// Which column a newly shown pane appears in.
+	private var focusedColumn = 0
 
 	private func showDropTarget() {
 		guard dropTarget == nil else { return }
@@ -981,11 +994,33 @@ final class BottomPanel: NSView {
 		])
 
 		if let split = columnSplit {
-			// Equal columns to begin with, which is what a split down the
-			// middle looks like it should give you.
-			DispatchQueue.main.async { [weak split] in
+			// Where it was left, or down the middle the first time. Changing
+			// what a column shows rebuilds the split view, and a divider that
+			// jumps back to the middle every time is a divider nobody can move.
+			let fraction = splitFraction
+			DispatchQueue.main.async { [weak self, weak split] in
 				guard let split, split.arrangedSubviews.count > 1 else { return }
-				split.setPosition(split.bounds.width / 2, ofDividerAt: 0)
+				split.setPosition(split.bounds.width * fraction, ofDividerAt: 0)
+				self?.watchDivider(split)
+			}
+		}
+	}
+
+	/// How the width is shared, so it survives the rebuild.
+	private var splitFraction: CGFloat = 0.5
+
+	/// Remembers where the divider is put.
+	private func watchDivider(_ split: NSSplitView) {
+		NotificationCenter.default.addObserver(
+			forName: NSSplitView.didResizeSubviewsNotification,
+			object: split,
+			queue: .main
+		) { [weak self, weak split] _ in
+			guard let split, split.bounds.width > 1,
+			      let first = split.arrangedSubviews.first
+			else { return }
+			MainActor.assumeIsolated {
+				self?.splitFraction = min(0.9, max(0.1, first.frame.width / split.bounds.width))
 			}
 		}
 	}
@@ -1012,10 +1047,11 @@ final class BottomPanel: NSView {
 				activate(index: payload.index, focus: true)
 				return
 			}
-			// Two at a time: a terminal narrower than half a window is a
-			// terminal nothing fits in.
-			if columns.count >= 2 { columns.removeLast() }
+			// Two at a time: a pane narrower than half a window is a pane
+			// nothing fits in.
+			if columns.count >= 2 { columns.remove(at: zone.insertsBefore ? 1 : 0) }
 			columns.insert(session, at: zone.insertsBefore ? 0 : columns.count)
+			focusedColumn = zone.insertsBefore ? 0 : columns.count - 1
 			activeIndex = payload.index
 			layoutColumns()
 			placeholder.isHidden = true
@@ -1086,6 +1122,7 @@ final class BottomPanel: NSView {
 		session.view.removeFromSuperview()
 		sessions.remove(at: index)
 		columns.removeAll { $0 === session }
+		focusedColumn = min(focusedColumn, max(0, columns.count - 1))
 
 		if sessions.isEmpty {
 			activeIndex = nil
@@ -1118,6 +1155,11 @@ final class BottomPanel: NSView {
 		}
 		refreshTabs()
 		onTerminalsChanged?()
+	}
+
+	/// Clicks a tab, for the capture harness.
+	func selectTabForTesting(_ index: Int) {
+		activate(index: index, focus: false)
 	}
 
 	/// Puts the first tab beside whatever is showing, as the menu does.
@@ -1967,6 +2009,7 @@ extension BottomPanel: TerminalDragSource {
 
 		sessions.remove(at: index)
 		columns.removeAll { $0 === session }
+		focusedColumn = min(focusedColumn, max(0, columns.count - 1))
 		pane.removeFromSuperview()
 
 		if sessions.isEmpty {
