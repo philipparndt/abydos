@@ -159,6 +159,10 @@ struct LaunchOptions {
 	var switchTo: String?
 	/// Rename the terminal tab before capture, as a double-click does.
 	var renameTerminal: String?
+	/// Put two terminals side by side before capture.
+	var splitTerminals = false
+	/// Pull a terminal out into a window before capture.
+	var tearOffTerminal = false
 	/// Split the editor before capture: "right" or "down".
 	var split: String?
 	/// Draw a tab drop preview before capture, without a real drag.
@@ -254,6 +258,8 @@ struct LaunchOptions {
 			case "--switcher":   options.switcherFilter = next()
 			case "--switch-to":  options.switchTo = next()
 			case "--rename-terminal": options.renameTerminal = next()
+			case "--split-terminals": options.splitTerminals = true
+			case "--tearoff-terminal": options.tearOffTerminal = true
 			case "--split":      options.split = next()
 			case "--dropzone":   options.dropZone = next()
 			default:

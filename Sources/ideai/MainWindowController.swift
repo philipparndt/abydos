@@ -383,6 +383,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// Written when they change rather than only on the way out: a terminal
 		// that survives a restart has to survive the kind of exit nobody plans.
 		bottomPanel.onTerminalsChanged = { [weak self] in self?.rememberOpenEditors() }
+		bottomPanel.onTearOffTerminal = { pane, title, screenPoint in
+			TerminalWindowController(pane: pane, title: title, at: screenPoint).show()
+		}
 		bottomPanel.onToggleFollowProject = { [weak self] in self?.toggleFollowTerminal() }
 		bottomPanel.onWorkingDirectoryChanged = { [weak self] directory in
 			self?.terminalDirectoryChanged(to: directory)
@@ -2212,6 +2215,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	}
 
 	func pushChangesForTesting() { changesPane?.pushForTesting() }
+
+	/// Opens two terminals side by side, as dropping one tab on the other's
+	/// edge does.
+	func splitTerminalsForTesting() {
+		setPanelVisible(true)
+		bottomPanel.newTerminal()
+		bottomPanel.newTerminal()
+		bottomPanel.splitForTesting()
+	}
+
+	func tearOffTerminalForTesting() {
+		setPanelVisible(true)
+		bottomPanel.newTerminal()
+		let point = window.map { NSPoint(x: $0.frame.maxX + 80, y: $0.frame.midY) } ?? .zero
+		bottomPanel.tearOffForTesting(at: point)
+	}
 
 	/// Renames the terminal in front, the way a double-click on its tab does.
 	func renameActiveTerminalForTesting(to name: String) {

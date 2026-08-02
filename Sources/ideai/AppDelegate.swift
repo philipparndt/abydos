@@ -61,6 +61,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		// Simulated input runs after the initial parse lands, so folds and
 		// highlights exist by the time it is exercised.
+		if options.splitTerminals {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+				controller?.splitTerminalsForTesting()
+			}
+		}
+		if options.tearOffTerminal {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+				controller?.tearOffTerminalForTesting()
+			}
+		}
+
 		if let name = options.renameTerminal {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
 				controller?.renameActiveTerminalForTesting(to: name)

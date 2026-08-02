@@ -108,8 +108,21 @@ final class BottomPanel: NSView {
 	/// Forwarded when a review finding or a search result is activated.
 	var onOpenFinding: ((URL, Int) -> Void)?
 
+	/// This panel, so a tab dragged from one is recognised by the other.
+	let panelID = UUID()
+	/// A terminal dragged out of the panel altogether.
+	var onTearOffTerminal: ((TerminalPane, String, NSPoint) -> Void)?
+
+	/// What is on screen, left to right.
+	///
+	/// One, nearly always. Two when somebody has dropped a tab against the
+	/// side of the pane: a shell beside the logs it is producing is the whole
+	/// reason for splitting a terminal area.
+	private var columns: [Session] = []
+
 	private var tabStrip: PanelTabStrip!
-	private var contentArea: NSView!
+	private var contentArea: PanelContentView!
+	private var columnSplit: NSSplitView?
 	private var placeholder: NSTextField!
 
 	override init(frame frameRect: NSRect) {
@@ -130,10 +143,25 @@ final class BottomPanel: NSView {
 		tabStrip.onAdd = { [weak self] in self?.newTerminal() }
 		tabStrip.onHide = { [weak self] in self?.onRequestHide?() }
 		tabStrip.onRename = { [weak self] index, name in self?.rename(index: index, to: name) }
+		tabStrip.panelID = panelID
+		tabStrip.setUpTabDropping()
+		tabStrip.canDrag = { [weak self] index in
+			guard let self, self.sessions.indices.contains(index) else { return false }
+			if case .terminal = self.sessions[index].kind { return true }
+			return false
+		}
+		tabStrip.onMove = { [weak self] from, to in self?.move(from: from, to: to) }
+		tabStrip.onTearOff = { [weak self] index, point in self?.tearOff(index: index, at: point) }
 		tabStrip.onToggleMaximize = { [weak self] in self?.onToggleMaximize?() }
 		tabStrip.onToggleFollowProject = { [weak self] in self?.onToggleFollowProject?() }
 
-		contentArea = NSView()
+		contentArea = PanelContentView()
+		contentArea.onDrop = { [weak self] payload, zone in
+			self?.handleDrop(payload, zone: zone)
+		}
+		contentArea.acceptsDrag = { [weak self] payload in
+			payload.panelID == self?.panelID
+		}
 
 		placeholder = NSTextField(labelWithString: "No terminal open")
 		placeholder.font = Theme.current.uiFont(12)
@@ -749,24 +777,122 @@ final class BottomPanel: NSView {
 
 	private func activate(index: Int, focus: Bool) {
 		guard sessions.indices.contains(index) else { return }
-		contentArea.subviews.forEach { $0.removeFromSuperview() }
-
-		activeIndex = index
 		let session = sessions[index]
-		let view = session.view
-		view.translatesAutoresizingMaskIntoConstraints = false
-		contentArea.addSubview(view)
-		NSLayoutConstraint.activate([
-			view.topAnchor.constraint(equalTo: contentArea.topAnchor),
-			view.bottomAnchor.constraint(equalTo: contentArea.bottomAnchor),
-			view.leadingAnchor.constraint(equalTo: contentArea.leadingAnchor),
-			view.trailingAnchor.constraint(equalTo: contentArea.trailingAnchor),
-		])
+
+		// Selecting a tab shows that one alone. A split is something asked for
+		// by dragging, and clicking through the tabs should not keep whatever
+		// was beside the last one.
+		activeIndex = index
+		columns = [session]
+		layoutColumns()
 
 		placeholder.isHidden = true
 		refreshTabs()
 		if focus, case .terminal = session.kind { session.terminal?.focus() }
 		activeTerminalChanged()
+	}
+
+	/// Installs whatever is in `columns`, side by side.
+	private func layoutColumns() {
+		contentArea.subviews.forEach { $0.removeFromSuperview() }
+		columnSplit = nil
+		columns.removeAll { session in !sessions.contains { $0 === session } }
+		guard !columns.isEmpty else { return }
+
+		let content: NSView
+		if columns.count == 1 {
+			content = columns[0].view
+		} else {
+			let split = NSSplitView()
+			split.isVertical = true
+			split.dividerStyle = .thin
+			for session in columns {
+				let view = session.view
+				view.translatesAutoresizingMaskIntoConstraints = true
+				split.addArrangedSubview(view)
+			}
+			columnSplit = split
+			content = split
+		}
+
+		content.translatesAutoresizingMaskIntoConstraints = false
+		contentArea.addSubview(content)
+		NSLayoutConstraint.activate([
+			content.topAnchor.constraint(equalTo: contentArea.topAnchor),
+			content.bottomAnchor.constraint(equalTo: contentArea.bottomAnchor),
+			content.leadingAnchor.constraint(equalTo: contentArea.leadingAnchor),
+			content.trailingAnchor.constraint(equalTo: contentArea.trailingAnchor),
+		])
+
+		if let split = columnSplit {
+			// Equal columns to begin with, which is what a split down the
+			// middle looks like it should give you.
+			DispatchQueue.main.async { [weak split] in
+				guard let split, split.arrangedSubviews.count > 1 else { return }
+				split.setPosition(split.bounds.width / 2, ofDividerAt: 0)
+			}
+		}
+	}
+
+	/// A tab dropped onto the pane: shown alone, or put beside what is there.
+	private func handleDrop(_ payload: TerminalTabDrag.Payload, zone: TerminalTabDrag.Zone) {
+		guard sessions.indices.contains(payload.index) else { return }
+		let session = sessions[payload.index]
+
+		switch zone {
+		case .center:
+			activate(index: payload.index, focus: true)
+		case .left, .right:
+			guard !columns.contains(where: { $0 === session }) else {
+				activate(index: payload.index, focus: true)
+				return
+			}
+			// Two at a time: a terminal narrower than half a window is a
+			// terminal nothing fits in.
+			if columns.count >= 2 { columns.removeLast() }
+			columns.insert(session, at: zone.insertsBefore ? 0 : columns.count)
+			activeIndex = payload.index
+			layoutColumns()
+			placeholder.isHidden = true
+			refreshTabs()
+			session.terminal?.focus()
+			activeTerminalChanged()
+		}
+	}
+
+	/// Reorders the tabs.
+	private func move(from: Int, to: Int) {
+		guard sessions.indices.contains(from) else { return }
+		let session = sessions.remove(at: from)
+		let target = max(0, min(to > from ? to - 1 : to, sessions.count))
+		sessions.insert(session, at: target)
+
+		activeIndex = sessions.firstIndex { $0 === session } ?? activeIndex
+		refreshTabs()
+		onTerminalsChanged?()
+	}
+
+	/// Takes a terminal out of the panel and hands it over to be a window.
+	private func tearOff(index: Int, at screenPoint: NSPoint) {
+		guard sessions.indices.contains(index) else { return }
+		let session = sessions[index]
+		guard case let .terminal(pane) = session.kind else { return }
+
+		sessions.remove(at: index)
+		columns.removeAll { $0 === session }
+		pane.removeFromSuperview()
+
+		if sessions.isEmpty {
+			activeIndex = nil
+			contentArea.subviews.forEach { $0.removeFromSuperview() }
+			placeholder.isHidden = false
+			refreshTabs()
+		} else {
+			activeIndex = nil
+			activate(index: min(index, sessions.count - 1), focus: false)
+		}
+		onTerminalsChanged?()
+		onTearOffTerminal?(pane, session.displayTitle, screenPoint)
 	}
 
 	/// Closes a session, optionally without asking the panel to go away.
@@ -819,6 +945,24 @@ final class BottomPanel: NSView {
 		onTerminalsChanged?()
 	}
 
+	/// Puts the last terminal beside the first, as dragging its tab to the edge
+	/// does. For the capture harness.
+	func splitForTesting() {
+		guard sessions.count >= 2 else { return }
+		// The one that is not on screen, which is the case dragging a tab to the
+		// edge is for.
+		handleDrop(
+			TerminalTabDrag.Payload(panelID: panelID, index: sessions.count - 2), zone: .right
+		)
+	}
+
+	/// Takes the terminal in front out into a window, as dragging its tab
+	/// outside does. For the capture harness.
+	func tearOffForTesting(at point: NSPoint) {
+		guard let activeIndex else { return }
+		tearOff(index: activeIndex, at: point)
+	}
+
 	/// Renames whichever tab is in front, for the capture harness.
 	func renameActiveForTesting(to name: String) {
 		guard let activeIndex else { return }
@@ -866,11 +1010,12 @@ final class BottomPanel: NSView {
 
 	private func refreshTabs() {
 		tabStrip.setItems(
-			sessions.map {
+			sessions.map { session in
 				PanelTabItem(
-					title: $0.displayTitle,
-					hasExited: $0.hasExited,
-					canRename: { if case .terminal = $0.kind { return true } else { return false } }($0)
+					title: session.displayTitle,
+					hasExited: session.hasExited,
+					canRename: { if case .terminal = session.kind { return true } else { return false } }(),
+					isShowing: columns.contains { $0 === session }
 				)
 			},
 			activeIndex: activeIndex
@@ -920,6 +1065,78 @@ struct PanelTabItem {
 	let hasExited: Bool
 	/// Only a terminal is named by the person using it.
 	var canRename = false
+	/// On screen — which, when the pane is split, is more than one of them.
+	var isShowing = false
+}
+
+/// The panel's content area, which a dragged terminal tab can be dropped on.
+final class PanelContentView: NSView {
+	var onDrop: ((TerminalTabDrag.Payload, TerminalTabDrag.Zone) -> Void)?
+	/// Whether this panel wants a given tab at all.
+	var acceptsDrag: ((TerminalTabDrag.Payload) -> Bool)?
+
+	private var zone: TerminalTabDrag.Zone?
+
+	override init(frame frameRect: NSRect) {
+		super.init(frame: frameRect)
+		registerForDraggedTypes([TerminalTabDrag.pasteboardType])
+	}
+
+	required init?(coder: NSCoder) { fatalError("not used") }
+
+	override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
+		update(with: sender)
+	}
+
+	override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
+		update(with: sender)
+	}
+
+	private func update(with sender: any NSDraggingInfo) -> NSDragOperation {
+		guard let payload = TerminalTabDrag.payload(from: sender.draggingPasteboard),
+		      acceptsDrag?(payload) ?? false
+		else { return [] }
+
+		let point = convert(sender.draggingLocation, from: nil)
+		let zone = TerminalTabDrag.zone(for: point, in: bounds)
+		if zone != self.zone {
+			self.zone = zone
+			needsDisplay = true
+		}
+		return .move
+	}
+
+	override func draggingExited(_ sender: (any NSDraggingInfo)?) {
+		zone = nil
+		needsDisplay = true
+	}
+
+	override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+		defer {
+			zone = nil
+			needsDisplay = true
+		}
+		guard let payload = TerminalTabDrag.payload(from: sender.draggingPasteboard),
+		      acceptsDrag?(payload) ?? false, let zone
+		else { return false }
+		onDrop?(payload, zone)
+		return true
+	}
+
+	/// The half it would land in, so a split is something you see before you
+	/// commit to it.
+	override func draw(_ dirtyRect: NSRect) {
+		super.draw(dirtyRect)
+		guard let zone else { return }
+
+		let rect = TerminalTabDrag.highlightRect(for: zone, in: bounds)
+		Theme.current.gitModified.withAlphaComponent(0.12).setFill()
+		rect.fill()
+		Theme.current.gitModified.withAlphaComponent(0.7).setStroke()
+		let outline = NSBezierPath(rect: rect.insetBy(dx: 1, dy: 1))
+		outline.lineWidth = 2
+		outline.stroke()
+	}
 }
 
 /// Compact tab strip with add and hide affordances.
@@ -928,6 +1145,14 @@ final class PanelTabStrip: NSView {
 	var onClose: ((Int) -> Void)?
 	/// A tab renamed in place. An empty name gives it back to the shell.
 	var onRename: ((Int, String) -> Void)?
+	/// A tab dropped back into this strip somewhere else.
+	var onMove: ((Int, Int) -> Void)?
+	/// A tab let go outside the window, which makes it a window.
+	var onTearOff: ((Int, NSPoint) -> Void)?
+	/// Whether a tab may be dragged at all — a debugger cannot be.
+	var canDrag: ((Int) -> Bool)?
+	/// The panel this strip belongs to, so a drag is recognised as its own.
+	var panelID = UUID()
 	var onAdd: (() -> Void)?
 	var onHide: (() -> Void)?
 	/// Asked to give the panel the whole window, or to give it back.
@@ -949,6 +1174,10 @@ final class PanelTabStrip: NSView {
 	private var followButtonFrame: NSRect = .zero
 	private var hoveredIndex: Int?
 	private var trackingArea: NSTrackingArea?
+	private var pressedIndex: Int?
+	private var pressOrigin: NSPoint = .zero
+	private var draggedIndex: Int?
+	private var dropCaret: Int?
 
 	override var isFlipped: Bool { true }
 
@@ -1068,6 +1297,7 @@ final class PanelTabStrip: NSView {
 
 	override func mouseDown(with event: NSEvent) {
 		let point = convert(event.locationInWindow, from: nil)
+		pressedIndex = nil
 
 		if addButtonFrame.contains(point) { onAdd?(); return }
 		if hideButtonFrame.contains(point) { onHide?(); return }
@@ -1100,7 +1330,57 @@ final class PanelTabStrip: NSView {
 			onClose?(index)
 		} else {
 			onSelect?(index)
+			// Remembered rather than acted on: a press becomes a drag only if
+			// the pointer travels, so selecting a tab stays a click.
+			pressedIndex = index
+			pressOrigin = point
 		}
+	}
+
+	override func mouseDragged(with event: NSEvent) {
+		guard let index = pressedIndex, index < frames.count else { return }
+		let point = convert(event.locationInWindow, from: nil)
+		guard hypot(point.x - pressOrigin.x, point.y - pressOrigin.y) > 6 else { return }
+		guard canDrag?(index) ?? false else { return }
+
+		pressedIndex = nil
+		beginDrag(index: index, event: event)
+	}
+
+	private func beginDrag(index: Int, event: NSEvent) {
+		guard let item = TerminalTabDrag.item(panelID: panelID, index: index) else { return }
+
+		let dragItem = NSDraggingItem(pasteboardWriter: item)
+		dragItem.setDraggingFrame(frames[index], contents: snapshot(of: index))
+
+		draggedIndex = index
+		let session = beginDraggingSession(with: [dragItem], event: event, source: self)
+		// A terminal let go outside the window becomes a window, so sliding it
+		// back to where it started would contradict what happens next.
+		session.animatesToStartingPositionsOnCancelOrFail = false
+	}
+
+	private func snapshot(of index: Int) -> NSImage? {
+		guard index < frames.count, index < items.count else { return nil }
+		let rect = frames[index]
+		guard rect.width > 1, rect.height > 1 else { return nil }
+
+		let image = NSImage(size: rect.size)
+		image.lockFocus()
+		if let context = NSGraphicsContext.current {
+			context.cgContext.translateBy(x: -rect.minX, y: 0)
+			draw(item: items[index], in: rect, isActive: true, isHovered: false)
+		}
+		image.unlockFocus()
+		return image
+	}
+
+	/// Where a dropped tab would land, as an index between tabs.
+	private func insertionIndex(at point: NSPoint) -> Int {
+		for (index, frame) in frames.enumerated() where point.x < frame.midX {
+			return index
+		}
+		return frames.count
 	}
 
 	override func draw(_ dirtyRect: NSRect) {
@@ -1108,6 +1388,18 @@ final class PanelTabStrip: NSView {
 		bounds.fill()
 		Theme.current.separator.setFill()
 		NSRect(x: 0, y: bounds.maxY - 1, width: bounds.width, height: 1).fill()
+
+		// Where a dragged tab would go, drawn where the gap will be.
+		if let caret = dropCaret {
+			let x = caret < frames.count
+				? frames[caret].minX - Theme.current.scaled(1)
+				: (frames.last?.maxX ?? Theme.current.scaled(8)) + Theme.current.scaled(1)
+			Theme.current.gitModified.setFill()
+			NSRect(
+				x: x - 1, y: Theme.current.scaled(4),
+				width: 2, height: bounds.height - Theme.current.scaled(8)
+			).fill()
+		}
 
 		for (index, item) in items.enumerated() where index < frames.count {
 			draw(item: item, in: frames[index], isActive: index == activeIndex, isHovered: index == hoveredIndex)
@@ -1131,6 +1423,19 @@ final class PanelTabStrip: NSView {
 	}
 
 	private func draw(item: PanelTabItem, in rect: NSRect, isActive: Bool, isHovered: Bool) {
+		// Beside the focused one when the pane is split: both are on screen,
+		// and a strip that marks only one of them makes the other look like it
+		// belongs to some other tab.
+		if item.isShowing, !isActive {
+			let path = NSBezierPath(
+				roundedRect: rect.insetBy(dx: 0, dy: Theme.current.scaled(4)),
+				xRadius: Theme.current.scaled(5),
+				yRadius: Theme.current.scaled(5)
+			)
+			NSColor.white.withAlphaComponent(0.05).setFill()
+			path.fill()
+		}
+
 		if isActive {
 			let path = NSBezierPath(
 				roundedRect: rect.insetBy(dx: 0, dy: Theme.current.scaled(4)),
@@ -1214,5 +1519,76 @@ extension PanelTabStrip: NSTextFieldDelegate {
 		default:
 			return false
 		}
+	}
+}
+
+
+/// Dragging a terminal tab within its own strip, and out of it.
+extension PanelTabStrip: NSDraggingSource {
+	func draggingSession(
+		_ session: NSDraggingSession,
+		sourceOperationMaskFor context: NSDraggingContext
+	) -> NSDragOperation {
+		context == .withinApplication ? .move : []
+	}
+
+	/// Let go where nothing wanted it: outside the window, that means a window
+	/// of its own.
+	func draggingSession(
+		_ session: NSDraggingSession,
+		endedAt screenPoint: NSPoint,
+		operation: NSDragOperation
+	) {
+		let index = draggedIndex
+		draggedIndex = nil
+		dropCaret = nil
+		needsDisplay = true
+
+		guard operation == [], let index, let frame = window?.frame else { return }
+		guard TearOff.tearsOff(dropPoint: screenPoint, sourceWindowFrame: frame) else { return }
+		onTearOff?(index, screenPoint)
+	}
+}
+
+extension PanelTabStrip {
+	func setUpTabDropping() {
+		registerForDraggedTypes([TerminalTabDrag.pasteboardType])
+	}
+
+	override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
+		draggingUpdated(sender)
+	}
+
+	override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
+		guard let payload = TerminalTabDrag.payload(from: sender.draggingPasteboard),
+		      payload.panelID == panelID
+		else { return [] }
+
+		let point = convert(sender.draggingLocation, from: nil)
+		let caret = insertionIndex(at: point)
+		if caret != dropCaret {
+			dropCaret = caret
+			needsDisplay = true
+		}
+		return .move
+	}
+
+	override func draggingExited(_ sender: (any NSDraggingInfo)?) {
+		dropCaret = nil
+		needsDisplay = true
+	}
+
+	override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+		defer {
+			dropCaret = nil
+			needsDisplay = true
+		}
+		guard let payload = TerminalTabDrag.payload(from: sender.draggingPasteboard),
+		      payload.panelID == panelID
+		else { return false }
+
+		let point = convert(sender.draggingLocation, from: nil)
+		onMove?(payload.index, insertionIndex(at: point))
+		return true
 	}
 }
