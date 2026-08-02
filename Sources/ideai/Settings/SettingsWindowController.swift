@@ -246,6 +246,13 @@ final class SettingsPaneController: NSViewController {
 
 	static func editorRows() -> [Row] {
 		[
+			.toggle(
+				title: "Show problems beside the line",
+				help: "The message is written after the code, dimmed. Off, only the "
+					+ "squiggle and the tooltip say what is wrong.",
+				get: { Settings.shared.showsInlineDiagnostics },
+				set: { Settings.shared.showsInlineDiagnostics = $0 }
+			),
 			.slider(
 				title: "UI zoom",
 				help: "Scales the whole window. Also ⌘+ / ⌘− / ⌘0.",

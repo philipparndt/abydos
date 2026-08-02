@@ -108,6 +108,9 @@ final class EditorViewController: NSViewController {
 	var onEditBreakpoint: ((URL, Int) -> Void)?
 	/// Asked for everywhere a symbol is used, at a zero-based position.
 	var onFindUsages: ((URL, Int, Int) -> Void)?
+	/// Asked to put an agent on a problem: the file, the line, and what the
+	/// language server said about it.
+	var onFixWithAI: ((URL, Int, LSPDiagnostic) -> Void)?
 	/// Which lines have a breakpoint that does more than stop, per file.
 	private var conditionalBreakpoints: [String: Set<Int>] = [:]
 
@@ -728,6 +731,9 @@ final class EditorViewController: NSViewController {
 		}
 		codeView.onFindUsages = { [weak self] line, character in
 			self?.onFindUsages?(tab.url, line, character)
+		}
+		codeView.onFixWithAI = { [weak self] line, diagnostic in
+			self?.onFixWithAI?(tab.url, line, diagnostic)
 		}
 		codeView.onRequestCompletions = { [weak self] prefix, _ in
 			self?.scheduleCompletions(for: tab, prefix: prefix)

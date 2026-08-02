@@ -56,6 +56,8 @@ final class CodeView: NSView, NSTextInputClient {
 	var onGoToDefinition: ((_ line: Int, _ character: Int) -> Void)?
 	/// Asked for everywhere the symbol under the caret is used.
 	var onFindUsages: ((_ line: Int, _ character: Int) -> Void)?
+	/// Asked to put an agent on the problem the caret is in.
+	var onFixWithAI: ((_ line: Int, _ diagnostic: LSPDiagnostic) -> Void)?
 	/// The text changed and the caret is in a word: offer completions for it.
 	var onRequestCompletions: ((_ prefix: String, _ caret: NSPoint) -> Void)?
 	/// A key the completion list wants first. Returns true if it took it.
@@ -529,6 +531,7 @@ final class CodeView: NSView, NSTextInputClient {
 		CTLineDraw(ctLine, context)
 
 		drawDiagnostics(docLine: docLine, ctLine: ctLine, lineStartUTF16: lineStartUTF16, rect: rect)
+		drawInlineDiagnostic(docLine: docLine, ctLine: ctLine, rect: rect)
 		drawNavigableWord(docLine: docLine, ctLine: ctLine, lineStartUTF16: lineStartUTF16, rect: rect)
 
 		// A collapsed region gets a "{…}" chip after its first line.
@@ -640,6 +643,45 @@ final class CodeView: NSView, NSTextInputClient {
 		)
 	}
 
+	/// The message itself, after the end of the line.
+	///
+	/// A squiggle says where a problem is; it does not say what it is, and
+	/// reading it means putting the pointer on a few characters and waiting.
+	/// The worst problem on a line is written out beside it instead, dimmed and
+	/// out of the way of the code, which is the arrangement Error Lens made
+	/// popular because it works: the message is read without aiming at it.
+	private func drawInlineDiagnostic(docLine: Int, ctLine: CTLine, rect: NSRect) {
+		guard Settings.shared.showsInlineDiagnostics else { return }
+		guard let worst = diagnosticsByLine[docLine]?.min(by: { $0.severity < $1.severity })
+		else { return }
+
+		let message = worst.message
+			.replacingOccurrences(of: "\n", with: " ")
+			.trimmingCharacters(in: .whitespaces)
+		guard !message.isEmpty else { return }
+
+		let lineWidth = CGFloat(CTLineGetTypographicBounds(ctLine, nil, nil, nil))
+		let x = textOriginX + lineWidth + charWidth * 3
+		// Room enough to be worth drawing: on a very long line the squiggle and
+		// the hover are what is left.
+		let available = bounds.maxX - x - Theme.current.scaled(12)
+		guard available > charWidth * 8 else { return }
+
+		let paragraph = NSMutableParagraphStyle()
+		paragraph.lineBreakMode = .byTruncatingTail
+		let text = NSAttributedString(string: message, attributes: [
+			.font: Theme.current.editorFont,
+			.foregroundColor: Self.color(for: worst.severity).withAlphaComponent(0.55),
+			.paragraphStyle: paragraph,
+		])
+		text.draw(in: NSRect(
+			x: x,
+			y: rect.maxY - baselineOffset - text.size().height * 0.78,
+			width: available,
+			height: text.size().height
+		))
+	}
+
 	/// Underlines what a language server objects to on this line.
 	///
 	/// A squiggle rather than a background: a problem is a property of a few
@@ -669,6 +711,14 @@ final class CodeView: NSView, NSTextInputClient {
 			Self.color(for: diagnostic.severity).setStroke()
 			squiggle(from: startX, to: endX, y: rect.maxY - Theme.current.scaled(2)).stroke()
 		}
+	}
+
+	/// The worst problem on the line the caret is on, for the menu.
+	func diagnosticAtCaret() -> (line: Int, diagnostic: LSPDiagnostic)? {
+		guard let position = caretPositionForRequest() else { return nil }
+		guard let worst = diagnosticsByLine[position.line]?.min(by: { $0.severity < $1.severity })
+		else { return nil }
+		return (position.line, worst)
 	}
 
 	/// The wavy line, drawn as one path so it strokes in a single pass.
@@ -1381,6 +1431,10 @@ final class CodeView: NSView, NSTextInputClient {
 
 		menu.addItem(item("Go to Definition", #selector(goToDefinitionFromMenu)))
 		menu.addItem(item("Find Usages", #selector(findUsagesFromMenu)))
+		if diagnosticAtCaret() != nil {
+			menu.addItem(.separator())
+			menu.addItem(item("Fix with AI", #selector(fixWithAIFromMenu)))
+		}
 		menu.addItem(.separator())
 		menu.addItem(item("Cut", #selector(NSText.cut(_:))))
 		menu.addItem(item("Copy", #selector(NSText.copy(_:))))
@@ -1401,6 +1455,11 @@ final class CodeView: NSView, NSTextInputClient {
 	@objc private func goToDefinitionFromMenu() {
 		guard let position = caretPositionForRequest() else { return }
 		onGoToDefinition?(position.line, position.character)
+	}
+
+	@objc private func fixWithAIFromMenu() {
+		guard let found = diagnosticAtCaret() else { return }
+		onFixWithAI?(found.line, found.diagnostic)
 	}
 
 	@objc private func findUsagesFromMenu() {

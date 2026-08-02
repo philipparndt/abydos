@@ -160,6 +160,10 @@ final class BottomPanel: NSView {
 		// where the preview of the split is drawn.
 		tabStrip.onDragStarted = { [weak self] in self?.showDropTarget() }
 		tabStrip.onDragEnded = { [weak self] in self?.hideDropTarget() }
+		tabStrip.onDragMoved = { [weak self] point in self?.previewDrop(at: point) }
+		tabStrip.onDragEndedAt = { [weak self] index, point in
+			self?.finishDrag(index: index, at: point)
+		}
 		tabStrip.acceptsForeign = { payload in
 			TerminalDragSources.source(for: payload.panelID) != nil
 		}
@@ -777,6 +781,29 @@ final class BottomPanel: NSView {
 		return .success(())
 	}
 
+	/// Puts an agent on a job that is not a review: fixing what a language
+	/// server is complaining about.
+	///
+	/// No MCP server here. A review reports findings back for the panel to
+	/// list; this one edits the file, which the agent does with its own tools,
+	/// and the session stays open so the change can be talked about.
+	func startAgent(title: String, prompt: String) -> Result<Void, ReviewStartError> {
+		guard let root = workingDirectory else { return .failure(.noProject) }
+		guard let executable = AgentLauncher.findClaudeExecutable() else {
+			return .failure(.claudeNotFound)
+		}
+
+		let pane = TerminalPane(
+			workingDirectory: root,
+			command: (executable: executable, arguments: [prompt])
+		)
+		let session = Session(title: title, kind: .terminal(pane))
+		wire(session)
+		sessions.append(session)
+		activate(index: sessions.count - 1, focus: true)
+		return .success(())
+	}
+
 	enum ReviewStartError: Error {
 		case noProject
 		case claudeNotFound
@@ -857,6 +884,45 @@ final class BottomPanel: NSView {
 		overlay.autoresizingMask = [.width, .height]
 		addSubview(overlay, positioned: .above, relativeTo: nil)
 		dropTarget = overlay
+	}
+
+	/// The point in this panel's coordinates, or nil when it is elsewhere.
+	private func local(_ screenPoint: NSPoint) -> NSPoint? {
+		guard let window, window.frame.contains(screenPoint) else { return nil }
+		let inWindow = window.convertPoint(fromScreen: screenPoint)
+		return convert(inWindow, from: nil)
+	}
+
+	/// Draws where a dragged tab would land as it moves.
+	private func previewDrop(at screenPoint: NSPoint) {
+		guard let point = local(screenPoint), contentArea.frame.contains(point) else {
+			dropTarget?.previewZone(nil)
+			return
+		}
+		let inside = convert(point, to: contentArea)
+		dropTarget?.previewZone(TerminalTabDrag.zone(for: inside, in: contentArea.bounds))
+	}
+
+	/// A drag nothing else took: the pane, the strip, or a window of its own.
+	private func finishDrag(index: Int, at screenPoint: NSPoint) {
+		defer { hideDropTarget() }
+
+		guard let point = local(screenPoint) else {
+			// Outside the window altogether, which is what makes a window.
+			tearOff(index: index, at: screenPoint)
+			return
+		}
+		if contentArea.frame.contains(point) {
+			let inside = convert(point, to: contentArea)
+			handleDrop(
+				TerminalTabDrag.Payload(panelID: panelID, index: index),
+				zone: TerminalTabDrag.zone(for: inside, in: contentArea.bounds)
+			)
+			return
+		}
+		if tabStrip.frame.contains(point) {
+			move(from: index, to: tabStrip.insertionIndex(at: convert(point, to: tabStrip)))
+		}
 	}
 
 	private func hideDropTarget() {
@@ -1183,6 +1249,12 @@ final class PanelContentView: NSView {
 
 	/// Shows the preview without a drag, for the capture harness.
 	func previewForTesting(_ zone: TerminalTabDrag.Zone) {
+		previewZone(zone)
+	}
+
+	/// Draws the half a drop would land in, or nothing.
+	func previewZone(_ zone: TerminalTabDrag.Zone?) {
+		guard zone != self.zone else { return }
 		self.zone = zone
 		needsDisplay = true
 	}
@@ -1263,6 +1335,10 @@ final class PanelTabStrip: NSView {
 	/// its drop target up while it lasts.
 	var onDragStarted: (() -> Void)?
 	var onDragEnded: (() -> Void)?
+	/// Where the pointer is during a drag, in screen coordinates.
+	var onDragMoved: ((NSPoint) -> Void)?
+	/// Where a drag ended that nothing else took, so the panel can decide.
+	var onDragEndedAt: ((Int, NSPoint) -> Void)?
 	/// A tab from another window dropped into this strip.
 	var onAdopt: ((TerminalTabDrag.Payload) -> Void)?
 	/// Whether a tab from elsewhere is welcome here.
@@ -1522,7 +1598,7 @@ final class PanelTabStrip: NSView {
 	}
 
 	/// Where a dropped tab would land, as an index between tabs.
-	private func insertionIndex(at point: NSPoint) -> Int {
+	func insertionIndex(at point: NSPoint) -> Int {
 		for (index, frame) in frames.enumerated() where point.x < frame.midX {
 			return index
 		}
@@ -1682,6 +1758,16 @@ extension PanelTabStrip: NSDraggingSource {
 
 	/// Let go where nothing wanted it: outside the window, that means a window
 	/// of its own.
+	func draggingSession(_ session: NSDraggingSession, movedTo screenPoint: NSPoint) {
+		onDragMoved?(screenPoint)
+	}
+
+	/// Where the drag ended, when nothing took it.
+	///
+	/// The panel decides rather than a drop target: a terminal fills the pane
+	/// it is in, and relying on a view under it to be offered the drop is
+	/// relying on a hit test through whatever the program happens to be
+	/// drawing. The pointer's position is not in doubt.
 	func draggingSession(
 		_ session: NSDraggingSession,
 		endedAt screenPoint: NSPoint,
@@ -1693,9 +1779,8 @@ extension PanelTabStrip: NSDraggingSource {
 		needsDisplay = true
 		onDragEnded?()
 
-		guard operation == [], let index, let frame = window?.frame else { return }
-		guard TearOff.tearsOff(dropPoint: screenPoint, sourceWindowFrame: frame) else { return }
-		onTearOff?(index, screenPoint)
+		guard operation == [], let index else { return }
+		onDragEndedAt?(index, screenPoint)
 	}
 }
 

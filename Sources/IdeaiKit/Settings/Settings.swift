@@ -29,6 +29,7 @@ public final class Settings {
 			Key.terminalScheme: "blue",
 			Key.terminalBellStyle: "sound",
 			Key.opensProjectsInNewWindow: false,
+			Key.showsInlineDiagnostics: true,
 		])
 	}
 
@@ -41,6 +42,7 @@ public final class Settings {
 		static let tabWidth = "tabWidth"
 		static let showHiddenFiles = "showHiddenFiles"
 		static let opensProjectsInNewWindow = "opensProjectsInNewWindow"
+		static let showsInlineDiagnostics = "showsInlineDiagnostics"
 		static let excludedDirectories = "excludedDirectories"
 		static let uiScale = "uiScale"
 		static let terminalFontName = "terminalFontName"
@@ -199,6 +201,12 @@ public final class Settings {
 	public var opensProjectsInNewWindow: Bool {
 		get { defaults.bool(forKey: Key.opensProjectsInNewWindow) }
 		set { set(newValue, Key.opensProjectsInNewWindow) }
+	}
+
+	/// Whether a problem's message is written beside the line it is on.
+	public var showsInlineDiagnostics: Bool {
+		get { defaults.bool(forKey: Key.showsInlineDiagnostics) }
+		set { set(newValue, Key.showsInlineDiagnostics) }
 	}
 
 	/// Directory names treated as build output and tinted accordingly.

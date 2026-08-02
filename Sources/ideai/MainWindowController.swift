@@ -498,6 +498,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		editor.onFindUsages = { [weak self] url, line, character in
 			self?.findUsages(in: url, line: line, character: character)
 		}
+		editor.onFixWithAI = { [weak self] url, line, diagnostic in
+			self?.fixWithAI(url: url, line: line, diagnostic: diagnostic)
+		}
 		editor.onEditBreakpoint = { [weak self] url, line in
 			self?.editBreakpoint(file: url, line: line)
 		}
@@ -1991,6 +1994,32 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		symbolPalette.show(scope: .workspace, over: window)
 	}
 
+	/// Puts an agent on what the language server is complaining about.
+	///
+	/// The same Claude Code that reviews a branch, given one problem instead:
+	/// the file, the line, the message, and the instruction to keep the change
+	/// to what is wrong. It opens in the panel so the fix can be read, argued
+	/// with, and undone like any other edit.
+	private func fixWithAI(url: URL, line: Int, diagnostic: LSPDiagnostic) {
+		guard let root = project?.root else { return }
+		let relative = url.path.replacingOccurrences(of: FilePath.canonical(root) + "/", with: "")
+
+		let prompt = """
+		Fix this problem, reported by the language server in \(relative) at line \(line + 1):
+
+		\(diagnostic.message)
+
+		Read the file first. Change as little as possible: the fix is for this \
+		problem, not for anything else you find on the way. Say in one sentence \
+		what you changed and why.
+		"""
+
+		setPanelVisible(true)
+		if case let .failure(error) = bottomPanel.startAgent(title: "Fix", prompt: prompt) {
+			notify("Could not start the agent", detail: error.message)
+		}
+	}
+
 	/// Opens the profiler on the bottom panel.
 	@objc func showProfiler(_ sender: Any?) {
 		setPanelVisible(true)
@@ -2979,7 +3008,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 
 		let profile = root.appendingPathComponent(".ideai/coverage.out")
-		try? IdeaiFolder.create(in: root)
+		_ = try? IdeaiFolder.create(in: root)
 		setPanelVisible(true)
 		bottomPanel.runCommand(
 			title: "coverage",

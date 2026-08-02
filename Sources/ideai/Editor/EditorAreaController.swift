@@ -135,6 +135,7 @@ final class EditorAreaController: NSViewController {
 		}
 		group.onEditBreakpoint = onEditBreakpoint
 		group.onFindUsages = onFindUsages
+		group.onFixWithAI = onFixWithAI
 		group.setConditionalBreakpoints(conditionalBreakpoints)
 		group.onRunLine = { [weak self] url, line in
 			self?.onRunLine?(url, line)
@@ -604,6 +605,10 @@ final class EditorAreaController: NSViewController {
 
 	var onEditBreakpoint: ((URL, Int) -> Void)? {
 		didSet { for group in groups { group.onEditBreakpoint = onEditBreakpoint } }
+	}
+
+	var onFixWithAI: ((URL, Int, LSPDiagnostic) -> Void)? {
+		didSet { for group in groups { group.onFixWithAI = onFixWithAI } }
 	}
 
 	var onFindUsages: ((URL, Int, Int) -> Void)? {
