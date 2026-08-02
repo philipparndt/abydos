@@ -122,6 +122,8 @@ struct LaunchOptions {
 	var makeDebug = false
 	/// Save the gutter's run at this line as a launch configuration.
 	var saveGutterLine: Int?
+	/// Narrow the window, to see what the titlebar does with no room.
+	var windowWidth: Double?
 	/// Open the list of launch configurations.
 	var launchMenu = false
 	/// Open the editor for the selected configuration.
@@ -197,6 +199,7 @@ struct LaunchOptions {
 			case "--make-goal":  options.makeGoal = next()
 			case "--make-debug": options.makeDebug = true
 			case "--save-config": options.saveGutterLine = next().flatMap(Int.init)
+			case "--window-width": options.windowWidth = next().flatMap(Double.init)
 			case "--sidebar":    options.sidebarTool = next()
 			case "--run-line":   options.runLine = next().flatMap(Int.init)
 			case "--debug-line": options.debugLine = next().flatMap(Int.init)

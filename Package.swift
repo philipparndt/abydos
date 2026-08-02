@@ -74,6 +74,9 @@ let package = Package(
 				"IdeaiKit",
 				.product(name: "GoSTLKit", package: "GoSTL-Swift"),
 			],
+			// The development pod's chart travels with the app: installing it
+			// should not mean finding a checkout of this repository first.
+			resources: [.copy("Resources/devpod-chart")],
 			swiftSettings: [.swiftLanguageMode(.v5)]
 		),
 		.testTarget(

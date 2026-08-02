@@ -391,6 +391,11 @@ final class EditorAreaController: NSViewController {
 		guard let project, !isClosing, suppressedRecording == 0 else { return }
 		let open = groups.flatMap(\.openScratchURLs).map(\.path)
 		OpenScratches().record(open, forProject: project.root)
+
+		// And what is open generally, on every change rather than at quit: a
+		// window that never gets to say goodbye — a crash, a force quit, a
+		// capture run — should still come back to the same files.
+		try? SessionStore.write(captureSession(), in: project.root)
 	}
 
 	/// Emptying and refilling the window is not the user closing tabs.

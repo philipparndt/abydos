@@ -121,6 +121,20 @@ ideai --open <project-dir> [--file <path>] [--expand]
       [--type <text>] [--collapse]
 ```
 
+### The .ideai folder
+
+A project ideai has been opened in keeps one folder beside its code:
+
+```
+.ideai/
+  .gitignore     # commits run/, ignores the rest
+  run/           # one file per launch configuration — shared
+  session.json   # which files were open here — this machine only
+```
+
+`.vscode/launch.json` is read but never written: what it holds is imported
+once, and after that the two go their own ways.
+
 ### Make goals
 
 The run menu lists the goals of the project's Makefiles that start a Go

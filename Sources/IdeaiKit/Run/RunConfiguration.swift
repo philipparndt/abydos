@@ -88,6 +88,21 @@ public enum RunConfigurationDiscovery {
 		"node_modules", "vendor", "dist", "build", "target", ".build", "Pods",
 	]
 
+	/// Whether a configuration is a test run.
+	///
+	/// Tests are run constantly and from anywhere in a file, so they must
+	/// never become saved configurations: one per test function would fill a
+	/// project with hundreds of them, and none of them worth keeping. A test
+	/// is run, not configured.
+	public static func isTest(_ configuration: RunConfiguration) -> Bool {
+		let arguments = configuration.arguments
+		if arguments.contains("test") || arguments.contains("-run") { return true }
+		if configuration.executable.hasSuffix("go") && arguments.first == "test" { return true }
+
+		let name = configuration.name.lowercased()
+		return name.hasPrefix("test ") || name.hasSuffix(" test") || name.contains("go test")
+	}
+
 	public static func discover(in root: URL) -> [RunConfiguration] {
 		var result: [RunConfiguration] = []
 		result += intelliJConfigurations(in: root)

@@ -160,6 +160,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// themselves.
 	private var sidebarTopInset: CGFloat = 0
 	private var runControl: RunControl?
+	/// Where the last run's message is shown, in the middle of the titlebar.
+	private var runStatus: RunStatusView?
 	/// The terminal a launch configuration is running in, so the play button can
 	/// become a stop button that stops the right thing.
 	private weak var runningPane: TerminalPane?
@@ -631,6 +633,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 		navigator.load(project: project)
 		editor.setProject(project)
+
+		// A project brought in from a `.vscode/launch.json` keeps its
+		// configurations once, so editing one here does not change a file the
+		// rest of the team shares with another editor.
+		if !IdeaiFolder.exists(in: project.root) {
+			_ = try? LaunchStore.importVSCode(in: project.root)
+		}
 		// Started now rather than when a file of that language is first opened,
 		// so asking for a symbol straight after opening a project works.
 		LanguageService.shared.warmUp(project: project.root)
@@ -639,6 +648,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		startWatchingRepository(at: project.root)
 		scratchesPane?.setProject(project.root)
 		bottomPanel.setWorkingDirectory(project.root)
+
+		// What was open here last time, from the folder beside the project —
+		// which is what makes opening it again feel like coming back rather
+		// than starting.
+		if !editor.hasOpenFiles, let remembered = SessionStore.read(in: project.root) {
+			editor.restore(remembered)
+		}
 
 		// Scratches come back with the project. Only when the window is empty:
 		// following a terminal into a project puts back what it had open, and
@@ -1086,19 +1102,31 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		guard root.path != project?.root.standardizedFileURL.path else { return }
 
 		if let current = project?.root {
-			sessions.store(editor.captureSession(), for: current)
+			let session = editor.captureSession()
+			sessions.store(session, for: current)
+			// And beside the project, so tomorrow's window opens on today's
+			// files: what was open is a property of the project, not of the
+			// application that happened to be running.
+			try? SessionStore.write(session, in: current)
 		}
 
 		load(project: Project(root: root), focusTree: false)
 		RecentProjects.shared.record(url: root)
 
-		// Whatever was open here before, or nothing if this is the first visit.
-		if let previous = sessions.take(for: root) {
+		// Whatever was open here before, from this run or the last one.
+		if let previous = sessions.take(for: root) ?? SessionStore.read(in: root) {
 			editor.restore(previous)
 		} else {
 			editor.closeAllTabs()
 			editor.restoreScratches()
 		}
+	}
+
+	/// Writes what is open beside the project, so the next window on it opens
+	/// where this one left off.
+	func rememberOpenEditors() {
+		guard let root = project?.root, !isTornOff else { return }
+		try? SessionStore.write(editor.captureSession(), in: root)
 	}
 
 	private func setPanelVisible(_ visible: Bool) {
@@ -1580,7 +1608,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			// The gutter is where a program is run the first time, so it is
 			// also where the configuration for it should come from: pressing
 			// play twice from the same arrow should not mean typing it in.
-			if configuration.isDebuggable {
+			//
+			// Except for a test. Tests are run from every function in a file
+			// and saving one for each would leave hundreds nobody wants.
+			if configuration.isDebuggable, !RunConfigurationDiscovery.isTest(configuration) {
 				let save = NSMenuItem(
 					title: "Save as Launch Configuration\u{2026}",
 					action: #selector(saveGutterConfiguration(_:)),
@@ -1634,12 +1665,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		)
 		// A name that is already taken would replace something somebody else
 		// wrote; the file is shared with the rest of the team.
-		let existing = Set(launchConfigurations.map(\.name))
-		if existing.contains(configuration.name) {
-			var attempt = 2
-			while existing.contains("\(discovered.name) \(attempt)") { attempt += 1 }
-			configuration.name = "\(discovered.name) \(attempt)"
-		}
+		configuration.name = LaunchNames.free(
+			like: discovered.name, avoiding: launchConfigurations.map(\.name)
+		)
 		presentConfigurationEditor(configuration, isNew: true)
 	}
 
@@ -2034,7 +2062,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// What the project defines, plus a suggestion when it defines nothing.
 	private var launchConfigurations: [LaunchConfiguration] {
 		guard let project else { return [] }
-		return LaunchFile.read(in: project.root)
+		return LaunchStore.read(in: project.root)
 	}
 
 	private var selectedConfiguration: LaunchConfiguration? {
@@ -2094,6 +2122,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	func pushChangesForTesting() { changesPane?.pushForTesting() }
 
+	/// What the toolbar is showing, and what it has put away.
+	func reportToolbarForTesting() {
+		guard let toolbar = window?.toolbar else { return }
+		let visible = Set((toolbar.visibleItems ?? []).map(\.itemIdentifier.rawValue))
+		let all = toolbar.items.map(\.itemIdentifier.rawValue)
+		let hidden = all.filter { !visible.contains($0) && !$0.hasPrefix("NSToolbar") }
+		print("TOOLBAR visible=\(visible.filter { !$0.hasPrefix("NSToolbar") }.sorted()) hidden=\(hidden)")
+
+		for item in toolbar.items where !visible.contains(item.itemIdentifier.rawValue) {
+			let menu = item.menuFormRepresentation
+			print("  put away: \(item.itemIdentifier.rawValue) menu=\(menu?.title ?? "none") "
+				+ "submenu=\(menu?.submenu?.items.map(\.title).prefix(4) ?? [])")
+		}
+	}
+
 	/// Derives a launch configuration from the gutter's arrow and prints it.
 	func saveGutterConfigurationForTesting(file: URL, line: Int) {
 		let path = RunConfigurationDiscovery.canonicalPath(file)
@@ -2123,7 +2166,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			print("MAKE: no plan for \(goal)")
 			return
 		}
-		_ = try? LaunchFile.save(configuration, in: project.root)
+		_ = try? LaunchStore.save(configuration, in: project.root)
 		selectedConfigurationName = configuration.name
 		refreshRunControl()
 
@@ -2232,6 +2275,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	var canNavigateBack: Bool { navigation.canGoBack }
 	var canNavigateForward: Bool { navigation.canGoForward }
 
+	@objc func stopSelected(_ sender: Any?) { stopRunning() }
+
 	@objc func runSelected(_ sender: Any?) { runSelectedConfiguration(debug: false) }
 	@objc func debugSelected(_ sender: Any?) { runSelectedConfiguration(debug: true) }
 
@@ -2259,7 +2304,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	private func createSuggestedConfiguration() -> LaunchConfiguration? {
 		guard let project, let suggestion = LaunchFile.suggestion(for: project.root) else { return nil }
 		do {
-			_ = try LaunchFile.save(suggestion, in: project.root)
+			_ = try LaunchStore.save(suggestion, in: project.root)
 			notify(
 				"Created a launch configuration",
 				detail: "Written to .vscode/launch.json as “\(suggestion.name)”. Edit it from the run menu.",
@@ -2385,11 +2430,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 					kubeconfig: kubeconfig
 				).filter { $0.isRunning }
 
-				guard let pod = pods.first(where: { settings.pod.isEmpty || $0.name == settings.pod })
-					?? pods.first
+				var candidates = pods
+				if candidates.isEmpty {
+					// Nowhere to run this yet, so make somewhere: pressing run
+					// should not stop to say a chart is missing.
+					try await installDevPod(settings: settings, root: root)
+					candidates = await DevPods.list(
+						context: context,
+						namespace: settings.namespace.isEmpty ? nil : settings.namespace,
+						kubeconfig: kubeconfig
+					).filter { $0.isRunning }
+				}
+
+				guard let pod = candidates.first(where: { settings.pod.isEmpty || $0.name == settings.pod })
+					?? candidates.first
 				else {
 					throw DevPodClient.Failure.unreachable(
-						"No development pod is running there. Install the chart in DevPod/chart."
+						"No development pod is running there, and installing one produced none."
 					)
 				}
 
@@ -2458,6 +2515,39 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				notify("Could not run in the cluster", detail: Self.describe(devPod: error))
 			}
 		}
+	}
+
+	/// Puts a development pod in the cluster for this project.
+	///
+	/// One release per project, named after it: two projects sharing a pod
+	/// would overwrite each other's binary, and the name is what somebody sees
+	/// in `helm list` when they wonder what this is.
+	private func installDevPod(
+		settings: LaunchConfiguration.DevPodSettings,
+		root: URL
+	) async throws {
+		guard let chart = Bundle.main.url(forResource: "devpod-chart", withExtension: nil)
+			?? Bundle.main.url(forResource: "devpod-chart", withExtension: nil, subdirectory: "Resources")
+		else {
+			throw DevPodInstall.Failure.noChart
+		}
+
+		let release = DevPodInstall.releaseName(for: root)
+		let namespace = settings.namespace.isEmpty ? "ideai-dev" : settings.namespace
+		runControl?.setStatus("Installing \(release) in \(namespace)…", busy: true)
+
+		try await DevPodInstall.install(
+			chart: chart,
+			release: release,
+			namespace: namespace,
+			context: settings.context.isEmpty ? nil : settings.context,
+			kubeconfig: settings.kubeconfig.isEmpty ? nil : settings.kubeconfig
+		)
+		notify(
+			"Installed a development pod",
+			detail: "\(release) in \(namespace). Remove it with: helm uninstall \(release) -n \(namespace)",
+			kind: .information
+		)
 	}
 
 	/// Connects the debugger to the `dlv dap` the pod is now running.
@@ -2690,6 +2780,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		edit.isEnabled = selectedConfiguration != nil
 		menu.addItem(edit)
 
+		// One local and one in the cluster differ by two fields, so the way to
+		// get the second is a copy of the first rather than typing it again.
+		let duplicate = NSMenuItem(
+			title: "Duplicate\u{2026}", action: #selector(duplicateSelectedConfiguration), keyEquivalent: ""
+		)
+		duplicate.target = self
+		duplicate.isEnabled = selectedConfiguration != nil
+		menu.addItem(duplicate)
+
 		let add = NSMenuItem(title: "New\u{2026}", action: #selector(addConfiguration), keyEquivalent: "")
 		add.target = self
 		menu.addItem(add)
@@ -2731,7 +2830,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		else { return }
 
 		do {
-			_ = try LaunchFile.save(configuration, in: project.root)
+			_ = try LaunchStore.save(configuration, in: project.root)
 			selectedConfigurationName = configuration.name
 			refreshRunControl()
 			notify(
@@ -2780,6 +2879,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		presentConfigurationEditor(suggestion, isNew: true)
 	}
 
+	/// Copies the selected configuration under a free name and opens it.
+	///
+	/// The copy is what somebody wanted: the same program and arguments, run
+	/// somewhere else. It opens in the editor because the name and the one
+	/// field that differs are the reason for making it.
+	@objc private func duplicateSelectedConfiguration() {
+		guard let configuration = selectedConfiguration else { return }
+		var copy = configuration
+		copy.name = LaunchNames.copy(
+			of: configuration.name, avoiding: launchConfigurations.map(\.name)
+		)
+		presentConfigurationEditor(copy, isNew: true)
+	}
+
 	@objc private func editSelectedConfiguration() {
 		guard let configuration = selectedConfiguration else { return }
 		presentConfigurationEditor(configuration, isNew: false)
@@ -2800,7 +2913,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			self.configurationEditor = nil
 
 			guard let updated else {
-				_ = try? LaunchFile.remove(named: configuration.name, in: project.root)
+				_ = try? LaunchStore.remove(named: configuration.name, in: project.root)
 				self.selectedConfigurationName = nil
 				self.refreshRunControl()
 				return
@@ -2808,9 +2921,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			do {
 				// Renaming replaces rather than duplicating.
 				if updated.name != configuration.name, !isNew {
-					_ = try LaunchFile.remove(named: configuration.name, in: project.root)
+					_ = try LaunchStore.remove(named: configuration.name, in: project.root)
 				}
-				_ = try LaunchFile.save(updated, in: project.root)
+				_ = try LaunchStore.save(updated, in: project.root)
 				self.selectedConfigurationName = updated.name
 				self.refreshRunControl()
 			} catch {
@@ -3363,6 +3476,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	}
 
 	func windowWillClose(_ notification: Notification) {
+		rememberOpenEditors()
 		bottomPanel.shutdown()
 		editor.windowWillClose()
 		navigator.windowWillClose()
@@ -3376,9 +3490,14 @@ extension MainWindowController: NSToolbarDelegate {
 	private static let projectItem = NSToolbarItem.Identifier("ideai.project")
 	private static let branchItem = NSToolbarItem.Identifier("ideai.branch")
 	private static let runItem = NSToolbarItem.Identifier("ideai.run")
+	private static let statusItem = NSToolbarItem.Identifier("ideai.runStatus")
 
 	func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-		[Self.projectItem, Self.branchItem, .flexibleSpace, Self.runItem]
+		[
+			Self.projectItem, Self.branchItem,
+			.flexibleSpace, Self.statusItem, .flexibleSpace,
+			Self.runItem,
+		]
 	}
 
 	func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -3403,6 +3522,30 @@ extension MainWindowController: NSToolbarDelegate {
 			}
 			projectPill = pill
 			item.view = pill
+			// What the overflow menu shows when the window is too narrow to
+			// hold this. Without it AppKit drops the item and says nothing.
+			item.menuFormRepresentation = menuItem(
+				"Project", #selector(showProjectSwitcher(_:))
+			)
+			// The switcher is also in the menu bar, so this is the first thing
+			// that can go when there is no room.
+			item.visibilityPriority = .standard
+			return item
+
+		case Self.statusItem:
+			let item = NSToolbarItem(itemIdentifier: identifier)
+			let view = RunStatusView()
+			view.onClear = { [weak self] in self?.runControl?.setStatus("") }
+			runStatus = view
+			item.view = view
+			// Nothing worth putting in a menu: the message is already gone
+			// from view, and a menu item saying it would be a second place to
+			// dismiss.
+			item.menuFormRepresentation = NSMenuItem()
+			item.menuFormRepresentation?.isHidden = true
+			// A message is worth less than a button: it goes before anything
+			// somebody presses.
+			item.visibilityPriority = .low
 			return item
 
 		case Self.runItem:
@@ -3417,9 +3560,22 @@ extension MainWindowController: NSToolbarDelegate {
 			control.onBusyChanged = { [weak self] running in
 				self?.setTitlebarRunning(running)
 			}
+			control.onStatus = { [weak self] text, failed in
+				self?.runStatus?.setStatus(text, failed: failed)
+			}
 			runControl = control
 			item.view = control
 			refreshRunControl()
+
+			// The whole strip in a menu: run, debug, stop and the list of
+			// configurations, so a narrow window loses the buttons but not the
+			// ability to press them.
+			let menu = NSMenuItem(title: "Run", action: nil, keyEquivalent: "")
+			menu.submenu = runOverflowMenu()
+			item.menuFormRepresentation = menu
+			// Last to go: it is the one thing here that is pressed rather than
+			// read.
+			item.visibilityPriority = .high
 			return item
 
 		case Self.branchItem:
@@ -3428,11 +3584,44 @@ extension MainWindowController: NSToolbarDelegate {
 			pill.onClick = { [weak self] in self?.showBranchMenu() }
 			branchPill = pill
 			item.view = pill
+			item.menuFormRepresentation = menuItem("Branch", #selector(showBranchMenuItem(_:)))
+			item.visibilityPriority = .low
 			return item
 
 		default:
 			return nil
 		}
+	}
+
+	/// A menu item pointing back at this window.
+	private func menuItem(_ title: String, _ action: Selector) -> NSMenuItem {
+		let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+		item.target = self
+		return item
+	}
+
+	@objc fileprivate func showBranchMenuItem(_ sender: Any?) { showBranchMenu() }
+
+	/// The run strip's commands, for when there is no room to draw it.
+	private func runOverflowMenu() -> NSMenu {
+		let menu = NSMenu()
+		menu.addItem(menuItem("Run", #selector(runSelected(_:))))
+		menu.addItem(menuItem("Debug", #selector(debugSelected(_:))))
+		menu.addItem(menuItem("Stop", #selector(stopSelected(_:))))
+		menu.addItem(.separator())
+
+		for configuration in launchConfigurations {
+			let item = NSMenuItem(
+				title: configuration.name,
+				action: #selector(configurationChosen(_:)),
+				keyEquivalent: ""
+			)
+			item.target = self
+			item.representedObject = configuration.name
+			item.state = configuration.name == selectedConfiguration?.name ? .on : .off
+			menu.addItem(item)
+		}
+		return menu
 	}
 
 	fileprivate func showBranchMenu() {

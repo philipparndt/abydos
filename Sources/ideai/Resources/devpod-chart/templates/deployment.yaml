@@ -1,0 +1,123 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ideai-devpod.fullname" . }}
+  labels:
+    {{- include "ideai-devpod.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "ideai-devpod.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ideai-devpod.selectorLabels" . | nindent 8 }}
+        # On the pod, not only on the Deployment: this is what the editor
+        # looks for, and it looks at pods.
+        ideai.dev/devpod: "true"
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: devpod
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          env:
+            - name: IDEAI_CONTROL_ADDR
+              value: ":{{ .Values.supervisor.controlPort }}"
+            - name: IDEAI_DEBUG_ADDR
+              value: ":{{ .Values.supervisor.debugPort }}"
+            - name: IDEAI_WORKDIR
+              value: {{ .Values.app.workdir | quote }}
+            - name: IDEAI_AUTOSTART
+              value: {{ .Values.supervisor.autoStart | quote }}
+            {{- with .Values.app.args }}
+            - name: IDEAI_ARGS
+              value: {{ join " " . | quote }}
+            {{- end }}
+            {{- range $name, $value := .Values.app.env }}
+            - name: {{ $name }}
+              value: {{ $value | quote }}
+            {{- end }}
+          {{- with .Values.app.envFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: control
+              containerPort: {{ .Values.supervisor.controlPort }}
+            - name: debug
+              containerPort: {{ .Values.supervisor.debugPort }}
+            {{- with .Values.app.ports }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- if .Values.probes.enabled }}
+          # The supervisor answers, not the program: a breakpoint is not a
+          # reason to restart the pod.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: control
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: control
+            initialDelaySeconds: 1
+            periodSeconds: 5
+          {{- end }}
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: app
+              mountPath: /app
+            {{- with .Values.volumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: app
+          {{- if .Values.storage.hostPath }}
+          # The editor writes the binary straight in: no transfer at all, for a
+          # cluster on the same machine.
+          hostPath:
+            path: {{ .Values.storage.hostPath | quote }}
+            type: DirectoryOrCreate
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- with .Values.volumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -335,6 +335,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let width = options.windowWidth {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+				guard let window = controller?.window else { return }
+				var frame = window.frame
+				frame.size.width = width
+				window.setFrame(frame, display: true)
+			}
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+				controller?.reportToolbarForTesting()
+			}
+		}
+
 		if let line = options.saveGutterLine, let path = options.filePath {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
 				controller?.saveGutterConfigurationForTesting(
@@ -588,6 +600,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 	func applicationWillTerminate(_ notification: Notification) {
 		for controller in windowControllers {
 			controller.autoSaveAll()
+			controller.rememberOpenEditors()
 		}
 	}
 
@@ -612,6 +625,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 	///   otherwise, that window changes project rather than a second one
 	///   appearing — the window is where you were working, and a new one for
 	///   the same task is a window to close later.
+	/// Another window, on whatever the front one has open.
+	///
+	/// The same project rather than an empty window: a second window is
+	/// nearly always wanted for the work already in progress, and the project
+	/// switcher is one click away for the other case.
+	@objc func newWindow(_ sender: Any?) {
+		let controller = makeWindow()
+		if let project = frontmostController?.project {
+			controller.load(project: Project(root: project.root))
+		}
+		controller.showWindow(nil)
+	}
+
+	/// The window a menu command belongs to.
+	private var frontmostController: MainWindowController? {
+		if let key = NSApp.keyWindow?.windowController as? MainWindowController { return key }
+		return windowControllers.first { !$0.isTornOff }
+	}
+
 	@discardableResult
 	func open(projectAt url: URL, from source: MainWindowController? = nil) -> MainWindowController {
 		// Focus an existing window rather than opening the same project twice.
@@ -721,6 +753,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		let fileMenuItem = NSMenuItem()
 		let fileMenu = NSMenu(title: "File")
+		// A second window on the same project: two files side by side, or a
+		// terminal in one and the code in the other.
+		let newWindow = NSMenuItem(
+			title: "New Window", action: #selector(newWindow(_:)), keyEquivalent: "n"
+		)
+		newWindow.target = self
+		fileMenu.addItem(newWindow)
+
 		let openItem = NSMenuItem(title: "Open…", action: #selector(openProjectPanel(_:)), keyEquivalent: "o")
 		openItem.target = self
 		fileMenu.addItem(openItem)

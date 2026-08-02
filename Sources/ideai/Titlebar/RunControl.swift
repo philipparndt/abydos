@@ -46,23 +46,19 @@ final class RunControl: NSView {
 	}
 
 	/// Everything drawn, plus a margin at each end.
+	///
+	/// The message is not in here: it lives in the middle of the titlebar, so
+	/// that a run which starts saying more does not move the buttons.
 	private var contentWidth: CGFloat {
 		let button = Theme.current.scaled(26)
-		var width = Self.margin
+		return Self.margin
 			+ button + Theme.current.scaled(4) + button
 			+ Theme.current.scaled(10) + Theme.current.scaled(190)
-		if !status.isEmpty {
-			width += Theme.current.scaled(12) + ceil(statusText.size().width)
-		}
-		return width + Self.margin
+			+ Self.margin
 	}
 
-	private var statusText: NSAttributedString {
-		NSAttributedString(string: status, attributes: [
-			.font: Theme.current.uiFont(11),
-			.foregroundColor: failed ? NSColor.hex(0xE05252) : Theme.current.gitIgnored,
-		])
-	}
+	/// Told what to say about the run, since it says it elsewhere.
+	var onStatus: ((String, Bool) -> Void)?
 
 	func setConfiguration(_ name: String?) {
 		guard name != configurationName else { return }
@@ -79,9 +75,7 @@ final class RunControl: NSView {
 		isBusy = busy
 		self.failed = failed
 		needsDisplay = true
-		// The strip is as wide as what it says, so saying something else
-		// changes its width.
-		invalidateIntrinsicContentSize()
+		onStatus?(text, failed)
 		// The run button is a stop button while busy, and says so.
 		if wasBusy != busy {
 			rebuildToolTips()
@@ -182,15 +176,6 @@ final class RunControl: NSView {
 			))
 		}
 
-		guard !status.isEmpty else { return }
-		let text = statusText
-		let x = schemeRect.maxX + Theme.current.scaled(12)
-		text.draw(in: NSRect(
-			x: x,
-			y: bounds.midY - text.size().height / 2,
-			width: max(0, bounds.width - x - Self.margin),
-			height: text.size().height
-		))
 	}
 
 	private func drawButton(in rect: NSRect, symbol: String, tint: NSColor) {
