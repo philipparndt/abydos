@@ -111,7 +111,7 @@ final class BottomPanel: NSView {
 	/// This panel, so a tab dragged from one is recognised by the other.
 	let panelID = UUID()
 	/// A terminal dragged out of the panel altogether.
-	var onTearOffTerminal: ((TerminalPane, String, NSPoint) -> Void)?
+	var onTearOffTerminal: ((DetachedTerminal, NSPoint) -> Void)?
 
 	/// What is on screen, left to right.
 	///
@@ -123,6 +123,8 @@ final class BottomPanel: NSView {
 	private var tabStrip: PanelTabStrip!
 	private var contentArea: PanelContentView!
 	private var columnSplit: NSSplitView?
+	/// Up only while a tab is being dragged.
+	private var dropTarget: PanelContentView?
 	private var placeholder: NSTextField!
 
 	override init(frame frameRect: NSRect) {
@@ -152,6 +154,23 @@ final class BottomPanel: NSView {
 		}
 		tabStrip.onMove = { [weak self] from, to in self?.move(from: from, to: to) }
 		tabStrip.onTearOff = { [weak self] index, point in self?.tearOff(index: index, at: point) }
+		// The pane is covered by whatever is running in it, and a drop has to
+		// land somewhere that is certain to see it. A sheet of glass over the
+		// pane for the length of the drag is that somewhere — and it is also
+		// where the preview of the split is drawn.
+		tabStrip.onDragStarted = { [weak self] in self?.showDropTarget() }
+		tabStrip.onDragEnded = { [weak self] in self?.hideDropTarget() }
+		tabStrip.acceptsForeign = { payload in
+			TerminalDragSources.source(for: payload.panelID) != nil
+		}
+		tabStrip.onAdopt = { [weak self] payload in
+			guard let self,
+			      let source = TerminalDragSources.source(for: payload.panelID),
+			      let detached = source.detachTerminal(at: payload.index)
+			else { return }
+			self.adopt(detached, zone: .center)
+		}
+		TerminalDragSources.register(self, as: panelID)
 		tabStrip.onToggleMaximize = { [weak self] in self?.onToggleMaximize?() }
 		tabStrip.onToggleFollowProject = { [weak self] in self?.onToggleFollowProject?() }
 
@@ -159,8 +178,8 @@ final class BottomPanel: NSView {
 		contentArea.onDrop = { [weak self] payload, zone in
 			self?.handleDrop(payload, zone: zone)
 		}
-		contentArea.acceptsDrag = { [weak self] payload in
-			payload.panelID == self?.panelID
+		contentArea.acceptsDrag = { payload in
+			payload.panelID == self.panelID || TerminalDragSources.source(for: payload.panelID) != nil
 		}
 
 		placeholder = NSTextField(labelWithString: "No terminal open")
@@ -792,6 +811,35 @@ final class BottomPanel: NSView {
 		activeTerminalChanged()
 	}
 
+	private func showDropTarget() {
+		guard dropTarget == nil else { return }
+		let overlay = PanelContentView()
+		overlay.onDrop = { [weak self] payload, zone in
+			self?.handleDrop(payload, zone: zone)
+			self?.hideDropTarget()
+		}
+		// From this panel, or from a terminal that was pulled out into a window
+		// of its own and is being brought back.
+		overlay.acceptsDrag = { payload in
+			payload.panelID == self.panelID || TerminalDragSources.source(for: payload.panelID) != nil
+		}
+
+		overlay.translatesAutoresizingMaskIntoConstraints = false
+		addSubview(overlay, positioned: .above, relativeTo: nil)
+		NSLayoutConstraint.activate([
+			overlay.topAnchor.constraint(equalTo: contentArea.topAnchor),
+			overlay.bottomAnchor.constraint(equalTo: contentArea.bottomAnchor),
+			overlay.leadingAnchor.constraint(equalTo: contentArea.leadingAnchor),
+			overlay.trailingAnchor.constraint(equalTo: contentArea.trailingAnchor),
+		])
+		dropTarget = overlay
+	}
+
+	private func hideDropTarget() {
+		dropTarget?.removeFromSuperview()
+		dropTarget = nil
+	}
+
 	/// Installs whatever is in `columns`, side by side.
 	private func layoutColumns() {
 		contentArea.subviews.forEach { $0.removeFromSuperview() }
@@ -836,6 +884,15 @@ final class BottomPanel: NSView {
 
 	/// A tab dropped onto the pane: shown alone, or put beside what is there.
 	private func handleDrop(_ payload: TerminalTabDrag.Payload, zone: TerminalTabDrag.Zone) {
+		// From somewhere else — a window it had been pulled out into. Take it
+		// in first, then treat it as one of ours.
+		if payload.panelID != panelID {
+			guard let source = TerminalDragSources.source(for: payload.panelID),
+			      let detached = source.detachTerminal(at: payload.index)
+			else { return }
+			adopt(detached, zone: zone)
+			return
+		}
 		guard sessions.indices.contains(payload.index) else { return }
 		let session = sessions[payload.index]
 
@@ -860,6 +917,32 @@ final class BottomPanel: NSView {
 		}
 	}
 
+	/// Takes in a terminal that was dragged here from somewhere else.
+	private func adopt(_ detached: DetachedTerminal, zone: TerminalTabDrag.Zone) {
+		let session = Session(title: detached.title, kind: .terminal(detached.pane))
+		session.directory = detached.directory
+		session.isRenamed = detached.isRenamed
+		session.displayTitle = detached.title
+		wire(session)
+
+		sessions.append(session)
+		let index = sessions.count - 1
+		switch zone {
+		case .center:
+			activate(index: index, focus: true)
+		case .left, .right:
+			if columns.count >= 2 { columns.removeLast() }
+			columns.insert(session, at: zone.insertsBefore ? 0 : columns.count)
+			activeIndex = index
+			layoutColumns()
+			refreshTabs()
+			session.terminal?.focus()
+			activeTerminalChanged()
+		}
+		placeholder.isHidden = true
+		onTerminalsChanged?()
+	}
+
 	/// Reorders the tabs.
 	private func move(from: Int, to: Int) {
 		guard sessions.indices.contains(from) else { return }
@@ -874,25 +957,8 @@ final class BottomPanel: NSView {
 
 	/// Takes a terminal out of the panel and hands it over to be a window.
 	private func tearOff(index: Int, at screenPoint: NSPoint) {
-		guard sessions.indices.contains(index) else { return }
-		let session = sessions[index]
-		guard case let .terminal(pane) = session.kind else { return }
-
-		sessions.remove(at: index)
-		columns.removeAll { $0 === session }
-		pane.removeFromSuperview()
-
-		if sessions.isEmpty {
-			activeIndex = nil
-			contentArea.subviews.forEach { $0.removeFromSuperview() }
-			placeholder.isHidden = false
-			refreshTabs()
-		} else {
-			activeIndex = nil
-			activate(index: min(index, sessions.count - 1), focus: false)
-		}
-		onTerminalsChanged?()
-		onTearOffTerminal?(pane, session.displayTitle, screenPoint)
+		guard let detached = detachTerminal(at: index) else { return }
+		onTearOffTerminal?(detached, screenPoint)
 	}
 
 	/// Closes a session, optionally without asking the panel to go away.
@@ -911,6 +977,7 @@ final class BottomPanel: NSView {
 		}
 		session.view.removeFromSuperview()
 		sessions.remove(at: index)
+		columns.removeAll { $0 === session }
 
 		if sessions.isEmpty {
 			activeIndex = nil
@@ -943,6 +1010,12 @@ final class BottomPanel: NSView {
 		}
 		refreshTabs()
 		onTerminalsChanged?()
+	}
+
+	/// Shows where a dropped tab would land, as the drag does. For the harness.
+	func previewDropForTesting() {
+		showDropTarget()
+		dropTarget?.previewForTesting(.right)
 	}
 
 	/// Puts the last terminal beside the first, as dragging its tab to the edge
@@ -1083,6 +1156,12 @@ final class PanelContentView: NSView {
 
 	private var zone: TerminalTabDrag.Zone?
 
+	/// Shows the preview without a drag, for the capture harness.
+	func previewForTesting(_ zone: TerminalTabDrag.Zone) {
+		self.zone = zone
+		needsDisplay = true
+	}
+
 	override init(frame frameRect: NSRect) {
 		super.init(frame: frameRect)
 		registerForDraggedTypes([TerminalTabDrag.pasteboardType])
@@ -1155,6 +1234,14 @@ final class PanelTabStrip: NSView {
 	var onMove: ((Int, Int) -> Void)?
 	/// A tab let go outside the window, which makes it a window.
 	var onTearOff: ((Int, NSPoint) -> Void)?
+	/// A drag of one of these tabs beginning and ending, so the panel can put
+	/// its drop target up while it lasts.
+	var onDragStarted: (() -> Void)?
+	var onDragEnded: (() -> Void)?
+	/// A tab from another window dropped into this strip.
+	var onAdopt: ((TerminalTabDrag.Payload) -> Void)?
+	/// Whether a tab from elsewhere is welcome here.
+	var acceptsForeign: ((TerminalTabDrag.Payload) -> Bool)?
 	/// Whether a tab may be dragged at all — a debugger cannot be.
 	var canDrag: ((Int) -> Bool)?
 	/// The panel this strip belongs to, so a drag is recognised as its own.
@@ -1369,6 +1456,7 @@ final class PanelTabStrip: NSView {
 		dragItem.setDraggingFrame(frames[index], contents: snapshot(of: index))
 
 		draggedIndex = index
+		onDragStarted?()
 		let session = beginDraggingSession(with: [dragItem], event: event, source: self)
 		// A terminal let go outside the window becomes a window, so sliding it
 		// back to where it started would contradict what happens next.
@@ -1558,6 +1646,7 @@ extension PanelTabStrip: NSDraggingSource {
 		draggedIndex = nil
 		dropCaret = nil
 		needsDisplay = true
+		onDragEnded?()
 
 		guard operation == [], let index, let frame = window?.frame else { return }
 		guard TearOff.tearsOff(dropPoint: screenPoint, sourceWindowFrame: frame) else { return }
@@ -1576,7 +1665,7 @@ extension PanelTabStrip {
 
 	override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
 		guard let payload = TerminalTabDrag.payload(from: sender.draggingPasteboard),
-		      payload.panelID == panelID
+		      payload.panelID == panelID || acceptsForeign?(payload) == true
 		else { return [] }
 
 		let point = convert(sender.draggingLocation, from: nil)
@@ -1598,12 +1687,14 @@ extension PanelTabStrip {
 			dropCaret = nil
 			needsDisplay = true
 		}
-		guard let payload = TerminalTabDrag.payload(from: sender.draggingPasteboard),
-		      payload.panelID == panelID
-		else { return false }
+		guard let payload = TerminalTabDrag.payload(from: sender.draggingPasteboard) else { return false }
 
 		let point = convert(sender.draggingLocation, from: nil)
-		onMove?(payload.index, insertionIndex(at: point))
+		if payload.panelID == panelID {
+			onMove?(payload.index, insertionIndex(at: point))
+		} else {
+			onAdopt?(payload)
+		}
 		return true
 	}
 }
@@ -1641,5 +1732,38 @@ private final class CenteredTextFieldCell: NSTextFieldCell {
 
 	override func select(withFrame rect: NSRect, in view: NSView, editor: NSText, delegate: Any?, start: Int, length: Int) {
 		super.select(withFrame: centered(rect), in: view, editor: editor, delegate: delegate, start: start, length: length)
+	}
+}
+
+
+/// A terminal can be dragged out of the panel into a window, and the panel is
+/// where it goes back to.
+extension BottomPanel: TerminalDragSource {
+	func detachTerminal(at index: Int) -> DetachedTerminal? {
+		guard sessions.indices.contains(index) else { return nil }
+		let session = sessions[index]
+		guard case let .terminal(pane) = session.kind else { return nil }
+
+		sessions.remove(at: index)
+		columns.removeAll { $0 === session }
+		pane.removeFromSuperview()
+
+		if sessions.isEmpty {
+			activeIndex = nil
+			contentArea.subviews.forEach { $0.removeFromSuperview() }
+			placeholder.isHidden = false
+			refreshTabs()
+		} else {
+			activeIndex = nil
+			activate(index: min(index, sessions.count - 1), focus: false)
+		}
+		onTerminalsChanged?()
+
+		return DetachedTerminal(
+			pane: pane,
+			title: session.displayTitle,
+			isRenamed: session.isRenamed,
+			directory: session.directory
+		)
 	}
 }

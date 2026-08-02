@@ -410,8 +410,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// Written when they change rather than only on the way out: a terminal
 		// that survives a restart has to survive the kind of exit nobody plans.
 		bottomPanel.onTerminalsChanged = { [weak self] in self?.rememberOpenEditors() }
-		bottomPanel.onTearOffTerminal = { pane, title, screenPoint in
-			TerminalWindowController(pane: pane, title: title, at: screenPoint).show()
+		bottomPanel.onTearOffTerminal = { detached, screenPoint in
+			TerminalWindowController(
+				pane: detached.pane,
+				title: detached.title,
+				at: screenPoint,
+				isRenamed: detached.isRenamed,
+				directory: detached.directory
+			).show()
 		}
 		bottomPanel.onToggleFollowProject = { [weak self] in self?.toggleFollowTerminal() }
 		bottomPanel.onWorkingDirectoryChanged = { [weak self] directory in
@@ -2250,6 +2256,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		bottomPanel.newTerminal()
 		bottomPanel.newTerminal()
 		bottomPanel.splitForTesting()
+	}
+
+	/// Shows the split preview a drag would show.
+	func previewTerminalDropForTesting() {
+		setPanelVisible(true)
+		bottomPanel.newTerminal()
+		bottomPanel.previewDropForTesting()
 	}
 
 	func tearOffTerminalForTesting() {

@@ -63,3 +63,47 @@ enum TerminalTabDrag {
 		}
 	}
 }
+
+
+/// A terminal taken out of wherever it was.
+struct DetachedTerminal {
+	let pane: TerminalPane
+	let title: String
+	let isRenamed: Bool
+	let directory: URL?
+}
+
+/// Something a terminal can be dragged out of.
+@MainActor
+protocol TerminalDragSource: AnyObject {
+	/// Gives up the terminal at this index, removing it from the source.
+	func detachTerminal(at index: Int) -> DetachedTerminal?
+}
+
+/// Who owns which terminals, so a tab dropped in one window can be found in
+/// another.
+///
+/// A drag carries an identifier, not an object: the pasteboard holds bytes.
+/// This is how those bytes find the panel — or the torn-off window — that the
+/// tab came from, which is what lets a terminal be dragged back in.
+@MainActor
+enum TerminalDragSources {
+	private static var sources: [UUID: WeakSource] = [:]
+
+	private struct WeakSource {
+		weak var value: (any TerminalDragSource)?
+	}
+
+	static func register(_ source: any TerminalDragSource, as id: UUID) {
+		sources[id] = WeakSource(value: source)
+		sources = sources.filter { $0.value.value != nil }
+	}
+
+	static func unregister(_ id: UUID) {
+		sources.removeValue(forKey: id)
+	}
+
+	static func source(for id: UUID) -> (any TerminalDragSource)? {
+		sources[id]?.value
+	}
+}

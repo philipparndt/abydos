@@ -66,6 +66,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 				controller?.splitTerminalsForTesting()
 			}
 		}
+		if options.previewTerminalDrop {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+				controller?.previewTerminalDropForTesting()
+			}
+		}
 		if options.tearOffTerminal {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
 				controller?.tearOffTerminalForTesting()

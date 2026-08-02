@@ -163,6 +163,8 @@ struct LaunchOptions {
 	var splitTerminals = false
 	/// Pull a terminal out into a window before capture.
 	var tearOffTerminal = false
+	/// Show the terminal drop preview before capture.
+	var previewTerminalDrop = false
 	/// Split the editor before capture: "right" or "down".
 	var split: String?
 	/// Draw a tab drop preview before capture, without a real drag.
@@ -260,6 +262,7 @@ struct LaunchOptions {
 			case "--rename-terminal": options.renameTerminal = next()
 			case "--split-terminals": options.splitTerminals = true
 			case "--tearoff-terminal": options.tearOffTerminal = true
+			case "--terminal-drop-preview": options.previewTerminalDrop = true
 			case "--split":      options.split = next()
 			case "--dropzone":   options.dropZone = next()
 			default:

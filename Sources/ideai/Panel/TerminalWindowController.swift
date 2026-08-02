@@ -12,9 +12,27 @@ final class TerminalWindowController: NSWindowController, NSWindowDelegate {
 	private static var open: [TerminalWindowController] = []
 
 	private let pane: TerminalPane
+	private var name: String
+	private var isRenamed: Bool
+	private let directory: URL?
+	/// This window, as somewhere a terminal can be dragged from.
+	private let sourceID = UUID()
+	private let strip = PanelTabStrip()
+	/// Set while the terminal is being handed to somebody else, so closing the
+	/// window does not also kill the shell.
+	private var isGivingUpTerminal = false
 
-	init(pane: TerminalPane, title: String, at screenPoint: NSPoint) {
+	init(
+		pane: TerminalPane,
+		title: String,
+		at screenPoint: NSPoint,
+		isRenamed: Bool = false,
+		directory: URL? = nil
+	) {
 		self.pane = pane
+		self.name = title
+		self.isRenamed = isRenamed
+		self.directory = directory
 
 		let screen = NSScreen.screens.first { $0.frame.contains(screenPoint) } ?? NSScreen.main
 		let frame = TearOff.windowFrame(
@@ -37,13 +55,32 @@ final class TerminalWindowController: NSWindowController, NSWindowDelegate {
 		super.init(window: window)
 
 		let content = ColoredView(color: Theme.current.editorBackground)
-		pane.translatesAutoresizingMaskIntoConstraints = false
-		content.addSubview(pane)
+
+		// A strip with the one tab in it, so the terminal can be dragged back
+		// into the panel it came from. Without it a torn-off terminal is out
+		// there for good, which makes tearing one off a decision rather than a
+		// gesture.
+		strip.panelID = sourceID
+		strip.setUpTabDropping()
+		strip.canDrag = { _ in true }
+		strip.setItems([PanelTabItem(title: title, hasExited: false, canRename: true, isShowing: true)], activeIndex: 0)
+		strip.onRename = { [weak self] _, newName in self?.rename(to: newName) }
+		strip.onClose = { [weak self] _ in self?.window?.performClose(nil) }
+
+		for view in [strip, pane] as [NSView] {
+			view.translatesAutoresizingMaskIntoConstraints = false
+			content.addSubview(view)
+		}
 		NSLayoutConstraint.activate([
+			// Clear of the titlebar the window draws under.
+			strip.topAnchor.constraint(equalTo: content.topAnchor, constant: 28),
+			strip.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+			strip.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+			strip.heightAnchor.constraint(equalToConstant: Theme.current.scaled(30)),
+
 			pane.leadingAnchor.constraint(equalTo: content.leadingAnchor),
 			pane.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-			// Clear of the titlebar it draws under.
-			pane.topAnchor.constraint(equalTo: content.topAnchor, constant: 28),
+			pane.topAnchor.constraint(equalTo: strip.bottomAnchor),
 			pane.bottomAnchor.constraint(equalTo: content.bottomAnchor),
 		])
 		window.contentView = content
@@ -51,12 +88,19 @@ final class TerminalWindowController: NSWindowController, NSWindowDelegate {
 
 		// The shell reports what it is running, and out here the window title
 		// is the only place left to say so.
-		pane.terminalView.onTitleChange = { [weak window] reported in
-			let trimmed = reported.trimmingCharacters(in: .whitespaces)
+		pane.terminalView.onTitleChange = { [weak self] reported in
+			guard let self, !self.isRenamed else { return }
+			let trimmed = reported.split(separator: " ").first.map(String.init) ?? reported
 			guard !trimmed.isEmpty else { return }
-			window?.title = trimmed
+			self.name = trimmed
+			self.window?.title = trimmed
+			self.strip.setItems(
+				[PanelTabItem(title: trimmed, hasExited: false, canRename: true, isShowing: true)],
+				activeIndex: 0
+			)
 		}
 
+		TerminalDragSources.register(self, as: sourceID)
 		Self.open.append(self)
 	}
 
@@ -73,9 +117,34 @@ final class TerminalWindowController: NSWindowController, NSWindowDelegate {
 		pane.focus()
 	}
 
-	/// Closing the window ends the shell: it has nowhere else to be.
+	private func rename(to newName: String) {
+		let trimmed = newName.trimmingCharacters(in: .whitespaces)
+		isRenamed = !trimmed.isEmpty
+		name = trimmed.isEmpty ? name : trimmed
+		window?.title = name
+		strip.setItems(
+			[PanelTabItem(title: name, hasExited: false, canRename: true, isShowing: true)],
+			activeIndex: 0
+		)
+	}
+
+	/// Closing the window ends the shell: it has nowhere else to be — unless it
+	/// has just been dragged somewhere that does want it.
 	func windowWillClose(_ notification: Notification) {
-		pane.terminalView.terminateProcess()
+		if !isGivingUpTerminal { pane.terminalView.terminateProcess() }
+		TerminalDragSources.unregister(sourceID)
 		Self.open.removeAll { $0 === self }
+	}
+}
+
+
+/// Dragging the terminal back where it came from.
+extension TerminalWindowController: TerminalDragSource {
+	func detachTerminal(at index: Int) -> DetachedTerminal? {
+		isGivingUpTerminal = true
+		pane.terminalView.onTitleChange = nil
+		pane.removeFromSuperview()
+		window?.close()
+		return DetachedTerminal(pane: pane, title: name, isRenamed: isRenamed, directory: directory)
 	}
 }
