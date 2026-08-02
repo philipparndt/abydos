@@ -6,11 +6,15 @@
 # work — which behind a corporate proxy is exactly what often does not.
 
 ARCH        ?= arm64
+# Which debuggers the image carries: full (both), go (Delve), native
+# (gdbserver). A pod only ever debugs one language, so a project can have the
+# small one — 10 MB against 32.
+VARIANT     ?= full
 DELVE       ?= v1.26.2
 TAG         ?= $(REPOSITORY):$(VERSION)
 OUT         := out
-ROOTFS      := $(OUT)/rootfs_$(ARCH)
-IMAGE       := $(OUT)/ideai-devpod-$(ARCH).tar
+ROOTFS      := $(OUT)/rootfs_$(ARCH)_$(VARIANT)
+IMAGE       := $(OUT)/ideai-devpod-$(ARCH)-$(VARIANT).tar
 
 REPOSITORY  ?= pharndt/ideai-devpod
 VERSION     ?= dev
@@ -44,11 +48,14 @@ binaries: ## Cross-compile the supervisor and delve for linux/$(ARCH)
 	@echo "==> $(OUT)/linux_$(ARCH)"
 
 .PHONY: rootfs
-rootfs: binaries ## Lay out the image's files for linux/$(ARCH)
+rootfs: binaries ## Lay out the image's files (ARCH, VARIANT=full|go|native)
 	@rm -rf $(ROOTFS)
 	@mkdir -p $(ROOTFS)/usr/local/bin $(ROOTFS)/app $(ROOTFS)/tmp $(ROOTFS)/etc/ssl/certs
-	@cp $(OUT)/linux_$(ARCH)/ideai-supervisor $(OUT)/linux_$(ARCH)/dlv $(ROOTFS)/usr/local/bin/
+	@cp $(OUT)/linux_$(ARCH)/ideai-supervisor $(ROOTFS)/usr/local/bin/
 	@cp /etc/ssl/cert.pem $(ROOTFS)/etc/ssl/certs/ca-certificates.crt
+	@if [ "$(VARIANT)" != "native" ]; then cp $(OUT)/linux_$(ARCH)/dlv $(ROOTFS)/usr/local/bin/; fi
+	@if [ "$(VARIANT)" != "go" ]; then ./tools/fetch-gdbserver.sh $(ARCH) $(ROOTFS); fi
+	@printf '  %s image for linux/%s: %s\n' "$(VARIANT)" "$(ARCH)" "$$(du -sh $(ROOTFS) | cut -f1)"
 
 .PHONY: mkimage
 mkimage: ## Build the image assembler
@@ -66,12 +73,18 @@ image: rootfs mkimage ## Assemble the image tarball (no Docker needed)
 # and an index. Credentials come from `docker login`'s keychain entry, or from
 # DOCKER_USERNAME and DOCKER_PASSWORD.
 .PHONY: publish
-publish: mkimage ## Push a multi-arch image (REPOSITORY, VERSION, PLATFORMS)
-	@$(foreach arch,$(PLATFORMS),$(MAKE) --no-print-directory rootfs ARCH=$(arch) &&) true
+publish: mkimage ## Push a multi-arch image (REPOSITORY, VERSION, VARIANT)
+	@$(foreach arch,$(PLATFORMS),$(MAKE) --no-print-directory rootfs ARCH=$(arch) VARIANT=$(VARIANT) &&) true
 	@./$(OUT)/mkimage -push "$(REPOSITORY):$(VERSION)" \
-		$(foreach arch,$(PLATFORMS),-layer $(arch)=$(OUT)/rootfs_$(arch)) \
+		$(foreach arch,$(PLATFORMS),-layer $(arch)=$(OUT)/rootfs_$(arch)_$(VARIANT)) \
 		-env "$(IMAGE_ENV)"
 	@echo "==> $(REPOSITORY):$(VERSION)"
+
+.PHONY: publish-all
+publish-all: ## Push the full image plus the slim per-language ones
+	@$(MAKE) --no-print-directory publish VARIANT=full VERSION=$(VERSION)
+	@$(MAKE) --no-print-directory publish VARIANT=go VERSION=$(VERSION)-go
+	@$(MAKE) --no-print-directory publish VARIANT=native VERSION=$(VERSION)-native
 
 .PHONY: import-k3c
 import-k3c: image ## Put the image in a k3c cluster (CLUSTER=demo1)

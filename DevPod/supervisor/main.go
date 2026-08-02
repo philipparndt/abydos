@@ -78,17 +78,22 @@ type Options struct {
 	// port-forward.
 	DebugAddr string
 	DelvePath string
-	AutoStart bool
+	// gdbserver, for programs Delve knows nothing about: Zig, Odin, C, C++,
+	// Rust. It speaks the protocol LLDB already understands, so the debugger
+	// the developer looks at stays the one on their own machine.
+	GdbServerPath string
+	AutoStart     bool
 }
 
 func readOptions() Options {
 	options := Options{
-		ControlAddr: env("IDEAI_CONTROL_ADDR", ":7999"),
-		BinaryPath:  env("IDEAI_BINARY", "/app/current"),
-		WorkDir:     env("IDEAI_WORKDIR", "/app"),
-		DebugAddr:   env("IDEAI_DEBUG_ADDR", ":2345"),
-		DelvePath:   env("IDEAI_DLV", "/usr/local/bin/dlv"),
-		AutoStart:   env("IDEAI_AUTOSTART", "true") == "true",
+		ControlAddr:   env("IDEAI_CONTROL_ADDR", ":7999"),
+		BinaryPath:    env("IDEAI_BINARY", "/app/current"),
+		WorkDir:       env("IDEAI_WORKDIR", "/app"),
+		DebugAddr:     env("IDEAI_DEBUG_ADDR", ":2345"),
+		DelvePath:     env("IDEAI_DLV", "/usr/local/bin/dlv"),
+		GdbServerPath: env("IDEAI_GDBSERVER", "/usr/local/bin/gdbserver"),
+		AutoStart:     env("IDEAI_AUTOSTART", "true") == "true",
 	}
 	if raw := os.Getenv("IDEAI_ARGS"); raw != "" {
 		options.Args = strings.Fields(raw)
@@ -116,6 +121,11 @@ const (
 	// launch. The program starts when the debugger connects, so a session can
 	// be prepared before anybody is ready to use it.
 	ModeDebug Mode = "debug"
+	// ModeNativeDebug runs gdbserver, for a program Delve cannot debug. It
+	// holds the program at its first instruction until a debugger connects,
+	// which is the same bargain: nothing has happened yet when somebody
+	// arrives.
+	ModeNativeDebug Mode = "native-debug"
 )
 
 // Supervisor owns the child process.
@@ -357,6 +367,17 @@ func (s *Supervisor) Start(mode Mode) error {
 
 	var command *exec.Cmd
 	switch mode {
+	case ModeNativeDebug:
+		// --no-startup-with-shell because this image has no shell: gdbserver
+		// otherwise tries to exec /bin/sh and dies saying so, which reads as
+		// the debugger being broken rather than the image being small.
+		arguments := []string{
+			"--no-startup-with-shell",
+			s.options.DebugAddr,
+			s.options.BinaryPath,
+		}
+		arguments = append(arguments, s.options.Args...)
+		command = exec.Command(s.options.GdbServerPath, arguments...)
 	case ModeDebug:
 		// `dlv dap` waits for a client and takes the program to launch from
 		// it, so the editor decides the arguments and the environment — and

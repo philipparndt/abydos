@@ -684,6 +684,7 @@ final class BottomPanel: NSView {
 				return directory ?? URL(fileURLWithPath: program).deletingLastPathComponent()
 			}
 			if case .remote = start { return workingDirectory }
+			if case .nativeRemote = start { return workingDirectory }
 			return FileManager.default.homeDirectoryForCurrentUser
 		}()
 		guard let session = makeDebugSession(breakpoints: breakpoints, fallbackRoot: fallback)
@@ -700,6 +701,11 @@ final class BottomPanel: NSView {
 					)
 				case let .attach(pid):
 					try await session.attach(adapter: adapter, executable: executable, pid: pid)
+				case let .nativeRemote(host, port, binary):
+					try await session.attachNatively(
+						adapter: adapter, executable: executable,
+						program: binary, host: host, port: port
+					)
 				case let .remote(host, port, program, arguments, directory, environment):
 					try await session.launchRemotely(
 						host: host, port: port, program: program,
@@ -725,6 +731,9 @@ final class BottomPanel: NSView {
 			environment: [String: String] = [:]
 		)
 		case attach(pid: Int)
+		/// A native program held in a pod by gdbserver, with the binary that
+		/// was pushed into it still here.
+		case nativeRemote(host: String, port: Int, binary: URL)
 		/// A debugger already running somewhere else, reached on a local port.
 		case remote(
 			host: String,

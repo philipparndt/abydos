@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -430,5 +431,43 @@ func main() {
 			}
 		}
 		return false
+	})
+}
+
+// Delve debugs Go and nothing else, so a Zig, Odin, C, C++ or Rust program is
+// held by gdbserver instead — and the image has no shell, which gdbserver
+// assumes it can use unless told otherwise.
+func TestNativeDebugStartsGdbserverWithoutAShell(t *testing.T) {
+	recorder := filepath.Join(t.TempDir(), "fake-gdbserver")
+	written := filepath.Join(t.TempDir(), "arguments")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + written + "\nsleep 30\n"
+	if err := os.WriteFile(recorder, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	supervisor, _ := newSupervisor(t)
+	supervisor.options.GdbServerPath = recorder
+	supervisor.options.DebugAddr = ":4321"
+	defer supervisor.Stop()
+
+	content, err := os.ReadFile(buildFixture(t, `package main
+
+func main() {}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	post(t, supervisor, "/binary?mode=native-debug", content, "")
+
+	waitFor(t, "gdbserver to be started with what it needs", func() bool {
+		data, err := os.ReadFile(written)
+		if err != nil {
+			return false
+		}
+		lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+		return len(lines) >= 3 &&
+			lines[0] == "--no-startup-with-shell" &&
+			lines[1] == ":4321" &&
+			lines[2] == supervisor.options.BinaryPath
 	})
 }

@@ -397,6 +397,47 @@ public final class DebugSession {
 		startLaunchWatchdog()
 	}
 
+	/// Debugs a native program that is stopped in a pod.
+	///
+	/// Delve is Go's and knows nothing about Zig, Odin, C, C++ or Rust, so what
+	/// waits in the pod for those is gdbserver — and what talks to it is the
+	/// LLDB on this machine, which speaks that protocol already. The binary
+	/// stays here as well: it was built here, so its debug information points
+	/// at the sources on this disk and every line lands where it should.
+	public func attachNatively(
+		adapter: DebugAdapter,
+		executable: String,
+		program: URL,
+		host: String,
+		port: Int
+	) async throws {
+		state = .starting
+		launchGeneration += 1
+		exitCode = nil
+		self.adapter = adapter
+
+		try client.start(
+			executable: executable,
+			arguments: adapter.arguments,
+			workingDirectory: program.deletingLastPathComponent()
+		)
+		try await handshake(with: adapter)
+
+		// `attachCommands` replaces LLDB's own idea of attaching, which is what
+		// makes this a remote session: the target is the local binary and the
+		// process is the one gdbserver is holding.
+		client.send("attach", arguments: [
+			"request": "attach",
+			"program": program.path,
+			"attachCommands": [
+				"target create \"\(program.path)\"",
+				"gdb-remote \(host):\(port)",
+			],
+			"stopOnEntry": false,
+		])
+		startLaunchWatchdog()
+	}
+
 	/// Starts a session on a debugger that is already running somewhere else.
 	///
 	/// The pod's supervisor has `dlv dap` up and a forwarded port leads to it,

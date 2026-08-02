@@ -2957,11 +2957,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 					)
 				}
 
+				// Delve debugs Go; everything else is held by gdbserver and
+				// driven by the LLDB on this machine.
+				let isGo = { if case .go = DevPodBuild.strategy(for: configuration, root: root) {
+					return true
+				} else {
+					return configuration.type == "go"
+				} }()
+				let mode = debug ? (isGo ? "debug" : "native-debug") : "run"
+
 				try Task.checkCancellation()
-				clusterLog("sending the binary, mode \(debug ? "debug" : "run")")
+				clusterLog("sending the binary, mode \(mode)")
 				let status = try await client.push(
 					binary: binary,
-					mode: debug ? "debug" : "run",
+					mode: mode,
 					// In debug mode the editor says what to launch, so these
 					// would be said twice; in run mode the pod is on its own.
 					arguments: debug ? [] : plan.arguments,
@@ -2977,7 +2986,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 					clusterLog("attaching the debugger")
 					try await attachDebugger(
 						to: pod, context: context, kubeconfig: kubeconfig,
-						arguments: plan.arguments, environment: environment
+						arguments: plan.arguments, environment: environment,
+						nativeBinary: isGo ? nil : binary
 					)
 				} else {
 					// Busy: the program is up in the cluster until somebody
@@ -3387,7 +3397,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		context: String?,
 		kubeconfig: String?,
 		arguments: [String],
-		environment: [String: String]
+		environment: [String: String],
+		nativeBinary: URL? = nil
 	) async throws {
 		let debugForward = try await PortForward.start(
 			to: PodTarget(
@@ -3401,6 +3412,29 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		devPodForwards.append(debugForward)
 
 		runControl?.setStatus("Debugging in \(pod.name)…", busy: true)
+
+		// A native program is held by gdbserver in the pod and driven by the
+		// LLDB here, against the binary that was pushed — which was built here,
+		// so its debug information points at these sources.
+		if let nativeBinary {
+			guard let lldb = DebugAdapters.executable(for: DebugAdapters.lldb) else {
+				throw DevPodClient.Failure.unreachable(
+					"Debugging a native program in a cluster needs LLDB's adapter here: "
+						+ DebugAdapters.lldb.installHint
+				)
+			}
+			guard let session = bottomPanel.startDebugging(
+				adapter: DebugAdapters.lldb,
+				executable: lldb,
+				start: .nativeRemote(
+					host: "127.0.0.1", port: debugForward.localPort, binary: nativeBinary
+				),
+				breakpoints: pendingBreakpoints
+			) else { return }
+			wire(session)
+			return
+		}
+
 		guard let session = bottomPanel.startDebugging(
 			adapter: DebugAdapters.delve,
 			executable: "",

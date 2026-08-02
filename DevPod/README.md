@@ -238,7 +238,7 @@ and says so when it is missing rather than failing with a page of linker errors.
 ## Other languages
 
 The transport carries a file and restarts a process, so anything that compiles
-to a static binary works the same way. Only the debugger differs: Rust, Zig,
-C and C++ want `lldb-server` or `gdbserver` in the image rather than Delve, and
-JVM, Node and Python want no cross-compilation at all — copy the sources and
-attach over JDWP, the inspector, or debugpy.
+to a static binary works the same way — and Rust, Zig, C, C++ and Odin now do,
+run and debugged alike. What is left is the languages that do not compile to
+one: JVM, Node and Python need no cross-compilation at all, and would copy
+their sources and attach over JDWP, the inspector, or debugpy.
