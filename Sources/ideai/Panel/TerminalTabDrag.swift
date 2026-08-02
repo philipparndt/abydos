@@ -22,6 +22,10 @@ enum TerminalTabDrag {
 
 	struct Payload {
 		let panelID: UUID
+		/// Which column of that panel it was dragged from. A panel that is
+		/// split has a strip per column, and an index means nothing without
+		/// knowing which strip it counts along.
+		let column: Int
 		let index: Int
 	}
 
@@ -31,13 +35,13 @@ enum TerminalTabDrag {
 		      let panel = (raw["panel"] as? String).flatMap(UUID.init(uuidString:)),
 		      let index = raw["index"] as? Int
 		else { return nil }
-		return Payload(panelID: panel, index: index)
+		return Payload(panelID: panel, column: raw["column"] as? Int ?? 0, index: index)
 	}
 
-	static func item(panelID: UUID, index: Int) -> NSPasteboardItem? {
+	static func item(panelID: UUID, column: Int, index: Int) -> NSPasteboardItem? {
 		let item = NSPasteboardItem()
 		guard let data = try? JSONSerialization.data(
-			withJSONObject: ["panel": panelID.uuidString, "index": index]
+			withJSONObject: ["panel": panelID.uuidString, "column": column, "index": index]
 		) else { return nil }
 		item.setData(data, forType: pasteboardType)
 		return item

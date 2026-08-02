@@ -99,6 +99,17 @@ final class BottomPanel: NSView {
 			}
 		}
 
+		/// What this holds, for its tab.
+		var symbol: String {
+			switch kind {
+			case .terminal: return "terminal"
+			case .review: return "sparkles"
+			case .search: return "magnifyingglass"
+			case .debug: return "ladybug"
+			case .profiler: return "gauge.with.needle"
+			}
+		}
+
 		/// The terminal behind this session, if it has one.
 		var terminal: TerminalPane? {
 			switch kind {
@@ -257,13 +268,12 @@ final class BottomPanel: NSView {
 		strip.acceptsForeign = { payload in
 			TerminalDragSources.source(for: payload.panelID) != nil
 		}
-		strip.onAdopt = { [weak self] payload in
-			guard let self,
-			      let source = TerminalDragSources.source(for: payload.panelID),
-			      let detached = source.detachTerminal(at: payload.index)
-			else { return }
-			self.focusedColumn = column
-			self.adopt(detached, zone: .center)
+		strip.column = column
+		// A tab dropped on a strip belongs to that strip's column afterwards,
+		// wherever it came from: the other column, or another window. Dragging
+		// one back is how a split is undone by hand.
+		strip.onDropTab = { [weak self] payload, position in
+			self?.dropOnStrip(payload, at: position, in: column)
 		}
 		strip.onToggleMaximize = { [weak self] in self?.onToggleMaximize?() }
 		strip.onToggleFollowProject = { [weak self] in self?.onToggleFollowProject?() }
@@ -1046,6 +1056,7 @@ final class BottomPanel: NSView {
 						title: session.displayTitle,
 						hasExited: session.hasExited,
 						isTerminal: { if case .terminal = session.kind { return true } else { return false } }(),
+						symbol: session.symbol,
 						isShowing: session === showing
 					)
 				},
@@ -1077,7 +1088,7 @@ final class BottomPanel: NSView {
 	private func showDropTargets() {}
 
 	private func hideDropTargets() {
-		for view in columnViews { view.content.previewZone(nil) }
+		for view in columnViews { view.showPreview(nil) }
 	}
 
 	/// The point in this panel's coordinates, or nil when it is elsewhere.
@@ -1095,11 +1106,11 @@ final class BottomPanel: NSView {
 		for view in columnViews {
 			let frame = view.content.convert(view.content.bounds, to: self)
 			guard frame.contains(point) else {
-				view.content.previewZone(nil)
+				view.showPreview(nil)
 				continue
 			}
 			let inside = view.content.convert(point, from: self)
-			view.content.previewZone(TerminalTabDrag.zone(for: inside, in: view.content.bounds))
+			view.showPreview(TerminalTabDrag.zone(for: inside, in: view.content.bounds))
 		}
 	}
 
@@ -1174,6 +1185,49 @@ final class BottomPanel: NSView {
 		drop(session, zone: zone)
 		placeholder.isHidden = true
 		onTerminalsChanged?()
+	}
+
+	/// A tab dropped on a column's strip.
+	///
+	/// From the same column it is a reorder; from the other column, or from a
+	/// window a terminal was pulled out into, it moves here — which is how a
+	/// split is undone by dragging rather than by menu.
+	private func dropOnStrip(_ payload: TerminalTabDrag.Payload, at position: Int, in column: Int) {
+		if payload.panelID != panelID {
+			guard let source = TerminalDragSources.source(for: payload.panelID),
+			      let detached = source.detachTerminal(at: payload.index)
+			else { return }
+			focusedColumn = column
+			adopt(detached, zone: .center)
+			return
+		}
+
+		guard let session = session(at: payload.index, in: payload.column) else { return }
+		if payload.column == column {
+			move(from: payload.index, to: position, in: column)
+			return
+		}
+
+		session.column = column
+		place(session, at: position, in: column)
+		activate(session, focus: true)
+		onTerminalsChanged?()
+	}
+
+	/// Puts a session among the tabs of its column, at a place.
+	private func place(_ session: Session, at position: Int, in column: Int) {
+		guard let from = sessions.firstIndex(where: { $0 === session }) else { return }
+		sessions.remove(at: from)
+
+		let list = sessions(in: column)
+		if position >= list.count {
+			let after = list.last.flatMap { last in sessions.firstIndex { $0 === last } }
+			sessions.insert(session, at: after.map { $0 + 1 } ?? sessions.count)
+		} else if let index = sessions.firstIndex(where: { $0 === list[position] }) {
+			sessions.insert(session, at: index)
+		} else {
+			sessions.append(session)
+		}
 	}
 
 	/// Reorders the tabs within one column.
@@ -1283,7 +1337,7 @@ final class BottomPanel: NSView {
 
 	/// Puts the first tab beside whatever is showing, as the menu does.
 	func splitFirstBesideForTesting() {
-		handleDrop(TerminalTabDrag.Payload(panelID: panelID, index: 0), zone: .left)
+		handleDrop(TerminalTabDrag.Payload(panelID: panelID, column: 0, index: 0), zone: .left)
 	}
 
 	/// The case somebody actually reaches for: the tab in front, told to sit
@@ -1298,7 +1352,7 @@ final class BottomPanel: NSView {
 	/// Shows where a dropped tab would land, as the drag does. For the harness.
 	func previewDropForTesting() {
 		showDropTargets()
-		columnViews.first?.content.previewZone(.right)
+		columnViews.first?.showPreview(.right)
 	}
 
 	/// Puts the last terminal beside the first, as dragging its tab to the edge
@@ -1308,7 +1362,8 @@ final class BottomPanel: NSView {
 		// The one that is not on screen, which is the case dragging a tab to the
 		// edge is for.
 		handleDrop(
-			TerminalTabDrag.Payload(panelID: panelID, index: sessions.count - 2), zone: .right
+			TerminalTabDrag.Payload(panelID: panelID, column: 0, index: sessions.count - 2),
+			zone: .right
 		)
 	}
 
@@ -1425,6 +1480,8 @@ struct PanelTabItem {
 	/// A terminal: the only kind somebody names, and the only kind that can go
 	/// off into a window of its own.
 	var isTerminal = false
+	/// What it holds, drawn on the tab the way a file's icon is.
+	var symbol = "terminal"
 	/// On screen — which, when the pane is split, is more than one of them.
 	var isShowing = false
 }
@@ -1529,8 +1586,9 @@ final class PanelTabStrip: NSView {
 	var onDragMoved: ((NSPoint) -> Void)?
 	/// Where a drag ended that nothing else took, so the panel can decide.
 	var onDragEndedAt: ((Int, NSPoint) -> Void)?
-	/// A tab from another window dropped into this strip.
-	var onAdopt: ((TerminalTabDrag.Payload) -> Void)?
+	/// A tab dropped into this strip, from anywhere: this column, the other
+	/// one, or another window.
+	var onDropTab: ((TerminalTabDrag.Payload, Int) -> Void)?
 	/// Whether a tab from elsewhere is welcome here.
 	var acceptsForeign: ((TerminalTabDrag.Payload) -> Bool)?
 	/// Asked to put a tab beside what is showing, without a drag.
@@ -1543,6 +1601,8 @@ final class PanelTabStrip: NSView {
 	var canDrag: ((Int) -> Bool)?
 	/// The panel this strip belongs to, so a drag is recognised as its own.
 	var panelID = UUID()
+	/// Which column of it this strip is.
+	var column = 0
 	/// Whether the panel's own controls belong here.
 	///
 	/// They do not in a torn-off terminal window: there is no panel to hide, no
@@ -1604,8 +1664,14 @@ final class PanelTabStrip: NSView {
 		frames.removeAll()
 		var x = Theme.current.scaled(8)
 		for item in items {
-			let width = (item.title as NSString).size(withAttributes: [.font: font]).width
-				+ padding * 2 + closeSize
+			// The editor's own measurement: room for the icon, the name, and
+			// the cross, and never so narrow that a name is all ellipsis.
+			let text = (item.title as NSString).size(withAttributes: [.font: font]).width
+			let width = max(
+				Theme.current.scaled(96),
+				padding * 2 + Theme.current.scaled(14) + Theme.current.scaled(6)
+					+ ceil(text) + Theme.current.scaled(8) + closeSize
+			)
 			frames.append(NSRect(x: x, y: 0, width: ceil(width), height: bounds.height))
 			x += ceil(width) + Theme.current.scaled(2)
 		}
@@ -1821,7 +1887,8 @@ final class PanelTabStrip: NSView {
 	}
 
 	private func beginDrag(index: Int, event: NSEvent) {
-		guard let item = TerminalTabDrag.item(panelID: panelID, index: index) else { return }
+		guard let item = TerminalTabDrag.item(panelID: panelID, column: column, index: index)
+		else { return }
 
 		let dragItem = NSDraggingItem(pasteboardWriter: item)
 		dragItem.setDraggingFrame(frames[index], contents: snapshot(of: index))
@@ -1899,6 +1966,89 @@ final class PanelTabStrip: NSView {
 	}
 
 	private func draw(item: PanelTabItem, in rect: NSRect, isActive: Bool, isHovered: Bool) {
+		drawEditorStyle(item: item, in: rect, isActive: isActive, isHovered: isHovered)
+	}
+
+	/// Drawn the way an editor tab is drawn.
+	///
+	/// The same shape, the same icon-then-name, the same accent under the one
+	/// in front: a terminal is a tab like any other and there is no reason for
+	/// the panel to have a style of its own.
+	private func drawEditorStyle(
+		item: PanelTabItem,
+		in rect: NSRect,
+		isActive: Bool,
+		isHovered: Bool
+	) {
+		if isActive {
+			Theme.current.editorBackground.setFill()
+			rect.fill()
+			Theme.current.gitModified.setFill()
+			NSRect(x: rect.minX, y: rect.maxY - 2, width: rect.width, height: 2).fill()
+		} else if item.isShowing {
+			// The other half of a split: on screen, but not the one the
+			// keyboard is in.
+			NSColor.white.withAlphaComponent(0.06).setFill()
+			rect.fill()
+		} else if isHovered {
+			NSColor.white.withAlphaComponent(0.05).setFill()
+			rect.fill()
+		}
+
+		if !isActive {
+			Theme.current.separator.withAlphaComponent(0.6).setFill()
+			NSRect(
+				x: rect.maxX - 1, y: Theme.current.scaled(6),
+				width: 1, height: rect.height - Theme.current.scaled(12)
+			).fill()
+		}
+
+		var x = rect.minX + padding
+		let iconSize = Theme.current.scaled(14)
+		let tint = item.hasExited
+			? Theme.current.gitIgnored
+			: Theme.current.sidebarText.withAlphaComponent(isActive ? 0.95 : 0.7)
+		Theme.symbol(item.symbol, size: 11 * Theme.current.scale, color: tint)?
+			.drawFitted(in: NSRect(
+				x: x, y: rect.midY - iconSize / 2, width: iconSize, height: iconSize
+			))
+		x += iconSize + Theme.current.scaled(6)
+
+		let color = item.hasExited
+			? Theme.current.gitIgnored
+			: (isActive ? Theme.current.sidebarHeaderText : Theme.current.sidebarText.withAlphaComponent(0.8))
+		let paragraph = NSMutableParagraphStyle()
+		paragraph.lineBreakMode = .byTruncatingTail
+		let label = NSAttributedString(string: item.title, attributes: [
+			.font: font,
+			.foregroundColor: color,
+			.paragraphStyle: paragraph,
+		])
+		let size = label.size()
+		let limit = max(0, rect.maxX - padding - closeSize - Theme.current.scaled(6) - x)
+		label.draw(in: NSRect(x: x, y: rect.midY - size.height / 2, width: limit, height: size.height))
+
+		if isActive || isHovered {
+			let close = NSRect(
+				x: rect.maxX - padding - closeSize,
+				y: rect.midY - closeSize / 2,
+				width: closeSize,
+				height: closeSize
+			)
+			let cross = NSBezierPath()
+			let inset = Theme.current.scaled(3)
+			cross.move(to: NSPoint(x: close.minX + inset, y: close.minY + inset))
+			cross.line(to: NSPoint(x: close.maxX - inset, y: close.maxY - inset))
+			cross.move(to: NSPoint(x: close.maxX - inset, y: close.minY + inset))
+			cross.line(to: NSPoint(x: close.minX + inset, y: close.maxY - inset))
+			cross.lineWidth = 1.2
+			cross.lineCapStyle = .round
+			Theme.current.sidebarText.setStroke()
+			cross.stroke()
+		}
+	}
+
+	private func drawPillStyle(item: PanelTabItem, in rect: NSRect, isActive: Bool, isHovered: Bool) {
 		// Beside the focused one when the pane is split: both are on screen,
 		// and a strip that marks only one of them makes the other look like it
 		// belongs to some other tab.
@@ -2070,13 +2220,8 @@ extension PanelTabStrip {
 			needsDisplay = true
 		}
 		guard let payload = TerminalTabDrag.payload(from: sender.draggingPasteboard) else { return false }
-
 		let point = convert(sender.draggingLocation, from: nil)
-		if payload.panelID == panelID {
-			onMove?(payload.index, insertionIndex(at: point))
-		} else {
-			onAdopt?(payload)
-		}
+		onDropTab?(payload, insertionIndex(at: point))
 		return true
 	}
 }
@@ -2176,7 +2321,10 @@ private final class ColumnSplitView: NSSplitView {
 @MainActor
 final class PanelColumn: NSView {
 	let strip = PanelTabStrip()
-	let content = PanelContentView()
+	let content = NSView()
+	/// Drawn over the pane rather than behind it: a terminal fills its column,
+	/// and a highlight under it is a highlight nobody sees.
+	let preview = PanelContentView()
 	let column: Int
 
 	private var stripHeight: NSLayoutConstraint!
@@ -2185,10 +2333,13 @@ final class PanelColumn: NSView {
 		self.column = column
 		super.init(frame: .zero)
 
-		for view in [strip, content] as [NSView] {
+		for view in [strip, content, preview] as [NSView] {
 			view.translatesAutoresizingMaskIntoConstraints = false
 			addSubview(view)
 		}
+		// Nothing to hit: it is a drawing, and the drop is decided from the
+		// pointer's own position.
+		preview.isHidden = true
 		stripHeight = strip.heightAnchor.constraint(equalToConstant: Theme.current.scaled(30))
 		NSLayoutConstraint.activate([
 			strip.topAnchor.constraint(equalTo: topAnchor),
@@ -2200,6 +2351,11 @@ final class PanelColumn: NSView {
 			content.leadingAnchor.constraint(equalTo: leadingAnchor),
 			content.trailingAnchor.constraint(equalTo: trailingAnchor),
 			content.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+			preview.topAnchor.constraint(equalTo: content.topAnchor),
+			preview.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+			preview.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+			preview.bottomAnchor.constraint(equalTo: content.bottomAnchor),
 		])
 	}
 
@@ -2210,6 +2366,23 @@ final class PanelColumn: NSView {
 	func applyThemeChange() {
 		stripHeight.constant = Theme.current.scaled(30)
 		strip.applyThemeChange()
+	}
+
+	/// Shows where a dropped tab would land, over the pane.
+	func showPreview(_ zone: TerminalTabDrag.Zone?) {
+		preview.isHidden = (zone == nil)
+		preview.previewZone(zone)
+		if zone != nil {
+			// Above whatever the pane put there since the last drag.
+			preview.removeFromSuperview()
+			addSubview(preview, positioned: .above, relativeTo: nil)
+			NSLayoutConstraint.activate([
+				preview.topAnchor.constraint(equalTo: content.topAnchor),
+				preview.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+				preview.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+				preview.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+			])
+		}
 	}
 
 	/// Puts a pane in, taking whatever was there out.
