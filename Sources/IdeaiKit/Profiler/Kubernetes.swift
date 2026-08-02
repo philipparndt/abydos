@@ -221,7 +221,9 @@ public enum Kubernetes {
 		public let stderr: String
 	}
 
-	static func run(
+	/// Runs kubectl. Public because putting a container into development mode
+	/// is a patch, and the app is where that decision is made.
+	public static func run(
 		_ arguments: [String],
 		context: String? = nil,
 		kubeconfig: String? = nil

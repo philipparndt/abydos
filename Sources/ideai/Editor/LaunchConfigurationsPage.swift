@@ -35,6 +35,9 @@ final class LaunchConfigurationsPage: NSView {
 	private var environmentView: NSTextView!
 	private var filesList: FileDropList!
 	private var clusterSection: NSView!
+	private var chartSection: NSView!
+	private var secretsBox: NSButton!
+	private var installBox: NSButton!
 	private var emptyLabel: NSTextField!
 	private var headerTitle: NSTextField!
 	private var scroll: NSScrollView!
@@ -278,6 +281,31 @@ final class LaunchConfigurationsPage: NSView {
 		])
 		form.addArrangedSubview(clusterSection)
 
+		// A project with a chart of its own runs that chart, and one container
+		// of it is put into development mode. Left empty, the development pod's
+		// own chart is used instead.
+		secretsBox = checkbox("The values files are encrypted (helm-secrets)")
+		installBox = checkbox("Install the chart when the release is not there")
+		chartSection = section(
+			"Chart",
+			caption: "The project's own chart: its values, its secrets, its neighbours.",
+			rows: [
+				field("Chart", key: "chart", monospaced: true, placeholder: "deploy/chart"),
+				field("Release", key: "release", monospaced: true, placeholder: "smarthome"),
+				field(
+					"Values files", key: "valueFiles", monospaced: true,
+					placeholder: "deploy/values.yaml, deploy/values-dev.yaml"
+				),
+				field(
+					"Container to replace", key: "container", monospaced: true,
+					placeholder: "app — the one this configuration runs"
+				),
+				secretsBox,
+				installBox,
+			]
+		)
+		form.addArrangedSubview(chartSection)
+
 		let hint = NSTextField(labelWithString: "${workspaceFolder} stands for the project directory.")
 		hint.font = Theme.current.uiFont(10.5)
 		hint.textColor = Theme.current.gitIgnored
@@ -407,6 +435,13 @@ final class LaunchConfigurationsPage: NSView {
 		return labelled(label, input)
 	}
 
+	private func checkbox(_ title: String) -> NSButton {
+		let box = NSButton(checkboxWithTitle: title, target: self, action: #selector(fieldChanged))
+		box.font = Theme.current.uiFont(11.5)
+		box.contentTintColor = Theme.current.sidebarText
+		return box
+	}
+
 	private func labelled(_ text: String, _ control: NSView) -> NSView {
 		let label = NSTextField(labelWithString: text)
 		label.font = Theme.current.uiFont(10.5)
@@ -462,7 +497,24 @@ final class LaunchConfigurationsPage: NSView {
 		filesList.files = settings.files
 		fillContexts(selecting: settings.context)
 
-		clusterSection.isHidden = configuration.kind != .devPod
+		let chart = configuration.helm
+		fields["chart"]?.stringValue = chart?.chart ?? ""
+		fields["release"]?.stringValue = chart?.release ?? ""
+		fields["valueFiles"]?.stringValue = (chart?.valueFiles ?? []).joined(separator: ", ")
+		fields["container"]?.stringValue = chart?.container ?? ""
+		secretsBox.state = (chart?.usesSecrets ?? false) ? .on : .off
+		installBox.state = (chart?.install ?? true) ? .on : .off
+
+		clusterSection.isHidden = !configuration.kind.runsInCluster
+		chartSection.isHidden = configuration.kind != .helmDevPod
+	}
+
+	/// A comma-separated field, as the list it stands for.
+	private func list(_ field: NSTextField?) -> [String] {
+		(field?.stringValue ?? "")
+			.split(separator: ",")
+			.map { $0.trimmingCharacters(in: .whitespaces) }
+			.filter { !$0.isEmpty }
 	}
 
 	private func fillContexts(selecting current: String) {
@@ -487,7 +539,19 @@ final class LaunchConfigurationsPage: NSView {
 		updated.workingDirectory = fields["cwd"]?.stringValue.trimmingCharacters(in: .whitespaces) ?? ""
 		updated.environment = EnvironmentLines.parse(environmentView.string)
 
-		if updated.kind == .devPod {
+		if updated.kind.runsInCluster {
+			if updated.kind == .helmDevPod {
+				updated.helm = LaunchConfiguration.HelmSettings(
+					chart: fields["chart"]?.stringValue.trimmingCharacters(in: .whitespaces) ?? "",
+					release: fields["release"]?.stringValue.trimmingCharacters(in: .whitespaces) ?? "",
+					valueFiles: list(fields["valueFiles"]),
+					usesSecrets: secretsBox.state == .on,
+					sets: original.helm?.sets ?? [],
+					container: fields["container"]?.stringValue.trimmingCharacters(in: .whitespaces) ?? "",
+					install: installBox.state == .on
+				)
+			}
+
 			let index = contextPopUp.indexOfSelectedItem - 1
 			updated.devPod = LaunchConfiguration.DevPodSettings(
 				context: contexts.indices.contains(index) ? contexts[index] : "",
@@ -530,7 +594,8 @@ final class LaunchConfigurationsPage: NSView {
 	@objc private func kindChanged(_ sender: Any?) {
 		guard let index = selected, configurations.indices.contains(index) else { return }
 		commit()
-		clusterSection.isHidden = configurations[index].kind != .devPod
+		clusterSection.isHidden = !configurations[index].kind.runsInCluster
+		chartSection.isHidden = configurations[index].kind != .helmDevPod
 	}
 
 	@objc private func addConfiguration() {

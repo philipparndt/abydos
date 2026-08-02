@@ -572,24 +572,131 @@ public extension LaunchConfiguration {
 		}
 	}
 
+	/// A project's own chart, and which container of it this replaces.
+	struct HelmSettings: Equatable, Sendable {
+		/// Where the chart is, relative to the project or absolute.
+		public var chart: String
+		/// The release name. A project's chart is somebody else's too, and the
+		/// release is what says whose copy this is.
+		public var release: String
+		/// Values files, in the order helm should read them — the stage's, then
+		/// whatever this developer overrides.
+		public var valueFiles: [String]
+		/// Whether the values are encrypted, and helm needs its secrets plugin.
+		public var usesSecrets: Bool
+		/// `--set` values, for the one or two things that are not worth a file.
+		public var sets: [String]
+		/// The container this configuration replaces with the supervisor. A pod
+		/// with an application and a web front end in it is two configurations,
+		/// one for each.
+		public var container: String
+		/// Whether the chart may be installed when the release is not there.
+		public var install: Bool
+
+		public init(
+			chart: String = "",
+			release: String = "",
+			valueFiles: [String] = [],
+			usesSecrets: Bool = false,
+			sets: [String] = [],
+			container: String = "",
+			install: Bool = true
+		) {
+			self.chart = chart
+			self.release = release
+			self.valueFiles = valueFiles
+			self.usesSecrets = usesSecrets
+			self.sets = sets
+			self.container = container
+			self.install = install
+		}
+
+		public var json: JSONValue {
+			var fields: [String: JSONValue] = [:]
+			if !chart.isEmpty { fields["chart"] = .string(chart) }
+			if !release.isEmpty { fields["release"] = .string(release) }
+			if !valueFiles.isEmpty { fields["values"] = .array(valueFiles.map(JSONValue.string)) }
+			if usesSecrets { fields["secrets"] = .bool(true) }
+			if !sets.isEmpty { fields["set"] = .array(sets.map(JSONValue.string)) }
+			if !container.isEmpty { fields["container"] = .string(container) }
+			if !install { fields["install"] = .bool(false) }
+			return .object(fields)
+		}
+
+		public init?(json: JSONValue) {
+			guard case let .object(fields) = json else { return nil }
+			func string(_ key: String) -> String {
+				guard case let .string(value)? = fields[key] else { return "" }
+				return value
+			}
+			func list(_ key: String) -> [String] {
+				guard case let .array(values)? = fields[key] else { return [] }
+				return values.compactMap { value in
+					guard case let .string(text) = value else { return nil }
+					return text
+				}
+			}
+			var install = true
+			if case let .bool(value)? = fields["install"] { install = value }
+			var secrets = false
+			if case let .bool(value)? = fields["secrets"] { secrets = value }
+
+			self.init(
+				chart: string("chart"),
+				release: string("release"),
+				valueFiles: list("values"),
+				usesSecrets: secrets,
+				sets: list("set"),
+				container: string("container"),
+				install: install
+			)
+		}
+	}
+
+	/// The project's own chart, when this configuration runs inside one.
+	var helm: HelmSettings? {
+		get {
+			guard let value = extras["ideai.helm"] else { return nil }
+			return HelmSettings(json: value)
+		}
+		set {
+			guard let newValue else {
+				extras.removeValue(forKey: "ideai.helm")
+				return
+			}
+			extras["ideai.helm"] = newValue.json
+		}
+	}
+
 	/// What kind of thing this configuration starts, in the terms the editor
 	/// offers rather than the ones the file uses.
 	enum Kind: String, CaseIterable, Sendable {
 		case go = "Go package"
 		case executable = "Executable"
-		case devPod = "Dev pod in a cluster"
+		case devPod = "In a cluster"
+		case helmDevPod = "In a cluster, with this project's chart"
+
+		/// Whether this runs somewhere else.
+		public var runsInCluster: Bool { self == .devPod || self == .helmDevPod }
 
 		public var explanation: String {
 			switch self {
 			case .go: return "Built and run here, with Delve for debugging."
 			case .executable: return "A binary that already exists, run with LLDB."
-			case .devPod: return "Built here, pushed into a pod, and debugged there."
+			case .devPod:
+				return "Built here, pushed into a development pod, and debugged there. "
+					+ "For a service with no chart of its own."
+			case .helmDevPod:
+				return "The project's chart is installed as it is, and one container of it "
+					+ "runs the build from this machine — same environment, same secrets, "
+					+ "same neighbours."
 			}
 		}
 	}
 
 	var kind: Kind {
 		get {
+			if helm != nil { return .helmDevPod }
 			if devPod != nil { return .devPod }
 			return type == "go" ? .go : .executable
 		}
@@ -598,12 +705,19 @@ public extension LaunchConfiguration {
 			case .go:
 				type = "go"
 				devPod = nil
+				helm = nil
 			case .executable:
 				type = "lldb"
 				devPod = nil
+				helm = nil
 			case .devPod:
 				type = "go"
 				if devPod == nil { devPod = DevPodSettings() }
+				helm = nil
+			case .helmDevPod:
+				type = "go"
+				if devPod == nil { devPod = DevPodSettings() }
+				if helm == nil { helm = HelmSettings() }
 			}
 		}
 	}

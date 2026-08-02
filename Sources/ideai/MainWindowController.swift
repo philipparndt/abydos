@@ -2612,6 +2612,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				clusterLog("cluster \(context ?? "current")"
 					+ (settings.namespace.isEmpty ? "" : ", namespace \(settings.namespace)"))
 
+				// A project with a chart of its own gets that chart, with one
+				// container of it put into development mode. Everything the
+				// chart gives that container — its environment, its secrets,
+				// what it sits beside — is what the program will find.
+				if let chart = configuration.helm {
+					try await prepareChart(
+						chart,
+						settings: settings,
+						context: context,
+						kubeconfig: kubeconfig,
+						root: root
+					)
+				}
+
 				let pods = await DevPods.list(
 					context: context,
 					namespace: settings.namespace.isEmpty ? nil : settings.namespace,
@@ -2622,10 +2636,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				// get a release named after them, and taking whichever pod is
 				// listed first means one project's binary lands in the other's
 				// pod — which looks, from the logs, like a stale build.
-				let release = DevPodInstall.releaseName(for: root)
+				// A chart of the project's own names its own release, and the
+				// pod is whichever one holds the patched container.
+				let release = configuration.helm?.release ?? DevPodInstall.releaseName(for: root)
 				var candidates = settings.pod.isEmpty
 					? pods.filter { $0.name.hasPrefix(release) }
 					: pods
+				if candidates.isEmpty, configuration.helm != nil {
+					throw DevPodClient.Failure.unreachable(
+						"The chart's pod did not come up. The launch log has what helm and the "
+							+ "cluster said about it."
+					)
+				}
 				if candidates.isEmpty {
 					// Nowhere to run this yet, so make somewhere: pressing run
 					// should not stop to say a chart is missing.
@@ -2649,7 +2671,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				// published. What the chart was installed with is compared
 				// against what this configuration asks for, and the release is
 				// upgraded when they have drifted apart.
-				if !candidates.isEmpty, settings.allowInstall {
+				if !candidates.isEmpty, settings.allowInstall, configuration.helm == nil {
 					let desired = DevPodFiles.helmValues(for: settings)
 					let release = DevPodInstall.releaseName(for: root)
 					let deployed = await DevPodInstall.deployedValues(
@@ -3013,6 +3035,106 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		} catch {
 			// Not a failure: plenty of programs serve nothing at all.
 			clusterLog("no forward to port \(port): \(error.localizedDescription)")
+		}
+	}
+
+	/// Installs the project's own chart, and puts one of its containers into
+	/// development mode.
+	///
+	/// Two steps, both of which somebody could do by hand and neither of which
+	/// anybody wants to: `helm upgrade` with this stage's values, and a patch
+	/// that swaps the named container's image and command for the supervisor.
+	/// The pod keeps everything else the chart gave it.
+	private func prepareChart(
+		_ chart: LaunchConfiguration.HelmSettings,
+		settings: LaunchConfiguration.DevPodSettings,
+		context: String?,
+		kubeconfig: String?,
+		root: URL
+	) async throws {
+		let namespace = settings.namespace.isEmpty ? "default" : settings.namespace
+
+		let present = await HelmRelease.exists(
+			release: chart.release, namespace: namespace, context: context, kubeconfig: kubeconfig
+		)
+		if !present || chart.install {
+			guard chart.install else {
+				throw HelmRelease.Failure(
+					"The release \(chart.release) is not installed in \(namespace), and this "
+						+ "configuration does not install it."
+				)
+			}
+			runControl?.setStatus("Installing \(chart.release)…", busy: true)
+			clusterLog("installing \(chart.release) from \(chart.chart)")
+			try await HelmRelease.upgrade(
+				chart,
+				root: root,
+				namespace: namespace,
+				context: context,
+				kubeconfig: kubeconfig,
+				progress: { line in Task { @MainActor in self.clusterLog(line) } }
+			)
+		}
+		try Task.checkCancellation()
+
+		// Which deployment holds the container this configuration is for. A pod
+		// with an application and a web front end in it is two configurations,
+		// and each replaces its own container.
+		let deployments = await HelmRelease.deployments(
+			release: chart.release, namespace: namespace, context: context, kubeconfig: kubeconfig
+		)
+		guard let deployment = HelmRelease.deployment(holding: chart.container, in: deployments) else {
+			throw HelmRelease.Failure(
+				"No deployment in \(chart.release) has a container called "
+					+ "\(chart.container.isEmpty ? "anything" : chart.container). "
+					+ "It has: " + deployments.map(\.name).joined(separator: ", ") + "."
+			)
+		}
+
+		let image = settings.image.isEmpty ? "pharndt/ideai-devpod:dev" : settings.image
+		let container = chart.container.isEmpty
+			? (deployments.first { $0.name == deployment }?.containers.first ?? "app")
+			: chart.container
+
+		runControl?.setStatus("Putting \(container) into development mode…", busy: true)
+		clusterLog("patching \(deployment)/\(container) to run the supervisor")
+
+		let patch = await Kubernetes.run(
+			[
+				"patch", "deployment", deployment, "--namespace", namespace,
+				"--type", "strategic",
+				// Under helm's name: the cluster records who owns each field,
+				// and a patch under a name of its own makes the next `helm
+				// upgrade` a conflict rather than an upgrade.
+				"--field-manager", "helm",
+				"-p", DevContainerPatch.json(container: container, image: image),
+			],
+			context: context,
+			kubeconfig: kubeconfig
+		)
+		guard patch.exitCode == 0 else {
+			throw HelmRelease.Failure(patch.stderr.isEmpty ? patch.stdout : patch.stderr)
+		}
+		clusterLog(patch.stdout.trimmingCharacters(in: .whitespacesAndNewlines))
+
+		// And wait for it, because the next thing that happens is a binary
+		// being pushed into a pod that has to exist first.
+		runControl?.setStatus("Waiting for \(deployment)…", busy: true)
+		let rollout = await Kubernetes.run(
+			[
+				"rollout", "status", "deployment/" + deployment,
+				"--namespace", namespace, "--timeout", "120s",
+			],
+			context: context,
+			kubeconfig: kubeconfig
+		)
+		clusterLog(rollout.stdout.trimmingCharacters(in: .whitespacesAndNewlines))
+		guard rollout.exitCode == 0 else {
+			throw HelmRelease.Failure(
+				(rollout.stderr.isEmpty ? rollout.stdout : rollout.stderr)
+					+ "\n\nThe container was patched but the pod did not come up. "
+					+ "`kubectl rollout undo deployment/\(deployment) -n \(namespace)` puts it back."
+			)
 		}
 	}
 

@@ -152,6 +152,45 @@ If the point is to take over an existing hostname rather than add one, leave
 this off and set `podLabels` to the real workload's selector labels: its
 Service — and therefore whatever already routes to it — sends traffic here.
 
+## A project with a chart of its own
+
+A real project usually has one: values files per stage, secrets through
+`helm-secrets`, an application and a web front end in one pod, a cache beside
+them. Reproducing that with the chart above would reproduce it badly — and the
+parts that would drift are exactly the parts that matter, like what the
+containers are given and what they can reach.
+
+So the project's chart is installed as it is, and then one container of it is
+swapped for the supervisor:
+
+```json
+{
+  "name": "app in the cluster",
+  "type": "go",
+  "program": "${workspaceFolder}/app",
+  "ideai.devPod": { "context": "${currentContext}", "namespace": "dev" },
+  "ideai.helm": {
+    "chart": "deploy/chart",
+    "release": "smarthome",
+    "values": ["deploy/values-dev.yaml"],
+    "secrets": true,
+    "container": "app"
+  }
+}
+```
+
+Same pod, same environment, same mounted secrets, same neighbours — with the
+binary from this machine running in it. A pod with two containers in it is two
+configurations, one naming `app` and one naming `web`, and each replaces its
+own; the other goes on running what the chart says.
+
+The patch is a strategic merge, so it merges into the container of that name
+rather than replacing the list. It takes the probes off — they test an
+application that has not arrived yet — and labels the pod the way the
+development pod chart labels its own, so one way of finding a pod finds both
+kinds. `kubectl rollout undo` puts the real container back, and so does running
+the chart again.
+
 ## Speed, measured
 
 On this machine against a local k3s cluster, for a small Go service:
