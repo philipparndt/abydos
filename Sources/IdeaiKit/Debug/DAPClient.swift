@@ -134,8 +134,9 @@ public final class DAPClient: @unchecked Sendable {
 		process.environment = childEnvironment
 
 		let output = Pipe()
+		let errors = Pipe()
 		process.standardOutput = output
-		process.standardError = Pipe()
+		process.standardError = errors
 		process.terminationHandler = { [weak self] _ in
 			guard let self else { return }
 			self.failAllPending(with: ClientError.notRunning)
@@ -151,14 +152,27 @@ public final class DAPClient: @unchecked Sendable {
 			timeout: timeout
 		)
 
-		// Keep draining after the port is found. The debuggee's own stdout comes
+		// Keep draining after the port is found. The debuggee's own output comes
 		// out here rather than as DAP output events, so leaving it unread both
 		// hides the program's output and risks filling the pipe.
+		//
+		// Both streams: Go's `log` writes to stderr, and so does anything that
+		// reports a problem — which made a running service look like a silent
+		// one with nothing in the console but Delve's own two lines.
 		output.fileHandleForReading.readabilityHandler = { [weak self] handle in
 			let data = handle.availableData
 			guard let self, !data.isEmpty else { return }
 			let text = String(decoding: data, as: UTF8.self)
 			self.callbackQueue.async { self.onOutput?("stdout", text) }
+		}
+		errors.fileHandleForReading.readabilityHandler = { [weak self] handle in
+			let data = handle.availableData
+			guard let self, !data.isEmpty else { return }
+			let text = String(decoding: data, as: UTF8.self)
+			// The one line worth hiding: Delve prints its own usage banner at
+			// every launch, which is not about the program being debugged.
+			guard !text.hasPrefix("DAP server listening at:") else { return }
+			self.callbackQueue.async { self.onOutput?("stderr", text) }
 		}
 
 		try await connect(host: endpoint.host, port: Int(endpoint.port))

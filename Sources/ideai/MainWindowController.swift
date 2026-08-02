@@ -2642,7 +2642,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	/// Writes a configuration for a project that has none, and says so.
 	private func createSuggestedConfiguration() -> LaunchConfiguration? {
-		guard let project, let suggestion = LaunchFile.suggestion(for: project.root) else { return nil }
+		guard project != nil, let suggestion = LaunchFile.suggestion(for: launchRoot) else { return nil }
 		do {
 			_ = try LaunchStore.save(suggestion, in: launchRoot)
 			notify(
@@ -3640,7 +3640,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			refreshRunControl()
 			notify(
 				"Added “\(configuration.name)”",
-				detail: Self.describe(configuration, root: project.root),
+				detail: Self.describe(configuration, root: launchRoot),
 				kind: .information
 			)
 		} catch {
@@ -3669,7 +3669,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	@objc private func openLaunchFile() {
 		guard let project else { return }
-		let file = LaunchFile.url(in: project.root)
+		let file = LaunchFile.url(in: launchRoot)
 		guard FileManager.default.fileExists(atPath: file.path) else {
 			notify("No launch.json yet", detail: "Press run once and one will be written.", kind: .information)
 			return
@@ -3679,7 +3679,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	@objc private func addConfiguration() {
 		guard let project else { return }
-		let suggestion = LaunchFile.suggestion(for: project.root)
+		let suggestion = LaunchFile.suggestion(for: launchRoot)
 			?? LaunchConfiguration(name: project.name, type: "lldb", program: "${workspaceFolder}")
 		presentConfigurationEditor(suggestion, isNew: true)
 	}
@@ -3794,9 +3794,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 		group.openPage(page, title: "Launch Configurations", identifier: "launch", symbol: "play.square")
 
+		// The part being worked on, not the repository around it: a subproject
+		// has its own configurations, and a page showing the ones belonging to
+		// somewhere else is a page showing nothing.
 		page.load(
-			LaunchStore.read(in: project.root),
-			root: project.root,
+			LaunchStore.read(in: launchRoot),
+			root: launchRoot,
 			selecting: name ?? selectedConfigurationName
 		)
 
