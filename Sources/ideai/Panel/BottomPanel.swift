@@ -147,10 +147,11 @@ final class BottomPanel: NSView {
 		tabStrip.onRename = { [weak self] index, name in self?.rename(index: index, to: name) }
 		tabStrip.panelID = panelID
 		tabStrip.setUpTabDropping()
+		// Anything in the panel can be moved: a profiler beside the terminal
+		// that produced the load is the arrangement somebody wants, and a
+		// debugger beside its program is another.
 		tabStrip.canDrag = { [weak self] index in
-			guard let self, self.sessions.indices.contains(index) else { return false }
-			if case .terminal = self.sessions[index].kind { return true }
-			return false
+			self?.sessions.indices.contains(index) ?? false
 		}
 		tabStrip.onMove = { [weak self] from, to in self?.move(from: from, to: to) }
 		tabStrip.onTearOff = { [weak self] index, point in self?.tearOff(index: index, at: point) }
@@ -161,6 +162,15 @@ final class BottomPanel: NSView {
 		tabStrip.onDragStarted = { [weak self] in self?.showDropTarget() }
 		tabStrip.onDragEnded = { [weak self] in self?.hideDropTarget() }
 		tabStrip.onDragMoved = { [weak self] point in self?.previewDrop(at: point) }
+		tabStrip.onSplit = { [weak self] index, zone in
+			guard let self else { return }
+			self.handleDrop(TerminalTabDrag.Payload(panelID: self.panelID, index: index), zone: zone)
+		}
+		tabStrip.onUnsplit = { [weak self] in
+			guard let self, let activeIndex = self.activeIndex else { return }
+			self.activate(index: activeIndex, focus: false)
+		}
+		tabStrip.isSplit = { [weak self] in (self?.columns.count ?? 0) > 1 }
 		tabStrip.onDragEndedAt = { [weak self] index, point in
 			self?.finishDrag(index: index, at: point)
 		}
@@ -877,16 +887,12 @@ final class BottomPanel: NSView {
 
 	private func showDropTarget() {
 		guard dropTarget == nil else { return }
+		// A sheet of glass that only draws. Where the drop lands is decided by
+		// the strip from the pointer's own position, because a destination view
+		// under a terminal is at the mercy of a hit test through whatever the
+		// program is drawing — which is why the preview appeared and the drop
+		// did nothing.
 		let overlay = PanelContentView()
-		overlay.onDrop = { [weak self] payload, zone in
-			self?.handleDrop(payload, zone: zone)
-			self?.hideDropTarget()
-		}
-		// From this panel, or from a terminal that was pulled out into a window
-		// of its own and is being brought back.
-		overlay.acceptsDrag = { payload in
-			payload.panelID == self.panelID || TerminalDragSources.source(for: payload.panelID) != nil
-		}
 
 		// Framed rather than constrained: the drag starts in the same breath as
 		// this call, and a view whose layout has not run yet is a view of zero
@@ -1114,6 +1120,11 @@ final class BottomPanel: NSView {
 		onTerminalsChanged?()
 	}
 
+	/// Puts the first tab beside whatever is showing, as the menu does.
+	func splitFirstBesideForTesting() {
+		handleDrop(TerminalTabDrag.Payload(panelID: panelID, index: 0), zone: .left)
+	}
+
 	/// Shows where a dropped tab would land, as the drag does. For the harness.
 	func previewDropForTesting() {
 		showDropTarget()
@@ -1201,7 +1212,7 @@ final class BottomPanel: NSView {
 				PanelTabItem(
 					title: session.displayTitle,
 					hasExited: session.hasExited,
-					canRename: { if case .terminal = session.kind { return true } else { return false } }(),
+					isTerminal: { if case .terminal = session.kind { return true } else { return false } }(),
 					isShowing: columns.contains { $0 === session }
 				)
 			},
@@ -1250,8 +1261,9 @@ final class BottomPanel: NSView {
 struct PanelTabItem {
 	let title: String
 	let hasExited: Bool
-	/// Only a terminal is named by the person using it.
-	var canRename = false
+	/// A terminal: the only kind somebody names, and the only kind that can go
+	/// off into a window of its own.
+	var isTerminal = false
 	/// On screen — which, when the pane is split, is more than one of them.
 	var isShowing = false
 }
@@ -1360,6 +1372,12 @@ final class PanelTabStrip: NSView {
 	var onAdopt: ((TerminalTabDrag.Payload) -> Void)?
 	/// Whether a tab from elsewhere is welcome here.
 	var acceptsForeign: ((TerminalTabDrag.Payload) -> Bool)?
+	/// Asked to put a tab beside what is showing, without a drag.
+	var onSplit: ((Int, TerminalTabDrag.Zone) -> Void)?
+	/// Asked to go back to one pane.
+	var onUnsplit: (() -> Void)?
+	/// Whether two panes are showing, so the menu can offer the way back.
+	var isSplit: (() -> Bool)?
 	/// Whether a tab may be dragged at all — a debugger cannot be.
 	var canDrag: ((Int) -> Bool)?
 	/// The panel this strip belongs to, so a drag is recognised as its own.
@@ -1552,7 +1570,7 @@ final class PanelTabStrip: NSView {
 		// Double-clicking a tab renames it, in place: the name is a label on a
 		// tab, and typing it anywhere else means finding the tab again after.
 		if event.clickCount == 2, let index = frames.firstIndex(where: { $0.contains(point) }),
-		   items.indices.contains(index), items[index].canRename {
+		   items.indices.contains(index), items[index].isTerminal {
 			beginRenaming(index)
 			return
 		}
@@ -1573,6 +1591,62 @@ final class PanelTabStrip: NSView {
 			pressedIndex = index
 			pressOrigin = point
 		}
+	}
+
+	override func rightMouseDown(with event: NSEvent) {
+		let point = convert(event.locationInWindow, from: nil)
+		guard let index = frames.firstIndex(where: { $0.contains(point) }),
+		      items.indices.contains(index)
+		else { return super.rightMouseDown(with: event) }
+
+		let menu = NSMenu()
+		func add(_ title: String, _ action: Selector) -> NSMenuItem {
+			let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+			item.target = self
+			item.representedObject = index
+			menu.addItem(item)
+			return item
+		}
+
+		if items[index].isTerminal { add("Rename\u{2026}", #selector(renameFromMenu(_:))) }
+		add("Put Beside, Left", #selector(splitLeftFromMenu(_:)))
+		add("Put Beside, Right", #selector(splitRightFromMenu(_:)))
+		if isSplit?() == true { add("Show One Only", #selector(unsplitFromMenu(_:))) }
+		menu.addItem(.separator())
+		// A window of its own is a terminal thing: a debugger belongs to the
+		// window whose program it is stopped in.
+		if items[index].isTerminal { add("Move to a Window", #selector(tearOffFromMenu(_:))) }
+		add("Close", #selector(closeFromMenu(_:)))
+
+		NSMenu.popUpContextMenu(menu, with: event, for: self)
+	}
+
+	@objc private func renameFromMenu(_ sender: NSMenuItem) {
+		guard let index = sender.representedObject as? Int else { return }
+		beginRenaming(index)
+	}
+
+	@objc private func splitLeftFromMenu(_ sender: NSMenuItem) {
+		guard let index = sender.representedObject as? Int else { return }
+		onSplit?(index, .left)
+	}
+
+	@objc private func splitRightFromMenu(_ sender: NSMenuItem) {
+		guard let index = sender.representedObject as? Int else { return }
+		onSplit?(index, .right)
+	}
+
+	@objc private func unsplitFromMenu(_ sender: NSMenuItem) { onUnsplit?() }
+
+	@objc private func tearOffFromMenu(_ sender: NSMenuItem) {
+		guard let index = sender.representedObject as? Int else { return }
+		let point = window?.frame.origin ?? .zero
+		onTearOff?(index, NSPoint(x: point.x - 60, y: point.y + (window?.frame.height ?? 0) - 80))
+	}
+
+	@objc private func closeFromMenu(_ sender: NSMenuItem) {
+		guard let index = sender.representedObject as? Int else { return }
+		onClose?(index)
 	}
 
 	override func mouseDragged(with event: NSEvent) {

@@ -2401,6 +2401,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		bottomPanel.splitForTesting()
 	}
 
+	/// Puts the profiler beside a terminal, as the tab menu does.
+	func splitPanesForTesting() {
+		setPanelVisible(true)
+		bottomPanel.newTerminal()
+		bottomPanel.showProfiler(address: Self.lastProfilerAddress)
+		bottomPanel.splitFirstBesideForTesting()
+	}
+
 	/// Shows the split preview a drag would show.
 	func previewTerminalDropForTesting() {
 		setPanelVisible(true)
