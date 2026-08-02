@@ -172,6 +172,10 @@ final class BranchPillButton: PillButton {
 	private static var horizontalPadding: CGFloat { Theme.current.scaled(7) }
 	private static var gap: CGFloat { Theme.current.scaled(6) }
 
+	/// Whether there is anything to show. The toolbar item is added and taken
+	/// away with it, since an item with nothing in it still draws a frame.
+	var hasBranch: Bool { branch != nil }
+
 	func setBranch(_ branch: String?) {
 		self.branch = branch
 		// A directory that is not a work tree has no branch to show, so the pill

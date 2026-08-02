@@ -590,6 +590,26 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	private func layoutTitlebarPills() {
 		projectPill?.invalidateIntrinsicContentSize()
 		branchPill?.invalidateIntrinsicContentSize()
+		updateBranchItemPresence()
+	}
+
+	/// Takes the branch item out of the toolbar when there is no branch.
+	///
+	/// Hiding its view is not enough: the toolbar still draws a background for
+	/// the item, and an item one point wide is a vertical line in the middle
+	/// of the titlebar that means nothing to anybody.
+	private func updateBranchItemPresence() {
+		guard let toolbar = window?.toolbar else { return }
+		let wanted = branchPill?.hasBranch == true
+		let index = toolbar.items.firstIndex { $0.itemIdentifier == Self.branchItem }
+
+		if wanted, index == nil {
+			// Straight after the project it belongs to.
+			let after = toolbar.items.firstIndex { $0.itemIdentifier == Self.projectItem }
+			toolbar.insertItem(withItemIdentifier: Self.branchItem, at: (after ?? -1) + 1)
+		} else if !wanted, let index {
+			toolbar.removeItem(at: index)
+		}
 	}
 
 	/// Pushes the measured titlebar height down to the navigator and editor.
@@ -2630,6 +2650,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			switch failure {
 			case .noToolchain: return "No Go toolchain was found"
 			case let .failed(output): return output
+			}
+		case let failure as DevPodInstall.Failure:
+			switch failure {
+			case .noHelm:
+				return "helm is not installed. The development pod is a chart, and helm is what installs it."
+			case .noChart:
+				return "The development pod's chart is missing from this build of ideai."
+			case let .failed(output):
+				return output.isEmpty ? "helm failed and said nothing." : output
 			}
 		case let failure as PortForward.Failure:
 			switch failure {

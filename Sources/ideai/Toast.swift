@@ -128,21 +128,11 @@ final class ToastPresenter {
 	/// The full story, in a dialog — which is fine, because by now it was asked
 	/// for.
 	private func present(_ toast: Toast) {
-		let alert = NSAlert()
-		alert.messageText = toast.title
-		alert.informativeText = toast.detail ?? ""
-		alert.alertStyle = toast.kind == .error ? .warning : .informational
-		if let detail = toast.detail, detail.count > 200 {
-			alert.addButton(withTitle: "OK")
-			alert.addButton(withTitle: "Copy")
-		}
-
-		let handle: (NSApplication.ModalResponse) -> Void = { response in
-			guard response == .alertSecondButtonReturn, let detail = toast.detail else { return }
-			NSPasteboard.general.clearContents()
-			NSPasteboard.general.setString("\(toast.title)\n\n\(detail)", forType: .string)
-		}
-		if let window { alert.beginSheetModal(for: window, completionHandler: handle) } else { handle(alert.runModal()) }
+		DetailDialog(
+			title: toast.title,
+			detail: toast.detail ?? "",
+			isError: toast.kind == .error
+		).show(over: window)
 	}
 }
 

@@ -71,6 +71,7 @@ final class DebugPane: NSView {
 	override var isFlipped: Bool { true }
 
 	private var console: TerminalPane!
+	private var clearButton: NSButton!
 	private var variablesScroll: NSScrollView!
 	private var rightSide: NSView!
 	private var sideTabs: NSSegmentedControl!
@@ -96,9 +97,14 @@ final class DebugPane: NSView {
 		sideTabs.setLabel("Console •", forSegment: 1)
 	}
 
+	@objc private func clearConsole() {
+		console.terminalView.clear()
+	}
+
 	@objc private func sideTabChanged() {
 		let showsConsole = sideTabs.selectedSegment == 1
 		console.isHidden = !showsConsole
+		clearButton.isHidden = !showsConsole
 		variablesScroll.isHidden = showsConsole
 		watchField.isHidden = showsConsole
 		if showsConsole {
@@ -237,6 +243,13 @@ final class DebugPane: NSView {
 		console.isHidden = true
 		rightSide.addSubview(console)
 
+		clearButton = NSButton(title: "", target: self, action: #selector(clearConsole))
+		clearButton.isBordered = false
+		clearButton.image = Theme.symbol("trash", size: 10 * Theme.current.scale, color: Theme.current.gitIgnored)
+		clearButton.imagePosition = .imageOnly
+		clearButton.toolTip = "Clear the console (⌘K)"
+		clearButton.isHidden = true
+
 		sideTabs = NSSegmentedControl(
 			labels: ["Variables", "Console"], trackingMode: .selectOne,
 			target: self, action: #selector(sideTabChanged)
@@ -245,8 +258,9 @@ final class DebugPane: NSView {
 		sideTabs.controlSize = .small
 		sideTabs.font = Theme.current.uiFont(10.5)
 		addSubview(sideTabs)
+		addSubview(clearButton)
 
-		for view in [console, variablesScroll, sideTabs, threadPopUp, watchField, stackScroll]
+		for view in [console, variablesScroll, sideTabs, clearButton, threadPopUp, watchField, stackScroll]
 			as [NSView] {
 			view.translatesAutoresizingMaskIntoConstraints = false
 		}
@@ -264,6 +278,14 @@ final class DebugPane: NSView {
 			// rather than to the row of stepping buttons.
 			sideTabs.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
 			sideTabs.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Theme.current.scaled(10)),
+
+			// Beside the tabs, and only while the console is the one showing.
+			clearButton.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
+			clearButton.trailingAnchor.constraint(
+				equalTo: sideTabs.leadingAnchor, constant: -Theme.current.scaled(8)
+			),
+			clearButton.widthAnchor.constraint(equalToConstant: Theme.current.scaled(18)),
+			clearButton.heightAnchor.constraint(equalToConstant: Theme.current.scaled(18)),
 
 			split.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
 			split.leadingAnchor.constraint(equalTo: leadingAnchor),

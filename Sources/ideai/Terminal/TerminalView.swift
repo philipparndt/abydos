@@ -1021,6 +1021,8 @@ final class TerminalView: NSView, NSTextInputClient {
 		enqueue(Data(text.utf8))
 	}
 
+	@objc func clearConsole(_ sender: Any?) { clear() }
+
 	/// Empties the screen and the scrollback, for a session starting again.
 	func clear() {
 		emulator.write("\u{1B}c")
@@ -1070,6 +1072,14 @@ final class TerminalView: NSView, NSTextInputClient {
 	}
 
 	override func keyDown(with event: NSEvent) {
+		// ⌘K clears, as it does in Terminal and every editor's console. A
+		// program is never sent it: nothing reads it, and every terminal on
+		// this platform takes it for this.
+		if event.modifierFlags.contains(.command),
+		   event.charactersIgnoringModifiers?.lowercased() == "k" {
+			clear()
+			return
+		}
 		guard let bytes = encode(event: event) else { return }
 		// Typing always jumps back to the prompt, as every terminal does.
 		isPinnedToBottom = true
@@ -1326,6 +1336,10 @@ final class TerminalView: NSView, NSTextInputClient {
 		menu.addItem(.separator())
 		menu.addItem(item("Select All", #selector(selectAll(_:))))
 		menu.addItem(item("Clear Selection", #selector(clearSelection), enabled: selection != nil))
+		menu.addItem(.separator())
+		// What ⌘K does in every other terminal, and the only thing to do with
+		// a console full of a run somebody has finished reading.
+		menu.addItem(item("Clear", #selector(clearConsole(_:))))
 		return menu
 	}
 
