@@ -80,6 +80,11 @@ public enum DevPodInstall {
 		}
 
 		let result = await run(helm, arguments, timeout: timeout + 30)
+		if ProcessInfo.processInfo.environment["IDEAI_HELM_DEBUG"] != nil {
+			FileHandle.standardError.write(Data(
+				"[helm] \(helm) \(arguments.joined(separator: " "))\n[helm] exit=\(result.exitCode) \(result.error)\n".utf8
+			))
+		}
 		guard result.exitCode == 0 else {
 			throw Failure.failed(
 				(result.error.isEmpty ? result.output : result.error)

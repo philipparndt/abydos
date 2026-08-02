@@ -2490,7 +2490,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				if candidates.isEmpty {
 					// Nowhere to run this yet, so make somewhere: pressing run
 					// should not stop to say a chart is missing.
-					try await installDevPod(settings: settings, root: root)
+					guard settings.allowInstall else {
+						throw DevPodClient.Failure.unreachable(
+							"No development pod is running in "
+								+ "\(context ?? "the current context")"
+								+ (settings.namespace.isEmpty ? "" : "/\(settings.namespace)")
+								+ ", and this configuration does not install one."
+						)
+					}
+					try await installDevPod(settings: settings, context: context, root: root)
 					candidates = await DevPods.list(
 						context: context,
 						namespace: settings.namespace.isEmpty ? nil : settings.namespace,
@@ -2573,6 +2581,28 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 	}
 
+	/// The chart that travels with the app.
+	///
+	/// `Bundle.module` rather than `Bundle.main`: a resource declared by a
+	/// package target lands in a bundle of its own beside the executable, and
+	/// looking for it in the application bundle finds nothing — which is what
+	/// "the chart is missing from this build" was really saying.
+	static var bundledChart: URL? {
+		let candidates = [
+			Bundle.module.url(forResource: "devpod-chart", withExtension: nil),
+			Bundle.main.url(forResource: "devpod-chart", withExtension: nil),
+			// Running from the repository, where the source is the chart.
+			URL(fileURLWithPath: #filePath)
+				.deletingLastPathComponent()
+				.deletingLastPathComponent()
+				.deletingLastPathComponent()
+				.appendingPathComponent("DevPod/chart/ideai-devpod"),
+		]
+		return candidates.compactMap { $0 }.first {
+			FileManager.default.fileExists(atPath: $0.appendingPathComponent("Chart.yaml").path)
+		}
+	}
+
 	/// Puts a development pod in the cluster for this project.
 	///
 	/// One release per project, named after it: two projects sharing a pod
@@ -2580,13 +2610,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// in `helm list` when they wonder what this is.
 	private func installDevPod(
 		settings: LaunchConfiguration.DevPodSettings,
+		context: String?,
 		root: URL
 	) async throws {
-		guard let chart = Bundle.main.url(forResource: "devpod-chart", withExtension: nil)
-			?? Bundle.main.url(forResource: "devpod-chart", withExtension: nil, subdirectory: "Resources")
-		else {
-			throw DevPodInstall.Failure.noChart
-		}
+		guard let chart = Self.bundledChart else { throw DevPodInstall.Failure.noChart }
 
 		let release = DevPodInstall.releaseName(for: root)
 		let namespace = settings.namespace.isEmpty ? "ideai-dev" : settings.namespace
@@ -2596,7 +2623,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			chart: chart,
 			release: release,
 			namespace: namespace,
-			context: settings.context.isEmpty ? nil : settings.context,
+			// The resolved context, not what the configuration says: it may
+			// say `${currentContext}`, which is not the name of a cluster.
+			context: context,
 			kubeconfig: settings.kubeconfig.isEmpty ? nil : settings.kubeconfig
 		)
 		notify(

@@ -381,6 +381,12 @@ public extension LaunchConfiguration {
 		/// A kubeconfig other than the default, for a cluster that lives in a
 		/// file of its own.
 		public var kubeconfig: String
+		/// Whether a missing development pod may be installed.
+		///
+		/// True by default: this is a development cluster, the chart is small,
+		/// and stopping to say "install this first" helps nobody. A team that
+		/// installs its own with a pipeline turns it off.
+		public var allowInstall: Bool
 		/// Which contexts this may run on, as patterns: `*-local`, `k3c-*`.
 		///
 		/// The point is a configuration that is shared. Everybody's cluster is
@@ -394,13 +400,15 @@ public extension LaunchConfiguration {
 			namespace: String = "",
 			pod: String = "",
 			kubeconfig: String = "",
-			allowedContexts: String = ""
+			allowedContexts: String = "",
+			allowInstall: Bool = true
 		) {
 			self.context = context
 			self.namespace = namespace
 			self.pod = pod
 			self.kubeconfig = kubeconfig
 			self.allowedContexts = allowedContexts
+			self.allowInstall = allowInstall
 		}
 
 		/// What `context` means when it is not a name.
@@ -435,6 +443,9 @@ public extension LaunchConfiguration {
 			if !pod.isEmpty { fields["pod"] = .string(pod) }
 			if !kubeconfig.isEmpty { fields["kubeconfig"] = .string(kubeconfig) }
 			if !allowedContexts.isEmpty { fields["allowedContexts"] = .string(allowedContexts) }
+			// Written only when it is off: the default is what nearly every
+			// configuration wants, and a file full of defaults is noise.
+			if !allowInstall { fields["allowInstall"] = .bool(false) }
 			return .object(fields)
 		}
 
@@ -444,12 +455,16 @@ public extension LaunchConfiguration {
 				guard case let .string(value)? = fields[key] else { return "" }
 				return value
 			}
+			var allowInstall = true
+			if case let .bool(value)? = fields["allowInstall"] { allowInstall = value }
+
 			self.init(
 				context: string("context"),
 				namespace: string("namespace"),
 				pod: string("pod"),
 				kubeconfig: string("kubeconfig"),
-				allowedContexts: string("allowedContexts")
+				allowedContexts: string("allowedContexts"),
+				allowInstall: allowInstall
 			)
 		}
 
