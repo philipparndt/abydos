@@ -11,6 +11,11 @@ final class RunControl: NSView {
 	var onRun: (() -> Void)?
 	var onDebug: (() -> Void)?
 	var onStop: (() -> Void)?
+	/// The ways of starting that are wanted now and then rather than
+	/// constantly: profiling, and running with coverage. They live behind the
+	/// debug button's chevron so the strip stays two buttons wide.
+	var onProfile: (() -> Void)?
+	var onCoverage: (() -> Void)?
 	/// Asked to show the list of configurations, at a point in this view.
 	var onChooseConfiguration: ((NSPoint) -> Void)?
 
@@ -23,6 +28,8 @@ final class RunControl: NSView {
 	/// Rects of the things that can be pressed, worked out while drawing.
 	private var runRect: NSRect = .zero
 	private var debugRect: NSRect = .zero
+	/// The chevron on the debug button, which opens the other ways to start.
+	private var debugMenuRect: NSRect = .zero
 	private var schemeRect: NSRect = .zero
 	private var toolTips: [NSView.ToolTipTag: String] = [:]
 	/// Told when a run starts or ends, so the titlebar can take the colour.
@@ -58,7 +65,7 @@ final class RunControl: NSView {
 	private var contentWidth: CGFloat {
 		let button = Theme.current.scaled(26)
 		return Self.margin
-			+ button + Theme.current.scaled(4) + button
+			+ button + Theme.current.scaled(4) + button + Self.chevronWidth
 			+ Theme.current.scaled(10) + Theme.current.scaled(190)
 			+ Theme.current.scaled(10) + Self.statusWidth
 			+ Self.margin
@@ -134,8 +141,13 @@ final class RunControl: NSView {
 
 		runRect = NSRect(x: Self.margin, y: y, width: button, height: button)
 		debugRect = NSRect(x: runRect.maxX + Theme.current.scaled(4), y: y, width: button, height: button)
+		// Narrow, and part of the same shape: a chevron beside the ladybird
+		// reads as "and the other ways", not as a third button.
+		debugMenuRect = NSRect(
+			x: debugRect.maxX, y: y, width: Self.chevronWidth, height: button
+		)
 
-		let schemeStart = debugRect.maxX + Theme.current.scaled(10)
+		let schemeStart = debugMenuRect.maxX + Theme.current.scaled(10)
 		schemeRect = NSRect(
 			x: schemeStart,
 			y: (height - Theme.current.scaled(20)) / 2,
@@ -150,6 +162,7 @@ final class RunControl: NSView {
 		layoutParts()
 		toolTips[addToolTip(runRect, owner: self, userData: nil)] = isBusy ? "Stop" : "Run (⌃R)"
 		toolTips[addToolTip(debugRect, owner: self, userData: nil)] = "Debug (⌃D)"
+		toolTips[addToolTip(debugMenuRect, owner: self, userData: nil)] = "Profile, coverage…"
 		toolTips[addToolTip(schemeRect, owner: self, userData: nil)] = "Choose what to run"
 		if !status.isEmpty {
 			toolTips[addToolTip(statusRect, owner: self, userData: nil)] = status
@@ -169,12 +182,38 @@ final class RunControl: NSView {
 			setStatus("")
 		} else if runRect.contains(point) {
 			isBusy ? onStop?() : onRun?()
+		} else if debugMenuRect.contains(point) {
+			showStartMenu()
 		} else if debugRect.contains(point) {
 			onDebug?()
 		} else if schemeRect.contains(point) {
 			onChooseConfiguration?(NSPoint(x: schemeRect.minX, y: schemeRect.maxY))
 		}
 	}
+
+	private static var chevronWidth: CGFloat { Theme.current.scaled(14) }
+
+	/// The ways of starting that are not one of the two buttons.
+	private func showStartMenu() {
+		let menu = NSMenu()
+		menu.addItem(withTitle: "Debug", action: #selector(debugFromMenu), keyEquivalent: "")
+		menu.addItem(.separator())
+		menu.addItem(withTitle: "Profile", action: #selector(profileFromMenu), keyEquivalent: "")
+		menu.addItem(
+			withTitle: "Run with Coverage", action: #selector(coverageFromMenu), keyEquivalent: ""
+		)
+		for item in menu.items { item.target = self }
+
+		menu.popUp(
+			positioning: nil,
+			at: NSPoint(x: debugRect.minX, y: debugRect.maxY + Theme.current.scaled(4)),
+			in: self
+		)
+	}
+
+	@objc private func debugFromMenu() { onDebug?() }
+	@objc private func profileFromMenu() { onProfile?() }
+	@objc private func coverageFromMenu() { onCoverage?() }
 
 	// MARK: - Drawing
 
@@ -193,6 +232,17 @@ final class RunControl: NSView {
 			tint: isBusy ? .hex(0xE05252) : Theme.current.gitAdded
 		)
 		drawButton(in: debugRect, symbol: "ladybug.fill", tint: Theme.current.gitModified)
+		if let chevron = Theme.symbol(
+			"chevron.down", size: 7 * Theme.current.scale, color: Theme.current.gitIgnored
+		) {
+			let size = Theme.current.scaled(8)
+			chevron.drawFitted(in: NSRect(
+				x: debugMenuRect.midX - size / 2 - Theme.current.scaled(1),
+				y: debugMenuRect.midY - size / 2,
+				width: size,
+				height: size
+			))
+		}
 
 		// The scheme, in a well of its own so it reads as something to press.
 		let well = NSBezierPath(roundedRect: schemeRect, xRadius: 5, yRadius: 5)

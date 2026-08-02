@@ -2875,6 +2875,104 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		)
 	}
 
+	// MARK: - The other ways to start
+
+	/// Runs what is selected and puts the profiler in front of it.
+	///
+	/// The program has to be serving pprof for this to find anything, which for
+	/// a Go service usually means `net/http/pprof` on 6060 — the profiler says
+	/// so plainly when there is nothing there, which is the only useful thing
+	/// to say about a program that is not instrumented.
+	private func profileSelectedConfiguration() {
+		guard let configuration = selectedConfiguration else {
+			notify("Nothing to profile", detail: "Choose a configuration first.", kind: .information)
+			return
+		}
+
+		runSelectedConfiguration(debug: false)
+
+		// After it is up: a profiler pointed at a program that has not started
+		// listening yet finds nothing and says the wrong thing about why.
+		let isCluster = configuration.devPod != nil
+		Task { @MainActor in
+			try? await Task.sleep(nanoseconds: 2_500_000_000)
+			if isCluster {
+				await profileRunningPod(configuration)
+			} else {
+				setPanelVisible(true)
+				bottomPanel.showProfiler(address: Self.lastProfilerAddress)
+			}
+		}
+	}
+
+	/// The pod this configuration is running in, through a forward to its pprof
+	/// port.
+	private func profileRunningPod(_ configuration: LaunchConfiguration) async {
+		guard let settings = configuration.devPod, let root = project?.root else { return }
+
+		let current = settings.followsCurrentContext
+			? await Kubernetes.currentContext(kubeconfig: settings.kubeconfig)
+			: nil
+		guard case let .success(context) = settings.resolve(current: current) else { return }
+		let kubeconfig = settings.kubeconfig.isEmpty ? nil : settings.kubeconfig
+
+		let release = DevPodInstall.releaseName(for: root)
+		let pods = await DevPods.list(
+			context: context,
+			namespace: settings.namespace.isEmpty ? nil : settings.namespace,
+			kubeconfig: kubeconfig
+		).filter { $0.isRunning && $0.name.hasPrefix(release) }
+
+		guard let pod = pods.first else {
+			notify("Nothing to profile", detail: "No development pod is running there.")
+			return
+		}
+		do {
+			let forward = try await PortForward.start(
+				to: PodTarget(
+					namespace: pod.namespace, name: pod.name, phase: pod.phase,
+					containers: [], port: 6060, portSource: .containerPort
+				),
+				context: context,
+				remotePort: 6060,
+				kubeconfig: kubeconfig
+			)
+			devPodForwards.append(forward)
+			setPanelVisible(true)
+			bottomPanel.showProfiler(address: "localhost:\(forward.localPort)")
+			clusterLog("profiling through localhost:\(forward.localPort)")
+		} catch {
+			notify("Could not reach the pod's profiler", detail: error.localizedDescription)
+		}
+	}
+
+	/// Runs the tests with coverage, and reports what they covered.
+	///
+	/// The tests rather than the program: coverage is a property of a test run,
+	/// and a program run by hand covers whatever the person doing it happened
+	/// to touch.
+	private func runSelectedWithCoverage() {
+		guard let root = project?.root else { return }
+		guard FileManager.default.fileExists(atPath: root.appendingPathComponent("go.mod").path) else {
+			notify(
+				"Coverage is Go-only so far",
+				detail: "This project has no go.mod. Coverage for other languages is not built yet.",
+				kind: .information
+			)
+			return
+		}
+
+		let profile = root.appendingPathComponent(".ideai/coverage.out")
+		try? IdeaiFolder.create(in: root)
+		setPanelVisible(true)
+		bottomPanel.runCommand(
+			title: "coverage",
+			command: "go test ./... -coverprofile='\(profile.path)' -covermode=atomic"
+				+ " && echo && go tool cover -func='\(profile.path)' | tail -30",
+			directory: root
+		)
+	}
+
 	/// Makes what the program serves reachable from here.
 	///
 	/// A microservice is tested by talking to it, and a pod in a cluster is not
@@ -3987,6 +4085,8 @@ extension MainWindowController: NSToolbarDelegate {
 			control.onRun = { [weak self] in self?.runSelectedConfiguration(debug: false) }
 			control.onDebug = { [weak self] in self?.runSelectedConfiguration(debug: true) }
 			control.onStop = { [weak self] in self?.stopRunning() }
+			control.onProfile = { [weak self] in self?.profileSelectedConfiguration() }
+			control.onCoverage = { [weak self] in self?.runSelectedWithCoverage() }
 			control.onChooseConfiguration = { [weak self] point in
 				self?.showConfigurationMenu(at: point, in: control)
 			}
