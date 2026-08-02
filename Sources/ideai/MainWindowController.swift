@@ -2383,6 +2383,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	func pushChangesForTesting() { changesPane?.pushForTesting() }
 
+	/// Runs a tab's close command and prints what is left.
+	func closeTabsForTesting(_ command: String, at index: Int) {
+		guard let group = editor.activeGroup else { return }
+		group.closeTabsForTesting(command, at: index)
+		print("TABS: \(group.tabTitlesForTesting.joined(separator: ", "))")
+	}
+
 	/// Chooses a configuration by name, as the menu does.
 	func selectConfigurationForTesting(named name: String) {
 		selectedConfigurationName = name

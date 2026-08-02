@@ -7,7 +7,9 @@ import AppKit
 /// in-process, which exercises exactly the same drawing code the display uses.
 struct LaunchOptions {
 	var projectPath: String?
-	var filePath: String?
+	var filePath: String? { filePaths.first }
+	/// Files to open, in the order given: `--file` may be repeated.
+	var filePaths: [String] = []
 	var screenshotPath: String?
 	/// Seconds to wait before capturing, so async parse/git work settles.
 	var screenshotDelay: TimeInterval = 1.5
@@ -154,6 +156,8 @@ struct LaunchOptions {
 	var subproject: String?
 	/// Which settings section to show.
 	var settingsSection: String?
+	/// A tab close command to run: "others:1", "left:2", "right:0", "all:0".
+	var closeTabs: String?
 	/// Which launch configuration to select first.
 	var launchConfiguration: String?
 	/// Profile the selected configuration before capture.
@@ -197,7 +201,7 @@ struct LaunchOptions {
 
 			switch argument {
 			case "--open":       options.projectPath = next()
-			case "--file":       options.filePath = next()
+			case "--file":       if let path = next() { options.filePaths.append(path) }
 			case "--screenshot": options.screenshotPath = next()
 			case "--delay":      options.screenshotDelay = next().flatMap(Double.init) ?? 1.5
 			case "--expand":     options.expandNavigator = true
@@ -252,6 +256,7 @@ struct LaunchOptions {
 			case "--launch-debug":  options.launchDebug = true
 			case "--launch-profile": options.launchProfile = true
 			case "--launch-config": options.launchConfiguration = next()
+			case "--close-tabs": options.closeTabs = next()
 			case "--debug-console": options.debugConsole = true
 			case "--launch-menu":   options.launchMenu = true
 			case "--launch-editor": options.launchEditor = true

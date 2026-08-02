@@ -32,6 +32,14 @@ struct EditorTabItem {
 final class EditorTabBar: NSView {
 	var onSelect: ((Int) -> Void)?
 	var onClose: ((Int) -> Void)?
+	/// Closing several at once, from the tab's own menu.
+	var onCloseOthers: ((Int) -> Void)?
+	var onCloseLeft: ((Int) -> Void)?
+	var onCloseRight: ((Int) -> Void)?
+	var onCloseAll: (() -> Void)?
+	/// Asked to show a file in the Finder, or to copy its path.
+	var onRevealInFinder: ((Int) -> Void)?
+	var onCopyPath: ((Int) -> Void)?
 	/// Double-click promotes a preview tab to a permanent one.
 	var onPromote: ((Int) -> Void)?
 	/// The empty part of the strip was double-clicked: make a scratch.
@@ -250,6 +258,67 @@ final class EditorTabBar: NSView {
 	/// Index the pointer went down on, so a drag knows what it is carrying.
 	private var pressedIndex: Int?
 	private var pressOrigin: NSPoint = .zero
+
+	/// What a right-click on a tab offers.
+	///
+	/// The closes people reach for — this one, the others, the ones to either
+	/// side — plus the two things anybody wants from a tab that names a file.
+	override func rightMouseDown(with event: NSEvent) {
+		let point = convert(event.locationInWindow, from: nil)
+		guard let index = frames.firstIndex(where: { $0.contains(point) }), index < items.count
+		else { return super.rightMouseDown(with: event) }
+
+		let menu = NSMenu()
+		func add(_ title: String, _ action: Selector, enabled: Bool = true) {
+			let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+			item.target = self
+			item.representedObject = index
+			item.isEnabled = enabled
+			menu.addItem(item)
+		}
+
+		add("Close", #selector(closeFromMenu(_:)))
+		add("Close Others", #selector(closeOthersFromMenu(_:)), enabled: items.count > 1)
+		add("Close to the Left", #selector(closeLeftFromMenu(_:)), enabled: index > 0)
+		add(
+			"Close to the Right", #selector(closeRightFromMenu(_:)),
+			enabled: index < items.count - 1
+		)
+		add("Close All", #selector(closeAllFromMenu(_:)))
+		menu.addItem(.separator())
+		add("Copy Path", #selector(copyPathFromMenu(_:)))
+		add("Reveal in Finder", #selector(revealFromMenu(_:)))
+
+		NSMenu.popUpContextMenu(menu, with: event, for: self)
+	}
+
+	private func index(of sender: NSMenuItem) -> Int? { sender.representedObject as? Int }
+
+	@objc private func closeFromMenu(_ sender: NSMenuItem) {
+		if let index = index(of: sender) { onClose?(index) }
+	}
+
+	@objc private func closeOthersFromMenu(_ sender: NSMenuItem) {
+		if let index = index(of: sender) { onCloseOthers?(index) }
+	}
+
+	@objc private func closeLeftFromMenu(_ sender: NSMenuItem) {
+		if let index = index(of: sender) { onCloseLeft?(index) }
+	}
+
+	@objc private func closeRightFromMenu(_ sender: NSMenuItem) {
+		if let index = index(of: sender) { onCloseRight?(index) }
+	}
+
+	@objc private func closeAllFromMenu(_ sender: NSMenuItem) { onCloseAll?() }
+
+	@objc private func copyPathFromMenu(_ sender: NSMenuItem) {
+		if let index = index(of: sender) { onCopyPath?(index) }
+	}
+
+	@objc private func revealFromMenu(_ sender: NSMenuItem) {
+		if let index = index(of: sender) { onRevealInFinder?(index) }
+	}
 
 	override func mouseDown(with event: NSEvent) {
 		let point = convert(event.locationInWindow, from: nil)
@@ -591,7 +660,7 @@ extension EditorTabBar {
 	}
 }
 
-private extension Array {
+extension Array {
 	subscript(safe index: Int) -> Element? {
 		indices.contains(index) ? self[index] : nil
 	}

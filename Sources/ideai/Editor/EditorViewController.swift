@@ -164,6 +164,19 @@ final class EditorViewController: NSViewController {
 		tabBar = EditorTabBar()
 		tabBar.onSelect = { [weak self] index in self?.activate(index: index, focusEditor: true) }
 		tabBar.onClose = { [weak self] index in self?.closeTab(at: index) }
+		tabBar.onCloseOthers = { [weak self] index in self?.closeTabs(keeping: index) }
+		tabBar.onCloseLeft = { [weak self] index in self?.closeTabs(before: index) }
+		tabBar.onCloseRight = { [weak self] index in self?.closeTabs(after: index) }
+		tabBar.onCloseAll = { [weak self] in self?.closeAllTabs() }
+		tabBar.onCopyPath = { [weak self] index in
+			guard let url = self?.tabs[safe: index]?.url else { return }
+			NSPasteboard.general.clearContents()
+			NSPasteboard.general.setString(url.path, forType: .string)
+		}
+		tabBar.onRevealInFinder = { [weak self] index in
+			guard let url = self?.tabs[safe: index]?.url else { return }
+			NSWorkspace.shared.activateFileViewerSelecting([url])
+		}
 		tabBar.onPromote = { [weak self] index in self?.promoteToPermanent(index: index) }
 		tabBar.onNewScratch = { [weak self] in self?.newScratch() }
 		tabBar.groupID = groupID
@@ -1663,6 +1676,48 @@ final class EditorViewController: NSViewController {
 		   let index = tabs.firstIndex(where: { $0.url.path == activePath }) {
 			activate(index: index, focusEditor: false)
 		}
+	}
+
+	/// Closes the tabs on one side of a tab, or all but it.
+	///
+	/// Right to left, always: closing a tab shifts everything after it, and a
+	/// loop that walks forwards would skip every other one.
+	private func closeTabs(keeping index: Int) {
+		guard let kept = tabs[safe: index] else { return }
+		for position in tabs.indices.reversed() where tabs[position] !== kept {
+			closeTab(at: position)
+		}
+	}
+
+	private func closeTabs(before index: Int) {
+		guard let anchor = tabs[safe: index] else { return }
+		for position in (0..<index).reversed() where tabs.indices.contains(position) {
+			guard tabs[position] !== anchor else { continue }
+			closeTab(at: position)
+		}
+	}
+
+	private func closeTabs(after index: Int) {
+		guard tabs.indices.contains(index) else { return }
+		for position in tabs.indices.reversed() where position > index {
+			closeTab(at: position)
+		}
+	}
+
+	/// Runs what a tab's menu runs, for the capture harness.
+	func closeTabsForTesting(_ command: String, at index: Int) {
+		switch command {
+		case "others": closeTabs(keeping: index)
+		case "left": closeTabs(before: index)
+		case "right": closeTabs(after: index)
+		case "all": closeAllTabs()
+		default: closeTab(at: index)
+		}
+	}
+
+	/// What the tab bar shows, in order.
+	var tabTitlesForTesting: [String] {
+		tabs.map { $0.pageTitle ?? $0.url.lastPathComponent }
 	}
 
 	/// Closes every tab, for swapping one project's editors for another's.

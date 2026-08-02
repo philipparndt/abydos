@@ -37,8 +37,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			controller = windowControllers.first
 		}
 
-		if let filePath = options.filePath {
-			controller?.openFile(at: URL(fileURLWithPath: filePath))
+		for path in options.filePaths {
+			controller?.openFile(at: URL(fileURLWithPath: path))
 		}
 		if let previewPath = options.previewPath {
 			controller?.previewFile(at: URL(fileURLWithPath: previewPath))
@@ -258,6 +258,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 				      let url = Subprojects.resolve(path, in: root)
 				else { return }
 				controller.openSubproject(at: url)
+			}
+		}
+
+		if let command = options.closeTabs {
+			let parts = command.split(separator: ":")
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+				controller?.closeTabsForTesting(
+					String(parts.first ?? "close"), at: Int(parts.last ?? "0") ?? 0
+				)
 			}
 		}
 
