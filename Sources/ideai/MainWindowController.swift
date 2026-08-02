@@ -160,8 +160,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// themselves.
 	private var sidebarTopInset: CGFloat = 0
 	private var runControl: RunControl?
-	/// Where the last run's message is shown, in the middle of the titlebar.
-	private var runStatus: RunStatusView?
 	/// The terminal a launch configuration is running in, so the play button can
 	/// become a stop button that stops the right thing.
 	private weak var runningPane: TerminalPane?
@@ -3490,14 +3488,9 @@ extension MainWindowController: NSToolbarDelegate {
 	private static let projectItem = NSToolbarItem.Identifier("ideai.project")
 	private static let branchItem = NSToolbarItem.Identifier("ideai.branch")
 	private static let runItem = NSToolbarItem.Identifier("ideai.run")
-	private static let statusItem = NSToolbarItem.Identifier("ideai.runStatus")
 
 	func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-		[
-			Self.projectItem, Self.branchItem,
-			.flexibleSpace, Self.statusItem, .flexibleSpace,
-			Self.runItem,
-		]
+		[Self.projectItem, Self.branchItem, .flexibleSpace, Self.runItem]
 	}
 
 	func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -3532,22 +3525,6 @@ extension MainWindowController: NSToolbarDelegate {
 			item.visibilityPriority = .standard
 			return item
 
-		case Self.statusItem:
-			let item = NSToolbarItem(itemIdentifier: identifier)
-			let view = RunStatusView()
-			view.onClear = { [weak self] in self?.runControl?.setStatus("") }
-			runStatus = view
-			item.view = view
-			// Nothing worth putting in a menu: the message is already gone
-			// from view, and a menu item saying it would be a second place to
-			// dismiss.
-			item.menuFormRepresentation = NSMenuItem()
-			item.menuFormRepresentation?.isHidden = true
-			// A message is worth less than a button: it goes before anything
-			// somebody presses.
-			item.visibilityPriority = .low
-			return item
-
 		case Self.runItem:
 			let item = NSToolbarItem(itemIdentifier: identifier)
 			let control = RunControl()
@@ -3559,9 +3536,6 @@ extension MainWindowController: NSToolbarDelegate {
 			}
 			control.onBusyChanged = { [weak self] running in
 				self?.setTitlebarRunning(running)
-			}
-			control.onStatus = { [weak self] text, failed in
-				self?.runStatus?.setStatus(text, failed: failed)
 			}
 			runControl = control
 			item.view = control

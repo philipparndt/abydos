@@ -45,20 +45,51 @@ final class RunControl: NSView {
 		NSSize(width: contentWidth, height: Theme.current.scaled(30))
 	}
 
-	/// Everything drawn, plus a margin at each end.
+	/// Room kept for the message, whether or not there is one.
 	///
-	/// The message is not in here: it lives in the middle of the titlebar, so
-	/// that a run which starts saying more does not move the buttons.
+	/// Reserved rather than added: the alternative is a strip that grows when
+	/// a run finishes, which moves the button somebody was about to press. It
+	/// also keeps this to one thing in the titlebar rather than two — the
+	/// toolbar draws a background behind every item it is given, and two of
+	/// them for one control looked like two controls.
+	private static var statusWidth: CGFloat { Theme.current.scaled(230) }
+
+	/// Everything drawn, plus a margin at each end.
 	private var contentWidth: CGFloat {
 		let button = Theme.current.scaled(26)
 		return Self.margin
 			+ button + Theme.current.scaled(4) + button
 			+ Theme.current.scaled(10) + Theme.current.scaled(190)
+			+ Theme.current.scaled(10) + Self.statusWidth
 			+ Self.margin
 	}
 
-	/// Told what to say about the run, since it says it elsewhere.
-	var onStatus: ((String, Bool) -> Void)?
+	private var statusText: NSAttributedString {
+		NSAttributedString(string: status, attributes: [
+			.font: Theme.current.uiFont(11.5),
+			.foregroundColor: failed ? NSColor.hex(0xE05252) : Theme.current.gitIgnored,
+		])
+	}
+
+	/// Where the message is, and the cross that forgets it.
+	private var statusRect: NSRect {
+		NSRect(
+			x: schemeRect.maxX + Theme.current.scaled(10),
+			y: 0,
+			width: Self.statusWidth,
+			height: bounds.height
+		)
+	}
+
+	private var clearRect: NSRect {
+		let size = Theme.current.scaled(14)
+		return NSRect(
+			x: statusRect.maxX - size,
+			y: bounds.midY - size / 2,
+			width: size,
+			height: size
+		)
+	}
 
 	func setConfiguration(_ name: String?) {
 		guard name != configurationName else { return }
@@ -75,7 +106,6 @@ final class RunControl: NSView {
 		isBusy = busy
 		self.failed = failed
 		needsDisplay = true
-		onStatus?(text, failed)
 		// The run button is a stop button while busy, and says so.
 		if wasBusy != busy {
 			rebuildToolTips()
@@ -120,7 +150,9 @@ final class RunControl: NSView {
 		let point = convert(event.locationInWindow, from: nil)
 		layoutParts()
 
-		if runRect.contains(point) {
+		if !status.isEmpty, clearRect.insetBy(dx: -4, dy: -4).contains(point) {
+			setStatus("")
+		} else if runRect.contains(point) {
 			isBusy ? onStop?() : onRun?()
 		} else if debugRect.contains(point) {
 			onDebug?()
@@ -166,6 +198,8 @@ final class RunControl: NSView {
 			height: label.size().height
 		))
 
+		drawStatus()
+
 		if let chevron = Theme.symbol("chevron.down", size: 8 * Theme.current.scale, color: Theme.current.gitIgnored) {
 			let size = Theme.current.scaled(9)
 			chevron.drawFitted(in: NSRect(
@@ -176,6 +210,25 @@ final class RunControl: NSView {
 			))
 		}
 
+	}
+
+	/// The message, and a way to be rid of it.
+	private func drawStatus() {
+		guard !status.isEmpty else { return }
+		let text = statusText
+		let size = text.size()
+		let area = statusRect
+
+		text.draw(in: NSRect(
+			x: area.minX,
+			y: area.midY - size.height / 2,
+			width: max(0, area.width - Theme.current.scaled(18)),
+			height: size.height
+		))
+
+		Theme.symbol(
+			"xmark", size: 8 * Theme.current.scale, color: Theme.current.gitIgnored.withAlphaComponent(0.8)
+		)?.drawFitted(in: clearRect.insetBy(dx: Theme.current.scaled(3), dy: Theme.current.scaled(3)))
 	}
 
 	private func drawButton(in rect: NSRect, symbol: String, tint: NSColor) {
