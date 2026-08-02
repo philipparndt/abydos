@@ -369,6 +369,12 @@ public enum DevPodBuild {
 		/// Odin's linker cannot make a Linux binary on a Mac, but it will emit
 		/// the objects, and zig's linker will take them.
 		case odin(directory: String)
+		/// C and C++ go through zig, which cross-compiles both and is already
+		/// here for Odin's sake.
+		case clang(directory: String, isCPlusPlus: Bool)
+		/// Rust needs its own standard library for the target, which only
+		/// rustup can install.
+		case rust(directory: String)
 	}
 
 	/// Works out how to build a configuration for the cluster.
@@ -400,10 +406,61 @@ public enum DevPodBuild {
 		if manager.fileExists(atPath: root.appendingPathComponent("build.zig").path) {
 			return .zig(directory: root.path)
 		}
+		if manager.fileExists(atPath: root.appendingPathComponent("Cargo.toml").path) {
+			return .rust(directory: root.path)
+		}
 		if hasSource(withExtension: "odin", in: directory) || hasSource(withExtension: "odin", in: root) {
 			return .odin(directory: directory.path)
 		}
+		for (ext, isCPlusPlus) in [("cpp", true), ("cc", true), ("cxx", true), ("c", false)]
+		where hasSource(withExtension: ext, in: directory) || hasSource(withExtension: ext, in: root) {
+			let holder = hasSource(withExtension: ext, in: directory) ? directory : root
+			return .clang(directory: holder.path, isCPlusPlus: isCPlusPlus)
+		}
 		return nil
+	}
+
+	/// The sources a whole-directory build compiles.
+	///
+	/// Everything with that extension in the directory, and in a `src` beside
+	/// it: enough for a project small enough not to have a build of its own.
+	/// Anything larger says how in a make step.
+	public static func sources(withExtension ext: String, in directory: URL) -> [URL] {
+		let manager = FileManager.default
+		var found: [URL] = []
+		for place in [directory, directory.appendingPathComponent("src")] {
+			let entries = (try? manager.contentsOfDirectory(atPath: place.path)) ?? []
+			found += entries
+				.filter { ($0 as NSString).pathExtension == ext }
+				.map { place.appendingPathComponent($0) }
+		}
+		return found.sorted { $0.path < $1.path }
+	}
+
+	/// What zig is told, to compile a C or C++ project for the pod.
+	///
+	/// Pure, so what runs can be read and tested rather than found out by
+	/// running it. Unoptimised and with debug information, for the reason the
+	/// Go build is: a breakpoint has to land where it was put.
+	public static func clangArguments(
+		compiler: String,
+		sources: [String],
+		architecture: String,
+		output: String,
+		isCPlusPlus: Bool
+	) -> [String] {
+		var arguments = [compiler, isCPlusPlus ? "c++" : "cc"]
+		arguments += ["-target", "\(machine(architecture))-linux-musl"]
+		arguments += ["-g", "-O0"]
+		if isCPlusPlus { arguments.append("-std=c++20") }
+		arguments += sources
+		arguments += ["-o", output]
+		return arguments
+	}
+
+	/// The Rust target triple for an architecture.
+	public static func rustTriple(_ architecture: String) -> String {
+		"\(machine(architecture))-unknown-linux-musl"
 	}
 
 	private static func hasSource(withExtension ext: String, in directory: URL) -> Bool {
@@ -471,6 +528,21 @@ public enum DevPodBuild {
 			)
 		case let .odin(directory):
 			return try await buildOdin(
+				in: URL(fileURLWithPath: directory),
+				architecture: architecture,
+				output: output,
+				progress: progress
+			)
+		case let .clang(directory, isCPlusPlus):
+			return try await buildClang(
+				in: URL(fileURLWithPath: directory),
+				architecture: architecture,
+				output: output,
+				isCPlusPlus: isCPlusPlus,
+				progress: progress
+			)
+		case let .rust(directory):
+			return try await buildRust(
 				in: URL(fileURLWithPath: directory),
 				architecture: architecture,
 				output: output,
@@ -661,6 +733,132 @@ public enum DevPodBuild {
 			throw Failure.failed(linked.error.isEmpty ? linked.output : linked.error)
 		}
 		try? FileManager.default.removeItem(at: objects)
+		return output
+	}
+
+	/// C and C++, through zig — a cross compiler for both, already here for
+	/// Odin's sake.
+	private static func buildClang(
+		in directory: URL,
+		architecture: String,
+		output: URL,
+		isCPlusPlus: Bool,
+		progress: (@Sendable (String) -> Void)?
+	) async throws -> URL {
+		guard let zig = tool("zig") else {
+			throw Failure.unsupported(
+				"Building C for Linux on a Mac needs a cross compiler, and zig is the one "
+					+ "this uses:\n\n    brew install zig"
+			)
+		}
+
+		var files: [URL] = []
+		for ext in isCPlusPlus ? ["cpp", "cc", "cxx"] : ["c"] {
+			files += sources(withExtension: ext, in: directory)
+		}
+		guard !files.isEmpty else {
+			throw Failure.failed("No sources to compile in \(directory.path).")
+		}
+
+		let arguments = clangArguments(
+			compiler: zig,
+			sources: files.map(\.path),
+			architecture: architecture,
+			output: output.path,
+			isCPlusPlus: isCPlusPlus
+		)
+		progress?(
+			"$ zig \(isCPlusPlus ? "c++" : "cc") -target \(machine(architecture))-linux-musl "
+				+ "\(files.count) source\(files.count == 1 ? "" : "s")"
+		)
+
+		let result = await ShellEnvironment.run(
+			arguments.map(shellQuoted).joined(separator: " "),
+			in: directory
+		)
+		guard result.exitCode == 0 else {
+			throw Failure.failed(result.error.isEmpty ? result.output : result.error)
+		}
+		return output
+	}
+
+	/// Rust, which needs its standard library for the target.
+	///
+	/// Only rustup can put that there, so when it is missing this says which
+	/// command to run rather than failing with a page of linker errors.
+	private static func buildRust(
+		in directory: URL,
+		architecture: String,
+		output: URL,
+		progress: (@Sendable (String) -> Void)?
+	) async throws -> URL {
+		guard let cargo = tool("cargo") else {
+			throw Failure.unsupported("This looks like a Rust project, but `cargo` is not installed.")
+		}
+		let triple = rustTriple(architecture)
+
+		let installed = await ShellEnvironment.run("rustup target list --installed", in: directory)
+		guard installed.output.contains(triple) else {
+			throw Failure.unsupported(
+				"Rust needs its standard library for the target, and \(triple) is not "
+					+ "installed:\n\n    rustup target add \(triple)\n\n"
+					+ "zig links it, so nothing else is needed."
+			)
+		}
+		guard let zig = tool("zig") else {
+			throw Failure.unsupported(
+				"Linking Rust for Linux on a Mac needs zig's linker: brew install zig"
+			)
+		}
+
+		// cargo takes one word as the linker, so the target and the compiler go
+		// into a script it can run.
+		let wrapper = output.deletingLastPathComponent()
+			.appendingPathComponent("ideai-\(triple)-linker.sh")
+		// zig's own spelling, not cargo's: cargo says
+		// aarch64-unknown-linux-musl and zig says aarch64-linux-musl, and zig
+		// rejects the other one with "UnknownOperatingSystem".
+		try "#!/bin/sh\nexec \(zig) cc -target \(machine(architecture))-linux-musl \"$@\"\n"
+			.write(to: wrapper, atomically: true, encoding: .utf8)
+		try FileManager.default.setAttributes(
+			[.posixPermissions: 0o755], ofItemAtPath: wrapper.path
+		)
+
+		let variable = "CARGO_TARGET_"
+			+ triple.uppercased().replacingOccurrences(of: "-", with: "_") + "_LINKER"
+		progress?("$ cargo build --target \(triple)")
+
+		let result = await ShellEnvironment.run(
+			[shellQuoted(cargo), "build", "--target", triple].joined(separator: " "),
+			in: directory,
+			environment: [
+				variable: wrapper.path,
+				// Rust ships musl's startup files and so does zig, and the
+				// linker will not take both — "duplicate symbol: _start".
+				// zig's are the ones that match the linker doing the work.
+				"RUSTFLAGS": "-C link-self-contained=no",
+			]
+		)
+		guard result.exitCode == 0 else {
+			throw Failure.failed(result.error.isEmpty ? result.output : result.error)
+		}
+
+		// A regular file, not `build/` or `deps/`: a directory is executable as
+		// far as the file manager is concerned, and copying one where a binary
+		// should be produced a push that could not open its own file.
+		let binaries = directory.appendingPathComponent("target/\(triple)/debug")
+		let produced = ((try? FileManager.default.contentsOfDirectory(atPath: binaries.path)) ?? [])
+			.filter { !$0.hasPrefix(".") && !$0.contains(".") }
+			.map { binaries.appendingPathComponent($0) }
+			.filter { url in
+				(try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true
+					&& FileManager.default.isExecutableFile(atPath: url.path)
+			}
+		guard let binary = produced.first else {
+			throw Failure.failed("cargo built nothing runnable in \(binaries.path).")
+		}
+		try? FileManager.default.removeItem(at: output)
+		try FileManager.default.copyItem(at: binary, to: output)
 		return output
 	}
 

@@ -225,7 +225,15 @@ cross-compile. In order:
 | `go.mod` | `go build` for linux, static, with the flags a debugger needs |
 | `build.zig` | `zig build -Dtarget=<arch>-linux-musl` |
 | `.odin` sources | `odin build -build-mode:obj -target:linux_<arch>`, then `zig cc` to link — Odin's own linker cannot cross-link, zig's can |
+| `.c` sources | `zig cc -target <arch>-linux-musl` |
+| `.cpp` sources | `zig c++ -target <arch>-linux-musl` |
+| `Cargo.toml` | `cargo build --target <arch>-unknown-linux-musl`, linked by zig, with `-C link-self-contained=no` so only one musl start file is in play |
 | none of these | it says so, rather than running `go build` in a project with no Go in it |
+
+Four of the five go through zig, which is a cross compiler for C, C++ and its
+own language and a linker for the rest: `brew install zig` is the one thing
+worth having. Rust additionally needs `rustup target add <arch>-unknown-linux-musl`,
+and says so when it is missing rather than failing with a page of linker errors.
 
 ## Other languages
 
