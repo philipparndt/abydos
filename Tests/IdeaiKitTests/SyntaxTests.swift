@@ -11,7 +11,7 @@ struct SyntaxTests {
 	static let allLanguages = [
 		"swift", "rust", "typescript", "tsx", "javascript", "python", "go",
 		"json", "bash", "c", "cpp", "java", "html", "css", "yaml", "toml",
-		"markdown", "svelte", "openscad",
+		"markdown", "svelte", "openscad", "odin", "zig",
 	]
 
 	@Test(arguments: allLanguages)
@@ -62,6 +62,37 @@ struct SyntaxTests {
 		    }
 		}
 		woven_basket(45, 90);
+		"""),
+		// Shaped after real Odin: a package clause, an import, a struct, and a
+		// procedure with a for-loop in it.
+		("odin", """
+		package main
+
+		import "core:fmt"
+
+		Reading :: struct {
+			sensor:  string,
+			celsius: f64,
+		}
+
+		main :: proc() {
+			readings := []Reading{{"kitchen", 21.5}, {"garage", 9.0}}
+			for reading in readings {
+				fmt.printfln("%s is at %.1f C", reading.sensor, reading.celsius)
+			}
+		}
+		"""),
+		("zig", """
+		const std = @import("std");
+
+		fn fib(n: u64) u64 {
+			if (n < 2) return n;
+			return fib(n - 1) + fib(n - 2);
+		}
+
+		pub fn main() void {
+			std.debug.print("fib(10) = {d}\\n", .{fib(10)});
+		}
 		"""),
 	]
 

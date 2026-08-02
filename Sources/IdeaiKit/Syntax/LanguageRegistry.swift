@@ -17,6 +17,8 @@ import TreeSitterMarkdown
 import TreeSitterMarkdownInline
 import TreeSitterSvelte
 import TreeSitterOpenscad
+import TreeSitterOdin
+import TreeSitterZig
 
 // Vendored because their upstream manifests drop the external scanner; see
 // Package.swift and Scripts/vendor-grammars.sh.
@@ -77,6 +79,8 @@ public final class LanguageRegistry {
 		register(id: "markdown_inline", name: "Markdown (inline)", bundle: "TreeSitterMarkdown_TreeSitterMarkdownInline") { tree_sitter_markdown_inline() }
 		register(id: "svelte", name: "Svelte", bundle: "TreeSitterSvelte_TreeSitterSvelte") { tree_sitter_svelte() }
 		register(id: "openscad", name: "OpenSCAD", bundle: "TreeSitterOpenscad_TreeSitterOpenscad") { tree_sitter_openscad() }
+		register(id: "odin", name: "Odin", bundle: "TreeSitterOdin_TreeSitterOdin") { tree_sitter_odin() }
+		register(id: "zig", name: "Zig", bundle: "TreeSitterZig_TreeSitterZig") { tree_sitter_zig() }
 	}
 
 	private func register(
@@ -212,6 +216,8 @@ public final class LanguageRegistry {
 		"md": "markdown", "markdown": "markdown", "mdx": "markdown",
 		"svelte": "svelte",
 		"scad": "openscad",
+		"odin": "odin",
+		"zig": "zig", "zon": "zig",
 	]
 
 	static let filenameMap: [String: String] = [

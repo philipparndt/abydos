@@ -84,6 +84,10 @@ enum FileIcon {
 		case "c", "h":               return Spec(symbol: "chevron.left.forwardslash.chevron.right", color: .hex(0x6E9ECF))
 		case "cpp", "cc", "hpp", "cxx":
 			return Spec(symbol: "chevron.left.forwardslash.chevron.right", color: .hex(0x9B6FD0))
+		// Odin's own blue, and Zig's orange: a project of either is all one
+		// extension, so the icon is what tells the tree apart at a glance.
+		case "odin":                 return Spec(symbol: "chevron.left.forwardslash.chevron.right", color: .hex(0x3882D2))
+		case "zig", "zon":           return Spec(symbol: "chevron.left.forwardslash.chevron.right", color: .hex(0xF7A41D))
 		case "svelte":               return Spec(symbol: "flame.fill", color: .hex(0xFF3E00))
 		case "sh", "bash", "zsh":    return Spec(symbol: "terminal.fill", color: .hex(0x6AAB73))
 

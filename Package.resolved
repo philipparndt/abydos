@@ -1,5 +1,5 @@
 {
-  "originHash" : "d975e8e3d8fb8602acd4507a9f6153349ec3e6922ca074f1872080bbb1ca8c8e",
+  "originHash" : "9d27bd2e53a16593fa20b2dda5acb95b0754525a6716f87c1f322431c7b3ee29",
   "pins" : [
     {
       "identity" : "swift-argument-parser",
@@ -110,6 +110,15 @@
       }
     },
     {
+      "identity" : "tree-sitter-odin",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/amaanq/tree-sitter-odin",
+      "state" : {
+        "revision" : "e8adc739b78409a99f8c31313f0bb54cc538cf73",
+        "version" : "1.3.0"
+      }
+    },
+    {
       "identity" : "tree-sitter-openscad",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/openscad/tree-sitter-openscad",
@@ -161,6 +170,15 @@
       "state" : {
         "revision" : "f975a621f4e7f532fe322e13c4f79495e0a7b2e7",
         "version" : "0.23.2"
+      }
+    },
+    {
+      "identity" : "tree-sitter-zig",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/tree-sitter-grammars/tree-sitter-zig",
+      "state" : {
+        "revision" : "b670c8df85a1568f498aa5c8cae42f51a90473c0",
+        "version" : "1.1.2"
       }
     }
   ],

@@ -24,6 +24,8 @@ let grammars: [(pkg: String, url: String, version: Version, products: [String])]
 	// check as the vendored four, but harmlessly so: this grammar has no external
 	// scanner, so there is nothing for the broken check to drop.
 	("tree-sitter-openscad",   "https://github.com/openscad/tree-sitter-openscad",          "0.7.1",  ["TreeSitterOpenscad"]),
+	("tree-sitter-odin",       "https://github.com/amaanq/tree-sitter-odin",                "1.3.0",  ["TreeSitterOdin"]),
+	("tree-sitter-zig",        "https://github.com/tree-sitter-grammars/tree-sitter-zig",   "1.1.2",  ["TreeSitterZig"]),
 ]
 
 // These four are vendored instead of used as packages. Their manifests gate the
