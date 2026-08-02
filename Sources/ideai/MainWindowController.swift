@@ -1005,6 +1005,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	///
 	/// A menu full of commands that do nothing is worse than one that says so.
 	func validateMenuItem(_ item: NSMenuItem) -> Bool {
+		// A shortcut the terminal needs belongs to the terminal while somebody
+		// is typing in one. ⌃D ends a shell and answers k9s; ⌃R searches a
+		// shell's history; ⌃P and ⌃N walk it. A menu item that claims those
+		// swallows them before the program ever sees them — and a disabled item
+		// lets the keystroke carry on down to the view that wants it.
+		if bottomPanel.hasKeyboardFocus, Self.terminalShortcuts.contains(where: {
+			$0.key == item.keyEquivalent
+				&& item.keyEquivalentModifierMask.subtracting(.function) == $0.modifiers
+		}) {
+			return false
+		}
+
 		switch item.action {
 		case #selector(debugContinue(_:)), #selector(debugPause(_:)),
 		     #selector(debugStepOver(_:)), #selector(debugStepInto(_:)),
@@ -3668,7 +3680,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	}
 
 	@objc private func openLaunchFile() {
-		guard let project else { return }
+		guard project != nil else { return }
 		let file = LaunchFile.url(in: launchRoot)
 		guard FileManager.default.fileExists(atPath: file.path) else {
 			notify("No launch.json yet", detail: "Press run once and one will be written.", kind: .information)
@@ -3754,7 +3766,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// the code it runs, and a modal panel takes the project away for as long
 	/// as it is open.
 	func showLaunchConfigurations(selecting name: String? = nil) {
-		guard let project, let group = editor.activeGroup else { return }
+		guard project != nil, let group = editor.activeGroup else { return }
 
 		let page = (group.page(identifier: "launch") as? LaunchConfigurationsPage)
 			?? LaunchConfigurationsPage()
@@ -3833,6 +3845,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	}
 
 	var isTerminalFocused: Bool { bottomPanel.hasKeyboardFocus }
+
+	/// Keystrokes a terminal has a prior claim on.
+	///
+	/// Control and a letter is the shell's own alphabet: this app may borrow
+	/// one for a menu, but not while the keyboard is in a terminal.
+	private static let terminalShortcuts: [(key: String, modifiers: NSEvent.ModifierFlags)] = [
+		("a", [.control]), ("c", [.control]), ("d", [.control]), ("e", [.control]),
+		("k", [.control]), ("l", [.control]), ("n", [.control]), ("p", [.control]),
+		("r", [.control]), ("u", [.control]), ("w", [.control]), ("z", [.control]),
+	]
 	var terminalSessionCountForTesting: Int { bottomPanel.sessionCountForTesting }
 
 	// MARK: - Zoom

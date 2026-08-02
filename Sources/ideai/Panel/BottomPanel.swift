@@ -1827,12 +1827,11 @@ final class PanelTabStrip: NSView {
 		else { return super.rightMouseDown(with: event) }
 
 		let menu = NSMenu()
-		func add(_ title: String, _ action: Selector) -> NSMenuItem {
+		func add(_ title: String, _ action: Selector) {
 			let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
 			item.target = self
 			item.representedObject = index
 			menu.addItem(item)
-			return item
 		}
 
 		if items[index].isTerminal { add("Rename\u{2026}", #selector(renameFromMenu(_:))) }

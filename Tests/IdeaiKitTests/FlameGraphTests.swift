@@ -68,7 +68,7 @@ struct FlameGraphTests {
 	}
 
 	/// A recursive stack must not count its own time once per level.
-	@Test func countsRecursionOnce() {
+	@Test func countsRecursionOnce() throws {
 		var locations: [UInt64: PprofProfile.Location] = [:]
 		var functions: [UInt64: PprofProfile.Function] = [:]
 		for id in UInt64(1)...2 {
@@ -85,9 +85,9 @@ struct FlameGraphTests {
 		)
 
 		let graph = FlameGraph.build(from: profile)
-		let recurse = try? #require(graph.functions.first { $0.name == "recurse" })
-		#expect(recurse?.cumulative == 90)
-		#expect(recurse?.flat == 90)
+		let recurse = try #require(graph.functions.first { $0.name == "recurse" })
+		#expect(recurse.cumulative == 90)
+		#expect(recurse.flat == 90)
 		#expect(graph.total == 90)
 	}
 
