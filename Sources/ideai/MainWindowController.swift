@@ -182,6 +182,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	private var selectedConfigurationName: String?
 	private var projectPill: ProjectPillButton!
 	private var branchPill: BranchPillButton!
+	private var subprojectPill: SubprojectPillButton!
+	/// The branch as last read. The toolbar builds its items when it feels like
+	/// it, and in a small repository git answers first — so the pill has to be
+	/// able to catch up rather than only be told.
+	private var lastBranch: String?
 	private var titlebarContainer: NSView?
 	private var toolStripWidthConstraint: NSLayoutConstraint!
 
@@ -464,6 +469,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		navigator.onOpenTerminal = { [weak self] directory in
 			self?.openTerminal(in: directory)
 		}
+		navigator.onOpenSubproject = { [weak self] url in self?.openSubproject(at: url) }
+		navigator.onLeaveSubproject = { [weak self] in self?.leaveSubproject() }
 		navigator.onPreviewModel = { url in
 			MainWindowController.previewModel(at: url)
 		}
@@ -625,6 +632,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	private func layoutTitlebarPills() {
 		projectPill?.invalidateIntrinsicContentSize()
 		branchPill?.invalidateIntrinsicContentSize()
+		subprojectPill?.invalidateIntrinsicContentSize()
 		// The run strip measures itself from the theme's scale, so it has to be
 		// asked again — otherwise zooming the window leaves the one control
 		// that is always on screen at the old size.
@@ -678,15 +686,99 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	// MARK: - Loading
 
+	/// The part of the project being worked on, when it is not the whole of it.
+	///
+	/// A repository is often not one thing: `ideai-examples` holds eight
+	/// projects, a work checkout holds a service and its front end. The tree
+	/// stays whole, because that is how somebody navigates — but everything
+	/// scoped follows this: the launch configurations, the build's working
+	/// directory, the work tree git acts on, the root the language server is
+	/// given, and where a terminal opens.
+	private(set) var subprojectRoot: URL?
+
+	/// Where launch configurations are read from and written to.
+	///
+	/// The subproject when one is open: `ideai-examples` has eight sets of
+	/// configurations, one per project in it, and the run button must offer
+	/// the ones belonging to the part being worked on.
+	var launchRoot: URL { subprojectRoot ?? project?.root ?? URL(fileURLWithPath: ".") }
+
+	/// What scoped things work against.
+	var scopeRoot: URL? { subprojectRoot ?? project?.root }
+
+	/// Works on part of the project instead of the whole of it.
+	func openSubproject(at url: URL) {
+		guard let project else { return }
+		guard Subprojects.resolve(Subprojects.relativePath(url, to: project.root), in: project.root) != nil
+		else { return }
+		guard url.path != subprojectRoot?.path else { return }
+
+		subprojectRoot = url.standardizedFileURL
+		applyScope()
+	}
+
+	/// Back to the whole project.
+	func leaveSubproject() {
+		guard subprojectRoot != nil else { return }
+		subprojectRoot = nil
+		applyScope()
+	}
+
+	/// Remembers the branch and shows it, whenever the pill turns up.
+	private func setBranch(_ branch: String?) {
+		lastBranch = branch
+		branchPill?.setBranch(branch)
+	}
+
+	/// Points everything scoped at the current scope.
+	private func applyScope() {
+		guard let project, let scope = scopeRoot else { return }
+
+		// Set before anything reads it: a git load started for the whole project
+		// may still be in flight, and both must look in the same place.
+		project.scope = subprojectRoot
+
+		selectedConfigurationName = nil
+		refreshRunControl()
+		LanguageService.shared.warmUp(project: scope)
+		startWatchingRepository(at: scope)
+		bottomPanel.setWorkingDirectory(scope)
+
+		subprojectPill?.setSubproject(
+			subprojectRoot.map { Subprojects.relativePath($0, to: project.root) }
+		)
+		layoutTitlebarPills()
+		navigator.setSubproject(subprojectRoot)
+		rememberOpenEditors()
+
+		// Git is per work tree, and a subproject may be its own repository — a
+		// checkout of several is the case this exists for.
+		Task { @MainActor in
+			await project.loadGit()
+			let branch = await project.git?.currentBranch()
+			self.setBranch(branch)
+			self.layoutTitlebarPills()
+			self.navigator.refreshGitStatus()
+			// Changes and branches hold on to one repository, so a different
+			// work tree needs them built again.
+			if self.currentSidebarTool == .changes || self.currentSidebarTool == .branches {
+				self.install(tool: self.currentSidebarTool, force: true)
+			}
+			self.refreshRunConfigurations()
+		}
+	}
+
 	func load(project: Project, focusTree: Bool = true) {
 		self.project = project
+		subprojectRoot = nil
+		subprojectPill?.setSubproject(nil)
 		window?.title = project.name
 
 		projectPill?.configure(
 			name: project.name,
 			colorIndex: RecentProjects.shared.entries.first { $0.path == project.root.path }?.colorIndex
 		)
-		branchPill?.setBranch(nil)
+		setBranch(nil)
 		layoutTitlebarPills()
 
 		navigator.load(project: project)
@@ -710,8 +802,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// What was open here last time, from the folder beside the project —
 		// which is what makes opening it again feel like coming back rather
 		// than starting.
-		if !editor.hasOpenFiles, let remembered = SessionStore.read(in: project.root) {
-			editor.restore(remembered)
+		if let remembered = SessionStore.read(in: project.root) {
+			if !editor.hasOpenFiles { editor.restore(remembered) }
+			// Where the work was left off, which for a repository of several
+			// projects is as much a part of it as the open files.
+			if let path = remembered.subprojectPath,
+			   let url = Subprojects.resolve(path, in: project.root) {
+				subprojectRoot = url
+				applyScope()
+			}
 		}
 
 		// Scratches come back with the project. Only when the window is empty:
@@ -733,7 +832,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		Task { @MainActor in
 			await project.loadGit()
 			let branch = await project.git?.currentBranch()
-			self.branchPill?.setBranch(branch)
+			self.setBranch(branch)
 			// The branch pill only gets a width once it has a name to show.
 			self.layoutTitlebarPills()
 			self.navigator.refreshGitStatus()
@@ -977,7 +1076,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// Debugs a binary, choosing the adapter the way the menu item does.
 	func debugBinaryForTesting(_ path: String) {
 		guard let project else { return }
-		let adapter = DebugAdapters.adapter(forProgramAt: path, projectRoot: project.root)
+		let adapter = DebugAdapters.adapter(forProgramAt: path, projectRoot: scopeRoot ?? project.root)
 		guard let executable = DebugAdapters.executable(for: adapter) else {
 			print("BINARY: no \(adapter.command) installed")
 			return
@@ -1163,6 +1262,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			var session = editor.captureSession()
 			session.terminals = bottomPanel.captureTerminals()
 			session.isPanelVisible = isPanelVisible
+			session.subprojectPath = subprojectRoot.map { Subprojects.relativePath($0, to: current) }
 			sessions.store(session, for: current)
 			// And beside the project, so tomorrow's window opens on today's
 			// files: what was open is a property of the project, not of the
@@ -1206,6 +1306,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		var session = editor.captureSession()
 		session.terminals = bottomPanel.captureTerminals()
 		session.isPanelVisible = isPanelVisible
+		session.subprojectPath = subprojectRoot.map { Subprojects.relativePath($0, to: root) }
 		try? SessionStore.write(session, in: root)
 	}
 
@@ -1456,7 +1557,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// The module need not be at the project root — a Go repository commonly
 		// keeps go.mod in a subdirectory — so the modules found by discovery
 		// decide where these commands run.
-		guard let moduleRoot = chooseModuleRoot(in: project.root) else { return }
+		guard let moduleRoot = chooseModuleRoot(in: scopeRoot ?? project.root) else { return }
 		guard let go = GoTooling.findGoExecutable() else {
 			presentGoError("Could not find the `go` executable. Install Go, or make sure it is in /opt/homebrew/bin or /usr/local/go/bin.")
 			return
@@ -2210,7 +2311,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// What the project defines, plus a suggestion when it defines nothing.
 	private var launchConfigurations: [LaunchConfiguration] {
 		guard let project else { return [] }
-		return LaunchStore.read(in: project.root)
+		return LaunchStore.read(in: launchRoot)
 	}
 
 	private var selectedConfiguration: LaunchConfiguration? {
@@ -2368,15 +2469,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			print("MAKE: no plan for \(goal)")
 			return
 		}
-		_ = try? LaunchStore.save(configuration, in: project.root)
+		_ = try? LaunchStore.save(configuration, in: launchRoot)
 		selectedConfigurationName = configuration.name
 		refreshRunControl()
 
 		print("MAKE CONFIG: \(configuration.json)")
 		if debug {
-			debugConfiguration(configuration, in: project.root)
+			debugConfiguration(configuration, in: launchRoot)
 		} else {
-			runConfiguration(configuration, in: project.root)
+			runConfiguration(configuration, in: launchRoot)
 		}
 	}
 
@@ -2496,9 +2597,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		refreshRunControl()
 
 		if debug {
-			debugConfiguration(configuration, in: project.root)
+			debugConfiguration(configuration, in: launchRoot)
 		} else {
-			runConfiguration(configuration, in: project.root)
+			runConfiguration(configuration, in: launchRoot)
 		}
 	}
 
@@ -2506,7 +2607,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	private func createSuggestedConfiguration() -> LaunchConfiguration? {
 		guard let project, let suggestion = LaunchFile.suggestion(for: project.root) else { return nil }
 		do {
-			_ = try LaunchStore.save(suggestion, in: project.root)
+			_ = try LaunchStore.save(suggestion, in: launchRoot)
 			notify(
 				"Created a launch configuration",
 				detail: "Written to .vscode/launch.json as “\(suggestion.name)”. Edit it from the run menu.",
@@ -3497,7 +3598,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		else { return }
 
 		do {
-			_ = try LaunchStore.save(configuration, in: project.root)
+			_ = try LaunchStore.save(configuration, in: launchRoot)
 			selectedConfigurationName = configuration.name
 			refreshRunControl()
 			notify(
@@ -3583,7 +3684,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			var stored = configuration
 			stored.name = free
 			do {
-				_ = try LaunchStore.save(stored, in: project.root)
+				_ = try LaunchStore.save(stored, in: launchRoot)
 			} catch {
 				notify("Could not write the configuration", detail: error.localizedDescription)
 				return
@@ -3625,12 +3726,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			do {
 				// Renaming replaces rather than duplicating.
 				if let previousName, previousName != updated.name {
-					_ = try LaunchStore.remove(named: previousName, in: project.root)
+					_ = try LaunchStore.remove(named: previousName, in: launchRoot)
 					if self.selectedConfigurationName == previousName {
 						self.selectedConfigurationName = updated.name
 					}
 				}
-				_ = try LaunchStore.save(updated, in: project.root)
+				_ = try LaunchStore.save(updated, in: launchRoot)
 				self.refreshRunControl()
 			} catch {
 				self.notify("Could not write the configuration", detail: error.localizedDescription)
@@ -3638,7 +3739,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 		page.onDelete = { [weak self] name in
 			guard let self else { return }
-			_ = try? LaunchStore.remove(named: name, in: project.root)
+			_ = try? LaunchStore.remove(named: name, in: launchRoot)
 			if self.selectedConfigurationName == name { self.selectedConfigurationName = nil }
 			self.refreshRunControl()
 		}
@@ -3770,14 +3871,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			view = navigator.view
 		case .changes:
 			guard let project, project.git != nil else { return }
-			let pane = ChangesPane(root: project.root)
+			let pane = ChangesPane(root: scopeRoot ?? project.root)
 			pane.onSelectChange = { [weak self] change in self?.showDiff(for: change) }
 			pane.onWorkingCopyChanged = { [weak self] in self?.navigator.refreshGitStatus() }
 			changesPane = pane
 			view = pane
 		case .branches:
 			guard let project, project.git != nil else { return }
-			let pane = BranchesPane(root: project.root)
+			let pane = BranchesPane(root: scopeRoot ?? project.root)
 			// A worktree is a project in its own right, so opening one is
 			// switching to it rather than checking anything out.
 			pane.onOpenWorktree = { [weak self] path in
@@ -3789,14 +3890,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				// The titlebar shows the branch, so a checkout has to reach it.
 				Task { @MainActor in
 					let branch = await self.project?.git?.currentBranch()
-					self.branchPill?.setBranch(branch)
+					self.setBranch(branch)
 					self.layoutTitlebarPills()
 				}
 			}
 			view = pane
 		case .history:
 			guard let project, project.git != nil else { return }
-			let pane = HistoryPane(root: project.root)
+			let pane = HistoryPane(root: scopeRoot ?? project.root)
 			pane.offerScope(path: relativePathOfActiveFile())
 			pane.onSelectFile = { [weak self] commit, file in
 				self?.showCommitDiff(commit: commit, file: file)
@@ -4229,10 +4330,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 extension MainWindowController: NSToolbarDelegate {
 	private static let projectItem = NSToolbarItem.Identifier("ideai.project")
 	private static let branchItem = NSToolbarItem.Identifier("ideai.branch")
+	private static let subprojectItem = NSToolbarItem.Identifier("ideai.subproject")
 	private static let runItem = NSToolbarItem.Identifier("ideai.run")
 
 	func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-		[Self.projectItem, Self.branchItem, .flexibleSpace, Self.runItem]
+		[Self.projectItem, Self.subprojectItem, Self.branchItem, .flexibleSpace, Self.runItem]
 	}
 
 	func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -4296,10 +4398,27 @@ extension MainWindowController: NSToolbarDelegate {
 			item.visibilityPriority = .high
 			return item
 
+		case Self.subprojectItem:
+			let item = NSToolbarItem(itemIdentifier: identifier)
+			let pill = SubprojectPillButton()
+			pill.onClick = { [weak self] in self?.showSubprojectMenu() }
+			pill.onLeave = { [weak self] in self?.leaveSubproject() }
+			pill.setSubproject(
+				subprojectRoot.flatMap { url in
+					project.map { Subprojects.relativePath(url, to: $0.root) }
+				}
+			)
+			subprojectPill = pill
+			item.view = pill
+			item.menuFormRepresentation = menuItem("Subproject", #selector(showSubprojectMenuItem(_:)))
+			item.visibilityPriority = .low
+			return item
+
 		case Self.branchItem:
 			let item = NSToolbarItem(itemIdentifier: identifier)
 			let pill = BranchPillButton()
 			pill.onClick = { [weak self] in self?.showBranchMenu() }
+			pill.setBranch(lastBranch)
 			branchPill = pill
 			item.view = pill
 			item.menuFormRepresentation = menuItem("Branch", #selector(showBranchMenuItem(_:)))
@@ -4319,6 +4438,49 @@ extension MainWindowController: NSToolbarDelegate {
 	}
 
 	@objc fileprivate func showBranchMenuItem(_ sender: Any?) { showBranchMenu() }
+
+	@objc fileprivate func showSubprojectMenuItem(_ sender: Any?) { showSubprojectMenu() }
+
+	/// The projects inside this one, so moving between them is a menu rather
+	/// than a hunt through the tree.
+	@objc func showSubprojectMenu() {
+		guard let project else { return }
+		let menu = NSMenu()
+
+		let whole = NSMenuItem(
+			title: project.name, action: #selector(leaveSubprojectFromMenu), keyEquivalent: ""
+		)
+		whole.target = self
+		whole.state = subprojectRoot == nil ? .on : .off
+		menu.addItem(whole)
+
+		let found = Subprojects.find(in: project.root)
+		if !found.isEmpty { menu.addItem(.separator()) }
+		for url in found {
+			let relative = Subprojects.relativePath(url, to: project.root)
+			let item = NSMenuItem(
+				title: relative, action: #selector(openSubprojectFromMenu(_:)), keyEquivalent: ""
+			)
+			item.target = self
+			item.representedObject = url
+			item.state = url.path == subprojectRoot?.path ? .on : .off
+			menu.addItem(item)
+		}
+
+		let anchor = subprojectPill ?? projectPill
+		menu.popUp(
+			positioning: nil,
+			at: NSPoint(x: 0, y: (anchor?.bounds.maxY ?? 0) + Theme.current.scaled(4)),
+			in: anchor
+		)
+	}
+
+	@objc private func openSubprojectFromMenu(_ sender: NSMenuItem) {
+		guard let url = sender.representedObject as? URL else { return }
+		openSubproject(at: url)
+	}
+
+	@objc private func leaveSubprojectFromMenu() { leaveSubproject() }
 
 	/// The run strip's commands, for when there is no room to draw it.
 	private func runOverflowMenu() -> NSMenu {

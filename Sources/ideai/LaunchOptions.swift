@@ -150,6 +150,8 @@ struct LaunchOptions {
 	var findQuery: String?
 	/// Query for project-wide search.
 	var searchQuery: String?
+	/// Open a folder inside the project as a subproject before capture.
+	var subproject: String?
 	/// Which settings section to show.
 	var settingsSection: String?
 	/// Which launch configuration to select first.
@@ -197,6 +199,7 @@ struct LaunchOptions {
 			case "--collapse":   options.collapseFolds = true
 			case "--preview":    options.previewPath = next()
 			case "--markdown":   options.markdownPreview = true
+			case "--subproject": options.subproject = next()
 			case "--settings-section": options.settingsSection = next()
 			case "--settings":   options.openSettings = true
 			case "--zoom":       options.zoom = next().flatMap(Double.init)

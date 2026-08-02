@@ -23,8 +23,22 @@ public final class Project {
 	}
 
 	/// Finds the enclosing git work tree and loads its status.
+	/// The part of the project being worked on, when it is not the whole of it.
+	///
+	/// Held here rather than passed in, so every refresh looks in the same
+	/// place: a load started for the whole project and one started for a
+	/// subproject can be in flight at once, and whichever finishes last must
+	/// not be the one that decides which repository this is.
+	public var scope: URL?
+
+	/// Finds the repository this project is in.
+	///
+	/// From the subproject when there is one, because a checkout of several
+	/// repositories is the case subprojects exist for: the work tree git acts
+	/// on is the one the part being worked on belongs to, which need not be the
+	/// one the tree is rooted in.
 	public func loadGit() async {
-		let repo = await GitRepository.discover(from: root)
+		let repo = await GitRepository.discover(from: scope ?? root)
 		await repo?.refresh()
 		git = repo
 	}

@@ -159,7 +159,8 @@ public enum SessionStore {
 			files: open,
 			activePath: object["active"] as? String,
 			terminals: terminals,
-			isPanelVisible: object["panel"] as? Bool ?? false
+			isPanelVisible: object["panel"] as? Bool ?? false,
+			subprojectPath: object["subproject"] as? String
 		)
 		return session.isEmpty ? nil : session
 	}
@@ -182,6 +183,7 @@ public enum SessionStore {
 		]
 		if let active = session.activePath { object["active"] = active }
 		if session.isPanelVisible { object["panel"] = true }
+		if let subproject = session.subprojectPath { object["subproject"] = subproject }
 		if !session.terminals.isEmpty {
 			object["terminals"] = session.terminals.map { terminal -> [String: Any] in
 				var entry: [String: Any] = ["name": terminal.name]

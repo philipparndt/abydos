@@ -9,6 +9,9 @@ final class ProjectNavigatorViewController: NSViewController {
 	var onSelectFile: ((URL, _ focusEditor: Bool) -> Void)?
 	/// Asked to open a terminal in the given directory.
 	var onOpenTerminal: ((URL) -> Void)?
+	/// Asked to work on part of the project, or on the whole of it again.
+	var onOpenSubproject: ((URL) -> Void)?
+	var onLeaveSubproject: (() -> Void)?
 	/// Asked to show a 3D model in the external viewer.
 	var onPreviewModel: ((URL) -> Void)?
 	/// Something under the project root changed on disk.
@@ -21,6 +24,9 @@ final class ProjectNavigatorViewController: NSViewController {
 
 	private var project: Project?
 	private var rootNode: FileNode?
+	/// The folder being worked on, marked in the tree so it is obvious which
+	/// part of a repository the run button belongs to.
+	private(set) var subprojectRoot: URL?
 	private var watcher: FileSystemWatcher?
 	private var outlineView: NSOutlineView!
 	private var headerTopConstraint: NSLayoutConstraint!
@@ -114,6 +120,14 @@ final class ProjectNavigatorViewController: NSViewController {
 	}
 
 	// MARK: - Loading
+
+	/// Marks a folder as the one being worked on.
+	func setSubproject(_ url: URL?) {
+		guard url?.path != subprojectRoot?.path else { return }
+		subprojectRoot = url
+		outlineView.reloadData()
+		if let url { reveal(url: url) }
+	}
 
 	func load(project: Project) {
 		self.project = project
@@ -407,6 +421,9 @@ final class ProjectNavigatorViewController: NSViewController {
 		// has been right-clicked, so it cannot be decided here.
 		menu.addItem(item("Preview in GoSTL", #selector(contextPreviewModel)))
 		menu.addItem(.separator())
+		menu.addItem(item("Open as Subproject", #selector(contextOpenSubproject)))
+		menu.addItem(item("Leave Subproject", #selector(contextLeaveSubproject)))
+		menu.addItem(.separator())
 		menu.addItem(item("Open Terminal Here", #selector(contextOpenTerminal)))
 		menu.addItem(item("Reveal in Finder", #selector(contextRevealInFinder)))
 		menu.addItem(.separator())
@@ -418,6 +435,15 @@ final class ProjectNavigatorViewController: NSViewController {
 		menu.addItem(item("Rename…", #selector(contextRename)))
 		menu.addItem(item("Move to Trash", #selector(contextTrash)))
 		return menu
+	}
+
+	@objc private func contextOpenSubproject() {
+		guard let node = contextNode, node.isDirectory else { return }
+		onOpenSubproject?(node.url)
+	}
+
+	@objc private func contextLeaveSubproject() {
+		onLeaveSubproject?()
 	}
 
 	/// The row the menu applies to: the right-clicked row, or the selection when
@@ -875,7 +901,8 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 			node: node,
 			isRoot: isRoot,
 			subtitle: isRoot ? project?.displayPath : nil,
-			isExpanded: outlineView.isItemExpanded(node)
+			isExpanded: outlineView.isItemExpanded(node),
+			isSubproject: node.url.path == subprojectRoot?.path
 		)
 		return cell
 	}
@@ -920,6 +947,12 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 			case #selector(contextPreviewModel):
 				item.isHidden = !(node.map { ModelPreview.canPreview($0.url) } ?? false)
 					|| !ModelPreview.isAvailable
+			case #selector(contextOpenSubproject):
+				// Only a folder, and not the one already being worked on.
+				let folder = node?.isDirectory == true && !isRoot
+				item.isHidden = !folder || node?.url.path == subprojectRoot?.path
+			case #selector(contextLeaveSubproject):
+				item.isHidden = subprojectRoot == nil
 			case #selector(contextRename), #selector(contextTrash):
 				item.isEnabled = node != nil && !isRoot
 			default:
@@ -1048,13 +1081,23 @@ private final class NavigatorCellView: NSTableCellView {
 	private var subtitle: String?
 	private var isExpanded = false
 
-	func configure(node: FileNode, isRoot: Bool, subtitle: String?, isExpanded: Bool) {
+	func configure(
+		node: FileNode,
+		isRoot: Bool,
+		subtitle: String?,
+		isExpanded: Bool,
+		isSubproject: Bool = false
+	) {
 		self.node = node
 		self.isRoot = isRoot
 		self.subtitle = subtitle
 		self.isExpanded = isExpanded
+		self.isSubproject = isSubproject
 		needsDisplay = true
 	}
+
+	/// The folder the run button, git and the language server are pointed at.
+	private var isSubproject = false
 
 	override var isFlipped: Bool { true }
 
@@ -1077,7 +1120,7 @@ private final class NavigatorCellView: NSTableCellView {
 		let nameColor: NSColor = isSelected
 			? .hex(0xE8EAED)
 			: (isRoot ? Theme.current.sidebarHeaderText : Theme.current.color(for: node.gitStatus))
-		let nameFont = isRoot
+		let nameFont = isRoot || isSubproject
 			? Theme.current.uiFont(13, weight: .bold)
 			: Theme.current.uiFont(13)
 
@@ -1101,6 +1144,20 @@ private final class NavigatorCellView: NSTableCellView {
 			height: nameSize.height
 		))
 		x += nameWidth + trailing
+
+		// A dot after the folder being worked on. Bold alone reads as "this is
+		// selected"; the mark says it is the one everything is pointed at.
+		if isSubproject {
+			let dot = NSBezierPath(ovalIn: NSRect(
+				x: x - trailing + Theme.current.scaled(2),
+				y: bounds.midY - Theme.current.scaled(2.5),
+				width: Theme.current.scaled(5),
+				height: Theme.current.scaled(5)
+			))
+			Theme.current.gitAdded.setFill()
+			dot.fill()
+			x += Theme.current.scaled(9)
+		}
 
 		if let subtitle {
 			let attributed = NSAttributedString(string: subtitle, attributes: [

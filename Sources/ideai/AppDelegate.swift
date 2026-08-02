@@ -237,6 +237,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let path = options.subproject, let controller {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+				guard let root = controller.project?.root,
+				      let url = Subprojects.resolve(path, in: root)
+				else { return }
+				controller.openSubproject(at: url)
+			}
+		}
+
 		if let name = options.launchConfiguration {
 			controller?.selectConfigurationForTesting(named: name)
 		}

@@ -46,20 +46,24 @@ public struct ProjectSession: Equatable, Sendable {
 	public var terminals: [OpenTerminal]
 	/// Whether the panel the terminals live in was showing.
 	public var isPanelVisible: Bool
+	/// Which part of the project was being worked on, relative to it.
+	public var subprojectPath: String?
 
 	public init(
 		files: [OpenFile] = [],
 		activePath: String? = nil,
 		terminals: [OpenTerminal] = [],
-		isPanelVisible: Bool = false
+		isPanelVisible: Bool = false,
+		subprojectPath: String? = nil
 	) {
 		self.files = files
 		self.activePath = activePath
 		self.terminals = terminals
 		self.isPanelVisible = isPanelVisible
+		self.subprojectPath = subprojectPath
 	}
 
-	public var isEmpty: Bool { files.isEmpty && terminals.isEmpty }
+	public var isEmpty: Bool { files.isEmpty && terminals.isEmpty && subprojectPath == nil }
 }
 
 /// What was open in each project, for as long as the app is running.
