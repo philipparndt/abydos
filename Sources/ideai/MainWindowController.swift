@@ -2486,7 +2486,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 					kubeconfig: kubeconfig
 				).filter { $0.isRunning }
 
-				var candidates = pods
+				// This project's own pod. Two projects sharing a namespace each
+				// get a release named after them, and taking whichever pod is
+				// listed first means one project's binary lands in the other's
+				// pod — which looks, from the logs, like a stale build.
+				let release = DevPodInstall.releaseName(for: root)
+				var candidates = settings.pod.isEmpty
+					? pods.filter { $0.name.hasPrefix(release) }
+					: pods
 				if candidates.isEmpty {
 					// Nowhere to run this yet, so make somewhere: pressing run
 					// should not stop to say a chart is missing.
@@ -2503,7 +2510,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 						context: context,
 						namespace: settings.namespace.isEmpty ? nil : settings.namespace,
 						kubeconfig: kubeconfig
-					).filter { $0.isRunning }
+					).filter { $0.isRunning && (settings.pod.isEmpty ? $0.name.hasPrefix(release) : true) }
 				}
 
 				guard let pod = candidates.first(where: { settings.pod.isEmpty || $0.name == settings.pod })
@@ -2548,7 +2555,34 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				devPodForwards.append(control)
 
 				let client = DevPodClient(localPort: control.localPort)
-				let status = try await client.push(binary: binary, mode: debug ? "debug" : "run")
+
+				// Whatever the program reads goes first, and before it starts:
+				// a service told where its configuration is cannot find it in
+				// a pod that has never seen the file, and "no such file" says
+				// nothing about the pod being empty.
+				let plan = DevPodFiles.plan(
+					files: settings.files,
+					arguments: configuration.expandedArguments(root: root),
+					root: root
+				)
+				for transfer in plan.transfers {
+					try await client.push(file: transfer.local, to: transfer.remote)
+				}
+				if !plan.transfers.isEmpty {
+					runControl?.setStatus(
+						"Sent \(plan.transfers.count) file\(plan.transfers.count == 1 ? "" : "s")…",
+						busy: true
+					)
+				}
+
+				let status = try await client.push(
+					binary: binary,
+					mode: debug ? "debug" : "run",
+					// In debug mode the editor says what to launch, so these
+					// would be said twice; in run mode the pod is on its own.
+					arguments: debug ? [] : plan.arguments,
+					environment: debug ? [:] : environment
+				)
 				guard status.architecture.isEmpty || status.architecture == architecture else {
 					throw DevPodClient.Failure.wrongArchitecture(
 						binary: architecture, pod: status.architecture
@@ -2558,7 +2592,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				if debug {
 					try await attachDebugger(
 						to: pod, context: context, kubeconfig: kubeconfig,
-						configuration: configuration, root: root, environment: environment
+						arguments: plan.arguments, environment: environment
 					)
 				} else {
 					// Busy: the program is up in the cluster until somebody
@@ -2640,8 +2674,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		to pod: DevPodTarget,
 		context: String?,
 		kubeconfig: String?,
-		configuration: LaunchConfiguration,
-		root: URL,
+		arguments: [String],
 		environment: [String: String]
 	) async throws {
 		let debugForward = try await PortForward.start(
@@ -2664,7 +2697,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				port: debugForward.localPort,
 				// The path inside the pod, which is where the supervisor put it.
 				program: "/app/current",
-				arguments: configuration.expandedArguments(root: root),
+				arguments: arguments,
 				workingDirectory: "/app",
 				environment: environment
 			),

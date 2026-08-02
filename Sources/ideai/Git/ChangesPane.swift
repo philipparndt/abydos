@@ -77,11 +77,23 @@ final class ChangesPane: NSView {
 		let unstagedScroll = makeScrollView(for: unstagedTable)
 		let stagedScroll = makeScrollView(for: stagedTable)
 
-		subjectField = NSTextField()
-		subjectField.placeholderString = "Commit subject"
-		subjectField.font = Theme.current.uiFont(12)
+		// The subject is where a commit starts, so it has to look like the
+		// field you type in first: the same dark ground and border as the body
+		// below it, and a little larger. Flat and grey it read as disabled, and
+		// people went to the body instead and left the subject empty.
+		subjectField = InsetTextField()
+		subjectField.placeholderString = "Summary"
+		subjectField.font = Theme.current.uiFont(12, weight: .medium)
 		subjectField.delegate = self
 		subjectField.focusRingType = .none
+		subjectField.isBordered = false
+		subjectField.drawsBackground = false
+		subjectField.textColor = Theme.current.sidebarText
+		subjectField.wantsLayer = true
+		subjectField.layer?.backgroundColor = Theme.current.editorBackground.cgColor
+		subjectField.layer?.borderColor = Theme.current.separator.cgColor
+		subjectField.layer?.borderWidth = 1
+		subjectField.layer?.cornerRadius = 3
 
 		bodyView = NSTextView()
 		bodyView.font = Theme.current.uiFont(12)
@@ -114,7 +126,9 @@ final class ChangesPane: NSView {
 		pushButton.controlSize = .small
 		pushButton.isEnabled = false
 
-		let commitRow = NSStackView(views: [amendCheckbox, NSView(), pushButton, commitButton])
+		// Commit then push: that is the order the two happen in, and reading the
+		// row left to right should not be backwards from doing it.
+		let commitRow = NSStackView(views: [amendCheckbox, NSView(), commitButton, pushButton])
 		commitRow.spacing = Theme.current.scaled(6)
 		commitRow.orientation = .horizontal
 		commitRow.distribution = .fill
@@ -147,6 +161,7 @@ final class ChangesPane: NSView {
 			// so neither can squeeze the other out.
 			unstagedScroll.heightAnchor.constraint(equalTo: stagedScroll.heightAnchor),
 			bodyScroll.heightAnchor.constraint(equalToConstant: Theme.current.scaled(70)),
+			subjectField.heightAnchor.constraint(equalToConstant: Theme.current.scaled(24)),
 		])
 
 		// Inset the message box from the edges without inseting the lists, which
@@ -687,5 +702,33 @@ private final class ChangeRowView: NSView {
 		case .untracked:       return Theme.current.gitUnversioned
 		case .conflicted:      return Theme.current.gitUnversioned
 		}
+	}
+}
+
+
+/// A text field with room around its text.
+///
+/// The commit subject draws its own background, and a field's text otherwise
+/// sits hard against the left edge of it.
+private final class InsetTextField: NSTextField {
+	override class var cellClass: AnyClass? {
+		get { InsetTextFieldCell.self }
+		set { super.cellClass = newValue }
+	}
+}
+
+private final class InsetTextFieldCell: NSTextFieldCell {
+	private func inset(_ rect: NSRect) -> NSRect { rect.insetBy(dx: 5, dy: 0) }
+
+	override func drawingRect(forBounds rect: NSRect) -> NSRect {
+		super.drawingRect(forBounds: inset(rect))
+	}
+
+	override func edit(withFrame rect: NSRect, in view: NSView, editor: NSText, delegate: Any?, event: NSEvent?) {
+		super.edit(withFrame: inset(rect), in: view, editor: editor, delegate: delegate, event: event)
+	}
+
+	override func select(withFrame rect: NSRect, in view: NSView, editor: NSText, delegate: Any?, start: Int, length: Int) {
+		super.select(withFrame: inset(rect), in: view, editor: editor, delegate: delegate, start: start, length: length)
 	}
 }

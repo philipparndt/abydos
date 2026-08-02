@@ -35,8 +35,21 @@ func main() {
 		entry     = flag.String("entrypoint", "/usr/local/bin/ideai-supervisor", "entrypoint")
 		envs      = flag.String("env", "", "comma-separated KEY=VALUE")
 		ports     = flag.String("ports", "7999/tcp,2345/tcp", "comma-separated exposed ports")
+		push      = flag.String("push", "", "registry reference to publish to, e.g. user/image:tag")
 	)
+	var layers variants
+	flag.Var(&layers, "layer", "arch=directory to publish (repeatable)")
 	flag.Parse()
+
+	// Publishing takes one rootfs per architecture and writes no tarball: what
+	// a remote cluster needs is something to pull, not a file on this machine.
+	if *push != "" {
+		if err := publish(*push, layers, *entry, split(*envs), split(*ports)); err != nil {
+			fmt.Fprintln(os.Stderr, "mkimage:", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	if *from == "" {
 		fmt.Fprintln(os.Stderr, "mkimage: -from is required")
@@ -48,6 +61,20 @@ func main() {
 	}
 	info, _ := os.Stat(*output)
 	fmt.Printf("%s → %s (%.1f MB)\n", *reference, *output, float64(info.Size())/(1<<20))
+}
+
+// variants collects the repeated -layer flags.
+type variants []variant
+
+func (v *variants) String() string { return fmt.Sprint([]variant(*v)) }
+
+func (v *variants) Set(value string) error {
+	arch, dir, found := strings.Cut(value, "=")
+	if !found {
+		return fmt.Errorf("want arch=directory, got %q", value)
+	}
+	*v = append(*v, variant{arch: arch, dir: dir})
+	return nil
 }
 
 func split(value string) []string {

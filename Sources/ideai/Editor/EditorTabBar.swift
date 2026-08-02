@@ -14,6 +14,12 @@ struct EditorTabItem {
 	var isPreview: Bool
 	/// Directory shown after the filename, relative to the project root.
 	var subtitle: String
+	/// A file from outside the project.
+	///
+	/// Marked, because nothing else about the tab says so: a file opened from
+	/// another checkout looks exactly like one from this one, and editing the
+	/// wrong copy is a mistake that takes a while to notice.
+	var isExternal = false
 }
 
 /// Horizontal strip of open-file tabs.
@@ -166,7 +172,8 @@ final class EditorTabBar: NSView {
 	private func measuredWidth(for item: EditorTabItem) -> CGFloat {
 		let name = item.title
 		let textWidth = (name as NSString).size(withAttributes: [.font: font(for: item)]).width
-		let raw = Self.horizontalPadding * 2 + Self.iconSize + Theme.current.scaled(6) + ceil(textWidth) + Theme.current.scaled(8) + Self.closeSize
+		let marker = item.isExternal ? Theme.current.scaled(14) : 0
+		let raw = Self.horizontalPadding * 2 + Self.iconSize + Theme.current.scaled(6) + ceil(textWidth) + marker + Theme.current.scaled(8) + Self.closeSize
 		return min(Self.maxTabWidth, max(Self.minTabWidth, raw))
 	}
 
@@ -453,12 +460,27 @@ final class EditorTabBar: NSView {
 			.foregroundColor: color,
 		])
 		let labelSize = label.size()
+		let marker = item.isExternal ? Theme.current.scaled(14) : 0
 		label.draw(in: NSRect(
 			x: x,
 			y: rect.midY - labelSize.height / 2,
-			width: max(0, labelLimit),
+			width: max(0, labelLimit - marker),
 			height: labelSize.height
 		))
+
+		// The mark for a file that is not in this project, in the colour the
+		// rest of the window uses for "look at this".
+		if item.isExternal {
+			let arrow = NSAttributedString(string: "↗", attributes: [
+				.font: Theme.current.uiFont(11, weight: .semibold),
+				.foregroundColor: Theme.current.gitModified.withAlphaComponent(isActive ? 0.95 : 0.7),
+			])
+			let size = arrow.size()
+			arrow.draw(at: NSPoint(
+				x: min(x + labelSize.width + Theme.current.scaled(4), rect.maxX - Self.horizontalPadding - Self.closeSize - marker),
+				y: rect.midY - size.height / 2
+			))
+		}
 
 		// The close control doubles as the unsaved marker: a dot until hovered.
 		let close = closeRect(for: rect)

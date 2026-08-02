@@ -186,3 +186,84 @@ struct DevPodContextTests {
 		#expect(try! settings.resolve(current: "mine-local").get() == "mine-local")
 	}
 }
+
+/// What travels into the pod beside the binary.
+struct DevPodFileTests {
+	private func project() throws -> URL {
+		let root = URL(fileURLWithPath: NSTemporaryDirectory())
+			.appendingPathComponent("files-\(UUID().uuidString)")
+		try FileManager.default.createDirectory(
+			at: root.appendingPathComponent("config"), withIntermediateDirectories: true
+		)
+		try "{}".write(
+			to: root.appendingPathComponent("config/config.json"), atomically: true, encoding: .utf8
+		)
+		return root
+	}
+
+	/// The usual shape: a service told where its configuration is. The path is
+	/// this machine's and means nothing in a pod, so the file goes too and the
+	/// argument is rewritten to where it lands.
+	@Test func sendsWhatTheArgumentsName() throws {
+		let root = try project()
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		let plan = DevPodFiles.plan(
+			files: [],
+			arguments: ["${workspaceFolder}/config/config.json"],
+			root: root
+		)
+		#expect(plan.transfers.count == 1)
+		#expect(plan.transfers.first?.remote == "/app/files/config.json")
+		#expect(plan.arguments == ["/app/files/config.json"])
+	}
+
+	@Test func sendsWhatTheConfigurationLists() throws {
+		let root = try project()
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		let plan = DevPodFiles.plan(
+			files: ["${workspaceFolder}/config/config.json:/etc/app/config.json"],
+			arguments: [],
+			root: root
+		)
+		#expect(plan.transfers.first?.remote == "/etc/app/config.json")
+	}
+
+	/// A file named in both places is sent once, and the argument follows what
+	/// the configuration said rather than the default.
+	@Test func sendsAFileOnce() throws {
+		let root = try project()
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		let plan = DevPodFiles.plan(
+			files: ["${workspaceFolder}/config/config.json:/etc/app/config.json"],
+			arguments: ["${workspaceFolder}/config/config.json"],
+			root: root
+		)
+		#expect(plan.transfers.count == 1)
+		#expect(plan.arguments == ["/etc/app/config.json"])
+	}
+
+	/// Arguments that are not files are left exactly as they were: a flag
+	/// rewritten into a path would be a fine way to ruin a launch.
+	@Test func leavesOrdinaryArgumentsAlone() throws {
+		let root = try project()
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		let plan = DevPodFiles.plan(
+			files: [],
+			arguments: ["--verbose", "8080", "/does/not/exist", "${workspaceFolder}"],
+			root: root
+		)
+		#expect(plan.transfers.isEmpty)
+		#expect(plan.arguments == ["--verbose", "8080", "/does/not/exist", "${workspaceFolder}"])
+	}
+
+	@Test func ignoresSomethingThatIsNotThere() throws {
+		let root = try project()
+		defer { try? FileManager.default.removeItem(at: root) }
+		#expect(DevPodFiles.plan(files: ["/nowhere/config.json"], arguments: [], root: root)
+			.transfers.isEmpty)
+	}
+}

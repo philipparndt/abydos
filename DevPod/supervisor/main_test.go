@@ -352,3 +352,83 @@ func TestStartingNothingSaysSo(t *testing.T) {
 		t.Fatalf("started a program that does not exist")
 	}
 }
+
+// A program that reads a config file needs the config file: a pod that only
+// ever received a binary makes it exit with "no such file".
+func TestReceivesAFile(t *testing.T) {
+	supervisor, path := newSupervisor(t)
+	directory := filepath.Dir(path)
+
+	target := filepath.Join(directory, "config", "config.json")
+	recorder := post(t, supervisor, "/file?path="+target, []byte(`{"port":8080}`), "")
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("push said %d: %s", recorder.Code, recorder.Body)
+	}
+
+	written, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("nothing written: %v", err)
+	}
+	if string(written) != `{"port":8080}` {
+		t.Fatalf("wrote %q", written)
+	}
+	// Read, not run.
+	info, _ := os.Stat(target)
+	if info.Mode()&0o111 != 0 {
+		t.Fatalf("a config file should not be executable: %v", info.Mode())
+	}
+}
+
+// The endpoint is reachable by anybody who can forward a port, so it writes
+// where the program lives and nowhere else.
+func TestRefusesToWriteOutsideTheWorkingDirectory(t *testing.T) {
+	supervisor, _ := newSupervisor(t)
+
+	for _, path := range []string{"/etc/passwd", "/usr/local/bin/dlv", "/"} {
+		recorder := post(t, supervisor, "/file?path="+path, []byte("no"), "")
+		if recorder.Code != http.StatusForbidden {
+			t.Fatalf("writing %s said %d, wanted a refusal", path, recorder.Code)
+		}
+	}
+}
+
+func TestNeedsToBeToldWhereAFileGoes(t *testing.T) {
+	supervisor, _ := newSupervisor(t)
+	if recorder := post(t, supervisor, "/file", []byte("x"), ""); recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected a complaint, got %d", recorder.Code)
+	}
+}
+
+// The chart's values are a default; the developer's arguments are what they
+// are working with, and they arrive with the binary.
+func TestPushCarriesArgumentsAndEnvironment(t *testing.T) {
+	content, err := os.ReadFile(buildFixture(t, `package main
+
+import (
+	"fmt"
+	"os"
+	"time"
+)
+
+func main() {
+	fmt.Println("args:", os.Args[1:], "who:", os.Getenv("WHO"))
+	time.Sleep(time.Minute)
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	supervisor, _ := newSupervisor(t)
+	defer supervisor.Stop()
+
+	post(t, supervisor, "/binary?arg=--config&arg=/app/files/config.json&env=WHO=the+push", content, "")
+	waitFor(t, "the program's own account of itself", func() bool {
+		for _, line := range supervisor.logs.tail(0) {
+			if line == "args: [--config /app/files/config.json] who: the push" {
+				return true
+			}
+		}
+		return false
+	})
+}

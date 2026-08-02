@@ -1385,7 +1385,8 @@ final class EditorViewController: NSViewController {
 				// says so — the same mark Sublime and Zed leave on one.
 				isDirty: tab.isDirty || scratch,
 				isPreview: tab.isPreview,
-				subtitle: tab.diffCommit ?? (tab.isDiff ? "diff" : (scratch ? "scratch" : relativeDirectory(for: tab.url)))
+				subtitle: tab.diffCommit ?? (tab.isDiff ? "diff" : (scratch ? "scratch" : relativeDirectory(for: tab.url))),
+				isExternal: !scratch && !tab.isDiff && isOutsideProject(tab.url)
 			)
 		}
 		tabBar.setItems(items, activeIndex: activeIndex)
@@ -1404,9 +1405,31 @@ final class EditorViewController: NSViewController {
 	}
 
 	private func relativeDirectory(for url: URL) -> String {
-		guard let root = project?.root, url.path.hasPrefix(root.path + "/") else { return "" }
-		let relative = String(url.path.dropFirst(root.path.count + 1))
+		guard let root = project?.root, !isOutsideProject(url) else { return outsideProject(url) }
+		let base = FilePath.canonical(root)
+		let path = FilePath.canonical(url)
+		let relative = String(path.dropFirst(base.count + 1))
 		return (relative as NSString).deletingLastPathComponent
+	}
+
+	/// Whether a file lives outside the project that is open.
+	func isOutsideProject(_ url: URL) -> Bool {
+		guard let root = project?.root else { return true }
+		return !FilePath.canonical(url).hasPrefix(FilePath.canonical(root) + "/")
+	}
+
+	/// A file that is not in the project, said so.
+	///
+	/// Without this it reads like a file at the project's root — same tab, same
+	/// blank subtitle — and editing the wrong copy of a file is a mistake that
+	/// takes a while to notice.
+	private func outsideProject(_ url: URL) -> String {
+		let directory = url.deletingLastPathComponent().path
+		let home = NSHomeDirectory()
+		let shown = directory.hasPrefix(home + "/") || directory == home
+			? "~" + directory.dropFirst(home.count)
+			: directory[...]
+		return "↗ " + shown
 	}
 
 	// MARK: - Closing

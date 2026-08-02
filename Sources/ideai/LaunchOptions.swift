@@ -154,6 +154,9 @@ struct LaunchOptions {
 	var wordWrap = false
 	/// Open the project switcher, optionally with a filter applied.
 	var switcherFilter: String?
+	/// Switch this window to another project before capture, the way the
+	/// switcher does.
+	var switchTo: String?
 	/// Split the editor before capture: "right" or "down".
 	var split: String?
 	/// Draw a tab drop preview before capture, without a real drag.
@@ -247,6 +250,7 @@ struct LaunchOptions {
 			case "--search":     options.searchQuery = next()
 			case "--wrap":       options.wordWrap = true
 			case "--switcher":   options.switcherFilter = next()
+			case "--switch-to":  options.switchTo = next()
 			case "--split":      options.split = next()
 			case "--dropzone":   options.dropZone = next()
 			default:

@@ -113,12 +113,21 @@ public actor DevPodClient {
 	public func push(
 		binary: URL,
 		mode: String,
+		arguments: [String] = [],
+		environment: [String: String] = [:],
 		compress: Bool = true
 	) async throws -> DevPodStatus {
 		let data = try Data(contentsOf: binary)
+
+		// The chart's values are the default; these are what the developer is
+		// working with, and the program has to be started with them.
+		var query = [URLQueryItem(name: "mode", value: mode)]
+		query += arguments.map { URLQueryItem(name: "arg", value: $0) }
+		query += environment.sorted { $0.key < $1.key }
+			.map { URLQueryItem(name: "env", value: "\($0.key)=\($0.value)") }
+
 		var request = URLRequest(
-			url: base.appendingPathComponent("binary")
-				.appending(queryItems: [URLQueryItem(name: "mode", value: mode)])
+			url: base.appendingPathComponent("binary").appending(queryItems: query)
 		)
 		request.httpMethod = "POST"
 		request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
@@ -138,6 +147,29 @@ public actor DevPodClient {
 			throw Failure.unreachable("the pod answered something unexpected")
 		}
 		return status
+	}
+
+	/// Sends something the program reads.
+	@discardableResult
+	public func push(file: URL, to path: String) async throws -> String {
+		let data = try Data(contentsOf: file)
+		var request = URLRequest(
+			url: base.appendingPathComponent("file")
+				.appending(queryItems: [URLQueryItem(name: "path", value: path)])
+		)
+		request.httpMethod = "POST"
+		if let packed = Gzip.compress(data) {
+			request.setValue("gzip", forHTTPHeaderField: "Content-Encoding")
+			request.httpBody = packed
+		} else {
+			request.httpBody = data
+		}
+
+		let (body, response) = try await send(request)
+		guard response.statusCode == 200 else {
+			throw Failure.refused(response.statusCode, String(decoding: body, as: UTF8.self))
+		}
+		return path
 	}
 
 	public func stop() async throws {
@@ -381,6 +413,12 @@ public extension LaunchConfiguration {
 		/// A kubeconfig other than the default, for a cluster that lives in a
 		/// file of its own.
 		public var kubeconfig: String
+		/// Files the program needs beside it, as `local` or `local:/in/the/pod`.
+		///
+		/// A service started with a path to its configuration cannot run in a
+		/// pod that has never seen that file, and the failure — "no such file"
+		/// — says nothing about the pod being empty.
+		public var files: [String]
 		/// Whether a missing development pod may be installed.
 		///
 		/// True by default: this is a development cluster, the chart is small,
@@ -401,7 +439,8 @@ public extension LaunchConfiguration {
 			pod: String = "",
 			kubeconfig: String = "",
 			allowedContexts: String = "",
-			allowInstall: Bool = true
+			allowInstall: Bool = true,
+			files: [String] = []
 		) {
 			self.context = context
 			self.namespace = namespace
@@ -409,6 +448,7 @@ public extension LaunchConfiguration {
 			self.kubeconfig = kubeconfig
 			self.allowedContexts = allowedContexts
 			self.allowInstall = allowInstall
+			self.files = files
 		}
 
 		/// What `context` means when it is not a name.
@@ -446,6 +486,7 @@ public extension LaunchConfiguration {
 			// Written only when it is off: the default is what nearly every
 			// configuration wants, and a file full of defaults is noise.
 			if !allowInstall { fields["allowInstall"] = .bool(false) }
+			if !files.isEmpty { fields["files"] = .array(files.map(JSONValue.string)) }
 			return .object(fields)
 		}
 
@@ -458,13 +499,22 @@ public extension LaunchConfiguration {
 			var allowInstall = true
 			if case let .bool(value)? = fields["allowInstall"] { allowInstall = value }
 
+			var files: [String] = []
+			if case let .array(values)? = fields["files"] {
+				files = values.compactMap { value in
+					guard case let .string(text) = value else { return nil }
+					return text
+				}
+			}
+
 			self.init(
 				context: string("context"),
 				namespace: string("namespace"),
 				pod: string("pod"),
 				kubeconfig: string("kubeconfig"),
 				allowedContexts: string("allowedContexts"),
-				allowInstall: allowInstall
+				allowInstall: allowInstall,
+				files: files
 			)
 		}
 
@@ -526,5 +576,78 @@ public extension LaunchConfiguration {
 				if devPod == nil { devPod = DevPodSettings() }
 			}
 		}
+	}
+}
+
+/// Working out what to send into a pod, and what the program should be told
+/// about where it landed.
+public enum DevPodFiles {
+	/// One file on its way in.
+	public struct Transfer: Equatable, Sendable {
+		public let local: URL
+		/// Where it lands in the pod.
+		public let remote: String
+
+		public init(local: URL, remote: String) {
+			self.local = local
+			self.remote = remote
+		}
+	}
+
+	/// The default place for something sent along: beside the program.
+	public static let directory = "/app/files"
+
+	/// What a configuration says to send, plus whatever its arguments name.
+	///
+    /// The arguments are read too because that is how a service is usually
+	/// told where its configuration is — `myservice /path/to/config.json` —
+	/// and a path that exists on this machine means nothing in a pod. Those
+	/// arguments are rewritten to where the file lands, so the program is told
+	/// the truth.
+	public static func plan(
+		files: [String],
+		arguments: [String],
+		root: URL
+	) -> (transfers: [Transfer], arguments: [String]) {
+		var transfers: [Transfer] = []
+		var seen: Set<String> = []
+
+		func add(_ local: URL, _ remote: String) {
+			guard seen.insert(local.path).inserted else { return }
+			transfers.append(Transfer(local: local, remote: remote))
+		}
+
+		for entry in files {
+			let expanded = LaunchConfiguration.expand(entry, root: root)
+			let parts = expanded.split(separator: ":", maxSplits: 1).map(String.init)
+			let localPath = parts[0]
+			let local = URL(fileURLWithPath: localPath)
+			guard FileManager.default.fileExists(atPath: local.path) else { continue }
+
+			let remote = parts.count > 1 ? parts[1] : directory + "/" + local.lastPathComponent
+			add(local, remote)
+		}
+
+		// An argument that names a file on this machine is a file the program
+		// will try to open in the pod.
+		var rewritten: [String] = []
+		for argument in arguments {
+			let expanded = LaunchConfiguration.expand(argument, root: root)
+			var isDirectory: ObjCBool = false
+			guard expanded.hasPrefix("/"),
+			      FileManager.default.fileExists(atPath: expanded, isDirectory: &isDirectory),
+			      !isDirectory.boolValue
+			else {
+				rewritten.append(argument)
+				continue
+			}
+
+			let local = URL(fileURLWithPath: expanded)
+			let remote = transfers.first { $0.local.path == local.path }?.remote
+				?? directory + "/" + local.lastPathComponent
+			add(local, remote)
+			rewritten.append(remote)
+		}
+		return (transfers, rewritten)
 	}
 }

@@ -37,6 +37,28 @@ proxy that is one fewer thing that has to be working.
 For a shared cluster, build `Dockerfile` instead and push it somewhere the
 cluster can pull from.
 
+## Publishing the image
+
+A remote cluster cannot be handed a tarball — it pulls — so for anything but a
+local cluster the image has to be in a registry:
+
+```sh
+make publish                                # pharndt/ideai-devpod:dev
+make publish VERSION=v1 PLATFORMS="amd64 arm64"
+```
+
+Both architectures in one image, and still no Docker: everything inside is a
+static binary, so each architecture is one layer of two files and publishing is
+a handful of blob uploads and an index. `mkimage -push` speaks the registry
+protocol itself. It logs in with what `docker login` left in the keychain, or
+with `DOCKER_USERNAME` and `DOCKER_PASSWORD`.
+
+A cluster that pulls rather than imports wants the chart pointed at it:
+
+```sh
+--set image.repository=pharndt/ideai-devpod --set image.tag=v1
+```
+
 ## Installing
 
 ```sh

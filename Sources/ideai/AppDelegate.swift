@@ -61,6 +61,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		// Simulated input runs after the initial parse lands, so folds and
 		// highlights exist by the time it is exercised.
+		if let path = options.switchTo {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+				self.open(projectAt: URL(fileURLWithPath: (path as NSString).expandingTildeInPath))
+			}
+		}
+
 		if let filter = options.switcherFilter {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
 				controller?.showProjectSwitcher(nil)
@@ -661,14 +667,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 		let reusable = source ?? windowControllers.first { !$0.isTornOff }
 		if !Settings.shared.opensProjectsInNewWindow,
 		   let target = reusable, !target.isTornOff {
-			target.load(project: Project(root: url))
+			// Through the switch rather than a bare load: the window keeps what
+			// each project had open, and leaving the last project's files in
+			// the tab bar is confusing — they are not this project's files.
+			target.switchProject(to: url)
 			target.showWindow(nil)
 			RecentProjects.shared.record(url: url)
 			return target
 		}
 
 		let controller = makeWindow()
-		controller.load(project: Project(root: url))
+		controller.switchProject(to: url)
 		controller.showWindow(nil)
 		RecentProjects.shared.record(url: url)
 		return controller

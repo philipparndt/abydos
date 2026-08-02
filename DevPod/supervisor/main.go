@@ -131,6 +131,20 @@ type Supervisor struct {
 	// Set while a push is replacing the binary, so a child that dies because
 	// we killed it is not reported as a crash.
 	replacing bool
+	// `KEY=VALUE` from the last push, on top of what the chart set.
+	extraEnvironment []string
+}
+
+func (s *Supervisor) setArguments(arguments []string) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.options.Args = arguments
+}
+
+func (s *Supervisor) setEnvironment(environment []string) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.extraEnvironment = environment
 }
 
 func (s *Supervisor) routes() http.Handler {
@@ -144,6 +158,7 @@ func (s *Supervisor) routes() http.Handler {
 	})
 	mux.HandleFunc("/status", s.handleStatus)
 	mux.HandleFunc("/binary", s.handleBinary)
+	mux.HandleFunc("/file", s.handleFile)
 	mux.HandleFunc("/start", s.handleStart)
 	mux.HandleFunc("/stop", s.handleStop)
 	mux.HandleFunc("/logs", s.handleLogs)
@@ -202,6 +217,17 @@ func (s *Supervisor) handleBinary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	mode := Mode(query(r, "mode", string(ModeRun)))
+	// What to run it with. The chart's values are the default, but a launch
+	// configuration knows the arguments the developer is actually working with
+	// — the config file they just sent, the flag they are testing — and those
+	// have to reach the program.
+	if arguments, ok := r.URL.Query()["arg"]; ok {
+		s.setArguments(arguments)
+	}
+	if environment, ok := r.URL.Query()["env"]; ok {
+		s.setEnvironment(environment)
+	}
+
 	body, err := decodeBody(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -233,6 +259,66 @@ func (s *Supervisor) handleBinary(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.handleStatus(w, r)
+}
+
+// handleFile receives something the program needs to read.
+//
+// A configuration file, a certificate, a fixture: the program under
+// development expects them beside it, and a pod that only ever received a
+// binary makes it exit with "no such file" — which is a poor way to learn that
+// a config was never sent.
+func (s *Supervisor) handleFile(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost && r.Method != http.MethodPut {
+		http.Error(w, "post a file", http.StatusMethodNotAllowed)
+		return
+	}
+
+	path := query(r, "path", "")
+	if path == "" {
+		http.Error(w, "say where with ?path=", http.StatusBadRequest)
+		return
+	}
+	// Under the working directory or /tmp, and nowhere else: this endpoint is
+	// reachable by anybody who can forward a port, and writing over the
+	// supervisor or a mounted secret is not something it should be able to do.
+	clean := filepath.Clean(path)
+	if !within(clean, s.options.WorkDir) && !within(clean, "/tmp") {
+		http.Error(w, "files go under "+s.options.WorkDir+" or /tmp", http.StatusForbidden)
+		return
+	}
+
+	body, err := decodeBody(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	defer body.Close()
+
+	if err := os.MkdirAll(filepath.Dir(clean), 0o777); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	written, err := writeAtomic(clean, body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// Not executable: what arrives here is read, and a config file with the
+	// execute bit on is a small lie about what it is.
+	if err := os.Chmod(clean, 0o644); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("received %s (%d bytes)", clean, written)
+	s.logs.add(fmt.Sprintf("[supervisor] received %s (%d bytes)", clean, written))
+	writeJSON(w, map[string]any{"path": clean, "size": written})
+}
+
+// within reports whether a path is inside a directory.
+func within(path, directory string) bool {
+	directory = filepath.Clean(directory)
+	return path == directory || strings.HasPrefix(path, directory+string(filepath.Separator))
 }
 
 func (s *Supervisor) handleStart(w http.ResponseWriter, r *http.Request) {
@@ -285,7 +371,7 @@ func (s *Supervisor) Start(mode Mode) error {
 		command = exec.Command(s.options.BinaryPath, s.options.Args...)
 	}
 	command.Dir = s.options.WorkDir
-	command.Env = os.Environ()
+	command.Env = append(os.Environ(), s.extraEnvironment...)
 
 	stdout, err := command.StdoutPipe()
 	if err != nil {

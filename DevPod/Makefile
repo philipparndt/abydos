@@ -12,9 +12,16 @@ OUT         := out
 ROOTFS      := $(OUT)/rootfs_$(ARCH)
 IMAGE       := $(OUT)/ideai-devpod-$(ARCH).tar
 
+REPOSITORY  ?= pharndt/ideai-devpod
+VERSION     ?= dev
+PLATFORMS   ?= amd64 arm64
+
 CLUSTER     ?= demo1
 NAMESPACE   ?= devpod
 RELEASE     ?= demo
+
+# What the supervisor needs to know, and where its parts are.
+IMAGE_ENV   := IDEAI_BINARY=/app/current,IDEAI_WORKDIR=/app,IDEAI_CONTROL_ADDR=:7999,IDEAI_DEBUG_ADDR=:2345,IDEAI_DLV=/usr/local/bin/dlv,SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
 .DEFAULT_GOAL := help
 
@@ -36,15 +43,35 @@ binaries: ## Cross-compile the supervisor and delve for linux/$(ARCH)
 	@cp "$$(go env GOPATH)/bin/linux_$(ARCH)/dlv" $(OUT)/linux_$(ARCH)/dlv
 	@echo "==> $(OUT)/linux_$(ARCH)"
 
-.PHONY: image
-image: binaries ## Assemble the image tarball (no Docker needed)
-	@cd tools/mkimage && go build -o ../../$(OUT)/mkimage .
+.PHONY: rootfs
+rootfs: binaries ## Lay out the image's files for linux/$(ARCH)
 	@rm -rf $(ROOTFS)
 	@mkdir -p $(ROOTFS)/usr/local/bin $(ROOTFS)/app $(ROOTFS)/tmp $(ROOTFS)/etc/ssl/certs
 	@cp $(OUT)/linux_$(ARCH)/ideai-supervisor $(OUT)/linux_$(ARCH)/dlv $(ROOTFS)/usr/local/bin/
 	@cp /etc/ssl/cert.pem $(ROOTFS)/etc/ssl/certs/ca-certificates.crt
+
+.PHONY: mkimage
+mkimage: ## Build the image assembler
+	@cd tools/mkimage && go build -o ../../$(OUT)/mkimage .
+
+.PHONY: image
+image: rootfs mkimage ## Assemble the image tarball (no Docker needed)
 	@./$(OUT)/mkimage -from $(ROOTFS) -out $(IMAGE) -tag "$(TAG)" -arch $(ARCH) \
-		-env "IDEAI_BINARY=/app/current,IDEAI_WORKDIR=/app,IDEAI_CONTROL_ADDR=:7999,IDEAI_DEBUG_ADDR=:2345,IDEAI_DLV=/usr/local/bin/dlv,SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt"
+		-env "$(IMAGE_ENV)"
+
+# Everything in the image is a static binary — the supervisor and delve are
+# both built with CGO_ENABLED=0 — so there is no base image to match and each
+# architecture is one layer of two files. That is why this can push a real
+# multi-architecture image without Docker or buildx: it is a few blob uploads
+# and an index. Credentials come from `docker login`'s keychain entry, or from
+# DOCKER_USERNAME and DOCKER_PASSWORD.
+.PHONY: publish
+publish: mkimage ## Push a multi-arch image (REPOSITORY, VERSION, PLATFORMS)
+	@$(foreach arch,$(PLATFORMS),$(MAKE) --no-print-directory rootfs ARCH=$(arch) &&) true
+	@./$(OUT)/mkimage -push "$(REPOSITORY):$(VERSION)" \
+		$(foreach arch,$(PLATFORMS),-layer $(arch)=$(OUT)/rootfs_$(arch)) \
+		-env "$(IMAGE_ENV)"
+	@echo "==> $(REPOSITORY):$(VERSION)"
 
 .PHONY: import-k3c
 import-k3c: image ## Put the image in a k3c cluster (CLUSTER=demo1)

@@ -24,6 +24,7 @@ final class LaunchConfigurationEditor: NSObject {
 	private var namespaceInput: NSTextField!
 	private var kubeconfigInput: NSTextField!
 	private var allowedInput: NSTextField!
+	private var filesInput: NSTextField!
 	/// A row of the form, kept so it can be collapsed.
 	@MainActor
 	private struct Row {
@@ -192,6 +193,11 @@ final class LaunchConfigurationEditor: NSObject {
 		allowedInput = input(settings.allowedContexts, monospaced: true)
 		allowedInput.placeholderString = "*-local, k3c-*"
 		allowedInput.toolTip = "Contexts this may run on. Empty allows any."
+		filesInput = input(settings.files.joined(separator: ", "), monospaced: true)
+		filesInput.placeholderString = "config/dev.json, certs/ca.pem:/etc/ssl/ca.pem"
+		// A service started with the path to its configuration cannot run in a
+		// pod that has never seen that file.
+		filesInput.toolTip = "Files sent into the pod before the program starts. A path on its own lands in /app/files; write local:/in/the/pod to choose where. Arguments naming one of them are rewritten to the path in the pod."
 
 
 		clusterRows = [
@@ -199,6 +205,7 @@ final class LaunchConfigurationEditor: NSObject {
 			row("Only run on contexts matching", allowedInput, height: 24),
 			row("Namespace", namespaceInput, height: 24),
 			row("Kubeconfig", kubeconfigInput, height: 24),
+			row("Files to send", filesInput, height: 24),
 		]
 		updateKindRows()
 		loadContexts(selecting: settings.context)
@@ -363,7 +370,14 @@ final class LaunchConfigurationEditor: NSObject {
 				namespace: namespaceInput.stringValue.trimmingCharacters(in: .whitespaces),
 				pod: original.devPod?.pod ?? "",
 				kubeconfig: kubeconfigInput.stringValue.trimmingCharacters(in: .whitespaces),
-				allowedContexts: allowedInput.stringValue.trimmingCharacters(in: .whitespaces)
+				allowedContexts: allowedInput.stringValue.trimmingCharacters(in: .whitespaces),
+				// Kept rather than defaulted: editing the namespace should not
+				// quietly turn off a setting nobody touched.
+				allowInstall: original.devPod?.allowInstall ?? true,
+				files: filesInput.stringValue
+					.split(separator: ",")
+					.map { $0.trimmingCharacters(in: .whitespaces) }
+					.filter { !$0.isEmpty }
 			)
 		}
 		updated.program = programInput.stringValue.trimmingCharacters(in: .whitespaces)
