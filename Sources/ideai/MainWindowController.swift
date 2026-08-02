@@ -1576,6 +1576,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				debugItem.representedObject = configuration.id
 				menu.addItem(debugItem)
 			}
+
+			// The gutter is where a program is run the first time, so it is
+			// also where the configuration for it should come from: pressing
+			// play twice from the same arrow should not mean typing it in.
+			if configuration.isDebuggable {
+				let save = NSMenuItem(
+					title: "Save as Launch Configuration\u{2026}",
+					action: #selector(saveGutterConfiguration(_:)),
+					keyEquivalent: ""
+				)
+				save.target = self
+				save.representedObject = configuration.id
+				menu.addItem(save)
+			}
 		}
 
 		popUpAtPointer(menu)
@@ -1595,6 +1609,38 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		notify("Nothing to run here", detail: """
 		No run configuration was found for \(url.lastPathComponent):\(line). 		This is a bug — the marker is drawn from the same list.
 		""")
+	}
+
+	/// Writes a launch configuration for what the gutter would have run.
+	///
+	/// The arrow beside `func main` knows the package, the arguments and where
+	/// it runs; a configuration written from it is the same thing with a name,
+	/// and it opens for editing so the arguments can be filled in before the
+	/// first run.
+	@objc private func saveGutterConfiguration(_ sender: NSMenuItem) {
+		guard let project, let discovered = configuration(for: sender) else { return }
+
+		let package = MakeLaunch.relativeToWorkspace(
+			path: discovered.workingDirectory, root: project.root
+		)
+		var configuration = LaunchConfiguration(
+			name: discovered.name,
+			type: "go",
+			request: "launch",
+			program: package,
+			arguments: discovered.arguments.filter { $0 != "run" && $0 != "." },
+			workingDirectory: package,
+			environment: discovered.environment
+		)
+		// A name that is already taken would replace something somebody else
+		// wrote; the file is shared with the rest of the team.
+		let existing = Set(launchConfigurations.map(\.name))
+		if existing.contains(configuration.name) {
+			var attempt = 2
+			while existing.contains("\(discovered.name) \(attempt)") { attempt += 1 }
+			configuration.name = "\(discovered.name) \(attempt)"
+		}
+		presentConfigurationEditor(configuration, isNew: true)
 	}
 
 	@objc private func runMenuItem(_ sender: NSMenuItem) {
@@ -2048,6 +2094,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	func pushChangesForTesting() { changesPane?.pushForTesting() }
 
+	/// Derives a launch configuration from the gutter's arrow and prints it.
+	func saveGutterConfigurationForTesting(file: URL, line: Int) {
+		let path = RunConfigurationDiscovery.canonicalPath(file)
+		guard let discovered = runConfigurations.first(where: { $0.file == path && $0.line == line })
+			?? runConfigurations.first
+		else {
+			print("GUTTER: nothing to run at \(file.lastPathComponent):\(line)")
+			return
+		}
+		let item = NSMenuItem()
+		item.representedObject = discovered.id
+		saveGutterConfiguration(item)
+		print("GUTTER: opened the editor for \(discovered.name)")
+	}
+
 	/// Derives a configuration from a make goal and starts it.
 	func runMakeGoalForTesting(_ goal: String, debug: Bool) {
 		guard let project else { return }
@@ -2348,7 +2409,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 					output: output
 				)
 
-				runControl?.setStatus("Sending to \(pod.name)…", busy: true)
+				let attributes = try? FileManager.default.attributesOfItem(atPath: binary.path)
+				let size = (attributes?[.size] as? NSNumber)?.int64Value ?? 0
+				runControl?.setStatus(
+					"Sending \(ProfileValue.format(size, unit: "bytes")) to \(pod.name)…",
+					busy: true
+				)
 				let control = try await PortForward.start(
 					to: PodTarget(
 						namespace: pod.namespace, name: pod.name, phase: pod.phase,
@@ -2376,8 +2442,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				} else {
 					// Busy: the program is up in the cluster until somebody
 					// stops it, and the strip is where that is said and done.
+					// The size is what proves the push landed: a program that
+					// looks unchanged is the first thing to doubt.
 					runControl?.setStatus(
-						"Running in \(pod.namespace)/\(pod.name)", busy: true
+						"Running \(ProfileValue.format(Int64(status.binarySize), unit: "bytes")) "
+							+ "in \(pod.namespace)/\(pod.name)",
+						busy: true
 					)
 					devPodClient = client
 					followDevPodLogs(client, pod: pod)

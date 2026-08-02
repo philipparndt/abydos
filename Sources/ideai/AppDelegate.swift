@@ -335,6 +335,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let line = options.saveGutterLine, let path = options.filePath {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+				controller?.saveGutterConfigurationForTesting(
+					file: URL(fileURLWithPath: path), line: line
+				)
+			}
+		}
+
 		if let goal = options.makeGoal {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
 				controller?.runMakeGoalForTesting(goal, debug: options.makeDebug)

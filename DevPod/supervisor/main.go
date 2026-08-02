@@ -212,6 +212,11 @@ func (s *Supervisor) handleBinary(w http.ResponseWriter, r *http.Request) {
 	s.setReplacing(true)
 	s.Stop()
 
+	// The tail belongs to the program that produced it. Kept across a push, a
+	// log pane shows the previous program's output beside the new one's, and
+	// the two are impossible to tell apart.
+	s.logs.reset()
+
 	written, err := writeAtomic(s.options.BinaryPath, body)
 	s.setReplacing(false)
 	if err != nil {
@@ -219,6 +224,7 @@ func (s *Supervisor) handleBinary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Printf("received %d bytes, mode %s", written, mode)
+	s.logs.add(fmt.Sprintf("[supervisor] received %d bytes, mode %s", written, mode))
 
 	if query(r, "start", "true") == "true" {
 		if err := s.Start(mode); err != nil {

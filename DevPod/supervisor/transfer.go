@@ -111,6 +111,13 @@ func (r *ring) add(line string) {
 	}
 }
 
+// reset drops everything, for a new program.
+func (r *ring) reset() {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+	r.lines = nil
+}
+
 func (r *ring) tail(count int) []string {
 	r.mutex.Lock()
 	defer r.mutex.Unlock()

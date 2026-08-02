@@ -171,6 +171,69 @@ func main() {
 	}
 }
 
+// A tail must belong to one program: mixed with the previous one's output,
+// there is no telling which lines came from what.
+func TestPushClearsTheLog(t *testing.T) {
+	supervisor, _ := newSupervisor(t)
+	defer supervisor.Stop()
+
+	first, err := os.ReadFile(buildFixture(t, `package main
+
+import (
+	"fmt"
+	"time"
+)
+
+func main() {
+	fmt.Println("from the old one")
+	time.Sleep(time.Minute)
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	post(t, supervisor, "/binary", first, "")
+	waitFor(t, "the first program", func() bool {
+		for _, line := range supervisor.logs.tail(0) {
+			if line == "from the old one" {
+				return true
+			}
+		}
+		return false
+	})
+
+	second, err := os.ReadFile(buildFixture(t, `package main
+
+import (
+	"fmt"
+	"time"
+)
+
+func main() {
+	fmt.Println("from the new one")
+	time.Sleep(time.Minute)
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	post(t, supervisor, "/binary", second, "")
+	waitFor(t, "the second program", func() bool {
+		for _, line := range supervisor.logs.tail(0) {
+			if line == "from the new one" {
+				return true
+			}
+		}
+		return false
+	})
+
+	for _, line := range supervisor.logs.tail(0) {
+		if line == "from the old one" {
+			t.Fatalf("the previous program's output is still in the tail")
+		}
+	}
+}
+
 // A binary going over a slow link is worth compressing, and the pod has to
 // accept it either way.
 func TestAcceptsAGzippedBinary(t *testing.T) {

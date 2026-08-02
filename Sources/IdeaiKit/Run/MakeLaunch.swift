@@ -321,11 +321,11 @@ public enum MakeLaunch {
 	}
 
 	/// A path under the project, written the way launch.json writes them.
-	static func relativeToWorkspace(_ url: URL, root: URL) -> String {
+	public static func relativeToWorkspace(_ url: URL, root: URL) -> String {
 		relativeToWorkspace(path: url.path, root: root)
 	}
 
-	static func relativeToWorkspace(path: String, root: URL) -> String {
+	public static func relativeToWorkspace(path: String, root: URL) -> String {
 		let base = FilePath.canonical(root)
 		let canonical = FilePath.canonical(path)
 		if canonical == base { return "${workspaceFolder}" }
