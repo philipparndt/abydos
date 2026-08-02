@@ -410,14 +410,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// Written when they change rather than only on the way out: a terminal
 		// that survives a restart has to survive the kind of exit nobody plans.
 		bottomPanel.onTerminalsChanged = { [weak self] in self?.rememberOpenEditors() }
-		bottomPanel.onTearOffTerminal = { detached, screenPoint in
-			TerminalWindowController(
-				pane: detached.pane,
-				title: detached.title,
-				at: screenPoint,
-				isRenamed: detached.isRenamed,
-				directory: detached.directory
-			).show()
+		bottomPanel.onTearOffTerminal = { [weak self] detached, screenPoint in
+			self?.openTerminalWindow(detached, at: screenPoint)
 		}
 		bottomPanel.onToggleFollowProject = { [weak self] in self?.toggleFollowTerminal() }
 		bottomPanel.onWorkingDirectoryChanged = { [weak self] directory in
@@ -2971,6 +2965,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				+ " && echo && go tool cover -func='\(profile.path)' | tail -30",
 			directory: root
 		)
+	}
+
+	/// A window for a terminal dragged out of a panel — including out of one of
+	/// these windows, which is why it hands itself along.
+	private func openTerminalWindow(_ detached: DetachedTerminal, at screenPoint: NSPoint) {
+		TerminalWindowController(
+			detached: detached,
+			at: screenPoint,
+			workingDirectory: project?.root,
+			openAnother: { [weak self] next, point in
+				self?.openTerminalWindow(next, at: point)
+			}
+		).show()
 	}
 
 	/// Makes what the program serves reachable from here.

@@ -223,6 +223,31 @@ final class BottomPanel: NSView {
 		tabStripTop.constant = inset
 	}
 
+	/// Turns this into the terminal area of a window of its own.
+	///
+	/// Everything a panel does with terminals — tabs, the +, renaming,
+	/// dragging, splitting — is wanted out there too; what is not wanted is the
+	/// chrome of a panel that can be hidden, maximised, or made to follow a
+	/// project the window does not have.
+	func becomeTerminalWindow() {
+		tabStrip.showsPanelControls = false
+		tabStrip.showsAddButton = true
+	}
+
+	/// Takes in a terminal dragged here from somewhere else.
+	func adoptTerminal(_ detached: DetachedTerminal) {
+		adopt(detached, zone: .center)
+	}
+
+	/// What the terminal in front is called, for a window title.
+	var activeTerminalTitle: String? {
+		guard let activeIndex, sessions.indices.contains(activeIndex) else { return nil }
+		return sessions[activeIndex].displayTitle
+	}
+
+	/// Told when the tabs or their names change, so a window can retitle.
+	var onActiveTerminalChanged: (() -> Void)?
+
 	// MARK: - Project
 
 	func setWorkingDirectory(_ url: URL?) {
@@ -1087,6 +1112,7 @@ final class BottomPanel: NSView {
 	}
 
 	private func refreshTabs() {
+		onActiveTerminalChanged?()
 		tabStrip.setItems(
 			sessions.map { session in
 				PanelTabItem(
@@ -1251,6 +1277,8 @@ final class PanelTabStrip: NSView {
 	/// panel to maximise, and following the shell's project belongs to the
 	/// window that has a project in it.
 	var showsPanelControls = true { didSet { recomputeLayout(); needsDisplay = true } }
+	/// Whether the + belongs here. It does in any strip that owns terminals.
+	var showsAddButton = true { didSet { recomputeLayout(); needsDisplay = true } }
 	var onAdd: (() -> Void)?
 	var onHide: (() -> Void)?
 	/// Asked to give the panel the whole window, or to give it back.
@@ -1309,15 +1337,17 @@ final class PanelTabStrip: NSView {
 			frames.append(NSRect(x: x, y: 0, width: ceil(width), height: bounds.height))
 			x += ceil(width) + Theme.current.scaled(2)
 		}
+		addButtonFrame = showsAddButton
+			? NSRect(x: x + Theme.current.scaled(4), y: 0, width: Theme.current.scaled(24), height: bounds.height)
+			: .zero
+
 		guard showsPanelControls else {
-			addButtonFrame = .zero
 			hideButtonFrame = .zero
 			maximizeButtonFrame = .zero
 			followButtonFrame = .zero
 			return
 		}
 
-		addButtonFrame = NSRect(x: x + Theme.current.scaled(4), y: 0, width: Theme.current.scaled(24), height: bounds.height)
 		hideButtonFrame = NSRect(
 			x: bounds.width - Theme.current.scaled(30),
 			y: 0,
@@ -1521,9 +1551,9 @@ final class PanelTabStrip: NSView {
 			draw(item: item, in: frames[index], isActive: index == activeIndex, isHovered: index == hoveredIndex)
 		}
 
+		if showsAddButton { drawGlyph(in: addButtonFrame, symbol: "plus") }
 		guard showsPanelControls else { return }
 
-		drawGlyph(in: addButtonFrame, symbol: "plus")
 		drawGlyph(in: hideButtonFrame, symbol: "chevron.down")
 		drawGlyph(
 			in: maximizeButtonFrame,
