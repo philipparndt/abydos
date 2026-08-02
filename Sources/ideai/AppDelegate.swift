@@ -562,7 +562,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 		}
 
 		if options.openSettings {
-			SettingsWindowController.shared.show()
+			controller?.settingsSectionForTesting = options.settingsSection
+			controller?.showSettingsPage(nil)
 		}
 
 		if let path = options.screenshotPath {
@@ -570,8 +571,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 				path: path,
 				delay: options.screenshotDelay,
 				controller: controller,
-				// A capture run asking for Settings wants that window, not the project.
-				window: options.openSettings ? SettingsWindowController.shared.window : nil
+				window: nil
 			)
 		}
 	}
@@ -622,7 +622,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 		true
 	}
 
+	/// ⌘, opens the settings in the window somebody is working in.
 	@objc func showSettings(_ sender: Any?) {
+		if let controller = frontmostController {
+			controller.showSettingsPage(sender)
+			controller.showWindow(nil)
+			return
+		}
+		// No window to put a page in — the settings still have to be reachable.
 		SettingsWindowController.shared.show()
 	}
 

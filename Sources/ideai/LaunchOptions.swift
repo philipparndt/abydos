@@ -150,6 +150,8 @@ struct LaunchOptions {
 	var findQuery: String?
 	/// Query for project-wide search.
 	var searchQuery: String?
+	/// Which settings section to show.
+	var settingsSection: String?
 	/// Which launch configuration to select first.
 	var launchConfiguration: String?
 	/// Profile the selected configuration before capture.
@@ -195,6 +197,7 @@ struct LaunchOptions {
 			case "--collapse":   options.collapseFolds = true
 			case "--preview":    options.previewPath = next()
 			case "--markdown":   options.markdownPreview = true
+			case "--settings-section": options.settingsSection = next()
 			case "--settings":   options.openSettings = true
 			case "--zoom":       options.zoom = next().flatMap(Double.init)
 			case "--terminal":   options.openTerminal = true

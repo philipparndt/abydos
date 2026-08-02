@@ -3596,6 +3596,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		showLaunchConfigurations(selecting: configuration.name)
 	}
 
+	/// Opens the settings as a page in the editor.
+	///
+	/// A page rather than a window: a setting is judged by what it does to the
+	/// thing beside it, and a preferences window covers exactly that.
+	@objc func showSettingsPage(_ sender: Any?) {
+		guard let group = editor.activeGroup else { return }
+		let page = (group.page(identifier: "settings") as? SettingsPage) ?? SettingsPage()
+		group.openPage(page, title: "Settings", identifier: "settings", symbol: "gearshape")
+		if let section = settingsSectionForTesting { page.show(named: section) }
+	}
+
+	/// Which section a capture run asked for.
+	var settingsSectionForTesting: String?
+
 	/// Opens the launch configurations as a page in the editor.
 	///
 	/// A page rather than a dialog: a configuration is edited while looking at

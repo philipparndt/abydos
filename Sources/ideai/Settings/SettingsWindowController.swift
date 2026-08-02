@@ -13,23 +13,11 @@ final class SettingsWindowController: NSWindowController {
 		let tabController = NSTabViewController()
 		tabController.tabStyle = .toolbar
 
-		let editor = SettingsPaneController(
-			title: "Editor",
-			symbol: "textformat",
-			rows: SettingsPaneController.editorRows()
-		)
-		let saving = SettingsPaneController(
-			title: "Saving",
-			symbol: "square.and.arrow.down",
-			rows: SettingsPaneController.savingRows()
-		)
-		let navigator = SettingsPaneController(
-			title: "Navigator",
-			symbol: "folder",
-			rows: SettingsPaneController.navigatorRows()
-		)
+		let panes = SettingsSections.all.map {
+			SettingsPaneController(title: $0.title, symbol: $0.symbol, rows: $0.rows())
+		}
 
-		for pane in [editor, saving, navigator] {
+		for pane in panes {
 			let item = NSTabViewItem(viewController: pane)
 			item.label = pane.paneTitle
 			item.image = NSImage(systemSymbolName: pane.paneSymbol, accessibilityDescription: pane.paneTitle)
@@ -244,15 +232,9 @@ final class SettingsPaneController: NSViewController {
 
 	// MARK: - Pane definitions
 
+	/// How code is shown and how big everything is.
 	static func editorRows() -> [Row] {
 		[
-			.toggle(
-				title: "Show problems beside the line",
-				help: "The message is written after the code, dimmed. Off, only the "
-					+ "squiggle and the tooltip say what is wrong.",
-				get: { Settings.shared.showsInlineDiagnostics },
-				set: { Settings.shared.showsInlineDiagnostics = $0 }
-			),
 			.slider(
 				title: "UI zoom",
 				help: "Scales the whole window. Also ⌘+ / ⌘− / ⌘0.",
@@ -285,14 +267,26 @@ final class SettingsPaneController: NSViewController {
 				get: { Settings.shared.wordWrap },
 				set: { Settings.shared.wordWrap = $0 }
 			),
-			.choice(
-				title: "What an agent may do",
-				help: "A review or a fix runs Claude Code. Accepting edits keeps it from stopping "
-					+ "to ask whether it may change the file it was asked to change.",
-				options: [("Accept edits", "acceptEdits"), ("Ask", "ask"), ("Everything", "full")],
-				get: { Settings.shared.agentPermissions },
-				set: { Settings.shared.agentPermissions = $0 }
+			.stepper(
+				title: "Tab width",
+				help: "Columns a tab character advances to.",
+				range: 1...16,
+				get: { Settings.shared.tabWidth },
+				set: { Settings.shared.tabWidth = $0 }
 			),
+			.toggle(
+				title: "Show problems beside the line",
+				help: "The message is written after the code, dimmed. Off, only the "
+					+ "squiggle and the tooltip say what is wrong.",
+				get: { Settings.shared.showsInlineDiagnostics },
+				set: { Settings.shared.showsInlineDiagnostics = $0 }
+			),
+		]
+	}
+
+	/// The terminal's own look, and how it draws.
+	static func terminalRows() -> [Row] {
+		[
 			.choice(
 				title: "Terminal colours",
 				help: "Blue is the palette Ghostty ships with. Dark matches the editor.",
@@ -307,24 +301,31 @@ final class SettingsPaneController: NSViewController {
 				get: { Settings.shared.terminalBellStyle },
 				set: { Settings.shared.terminalBellStyle = $0 }
 			),
-			.toggle(
-				title: "GPU terminal rendering",
-				help: "Draw the terminal with Metal. Faster when a program repaints the whole screen; still new.",
-				get: { Settings.shared.terminalGPURendering },
-				set: { Settings.shared.terminalGPURendering = $0 }
-			),
 			.text(
 				title: "Terminal font",
 				help: "Leave empty to choose automatically. Powerline prompts need a Nerd Font.",
 				get: { Settings.shared.terminalFontName },
 				set: { Settings.shared.terminalFontName = $0.trimmingCharacters(in: .whitespaces) }
 			),
-			.stepper(
-				title: "Tab width",
-				help: "Columns a tab character advances to.",
-				range: 1...16,
-				get: { Settings.shared.tabWidth },
-				set: { Settings.shared.tabWidth = $0 }
+			.toggle(
+				title: "GPU terminal rendering",
+				help: "Draw the terminal with Metal. Faster when a program repaints the whole screen; still new.",
+				get: { Settings.shared.terminalGPURendering },
+				set: { Settings.shared.terminalGPURendering = $0 }
+			),
+		]
+	}
+
+	/// What Claude Code is allowed to do on your behalf.
+	static func agentRows() -> [Row] {
+		[
+			.choice(
+				title: "What an agent may do",
+				help: "A review or a fix runs Claude Code. Accepting edits keeps it from stopping "
+					+ "to ask whether it may change the file it was asked to change.",
+				options: [("Accept edits", "acceptEdits"), ("Ask", "ask"), ("Everything", "full")],
+				get: { Settings.shared.agentPermissions },
+				set: { Settings.shared.agentPermissions = $0 }
 			),
 		]
 	}
@@ -410,4 +411,25 @@ extension NSControl {
 			action = #selector(ActionTrampoline.fire)
 		}
 	}
+}
+
+
+/// The sections settings are grouped into.
+///
+/// Named once, so the page in the editor and the window behind ⌘, are the same
+/// set of settings in the same order rather than two lists that drift.
+enum SettingsSections {
+	struct Section {
+		let title: String
+		let symbol: String
+		let rows: () -> [SettingsPaneController.Row]
+	}
+
+	static let all: [Section] = [
+		Section(title: "Editor", symbol: "textformat", rows: SettingsPaneController.editorRows),
+		Section(title: "Terminal", symbol: "terminal", rows: SettingsPaneController.terminalRows),
+		Section(title: "Saving", symbol: "square.and.arrow.down", rows: SettingsPaneController.savingRows),
+		Section(title: "Navigator", symbol: "folder", rows: SettingsPaneController.navigatorRows),
+		Section(title: "Agent", symbol: "sparkles", rows: SettingsPaneController.agentRows),
+	]
 }
