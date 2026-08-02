@@ -390,6 +390,31 @@ final class BottomPanel: NSView {
 	/// In a terminal pane with nothing behind it, so the output is coloured
 	/// the way the program coloured it — a service's logs are the same logs
 	/// wherever the service happens to be running.
+	/// A running account of what a launch is doing.
+	///
+	/// Its own pane, appended to rather than replaced: the interesting part of
+	/// a launch that hangs is the order things happened in, and a status line
+	/// in the titlebar holds one sentence at a time.
+	func appendLaunchLog(_ line: String, reset: Bool = false) {
+		let title = "☸ launch"
+		let pane: TerminalPane
+		if let index = sessions.firstIndex(where: { $0.title == title }),
+		   case let .terminal(existing) = sessions[index].kind {
+			pane = existing
+			activate(index: index, focus: false)
+		} else {
+			pane = TerminalPane(readOnly: ())
+			sessions.append(Session(title: title, kind: .terminal(pane)))
+			activate(index: sessions.count - 1, focus: false)
+		}
+
+		if reset { pane.terminalView.clear() }
+		pane.terminalView.append(
+			line.replacingOccurrences(of: "\r\n", with: "\n")
+				.replacingOccurrences(of: "\n", with: "\r\n") + "\r\n"
+		)
+	}
+
 	func showDevPodOutput(_ text: String, from pod: String) {
 		let title = "☸ \(pod.split(separator: "/").last.map(String.init) ?? pod)"
 		let pane: TerminalPane

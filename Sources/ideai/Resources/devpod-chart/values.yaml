@@ -6,10 +6,13 @@
 # that differs from production in one way only: what runs inside it.
 
 image:
-  repository: ideai-devpod
+  # Published, so a cluster that cannot be handed a tarball — anything not on
+  # this machine — has somewhere to pull from. A local cluster given the same
+  # reference by `k3c image import` keeps its own copy: IfNotPresent means what
+  # is already there wins, which is what makes working on the supervisor
+  # itself possible.
+  repository: pharndt/ideai-devpod
   tag: dev
-  # Never on a local cluster where the image was imported rather than pulled;
-  # IfNotPresent once it comes from a registry.
   pullPolicy: IfNotPresent
 imagePullSecrets: []
 

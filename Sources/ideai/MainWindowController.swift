@@ -2150,6 +2150,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// information to answer before the first run.
 	/// Stops whichever of the two is running.
 	private func stopRunning() {
+		// A launch still working its way through the cluster is the thing most
+		// worth being able to stop: it is the part that waits.
+		if let task = clusterTask {
+			clusterTask = nil
+			task.cancel()
+			stopDevPodForwards()
+			clusterLog("stopped")
+			runControl?.setStatus("Stopped")
+			return
+		}
 		if devPodClient != nil {
 			stopDevPod()
 			return
@@ -2445,6 +2455,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	private var devPodForwards: [PortForward] = []
 	/// The pod running something of ours, so stop can tell it to stop.
 	private var devPodClient: DevPodClient?
+	/// The launch in progress, so it can be cancelled.
+	private var clusterTask: Task<Void, Never>?
+
+	/// Writes a line into the launch log.
+	///
+	/// Everything a cluster launch does happens somewhere else and takes
+	/// seconds: which context, which pod, what helm is doing, what the cluster
+	/// says about it. A spinner and one line of status is not enough to tell a
+	/// slow step from a stuck one.
+	private func clusterLog(_ line: String, reset: Bool = false) {
+		bottomPanel.appendLaunchLog(line, reset: reset)
+	}
 
 	/// Builds for the cluster, pushes the binary into a pod, and starts it.
 	///
@@ -2460,9 +2482,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		guard let settings = configuration.devPod else { return }
 		stopDevPodForwards()
 		setPanelVisible(true)
-		runControl?.setStatus("Looking for a pod…", busy: true)
+		runControl?.setStatus("Looking for a pod\u{2026}", busy: true)
+		clusterLog("launching \(configuration.name)", reset: true)
 
-		Task { @MainActor in
+		// Kept, so the stop button has something to stop. Everything here waits
+		// on a cluster, and waiting on a cluster is exactly when somebody wants
+		// to change their mind.
+		clusterTask = Task { @MainActor in
+			defer { clusterTask = nil }
 			do {
 				// Which cluster, and whether this configuration is allowed on
 				// it: one that follows the current context follows it
@@ -2479,6 +2506,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 					throw refusal
 				}
 				let kubeconfig = settings.kubeconfig.isEmpty ? nil : settings.kubeconfig
+				clusterLog("cluster \(context ?? "current")"
+					+ (settings.namespace.isEmpty ? "" : ", namespace \(settings.namespace)"))
 
 				let pods = await DevPods.list(
 					context: context,
@@ -2523,9 +2552,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 				// The node decides what the binary has to be: a laptop is arm64
 				// and a shared cluster usually is not.
+				try Task.checkCancellation()
+				clusterLog("pod \(pod.namespace)/\(pod.name)")
 				let architecture = await DevPods.architecture(context: context, kubeconfig: kubeconfig)
 					?? "amd64"
 				runControl?.setStatus("Building for linux/\(architecture)…", busy: true)
+				clusterLog("building for linux/\(architecture)")
 
 				let directory = URL(fileURLWithPath: configuration.expandedWorkingDirectory(root: root))
 				let output = FileManager.default.temporaryDirectory
@@ -2566,6 +2598,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 					root: root
 				)
 				for transfer in plan.transfers {
+					try Task.checkCancellation()
+					clusterLog("sending \(transfer.local.lastPathComponent) to \(transfer.remote)")
 					try await client.push(file: transfer.local, to: transfer.remote)
 				}
 				if !plan.transfers.isEmpty {
@@ -2575,6 +2609,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 					)
 				}
 
+				try Task.checkCancellation()
+				clusterLog("sending the binary, mode \(debug ? "debug" : "run")")
 				let status = try await client.push(
 					binary: binary,
 					mode: debug ? "debug" : "run",
@@ -2590,6 +2626,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				}
 
 				if debug {
+					clusterLog("attaching the debugger")
 					try await attachDebugger(
 						to: pod, context: context, kubeconfig: kubeconfig,
 						arguments: plan.arguments, environment: environment
@@ -2604,13 +2641,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 							+ "in \(pod.namespace)/\(pod.name)",
 						busy: true
 					)
+					clusterLog("running in \(pod.namespace)/\(pod.name)")
 					devPodClient = client
 					followDevPodLogs(client, pod: pod)
 				}
-			} catch {
+			} catch is CancellationError {
 				stopDevPodForwards()
-				runControl?.setStatus(Self.describe(devPod: error), failed: true)
-				notify("Could not run in the cluster", detail: Self.describe(devPod: error))
+				clusterLog("stopped")
+				runControl?.setStatus("Stopped")
+			} catch {
+				let detail = Self.describe(devPod: error)
+				stopDevPodForwards()
+				clusterLog(detail)
+				// The strip gets the headline; the whole story is in the toast
+				// and in the launch log, where there is room for it.
+				runControl?.setStatus(Self.headline(of: detail), failed: true)
+				notify("Could not run in the cluster", detail: detail)
 			}
 		}
 	}
@@ -2651,22 +2697,75 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 		let release = DevPodInstall.releaseName(for: root)
 		let namespace = settings.namespace.isEmpty ? "ideai-dev" : settings.namespace
+		let kubeconfig = settings.kubeconfig.isEmpty ? nil : settings.kubeconfig
 		runControl?.setStatus("Installing \(release) in \(namespace)…", busy: true)
+		clusterLog("installing \(release) in \(namespace)")
 
-		try await DevPodInstall.install(
-			chart: chart,
-			release: release,
-			namespace: namespace,
-			// The resolved context, not what the configuration says: it may
-			// say `${currentContext}`, which is not the name of a cluster.
-			context: context,
-			kubeconfig: settings.kubeconfig.isEmpty ? nil : settings.kubeconfig
-		)
+		// The install and a watch on what it produces, side by side. helm waits
+		// in silence and then reports its own deadline — "context deadline
+		// exceeded" — while the cluster has been saying since the fourth second
+		// that it cannot pull the image. Whichever finishes first wins: a pod
+		// that will never start ends this now rather than in two minutes.
+		try await withThrowingTaskGroup(of: Void.self) { group in
+			group.addTask { @MainActor [weak self] in
+				try await DevPodInstall.install(
+					chart: chart,
+					release: release,
+					namespace: namespace,
+					// The resolved context, not what the configuration says: it
+					// may say `${currentContext}`, which is not a cluster.
+					context: context,
+					kubeconfig: kubeconfig,
+					image: settings.image.isEmpty ? nil : settings.image,
+					progress: { line in
+						Task { @MainActor in self?.clusterLog(line) }
+					}
+				)
+			}
+			group.addTask { @MainActor [weak self] in
+				try await self?.watchInstall(
+					release: release, namespace: namespace,
+					context: context, kubeconfig: kubeconfig, image: settings.image
+				)
+			}
+
+			defer { group.cancelAll() }
+			try await group.next()
+		}
 		notify(
 			"Installed a development pod",
 			detail: "\(release) in \(namespace). Remove it with: helm uninstall \(release) -n \(namespace)",
 			kind: .information
 		)
+	}
+
+	/// Reports what the cluster is doing with the pods an install just asked
+	/// for, and gives up when there is nothing left to wait for.
+	///
+	/// Only failure ends this: readiness is helm's to decide, and a pod that
+	/// looks ready for a moment is not the same as a release that is.
+	private func watchInstall(
+		release: String,
+		namespace: String,
+		context: String?,
+		kubeconfig: String?,
+		image: String
+	) async throws {
+		var reported: Set<String> = []
+		while !Task.isCancelled {
+			try await Task.sleep(nanoseconds: 1_500_000_000)
+			let states = await DevPodWatch.states(
+				release: release, namespace: namespace,
+				context: context, kubeconfig: kubeconfig
+			)
+			for state in states where !reported.contains(state.line) {
+				reported.insert(state.line)
+				clusterLog("  " + state.line)
+			}
+			if let hopeless = states.first(where: \.isHopeless) {
+				throw DevPodInstall.Failure.failed(DevPodWatch.explain(hopeless, image: image))
+			}
+		}
 	}
 
 	/// Connects the debugger to the `dlv dap` the pod is now running.
@@ -2735,6 +2834,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			stopDevPodForwards()
 			runControl?.setStatus("Stopped")
 		}
+	}
+
+	/// The first line of a message, for somewhere a line is all there is.
+	static func headline(of message: String) -> String {
+		let first = message
+			.split(separator: "\n", omittingEmptySubsequences: false)
+			.first
+			.map(String.init)?
+			.trimmingCharacters(in: .whitespaces) ?? message
+		return first.count > 140 ? String(first.prefix(139)) + "\u{2026}" : first
 	}
 
 	private static func describe(devPod error: any Error) -> String {

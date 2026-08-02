@@ -267,3 +267,124 @@ struct DevPodFileTests {
 			.transfers.isEmpty)
 	}
 }
+
+/// Watching an install, so a launch that will never work says why.
+struct DevPodWatchTests {
+	private let stuck = """
+	{"items": [{
+	  "metadata": {"name": "ideai-thing-ideai-devpod-59cd-2cmr2"},
+	  "status": {
+	    "phase": "Pending",
+	    "containerStatuses": [{
+	      "state": {"waiting": {
+	        "reason": "ImagePullBackOff",
+	        "message": "Back-off pulling image \\"ideai-devpod:dev\\""
+	      }}
+	    }]
+	  }
+	}]}
+	"""
+
+	@Test func readsWhyAPodIsNotRunning() {
+		let states = DevPodWatch.parse(stuck)
+		#expect(states.count == 1)
+		#expect(states[0].pod == "ideai-thing-ideai-devpod-59cd-2cmr2")
+		#expect(states[0].phase == "Pending")
+		#expect(states[0].reason == "ImagePullBackOff")
+		#expect(states[0].isHopeless)
+	}
+
+	/// The point of watching: helm waits two minutes and then reports its own
+	/// deadline, while the cluster said this in the fourth second.
+	@Test func sayingWhatToDoAboutAnImageTheClusterCannotPull() {
+		let explanation = DevPodWatch.explain(DevPodWatch.parse(stuck)[0], image: "")
+		#expect(explanation.hasPrefix("The cluster cannot pull"))
+		#expect(explanation.contains("import-k3d"))
+		#expect(explanation.contains("devpod-publish"))
+		#expect(explanation.contains("Back-off pulling image"))
+	}
+
+	@Test func aRunningPodIsNothingToGiveUpOn() {
+		let json = """
+		{"items": [{
+		  "metadata": {"name": "pod-1"},
+		  "status": {"phase": "Running", "containerStatuses": [{"state": {"running": {}}}]}
+		}]}
+		"""
+		let states = DevPodWatch.parse(json)
+		#expect(states[0].reason.isEmpty)
+		#expect(!states[0].isHopeless)
+		#expect(states[0].line == "pod-1: Running")
+	}
+
+	/// A container that is only starting is not a failure: pulling takes time,
+	/// and giving up on it would be giving up on every first launch.
+	@Test func waitingForAnImageIsNotHopeless() {
+		let json = """
+		{"items": [{
+		  "metadata": {"name": "pod-1"},
+		  "status": {"phase": "Pending", "containerStatuses": [
+		    {"state": {"waiting": {"reason": "ContainerCreating"}}}
+		  ]}
+		}]}
+		"""
+		#expect(!DevPodWatch.parse(json)[0].isHopeless)
+	}
+
+	@Test func nonsenseIsNoPods() {
+		#expect(DevPodWatch.parse("").isEmpty)
+		#expect(DevPodWatch.parse("not json at all").isEmpty)
+	}
+
+	/// A cluster that has to pull needs to be told what to pull, so the image
+	/// belongs to the configuration and has to survive being written down.
+	@Test func theImageIsKeptInTheConfiguration() throws {
+		var configuration = LaunchConfiguration(name: "in the cluster", type: "go")
+		configuration.devPod = LaunchConfiguration.DevPodSettings(
+			context: "k3c-demo1",
+			namespace: "devpod",
+			image: "pharndt/ideai-devpod:v1"
+		)
+		let json = configuration.json
+		let read = try #require(LaunchConfiguration(json: json))
+		#expect(read.devPod?.image == "pharndt/ideai-devpod:v1")
+	}
+}
+
+/// The chart the app ships is a copy of the chart in the repository, and a
+/// copy is a thing that drifts. This is the reminder: an edit to one that
+/// never reached the other means the app installs the old chart, which shows
+/// up in a cluster as a pod that runs the wrong image.
+struct BundledChartTests {
+	@Test func theShippedChartMatchesTheSource() throws {
+		let repository = URL(fileURLWithPath: #filePath)
+			.deletingLastPathComponent()
+			.deletingLastPathComponent()
+			.deletingLastPathComponent()
+		let source = repository.appendingPathComponent("DevPod/chart/ideai-devpod")
+		let shipped = repository.appendingPathComponent("Sources/ideai/Resources/devpod-chart")
+
+		let manager = FileManager.default
+		try #require(manager.fileExists(atPath: source.path))
+		try #require(manager.fileExists(atPath: shipped.path))
+
+		func contents(of directory: URL) throws -> [String: String] {
+			var found: [String: String] = [:]
+			let files = manager.enumerator(at: directory, includingPropertiesForKeys: nil)
+			while let file = files?.nextObject() as? URL {
+				guard (try? file.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true
+				else { continue }
+				let relative = file.path.replacingOccurrences(of: directory.path + "/", with: "")
+				found[relative] = try String(contentsOf: file, encoding: .utf8)
+			}
+			return found
+		}
+
+		let left = try contents(of: source)
+		let right = try contents(of: shipped)
+		#expect(Set(left.keys) == Set(right.keys), "the two charts hold different files")
+		for (name, text) in left {
+			#expect(right[name] == text, "\(name) differs — run: make devpod-chart")
+		}
+	}
+}

@@ -65,9 +65,16 @@ final class RunControl: NSView {
 	}
 
 	private var statusText: NSAttributedString {
-		NSAttributedString(string: status, attributes: [
+		// One line, ending in an ellipsis when there is more of it. A message
+		// long enough to wrap would otherwise grow down the window, and this is
+		// a strip in a titlebar; the whole message is in the tooltip, the toast
+		// and the launch log.
+		let paragraph = NSMutableParagraphStyle()
+		paragraph.lineBreakMode = .byTruncatingTail
+		return NSAttributedString(string: status, attributes: [
 			.font: Theme.current.uiFont(11.5),
 			.foregroundColor: failed ? NSColor.hex(0xE05252) : Theme.current.gitIgnored,
+			.paragraphStyle: paragraph,
 		])
 	}
 
@@ -100,9 +107,14 @@ final class RunControl: NSView {
 
 	/// What to say about the last or current run.
 	func setStatus(_ text: String, busy: Bool = false, failed: Bool = false) {
+		// One line, whatever it was given: this is a strip in a titlebar, and a
+		// message with newlines in it turns into a paragraph across the window.
+		let text = text.replacingOccurrences(of: "\n", with: " ")
+			.trimmingCharacters(in: .whitespaces)
 		guard text != status || busy != isBusy || failed != self.failed else { return }
 		let wasBusy = isBusy
 		status = text
+		rebuildToolTips()
 		isBusy = busy
 		self.failed = failed
 		needsDisplay = true
@@ -139,6 +151,9 @@ final class RunControl: NSView {
 		toolTips[addToolTip(runRect, owner: self, userData: nil)] = isBusy ? "Stop" : "Run (⌃R)"
 		toolTips[addToolTip(debugRect, owner: self, userData: nil)] = "Debug (⌃D)"
 		toolTips[addToolTip(schemeRect, owner: self, userData: nil)] = "Choose what to run"
+		if !status.isEmpty {
+			toolTips[addToolTip(statusRect, owner: self, userData: nil)] = status
+		}
 	}
 
 	override func layout() {

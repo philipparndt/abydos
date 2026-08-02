@@ -25,6 +25,7 @@ final class LaunchConfigurationEditor: NSObject {
 	private var kubeconfigInput: NSTextField!
 	private var allowedInput: NSTextField!
 	private var filesInput: NSTextField!
+	private var imageInput: NSTextField!
 	/// A row of the form, kept so it can be collapsed.
 	@MainActor
 	private struct Row {
@@ -193,6 +194,9 @@ final class LaunchConfigurationEditor: NSObject {
 		allowedInput = input(settings.allowedContexts, monospaced: true)
 		allowedInput.placeholderString = "*-local, k3c-*"
 		allowedInput.toolTip = "Contexts this may run on. Empty allows any."
+		imageInput = input(settings.image, monospaced: true)
+		imageInput.placeholderString = "ideai-devpod (imported into the cluster)"
+		imageInput.toolTip = "The image the development pod runs. A cluster that cannot be handed a tarball needs a published one."
 		filesInput = input(settings.files.joined(separator: ", "), monospaced: true)
 		filesInput.placeholderString = "config/dev.json, certs/ca.pem:/etc/ssl/ca.pem"
 		// A service started with the path to its configuration cannot run in a
@@ -206,6 +210,7 @@ final class LaunchConfigurationEditor: NSObject {
 			row("Namespace", namespaceInput, height: 24),
 			row("Kubeconfig", kubeconfigInput, height: 24),
 			row("Files to send", filesInput, height: 24),
+			row("Pod image", imageInput, height: 24),
 		]
 		updateKindRows()
 		loadContexts(selecting: settings.context)
@@ -377,7 +382,8 @@ final class LaunchConfigurationEditor: NSObject {
 				files: filesInput.stringValue
 					.split(separator: ",")
 					.map { $0.trimmingCharacters(in: .whitespaces) }
-					.filter { !$0.isEmpty }
+					.filter { !$0.isEmpty },
+				image: imageInput.stringValue.trimmingCharacters(in: .whitespaces)
 			)
 		}
 		updated.program = programInput.stringValue.trimmingCharacters(in: .whitespaces)

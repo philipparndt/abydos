@@ -413,6 +413,12 @@ public extension LaunchConfiguration {
 		/// A kubeconfig other than the default, for a cluster that lives in a
 		/// file of its own.
 		public var kubeconfig: String
+		/// The image the pod runs, for a cluster that has to pull one.
+		///
+		/// Empty means the chart's own default, which is the image imported by
+		/// hand into a local cluster. A cluster somewhere else has no way to be
+		/// handed a tarball, so it is given a published image instead.
+		public var image: String
 		/// Files the program needs beside it, as `local` or `local:/in/the/pod`.
 		///
 		/// A service started with a path to its configuration cannot run in a
@@ -440,7 +446,8 @@ public extension LaunchConfiguration {
 			kubeconfig: String = "",
 			allowedContexts: String = "",
 			allowInstall: Bool = true,
-			files: [String] = []
+			files: [String] = [],
+			image: String = ""
 		) {
 			self.context = context
 			self.namespace = namespace
@@ -449,6 +456,7 @@ public extension LaunchConfiguration {
 			self.allowedContexts = allowedContexts
 			self.allowInstall = allowInstall
 			self.files = files
+			self.image = image
 		}
 
 		/// What `context` means when it is not a name.
@@ -487,6 +495,7 @@ public extension LaunchConfiguration {
 			// configuration wants, and a file full of defaults is noise.
 			if !allowInstall { fields["allowInstall"] = .bool(false) }
 			if !files.isEmpty { fields["files"] = .array(files.map(JSONValue.string)) }
+			if !image.isEmpty { fields["image"] = .string(image) }
 			return .object(fields)
 		}
 
@@ -514,7 +523,8 @@ public extension LaunchConfiguration {
 				kubeconfig: string("kubeconfig"),
 				allowedContexts: string("allowedContexts"),
 				allowInstall: allowInstall,
-				files: files
+				files: files,
+				image: string("image")
 			)
 		}
 

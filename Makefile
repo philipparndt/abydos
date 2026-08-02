@@ -14,7 +14,7 @@ help: ## Show this help
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
 .PHONY: build
-build: ## Build the .app bundle (CONFIG=debug|release, default release)
+build: devpod-chart ## Build the .app bundle (CONFIG=debug|release, default release)
 	@Scripts/bundle.sh $(CONFIG)
 
 .PHONY: run
@@ -72,6 +72,22 @@ install-cli: ## Put the `ideai` command on the PATH (PREFIX=/usr/local)
 	@mkdir -p $(or $(PREFIX),/usr/local)/bin
 	@install -m 755 Scripts/ideai $(or $(PREFIX),/usr/local)/bin/ideai
 	@echo "==> Installed $(or $(PREFIX),/usr/local)/bin/ideai"
+
+# The development pod has a Makefile of its own; these are the two goals
+# somebody standing in the repository root wants from it.
+# The app ships the chart, so the copy it ships has to be the chart.
+.PHONY: devpod-chart
+devpod-chart: ## Copy the dev pod chart into the app's resources
+	@rsync -a --delete DevPod/chart/ideai-devpod/ Sources/ideai/Resources/devpod-chart/
+	@echo "==> Synced the dev pod chart"
+
+.PHONY: devpod-image
+devpod-image: ## Build the dev pod image tarball (ARCH=arm64|amd64)
+	@$(MAKE) -C DevPod image
+
+.PHONY: devpod-publish
+devpod-publish: ## Push a multi-arch dev pod image (REPOSITORY, VERSION)
+	@$(MAKE) -C DevPod publish
 
 .PHONY: clean
 clean: ## Remove build output

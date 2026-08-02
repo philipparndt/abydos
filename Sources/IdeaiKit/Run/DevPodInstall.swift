@@ -60,7 +60,8 @@ public enum DevPodInstall {
 		context: String?,
 		kubeconfig: String?,
 		image: String? = nil,
-		timeout: TimeInterval = 120
+		timeout: TimeInterval = 120,
+		progress: (@Sendable (String) -> Void)? = nil
 	) async throws {
 		guard let helm else { throw Failure.noHelm }
 		guard FileManager.default.fileExists(atPath: chart.appendingPathComponent("Chart.yaml").path)
@@ -79,7 +80,8 @@ public enum DevPodInstall {
 			arguments += ["--set", "image.repository=" + image]
 		}
 
-		let result = await run(helm, arguments, timeout: timeout + 30)
+		progress?("$ helm " + arguments.joined(separator: " "))
+		let result = await run(helm, arguments, timeout: timeout + 30, progress: progress)
 		if ProcessInfo.processInfo.environment["IDEAI_HELM_DEBUG"] != nil {
 			FileHandle.standardError.write(Data(
 				"[helm] \(helm) \(arguments.joined(separator: " "))\n[helm] exit=\(result.exitCode) \(result.error)\n".utf8
@@ -112,37 +114,53 @@ public enum DevPodInstall {
 		return result.stdout.contains(image)
 	}
 
+	/// Runs a command, reporting its output as it arrives and stopping it if the
+	/// task is cancelled.
+	///
+	/// Both matter here for the same reason: `helm --wait` can sit for two
+	/// minutes on a deployment that will never become ready, and a person
+	/// watching a spinner with no output and no stop button has no idea whether
+	/// to keep waiting.
 	private static func run(
 		_ executable: String,
 		_ arguments: [String],
-		timeout: TimeInterval
+		timeout: TimeInterval,
+		progress: (@Sendable (String) -> Void)? = nil
 	) async -> (exitCode: Int32, output: String, error: String) {
-		await withCheckedContinuation { continuation in
-			DispatchQueue.global(qos: .userInitiated).async {
-				let process = Process()
-				process.executableURL = URL(fileURLWithPath: executable)
-				process.arguments = arguments
+		let process = Process()
+		process.executableURL = URL(fileURLWithPath: executable)
+		process.arguments = arguments
 
-				let out = Pipe(), err = Pipe()
-				process.standardOutput = out
-				process.standardError = err
+		return await withTaskCancellationHandler {
+			await withCheckedContinuation { continuation in
+				DispatchQueue.global(qos: .userInitiated).async {
+					let out = Pipe(), err = Pipe()
+					process.standardOutput = out
+					process.standardError = err
 
-				do {
-					try process.run()
-				} catch {
-					continuation.resume(returning: (127, "", error.localizedDescription))
-					return
+					do {
+						try process.run()
+					} catch {
+						continuation.resume(returning: (127, "", error.localizedDescription))
+						return
+					}
+					let outData = out.fileHandleForReading.readDataToEndOfFile()
+					let errData = err.fileHandleForReading.readDataToEndOfFile()
+					process.waitUntilExit()
+
+					let output = String(decoding: outData, as: UTF8.self)
+					let error = String(decoding: errData, as: UTF8.self)
+					for line in (output + error).split(separator: "\n") where !line.isEmpty {
+						progress?(String(line))
+					}
+					continuation.resume(returning: (process.terminationStatus, output, error))
 				}
-				let outData = out.fileHandleForReading.readDataToEndOfFile()
-				let errData = err.fileHandleForReading.readDataToEndOfFile()
-				process.waitUntilExit()
-
-				continuation.resume(returning: (
-					process.terminationStatus,
-					String(decoding: outData, as: UTF8.self),
-					String(decoding: errData, as: UTF8.self)
-				))
 			}
+		} onCancel: {
+			// Terminating leaves the release as helm left it — which is what
+			// `helm upgrade --install` is built to survive, and better than an
+			// editor that cannot be told to stop.
+			process.terminate()
 		}
 	}
 }

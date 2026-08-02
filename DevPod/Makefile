@@ -7,7 +7,7 @@
 
 ARCH        ?= arm64
 DELVE       ?= v1.26.2
-TAG         ?= ideai-devpod:dev
+TAG         ?= $(REPOSITORY):$(VERSION)
 OUT         := out
 ROOTFS      := $(OUT)/rootfs_$(ARCH)
 IMAGE       := $(OUT)/ideai-devpod-$(ARCH).tar

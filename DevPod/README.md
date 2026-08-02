@@ -53,7 +53,13 @@ a handful of blob uploads and an index. `mkimage -push` speaks the registry
 protocol itself. It logs in with what `docker login` left in the keychain, or
 with `DOCKER_USERNAME` and `DOCKER_PASSWORD`.
 
-A cluster that pulls rather than imports wants the chart pointed at it:
+That published image is what the chart runs by default, so a cluster with a
+network needs nothing else. A local cluster given the same reference by
+`make import-k3c` or `make import-k3d` keeps its own copy — `IfNotPresent`
+means what is already there wins, which is what makes working on the
+supervisor itself possible.
+
+A configuration can name a different one in its Image field, or:
 
 ```sh
 --set image.repository=pharndt/ideai-devpod --set image.tag=v1
