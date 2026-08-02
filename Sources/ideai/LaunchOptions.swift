@@ -150,6 +150,8 @@ struct LaunchOptions {
 	var findQuery: String?
 	/// Query for project-wide search.
 	var searchQuery: String?
+	/// Which launch configuration to select first.
+	var launchConfiguration: String?
 	/// Profile the selected configuration before capture.
 	var launchProfile = false
 	/// Turn soft wrap on before capture.
@@ -237,6 +239,7 @@ struct LaunchOptions {
 			case "--launch-run":    options.launchRun = true
 			case "--launch-debug":  options.launchDebug = true
 			case "--launch-profile": options.launchProfile = true
+			case "--launch-config": options.launchConfiguration = next()
 			case "--debug-console": options.debugConsole = true
 			case "--launch-menu":   options.launchMenu = true
 			case "--launch-editor": options.launchEditor = true

@@ -625,6 +625,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	private func layoutTitlebarPills() {
 		projectPill?.invalidateIntrinsicContentSize()
 		branchPill?.invalidateIntrinsicContentSize()
+		// The run strip measures itself from the theme's scale, so it has to be
+		// asked again — otherwise zooming the window leaves the one control
+		// that is always on screen at the old size.
+		runControl?.invalidateIntrinsicContentSize()
+		runControl?.applyThemeChange()
 		updateBranchItemPresence()
 	}
 
@@ -1180,10 +1185,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			editor.restoreScratches()
 		}
 
-		// The terminals too: a project's shells are as much a part of where
-		// somebody left off as the files they had open.
-		bottomPanel.closeTerminals()
-		if let previous, !previous.terminals.isEmpty {
+		// The terminals a project had, but only into a window that has none.
+		//
+		// A terminal is a place somebody is, not a property of the project: the
+		// window follows the shell around when that is turned on, so closing
+		// the shell that just changed directory would kill the thing doing the
+		// navigating — and with it any way of navigating back.
+		if !bottomPanel.hasTerminals, let previous, !previous.terminals.isEmpty {
 			bottomPanel.restoreTerminals(previous.terminals)
 			// And the panel itself, if it was showing: terminals that came back
 			// behind a closed panel look like terminals that did not.
@@ -2271,6 +2279,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	}
 
 	func pushChangesForTesting() { changesPane?.pushForTesting() }
+
+	/// Chooses a configuration by name, as the menu does.
+	func selectConfigurationForTesting(named name: String) {
+		selectedConfigurationName = name
+		refreshRunControl()
+	}
 
 	/// Runs the selected configuration and puts the profiler on it.
 	func profileSelectedForTesting() { profileSelectedConfiguration() }

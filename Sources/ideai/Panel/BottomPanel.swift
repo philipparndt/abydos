@@ -1181,6 +1181,11 @@ final class BottomPanel: NSView {
 		refreshTabs()
 	}
 
+	/// Whether any plain terminal is open.
+	var hasTerminals: Bool {
+		sessions.contains { if case .terminal = $0.kind { return true }; return false }
+	}
+
 	/// Closes every plain terminal, for a window that is changing project.
 	func closeTerminals() {
 		for index in sessions.indices.reversed() {

@@ -237,6 +237,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let name = options.launchConfiguration {
+			controller?.selectConfigurationForTesting(named: name)
+		}
+
 		if options.launchProfile {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
 				controller?.profileSelectedForTesting()

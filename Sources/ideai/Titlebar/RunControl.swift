@@ -132,6 +132,14 @@ final class RunControl: NSView {
 		}
 	}
 
+	/// Re-measures at the theme's scale.
+	func applyThemeChange() {
+		invalidateIntrinsicContentSize()
+		layoutParts()
+		rebuildToolTips()
+		needsDisplay = true
+	}
+
 	// MARK: - Layout
 
 	private func layoutParts() {
