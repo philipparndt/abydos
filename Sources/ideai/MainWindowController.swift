@@ -874,24 +874,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		let wanted = hasArrangedTerminal ? "keep" : Settings.shared.terminalAtStartup
 		hasArrangedTerminal = true
 		if wanted != "closed", wanted != "keep" {
+			// The setting is explicit and wins over what the project was last
+			// left with: somebody who asked for the terminal to fill the window
+			// asked for every window, not for the ones whose session happens to
+			// agree.
+			setPanelVisible(true)
 			let remembered = SessionStore.read(in: project.root)
-			if remembered?.isPanelVisible ?? true {
-				setPanelVisible(true)
-				// A panel with nothing in it is not a terminal being open. The
-				// session's own terminals come back a moment later if it had
-				// any; this is for the window that has none.
-				if !bottomPanel.hasTerminals, remembered?.terminals.isEmpty ?? true {
-					_ = bottomPanel.showTerminal()
-				}
-				// After layout: maximising divides the window, and the window
-				// has no height to divide until it has been laid out once.
-				if wanted == "full" {
-					DispatchQueue.main.async { [weak self] in
-						guard let self, !self.isPanelMaximized else { return }
-						self.togglePanelMaximized(nil)
-					}
-				}
+			// A panel with nothing in it is not a terminal being open. The
+			// session's own terminals come back a moment later if it had any;
+			// this is for the window that has none.
+			if !bottomPanel.hasTerminals, remembered?.terminals.isEmpty ?? true {
+				_ = bottomPanel.showTerminal()
 			}
+			if wanted == "full" { maximizeTerminalWhenLaidOut() }
 		}
 
 		// Scratches come back with the project. Only when the window is empty:
@@ -4310,6 +4305,25 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// Whether this window has already arranged its terminal the way the
 	/// setting asks. Only the first project it opens counts.
 	private var hasArrangedTerminal = false
+
+	/// Gives the terminal the window, once there is a window to give.
+	///
+	/// Maximising divides the window's height, and a window that has not been
+	/// laid out has none to divide — the split silently does nothing and the
+	/// terminal stays where it was, which is what "not reliably" looked like.
+	/// So it waits for a height, and gives up after a second rather than
+	/// spinning if one never arrives.
+	private func maximizeTerminalWhenLaidOut(attempt: Int = 0) {
+		DispatchQueue.main.async { [weak self] in
+			guard let self, !self.isPanelMaximized else { return }
+			guard self.verticalSplitView.bounds.height > 200 else {
+				guard attempt < 60 else { return }
+				self.maximizeTerminalWhenLaidOut(attempt: attempt + 1)
+				return
+			}
+			self.togglePanelMaximized(nil)
+		}
+	}
 
 	private func install(tool: SidebarToolKind, force: Bool = false) {
 		guard force || currentSidebarTool != tool || primaryToolView == nil else { return }
