@@ -68,11 +68,23 @@ xcode: ## Generate the Xcode project and open it (needs xcodegen)
 	@open ideai.xcodeproj
 
 .PHONY: xcode-build
-xcode-build: ## Build the app the way Xcode and App Store Connect will
+xcode-build: ## Build the app the way Xcode does, as a check on the package
 	@command -v xcodegen >/dev/null || { echo "xcodegen not found — brew install xcodegen"; exit 1; }
 	@xcodegen generate
 	@xcodebuild build -project ideai.xcodeproj -scheme ideai \
 		-destination 'platform=macOS' -derivedDataPath build/xcode | tail -3
+
+.PHONY: release
+release: build ## Sign with Developer ID, notarise and package a DMG
+	@Scripts/release.sh
+
+.PHONY: sign-check
+sign-check: ## Show the signing identity and notary profile the release will use
+	@security find-identity -v -p codesigning | grep "Developer ID Application" \
+		|| echo "no Developer ID Application certificate in the keychain"
+	@xcrun notarytool history --keychain-profile $(or $(NOTARY_PROFILE),ideai-notary) \
+		>/dev/null 2>&1 && echo "  notary profile: $(or $(NOTARY_PROFILE),ideai-notary) ✓" \
+		|| echo "  notary profile $(or $(NOTARY_PROFILE),ideai-notary) is not stored yet — see Scripts/release.sh"
 
 .PHONY: install
 install: build ## Copy the app into /Applications

@@ -18,6 +18,9 @@
 	<string>ideai</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
+	<!-- Required by App Store Connect, and the shelf the app belongs on. -->
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.developer-tools</string>
 	<key>CFBundleShortVersionString</key>
 	<string>0.1.0</string>
 	<key>CFBundleVersion</key>
@@ -26,7 +29,7 @@
 	<string>14.0</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
-	<!-- Dark by default; the theme is a fixed dark palette for now. -->
+	<!-- The palette follows the theme setting, including the system's own. -->
 	<key>NSRequiresAquaSystemAppearance</key>
 	<false/>
 	<key>CFBundleDocumentTypes</key>
@@ -40,6 +43,11 @@
 			<array>
 				<string>public.folder</string>
 			</array>
+			<!-- Alternate, not Owner: Finder owns folders. This only offers
+			     the app under "Open With" for a folder somebody wants to
+			     open as a project. -->
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
 		</dict>
 	</array>
 </dict>
