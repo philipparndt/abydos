@@ -15,6 +15,17 @@ final class HistoryPane: NSView {
 	private let root: URL
 
 	private var commits: [GitCommit] = []
+	/// The shape of what is loaded: one row per commit, in the same order.
+	///
+	/// Rebuilt whenever the list changes rather than kept in step by hand — it
+	/// is a page of a few hundred rows and the layout costs less than the git
+	/// call that fetched them.
+	private var graph: [GitGraph.Row] = []
+	/// Merges whose branch is folded away, and the commits that hides.
+	private var collapsedMerges: Set<String> = []
+	private var hiddenByCollapse: Set<String> = []
+	/// What is actually on screen: the commits, less anything folded away.
+	private var visible: [(commit: GitCommit, graph: GitGraph.Row?)] = []
 	/// Commits that exist here and nowhere else yet.
 	private var unpushed: Set<String> = []
 	private var files: [GitCommitFile] = []
@@ -94,6 +105,9 @@ final class HistoryPane: NSView {
 		commitTable.onSelectionChange = { [weak self] in self?.commitSelected() }
 		commitTable.menu = makeCommitMenu()
 		commitTable.onScrolledToEnd = { [weak self] in self?.loadMore() }
+		commitTable.onGraphClick = { [weak self] point, row in
+			self?.handleGraphClick(at: point, row: row) ?? false
+		}
 
 		fileTable = makeTable(rowHeight: Theme.current.scaled(22))
 		fileTable.onSelectionChange = { [weak self] in self?.fileSelected() }
@@ -199,6 +213,9 @@ final class HistoryPane: NSView {
 			unpushed = await GitHistory.unpushed(in: root)
 			hasMore = loaded.count == Self.pageSize
 			isLoading = false
+			// A fold only means something for the commits it was made on.
+			collapsedMerges = []
+			rebuildGraph()
 			commitTable.reloadData()
 
 			// Selecting the newest commit means the pane opens showing
@@ -232,14 +249,62 @@ final class HistoryPane: NSView {
 			commits += more
 			hasMore = more.count == Self.pageSize
 			isLoading = false
+			rebuildGraph()
 			commitTable.reloadData()
 		}
 	}
 
+	/// Lays the loaded commits out and works out what is on screen.
+	///
+	/// A search or a path filter leaves a list that is not a graph — the
+	/// commits between the ones shown are missing — so the lanes are dropped
+	/// and the rows are drawn plainly.
+	private func rebuildGraph() {
+		let isWholeHistory = query.isEmpty && scopedPath == nil
+		guard isWholeHistory else {
+			graph = []
+			hiddenByCollapse = []
+			visible = commits.map { ($0, nil) }
+			return
+		}
+
+		graph = GitGraph.lay(out: commits.map {
+			GitGraph.Node(hash: $0.hash, parents: $0.parentHashes)
+		})
+
+		// What each folded merge hides: everything its side brought in, which
+		// is the same walk the layout does to count them.
+		let nodes = commits.map { GitGraph.Node(hash: $0.hash, parents: $0.parentHashes) }
+		hiddenByCollapse = []
+		for hash in collapsedMerges {
+			guard let node = nodes.first(where: { $0.hash == hash }) else { continue }
+			hiddenByCollapse.formUnion(GitGraph.mergedHashes(of: node, nodes: nodes))
+		}
+
+		visible = zip(commits, graph)
+			.filter { !hiddenByCollapse.contains($0.0.hash) }
+			.map { ($0.0, $0.1) }
+	}
+
+	/// Folds a merge's branch away, or brings it back.
+	private func toggleCollapse(at row: Int) {
+		guard visible.indices.contains(row) else { return }
+		let commit = visible[row].commit
+		guard visible[row].graph?.collapsible ?? 0 > 0 else { return }
+
+		if collapsedMerges.contains(commit.hash) {
+			collapsedMerges.remove(commit.hash)
+		} else {
+			collapsedMerges.insert(commit.hash)
+		}
+		rebuildGraph()
+		commitTable.reloadData()
+	}
+
 	private func commitSelected() {
 		let row = commitTable.selectedRow
-		guard commits.indices.contains(row) else { return }
-		let commit = commits[row]
+		guard visible.indices.contains(row) else { return }
+		let commit = visible[row].commit
 		selectedCommit = commit
 
 		let message = [commit.subject, commit.body].filter { !$0.isEmpty }.joined(separator: " — ")
@@ -266,6 +331,25 @@ final class HistoryPane: NSView {
 		setScope(path: scopeControl.selectedSegment == 1 ? offeredPath : nil)
 	}
 
+	/// A click in the graph column, which is where a fold is opened and closed.
+	///
+	/// Anywhere else in the row selects the commit, as it always did: the
+	/// chevron is small and the lane it sits in is not, so the whole column
+	/// under a foldable merge is the target.
+	func handleGraphClick(at point: NSPoint, row: Int) -> Bool {
+		guard visible.indices.contains(row), let place = visible[row].graph else { return false }
+		guard place.collapsible > 0 else { return false }
+
+		// The dot, and the marker beside it.
+		let lane = Theme.current.scaled(13)
+		let centre = Theme.current.scaled(8) + CGFloat(place.lane) * lane
+		let target = centre - lane / 2 ... centre + lane
+		guard target.contains(point.x) else { return false }
+
+		toggleCollapse(at: row)
+		return true
+	}
+
 	private func makeCommitMenu() -> NSMenu {
 		let menu = NSMenu()
 		menu.autoenablesItems = false
@@ -276,7 +360,7 @@ final class HistoryPane: NSView {
 	private var clickedCommit: GitCommit? {
 		let clicked = commitTable.clickedRow
 		let row = clicked >= 0 ? clicked : commitTable.selectedRow
-		return commits.indices.contains(row) ? commits[row] : nil
+		return visible.indices.contains(row) ? visible[row].commit : nil
 	}
 
 	@objc private func copyHash() {
@@ -317,7 +401,7 @@ final class HistoryPane: NSView {
 
 extension HistoryPane: NSTableViewDataSource, NSTableViewDelegate {
 	func numberOfRows(in tableView: NSTableView) -> Int {
-		tableView === commitTable ? commits.count : files.count
+		tableView === commitTable ? visible.count : files.count
 	}
 
 	func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
@@ -327,8 +411,13 @@ extension HistoryPane: NSTableViewDataSource, NSTableViewDelegate {
 	func tableView(_ tableView: NSTableView, viewFor column: NSTableColumn?, row: Int) -> NSView? {
 		if tableView === commitTable {
 			guard commits.indices.contains(row) else { return nil }
-			let commit = commits[row]
-			return CommitRowView(commit: commit, isUnpushed: unpushed.contains(commit.hash))
+			let commit = visible[row].commit
+			return CommitRowView(
+				commit: commit,
+				isUnpushed: unpushed.contains(commit.hash),
+				graph: visible[row].graph,
+				isCollapsed: collapsedMerges.contains(commit.hash)
+			)
 		}
 		guard files.indices.contains(row) else { return nil }
 		return CommitFileRowView(file: files[row])
@@ -366,6 +455,17 @@ private final class HistoryTableView: NSTableView {
 	var onSelectionChange: (() -> Void)?
 	var onScrolledToEnd: (() -> Void)?
 	var rowHeightOverride: CGFloat?
+	/// A click in the graph column, which the pane may take for a fold.
+	var onGraphClick: ((NSPoint, Int) -> Bool)?
+
+	override func mouseDown(with event: NSEvent) {
+		let point = convert(event.locationInWindow, from: nil)
+		let row = self.row(at: point)
+		if row >= 0, onGraphClick?(convert(point, to: rowView(atRow: row, makeIfNecessary: false)), row) == true {
+			return
+		}
+		super.mouseDown(with: event)
+	}
 
 	override func draw(_ dirtyRect: NSRect) {
 		super.draw(dirtyRect)
@@ -383,11 +483,22 @@ private final class HistoryTableView: NSTableView {
 private final class CommitRowView: NSView {
 	private let commit: GitCommit
 	private let isUnpushed: Bool
+	/// Where this commit sits in the drawing, and what runs past it.
+	private let graph: GitGraph.Row?
+	/// Whether the branch this merge brought in is folded away.
+	private let isCollapsed: Bool
 	override var isFlipped: Bool { true }
 
-	init(commit: GitCommit, isUnpushed: Bool = false) {
+	init(
+		commit: GitCommit,
+		isUnpushed: Bool = false,
+		graph: GitGraph.Row? = nil,
+		isCollapsed: Bool = false
+	) {
 		self.commit = commit
 		self.isUnpushed = isUnpushed
+		self.graph = graph
+		self.isCollapsed = isCollapsed
 		super.init(frame: .zero)
 		var lines = [commit.shortHash, commit.subject, commit.body]
 		if isUnpushed { lines.append("Not pushed yet") }
@@ -398,8 +509,33 @@ private final class CommitRowView: NSView {
 
 	required init?(coder: NSCoder) { fatalError("not used") }
 
+	/// How wide one lane is, and how far the text starts from the graph.
+	private var laneWidth: CGFloat { Theme.current.scaled(13) }
+
+	/// The colours lines of descent are drawn in, in order.
+	///
+	/// Chosen to be told apart at a glance rather than to be pretty: a graph is
+	/// read by following one line down past the others.
+	private static let laneColours: [NSColor] = [
+		.hex(0x6E97F0), .hex(0x71B382), .hex(0xE5BE72), .hex(0xC983C5),
+		.hex(0x62B4F0), .hex(0xD8926B), .hex(0x46BDB6), .hex(0xD6706E),
+	]
+
+	static func colour(forBranch branch: Int) -> NSColor {
+		laneColours[abs(branch) % laneColours.count]
+	}
+
+	/// The graph column's width for this row, or nothing when there is no
+	/// graph — a filtered log has no shape worth drawing.
+	private var graphWidth: CGFloat {
+		guard let graph else { return 0 }
+		return CGFloat(max(1, graph.width)) * laneWidth + Theme.current.scaled(6)
+	}
+
 	override func draw(_ dirtyRect: NSRect) {
-		let left = Theme.current.scaled(10)
+		drawGraph()
+
+		let left = Theme.current.scaled(10) + graphWidth
 		let top = Theme.current.scaled(5)
 
 		var x = left
@@ -456,6 +592,101 @@ private final class CommitRowView: NSView {
 			width: max(0, bounds.width - left - Theme.current.scaled(10)),
 			height: detail.size().height
 		))
+	}
+
+	/// Draws the lanes, the lines between them, and this commit's dot.
+	///
+	/// A row is drawn as: everything that passes through it going straight
+	/// down, then the lines that bend into or out of this commit, then the dot
+	/// on top so nothing crosses it.
+	private func drawGraph() {
+		guard let graph else { return }
+		let centreY = bounds.midY
+		func centre(_ lane: Int) -> CGFloat {
+			Theme.current.scaled(8) + CGFloat(lane) * laneWidth
+		}
+
+		let width = Theme.current.scaled(1.6)
+		for edge in graph.edges {
+			let path = NSBezierPath()
+			let from = centre(edge.from)
+			let to = centre(edge.to)
+			if from == to {
+				// A lane carrying on: the line runs the height of the row, and
+				// only from the dot downwards when it starts here.
+				let top = (edge.from == graph.lane) ? centreY : bounds.minY
+				path.move(to: NSPoint(x: from, y: top))
+				path.line(to: NSPoint(x: from, y: bounds.maxY))
+			} else {
+				// A line joining or leaving: a curve rather than a corner, so
+				// the eye follows it round.
+				path.move(to: NSPoint(x: from, y: centreY))
+				path.curve(
+					to: NSPoint(x: to, y: bounds.maxY),
+					controlPoint1: NSPoint(x: from, y: bounds.maxY - (bounds.height / 3)),
+					controlPoint2: NSPoint(x: to, y: centreY + (bounds.height / 3))
+				)
+			}
+			path.lineWidth = width
+			Self.colour(forBranch: edge.branch).withAlphaComponent(0.9).setStroke()
+			path.stroke()
+		}
+
+		// Lines coming from above into this commit's lane: the row above drew
+		// them to its own edge, and this one meets them.
+		let own = centre(graph.lane)
+		let up = NSBezierPath()
+		up.move(to: NSPoint(x: own, y: bounds.minY))
+		up.line(to: NSPoint(x: own, y: centreY))
+		up.lineWidth = width
+		Self.colour(forBranch: graph.branch).withAlphaComponent(0.9).setStroke()
+		up.stroke()
+
+		let radius = Theme.current.scaled(commit.isMerge ? 4 : 3.5)
+		let dot = NSRect(
+			x: own - radius, y: centreY - radius, width: radius * 2, height: radius * 2
+		)
+		let colour = Self.colour(forBranch: graph.branch)
+		if commit.isMerge {
+			// A merge is drawn hollow, the way a junction is: the two lines
+			// meeting are what matters, not the point itself.
+			Theme.current.editorBackground.setFill()
+			NSBezierPath(ovalIn: dot).fill()
+			colour.setStroke()
+			let ring = NSBezierPath(ovalIn: dot.insetBy(dx: 0.8, dy: 0.8))
+			ring.lineWidth = Theme.current.scaled(1.8)
+			ring.stroke()
+		} else {
+			colour.setFill()
+			NSBezierPath(ovalIn: dot).fill()
+		}
+
+		// A merge that brought a branch in can fold it away. The marker sits
+		// beside the dot rather than under it, where the lines leaving the row
+		// are: a plus for a branch that is folded, a minus for one that is not,
+		// which is how a tree says the same thing everywhere else.
+		guard graph.collapsible > 0 else { return }
+		let box = NSRect(
+			x: own + radius + Theme.current.scaled(3),
+			y: centreY - Theme.current.scaled(4.5),
+			width: Theme.current.scaled(9),
+			height: Theme.current.scaled(9)
+		)
+		colour.withAlphaComponent(0.18).setFill()
+		NSBezierPath(roundedRect: box, xRadius: 2, yRadius: 2).fill()
+
+		let marker = NSBezierPath()
+		let arm = Theme.current.scaled(2.4)
+		marker.move(to: NSPoint(x: box.midX - arm, y: box.midY))
+		marker.line(to: NSPoint(x: box.midX + arm, y: box.midY))
+		if isCollapsed {
+			marker.move(to: NSPoint(x: box.midX, y: box.midY - arm))
+			marker.line(to: NSPoint(x: box.midX, y: box.midY + arm))
+		}
+		marker.lineWidth = Theme.current.scaled(1.3)
+		marker.lineCapStyle = .round
+		colour.setStroke()
+		marker.stroke()
 	}
 
 	/// Coarse: which week it was is what anybody remembers.

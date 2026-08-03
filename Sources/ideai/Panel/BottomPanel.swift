@@ -228,6 +228,10 @@ final class BottomPanel: NSView {
 		strip.setUpTabDropping()
 		strip.onSelect = { [weak self] index in
 			guard let self else { return }
+			if let session = self.mirroredSession(at: index, in: column) {
+				self.activate(session, focus: true)
+				return
+			}
 			if let window = self.mirroredWindow(at: index, in: column) {
 				self.markMirroredWindowActive(window.index)
 				Task {
@@ -242,6 +246,10 @@ final class BottomPanel: NSView {
 		}
 		strip.onClose = { [weak self] index in
 			guard let self else { return }
+			if let session = self.mirroredSession(at: index, in: column) {
+				self.close(session)
+				return
+			}
 			if let window = self.mirroredWindow(at: index, in: column) {
 				Task {
 					await TmuxMirror.killWindow(window.index, inSession: self.mirroredSession ?? self.tmuxSession ?? "")
@@ -268,6 +276,10 @@ final class BottomPanel: NSView {
 		strip.onHide = { [weak self] in self?.onRequestHide?() }
 		strip.onRename = { [weak self] index, name in
 			guard let self else { return }
+			if let session = self.mirroredSession(at: index, in: column) {
+				self.rename(session, to: name)
+				return
+			}
 			if let window = self.mirroredWindow(at: index, in: column) {
 				Task {
 					await TmuxMirror.rename(
@@ -286,6 +298,7 @@ final class BottomPanel: NSView {
 		// debugger beside its program is another.
 		strip.canDrag = { [weak self] index in
 			guard let self else { return false }
+			if self.mirroredSession(at: index, in: column) != nil { return true }
 			// A mirrored tab is a tmux window: it can be dragged along the
 			// strip, but not out into a window of its own or into another
 			// column — tmux owns where it lives.
@@ -294,6 +307,9 @@ final class BottomPanel: NSView {
 		}
 		strip.onMove = { [weak self] from, to in
 			guard let self else { return }
+			// A tab that is not a tmux window keeps its own ordering, and does
+			// not shuffle tmux's.
+			if self.mirroredSession(at: from, in: column) != nil { return }
 			if let moved = self.mirroredWindow(at: from, in: column) {
 				self.moveMirroredWindow(moved, from: from, to: to)
 				return
@@ -302,6 +318,10 @@ final class BottomPanel: NSView {
 		}
 		strip.onTearOff = { [weak self] index, point in
 			guard let self else { return }
+			if let session = self.mirroredSession(at: index, in: column) {
+				self.tearOff(session, at: point)
+				return
+			}
 			// tmux's windows stay in tmux: tearing one into a window of its own
 			// would mean a second client, which is not what the drag looked
 			// like it would do.
@@ -806,10 +826,28 @@ final class BottomPanel: NSView {
 		}
 	}
 
+	/// The terminal attached to tmux, which the mirrored tabs stand for.
+	///
+	/// The first one: the mode attaches the first terminal of a window, and any
+	/// opened afterwards are ordinary shells with tabs of their own.
+	private var mirroredTerminal: Session? {
+		sessions.first { $0.terminal != nil }
+	}
+
 	/// The tmux window a strip position stands for, when the strip is a mirror.
 	private func mirroredWindow(at index: Int, in column: Int) -> TmuxMirror.Window? {
 		guard mirrorsTmux, column == 0, tmuxWindows.indices.contains(index) else { return nil }
 		return tmuxWindows[index]
+	}
+
+
+	/// What a strip position means: the tmux windows come first, then whatever
+	/// else the column is holding.
+	private func mirroredSession(at index: Int, in column: Int) -> Session? {
+		guard mirrorsTmux, column == 0, !tmuxWindows.isEmpty else { return nil }
+		let others = sessions(in: column).filter { $0 !== mirroredTerminal }
+		let position = index - tmuxWindows.count
+		return others.indices.contains(position) ? others[position] : nil
 	}
 
 	/// Puts the keyboard back in the terminal after a tab was clicked: the
@@ -1437,24 +1475,44 @@ final class BottomPanel: NSView {
 			// point: switching tabs is a message to tmux, not a teardown.
 			let mirroring = mirrorsTmux && index == 0 && !tmuxWindows.isEmpty
 			view.strip.mirroredSession = mirroring ? (mirroredSession ?? tmuxSession) : nil
-			// Killing a tmux window can take real work with it — a build, an
-			// ssh session, an editor with unsaved buffers — so it is not one
-			// stray click away. The right-click menu still offers it.
-			view.strip.showsCloseButtons = !mirroring
+			if mirroring {
+				// tmux's windows stand for the one terminal that is attached to
+				// it; everything else the panel is holding — a build's output,
+				// a debugger, a search, a second terminal — keeps a tab of its
+				// own. A run that took the strip over was the whole complaint.
+				let others = list.filter { $0 !== mirroredTerminal }
+				// No ✕ on a tmux window: killing one can take a build or an
+				// ssh session with it, and that should not be one stray click
+				// away. The right-click menu still offers it.
+				var items = tmuxWindows.map { window in
+					PanelTabItem(
+						title: window.name,
+						hasExited: false,
+						isTerminal: true,
+						symbol: "terminal",
+						isShowing: window.isActive && showing === mirroredTerminal,
+						isClosable: false
+					)
+				}
+				items += others.map { session in
+					PanelTabItem(
+						title: session.displayTitle,
+						hasExited: session.hasExited,
+						isTerminal: { if case .terminal = session.kind { return true } else { return false } }(),
+						symbol: session.symbol,
+						isShowing: session === showing
+					)
+				}
 
-			if mirrorsTmux, index == 0, !tmuxWindows.isEmpty {
-				view.strip.setItems(
-					tmuxWindows.map { window in
-						PanelTabItem(
-							title: window.name,
-							hasExited: false,
-							isTerminal: true,
-							symbol: "terminal",
-							isShowing: window.isActive
-						)
-					},
-					activeIndex: tmuxWindows.firstIndex { $0.isActive }
-				)
+				let active: Int?
+				if showing === mirroredTerminal {
+					active = tmuxWindows.firstIndex { $0.isActive }
+				} else if let position = others.firstIndex(where: { $0 === showing }) {
+					active = tmuxWindows.count + position
+				} else {
+					active = nil
+				}
+				view.strip.setItems(items, activeIndex: active)
 				continue
 			}
 
@@ -1904,6 +1962,12 @@ struct PanelTabItem {
 	var symbol = "terminal"
 	/// On screen — which, when the pane is split, is more than one of them.
 	var isShowing = false
+	/// Whether the ✕ belongs on it.
+	///
+	/// A tmux window is closed by killing it, which can take a build or an ssh
+	/// session with it; everything the panel owns itself closes with a click,
+	/// as it always did.
+	var isClosable = true
 }
 
 /// The panel's content area, which a dragged terminal tab can be dropped on.
@@ -2048,20 +2112,6 @@ final class PanelTabStrip: NSView {
 	/// Shown as a tag beside the panel's own controls: the tabs look like our
 	/// tabs, and it should be visible at a glance that they are not — that
 	/// closing one closes a tmux window, and that another client can move them.
-	/// Whether a tab may be closed from the strip.
-	///
-	/// A mirrored tab is a tmux window, and killing one from a stray click on
-	/// an ✕ can take real work with it — a build, an ssh session, an editor
-	/// with unsaved buffers. The right-click menu still offers it, where the
-	/// gesture is deliberate.
-	var showsCloseButtons = true {
-		didSet {
-			guard showsCloseButtons != oldValue else { return }
-			recomputeLayout()
-			needsDisplay = true
-		}
-	}
-
 	var mirroredSession: String? {
 		didSet {
 			guard mirroredSession != oldValue else { return }
@@ -2290,7 +2340,8 @@ final class PanelTabStrip: NSView {
 			width: closeSize,
 			height: closeSize
 		)
-		if showsCloseButtons, closeRect.contains(point) {
+		let closable = items.indices.contains(index) ? items[index].isClosable : true
+		if closable, closeRect.contains(point) {
 			onClose?(index)
 		} else {
 			onSelect?(index)
@@ -2548,11 +2599,11 @@ final class PanelTabStrip: NSView {
 			.paragraphStyle: paragraph,
 		])
 		let size = label.size()
-		let reserved = showsCloseButtons ? closeSize + Theme.current.scaled(6) : 0
+		let reserved = item.isClosable ? closeSize + Theme.current.scaled(6) : 0
 		let limit = max(0, rect.maxX - padding - reserved - x)
 		label.draw(in: NSRect(x: x, y: rect.midY - size.height / 2, width: limit, height: size.height))
 
-		if showsCloseButtons, isActive || isHovered {
+		if item.isClosable, isActive || isHovered {
 			let close = NSRect(
 				x: rect.maxX - padding - closeSize,
 				y: rect.midY - closeSize / 2,

@@ -970,6 +970,28 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		install(tool: currentSidebarTool, force: true)
 	}
 
+	/// Draws the sidebar's pane into a file, whatever the window is doing.
+	///
+	/// The window capture goes through the compositor and a pane that has just
+	/// been built is not always in it yet; this asks the view itself.
+	func snapshotSidebarForTesting(to path: String) {
+		guard let view = primaryToolView, view.bounds.width > 1 else { return }
+		guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+		view.cacheDisplay(in: view.bounds, to: rep)
+		guard let data = rep.representation(using: .png, properties: [:]) else { return }
+		try? data.write(to: URL(fileURLWithPath: path))
+	}
+
+	/// Opens the sidebar to a width, for looking at a pane in a screenshot.
+	func openSidebarForTesting(width: CGFloat) {
+		navigatorWidth = width
+		navigatorWidthConstraint.constant = width
+		navigatorContainer.isHidden = false
+		splitView.setPosition(width, ofDividerAt: 0)
+		splitView.adjustSubviews()
+		updateSidebarSelection()
+	}
+
 	/// Gives the project tree keyboard focus.
 	func focusNavigator() {
 		navigator.focusTree()
@@ -4347,6 +4369,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 		currentSidebarTool = tool
 		primaryToolView = install(view: view, for: tool)
+		if ProcessInfo.processInfo.environment["IDEAI_TOOL_PROBE"] != nil {
+			print("TOOL installed \(tool) container=\(primaryContainer.frame) view=\(view.frame)")
+			DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self, weak view] in
+				guard let self, let view else { return }
+				print("TOOL later container=\(self.primaryContainer.frame) view=\(view.frame) "
+					+ "hidden=\(view.isHidden) window=\(view.window != nil) "
+					+ "navigator=\(self.navigatorContainer.frame) split=\(self.splitView.frame)")
+			}
+		}
 	}
 
 	/// Puts a built view into the sidebar and returns it.
@@ -4372,6 +4403,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	/// Builds a tool's view, or nil when what it needs is not there yet.
 	private func makeToolView(_ tool: SidebarToolKind) -> NSView? {
+		if ProcessInfo.processInfo.environment["IDEAI_TOOL_PROBE"] != nil {
+			print("TOOL make \(tool) project=\(project != nil) git=\(project?.git != nil)")
+		}
 		let view: NSView
 
 		switch tool {

@@ -403,6 +403,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 				case "changes":   controller?.showSidebarTool(.changes)
 				case "branches":  controller?.showSidebarTool(.branches)
 				case "structure": controller?.showSidebarTool(.structure)
+				case "history":   controller?.showSidebarTool(.history)
+				case "scratches": controller?.showSidebarTool(.scratches)
 				default:          controller?.showSidebarTool(.project)
 				}
 			}
@@ -540,6 +542,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 		if let hovers = options.tmuxMenuHovers {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
 				controller?.tmuxMenuForTesting(hovers: hovers)
+			}
+		}
+
+		if let path = options.sidebarShot {
+			DispatchQueue.main.asyncAfter(deadline: .now() + max(2, options.screenshotDelay - 1)) {
+				controller?.snapshotSidebarForTesting(to: path)
+			}
+		}
+
+		if let width = options.sidebarWidth {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+				controller?.openSidebarForTesting(width: CGFloat(width))
 			}
 		}
 

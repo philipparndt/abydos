@@ -124,6 +124,10 @@ struct LaunchOptions {
 	var resizeWidth: Double?
 	/// Switch the appearance part-way through, to see it change live.
 	var switchAppearance: String?
+	/// Force the sidebar open to a width, for photographing a pane.
+	var sidebarWidth: Double?
+	/// Draw the sidebar's pane straight into a file.
+	var sidebarShot: String?
 	/// Open tmux's own menu and move the pointer through it.
 	var tmuxMenuHovers: Int?
 	/// Hover the editor at line:character with ⌘ held.
@@ -255,6 +259,8 @@ struct LaunchOptions {
 			case "--blame": options.showsBlame = true
 			case "--resize": options.resizeWidth = next().flatMap(Double.init)
 			case "--switch-appearance": options.switchAppearance = next()
+			case "--sidebar-width": options.sidebarWidth = next().flatMap(Double.init)
+			case "--sidebar-shot": options.sidebarShot = next()
 			case "--tmux-menu": options.tmuxMenuHovers = next().flatMap(Int.init) ?? 0
 			case "--cmd-hover":  options.commandHoverAt = next()
 			case "--attach-picker": options.attachFilter = next()
