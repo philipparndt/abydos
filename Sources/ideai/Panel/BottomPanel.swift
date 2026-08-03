@@ -229,7 +229,11 @@ final class BottomPanel: NSView {
 		strip.onSelect = { [weak self] index in
 			guard let self else { return }
 			if let window = self.mirroredWindow(at: index, in: column) {
-				Task { await TmuxMirror.select(window: window.index, inSession: self.tmuxSession ?? "") }
+				self.markMirroredWindowActive(window.index)
+				Task {
+					await TmuxMirror.select(window: window.index, inSession: self.tmuxSession ?? "")
+					self.refreshTmuxWindows()
+				}
 				self.focusTerminal()
 				return
 			}
@@ -239,7 +243,10 @@ final class BottomPanel: NSView {
 		strip.onClose = { [weak self] index in
 			guard let self else { return }
 			if let window = self.mirroredWindow(at: index, in: column) {
-				Task { await TmuxMirror.killWindow(window.index, inSession: self.tmuxSession ?? "") }
+				Task {
+					await TmuxMirror.killWindow(window.index, inSession: self.tmuxSession ?? "")
+					self.refreshTmuxWindows()
+				}
 				return
 			}
 			guard let session = self.session(at: index, in: column) else { return }
@@ -248,7 +255,10 @@ final class BottomPanel: NSView {
 		strip.onAdd = { [weak self] in
 			guard let self else { return }
 			if self.mirrorsTmux, column == 0, let session = self.tmuxSession {
-				Task { await TmuxMirror.newWindow(inSession: session) }
+				Task {
+					await TmuxMirror.newWindow(inSession: session)
+					self.refreshTmuxWindows()
+				}
 				self.focusTerminal()
 				return
 			}
@@ -263,6 +273,7 @@ final class BottomPanel: NSView {
 					await TmuxMirror.rename(
 						window: window.index, to: name, inSession: self.tmuxSession ?? ""
 					)
+					self.refreshTmuxWindows()
 				}
 				return
 			}
@@ -554,7 +565,7 @@ final class BottomPanel: NSView {
 	private func startMirroringTmuxIfWanted() {
 		tmuxPoll?.invalidate()
 		tmuxPoll = nil
-		guard mirrorsTmux, let session = tmuxSession else {
+		guard mirrorsTmux, tmuxSession != nil else {
 			if !tmuxWindows.isEmpty {
 				tmuxWindows = []
 				rebuildColumns()
@@ -563,18 +574,58 @@ final class BottomPanel: NSView {
 		}
 
 		let poll = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-			Task { @MainActor in
-				guard let self else { return }
-				let windows = await TmuxMirror.windows(inSession: session)
-				// Nothing at all means tmux is still starting, or has gone: the
-				// strip keeps what it had rather than blinking empty.
-				guard !windows.isEmpty, windows != self.tmuxWindows else { return }
-				self.tmuxWindows = windows
-				self.rebuildColumns()
-			}
+			self?.refreshTmuxWindows()
 		}
 		RunLoop.main.add(poll, forMode: .common)
 		tmuxPoll = poll
+		refreshTmuxWindows()
+	}
+
+	/// Looks again soon, when something on screen suggests tmux has moved.
+	///
+	/// Coalesced: a build's output is thousands of chunks and one question is
+	/// enough for all of them.
+	private func scheduleMirrorCheck() {
+		guard mirrorsTmux, !mirrorCheckScheduled else { return }
+		mirrorCheckScheduled = true
+		DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+			self?.mirrorCheckScheduled = false
+			self?.refreshTmuxWindows()
+		}
+	}
+
+	private var mirrorCheckScheduled = false
+
+	/// Asks tmux what it has now.
+	///
+	/// Also called the moment anything might have changed it — a tab clicked,
+	/// output arriving — so the strip keeps up with a hand switching windows
+	/// faster than twice a second.
+	func refreshTmuxWindows() {
+		guard mirrorsTmux, let session = tmuxSession else { return }
+		Task { @MainActor in
+			let windows = await TmuxMirror.windows(inSession: session)
+			// Nothing at all means tmux is still starting, or has gone: the
+			// strip keeps what it had rather than blinking empty.
+			guard !windows.isEmpty, windows != self.tmuxWindows else { return }
+			self.tmuxWindows = windows
+			self.rebuildColumns()
+		}
+	}
+
+	/// Moves the highlight before tmux has answered.
+	///
+	/// A click that waits for a round trip through another process reads as a
+	/// click that did not land — and it is the one thing here that can be known
+	/// without asking, since we are the ones who asked for the switch.
+	private func markMirroredWindowActive(_ index: Int) {
+		guard tmuxWindows.contains(where: { $0.index == index }) else { return }
+		tmuxWindows = tmuxWindows.map {
+			TmuxMirror.Window(
+				index: $0.index, name: $0.name, isActive: $0.index == index, command: $0.command
+			)
+		}
+		rebuildColumns()
 	}
 
 	/// What the first terminal runs instead of a plain shell.
@@ -1072,6 +1123,9 @@ final class BottomPanel: NSView {
 		// to look. An idle terminal produces none and costs nothing.
 		terminal.terminalView.onOutput = { [weak self] in
 			self?.scheduleDirectoryCheck()
+			// A window switched inside tmux redraws the screen, so output is
+			// also the cue that the tab strip may be out of date.
+			self?.scheduleMirrorCheck()
 		}
 		terminal.terminalView.onProcessExit = { [weak self, weak session] _ in
 			guard let self, let session else { return }
