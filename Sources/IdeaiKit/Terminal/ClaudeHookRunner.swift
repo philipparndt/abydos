@@ -29,6 +29,7 @@ public enum ClaudeHookRunner {
 		}
 
 		let input = FileHandle.standardInput.readDataToEndOfFile()
+		log(input)
 		guard let event = ClaudeHook.parse(input) else { exit(0) }
 		note("read")
 
@@ -39,6 +40,26 @@ public enum ClaudeHookRunner {
 		announce(event: event, at: place)
 		note("announce")
 		exit(0)
+	}
+
+	/// Keeps what Claude actually sent, when asked to.
+	///
+	/// A badge that says something surprising is otherwise an argument about
+	/// what the payload probably was. `IDEAI_HOOK_LOG=<path>` makes it a
+	/// question anybody can answer by reading a file.
+	private static func log(_ input: Data) {
+		guard let path = ProcessInfo.processInfo.environment["IDEAI_HOOK_LOG"], !path.isEmpty
+		else { return }
+		let line = String(decoding: input, as: UTF8.self)
+			.trimmingCharacters(in: .whitespacesAndNewlines) + "\n"
+		let url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+		if let handle = try? FileHandle(forWritingTo: url) {
+			defer { try? handle.close() }
+			_ = try? handle.seekToEnd()
+			try? handle.write(contentsOf: Data(line.utf8))
+		} else {
+			try? Data(line.utf8).write(to: url)
+		}
 	}
 
 	// MARK: - tmux

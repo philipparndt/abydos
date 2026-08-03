@@ -19,6 +19,13 @@ public enum ClaudeHook {
 		public let cwd: String
 		/// What Claude wants to say, on the events that carry a message.
 		public let message: String?
+		/// Which kind of notification it is, on the events that have one.
+		///
+		/// The field that matters: a `Notification` is not by itself somebody
+		/// being waited for. Claude sends them for signing in, for a push
+		/// having gone out, for compaction — and treating all of those as
+		/// "needs you" is how an amber badge stops meaning anything.
+		public let notificationType: String?
 		/// A `Stop` that is only a pause: Claude carries on afterwards, so it
 		/// is not the end of a turn and must not read as one.
 		public let isIntermediateStop: Bool
@@ -28,12 +35,14 @@ public enum ClaudeHook {
 			sessionID: String = "",
 			cwd: String = "",
 			message: String? = nil,
+			notificationType: String? = nil,
 			isIntermediateStop: Bool = false
 		) {
 			self.name = name
 			self.sessionID = sessionID
 			self.cwd = cwd
 			self.message = message
+			self.notificationType = notificationType
 			self.isIntermediateStop = isIntermediateStop
 		}
 	}
@@ -49,6 +58,7 @@ public enum ClaudeHook {
 			sessionID: object["session_id"] as? String ?? "",
 			cwd: object["cwd"] as? String ?? "",
 			message: object["message"] as? String,
+			notificationType: object["notification_type"] as? String,
 			isIntermediateStop: object["stop_hook_active"] as? Bool ?? false
 		)
 	}
@@ -65,7 +75,10 @@ public enum ClaudeHook {
 		case "UserPromptSubmit", "PostToolUse", "PreToolUse":
 			return .working
 		case "Notification":
-			return .needsInput
+			// Only the ones that are actually about somebody being waited for.
+			// Anything else — compaction, a push going out, signing in — leaves
+			// the badge as it was: a session that was working still is.
+			return wantsAnswer(event) ? .needsInput : nil
 		case "Stop":
 			return event.isIntermediateStop ? .working : .done
 		// A subagent finishing is not the session finishing: the one that sent
@@ -87,7 +100,7 @@ public enum ClaudeHook {
 	/// is progress, and progress that interrupts is just noise.
 	public static func isWorthAnnouncing(_ event: Event) -> Bool {
 		switch event.name {
-		case "Notification":  return true
+		case "Notification":  return wantsAnswer(event)
 		case "Stop":          return !event.isIntermediateStop
 		case "SubagentStop":  return true
 		default:              return false
@@ -109,6 +122,25 @@ public enum ClaudeHook {
 		case "SubagentStop":  return "\(name) · a subagent finished"
 		default:              return nil
 		}
+	}
+
+	/// Whether a notification is Claude waiting on a person.
+	///
+	/// `notification_type` says so outright, and is the field to trust:
+	/// `agent_needs_input`, `idle_prompt` and a permission prompt are somebody
+	/// being waited for; `auth_success`, `push_notification` and the rest are
+	/// Claude talking to itself. Older versions send no type, so the message is
+	/// read instead — the two sentences it uses when it is waiting.
+	static func wantsAnswer(_ event: Event) -> Bool {
+		if let type = event.notificationType?.lowercased(), !type.isEmpty {
+			return type.contains("needs_input")
+				|| type.contains("permission")
+				|| type == "idle_prompt"
+		}
+		let message = (event.message ?? "").lowercased()
+		return message.contains("needs your permission")
+			|| message.contains("waiting for your input")
+			|| message.contains("permission to use")
 	}
 
 	/// The detail behind the line: whatever Claude said, if it said anything.

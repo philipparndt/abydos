@@ -13,6 +13,7 @@ struct ClaudeHookTests {
 		let parsed = event("""
 		{"hook_event_name": "Notification", "session_id": "abc123",
 		 "cwd": "/Users/x/dev/ideai", "transcript_path": "/tmp/t.jsonl",
+		 "notification_type": "worker_permission_prompt",
 		 "message": "Claude needs your permission to use Bash"}
 		""")
 
@@ -20,6 +21,7 @@ struct ClaudeHookTests {
 		#expect(parsed?.sessionID == "abc123")
 		#expect(parsed?.cwd == "/Users/x/dev/ideai")
 		#expect(parsed?.message == "Claude needs your permission to use Bash")
+		#expect(parsed?.notificationType == "worker_permission_prompt")
 	}
 
 	@Test func anythingThatIsNotAnEventIsNotOne() {
@@ -36,8 +38,47 @@ struct ClaudeHookTests {
 		}
 	}
 
-	@Test func aNotificationIsSomebodyBeingWaitedFor() {
-		#expect(ClaudeHook.status(after: .init(name: "Notification")) == .needsInput)
+	/// The kinds of notification that really are somebody being waited for.
+	/// Claude sends these with `notification_type`, which is the field to
+	/// trust.
+	@Test func onlySomeNotificationsAreSomebodyBeingWaitedFor() {
+		for type in ["agent_needs_input", "idle_prompt", "worker_permission_prompt"] {
+			#expect(
+				ClaudeHook.status(after: .init(name: "Notification", notificationType: type))
+					== .needsInput,
+				"\(type)"
+			)
+		}
+	}
+
+	/// The bug this exists to stop: a session that is compacting, signing in,
+	/// or sending a push is not waiting for anybody, and a badge that says it
+	/// is teaches people to ignore amber.
+	@Test func claudeTalkingToItselfLeavesTheBadgeAlone() {
+		for type in ["push_notification", "auth_success", "computer_use_enter"] {
+			#expect(
+				ClaudeHook.status(after: .init(name: "Notification", notificationType: type)) == nil,
+				"\(type)"
+			)
+		}
+		#expect(!ClaudeHook.isWorthAnnouncing(
+			.init(name: "Notification", message: "Compacting conversation…",
+			      notificationType: "push_notification")
+		))
+	}
+
+	/// A version that sends no type at all: the two sentences Claude uses when
+	/// it is waiting, and nothing else.
+	@Test func withoutATypeTheSentenceDecides() {
+		#expect(ClaudeHook.status(after: .init(
+			name: "Notification", message: "Claude needs your permission to use Bash"
+		)) == .needsInput)
+		#expect(ClaudeHook.status(after: .init(
+			name: "Notification", message: "Claude is waiting for your input"
+		)) == .needsInput)
+		#expect(ClaudeHook.status(after: .init(
+			name: "Notification", message: "Compacting conversation…"
+		)) == nil)
 	}
 
 	@Test func aFinishedTurnIsDone() {
@@ -67,7 +108,9 @@ struct ClaudeHookTests {
 	/// Progress is not news. Only the two things somebody would get up for,
 	/// and a subagent handing work back.
 	@Test func onlyTheEventsWorthInterruptingFor() {
-		#expect(ClaudeHook.isWorthAnnouncing(.init(name: "Notification")))
+		#expect(ClaudeHook.isWorthAnnouncing(
+			.init(name: "Notification", notificationType: "agent_needs_input")
+		))
 		#expect(ClaudeHook.isWorthAnnouncing(.init(name: "Stop")))
 		#expect(!ClaudeHook.isWorthAnnouncing(.init(name: "Stop", isIntermediateStop: true)))
 		#expect(!ClaudeHook.isWorthAnnouncing(.init(name: "PostToolUse")))
@@ -79,8 +122,10 @@ struct ClaudeHookTests {
 	/// somebody needs from the corner of their eye is which of eight tabs is
 	/// talking.
 	@Test func everyAnnouncementNamesItsWindow() {
-		#expect(ClaudeHook.announcement(for: .init(name: "Notification"), window: "docscanner")
-			== "docscanner needs you")
+		#expect(ClaudeHook.announcement(
+			for: .init(name: "Notification", notificationType: "agent_needs_input"),
+			window: "docscanner"
+		) == "docscanner needs you")
 		#expect(ClaudeHook.announcement(for: .init(name: "Stop"), window: "pulse")
 			== "pulse finished")
 		#expect(ClaudeHook.announcement(for: .init(name: "SubagentStop"), window: "ideai")
