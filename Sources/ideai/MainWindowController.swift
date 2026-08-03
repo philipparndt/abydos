@@ -2627,6 +2627,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 	}
 
+	/// Right-clicks the tmux status line and then moves the pointer up through
+	/// the menu it opens, which is the gesture that was dead.
+	func tmuxMenuForTesting(hovers: Int) {
+		let grid = bottomPanel.terminalGridForTesting
+		guard grid.rows > 4 else { return }
+		// The window tab, not the session name: `[menu]  [0:zsh]` — the tab is
+		// what has a menu bound to it.
+		var steps = [(row: grid.rows, column: 12, isClick: true)]
+		for offset in 0..<hovers {
+			steps.append((row: grid.rows - 2 - offset, column: 14, isClick: false))
+		}
+		bottomPanel.terminalPointerForTesting(steps)
+	}
+
 	/// What the terminal's geometry is, for checking that the bottom row is on
 	/// screen at all.
 	func terminalGeometryForTesting() -> String {

@@ -118,6 +118,8 @@ struct LaunchOptions {
 	var reportsTerminalGeometry = false
 	/// Turn blame on for the file that was opened.
 	var showsBlame = false
+	/// Open tmux's own menu and move the pointer through it.
+	var tmuxMenuHovers: Int?
 	/// Hover the editor at line:character with ⌘ held.
 	var commandHoverAt: String?
 	/// Open the attach-to-process picker, filtered by this text.
@@ -244,6 +246,7 @@ struct LaunchOptions {
 			case "--report-cwd": options.reportsTerminalDirectory = true
 			case "--report-geometry": options.reportsTerminalGeometry = true
 			case "--blame": options.showsBlame = true
+			case "--tmux-menu": options.tmuxMenuHovers = next().flatMap(Int.init) ?? 0
 			case "--cmd-hover":  options.commandHoverAt = next()
 			case "--attach-picker": options.attachFilter = next()
 			case "--pills":      options.highlightPills = true

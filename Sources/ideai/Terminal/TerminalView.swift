@@ -159,6 +159,23 @@ final class TerminalView: NSView, NSTextInputClient {
 	override var isFlipped: Bool { true }
 	override var acceptsFirstResponder: Bool { runsProcess }
 
+	override func updateTrackingAreas() {
+		super.updateTrackingAreas()
+		if let motionTracking { removeTrackingArea(motionTracking) }
+
+		// Only while this window has the keyboard: a pointer crossing a
+		// background window is not something to report to a program in it.
+		let area = NSTrackingArea(
+			rect: .zero,
+			options: [.mouseMoved, .activeInKeyWindow, .inVisibleRect],
+			owner: self
+		)
+		addTrackingArea(area)
+		motionTracking = area
+	}
+
+	private var motionTracking: NSTrackingArea?
+
 	override func viewDidMoveToWindow() {
 		super.viewDidMoveToWindow()
 		updateDisplayLink()
@@ -1473,6 +1490,49 @@ final class TerminalView: NSView, NSTextInputClient {
 		return (max(1, row + 1), max(1, column))
 	}
 
+	/// Where in the window a grid cell is, for driving the pointer from a test.
+	private func windowPoint(row: Int, column: Int) -> NSPoint {
+		let x = Self.horizontalInset + (CGFloat(column - 1) + 0.5) * cellWidth
+		let y = Self.verticalInset
+			+ (CGFloat(row - 1 + emulator.screen.scrollback.count) + 0.5) * cellHeight
+		return convert(NSPoint(x: x, y: y), to: nil)
+	}
+
+	private func mouseEventForTesting(_ type: NSEvent.EventType, row: Int, column: Int) -> NSEvent? {
+		NSEvent.mouseEvent(
+			with: type,
+			location: windowPoint(row: row, column: column),
+			modifierFlags: [],
+			timestamp: ProcessInfo.processInfo.systemUptime,
+			windowNumber: window?.windowNumber ?? 0,
+			context: nil,
+			eventNumber: 0,
+			clickCount: 1,
+			pressure: 1
+		)
+	}
+
+	/// Right-clicks a cell, as somebody would on a tmux status line.
+	func rightClickForTesting(row: Int, column: Int) {
+		window?.makeFirstResponder(self)
+		guard let down = mouseEventForTesting(.rightMouseDown, row: row, column: column),
+		      let up = mouseEventForTesting(.rightMouseUp, row: row, column: column)
+		else { return }
+		rightMouseDown(with: down)
+		rightMouseUp(with: up)
+	}
+
+	/// Moves the pointer over a cell without pressing anything.
+	func moveMouseForTesting(row: Int, column: Int) {
+		guard let event = mouseEventForTesting(.mouseMoved, row: row, column: column) else { return }
+		mouseMoved(with: event)
+	}
+
+	/// The visible grid, so a test can aim at the last row.
+	var gridSizeForTesting: (rows: Int, columns: Int) {
+		(emulator.screen.rows, emulator.screen.columns)
+	}
+
 	private func modifiers(_ event: NSEvent) -> (Bool, Bool, Bool) {
 		let flags = event.modifierFlags
 		return (flags.contains(.shift), flags.contains(.option), flags.contains(.control))
@@ -1536,6 +1596,26 @@ final class TerminalView: NSView, NSTextInputClient {
 		}
 		_ = forwardMouse(event, button: .left, isRelease: true)
 	}
+
+	/// Tells a program where the pointer is, when it has asked to know.
+	///
+	/// Only mode 1003 asks — and tmux turns it on while one of its own menus is
+	/// open, which is how the item under the pointer comes to be highlighted.
+	/// Without this the menu appears and then sits there, dead.
+	override func mouseMoved(with event: NSEvent) {
+		guard emulator.mouseTracking == .anyEvent else { return }
+		let position = gridPosition(for: event)
+		guard position.row != lastReportedMouseCell?.row
+			|| position.column != lastReportedMouseCell?.column
+		else { return }
+		lastReportedMouseCell = position
+
+		_ = forwardMouse(event, button: .none, isRelease: false, isDrag: true)
+	}
+
+	/// The cell the program was last told about, so a pointer wandering inside
+	/// one cell does not send a report per pixel.
+	private var lastReportedMouseCell: (row: Int, column: Int)?
 
 	override func mouseDragged(with event: NSEvent) {
 		guard isSelecting else {
@@ -1779,6 +1859,15 @@ final class TerminalPane: NSView {
 	/// Where the shell in this terminal currently is.
 	var currentDirectoryForTesting: URL? { terminalView.currentDirectory() }
 	var geometryForTesting: String { terminalView.geometryForTesting }
+	var gridSizeForTesting: (rows: Int, columns: Int) { terminalView.gridSizeForTesting }
+
+	func rightClickForTesting(row: Int, column: Int) {
+		terminalView.rightClickForTesting(row: row, column: column)
+	}
+
+	func moveMouseForTesting(row: Int, column: Int) {
+		terminalView.moveMouseForTesting(row: row, column: column)
+	}
 
 	/// Output arrived, which is the moment to check whether the shell has moved.
 	var onOutput: (() -> Void)? {

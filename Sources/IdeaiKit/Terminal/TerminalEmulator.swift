@@ -1026,6 +1026,10 @@ public final class TerminalEmulator {
 
 	public enum MouseButton: Int, Sendable {
 		case left = 0, middle = 1, right = 2
+		/// No button held. Only meaningful with motion, where it is how a
+		/// program hears that the pointer has moved over something — which is
+		/// what makes a menu highlight the item under it.
+		case none = 3
 		case scrollUp = 64, scrollDown = 65
 	}
 
@@ -1046,6 +1050,9 @@ public final class TerminalEmulator {
 	) -> String? {
 		guard mouseTracking != .off else { return nil }
 		if isDrag, mouseTracking == .click { return nil }
+		// Motion with nothing held is only wanted by a program that asked for
+		// every event; the others would be flooded by it.
+		if button == .none, mouseTracking != .anyEvent { return nil }
 
 		var code = button.rawValue
 		if isDrag { code += 32 }

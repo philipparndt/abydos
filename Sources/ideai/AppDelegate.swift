@@ -509,6 +509,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let hovers = options.tmuxMenuHovers {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
+				controller?.tmuxMenuForTesting(hovers: hovers)
+			}
+		}
+
 		if options.showsBlame {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
 				controller?.toggleBlame(nil)

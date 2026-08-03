@@ -346,6 +346,29 @@ final class BottomPanel: NSView {
 	/// Driven by output rather than by a clock: a shell that changes directory
 	/// prints a prompt, and one that is sitting idle has not gone anywhere. An
 	/// idle terminal therefore costs nothing at all.
+	/// Drives the pointer over the terminal grid: a right-click, then moves.
+	func terminalPointerForTesting(_ steps: [(row: Int, column: Int, isClick: Bool)]) {
+		let index = activeIndex ?? 0
+		guard index >= 0, index < sessions.count, let terminal = sessions[index].terminal else { return }
+		for (offset, step) in steps.enumerated() {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.4 * Double(offset)) {
+				if step.isClick {
+					terminal.rightClickForTesting(row: step.row, column: step.column)
+				} else {
+					terminal.moveMouseForTesting(row: step.row, column: step.column)
+				}
+			}
+		}
+	}
+
+	var terminalGridForTesting: (rows: Int, columns: Int) {
+		let index = activeIndex ?? 0
+		guard index >= 0, index < sessions.count, let terminal = sessions[index].terminal else {
+			return (0, 0)
+		}
+		return terminal.gridSizeForTesting
+	}
+
 	func terminalGeometryForTesting() -> String {
 		let index = activeIndex ?? 0
 		guard index >= 0, index < sessions.count, let terminal = sessions[index].terminal else {
