@@ -132,6 +132,31 @@ final class TerminalView: NSView, NSTextInputClient {
 		}
 		emulator.onBell = { [weak self] in self?.ringBell() }
 
+		// A copy made inside tmux, or on the other end of an ssh connection,
+		// lands on the clipboard of the machine somebody is sitting at.
+		emulator.onClipboardWrite = { text in
+			NSPasteboard.general.clearContents()
+			NSPasteboard.general.setString(text, forType: .string)
+		}
+
+		// What a program asks for when it wants to know whether it is being
+		// read on a light background or a dark one.
+		emulator.colourLookup = { query in
+			let colour: NSColor
+			switch query {
+			case .foreground: colour = TerminalPalette.foreground
+			case .background: colour = TerminalPalette.background
+			case .cursor: colour = TerminalPalette.cursor
+			case let .palette(index):
+				guard index >= 0, index < 256 else { return nil }
+				colour = TerminalPalette.color(
+					for: .indexed(UInt8(index)), isForeground: true, bold: false
+				)
+			}
+			guard let srgb = colour.usingColorSpace(.sRGB) else { return nil }
+			return (Double(srgb.redComponent), Double(srgb.greenComponent), Double(srgb.blueComponent))
+		}
+
 		pty.onOutput = { [weak self] data in
 			self?.enqueue(data)
 		}
@@ -571,12 +596,15 @@ final class TerminalView: NSView, NSTextInputClient {
 				))
 			}
 		}
+		metal.renderer.hoveredLink = hoveredLink
+
 		var cursor: TerminalMetalRenderer.Cursor?
 		if let place = cursorPlace() {
 			cursor = .init(
 				row: place.row,
 				column: place.column,
 				colour: TerminalPalette.cursor.components,
+				shape: emulator.cursorShape,
 				// Outlined when the keyboard is somewhere else: the cursor is
 				// still where it was, and typing would not go there.
 				isFilled: hasKeyboardFocus,
@@ -1141,13 +1169,25 @@ final class TerminalView: NSView, NSTextInputClient {
 
 	override func becomeFirstResponder() -> Bool {
 		cursorVisible = true
+		reportFocus(true)
 		repaint()
 		return true
 	}
 
 	override func resignFirstResponder() -> Bool {
+		reportFocus(false)
 		repaint()
 		return true
+	}
+
+	/// Tells a program that the window gained or lost the keyboard.
+	///
+	/// Only when it has asked (mode 1004). tmux passes it through to whatever
+	/// is in the pane, which is how a full-screen program knows to stop
+	/// animating while nobody is looking at it.
+	private func reportFocus(_ hasFocus: Bool) {
+		guard emulator.reportsFocus else { return }
+		pty.write(hasFocus ? "\u{1B}[I" : "\u{1B}[O")
 	}
 
 	// MARK: - Input
@@ -1351,9 +1391,51 @@ final class TerminalView: NSView, NSTextInputClient {
 		keyDown(with: event)
 	}
 
+	/// The kitty or xterm form of a key, when the program has asked for it.
+	///
+	/// Only the keys that are genuinely ambiguous. Sending every keystroke
+	/// through the protocol would be correct by the letter of it and would
+	/// break the shells and programs that never asked.
+	private func modifiedKeySequence(for event: NSEvent) -> String? {
+		guard emulator.reportsModifiedKeys else { return nil }
+		let flags = event.modifierFlags
+
+		// ⌘ belongs to the app: ⌘K clears, ⌘V pastes, and a program should not
+		// see either.
+		guard !flags.contains(.command) else { return nil }
+
+		let code: Int
+		switch event.keyCode {
+		case 36, 76: code = 13   // Return
+		case 48: code = 9        // Tab
+		case 51: code = 127      // Backspace
+		case 53: code = 27       // Escape
+		default:
+			// Anything else only when Control is held, which is where the
+			// pairs live: Ctrl+I is Tab, Ctrl+M is Return, Ctrl+/ is Ctrl+_.
+			guard flags.contains(.control),
+			      let scalar = event.charactersIgnoringModifiers?.lowercased().unicodeScalars.first,
+			      scalar.isASCII
+			else { return nil }
+			code = Int(scalar.value)
+		}
+
+		return emulator.encodeModifiedKey(
+			code: code,
+			shift: flags.contains(.shift),
+			option: flags.contains(.option),
+			control: flags.contains(.control)
+		)
+	}
+
 	/// Translates a key event into the bytes a terminal would send.
 	private func encode(event: NSEvent) -> String? {
 		let flags = event.modifierFlags
+
+		// A program that asked to be told which key was pressed, rather than
+		// which byte it maps to, gets that first: Shift+Enter and Enter are one
+		// byte apart otherwise, and no program can tell them apart.
+		if let modified = modifiedKeySequence(for: event) { return modified }
 
 		// Keys with a fixed sequence, and the Option-as-Meta rule that goes with
 		// them. Applied here rather than after the switch: returning early was
@@ -1578,6 +1660,13 @@ final class TerminalView: NSView, NSTextInputClient {
 	override func mouseDown(with event: NSEvent) {
 		window?.makeFirstResponder(self)
 
+		// A link under the pointer is what the click is for — unless a program
+		// is taking the mouse, in which case it is the program's click.
+		if mouseSelects, event.clickCount == 1, let link = link(at: event) {
+			NSWorkspace.shared.open(link.url)
+			return
+		}
+
 		guard mouseSelects || event.modifierFlags.contains(.shift) else {
 			_ = forwardMouse(event, button: .left, isRelease: false)
 			return
@@ -1612,6 +1701,7 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// open, which is how the item under the pointer comes to be highlighted.
 	/// Without this the menu appears and then sits there, dead.
 	override func mouseMoved(with event: NSEvent) {
+		updateHoveredLink(at: event)
 		guard emulator.mouseTracking == .anyEvent else { return }
 		// A button is down: that is a drag, and dragging reports itself.
 		guard NSEvent.pressedMouseButtons == 0 else { return }
@@ -1626,6 +1716,36 @@ final class TerminalView: NSView, NSTextInputClient {
 		lastReportedMouseCell = position
 
 		_ = forwardMouse(event, button: .none, isRelease: false, isDrag: true)
+	}
+
+	/// Which hyperlink the pointer is over, so it can be underlined and opened.
+	private var hoveredLink: UInt16 = 0
+
+	private func updateHoveredLink(at event: NSEvent) {
+		let link = self.link(at: event)?.id ?? 0
+		guard link != hoveredLink else { return }
+		hoveredLink = link
+		// A pointer over something clickable should say so, and stop saying so
+		// the moment it leaves.
+		if link != 0 { NSCursor.pointingHand.set() } else { NSCursor.iBeam.set() }
+		repaint()
+	}
+
+	/// The hyperlink under a pointer event, if the cell has one.
+	private func link(at event: NSEvent) -> (id: UInt16, url: URL)? {
+		let point = convert(event.locationInWindow, from: nil)
+		let row = Int((point.y - Self.verticalInset) / max(1, cellHeight))
+		let column = Int((point.x - Self.horizontalInset) / max(1, cellWidth))
+		guard row >= 0, column >= 0,
+		      let line = emulator.screen.line(at: row),
+		      column < line.cells.count
+		else { return nil }
+
+		let id = line.cells[column].attributes.link
+		guard id != 0, let text = emulator.link(for: id), let url = URL(string: text) else {
+			return nil
+		}
+		return (id, url)
 	}
 
 	/// The cell the program was last told about, so a pointer wandering inside

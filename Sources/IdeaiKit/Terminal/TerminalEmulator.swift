@@ -35,6 +35,38 @@ public final class TerminalEmulator {
 	/// Fired on BEL.
 	public var onBell: (() -> Void)?
 
+	/// The addresses behind the hyperlinks on screen, by the id cells carry.
+	private var links: [String] = []
+
+	/// The address a cell belongs to, if it belongs to one.
+	public func link(for id: UInt16) -> String? {
+		guard id > 0, Int(id) <= links.count else { return nil }
+		return links[Int(id) - 1]
+	}
+
+	/// A program put something on the clipboard (OSC 52).
+	///
+	/// How a copy inside tmux — or inside anything on the other end of an ssh
+	/// connection — reaches the clipboard of the machine somebody is sitting
+	/// at. Without it those copies go nowhere at all.
+	public var onClipboardWrite: ((String) -> Void)?
+
+	/// A program asked what a colour is, and the answer has to come from
+	/// whoever owns the palette.
+	///
+	/// `nil` means "no such colour", and nothing is sent — a program that
+	/// asked is expected to cope with silence.
+	public var colourLookup: ((ColourQuery) -> (red: Double, green: Double, blue: Double)?)?
+
+	/// Which colour a program is asking about.
+	public enum ColourQuery: Equatable, Sendable {
+		/// A palette entry, 0–255.
+		case palette(Int)
+		case foreground
+		case background
+		case cursor
+	}
+
 	private var attributes = TerminalAttributes()
 	private var savedCursor: (row: Int, column: Int, attributes: TerminalAttributes)?
 
@@ -72,6 +104,39 @@ public final class TerminalEmulator {
 	}
 
 	public private(set) var mouseTracking: MouseTracking = .off
+	/// 1004 — whether the program wants to hear about the window gaining and
+	/// losing the keyboard. tmux passes it through to whatever is in the pane,
+	/// which is how a full-screen program knows to stop animating.
+	public private(set) var reportsFocus = false
+
+	/// The kitty keyboard protocol's flags, and the stack a program pushes them
+	/// on so it can put them back.
+	///
+	/// Bit 1 is the one that matters: "disambiguate escape codes", which is how
+	/// a program tells Shift+Enter from Enter, or Ctrl+I from Tab. Without it
+	/// both halves of each pair send the same byte and no program can tell.
+	public private(set) var keyboardFlags: UInt8 = 0
+	private var keyboardStack: [UInt8] = []
+
+	/// xterm's older answer to the same problem: `CSI > 4 ; 2 m` asks for
+	/// modified keys as `CSI 27 ; modifiers ; code ~`.
+	public private(set) var modifyOtherKeys = 0
+
+	/// Whether either protocol is on, in whichever form.
+	public var reportsModifiedKeys: Bool { keyboardFlags & 1 != 0 || modifyOtherKeys >= 2 }
+
+	/// What shape the cursor should be, as the program last asked (DECSCUSR).
+	///
+	/// Blinking is not honoured — a cursor that blinks repaints the screen
+	/// twice a second whatever the program is doing — but the shape is: vim in
+	/// insert mode asks for a bar, and a block there is a lie about what typing
+	/// will do.
+	public private(set) var cursorShape: CursorShape = .block
+
+	public enum CursorShape: Sendable, Equatable {
+		case block, underline, bar
+	}
+
 	/// 1006 — SGR encoding. The legacy encoding cannot express coordinates past
 	/// column 223, so modern programs all ask for this one.
 	public private(set) var sgrMouseEncoding = false
@@ -634,7 +699,12 @@ public final class TerminalEmulator {
 	/// - `p`: DECRQM, a mode query — tmux and modern shells probe synchronised
 	///   output (mode 2026) with it and wait for the reply.
 	/// - `n`: DECXCPR, the private cursor position report.
-	static let introducerAwareFinals: Set<UInt8> = [0x68, 0x6C, 0x63, 0x70, 0x6E] // h l c p n
+	/// - `u`: the kitty keyboard protocol — push, pop, set and query.
+	/// - `m`: XTMODKEYS with `>`, which is xterm's older answer to the same
+	///   question and not SGR at all.
+	static let introducerAwareFinals: Set<UInt8> = [
+		0x68, 0x6C, 0x63, 0x70, 0x6E, 0x75, 0x6D, // h l c p n u m
+	]
 
 	private func parameter(_ index: Int, default fallback: Int) -> Int {
 		guard index < componentCount else { return fallback }
@@ -679,6 +749,38 @@ public final class TerminalEmulator {
 		case 0x58: eraseCharacters(parameter(0, default: 1)) // X
 		case 0x53: screen.scrollUp(top: scrollTop, bottom: scrollBottom, attributes: attributes) // S
 		case 0x54: screen.scrollDown(top: scrollTop, bottom: scrollBottom, attributes: attributes) // T
+		case 0x71 where intermediateBytes.contains(0x20): // SP q — DECSCUSR
+			// 0 and 1 are a blinking block, 2 a steady one, 3/4 underline,
+			// 5/6 bar. Blink is dropped; shape is kept.
+			switch parameter(0, default: 1) {
+			case 0, 1, 2: cursorShape = .block
+			case 3, 4: cursorShape = .underline
+			case 5, 6: cursorShape = .bar
+			default: break
+			}
+			onUpdate?()
+		case 0x75 where introducer == 0x3E: // > u — push keyboard flags
+			keyboardStack.append(keyboardFlags)
+			if keyboardStack.count > 16 { keyboardStack.removeFirst() }
+			keyboardFlags = UInt8(truncatingIfNeeded: parameter(0, default: 0))
+		case 0x75 where introducer == 0x3C: // < u — pop them again
+			for _ in 0..<max(1, parameter(0, default: 1)) {
+				keyboardFlags = keyboardStack.popLast() ?? 0
+			}
+		case 0x75 where introducer == 0x3D: // = u — set, or or, or clear
+			let value = UInt8(truncatingIfNeeded: parameter(0, default: 0))
+			switch parameter(1, default: 1) {
+			case 2: keyboardFlags |= value
+			case 3: keyboardFlags &= ~value
+			default: keyboardFlags = value
+			}
+		case 0x75 where introducer == 0x3F: // ? u — what are they now?
+			onResponse?("\u{1B}[?\(keyboardFlags)u")
+		case 0x6D where introducer == 0x3E: // > m — XTMODKEYS
+			// `CSI > 4 ; n m` sets the level; `CSI > 4 m` puts it back.
+			if parameter(0, default: 0) == 4 {
+				modifyOtherKeys = parameterCount > 1 ? parameter(1, default: 0) : 0
+			}
 		case 0x6D: applySGR() // m
 		case 0x72: // r
 			let top = parameter(0, default: 1) - 1
@@ -760,6 +862,7 @@ public final class TerminalEmulator {
 			case 1000: mouseTracking = enabled ? .click : .off
 			case 1002: mouseTracking = enabled ? .buttonEvent : .off
 			case 1003: mouseTracking = enabled ? .anyEvent : .off
+			case 1004: reportsFocus = enabled
 			case 1006: sgrMouseEncoding = enabled
 			case 1049, 1047, 47:
 				setAlternateScreen(enabled)
@@ -966,12 +1069,103 @@ public final class TerminalEmulator {
 		// routinely contains an emoji; treating each byte as a scalar turned
 		// "\u{23F3}" into "\u{00E2}\u{008F}\u{00B3}" and put mojibake in the tab.
 		let text = String(decoding: oscBytes, as: UTF8.self)
-		let parts = text.split(separator: ";", maxSplits: 1, omittingEmptySubsequences: false)
-		if parts.count == 2, let code = Int(parts[0]), code == 0 || code == 2 {
-			title = String(parts[1])
-		}
 		oscBytes = []
 		state = .ground
+
+		let parts = text.split(separator: ";", maxSplits: 1, omittingEmptySubsequences: false)
+		guard let code = Int(parts.first ?? "") else { return }
+		let body = parts.count > 1 ? String(parts[1]) : ""
+
+		switch code {
+		case 0, 2:
+			title = body
+		case 4:
+			applyPaletteRequest(body)
+		case 8:
+			applyHyperlink(body)
+		case 10, 11, 12:
+			applyColourRequest(code: code, body: body)
+		case 52:
+			applyClipboard(body)
+		default:
+			break
+		}
+	}
+
+	/// OSC 52 — a program handing something to the clipboard.
+	///
+	/// Only writing. A program that asks to *read* the clipboard is refused in
+	/// silence: anything that can run in a terminal could then take whatever
+	/// somebody last copied, which is a password as often as not.
+	private func applyClipboard(_ body: String) {
+		let parts = body.split(separator: ";", maxSplits: 1, omittingEmptySubsequences: false)
+		guard parts.count == 2 else { return }
+		let payload = String(parts[1])
+		guard payload != "?" else { return }
+
+		guard let data = Data(base64Encoded: payload, options: .ignoreUnknownCharacters) else { return }
+		onClipboardWrite?(String(decoding: data, as: UTF8.self))
+	}
+
+	/// OSC 10, 11, 12 — the default foreground, background and cursor colours.
+	///
+	/// A query is what matters: a program asks what the background is so it can
+	/// choose a palette that can be read against it, and one that gets no
+	/// answer guesses — which is how a light theme ends up with grey-on-white
+	/// diffs.
+	private func applyColourRequest(code: Int, body: String) {
+		let query: ColourQuery = code == 10 ? .foreground : (code == 11 ? .background : .cursor)
+		for request in body.split(separator: ";") where request == "?" {
+			guard let colour = colourLookup?(query) else { continue }
+			onResponse?("\u{1B}]\(code);\(Self.xtermColour(colour))\u{1B}\\")
+		}
+	}
+
+	/// OSC 4 — a palette entry, asked about by number.
+	private func applyPaletteRequest(_ body: String) {
+		let fields = body.split(separator: ";", omittingEmptySubsequences: false)
+		var index = 0
+		for (position, field) in fields.enumerated() {
+			if position % 2 == 0 {
+				index = Int(field) ?? -1
+			} else if field == "?", index >= 0 {
+				guard let colour = colourLookup?(.palette(index)) else { continue }
+				onResponse?("\u{1B}]4;\(index);\(Self.xtermColour(colour))\u{1B}\\")
+			}
+		}
+	}
+
+	/// OSC 8 — the text that follows belongs to an address.
+	///
+	/// `OSC 8 ; params ; uri ST` opens one and `OSC 8 ; ; ST` closes it, so a
+	/// program brackets the text it wants to make clickable. The parameters
+	/// carry an id for linking runs that are far apart, which nothing here
+	/// needs: what matters is which address a cell belongs to.
+	private func applyHyperlink(_ body: String) {
+		let parts = body.split(separator: ";", maxSplits: 1, omittingEmptySubsequences: false)
+		let uri = parts.count > 1 ? String(parts[1]) : ""
+		guard !uri.isEmpty else {
+			attributes.link = 0
+			return
+		}
+
+		// Only the addresses a screenful can hold: a program printing thousands
+		// of links should not grow a table nobody will look at again.
+		if let existing = links.firstIndex(of: uri) {
+			attributes.link = UInt16(existing + 1)
+			return
+		}
+		guard links.count < Int(UInt16.max) - 1 else { return }
+		links.append(uri)
+		attributes.link = UInt16(links.count)
+	}
+
+	/// `rgb:RRRR/GGGG/BBBB`, which is the form every terminal answers in.
+	static func xtermColour(_ colour: (red: Double, green: Double, blue: Double)) -> String {
+		func component(_ value: Double) -> String {
+			String(format: "%04x", Int((max(0, min(1, value)) * 65535).rounded()))
+		}
+		return "rgb:\(component(colour.red))/\(component(colour.green))/\(component(colour.blue))"
 	}
 
 	// MARK: - Lifecycle
@@ -1012,6 +1206,39 @@ public final class TerminalEmulator {
 		alternateSaved = nil
 		pendingWrap = false
 		onUpdate?()
+	}
+
+	/// Encodes a key the way the program asked to hear about it, or nil when it
+	/// has not asked and the ordinary bytes should be sent.
+	///
+	/// Only for keys that are otherwise ambiguous — Enter, Tab, Escape,
+	/// Backspace, and anything held with Control — because that is the whole
+	/// point: Shift+Enter and Enter are one byte apart in a program's mind only
+	/// if the terminal says which was pressed.
+	public func encodeModifiedKey(
+		code: Int,
+		shift: Bool = false,
+		option: Bool = false,
+		control: Bool = false,
+		command: Bool = false
+	) -> String? {
+		guard reportsModifiedKeys else { return nil }
+
+		// 1 is "no modifiers", and each one adds its bit.
+		var modifiers = 1
+		if shift { modifiers += 1 }
+		if option { modifiers += 2 }
+		if control { modifiers += 4 }
+		if command { modifiers += 8 }
+
+		// Nothing held is what it always was; a protocol that changed those
+		// would break every program that only asked about the modified ones.
+		guard modifiers > 1 else { return nil }
+
+		if keyboardFlags & 1 != 0 {
+			return "\u{1B}[\(code);\(modifiers)u"
+		}
+		return "\u{1B}[27;\(modifiers);\(code)~"
 	}
 
 	/// Encodes a key for the process, honouring application cursor key mode.

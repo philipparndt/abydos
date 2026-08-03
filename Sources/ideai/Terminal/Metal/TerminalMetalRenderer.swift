@@ -114,10 +114,31 @@ final class TerminalMetalRenderer {
 		var row: Int
 		var column: Int
 		var colour: SIMD4<Float>
+		/// Block, underline or bar, as the program asked (DECSCUSR).
+		var shape: TerminalEmulator.CursorShape = .block
 		/// Filled where the keyboard is; an outline where it is not.
 		var isFilled = true
 		/// How thick that outline is, in points.
 		var thickness: Float = 1.5
+	}
+
+	/// The hyperlink under the pointer, which is drawn underlined so it is
+	/// visible that it can be clicked at all.
+	var hoveredLink: UInt16 = 0
+
+	/// A thin filled rectangle: an underline, or a line through.
+	private func rule(x: Float, width: Float, y: Float, colour: SIMD4<Float>) -> CellInstance {
+		CellInstance(
+			origin: SIMD2(x, y),
+			size: SIMD2(width, max(1, Float(1.0))),
+			glyphOrigin: .zero,
+			glyphSize: .zero,
+			uvOrigin: .zero,
+			uvSize: .zero,
+			foreground: colour,
+			background: colour,
+			isColour: 0
+		)
 	}
 
 	func build(
@@ -147,6 +168,8 @@ final class TerminalMetalRenderer {
 		for (index, line) in rows {
 			let y = rowEdge(index)
 			let rowHeight = rowEdge(index + 1) - y
+			// Just below the baseline, where an underline belongs.
+			let underlineOffset = min(rowHeight - 1, Float(faces.baselineFromTop) + 2)
 
 			for (column, cell) in line.cells.enumerated() {
 				if cell.isWideTrailer { continue }
@@ -175,7 +198,10 @@ final class TerminalMetalRenderer {
 				// the colour behind. Laying a block over the character instead
 				// leaves it the same colour as what is now behind it, which is
 				// how it becomes unreadable exactly where you are looking.
-				if let cursor, cursor.isFilled, cursor.row == index, cursor.column == column {
+				// Only a block turns the cell inside out; an underline or a bar
+				// is drawn over it afterwards and leaves the character alone.
+				if let cursor, cursor.isFilled, cursor.shape == .block,
+				   cursor.row == index, cursor.column == column {
 					background = cursor.colour
 					foreground = frame.background
 				}
@@ -228,6 +254,17 @@ final class TerminalMetalRenderer {
 				}
 
 				instances.append(instance)
+
+				// Lines through and under the text, which the GPU path never
+				// drew at all: a man page's underlined headings and a diff's
+				// struck-out text came out plain.
+				let isLinked = cursor == nil && cell.attributes.link != 0 && cell.attributes.link == hoveredLink
+				if cell.attributes.underline || isLinked {
+					instances.append(rule(x: x, width: width, y: y + underlineOffset, colour: foreground))
+				}
+				if cell.attributes.strikethrough {
+					instances.append(rule(x: x, width: width, y: y + rowHeight * 0.45, colour: foreground))
+				}
 			}
 		}
 
@@ -251,6 +288,28 @@ final class TerminalMetalRenderer {
 				background: overlay.colour,
 				isColour: 0
 			))
+		}
+
+		// A cursor that is not a block: a line under the cell, or a bar at its
+		// leading edge — which is what vim asks for in insert mode, and saying
+		// "block" there is a lie about what typing will do.
+		if let cursor, cursor.isFilled, cursor.shape != .block {
+			let y = rowEdge(cursor.row)
+			let height = rowEdge(cursor.row + 1) - y
+			let x = columnEdge(cursor.column)
+			let width = columnEdge(cursor.column + 1) - x
+			let thickness = snap(cursor.thickness)
+
+			instances.append(rule(
+				x: x,
+				width: cursor.shape == .bar ? thickness : width,
+				y: cursor.shape == .bar ? y : y + height - thickness,
+				colour: cursor.colour
+			))
+			if cursor.shape == .bar {
+				// A bar is as tall as the cell, which `rule` is not.
+				instances[instances.count - 1].size = SIMD2(thickness, height)
+			}
 		}
 
 		// An outlined cursor is four thin blocks rather than a filled one: the

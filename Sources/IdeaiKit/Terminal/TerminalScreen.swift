@@ -19,6 +19,12 @@ public struct TerminalAttributes: Equatable, Sendable {
 	public var inverse = false
 	public var strikethrough = false
 	public var hidden = false
+	/// Which hyperlink this cell belongs to, or 0 for none.
+	///
+	/// A number rather than the address itself: a link covers a run of cells
+	/// and the same one often covers several runs, and a string per cell would
+	/// cost more than the text does. The emulator keeps the table.
+	public var link: UInt16 = 0
 
 	public init() {}
 
