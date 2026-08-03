@@ -26,6 +26,7 @@ public final class Settings {
 			Key.terminalFontName: "",
 			Key.wordWrap: false,
 			Key.terminalGPURendering: false,
+			Key.appearance: "system",
 			Key.followsTerminalProject: false,
 			Key.terminalScheme: "blue",
 			Key.terminalBellStyle: "sound",
@@ -51,6 +52,7 @@ public final class Settings {
 		static let terminalFontName = "terminalFontName"
 		static let wordWrap = "wordWrap"
 		static let terminalGPURendering = "terminalGPURendering"
+		static let appearance = "appearance"
 		static let followsTerminalProject = "followsTerminalProject"
 		static let terminalScheme = "terminalScheme"
 		static let terminalBellStyle = "terminalBellStyle"
@@ -185,6 +187,15 @@ public final class Settings {
 	public var terminalGPURendering: Bool {
 		get { defaults.bool(forKey: Key.terminalGPURendering) }
 		set { set(newValue, Key.terminalGPURendering) }
+	}
+
+	/// Dark, light, or whatever the system is set to.
+	///
+	/// `system` by default: a machine that turns dark at sunset should take the
+	/// editor with it, and somebody who disagrees says so once.
+	public var appearance: String {
+		get { defaults.string(forKey: Key.appearance) ?? "system" }
+		set { set(newValue, Key.appearance) }
 	}
 
 	/// Whether a new window follows the terminal into whatever project it is

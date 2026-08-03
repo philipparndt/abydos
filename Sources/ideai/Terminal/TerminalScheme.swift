@@ -11,7 +11,8 @@ enum TerminalScheme: String, CaseIterable {
 	/// will recognise, and the default.
 	case blue
 	/// The editor's own colours, so the terminal sits in the same palette as
-	/// the syntax highlighting beside it.
+	/// the syntax highlighting beside it — including in daylight, where a
+	/// terminal that stayed black would be the one dark rectangle on screen.
 	case dark
 
 	static let `default` = TerminalScheme.blue
@@ -44,6 +45,28 @@ enum TerminalScheme: String, CaseIterable {
 				.hex(0xC397D8), // 13 bright magenta
 				.hex(0x70C0B1), // 14 bright cyan
 				.hex(0xEAEAEA), // 15 bright white
+			]
+		case .dark where Theme.current.isLight:
+			// The same hues, darkened to be read against white. A palette made
+			// for a black background disappears on a light one — yellow most
+			// of all.
+			return [
+				.hex(0x3B3E45), // 0 black
+				.hex(0xB03A2E), // 1 red
+				.hex(0x2E7D32), // 2 green
+				.hex(0x8A6100), // 3 yellow
+				.hex(0x1565C0), // 4 blue
+				.hex(0x9C27B0), // 5 magenta
+				.hex(0x00796B), // 6 cyan
+				.hex(0x5A5D66), // 7 white
+				.hex(0x6B6F78), // 8 bright black
+				.hex(0xD32F2F), // 9 bright red
+				.hex(0x388E3C), // 10 bright green
+				.hex(0xA97400), // 11 bright yellow
+				.hex(0x1976D2), // 12 bright blue
+				.hex(0xAB47BC), // 13 bright magenta
+				.hex(0x00897B), // 14 bright cyan
+				.hex(0x2B2D30), // 15 bright white
 			]
 		case .dark:
 			return [

@@ -5,6 +5,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 	private var windowControllers: [MainWindowController] = []
 
 	func applicationDidFinishLaunching(_ notification: Notification) {
+		// The palette, before anything is built with it.
+		Theme.apply()
+		DistributedNotificationCenter.default.addObserver(
+			forName: Notification.Name("AppleInterfaceThemeChangedNotification"),
+			object: nil,
+			queue: .main
+		) { _ in
+			// The system's own answer arrives a moment after the notification.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+				guard Theme.apply() else { return }
+				NotificationCenter.default.post(name: .ideaiSettingsChanged, object: nil)
+			}
+		}
+
 		NSApp.appearance = NSAppearance(named: .darkAqua)
 		// Before any view measures text.
 		FontRegistry.registerBundledFonts()

@@ -6,6 +6,43 @@ import IdeaiKit
 struct Theme {
 	static var current = Theme.dusk
 
+	/// Chooses the palette from the setting, and from the system when the
+	/// setting defers to it.
+	///
+	/// Called at startup and whenever either changes. Returns whether anything
+	/// actually changed, so a redraw of every window is only asked for when
+	/// there is something to see.
+	@discardableResult
+	static func apply() -> Bool {
+		let wanted: Theme
+		switch Settings.shared.appearance {
+		case "light": wanted = .daylight
+		case "dark": wanted = .dusk
+		default: wanted = systemIsDark ? .dusk : .daylight
+		}
+
+		guard wanted.isLight != current.isLight else { return false }
+		current = wanted
+
+		// Native controls — fields, alerts, scrollers, the titlebar — take
+		// their look from the app's appearance rather than from this palette,
+		// and a light window with dark scrollbars in it looks broken.
+		NSApp.appearance = NSAppearance(named: wanted.isLight ? .aqua : .darkAqua)
+		return true
+	}
+
+	/// What the system is set to right now.
+	static var systemIsDark: Bool {
+		let match = NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua])
+		return match == .darkAqua
+	}
+
+	/// Whether this palette is a light one.
+	///
+	/// Syntax colours are chosen from it rather than stored twenty-odd times
+	/// over, and a few places need to know which way round the contrast goes.
+	var isLight = false
+
 	// Surfaces
 	var windowBackground: NSColor
 	var sidebarBackground: NSColor
@@ -163,9 +200,47 @@ struct Theme {
 		indentGuide: .hex(0x2F323B)
 	)
 
+	/// The same interface in daylight.
+	///
+	/// Not the dark palette inverted: a light theme wants more contrast in the
+	/// text and less in the surfaces, or every panel edge shouts. The greys are
+	/// close together and the colours do the separating.
+	static let daylight = Theme(
+		isLight: true,
+
+		windowBackground: .hex(0xF7F8FA),
+		sidebarBackground: .hex(0xF2F3F5),
+		editorBackground: .hex(0xFFFFFF),
+		toolbarBackground: .hex(0xF2F3F5),
+		separator: .hex(0xD8DAE0),
+
+		sidebarText: .hex(0x2B2D30),
+		sidebarHeaderText: .hex(0x14161A),
+		selectionActive: .hex(0xBFD5F5),
+		selectionInactive: .hex(0xE1E3E8),
+		excludedDirectoryTint: .hex(0xF6E9CC),
+
+		gitAdded: .hex(0x2E8B45),
+		gitModified: .hex(0x1F6FCC),
+		gitUnversioned: .hex(0xB4553F),
+		gitIgnored: .hex(0x8A8F98),
+		gitConflict: .hex(0xC5372F),
+
+		editorText: .hex(0x2B2D30),
+		gutterText: .hex(0xA1A5AE),
+		gutterCurrentLineText: .hex(0x5A5F6A),
+		currentLineBackground: .hex(0xF3F6FB),
+		caret: .hex(0x1F2126),
+		selectionBackground: .hex(0xCBDEFB),
+		foldPlaceholderBackground: .hex(0xE4E6EA),
+		foldPlaceholderText: .hex(0x5A5F6A),
+		indentGuide: .hex(0xE6E8EC)
+	)
+
 	/// Maps a syntax token to a colour. `HighlightKind` is produced by IdeaiKit
 	/// from tree-sitter capture names, so the theme never sees grammar details.
 	func color(for kind: HighlightKind) -> NSColor {
+		if isLight { return lightColor(for: kind) }
 		switch kind {
 		// Keyword warm, string green, call blue: the arrangement every dark
 		// scheme has settled on, in our own values. Parameters are tinted
@@ -195,6 +270,40 @@ struct Theme {
 		case .link:         return .hex(0x6E97F0)
 		case .emphasis:     return .hex(0xC2C6D0)
 		case .error:        return .hex(0xD6706E)
+		case .plain:        return editorText
+		}
+	}
+
+	/// The same arrangement on white: keyword blue, string green, call teal.
+	///
+	/// Darker and more saturated than the dark theme's, because a colour that
+	/// reads well against near-black washes out against white.
+	private func lightColor(for kind: HighlightKind) -> NSColor {
+		switch kind {
+		case .keyword:      return .hex(0x0033B3)
+		case .type:         return .hex(0x7A3E9D)
+		case .function:     return .hex(0x00627A)
+		case .method:       return .hex(0x00627A)
+		case .property:     return .hex(0x871094)
+		case .variable:     return editorText
+		case .parameter:    return .hex(0x4B5563)
+		case .constant:     return .hex(0x871094)
+		case .string:       return .hex(0x067D17)
+		case .escape:       return .hex(0x0037A6)
+		case .number:       return .hex(0x1750EB)
+		case .boolean:      return .hex(0x0033B3)
+		case .comment:      return .hex(0x8A8F98)
+		case .documentation:return .hex(0x3D7A4E)
+		case .operatorToken:return .hex(0x4B5563)
+		case .punctuation:  return .hex(0x6B7280)
+		case .tag:          return .hex(0x0033B3)
+		case .attribute:    return .hex(0x4B5563)
+		case .label:        return .hex(0x871094)
+		case .namespace:    return .hex(0x374151)
+		case .heading:      return .hex(0x0033B3)
+		case .link:         return .hex(0x1750EB)
+		case .emphasis:     return editorText
+		case .error:        return .hex(0xC5372F)
 		case .plain:        return editorText
 		}
 	}

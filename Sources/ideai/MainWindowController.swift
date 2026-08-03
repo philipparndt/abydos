@@ -149,7 +149,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// How wide the tree is, kept as a constraint so nothing else decides.
 	private var navigatorWidthConstraint: NSLayoutConstraint!
 	private var panelHeight: CGFloat = 260
-	private var navigatorContainer: NSView!
+	private var navigatorContainer: ColoredView!
 	private var changesPane: ChangesPane?
 	private var branchesPane: BranchesPane?
 	private var structurePane: StructurePane?
@@ -315,6 +315,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	private func buildContent() {
 		let root = ColoredView(color: Theme.current.windowBackground)
+		root.colourSource = { Theme.current.windowBackground }
 
 		toolStrip.onToggleNavigator = { [weak self] in self?.showSidebarTool(.project) }
 		toolStrip.onToggleTerminal = { [weak self] in self?.toggleTerminal(nil) }
@@ -343,6 +344,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		toolStrip.onAttachToProcess = { [weak self] in self?.attachToProcess(nil) }
 
 		navigatorContainer = ColoredView(color: Theme.current.sidebarBackground)
+		navigatorContainer.colourSource = { Theme.current.sidebarBackground }
 
 		// The sidebar is two stacked panes: the tool on top, and whatever has
 		// been docked underneath it. The lower one takes no room until
@@ -360,7 +362,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		])
 
 		let toolContainer = ColoredView(color: Theme.current.sidebarBackground)
+		toolContainer.colourSource = { Theme.current.sidebarBackground }
 		dockContainer = ColoredView(color: Theme.current.sidebarBackground)
+		dockContainer.colourSource = { Theme.current.sidebarBackground }
 		dockContainer.isHidden = true
 		sidebarSplit.addArrangedSubview(toolContainer)
 		sidebarSplit.addArrangedSubview(dockContainer)
@@ -884,6 +888,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// Applies changed preferences: editor metrics, and tree filters that change
 	/// which files exist at all.
 	private func applySettings() {
+		// A palette change reaches everything that draws, which is everything:
+		// the panes read Theme.current when they draw, and the ones that hold a
+		// layer colour are told to take it again.
+		Theme.apply()
+		applyPalette()
+
 		editor.applySettings()
 		navigator.applySettings()
 		toolStrip.applySettings()
@@ -897,6 +907,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// The tool strip's width changed, which moves everything to its right.
 		toolStripWidthConstraint?.constant = ToolWindowBar.width
 		updateTopInsets()
+	}
+
+	/// Re-reads the palette everywhere it was baked into a layer.
+	private func applyPalette() {
+		window?.backgroundColor = Theme.current.windowBackground
+		window?.appearance = NSAppearance(named: Theme.current.isLight ? .aqua : .darkAqua)
+		splitView.needsDisplay = true
+		repaint(view: window?.contentView)
+	}
+
+	/// Marks a view and everything under it for redraw, refreshing the layer
+	/// colours that were set once at build time.
+	private func repaint(view: NSView?) {
+		guard let view else { return }
+		if let coloured = view as? ColoredView { coloured.refreshColour() }
+		view.needsDisplay = true
+		for child in view.subviews { repaint(view: child) }
 	}
 
 	/// Gives the project tree keyboard focus.
@@ -4821,6 +4848,20 @@ extension MainWindowController: NSToolbarDelegate {
 /// `NSBox` or vibrancy so the palette matches the theme exactly.
 class ColoredView: NSView {
 	private var color: NSColor
+
+	/// Where the colour comes from, for views that follow the palette.
+	///
+	/// The colour itself is copied into a layer, so a theme change has to hand
+	/// it over again — and only the view knows which colour it was.
+	var colourSource: (() -> NSColor)? {
+		didSet { refreshColour() }
+	}
+
+	/// Takes the colour again from whatever supplies it.
+	func refreshColour() {
+		guard let colourSource else { return }
+		setColor(colourSource())
+	}
 
 	/// Repaints in another colour, for a strip that means something by it.
 	func setColor(_ colour: NSColor) {

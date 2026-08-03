@@ -235,6 +235,17 @@ final class SettingsPaneController: NSViewController {
 	/// How code is shown and how big everything is.
 	static func editorRows() -> [Row] {
 		[
+			.choice(
+				title: "Appearance",
+				help: "Dark, light, or whatever the system is set to.",
+				options: [
+					(label: "System", value: "system"),
+					(label: "Dark", value: "dark"),
+					(label: "Light", value: "light"),
+				],
+				get: { Settings.shared.appearance },
+				set: { Settings.shared.appearance = $0 }
+			),
 			.slider(
 				title: "UI zoom",
 				help: "Scales the whole window. Also ⌘+ / ⌘− / ⌘0.",
