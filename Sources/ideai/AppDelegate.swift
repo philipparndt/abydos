@@ -7,12 +7,21 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 	public override init() { super.init() }
 
 	private var windowControllers: [MainWindowController] = []
+	/// Claude sessions announcing themselves, from the hook this binary also is.
+	private var claudeWatch: ClaudeWatch?
 
 	public func applicationDidFinishLaunching(_ notification: Notification) {
 		// Settings from the identifier this app used to have, before anything
 		// reads one: the move to `de.rnd7.ideai` for the App Store would
 		// otherwise look like every preference being forgotten at once.
 		Settings.migrate(from: "dev.philipparndt.ideai")
+
+		// Claude sessions in the terminal, saying when they need an answer or
+		// have finished. Nothing arrives unless the hooks are installed.
+		let watch = ClaudeWatch()
+		watch.windows = { [weak self] in self?.windowControllers ?? [] }
+		watch.start()
+		claudeWatch = watch
 
 		// Watching for the main thread going away, from the start: a hitch
 		// while typing is over before it can be looked into, so the trail has
@@ -525,6 +534,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		if let steps = options.treeSteps {
 			DispatchQueue.main.asyncAfter(deadline: .now() + max(1, options.screenshotDelay - 1.5)) {
 				controller?.treeStepsForTesting(steps)
+			}
+		}
+
+		if options.addTerminalTab {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+				controller?.addTerminalTabForTesting()
 			}
 		}
 

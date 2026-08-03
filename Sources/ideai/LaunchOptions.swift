@@ -222,6 +222,8 @@ struct LaunchOptions {
 	/// Block the main thread for this many milliseconds, to see the stall
 	/// watch catch it.
 	var stallMilliseconds: Int?
+	/// Press the terminal strip's + before capture.
+	var addTerminalTab = false
 
 	static func parse(_ arguments: [String] = CommandLine.arguments) -> LaunchOptions {
 		var options = LaunchOptions()
@@ -258,6 +260,7 @@ struct LaunchOptions {
 			case "--tree":       options.treeSteps = next()
 			case "--type-latency": options.typingPresses = next().flatMap(Int.init)
 			case "--stall":      options.stallMilliseconds = next().flatMap(Int.init)
+			case "--tab-add":    options.addTerminalTab = true
 			case "--branch-menu": options.branchMenuRow = next().flatMap(Int.init)
 			case "--push-branch": options.pushBranch = next()
 			case "--report-cwd": options.reportsTerminalDirectory = true

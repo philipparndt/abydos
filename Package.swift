@@ -43,6 +43,7 @@ let package = Package(
 		// The window layer, so an Xcode app target can be built from the same
 		// sources without a second copy of the dependency graph.
 		.library(name: "IdeaiApp", targets: ["IdeaiApp"]),
+		.executable(name: "ideai-hook", targets: ["ideaiHook"]),
 		// A terminal stress test, run against the app's own terminal.
 		.executable(name: "firebench", targets: ["FireBench"]),
 		.library(name: "IdeaiKit", targets: ["IdeaiKit"]),
@@ -95,6 +96,16 @@ let package = Package(
 			name: "ideai",
 			dependencies: ["IdeaiApp"],
 			path: "Sources/ideaiMain",
+			swiftSettings: [.swiftLanguageMode(.v5)]
+		),
+		// The Claude Code hook, kept apart from the app on purpose: Claude runs
+		// it several times per tool call, and starting a binary that links
+		// AppKit and a syntax engine to read one line of JSON would be felt in
+		// every session on the machine.
+		.executableTarget(
+			name: "ideaiHook",
+			dependencies: ["IdeaiKit"],
+			path: "Sources/ideaiHook",
 			swiftSettings: [.swiftLanguageMode(.v5)]
 		),
 		.testTarget(

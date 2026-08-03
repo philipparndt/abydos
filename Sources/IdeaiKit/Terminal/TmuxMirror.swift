@@ -179,8 +179,22 @@ public enum TmuxMirror {
 		await command(["select-window", "-t", "\(session):\(index)"])
 	}
 
-	public static func newWindow(inSession session: String) async {
-		await command(["new-window", "-t", session])
+	/// Makes a window in a session, saying whether it could.
+	///
+	/// It cannot when the session is gone — which is what closing its last
+	/// window does — and the caller's answer to that is to start the session
+	/// again rather than to do nothing.
+	@discardableResult
+	public static func newWindow(inSession session: String) async -> Bool {
+		guard let tmux = Executables.locate("tmux") else { return false }
+		let result = await run(tmux, ["new-window", "-t", session])
+		return result?.exitCode == 0
+	}
+
+	/// Whether the server has a session by this name.
+	public static func sessionExists(_ name: String) async -> Bool {
+		guard let tmux = Executables.locate("tmux") else { return false }
+		return await run(tmux, ["has-session", "-t", "=\(name)"])?.exitCode == 0
 	}
 
 	/// Moves a window to where another one is, shifting the rest along.

@@ -238,8 +238,36 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// Automatic modals are banned here: they take the keyboard and demand
 	/// dismissal for news as small as "no go.mod in this project". A toast
 	/// says it in the corner and opens the details if it turns out to matter.
-	func notify(_ title: String, detail: String? = nil, kind: Toast.Kind = .error) {
-		toasts.show(Toast(kind: kind, title: title, detail: detail))
+	func notify(
+		_ title: String,
+		detail: String? = nil,
+		kind: Toast.Kind = .error,
+		actionTitle: String? = nil,
+		action: (() -> Void)? = nil
+	) {
+		toasts.show(Toast(
+			kind: kind, title: title, detail: detail, actionTitle: actionTitle, action: action
+		))
+	}
+
+	// MARK: - Claude sessions in the terminal
+
+	/// The tmux session the panel's tabs are showing, if they are showing one.
+	var mirroredTmuxSession: String? { bottomPanel.mirroredTmuxSession }
+
+	/// Which of those windows is the active one.
+	var activeTmuxWindow: Int? { bottomPanel.activeTmuxWindow }
+
+	/// Presses the + on the terminal strip, for testing what it does.
+	func addTerminalTabForTesting() {
+		bottomPanel.addTabForTesting()
+	}
+
+	/// Brings a tmux window forward, as clicking its tab would.
+	func revealTmuxWindow(_ index: Int) {
+		window?.makeKeyAndOrderFront(nil)
+		NSApp.activate(ignoringOtherApps: true)
+		bottomPanel.revealTmuxWindow(index)
 	}
 
 	/// Shows a toast raised from somewhere with no window of its own.

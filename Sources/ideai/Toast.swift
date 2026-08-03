@@ -36,11 +36,26 @@ struct Toast {
 	let title: String
 	/// The rest, shown only if the toast is clicked.
 	let detail: String?
+	/// What a click should do instead of opening the detail, and the words for
+	/// it.
+	///
+	/// News about somewhere else — a Claude session two tabs away wanting an
+	/// answer — is worth more as a way of getting there than as a paragraph.
+	let action: (() -> Void)?
+	let actionTitle: String?
 
-	init(kind: Kind = .error, title: String, detail: String? = nil) {
+	init(
+		kind: Kind = .error,
+		title: String,
+		detail: String? = nil,
+		actionTitle: String? = nil,
+		action: (() -> Void)? = nil
+	) {
 		self.kind = kind
 		self.title = title
 		self.detail = detail
+		self.actionTitle = actionTitle
+		self.action = action
 	}
 }
 
@@ -99,7 +114,13 @@ final class ToastPresenter {
 			guard let view else { return }
 			self?.dismiss(view)
 		}
-		view.onOpen = { [weak self] in self?.present(toast) }
+		view.onOpen = { [weak self] in
+			guard let action = toast.action else {
+				self?.present(toast)
+				return
+			}
+			action()
+		}
 
 		host.add(view)
 		shown.append(view)
@@ -253,9 +274,9 @@ private final class ToastView: NSView {
 			x: textX, y: 11, width: max(0, bounds.width - textX - 34), height: title.size().height
 		))
 
-		// A hint that there is more, only when there is.
-		if toast.detail?.isEmpty == false {
-			let more = NSAttributedString(string: "Click for details", attributes: [
+		// A hint about what a click does, only when it does anything.
+		if let hint = toast.actionTitle ?? (toast.detail?.isEmpty == false ? "Click for details" : nil) {
+			let more = NSAttributedString(string: hint, attributes: [
 				.font: Theme.current.uiFont(10),
 				.foregroundColor: Theme.current.gitIgnored,
 			])
@@ -274,6 +295,9 @@ private final class ToastView: NSView {
 	}
 
 	override var intrinsicContentSize: NSSize {
-		NSSize(width: NSView.noIntrinsicMetric, height: toast.detail?.isEmpty == false ? 52 : 40)
+		NSSize(
+			width: NSView.noIntrinsicMetric,
+			height: toast.actionTitle != nil || toast.detail?.isEmpty == false ? 52 : 40
+		)
 	}
 }

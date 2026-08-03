@@ -263,8 +263,17 @@ final class BottomPanel: NSView {
 		strip.onAdd = { [weak self] in
 			guard let self else { return }
 			if self.mirrorsTmux, column == 0, let session = self.mirroredSession ?? self.tmuxSession {
+				// The terminal can be dead — the session it was attached to is
+				// destroyed by closing its last window, and the client goes
+				// with it. Then a new *window* is not what is wanted: a live
+				// terminal is, attached to the session, making it if need be.
+				if self.mirroredTerminal?.hasExited != false {
+					self.reattachTmux(to: session)
+					return
+				}
 				Task {
-					await TmuxMirror.newWindow(inSession: session)
+					let made = await TmuxMirror.newWindow(inSession: session)
+					if !made { self.reattachTmux(to: session) }
 					self.refreshTmuxWindows()
 				}
 				self.focusTerminal()
@@ -665,12 +674,46 @@ final class BottomPanel: NSView {
 				self.tmuxWindows = []
 			}
 			let windows = await TmuxMirror.windows(inSession: session)
-			// Nothing at all means tmux is still starting, or has gone: the
-			// strip keeps what it had rather than blinking empty.
+			// Nothing at all usually means tmux is still starting, and the
+			// strip keeps what it had rather than blinking empty — but not
+			// when the terminal itself has exited. Then the session really is
+			// gone, and tabs for windows nobody can reach are worse than none.
+			if windows.isEmpty, self.mirroredTerminal?.hasExited == true, !self.tmuxWindows.isEmpty {
+				self.tmuxWindows = []
+				self.rebuildColumns()
+				return
+			}
 			guard !windows.isEmpty, windows != self.tmuxWindows else { return }
 			self.tmuxWindows = windows
 			StallWatch.mark("tmux tabs") { self.rebuildColumns() }
 		}
+	}
+
+	/// Which tmux session the tabs are showing, for anything outside that needs
+	/// to know whether a session's news belongs to this window.
+	var mirroredTmuxSession: String? { mirrorsTmux ? (mirroredSession ?? tmuxSession) : nil }
+
+	/// Presses the + on the first strip, for testing what it does.
+	func addTabForTesting() {
+		columnViews.first?.strip.pressAddForTesting()
+	}
+
+	/// The window the tabs show as active, for deciding whether a session that
+	/// has something to say is already the one being looked at.
+	var activeTmuxWindow: Int? { tmuxWindows.first { $0.isActive }?.index }
+
+	/// Brings a tmux window to the front, the way clicking its tab does.
+	///
+	/// For a toast about a session that wants an answer: the whole value of the
+	/// message is being one click away from the thing it is about.
+	func revealTmuxWindow(_ index: Int) {
+		guard mirrorsTmux, let session = mirroredTmuxSession else { return }
+		markMirroredWindowActive(index)
+		Task {
+			await TmuxMirror.select(window: index, inSession: session)
+			self.refreshTmuxWindows()
+		}
+		focusTerminal()
 	}
 
 	/// Moves the highlight before tmux has answered.
@@ -688,6 +731,13 @@ final class BottomPanel: NSView {
 		rebuildColumns()
 	}
 
+	/// The command that attaches to one particular session, making it if it is
+	/// not there — which is what `new -A` means.
+	private func attachCommand(to session: String) -> (executable: String, arguments: [String])? {
+		guard let tmux = Executables.locate("tmux") else { return nil }
+		return (executable: tmux, arguments: ["new", "-A", "-s", session])
+	}
+
 	/// What the first terminal runs instead of a plain shell.
 	private func startupCommand() -> (executable: String, arguments: [String])? {
 		guard Settings.shared.startsTmux, let session = tmuxSession else { return nil }
@@ -702,9 +752,12 @@ final class BottomPanel: NSView {
 	/// Where somebody would look for it: the tag says which session the tabs
 	/// belong to, so the tag is where the others should be.
 	private func showSessionMenu(from rect: NSRect, in column: Int) {
-		guard let strip = columnViews.indices.contains(column) ? columnViews[column].strip : nil,
-		      let tty = sessions.first?.terminal?.ttyName
+		guard let strip = columnViews.indices.contains(column) ? columnViews[column].strip : nil
 		else { return }
+		// A dead terminal has no client to switch, and that is exactly when
+		// somebody most needs this menu — picking a session then attaches a
+		// new terminal to it instead of switching one that is not there.
+		let tty = sessions.first?.terminal?.ttyName ?? ""
 
 		Task { @MainActor in
 			let all = await TmuxMirror.sessions()
@@ -765,14 +818,40 @@ final class BottomPanel: NSView {
 
 	@objc private func switchToSession(_ sender: NSMenuItem) {
 		guard let parts = sender.representedObject as? [String], parts.count == 2 else { return }
+		// Nothing to switch when there is no client left: attach a new one.
+		guard mirroredTerminal?.hasExited != true else {
+			reattachTmux(to: parts[0])
+			return
+		}
 		Task {
 			await TmuxMirror.switchClient(onTTY: parts[1], to: parts[0])
 			self.refreshTmuxWindows()
 		}
 	}
 
+	/// Puts a live terminal back, attached to a tmux session.
+	///
+	/// The session behind the tabs can go while the app is looking at it —
+	/// closing its last window destroys it, and the client we had attached
+	/// exits with it, leaving a dead pane and a strip of tabs for something
+	/// that is not there. Rather than making somebody close the terminal and
+	/// open another, the + and the session tag both come here: the dead one is
+	/// cleared away and a new one attaches, making the session if it has gone.
+	func reattachTmux(to session: String) {
+		// Not `hidingWhenEmpty`: closing the dead one empties the panel for a
+		// moment, and a panel that hid itself there would take the new
+		// terminal down with it — the button that was pressed would look like
+		// it had closed the terminal rather than replaced it.
+		if let dead = mirroredTerminal, dead.hasExited { close(dead, hidingWhenEmpty: false) }
+		tmuxSession = session
+		mirroredSession = session
+		tmuxWindows = []
+		newTerminal(rootedAt: workingDirectory, title: session, attachingTo: session)
+		refreshTmuxWindows()
+	}
+
 	@objc private func createSessionFromMenu(_ sender: NSMenuItem) {
-		guard let tty = sender.representedObject as? String else { return }
+		let tty = sender.representedObject as? String ?? ""
 
 		let alert = NSAlert()
 		alert.messageText = "New tmux session"
@@ -788,6 +867,12 @@ final class BottomPanel: NSView {
 			guard response == .alertFirstButtonReturn, let self else { return }
 			let name = field.stringValue.trimmingCharacters(in: .whitespaces)
 			guard !name.isEmpty else { return }
+			guard !tty.isEmpty, self.mirroredTerminal?.hasExited != true else {
+				// No client to point anywhere: attach one, which makes the
+				// session on the way in.
+				self.reattachTmux(to: name)
+				return
+			}
 			Task {
 				await TmuxMirror.createSession(named: name, in: self.workingDirectory)
 				await TmuxMirror.switchClient(onTTY: tty, to: name)
@@ -885,7 +970,8 @@ final class BottomPanel: NSView {
 	private func newTerminal(
 		rootedAt directory: URL?,
 		title: String,
-		focus: Bool = true
+		focus: Bool = true,
+		attachingTo session: String? = nil
 	) -> TerminalPane? {
 		// The first terminal of a window can be told to run something instead
 		// of a plain shell — `tmux new -A -s ideai`, for whoever lives in tmux.
@@ -893,7 +979,7 @@ final class BottomPanel: NSView {
 		// should not join the session.
 		let pane = TerminalPane(
 			workingDirectory: directory,
-			command: sessions.isEmpty ? startupCommand() : nil
+			command: session.map(attachCommand(to:)) ?? (sessions.isEmpty ? startupCommand() : nil)
 		)
 		let session = Session(title: title, kind: .terminal(pane))
 		session.directory = directory
@@ -2143,14 +2229,61 @@ final class PanelTabStrip: NSView {
 	private var pressOrigin: NSPoint = .zero
 	private var draggedIndex: Int?
 	private var dropCaret: Int?
+	private var spinnerTimer: Timer?
+	private var spinnerPhase: CGFloat = 0
 
 	override var isFlipped: Bool { true }
+
+	/// Presses the + from a test, without a mouse.
+	func pressAddForTesting() { onAdd?() }
 
 	func setItems(_ items: [PanelTabItem], activeIndex: Int?) {
 		self.items = items
 		self.activeIndex = activeIndex
 		recomputeLayout()
+		syncSpinner()
 		needsDisplay = true
+	}
+
+	// MARK: - The spinner on a working tab
+
+	/// Turning while at least one session is working, and stopped otherwise.
+	///
+	/// A still `⋯` says "something is happening here" no more convincingly than
+	/// a full stop does; a turning one says it at a glance from across the
+	/// room. The timer exists only while there is something to turn, so an
+	/// idle app is an idle app.
+	private func syncSpinner() {
+		let wanted = items.contains { $0.aiStatus == .working }
+		if wanted, spinnerTimer == nil {
+			spinnerTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 12, repeats: true) { [weak self] _ in
+				guard let self else { return }
+				self.spinnerPhase += 1
+				// Only the badges: redrawing a whole strip twelve times a
+				// second to turn three little marks would be silly.
+				for (index, item) in self.items.enumerated()
+				where item.aiStatus == .working && index < self.frames.count {
+					self.setNeedsDisplay(self.badgeRect(in: self.frames[index]))
+				}
+			}
+			// Turning has to carry on while a menu is open or a divider is
+			// being dragged, which is exactly what the tracking mode is for.
+			RunLoop.main.add(spinnerTimer!, forMode: .common)
+		} else if !wanted {
+			spinnerTimer?.invalidate()
+			spinnerTimer = nil
+		}
+	}
+
+	/// Where a tab's status badge goes: where the ✕ would be, which a tmux tab
+	/// does not have.
+	private func badgeRect(in rect: NSRect) -> NSRect {
+		NSRect(
+			x: rect.maxX - padding - statusSize,
+			y: rect.midY - statusSize / 2,
+			width: statusSize,
+			height: statusSize
+		)
 	}
 
 	func applyThemeChange() {
@@ -2613,18 +2746,17 @@ final class PanelTabStrip: NSView {
 		// The Claude session's state, where the ✕ would be — a tmux tab has
 		// none, and the two never appear together.
 		if let status = item.aiStatus {
-			let badgeRect = NSRect(
-				x: rect.maxX - padding - statusSize,
-				y: rect.midY - statusSize / 2,
-				width: statusSize,
-				height: statusSize
-			)
-			Theme.symbol(
-				Self.symbol(for: status),
-				size: 11 * Theme.current.scale,
-				color: Self.colour(for: status),
-				weight: .semibold
-			)?.drawFitted(in: badgeRect)
+			let badge = badgeRect(in: rect)
+			if status == .working {
+				drawSpinner(in: badge)
+			} else {
+				Theme.symbol(
+					Self.symbol(for: status),
+					size: 11 * Theme.current.scale,
+					color: Self.colour(for: status),
+					weight: .semibold
+				)?.drawFitted(in: badge)
+			}
 		}
 
 		if item.isClosable, isActive || isHovered {
@@ -2645,6 +2777,30 @@ final class PanelTabStrip: NSView {
 			Theme.current.sidebarText.setStroke()
 			cross.stroke()
 		}
+	}
+
+	/// An arc chasing its own tail, a twelfth of a turn at a time.
+	///
+	/// Drawn rather than an `NSProgressIndicator`: the strip is one view that
+	/// draws all its tabs, and a control per tab would have to be created,
+	/// placed and torn down every time tmux's window list changes — which is
+	/// twice a second.
+	private func drawSpinner(in rect: NSRect) {
+		let radius = rect.width / 2 - Theme.current.scaled(1.5)
+		let centre = NSPoint(x: rect.midX, y: rect.midY)
+		let start = spinnerPhase * 30
+
+		let arc = NSBezierPath()
+		arc.appendArc(
+			withCenter: centre,
+			radius: radius,
+			startAngle: start,
+			endAngle: start + 280
+		)
+		arc.lineWidth = Theme.current.scaled(1.6)
+		arc.lineCapStyle = .round
+		Self.colour(for: .working).setStroke()
+		arc.stroke()
 	}
 
 	/// cmanager's three states, in this app's alphabet.

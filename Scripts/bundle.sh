@@ -27,6 +27,12 @@ mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources"
 
 cp "$BIN_DIR/ideai" "$CONTENTS/MacOS/ideai"
 
+# The Claude Code hook, which travels with the app but is its own binary:
+# Claude runs it several times per tool call, and starting one that links
+# AppKit and a syntax engine to read a line of JSON would be felt in every
+# session on the machine.
+cp "$BIN_DIR/ideai-hook" "$CONTENTS/MacOS/ideai-hook"
+
 # Grammar query bundles. Without these every file opens uncoloured, so treat a
 # missing set as a hard failure rather than shipping a broken app.
 COUNT=0
