@@ -498,7 +498,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		navigator.currentEditorFile = { [weak self] in self?.editor.activeGroup?.activeTabURL }
 		// The tree reads the working copy's status anyway; the strip shows it.
 		navigator.onChangeCount = { [weak self] count in
-			self?.toolStrip.uncommittedCount = count
+			guard let self else { return }
+			self.toolStrip.uncommittedCount = count
+			// What is committed but not sent is worth the same glance: the
+			// same read the push button uses, on the same occasion the tree
+			// reads the working copy.
+			Task { @MainActor in
+				guard let root = self.scopeRoot ?? self.project?.root else { return }
+				let state = await GitPush.state(in: root)
+				self.toolStrip.unpushedCount = state?.ahead ?? 0
+			}
 		}
 		navigator.onFilesChanged = { [weak self] in
 			// Something wrote inside the project — possibly a file that is open.

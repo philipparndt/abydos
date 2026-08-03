@@ -1332,9 +1332,12 @@ final class BottomPanel: NSView {
 			// In the mirrored mode the first column's strip is tmux's window
 			// list. The terminal underneath it never changes — that is the
 			// point: switching tabs is a message to tmux, not a teardown.
-			view.strip.mirroredSession = (mirrorsTmux && index == 0 && !tmuxWindows.isEmpty)
-				? (mirroredSession ?? tmuxSession)
-				: nil
+			let mirroring = mirrorsTmux && index == 0 && !tmuxWindows.isEmpty
+			view.strip.mirroredSession = mirroring ? (mirroredSession ?? tmuxSession) : nil
+			// Killing a tmux window can take real work with it — a build, an
+			// ssh session, an editor with unsaved buffers — so it is not one
+			// stray click away. The right-click menu still offers it.
+			view.strip.showsCloseButtons = !mirroring
 
 			if mirrorsTmux, index == 0, !tmuxWindows.isEmpty {
 				view.strip.setItems(
@@ -1495,6 +1498,18 @@ final class BottomPanel: NSView {
 	/// window a terminal was pulled out into, it moves here — which is how a
 	/// split is undone by dragging rather than by menu.
 	private func dropOnStrip(_ payload: TerminalTabDrag.Payload, at position: Int, in column: Int) {
+		// A dropped tab arrives here rather than through `onMove`, and a
+		// mirrored one has no session to look up — which is why dragging one
+		// looked as though it worked and then did nothing.
+		if let window = mirroredWindow(at: payload.index, in: payload.column) {
+			guard payload.panelID == panelID, payload.column == column else { return }
+			// An insertion index counts the gaps; a position counts the tabs,
+			// and the one being moved is not there any more.
+			let target = position > payload.index ? position - 1 : position
+			moveMirroredWindow(window, from: payload.index, to: target)
+			return
+		}
+
 		if payload.panelID != panelID {
 			guard let source = TerminalDragSources.source(for: payload.panelID),
 			      let detached = source.detachTerminal(at: payload.index)
@@ -1930,6 +1945,20 @@ final class PanelTabStrip: NSView {
 	/// Shown as a tag beside the panel's own controls: the tabs look like our
 	/// tabs, and it should be visible at a glance that they are not — that
 	/// closing one closes a tmux window, and that another client can move them.
+	/// Whether a tab may be closed from the strip.
+	///
+	/// A mirrored tab is a tmux window, and killing one from a stray click on
+	/// an ✕ can take real work with it — a build, an ssh session, an editor
+	/// with unsaved buffers. The right-click menu still offers it, where the
+	/// gesture is deliberate.
+	var showsCloseButtons = true {
+		didSet {
+			guard showsCloseButtons != oldValue else { return }
+			recomputeLayout()
+			needsDisplay = true
+		}
+	}
+
 	var mirroredSession: String? {
 		didSet {
 			guard mirroredSession != oldValue else { return }
@@ -2149,7 +2178,7 @@ final class PanelTabStrip: NSView {
 			width: closeSize,
 			height: closeSize
 		)
-		if closeRect.contains(point) {
+		if showsCloseButtons, closeRect.contains(point) {
 			onClose?(index)
 		} else {
 			onSelect?(index)
@@ -2385,10 +2414,11 @@ final class PanelTabStrip: NSView {
 			.paragraphStyle: paragraph,
 		])
 		let size = label.size()
-		let limit = max(0, rect.maxX - padding - closeSize - Theme.current.scaled(6) - x)
+		let reserved = showsCloseButtons ? closeSize + Theme.current.scaled(6) : 0
+		let limit = max(0, rect.maxX - padding - reserved - x)
 		label.draw(in: NSRect(x: x, y: rect.midY - size.height / 2, width: limit, height: size.height))
 
-		if isActive || isHovered {
+		if showsCloseButtons, isActive || isHovered {
 			let close = NSRect(
 				x: rect.maxX - padding - closeSize,
 				y: rect.midY - closeSize / 2,

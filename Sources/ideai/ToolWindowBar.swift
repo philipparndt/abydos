@@ -40,7 +40,8 @@ final class ToolWindowBar: NSView {
 	private var reviewButton: StripButton!
 	private var commitButton: StripButton!
 
-	/// How many files are waiting to be committed.
+	/// How many files are waiting to be committed, and how many commits are
+	/// waiting to be pushed.
 	///
 	/// Shown as a colour on the commit button rather than a number: the useful
 	/// question from across the room is "is there anything", and the tooltip
@@ -48,11 +49,35 @@ final class ToolWindowBar: NSView {
 	var uncommittedCount = 0 {
 		didSet {
 			guard uncommittedCount != oldValue else { return }
-			commitButton?.accent = uncommittedCount > 0 ? Theme.current.gitModified : nil
-			commitButton?.toolTip = uncommittedCount > 0
-				? "Commit (⌘2) — \(uncommittedCount) changed file\(uncommittedCount == 1 ? "" : "s")"
-				: "Commit (⌘2)"
+			updateCommitButton()
 		}
+	}
+
+	var unpushedCount = 0 {
+		didSet {
+			guard unpushedCount != oldValue else { return }
+			updateCommitButton()
+		}
+	}
+
+	/// Blue for work not committed, green for work not pushed, and blue wins:
+	/// committing is what comes first, so it is what the button should be
+	/// asking for while there is any of it to do.
+	private func updateCommitButton() {
+		commitButton?.accent = uncommittedCount > 0
+			? Theme.current.gitModified
+			: (unpushedCount > 0 ? Theme.current.gitAdded : nil)
+
+		var parts: [String] = []
+		if uncommittedCount > 0 {
+			parts.append("\(uncommittedCount) changed file\(uncommittedCount == 1 ? "" : "s")")
+		}
+		if unpushedCount > 0 {
+			parts.append("\(unpushedCount) commit\(unpushedCount == 1 ? "" : "s") to push")
+		}
+		commitButton?.toolTip = parts.isEmpty
+			? "Commit (⌘2)"
+			: "Commit (⌘2) — " + parts.joined(separator: ", ")
 	}
 	private var branchesButton: StripButton!
 	private var structureButton: StripButton!
