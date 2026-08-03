@@ -64,8 +64,6 @@ final class TerminalView: NSView, NSTextInputClient {
 
 	/// How long parsing may take before yielding so the screen can be drawn.
 	private static let parseBudget: TimeInterval = 0.006
-	/// Output small enough to be somebody's own typing coming back.
-	private static let smallInput = 4096
 	/// Backlog at which the process is made to wait, and the one it resumes at.
 	private static let backlogHighWater = 4 << 20
 	private static let backlogLowWater = 1 << 20
@@ -81,10 +79,11 @@ final class TerminalView: NSView, NSTextInputClient {
 
 	/// When a key was last pressed, and what has happened to it since.
 	///
-	/// Only kept while the probe is on: this is here to answer "how long does a
-	/// keystroke take to appear", which cannot be reasoned about from the code
-	/// because most of the wait is other people's — the shell's, tmux's, the
-	/// display's.
+	/// The echo of a keystroke is drawn as soon as it is parsed; everything
+	/// else waits for the display's clock. The other two are for the probe,
+	/// which answers "how long does a keystroke take to appear" — a question
+	/// the code cannot answer by itself, because most of the wait is other
+	/// people's: the shell's, tmux's, the display's.
 	private var keyPressedAt: Date?
 	private var keyEchoedAt: Date?
 	private var keyParsedAt: Date?
@@ -238,18 +237,12 @@ final class TerminalView: NSView, NSTextInputClient {
 		guard !drainScheduled, !pending.isEmpty else { return }
 		drainScheduled = true
 
-		// A keystroke's echo is a few bytes with nothing queued behind it, and
-		// making it wait two milliseconds to be read is two milliseconds of
-		// somebody watching for their own letter to appear.
-		guard pendingBytes > Self.smallInput else {
-			DispatchQueue.main.async { [weak self] in self?.drain() }
-			return
-		}
-
-		// Behind, though — a program painting the whole screen — and a delay
-		// rather than an immediate hop: blocks queued on the main queue are all
-		// run before the display cycle, so re-queueing at once would starve
-		// drawing exactly as parsing everything inline did.
+		// A delay rather than an immediate hop, for two reasons. Blocks queued
+		// on the main queue are all run before the display cycle, so re-queueing
+		// at once would starve drawing exactly as parsing everything inline did.
+		// And a program repainting writes its picture in several goes: two
+		// milliseconds of gathering is what turns those into one picture rather
+		// than three, one of which has the cursor somewhere it never really was.
 		DispatchQueue.main.asyncAfter(deadline: .now() + 0.002) { [weak self] in
 			self?.drain()
 		}
@@ -327,12 +320,18 @@ final class TerminalView: NSView, NSTextInputClient {
 	private func requestFrame() {
 		needsRender = true
 
-		// Only when everything that has arrived has been parsed. A program
-		// repainting sends its frame in several writes — hide the cursor, draw,
-		// show it again — and drawing between two of them shows a picture that
-		// was never meant to be seen. That is what a flickering cursor is.
+		// Only for somebody's own typing coming back. A program painting the
+		// screen does it in stages — the cursor parked somewhere while a line
+		// is rewritten, hidden while it draws — and every one of those stages
+		// drawn as it arrives is a cursor that flickers and appears in places
+		// it was never meant to be seen. Those wait for the display's clock,
+		// as they always did, and only the state they settle in is shown.
+		guard isEchoingKeystroke else { return }
 		guard pending.isEmpty, !drainScheduled else { return }
 		guard -lastRenderedAt.timeIntervalSinceNow >= frameInterval else { return }
+		// One frame per keystroke: whatever the program does afterwards is the
+		// program's own repainting.
+		hasDrawnEcho = true
 
 		// The scroll view has just been told the document grew and where to
 		// sit; drawing before it has laid that out would put the picture a line
@@ -349,6 +348,22 @@ final class TerminalView: NSView, NSTextInputClient {
 		renderIfNeeded()
 		CATransaction.commit()
 	}
+
+	/// Whether what has just been parsed is the echo of a key that was pressed.
+	///
+	/// Bounded in time because not every key produces output — a shell may
+	/// ignore it entirely — and a keystroke that was never echoed must not
+	/// license an immediate frame minutes later.
+	private var isEchoingKeystroke: Bool {
+		guard let pressed = keyPressedAt, !hasDrawnEcho else { return false }
+		return -pressed.timeIntervalSinceNow < Self.echoWindow
+	}
+
+	/// Whether this keystroke has already had its frame.
+	private var hasDrawnEcho = false
+
+	/// How long after a key is pressed its echo is still its echo.
+	private static let echoWindow: TimeInterval = 0.15
 
 	/// When the last frame was handed over, and how long a frame lasts here.
 	///
@@ -534,10 +549,10 @@ final class TerminalView: NSView, NSTextInputClient {
 			}
 		}
 		var cursor: TerminalMetalRenderer.Cursor?
-		if shouldDrawCursor() {
+		if let place = cursorPlace() {
 			cursor = .init(
-				row: screen.scrollback.count + emulator.cursorRow,
-				column: emulator.cursorColumn,
+				row: place.row,
+				column: place.column,
 				colour: TerminalPalette.cursor.components,
 				// Outlined when the keyboard is somewhere else: the cursor is
 				// still where it was, and typing would not go there.
@@ -546,9 +561,11 @@ final class TerminalView: NSView, NSTextInputClient {
 			)
 		}
 
-		if InputProbe.enabled {
-			InputProbe.frame(cursor: cursor != nil)
-		}
+			InputProbe.frame(
+				cursor: cursor != nil,
+				row: cursor?.row ?? -1,
+				column: cursor?.column ?? -1
+			)
 
 		let background = TerminalPalette.background.components
 		let buildStart = probing ? Date() : nil
@@ -970,11 +987,11 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// leaves it the same colour as what is now behind it, which is how it
 	/// becomes unreadable exactly where you are looking.
 	private func drawCursor() {
-		guard shouldDrawCursor() else { return }
+		guard let place = cursorPlace() else { return }
 
 		let screen = emulator.screen
-		let row = screen.scrollback.count + emulator.cursorRow
-		let column = emulator.cursorColumn
+		let row = place.row
+		let column = place.column
 		let x = (Self.horizontalInset + CGFloat(column) * cellWidth).rounded()
 		let endX = (Self.horizontalInset + CGFloat(column + 1) * cellWidth).rounded()
 		let y = (Self.verticalInset + CGFloat(row) * cellHeight).rounded()
@@ -1029,24 +1046,41 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// honouring the hide the instant it arrives turns an ordinary repaint into
 	/// a blink, which is what a flickering cursor is. A hide is believed only
 	/// once it has lasted longer than a repaint would.
-	private func shouldDrawCursor() -> Bool {
-		guard cursorVisible else { return false }
+	private func cursorPlace() -> (row: Int, column: Int)? {
+		guard cursorVisible else { return nil }
+
+		let here = (
+			row: emulator.screen.scrollback.count + emulator.cursorRow,
+			column: emulator.cursorColumn
+		)
 		guard !emulator.isCursorVisible else {
 			cursorHiddenSince = nil
-			return true
+			settledCursor = here
+			return here
 		}
 
+		// Hidden. A program does that while it repaints — park the cursor
+		// somewhere convenient, write, put it back — and both showing it where
+		// it was parked and taking it away for those few milliseconds are
+		// wrong: one is a cursor that jumps about, the other is a cursor that
+		// blinks. So it stays where it last settled.
 		guard let since = cursorHiddenSince else {
 			cursorHiddenSince = Date()
-			// Nothing more may arrive to prove the hide was meant, so the
-			// screen has to be asked again once the moment has passed.
+			// The hide may be meant, and nothing more may arrive to say so;
+			// the screen has to be asked again once the moment has passed.
 			DispatchQueue.main.asyncAfter(deadline: .now() + Self.cursorHideGrace) { [weak self] in
 				self?.repaint()
 			}
-			return true
+			return settledCursor
 		}
-		return -since.timeIntervalSinceNow < Self.cursorHideGrace
+
+		// Unless it stays hidden, which is a program saying it means it.
+		guard -since.timeIntervalSinceNow < Self.cursorHideGrace else { return nil }
+		return settledCursor
 	}
+
+	/// Where the cursor was when the program last had it visible.
+	private var settledCursor: (row: Int, column: Int)?
 
 	/// When a program last asked for the cursor to go away.
 	private var cursorHiddenSince: Date?
@@ -1230,11 +1264,10 @@ final class TerminalView: NSView, NSTextInputClient {
 			return
 		}
 		guard let bytes = encode(event: event) else { return }
-		if InputProbe.enabled, keyPressedAt == nil {
-			keyPressedAt = Date()
-			keyEchoedAt = nil
-			keyParsedAt = nil
-		}
+		keyPressedAt = Date()
+		keyEchoedAt = nil
+		keyParsedAt = nil
+		hasDrawnEcho = false
 		// Typing always jumps back to the prompt, as every terminal does.
 		isPinnedToBottom = true
 		pty.write(bytes)
@@ -1864,14 +1897,30 @@ enum InputProbe {
 
 	/// Frames drawn without the cursor in them, which is what a flicker is: a
 	/// picture taken while a program had hidden it to repaint.
-	static func frame(cursor: Bool) {
+	nonisolated(unsafe) private static var places: [(row: Int, column: Int)] = []
+
+	static func frame(cursor: Bool, row: Int = 0, column: Int = 0) {
 		frames += 1
 		if !cursor { framesWithoutCursor += 1 }
+		places.append((row, column))
+	}
+
+	/// Frames whose cursor was somewhere the frames on either side were not —
+	/// a position the terminal passed through rather than settled in, which is
+	/// the cursor appearing where it never really was.
+	private static var transientPlaces: Int {
+		guard places.count > 2 else { return 0 }
+		var count = 0
+		for index in 1..<(places.count - 1) where
+			places[index] != places[index - 1] && places[index - 1] == places[index + 1] {
+			count += 1
+		}
+		return count
 	}
 
 	static func report() {
 		FileHandle.standardError.write(Data(
-			"INPUTSUM frames=\(frames) withoutCursor=\(framesWithoutCursor) \n".utf8
+			"INPUTSUM frames=\(frames) withoutCursor=\(framesWithoutCursor) transient=\(transientPlaces) \n".utf8
 		))
 		guard !samples.isEmpty else { return }
 		func line(_ name: String, _ values: [Double]) -> String {
