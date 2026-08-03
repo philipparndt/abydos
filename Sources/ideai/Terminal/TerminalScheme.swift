@@ -28,24 +28,28 @@ enum TerminalScheme: String, CaseIterable {
 	var named: [NSColor] {
 		switch self {
 		case .blue where Theme.current.isLight:
-			// The same palette in daylight: the hues kept, the values pushed
-			// down so they can be read on paper-white rather than on navy.
+			// The hues kept, at a lightness that works both ways round. A
+			// terminal colour is as often a background as a foreground — a
+			// powerline prompt is nothing but coloured backgrounds — so these
+			// sit in the middle: dark enough to read on paper-white, light
+			// enough that black text on them is not a smudge.
 			return [
-				.hex(0x3B3E45), // 0 black
-				.hex(0xB03A2E), // 1 red
-				.hex(0x4E7A1E), // 2 green
-				.hex(0x8A6100), // 3 yellow
-				.hex(0x2C5F8A), // 4 blue
-				.hex(0xA4318B), // 5 magenta
-				.hex(0x2A7D74), // 6 cyan
-				.hex(0x60656E), // 7 white
-				.hex(0x767B85), // 8 bright black
-				.hex(0xC0392B), // 9 bright red
-				.hex(0x5E8C22), // 10 bright green
-				.hex(0xA97400), // 11 bright yellow
-				.hex(0x2E6DA4), // 12 bright blue
-				.hex(0x8E44AD), // 13 bright magenta
-				.hex(0x2E8B84), // 14 bright cyan
+				.hex(0x2B2D30), // 0 black — properly black, since a prompt
+				               //   writes it on top of its own colours
+				.hex(0xCB4B3C), // 1 red
+				.hex(0x74A62F), // 2 green
+				.hex(0xC08A00), // 3 yellow
+				.hex(0x3E86C4), // 4 blue
+				.hex(0xB65AAE), // 5 magenta
+				.hex(0x3AA79E), // 6 cyan
+				.hex(0x8B919B), // 7 white
+				.hex(0x6B7078), // 8 bright black
+				.hex(0xE0685A), // 9 bright red
+				.hex(0x8CBF45), // 10 bright green
+				.hex(0xDBA318), // 11 bright yellow
+				.hex(0x5B9FD8), // 12 bright blue
+				.hex(0xC97BC2), // 13 bright magenta
+				.hex(0x54BDB4), // 14 bright cyan
 				.hex(0x2B2D30), // 15 bright white
 			]
 		case .blue:
@@ -68,25 +72,25 @@ enum TerminalScheme: String, CaseIterable {
 				.hex(0xEAEAEA), // 15 bright white
 			]
 		case .dark where Theme.current.isLight:
-			// The same hues, darkened to be read against white. A palette made
-			// for a black background disappears on a light one — yellow most
-			// of all.
+			// As above: a middle lightness, so the same colour serves as text
+			// on white and as something to write black on.
 			return [
-				.hex(0x3B3E45), // 0 black
-				.hex(0xB03A2E), // 1 red
-				.hex(0x2E7D32), // 2 green
-				.hex(0x8A6100), // 3 yellow
-				.hex(0x1565C0), // 4 blue
-				.hex(0x9C27B0), // 5 magenta
-				.hex(0x00796B), // 6 cyan
-				.hex(0x5A5D66), // 7 white
-				.hex(0x6B6F78), // 8 bright black
-				.hex(0xD32F2F), // 9 bright red
-				.hex(0x388E3C), // 10 bright green
-				.hex(0xA97400), // 11 bright yellow
-				.hex(0x1976D2), // 12 bright blue
-				.hex(0xAB47BC), // 13 bright magenta
-				.hex(0x00897B), // 14 bright cyan
+				.hex(0x2B2D30), // 0 black — properly black, since a prompt
+				               //   writes it on top of its own colours
+				.hex(0xC8503F), // 1 red
+				.hex(0x5FA03A), // 2 green
+				.hex(0xB8860B), // 3 yellow
+				.hex(0x3B82C4), // 4 blue
+				.hex(0xB158AE), // 5 magenta
+				.hex(0x2FA39A), // 6 cyan
+				.hex(0x8B919B), // 7 white
+				.hex(0x6B7078), // 8 bright black
+				.hex(0xDD6A58), // 9 bright red
+				.hex(0x7FBE55), // 10 bright green
+				.hex(0xD3A017), // 11 bright yellow
+				.hex(0x589CD6), // 12 bright blue
+				.hex(0xC77BC0), // 13 bright magenta
+				.hex(0x4FBAB1), // 14 bright cyan
 				.hex(0x2B2D30), // 15 bright white
 			]
 		case .dark:

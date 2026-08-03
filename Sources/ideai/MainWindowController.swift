@@ -480,7 +480,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// A click in the tree opens provisionally and keeps focus in the tree;
 		// Return or a double-click pins the tab and moves focus to the editor.
 		navigator.onSelectFile = { [weak self] url, focusEditor in
-			self?.editor.open(fileURL: url, focusEditor: focusEditor, preview: !focusEditor)
+			guard let self else { return }
+			// Only when it is being opened to look at: arrowing through the
+			// tree in a popover should not throw the terminal out of the window
+			// on the way past.
+			if focusEditor { self.leaveTerminalFullScreen() }
+			self.editor.open(fileURL: url, focusEditor: focusEditor, preview: !focusEditor)
 		}
 		navigator.onOpenTerminal = { [weak self] directory in
 			self?.openTerminal(in: directory)
@@ -1254,6 +1259,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	///
 	/// Everything above it goes: the tree, the editors and their tabs. The
 	/// panel's own tabs stay, since they are how you get between terminals.
+	/// Gives the window back, for anything that needs the editor to be visible.
+	///
+	/// A page opened while the terminal has the whole window would open behind
+	/// it: the editor is hidden, not merely small. Asking for one is asking to
+	/// look at it.
+	private func leaveTerminalFullScreen() {
+		guard isPanelMaximized else { return }
+		togglePanelMaximized(nil)
+	}
+
 	@objc func togglePanelMaximized(_ sender: Any? = nil) {
 		if isPanelMaximized {
 			toolPopover?.performClose(nil)
@@ -3955,6 +3970,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// A page rather than a window: a setting is judged by what it does to the
 	/// thing beside it, and a preferences window covers exactly that.
 	@objc func showSettingsPage(_ sender: Any?) {
+		leaveTerminalFullScreen()
 		guard let group = editor.activeGroup else { return }
 		let page = (group.page(identifier: "settings") as? SettingsPage) ?? SettingsPage()
 		group.openPage(page, title: "Settings", identifier: "settings", symbol: "gearshape")
@@ -3970,6 +3986,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// the code it runs, and a modal panel takes the project away for as long
 	/// as it is open.
 	func showLaunchConfigurations(selecting name: String? = nil) {
+		leaveTerminalFullScreen()
 		guard project != nil, let group = editor.activeGroup else { return }
 
 		let page = (group.page(identifier: "launch") as? LaunchConfigurationsPage)
@@ -4935,6 +4952,9 @@ extension MainWindowController: NSToolbarDelegate {
 /// `NSBox` or vibrancy so the palette matches the theme exactly.
 class ColoredView: NSView {
 	private var color: NSColor
+
+	/// What it is painted with, for anything swapping palettes.
+	var colour: NSColor { color }
 
 	/// Where the colour comes from, for views that follow the palette.
 	///

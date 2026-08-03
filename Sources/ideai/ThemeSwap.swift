@@ -76,7 +76,16 @@ enum ThemeSwap {
 	}
 
 	private static func swapColours(from old: Theme, to new: Theme, in view: NSView) {
-		if let coloured = view as? ColoredView { coloured.refreshColour() }
+		// A ColoredView keeps its colour and puts it back on every display
+		// pass, so poking the layer would be undone a moment later: it has to
+		// be told.
+		if let coloured = view as? ColoredView {
+			coloured.refreshColour()
+			if let swapped = counterpart(of: coloured.colour, from: old, to: new) {
+				coloured.setColor(swapped)
+			}
+			return
+		}
 
 		if let cgColour = view.layer?.backgroundColor,
 		   let colour = NSColor(cgColor: cgColour),
