@@ -853,6 +853,34 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			}
 		}
 
+		// The terminal is where half the work happens, so a window arrives with
+		// it up — unless this project was left with it closed, which is a
+		// decision and outlives the default.
+		// One tmux session per project, for whoever asked for tmux at all.
+		bottomPanel.tmuxSession = TmuxSessionName.of(project.root)
+
+		let wanted = Settings.shared.terminalAtStartup
+		if wanted != "closed" {
+			let remembered = SessionStore.read(in: project.root)
+			if remembered?.isPanelVisible ?? true {
+				setPanelVisible(true)
+				// A panel with nothing in it is not a terminal being open. The
+				// session's own terminals come back a moment later if it had
+				// any; this is for the window that has none.
+				if !bottomPanel.hasTerminals, remembered?.terminals.isEmpty ?? true {
+					_ = bottomPanel.showTerminal()
+				}
+				// After layout: maximising divides the window, and the window
+				// has no height to divide until it has been laid out once.
+				if wanted == "full" {
+					DispatchQueue.main.async { [weak self] in
+						guard let self, !self.isPanelMaximized else { return }
+						self.togglePanelMaximized(nil)
+					}
+				}
+			}
+		}
+
 		// Scratches come back with the project. Only when the window is empty:
 		// following a terminal into a project puts back what it had open, and
 		// that already includes whichever scratches were among it.
@@ -5015,6 +5043,24 @@ class ColoredView: NSView {
 
 	override func updateLayer() {
 		layer?.backgroundColor = color.cgColor
+	}
+}
+
+/// What a project's tmux session is called.
+///
+/// The folder's name, with anything tmux would object to replaced: a session
+/// name cannot hold a colon or a full stop, and a project called `v1.2` would
+/// otherwise fail to attach with a message about a window index.
+enum TmuxSessionName {
+	static func of(_ root: URL) -> String {
+		let name = root.lastPathComponent
+		let cleaned = name.map { character -> Character in
+			character.isLetter || character.isNumber || character == "-" || character == "_"
+				? character
+				: "-"
+		}
+		let text = String(cleaned).trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+		return text.isEmpty ? "ideai" : text
 	}
 }
 

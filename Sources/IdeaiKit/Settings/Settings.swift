@@ -28,6 +28,8 @@ public final class Settings {
 			Key.terminalGPURendering: false,
 			Key.appearance: "system",
 			Key.followsTerminalProject: false,
+			Key.terminalAtStartup: "open",
+			Key.startsTmux: false,
 			Key.terminalScheme: "blue",
 			Key.terminalBellStyle: "sound",
 			Key.opensProjectsInNewWindow: false,
@@ -54,6 +56,8 @@ public final class Settings {
 		static let terminalGPURendering = "terminalGPURendering"
 		static let appearance = "appearance"
 		static let followsTerminalProject = "followsTerminalProject"
+		static let terminalAtStartup = "terminalAtStartup"
+		static let startsTmux = "startsTmux"
 		static let terminalScheme = "terminalScheme"
 		static let terminalBellStyle = "terminalBellStyle"
 		static let projectSearchPaths = "projectSearchPaths"
@@ -187,6 +191,26 @@ public final class Settings {
 	public var terminalGPURendering: Bool {
 		get { defaults.bool(forKey: Key.terminalGPURendering) }
 		set { set(newValue, Key.terminalGPURendering) }
+	}
+
+	/// How the terminal arrives when a window opens.
+	///
+	/// `closed`, `open`, or `full` — the last giving it the whole window, for
+	/// somebody whose day starts in a shell and who reaches for the editor
+	/// afterwards.
+	public var terminalAtStartup: String {
+		get { defaults.string(forKey: Key.terminalAtStartup) ?? "open" }
+		set { set(newValue, Key.terminalAtStartup) }
+	}
+
+	/// Whether the first terminal of a window attaches to tmux.
+	///
+	/// Only the first: the ones opened afterwards are for the odd job that
+	/// should not join the session. One session per project, so reopening a
+	/// project comes back to the panes it was left with.
+	public var startsTmux: Bool {
+		get { defaults.bool(forKey: Key.startsTmux) }
+		set { set(newValue, Key.startsTmux) }
 	}
 
 	/// Dark, light, or whatever the system is set to.

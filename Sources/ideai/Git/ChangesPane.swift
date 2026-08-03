@@ -819,7 +819,22 @@ private final class InsetTextField: NSTextField {
 }
 
 private final class InsetTextFieldCell: NSTextFieldCell {
-	private func inset(_ rect: NSRect) -> NSRect { rect.insetBy(dx: 5, dy: 0) }
+	/// Inset from the edges, and sitting in the middle of them.
+	///
+	/// A field taller than its line — which this one is, to be comfortable to
+	/// click — draws the text against the top otherwise, and the placeholder
+	/// sits above the line everything else is on.
+	private func inset(_ rect: NSRect) -> NSRect {
+		let room = rect.insetBy(dx: 5, dy: 0)
+		let height = ceil(font?.boundingRectForFont.height ?? room.height)
+		guard height < room.height else { return room }
+		return NSRect(
+			x: room.minX,
+			y: room.minY + ((room.height - height) / 2).rounded(),
+			width: room.width,
+			height: height
+		)
+	}
 
 	override func drawingRect(forBounds rect: NSRect) -> NSRect {
 		super.drawingRect(forBounds: inset(rect))

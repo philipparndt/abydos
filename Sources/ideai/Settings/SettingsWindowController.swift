@@ -297,7 +297,7 @@ final class SettingsPaneController: NSViewController {
 
 	/// The terminal's own look, and how it draws.
 	static func terminalRows() -> [Row] {
-		[
+		var rows: [Row] = [
 			.choice(
 				title: "Terminal colours",
 				help: "Blue is the palette Ghostty ships with. Dark matches the editor.",
@@ -318,6 +318,17 @@ final class SettingsPaneController: NSViewController {
 				get: { Settings.shared.terminalFontName },
 				set: { Settings.shared.terminalFontName = $0.trimmingCharacters(in: .whitespaces) }
 			),
+			.choice(
+				title: "Terminal when a window opens",
+				help: "Closed, open at its usual height, or filling the window.",
+				options: [
+					(label: "Closed", value: "closed"),
+					(label: "Open", value: "open"),
+					(label: "Filling the window", value: "full"),
+				],
+				get: { Settings.shared.terminalAtStartup },
+				set: { Settings.shared.terminalAtStartup = $0 }
+			),
 			.toggle(
 				title: "Follow the terminal's project",
 				help: "When the terminal moves into another project, the window opens it. "
@@ -332,6 +343,22 @@ final class SettingsPaneController: NSViewController {
 				set: { Settings.shared.terminalGPURendering = $0 }
 			),
 		]
+
+		// Offered only where there is a tmux to attach to: a switch that can do
+		// nothing is worse than no switch.
+		if Executables.locate("tmux") != nil {
+			rows.insert(
+				.toggle(
+					title: "Attach the first terminal to tmux",
+					help: "One session per project, so reopening it comes back to the panes it was "
+						+ "left with. Terminals opened afterwards are plain shells.",
+					get: { Settings.shared.startsTmux },
+					set: { Settings.shared.startsTmux = $0 }
+				),
+				at: 1
+			)
+		}
+		return rows
 	}
 
 	/// What Claude Code is allowed to do on your behalf.

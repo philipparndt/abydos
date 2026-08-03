@@ -494,6 +494,21 @@ final class BottomPanel: NSView {
 	var sessionCountForTesting: Int { sessions.count }
 
 	/// Opens a shell, or focuses the existing one if there already is a terminal.
+	/// The name of this window's tmux session, when it should have one.
+	///
+	/// One per project: reopening a project comes back to the panes it was left
+	/// with, and two projects do not share a shell.
+	var tmuxSession: String?
+
+	/// What the first terminal runs instead of a plain shell.
+	private func startupCommand() -> (executable: String, arguments: [String])? {
+		guard Settings.shared.startsTmux, let session = tmuxSession else { return nil }
+		guard let tmux = Executables.locate("tmux") else { return nil }
+		// `new -A` is "attach if it exists, make it if it does not", which is
+		// exactly what reopening a project should do.
+		return (executable: tmux, arguments: ["new", "-A", "-s", session])
+	}
+
 	@discardableResult
 	func showTerminal() -> TerminalPane? {
 		if sessions.isEmpty {
@@ -523,7 +538,14 @@ final class BottomPanel: NSView {
 		title: String,
 		focus: Bool = true
 	) -> TerminalPane? {
-		let pane = TerminalPane(workingDirectory: directory)
+		// The first terminal of a window can be told to run something instead
+		// of a plain shell — `tmux new -A -s ideai`, for whoever lives in tmux.
+		// Only the first: the ones opened afterwards are for the odd job that
+		// should not join the session.
+		let pane = TerminalPane(
+			workingDirectory: directory,
+			command: sessions.isEmpty ? startupCommand() : nil
+		)
 		let session = Session(title: title, kind: .terminal(pane))
 		session.directory = directory
 		wire(session)
