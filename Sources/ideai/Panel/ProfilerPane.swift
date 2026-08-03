@@ -28,6 +28,9 @@ final class ProfilerPane: NSView {
 	private var statusLabel: NSTextField!
 	private var focusButton: NSButton!
 	private var podButton: NSButton!
+	private var heapStrip: HeapStripView!
+	private var heapTimer: Timer?
+	private var heapHeight: NSLayoutConstraint!
 	private var flameScroll: NSScrollView!
 	private var flameView: FlameGraphView!
 	private var table: NSTableView!
@@ -188,18 +191,32 @@ final class ProfilerPane: NSView {
 		share.priority = .defaultLow
 		share.isActive = true
 
+		// Whether the heap is growing, which no single profile can say. Hidden
+		// until there is something to draw, so a program without expvar shows
+		// nothing rather than an empty box.
+		heapStrip = HeapStripView()
+		heapStrip.isHidden = true
+
 		// Constrained rather than stacked: a stack view hands the split view
 		// only as much height as it asks for, and a split view asks for none.
 		controls.translatesAutoresizingMaskIntoConstraints = false
+		heapStrip.translatesAutoresizingMaskIntoConstraints = false
 		split.translatesAutoresizingMaskIntoConstraints = false
 		addSubview(controls)
+		addSubview(heapStrip)
 		addSubview(split)
+		heapHeight = heapStrip.heightAnchor.constraint(equalToConstant: 0)
 		NSLayoutConstraint.activate([
 			controls.topAnchor.constraint(equalTo: topAnchor),
 			controls.leadingAnchor.constraint(equalTo: leadingAnchor),
 			controls.trailingAnchor.constraint(equalTo: trailingAnchor),
 
-			split.topAnchor.constraint(equalTo: controls.bottomAnchor),
+			heapStrip.topAnchor.constraint(equalTo: controls.bottomAnchor),
+			heapStrip.leadingAnchor.constraint(equalTo: leadingAnchor),
+			heapStrip.trailingAnchor.constraint(equalTo: trailingAnchor),
+			heapHeight,
+
+			split.topAnchor.constraint(equalTo: heapStrip.bottomAnchor),
 			split.leadingAnchor.constraint(equalTo: leadingAnchor),
 			split.trailingAnchor.constraint(equalTo: trailingAnchor),
 			split.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -247,6 +264,7 @@ final class ProfilerPane: NSView {
 				let kinds = try await client.kinds(at: endpoint)
 				showKinds(kinds)
 				setStatus("\(endpoint.displayName) — \(kinds.count) profiles")
+				watchHeap(of: endpoint)
 			} catch {
 				setStatus(Self.describe(error), failed: true)
 			}
@@ -334,8 +352,46 @@ final class ProfilerPane: NSView {
 		}
 	}
 
+	// MARK: - The heap over time
+
+	/// Follows the program's heap for as long as the pane is pointed at it.
+	///
+	/// `expvar` is a different endpoint from pprof — `/debug/vars` beside
+	/// `/debug/pprof` — and a program can have one without the other, so the
+	/// strip appears only once a reading has actually arrived. A second
+	/// between readings: fast enough to see a leak climb, slow enough that the
+	/// program being profiled never notices.
+	private func watchHeap(of endpoint: PprofEndpoint) {
+		heapTimer?.invalidate()
+		heapStrip.clear()
+		let base = endpoint.base
+
+		func take() {
+			Task { @MainActor in
+				guard let sample = await GoMemoryWatch.sample(from: base) else { return }
+				// Still the same program: an address changed mid-flight would
+				// otherwise splice two heaps into one line.
+				guard self.endpoint?.base == base else { return }
+				self.showHeap(sample)
+			}
+		}
+
+		take()
+		heapTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in take() }
+	}
+
+	private func showHeap(_ sample: GoMemoryWatch.Sample) {
+		if heapStrip.isHidden {
+			heapStrip.isHidden = false
+			heapHeight.constant = HeapStripView.preferredHeight
+		}
+		heapStrip.add(sample)
+	}
+
 	/// Closes the tunnel with the pane.
 	func shutdown() {
+		heapTimer?.invalidate()
+		heapTimer = nil
 		forward?.stop()
 		forward = nil
 	}
