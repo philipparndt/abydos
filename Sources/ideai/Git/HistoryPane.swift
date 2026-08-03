@@ -331,6 +331,14 @@ final class HistoryPane: NSView {
 		setScope(path: scopeControl.selectedSegment == 1 ? offeredPath : nil)
 	}
 
+	/// Folds the branch a row's merge brought in, for checking it works.
+	func toggleCollapseForTesting(row: Int) -> String {
+		guard visible.indices.contains(row) else { return "no row \(row)" }
+		let before = visible.count
+		toggleCollapse(at: row)
+		return "rows \(before) -> \(visible.count)"
+	}
+
 	/// A click in the graph column, which is where a fold is opened and closed.
 	///
 	/// Anywhere else in the row selects the commit, as it always did: the
@@ -460,10 +468,11 @@ private final class HistoryTableView: NSTableView {
 
 	override func mouseDown(with event: NSEvent) {
 		let point = convert(event.locationInWindow, from: nil)
+		// The table's own x is the row's x — rows start at its leading edge —
+		// so converting through a row view that may not exist yet only ever
+		// moved the point into the wrong space.
 		let row = self.row(at: point)
-		if row >= 0, onGraphClick?(convert(point, to: rowView(atRow: row, makeIfNecessary: false)), row) == true {
-			return
-		}
+		if row >= 0, onGraphClick?(point, row) == true { return }
 		super.mouseDown(with: event)
 	}
 
@@ -541,14 +550,33 @@ private final class CommitRowView: NSView {
 		var x = left
 		// Where a branch or tag points, said before the subject: it is how a
 		// commit is found by eye when scrolling.
-		for ref in commit.refs.prefix(2) {
-			let label = NSAttributedString(string: ref.replacingOccurrences(of: "tag: ", with: ""), attributes: [
+		// Four rather than two: a commit at the tip of a branch that is also
+		// tagged, pushed and stashed on top of is exactly the commit somebody
+		// is looking for, and it is the one whose labels were being dropped.
+		for ref in commit.refs.prefix(4) {
+			let name = ref.replacingOccurrences(of: "tag: ", with: "")
+			// A tag is one thing, a stash another, a branch a third: the colour
+			// is what tells them apart while scrolling.
+			let tint: NSColor
+			if ref.hasPrefix("tag: ") {
+				tint = Theme.current.gitModified
+			} else if name.hasPrefix("refs/stash") || name.hasPrefix("stash@") {
+				tint = Theme.current.gitUnversioned
+			} else if name.contains("/") && !name.hasPrefix("feature/") && name.split(separator: "/").count == 2
+				&& !name.hasPrefix("fix/") && !name.hasPrefix("chore/") && !name.hasPrefix("release/") {
+				// `origin/main` and friends: where it is, not where it is being
+				// worked on.
+				tint = Theme.current.gitIgnored
+			} else {
+				tint = Theme.current.gitAdded
+			}
+
+			let label = NSAttributedString(string: name, attributes: [
 				.font: NSFont.systemFont(ofSize: Theme.current.scaled(9.5), weight: .semibold),
-				.foregroundColor: ref.hasPrefix("tag: ") ? Theme.current.gitModified : Theme.current.gitAdded,
+				.foregroundColor: tint,
 			])
 			let size = label.size()
 			let pill = NSRect(x: x, y: top, width: size.width + 8, height: size.height + 2)
-			let tint = ref.hasPrefix("tag: ") ? Theme.current.gitModified : Theme.current.gitAdded
 			tint.withAlphaComponent(0.18).setFill()
 			NSBezierPath(roundedRect: pill, xRadius: 3, yRadius: 3).fill()
 			label.draw(at: NSPoint(x: x + 4, y: top + 1))
@@ -617,9 +645,19 @@ private final class CommitRowView: NSView {
 				let top = (edge.from == graph.lane) ? centreY : bounds.minY
 				path.move(to: NSPoint(x: from, y: top))
 				path.line(to: NSPoint(x: from, y: bounds.maxY))
+			} else if edge.to == graph.lane {
+				// A line arriving: it came down its own lane from the row
+				// above and bends into this commit. Drawn upwards, which is
+				// where it comes from — drawing it downwards left every merged
+				// branch ending in mid-air.
+				path.move(to: NSPoint(x: from, y: bounds.minY))
+				path.curve(
+					to: NSPoint(x: to, y: centreY),
+					controlPoint1: NSPoint(x: from, y: centreY - (bounds.height / 3)),
+					controlPoint2: NSPoint(x: to, y: bounds.minY + (bounds.height / 3))
+				)
 			} else {
-				// A line joining or leaving: a curve rather than a corner, so
-				// the eye follows it round.
+				// A line leaving: from this commit down into another lane.
 				path.move(to: NSPoint(x: from, y: centreY))
 				path.curve(
 					to: NSPoint(x: to, y: bounds.maxY),

@@ -545,6 +545,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let row = options.collapseRow {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+				controller?.collapseHistoryRowForTesting(row)
+			}
+		}
+
 		if let path = options.sidebarShot {
 			DispatchQueue.main.asyncAfter(deadline: .now() + max(2, options.screenshotDelay - 1)) {
 				controller?.snapshotSidebarForTesting(to: path)

@@ -128,6 +128,8 @@ struct LaunchOptions {
 	var sidebarWidth: Double?
 	/// Draw the sidebar's pane straight into a file.
 	var sidebarShot: String?
+	/// Fold a merge in the history, to check the graph.
+	var collapseRow: Int?
 	/// Open tmux's own menu and move the pointer through it.
 	var tmuxMenuHovers: Int?
 	/// Hover the editor at line:character with ⌘ held.
@@ -261,6 +263,7 @@ struct LaunchOptions {
 			case "--switch-appearance": options.switchAppearance = next()
 			case "--sidebar-width": options.sidebarWidth = next().flatMap(Double.init)
 			case "--sidebar-shot": options.sidebarShot = next()
+			case "--collapse-row": options.collapseRow = next().flatMap(Int.init)
 			case "--tmux-menu": options.tmuxMenuHovers = next().flatMap(Int.init) ?? 0
 			case "--cmd-hover":  options.commandHoverAt = next()
 			case "--attach-picker": options.attachFilter = next()

@@ -105,7 +105,15 @@ public enum GitHistory {
 			arguments.append("--grep=\(search)")
 		}
 
-		if let revision { arguments.append(revision) }
+		if let revision {
+			arguments.append(revision)
+		} else if path == nil, search == nil {
+			// Every branch, tag and remote — and the stash, which `--all` does
+			// not count as a ref. A graph of one branch is a line, and the
+			// question a graph answers is what the branches are doing.
+			arguments.append("--all")
+			if hasStash(in: root) { arguments.append("refs/stash") }
+		}
 		if let path {
 			// `--follow` takes exactly one path and must come after `--`, and it
 			// is what keeps a file's history from stopping where somebody
@@ -167,6 +175,19 @@ public enum GitHistory {
 	/// branch's upstream: a branch may have no upstream set and still have been
 	/// pushed under another name, and a commit that is on some remote is not
 	/// one you can lose by dropping this machine in a river.
+	/// Whether there is anything stashed, so the log can be asked for it.
+	///
+	/// `--all` leaves `refs/stash` out — it is a reflog rather than a branch —
+	/// and asking for a ref that does not exist makes git fail the whole
+	/// command rather than skip it.
+	static func hasStash(in root: URL) -> Bool {
+		FileManager.default.fileExists(
+			atPath: root.appendingPathComponent(".git/refs/stash").path
+		) || FileManager.default.fileExists(
+			atPath: root.appendingPathComponent(".git/logs/refs/stash").path
+		)
+	}
+
 	public static func unpushed(in root: URL, limit: Int = 500) async -> Set<String> {
 		let result = await GitRepository.run(
 			["rev-list", "--max-count=\(max(1, limit))", "HEAD", "--not", "--remotes"],

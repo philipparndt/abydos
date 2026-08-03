@@ -2753,6 +2753,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 	}
 
+	/// Folds a merge in the history, for checking the graph.
+	func collapseHistoryRowForTesting(_ row: Int) {
+		DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+			guard let pane = self?.historyPane else {
+				print("FOLD no history pane")
+				return
+			}
+			print("FOLD " + pane.toggleCollapseForTesting(row: row))
+		}
+	}
+
 	/// Opens the branches view's own menu on a row, so what it offers for a
 	/// branch or a stash can be looked at rather than assumed.
 	func branchMenuForTesting(row: Int) {
@@ -3853,7 +3864,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 		// The goals a Makefile already defines, so a project that says how to
 		// run itself does not have to be told a second time.
-		let goals = debuggableMakeGoals()
+		//
+		// All of them, not only the ones a debugger could be attached to: a
+		// project whose `make dev` builds and runs a Swift app is exactly as
+		// runnable as one whose Makefile builds Go, and offering nothing for it
+		// was reading the Makefile and then pretending it said nothing.
+		let goals = makeGoals()
+		let debuggable = Set(
+			goals.filter { MakeLaunch.plan(for: $0.name, in: $0.makefile) != nil }.map(\.name)
+		)
 		if !goals.isEmpty {
 			menu.addItem(.separator())
 			let heading = NSMenuItem(title: "From the Makefile", action: nil, keyEquivalent: "")
@@ -3861,9 +3880,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			menu.addItem(heading)
 
 			for goal in goals where !all.contains(where: { $0.name == "make \(goal.name)" }) {
+				// The ones a debugger can be attached to become configurations;
+				// the rest run as make runs them, in the terminal, which is
+				// what a `make dev` that builds and launches a Swift app wants
+				// anyway.
 				let item = NSMenuItem(
 					title: "make \(goal.name)",
-					action: #selector(makeGoalChosen(_:)),
+					action: debuggable.contains(goal.name)
+						? #selector(makeGoalChosen(_:))
+						: #selector(makeGoalRunChosen(_:)),
 					keyEquivalent: ""
 				)
 				item.target = self
@@ -3900,6 +3925,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		reveal.target = self
 		menu.addItem(reveal)
 
+
 		menu.popUp(positioning: nil, at: point, in: view)
 	}
 
@@ -3909,16 +3935,50 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// project is open, and a stale list would offer goals that no longer
 	/// exist and hide the ones just added.
 	private func debuggableMakeGoals() -> [(makefile: Makefile, name: String, summary: String)] {
+		makeGoals().filter { MakeLaunch.plan(for: $0.name, in: $0.makefile) != nil }
+	}
+
+	/// Every goal the project's Makefiles define, worth offering to run.
+	///
+	/// Read here rather than taken from the discovered configurations: those
+	/// are found on a background queue when the project opens, and a menu
+	/// opened before that finished showed nothing at all — which is what "why
+	/// is `make dev` not offered" turned out to be.
+	///
+	/// Goals that clean, install or explain themselves are left out: a run
+	/// menu is a list of ways to start the thing being worked on.
+	private func makeGoals() -> [(makefile: Makefile, name: String, summary: String)] {
 		guard let project else { return [] }
 		var found: [(Makefile, String, String)] = []
 
+		let uninteresting: Set<String> = [
+			"help", "clean", "distclean", "install", "uninstall", "all",
+		]
 		for url in Makefile.find(in: project.root) {
 			guard let makefile = Makefile.read(at: url) else { continue }
-			for target in makefile.targets where MakeLaunch.plan(for: target.name, in: makefile) != nil {
+			for target in makefile.targets
+			where !uninteresting.contains(target.name) && !target.recipe.isEmpty {
 				found.append((makefile, target.name, target.summary))
 			}
 		}
 		return found
+	}
+
+	/// Runs a goal the Makefile defines but nothing here can debug.
+	///
+	/// Exactly what `make <goal>` does, in the terminal, where its output
+	/// belongs — the same path the play button beside a target in a Makefile
+	/// takes.
+	@objc private func makeGoalRunChosen(_ sender: NSMenuItem) {
+		guard let parts = sender.representedObject as? [String], parts.count == 2 else { return }
+		let directory = URL(fileURLWithPath: parts[0]).deletingLastPathComponent()
+		run(RunConfiguration(
+			name: "make \(parts[1])",
+			source: .make,
+			executable: "make",
+			arguments: [parts[1]],
+			workingDirectory: directory.path
+		))
 	}
 
 	@objc private func makeGoalChosen(_ sender: NSMenuItem) {
@@ -4350,6 +4410,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	private func install(tool: SidebarToolKind, force: Bool = false) {
 		guard force || currentSidebarTool != tool || primaryToolView == nil else { return }
 
+		// Cleared before building, not after: building is what sets the new
+		// one, and clearing afterwards threw away the reference that had just
+		// been made — which is how the history pane came to exist on screen
+		// while nothing could reach it.
+		changesPane = nil
+		branchesPane = nil
+		structurePane = nil
+		scratchesPane = nil
+		historyPane = nil
+
 		// Built before anything is taken down. The panes that need a repository
 		// cannot be built until it has been read, and tearing the sidebar down
 		// first left it empty until somebody thought to close and reopen it.
@@ -4360,24 +4430,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 		primaryToolView?.removeFromSuperview()
 		primaryToolTop = nil
-		changesPane = nil
-		branchesPane = nil
-		structurePane = nil
-		scratchesPane = nil
-		historyPane = nil
 		navigator.view.removeFromSuperview()
 
 		currentSidebarTool = tool
 		primaryToolView = install(view: view, for: tool)
-		if ProcessInfo.processInfo.environment["IDEAI_TOOL_PROBE"] != nil {
-			print("TOOL installed \(tool) container=\(primaryContainer.frame) view=\(view.frame)")
-			DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self, weak view] in
-				guard let self, let view else { return }
-				print("TOOL later container=\(self.primaryContainer.frame) view=\(view.frame) "
-					+ "hidden=\(view.isHidden) window=\(view.window != nil) "
-					+ "navigator=\(self.navigatorContainer.frame) split=\(self.splitView.frame)")
-			}
-		}
 	}
 
 	/// Puts a built view into the sidebar and returns it.
@@ -4403,9 +4459,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	/// Builds a tool's view, or nil when what it needs is not there yet.
 	private func makeToolView(_ tool: SidebarToolKind) -> NSView? {
-		if ProcessInfo.processInfo.environment["IDEAI_TOOL_PROBE"] != nil {
-			print("TOOL make \(tool) project=\(project != nil) git=\(project?.git != nil)")
-		}
 		let view: NSView
 
 		switch tool {
