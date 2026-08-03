@@ -332,6 +332,9 @@ final class BottomPanel: NSView {
 		strip.onDropTab = { [weak self] payload, position in
 			self?.dropOnStrip(payload, at: position, in: column)
 		}
+		strip.onMirrorTagClicked = { [weak self] rect in
+			self?.showSessionMenu(from: rect, in: column)
+		}
 		strip.onToggleMaximize = { [weak self] in self?.onToggleMaximize?() }
 		strip.onToggleFollowProject = { [weak self] in self?.onToggleFollowProject?() }
 		strip.isFollowingProject = isFollowingProject
@@ -672,6 +675,85 @@ final class BottomPanel: NSView {
 		// `new -A` is "attach if it exists, make it if it does not", which is
 		// exactly what reopening a project should do.
 		return (executable: tmux, arguments: ["new", "-A", "-s", session])
+	}
+
+	/// The sessions the server has, to switch this terminal between them.
+	///
+	/// Where somebody would look for it: the tag says which session the tabs
+	/// belong to, so the tag is where the others should be.
+	private func showSessionMenu(from rect: NSRect, in column: Int) {
+		guard let strip = columnViews.indices.contains(column) ? columnViews[column].strip : nil,
+		      let tty = sessions.first?.terminal?.ttyName
+		else { return }
+
+		Task { @MainActor in
+			let all = await TmuxMirror.sessions()
+			let current = self.mirroredSession
+			let menu = NSMenu()
+
+			for summary in all {
+				let item = NSMenuItem(
+					title: "\(summary.name)  ·  \(summary.windowCount) window"
+						+ (summary.windowCount == 1 ? "" : "s"),
+					action: #selector(BottomPanel.switchToSession(_:)),
+					keyEquivalent: ""
+				)
+				item.target = self
+				item.representedObject = [summary.name, tty]
+				item.state = summary.name == current ? .on : .off
+				menu.addItem(item)
+			}
+
+			if !all.isEmpty { menu.addItem(.separator()) }
+			let new = NSMenuItem(
+				title: "New Session…",
+				action: #selector(BottomPanel.createSessionFromMenu(_:)),
+				keyEquivalent: ""
+			)
+			new.target = self
+			new.representedObject = tty
+			menu.addItem(new)
+
+			menu.popUp(
+				positioning: nil,
+				at: NSPoint(x: rect.minX, y: rect.maxY + Theme.current.scaled(4)),
+				in: strip
+			)
+		}
+	}
+
+	@objc private func switchToSession(_ sender: NSMenuItem) {
+		guard let parts = sender.representedObject as? [String], parts.count == 2 else { return }
+		Task {
+			await TmuxMirror.switchClient(onTTY: parts[1], to: parts[0])
+			self.refreshTmuxWindows()
+		}
+	}
+
+	@objc private func createSessionFromMenu(_ sender: NSMenuItem) {
+		guard let tty = sender.representedObject as? String else { return }
+
+		let alert = NSAlert()
+		alert.messageText = "New tmux session"
+		alert.informativeText = "It is made in this project's directory and switched to."
+		alert.addButton(withTitle: "Create")
+		alert.addButton(withTitle: "Cancel")
+
+		let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+		field.placeholderString = "name"
+		alert.accessoryView = field
+
+		let act: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+			guard response == .alertFirstButtonReturn, let self else { return }
+			let name = field.stringValue.trimmingCharacters(in: .whitespaces)
+			guard !name.isEmpty else { return }
+			Task {
+				await TmuxMirror.createSession(named: name, in: self.workingDirectory)
+				await TmuxMirror.switchClient(onTTY: tty, to: name)
+				self.refreshTmuxWindows()
+			}
+		}
+		if let window { alert.beginSheetModal(for: window, completionHandler: act) } else { act(alert.runModal()) }
 	}
 
 	/// Reorders tmux's windows to match a dragged tab.
@@ -1969,6 +2051,11 @@ final class PanelTabStrip: NSView {
 
 	private var mirrorTagFrame: NSRect = .zero
 
+	/// The tag was clicked, with where it is on screen so a menu can hang off
+	/// it. The tag says which session these tabs belong to; being able to
+	/// change it there is where somebody would look for it.
+	var onMirrorTagClicked: ((NSRect) -> Void)?
+
 	private var items: [PanelTabItem] = []
 	private var activeIndex: Int?
 	private var frames: [NSRect] = []
@@ -2068,9 +2155,9 @@ final class PanelTabStrip: NSView {
 		)
 	}
 
-	/// `tmux · session`, or just `tmux` when the name would crowd the strip.
+	/// `tmux · session ⌄`, or just `tmux ⌄` when the name would crowd the strip.
 	private func mirrorTagText(for session: String) -> NSAttributedString {
-		let text = bounds.width > Theme.current.scaled(420) ? "tmux · \(session)" : "tmux"
+		let text = bounds.width > Theme.current.scaled(420) ? "tmux · \(session) ⌄" : "tmux ⌄"
 		return NSAttributedString(string: text, attributes: [
 			.font: Theme.current.uiFont(10, weight: .medium),
 			.foregroundColor: Theme.current.gitModified,
@@ -2154,6 +2241,10 @@ final class PanelTabStrip: NSView {
 		if addButtonFrame.contains(point) { onAdd?(); return }
 		if hideButtonFrame.contains(point) { onHide?(); return }
 		if maximizeButtonFrame.contains(point) { onToggleMaximize?(); return }
+		if mirroredSession != nil, mirrorTagFrame.contains(point) {
+			onMirrorTagClicked?(mirrorTagFrame)
+			return
+		}
 		if followButtonFrame.contains(point) { onToggleFollowProject?(); return }
 
 		// Double-clicking the empty part of the strip does what the arrow does,

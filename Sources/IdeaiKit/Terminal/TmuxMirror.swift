@@ -46,6 +46,56 @@ public enum TmuxMirror {
 		return (name?.isEmpty ?? true) ? nil : name
 	}
 
+	/// One session of the server.
+	public struct SessionSummary: Equatable, Sendable {
+		public let name: String
+		public let windowCount: Int
+		public let isAttached: Bool
+
+		public init(name: String, windowCount: Int, isAttached: Bool) {
+			self.name = name
+			self.windowCount = windowCount
+			self.isAttached = isAttached
+		}
+	}
+
+	/// Every session the server has, for choosing another one.
+	public static func sessions() async -> [SessionSummary] {
+		guard let tmux = Executables.locate("tmux") else { return [] }
+		let format = "#{session_windows};#{?session_attached,1,0};#{session_name}"
+		let result = await run(tmux, ["list-sessions", "-F", format])
+		guard let result, result.exitCode == 0 else { return [] }
+		return parseSessions(result.output)
+	}
+
+	/// Reads `list-sessions` output. The name comes last, since a session can
+	/// be called anything.
+	static func parseSessions(_ output: String) -> [SessionSummary] {
+		var sessions: [SessionSummary] = []
+		for line in output.split(separator: "\n", omittingEmptySubsequences: true) {
+			let fields = line.split(separator: ";", maxSplits: 2, omittingEmptySubsequences: false)
+			guard fields.count == 3, let windows = Int(fields[0]) else { continue }
+			sessions.append(SessionSummary(
+				name: String(fields[2]),
+				windowCount: windows,
+				isAttached: fields[1] == "1"
+			))
+		}
+		return sessions
+	}
+
+	/// Points this terminal's client at another session.
+	public static func switchClient(onTTY tty: String, to session: String) async {
+		await command(["switch-client", "-c", tty, "-t", session])
+	}
+
+	/// Makes a session and leaves it running, for switching to afterwards.
+	public static func createSession(named name: String, in directory: URL?) async {
+		var arguments = ["new-session", "-d", "-s", name]
+		if let directory { arguments += ["-c", directory.path] }
+		await command(arguments)
+	}
+
 	/// Reads the windows of a session, in the order tmux lists them.
 	///
 	/// Nothing at all when there is no such session, which is also the answer

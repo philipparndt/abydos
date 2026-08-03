@@ -232,3 +232,27 @@ struct TmuxMirrorTests {
 		#expect(TmuxMirror.parse("nonsense\n").isEmpty)
 	}
 }
+
+/// Reading tmux's session list, for switching between them from the tag.
+struct TmuxSessionListTests {
+	@Test func readsNameWindowsAndWhetherItIsAttached() {
+		let sessions = TmuxMirror.parseSessions("""
+		3;1;work
+		1;0;notes
+		""")
+
+		#expect(sessions.count == 2)
+		#expect(sessions[0] == .init(name: "work", windowCount: 3, isAttached: true))
+		#expect(sessions[1] == .init(name: "notes", windowCount: 1, isAttached: false))
+	}
+
+	/// A session can be called anything, semicolons included, so the name is
+	/// whatever is left of the line.
+	@Test func aNameCanContainTheSeparator() {
+		#expect(TmuxMirror.parseSessions("2;0;a;b").first?.name == "a;b")
+	}
+
+	@Test func nothingAtAllIsNoSessions() {
+		#expect(TmuxMirror.parseSessions("").isEmpty)
+	}
+}
