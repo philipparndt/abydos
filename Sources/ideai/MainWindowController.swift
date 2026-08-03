@@ -4162,9 +4162,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		holder.view = background
 		view.translatesAutoresizingMaskIntoConstraints = false
 		holder.view.addSubview(view)
+
+		// A popover has no titlebar to duck under. The tree insets itself for
+		// one and would leave a hand's width of nothing at the top; the panes
+		// that do not are given a little room instead of starting hard against
+		// the edge.
+		if tool == .project { navigator.setTopInset(0) }
+		let top = tool == .project ? 0 : Theme.current.scaled(8)
 		NSLayoutConstraint.activate([
-			view.topAnchor.constraint(equalTo: holder.view.topAnchor),
-			view.bottomAnchor.constraint(equalTo: holder.view.bottomAnchor),
+			view.topAnchor.constraint(equalTo: holder.view.topAnchor, constant: top),
+			view.bottomAnchor.constraint(
+				equalTo: holder.view.bottomAnchor, constant: -Theme.current.scaled(4)
+			),
 			view.leadingAnchor.constraint(equalTo: holder.view.leadingAnchor),
 			view.trailingAnchor.constraint(equalTo: holder.view.trailingAnchor),
 		])
@@ -4197,6 +4206,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			self.popoverTool = nil
 			self.toolStrip.setSidebarSelection(visible: false, tool: self.currentSidebarTool)
 			self.install(tool: self.currentSidebarTool, force: true)
+			// The tree ducks under the titlebar again once it is back in the
+			// sidebar.
+			self.updateTopInsets()
 			if let observer = self.popoverObserver {
 				NotificationCenter.default.removeObserver(observer)
 				self.popoverObserver = nil

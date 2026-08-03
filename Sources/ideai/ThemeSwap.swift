@@ -75,6 +75,26 @@ enum ThemeSwap {
 		}
 	}
 
+	/// The colours a layer keeps of its own: what it is filled with, and the
+	/// line around it.
+	///
+	/// The border matters as much as the fill: a card that went light inside a
+	/// dark outline is the one thing left looking like the old theme.
+	private static func swapLayerColours(from old: Theme, to new: Theme, in view: NSView) {
+		guard let layer = view.layer else { return }
+
+		if let fill = layer.backgroundColor,
+		   let colour = NSColor(cgColor: fill),
+		   let swapped = counterpart(of: colour, from: old, to: new) {
+			layer.backgroundColor = swapped.cgColor
+		}
+		if let border = layer.borderColor,
+		   let colour = NSColor(cgColor: border),
+		   let swapped = counterpart(of: colour, from: old, to: new) {
+			layer.borderColor = swapped.cgColor
+		}
+	}
+
 	private static func swapColours(from old: Theme, to new: Theme, in view: NSView) {
 		// A ColoredView keeps its colour and puts it back on every display
 		// pass, so poking the layer would be undone a moment later: it has to
@@ -84,14 +104,13 @@ enum ThemeSwap {
 			if let swapped = counterpart(of: coloured.colour, from: old, to: new) {
 				coloured.setColor(swapped)
 			}
+			// A coloured view can still carry a border, and that is not its
+			// fill: the cards in the settings have both.
+			swapLayerColours(from: old, to: new, in: view)
 			return
 		}
 
-		if let cgColour = view.layer?.backgroundColor,
-		   let colour = NSColor(cgColor: cgColour),
-		   let swapped = counterpart(of: colour, from: old, to: new) {
-			view.layer?.backgroundColor = swapped.cgColor
-		}
+		swapLayerColours(from: old, to: new, in: view)
 
 		switch view {
 		case let table as NSTableView:
