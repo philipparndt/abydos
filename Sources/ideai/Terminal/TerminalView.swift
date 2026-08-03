@@ -577,7 +577,7 @@ final class TerminalView: NSView, NSTextInputClient {
 
 		let screen = emulator.screen
 		let first = max(0, Int(floor((visible.minY - Self.verticalInset) / cellHeight)))
-		let last = min(screen.totalLineCount, Int(ceil((visible.maxY - Self.verticalInset) / cellHeight)) + 1)
+		let last = min(shownLineCount, Int(ceil((visible.maxY - Self.verticalInset) / cellHeight)) + 1)
 		guard last > first else { return }
 
 		var rows: [(index: Int, line: TerminalLine)] = []
@@ -603,7 +603,7 @@ final class TerminalView: NSView, NSTextInputClient {
 		metal.renderer.hoveredLink = hoveredLink
 
 		var cursor: TerminalMetalRenderer.Cursor?
-		if let place = cursorPlace() {
+		if let place = cursorPlace(), place.row < shownLineCount {
 			cursor = .init(
 				row: place.row,
 				column: place.column,
@@ -745,6 +745,18 @@ final class TerminalView: NSView, NSTextInputClient {
 		repaint()
 	}
 
+	/// How many rows of the grid this pane actually shows.
+	///
+	/// Everything that walks rows — both renderers, the selection, the mouse,
+	/// the document height — goes through this rather than through the screen's
+	/// own count, because the screen is deliberately taller than the pane when
+	/// tmux is being given somewhere to put its status bar. One definition, or
+	/// the row leaks out of whichever path forgot about it — and it did: the
+	/// GPU renderer drew the lot.
+	var shownLineCount: Int {
+		max(0, emulator.screen.totalLineCount - hiddenBottomRows)
+	}
+
 	/// Rows at the foot of the grid that the program may draw on but nobody
 	/// sees.
 	///
@@ -787,8 +799,8 @@ final class TerminalView: NSView, NSTextInputClient {
 
 	private func updateFrameSize() {
 		let totalRows = (emulator.isAlternateScreen
-			? emulator.screen.rows
-			: emulator.screen.totalLineCount) - hiddenBottomRows
+			? emulator.screen.rows - hiddenBottomRows
+			: shownLineCount)
 		let height = CGFloat(totalRows) * cellHeight + Self.verticalInset * 2
 		let width = enclosingScrollView?.contentSize.width ?? bounds.width
 		let newSize = NSSize(width: max(width, 10), height: max(height, 10))
@@ -848,8 +860,7 @@ final class TerminalView: NSView, NSTextInputClient {
 		let firstRow = max(0, Int(floor((dirtyRect.minY - Self.verticalInset) / cellHeight)))
 		// Never the hidden rows: they exist so tmux has somewhere to put a
 		// status bar that this pane does not show.
-		let drawable = screen.totalLineCount - hiddenBottomRows
-		let lastRow = min(drawable, Int(ceil((dirtyRect.maxY - Self.verticalInset) / cellHeight)) + 1)
+		let lastRow = min(shownLineCount, Int(ceil((dirtyRect.maxY - Self.verticalInset) / cellHeight)) + 1)
 		guard lastRow > firstRow else { return }
 
 		for index in firstRow..<lastRow {
@@ -1079,6 +1090,10 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// becomes unreadable exactly where you are looking.
 	private func drawCursor() {
 		guard let place = cursorPlace() else { return }
+		// A cursor parked on a row this pane does not show — tmux putting it on
+		// its own status bar while it draws there — would otherwise be drawn at
+		// the foot of the pane, on a line that is not the one it is on.
+		guard place.row < shownLineCount else { return }
 
 		let screen = emulator.screen
 		let row = place.row
@@ -1257,7 +1272,7 @@ final class TerminalView: NSView, NSTextInputClient {
 	var geometryForTesting: String {
 		let clip = enclosingScrollView?.contentView.bounds ?? .zero
 		let bottomOfLastRow = Self.verticalInset
-			+ CGFloat(emulator.screen.totalLineCount) * cellHeight
+			+ CGFloat(shownLineCount) * cellHeight
 		return String(
 			format: "alt=%@ rows=%d frame=%.1f clip=%.1f origin=%.1f lastRowBottom=%.1f visible=%@",
 			emulator.isAlternateScreen ? "yes" : "no",
@@ -1555,7 +1570,7 @@ final class TerminalView: NSView, NSTextInputClient {
 		let row = Int(floor((point.y - Self.verticalInset) / max(1, cellHeight)))
 		let exact = (point.x - Self.horizontalInset) / max(1, cellWidth)
 		let column = Int(roundingToBoundary ? exact.rounded() : exact.rounded(.down))
-		let lastRow = max(0, emulator.screen.totalLineCount - 1)
+		let lastRow = max(0, shownLineCount - 1)
 		return TerminalPosition(
 			row: max(0, min(row, lastRow)),
 			column: max(0, min(column, emulator.screen.columns))

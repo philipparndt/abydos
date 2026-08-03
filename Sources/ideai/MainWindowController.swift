@@ -258,6 +258,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// Which of those windows is the active one.
 	var activeTmuxWindow: Int? { bottomPanel.activeTmuxWindow }
 
+	/// Presses the + on tmux's strip, for testing what it does.
+	func addTmuxWindowForTesting() { bottomPanel.addTmuxWindowForTesting() }
+
 	/// Closes a tmux tab from its menu, for testing what it does.
 	func closeTmuxTabForTesting(_ index: Int) {
 		bottomPanel.closeTmuxTabForTesting(index)

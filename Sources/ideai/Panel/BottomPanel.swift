@@ -595,6 +595,9 @@ final class BottomPanel: NSView {
 	/// The session the tabs are currently showing, which is whatever the client
 	/// is attached to rather than whatever it was started with.
 	private var mirroredSession: String?
+	/// Whether a tmux client has ever been seen on this terminal's tty, so a
+	/// client that has gone away can be told from one that has not arrived yet.
+	private var hasAttachedOnce = false
 
 	/// Whether the strip is a view of tmux rather than a list of terminals.
 	///
@@ -671,9 +674,29 @@ final class BottomPanel: NSView {
 
 		Task { @MainActor in
 			var session = configured
-			if let tty, let attached = await TmuxMirror.session(forClient: tty) {
+			var attached: String?
+			if let tty { attached = await TmuxMirror.session(forClient: tty) }
+			if let attached {
 				session = attached
+			} else if self.hasAttachedOnce {
+				// There was a client on this tty and now there is not: somebody
+				// detached, and what is in the pane is a plain shell again. The
+				// tabs are for a session this terminal is no longer in, and the
+				// hidden row is stealing a line from whatever is there now.
+				//
+				// Every poll, not once: the session itself is still there, so
+				// falling through would mirror it again a moment later and the
+				// tabs would come back for a terminal that is not in it. What
+				// ends this is a client appearing on this tty again.
+				self.mirroredSession = nil
+				self.mirroredTerminal?.terminal?.terminalView.hiddenBottomRows = 0
+				if !self.tmuxWindows.isEmpty {
+					self.tmuxWindows = []
+					self.rebuildColumns()
+				}
+				return
 			}
+			if attached != nil { self.hasAttachedOnce = true }
 			if session != self.mirroredSession {
 				self.mirroredSession = session
 				self.tmuxWindows = []
@@ -712,6 +735,11 @@ final class BottomPanel: NSView {
 	/// Presses the + on the first strip, for testing what it does.
 	func addTabForTesting() {
 		columnViews.first?.strip.pressAddForTesting()
+	}
+
+	/// Presses the + on tmux's own strip, for testing what it does.
+	func addTmuxWindowForTesting() {
+		columnViews.first?.mirrorStrip.pressAddForTesting()
 	}
 
 	/// Closes a tab on tmux's own strip, as its menu does.
@@ -807,9 +835,18 @@ final class BottomPanel: NSView {
 	/// without asking, since we are the ones who asked for the switch.
 	private func markMirroredWindowActive(_ index: Int) {
 		guard tmuxWindows.contains(where: { $0.index == index }) else { return }
+		// Everything except which one is active is carried over. Rebuilding
+		// these from four fields dropped each window's Claude status, so every
+		// tab switch blanked the badges until the next poll put them back — a
+		// blink, and a jump when the badges were what set the tab's width.
 		tmuxWindows = tmuxWindows.map {
 			TmuxMirror.Window(
-				index: $0.index, name: $0.name, isActive: $0.index == index, command: $0.command
+				index: $0.index,
+				name: $0.name,
+				isActive: $0.index == index,
+				command: $0.command,
+				aiStatus: $0.aiStatus,
+				silentFor: $0.silentFor
 			)
 		}
 		rebuildColumns()
@@ -999,12 +1036,27 @@ final class BottomPanel: NSView {
 	///
 	/// The first one: the mode attaches the first terminal of a window, and any
 	/// opened afterwards are ordinary shells with tabs of their own.
+	/// The terminal that is attached to tmux — the one the tabs below belong
+	/// to.
+	///
+	/// Tracked rather than guessed at: "the first terminal in the list" was
+	/// true until the tmux tab became closable and ordinary terminals could sit
+	/// beside it, and after that the panel would happily mirror tmux onto a
+	/// shell that had never heard of it.
 	private var mirroredTerminal: Session? {
-		sessions.first { $0.terminal != nil }
+		guard let id = attachedTerminalID else { return nil }
+		return sessions.first { ObjectIdentifier($0) == id }
 	}
+	private var attachedTerminalID: ObjectIdentifier?
 
 	/// The tmux window a strip position stands for, when the strip is a mirror.
 	private func mirroredWindow(at index: Int, in column: Int) -> TmuxMirror.Window? {
+		// Only where the two lists share a strip. With tmux's windows on their
+		// own strip below, a position in the top one is a pane of the panel's
+		// and nothing to do with tmux — the top tabs had been driving tmux,
+		// because the items were split but the arithmetic behind the clicks
+		// was not.
+		guard !Settings.shared.tmuxTabsAtBottom else { return nil }
 		guard mirrorsTmux, column == 0, tmuxWindows.indices.contains(index) else { return nil }
 		return tmuxWindows[index]
 	}
@@ -1013,6 +1065,7 @@ final class BottomPanel: NSView {
 	/// What a strip position means: the tmux windows come first, then whatever
 	/// else the column is holding.
 	private func mirroredSession(at index: Int, in column: Int) -> Session? {
+		guard !Settings.shared.tmuxTabsAtBottom else { return nil }
 		guard mirrorsTmux, column == 0, !tmuxWindows.isEmpty else { return nil }
 		let others = sessions(in: column).filter { $0 !== mirroredTerminal }
 		let position = index - tmuxWindows.count
@@ -1061,11 +1114,13 @@ final class BottomPanel: NSView {
 		// of a plain shell — `tmux new -A -s ideai`, for whoever lives in tmux.
 		// Only the first: the ones opened afterwards are for the odd job that
 		// should not join the session.
+		let attaches = session != nil || (sessions.isEmpty && startupCommand() != nil)
 		let pane = TerminalPane(
 			workingDirectory: directory,
 			command: session.map(attachCommand(to:)) ?? (sessions.isEmpty ? startupCommand() : nil)
 		)
 		let session = Session(title: title, kind: .terminal(pane))
+		if attaches { attachedTerminalID = ObjectIdentifier(session) }
 		session.directory = directory
 		wire(session)
 
@@ -1644,8 +1699,14 @@ final class BottomPanel: NSView {
 			// list. The terminal underneath it never changes — that is the
 			// point: switching tabs is a message to tmux, not a teardown.
 			let mirroring = mirrorsTmux && index == 0 && !tmuxWindows.isEmpty
+				&& mirroredTerminal != nil
 			view.strip.mirroredSession = mirroring ? (mirroredSession ?? tmuxSession) : nil
-			view.showsMirrorStrip = mirroring && Settings.shared.tmuxTabsAtBottom
+			// Where the two lists live is a setting; whether tmux's strip is on
+			// screen is a matter of which tab is showing. Keeping those apart
+			// matters: tying the layout to the visibility put tmux's windows
+			// back in the top strip the moment somebody clicked another tab.
+			let splitStrips = mirroring && Settings.shared.tmuxTabsAtBottom
+			view.showsMirrorStrip = splitStrips && showing === mirroredTerminal
 			if mirroring {
 				// Two strips, or one, depending on where tmux's windows are
 				// wanted. Along the bottom they are tmux's own: numbered,
@@ -1665,8 +1726,8 @@ final class BottomPanel: NSView {
 						symbol: "terminal",
 						isShowing: window.isActive && showing === mirroredTerminal,
 						isClosable: false,
-						aiStatus: window.aiStatus,
-						tmuxIndex: view.showsMirrorStrip ? window.index : nil
+						aiStatus: window.shownStatus,
+						tmuxIndex: splitStrips ? window.index : nil
 					)
 				}
 				let rest = others.map { session in
@@ -1679,7 +1740,7 @@ final class BottomPanel: NSView {
 					)
 				}
 
-				if view.showsMirrorStrip {
+				if splitStrips {
 					// The terminal itself is one tab up top, called after the
 					// session it is attached to, and tmux's windows are the
 					// strip below it.
@@ -1687,13 +1748,16 @@ final class BottomPanel: NSView {
 					// closes a terminal that is attached to tmux, which costs
 					// nothing — the session and every window in it carry on,
 					// and the tab comes back attached to the same session.
-					let terminal = PanelTabItem(
+					var terminal = PanelTabItem(
 						title: mirroredSession ?? tmuxSession ?? "tmux",
 						hasExited: mirroredTerminal?.hasExited ?? false,
 						isTerminal: true,
 						symbol: "terminal",
 						isShowing: showing === mirroredTerminal
 					)
+					// Which of these tabs is the one tmux is in: its icon is
+					// green, the same green as the strip that appears under it.
+					terminal.isTmuxAttached = true
 					view.strip.setItems(
 						[terminal] + rest,
 						activeIndex: showing === mirroredTerminal
@@ -2178,6 +2242,9 @@ struct PanelTabItem {
 	/// what `C-b 2` selects, and it is the name everybody using tmux already
 	/// has for that window.
 	var tmuxIndex: Int?
+	/// Whether this tab is the terminal tmux is attached to — the one whose
+	/// windows are the strip below.
+	var isTmuxAttached = false
 }
 
 /// The panel's content area, which a dragged terminal tab can be dropped on.
@@ -2368,6 +2435,10 @@ final class PanelTabStrip: NSView {
 		}
 	}
 
+	/// What is legible on that green: tmux writes its window list in black on
+	/// green, and so does this.
+	static var onTmuxGreen: NSColor { .hex(0x1D1F21) }
+
 	/// The green tmux paints its own status bar with, as this terminal renders
 	/// it: the palette's green, so a theme that has one of its own is honoured.
 	static var tmuxGreen: NSColor { TerminalPalette.named.indices.contains(2)
@@ -2455,7 +2526,13 @@ final class PanelTabStrip: NSView {
 			// The editor's own measurement: room for the icon, the name, and
 			// the cross, and never so narrow that a name is all ellipsis.
 			let text = (item.title as NSString).size(withAttributes: [.font: font]).width
-			let badge = item.aiStatus == nil ? 0 : statusSize + Theme.current.scaled(5)
+			// Room for the badge whether or not there is one to draw, on the
+			// strip where badges come and go: a tab that widens the moment its
+			// session starts working shoves every tab after it sideways, and
+			// the one somebody was aiming at moves out from under the pointer.
+			let badge = isMirroringTmux || item.aiStatus != nil
+				? statusSize + Theme.current.scaled(5)
+				: 0
 			let width = max(
 				Theme.current.scaled(96),
 				padding * 2 + Theme.current.scaled(14) + Theme.current.scaled(6)
@@ -2752,15 +2829,15 @@ final class PanelTabStrip: NSView {
 	}
 
 	override func draw(_ dirtyRect: NSRect) {
-		Theme.current.sidebarBackground.setFill()
+		// tmux's strip is green from end to end, not a green tab here and
+		// there on the app's own background: the bar across the foot of the
+		// screen is the thing everybody recognises.
+		(isMirroringTmux ? Self.tmuxGreen : Theme.current.sidebarBackground).setFill()
 		bounds.fill()
-		Theme.current.separator.setFill()
-		NSRect(
-			x: 0,
-			y: isMirroringTmux ? 0 : bounds.maxY - 1,
-			width: bounds.width,
-			height: 1
-		).fill()
+		if !isMirroringTmux {
+			Theme.current.separator.setFill()
+			NSRect(x: 0, y: bounds.maxY - 1, width: bounds.width, height: 1).fill()
+		}
 
 		// Where a dragged tab would go, drawn where the gap will be.
 		if let caret = dropCaret {
@@ -2778,7 +2855,9 @@ final class PanelTabStrip: NSView {
 			draw(item: item, in: frames[index], isActive: index == activeIndex, isHovered: index == hoveredIndex)
 		}
 
-		if showsAddButton { drawGlyph(in: addButtonFrame, symbol: "plus") }
+		if showsAddButton {
+			drawGlyph(in: addButtonFrame, symbol: "plus", tint: isMirroringTmux ? Self.onTmuxGreen : nil)
+		}
 		guard showsPanelControls else { return }
 
 		drawGlyph(in: hideButtonFrame, symbol: "chevron.down")
@@ -2855,8 +2934,19 @@ final class PanelTabStrip: NSView {
 		isActive: Bool,
 		isHovered: Bool
 	) {
+		if isMirroringTmux, !isActive, isHovered {
+			// The strip is already green; hovering only darkens the one under
+			// the pointer.
+			Self.onTmuxGreen.withAlphaComponent(0.12).setFill()
+			rect.fill()
+		}
+
 		if isActive {
-			Theme.current.editorBackground.setFill()
+			// On tmux's strip the active tab is a hole cut in the green, and
+			// what shows through it has to be the terminal that is sitting
+			// directly above — the editor's background is a different dark, and
+			// the step between the two read as a gap under the green line.
+			(isMirroringTmux ? TerminalPalette.background : Theme.current.editorBackground).setFill()
 			rect.fill()
 			(isMirroringTmux ? Self.tmuxGreen : Theme.current.gitModified).setFill()
 			// On tmux's strip the line goes along the top, since the strip is
@@ -2878,11 +2968,18 @@ final class PanelTabStrip: NSView {
 		}
 
 		if !isActive {
-			Theme.current.separator.withAlphaComponent(0.6).setFill()
-			NSRect(
-				x: rect.maxX - 1, y: Theme.current.scaled(6),
-				width: 1, height: rect.height - Theme.current.scaled(12)
-			).fill()
+			// On tmux's strip the divider is green and full height, the way
+			// tmux separates the entries in its own window list.
+			if isMirroringTmux {
+				Self.onTmuxGreen.withAlphaComponent(0.35).setFill()
+				NSRect(x: rect.maxX - 1, y: 0, width: 1, height: rect.height).fill()
+			} else {
+				Theme.current.separator.withAlphaComponent(0.6).setFill()
+				NSRect(
+					x: rect.maxX - 1, y: Theme.current.scaled(6),
+					width: 1, height: rect.height - Theme.current.scaled(12)
+				).fill()
+			}
 		}
 
 		var x = rect.minX + padding
@@ -2892,29 +2989,39 @@ final class PanelTabStrip: NSView {
 			: Theme.current.sidebarText.withAlphaComponent(isActive ? 0.95 : 0.7)
 
 		if let number = item.tmuxIndex {
-			// tmux's number, in tmux's green: the label somebody already uses
-			// for this window when they type `C-b 2`.
+			// tmux's number: the label somebody already uses for this window
+			// when they type `C-b 2`. Green on dark for the window you are in,
+			// dark on green for the rest — which is tmux's own status bar,
+			// the other way up.
 			let text = NSAttributedString(string: "\(number)", attributes: [
 				.font: Theme.current.uiFont(11, weight: .semibold),
-				.foregroundColor: isActive
-					? Self.tmuxGreen
-					: Self.tmuxGreen.withAlphaComponent(0.65),
+				.foregroundColor: isActive ? Self.tmuxGreen : Self.onTmuxGreen,
 			])
 			let size = text.size()
 			text.draw(at: NSPoint(
 				x: x + (iconSize - size.width) / 2, y: rect.midY - size.height / 2
 			))
 		} else {
-			Theme.symbol(item.symbol, size: 11 * Theme.current.scale, color: tint)?
-				.drawFitted(in: NSRect(
-					x: x, y: rect.midY - iconSize / 2, width: iconSize, height: iconSize
-				))
+			Theme.symbol(
+				item.symbol,
+				size: 11 * Theme.current.scale,
+				color: item.isTmuxAttached ? Self.tmuxGreen : tint
+			)?.drawFitted(in: NSRect(
+				x: x, y: rect.midY - iconSize / 2, width: iconSize, height: iconSize
+			))
 		}
 		x += iconSize + Theme.current.scaled(6)
 
-		let color = item.hasExited
-			? Theme.current.gitIgnored
-			: (isActive ? Theme.current.sidebarHeaderText : Theme.current.sidebarText.withAlphaComponent(0.8))
+		let color: NSColor
+		if isMirroringTmux, !isActive {
+			color = Self.onTmuxGreen
+		} else if item.hasExited {
+			color = Theme.current.gitIgnored
+		} else {
+			color = isActive
+				? Theme.current.sidebarHeaderText
+				: Theme.current.sidebarText.withAlphaComponent(0.8)
+		}
 		let paragraph = NSMutableParagraphStyle()
 		paragraph.lineBreakMode = .byTruncatingTail
 		let label = NSAttributedString(string: item.title, attributes: [
@@ -2923,7 +3030,9 @@ final class PanelTabStrip: NSView {
 			.paragraphStyle: paragraph,
 		])
 		let size = label.size()
-		let badge = item.aiStatus == nil ? 0 : statusSize + Theme.current.scaled(5)
+		let badge = isMirroringTmux || item.aiStatus != nil
+			? statusSize + Theme.current.scaled(5)
+			: 0
 		let reserved = (item.isClosable ? closeSize + Theme.current.scaled(6) : 0) + badge
 		let limit = max(0, rect.maxX - padding - reserved - x)
 		label.draw(in: NSRect(x: x, y: rect.midY - size.height / 2, width: limit, height: size.height))
@@ -2932,13 +3041,17 @@ final class PanelTabStrip: NSView {
 		// none, and the two never appear together.
 		if let status = item.aiStatus {
 			let badge = badgeRect(in: rect)
+			let onGreen = isMirroringTmux && !isActive
 			if status == .working {
-				drawSpinner(in: badge)
+				drawSpinner(in: badge, colour: onGreen ? Self.onTmuxGreen : nil)
 			} else {
+				// On a green tab the badge is drawn in the ink the rest of the
+				// tab uses: amber on green is a smudge, and the mark itself —
+				// ⟳, !, ✓ — already says which of the three it is.
 				Theme.symbol(
 					Self.symbol(for: status),
 					size: 11 * Theme.current.scale,
-					color: Self.colour(for: status),
+					color: onGreen ? Self.onTmuxGreen : Self.colour(for: status),
 					weight: .semibold
 				)?.drawFitted(in: badge)
 			}
@@ -2970,7 +3083,7 @@ final class PanelTabStrip: NSView {
 	/// draws all its tabs, and a control per tab would have to be created,
 	/// placed and torn down every time tmux's window list changes — which is
 	/// twice a second.
-	private func drawSpinner(in rect: NSRect) {
+	private func drawSpinner(in rect: NSRect, colour: NSColor? = nil) {
 		let radius = rect.width / 2 - Theme.current.scaled(1.5)
 		let centre = NSPoint(x: rect.midX, y: rect.midY)
 		let start = spinnerPhase * 30
@@ -2984,7 +3097,7 @@ final class PanelTabStrip: NSView {
 		)
 		arc.lineWidth = Theme.current.scaled(1.6)
 		arc.lineCapStyle = .round
-		Self.colour(for: .working).setStroke()
+		(colour ?? Self.colour(for: .working)).setStroke()
 		arc.stroke()
 	}
 

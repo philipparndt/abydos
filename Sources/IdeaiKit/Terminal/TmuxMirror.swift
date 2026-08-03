@@ -28,9 +28,17 @@ public enum TmuxMirror {
 		/// What is running in its active pane, for a tab that has no name of
 		/// its own worth showing.
 		public let command: String
-		/// What the Claude session in the window is doing, when cmanager is
-		/// installed and one is running there.
+		/// What the Claude session in the window is doing, when a hook has told
+		/// us. Not necessarily still true — see `silentFor`.
 		public let aiStatus: AIStatus?
+		/// How long the window has produced nothing, by tmux's own reckoning.
+		///
+		/// The badge is a memory of the last event, and events can go missing:
+		/// a session that was working when the app was last closed, one that
+		/// was already running before the hooks were installed, a Claude that
+		/// was killed mid-turn. A window that claims to be working and has
+		/// printed nothing for half a minute is not working.
+		public let silentFor: TimeInterval
 
 		public var id: Int { index }
 
@@ -39,14 +47,34 @@ public enum TmuxMirror {
 			name: String,
 			isActive: Bool,
 			command: String = "",
-			aiStatus: AIStatus? = nil
+			aiStatus: AIStatus? = nil,
+			silentFor: TimeInterval = 0
 		) {
 			self.index = index
 			self.name = name
 			self.isActive = isActive
 			self.command = command
 			self.aiStatus = aiStatus
+			self.silentFor = silentFor
 		}
+
+		/// What the tab should actually show.
+		///
+		/// A stale "working" is worse than no badge: it says a session is busy
+		/// when it has been sitting waiting for somebody. "Needs you" and
+		/// "finished" do not go stale in the same way — they are states a
+		/// session stays in, quietly, until somebody comes back to it.
+		public var shownStatus: AIStatus? {
+			guard aiStatus == .working, silentFor > Self.staleAfter else { return aiStatus }
+			return nil
+		}
+
+		/// How long a working window may say nothing before it is not believed.
+		///
+		/// Claude prints a spinner and its running total while it works, so a
+		/// working pane is never quiet for long; a person reading a permission
+		/// prompt is quiet for as long as they like.
+		static let staleAfter: TimeInterval = 30
 	}
 
 	/// Which session the client on this terminal is looking at.
@@ -140,7 +168,7 @@ public enum TmuxMirror {
 		// underscore, and a name with a semicolon in it is rarer than one with
 		// a space. The name comes last so what is left of the line is all of it.
 		let format = "#{window_index};#{?window_active,1,0};#{pane_current_command}"
-			+ ";#{@ai_status};#{window_name}"
+			+ ";#{@ai_status};#{window_activity};#{window_name}"
 		let result = await run(tmux, ["list-windows", "-t", session, "-F", format])
 		guard let result, result.exitCode == 0 else { return [] }
 		return parse(result.output)
@@ -151,23 +179,25 @@ public enum TmuxMirror {
 	/// Internal so the shapes can be tested: a window whose name holds a
 	/// semicolon, one running nothing, and the line tmux prints for a session
 	/// that has just been created.
-	static func parse(_ output: String) -> [Window] {
+	static func parse(_ output: String, now: Date = Date()) -> [Window] {
 		var windows: [Window] = []
 		for line in output.split(separator: "\n", omittingEmptySubsequences: true) {
-			// Exactly the five the format asks for, and no shorter form
+			// Exactly the six the format asks for, and no shorter form
 			// accepted: a window called "one; two" would otherwise be
-			// indistinguishable from a four-field line, and the name — which
-			// can hold anything — has to stay whole. tmux prints an empty
-			// field for an option that is not set, so a window with no Claude
-			// session in it still arrives as five.
-			let fields = line.split(separator: ";", maxSplits: 4, omittingEmptySubsequences: false)
-			guard fields.count == 5, let index = Int(fields[0]) else { continue }
+			// indistinguishable from a line carrying fewer fields, and the
+			// name — which can hold anything — has to stay whole. tmux prints
+			// an empty field for an option that is not set, so a window with
+			// no Claude session in it still arrives as six.
+			let fields = line.split(separator: ";", maxSplits: 5, omittingEmptySubsequences: false)
+			guard fields.count == 6, let index = Int(fields[0]) else { continue }
+			let activity = Double(fields[4]) ?? 0
 			windows.append(Window(
 				index: index,
-				name: String(fields[4]),
+				name: String(fields[5]),
 				isActive: fields[1] == "1",
 				command: String(fields[2]),
-				aiStatus: AIStatus(rawValue: String(fields[3]))
+				aiStatus: AIStatus(rawValue: String(fields[3])),
+				silentFor: activity > 0 ? max(0, now.timeIntervalSince1970 - activity) : 0
 			))
 		}
 		return windows
