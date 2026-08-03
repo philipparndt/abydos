@@ -357,6 +357,35 @@ final class SettingsPaneController: NSViewController {
 				),
 				at: 1
 			)
+			// A button rather than a switch, because what it changes is not
+			// ours: it is a block in ~/.tmux.conf, which somebody can read,
+			// keep, or take out by hand.
+			rows.insert(
+				.button(
+					title: "tmux's own status bar",
+					label: TmuxConfig.isStatusHidden() ? "Show it again" : "Turn it off",
+					action: {
+						let hide = !TmuxConfig.isStatusHidden()
+						do {
+							let backup = try TmuxConfig.setStatusHidden(hide)
+							let file = TmuxConfig.configURL.lastPathComponent
+							Toast.post(
+								hide
+									? "tmux's status bar is off"
+									: "tmux's status bar is back",
+								detail: "Changed \(file)."
+									+ (backup.map { " The file as it was: \($0.lastPathComponent)." } ?? "")
+									+ " Sessions already running have been told; anything else picks"
+									+ " it up on the next reload.",
+								kind: .information
+							)
+						} catch {
+							Toast.post("Could not change \(TmuxConfig.configURL.path)")
+						}
+					}
+				),
+				at: 1
+			)
 			rows.insert(
 				.toggle(
 					title: "Attach the first terminal to tmux",

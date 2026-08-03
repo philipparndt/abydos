@@ -52,7 +52,6 @@ public final class Settings {
 			Key.followsTerminalProject: false,
 			Key.terminalAtStartup: "open",
 			Key.tmuxTabsAtBottom: true,
-			Key.hidesTmuxStatus: true,
 			Key.startsTmux: false,
 			Key.strictTmux: false,
 			Key.terminalScheme: "blue",
@@ -83,7 +82,6 @@ public final class Settings {
 		static let followsTerminalProject = "followsTerminalProject"
 		static let terminalAtStartup = "terminalAtStartup"
 		static let tmuxTabsAtBottom = "tmuxTabsAtBottom"
-		static let hidesTmuxStatus = "hidesTmuxStatus"
 		static let startsTmux = "startsTmux"
 		static let strictTmux = "strictTmux"
 		static let terminalScheme = "terminalScheme"
@@ -231,16 +229,6 @@ public final class Settings {
 	public var tmuxTabsAtBottom: Bool {
 		get { defaults.bool(forKey: Key.tmuxTabsAtBottom) }
 		set { set(newValue, Key.tmuxTabsAtBottom) }
-	}
-
-	/// Whether tmux's own status bar is turned off while ideai is showing the
-	/// same windows as tabs.
-	///
-	/// Session-scoped and at runtime: nothing is written to anybody's
-	/// `.tmux.conf`, and every other session on the server keeps its bar.
-	public var hidesTmuxStatus: Bool {
-		get { defaults.bool(forKey: Key.hidesTmuxStatus) }
-		set { set(newValue, Key.hidesTmuxStatus) }
 	}
 
 	public var terminalAtStartup: String {

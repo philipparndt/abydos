@@ -680,16 +680,14 @@ final class BottomPanel: NSView {
 				session = attached
 			} else if self.hasAttachedOnce {
 				// There was a client on this tty and now there is not: somebody
-				// detached, and what is in the pane is a plain shell again. The
-				// tabs are for a session this terminal is no longer in, and the
-				// hidden row is stealing a line from whatever is there now.
+				// detached, and what is in the pane is a plain shell again: the
+				// tabs are for a session this terminal is no longer in.
 				//
 				// Every poll, not once: the session itself is still there, so
 				// falling through would mirror it again a moment later and the
 				// tabs would come back for a terminal that is not in it. What
 				// ends this is a client appearing on this tty again.
 				self.mirroredSession = nil
-				self.mirroredTerminal?.terminal?.terminalView.hiddenBottomRows = 0
 				if !self.tmuxWindows.isEmpty {
 					self.tmuxWindows = []
 					self.rebuildColumns()
@@ -702,16 +700,6 @@ final class BottomPanel: NSView {
 				self.tmuxWindows = []
 			}
 
-			// tmux's own bar, hidden without touching tmux: the pane is
-			// reported as many rows taller as the session has status lines,
-			// and those rows are never drawn. Somebody who has already turned
-			// their status bar off gets no phantom row — `#{status}` says
-			// `off`, which is nought lines — and every other client attached
-			// to the same session keeps its bar exactly as it was.
-			let lines = Settings.shared.hidesTmuxStatus
-				? await TmuxMirror.statusLines(inSession: session)
-				: 0
-			self.mirroredTerminal?.terminal?.terminalView.hiddenBottomRows = lines
 			let windows = await TmuxMirror.windows(inSession: session)
 			// Nothing at all usually means tmux is still starting, and the
 			// strip keeps what it had rather than blinking empty — but not

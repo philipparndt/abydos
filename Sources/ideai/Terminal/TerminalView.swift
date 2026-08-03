@@ -748,47 +748,23 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// How many rows of the grid this pane actually shows.
 	///
 	/// Everything that walks rows — both renderers, the selection, the mouse,
-	/// the document height — goes through this rather than through the screen's
-	/// own count, because the screen is deliberately taller than the pane when
-	/// tmux is being given somewhere to put its status bar. One definition, or
-	/// the row leaks out of whichever path forgot about it — and it did: the
-	/// GPU renderer drew the lot.
+	/// the document height — goes through this one definition rather than
+	/// through the screen's own count.
 	var shownLineCount: Int {
-		max(0, emulator.screen.totalLineCount - hiddenBottomRows)
-	}
-
-	/// Rows at the foot of the grid that the program may draw on but nobody
-	/// sees.
-	///
-	/// For tmux's status line while ideai is drawing the same window list as
-	/// tabs: rather than turning tmux's bar off — which changes a session
-	/// everybody else's terminals are attached to as well — the pane is
-	/// reported one line taller than it is, and tmux paints its bar onto a row
-	/// that is never shown. tmux keeps its bar for every other client, and this
-	/// one shows only the pane.
-	var hiddenBottomRows = 0 {
-		didSet {
-			guard hiddenBottomRows != oldValue else { return }
-			recomputeGridSize(force: true)
-			updateFrameSize()
-			repaint()
-		}
+		emulator.screen.totalLineCount
 	}
 
 	/// Derives rows and columns from the pane size and tells both the emulator
 	/// and the process.
-	private func recomputeGridSize(force: Bool = false) {
+	private func recomputeGridSize() {
 		guard let clip = enclosingScrollView?.contentView else { return }
 		let usableWidth = clip.bounds.width - Self.horizontalInset * 2
 		let usableHeight = clip.bounds.height - Self.verticalInset * 2
 
 		let columns = max(20, Int(floor(usableWidth / max(1, cellWidth))))
-		// The hidden rows are real as far as the program is concerned: it is
-		// given a taller screen and draws into all of it.
-		let rows = max(4, Int(floor(usableHeight / max(1, cellHeight)))) + hiddenBottomRows
+		let rows = max(4, Int(floor(usableHeight / max(1, cellHeight))))
 
-		guard force || rows != emulator.screen.rows || columns != emulator.screen.columns
-		else { return }
+		guard rows != emulator.screen.rows || columns != emulator.screen.columns else { return }
 		// A resize reflows what the absolute rows mean, and there is no honest
 		// mapping from the old grid to the new one.
 		setSelection(nil)
@@ -798,9 +774,9 @@ final class TerminalView: NSView, NSTextInputClient {
 	}
 
 	private func updateFrameSize() {
-		let totalRows = (emulator.isAlternateScreen
-			? emulator.screen.rows - hiddenBottomRows
-			: shownLineCount)
+		let totalRows = emulator.isAlternateScreen
+			? emulator.screen.rows
+			: emulator.screen.totalLineCount
 		let height = CGFloat(totalRows) * cellHeight + Self.verticalInset * 2
 		let width = enclosingScrollView?.contentSize.width ?? bounds.width
 		let newSize = NSSize(width: max(width, 10), height: max(height, 10))
@@ -858,8 +834,6 @@ final class TerminalView: NSView, NSTextInputClient {
 
 		let screen = emulator.screen
 		let firstRow = max(0, Int(floor((dirtyRect.minY - Self.verticalInset) / cellHeight)))
-		// Never the hidden rows: they exist so tmux has somewhere to put a
-		// status bar that this pane does not show.
 		let lastRow = min(shownLineCount, Int(ceil((dirtyRect.maxY - Self.verticalInset) / cellHeight)) + 1)
 		guard lastRow > firstRow else { return }
 
