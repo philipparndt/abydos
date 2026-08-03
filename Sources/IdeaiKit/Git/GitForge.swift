@@ -74,6 +74,31 @@ public enum GitForge {
 		return Repository(host: host, owner: parts.joined(separator: "/"), name: name)
 	}
 
+	/// The address a remote points at, or nil when there is no such remote.
+	public static func remoteURL(in root: URL, remote: String = "origin") async -> String? {
+		let result = await GitRepository.run(["remote", "get-url", remote], in: root)
+		guard result.exitCode == 0 else { return nil }
+		let text = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+		return text.isEmpty ? nil : text
+	}
+
+	/// Points a remote somewhere, adding it if the repository has none.
+	///
+	/// One call for both cases: a repository cloned without a remote and one
+	/// pointed at the wrong place are the same problem to whoever is looking at
+	/// it, and `add` versus `set-url` is git's distinction, not theirs.
+	public static func setRemote(
+		_ url: String,
+		named remote: String = "origin",
+		in root: URL
+	) async -> GitRepository.ProcessResult {
+		let existing = await GitRepository.run(["remote", "get-url", remote], in: root)
+		let arguments = existing.exitCode == 0
+			? ["remote", "set-url", remote, url]
+			: ["remote", "add", remote, url]
+		return await GitRepository.run(arguments, in: root)
+	}
+
 	/// Where a repository's remote points, ready to be opened.
 	///
 	/// - Parameter remote: which remote to ask about; the branch's own, when it

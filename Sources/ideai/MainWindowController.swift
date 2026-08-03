@@ -2630,6 +2630,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 	}
 
+	/// Pushes a branch from the branches view, for looking at what it does
+	/// while it is happening.
+	func pushBranchForTesting(_ name: String) {
+		showSidebarTool(.branches)
+		DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+			self?.branchesPane?.pushForTesting(branch: name)
+		}
+	}
+
 	/// Opens the branches view's own menu on a row, so what it offers for a
 	/// branch or a stash can be looked at rather than assumed.
 	func branchMenuForTesting(row: Int) {
@@ -4541,6 +4550,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// Opens the sidebar, whichever way it came to be shut.
 	private func openNavigator() {
 		guard let navigatorContainer else { return }
+		// A width of nothing is what a sidebar dragged shut leaves behind, and
+		// opening it to nothing is the same as not opening it.
+		navigatorWidth = max(200, navigatorWidth)
 		navigatorWidthConstraint.constant = navigatorWidth
 		navigatorContainer.isHidden = false
 		splitView.setPosition(navigatorWidth, ofDividerAt: 0)

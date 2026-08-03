@@ -111,6 +111,8 @@ struct LaunchOptions {
 	var typingPresses: Int?
 	/// Which row of the branches view to open the menu on.
 	var branchMenuRow: Int?
+	/// Push this branch from the branches view.
+	var pushBranch: String?
 	/// Print where the active terminal thinks it is, for checking that the
 	/// window can follow it.
 	var reportsTerminalDirectory = false
@@ -245,6 +247,7 @@ struct LaunchOptions {
 			case "--tree":       options.treeSteps = next()
 			case "--type-latency": options.typingPresses = next().flatMap(Int.init)
 			case "--branch-menu": options.branchMenuRow = next().flatMap(Int.init)
+			case "--push-branch": options.pushBranch = next()
 			case "--report-cwd": options.reportsTerminalDirectory = true
 			case "--report-geometry": options.reportsTerminalGeometry = true
 			case "--blame": options.showsBlame = true

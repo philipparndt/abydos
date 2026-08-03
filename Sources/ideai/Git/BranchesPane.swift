@@ -19,6 +19,14 @@ final class BranchesPane: NSView {
 	/// Where this repository lives on the web, when it lives anywhere: read
 	/// from the remote, so GitHub and an Enterprise install are the same case.
 	private var forge: GitForge.Repository?
+	/// What origin points at, or nil when there is no origin at all.
+	private var remoteURL: String?
+	/// The branch currently being pushed, if one is.
+	///
+	/// A push talks to another machine and can take a while over a slow link,
+	/// and a list that looks exactly as it did is indistinguishable from a
+	/// click that never landed.
+	private var pushingBranch: String?
 	private var worktrees: [GitWorktree] = []
 	private var stashes: [GitStash.Entry] = []
 	private var rows: [Row] = []
@@ -127,7 +135,8 @@ final class BranchesPane: NSView {
 			// carry a section explaining that it has one.
 			let trees = await GitWorktrees.list(in: root)
 			let put = await GitStash.list(in: root)
-			forge = await GitForge.repository(in: root)
+			remoteURL = await GitForge.remoteURL(in: root)
+			forge = remoteURL.flatMap { GitForge.repository(fromRemote: $0) }
 			guard fresh != branches || trees != worktrees || put != stashes else { return }
 			branches = fresh
 			worktrees = trees
@@ -251,13 +260,14 @@ final class BranchesPane: NSView {
 		guard let branch = selectedBranch, case .local = branch.kind else { return }
 		let publishing = branch.upstream == nil
 
-		Toast.post(
-			publishing ? "Publishing \(branch.name)…" : "Pushing \(branch.name)…",
-			detail: publishing ? "Setting its upstream on origin." : nil,
-			kind: .information
-		)
+		pushingBranch = branch.name
+		tableView.reloadData()
 
 		Task { @MainActor in
+			defer {
+				pushingBranch = nil
+				tableView.reloadData()
+			}
 			let result = await GitPush.push(
 				in: root,
 				setUpstream: publishing,
@@ -285,6 +295,16 @@ final class BranchesPane: NSView {
 		guard let branch = selectedBranch, let forge else { return }
 		guard let url = forge.url(forBranch: branch.name) else { return }
 		NSWorkspace.shared.open(url)
+	}
+
+	/// Pushes a branch by name, so the spinner can be looked at.
+	func pushForTesting(branch name: String) {
+		guard let row = rows.firstIndex(where: {
+			if case let .branch(branch) = $0 { return branch.name == name }
+			return false
+		}) else { return }
+		tableView.selectRowIndexes([row], byExtendingSelection: false)
+		pushBranch()
 	}
 
 	/// Pops the context menu open on a row, as a right-click would.
@@ -371,6 +391,44 @@ final class BranchesPane: NSView {
 			} else {
 				act(alert.runModal())
 			}
+		}
+	}
+
+	// MARK: - The remote
+
+	private var remoteMenuTitle: String {
+		remoteURL == nil ? "Add a Remote…" : "Change the Remote…"
+	}
+
+	/// Points origin somewhere, or gives the repository one.
+	///
+	/// A clone has one and nobody thinks about it; a repository made with `git
+	/// init` has none, and everything that talks to a remote — pushing,
+	/// opening it on GitHub — has nothing to say until it does.
+	@objc private func setRemote() {
+		let alert = NSAlert()
+		alert.messageText = remoteURL == nil ? "Add a remote" : "Change the remote"
+		alert.informativeText = remoteURL.map { "origin is \($0)." }
+			?? "This repository has no remote, so there is nowhere to push."
+		alert.addButton(withTitle: remoteURL == nil ? "Add" : "Change")
+		alert.addButton(withTitle: "Cancel")
+
+		let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+		field.stringValue = remoteURL ?? ""
+		field.placeholderString = "git@github.com:you/thing.git"
+		alert.accessoryView = field
+
+		let act: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+			guard response == .alertFirstButtonReturn, let self else { return }
+			let url = field.stringValue.trimmingCharacters(in: .whitespaces)
+			guard !url.isEmpty, url != self.remoteURL else { return }
+			self.run { await GitForge.setRemote(url, in: self.root) }
+		}
+		if let window {
+			alert.beginSheetModal(for: window, completionHandler: act)
+			window.makeFirstResponder(field)
+		} else {
+			act(alert.runModal())
 		}
 	}
 
@@ -656,7 +714,8 @@ extension BranchesPane: NSTableViewDataSource, NSTableViewDelegate {
 		guard rows.indices.contains(row) else { return nil }
 		switch rows[row] {
 		case .header(let title): return BranchSectionView(title: title)
-		case .branch(let branch): return BranchRowView(branch: branch)
+		case .branch(let branch):
+			return BranchRowView(branch: branch, isPushing: branch.name == pushingBranch)
 		case .worktree(let worktree): return WorktreeRowView(worktree: worktree)
 		case .stash(let entry): return StashRowView(entry: entry)
 		}
@@ -701,6 +760,8 @@ extension BranchesPane: NSMenuDelegate {
 
 		guard let branch = selectedBranch else {
 			menu.addItem(item("New Worktree…", #selector(addWorktree)))
+			menu.addItem(.separator())
+			menu.addItem(item(remoteMenuTitle, #selector(setRemote)))
 			return
 		}
 
@@ -725,6 +786,7 @@ extension BranchesPane: NSMenuDelegate {
 		menu.addItem(.separator())
 		menu.addItem(item("Copy Name", #selector(copyBranchName)))
 		menu.addItem(item("New Worktree from Here…", #selector(addWorktree)))
+		menu.addItem(item(remoteMenuTitle, #selector(setRemote)))
 
 		if case .local = branch.kind {
 			menu.addItem(item("Delete…", #selector(deleteBranch), enabled: !branch.isCurrent))
@@ -786,12 +848,38 @@ private final class BranchSectionView: NSView {
 
 private final class BranchRowView: NSView {
 	private let branch: GitBranch
+	private let isPushing: Bool
+	private var spinner: NSProgressIndicator?
 	override var isFlipped: Bool { true }
 
-	init(branch: GitBranch) {
+	init(branch: GitBranch, isPushing: Bool = false) {
 		self.branch = branch
+		self.isPushing = isPushing
 		super.init(frame: .zero)
-		toolTip = branch.subject.isEmpty ? branch.checkoutName : "\(branch.checkoutName) — \(branch.subject)"
+		toolTip = isPushing
+			? "Pushing \(branch.name)…"
+			: (branch.subject.isEmpty ? branch.checkoutName : "\(branch.checkoutName) — \(branch.subject)")
+
+		guard isPushing else { return }
+		// A real spinner rather than something drawn by hand: it has to keep
+		// turning while a push waits on another machine, and that is exactly
+		// what this control is for.
+		let wheel = NSProgressIndicator()
+		wheel.style = .spinning
+		wheel.controlSize = .small
+		wheel.isIndeterminate = true
+		wheel.translatesAutoresizingMaskIntoConstraints = false
+		addSubview(wheel)
+		NSLayoutConstraint.activate([
+			wheel.centerYAnchor.constraint(equalTo: centerYAnchor),
+			wheel.trailingAnchor.constraint(
+				equalTo: trailingAnchor, constant: -Theme.current.scaled(10)
+			),
+			wheel.widthAnchor.constraint(equalToConstant: Theme.current.scaled(12)),
+			wheel.heightAnchor.constraint(equalToConstant: Theme.current.scaled(12)),
+		])
+		wheel.startAnimation(nil)
+		spinner = wheel
 	}
 
 	required init?(coder: NSCoder) { fatalError("not used") }
@@ -823,7 +911,9 @@ private final class BranchRowView: NSView {
 			string: tracking, attributes: [.font: countsFont]
 		).size().width + Theme.current.scaled(6)
 
+		// While pushing, the spinner has the right-hand end of the row.
 		let limit = bounds.maxX - RowMetrics.trailingInset
+			- (isPushing ? Theme.current.scaled(18) : 0)
 		x = RowMetrics.draw(
 			branch.name, font: font, colour: colour,
 			at: x, in: bounds, limit: limit - countsWidth
