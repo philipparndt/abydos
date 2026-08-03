@@ -1281,6 +1281,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			let restored = heightBeforeMaximize ?? panelHeight
 			if total > 200 { verticalSplitView.setPosition(total - restored, ofDividerAt: 0) }
 			tellTerminalsTheySizeChanged()
+
+			// The sidebar comes back as it was left, whatever was looked at
+			// over the terminal in the meantime — and the strip says so, which
+			// it could not while there was no sidebar to point at.
+			install(tool: currentSidebarTool, force: true)
+			updateTopInsets()
+			updateSidebarSelection()
 			return
 		}
 
@@ -4190,7 +4197,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 		toolPopover = popover
 		popoverTool = tool
-		currentSidebarTool = tool
+		// What the sidebar is showing is not changed by looking at something
+		// over the terminal: it is what comes back when the terminal gives the
+		// window up.
 		toolStrip.setSidebarSelection(visible: true, tool: tool)
 
 		// The views are the sidebar's own — the tree especially — so when the
@@ -4205,6 +4214,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			self.toolPopover = nil
 			self.popoverTool = nil
 			self.toolStrip.setSidebarSelection(visible: false, tool: self.currentSidebarTool)
+			// The popover borrowed the sidebar's own views — the tree most of
+			// all — so they are put back where they belong.
 			self.install(tool: self.currentSidebarTool, force: true)
 			// The tree ducks under the titlebar again once it is back in the
 			// sidebar.

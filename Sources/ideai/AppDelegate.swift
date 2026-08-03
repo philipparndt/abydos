@@ -529,6 +529,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if options.maximizeTerminal, options.sidebarTool != nil {
+			// Maximise, borrow a tool over the terminal, then give the window
+			// back — the sequence that used to come back to an empty sidebar.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+				controller?.togglePanelMaximized(nil)
+			}
+		}
+
 		if let hovers = options.tmuxMenuHovers {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
 				controller?.tmuxMenuForTesting(hovers: hovers)
