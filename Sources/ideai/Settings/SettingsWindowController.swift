@@ -308,6 +308,13 @@ final class SettingsPaneController: NSViewController {
 				set: { Settings.shared.terminalFontName = $0.trimmingCharacters(in: .whitespaces) }
 			),
 			.toggle(
+				title: "Follow the terminal's project",
+				help: "When the terminal moves into another project, the window opens it. "
+					+ "New windows start this way; each window can still be switched by hand.",
+				get: { Settings.shared.followsTerminalProject },
+				set: { Settings.shared.followsTerminalProject = $0 }
+			),
+			.toggle(
 				title: "GPU terminal rendering",
 				help: "Draw the terminal with Metal. Faster when a program repaints the whole screen; still new.",
 				get: { Settings.shared.terminalGPURendering },

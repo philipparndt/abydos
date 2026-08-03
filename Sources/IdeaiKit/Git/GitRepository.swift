@@ -62,6 +62,15 @@ public actor GitRepository {
 
 	public func currentBranch() -> String? { branchName }
 
+	/// How many files the working copy has that HEAD does not agree with.
+	///
+	/// Ignored files are not changes — a build directory is not something
+	/// anybody is going to commit — and the count is what the commit button
+	/// uses to say, without being opened, that there is something to do.
+	public func changedFileCount() -> Int {
+		statusCache.values.filter { $0 != .unmodified && $0 != .ignored }.count
+	}
+
 	/// Re-reads branch and per-file status.
 	public func refresh() async {
 		async let branch = Self.run(["rev-parse", "--abbrev-ref", "HEAD"], in: root)

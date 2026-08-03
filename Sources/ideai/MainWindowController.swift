@@ -9,7 +9,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// What each project had open, so going back to one looks as it was left.
 	private var sessions = ProjectSessions()
 	/// Whether the window follows the terminal's working directory.
-	private(set) var followsTerminal = false
+	/// Whether this window follows the terminal into another project.
+	///
+	/// Starts from the setting and is a per-window switch afterwards: one
+	/// window following a terminal about while another stays where it was put
+	/// is a reasonable way to work.
+	private(set) var followsTerminal = Settings.shared.followsTerminalProject
 
 	/// True for a window made by dragging a tab out of another one.
 	///
@@ -422,6 +427,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		bottomPanel.onTearOffTerminal = { [weak self] detached, screenPoint in
 			self?.openTerminalWindow(detached, at: screenPoint)
 		}
+		// The setting decides how a window starts; the control on the panel is
+		// what changes it afterwards.
+		bottomPanel.isFollowingProject = followsTerminal
 		bottomPanel.onToggleFollowProject = { [weak self] in self?.toggleFollowTerminal() }
 		bottomPanel.onWorkingDirectoryChanged = { [weak self] directory in
 			self?.terminalDirectoryChanged(to: directory)
@@ -479,6 +487,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			MainWindowController.previewModel(at: url)
 		}
 		navigator.currentEditorFile = { [weak self] in self?.editor.activeGroup?.activeTabURL }
+		// The tree reads the working copy's status anyway; the strip shows it.
+		navigator.onChangeCount = { [weak self] count in
+			self?.toolStrip.uncommittedCount = count
+		}
 		navigator.onFilesChanged = { [weak self] in
 			// Something wrote inside the project — possibly a file that is open.
 			self?.editor.reloadExternallyChangedFiles()
@@ -4039,7 +4051,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// showing closes the sidebar, which is what IDEA does and the only way to
 	/// reclaim the space.
 	func showSidebarTool(_ tool: SidebarToolKind) {
+		// Hidden, or dragged shut until there is nothing left of it — which is
+		// the same thing to look at and was not the same thing to the code:
+		// pressing ⌘2 on a sidebar somebody had dragged closed did nothing at
+		// all, twice, because it thought it was already showing.
 		let isCollapsed = navigatorContainer.isHidden
+			|| splitView.isSubviewCollapsed(navigatorContainer)
+			|| navigatorContainer.frame.width < 2
 
 		if !isCollapsed, tool == currentSidebarTool {
 			toggleNavigator(nil)
@@ -4047,7 +4065,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 
 		install(tool: tool)
-		if isCollapsed { toggleNavigator(nil) }
+		if isCollapsed { openNavigator() }
 		updateSidebarSelection()
 	}
 
@@ -4062,33 +4080,94 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// The panes are built on demand rather than kept alive: each watches the
 	/// work tree or the open file, and several doing that while one is visible
 	/// is work nobody asked for.
+	/// Puts a tool up once the repository has been read.
+	///
+	/// The panes that need git are built with a repository in hand, and asking
+	/// for one before the read has finished used to leave the sidebar blank.
+	private func installWhenRepositoryIsReady(_ tool: SidebarToolKind) {
+		// Remembered so the strip shows what will appear, and so a second ask
+		// for the same tool does not queue a second wait.
+		guard pendingSidebarTool != tool else { return }
+		pendingSidebarTool = tool
+
+		Task { @MainActor [weak self] in
+			await self?.project?.loadGit()
+			guard let self, self.pendingSidebarTool == tool else { return }
+			self.pendingSidebarTool = nil
+			guard self.makeToolView(tool) != nil else { return }
+			self.install(tool: tool, force: true)
+			self.updateSidebarSelection()
+		}
+	}
+
+	/// A tool asked for before the project it needs had been read.
+	private var pendingSidebarTool: SidebarToolKind?
+
 	private func install(tool: SidebarToolKind, force: Bool = false) {
 		guard force || currentSidebarTool != tool || primaryToolView == nil else { return }
 
+		// Built before anything is taken down. The panes that need a repository
+		// cannot be built until it has been read, and tearing the sidebar down
+		// first left it empty until somebody thought to close and reopen it.
+		guard let view = makeToolView(tool) else {
+			installWhenRepositoryIsReady(tool)
+			return
+		}
+
 		primaryToolView?.removeFromSuperview()
-		primaryToolView = nil
 		primaryToolTop = nil
 		changesPane = nil
+		branchesPane = nil
 		structurePane = nil
 		scratchesPane = nil
 		historyPane = nil
 		navigator.view.removeFromSuperview()
 
 		currentSidebarTool = tool
+		primaryToolView = install(view: view, for: tool)
+	}
+
+	/// Puts a built view into the sidebar and returns it.
+	private func install(view: NSView, for tool: SidebarToolKind) -> NSView {
+		view.translatesAutoresizingMaskIntoConstraints = false
+		primaryContainer.addSubview(view)
+
+		// The navigator insets itself for the titlebar; the other panes are
+		// plain views, so the container does it for them.
+		let inset = tool == .project ? 0 : sidebarTopInset
+		let top = view.topAnchor.constraint(equalTo: primaryContainer.topAnchor, constant: inset)
+		NSLayoutConstraint.activate([
+			top,
+			view.bottomAnchor.constraint(equalTo: primaryContainer.bottomAnchor),
+			view.leadingAnchor.constraint(equalTo: primaryContainer.leadingAnchor),
+			view.trailingAnchor.constraint(equalTo: primaryContainer.trailingAnchor),
+		])
+
+		primaryToolTop = tool == .project ? nil : top
+		updateTopInsets()
+		return view
+	}
+
+	/// Builds a tool's view, or nil when what it needs is not there yet.
+	private func makeToolView(_ tool: SidebarToolKind) -> NSView? {
 		let view: NSView
 
 		switch tool {
 		case .project:
 			view = navigator.view
 		case .changes:
-			guard let project, project.git != nil else { return }
+			// Nothing to show until the project's repository has been read,
+			// which the caller waits for rather than leaving the sidebar empty.
+			guard let project, project.git != nil else { return nil }
 			let pane = ChangesPane(root: scopeRoot ?? project.root)
 			pane.onSelectChange = { [weak self] change in self?.showDiff(for: change) }
 			pane.onWorkingCopyChanged = { [weak self] in self?.navigator.refreshGitStatus() }
 			changesPane = pane
 			view = pane
 		case .branches:
-			guard let project, project.git != nil else { return }
+			// Nothing to show until the project's repository has been read,
+			// which the caller waits for rather than leaving the sidebar empty.
+			guard let project, project.git != nil else { return nil }
 			let pane = BranchesPane(root: scopeRoot ?? project.root)
 			// A worktree is a project in its own right, so opening one is
 			// switching to it rather than checking anything out.
@@ -4104,7 +4183,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			branchesPane = pane
 			view = pane
 		case .history:
-			guard let project, project.git != nil else { return }
+			// Nothing to show until the project's repository has been read,
+			// which the caller waits for rather than leaving the sidebar empty.
+			guard let project, project.git != nil else { return nil }
 			let pane = HistoryPane(root: scopeRoot ?? project.root)
 			pane.offerScope(path: relativePathOfActiveFile())
 			pane.onSelectFile = { [weak self] commit, file in
@@ -4134,23 +4215,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			refreshStructure()
 		}
 
-		view.translatesAutoresizingMaskIntoConstraints = false
-		primaryContainer.addSubview(view)
-
-		// The navigator insets itself for the titlebar; the other panes are
-		// plain views, so the container does it for them.
-		let inset = tool == .project ? 0 : sidebarTopInset
-		let top = view.topAnchor.constraint(equalTo: primaryContainer.topAnchor, constant: inset)
-		NSLayoutConstraint.activate([
-			top,
-			view.bottomAnchor.constraint(equalTo: primaryContainer.bottomAnchor),
-			view.leadingAnchor.constraint(equalTo: primaryContainer.leadingAnchor),
-			view.trailingAnchor.constraint(equalTo: primaryContainer.trailingAnchor),
-		])
-
-		primaryToolView = view
-		primaryToolTop = tool == .project ? nil : top
-		updateTopInsets()
+		return view
 	}
 
 	/// Hands the active file's outline to the structure view.
@@ -4473,9 +4538,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	// MARK: - Actions
 
+	/// Opens the sidebar, whichever way it came to be shut.
+	private func openNavigator() {
+		guard let navigatorContainer else { return }
+		navigatorWidthConstraint.constant = navigatorWidth
+		navigatorContainer.isHidden = false
+		splitView.setPosition(navigatorWidth, ofDividerAt: 0)
+		toolStrip.setSidebarSelection(visible: true, tool: currentSidebarTool)
+		splitView.adjustSubviews()
+	}
+
 	@objc func toggleNavigator(_ sender: Any?) {
 		guard let navigatorContainer else { return }
 		let collapsed = splitView.isSubviewCollapsed(navigatorContainer)
+			|| navigatorContainer.isHidden
+			|| navigatorContainer.frame.width < 2
 		if collapsed {
 			navigatorWidthConstraint.constant = navigatorWidth
 			splitView.setPosition(navigatorWidth, ofDividerAt: 0)

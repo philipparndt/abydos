@@ -753,27 +753,32 @@ private final class ChangeRowView: NSView {
 		))
 		x = badge.maxX + Theme.current.scaled(6)
 
-		let name = NSAttributedString(string: change.name, attributes: [
-			.font: Theme.current.uiFont(12),
-			.foregroundColor: Theme.current.sidebarText,
-		])
-		name.draw(at: NSPoint(x: x, y: bounds.midY - name.size().height / 2))
-		x += name.size().width + Theme.current.scaled(6)
+		// The name first, and it gives way before the directory does: two files
+		// with the same name in different places are told apart by the
+		// directory, so that is the part worth keeping when the pane is narrow.
+		let limit = bounds.maxX - RowMetrics.trailingInset
+		x = RowMetrics.draw(
+			change.name,
+			font: Theme.current.uiFont(12),
+			colour: Theme.current.sidebarText,
+			at: x, in: bounds, limit: limit
+		)
 
-		// The directory follows in grey, so files with the same name in
-		// different places are still tellable apart.
 		guard !change.directory.isEmpty else { return }
 		let paragraph = NSMutableParagraphStyle()
+		// From the head: the end of a path says where the file is; the start of
+		// it is the same for everything in the project.
 		paragraph.lineBreakMode = .byTruncatingHead
 		let directory = NSAttributedString(string: change.directory, attributes: [
 			.font: Theme.current.uiFont(10.5),
 			.foregroundColor: Theme.current.gitIgnored,
 			.paragraphStyle: paragraph,
 		])
+		let start = x + Theme.current.scaled(6)
 		directory.draw(in: NSRect(
-			x: x,
+			x: start,
 			y: bounds.midY - directory.size().height / 2,
-			width: max(0, bounds.width - x - Theme.current.scaled(8)),
+			width: max(0, limit - start),
 			height: directory.size().height
 		))
 	}

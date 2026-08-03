@@ -39,6 +39,21 @@ final class ToolWindowBar: NSView {
 	private var terminalButton: StripButton!
 	private var reviewButton: StripButton!
 	private var commitButton: StripButton!
+
+	/// How many files are waiting to be committed.
+	///
+	/// Shown as a colour on the commit button rather than a number: the useful
+	/// question from across the room is "is there anything", and the tooltip
+	/// says how much for anybody who wants it.
+	var uncommittedCount = 0 {
+		didSet {
+			guard uncommittedCount != oldValue else { return }
+			commitButton?.accent = uncommittedCount > 0 ? Theme.current.gitModified : nil
+			commitButton?.toolTip = uncommittedCount > 0
+				? "Commit (⌘2) — \(uncommittedCount) changed file\(uncommittedCount == 1 ? "" : "s")"
+				: "Commit (⌘2)"
+		}
+	}
 	private var branchesButton: StripButton!
 	private var structureButton: StripButton!
 	private var scratchesButton: StripButton!
@@ -262,6 +277,12 @@ final class StripButton: NSView {
 		didSet { needsDisplay = true }
 	}
 
+	/// A colour for the symbol when it has something to say — the commit
+	/// button when the working copy has changes in it.
+	var accent: NSColor? {
+		didSet { if accent != oldValue { needsDisplay = true } }
+	}
+
 	private let symbol: String
 	private let enabled: Bool
 	private var sizeConstraints: [NSLayoutConstraint] = []
@@ -330,7 +351,7 @@ final class StripButton: NSView {
 		}
 
 		let tint: NSColor = enabled
-			? (isSelected ? Theme.current.sidebarHeaderText : Theme.current.sidebarText)
+			? (accent ?? (isSelected ? Theme.current.sidebarHeaderText : Theme.current.sidebarText))
 			: Theme.current.gitIgnored.withAlphaComponent(0.5)
 		// Colour baked into the symbol configuration — see Theme.symbol.
 		guard let rendered = Theme.symbol(symbol, size: 15 * Theme.current.scale, color: tint) else { return }

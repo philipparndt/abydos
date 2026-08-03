@@ -16,6 +16,12 @@ final class ProjectNavigatorViewController: NSViewController {
 	var onPreviewModel: ((URL) -> Void)?
 	/// Something under the project root changed on disk.
 	var onFilesChanged: (() -> Void)?
+	/// How many files the working copy has changed, whenever that is read.
+	///
+	/// The tree reads `git status` already, on every watcher event; anything
+	/// else that wants the number should hear it from here rather than run its
+	/// own.
+	var onChangeCount: ((Int) -> Void)?
 	/// What the editor is showing, so the tree can be asked to find its way back
 	/// to it after browsing somewhere else.
 	var currentEditorFile: (() -> URL?)?
@@ -205,6 +211,7 @@ final class ProjectNavigatorViewController: NSViewController {
 			// only the colours, and a reload would clear the selection — which is
 			// what made keyboard-expanding a folder lose your place.
 			redrawVisibleRows()
+			onChangeCount?(await git.changedFileCount())
 		}
 	}
 

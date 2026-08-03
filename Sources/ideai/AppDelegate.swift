@@ -515,6 +515,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let width = options.resizeWidth {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+				guard let window = controller?.window else { return }
+				var frame = window.frame
+				frame.size.width = width
+				window.setFrame(frame, display: true, animate: false)
+			}
+		}
+
 		if options.showsBlame {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
 				controller?.toggleBlame(nil)

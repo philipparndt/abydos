@@ -26,6 +26,7 @@ public final class Settings {
 			Key.terminalFontName: "",
 			Key.wordWrap: false,
 			Key.terminalGPURendering: false,
+			Key.followsTerminalProject: false,
 			Key.terminalScheme: "blue",
 			Key.terminalBellStyle: "sound",
 			Key.opensProjectsInNewWindow: false,
@@ -50,6 +51,7 @@ public final class Settings {
 		static let terminalFontName = "terminalFontName"
 		static let wordWrap = "wordWrap"
 		static let terminalGPURendering = "terminalGPURendering"
+		static let followsTerminalProject = "followsTerminalProject"
 		static let terminalScheme = "terminalScheme"
 		static let terminalBellStyle = "terminalBellStyle"
 		static let projectSearchPaths = "projectSearchPaths"
@@ -183,6 +185,17 @@ public final class Settings {
 	public var terminalGPURendering: Bool {
 		get { defaults.bool(forKey: Key.terminalGPURendering) }
 		set { set(newValue, Key.terminalGPURendering) }
+	}
+
+	/// Whether a new window follows the terminal into whatever project it is
+	/// standing in.
+	///
+	/// Off by default, because a window that changes project on its own is a
+	/// surprise the first time. Somebody who works by `cd`-ing to the thing
+	/// they want turns it on once and never thinks about it again.
+	public var followsTerminalProject: Bool {
+		get { defaults.bool(forKey: Key.followsTerminalProject) }
+		set { set(newValue, Key.followsTerminalProject) }
 	}
 
 	// MARK: - Navigator
