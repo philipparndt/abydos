@@ -240,6 +240,16 @@ final class ChangesPane: NSView {
 		pushButton.title = pushState?.buttonTitle ?? "Push"
 		pushButton.isEnabled = !isBusy && pushState?.canPush == true
 		pushButton.toolTip = pushTooltip
+
+		// The accent goes to whichever action the page is actually for: with
+		// nothing staged there is nothing to commit, and what is left to do is
+		// send what is already committed. Return follows the accent, since the
+		// default button is what Return means.
+		let primary = CommitPageAction.primary(
+			staged: count, isAmending: isAmending, canPush: pushButton.isEnabled
+		)
+		commitButton.keyEquivalent = primary == .commit ? "\r" : ""
+		pushButton.keyEquivalent = primary == .push ? "\r" : ""
 	}
 
 	private var pushTooltip: String {
