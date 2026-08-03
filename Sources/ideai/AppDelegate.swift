@@ -497,6 +497,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let presses = options.typingPresses {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+				controller?.measureTypingForTesting(presses: presses, interval: 0.12)
+			}
+		}
+
 		if options.pushChanges {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.6) {
 				controller?.pushChangesForTesting()

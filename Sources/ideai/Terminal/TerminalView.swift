@@ -64,6 +64,8 @@ final class TerminalView: NSView, NSTextInputClient {
 
 	/// How long parsing may take before yielding so the screen can be drawn.
 	private static let parseBudget: TimeInterval = 0.006
+	/// Output small enough to be somebody's own typing coming back.
+	private static let smallInput = 4096
 	/// Backlog at which the process is made to wait, and the one it resumes at.
 	private static let backlogHighWater = 4 << 20
 	private static let backlogLowWater = 1 << 20
@@ -76,6 +78,16 @@ final class TerminalView: NSView, NSTextInputClient {
 
 	private static let horizontalInset: CGFloat = 8
 	private static let verticalInset: CGFloat = 4
+
+	/// When a key was last pressed, and what has happened to it since.
+	///
+	/// Only kept while the probe is on: this is here to answer "how long does a
+	/// keystroke take to appear", which cannot be reasoned about from the code
+	/// because most of the wait is other people's — the shell's, tmux's, the
+	/// display's.
+	private var keyPressedAt: Date?
+	private var keyEchoedAt: Date?
+	private var keyParsedAt: Date?
 
 	/// Coalesces repaints to one per runloop turn.
 	///
@@ -209,6 +221,7 @@ final class TerminalView: NSView, NSTextInputClient {
 
 	/// Takes output from the process and asks for it to be parsed soon.
 	private func enqueue(_ data: Data) {
+		if InputProbe.enabled, keyPressedAt != nil, keyEchoedAt == nil { keyEchoedAt = Date() }
 		pending.append(data)
 		pendingBytes += data.count
 
@@ -223,9 +236,19 @@ final class TerminalView: NSView, NSTextInputClient {
 	private func scheduleDrain() {
 		guard !drainScheduled, !pending.isEmpty else { return }
 		drainScheduled = true
-		// A delay rather than an immediate hop: blocks queued on the main queue
-		// are all run before the display cycle, so re-queueing at once would
-		// starve drawing exactly as parsing everything inline did.
+
+		// A keystroke's echo is a few bytes with nothing queued behind it, and
+		// making it wait two milliseconds to be read is two milliseconds of
+		// somebody watching for their own letter to appear.
+		guard pendingBytes > Self.smallInput else {
+			DispatchQueue.main.async { [weak self] in self?.drain() }
+			return
+		}
+
+		// Behind, though — a program painting the whole screen — and a delay
+		// rather than an immediate hop: blocks queued on the main queue are all
+		// run before the display cycle, so re-queueing at once would starve
+		// drawing exactly as parsing everything inline did.
 		DispatchQueue.main.asyncAfter(deadline: .now() + 0.002) { [weak self] in
 			self?.drain()
 		}
@@ -269,6 +292,9 @@ final class TerminalView: NSView, NSTextInputClient {
 				self.updateFrameSize()
 				if self.isPinnedToBottom { self.scrollToBottom() }
 			}
+			if InputProbe.enabled, self.keyEchoedAt != nil, self.keyParsedAt == nil {
+				self.keyParsedAt = Date()
+			}
 			self.invalidateChangedRows()
 		}
 	}
@@ -280,14 +306,37 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// Marking the view for display reaches CoreGraphics only; the GPU path
 	/// draws when it is told to.
 	private func repaint() {
-		if metal != nil {
-			// Only noted, not drawn. Asking for a drawable waits for the
-			// display, and doing that here would make everything that produced
-			// the change wait with it.
-			needsRender = true
-		} else {
+		guard metal != nil else {
 			needsDisplay = true
+			return
 		}
+		requestFrame()
+	}
+
+	/// Asks the GPU path for a frame, now or at the next tick of the display.
+	///
+	/// Normally noted rather than drawn: asking for a drawable waits for the
+	/// display, and doing that while output pours in makes everything that
+	/// produced the change wait with it.
+	///
+	/// But when nothing has been drawn for a frame or more there is nothing to
+	/// coalesce with and the drawable is free, so waiting buys nothing and
+	/// costs half a frame on average — which, for somebody typing, is most of
+	/// the delay between pressing a key and seeing it.
+	private func requestFrame() {
+		needsRender = true
+		guard -lastRenderedAt.timeIntervalSinceNow >= frameInterval else { return }
+		renderIfNeeded()
+	}
+
+	/// When the last frame was handed over, and how long a frame lasts here.
+	///
+	/// The display link knows the real rate — 60 on these monitors, 120 on a
+	/// laptop — and the fallback only matters before it has ticked once.
+	private var lastRenderedAt = Date.distantPast
+	private var frameInterval: TimeInterval {
+		let duration = displayLink?.duration ?? 0
+		return duration > 0 ? duration : 1.0 / 60
 	}
 
 	/// Turns the GPU path on or off to match the setting.
@@ -368,7 +417,9 @@ final class TerminalView: NSView, NSTextInputClient {
 		heldFrameSince = nil
 
 		needsRender = false
+		lastRenderedAt = Date()
 		renderMetal()
+		noteKeystrokeShown()
 	}
 
 	// MARK: - Bell
@@ -514,7 +565,7 @@ final class TerminalView: NSView, NSTextInputClient {
 			// Nothing to work out: the GPU redraws what is on screen, and what
 			// that costs does not depend on how much of it changed.
 			_ = emulator.takeDirtyRange()
-			needsRender = true
+			requestFrame()
 			return
 		}
 
@@ -655,6 +706,7 @@ final class TerminalView: NSView, NSTextInputClient {
 	// MARK: - Drawing
 
 	override func draw(_ dirtyRect: NSRect) {
+		defer { if metal == nil { noteKeystrokeShown() } }
 		TerminalPalette.background.setFill()
 		dirtyRect.fill()
 
@@ -1081,10 +1133,45 @@ final class TerminalView: NSView, NSTextInputClient {
 			return
 		}
 		guard let bytes = encode(event: event) else { return }
+		if InputProbe.enabled, keyPressedAt == nil {
+			keyPressedAt = Date()
+			keyEchoedAt = nil
+			keyParsedAt = nil
+		}
 		// Typing always jumps back to the prompt, as every terminal does.
 		isPinnedToBottom = true
 		pty.write(bytes)
 		scrollToBottom()
+	}
+
+	/// Records how long the last keystroke took to reach the screen.
+	///
+	/// Split three ways, because only the middle part is ours: the shell (and
+	/// tmux, if it is in the way) has to echo the byte back before there is
+	/// anything to draw at all.
+	private func noteKeystrokeShown() {
+		guard InputProbe.enabled, let pressed = keyPressedAt, let parsed = keyParsedAt else { return }
+		let now = Date()
+		InputProbe.record(
+			echo: (keyEchoedAt ?? parsed).timeIntervalSince(pressed),
+			parse: parsed.timeIntervalSince(keyEchoedAt ?? pressed),
+			draw: now.timeIntervalSince(parsed),
+			total: now.timeIntervalSince(pressed)
+		)
+		keyPressedAt = nil
+		keyEchoedAt = nil
+		keyParsedAt = nil
+	}
+
+	/// Types one character as the keyboard would, for measuring.
+	func typeForTesting(_ character: String) {
+		guard let event = NSEvent.keyEvent(
+			with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+			windowNumber: window?.windowNumber ?? 0, context: nil,
+			characters: character, charactersIgnoringModifiers: character,
+			isARepeat: false, keyCode: 0
+		) else { return }
+		keyDown(with: event)
 	}
 
 	/// Translates a key event into the bytes a terminal would send.
@@ -1654,6 +1741,44 @@ private final class GlyphCache {
 		      glyphs[0] != 0
 		else { return nil }
 		return CachedGlyph(glyph: glyphs[0], font: fallback)
+	}
+}
+
+/// Splits a keystroke into where its time actually goes.
+///
+/// `echo` is the round trip through the pty — the shell, and tmux if it is in
+/// the way — which no terminal can do anything about. `parse` and `draw` are
+/// ours: how long the bytes wait to be read, and how long the picture then
+/// waits for a frame.
+enum InputProbe {
+	static let enabled = ProcessInfo.processInfo.environment["IDEAI_INPUT_PROBE"] != nil
+	nonisolated(unsafe) private static var samples: [(echo: Double, parse: Double, draw: Double, total: Double)] = []
+
+	static func record(echo: Double, parse: Double, draw: Double, total: Double) {
+		samples.append((echo, parse, draw, total))
+		let ms = { (value: Double) in String(format: "%6.2f", value * 1000) }
+		FileHandle.standardError.write(Data(
+			"INPUT echo=\(ms(echo)) parse=\(ms(parse)) draw=\(ms(draw)) total=\(ms(total))\n".utf8
+		))
+	}
+
+	static func report() {
+		guard !samples.isEmpty else { return }
+		func line(_ name: String, _ values: [Double]) -> String {
+			let sorted = values.sorted()
+			let ms = { (value: Double) in String(format: "%6.2f", value * 1000) }
+			let mean = values.reduce(0, +) / Double(values.count)
+			return "INPUTSUM \(name) mean=\(ms(mean)) median=\(ms(sorted[sorted.count / 2])) "
+				+ "min=\(ms(sorted[0])) max=\(ms(sorted[sorted.count - 1]))"
+		}
+		let text = [
+			line("echo ", samples.map(\.echo)),
+			line("parse", samples.map(\.parse)),
+			line("draw ", samples.map(\.draw)),
+			line("total", samples.map(\.total)),
+			"INPUTSUM samples=\(samples.count)",
+		].joined(separator: "\n") + "\n"
+		FileHandle.standardError.write(Data(text.utf8))
 	}
 }
 

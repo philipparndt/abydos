@@ -2600,6 +2600,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 	}
 
+	/// Types into the terminal at a human rate and reports what each keystroke
+	/// cost, so "it feels slower" can be answered with numbers.
+	func measureTypingForTesting(presses: Int, interval: TimeInterval) {
+		guard let terminal = bottomPanel.showTerminal()?.terminalView else { return }
+		window?.makeFirstResponder(terminal)
+		let letters = Array("abcdefghijklmnopqrstuvwxyz")
+		for press in 0..<presses {
+			DispatchQueue.main.asyncAfter(deadline: .now() + interval * Double(press)) {
+				self.window?.makeFirstResponder(terminal)
+				terminal.typeForTesting(String(letters[press % letters.count]))
+			}
+		}
+		DispatchQueue.main.asyncAfter(deadline: .now() + interval * Double(presses) + 0.5) {
+			InputProbe.report()
+		}
+	}
+
 	func showDebugConsoleForTesting() {
 		bottomPanel.showDebugConsoleForTesting()
 	}
