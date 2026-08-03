@@ -306,10 +306,7 @@ struct OpenScratchesTests {
 	/// A suite of its own per test, removed again so the machine is not left
 	/// with a preference domain for every test that has ever run.
 	private func withDefaults(_ body: (UserDefaults) throws -> Void) rethrows {
-		let suite = "open-scratches-\(UUID().uuidString)"
-		let defaults = UserDefaults(suiteName: suite)!
-		defer { defaults.removePersistentDomain(forName: suite) }
-		try body(defaults)
+		try TestDefaults.with { try body($0) }
 	}
 
 	/// Never having said is not the same as saying none.

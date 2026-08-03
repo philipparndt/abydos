@@ -163,6 +163,7 @@ final class TerminalView: NSView, NSTextInputClient {
 	override func viewDidMoveToWindow() {
 		super.viewDidMoveToWindow()
 		updateDisplayLink()
+		watchWindowFocus()
 		guard window != nil else { return }
 		guard let launch = pendingLaunch else {
 			updateMetalEnabled()
@@ -325,8 +326,28 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// the delay between pressing a key and seeing it.
 	private func requestFrame() {
 		needsRender = true
+
+		// Only when everything that has arrived has been parsed. A program
+		// repainting sends its frame in several writes — hide the cursor, draw,
+		// show it again — and drawing between two of them shows a picture that
+		// was never meant to be seen. That is what a flickering cursor is.
+		guard pending.isEmpty, !drainScheduled else { return }
 		guard -lastRenderedAt.timeIntervalSinceNow >= frameInterval else { return }
+
+		// The scroll view has just been told the document grew and where to
+		// sit; drawing before it has laid that out would put the picture a line
+		// from where it belongs and the next frame would put it back.
+		enclosingScrollView?.layoutSubtreeIfNeeded()
+
+		// Handed over inside a transaction of its own. The layer presents with
+		// the transaction, and outside the display link's tick there is no
+		// saying when the one already open will commit — which is the
+		// difference between a frame appearing now and a frame appearing
+		// twice.
+		CATransaction.begin()
+		CATransaction.setDisableActions(true)
 		renderIfNeeded()
+		CATransaction.commit()
 	}
 
 	/// When the last frame was handed over, and how long a frame lasts here.
@@ -513,12 +534,20 @@ final class TerminalView: NSView, NSTextInputClient {
 			}
 		}
 		var cursor: TerminalMetalRenderer.Cursor?
-		if emulator.isCursorVisible, cursorVisible, window?.firstResponder === self {
+		if shouldDrawCursor() {
 			cursor = .init(
 				row: screen.scrollback.count + emulator.cursorRow,
 				column: emulator.cursorColumn,
-				colour: TerminalPalette.cursor.components
+				colour: TerminalPalette.cursor.components,
+				// Outlined when the keyboard is somewhere else: the cursor is
+				// still where it was, and typing would not go there.
+				isFilled: hasKeyboardFocus,
+				thickness: Float(1.5)
 			)
+		}
+
+		if InputProbe.enabled {
+			InputProbe.frame(cursor: cursor != nil)
 		}
 
 		let background = TerminalPalette.background.components
@@ -941,7 +970,7 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// leaves it the same colour as what is now behind it, which is how it
 	/// becomes unreadable exactly where you are looking.
 	private func drawCursor() {
-		guard emulator.isCursorVisible, cursorVisible, window?.firstResponder === self else { return }
+		guard shouldDrawCursor() else { return }
 
 		let screen = emulator.screen
 		let row = screen.scrollback.count + emulator.cursorRow
@@ -950,8 +979,20 @@ final class TerminalView: NSView, NSTextInputClient {
 		let endX = (Self.horizontalInset + CGFloat(column + 1) * cellWidth).rounded()
 		let y = (Self.verticalInset + CGFloat(row) * cellHeight).rounded()
 
+		let box = NSRect(x: x, y: y, width: endX - x, height: cellHeight)
+
+		// Outlined when the keyboard is somewhere else — the cursor is still
+		// where it was, and the character underneath stays as it was written.
+		guard hasKeyboardFocus else {
+			TerminalPalette.cursor.setStroke()
+			let path = NSBezierPath(rect: box.insetBy(dx: 0.75, dy: 0.75))
+			path.lineWidth = 1.5
+			path.stroke()
+			return
+		}
+
 		TerminalPalette.cursor.setFill()
-		NSRect(x: x, y: y, width: endX - x, height: cellHeight).fill()
+		box.fill()
 
 		// The character again, in the colour of what is now behind it.
 		guard let line = screen.line(at: row), column < line.cells.count else { return }
@@ -963,6 +1004,62 @@ final class TerminalView: NSView, NSTextInputClient {
 		attributes.background = .default
 		attributes.inverse = true
 		drawText(of: line, from: column, to: column + 1, attributes: attributes, y: y)
+	}
+
+	/// Repaints when the window gains or loses the keyboard.
+	///
+	/// Becoming first responder is not the only way focus moves: switching to
+	/// another app leaves this view first responder in a window that is no
+	/// longer key, and the cursor has to say so.
+	private func watchWindowFocus() {
+		let centre = NotificationCenter.default
+		for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
+			centre.removeObserver(self, name: name, object: nil)
+			guard let window else { continue }
+			centre.addObserver(
+				forName: name, object: window, queue: .main
+			) { [weak self] _ in self?.repaint() }
+		}
+	}
+
+	/// Whether the cursor is drawn at all.
+	///
+	/// A program repainting hides the cursor, draws, and shows it again. Those
+	/// are three writes and they need not arrive in the same frame — so
+	/// honouring the hide the instant it arrives turns an ordinary repaint into
+	/// a blink, which is what a flickering cursor is. A hide is believed only
+	/// once it has lasted longer than a repaint would.
+	private func shouldDrawCursor() -> Bool {
+		guard cursorVisible else { return false }
+		guard !emulator.isCursorVisible else {
+			cursorHiddenSince = nil
+			return true
+		}
+
+		guard let since = cursorHiddenSince else {
+			cursorHiddenSince = Date()
+			// Nothing more may arrive to prove the hide was meant, so the
+			// screen has to be asked again once the moment has passed.
+			DispatchQueue.main.asyncAfter(deadline: .now() + Self.cursorHideGrace) { [weak self] in
+				self?.repaint()
+			}
+			return true
+		}
+		return -since.timeIntervalSinceNow < Self.cursorHideGrace
+	}
+
+	/// When a program last asked for the cursor to go away.
+	private var cursorHiddenSince: Date?
+	/// How long a hide has to last before it is taken seriously — longer than
+	/// the gap between the writes of one repaint, shorter than a glance.
+	private static let cursorHideGrace: TimeInterval = 0.12
+
+	/// Whether typing would go into this terminal.
+	///
+	/// Which is what the cursor says: filled here, outlined everywhere else.
+	private var hasKeyboardFocus: Bool {
+		guard let window, window.isKeyWindow else { return false }
+		return window.firstResponder === self
 	}
 
 	/// The cursor is drawn solid rather than blinking.
@@ -1762,7 +1859,20 @@ enum InputProbe {
 		))
 	}
 
+	nonisolated(unsafe) private static var frames = 0
+	nonisolated(unsafe) private static var framesWithoutCursor = 0
+
+	/// Frames drawn without the cursor in them, which is what a flicker is: a
+	/// picture taken while a program had hidden it to repaint.
+	static func frame(cursor: Bool) {
+		frames += 1
+		if !cursor { framesWithoutCursor += 1 }
+	}
+
 	static func report() {
+		FileHandle.standardError.write(Data(
+			"INPUTSUM frames=\(frames) withoutCursor=\(framesWithoutCursor) \n".utf8
+		))
 		guard !samples.isEmpty else { return }
 		func line(_ name: String, _ values: [Double]) -> String {
 			let sorted = values.sorted()

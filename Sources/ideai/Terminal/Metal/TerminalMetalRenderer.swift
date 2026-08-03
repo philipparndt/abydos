@@ -114,6 +114,10 @@ final class TerminalMetalRenderer {
 		var row: Int
 		var column: Int
 		var colour: SIMD4<Float>
+		/// Filled where the keyboard is; an outline where it is not.
+		var isFilled = true
+		/// How thick that outline is, in points.
+		var thickness: Float = 1.5
 	}
 
 	func build(
@@ -171,7 +175,7 @@ final class TerminalMetalRenderer {
 				// the colour behind. Laying a block over the character instead
 				// leaves it the same colour as what is now behind it, which is
 				// how it becomes unreadable exactly where you are looking.
-				if let cursor, cursor.row == index, cursor.column == column {
+				if let cursor, cursor.isFilled, cursor.row == index, cursor.column == column {
 					background = cursor.colour
 					foreground = frame.background
 				}
@@ -247,6 +251,36 @@ final class TerminalMetalRenderer {
 				background: overlay.colour,
 				isColour: 0
 			))
+		}
+
+		// An outlined cursor is four thin blocks rather than a filled one: the
+		// character underneath is left exactly as it was written, which is what
+		// says the keyboard is elsewhere rather than that the text changed.
+		if let cursor, !cursor.isFilled {
+			let y = rowEdge(cursor.row)
+			let height = rowEdge(cursor.row + 1) - y
+			let x = columnEdge(cursor.column)
+			let width = columnEdge(cursor.column + 1) - x
+			let edge = snap(cursor.thickness)
+
+			for side in [
+				(x: x, y: y, width: width, height: edge),
+				(x: x, y: y + height - edge, width: width, height: edge),
+				(x: x, y: y, width: edge, height: height),
+				(x: x + width - edge, y: y, width: edge, height: height),
+			] {
+				instances.append(CellInstance(
+					origin: SIMD2(side.x, side.y),
+					size: SIMD2(side.width, side.height),
+					glyphOrigin: .zero,
+					glyphSize: .zero,
+					uvOrigin: .zero,
+					uvSize: .zero,
+					foreground: cursor.colour,
+					background: cursor.colour,
+					isColour: 0
+				))
+			}
 		}
 	}
 

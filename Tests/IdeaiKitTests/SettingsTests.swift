@@ -5,15 +5,13 @@ import Foundation
 /// Settings are exercised against an isolated `UserDefaults` suite so the tests
 /// never touch the real preferences.
 struct SettingsTests {
-	private func makeSettings() -> (Settings, UserDefaults, String) {
-		let suite = "ideai.tests.\(UUID().uuidString)"
-		let defaults = UserDefaults(suiteName: suite)!
-		return (Settings(defaults: defaults), defaults, suite)
+	private func makeSettings() -> (Settings, UserDefaults) {
+		let defaults = TestDefaults.make()
+		return (Settings(defaults: defaults), defaults)
 	}
 
 	@Test func autoSaveIsOnByDefault() {
-		let (settings, _, suite) = makeSettings()
-		defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+		let (settings, _) = makeSettings()
 
 		#expect(settings.autoSaveEnabled, "auto save must default to on")
 		// Long by default, so writing a file does not set off everything
@@ -23,15 +21,13 @@ struct SettingsTests {
 	}
 
 	@Test func hiddenFilesShownByDefault() {
-		let (settings, _, suite) = makeSettings()
-		defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+		let (settings, _) = makeSettings()
 		// .gitignore and .idea are part of a project and appear in IDEA too.
 		#expect(settings.showHiddenFiles)
 	}
 
 	@Test func valuesRoundTrip() {
-		let (settings, _, suite) = makeSettings()
-		defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+		let (settings, _) = makeSettings()
 
 		settings.autoSaveEnabled = false
 		settings.autoSaveDelay = 2.5
@@ -51,8 +47,7 @@ struct SettingsTests {
 	/// Out-of-range values would produce an unusable editor, so they clamp
 	/// rather than being trusted.
 	@Test func clampsOutOfRangeValues() {
-		let (settings, _, suite) = makeSettings()
-		defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+		let (settings, _) = makeSettings()
 
 		settings.editorFontSize = 900
 		#expect(settings.editorFontSize <= 32)
@@ -70,14 +65,12 @@ struct SettingsTests {
 	// MARK: - Zoom
 
 	@Test func zoomStartsAtActualSize() {
-		let (settings, _, suite) = makeSettings()
-		defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+		let (settings, _) = makeSettings()
 		#expect(settings.uiScale == 1.0)
 	}
 
 	@Test func zoomStepsThroughDiscreteValues() {
-		let (settings, _, suite) = makeSettings()
-		defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+		let (settings, _) = makeSettings()
 
 		#expect(settings.zoomIn() == 1.1)
 		#expect(settings.zoomIn() == 1.25)
@@ -88,8 +81,7 @@ struct SettingsTests {
 
 	/// Repeated zooming must not run away past the usable range.
 	@Test func zoomClampsAtBothEnds() {
-		let (settings, _, suite) = makeSettings()
-		defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+		let (settings, _) = makeSettings()
 
 		for _ in 0..<20 { settings.zoomIn() }
 		#expect(settings.uiScale == Settings.zoomSteps.last)
@@ -99,8 +91,7 @@ struct SettingsTests {
 	}
 
 	@Test func resetZoomReturnsExactlyToOne() {
-		let (settings, _, suite) = makeSettings()
-		defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+		let (settings, _) = makeSettings()
 
 		settings.zoomIn()
 		settings.zoomIn()
@@ -110,8 +101,7 @@ struct SettingsTests {
 	}
 
 	@Test func zoomIsClampedWhenSetDirectly() {
-		let (settings, _, suite) = makeSettings()
-		defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+		let (settings, _) = makeSettings()
 
 		settings.uiScale = 99
 		#expect(settings.uiScale <= Settings.zoomSteps.last!)
@@ -121,8 +111,7 @@ struct SettingsTests {
 	}
 
 	@Test func resetRestoresDefaults() {
-		let (settings, _, suite) = makeSettings()
-		defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+		let (settings, _) = makeSettings()
 
 		settings.autoSaveEnabled = false
 		settings.tabWidth = 8
@@ -133,8 +122,7 @@ struct SettingsTests {
 	}
 
 	@Test func changesPostNotification() async {
-		let (settings, _, suite) = makeSettings()
-		defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+		let (settings, _) = makeSettings()
 
 		// Open windows rely on this to apply preferences without a restart.
 		// The notification is global and tests run in parallel, so other suites
@@ -154,25 +142,23 @@ struct SettingsTests {
 struct AutoSaveTests {
 	/// Each document gets its own settings suite, so these tests neither read
 	/// nor disturb the real preferences and can run in parallel.
-	private func makeDocument(_ contents: String, autoSave: Bool) throws -> (TextDocument, URL, String) {
+	private func makeDocument(_ contents: String, autoSave: Bool) throws -> (TextDocument, URL) {
 		let url = FileManager.default.temporaryDirectory
 			.appendingPathComponent("ideai-autosave-\(UUID().uuidString).swift")
 		try contents.write(to: url, atomically: true, encoding: .utf8)
 
-		let suite = "ideai.tests.\(UUID().uuidString)"
-		let settings = Settings(defaults: UserDefaults(suiteName: suite)!)
+		let settings = Settings(defaults: TestDefaults.make())
 		settings.autoSaveEnabled = autoSave
 
 		let document = try TextDocument(url: url)
 		document.settings = settings
-		return (document, url, suite)
+		return (document, url)
 	}
 
 	@Test func autoSaveIfNeededWritesAndClearsDirty() throws {
-		let (document, url, suite) = try makeDocument("let a = 1\n", autoSave: true)
+		let (document, url) = try makeDocument("let a = 1\n", autoSave: true)
 		defer {
 			try? FileManager.default.removeItem(at: url)
-			UserDefaults.standard.removePersistentDomain(forName: suite)
 		}
 
 		document.replace(utf16Range: 0..<0, with: "// added\n", caretBefore: 0)
@@ -186,10 +172,9 @@ struct AutoSaveTests {
 	}
 
 	@Test func autoSaveIsSkippedWhenDisabled() throws {
-		let (document, url, suite) = try makeDocument("let a = 1\n", autoSave: false)
+		let (document, url) = try makeDocument("let a = 1\n", autoSave: false)
 		defer {
 			try? FileManager.default.removeItem(at: url)
-			UserDefaults.standard.removePersistentDomain(forName: suite)
 		}
 
 		document.replace(utf16Range: 0..<0, with: "// added\n", caretBefore: 0)
@@ -201,10 +186,9 @@ struct AutoSaveTests {
 	}
 
 	@Test func autoSaveIsANoOpWhenClean() throws {
-		let (document, url, suite) = try makeDocument("let a = 1\n", autoSave: true)
+		let (document, url) = try makeDocument("let a = 1\n", autoSave: true)
 		defer {
 			try? FileManager.default.removeItem(at: url)
-			UserDefaults.standard.removePersistentDomain(forName: suite)
 		}
 
 		#expect(document.autoSaveIfNeeded() == false, "nothing to write")
@@ -212,10 +196,9 @@ struct AutoSaveTests {
 
 	@Test func savePreservesBytesExactly() throws {
 		// Round-tripping must not normalise line endings or re-encode.
-		let (document, url, suite) = try makeDocument("alpha\r\nbeta\r\n", autoSave: false)
+		let (document, url) = try makeDocument("alpha\r\nbeta\r\n", autoSave: false)
 		defer {
 			try? FileManager.default.removeItem(at: url)
-			UserDefaults.standard.removePersistentDomain(forName: suite)
 		}
 
 		document.replace(utf16Range: 0..<0, with: "x", caretBefore: 0)
@@ -228,19 +211,21 @@ struct AutoSaveTests {
 
 /// Whether choosing a project takes over the window or opens another.
 struct ProjectWindowSettingTests {
-	private func settings() -> Settings {
-		let defaults = UserDefaults(suiteName: "ideai.tests.\(UUID().uuidString)")!
-		return Settings(defaults: defaults)
+	/// The suite goes away with the settings that used it, so a machine does
+	/// not end up with a preference domain for every test that has ever run.
+	private func withSettings(_ body: (Settings) -> Void) {
+		TestDefaults.with { body(Settings(defaults: $0)) }
 	}
 
 	/// Switching in place is the default: the window is where the work was.
 	@Test func switchesInPlaceByDefault() {
-		#expect(settings().opensProjectsInNewWindow == false)
+		withSettings { #expect($0.opensProjectsInNewWindow == false) }
 	}
 
 	@Test func remembersTheChoice() {
-		let settings = settings()
-		settings.opensProjectsInNewWindow = true
-		#expect(settings.opensProjectsInNewWindow)
+		withSettings { settings in
+			settings.opensProjectsInNewWindow = true
+			#expect(settings.opensProjectsInNewWindow)
+		}
 	}
 }

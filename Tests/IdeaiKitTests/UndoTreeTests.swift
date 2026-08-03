@@ -201,7 +201,7 @@ struct DocumentHistoryTests {
 			.appendingPathComponent("history-\(UUID().uuidString).txt")
 		try text.write(to: url, atomically: true, encoding: .utf8)
 		let document = try TextDocument(url: url)
-		document.settings = Settings(defaults: UserDefaults(suiteName: "history-\(UUID().uuidString)")!)
+		document.settings = Settings(defaults: TestDefaults.make())
 		return document
 	}
 
