@@ -30,6 +30,7 @@ public final class Settings {
 			Key.followsTerminalProject: false,
 			Key.terminalAtStartup: "open",
 			Key.startsTmux: false,
+			Key.strictTmux: false,
 			Key.terminalScheme: "blue",
 			Key.terminalBellStyle: "sound",
 			Key.opensProjectsInNewWindow: false,
@@ -58,6 +59,7 @@ public final class Settings {
 		static let followsTerminalProject = "followsTerminalProject"
 		static let terminalAtStartup = "terminalAtStartup"
 		static let startsTmux = "startsTmux"
+		static let strictTmux = "strictTmux"
 		static let terminalScheme = "terminalScheme"
 		static let terminalBellStyle = "terminalBellStyle"
 		static let projectSearchPaths = "projectSearchPaths"
@@ -211,6 +213,17 @@ public final class Settings {
 	public var startsTmux: Bool {
 		get { defaults.bool(forKey: Key.startsTmux) }
 		set { set(newValue, Key.startsTmux) }
+	}
+
+	/// Whether the terminal's tabs are tmux's windows.
+	///
+	/// In this mode there is one terminal and one pty; the strip shows what
+	/// tmux has and switching a tab switches tmux's window. Nothing is torn
+	/// down or built up to change tabs, which is why it costs nothing — and
+	/// why a window renamed in tmux renames the tab.
+	public var strictTmux: Bool {
+		get { defaults.bool(forKey: Key.strictTmux) }
+		set { set(newValue, Key.strictTmux) }
 	}
 
 	/// Dark, light, or whatever the system is set to.

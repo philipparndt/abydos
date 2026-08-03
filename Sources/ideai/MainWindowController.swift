@@ -859,8 +859,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// One tmux session per project, for whoever asked for tmux at all.
 		bottomPanel.tmuxSession = TmuxSessionName.of(project.root)
 
-		let wanted = Settings.shared.terminalAtStartup
-		if wanted != "closed" {
+		// Once per window. Opening another project in the same window is not a
+		// window opening, and having the terminal take the screen again — in
+		// the middle of switching to something — is a jump nobody asked for.
+		let wanted = hasArrangedTerminal ? "keep" : Settings.shared.terminalAtStartup
+		hasArrangedTerminal = true
+		if wanted != "closed", wanted != "keep" {
 			let remembered = SessionStore.read(in: project.root)
 			if remembered?.isPanelVisible ?? true {
 				setPanelVisible(true)
@@ -4293,6 +4297,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	/// A tool asked for before the project it needs had been read.
 	private var pendingSidebarTool: SidebarToolKind?
+
+	/// Whether this window has already arranged its terminal the way the
+	/// setting asks. Only the first project it opens counts.
+	private var hasArrangedTerminal = false
 
 	private func install(tool: SidebarToolKind, force: Bool = false) {
 		guard force || currentSidebarTool != tool || primaryToolView == nil else { return }

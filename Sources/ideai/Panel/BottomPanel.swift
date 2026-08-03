@@ -227,20 +227,46 @@ final class BottomPanel: NSView {
 		strip.panelID = panelID
 		strip.setUpTabDropping()
 		strip.onSelect = { [weak self] index in
-			guard let self, let session = self.session(at: index, in: column) else { return }
+			guard let self else { return }
+			if let window = self.mirroredWindow(at: index, in: column) {
+				Task { await TmuxMirror.select(window: window.index, inSession: self.tmuxSession ?? "") }
+				self.focusTerminal()
+				return
+			}
+			guard let session = self.session(at: index, in: column) else { return }
 			self.activate(session, focus: true)
 		}
 		strip.onClose = { [weak self] index in
-			guard let self, let session = self.session(at: index, in: column) else { return }
+			guard let self else { return }
+			if let window = self.mirroredWindow(at: index, in: column) {
+				Task { await TmuxMirror.killWindow(window.index, inSession: self.tmuxSession ?? "") }
+				return
+			}
+			guard let session = self.session(at: index, in: column) else { return }
 			self.close(session)
 		}
 		strip.onAdd = { [weak self] in
-			self?.focusedColumn = column
-			self?.newTerminal()
+			guard let self else { return }
+			if self.mirrorsTmux, column == 0, let session = self.tmuxSession {
+				Task { await TmuxMirror.newWindow(inSession: session) }
+				self.focusTerminal()
+				return
+			}
+			self.focusedColumn = column
+			self.newTerminal()
 		}
 		strip.onHide = { [weak self] in self?.onRequestHide?() }
 		strip.onRename = { [weak self] index, name in
-			guard let self, let session = self.session(at: index, in: column) else { return }
+			guard let self else { return }
+			if let window = self.mirroredWindow(at: index, in: column) {
+				Task {
+					await TmuxMirror.rename(
+						window: window.index, to: name, inSession: self.tmuxSession ?? ""
+					)
+				}
+				return
+			}
+			guard let session = self.session(at: index, in: column) else { return }
 			self.rename(session, to: name)
 		}
 		// Anything in the panel can be moved: a profiler beside the terminal
@@ -494,11 +520,62 @@ final class BottomPanel: NSView {
 	var sessionCountForTesting: Int { sessions.count }
 
 	/// Opens a shell, or focuses the existing one if there already is a terminal.
+	/// tmux's windows, when the strip is showing those rather than our own
+	/// terminals.
+	private var tmuxWindows: [TmuxMirror.Window] = []
+	private var tmuxPoll: Timer?
+
+	/// Whether the strip is a view of tmux rather than a list of terminals.
+	///
+	/// Only with a session to mirror and a terminal attached to it: the mode is
+	/// about one shell seen two ways, and without the shell there is nothing to
+	/// see.
+	private var mirrorsTmux: Bool {
+		Settings.shared.strictTmux && Settings.shared.startsTmux && tmuxSession != nil
+	}
+
 	/// The name of this window's tmux session, when it should have one.
 	///
 	/// One per project: reopening a project comes back to the panes it was left
 	/// with, and two projects do not share a shell.
-	var tmuxSession: String?
+	var tmuxSession: String? {
+		didSet {
+			guard tmuxSession != oldValue else { return }
+			startMirroringTmuxIfWanted()
+		}
+	}
+
+	/// Watches the session, so a window opened or renamed inside tmux shows up
+	/// on the strip.
+	///
+	/// Polled rather than pushed: tmux will run a hook, but a hook has to reach
+	/// back into this process somehow, and asking twice a second costs a
+	/// millisecond of a shell nobody is waiting on.
+	private func startMirroringTmuxIfWanted() {
+		tmuxPoll?.invalidate()
+		tmuxPoll = nil
+		guard mirrorsTmux, let session = tmuxSession else {
+			if !tmuxWindows.isEmpty {
+				tmuxWindows = []
+				rebuildColumns()
+			}
+			return
+		}
+
+		let poll = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+			Task { @MainActor in
+				guard let self else { return }
+				let windows = await TmuxMirror.windows(inSession: session)
+				// Nothing at all means tmux is still starting, or has gone: the
+				// strip keeps what it had rather than blinking empty.
+				guard !windows.isEmpty, windows != self.tmuxWindows else { return }
+				self.tmuxWindows = windows
+				self.rebuildColumns()
+			}
+		}
+		RunLoop.main.add(poll, forMode: .common)
+		tmuxPoll = poll
+	}
 
 	/// What the first terminal runs instead of a plain shell.
 	private func startupCommand() -> (executable: String, arguments: [String])? {
@@ -507,6 +584,20 @@ final class BottomPanel: NSView {
 		// `new -A` is "attach if it exists, make it if it does not", which is
 		// exactly what reopening a project should do.
 		return (executable: tmux, arguments: ["new", "-A", "-s", session])
+	}
+
+	/// The tmux window a strip position stands for, when the strip is a mirror.
+	private func mirroredWindow(at index: Int, in column: Int) -> TmuxMirror.Window? {
+		guard mirrorsTmux, column == 0, tmuxWindows.indices.contains(index) else { return nil }
+		return tmuxWindows[index]
+	}
+
+	/// Puts the keyboard back in the terminal after a tab was clicked: the
+	/// point of switching windows is to type in the new one.
+	private func focusTerminal() {
+		let index = activeIndex ?? 0
+		guard index >= 0, index < sessions.count else { return }
+		activate(sessions[index], focus: true)
 	}
 
 	@discardableResult
@@ -1117,6 +1208,26 @@ final class BottomPanel: NSView {
 				activeByColumn[index] = showing
 			}
 			view.show(showing?.view)
+
+			// In the mirrored mode the first column's strip is tmux's window
+			// list. The terminal underneath it never changes — that is the
+			// point: switching tabs is a message to tmux, not a teardown.
+			if mirrorsTmux, index == 0, !tmuxWindows.isEmpty {
+				view.strip.setItems(
+					tmuxWindows.map { window in
+						PanelTabItem(
+							title: window.name,
+							hasExited: false,
+							isTerminal: true,
+							symbol: "terminal",
+							isShowing: window.isActive
+						)
+					},
+					activeIndex: tmuxWindows.firstIndex { $0.isActive }
+				)
+				continue
+			}
+
 			view.strip.setItems(
 				list.map { session in
 					PanelTabItem(

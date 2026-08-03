@@ -194,3 +194,41 @@ struct TerminalKeyProtocolTests {
 		#expect(!terminal.reportsModifiedKeys)
 	}
 }
+
+/// Reading tmux's window list, for the mode where the tabs are its windows.
+struct TmuxMirrorTests {
+	@Test func readsIndexNameAndWhichIsActive() {
+		let windows = TmuxMirror.parse("""
+		0;0;zsh;shell
+		1;1;nvim;editing
+		2;0;go;build
+		""")
+
+		#expect(windows.count == 3)
+		#expect(windows[1].index == 1)
+		#expect(windows[1].name == "editing")
+		#expect(windows[1].isActive)
+		#expect(windows[1].command == "nvim")
+		#expect(!windows[0].isActive)
+	}
+
+	/// The name is whatever is left of the line, because a window can be called
+	/// anything — semicolons included.
+	@Test func aNameCanContainTheSeparator() {
+		let windows = TmuxMirror.parse("3;1;zsh;one; two; three")
+		#expect(windows.first?.name == "one; two; three")
+	}
+
+	/// tmux numbers windows as it likes: a session with 1, 4 and 9 in it is
+	/// ordinary, and the position on the strip is not the number.
+	@Test func indexesAreNotPositions() {
+		let windows = TmuxMirror.parse("1;0;zsh;a\n4;0;zsh;b\n9;1;zsh;c")
+		#expect(windows.map(\.index) == [1, 4, 9])
+		#expect(windows.last?.isActive == true)
+	}
+
+	@Test func nothingAtAllIsNoWindows() {
+		#expect(TmuxMirror.parse("").isEmpty)
+		#expect(TmuxMirror.parse("nonsense\n").isEmpty)
+	}
+}

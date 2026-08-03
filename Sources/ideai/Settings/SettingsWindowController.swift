@@ -349,6 +349,16 @@ final class SettingsPaneController: NSViewController {
 		if Executables.locate("tmux") != nil {
 			rows.insert(
 				.toggle(
+					title: "Tabs are tmux's windows",
+					help: "The strip shows the session's windows and switching a tab switches tmux. "
+						+ "One terminal, one shell: changing tabs costs nothing.",
+					get: { Settings.shared.strictTmux },
+					set: { Settings.shared.strictTmux = $0 }
+				),
+				at: 1
+			)
+			rows.insert(
+				.toggle(
 					title: "Attach the first terminal to tmux",
 					help: "One session per project, so reopening it comes back to the panes it was "
 						+ "left with. Terminals opened afterwards are plain shells.",
