@@ -191,6 +191,24 @@ public enum TmuxMirror {
 		return result?.exitCode == 0
 	}
 
+	/// How many rows this session's status bar takes.
+	///
+	/// `off` is none, `on` is one, and tmux also takes a number — somebody can
+	/// have two or five. Asked rather than assumed, because the whole point of
+	/// reporting a taller pane is to hide exactly what tmux will draw: one row
+	/// too few leaves a bar on screen, one too many leaves a gap, and somebody
+	/// who has already turned their bar off must get neither.
+	public static func statusLines(inSession session: String) async -> Int {
+		guard let tmux = Executables.locate("tmux") else { return 0 }
+		let result = await run(tmux, ["display-message", "-p", "-t", session, "#{status}"])
+		guard let text = result?.output.trimmingCharacters(in: .whitespacesAndNewlines),
+		      result?.exitCode == 0
+		else { return 0 }
+		if text == "off" { return 0 }
+		if text == "on" { return 1 }
+		return Int(text) ?? 1
+	}
+
 	/// Whether the server has a session by this name.
 	public static func sessionExists(_ name: String) async -> Bool {
 		guard let tmux = Executables.locate("tmux") else { return false }

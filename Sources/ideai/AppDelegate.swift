@@ -537,6 +537,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let index = options.closeTmuxTab {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
+				controller?.closeTmuxTabForTesting(index)
+			}
+		}
+
 		if options.addTerminalTab {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
 				controller?.addTerminalTabForTesting()

@@ -224,6 +224,8 @@ struct LaunchOptions {
 	var stallMilliseconds: Int?
 	/// Press the terminal strip's + before capture.
 	var addTerminalTab = false
+	/// Close this tmux tab from its menu before capture.
+	var closeTmuxTab: Int?
 
 	static func parse(_ arguments: [String] = CommandLine.arguments) -> LaunchOptions {
 		var options = LaunchOptions()
@@ -261,6 +263,7 @@ struct LaunchOptions {
 			case "--type-latency": options.typingPresses = next().flatMap(Int.init)
 			case "--stall":      options.stallMilliseconds = next().flatMap(Int.init)
 			case "--tab-add":    options.addTerminalTab = true
+			case "--tmux-close": options.closeTmuxTab = next().flatMap(Int.init)
 			case "--branch-menu": options.branchMenuRow = next().flatMap(Int.init)
 			case "--push-branch": options.pushBranch = next()
 			case "--report-cwd": options.reportsTerminalDirectory = true

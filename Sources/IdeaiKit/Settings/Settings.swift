@@ -51,6 +51,8 @@ public final class Settings {
 			Key.appearance: "system",
 			Key.followsTerminalProject: false,
 			Key.terminalAtStartup: "open",
+			Key.tmuxTabsAtBottom: true,
+			Key.hidesTmuxStatus: true,
 			Key.startsTmux: false,
 			Key.strictTmux: false,
 			Key.terminalScheme: "blue",
@@ -80,6 +82,8 @@ public final class Settings {
 		static let appearance = "appearance"
 		static let followsTerminalProject = "followsTerminalProject"
 		static let terminalAtStartup = "terminalAtStartup"
+		static let tmuxTabsAtBottom = "tmuxTabsAtBottom"
+		static let hidesTmuxStatus = "hidesTmuxStatus"
 		static let startsTmux = "startsTmux"
 		static let strictTmux = "strictTmux"
 		static let terminalScheme = "terminalScheme"
@@ -222,6 +226,23 @@ public final class Settings {
 	/// `closed`, `open`, or `full` — the last giving it the whole window, for
 	/// somebody whose day starts in a shell and who reaches for the editor
 	/// afterwards.
+	/// Whether tmux's windows get a strip of their own along the bottom,
+	/// leaving the top strip for what the panel holds.
+	public var tmuxTabsAtBottom: Bool {
+		get { defaults.bool(forKey: Key.tmuxTabsAtBottom) }
+		set { set(newValue, Key.tmuxTabsAtBottom) }
+	}
+
+	/// Whether tmux's own status bar is turned off while ideai is showing the
+	/// same windows as tabs.
+	///
+	/// Session-scoped and at runtime: nothing is written to anybody's
+	/// `.tmux.conf`, and every other session on the server keeps its bar.
+	public var hidesTmuxStatus: Bool {
+		get { defaults.bool(forKey: Key.hidesTmuxStatus) }
+		set { set(newValue, Key.hidesTmuxStatus) }
+	}
+
 	public var terminalAtStartup: String {
 		get { defaults.string(forKey: Key.terminalAtStartup) ?? "open" }
 		set { set(newValue, Key.terminalAtStartup) }
