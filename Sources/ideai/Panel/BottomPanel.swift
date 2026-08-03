@@ -284,10 +284,29 @@ final class BottomPanel: NSView {
 		// Anything in the panel can be moved: a profiler beside the terminal
 		// that produced the load is the arrangement somebody wants, and a
 		// debugger beside its program is another.
-		strip.canDrag = { [weak self] index in self?.session(at: index, in: column) != nil }
-		strip.onMove = { [weak self] from, to in self?.move(from: from, to: to, in: column) }
+		strip.canDrag = { [weak self] index in
+			guard let self else { return false }
+			// A mirrored tab is a tmux window: it can be dragged along the
+			// strip, but not out into a window of its own or into another
+			// column — tmux owns where it lives.
+			if self.mirroredWindow(at: index, in: column) != nil { return true }
+			return self.session(at: index, in: column) != nil
+		}
+		strip.onMove = { [weak self] from, to in
+			guard let self else { return }
+			if let moved = self.mirroredWindow(at: from, in: column) {
+				self.moveMirroredWindow(moved, from: from, to: to)
+				return
+			}
+			self.move(from: from, to: to, in: column)
+		}
 		strip.onTearOff = { [weak self] index, point in
-			guard let self, let session = self.session(at: index, in: column) else { return }
+			guard let self else { return }
+			// tmux's windows stay in tmux: tearing one into a window of its own
+			// would mean a second client, which is not what the drag looked
+			// like it would do.
+			guard self.mirroredWindow(at: index, in: column) == nil else { return }
+			guard let session = self.session(at: index, in: column) else { return }
 			self.tearOff(session, at: point)
 		}
 		strip.onDragStarted = { [weak self] in self?.showDropTargets() }
@@ -653,6 +672,35 @@ final class BottomPanel: NSView {
 		// `new -A` is "attach if it exists, make it if it does not", which is
 		// exactly what reopening a project should do.
 		return (executable: tmux, arguments: ["new", "-A", "-s", session])
+	}
+
+	/// Reorders tmux's windows to match a dragged tab.
+	///
+	/// The position dragged past decides the side: dragging right puts the
+	/// window after the one it landed on, dragging left puts it before — which
+	/// is what the gap the tab was dropped into looked like.
+	private func moveMirroredWindow(_ window: TmuxMirror.Window, from: Int, to: Int) {
+		let clamped = max(0, min(tmuxWindows.count - 1, to))
+		guard clamped != from, tmuxWindows.indices.contains(clamped) else { return }
+		let target = tmuxWindows[clamped]
+		let session = mirroredSession ?? tmuxSession ?? ""
+
+		// Moved here first, so the strip does not wait for tmux to answer.
+		var reordered = tmuxWindows
+		reordered.remove(at: from)
+		reordered.insert(window, at: clamped)
+		tmuxWindows = reordered
+		rebuildColumns()
+
+		Task {
+			await TmuxMirror.move(
+				window: window.index,
+				before: target.index,
+				after: clamped > from,
+				inSession: session
+			)
+			self.refreshTmuxWindows()
+		}
 	}
 
 	/// The tmux window a strip position stands for, when the strip is a mirror.

@@ -93,6 +93,26 @@ public enum TmuxMirror {
 		await command(["new-window", "-t", session])
 	}
 
+	/// Moves a window to where another one is, shifting the rest along.
+	///
+	/// tmux does this properly — `move-window -b/-a` inserts before or after a
+	/// target and pushes the others up — so a dragged tab is a real reorder
+	/// rather than a swap of two. Renumbered afterwards so the indices stay the
+	/// positions they look like.
+	public static func move(
+		window index: Int,
+		before target: Int,
+		after isAfter: Bool,
+		inSession session: String
+	) async {
+		await command([
+			"move-window", isAfter ? "-a" : "-b",
+			"-s", "\(session):\(index)",
+			"-t", "\(session):\(target)",
+		])
+		await command(["move-window", "-r", "-t", session])
+	}
+
 	public static func killWindow(_ index: Int, inSession session: String) async {
 		await command(["kill-window", "-t", "\(session):\(index)"])
 	}
