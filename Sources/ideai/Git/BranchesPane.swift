@@ -299,6 +299,81 @@ final class BranchesPane: NSView {
 		)
 	}
 
+	/// Moves a tag to another commit, and offers to move it on the remote too.
+	///
+	/// For the moving tags every GitHub Action expects — `v1` kept at the
+	/// newest `v1.x` — which git can do but only as delete-and-write, twice,
+	/// with a force push nobody remembers the spelling of.
+	@objc private func recreateTag() {
+		guard let tag = selectedBranch, case .tag = tag.kind else { return }
+
+		Task { @MainActor in
+			let suggestion = await GitTags.likelySource(for: tag.name, in: root)
+			let now = await GitTags.describe(tag.name, in: root)
+
+			let alert = NSAlert()
+			alert.messageText = "Recreate “\(tag.name)”"
+			alert.informativeText = [
+				now.map { "It is at \($0)." },
+				"Give anything git can resolve: a tag, a branch, or a commit.",
+			].compactMap { $0 }.joined(separator: "\n")
+			alert.addButton(withTitle: "Recreate")
+			alert.addButton(withTitle: "Cancel")
+
+			let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+			field.stringValue = suggestion
+			field.placeholderString = "HEAD"
+
+			// The point of moving a tag is that something else reads it, and
+			// that something reads it from the remote.
+			let push = NSButton(checkboxWithTitle: "Force-push to origin", target: nil, action: nil)
+			push.state = .on
+			push.frame = NSRect(x: 0, y: 0, width: 280, height: 20)
+
+			let stack = NSStackView(views: [field, push])
+			stack.orientation = .vertical
+			stack.alignment = .leading
+			stack.spacing = 8
+			stack.frame = NSRect(x: 0, y: 0, width: 280, height: 56)
+			alert.accessoryView = stack
+
+			let act: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+				guard response == .alertFirstButtonReturn, let self else { return }
+				let source = field.stringValue.trimmingCharacters(in: .whitespaces)
+				guard !source.isEmpty else { return }
+				let pushes = push.state == .on
+
+				self.run {
+					let moved = await GitTags.recreate(tag.name, at: source, in: self.root)
+					guard moved.exitCode == 0 else { return moved }
+					guard pushes else {
+						Toast.post(
+							"\(tag.name) now points at \(source)",
+							detail: "It has not been pushed.",
+							kind: .information
+						)
+						return moved
+					}
+					let sent = await GitTags.push(tag.name, in: self.root)
+					if sent.exitCode == 0 {
+						Toast.post(
+							"\(tag.name) now points at \(source)",
+							detail: "Pushed to origin.",
+							kind: .information
+						)
+					}
+					return sent
+				}
+			}
+			if let window {
+				alert.beginSheetModal(for: window, completionHandler: act)
+				window.makeFirstResponder(field)
+			} else {
+				act(alert.runModal())
+			}
+		}
+	}
+
 	// MARK: - Stashes
 
 	/// Puts a stash back into the working copy, having asked what should
@@ -653,6 +728,10 @@ extension BranchesPane: NSMenuDelegate {
 
 		if case .local = branch.kind {
 			menu.addItem(item("Delete…", #selector(deleteBranch), enabled: !branch.isCurrent))
+		}
+		if case .tag = branch.kind {
+			menu.addItem(.separator())
+			menu.addItem(item("Recreate…", #selector(recreateTag)))
 		}
 	}
 }

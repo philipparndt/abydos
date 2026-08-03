@@ -180,3 +180,102 @@ private extension Process {
 		return process.terminationStatus
 	}
 }
+
+/// Moving a tag, which is what a GitHub Action's `v1` is for.
+struct GitTagsLiveTests {
+	private func repository() throws -> URL {
+		let root = FileManager.default.temporaryDirectory
+			.appendingPathComponent("tags-\(UUID().uuidString)")
+		try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+		for command in [
+			["init", "-q", "-b", "main", "."],
+			["config", "user.email", "t@example.com"],
+			["config", "user.name", "T"],
+		] {
+			#expect(Process.git(command, in: root) == 0)
+		}
+		return root
+	}
+
+	private func commit(_ text: String, in root: URL) throws {
+		try text.write(to: root.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
+		#expect(Process.git(["add", "."], in: root) == 0)
+		#expect(Process.git(["commit", "-qm", text], in: root) == 0)
+	}
+
+	private func commit(at reference: String, in root: URL) -> String {
+		let process = Process()
+		process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+		process.arguments = ["git", "rev-parse", reference]
+		process.currentDirectoryURL = root
+		let pipe = Pipe()
+		process.standardOutput = pipe
+		process.standardError = FileHandle.nullDevice
+		try? process.run()
+		let data = pipe.fileHandleForReading.readDataToEndOfFile()
+		process.waitUntilExit()
+		return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+	}
+
+	@Test func aTagIsMovedToWhereItIsTold() async throws {
+		let root = try repository()
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		try commit("one", in: root)
+		#expect(Process.git(["tag", "v1"], in: root) == 0)
+		#expect(Process.git(["tag", "v1.0.0"], in: root) == 0)
+		try commit("two", in: root)
+		#expect(Process.git(["tag", "v1.1.0"], in: root) == 0)
+
+		#expect(await GitTags.recreate("v1", at: "v1.1.0", in: root).exitCode == 0)
+		#expect(commit(at: "v1", in: root) == commit(at: "v1.1.0", in: root))
+	}
+
+	/// What the dialog should offer: the newest `v1.x`, by version and not by
+	/// text — otherwise v1.9 beats v1.10, which is how a release goes backwards.
+	@Test func theNewestVersionUnderTheTagIsSuggested() async throws {
+		let root = try repository()
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		try commit("one", in: root)
+		for name in ["v1", "v1.9.0", "v1.10.0", "v2.0.0"] {
+			#expect(Process.git(["tag", name], in: root) == 0)
+		}
+		#expect(await GitTags.likelySource(for: "v1", in: root) == "v1.10.0")
+	}
+
+	/// Nothing to move it to: better to offer HEAD than nothing at all.
+	@Test func withNoVersionsUnderItTheSuggestionIsHead() async throws {
+		let root = try repository()
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		try commit("one", in: root)
+		#expect(Process.git(["tag", "stable"], in: root) == 0)
+		#expect(await GitTags.likelySource(for: "stable", in: root) == "HEAD")
+	}
+
+	/// And the half that actually matters to a workflow: the remote moves too.
+	@Test func theTagIsForcedOntoTheRemote() async throws {
+		let origin = try repository()
+		defer { try? FileManager.default.removeItem(at: origin) }
+		let bare = FileManager.default.temporaryDirectory
+			.appendingPathComponent("origin-\(UUID().uuidString).git")
+		defer { try? FileManager.default.removeItem(at: bare) }
+
+		try FileManager.default.createDirectory(at: bare, withIntermediateDirectories: true)
+		#expect(Process.git(["init", "-q", "--bare", "."], in: bare) == 0)
+
+		try commit("one", in: origin)
+		#expect(Process.git(["remote", "add", "origin", bare.path], in: origin) == 0)
+		#expect(Process.git(["tag", "v1"], in: origin) == 0)
+		#expect(await GitTags.push("v1", in: origin).exitCode == 0)
+
+		// Moved here, and then over the one the remote already has — which is
+		// what git refuses without force.
+		try commit("two", in: origin)
+		#expect(await GitTags.recreate("v1", at: "HEAD", in: origin).exitCode == 0)
+		#expect(await GitTags.push("v1", in: origin).exitCode == 0)
+
+		#expect(commit(at: "v1", in: origin) == commit(at: "v1", in: bare))
+	}
+}
