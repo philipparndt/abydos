@@ -281,13 +281,11 @@ final class EditorAreaController: NSViewController {
 			parentSplit.insertArrangedSubview(split, at: index)
 		}
 
-		// Even halves, which is what a split gesture implies.
-		DispatchQueue.main.async { [weak self, weak split] in
-			guard let split else { return }
-			let total = vertical ? split.bounds.width : split.bounds.height
-			split.setPosition(total / 2, ofDividerAt: 0)
-			self?.updateGroupInsets()
-		}
+		// Even halves, which is what a split gesture implies — placed at layout
+		// rather than now, because now the split has no width to halve.
+		split.wantsEvenSplit = true
+		split.needsLayout = true
+		DispatchQueue.main.async { [weak self] in self?.updateGroupInsets() }
 	}
 
 	/// Removes an empty group and collapses the split that held it.

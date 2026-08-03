@@ -4851,6 +4851,24 @@ class ColoredView: NSView {
 final class ThinDividerSplitView: NSSplitView {
 	override var dividerColor: NSColor { Theme.current.separator }
 	override var dividerThickness: CGFloat { 1 }
+
+	/// Put the divider in the middle as soon as there is a middle to put it in.
+	///
+	/// A split made in response to a gesture has no size yet, and dividing
+	/// nothing in half gives the new pane nothing — which is the split that
+	/// opens so narrow that only a sliver of text shows. Waiting for layout is
+	/// the difference between halving the pane and halving zero.
+	var wantsEvenSplit = false
+
+	override func layout() {
+		super.layout()
+		guard wantsEvenSplit, arrangedSubviews.count == 2 else { return }
+		let total = isVertical ? bounds.width : bounds.height
+		// Still without a size: this runs again when there is one.
+		guard total > 1 else { return }
+		wantsEvenSplit = false
+		setPosition(total / 2, ofDividerAt: 0)
+	}
 }
 
 
