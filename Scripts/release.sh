@@ -6,19 +6,16 @@
 # app is mostly children — a login shell in a pty, git, tmux, kubectl, helm.
 # A notarised Developer ID build is what every comparable editor ships.
 #
-# One-time setup, interactively, because it asks for a password:
+# The credentials are the keychain profile the other apps here already use —
+# `notarytool`, the same one GoProfiler and MQTT Analyzer are notarised with.
+# On a machine that has none, once, interactively:
 #
-#   xcrun notarytool store-credentials ideai-notary \
-#       --apple-id <your Apple ID> --team-id 643R6YSRER --password <app-specific>
-#
-# or, with the App Store Connect key you already have:
-#
-#   xcrun notarytool store-credentials ideai-notary \
-#       --key <AuthKey_XXXX.p8> --key-id <KEY_ID> --issuer <ISSUER_UUID>
+#   xcrun notarytool store-credentials notarytool \
+#       --apple-id <Apple ID> --team-id 643R6YSRER --password <app-specific>
 set -euo pipefail
 
 APP="build/ideai.app"
-PROFILE="${NOTARY_PROFILE:-ideai-notary}"
+PROFILE="${NOTARY_PROFILE:-notarytool}"
 IDENTITY="${SIGN_IDENTITY:-Developer ID Application}"
 
 test -d "$APP" || { echo "no $APP — run make build first"; exit 1; }

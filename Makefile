@@ -82,9 +82,9 @@ release: build ## Sign with Developer ID, notarise and package a DMG
 sign-check: ## Show the signing identity and notary profile the release will use
 	@security find-identity -v -p codesigning | grep "Developer ID Application" \
 		|| echo "no Developer ID Application certificate in the keychain"
-	@xcrun notarytool history --keychain-profile $(or $(NOTARY_PROFILE),ideai-notary) \
-		>/dev/null 2>&1 && echo "  notary profile: $(or $(NOTARY_PROFILE),ideai-notary) ✓" \
-		|| echo "  notary profile $(or $(NOTARY_PROFILE),ideai-notary) is not stored yet — see Scripts/release.sh"
+	@xcrun notarytool history --keychain-profile $(or $(NOTARY_PROFILE),notarytool) \
+		>/dev/null 2>&1 && echo "  notary profile: $(or $(NOTARY_PROFILE),notarytool) ✓" \
+		|| echo "  notary profile $(or $(NOTARY_PROFILE),notarytool) is not stored yet — see Scripts/release.sh"
 
 .PHONY: install
 install: build ## Copy the app into /Applications
