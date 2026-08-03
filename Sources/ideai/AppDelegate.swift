@@ -503,6 +503,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let row = options.branchMenuRow {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+				controller?.branchMenuForTesting(row: row)
+			}
+		}
+
 		if options.pushChanges {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.6) {
 				controller?.pushChangesForTesting()

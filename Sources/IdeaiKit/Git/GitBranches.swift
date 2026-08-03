@@ -18,6 +18,12 @@ public struct GitBranch: Equatable, Sendable, Identifiable {
 	/// How far ahead of and behind its upstream, when it has one.
 	public let ahead: Int
 	public let behind: Int
+	/// The branch it tracks, or nil when it has never been pushed.
+	///
+	/// Not the same as being in step with it: a branch level with its upstream
+	/// and a branch that has no upstream both count nothing, and only one of
+	/// them has somewhere to push to.
+	public let upstream: String?
 
 	public var id: String {
 		switch kind {
@@ -41,7 +47,8 @@ public struct GitBranch: Equatable, Sendable, Identifiable {
 		isCurrent: Bool = false,
 		subject: String = "",
 		ahead: Int = 0,
-		behind: Int = 0
+		behind: Int = 0,
+		upstream: String? = nil
 	) {
 		self.name = name
 		self.kind = kind
@@ -49,6 +56,7 @@ public struct GitBranch: Equatable, Sendable, Identifiable {
 		self.subject = subject
 		self.ahead = ahead
 		self.behind = behind
+		self.upstream = upstream
 	}
 }
 
@@ -64,6 +72,7 @@ public enum GitBranches {
 			"%(HEAD)",
 			"%(contents:subject)",
 			"%(upstream:track)",
+			"%(upstream:short)",
 		].joined(separator: separator)
 
 		async let branches = GitRepository.run(
@@ -99,6 +108,7 @@ public enum GitBranches {
 			let isCurrent = fields[1] == "*"
 			let subject = fields.count > 2 ? fields[2] : ""
 			let track = fields.count > 3 ? fields[3] : ""
+			let upstream = fields.count > 4 && !fields[4].isEmpty ? fields[4] : nil
 
 			guard let (name, kind) = classify(refname: refname) else { continue }
 			let counts = parseTracking(track)
@@ -109,7 +119,8 @@ public enum GitBranches {
 				isCurrent: isCurrent,
 				subject: subject,
 				ahead: counts.ahead,
-				behind: counts.behind
+				behind: counts.behind,
+				upstream: upstream
 			))
 		}
 		return result

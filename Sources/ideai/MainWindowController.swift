@@ -146,6 +146,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	private var panelHeight: CGFloat = 260
 	private var navigatorContainer: NSView!
 	private var changesPane: ChangesPane?
+	private var branchesPane: BranchesPane?
 	private var structurePane: StructurePane?
 	private var scratchesPane: ScratchesPane?
 	private var historyPane: HistoryPane?
@@ -2617,6 +2618,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 	}
 
+	/// Opens the branches view's own menu on a row, so what it offers for a
+	/// branch or a stash can be looked at rather than assumed.
+	func branchMenuForTesting(row: Int) {
+		showSidebarTool(.branches)
+		DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+			self?.branchesPane?.showMenuForTesting(row: row)
+		}
+	}
+
 	func showDebugConsoleForTesting() {
 		bottomPanel.showDebugConsoleForTesting()
 	}
@@ -4066,6 +4076,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				// awaits.
 				self?.readGit()
 			}
+			branchesPane = pane
 			view = pane
 		case .history:
 			guard let project, project.git != nil else { return }

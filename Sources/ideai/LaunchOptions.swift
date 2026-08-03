@@ -109,6 +109,8 @@ struct LaunchOptions {
 	var treeSteps: String?
 	/// How many keystrokes to time in the terminal.
 	var typingPresses: Int?
+	/// Which row of the branches view to open the menu on.
+	var branchMenuRow: Int?
 	/// Hover the editor at line:character with ⌘ held.
 	var commandHoverAt: String?
 	/// Open the attach-to-process picker, filtered by this text.
@@ -231,6 +233,7 @@ struct LaunchOptions {
 			case "--navigate":   options.navigateSteps = next()
 			case "--tree":       options.treeSteps = next()
 			case "--type-latency": options.typingPresses = next().flatMap(Int.init)
+			case "--branch-menu": options.branchMenuRow = next().flatMap(Int.init)
 			case "--cmd-hover":  options.commandHoverAt = next()
 			case "--attach-picker": options.attachFilter = next()
 			case "--pills":      options.highlightPills = true

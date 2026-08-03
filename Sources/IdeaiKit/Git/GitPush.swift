@@ -90,11 +90,18 @@ public enum GitPush {
 	/// terminal this app does not have, and the push would hang forever with
 	/// nothing on screen to say why. Refusing to prompt turns that into an
 	/// error message, which can at least be read.
-	public static func push(in root: URL, setUpstream: Bool) async -> GitRepository.ProcessResult {
+	/// - Parameter branch: which branch to send, or nil for the one checked
+	///   out. Naming one is what makes a branch pushable from a list without
+	///   checking it out first.
+	public static func push(
+		in root: URL,
+		setUpstream: Bool,
+		branch: String? = nil
+	) async -> GitRepository.ProcessResult {
 		var arguments = ["push"]
 		if setUpstream { arguments.append("--set-upstream") }
 		arguments.append("origin")
-		arguments.append("HEAD")
+		arguments.append(branch ?? "HEAD")
 
 		return await GitRepository.run(
 			arguments,

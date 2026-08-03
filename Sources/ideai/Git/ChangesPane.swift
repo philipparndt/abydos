@@ -383,6 +383,85 @@ final class ChangesPane: NSView {
 		ignoreField?.stringValue = ignoreSuggestions[sender.indexOfSelectedItem].pattern
 	}
 
+	// MARK: - Stashing
+
+	/// Which paths a stash from the menu would take.
+	///
+	/// The selection when the click landed inside it, and the clicked row
+	/// otherwise — the rule every list follows, and the one that makes
+	/// stashing a handful of files a single gesture.
+	private func stashablePaths() -> [String] {
+		guard let clicked = clickedChange else {
+			return (status.staged + status.unstaged).map(\.path)
+		}
+		let table = clicked.isStaged ? stagedTable : unstagedTable
+		let selected = selectedChanges(in: table ?? NSTableView()).map(\.path)
+		return selected.contains(clicked.change.path) ? selected : [clicked.change.path]
+	}
+
+	@objc private func stashSelected() {
+		let paths = stashablePaths()
+		guard !paths.isEmpty else { return }
+		promptForStashMessage(
+			title: paths.count == 1
+				? "Stash “\((paths[0] as NSString).lastPathComponent)”"
+				: "Stash \(paths.count) files",
+			message: "The changes come out of the working copy and wait in the list, "
+				+ "under whatever this says.",
+			suggestion: paths.count == 1 ? (paths[0] as NSString).lastPathComponent : ""
+		) { [weak self] message in
+			guard let self else { return }
+			self.run { await GitStash.push(in: self.root, message: message, paths: paths) }
+		}
+	}
+
+	@objc private func stashEverything() {
+		let count = status.staged.count + status.unstaged.count
+		guard count > 0 else { return }
+		promptForStashMessage(
+			title: "Stash all changes",
+			message: "\(count) file\(count == 1 ? "" : "s") come out of the working copy and "
+				+ "wait in the list, under whatever this says.",
+			suggestion: ""
+		) { [weak self] message in
+			guard let self else { return }
+			self.run { await GitStash.push(in: self.root, message: message) }
+		}
+	}
+
+	/// Asks what the entry should be called.
+	///
+	/// A stash nobody named says `WIP on main` and nothing else, which is no
+	/// help at all once there are three of them.
+	private func promptForStashMessage(
+		title: String,
+		message: String,
+		suggestion: String,
+		then act: @escaping (String) -> Void
+	) {
+		let alert = NSAlert()
+		alert.messageText = title
+		alert.informativeText = message
+		alert.addButton(withTitle: "Stash")
+		alert.addButton(withTitle: "Cancel")
+
+		let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+		field.placeholderString = "What this is"
+		field.stringValue = suggestion
+		alert.accessoryView = field
+
+		let handle: (NSApplication.ModalResponse) -> Void = { response in
+			guard response == .alertFirstButtonReturn else { return }
+			act(field.stringValue.trimmingCharacters(in: .whitespaces))
+		}
+		if let window {
+			alert.beginSheetModal(for: window, completionHandler: handle)
+			window.makeFirstResponder(field)
+		} else {
+			handle(alert.runModal())
+		}
+	}
+
 	private func selectedChanges(in table: NSTableView) -> [GitChange] {
 		let source = table === stagedTable ? status.staged : status.unstaged
 		return table.selectedRowIndexes.compactMap { source.indices.contains($0) ? source[$0] : nil }
@@ -493,12 +572,20 @@ final class ChangesPane: NSView {
 extension ChangesPane: NSMenuDelegate {
 	func menuNeedsUpdate(_ menu: NSMenu) {
 		menu.removeAllItems()
-		guard let clicked = clickedChange else { return }
 
 		func item(_ title: String, _ selector: Selector) -> NSMenuItem {
 			let entry = NSMenuItem(title: title, action: selector, keyEquivalent: "")
 			entry.target = self
 			return entry
+		}
+
+		guard let clicked = clickedChange else {
+			// Nothing under the pointer, so the only thing on offer is what
+			// applies to the lot.
+			if !status.staged.isEmpty || !status.unstaged.isEmpty {
+				menu.addItem(item("Stash All Changes…", #selector(stashEverything)))
+			}
+			return
 		}
 
 		menu.addItem(item(clicked.isStaged ? "Unstage" : "Stage", clicked.isStaged
@@ -509,6 +596,15 @@ extension ChangesPane: NSMenuDelegate {
 		if clicked.change.kind == .untracked {
 			menu.addItem(item("Add to .gitignore\u{2026}", #selector(ignoreClicked)))
 		}
+		menu.addItem(.separator())
+		// What is chosen, or what was clicked when nothing is.
+		let chosen = stashablePaths()
+		menu.addItem(item(
+			chosen.count > 1 ? "Stash \(chosen.count) Files…" : "Stash This File…",
+			#selector(stashSelected)
+		))
+		menu.addItem(item("Stash All Changes…", #selector(stashEverything)))
+		menu.addItem(.separator())
 		menu.addItem(item("Reveal in Finder", #selector(revealClicked)))
 		menu.addItem(item("Copy Path", #selector(copyClickedPath)))
 	}
