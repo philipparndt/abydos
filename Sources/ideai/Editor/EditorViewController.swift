@@ -708,6 +708,18 @@ final class EditorViewController: NSViewController {
 
 		let tab = Tab(url: fileURL, document: document, codeView: codeView, contentView: scrollView, isPreview: preview)
 
+		// Clicking a name in the blame column says what that commit was.
+		codeView.onShowBlameDetail = { entry in
+			let when = DateFormatter.localizedString(
+				from: entry.date, dateStyle: .medium, timeStyle: .short
+			)
+			Toast.post(
+				entry.summary.isEmpty ? entry.shortCommit : entry.summary,
+				detail: "\(entry.shortCommit) · \(entry.author) · \(when)",
+				kind: .information
+			)
+		}
+
 		codeView.onCaretMoved = { [weak self] line, column in
 			guard let self, self.activeTab === tab else { return }
 			self.setStatus(line: line, column: column)
@@ -1603,6 +1615,37 @@ final class EditorViewController: NSViewController {
 		guard let tab = activeTab else { return }
 		view.window?.makeFirstResponder(tab.codeView ?? tab.contentView)
 	}
+
+	/// Shows or hides who last touched each line, for the file in front.
+	///
+	/// Per editor rather than for all of them: blame is something you turn on
+	/// to answer a question about one file, and a column of names beside every
+	/// other file afterwards is not what anybody asked for.
+	func toggleBlame() {
+		guard let tab = activeTab, let codeView = tab.codeView else { return }
+		let url = tab.url
+		let showing = !codeView.isBlameVisible
+		codeView.setBlameVisible(showing)
+		guard showing else { return }
+
+		guard let root = project?.root else { return }
+		Task { @MainActor in
+			let lines = await GitBlame.lines(for: url, in: root)
+			// The tab may have been closed, or blame turned off again, while
+			// git was reading a file with ten thousand lines in it.
+			guard codeView.isBlameVisible else { return }
+			codeView.setBlame(lines)
+			if lines.isEmpty {
+				Toast.post(
+					"Nothing to blame",
+					detail: "\(url.lastPathComponent) is not in this repository, or has never been committed.",
+					kind: .information
+				)
+			}
+		}
+	}
+
+	var isBlameVisible: Bool { activeTab?.codeView?.isBlameVisible ?? false }
 
 	/// Flips soft wrap for every open editor and remembers the choice.
 	func toggleWordWrap() {

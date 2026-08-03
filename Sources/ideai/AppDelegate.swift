@@ -509,6 +509,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if options.showsBlame {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+				controller?.toggleBlame(nil)
+			}
+		}
+
 		if options.reportsTerminalGeometry {
 			for seconds in [3.0, 5.0, 7.0, 9.0] {
 				DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
@@ -1164,6 +1170,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 		viewMenu.addItem(withTitle: "Zoom Out", action: #selector(MainWindowController.zoomOut(_:)), keyEquivalent: "-")
 		viewMenu.addItem(withTitle: "Actual Size", action: #selector(MainWindowController.resetZoom(_:)), keyEquivalent: "0")
 		viewMenu.addItem(.separator())
+		let blameItem = NSMenuItem(
+			title: "Toggle Blame",
+			action: #selector(MainWindowController.toggleBlame(_:)),
+			keyEquivalent: "b"
+		)
+		blameItem.keyEquivalentModifierMask = [.command, .option]
+		viewMenu.addItem(blameItem)
+
 		let wrapItem = NSMenuItem(
 			title: "Toggle Word Wrap",
 			action: #selector(MainWindowController.toggleWordWrap(_:)),

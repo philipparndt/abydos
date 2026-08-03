@@ -4430,6 +4430,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		editor.setPreviewMode(mode)
 	}
 
+	@objc func toggleBlame(_ sender: Any?) {
+		editor.toggleBlame()
+	}
+
 	@objc func toggleWordWrap(_ sender: Any?) {
 		editor.toggleWordWrap()
 	}

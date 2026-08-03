@@ -116,6 +116,8 @@ struct LaunchOptions {
 	var reportsTerminalDirectory = false
 	/// Print the terminal's geometry, for the clipped-bottom-row bug.
 	var reportsTerminalGeometry = false
+	/// Turn blame on for the file that was opened.
+	var showsBlame = false
 	/// Hover the editor at line:character with ⌘ held.
 	var commandHoverAt: String?
 	/// Open the attach-to-process picker, filtered by this text.
@@ -241,6 +243,7 @@ struct LaunchOptions {
 			case "--branch-menu": options.branchMenuRow = next().flatMap(Int.init)
 			case "--report-cwd": options.reportsTerminalDirectory = true
 			case "--report-geometry": options.reportsTerminalGeometry = true
+			case "--blame": options.showsBlame = true
 			case "--cmd-hover":  options.commandHoverAt = next()
 			case "--attach-picker": options.attachFilter = next()
 			case "--pills":      options.highlightPills = true

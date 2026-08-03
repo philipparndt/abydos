@@ -99,6 +99,20 @@ final class CodeView: NSView, NSTextInputClient {
 	private var charWidth: CGFloat = 7
 	private(set) var gutterWidth: CGFloat = 60
 
+	/// Who last touched each line, when blame is being shown.
+	///
+	/// One entry per line of the file as it was read; a file edited since is
+	/// blamed again on the next save, and until then the entries still line up
+	/// with what is on screen for everything above the edit.
+	private var blame: [GitBlame.Line] = []
+	private(set) var isBlameVisible = false
+	/// The width of the blame column, in characters.
+	private static let blameColumns = 18
+
+	private var blameWidth: CGFloat {
+		isBlameVisible ? ceil(CGFloat(Self.blameColumns) * charWidth) + Self.gutterPadding : 0
+	}
+
 	private static let gutterPadding: CGFloat = 10
 	/// Clickable strip on the far left of the gutter for breakpoints.
 	private static var breakpointColumnWidth: CGFloat { Theme.current.scaled(18) }
@@ -362,7 +376,8 @@ final class CodeView: NSView, NSTextInputClient {
 		guard let document else { return }
 		let digits = max(2, String(document.lineCount).count)
 		// The extra column on the left is the breakpoint gutter.
-		gutterWidth = ceil(CGFloat(digits) * charWidth) + Self.gutterPadding * 2 + 14 + Self.breakpointColumnWidth
+		gutterWidth = ceil(CGFloat(digits) * charWidth) + Self.gutterPadding * 2 + 14
+			+ Self.breakpointColumnWidth + blameWidth
 
 		if isWordWrapEnabled { rebuildWrapLayout() }
 
@@ -923,6 +938,88 @@ final class CodeView: NSView, NSTextInputClient {
 		attributed.draw(at: NSPoint(x: box.minX + 5, y: box.midY - size.height / 2))
 	}
 
+	// MARK: - Blame
+
+	/// Shows or hides the blame column. The caller does the asking of git.
+	func setBlameVisible(_ visible: Bool) {
+		guard visible != isBlameVisible else { return }
+		isBlameVisible = visible
+		if !visible { blame = [] }
+		updateFrameSize()
+		needsDisplay = true
+	}
+
+	func setBlame(_ lines: [GitBlame.Line]) {
+		blame = lines
+		needsDisplay = true
+	}
+
+	/// What the blame column says for a line, or nil when it should stay blank.
+	///
+	/// Blank for every line of a commit after its first: a run of forty lines
+	/// from one commit says the same thing forty times otherwise, and the eye
+	/// has to work out that they are one change rather than seeing it.
+	private func blameLabel(forLine line: Int) -> String? {
+		guard blame.indices.contains(line) else { return nil }
+		if line > 0, blame.indices.contains(line - 1), blame[line - 1].commit == blame[line].commit {
+			return nil
+		}
+		return blame[line].label(width: Self.blameColumns)
+	}
+
+	private func drawBlame(rows: Range<Int>, scrollX: CGFloat) {
+		guard isBlameVisible, !blame.isEmpty else { return }
+
+		let width = blameWidth
+		for visual in rows {
+			let docLine = documentLine(forVisualRow: visual)
+			guard docLine < blame.count else { break }
+			guard wrapSegment(forVisualRow: visual) == 0 else { continue }
+			let y = yPosition(forVisualLine: visual)
+
+			// A line still being written stands out, since it is the one thing
+			// in the column that is nobody's yet.
+			let entry = blame[docLine]
+			guard let label = blameLabel(forLine: docLine) else { continue }
+
+			let text = NSAttributedString(string: label, attributes: [
+				.font: font,
+				.foregroundColor: entry.isUncommitted
+					? Theme.current.gitModified
+					: Theme.current.gutterText,
+			])
+			text.draw(in: NSRect(
+				x: scrollX + Self.gutterPadding / 2,
+				y: y + (lineHeight - text.size().height) / 2,
+				width: width - Self.gutterPadding,
+				height: text.size().height
+			))
+		}
+
+		// A hairline between the column and the gutter, so the two do not read
+		// as one wide margin of numbers and names.
+		Theme.current.gutterText.withAlphaComponent(0.25).setFill()
+		NSRect(
+			x: scrollX + width - 1,
+			y: CGFloat(rows.lowerBound) * lineHeight,
+			width: 1,
+			height: CGFloat(rows.count) * lineHeight
+		).fill()
+	}
+
+	/// The commit on a line, for the menu and the tooltip.
+	func blameEntry(forLine line: Int) -> GitBlame.Line? {
+		blame.indices.contains(line) ? blame[line] : nil
+	}
+
+	/// Asked to say more about the commit on a line.
+	var onShowBlameDetail: ((GitBlame.Line) -> Void)?
+
+	private func showBlameDetail(forLine line: Int) {
+		guard let entry = blameEntry(forLine: line), !entry.isUncommitted else { return }
+		onShowBlameDetail?(entry)
+	}
+
 	// MARK: - Gutter
 
 	private func drawGutter(rows: Range<Int>, caretLine: Int, scrollX: CGFloat, context: CGContext) {
@@ -934,6 +1031,8 @@ final class CodeView: NSView, NSTextInputClient {
 		       y: CGFloat(rows.lowerBound) * lineHeight,
 		       width: gutterWidth,
 		       height: CGFloat(rows.count) * lineHeight).fill()
+
+		drawBlame(rows: rows, scrollX: scrollX)
 
 		for visual in rows {
 			let docLine = documentLine(forVisualRow: visual)
@@ -947,9 +1046,9 @@ final class CodeView: NSView, NSTextInputClient {
 			// a `func main` is far more often something you want to run than
 			// something you want to stop inside, and both cannot fit in 18pt.
 			if runnableLines.contains(docLine + 1), breakpointLines[docLine] == nil {
-				drawRunMarker(y: y, scrollX: scrollX)
+				drawRunMarker(y: y, scrollX: scrollX + blameWidth)
 			} else {
-				drawBreakpoint(docLine: docLine, y: y, scrollX: scrollX)
+				drawBreakpoint(docLine: docLine, y: y, scrollX: scrollX + blameWidth)
 			}
 
 			let number = NSAttributedString(string: "\(docLine + 1)", attributes: [
@@ -1478,10 +1577,18 @@ final class CodeView: NSView, NSTextInputClient {
 		let visual = max(0, min(visibleLineCount - 1, Int(floor(point.y / lineHeight))))
 		let docLine = min(document.lineCount - 1, documentLine(forVisualRow: visual))
 
+		let scrollX = enclosingScrollView?.contentView.bounds.origin.x ?? 0
+
+		// The blame column, when it is showing, is in front of everything else
+		// the gutter does — and it is for reading, not for clicking.
+		if isBlameVisible, point.x < scrollX + blameWidth {
+			showBlameDetail(forLine: docLine)
+			return
+		}
+
 		// The leftmost strip is the breakpoint column, or the run button when
 		// the line has one.
-		let scrollX = enclosingScrollView?.contentView.bounds.origin.x ?? 0
-		if point.x < scrollX + Self.breakpointColumnWidth {
+		if point.x < scrollX + blameWidth + Self.breakpointColumnWidth {
 			if runnableLines.contains(docLine + 1), breakpointLines[docLine] == nil {
 				onRunLine?(docLine + 1)
 			} else {
