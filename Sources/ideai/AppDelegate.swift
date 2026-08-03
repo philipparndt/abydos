@@ -19,7 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
-		NSApp.appearance = NSAppearance(named: .darkAqua)
+		// The palette decides this now — `Theme.apply()` above set it.
 		// Before any view measures text.
 		FontRegistry.registerBundledFonts()
 		buildMenu()
@@ -532,6 +532,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 		if let hovers = options.tmuxMenuHovers {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
 				controller?.tmuxMenuForTesting(hovers: hovers)
+			}
+		}
+
+		if let appearance = options.switchAppearance {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+				Settings.shared.appearance = appearance
 			}
 		}
 

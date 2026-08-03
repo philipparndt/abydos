@@ -122,6 +122,8 @@ struct LaunchOptions {
 	var showsBlame = false
 	/// Resize the window part-way through, for layout that only settles once.
 	var resizeWidth: Double?
+	/// Switch the appearance part-way through, to see it change live.
+	var switchAppearance: String?
 	/// Open tmux's own menu and move the pointer through it.
 	var tmuxMenuHovers: Int?
 	/// Hover the editor at line:character with ⌘ held.
@@ -252,6 +254,7 @@ struct LaunchOptions {
 			case "--report-geometry": options.reportsTerminalGeometry = true
 			case "--blame": options.showsBlame = true
 			case "--resize": options.resizeWidth = next().flatMap(Double.init)
+			case "--switch-appearance": options.switchAppearance = next()
 			case "--tmux-menu": options.tmuxMenuHovers = next().flatMap(Int.init) ?? 0
 			case "--cmd-hover":  options.commandHoverAt = next()
 			case "--attach-picker": options.attachFilter = next()

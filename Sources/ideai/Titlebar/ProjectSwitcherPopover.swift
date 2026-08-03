@@ -28,7 +28,7 @@ enum ProjectSwitcherPopover {
 		let popover = NSPopover()
 		popover.contentViewController = controller
 		popover.behavior = .transient
-		popover.appearance = NSAppearance(named: .darkAqua)
+		popover.appearance = NSAppearance(named: Theme.current.isLight ? .aqua : .darkAqua)
 
 		controller.onDismiss = { [weak popover] in popover?.close() }
 		pill.isMenuOpen = true
@@ -158,7 +158,8 @@ private final class SwitcherViewController: NSViewController {
 		field.focusRingType = .none
 		filterField = field
 
-		let container = ColoredView(color: .hex(0x2B2D30))
+		let container = ColoredView(color: Theme.current.sidebarBackground)
+		container.colourSource = { Theme.current.sidebarBackground }
 		container.addSubview(field)
 		container.addSubview(scrollView)
 		field.translatesAutoresizingMaskIntoConstraints = false

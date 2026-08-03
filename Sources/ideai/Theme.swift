@@ -21,15 +21,21 @@ struct Theme {
 		default: wanted = systemIsDark ? .dusk : .daylight
 		}
 
-		guard wanted.isLight != current.isLight else { return false }
-		current = wanted
-
 		// Native controls — fields, alerts, scrollers, the titlebar — take
 		// their look from the app's appearance rather than from this palette,
-		// and a light window with dark scrollbars in it looks broken.
+		// and a light window with dark scrollbars in it looks broken. Set every
+		// time, since the first call is what establishes it at all.
 		NSApp.appearance = NSAppearance(named: wanted.isLight ? .aqua : .darkAqua)
+
+		guard wanted.isLight != current.isLight else { return false }
+		previous = current
+		current = wanted
 		return true
 	}
+
+	/// The palette that was in use before the last change, so what was drawn in
+	/// it can be recognised and swapped.
+	static var previous = Theme.dusk
 
 	/// What the system is set to right now.
 	static var systemIsDark: Bool {

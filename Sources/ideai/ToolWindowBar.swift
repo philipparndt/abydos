@@ -88,6 +88,18 @@ final class ToolWindowBar: NSView {
 		historyButton.isSelected = visible && tool == .history
 	}
 
+	/// The button a tool lives on, for hanging a popover off.
+	func button(for tool: SidebarToolKind) -> NSView? {
+		switch tool {
+		case .project: return projectButton
+		case .changes: return commitButton
+		case .branches: return branchesButton
+		case .structure: return structureButton
+		case .scratches: return scratchesButton
+		case .history: return historyButton
+		}
+	}
+
 	private func showReviewMenu() {
 		let menu = NSMenu()
 

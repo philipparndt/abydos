@@ -27,6 +27,27 @@ enum TerminalScheme: String, CaseIterable {
 	/// ANSI 0–15.
 	var named: [NSColor] {
 		switch self {
+		case .blue where Theme.current.isLight:
+			// The same palette in daylight: the hues kept, the values pushed
+			// down so they can be read on paper-white rather than on navy.
+			return [
+				.hex(0x3B3E45), // 0 black
+				.hex(0xB03A2E), // 1 red
+				.hex(0x4E7A1E), // 2 green
+				.hex(0x8A6100), // 3 yellow
+				.hex(0x2C5F8A), // 4 blue
+				.hex(0xA4318B), // 5 magenta
+				.hex(0x2A7D74), // 6 cyan
+				.hex(0x60656E), // 7 white
+				.hex(0x767B85), // 8 bright black
+				.hex(0xC0392B), // 9 bright red
+				.hex(0x5E8C22), // 10 bright green
+				.hex(0xA97400), // 11 bright yellow
+				.hex(0x2E6DA4), // 12 bright blue
+				.hex(0x8E44AD), // 13 bright magenta
+				.hex(0x2E8B84), // 14 bright cyan
+				.hex(0x2B2D30), // 15 bright white
+			]
 		case .blue:
 			return [
 				.hex(0x1D1F21), // 0 black
@@ -93,7 +114,9 @@ enum TerminalScheme: String, CaseIterable {
 	/// What a cell with no colour of its own sits on.
 	var background: NSColor {
 		switch self {
-		case .blue: return .hex(0x282935)
+		// Not white: a terminal that is exactly the colour of the editor beside
+		// it stops reading as a terminal. A hint of the same blue does it.
+		case .blue: return Theme.current.isLight ? .hex(0xF4F6FB) : .hex(0x282935)
 		case .dark: return Theme.current.editorBackground
 		}
 	}
@@ -101,7 +124,7 @@ enum TerminalScheme: String, CaseIterable {
 	/// What a cell with no colour of its own is written in.
 	var foreground: NSColor {
 		switch self {
-		case .blue: return .hex(0xFFFFFF)
+		case .blue: return Theme.current.isLight ? .hex(0x24262B) : .hex(0xFFFFFF)
 		case .dark: return Theme.current.editorText
 		}
 	}
@@ -109,7 +132,7 @@ enum TerminalScheme: String, CaseIterable {
 	/// The block cursor.
 	var cursor: NSColor {
 		switch self {
-		case .blue: return .hex(0xC5C8C6)
+		case .blue: return Theme.current.isLight ? .hex(0x3B3E45) : .hex(0xC5C8C6)
 		case .dark: return Theme.current.caret
 		}
 	}

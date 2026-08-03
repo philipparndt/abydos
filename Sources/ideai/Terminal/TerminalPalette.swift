@@ -36,6 +36,14 @@ enum TerminalPalette {
 	@MainActor static var foreground: NSColor { TerminalScheme.current.foreground }
 	@MainActor static var cursor: NSColor { TerminalScheme.current.cursor }
 
+	/// Throws the table away, so the next draw builds it again.
+	///
+	/// The scheme has not changed, but what it resolves to has: the one that
+	/// follows the editor is a different set of colours in daylight.
+	@MainActor static func invalidate() {
+		builtFor = nil
+	}
+
 	@MainActor private static func rebuildIfNeeded() {
 		let scheme = TerminalScheme.current
 		guard builtFor != scheme else { return }

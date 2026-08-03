@@ -888,11 +888,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// Applies changed preferences: editor metrics, and tree filters that change
 	/// which files exist at all.
 	private func applySettings() {
-		// A palette change reaches everything that draws, which is everything:
-		// the panes read Theme.current when they draw, and the ones that hold a
-		// layer colour are told to take it again.
-		Theme.apply()
-		applyPalette()
+		// A palette change reaches everything that draws. Most of it reads the
+		// theme as it draws and needs only a repaint; the colours that were
+		// copied into a layer or a control when it was built are recognised and
+		// swapped for their counterparts.
+		if Theme.apply() { applyPalette() }
 
 		editor.applySettings()
 		navigator.applySettings()
@@ -909,21 +909,24 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		updateTopInsets()
 	}
 
-	/// Re-reads the palette everywhere it was baked into a layer.
+	/// Re-reads the palette everywhere it was copied when a view was built.
 	private func applyPalette() {
 		window?.backgroundColor = Theme.current.windowBackground
 		window?.appearance = NSAppearance(named: Theme.current.isLight ? .aqua : .darkAqua)
-		splitView.needsDisplay = true
-		repaint(view: window?.contentView)
-	}
 
-	/// Marks a view and everything under it for redraw, refreshing the layer
-	/// colours that were set once at build time.
-	private func repaint(view: NSView?) {
-		guard let view else { return }
-		if let coloured = view as? ColoredView { coloured.refreshColour() }
-		view.needsDisplay = true
-		for child in view.subviews { repaint(view: child) }
+		if let content = window?.contentView {
+			ThemeSwap.apply(from: Theme.previous, to: Theme.current, in: content)
+		}
+		splitView.needsDisplay = true
+
+		// The terminal keeps its palette as a table of components, and the
+		// theme-following scheme is a different table in daylight.
+		TerminalPalette.invalidate()
+		bottomPanel.applySettings()
+
+		// Rebuilt rather than swapped: a sidebar pane is cheap to make and
+		// draws a dozen shades that are chosen as it builds.
+		install(tool: currentSidebarTool, force: true)
 	}
 
 	/// Gives the project tree keyboard focus.
@@ -1253,6 +1256,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// panel's own tabs stay, since they are how you get between terminals.
 	@objc func togglePanelMaximized(_ sender: Any? = nil) {
 		if isPanelMaximized {
+			toolPopover?.performClose(nil)
 			isPanelMaximized = false
 			bottomPanel.isMaximized = false
 			splitView.isHidden = false
@@ -1268,6 +1272,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		setPanelVisible(true)
 		isPanelMaximized = true
 		bottomPanel.isMaximized = true
+		// Nothing in the sidebar is showing any more, and the strip should not
+		// claim otherwise; what it offers now opens over the terminal.
+		toolStrip.setSidebarSelection(visible: false, tool: currentSidebarTool)
 		heightBeforeMaximize = max(160, bottomPanel.frame.height)
 		// Hidden rather than resized to nothing: a split view will not put a
 		// pane fully away, and a sliver of editor left showing is not what
@@ -4087,6 +4094,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// showing closes the sidebar, which is what IDEA does and the only way to
 	/// reclaim the space.
 	func showSidebarTool(_ tool: SidebarToolKind) {
+		// The terminal has the window: there is no sidebar to put anything in,
+		// so the tool comes out over the top of it instead. Shrinking the
+		// terminal to show a file tree is not what "give me the window" meant.
+		if isPanelMaximized {
+			showToolPopover(tool)
+			return
+		}
+
 		// Hidden, or dragged shut until there is nothing left of it — which is
 		// the same thing to look at and was not the same thing to the code:
 		// pressing ⌘2 on a sidebar somebody had dragged closed did nothing at
@@ -4104,6 +4119,78 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		if isCollapsed { openNavigator() }
 		updateSidebarSelection()
 	}
+
+	/// Shows a sidebar tool over the terminal, hanging off its own button.
+	///
+	/// The same views the sidebar would hold — built the same way, and put back
+	/// where they belong when the popover closes.
+	private func showToolPopover(_ tool: SidebarToolKind) {
+		// Asking for the one already showing puts it away, which is what the
+		// button does everywhere else.
+		if toolPopover?.isShown == true, popoverTool == tool {
+			toolPopover?.performClose(nil)
+			return
+		}
+		toolPopover?.performClose(nil)
+
+		guard let anchor = toolStrip.button(for: tool) else { return }
+		guard let view = makeToolView(tool) else {
+			installWhenRepositoryIsReady(tool)
+			return
+		}
+
+		let holder = NSViewController()
+		let background = ColoredView(color: Theme.current.sidebarBackground)
+		background.colourSource = { Theme.current.sidebarBackground }
+		holder.view = background
+		view.translatesAutoresizingMaskIntoConstraints = false
+		holder.view.addSubview(view)
+		NSLayoutConstraint.activate([
+			view.topAnchor.constraint(equalTo: holder.view.topAnchor),
+			view.bottomAnchor.constraint(equalTo: holder.view.bottomAnchor),
+			view.leadingAnchor.constraint(equalTo: holder.view.leadingAnchor),
+			view.trailingAnchor.constraint(equalTo: holder.view.trailingAnchor),
+		])
+		holder.view.frame = NSRect(
+			x: 0, y: 0,
+			width: Theme.current.scaled(340),
+			height: min(Theme.current.scaled(560), (window?.frame.height ?? 700) - 120)
+		)
+
+		let popover = NSPopover()
+		popover.contentViewController = holder
+		popover.behavior = .transient
+		popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .maxX)
+
+		toolPopover = popover
+		popoverTool = tool
+		currentSidebarTool = tool
+		toolStrip.setSidebarSelection(visible: true, tool: tool)
+
+		// The views are the sidebar's own — the tree especially — so when the
+		// popover goes away they are put back into it, ready for whenever the
+		// terminal gives the window back.
+		popoverObserver = NotificationCenter.default.addObserver(
+			forName: NSPopover.didCloseNotification,
+			object: popover,
+			queue: .main
+		) { [weak self] _ in
+			guard let self else { return }
+			self.toolPopover = nil
+			self.popoverTool = nil
+			self.toolStrip.setSidebarSelection(visible: false, tool: self.currentSidebarTool)
+			self.install(tool: self.currentSidebarTool, force: true)
+			if let observer = self.popoverObserver {
+				NotificationCenter.default.removeObserver(observer)
+				self.popoverObserver = nil
+			}
+		}
+	}
+
+	/// The tool showing over the terminal, if one is.
+	private var toolPopover: NSPopover?
+	private var popoverTool: SidebarToolKind?
+	private var popoverObserver: NSObjectProtocol?
 
 	private func updateSidebarSelection() {
 		let visible = !navigatorContainer.isHidden
