@@ -7,6 +7,19 @@ import Foundation
 /// tmux has. Switching tabs switches tmux's window, and switching it inside
 /// tmux moves the tab — the same thing seen from either end.
 public enum TmuxMirror {
+	/// What the Claude session in a window is doing, if one is there.
+	///
+	/// Not ours to work out: cmanager's hooks put it on the window as the
+	/// `@ai_status` user option, and tmux hands user options to a format like
+	/// any other field. So a tab can say whether the session in it is working,
+	/// waiting for an answer, or finished, for the price of a wider format
+	/// string on a query the strip already makes.
+	public enum AIStatus: String, Sendable, CaseIterable {
+		case working
+		case needsInput = "needs"
+		case done
+	}
+
 	/// One window of a session.
 	public struct Window: Equatable, Sendable, Identifiable {
 		public let index: Int
@@ -15,14 +28,24 @@ public enum TmuxMirror {
 		/// What is running in its active pane, for a tab that has no name of
 		/// its own worth showing.
 		public let command: String
+		/// What the Claude session in the window is doing, when cmanager is
+		/// installed and one is running there.
+		public let aiStatus: AIStatus?
 
 		public var id: Int { index }
 
-		public init(index: Int, name: String, isActive: Bool, command: String = "") {
+		public init(
+			index: Int,
+			name: String,
+			isActive: Bool,
+			command: String = "",
+			aiStatus: AIStatus? = nil
+		) {
 			self.index = index
 			self.name = name
 			self.isActive = isActive
 			self.command = command
+			self.aiStatus = aiStatus
 		}
 	}
 
@@ -116,7 +139,8 @@ public enum TmuxMirror {
 		// Semicolons, not tabs: tmux replaces a tab in a format with an
 		// underscore, and a name with a semicolon in it is rarer than one with
 		// a space. The name comes last so what is left of the line is all of it.
-		let format = "#{window_index};#{?window_active,1,0};#{pane_current_command};#{window_name}"
+		let format = "#{window_index};#{?window_active,1,0};#{pane_current_command}"
+			+ ";#{@ai_status};#{window_name}"
 		let result = await run(tmux, ["list-windows", "-t", session, "-F", format])
 		guard let result, result.exitCode == 0 else { return [] }
 		return parse(result.output)
@@ -130,13 +154,20 @@ public enum TmuxMirror {
 	static func parse(_ output: String) -> [Window] {
 		var windows: [Window] = []
 		for line in output.split(separator: "\n", omittingEmptySubsequences: true) {
-			let fields = line.split(separator: ";", maxSplits: 3, omittingEmptySubsequences: false)
-			guard fields.count == 4, let index = Int(fields[0]) else { continue }
+			// Exactly the five the format asks for, and no shorter form
+			// accepted: a window called "one; two" would otherwise be
+			// indistinguishable from a four-field line, and the name — which
+			// can hold anything — has to stay whole. tmux prints an empty
+			// field for an option that is not set, so a window with no Claude
+			// session in it still arrives as five.
+			let fields = line.split(separator: ";", maxSplits: 4, omittingEmptySubsequences: false)
+			guard fields.count == 5, let index = Int(fields[0]) else { continue }
 			windows.append(Window(
 				index: index,
-				name: String(fields[3]),
+				name: String(fields[4]),
 				isActive: fields[1] == "1",
-				command: String(fields[2])
+				command: String(fields[2]),
+				aiStatus: AIStatus(rawValue: String(fields[3]))
 			))
 		}
 		return windows

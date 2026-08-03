@@ -1491,7 +1491,8 @@ final class BottomPanel: NSView {
 						isTerminal: true,
 						symbol: "terminal",
 						isShowing: window.isActive && showing === mirroredTerminal,
-						isClosable: false
+						isClosable: false,
+						aiStatus: window.aiStatus
 					)
 				}
 				items += others.map { session in
@@ -1968,6 +1969,8 @@ struct PanelTabItem {
 	/// session with it; everything the panel owns itself closes with a click,
 	/// as it always did.
 	var isClosable = true
+	/// What the Claude session in this tmux window is doing, from cmanager.
+	var aiStatus: TmuxMirror.AIStatus?
 }
 
 /// The panel's content area, which a dragged terminal tab can be dropped on.
@@ -2157,6 +2160,8 @@ final class PanelTabStrip: NSView {
 
 	private var font: NSFont { Theme.current.uiFont(11.5) }
 	private var closeSize: CGFloat { Theme.current.scaled(12) }
+	/// The Claude badge, the size of the ✕ it sits where.
+	private var statusSize: CGFloat { Theme.current.scaled(12) }
 	private var padding: CGFloat { Theme.current.scaled(10) }
 
 	override func setFrameSize(_ newSize: NSSize) {
@@ -2171,10 +2176,11 @@ final class PanelTabStrip: NSView {
 			// The editor's own measurement: room for the icon, the name, and
 			// the cross, and never so narrow that a name is all ellipsis.
 			let text = (item.title as NSString).size(withAttributes: [.font: font]).width
+			let badge = item.aiStatus == nil ? 0 : statusSize + Theme.current.scaled(5)
 			let width = max(
 				Theme.current.scaled(96),
 				padding * 2 + Theme.current.scaled(14) + Theme.current.scaled(6)
-					+ ceil(text) + Theme.current.scaled(8) + closeSize
+					+ ceil(text) + Theme.current.scaled(8) + closeSize + badge
 			)
 			frames.append(NSRect(x: x, y: 0, width: ceil(width), height: bounds.height))
 			x += ceil(width) + Theme.current.scaled(2)
@@ -2599,9 +2605,27 @@ final class PanelTabStrip: NSView {
 			.paragraphStyle: paragraph,
 		])
 		let size = label.size()
-		let reserved = item.isClosable ? closeSize + Theme.current.scaled(6) : 0
+		let badge = item.aiStatus == nil ? 0 : statusSize + Theme.current.scaled(5)
+		let reserved = (item.isClosable ? closeSize + Theme.current.scaled(6) : 0) + badge
 		let limit = max(0, rect.maxX - padding - reserved - x)
 		label.draw(in: NSRect(x: x, y: rect.midY - size.height / 2, width: limit, height: size.height))
+
+		// The Claude session's state, where the ✕ would be — a tmux tab has
+		// none, and the two never appear together.
+		if let status = item.aiStatus {
+			let badgeRect = NSRect(
+				x: rect.maxX - padding - statusSize,
+				y: rect.midY - statusSize / 2,
+				width: statusSize,
+				height: statusSize
+			)
+			Theme.symbol(
+				Self.symbol(for: status),
+				size: 11 * Theme.current.scale,
+				color: Self.colour(for: status),
+				weight: .semibold
+			)?.drawFitted(in: badgeRect)
+		}
 
 		if item.isClosable, isActive || isHovered {
 			let close = NSRect(
@@ -2620,6 +2644,34 @@ final class PanelTabStrip: NSView {
 			cross.lineCapStyle = .round
 			Theme.current.sidebarText.setStroke()
 			cross.stroke()
+		}
+	}
+
+	/// cmanager's three states, in this app's alphabet.
+	///
+	/// The same meanings it writes on tmux's own status line — working, needs
+	/// you, finished — drawn as symbols rather than as `…` `⚠` `✓`, so they sit
+	/// on the baseline of a tab beside an icon rather than wherever a glyph's
+	/// own metrics put them.
+	///
+	/// Bare marks, not the ringed or filled ones: at the size a tab badge can
+	/// be, a `.circle.fill` symbol is a dot and nothing else, and telling
+	/// "needs you" from "finished" would come down to colour alone.
+	static func symbol(for status: TmuxMirror.AIStatus) -> String {
+		switch status {
+		case .working:    return "ellipsis"
+		case .needsInput: return "exclamationmark"
+		case .done:       return "checkmark"
+		}
+	}
+
+	/// Amber for the one that wants something: it is the only one worth
+	/// crossing the room for, and the other two should not compete with it.
+	static func colour(for status: TmuxMirror.AIStatus) -> NSColor {
+		switch status {
+		case .working:    return Theme.current.sidebarText.withAlphaComponent(0.55)
+		case .needsInput: return .hex(0xD6A05E)
+		case .done:       return Theme.current.gitAdded
 		}
 	}
 
