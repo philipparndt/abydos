@@ -51,18 +51,21 @@ public enum TmuxMirror {
 		public let name: String
 		public let windowCount: Int
 		public let isAttached: Bool
+		/// When tmux made it, which is the order it cycles through them in.
+		public let created: Int
 
-		public init(name: String, windowCount: Int, isAttached: Bool) {
+		public init(name: String, windowCount: Int, isAttached: Bool, created: Int = 0) {
 			self.name = name
 			self.windowCount = windowCount
 			self.isAttached = isAttached
+			self.created = created
 		}
 	}
 
 	/// Every session the server has, for choosing another one.
 	public static func sessions() async -> [SessionSummary] {
 		guard let tmux = Executables.locate("tmux") else { return [] }
-		let format = "#{session_windows};#{?session_attached,1,0};#{session_name}"
+		let format = "#{session_windows};#{?session_attached,1,0};#{session_created};#{session_name}"
 		let result = await run(tmux, ["list-sessions", "-F", format])
 		guard let result, result.exitCode == 0 else { return [] }
 		return parseSessions(result.output)
@@ -70,18 +73,24 @@ public enum TmuxMirror {
 
 	/// Reads `list-sessions` output. The name comes last, since a session can
 	/// be called anything.
+	/// In the order tmux cycles through them — oldest first, which is what
+	/// `C-b (` and `C-b )` walk and what the session list in tmux shows.
 	static func parseSessions(_ output: String) -> [SessionSummary] {
 		var sessions: [SessionSummary] = []
 		for line in output.split(separator: "\n", omittingEmptySubsequences: true) {
-			let fields = line.split(separator: ";", maxSplits: 2, omittingEmptySubsequences: false)
-			guard fields.count == 3, let windows = Int(fields[0]) else { continue }
+			let fields = line.split(separator: ";", maxSplits: 3, omittingEmptySubsequences: false)
+			// Three fields is the older format, kept so a fixture without a
+			// creation time still reads.
+			guard fields.count >= 3, let windows = Int(fields[0]) else { continue }
+			let hasCreated = fields.count == 4
 			sessions.append(SessionSummary(
-				name: String(fields[2]),
+				name: String(fields[hasCreated ? 3 : 2]),
 				windowCount: windows,
-				isAttached: fields[1] == "1"
+				isAttached: fields[1] == "1",
+				created: hasCreated ? Int(fields[2]) ?? 0 : 0
 			))
 		}
-		return sessions
+		return sessions.sorted { $0.created < $1.created }
 	}
 
 	/// Points this terminal's client at another session.

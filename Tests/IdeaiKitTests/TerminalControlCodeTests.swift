@@ -237,19 +237,31 @@ struct TmuxMirrorTests {
 struct TmuxSessionListTests {
 	@Test func readsNameWindowsAndWhetherItIsAttached() {
 		let sessions = TmuxMirror.parseSessions("""
-		3;1;work
-		1;0;notes
+		3;1;100;work
+		1;0;200;notes
 		""")
 
 		#expect(sessions.count == 2)
-		#expect(sessions[0] == .init(name: "work", windowCount: 3, isAttached: true))
-		#expect(sessions[1] == .init(name: "notes", windowCount: 1, isAttached: false))
+		#expect(sessions[0] == .init(name: "work", windowCount: 3, isAttached: true, created: 100))
+		#expect(sessions[1] == .init(name: "notes", windowCount: 1, isAttached: false, created: 200))
 	}
 
 	/// A session can be called anything, semicolons included, so the name is
 	/// whatever is left of the line.
 	@Test func aNameCanContainTheSeparator() {
-		#expect(TmuxMirror.parseSessions("2;0;a;b").first?.name == "a;b")
+		#expect(TmuxMirror.parseSessions("2;0;100;a;b").first?.name == "a;b")
+	}
+
+	/// tmux's own order: oldest first, which is what `C-b (` and `C-b )` walk
+	/// through — not alphabetical, which would put a session called `0` in
+	/// front of everything however long ago it was made.
+	@Test func theyComeBackInTheOrderTmuxCyclesThem() {
+		let sessions = TmuxMirror.parseSessions("""
+		1;0;300;zshutil
+		1;0;100;ahead
+		2;1;200;ideai
+		""")
+		#expect(sessions.map(\.name) == ["ahead", "ideai", "zshutil"])
 	}
 
 	@Test func nothingAtAllIsNoSessions() {

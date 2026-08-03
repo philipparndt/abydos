@@ -691,13 +691,34 @@ final class BottomPanel: NSView {
 			let current = self.mirroredSession
 			let menu = NSMenu()
 
+			// Names in one column and counts in another, on a tab stop: the
+			// names are of every length and a run of them with counts trailing
+			// behind reads as a jumble.
+			let paragraph = NSMutableParagraphStyle()
+			paragraph.tabStops = [NSTextTab(textAlignment: .left, location: 150)]
+
 			for summary in all {
 				let item = NSMenuItem(
-					title: "\(summary.name)  ·  \(summary.windowCount) window"
-						+ (summary.windowCount == 1 ? "" : "s"),
+					title: summary.name,
 					action: #selector(BottomPanel.switchToSession(_:)),
 					keyEquivalent: ""
 				)
+				let title = NSMutableAttributedString(
+					string: summary.name,
+					attributes: [
+						.font: NSFont.systemFont(ofSize: 13),
+						.paragraphStyle: paragraph,
+					]
+				)
+				title.append(NSAttributedString(
+					string: "\t\(summary.windowCount) window\(summary.windowCount == 1 ? "" : "s")",
+					attributes: [
+						.font: NSFont.systemFont(ofSize: 11),
+						.foregroundColor: NSColor.secondaryLabelColor,
+						.paragraphStyle: paragraph,
+					]
+				))
+				item.attributedTitle = title
 				item.target = self
 				item.representedObject = [summary.name, tty]
 				item.state = summary.name == current ? .on : .off
@@ -2145,7 +2166,7 @@ final class PanelTabStrip: NSView {
 			return
 		}
 		let label = mirrorTagText(for: session)
-		let width = label.size().width + Theme.current.scaled(12)
+		let width = label.size().width + Theme.current.scaled(12) + mirrorChevronWidth
 		let height = Theme.current.scaled(16)
 		mirrorTagFrame = NSRect(
 			x: followButtonFrame.minX - Theme.current.scaled(8) - width,
@@ -2155,9 +2176,9 @@ final class PanelTabStrip: NSView {
 		)
 	}
 
-	/// `tmux · session ⌄`, or just `tmux ⌄` when the name would crowd the strip.
+	/// `tmux · session`, or just `tmux` when the name would crowd the strip.
 	private func mirrorTagText(for session: String) -> NSAttributedString {
-		let text = bounds.width > Theme.current.scaled(420) ? "tmux · \(session) ⌄" : "tmux ⌄"
+		let text = bounds.width > Theme.current.scaled(420) ? "tmux · \(session)" : "tmux"
 		return NSAttributedString(string: text, attributes: [
 			.font: Theme.current.uiFont(10, weight: .medium),
 			.foregroundColor: Theme.current.gitModified,
@@ -2426,6 +2447,9 @@ final class PanelTabStrip: NSView {
 		drawMirrorTag()
 	}
 
+	/// Room for the chevron and the gap in front of it.
+	private var mirrorChevronWidth: CGFloat { Theme.current.scaled(11) }
+
 	private func drawMirrorTag() {
 		guard let session = mirroredSession, mirrorTagFrame.width > 0 else { return }
 
@@ -2437,12 +2461,31 @@ final class PanelTabStrip: NSView {
 		Theme.current.gitModified.withAlphaComponent(0.14).setFill()
 		pill.fill()
 
+		// The text and the chevron are laid out together, so the pair sits in
+		// the middle of the pill rather than the text alone.
 		let label = mirrorTagText(for: session)
 		let size = label.size()
-		label.draw(at: NSPoint(
-			x: mirrorTagFrame.midX - size.width / 2,
-			y: mirrorTagFrame.midY - size.height / 2
-		))
+		let content = size.width + mirrorChevronWidth
+		let left = mirrorTagFrame.midX - content / 2
+
+		label.draw(at: NSPoint(x: left, y: mirrorTagFrame.midY - size.height / 2))
+
+		// Drawn rather than typed: a `⌄` is a character with a baseline of its
+		// own and sits low beside anything else.
+		let centre = NSPoint(
+			x: left + size.width + mirrorChevronWidth / 2,
+			y: mirrorTagFrame.midY + Theme.current.scaled(0.5)
+		)
+		let arm = Theme.current.scaled(2.6)
+		let chevron = NSBezierPath()
+		chevron.move(to: NSPoint(x: centre.x - arm, y: centre.y - arm / 2))
+		chevron.line(to: NSPoint(x: centre.x, y: centre.y + arm / 2))
+		chevron.line(to: NSPoint(x: centre.x + arm, y: centre.y - arm / 2))
+		chevron.lineWidth = Theme.current.scaled(1.2)
+		chevron.lineCapStyle = .round
+		chevron.lineJoinStyle = .round
+		Theme.current.gitModified.setStroke()
+		chevron.stroke()
 	}
 
 	private func draw(item: PanelTabItem, in rect: NSRect, isActive: Bool, isHovered: Bool) {
