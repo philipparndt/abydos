@@ -10,6 +10,10 @@
 	<string>de.rnd7.ideai</string>
 	<key>CFBundleExecutable</key>
 	<string>ideai</string>
+	<!-- The catalog, which Xcode compiles and the App Store reads. -->
+	<key>CFBundleIconName</key>
+	<string>AppIcon</string>
+	<!-- The loose .icns, for the bundle `make bundle` assembles by hand. -->
 	<key>CFBundleIconFile</key>
 	<string>ideai</string>
 	<key>CFBundlePackageType</key>

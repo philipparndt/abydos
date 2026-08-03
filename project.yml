@@ -39,6 +39,11 @@ targets:
       - path: Resources/Fonts
         type: folder
         buildPhase: resources
+      # The icon as a catalog: what Xcode shows in the target editor, and
+      # what App Store Connect wants. The .icns stays for `make bundle`,
+      # which has no compiler to build a catalog with; both are made from
+      # the same PNGs.
+      - path: Resources/Assets.xcassets
       - path: Resources/Icon/ideai.icns
         buildPhase: resources
         optional: true
@@ -54,7 +59,7 @@ targets:
         PRODUCT_NAME: ideai
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Resources/Info.plist
-        CFBundleIconFile: ideai
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         SWIFT_STRICT_CONCURRENCY: minimal
         # The app talks to git, kubectl, helm and a shell, none of which a
         # sandboxed process can reach.
