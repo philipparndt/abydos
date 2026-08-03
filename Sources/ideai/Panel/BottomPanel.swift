@@ -231,7 +231,7 @@ final class BottomPanel: NSView {
 			if let window = self.mirroredWindow(at: index, in: column) {
 				self.markMirroredWindowActive(window.index)
 				Task {
-					await TmuxMirror.select(window: window.index, inSession: self.tmuxSession ?? "")
+					await TmuxMirror.select(window: window.index, inSession: self.mirroredSession ?? self.tmuxSession ?? "")
 					self.refreshTmuxWindows()
 				}
 				self.focusTerminal()
@@ -244,7 +244,7 @@ final class BottomPanel: NSView {
 			guard let self else { return }
 			if let window = self.mirroredWindow(at: index, in: column) {
 				Task {
-					await TmuxMirror.killWindow(window.index, inSession: self.tmuxSession ?? "")
+					await TmuxMirror.killWindow(window.index, inSession: self.mirroredSession ?? self.tmuxSession ?? "")
 					self.refreshTmuxWindows()
 				}
 				return
@@ -254,7 +254,7 @@ final class BottomPanel: NSView {
 		}
 		strip.onAdd = { [weak self] in
 			guard let self else { return }
-			if self.mirrorsTmux, column == 0, let session = self.tmuxSession {
+			if self.mirrorsTmux, column == 0, let session = self.mirroredSession ?? self.tmuxSession {
 				Task {
 					await TmuxMirror.newWindow(inSession: session)
 					self.refreshTmuxWindows()
@@ -271,7 +271,8 @@ final class BottomPanel: NSView {
 			if let window = self.mirroredWindow(at: index, in: column) {
 				Task {
 					await TmuxMirror.rename(
-						window: window.index, to: name, inSession: self.tmuxSession ?? ""
+						window: window.index, to: name,
+						inSession: self.mirroredSession ?? self.tmuxSession ?? ""
 					)
 					self.refreshTmuxWindows()
 				}
@@ -535,6 +536,9 @@ final class BottomPanel: NSView {
 	/// terminals.
 	private var tmuxWindows: [TmuxMirror.Window] = []
 	private var tmuxPoll: Timer?
+	/// The session the tabs are currently showing, which is whatever the client
+	/// is attached to rather than whatever it was started with.
+	private var mirroredSession: String?
 
 	/// Whether the strip is a view of tmux rather than a list of terminals.
 	///
@@ -602,8 +606,22 @@ final class BottomPanel: NSView {
 	/// output arriving — so the strip keeps up with a hand switching windows
 	/// faster than twice a second.
 	func refreshTmuxWindows() {
-		guard mirrorsTmux, let session = tmuxSession else { return }
+		guard mirrorsTmux, let configured = tmuxSession else { return }
+		// The session the client is *looking at*, which `C-b w` changes: the
+		// tabs should be what is on screen, not what the window was opened
+		// with. The configured one is the fallback for the moment before the
+		// client has attached.
+		let tty = sessions.first?.terminal?.ttyName
+
 		Task { @MainActor in
+			var session = configured
+			if let tty, let attached = await TmuxMirror.session(forClient: tty) {
+				session = attached
+			}
+			if session != self.mirroredSession {
+				self.mirroredSession = session
+				self.tmuxWindows = []
+			}
 			let windows = await TmuxMirror.windows(inSession: session)
 			// Nothing at all means tmux is still starting, or has gone: the
 			// strip keeps what it had rather than blinking empty.
@@ -1266,6 +1284,10 @@ final class BottomPanel: NSView {
 			// In the mirrored mode the first column's strip is tmux's window
 			// list. The terminal underneath it never changes — that is the
 			// point: switching tabs is a message to tmux, not a teardown.
+			view.strip.mirroredSession = (mirrorsTmux && index == 0 && !tmuxWindows.isEmpty)
+				? (mirroredSession ?? tmuxSession)
+				: nil
+
 			if mirrorsTmux, index == 0, !tmuxWindows.isEmpty {
 				view.strip.setItems(
 					tmuxWindows.map { window in
@@ -1855,6 +1877,21 @@ final class PanelTabStrip: NSView {
 	/// Whether the window is following the terminal, which the control shows.
 	var isFollowingProject = false { didSet { needsDisplay = true } }
 
+	/// The tmux session these tabs are the windows of, when they are.
+	///
+	/// Shown as a tag beside the panel's own controls: the tabs look like our
+	/// tabs, and it should be visible at a glance that they are not — that
+	/// closing one closes a tmux window, and that another client can move them.
+	var mirroredSession: String? {
+		didSet {
+			guard mirroredSession != oldValue else { return }
+			recomputeLayout()
+			needsDisplay = true
+		}
+	}
+
+	private var mirrorTagFrame: NSRect = .zero
+
 	private var items: [PanelTabItem] = []
 	private var activeIndex: Int?
 	private var frames: [NSRect] = []
@@ -1938,6 +1975,29 @@ final class PanelTabStrip: NSView {
 			width: Theme.current.scaled(24),
 			height: bounds.height
 		)
+
+		guard let session = mirroredSession else {
+			mirrorTagFrame = .zero
+			return
+		}
+		let label = mirrorTagText(for: session)
+		let width = label.size().width + Theme.current.scaled(12)
+		let height = Theme.current.scaled(16)
+		mirrorTagFrame = NSRect(
+			x: followButtonFrame.minX - Theme.current.scaled(8) - width,
+			y: (bounds.height - height) / 2,
+			width: width,
+			height: height
+		)
+	}
+
+	/// `tmux · session`, or just `tmux` when the name would crowd the strip.
+	private func mirrorTagText(for session: String) -> NSAttributedString {
+		let text = bounds.width > Theme.current.scaled(420) ? "tmux · \(session)" : "tmux"
+		return NSAttributedString(string: text, attributes: [
+			.font: Theme.current.uiFont(10, weight: .medium),
+			.foregroundColor: Theme.current.gitModified,
+		])
 	}
 
 	// MARK: - Renaming in place
@@ -2194,6 +2254,27 @@ final class PanelTabStrip: NSView {
 			symbol: isFollowingProject ? "link.circle.fill" : "link.circle",
 			tint: isFollowingProject ? Theme.current.gitAdded : nil
 		)
+
+		drawMirrorTag()
+	}
+
+	private func drawMirrorTag() {
+		guard let session = mirroredSession, mirrorTagFrame.width > 0 else { return }
+
+		let pill = NSBezierPath(
+			roundedRect: mirrorTagFrame,
+			xRadius: mirrorTagFrame.height / 2,
+			yRadius: mirrorTagFrame.height / 2
+		)
+		Theme.current.gitModified.withAlphaComponent(0.14).setFill()
+		pill.fill()
+
+		let label = mirrorTagText(for: session)
+		let size = label.size()
+		label.draw(at: NSPoint(
+			x: mirrorTagFrame.midX - size.width / 2,
+			y: mirrorTagFrame.midY - size.height / 2
+		))
 	}
 
 	private func draw(item: PanelTabItem, in rect: NSRect, isActive: Bool, isHovered: Bool) {

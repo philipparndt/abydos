@@ -1216,6 +1216,9 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// Where the process in the foreground of this terminal is.
 	func currentDirectory() -> URL? { pty.currentDirectory() }
 
+	/// The terminal device this pane's shell is on.
+	var ttyName: String? { pty.ttyName }
+
 	/// The numbers behind "the last line is not on screen": how tall the
 	/// document is, where the clip view sits in it, and how much of the grid
 	/// that leaves visible.
@@ -2025,6 +2028,7 @@ final class TerminalPane: NSView {
 
 	/// Where the shell in this terminal currently is.
 	var currentDirectoryForTesting: URL? { terminalView.currentDirectory() }
+	var ttyName: String? { terminalView.ttyName }
 	var geometryForTesting: String { terminalView.geometryForTesting }
 	var gridSizeForTesting: (rows: Int, columns: Int) { terminalView.gridSizeForTesting }
 

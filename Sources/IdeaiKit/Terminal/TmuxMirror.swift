@@ -26,6 +26,26 @@ public enum TmuxMirror {
 		}
 	}
 
+	/// Which session the client on this terminal is looking at.
+	///
+	/// Not the one it was started with: `C-b w` and `switch-client` move a
+	/// client between sessions, and the tabs should follow what is on screen
+	/// rather than what was asked for when the window opened.
+	public static func session(forClient tty: String) async -> String? {
+		guard let tmux = Executables.locate("tmux") else { return nil }
+		let result = await run(tmux, [
+			"list-clients",
+			"-F", "#{client_session}",
+			"-f", "#{==:#{client_tty},\(tty)}",
+		])
+		guard let result, result.exitCode == 0 else { return nil }
+		let name = result.output
+			.split(separator: "\n")
+			.first
+			.map { $0.trimmingCharacters(in: .whitespaces) }
+		return (name?.isEmpty ?? true) ? nil : name
+	}
+
 	/// Reads the windows of a session, in the order tmux lists them.
 	///
 	/// Nothing at all when there is no such session, which is also the answer

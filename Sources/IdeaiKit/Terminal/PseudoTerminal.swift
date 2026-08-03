@@ -186,6 +186,10 @@ public final class PseudoTerminal {
 	/// the process writing to it blocks — which is how a terminal tells a
 	/// program that it is going faster than anyone can look at.
 	/// Where the process in the foreground of this terminal currently is.
+	/// The terminal device the child sees, which is how tmux is asked about
+	/// the client sitting on it.
+	public var ttyName: String? { slaveName }
+
 	public func currentDirectory() -> URL? {
 		TerminalDirectory.current(masterDescriptor: masterDescriptor, slaveName: slaveName)
 	}
