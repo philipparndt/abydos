@@ -347,16 +347,15 @@ final class BottomPanel: NSView {
 	/// prints a prompt, and one that is sitting idle has not gone anywhere. An
 	/// idle terminal therefore costs nothing at all.
 	/// Drives the pointer over the terminal grid: a right-click, then moves.
-	func terminalPointerForTesting(_ steps: [(row: Int, column: Int, isClick: Bool)]) {
+	/// What a hand does with a tmux menu: press, drag onto an item, let go.
+	func terminalMenuDragForTesting(from start: (row: Int, column: Int), over cells: [(row: Int, column: Int)]) {
 		let index = activeIndex ?? 0
 		guard index >= 0, index < sessions.count, let terminal = sessions[index].terminal else { return }
-		for (offset, step) in steps.enumerated() {
-			DispatchQueue.main.asyncAfter(deadline: .now() + 0.4 * Double(offset)) {
-				if step.isClick {
-					terminal.rightClickForTesting(row: step.row, column: step.column)
-				} else {
-					terminal.moveMouseForTesting(row: step.row, column: step.column)
-				}
+
+		terminal.rightPressForTesting(row: start.row, column: start.column)
+		for (offset, cell) in cells.enumerated() {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.4 * Double(offset + 1)) {
+				terminal.rightDragForTesting(row: cell.row, column: cell.column)
 			}
 		}
 	}

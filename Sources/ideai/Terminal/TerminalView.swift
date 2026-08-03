@@ -1512,13 +1512,21 @@ final class TerminalView: NSView, NSTextInputClient {
 		)
 	}
 
-	/// Right-clicks a cell, as somebody would on a tmux status line.
-	func rightClickForTesting(row: Int, column: Int) {
+	/// Presses the right button on a cell and holds it.
+	func rightPressForTesting(row: Int, column: Int) {
 		window?.makeFirstResponder(self)
-		guard let down = mouseEventForTesting(.rightMouseDown, row: row, column: column),
-		      let up = mouseEventForTesting(.rightMouseUp, row: row, column: column)
-		else { return }
+		guard let down = mouseEventForTesting(.rightMouseDown, row: row, column: column) else { return }
 		rightMouseDown(with: down)
+	}
+
+	/// Drags to a cell with the right button held, then lets go.
+	func rightDragForTesting(row: Int, column: Int) {
+		guard let event = mouseEventForTesting(.rightMouseDragged, row: row, column: column) else { return }
+		rightMouseDragged(with: event)
+	}
+
+	func rightReleaseForTesting(row: Int, column: Int) {
+		guard let up = mouseEventForTesting(.rightMouseUp, row: row, column: column) else { return }
 		rightMouseUp(with: up)
 	}
 
@@ -1562,6 +1570,7 @@ final class TerminalView: NSView, NSTextInputClient {
 			control: control
 		) else { return false }
 
+		lastReportedMouseCell = GridCell(row: position.row, column: position.column)
 		pty.write(sequence)
 		return true
 	}
@@ -1604,10 +1613,16 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// Without this the menu appears and then sits there, dead.
 	override func mouseMoved(with event: NSEvent) {
 		guard emulator.mouseTracking == .anyEvent else { return }
-		let position = gridPosition(for: event)
-		guard position.row != lastReportedMouseCell?.row
-			|| position.column != lastReportedMouseCell?.column
-		else { return }
+		// A button is down: that is a drag, and dragging reports itself.
+		guard NSEvent.pressedMouseButtons == 0 else { return }
+
+		// Only when the pointer has actually left the cell it was last seen in
+		// — including the cell it was clicked in. A menu opened by that click
+		// is waiting for the pointer to move somewhere, and being told it is
+		// still where it was reads as somewhere else entirely.
+		let cell = gridPosition(for: event)
+		let position = GridCell(row: cell.row, column: cell.column)
+		guard position != lastReportedMouseCell else { return }
 		lastReportedMouseCell = position
 
 		_ = forwardMouse(event, button: .none, isRelease: false, isDrag: true)
@@ -1615,7 +1630,13 @@ final class TerminalView: NSView, NSTextInputClient {
 
 	/// The cell the program was last told about, so a pointer wandering inside
 	/// one cell does not send a report per pixel.
-	private var lastReportedMouseCell: (row: Int, column: Int)?
+	private var lastReportedMouseCell: GridCell?
+
+	/// A cell of the visible grid, as the mouse protocol addresses it.
+	private struct GridCell: Equatable {
+		let row: Int
+		let column: Int
+	}
 
 	override func mouseDragged(with event: NSEvent) {
 		guard isSelecting else {
@@ -1628,6 +1649,32 @@ final class TerminalView: NSView, NSTextInputClient {
 
 		// Dragging past an edge should keep going, the way it does in a list.
 		autoscroll(with: event)
+	}
+
+	/// A drag with the right button held.
+	///
+	/// tmux's own menus are press-drag-release: the menu opens on the press and
+	/// closes on the release, so the item under the pointer is chosen by
+	/// dragging onto it. Without this the menu opens and nothing highlights,
+	/// which is what right-clicking a tmux tab looked like.
+	override func rightMouseDragged(with event: NSEvent) {
+		guard !mouseSelects else { return }
+		_ = forwardMouse(event, button: .right, isRelease: false, isDrag: true)
+	}
+
+	override func otherMouseDown(with event: NSEvent) {
+		guard !mouseSelects else { return }
+		_ = forwardMouse(event, button: .middle, isRelease: false)
+	}
+
+	override func otherMouseUp(with event: NSEvent) {
+		guard !mouseSelects else { return }
+		_ = forwardMouse(event, button: .middle, isRelease: true)
+	}
+
+	override func otherMouseDragged(with event: NSEvent) {
+		guard !mouseSelects else { return }
+		_ = forwardMouse(event, button: .middle, isRelease: false, isDrag: true)
 	}
 
 	override func rightMouseDown(with event: NSEvent) {
@@ -1861,8 +1908,16 @@ final class TerminalPane: NSView {
 	var geometryForTesting: String { terminalView.geometryForTesting }
 	var gridSizeForTesting: (rows: Int, columns: Int) { terminalView.gridSizeForTesting }
 
-	func rightClickForTesting(row: Int, column: Int) {
-		terminalView.rightClickForTesting(row: row, column: column)
+	func rightPressForTesting(row: Int, column: Int) {
+		terminalView.rightPressForTesting(row: row, column: column)
+	}
+
+	func rightDragForTesting(row: Int, column: Int) {
+		terminalView.rightDragForTesting(row: row, column: column)
+	}
+
+	func rightReleaseForTesting(row: Int, column: Int) {
+		terminalView.rightReleaseForTesting(row: row, column: column)
 	}
 
 	func moveMouseForTesting(row: Int, column: Int) {

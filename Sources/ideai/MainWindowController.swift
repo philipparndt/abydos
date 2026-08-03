@@ -2633,12 +2633,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		let grid = bottomPanel.terminalGridForTesting
 		guard grid.rows > 4 else { return }
 		// The window tab, not the session name: `[menu]  [0:zsh]` — the tab is
-		// what has a menu bound to it.
-		var steps = [(row: grid.rows, column: 12, isClick: true)]
-		for offset in 0..<hovers {
-			steps.append((row: grid.rows - 2 - offset, column: 14, isClick: false))
-		}
-		bottomPanel.terminalPointerForTesting(steps)
+		// what has a menu bound to it. Held down, because a tmux menu is a
+		// press-drag-release affair.
+		bottomPanel.terminalMenuDragForTesting(
+			from: (row: grid.rows, column: 12),
+			over: (0..<max(1, hovers)).map { (row: grid.rows - 2 - $0, column: 14) }
+		)
 	}
 
 	/// What the terminal's geometry is, for checking that the bottom row is on
