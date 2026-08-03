@@ -86,50 +86,9 @@ if [ -f THIRD-PARTY-NOTICES.md ]; then
 	echo "    bundled $(ls "$CONTENTS/Resources/Fonts"/*.ttf 2>/dev/null | wc -l | tr -d ' ') fonts"
 fi
 
-cat > "$CONTENTS/Info.plist" <<'PLIST'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>CFBundleName</key>
-	<string>ideai</string>
-	<key>CFBundleDisplayName</key>
-	<string>ideai</string>
-	<key>CFBundleIdentifier</key>
-	<string>dev.philipparndt.ideai</string>
-	<key>CFBundleExecutable</key>
-	<string>ideai</string>
-	<key>CFBundleIconFile</key>
-	<string>ideai</string>
-	<key>CFBundlePackageType</key>
-	<string>APPL</string>
-	<key>CFBundleShortVersionString</key>
-	<string>0.1.0</string>
-	<key>CFBundleVersion</key>
-	<string>1</string>
-	<key>LSMinimumSystemVersion</key>
-	<string>14.0</string>
-	<key>NSHighResolutionCapable</key>
-	<true/>
-	<!-- Dark by default; the theme is a fixed dark palette for now. -->
-	<key>NSRequiresAquaSystemAppearance</key>
-	<false/>
-	<key>CFBundleDocumentTypes</key>
-	<array>
-		<dict>
-			<key>CFBundleTypeName</key>
-			<string>Folder</string>
-			<key>CFBundleTypeRole</key>
-			<string>Viewer</string>
-			<key>LSItemContentTypes</key>
-			<array>
-				<string>public.folder</string>
-			</array>
-		</dict>
-	</array>
-</dict>
-</plist>
-PLIST
+# The same Info.plist Xcode builds with, rather than a second copy of it that
+# drifts: the bundle id and the version have to agree wherever the app is built.
+cp Resources/Info.plist "$CONTENTS/Info.plist"
 
 # Ad-hoc signature: without it macOS refuses to launch an unsigned bundle that
 # was assembled by hand rather than by Xcode.

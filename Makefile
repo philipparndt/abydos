@@ -61,6 +61,19 @@ icon: ## Regenerate the app icon from Scripts/make-icon.py
 grammars: ## Re-vendor the grammars whose upstream manifests are broken
 	@Scripts/vendor-grammars.sh
 
+.PHONY: xcode
+xcode: ## Generate the Xcode project and open it (needs xcodegen)
+	@command -v xcodegen >/dev/null || { echo "xcodegen not found — brew install xcodegen"; exit 1; }
+	@xcodegen generate
+	@open ideai.xcodeproj
+
+.PHONY: xcode-build
+xcode-build: ## Build the app the way Xcode and App Store Connect will
+	@command -v xcodegen >/dev/null || { echo "xcodegen not found — brew install xcodegen"; exit 1; }
+	@xcodegen generate
+	@xcodebuild build -project ideai.xcodeproj -scheme ideai \
+		-destination 'platform=macOS' -derivedDataPath build/xcode | tail -3
+
 .PHONY: install
 install: build ## Copy the app into /Applications
 	@rm -rf /Applications/ideai.app

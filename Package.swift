@@ -40,6 +40,9 @@ let package = Package(
 	platforms: [.macOS(.v14)],
 	products: [
 		.executable(name: "ideai", targets: ["ideai"]),
+		// The window layer, so an Xcode app target can be built from the same
+		// sources without a second copy of the dependency graph.
+		.library(name: "IdeaiApp", targets: ["IdeaiApp"]),
 		// A terminal stress test, run against the app's own terminal.
 		.executable(name: "firebench", targets: ["FireBench"]),
 		.library(name: "IdeaiKit", targets: ["IdeaiKit"]),
@@ -70,15 +73,28 @@ let package = Package(
 			swiftSettings: [.swiftLanguageMode(.v5)]
 		),
 		// AppKit shell: window, navigator, toolbar, code view.
-		.executableTarget(
-			name: "ideai",
+		//
+		// A library rather than the executable itself, so an Xcode application
+		// target can be built from these same sources without declaring the
+		// dependency graph a second time — two declarations of the same path
+		// package build it twice and the link fails.
+		.target(
+			name: "IdeaiApp",
 			dependencies: [
 				"IdeaiKit",
 				.product(name: "GoSTLKit", package: "GoSTL-Swift"),
 			],
+			path: "Sources/ideai",
 			// The development pod's chart travels with the app: installing it
 			// should not mean finding a checkout of this repository first.
 			resources: [.copy("Resources/devpod-chart")],
+			swiftSettings: [.swiftLanguageMode(.v5)]
+		),
+		// Four lines: make an application, give it the delegate, run it.
+		.executableTarget(
+			name: "ideai",
+			dependencies: ["IdeaiApp"],
+			path: "Sources/ideaiMain",
 			swiftSettings: [.swiftLanguageMode(.v5)]
 		),
 		.testTarget(

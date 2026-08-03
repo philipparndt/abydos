@@ -1,10 +1,19 @@
 import AppKit
 import IdeaiKit
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+public final class AppDelegate: NSObject, NSApplicationDelegate {
+	/// Public so the four-line executable — and an Xcode application target
+	/// built from the same sources — can make one.
+	public override init() { super.init() }
+
 	private var windowControllers: [MainWindowController] = []
 
-	func applicationDidFinishLaunching(_ notification: Notification) {
+	public func applicationDidFinishLaunching(_ notification: Notification) {
+		// Settings from the identifier this app used to have, before anything
+		// reads one: the move to `de.rnd7.ideai` for the App Store would
+		// otherwise look like every preference being forgotten at once.
+		Settings.migrate(from: "dev.philipparndt.ideai")
+
 		// The palette, before anything is built with it.
 		Theme.apply()
 		DistributedNotificationCenter.default.addObserver(
@@ -776,7 +785,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 		)
 	}
 
-	func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+	public func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
 		true
 	}
 
@@ -793,21 +802,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 	/// Flushes pending edits when the app goes to the background, so switching to
 	/// a terminal always finds the file on disk current.
-	func applicationDidResignActive(_ notification: Notification) {
+	public func applicationDidResignActive(_ notification: Notification) {
 		guard Settings.shared.saveOnFocusLoss else { return }
 		for controller in windowControllers {
 			controller.autoSaveAll()
 		}
 	}
 
-	func applicationWillTerminate(_ notification: Notification) {
+	public func applicationWillTerminate(_ notification: Notification) {
 		for controller in windowControllers {
 			controller.autoSaveAll()
 			controller.rememberOpenEditors()
 		}
 	}
 
-	func application(_ application: NSApplication, open urls: [URL]) {
+	public func application(_ application: NSApplication, open urls: [URL]) {
 		for url in urls {
 			if url.hasDirectoryPath {
 				open(projectAt: url)

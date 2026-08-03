@@ -2465,7 +2465,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	}
 
 	func refreshRunControl() {
-		runControl?.setConfiguration(selectedConfiguration?.name)
+		runControl?.setConfiguration(selectedConfiguration?.name ?? selectedMakeRun?.name)
 	}
 
 	/// Keeps the titlebar saying what the session is doing.
@@ -2856,6 +2856,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	private func runSelectedConfiguration(debug: Bool) {
 		guard project != nil else { return }
+
+		// A make goal nothing can debug runs as make runs it, in the terminal,
+		// for both buttons: there is no debugger to offer and refusing to start
+		// would be worse than starting without one.
+		if let goal = selectedMakeRun, selectedConfigurationName == goal.name {
+			run(goal)
+			return
+		}
 
 		guard let configuration = selectedConfiguration ?? createSuggestedConfiguration() else {
 			notify(
@@ -3971,15 +3979,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// takes.
 	@objc private func makeGoalRunChosen(_ sender: NSMenuItem) {
 		guard let parts = sender.representedObject as? [String], parts.count == 2 else { return }
-		let directory = URL(fileURLWithPath: parts[0]).deletingLastPathComponent()
-		run(RunConfiguration(
+		// Chosen, not started: picking something from a list of things to run
+		// says which one, and the play button says when. Starting a build
+		// because somebody looked at the menu is a surprise.
+		selectedMakeRun = RunConfiguration(
 			name: "make \(parts[1])",
 			source: .make,
 			executable: "make",
 			arguments: [parts[1]],
-			workingDirectory: directory.path
-		))
+			workingDirectory: URL(fileURLWithPath: parts[0]).deletingLastPathComponent().path
+		)
+		selectedConfigurationName = selectedMakeRun?.name
+		refreshRunControl()
 	}
+
+	/// A make goal chosen from the menu that has no launch configuration —
+	/// nothing here can debug it, so play runs it as make would.
+	private var selectedMakeRun: RunConfiguration?
 
 	@objc private func makeGoalChosen(_ sender: NSMenuItem) {
 		guard let project,
@@ -4019,6 +4035,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	}
 
 	@objc private func configurationChosen(_ sender: NSMenuItem) {
+		selectedMakeRun = nil
 		selectedConfigurationName = sender.representedObject as? String
 		refreshRunControl()
 	}

@@ -11,6 +11,28 @@ public final class Settings {
 
 	private let defaults: UserDefaults
 
+	/// Brings settings over from the identifier the app used to have.
+	///
+	/// Preferences are keyed by bundle identifier, so changing one — which is
+	/// what going to the App Store took — would otherwise look to somebody
+	/// using the app like every setting being reset at once. Copied once: the
+	/// old domain is left alone, so an older build still works, and anything
+	/// already set in the new one wins.
+	public static func migrate(
+		from oldIdentifier: String,
+		into defaults: UserDefaults = .standard
+	) {
+		guard defaults.object(forKey: Key.appearance) == nil,
+		      defaults.object(forKey: Key.terminalScheme) == nil,
+		      defaults.object(forKey: Key.uiScale) == nil
+		else { return }
+		guard let old = defaults.persistentDomain(forName: oldIdentifier), !old.isEmpty else { return }
+
+		for (key, value) in old where defaults.object(forKey: key) == nil {
+			defaults.set(value, forKey: key)
+		}
+	}
+
 	public init(defaults: UserDefaults = .standard) {
 		self.defaults = defaults
 		defaults.register(defaults: [
