@@ -279,12 +279,18 @@ final class TerminalView: NSView, NSTextInputClient {
 			guard let self else { return }
 			self.redrawScheduled = false
 
-			// On the alternate screen the document never grows and there is no
-			// history to follow, so resizing and autoscrolling there would fight
-			// the program's own repainting.
-			if !self.emulator.isAlternateScreen {
-				self.updateFrameSize()
-				if self.isPinnedToBottom { self.scrollToBottom() }
+			// The alternate screen is one screenful that never scrolls: the
+			// document is exactly the grid and the view sits at the top of it.
+			// Left alone it keeps whatever height the scrollback had when the
+			// program took over — a document thousands of points tall, scrolled
+			// to the end of it — and the screen is then somewhere above the
+			// window. That is a terminal gone blank, or, when the mismatch is a
+			// single row, a last line nobody can see.
+			self.updateFrameSize()
+			if self.emulator.isAlternateScreen {
+				self.scrollToTop()
+			} else if self.isPinnedToBottom {
+				self.scrollToBottom()
 			}
 			if InputProbe.enabled, self.keyEchoedAt != nil, self.keyParsedAt == nil {
 				self.keyParsedAt = Date()
@@ -721,6 +727,14 @@ final class TerminalView: NSView, NSTextInputClient {
 		}
 	}
 
+	/// Puts the view at the top of the document, where the alternate screen is.
+	func scrollToTop() {
+		guard let scrollView = enclosingScrollView, scrollView.contentView.bounds.origin.y != 0
+		else { return }
+		scrollView.contentView.scroll(to: .zero)
+		scrollView.reflectScrolledClipView(scrollView.contentView)
+	}
+
 	func scrollToBottom() {
 		guard let scrollView = enclosingScrollView else { return }
 		let maxY = max(0, frame.height - scrollView.contentSize.height)
@@ -1144,6 +1158,22 @@ final class TerminalView: NSView, NSTextInputClient {
 
 	/// Where the process in the foreground of this terminal is.
 	func currentDirectory() -> URL? { pty.currentDirectory() }
+
+	/// The numbers behind "the last line is not on screen": how tall the
+	/// document is, where the clip view sits in it, and how much of the grid
+	/// that leaves visible.
+	var geometryForTesting: String {
+		let clip = enclosingScrollView?.contentView.bounds ?? .zero
+		let bottomOfLastRow = Self.verticalInset
+			+ CGFloat(emulator.screen.totalLineCount) * cellHeight
+		return String(
+			format: "alt=%@ rows=%d frame=%.1f clip=%.1f origin=%.1f lastRowBottom=%.1f visible=%@",
+			emulator.isAlternateScreen ? "yes" : "no",
+			emulator.screen.rows,
+			frame.height, clip.height, clip.origin.y, bottomOfLastRow,
+			bottomOfLastRow <= clip.origin.y + clip.height + 0.5 ? "yes" : "NO"
+		)
+	}
 
 	/// Draws what is on screen through Metal and writes it out as a PNG.
 	///
@@ -1748,6 +1778,7 @@ final class TerminalPane: NSView {
 
 	/// Where the shell in this terminal currently is.
 	var currentDirectoryForTesting: URL? { terminalView.currentDirectory() }
+	var geometryForTesting: String { terminalView.geometryForTesting }
 
 	/// Output arrived, which is the moment to check whether the shell has moved.
 	var onOutput: (() -> Void)? {

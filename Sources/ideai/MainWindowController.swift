@@ -2627,6 +2627,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 	}
 
+	/// What the terminal's geometry is, for checking that the bottom row is on
+	/// screen at all.
+	func terminalGeometryForTesting() -> String {
+		bottomPanel.terminalGeometryForTesting()
+	}
+
 	/// Where the terminal in front says it is — the answer the window follows.
 	func terminalDirectoryForTesting() -> URL? {
 		bottomPanel.activeTerminalDirectoryForTesting()

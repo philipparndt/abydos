@@ -509,6 +509,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if options.reportsTerminalGeometry {
+			for seconds in [3.0, 5.0, 7.0, 9.0] {
+				DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
+					print("GEOM \(Int(seconds))s: \(controller?.terminalGeometryForTesting() ?? "-")")
+				}
+			}
+		}
+
 		if options.reportsTerminalDirectory {
 			for seconds in [3.0, 5.0, 7.0, 9.0] {
 				DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {

@@ -114,6 +114,8 @@ struct LaunchOptions {
 	/// Print where the active terminal thinks it is, for checking that the
 	/// window can follow it.
 	var reportsTerminalDirectory = false
+	/// Print the terminal's geometry, for the clipped-bottom-row bug.
+	var reportsTerminalGeometry = false
 	/// Hover the editor at line:character with ⌘ held.
 	var commandHoverAt: String?
 	/// Open the attach-to-process picker, filtered by this text.
@@ -238,6 +240,7 @@ struct LaunchOptions {
 			case "--type-latency": options.typingPresses = next().flatMap(Int.init)
 			case "--branch-menu": options.branchMenuRow = next().flatMap(Int.init)
 			case "--report-cwd": options.reportsTerminalDirectory = true
+			case "--report-geometry": options.reportsTerminalGeometry = true
 			case "--cmd-hover":  options.commandHoverAt = next()
 			case "--attach-picker": options.attachFilter = next()
 			case "--pills":      options.highlightPills = true

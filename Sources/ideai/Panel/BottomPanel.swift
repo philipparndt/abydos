@@ -346,6 +346,14 @@ final class BottomPanel: NSView {
 	/// Driven by output rather than by a clock: a shell that changes directory
 	/// prints a prompt, and one that is sitting idle has not gone anywhere. An
 	/// idle terminal therefore costs nothing at all.
+	func terminalGeometryForTesting() -> String {
+		let index = activeIndex ?? 0
+		guard index >= 0, index < sessions.count, let terminal = sessions[index].terminal else {
+			return "no terminal"
+		}
+		return terminal.geometryForTesting
+	}
+
 	func activeTerminalDirectoryForTesting() -> URL? {
 		let index = activeIndex ?? 0
 		guard index >= 0, index < sessions.count else { return nil }
