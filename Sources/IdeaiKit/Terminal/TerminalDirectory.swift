@@ -63,27 +63,31 @@ public enum TerminalDirectory {
 	/// panes gives a different answer straight away — which is the whole point
 	/// of following a terminal that has tmux in it.
 	static func tmuxPaneDirectory(client: String) -> URL? {
-		// Listed and filtered rather than asked about directly. The obvious
-		// spelling — display-message -c <client> — chooses who the message would
-		// be shown to, not whose pane the format is about: asked about one
-		// client while another is current, tmux answers about the current one.
-		// Following that would put the window in somebody else's pane.
+		// Found rather than run through `env`: an app started from the Finder
+		// has almost no PATH, and tmux is in Homebrew's — so this worked when
+		// the app was launched from a terminal and did nothing at all when it
+		// was launched the way anybody actually launches it.
+		guard let tmux = Executables.locate("tmux") else { return nil }
+
+		// Filtered to this client rather than asked about it. The obvious
+		// spelling — display-message -c <client> — chooses who the message
+		// would be shown to, not whose pane the format is about: asked about
+		// one client while another is current, tmux answers about the current
+		// one, and following that would put the window in somebody else's pane.
 		//
-		// list-clients evaluates its format once per client, so filtering it to
-		// this one gives this one's answer, and nothing at all when the client
-		// is not there.
-		let output = run("/usr/bin/env", [
-			"tmux", "list-clients",
-			"-F", "#{client_tty}\t#{pane_current_path}",
+		// The filter leaves one line, so the format needs no separator — which
+		// is just as well, since tmux replaces a tab in a format with an
+		// underscore and the field never came apart again.
+		let output = run(tmux, [
+			"list-clients",
+			"-F", "#{pane_current_path}",
 			"-f", "#{==:#{client_tty},\(client)}",
 		])
 		guard let output else { return nil }
 
 		for line in output.split(separator: "\n") {
-			let parts = line.split(separator: "\t")
-			guard parts.count == 2, String(parts[0]) == client else { continue }
-			let path = String(parts[1])
-			guard !path.isEmpty else { continue }
+			let path = line.trimmingCharacters(in: .whitespaces)
+			guard path.hasPrefix("/") else { continue }
 			return URL(fileURLWithPath: path, isDirectory: true)
 		}
 		return nil

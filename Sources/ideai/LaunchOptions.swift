@@ -111,6 +111,9 @@ struct LaunchOptions {
 	var typingPresses: Int?
 	/// Which row of the branches view to open the menu on.
 	var branchMenuRow: Int?
+	/// Print where the active terminal thinks it is, for checking that the
+	/// window can follow it.
+	var reportsTerminalDirectory = false
 	/// Hover the editor at line:character with ⌘ held.
 	var commandHoverAt: String?
 	/// Open the attach-to-process picker, filtered by this text.
@@ -234,6 +237,7 @@ struct LaunchOptions {
 			case "--tree":       options.treeSteps = next()
 			case "--type-latency": options.typingPresses = next().flatMap(Int.init)
 			case "--branch-menu": options.branchMenuRow = next().flatMap(Int.init)
+			case "--report-cwd": options.reportsTerminalDirectory = true
 			case "--cmd-hover":  options.commandHoverAt = next()
 			case "--attach-picker": options.attachFilter = next()
 			case "--pills":      options.highlightPills = true

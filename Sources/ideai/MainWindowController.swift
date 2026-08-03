@@ -2627,6 +2627,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 	}
 
+	/// Where the terminal in front says it is — the answer the window follows.
+	func terminalDirectoryForTesting() -> URL? {
+		bottomPanel.activeTerminalDirectoryForTesting()
+	}
+
 	func showDebugConsoleForTesting() {
 		bottomPanel.showDebugConsoleForTesting()
 	}

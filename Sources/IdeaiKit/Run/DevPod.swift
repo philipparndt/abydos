@@ -955,20 +955,7 @@ public enum DevPodBuild {
 		architecture == "arm64" ? "aarch64" : "x86_64"
 	}
 
-	private static func tool(_ name: String) -> String? {
-		let candidates = [
-			"/opt/homebrew/bin/" + name,
-			"/usr/local/bin/" + name,
-			"/usr/bin/" + name,
-		]
-		if let path = ProcessInfo.processInfo.environment["PATH"] {
-			for directory in path.split(separator: ":") {
-				let candidate = String(directory) + "/" + name
-				if FileManager.default.isExecutableFile(atPath: candidate) { return candidate }
-			}
-		}
-		return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
-	}
+	private static func tool(_ name: String) -> String? { Executables.locate(name) }
 
 	private static func shellQuoted(_ word: String) -> String {
 		guard word.contains(where: { !$0.isLetter && !$0.isNumber && !"-_./=:@".contains($0) })

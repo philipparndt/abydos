@@ -509,6 +509,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if options.reportsTerminalDirectory {
+			for seconds in [3.0, 5.0, 7.0, 9.0] {
+				DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
+					let where_ = controller?.terminalDirectoryForTesting()
+					print("CWD \(Int(seconds))s: \(where_?.path ?? "unknown")")
+				}
+			}
+		}
+
 		if options.pushChanges {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.6) {
 				controller?.pushChangesForTesting()

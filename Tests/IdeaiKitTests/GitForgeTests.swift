@@ -79,3 +79,39 @@ struct GitForgeTests {
 		#expect(GitForge.repository(fromRemote: "git@github.com:nothing") == nil)
 	}
 }
+
+/// Finding a tool when the app was not started from a terminal.
+///
+/// An app launched from the Finder has almost no `PATH`, and everything people
+/// install lives in Homebrew's — which is how a feature comes to work for
+/// whoever built it and for nobody else.
+struct ExecutablesTests {
+	@Test func aToolIsFoundOnThePath() {
+		#expect(Executables.locate("env", path: "/usr/bin:/bin") == "/usr/bin/env")
+	}
+
+	/// The case that mattered: no PATH worth the name, tool in Homebrew's.
+	@Test func aToolIsFoundWithoutAPathAtAll() {
+		let found = Executables.locate("env", path: nil)
+		#expect(found == "/usr/bin/env")
+	}
+
+	@Test func whatIsNotInstalledIsNotFound() {
+		#expect(Executables.locate("nothing-called-this-surely", path: "/usr/bin") == nil)
+	}
+
+	/// What the PATH says wins: a tool somebody put in front is the one they
+	/// meant to use.
+	@Test func thePathIsSearchedBeforeTheFallbacks() throws {
+		let directory = FileManager.default.temporaryDirectory
+			.appendingPathComponent("tools-\(UUID().uuidString)")
+		try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+		defer { try? FileManager.default.removeItem(at: directory) }
+
+		let mine = directory.appendingPathComponent("env")
+		try "#!/bin/sh\n".write(to: mine, atomically: true, encoding: .utf8)
+		try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: mine.path)
+
+		#expect(Executables.locate("env", path: directory.path) == mine.path)
+	}
+}
