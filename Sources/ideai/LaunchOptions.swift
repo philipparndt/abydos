@@ -219,6 +219,9 @@ struct LaunchOptions {
 	var split: String?
 	/// Draw a tab drop preview before capture, without a real drag.
 	var dropZone: String?
+	/// Block the main thread for this many milliseconds, to see the stall
+	/// watch catch it.
+	var stallMilliseconds: Int?
 
 	static func parse(_ arguments: [String] = CommandLine.arguments) -> LaunchOptions {
 		var options = LaunchOptions()
@@ -254,6 +257,7 @@ struct LaunchOptions {
 			case "--navigate":   options.navigateSteps = next()
 			case "--tree":       options.treeSteps = next()
 			case "--type-latency": options.typingPresses = next().flatMap(Int.init)
+			case "--stall":      options.stallMilliseconds = next().flatMap(Int.init)
 			case "--branch-menu": options.branchMenuRow = next().flatMap(Int.init)
 			case "--push-branch": options.pushBranch = next()
 			case "--report-cwd": options.reportsTerminalDirectory = true

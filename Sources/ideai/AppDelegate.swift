@@ -14,6 +14,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		// otherwise look like every preference being forgotten at once.
 		Settings.migrate(from: "dev.philipparndt.ideai")
 
+		// Watching for the main thread going away, from the start: a hitch
+		// while typing is over before it can be looked into, so the trail has
+		// to be there already. One sleeping thread, written to
+		// ~/Library/Logs/ideai/stalls.log only when something takes too long.
+		StallWatch.start()
+
 		// The palette, before anything is built with it.
 		Theme.apply()
 		DistributedNotificationCenter.default.addObserver(
@@ -519,6 +525,21 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		if let steps = options.treeSteps {
 			DispatchQueue.main.asyncAfter(deadline: .now() + max(1, options.screenshotDelay - 1.5)) {
 				controller?.treeStepsForTesting(steps)
+			}
+		}
+
+		if let milliseconds = options.stallMilliseconds {
+			// A hitch on purpose, to prove the watch is awake and that the log
+			// says what was going on.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+				StallWatch.mark("deliberate stall") {
+					Thread.sleep(forTimeInterval: Double(milliseconds) / 1000)
+				}
+				DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+					for stall in StallWatch.worst(limit: 5) {
+						print("STALL \(stall.line)")
+					}
+				}
 			}
 		}
 

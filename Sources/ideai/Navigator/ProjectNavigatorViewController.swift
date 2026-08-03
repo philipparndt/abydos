@@ -329,6 +329,10 @@ final class ProjectNavigatorViewController: NSViewController {
 	}
 
 	private func reloadTree() {
+		StallWatch.mark("navigator reload") { reloadTreeMarked() }
+	}
+
+	private func reloadTreeMarked() {
 		guard let rootNode else { return }
 		let expanded = expandedPaths()
 		let selected = selectedPath()

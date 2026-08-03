@@ -292,6 +292,10 @@ final class TerminalView: NSView, NSTextInputClient {
 
 	/// Parses what has arrived, for as long as the budget allows.
 	private func drain() {
+		StallWatch.mark("terminal parse") { drainMarked() }
+	}
+
+	private func drainMarked() {
 		drainScheduled = false
 		let deadline = Date().addingTimeInterval(Self.parseBudget)
 
@@ -811,6 +815,10 @@ final class TerminalView: NSView, NSTextInputClient {
 	// MARK: - Drawing
 
 	override func draw(_ dirtyRect: NSRect) {
+		StallWatch.mark("terminal draw") { drawMarked(dirtyRect) }
+	}
+
+	private func drawMarked(_ dirtyRect: NSRect) {
 		defer { if metal == nil { noteKeystrokeShown() } }
 		TerminalPalette.background.setFill()
 		dirtyRect.fill()

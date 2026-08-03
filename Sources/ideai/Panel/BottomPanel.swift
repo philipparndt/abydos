@@ -669,7 +669,7 @@ final class BottomPanel: NSView {
 			// strip keeps what it had rather than blinking empty.
 			guard !windows.isEmpty, windows != self.tmuxWindows else { return }
 			self.tmuxWindows = windows
-			self.rebuildColumns()
+			StallWatch.mark("tmux tabs") { self.rebuildColumns() }
 		}
 	}
 

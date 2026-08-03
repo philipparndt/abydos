@@ -260,6 +260,10 @@ final class HistoryPane: NSView {
 	/// commits between the ones shown are missing — so the lanes are dropped
 	/// and the rows are drawn plainly.
 	private func rebuildGraph() {
+		StallWatch.mark("history graph") { rebuildGraphMarked() }
+	}
+
+	private func rebuildGraphMarked() {
 		let isWholeHistory = query.isEmpty && scopedPath == nil
 		guard isWholeHistory else {
 			graph = []
