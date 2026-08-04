@@ -50,6 +50,9 @@ struct LaunchOptions {
 	var maximizeTerminal = false
 	/// Follows the terminal's project, for checking that it does.
 	var followTerminal = false
+	/// Close every terminal tab after this many seconds, leaving the panel
+	/// belonging to a tmux session with nothing attached to it.
+	var closeTerminals: Double?
 	/// Toggle a breakpoint on this 1-based line before capture.
 	var breakpointLine: Int?
 	/// Print where the open file's breakpoints ended up, after each of these
@@ -228,7 +231,10 @@ struct LaunchOptions {
 	/// watch catch it.
 	var stallMilliseconds: Int?
 	/// Press the terminal strip's + before capture.
-	var addTerminalTab = false
+	/// Press + on the terminal strip, this many seconds in. `--tab-add` on its
+	/// own means three; a number after it says when, for the sequences where
+	/// something has to happen first.
+	var addTerminalTabAt: Double?
 	/// Close this tmux tab from its menu before capture.
 	var closeTmuxTab: Int?
 	/// Press the + on tmux's strip before capture.
@@ -282,9 +288,18 @@ struct LaunchOptions {
 			case "--tree":       options.treeSteps = next()
 			case "--type-latency": options.typingPresses = next().flatMap(Int.init)
 			case "--stall":      options.stallMilliseconds = next().flatMap(Int.init)
-			case "--tab-add":    options.addTerminalTab = true
+			case "--tab-add":
+				// The number is optional, so peek rather than consume: without
+				// one the next argument is the next flag.
+				if index + 1 < arguments.count, let at = Double(arguments[index + 1]) {
+					options.addTerminalTabAt = at
+					index += 1
+				} else {
+					options.addTerminalTabAt = 3.0
+				}
 			case "--tmux-close": options.closeTmuxTab = next().flatMap(Int.init)
 			case "--tmux-add":   options.addTmuxWindow = true
+			case "--close-terminals": options.closeTerminals = next().flatMap(Double.init)
 			case "--untmux":     options.toggleStrictTmuxOff = true
 			case "--dump-settings": options.dumpSettings = next()
 			case "--make-run":   options.chooseMakeRun = next()

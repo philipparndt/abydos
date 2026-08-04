@@ -749,6 +749,17 @@ final class BottomPanel: NSView {
 	/// to know whether a session's news belongs to this window.
 	var mirroredTmuxSession: String? { mirrorsTmux ? (mirroredSession ?? tmuxSession) : nil }
 
+	/// Closes every terminal tab, as clicking each ✕ would.
+	///
+	/// The state that had no way out of it: the panel still belongs to a tmux
+	/// session, and nothing is attached to it any more.
+	func closeTerminalTabsForTesting() {
+		for index in sessions.indices.reversed() {
+			guard case .terminal = sessions[index].kind else { continue }
+			close(index: index, hidingWhenEmpty: false)
+		}
+	}
+
 	/// Presses the + on the first strip, for testing what it does.
 	func addTabForTesting() {
 		columnViews.first?.strip.pressAddForTesting()
@@ -1129,6 +1140,16 @@ final class BottomPanel: NSView {
 	}
 	private var attachedTerminalID: ObjectIdentifier?
 
+	/// Whether a living terminal is attached to this window's tmux session.
+	///
+	/// False when it was closed, and false when its session was destroyed from
+	/// inside and the client exited with it. Either way there is nothing
+	/// attached, and the next terminal opened here is the one that should be.
+	private var hasLiveTmuxTerminal: Bool {
+		guard let mirrored = mirroredTerminal else { return false }
+		return !mirrored.hasExited
+	}
+
 	/// The tmux window a strip position stands for, when the strip is a mirror.
 	private func mirroredWindow(at index: Int, in column: Int) -> TmuxMirror.Window? {
 		// Only where the two lists share a strip. With tmux's windows on their
@@ -1175,7 +1196,10 @@ final class BottomPanel: NSView {
 	/// is already somewhere else — possibly mid-command — would not honour it.
 	@discardableResult
 	func newTerminal(in directory: URL) -> TerminalPane? {
-		newTerminal(rootedAt: directory, title: directory.lastPathComponent)
+		// Never the session's own terminal, whatever else is open: attaching
+		// puts you wherever tmux left the shell, and the directory asked for
+		// here is the whole point of asking.
+		newTerminal(rootedAt: directory, title: directory.lastPathComponent, joinsSession: false)
 	}
 
 	@discardableResult
@@ -1188,16 +1212,25 @@ final class BottomPanel: NSView {
 		rootedAt directory: URL?,
 		title: String,
 		focus: Bool = true,
-		attachingTo session: String? = nil
+		attachingTo session: String? = nil,
+		joinsSession: Bool = true
 	) -> TerminalPane? {
-		// The first terminal of a window can be told to run something instead
-		// of a plain shell — `tmux new -A -s ideai`, for whoever lives in tmux.
-		// Only the first: the ones opened afterwards are for the odd job that
+		// A terminal of a window can be told to run something instead of a
+		// plain shell — `tmux new -A -s ideai`, for whoever lives in tmux. One
+		// of them, not all: the ones opened beside it are for the odd job that
 		// should not join the session.
-		let attaches = session != nil || (sessions.isEmpty && startupCommand() != nil)
+		//
+		// Which one, though, is "there is not one attached" — not "this is the
+		// first pane in the panel". Closing the tmux tab left the panel with an
+		// attached terminal that no longer existed, and every + after that gave
+		// another plain shell with no way back to an integrated one. A leftover
+		// pane of any kind — a search, a debugger, a shell for one command —
+		// was enough to make it permanent.
+		let attaches = session != nil
+			|| (joinsSession && !hasLiveTmuxTerminal && startupCommand() != nil)
 		let pane = TerminalPane(
 			workingDirectory: directory,
-			command: session.map(attachCommand(to:)) ?? (sessions.isEmpty ? startupCommand() : nil)
+			command: session.map(attachCommand(to:)) ?? (attaches ? startupCommand() : nil)
 		)
 		let session = Session(title: title, kind: .terminal(pane))
 		if attaches { attachedTerminalID = ObjectIdentifier(session) }

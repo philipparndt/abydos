@@ -596,9 +596,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
-		if options.addTerminalTab {
-			DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+		if let delay = options.addTerminalTabAt {
+			DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
 				controller?.addTerminalTabForTesting()
+			}
+		}
+
+		if let delay = options.closeTerminals {
+			DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+				controller?.closeTerminalTabsForTesting()
 			}
 		}
 
