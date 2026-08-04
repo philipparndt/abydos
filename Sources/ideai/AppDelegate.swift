@@ -592,7 +592,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if options.addTmuxWindow {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
+				let before = controller?.paneCountForTesting ?? 0
 				controller?.addTmuxWindowForTesting()
+				// The one thing this button must never do is add a pane here.
+				DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+					let after = controller?.paneCountForTesting ?? 0
+					print("TMUXADD: panes \(before) -> \(after)")
+				}
 			}
 		}
 

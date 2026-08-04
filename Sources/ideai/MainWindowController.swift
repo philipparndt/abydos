@@ -281,6 +281,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	}
 
 	/// Presses the + on the terminal strip, for testing what it does.
+	/// Panes in the panel, for proving the tmux + added none.
+	var paneCountForTesting: Int { bottomPanel.paneCountForTesting }
+
 	func addTerminalTabForTesting() {
 		bottomPanel.addTabForTesting()
 	}

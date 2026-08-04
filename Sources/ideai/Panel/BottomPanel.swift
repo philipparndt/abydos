@@ -875,6 +875,10 @@ final class BottomPanel: NSView {
 		columnViews.first?.mirrorStrip.pressAddForTesting()
 	}
 
+	/// How many panes the panel is holding, so a press that was supposed to
+	/// make a tmux window can be checked for having quietly made a tab.
+	var paneCountForTesting: Int { sessions.count }
+
 	/// Clicks a tab on the panel's own strip and says what that actually
 	/// brought to the front — the two being the same thing is the point.
 	func clickPanelTabForTesting(_ index: Int) -> String {
@@ -927,17 +931,29 @@ final class BottomPanel: NSView {
 		}
 		strip.onAdd = { [weak self] in
 			guard let self, let session = self.mirroredSession ?? self.tmuxSession else { return }
-			if self.mirroredTerminal?.hasExited != false {
-				self.reattachTmux(to: session)
-				return
-			}
+			// This button makes tmux windows. Nothing else, ever.
+			//
+			// It used to check whether *we* had a live client first and open a
+			// terminal instead when we did not — which is how pressing the +
+			// on tmux's own strip put plain tabs in the panel's strip above it,
+			// one per press. Creating a window never needed a client: `tmux
+			// new-window -t <session>` is answered by the server, and whether
+			// this app happens to be looking at that session is beside the
+			// point. So it asks for the window first, always.
 			Task {
 				self.mirrorChangedLocally()
-				let made = await TmuxMirror.newWindow(inSession: session)
-				if !made { self.reattachTmux(to: session) }
+				if await TmuxMirror.newWindow(inSession: session) {
+					self.refreshTmuxWindows()
+					self.focusTerminal()
+					return
+				}
+				// The server said no, which at this point means the session
+				// itself has gone — its last window was closed, and with it
+				// the thing these tabs are a picture of. Making it again is
+				// the only way to have one, and that does need a client.
+				self.reattachTmux(to: session)
 				self.refreshTmuxWindows()
 			}
-			self.focusTerminal()
 		}
 		strip.onRename = { [weak self] index, name in
 			guard let self, self.tmuxWindows.indices.contains(index) else { return }
