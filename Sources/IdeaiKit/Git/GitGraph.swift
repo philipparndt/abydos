@@ -41,6 +41,13 @@ public enum GitGraph {
 		/// A merge whose second parent's own commits can be folded away, and
 		/// how many rows that would hide.
 		public let collapsible: Int
+		/// Whether this commit is the newest of its line of descent.
+		///
+		/// Nothing above it continues into its lane, so the line has to *start*
+		/// at its dot. Drawn without knowing, every branch tip grew a stub of
+		/// line above it going nowhere — a lane arriving from off the top of a
+		/// history that has nothing up there.
+		public let isTip: Bool
 
 		public init(
 			hash: String,
@@ -48,7 +55,8 @@ public enum GitGraph {
 			branch: Int,
 			edges: [Edge],
 			width: Int,
-			collapsible: Int = 0
+			collapsible: Int = 0,
+			isTip: Bool = false
 		) {
 			self.hash = hash
 			self.lane = lane
@@ -56,6 +64,7 @@ public enum GitGraph {
 			self.edges = edges
 			self.width = width
 			self.collapsible = collapsible
+			self.isTip = isTip
 		}
 	}
 
@@ -91,6 +100,9 @@ public enum GitGraph {
 			// right. The leftmost wins, so a long-lived line — main — keeps the
 			// lane it started in.
 			var lane = lanes.firstIndex { $0?.expects == node.hash } ?? -1
+			// Nothing was waiting for this commit, so nothing above it leads
+			// here: it is the newest of its line, and its lane starts at it.
+			let isTip = lane < 0
 			if lane < 0 {
 				lane = lanes.firstIndex { $0 == nil } ?? lanes.count
 				if lane == lanes.count { lanes.append(nil) }
@@ -149,7 +161,8 @@ public enum GitGraph {
 				branch: branch,
 				edges: edges,
 				width: lanes.count,
-				collapsible: mergedRowCount(of: node, nodes: nodes, positions: positions)
+				collapsible: mergedRowCount(of: node, nodes: nodes, positions: positions),
+				isTip: isTip
 			))
 		}
 		return rows

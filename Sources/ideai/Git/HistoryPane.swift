@@ -676,13 +676,20 @@ private final class CommitRowView: NSView {
 
 		// Lines coming from above into this commit's lane: the row above drew
 		// them to its own edge, and this one meets them.
+		//
+		// Unless there is nothing above. The newest commit of a line has
+		// nothing continuing into it, and drawing this anyway gave every
+		// branch tip a stub of line above the dot, arriving from a history
+		// that is not there.
 		let own = centre(graph.lane)
-		let up = NSBezierPath()
-		up.move(to: NSPoint(x: own, y: bounds.minY))
-		up.line(to: NSPoint(x: own, y: centreY))
-		up.lineWidth = width
-		Self.colour(forBranch: graph.branch).withAlphaComponent(0.9).setStroke()
-		up.stroke()
+		if !graph.isTip {
+			let up = NSBezierPath()
+			up.move(to: NSPoint(x: own, y: bounds.minY))
+			up.line(to: NSPoint(x: own, y: centreY))
+			up.lineWidth = width
+			Self.colour(forBranch: graph.branch).withAlphaComponent(0.9).setStroke()
+			up.stroke()
+		}
 
 		let radius = Theme.current.scaled(commit.isMerge ? 4 : 3.5)
 		let dot = NSRect(

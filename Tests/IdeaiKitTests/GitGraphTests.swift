@@ -87,6 +87,39 @@ struct GitGraphTests {
 		#expect(side != rows[3].branch, "which is not the same colour")
 	}
 
+	/// A line has to start somewhere: the newest commit of each one is where.
+	///
+	/// Drawn without knowing which those are, every branch tip grew a stub of
+	/// line above its dot, arriving out of a history that is not there.
+	@Test func onlyTheNewestOfALineStartsIt() {
+		//  m ── merge of main (b) and side (s)
+		//  |\
+		//  b s
+		//  |/
+		//  a
+		let rows = GitGraph.lay(out: [
+			node("m", "b", "s"),
+			node("b", "a"),
+			node("s", "a"),
+			node("a"),
+		])
+
+		#expect(rows[0].isTip, "nothing is above the newest commit")
+		#expect(!rows[1].isTip, "the merge's first parent is led into from above")
+		#expect(!rows[2].isTip, "and so is its second — that is what the curve is")
+		#expect(!rows[3].isTip, "the root is reached by both sides")
+	}
+
+	/// Two branches with nothing merging them: each is the top of its own line.
+	@Test func everyUnmergedBranchHasATipOfItsOwn() {
+		let rows = GitGraph.lay(out: [
+			node("x", "a"),
+			node("y", "a"),
+			node("a"),
+		])
+		#expect(rows.map(\.isTip) == [true, true, false])
+	}
+
 	/// Two branches open at once: three lanes, and nothing shares one while
 	/// both are alive.
 	@Test func twoBranchesAtOnce() {
