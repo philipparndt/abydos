@@ -246,8 +246,13 @@ public enum TmuxMirror {
 	/// does every other terminal attached to those. Worth having because in the
 	/// mirrored mode this app draws the same window list as tabs, and two rows
 	/// of the same thing is one row too many.
-	public static func setStatusBar(_ shown: Bool, inSession session: String) async {
-		await command(shown
+	/// Returns whether tmux accepted it. It does not, quietly, when the session
+	/// is not there yet — which at startup is most of the time, since the poll
+	/// that asks is running before the session it asks about exists. A caller
+	/// that recorded the wish as granted anyway would never ask again.
+	@discardableResult
+	public static func setStatusBar(_ shown: Bool, inSession session: String) async -> Bool {
+		await succeeds(shown
 			? ["set-option", "-t", session, "-u", "status"]
 			: ["set-option", "-t", session, "status", "off"])
 	}
@@ -289,6 +294,12 @@ public enum TmuxMirror {
 	private static func command(_ arguments: [String]) async {
 		guard let tmux = Executables.locate("tmux") else { return }
 		_ = await run(tmux, arguments)
+	}
+
+	/// The same, for the commands whose failing matters.
+	private static func succeeds(_ arguments: [String]) async -> Bool {
+		guard let tmux = Executables.locate("tmux") else { return false }
+		return await run(tmux, arguments)?.exitCode == 0
 	}
 
 	private static func run(

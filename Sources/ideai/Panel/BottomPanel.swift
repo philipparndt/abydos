@@ -619,9 +619,13 @@ final class BottomPanel: NSView {
 	/// Whether a tmux client has ever been seen on this terminal's tty, so a
 	/// client that has gone away can be told from one that has not arrived yet.
 	private var hasAttachedOnce = false
-	/// The session whose status bar this window turned off, so it can be given
-	/// back when the setting changes or the session does.
-	private var statusBarHiddenFor: String?
+	/// What tmux was last told about its status bar, and *heard* — the session,
+	/// and whether the bar was to go. Nil until something has actually landed,
+	/// so a command that went nowhere is retried rather than remembered as done.
+	private var statusBarApplied: (session: String, hidden: Bool)?
+	/// Polls since the bar was last checked against tmux rather than against
+	/// what we believe we told it.
+	private var statusBarPollsSinceCheck = 0
 
 	/// Whether the strip is a view of tmux rather than a list of terminals.
 	///
@@ -867,15 +871,42 @@ final class BottomPanel: NSView {
 
 	/// Tells this session whether to draw its own status bar.
 	///
-	/// Once per session rather than on every poll: the option sticks, and
-	/// saying it twice a second would be a `tmux` process twice a second for
-	/// nothing.
+	/// Once per session rather than on every poll: the option sticks, and saying
+	/// it twice a second would be a `tmux` process twice a second for nothing.
+	///
+	/// Only once it has landed, though. The first attempt often goes out while
+	/// the session is still being created — the poll starts before tmux does —
+	/// and `set-option` against a session that is not there yet fails quietly.
+	/// Recorded as done anyway, that left the bar on with nothing ever asking
+	/// again, which is why turning the setting off and on was what fixed it: the
+	/// only other thing that ever re-sent the command.
+	///
+	/// And asked afresh now and then, because a session option does not outlive
+	/// its server. Anything that restarts tmux underneath brings the bar back
+	/// without telling this app, and believing what we last said would leave it
+	/// there for good.
 	private func applyStatusBarWish(to session: String) async {
 		let wanted = TmuxSettings.shouldHideStatusBar
-		guard statusBarHiddenFor != (wanted ? session : nil) else { return }
-		await TmuxMirror.setStatusBar(!wanted, inSession: session)
-		statusBarHiddenFor = wanted ? session : nil
+
+		if let applied = statusBarApplied, applied == (session, wanted) {
+			// Nothing to check when the bar is theirs again: `-u` restores
+			// whatever their own config says, which may be any height.
+			guard wanted else { return }
+			statusBarPollsSinceCheck += 1
+			guard statusBarPollsSinceCheck >= Self.statusBarRecheckPolls else { return }
+			statusBarPollsSinceCheck = 0
+			guard await TmuxMirror.statusLines(inSession: session) > 0 else { return }
+		}
+
+		statusBarPollsSinceCheck = 0
+		guard await TmuxMirror.setStatusBar(!wanted, inSession: session) else { return }
+		statusBarApplied = (session, wanted)
 	}
+
+	/// How many polls between asking tmux what its status bar is really doing.
+	/// Twenty seconds at the poll's half-second, against a poll that already
+	/// runs tmux every tick — cheap enough to be worth never being wrong.
+	private static let statusBarRecheckPolls = 40
 
 	/// Moves the highlight before tmux has answered.
 	///
@@ -2249,13 +2280,11 @@ final class BottomPanel: NSView {
 
 	func applySettings() {
 		// The status bar follows the switches: off while these tabs show the
-		// same windows, back the moment they do not.
+		// same windows, back the moment they do not. Through the same path the
+		// poll uses, so a switch flicked while tmux is not listening is retried
+		// rather than being the one thing that was meant to fix it.
 		if let session = mirroredSession ?? tmuxSession {
-			let wanted = TmuxSettings.shouldHideStatusBar
-			if (statusBarHiddenFor != nil) != wanted {
-				statusBarHiddenFor = wanted ? session : nil
-				Task { await TmuxMirror.setStatusBar(!wanted, inSession: session) }
-			}
+			Task { await applyStatusBarWish(to: session) }
 		}
 
 		// "Tabs are tmux's windows" switched: start or stop watching the
