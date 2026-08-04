@@ -33,6 +33,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		// ~/Library/Logs/ideai/stalls.log only when something takes too long.
 		StallWatch.start()
 
+		// Before the palette is chosen, since presenting picks a different one.
+		// An override rather than the stored switch: this shares a preferences
+		// domain with the installed app, and a screenshot must not leave it
+		// presenting.
+		if LaunchOptions.parse().presentation { Settings.shared.presentingOverride = true }
+
 		// The palette, before anything is built with it.
 		Theme.apply()
 		DistributedNotificationCenter.default.addObserver(
@@ -1361,6 +1367,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		viewMenu.addItem(zoomInAlt)
 		viewMenu.addItem(withTitle: "Zoom Out", action: #selector(MainWindowController.zoomOut(_:)), keyEquivalent: "-")
 		viewMenu.addItem(withTitle: "Actual Size", action: #selector(MainWindowController.resetZoom(_:)), keyEquivalent: "0")
+
+		// Its own zoom and its own palette, so a talk can be set up once and
+		// left alone — and so coming back to the desk afterwards is a menu item
+		// rather than finding the old size by hand.
+		let presentation = NSMenuItem(
+			title: "Presentation Mode",
+			action: #selector(MainWindowController.togglePresentationMode(_:)),
+			keyEquivalent: "p"
+		)
+		presentation.keyEquivalentModifierMask = [.command, .shift]
+		viewMenu.addItem(presentation)
 		viewMenu.addItem(.separator())
 		let blameItem = NSMenuItem(
 			title: "Toggle Blame",

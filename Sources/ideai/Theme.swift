@@ -15,7 +15,7 @@ struct Theme {
 	@discardableResult
 	static func apply() -> Bool {
 		let wanted: Theme
-		switch Settings.shared.appearance {
+		switch Settings.shared.activeAppearance {
 		case "light": wanted = .daylight
 		case "dark": wanted = .dusk
 		default: wanted = systemIsDark ? .dusk : .daylight
@@ -86,7 +86,11 @@ struct Theme {
 
 	/// Global zoom (⌘+ / ⌘- / ⌘0). Every dimension in the window goes through
 	/// `scaled(_:)` or `uiFont(_:)` so the interface zooms as one piece.
-	var scale: CGFloat { CGFloat(Settings.shared.uiScale) }
+	///
+	/// The presentation zoom while presenting, which is a separate number: the
+	/// size a room needs is not the size a desk does, and coming back from a
+	/// talk should not mean finding the zoom by hand.
+	var scale: CGFloat { CGFloat(Settings.shared.activeScale) }
 
 	/// Scales a design-time dimension. Rounded to whole points so borders and
 	/// separators stay crisp instead of landing on half pixels.

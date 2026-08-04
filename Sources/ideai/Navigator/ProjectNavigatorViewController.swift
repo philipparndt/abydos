@@ -1290,14 +1290,17 @@ private final class NavigatorCellView: NSTableCellView {
 		}
 		x += iconSize + Theme.current.scaled(6)
 
-		// On a selected row the VCS colour would fight the blue behind it, so the
-		// label goes near-white — the treatment IDEA uses.
+		// On a selected row the VCS colour would fight the pill behind it, so the
+		// label goes to whichever plain ink the palette reads with — the
+		// treatment IDEA uses. Near-white was written for the dark theme's blue
+		// and disappeared entirely on the light theme's pale one, which the
+		// presentation mode ships by default.
 		let isSelected = (superview as? NSTableRowView)?.isSelected ?? false
 		// The subproject is written the way the project above it is — bold and
 		// bright — because that is what it is here: the project everything is
 		// pointed at. The blue folder says which of the two.
 		let nameColor: NSColor = isSelected
-			? .hex(0xE8EAED)
+			? (Theme.current.isLight ? Theme.current.sidebarHeaderText : .hex(0xE8EAED))
 			: (isRoot || isSubproject
 				? Theme.current.sidebarHeaderText
 				: Theme.current.color(for: node.gitStatus))

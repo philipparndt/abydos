@@ -1195,6 +1195,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			return canNavigateBack
 		case #selector(navigateForward(_:)):
 			return canNavigateForward
+		case #selector(togglePresentationMode(_:)):
+			// Ticked while presenting, since the whole point is that it is a
+			// mode you are in rather than a change you made.
+			item.state = Settings.shared.presenting ? .on : .off
+			return true
 		default:
 			return true
 		}
@@ -4558,6 +4563,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	@objc func resetZoom(_ sender: Any?) {
 		Settings.shared.resetZoom()
+	}
+
+	/// Sets the window up to be shown to a room, or puts it back.
+	///
+	/// Both halves are one switch: the zoom a room needs and a palette a
+	/// projector can actually show. Neither overwrites what was there — they
+	/// are a second pair of preferences — so coming back is exact, whatever was
+	/// zoomed or re-themed during the talk.
+	@objc func togglePresentationMode(_ sender: Any?) {
+		Settings.shared.presenting.toggle()
 	}
 
 	@objc func splitEditorRight(_ sender: Any?) {

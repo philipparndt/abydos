@@ -50,6 +50,8 @@ struct LaunchOptions {
 	var maximizeTerminal = false
 	/// Follows the terminal's project, for checking that it does.
 	var followTerminal = false
+	/// Show the window as it looks while presenting, without storing the mode.
+	var presentation = false
 	/// Close every terminal tab after this many seconds, leaving the panel
 	/// belonging to a tmux session with nothing attached to it.
 	var closeTerminals: Double?
@@ -300,6 +302,7 @@ struct LaunchOptions {
 			case "--tmux-close": options.closeTmuxTab = next().flatMap(Int.init)
 			case "--tmux-add":   options.addTmuxWindow = true
 			case "--close-terminals": options.closeTerminals = next().flatMap(Double.init)
+			case "--presentation": options.presentation = true
 			case "--untmux":     options.toggleStrictTmuxOff = true
 			case "--dump-settings": options.dumpSettings = next()
 			case "--make-run":   options.chooseMakeRun = next()

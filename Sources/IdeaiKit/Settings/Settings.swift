@@ -45,6 +45,11 @@ public final class Settings {
 			Key.showHiddenFiles: true,
 			Key.excludedDirectories: Array(FileNode.defaultExcludedDirectoryNames).sorted(),
 			Key.uiScale: 1.0,
+			// Big enough to read from the back of a room, and light, because a
+			// projector washes a dark theme out to a grey smear.
+			Key.presenting: false,
+			Key.presentationScale: 1.5,
+			Key.presentationAppearance: "light",
 			Key.terminalFontName: "",
 			Key.wordWrap: false,
 			Key.terminalGPURendering: false,
@@ -75,6 +80,9 @@ public final class Settings {
 		static let agentPermissions = "agentPermissions"
 		static let excludedDirectories = "excludedDirectories"
 		static let uiScale = "uiScale"
+		static let presenting = "presenting"
+		static let presentationScale = "presentationScale"
+		static let presentationAppearance = "presentationAppearance"
 		static let terminalFontName = "terminalFontName"
 		static let wordWrap = "wordWrap"
 		static let terminalGPURendering = "terminalGPURendering"
@@ -111,22 +119,74 @@ public final class Settings {
 	/// always returns exactly to 1.0.
 	public static let zoomSteps: [Double] = [0.75, 0.85, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0]
 
+	// MARK: - Presentation
+
+	/// Whether the window is set up to be shown to a room rather than worked in.
+	///
+	/// Presenting is a different set of the same two preferences — bigger, and
+	/// light, because a projector turns a dark theme into a grey smear — and
+	/// the point is that going back afterwards is exact. So it is a second set
+	/// held alongside the first rather than a mode that saves the first
+	/// somewhere and puts it back: nothing to restore, and nothing that can
+	/// leave a talk's zoom behind after the talk.
+	public var presenting: Bool {
+		get { presentingOverride ?? defaults.bool(forKey: Key.presenting) }
+		set { set(newValue, Key.presenting) }
+	}
+
+	/// Presentation mode forced on for one run, without storing it.
+	///
+	/// The screenshot harness shares this preferences domain with the installed
+	/// app — same bundle, same defaults — so a test that simply switched the
+	/// mode on would leave somebody's editor presenting to an empty room.
+	public var presentingOverride: Bool?
+
+	/// The zoom used while presenting, kept apart from the working one so that
+	/// zooming during a talk does not resize the desk you go back to.
+	public var presentationScale: Double {
+		get {
+			let stored = defaults.double(forKey: Key.presentationScale)
+			return stored == 0 ? 1.5 : max(Self.zoomSteps.first!, min(Self.zoomSteps.last!, stored))
+		}
+		set { set(newValue, Key.presentationScale) }
+	}
+
+	/// The palette used while presenting: light, dark, or the system's.
+	public var presentationAppearance: String {
+		get { defaults.string(forKey: Key.presentationAppearance) ?? "light" }
+		set { set(newValue, Key.presentationAppearance) }
+	}
+
+	/// The zoom actually in force, and the one the zoom commands move.
+	///
+	/// Everything that draws asks for this rather than for `uiScale`, so ⌘+ in
+	/// the middle of a talk makes the talk bigger and leaves the desk alone.
+	public var activeScale: Double {
+		get { presenting ? presentationScale : uiScale }
+		set { if presenting { presentationScale = newValue } else { uiScale = newValue } }
+	}
+
+	/// The palette actually in force.
+	public var activeAppearance: String {
+		presenting ? presentationAppearance : appearance
+	}
+
 	@discardableResult
 	public func zoomIn() -> Double {
-		let next = Self.zoomSteps.first { $0 > uiScale + 0.001 } ?? Self.zoomSteps.last!
-		uiScale = next
+		let next = Self.zoomSteps.first { $0 > activeScale + 0.001 } ?? Self.zoomSteps.last!
+		activeScale = next
 		return next
 	}
 
 	@discardableResult
 	public func zoomOut() -> Double {
-		let next = Self.zoomSteps.last { $0 < uiScale - 0.001 } ?? Self.zoomSteps.first!
-		uiScale = next
+		let next = Self.zoomSteps.last { $0 < activeScale - 0.001 } ?? Self.zoomSteps.first!
+		activeScale = next
 		return next
 	}
 
 	public func resetZoom() {
-		uiScale = 1.0
+		activeScale = presenting ? 1.5 : 1.0
 	}
 
 	// MARK: - Saving
