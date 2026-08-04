@@ -2589,16 +2589,25 @@ final class PanelTabStrip: NSView {
 	/// is dimmed is a number somebody will want to turn, and a theme's green can
 	/// be any green at all, so the ink is decided from what the bar actually
 	/// came out as: tmux's own black-on-green while the bar is light enough for
-	/// it, and a pale green once it is not. Chosen either way, one of the two
+	/// it, and a bright one once it is not. Chosen either way, one of the two
 	/// would eventually be ink the same colour as the thing it is written on.
+	///
+	/// Bright rather than merely paler than the bar: the tabs nobody is in are
+	/// still a list somebody reads across, and a green only a little lighter
+	/// than the green behind it is a list you have to lean in for.
 	static var onTmuxGreen: NSColor {
 		let dark = NSColor.hex(0x1D1F21)
-		let pale = tmuxGreen.blended(withFraction: 0.72, of: .white) ?? .hex(0xDCE8CC)
+		let pale = tmuxGreen.blended(withFraction: 0.86, of: .white) ?? .hex(0xF0F5E8)
 		guard let bar = tmuxGreenBar.usingColorSpace(.sRGB) else { return dark }
 		let luminance = 0.2126 * bar.redComponent
 			+ 0.7152 * bar.greenComponent
 			+ 0.0722 * bar.blueComponent
-		return luminance > 0.42 ? dark : pale
+		// Well clear of where the bar actually sits, rather than at the point
+		// the two inks are equally bad. At the dimming this ships with, the bar
+		// lands at 0.42 — a threshold there would flip the whole strip to
+		// near-black ink on the strength of a rounding difference in somebody's
+		// theme green. Black only wins on a bar that is genuinely light.
+		return luminance > 0.55 ? dark : pale
 	}
 
 	/// The green tmux paints its own status bar with, as this terminal renders
@@ -2622,7 +2631,7 @@ final class PanelTabStrip: NSView {
 	/// the terminal above it, so it reads as part of the terminal rather than
 	/// as part of the app.
 	static var tmuxGreenBar: NSColor {
-		tmuxGreen.blended(withFraction: 0.35, of: TerminalPalette.background) ?? tmuxGreen
+		tmuxGreen.blended(withFraction: 0.58, of: TerminalPalette.background) ?? tmuxGreen
 	}
 
 	override var isFlipped: Bool { true }
