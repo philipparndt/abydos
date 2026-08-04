@@ -146,7 +146,7 @@ public enum TmuxMirror {
 
 	/// Points this terminal's client at another session.
 	public static func switchClient(onTTY tty: String, to session: String) async {
-		await command(["switch-client", "-c", tty, "-t", session])
+		await command(["switch-client", "-c", tty, "-t", "=\(session)"])
 	}
 
 	/// Makes a session and leaves it running, for switching to afterwards.
@@ -169,7 +169,7 @@ public enum TmuxMirror {
 		// a space. The name comes last so what is left of the line is all of it.
 		let format = "#{window_index};#{?window_active,1,0};#{pane_current_command}"
 			+ ";#{@ai_status};#{window_activity};#{window_name}"
-		let result = await run(tmux, ["list-windows", "-t", session, "-F", format])
+		let result = await run(tmux, ["list-windows", "-t", "=\(session)", "-F", format])
 		guard let result, result.exitCode == 0 else { return [] }
 		return parse(result.output)
 	}
@@ -217,7 +217,13 @@ public enum TmuxMirror {
 	@discardableResult
 	public static func newWindow(inSession session: String) async -> Bool {
 		guard let tmux = Executables.locate("tmux") else { return false }
-		let result = await run(tmux, ["new-window", "-t", session])
+		// `<session>:` — with the colon, and exact. Without it tmux reads the
+		// argument as a *target window*: the session's current window, whose
+		// index is then the index the new one is asked to take. On a session
+		// sitting on window 0 that is "create window failed: index 0 in use",
+		// every time. The colon means the session itself, next free index; the
+		// `=` means this session rather than anything it is a prefix of.
+		let result = await run(tmux, ["new-window", "-t", "=\(session):"])
 		return result?.exitCode == 0
 	}
 
@@ -230,7 +236,7 @@ public enum TmuxMirror {
 	/// who has already turned their bar off must get neither.
 	public static func statusLines(inSession session: String) async -> Int {
 		guard let tmux = Executables.locate("tmux") else { return 0 }
-		let result = await run(tmux, ["display-message", "-p", "-t", session, "#{status}"])
+		let result = await run(tmux, ["display-message", "-p", "-t", "=\(session)", "#{status}"])
 		guard let text = result?.output.trimmingCharacters(in: .whitespacesAndNewlines),
 		      result?.exitCode == 0
 		else { return 0 }
@@ -253,8 +259,8 @@ public enum TmuxMirror {
 	@discardableResult
 	public static func setStatusBar(_ shown: Bool, inSession session: String) async -> Bool {
 		await succeeds(shown
-			? ["set-option", "-t", session, "-u", "status"]
-			: ["set-option", "-t", session, "status", "off"])
+			? ["set-option", "-t", "=\(session)", "-u", "status"]
+			: ["set-option", "-t", "=\(session)", "status", "off"])
 	}
 
 	/// Whether the server has a session by this name.

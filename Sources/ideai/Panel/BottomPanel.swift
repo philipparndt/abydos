@@ -774,7 +774,17 @@ final class BottomPanel: NSView {
 				self.focusTerminal()
 				return
 			}
-			self.reattachTmux(to: session)
+			// Not a terminal, whatever went wrong. This button belongs to
+			// tmux's window list and the strip above it is the panel's own —
+			// the two are separate things, and a button on one quietly adding
+			// a tab to the other is the bug this kept turning into. Say so
+			// instead; the session tag is where attaching lives.
+			Toast.post(
+				"tmux would not open a window",
+				detail: "The session \(session) refused it. "
+					+ "~/Library/Logs/ideai/tmux.log has what it said.",
+				kind: .warning
+			)
 			self.refreshTmuxWindows()
 		}
 	}
