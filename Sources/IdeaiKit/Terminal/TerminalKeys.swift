@@ -20,6 +20,14 @@ public enum TerminalKeys {
 		case Return = 36
 		case tab = 48
 		case escape = 53
+		/// The Enter at the bottom right of a numeric keypad.
+		///
+		/// Needs naming because macOS hands it over as U+0003 — End of Text,
+		/// which is to say Ctrl-C. Passed through as the character it claims to
+		/// be, it interrupts: in a shell it kills the line being typed, and in
+		/// an agent's prompt it throws away the message instead of sending it.
+		/// It is a Return, and every other terminal sends one.
+		case keypadEnter = 76
 	}
 
 	/// Whether Option should send ESC before this key's own sequence.
@@ -35,7 +43,7 @@ public enum TerminalKeys {
 	/// the user was trying to break in half.
 	public static func takesMetaPrefix(_ key: Key) -> Bool {
 		switch key {
-		case .Return, .backspace, .tab, .escape, .forwardDelete:
+		case .Return, .keypadEnter, .backspace, .tab, .escape, .forwardDelete:
 			return true
 		case .upArrow, .downArrow, .leftArrow, .rightArrow,
 		     .home, .end, .pageUp, .pageDown:
@@ -57,7 +65,10 @@ public enum TerminalKeys {
 		// DEL rather than BS: what every Unix terminal has sent since the VT220,
 		// and what readline expects for "delete backwards".
 		case .backspace:     return "\u{7F}"
-		case .Return:        return "\r"
+		// The same carriage return as the big one. Programs that want to tell
+		// the two apart ask for the keyboard protocol, which reports the key
+		// rather than the byte and is handled before this table.
+		case .Return, .keypadEnter: return "\r"
 		case .tab:           return "\t"
 		case .escape:        return "\u{1B}"
 		case .upArrow, .downArrow, .leftArrow, .rightArrow: return nil
