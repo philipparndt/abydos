@@ -228,6 +228,9 @@ struct LaunchOptions {
 	var closeTmuxTab: Int?
 	/// Press the + on tmux's strip before capture.
 	var addTmuxWindow = false
+	/// Turn "tabs are tmux's windows" off part-way through, to see the strip
+	/// and the status bar follow.
+	var toggleStrictTmuxOff = false
 
 	static func parse(_ arguments: [String] = CommandLine.arguments) -> LaunchOptions {
 		var options = LaunchOptions()
@@ -267,6 +270,7 @@ struct LaunchOptions {
 			case "--tab-add":    options.addTerminalTab = true
 			case "--tmux-close": options.closeTmuxTab = next().flatMap(Int.init)
 			case "--tmux-add":   options.addTmuxWindow = true
+			case "--untmux":     options.toggleStrictTmuxOff = true
 			case "--branch-menu": options.branchMenuRow = next().flatMap(Int.init)
 			case "--push-branch": options.pushBranch = next()
 			case "--report-cwd": options.reportsTerminalDirectory = true

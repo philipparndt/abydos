@@ -537,6 +537,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if options.toggleStrictTmuxOff {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
+				Settings.shared.strictTmux = false
+				if TmuxConfig.isStatusHidden() { try? TmuxConfig.setStatusHidden(false) }
+				NotificationCenter.default.post(name: .ideaiSettingsChanged, object: nil)
+			}
+		}
+
 		if options.addTmuxWindow {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
 				controller?.addTmuxWindowForTesting()

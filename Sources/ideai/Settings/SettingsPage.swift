@@ -233,11 +233,20 @@ final class SettingsPage: NSView {
 	/// The control for a row, in this app's colours.
 	private func build(_ row: SettingsPaneController.Row) -> (String, NSView, String?) {
 		switch row {
-		case let .toggle(title, help, get, set):
+		case let .toggle(title, help, get, set, isEnabled):
 			let button = NSButton(checkboxWithTitle: "", target: nil, action: nil)
 			button.state = get() ? .on : .off
-			button.onAction = { set(button.state == .on) }
-			refreshHandlers.append { button.state = get() ? .on : .off }
+			button.isEnabled = isEnabled?() ?? true
+			button.onAction = {
+				set(button.state == .on)
+				// One switch decides another's fate, so every control re-reads
+				// itself — and its own state — after any of them changes.
+				NotificationCenter.default.post(name: .ideaiSettingsChanged, object: nil)
+			}
+			refreshHandlers.append {
+				button.state = get() ? .on : .off
+				button.isEnabled = isEnabled?() ?? true
+			}
 			return (title, button, help)
 
 		case let .slider(title, help, range, step, format, get, set):

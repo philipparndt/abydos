@@ -2179,6 +2179,16 @@ final class BottomPanel: NSView {
 	}
 
 	func applySettings() {
+		// "Tabs are tmux's windows" switched: start or stop watching the
+		// session, and rebuild the strip so the change is visible now rather
+		// than at the next launch.
+		startMirroringTmuxIfWanted()
+		if !mirrorsTmux, !tmuxWindows.isEmpty {
+			tmuxWindows = []
+			mirroredSession = nil
+		}
+		rebuildColumns()
+
 		placeholder.font = Theme.current.uiFont(12)
 		for view in columnViews { view.applyThemeChange() }
 		for session in sessions {

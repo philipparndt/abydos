@@ -49,7 +49,8 @@ final class SettingsWindowController: NSWindowController {
 /// every pane consistent and makes adding a setting a one-line change.
 final class SettingsPaneController: NSViewController {
 	enum Row {
-		case toggle(title: String, help: String?, get: () -> Bool, set: (Bool) -> Void)
+		case toggle(title: String, help: String?, get: () -> Bool, set: (Bool) -> Void,
+		            isEnabled: (() -> Bool)? = nil)
 		case slider(title: String, help: String?, range: ClosedRange<Double>, step: Double,
 		            format: (Double) -> String, get: () -> Double, set: (Double) -> Void)
 		case stepper(title: String, help: String?, range: ClosedRange<Int>,
@@ -136,11 +137,21 @@ final class SettingsPaneController: NSViewController {
 
 	private func makeRow(_ row: Row) -> (String, NSView, String?) {
 		switch row {
-		case let .toggle(title, help, get, set):
+		case let .toggle(title, help, get, set, isEnabled):
 			let button = NSButton(checkboxWithTitle: "", target: nil, action: nil)
 			button.state = get() ? .on : .off
-			button.onAction = { set(button.state == .on) }
-			refreshHandlers.append { button.state = get() ? .on : .off }
+			button.isEnabled = isEnabled?() ?? true
+			button.onAction = {
+				set(button.state == .on)
+				// One switch can decide another's fate — turning tmux's tabs
+				// off leaves nothing for its status bar setting to be about —
+				// so every control re-reads itself after any of them changes.
+				NotificationCenter.default.post(name: .ideaiSettingsChanged, object: nil)
+			}
+			refreshHandlers.append {
+				button.state = get() ? .on : .off
+				button.isEnabled = isEnabled?() ?? true
+			}
 			return (title, button, help)
 
 		case let .slider(title, help, range, step, format, get, set):
@@ -353,27 +364,35 @@ final class SettingsPaneController: NSViewController {
 					help: "The strip shows the session's windows and switching a tab switches tmux. "
 						+ "One terminal, one shell: changing tabs costs nothing.",
 					get: { Settings.shared.strictTmux },
-					set: { Settings.shared.strictTmux = $0 }
+					set: { on in
+						Settings.shared.strictTmux = on
+						// The bar was hidden because these tabs replaced it. If
+						// they are not replacing it any more, it comes back —
+						// leaving somebody with no window list at all would be
+						// this switch quietly breaking their tmux.
+						if !on, TmuxConfig.isStatusHidden() {
+							try? TmuxConfig.setStatusHidden(false)
+						}
+					}
 				),
 				at: 1
 			)
-			// A button rather than a switch, because what it changes is not
-			// ours: it is a block in ~/.tmux.conf, which somebody can read,
-			// keep, or take out by hand.
+			// Under the switch it depends on: with the tabs showing something
+			// else, tmux's own bar is not a duplicate of anything and there is
+			// nothing to turn off.
 			rows.insert(
-				.button(
-					title: "tmux's own status bar",
-					label: TmuxConfig.isStatusHidden() ? "Show it again" : "Turn it off",
-					action: {
-						let hide = !TmuxConfig.isStatusHidden()
+				.toggle(
+					title: "Hide tmux's own status bar",
+					help: "The tabs already show this session's windows, so tmux's bar is the same "
+						+ "list twice. This adds a marked block to ~/.tmux.conf — backed up first, "
+						+ "and taken out again by unticking this.",
+					get: { TmuxConfig.isStatusHidden() },
+					set: { hide in
 						do {
 							let backup = try TmuxConfig.setStatusHidden(hide)
-							let file = TmuxConfig.configURL.lastPathComponent
 							Toast.post(
-								hide
-									? "tmux's status bar is off"
-									: "tmux's status bar is back",
-								detail: "Changed \(file)."
+								hide ? "tmux's status bar is off" : "tmux's status bar is back",
+								detail: "Changed \(TmuxConfig.configURL.lastPathComponent)."
 									+ (backup.map { " The file as it was: \($0.lastPathComponent)." } ?? "")
 									+ " Sessions already running have been told; anything else picks"
 									+ " it up on the next reload.",
@@ -382,7 +401,8 @@ final class SettingsPaneController: NSViewController {
 						} catch {
 							Toast.post("Could not change \(TmuxConfig.configURL.path)")
 						}
-					}
+					},
+					isEnabled: { Settings.shared.strictTmux && Settings.shared.startsTmux }
 				),
 				at: 1
 			)
