@@ -100,10 +100,13 @@ public enum GitGraph {
 			let branch = lanes[lane]?.branch ?? 0
 
 			// Anything else waiting for the same commit merges into this lane
-			// and lets its own go.
-			var joining: [Int] = []
+			// and lets its own go. Its branch is taken now, before the lane is
+			// let go: the line arriving here is the last of *that* line of
+			// descent, and drawing it in this commit's colour would change a
+			// branch's colour halfway down for no reason the history gives.
+			var joining: [(lane: Int, branch: Int)] = []
 			for (index, entry) in lanes.enumerated() where index != lane && entry?.expects == node.hash {
-				joining.append(index)
+				joining.append((lane: index, branch: entry?.branch ?? 0))
 				lanes[index] = nil
 			}
 
@@ -121,9 +124,10 @@ public enum GitGraph {
 				// down, except this one, which bends from the dot.
 				edges.append(Edge(from: index, to: index, branch: entry?.branch ?? 0))
 			}
-			// Lines that ended here came from their own lane into this one.
-			for index in joining {
-				edges.append(Edge(from: index, to: lane, branch: branch))
+			// Lines that ended here came from their own lane into this one, in
+			// their own colour.
+			for join in joining {
+				edges.append(Edge(from: join.lane, to: lane, branch: join.branch))
 			}
 
 			for parent in node.parents.dropFirst() {

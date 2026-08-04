@@ -67,6 +67,26 @@ struct GitGraphTests {
 		#expect(rows[0].edges.contains { $0.from == 0 && $0.to == 1 })
 	}
 
+	/// A branch keeps its colour all the way down, including the last stretch
+	/// where it comes back into the commit both sides share.
+	///
+	/// Drawn in the colour of the commit it arrives at, a branch changed colour
+	/// halfway down for no reason the history gives — the side ran green from
+	/// the merge and then turned blue as it rejoined.
+	@Test func aBranchKeepsItsColourWhereItRejoins() {
+		let rows = GitGraph.lay(out: [
+			node("m", "b", "s"),
+			node("b", "a"),
+			node("s", "a"),
+			node("a"),
+		])
+
+		let side = rows[2].branch
+		let arriving = rows[3].edges.first { $0.from == 1 && $0.to == 0 }
+		#expect(arriving?.branch == side, "the side's own colour, not the root's")
+		#expect(side != rows[3].branch, "which is not the same colour")
+	}
+
 	/// Two branches open at once: three lanes, and nothing shares one while
 	/// both are alive.
 	@Test func twoBranchesAtOnce() {
