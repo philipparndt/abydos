@@ -99,10 +99,20 @@ final class BottomPanel: NSView {
 			}
 		}
 
+		/// Whether this pane is a program somebody started, rather than a shell.
+		///
+		/// Worth telling apart: a run finishes, and while it has not, its tab
+		/// is the one to look at.
+		var isRun = false
+
 		/// What this holds, for its tab.
 		var symbol: String {
 			switch kind {
-			case .terminal: return "terminal"
+			case .terminal:
+				guard isRun else { return "terminal" }
+				// A finished run keeps an icon of its own: it is still not a
+				// shell, and its output is still worth coming back to.
+				return hasExited ? "stop.fill" : "play.fill"
 			case .review: return "sparkles"
 			case .search: return "magnifyingglass"
 			case .debug: return "ladybug"
@@ -1200,6 +1210,7 @@ final class BottomPanel: NSView {
 			command: (executable: executable, arguments: arguments)
 		)
 		let session = Session(title: title, kind: .terminal(pane))
+		session.isRun = true
 		wire(session)
 
 		sessions.append(session)
@@ -1764,7 +1775,9 @@ final class BottomPanel: NSView {
 						hasExited: session.hasExited,
 						isTerminal: { if case .terminal = session.kind { return true } else { return false } }(),
 						symbol: session.symbol,
-						isShowing: session === showing
+						isShowing: session === showing,
+						isRun: session.isRun,
+						isRunning: session.isRun && !session.hasExited
 					)
 				}
 
@@ -1819,7 +1832,9 @@ final class BottomPanel: NSView {
 						hasExited: session.hasExited,
 						isTerminal: { if case .terminal = session.kind { return true } else { return false } }(),
 						symbol: session.symbol,
-						isShowing: session === showing
+						isShowing: session === showing,
+						isRun: session.isRun,
+						isRunning: session.isRun && !session.hasExited
 					)
 				},
 				activeIndex: list.firstIndex { $0 === showing }
@@ -2293,6 +2308,12 @@ struct PanelTabItem {
 	/// Whether this tab is the terminal tmux is attached to — the one whose
 	/// windows are the strip below.
 	var isTmuxAttached = false
+	/// A program somebody started, and whether it is still going.
+	///
+	/// Running, the tab wears the same green the titlebar does — the two are
+	/// saying the same thing, and the one in the corner of the eye is the tab.
+	var isRun = false
+	var isRunning = false
 }
 
 /// The panel's content area, which a dragged terminal tab can be dropped on.
@@ -2482,6 +2503,9 @@ final class PanelTabStrip: NSView {
 			needsDisplay = true
 		}
 	}
+
+	/// The green a run wears while it is going, matching the titlebar.
+	static var runningGreen: NSColor { .hex(0x4E7A4E) }
 
 	/// What is legible on that green: tmux writes its window list in black on
 	/// green, and so does this.
@@ -3019,6 +3043,14 @@ final class PanelTabStrip: NSView {
 			rect.fill()
 		}
 
+		// A run in progress: the tab wears the titlebar's green so the two say
+		// the same thing, and the one in the corner of the eye is the tab.
+		// After the backgrounds, or the active tab's own fill covers it.
+		if item.isRunning {
+			Self.runningGreen.withAlphaComponent(isActive ? 0.38 : 0.24).setFill()
+			rect.fill()
+		}
+
 		if !isActive {
 			// On tmux's strip the divider is green and full height, the way
 			// tmux separates the entries in its own window list.
@@ -3054,10 +3086,18 @@ final class PanelTabStrip: NSView {
 				x: x + (iconSize - size.width) / 2, y: rect.midY - size.height / 2
 			))
 		} else {
+			let symbolColour: NSColor
+			if item.isTmuxAttached {
+				symbolColour = Self.tmuxGreen
+			} else if item.isRunning {
+				symbolColour = Theme.current.gitAdded
+			} else {
+				symbolColour = tint
+			}
 			Theme.symbol(
 				item.symbol,
 				size: 11 * Theme.current.scale,
-				color: item.isTmuxAttached ? Self.tmuxGreen : tint
+				color: symbolColour
 			)?.drawFitted(in: NSRect(
 				x: x, y: rect.midY - iconSize / 2, width: iconSize, height: iconSize
 			))
