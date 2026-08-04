@@ -106,9 +106,23 @@ final class BottomPanel: NSView {
 		/// wearing "running" over `[process exited]` is exactly what that
 		/// costs.
 		var isStillRunning: Bool {
+			// A debugger is a program somebody started too. Its tab wore
+			// nothing while it was going, so the one pane you would want to
+			// find in a panel full of them was the only one not saying so.
+			if case let .debug(pane) = kind { return pane.isSessionActive }
 			guard isRun else { return false }
 			return terminal?.terminalView.isProcessRunning ?? false
 		}
+
+		/// The project this pane was started for.
+		///
+		/// A run and a debugger are about one project's sources. A window that
+		/// follows its terminal can be looking at another one by the time
+		/// somebody comes back to the pane, and then every file it points at —
+		/// a stack frame, a path in the output — resolves against the wrong
+		/// tree. Recorded so coming back to the pane can take the window with
+		/// it.
+		var projectRoot: URL?
 
 		/// Whether this pane is a program somebody started, rather than a shell.
 		///
@@ -194,6 +208,13 @@ final class BottomPanel: NSView {
 
 	/// Forwarded when a review finding or a search result is activated.
 	var onOpenFinding: ((URL, Int) -> Void)?
+	/// The debugger's toolbar asking for the program to be started again, once
+	/// it has finished. What to start is a launch configuration, which is the
+	/// window's business rather than the panel's.
+	var onRunAgain: (() -> Void)?
+	var onDebugAgain: (() -> Void)?
+	/// A pane that belongs to a project was brought forward.
+	var onPaneNeedsProject: ((URL) -> Void)?
 
 	/// This panel, so a tab dragged from one is recognised by the other.
 	let panelID = UUID()
@@ -1378,6 +1399,11 @@ final class BottomPanel: NSView {
 		)
 		let session = Session(title: title, kind: .terminal(pane))
 		session.isRun = true
+		// The panel's own root, not the parameter: a configuration's working
+		// directory is often a package inside the project, and switching a
+		// window to one of those would be switching it to something that is
+		// not a project at all.
+		session.projectRoot = self.workingDirectory
 		wire(session)
 
 		sessions.append(session)
@@ -1617,6 +1643,13 @@ final class BottomPanel: NSView {
 		pane.onNavigate = { [weak self] url, line in
 			self?.onOpenFinding?(url, line)
 		}
+		// Its tab wears "running" for as long as the program does, the way a
+		// run's does — the debugger is the pane you want to find again.
+		pane.onRunningChanged = { [weak self] in
+			self?.refreshTabs()
+		}
+		pane.onRunAgain = { [weak self] in self?.onRunAgain?() }
+		pane.onDebugAgain = { [weak self] in self?.onDebugAgain?() }
 		// Straight to the pane's console: `debugOutput` was a hook nobody ever
 		// assigned, so every build error and every line the program printed was
 		// dropped on the floor.
@@ -1653,6 +1686,8 @@ final class BottomPanel: NSView {
 		}
 
 		let panelSession = Session(title: "Debug", kind: .debug(pane))
+		// Bound to the sources it is stopped in.
+		panelSession.projectRoot = root
 		panelSession.column = focusedColumn
 		sessions.append(panelSession)
 		activate(panelSession, focus: false)
@@ -1790,6 +1825,13 @@ final class BottomPanel: NSView {
 		guard sessions.contains(where: { $0 === session }) else { return }
 		focusedColumn = session.column
 		activeByColumn[session.column] = session
+		// Coming back to a run or a debugger takes the window back to the
+		// project it belongs to — but only while the window is following its
+		// terminal, which is when it wanders in the first place.
+		// Only when somebody actually reached for it: panes are activated
+		// again while a project is being restored, and following those back
+		// would pull the window to wherever the last one came from.
+		if focus, let root = session.projectRoot { onPaneNeedsProject?(root) }
 
 		rebuildColumns()
 		placeholder.isHidden = true

@@ -9,12 +9,25 @@ import IdeaiKit
 final class DebugPane: NSView {
 	/// Called to show the file and line execution stopped at.
 	var onNavigate: ((URL, Int) -> Void)?
+	/// Asked to start the program again, once it has finished.
+	var onRunAgain: (() -> Void)?
+	var onDebugAgain: (() -> Void)?
 
 	private let session: DebugSession
 	private let projectRoot: URL
 
 	/// The session this pane drives, so the window can reach it for breakpoints.
 	var debugSession: DebugSession { session }
+
+	/// Whether the program being debugged is still going, for the tab's colour.
+	var isSessionActive: Bool { session.isActive }
+
+	/// The project this was started for.
+	///
+	/// A window that follows its terminal can be looking at another project by
+	/// the time somebody comes back to this pane, and a debugger belongs to the
+	/// sources it is stopped in.
+	var debuggedProject: URL { projectRoot }
 
 	private var toolbar: DebugToolbar!
 	private var stackTable: NSTableView!
@@ -152,6 +165,10 @@ final class DebugPane: NSView {
 		toolbar.onStepInto = { [weak self] in self?.session.stepInto() }
 		toolbar.onStepOut = { [weak self] in self?.session.stepOut() }
 		toolbar.onStop = { [weak self] in self?.session.stop() }
+		// Not the session's to do: what to start is a launch configuration, and
+		// the window is what holds those.
+		toolbar.onRunAgain = { [weak self] in self?.onRunAgain?() }
+		toolbar.onDebugAgain = { [weak self] in self?.onDebugAgain?() }
 
 		// Stack on the left, variables on the right — the arrangement every
 		// debugger uses, because you pick a frame and then read its values.
@@ -337,9 +354,13 @@ final class DebugPane: NSView {
 		return scrollView
 	}
 
+	/// Told when the debugger starts or stops, so the tab can wear it.
+	var onRunningChanged: (() -> Void)?
+
 	private func wireSession() {
 		session.observeState { [weak self, weak session] state in
 			self?.toolbar.update(state: state, exitCode: session?.exitCode)
+			self?.onRunningChanged?()
 		}
 		session.onStackChanged = { [weak self] in
 			self?.stackTable.reloadData()
@@ -799,10 +820,17 @@ private final class DebugToolbar: NSView {
 	var onStepInto: (() -> Void)?
 	var onStepOut: (() -> Void)?
 	var onStop: (() -> Void)?
+	/// Start it again, once it is over — with or without the debugger.
+	var onRunAgain: (() -> Void)?
+	var onDebugAgain: (() -> Void)?
 
 	/// What a button is, which decides its glyph, its name and what it does.
 	private enum Kind {
 		case play, pause, stepOver, stepInto, stepOut, stop
+		/// Only once it is over, where Continue was: continuing a program that
+		/// has ended means nothing, and starting it again is the one thing
+		/// somebody standing here wants.
+		case runAgain, debugAgain
 
 		var tooltip: String {
 			switch self {
@@ -812,6 +840,8 @@ private final class DebugToolbar: NSView {
 			case .stepInto: return "Step Into (F7)"
 			case .stepOut: return "Step Out (\u{21E7}F8)"
 			case .stop: return "Stop (\u{2318}F2)"
+			case .runAgain: return "Run Again"
+			case .debugAgain: return "Debug Again"
 			}
 		}
 	}
@@ -869,14 +899,23 @@ private final class DebugToolbar: NSView {
 			return button
 		}
 
-		// Continue and pause occupy the same slot, as in every debugger.
-		buttons = [
-			isRunning ? place(.pause, enabled: true) : place(.play, enabled: isStopped),
-			place(.stepOver, enabled: isStopped),
-			place(.stepInto, enabled: isStopped),
-			place(.stepOut, enabled: isStopped),
-			place(.stop, enabled: canStop, extraGap: Theme.current.scaled(8)),
-		]
+		// Over and done with: the stepping buttons have nothing to step, and
+		// the slot they were in is where starting it again belongs.
+		if !canStop {
+			buttons = [
+				place(.runAgain, enabled: true),
+				place(.debugAgain, enabled: true),
+			]
+		} else {
+			// Continue and pause occupy the same slot, as in every debugger.
+			buttons = [
+				isRunning ? place(.pause, enabled: true) : place(.play, enabled: isStopped),
+				place(.stepOver, enabled: isStopped),
+				place(.stepInto, enabled: isStopped),
+				place(.stepOut, enabled: isStopped),
+				place(.stop, enabled: canStop, extraGap: Theme.current.scaled(8)),
+			]
+		}
 		labelOrigin = x + Theme.current.scaled(10)
 
 		removeAllToolTips()
@@ -904,6 +943,8 @@ private final class DebugToolbar: NSView {
 		case .stepInto: onStepInto?()
 		case .stepOut: onStepOut?()
 		case .stop: onStop?()
+		case .runAgain: onRunAgain?()
+		case .debugAgain: onDebugAgain?()
 		}
 	}
 
@@ -946,8 +987,14 @@ private final class DebugToolbar: NSView {
 		)
 
 		switch kind {
-		case .play, .pause, .stop:
-			let symbol = kind == .play ? "play.fill" : (kind == .pause ? "pause.fill" : "stop.fill")
+		case .play, .pause, .stop, .runAgain, .debugAgain:
+			let symbol: String
+			switch kind {
+			case .pause: symbol = "pause.fill"
+			case .stop: symbol = "stop.fill"
+			case .debugAgain: symbol = "ladybug.fill"
+			default: symbol = "play.fill"
+			}
 			Theme.symbol(symbol, size: 11 * Theme.current.scale, color: colour)?.drawFitted(in: box)
 
 		case .stepOver:

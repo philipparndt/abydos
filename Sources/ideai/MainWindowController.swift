@@ -507,6 +507,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				over: self.window
 			)
 		}
+		// The debugger's own toolbar, once the program has ended: whatever the
+		// play button up in the titlebar would start is what these start too.
+		// A run or a debugger brought forward takes the window back to the
+		// project it belongs to — while the window is following its terminal,
+		// which is the only time it is anywhere else.
+		bottomPanel.onPaneNeedsProject = { [weak self] root in
+			guard let self, self.followsTerminal else { return }
+			self.switchProject(to: root)
+		}
+		bottomPanel.onRunAgain = { [weak self] in self?.runSelectedConfiguration(debug: false) }
+		bottomPanel.onDebugAgain = { [weak self] in self?.runSelectedConfiguration(debug: true) }
 		bottomPanel.onOpenFinding = { [weak self] url, line in
 			self?.editor.open(fileURL: url, atLine: line)
 		}
