@@ -1,0 +1,9 @@
+# What this app keeps beside the project.
+#
+# The run configurations belong to everybody working on it, so they are
+# committed. Everything else is one machine's state — which files were
+# open, where the caret was — and is not.
+*
+!.gitignore
+!run/
+!run/**

@@ -791,6 +791,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let section = options.dumpSettings {
+			let rows = SettingsSections.all.first { $0.title == section }?.rows() ?? []
+			for line in SettingsPaneController.describe(rows) { print("SETTING \(line)") }
+			exit(0)
+		}
+
 		if options.openSettings {
 			controller?.settingsSectionForTesting = options.settingsSection
 			controller?.showSettingsPage(nil)

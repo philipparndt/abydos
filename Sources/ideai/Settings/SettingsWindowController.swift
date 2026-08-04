@@ -48,6 +48,23 @@ final class SettingsWindowController: NSWindowController {
 /// Describing rows as data rather than laying out each control by hand keeps
 /// every pane consistent and makes adding a setting a one-line change.
 final class SettingsPaneController: NSViewController {
+	/// A row's title and whether it can be used, for checking that a switch
+	/// which depends on another really is greyed out with it.
+	static func describe(_ rows: [Row]) -> [String] {
+		rows.map { row in
+			switch row {
+			case let .toggle(title, _, get, _, isEnabled):
+				let state = get() ? "on " : "off"
+				return "\(state) \(isEnabled?() ?? true ? "        " : "disabled") \(title)"
+			case let .slider(title, _, _, _, _, _, _): return "        slider   \(title)"
+			case let .stepper(title, _, _, _, _):      return "        stepper  \(title)"
+			case let .text(title, _, _, _):            return "        text     \(title)"
+			case let .choice(title, _, _, get, _):     return "\(get())  choice   \(title)"
+			case let .button(title, label, _):         return "        [\(label)] \(title)"
+			}
+		}
+	}
+
 	enum Row {
 		case toggle(title: String, help: String?, get: () -> Bool, set: (Bool) -> Void,
 		            isEnabled: (() -> Bool)? = nil)
@@ -357,8 +374,20 @@ final class SettingsPaneController: NSViewController {
 
 		// Offered only where there is a tmux to attach to: a switch that can do
 		// nothing is worse than no switch.
+		//
+		// Inserted as a block, in the order they depend on each other: nothing
+		// attaches to tmux, so nothing is showing its windows, so there is no
+		// second copy of its status bar to put away. Each is greyed while the
+		// one above it is off.
 		if Executables.locate("tmux") != nil {
-			rows.insert(
+			rows.insert(contentsOf: [
+				.toggle(
+					title: "Attach the first terminal to tmux",
+					help: "One session per project, so reopening it comes back to the panes it was "
+						+ "left with. Terminals opened afterwards are plain shells.",
+					get: { Settings.shared.startsTmux },
+					set: { Settings.shared.startsTmux = $0 }
+				),
 				.toggle(
 					title: "Tabs are tmux's windows",
 					help: "The strip shows the session's windows and switching a tab switches tmux. "
@@ -367,35 +396,19 @@ final class SettingsPaneController: NSViewController {
 					// The status bar goes with it: leaving somebody with no
 					// window list at all — no tabs and no bar — would be this
 					// switch quietly breaking their tmux.
-					set: { TmuxSettings.setTabsAreTmuxWindows($0) }
+					set: { TmuxSettings.setTabsAreTmuxWindows($0) },
+					isEnabled: { Settings.shared.startsTmux }
 				),
-				at: 1
-			)
-			// Under the switch it depends on: with the tabs showing something
-			// else, tmux's own bar is not a duplicate of anything and there is
-			// nothing to turn off.
-			rows.insert(
 				.toggle(
 					title: "Hide tmux's own status bar",
-					help: "The tabs already show this session's windows, so tmux's bar is the same "
-						+ "list twice. This adds a marked block to ~/.tmux.conf — backed up first, "
-						+ "and taken out again by unticking this.",
+					help: "Those tabs already show this session's windows, so tmux's bar is the "
+						+ "same list twice. Set on the session as it is attached — nothing is "
+						+ "written to ~/.tmux.conf, and other sessions keep their bar.",
 					get: { TmuxSettings.wantsStatusBarHidden },
 					set: { TmuxSettings.wantsStatusBarHidden = $0 },
 					isEnabled: { TmuxSettings.tabsAreTmuxWindows }
 				),
-				at: 1
-			)
-			rows.insert(
-				.toggle(
-					title: "Attach the first terminal to tmux",
-					help: "One session per project, so reopening it comes back to the panes it was "
-						+ "left with. Terminals opened afterwards are plain shells.",
-					get: { Settings.shared.startsTmux },
-					set: { Settings.shared.startsTmux = $0 }
-				),
-				at: 1
-			)
+			], at: 1)
 		}
 		return rows
 	}
