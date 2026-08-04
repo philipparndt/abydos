@@ -44,7 +44,12 @@ perf: ## Run the performance suite in release and print timings
 .PHONY: fire
 fire: ## Burn the DOOM fire in this terminal, whichever it is (SECONDS=20)
 	@swift build -c release --product firebench
-	@.build/release/firebench --seconds $(or $(SECONDS),20)
+	@.build/release/firebench --mode fire --seconds $(or $(SECONDS),20)
+
+.PHONY: matrix
+matrix: ## The same benchmark on the glyph cache instead of the colours
+	@swift build -c release --product firebench
+	@.build/release/firebench --mode matrix --seconds $(or $(SECONDS),20)
 
 .PHONY: shot
 shot: ## Render the window to a PNG without Screen Recording permission
