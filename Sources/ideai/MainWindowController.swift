@@ -2691,6 +2691,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		if let pane = runningPane {
 			runningPane = nil
 			pane.terminalView.terminateProcess()
+			// The tab is showing a running program; it has just stopped being
+			// one.
+			bottomPanel.refreshTabs()
 			runControl?.setStatus("Stopped")
 			return
 		}
@@ -4872,6 +4875,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	}
 
 	/// Sets a breakpoint as a gutter click would, for verifying alignment.
+	/// Presses stop, as the titlebar button does.
+	func stopRunningForTesting() { stopRunning() }
+
 	/// Sets a breakpoint and turns it off, as clicking its marker does.
 	func disableBreakpointForTesting(line: Int) {
 		guard let url = editor.activeGroup.activeTabURL else { return }

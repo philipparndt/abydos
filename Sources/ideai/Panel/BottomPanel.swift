@@ -99,6 +99,17 @@ final class BottomPanel: NSView {
 			}
 		}
 
+		/// Whether the program in this pane is still going.
+		///
+		/// Asked of the process rather than remembered from a callback: the
+		/// flag is set by a handler that another one can replace, and a tab
+		/// wearing "running" over `[process exited]` is exactly what that
+		/// costs.
+		var isStillRunning: Bool {
+			guard isRun else { return false }
+			return terminal?.terminalView.isProcessRunning ?? false
+		}
+
 		/// Whether this pane is a program somebody started, rather than a shell.
 		///
 		/// Worth telling apart: a run finishes, and while it has not, its tab
@@ -112,7 +123,7 @@ final class BottomPanel: NSView {
 				guard isRun else { return "terminal" }
 				// A finished run keeps an icon of its own: it is still not a
 				// shell, and its output is still worth coming back to.
-				return hasExited ? "stop.fill" : "play.fill"
+				return isStillRunning ? "play.fill" : "stop.fill"
 			case .review: return "sparkles"
 			case .search: return "magnifyingglass"
 			case .debug: return "ladybug"
@@ -1777,7 +1788,7 @@ final class BottomPanel: NSView {
 						symbol: session.symbol,
 						isShowing: session === showing,
 						isRun: session.isRun,
-						isRunning: session.isRun && !session.hasExited
+						isRunning: session.isStillRunning
 					)
 				}
 
@@ -1834,7 +1845,7 @@ final class BottomPanel: NSView {
 						symbol: session.symbol,
 						isShowing: session === showing,
 						isRun: session.isRun,
-						isRunning: session.isRun && !session.hasExited
+						isRunning: session.isStillRunning
 					)
 				},
 				activeIndex: list.firstIndex { $0 === showing }
@@ -2221,7 +2232,10 @@ final class BottomPanel: NSView {
 		}
 	}
 
-	private func refreshTabs() {
+	/// Redraws the tab strip. Called from outside when something a tab shows —
+	/// whether its program is still running — has changed without the panel
+	/// being told.
+	func refreshTabs() {
 		onActiveTerminalChanged?()
 		rebuildColumns()
 	}

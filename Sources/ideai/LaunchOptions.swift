@@ -239,6 +239,8 @@ struct LaunchOptions {
 	var dragTmuxTab: String?
 	/// Set a breakpoint on this line and turn it off, to see how it is drawn.
 	var disabledBreakpointLine: Int?
+	/// Press stop this many seconds in, to see what the tab does afterwards.
+	var stopAfter: Double?
 
 	static func parse(_ arguments: [String] = CommandLine.arguments) -> LaunchOptions {
 		var options = LaunchOptions()
@@ -353,6 +355,7 @@ struct LaunchOptions {
 			case "--follow-terminal": options.followTerminal = true
 			case "--breakpoint": options.breakpointLine = next().flatMap(Int.init)
 			case "--breakpoint-off": options.disabledBreakpointLine = next().flatMap(Int.init)
+			case "--stop-after": options.stopAfter = next().flatMap(Double.init)
 			case "--find":       options.findQuery = next()
 			case "--search":     options.searchQuery = next()
 			case "--wrap":       options.wordWrap = true

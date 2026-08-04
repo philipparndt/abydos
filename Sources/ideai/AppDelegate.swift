@@ -564,6 +564,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let seconds = options.stopAfter {
+			DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
+				controller?.stopRunningForTesting()
+			}
+		}
+
 		if let line = options.disabledBreakpointLine {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
 				controller?.disableBreakpointForTesting(line: line)
