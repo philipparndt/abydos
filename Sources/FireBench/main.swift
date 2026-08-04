@@ -249,7 +249,9 @@ nonisolated(unsafe) var rainSpeed = [Double]()
 func seedRain() {
 	rainGlyph = [UInt8](repeating: 0, count: columns * rows)
 	rainShade = [Int8](repeating: -1, count: columns * rows)
-	rainHead = (0..<columns).map { _ in -Double(nextRandom(below: rows * 2)) }
+	// Started within a screen of the top rather than two, so the rain is
+	// already falling everywhere by the time anybody looks at it.
+	rainHead = (0..<columns).map { _ in -Double(nextRandom(below: max(2, rows / 2))) }
 	rainSpeed = (0..<columns).map { _ in 0.15 + Double(nextRandom(below: 85)) / 100 }
 }
 
@@ -276,10 +278,12 @@ func stepRain() {
 			rainShade[index] = 0
 		}
 
-		// Off the bottom, trail and all: wait a while and fall again, at a
-		// different speed, so the columns never fall into step.
+		// Off the bottom, trail and all: fall again from just above the top, at
+		// a different speed so the columns never fall into step. A short wait
+		// rather than a screen's worth — the gap is what decides how much rain
+		// is on screen at once, and a screen of it was a drizzle.
 		if after > rows + rainPalette.count {
-			rainHead[x] = -Double(nextRandom(below: rows))
+			rainHead[x] = -Double(nextRandom(below: max(2, rows / 4)))
 			rainSpeed[x] = 0.15 + Double(nextRandom(below: 85)) / 100
 		}
 	}

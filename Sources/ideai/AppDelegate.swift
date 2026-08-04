@@ -1231,6 +1231,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		)
 		debugSelected.keyEquivalentModifierMask = [.control]
 		runMenu.addItem(debugSelected)
+		let fromMake = NSMenuItem(
+			title: "New from Make goal\u{2026}",
+			action: #selector(MainWindowController.newFromMakeGoal(_:)),
+			keyEquivalent: ""
+		)
+		runMenu.addItem(fromMake)
 		runMenu.addItem(.separator())
 
 		let profiler = NSMenuItem(

@@ -2731,6 +2731,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			      let languageId = editor.activeGroup?.activeDocument?.languageId
 			else { return [] }
 
+			// A Makefile has no language server, and the grammar it borrows is
+			// bash's, which knows nothing about targets — so the one file in a
+			// project that is a list of named things was the one file this
+			// could not list. Its own parser already reads them.
+			if languageId == "makefile" {
+				let targets = Self.makefileSymbols(at: url)
+				guard !query.isEmpty else { return targets }
+				return targets.filter { $0.name.localizedCaseInsensitiveContains(query) }
+			}
+
 			let all = await LanguageService.shared
 				.documentSymbols(url: url, languageId: languageId, project: project.root)
 			guard !query.isEmpty else { return all }
@@ -4311,6 +4321,38 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	///
 	/// Goals that clean, install or explain themselves are left out: a run
 	/// menu is a list of ways to start the thing being worked on.
+	/// A Makefile's targets, as symbols to jump between.
+	///
+	/// The line is found by looking for the target's own rule rather than
+	/// recorded by the parser, which reads a Makefile for what it runs and has
+	/// no reason to care where in the file that was written.
+	static func makefileSymbols(at url: URL) -> [LSPSymbol] {
+		guard let makefile = Makefile.read(at: url),
+		      let text = try? String(contentsOf: url, encoding: .utf8)
+		else { return [] }
+
+		let lines = text.components(separatedBy: "\n")
+		return makefile.targets.map { target in
+			let line = lines.firstIndex { candidate in
+				guard candidate.hasPrefix(target.name) else { return false }
+				let rest = candidate.dropFirst(target.name.count).drop { $0 == " " || $0 == "\t" }
+				// `install:` and `install::` are rules; `installed: ...` is a
+				// different target that merely starts the same way.
+				return rest.first == ":"
+			} ?? 0
+			let position = LSPPosition(line: line, character: 0)
+			return LSPSymbol(
+				name: target.name,
+				kind: .function,
+				location: LSPLocation(
+					uri: url.absoluteString,
+					range: LSPRange(start: position, end: position)
+				),
+				container: target.summary.isEmpty ? nil : target.summary
+			)
+		}
+	}
+
 	private func makeGoals() -> [(makefile: Makefile, name: String, summary: String)] {
 		guard let project else { return [] }
 		var found: [(Makefile, String, String)] = []
@@ -4326,6 +4368,73 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			}
 		}
 		return found
+	}
+
+	/// Every goal every Makefile in the project defines, for the dialog.
+	///
+	/// Unfiltered, unlike the ones offered beside the play button. That list
+	/// leaves out the goals nobody wants suggested — `help`, `clean`,
+	/// `install` — because suggesting them is noise; but somebody who came
+	/// here has said which one they want, and refusing to show `install`
+	/// because it is usually uninteresting is refusing the thing they asked
+	/// for.
+	private func allMakeGoals() -> [(makefile: Makefile, name: String, summary: String)] {
+		guard let project else { return [] }
+		var found: [(Makefile, String, String)] = []
+		for url in Makefile.find(in: project.root) {
+			guard let makefile = Makefile.read(at: url) else { continue }
+			for target in makefile.targets where !target.recipe.isEmpty {
+				found.append((makefile, target.name, target.summary))
+			}
+		}
+		return found
+	}
+
+	/// Makes a launch configuration out of any goal in the project.
+	@objc func newFromMakeGoal(_ sender: Any?) {
+		let goals = allMakeGoals()
+		guard !goals.isEmpty else {
+			notify("No Makefile goals here", detail: "Nothing in this project defines any.")
+			return
+		}
+
+		let alert = NSAlert()
+		alert.messageText = "New from Make goal"
+		alert.informativeText = "It becomes a launch configuration you can run, edit and keep."
+		alert.addButton(withTitle: "Create")
+		alert.addButton(withTitle: "Cancel")
+
+		let picker = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 320, height: 25))
+		for goal in goals {
+			// The summary beside the name, since a Makefile that documents
+			// itself has already said what each one is for.
+			let title = goal.summary.isEmpty ? goal.name : "\(goal.name) — \(goal.summary)"
+			picker.addItem(withTitle: title)
+		}
+		alert.accessoryView = picker
+
+		guard alert.runModal() == .alertFirstButtonReturn else { return }
+		let goal = goals[max(0, min(goals.count - 1, picker.indexOfSelectedItem))]
+
+        let directory = goal.makefile.path.deletingLastPathComponent()
+		let configuration = LaunchConfiguration(
+			name: LaunchNames.free(
+				like: "make \(goal.name)", avoiding: launchConfigurations.map(\.name)
+			),
+			type: "shell",
+			program: "make",
+			arguments: [goal.name],
+			workingDirectory: directory.path
+		)
+		do {
+			_ = try LaunchStore.save(configuration, in: launchRoot)
+		} catch {
+			notify("Could not write the configuration", detail: error.localizedDescription)
+			return
+		}
+		refreshRunConfigurations()
+		selectedConfigurationName = configuration.name
+		refreshRunControl()
 	}
 
 	/// Runs a goal the Makefile defines but nothing here can debug.
