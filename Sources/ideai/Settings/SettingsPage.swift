@@ -165,7 +165,7 @@ final class SettingsPage: NSView {
 		card.layer?.borderWidth = 1
 		card.layer?.borderColor = Theme.current.separator.withAlphaComponent(0.6).cgColor
 
-		let rows = NSStackView(views: section.rows().map { row(for: $0) })
+		let rows = NSStackView(views: blocks(for: section.rows()))
 		rows.orientation = .vertical
 		rows.alignment = .leading
 		rows.spacing = Theme.current.scaled(16)
@@ -193,14 +193,69 @@ final class SettingsPage: NSView {
 		}
 	}
 
+	/// The rows of a section, with any group gathered into a card of its own.
+	///
+	/// A heading and a gap were not enough to say "these three belong
+	/// together": the switches that depend on each other now sit inside their
+	/// own rounded rectangle, which is what a group looks like on this
+	/// platform.
+	private func blocks(for rows: [SettingsPaneController.Row]) -> [NSView] {
+		rows.map { row in
+			guard case let .group(title, help, inside) = row else { return self.row(for: row) }
+			return card(titled: title, help: help, rows: inside.map { self.row(for: $0) })
+		}
+	}
+
+	/// A group's own card: a heading, a sentence, and the settings it gathers.
+	private func card(titled title: String, help: String?, rows: [NSView]) -> NSView {
+		let heading = NSTextField(labelWithString: title)
+		heading.font = Theme.current.uiFont(11.5, weight: .semibold)
+		heading.textColor = Theme.current.sidebarText
+
+		var top: [NSView] = [heading]
+		if let help {
+			let text = NSTextField(wrappingLabelWithString: help)
+			text.font = Theme.current.uiFont(11)
+			text.textColor = Theme.current.gitIgnored
+			text.isSelectable = false
+			text.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+			top.append(text)
+		}
+
+		let stack = NSStackView(views: top + rows)
+		stack.orientation = .vertical
+		stack.alignment = .leading
+		stack.spacing = Theme.current.scaled(14)
+		stack.setCustomSpacing(Theme.current.scaled(4), after: heading)
+		stack.translatesAutoresizingMaskIntoConstraints = false
+
+		// A shade apart from the card it sits in, so the boundary reads without
+		// a heavy line around it.
+		let card = ColoredView(color: Theme.current.editorBackground)
+		card.colourSource = { Theme.current.editorBackground }
+		card.wantsLayer = true
+		card.layer?.cornerRadius = 8
+		card.layer?.borderWidth = 1
+		card.layer?.borderColor = Theme.current.separator.withAlphaComponent(0.7).cgColor
+		card.addSubview(stack)
+
+		let inset = Theme.current.scaled(14)
+		NSLayoutConstraint.activate([
+			stack.topAnchor.constraint(equalTo: card.topAnchor, constant: inset),
+			stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -inset),
+			stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: inset),
+			stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -inset),
+		])
+		for view in rows { view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true }
+		return card
+	}
+
 	/// One setting: its name, its control, and a sentence about it.
 	///
 	/// The control goes on the right of the name, and the help under both —
 	/// which reads as one thing rather than as a grid, and leaves the sentence
 	/// the whole width to be a sentence in.
 	private func row(for row: SettingsPaneController.Row) -> NSView {
-		if case let .group(title, help) = row { return groupHeading(title, help: help) }
-
 		let (title, control, help) = build(row)
 
 		let label = NSTextField(labelWithString: title)
@@ -247,28 +302,6 @@ final class SettingsPage: NSView {
 			}
 			dim()
 			refreshHandlers.append(dim)
-		}
-		return stack
-	}
-
-	/// A heading inside a card, over the settings it gathers.
-	private func groupHeading(_ title: String, help: String?) -> NSView {
-		let label = NSTextField(labelWithString: title.uppercased())
-		label.font = Theme.current.uiFont(10, weight: .semibold)
-		label.textColor = Theme.current.gitIgnored
-
-		let stack = NSStackView(views: [label])
-		stack.orientation = .vertical
-		stack.alignment = .leading
-		stack.spacing = Theme.current.scaled(2)
-
-		if let help {
-			let text = NSTextField(wrappingLabelWithString: help)
-			text.font = Theme.current.uiFont(11)
-			text.textColor = Theme.current.gitIgnored.withAlphaComponent(0.8)
-			text.isSelectable = false
-			stack.addArrangedSubview(text)
-			text.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
 		}
 		return stack
 	}
@@ -374,7 +407,7 @@ final class SettingsPage: NSView {
 			refreshHandlers.append { select(get()) }
 			return (title, popUp, help)
 
-		case let .group(title, _):
+		case let .group(title, _, _):
 			return (title, NSView(), nil)
 
 		case let .button(title, label, action):

@@ -61,7 +61,8 @@ final class SettingsPaneController: NSViewController {
 			case let .text(title, _, _, _):            return "        text     \(title)"
 			case let .choice(title, _, _, get, _):     return "\(get())  choice   \(title)"
 			case let .button(title, label, _):         return "        [\(label)] \(title)"
-			case let .group(title, _):                 return "── \(title) ──"
+			case let .group(title, _, rows):
+				return (["── \(title) ──"] + describe(rows).map { "  " + $0 }).joined(separator: "\n")
 			}
 		}
 	}
@@ -78,9 +79,10 @@ final class SettingsPaneController: NSViewController {
 		case choice(title: String, help: String?, options: [(label: String, value: String)],
 		            get: () -> String, set: (String) -> Void)
 		case button(title: String, label: String, action: () -> Void)
-		/// A heading over the rows that follow, for settings that only make
-		/// sense together.
-		case group(title: String, help: String?)
+		/// Settings that only mean anything together, shown in a card of their
+		/// own. The rows are inside it rather than following it: a group that
+		/// only marks a beginning has no end, and swallows whatever comes next.
+		indirect case group(title: String, help: String?, rows: [Row])
 	}
 
 	let paneTitle: String
@@ -158,7 +160,7 @@ final class SettingsPaneController: NSViewController {
 
 	private func makeRow(_ row: Row) -> (String, NSView, String?) {
 		switch row {
-		case let .group(title, help):
+		case let .group(title, help, _):
 			// The window's own settings list has no cards to group inside, so a
 			// group is a labelled gap.
 			let label = NSTextField(labelWithString: title.uppercased())
@@ -393,10 +395,7 @@ final class SettingsPaneController: NSViewController {
 		// one above it is off.
 		if Executables.locate("tmux") != nil {
 			rows.insert(contentsOf: [
-				.group(
-					title: "tmux",
-					help: "Each of these only means anything while the one above it is on."
-				),
+				.group(title: "tmux", help: "Each of these only means anything while the one above it is on.", rows: [
 				.toggle(
 					title: "Attach the first terminal to tmux",
 					help: "One session per project, so reopening it comes back to the panes it was "
@@ -424,6 +423,7 @@ final class SettingsPaneController: NSViewController {
 					set: { TmuxSettings.wantsStatusBarHidden = $0 },
 					isEnabled: { TmuxSettings.tabsAreTmuxWindows }
 				),
+				]),
 			], at: 1)
 		}
 		return rows
