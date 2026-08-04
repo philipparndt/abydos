@@ -96,7 +96,10 @@ struct TmuxConfigRealFileTests {
 
 		let copy = directory.appendingPathComponent(".tmux.conf")
 		try FileManager.default.copyItem(at: home, to: copy)
-		let original = try TmuxConfig.read(at: copy)
+		// Whatever state this machine's config is in — the button may well have
+		// been pressed — the round trip starts from it without our block.
+		let original = TmuxConfig.removing(from: try TmuxConfig.read(at: copy))
+		try TmuxConfig.write(original, to: copy)
 
 		try TmuxConfig.write(TmuxConfig.adding(to: original), to: copy)
 		let hidden = try TmuxConfig.read(at: copy)
