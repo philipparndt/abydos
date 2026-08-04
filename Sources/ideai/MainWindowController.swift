@@ -4190,9 +4190,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// runnable as one whose Makefile builds Go, and offering nothing for it
 		// was reading the Makefile and then pretending it said nothing.
 		let goals = makeGoals()
-		let debuggable = Set(
-			goals.filter { MakeLaunch.plan(for: $0.name, in: $0.makefile) != nil }.map(\.name)
-		)
 		if !goals.isEmpty {
 			menu.addItem(.separator())
 			let heading = NSMenuItem(title: "From the Makefile", action: nil, keyEquivalent: "")

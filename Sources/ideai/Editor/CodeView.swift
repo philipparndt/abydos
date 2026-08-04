@@ -1547,6 +1547,8 @@ final class CodeView: NSView, NSTextInputClient {
 
 	/// The breakpoint being dragged out of the gutter, if one is.
 	private var draggingBreakpointLine: Int?
+	/// Whether this drag threw one away, and so is showing the puff cursor.
+	private var threwBreakpointAway = false
 
 	override func mouseDown(with event: NSEvent) {
 		window?.makeFirstResponder(self)
@@ -1704,14 +1706,12 @@ final class CodeView: NSView, NSTextInputClient {
 
 			draggingBreakpointLine = nil
 			onDeleteBreakpoint?(line)
-			// The puff Xcode shows: a marker that simply vanishes reads as a
-			// misclick rather than as something done on purpose.
-			if let window {
-				NSAnimationEffect.disappearingItemDefault.show(
-					centeredAt: window.convertPoint(toScreen: convert(point, to: nil)),
-					size: NSSize(width: Theme.current.scaled(26), height: lineHeight)
-				)
-			}
+			// The puff cursor Xcode shows: a marker that simply vanishes reads as
+			// a misclick rather than as something done on purpose. This is the
+			// cursor rather than the animation `NSAnimationEffect` used to play,
+			// which macOS 14 deprecated in favour of exactly this.
+			threwBreakpointAway = true
+			NSCursor.disappearingItem.set()
 			return
 		}
 
@@ -1721,6 +1721,13 @@ final class CodeView: NSView, NSTextInputClient {
 
 	override func mouseUp(with event: NSEvent) {
 		draggingBreakpointLine = nil
+		// The puff belongs to the drag that ended. Left set, it would follow the
+		// pointer around the file as though everything under it were about to be
+		// thrown away too.
+		if threwBreakpointAway {
+			threwBreakpointAway = false
+			NSCursor.arrow.set()
+		}
 		super.mouseUp(with: event)
 	}
 

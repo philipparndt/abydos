@@ -65,7 +65,9 @@ enum TmuxSettings {
 	/// session, so the old line is not only unnecessary — it is wrong.
 	static func migrateAwayFromConfigEdit() {
 		guard TmuxConfig.isStatusHidden() else { return }
-		try? TmuxConfig.setStatusHidden(false)
+		// The backup it made is not offered anywhere: this is taking out a line
+		// this app wrote itself, not touching anything the user put there.
+		_ = try? TmuxConfig.setStatusHidden(false)
 		Settings.shared.hidesTmuxStatus = true
 	}
 }
