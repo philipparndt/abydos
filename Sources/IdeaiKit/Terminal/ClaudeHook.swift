@@ -161,7 +161,12 @@ public enum ClaudeHook {
 	/// turning it amber because nobody has typed since is how a "needs you"
 	/// stops meaning "go and look at this one".
 	public static func status(after event: Event, whenWindowSays current: AIStatusName?) -> TmuxMirror.AIStatus? {
-		if isIdleNudge(event), current == .done { return nil }
+		// Nothing resurrects a finished turn. Two things used to: the nudge
+		// Claude sends when nobody has answered, and a subagent handing its
+		// work back after the turn that sent it off had already ended — the
+		// second put the tab back to "working" and, with the window no longer
+		// saying "done", let the first turn it amber a moment later.
+		if current == .done, isIdleNudge(event) || event.name == "SubagentStop" { return nil }
 		return status(after: event)
 	}
 
@@ -170,7 +175,7 @@ public enum ClaudeHook {
 
 	/// Whether this event should be announced, given what the window said.
 	public static func isWorthAnnouncing(_ event: Event, whenWindowSays current: AIStatusName?) -> Bool {
-		if isIdleNudge(event), current == .done { return false }
+		if current == .done, isIdleNudge(event) || event.name == "SubagentStop" { return false }
 		return isWorthAnnouncing(event)
 	}
 

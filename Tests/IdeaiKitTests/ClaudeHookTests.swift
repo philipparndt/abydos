@@ -94,6 +94,44 @@ struct ClaudeHookTests {
 		#expect(ClaudeHook.isWorthAnnouncing(nudge, whenWindowSays: .working))
 	}
 
+	/// The one that came after: a subagent finishing arrives after the turn
+	/// that sent it off has already ended, and set the tab back to "working" —
+	/// which then let an idle nudge turn it amber, because the window no longer
+	/// said "done".
+	@Test func aStragglingSubagentDoesNotUnfinishATurn() {
+		let straggler = ClaudeHook.Event(name: "SubagentStop")
+		#expect(ClaudeHook.status(after: straggler, whenWindowSays: .done) == nil)
+		#expect(!ClaudeHook.isWorthAnnouncing(straggler, whenWindowSays: .done))
+
+		// Mid-turn it still means the session is working, and is still worth
+		// saying: that is the case the announcement was written for.
+		#expect(ClaudeHook.status(after: straggler, whenWindowSays: .working) == .working)
+		#expect(ClaudeHook.isWorthAnnouncing(straggler, whenWindowSays: .working))
+	}
+
+	/// The whole sequence from the tab strip, in order, as the hook sees it.
+	@Test func aTurnThatEndsStaysEnded() {
+		var badge: TmuxMirror.AIStatus?
+		func fire(_ event: ClaudeHook.Event) {
+			badge = ClaudeHook.status(after: event, whenWindowSays: badge) ?? badge
+		}
+
+		fire(.init(name: "UserPromptSubmit"))
+		#expect(badge == .working)
+		fire(.init(name: "PostToolUse"))
+		#expect(badge == .working)
+		fire(.init(name: "Stop"))
+		#expect(badge == .done)
+		fire(.init(name: "SubagentStop"))
+		#expect(badge == .done, "a subagent handing back does not unfinish it")
+		fire(.init(name: "Notification", notificationType: "idle_prompt"))
+		#expect(badge == .done, "nor does a nudge about nobody having answered")
+
+		// And the next turn starts it again.
+		fire(.init(name: "UserPromptSubmit"))
+		#expect(badge == .working)
+	}
+
 	/// A permission prompt is not a nudge, and is worth the badge whatever the
 	/// tab said before — including after a turn that looked finished.
 	@Test func aPermissionPromptAlwaysCounts() {
