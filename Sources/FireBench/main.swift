@@ -44,6 +44,14 @@ var mode = Mode.fire
 /// is a flat glare and the rain falls faster than it can be read. Held to
 /// sixty they become what they are pictures of.
 var frameRate: Double?
+/// Whether the rain falls in letters instead of katakana.
+///
+/// Half-width katakana is what the film's rain is usually approximated with,
+/// and it is what this uses — but only a font that has those glyphs can draw
+/// them, and a terminal that will not fall back to one draws nothing at all.
+/// Blank cells are not a benchmark of anything, so there is a way to ask for
+/// characters every font on earth has.
+var asciiRain = false
 var arguments = Array(CommandLine.arguments.dropFirst())
 while let flag = arguments.first {
 	arguments.removeFirst()
@@ -69,8 +77,11 @@ while let flag = arguments.first {
 		} else {
 			frameRate = 60
 		}
+	case "--ascii":
+		asciiRain = true
 	case "--help", "-h":
-		print("usage: firebench [--mode fire|matrix] [--seconds 20] [--fps [60]] [--report path]")
+		print("usage: firebench [--mode fire|matrix] [--seconds 20] [--fps [60]] "
+			+ "[--ascii] [--report path]")
 		exit(0)
 	default:
 		FileHandle.standardError.write(Data("unknown option \(flag)\n".utf8))
@@ -226,7 +237,13 @@ func drawFire() {
 /// the alphabet the film's rain is usually approximated with. Built once, in
 /// UTF-8, for the same reason the colours are.
 let rainGlyphs: [[UInt8]] = {
-	var scalars = (0xFF66...0xFF9D).compactMap(Unicode.Scalar.init)
+	// Letters and digits when asked: printable ASCII is the one alphabet no
+	// font can be missing, so the rain falls whatever is installed.
+	var scalars = asciiRain ? [] : (0xFF66...0xFF9D).compactMap(Unicode.Scalar.init)
+	if asciiRain {
+		scalars += (0x41...0x5A).compactMap(Unicode.Scalar.init)
+		scalars += (0x61...0x7A).compactMap(Unicode.Scalar.init)
+	}
 	scalars += (0x30...0x39).compactMap(Unicode.Scalar.init)
 	return scalars.map { Array(String($0).utf8) }
 }()
