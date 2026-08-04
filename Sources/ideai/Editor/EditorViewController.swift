@@ -112,6 +112,9 @@ final class EditorViewController: NSViewController {
 	var onDeleteBreakpoint: ((URL, Int) -> Void)?
 	/// Chose to disable — or enable — every breakpoint but this one.
 	var onSetOtherBreakpointsEnabled: ((URL, Int, Bool) -> Void)?
+	/// Lines were added or taken out of a file, so anything anchored to them
+	/// has to move. First line 0-based.
+	var onLinesChanged: ((URL, Int, Int, Int) -> Void)?
 	/// Asked for everywhere a symbol is used, at a zero-based position.
 	var onFindUsages: ((URL, Int, Int) -> Void)?
 	/// Asked to put an agent on a problem: the file, the line, and what the
@@ -325,6 +328,10 @@ final class EditorViewController: NSViewController {
 		tab.codeView?.onDeleteBreakpoint = { [weak self, weak tab] line in
 			guard let tab else { return }
 			self?.onDeleteBreakpoint?(tab.url, line + 1)
+		}
+		tab.codeView?.onLinesChanged = { [weak self, weak tab] first, removed, inserted in
+			guard let tab else { return }
+			self?.onLinesChanged?(tab.url, first, removed, inserted)
 		}
 		tab.codeView?.onSetOtherBreakpointsEnabled = { [weak self, weak tab] line, enabled in
 			guard let tab else { return }
@@ -773,6 +780,9 @@ final class EditorViewController: NSViewController {
 		}
 		codeView.onSetOtherBreakpointsEnabled = { [weak self] line, enabled in
 			self?.onSetOtherBreakpointsEnabled?(fileURL, line + 1, enabled)
+		}
+		codeView.onLinesChanged = { [weak self] first, removed, inserted in
+			self?.onLinesChanged?(fileURL, first, removed, inserted)
 		}
 		codeView.onRunLine = { [weak self] line in
 			// Already 1-based: the gutter converts before reporting a run.

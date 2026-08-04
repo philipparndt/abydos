@@ -96,6 +96,9 @@ final class CodeView: NSView, NSTextInputClient {
 	var onDeleteBreakpoint: ((Int) -> Void)?
 	/// Chose "Disable other breakpoints" — or the reverse.
 	var onSetOtherBreakpointsEnabled: ((Int, Bool) -> Void)?
+	/// The text moved under the breakpoints: an edit starting at this 0-based
+	/// line took out `removed` lines and put in `inserted`.
+	var onLinesChanged: ((Int, Int, Int) -> Void)?
 
 	/// What the gutter needs to know about a breakpoint to draw it.
 	struct BreakpointMark: Equatable {
@@ -253,6 +256,11 @@ final class CodeView: NSView, NSTextInputClient {
 
 	func load(document: TextDocument) {
 		self.document = document
+		// Breakpoints follow the text they were put on rather than the line
+		// number they were put at.
+		document.onLinesChanged = { [weak self] first, removed, inserted in
+			self?.onLinesChanged?(first, removed, inserted)
+		}
 		caret = 0
 		selectionAnchor = 0
 		folding = FoldingState()

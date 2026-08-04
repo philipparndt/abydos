@@ -280,6 +280,14 @@ public final class DebugSession {
 		if isActive { Task { await syncBreakpoints(for: file) } }
 	}
 
+	/// Puts a file's breakpoints where the text moved them.
+	public func replaceBreakpoints(inFile file: String, with list: [Breakpoint]) {
+		let file = FilePath.canonical(file)
+		breakpoints[file] = list.isEmpty ? nil : list
+		onMain { [weak self] in self?.onBreakpointsChanged?() }
+		if isActive { Task { await syncBreakpoints(for: file) } }
+	}
+
 	/// Takes a breakpoint away — what dragging one out of the gutter means.
 	public func removeBreakpoint(file: String, line: Int) {
 		let file = FilePath.canonical(file)

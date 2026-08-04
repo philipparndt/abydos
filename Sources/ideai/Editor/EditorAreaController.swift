@@ -71,6 +71,7 @@ final class EditorAreaController: NSViewController {
 	var onSetBreakpointEnabled: ((URL, Int, Bool) -> Void)?
 	var onDeleteBreakpoint: ((URL, Int) -> Void)?
 	var onSetOtherBreakpointsEnabled: ((URL, Int, Bool) -> Void)?
+	var onLinesChanged: ((URL, Int, Int, Int) -> Void)?
 	var onRunLine: ((URL, Int) -> Void)?
 	var onApplyDiffSelection: ((GitChange, String, Set<Int>) -> Void)?
 	var onDiscardDiffSelection: ((GitChange, String, Set<Int>) -> Void)?
@@ -145,6 +146,9 @@ final class EditorAreaController: NSViewController {
 		}
 		group.onSetOtherBreakpointsEnabled = { [weak self] url, line, enabled in
 			self?.onSetOtherBreakpointsEnabled?(url, line, enabled)
+		}
+		group.onLinesChanged = { [weak self] url, first, removed, inserted in
+			self?.onLinesChanged?(url, first, removed, inserted)
 		}
 		group.onFindUsages = onFindUsages
 		group.onFixWithAI = onFixWithAI

@@ -599,6 +599,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		editor.onSetOtherBreakpointsEnabled = { [weak self] url, line, enabled in
 			self?.setOtherBreakpoints(file: url, line: line, enabled: enabled)
 		}
+		editor.onLinesChanged = { [weak self] url, first, removed, inserted in
+			self?.moveBreakpoints(inFile: url, editedFrom: first, removed: removed, inserted: inserted)
+		}
 		editor.onRunLine = { [weak self] url, line in
 			self?.runConfiguration(forFile: url, line: line)
 		}
@@ -1633,6 +1636,49 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			isVerified: breakpoint.isVerified,
 			isConditional: breakpoint.isConditional
 		)
+	}
+
+	/// Moves the breakpoints in a file with the text they were put on.
+	///
+	/// Typing above a breakpoint used to leave it on its line number while the
+	/// code moved out from under it — so it stopped somewhere nobody had asked
+	/// it to. A breakpoint on a line that is deleted goes with it.
+	private func moveBreakpoints(inFile url: URL, editedFrom first: Int, removed: Int, inserted: Int) {
+		guard removed != inserted else { return }
+		let path = FilePath.canonical(url)
+
+		func move(_ list: [Breakpoint]) -> [Breakpoint] {
+			list.compactMap { breakpoint in
+				guard let line = BreakpointAnchors.moved(
+					line: breakpoint.line, editedFrom: first, removed: removed, inserted: inserted
+				) else { return nil }
+				guard line != breakpoint.line else { return breakpoint }
+				var moved = breakpoint
+				moved = Breakpoint(
+					file: breakpoint.file,
+					line: line,
+					isEnabled: breakpoint.isEnabled,
+					// Where it is now is not where the adapter bound it, so it
+					// is drawn as unbound until the adapter says otherwise.
+					isVerified: false,
+					condition: breakpoint.condition,
+					hitCondition: breakpoint.hitCondition,
+					logMessage: breakpoint.logMessage
+				)
+				return moved
+			}
+			.sorted { $0.line < $1.line }
+		}
+
+		if let list = pendingBreakpoints[path], !list.isEmpty {
+			pendingBreakpoints[path] = move(list)
+		}
+		if let session = bottomPanel.activeDebugSession, !session.breakpoints(inFile: path).isEmpty {
+			session.replaceBreakpoints(inFile: path, with: move(session.breakpoints(inFile: path)))
+			syncBreakpointsToEditor(from: session)
+			return
+		}
+		publishPendingBreakpoints()
 	}
 
 	/// Turns a breakpoint off, or on again, wherever it is kept.

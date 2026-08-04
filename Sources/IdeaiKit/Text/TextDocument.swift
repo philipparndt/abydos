@@ -310,6 +310,14 @@ public final class TextDocument {
 	}
 
 	/// Applies an edit to the rope, then hands the reparse to the syntax queue.
+	/// An edit happened: where it started, how many lines it took out, and how
+	/// many it put in.
+	///
+	/// For anything anchored to a place in the file rather than to a line
+	/// number — a breakpoint above all. Rows are 0-based, as the parser counts
+	/// them.
+	public var onLinesChanged: ((_ firstLine: Int, _ removed: Int, _ inserted: Int) -> Void)?
+
 	private func applyEdit(byteRange: Range<Int>, newBytes: [UInt8]) {
 		// Positions must be captured against the *old* text — tree-sitter needs
 		// both the old and new end to map the tree forward.
@@ -321,6 +329,15 @@ public final class TextDocument {
 
 		let newEndByte = byteRange.lowerBound + newBytes.count
 		let newEndPoint = point(forByte: newEndByte)
+
+		// The same three numbers tree-sitter is about to be given, in lines.
+		if startPoint.row != oldEndPoint.row || startPoint.row != newEndPoint.row {
+			onLinesChanged?(
+				Int(startPoint.row),
+				Int(oldEndPoint.row) - Int(startPoint.row),
+				Int(newEndPoint.row) - Int(startPoint.row)
+			)
+		}
 
 		let edit = InputEdit(
 			startByte: byteRange.lowerBound,
