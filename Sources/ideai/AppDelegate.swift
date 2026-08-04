@@ -610,7 +610,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if let delay = options.addTerminalTabAt {
 			DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+				let before = controller?.paneCountForTesting ?? 0
 				controller?.addTerminalTabForTesting()
+				// The panel's own + must not add a pane either while the panel
+				// is a view of tmux — it makes a window there, like the other.
+				DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+					print("PANELADD: panes \(before) -> \(controller?.paneCountForTesting ?? 0)")
+				}
 			}
 		}
 

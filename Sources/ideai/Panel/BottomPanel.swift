@@ -326,26 +326,23 @@ final class BottomPanel: NSView {
 		}
 		strip.onAdd = { [weak self] in
 			guard let self else { return }
-			// With tmux's windows on a strip of their own, the + up here means
-			// what it means everywhere else in the panel: another terminal of
-			// ours. The one on tmux's strip is the one that makes tmux windows.
-			if self.mirrorsTmux, column == 0, !Settings.shared.tmuxTabsAtBottom,
+			// While this panel is a view of tmux, every + in it makes a tmux
+			// window. Both strips, wherever the window list is being drawn.
+			//
+			// The + up here used to mean "another terminal of ours" whenever
+			// tmux's windows had a strip of their own — a second meaning for
+			// the same button, decided by a setting, on a strip whose first tab
+			// is the tmux terminal. Pressing it put plain shells in a window
+			// that is supposed to *be* the session, and no amount of pressing
+			// produced the tmux window it looked like it would.
+			//
+			// A panel not mirroring tmux still adds a terminal, which is the
+			// only thing a + can mean there. That is the whole separation:
+			// mirroring or not, rather than mirroring and a preference about
+			// where the tabs are drawn.
+			if self.mirrorsTmux, column == 0,
 			   let session = self.mirroredSession ?? self.tmuxSession {
-				// The terminal can be dead — the session it was attached to is
-				// destroyed by closing its last window, and the client goes
-				// with it. Then a new *window* is not what is wanted: a live
-				// terminal is, attached to the session, making it if need be.
-				if self.mirroredTerminal?.hasExited != false {
-					self.reattachTmux(to: session)
-					return
-				}
-				Task {
-					self.mirrorChangedLocally()
-					let made = await TmuxMirror.newWindow(inSession: session)
-					if !made { self.reattachTmux(to: session) }
-					self.refreshTmuxWindows()
-				}
-				self.focusTerminal()
+				self.addTmuxWindow(to: session)
 				return
 			}
 			self.focusedColumn = column
@@ -747,6 +744,32 @@ final class BottomPanel: NSView {
 	/// worked out before the change can be recognised and dropped.
 	private var mirrorGeneration = 0
 
+	/// Adds a window to the session these tabs are a view of.
+	///
+	/// The only thing either + does while the panel is mirroring tmux, and it
+	/// cannot do anything else. Creating a window never needed a client of our
+	/// own: `tmux new-window -t <session>` is answered by the server, and
+	/// whether this app happens to be looking at that session is beside the
+	/// point — so it is asked for first, always, with no condition in front of
+	/// it that could quietly turn the press into a plain terminal instead.
+	///
+	/// Attaching survives in one case only: the server refusing, which by then
+	/// means the session itself has gone — its last window closed, and with it
+	/// the thing these tabs are a picture of. Making it again does need a
+	/// client, and that is the whole of the exception.
+	private func addTmuxWindow(to session: String) {
+		Task {
+			self.mirrorChangedLocally()
+			if await TmuxMirror.newWindow(inSession: session) {
+				self.refreshTmuxWindows()
+				self.focusTerminal()
+				return
+			}
+			self.reattachTmux(to: session)
+			self.refreshTmuxWindows()
+		}
+	}
+
 	/// Notes that the tabs have just been changed from this side.
 	private func mirrorChangedLocally() {
 		mirrorGeneration &+= 1
@@ -931,29 +954,7 @@ final class BottomPanel: NSView {
 		}
 		strip.onAdd = { [weak self] in
 			guard let self, let session = self.mirroredSession ?? self.tmuxSession else { return }
-			// This button makes tmux windows. Nothing else, ever.
-			//
-			// It used to check whether *we* had a live client first and open a
-			// terminal instead when we did not — which is how pressing the +
-			// on tmux's own strip put plain tabs in the panel's strip above it,
-			// one per press. Creating a window never needed a client: `tmux
-			// new-window -t <session>` is answered by the server, and whether
-			// this app happens to be looking at that session is beside the
-			// point. So it asks for the window first, always.
-			Task {
-				self.mirrorChangedLocally()
-				if await TmuxMirror.newWindow(inSession: session) {
-					self.refreshTmuxWindows()
-					self.focusTerminal()
-					return
-				}
-				// The server said no, which at this point means the session
-				// itself has gone — its last window was closed, and with it
-				// the thing these tabs are a picture of. Making it again is
-				// the only way to have one, and that does need a client.
-				self.reattachTmux(to: session)
-				self.refreshTmuxWindows()
-			}
+			self.addTmuxWindow(to: session)
 		}
 		strip.onRename = { [weak self] index, name in
 			guard let self, self.tmuxWindows.indices.contains(index) else { return }
