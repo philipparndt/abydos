@@ -2497,16 +2497,31 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		return LaunchStore.read(in: launchRoot)
 	}
 
+	/// What the play button is pointed at, decided in one place.
+	///
+	/// The strip and the button used to work this out separately, and disagreed
+	/// exactly where it mattered: with a Makefile goal chosen in a project that
+	/// has launch configurations of its own, the strip fell back to the first
+	/// configuration while the button ran the goal.
+	private var runTarget: RunSelection.Target {
+		RunSelection.resolve(
+			configurations: launchConfigurations.map(\.name),
+			makeRun: selectedMakeRun?.name,
+			selected: selectedConfigurationName
+		)
+	}
+
 	private var selectedConfiguration: LaunchConfiguration? {
-		let all = launchConfigurations
-		if let name = selectedConfigurationName, let found = all.first(where: { $0.name == name }) {
-			return found
-		}
-		return all.first
+		guard case let .configuration(name) = runTarget else { return nil }
+		return launchConfigurations.first { $0.name == name }
 	}
 
 	func refreshRunControl() {
-		runControl?.setConfiguration(selectedConfiguration?.name ?? selectedMakeRun?.name)
+		runControl?.setConfiguration(RunSelection.displayName(
+			configurations: launchConfigurations.map(\.name),
+			makeRun: selectedMakeRun?.name,
+			selected: selectedConfigurationName
+		))
 	}
 
 	/// Keeps the titlebar saying what the session is doing.
@@ -2691,11 +2706,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	/// What play would start right now, without starting it.
 	func describeRunTargetForTesting() {
-		if let goal = selectedMakeRun, selectedConfigurationName == goal.name {
-			print("MAKE PLAY: \(goal.executable) \(goal.arguments.joined(separator: " "))")
-			return
+		switch runTarget {
+		case let .make(name):          print("MAKE PLAY: \(name)")
+		case let .configuration(name): print("MAKE PLAY: \(name)")
+		case .none:                    print("MAKE PLAY: (nothing)")
 		}
-		print("MAKE PLAY: \(selectedConfiguration?.name ?? "(nothing)")")
 	}
 
 	func runMakeGoalForTesting(_ goal: String, debug: Bool) {
@@ -2925,7 +2940,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// A make goal nothing can debug runs as make runs it, in the terminal,
 		// for both buttons: there is no debugger to offer and refusing to start
 		// would be worse than starting without one.
-		if let goal = selectedMakeRun, selectedConfigurationName == goal.name {
+		if case let .make(name) = runTarget, let goal = selectedMakeRun, goal.name == name {
 			run(goal)
 			return
 		}
