@@ -414,7 +414,16 @@ final class EditorAreaController: NSViewController {
 		// And what is open generally, on every change rather than at quit: a
 		// window that never gets to say goodbye — a crash, a force quit, a
 		// capture run — should still come back to the same files.
-		try? SessionStore.write(captureSession(), in: project.root)
+		//
+		// Merged rather than written over. Only the editor's half is known
+		// here; the terminals, the panel, the subproject and the chosen
+		// configuration belong to the window, and writing what this knows over
+		// what it does not would drop them every time a tab changed.
+		var session = SessionStore.read(in: project.root) ?? ProjectSession()
+		let captured = captureSession()
+		session.files = captured.files
+		session.activePath = captured.activePath
+		try? SessionStore.write(session, in: project.root)
 	}
 
 	/// Emptying and refilling the window is not the user closing tabs.

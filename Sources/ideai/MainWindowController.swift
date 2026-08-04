@@ -185,7 +185,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// Held while open, for the same reason.
 	private var processPicker: ProcessPicker?
 	/// What the run control acts on, remembered per project.
-	private var selectedConfigurationName: String?
+	///
+	/// Written down as it changes rather than at quit. A window that never gets
+	/// to say goodbye — a crash, a force quit, a capture run — should still
+	/// come back pointing at whatever was last run from it.
+	private var selectedConfigurationName: String? {
+		didSet {
+			guard selectedConfigurationName != oldValue else { return }
+			rememberOpenEditors()
+		}
+	}
 	private var projectPill: ProjectPillButton!
 	private var branchPill: BranchPillButton!
 	private var subprojectPill: SubprojectPillButton!
@@ -924,6 +933,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				subprojectRoot = url
 				applyScope()
 			}
+			// And what the play button was pointing at. Set before the
+			// configurations have finished loading, which is fine: it is a
+			// name, and the list is only needed when something is run.
+			if let chosen = remembered.selectedConfiguration {
+				selectedConfigurationName = chosen
+				refreshRunControl()
+			}
 		}
 
 		// The terminal is where half the work happens, so a window arrives with
@@ -1474,6 +1490,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			session.terminals = bottomPanel.captureTerminals()
 			session.isPanelVisible = isPanelVisible
 			session.subprojectPath = subprojectRoot.map { Subprojects.relativePath($0, to: current) }
+			session.selectedConfiguration = selectedConfigurationName
 			sessions.store(session, for: current)
 			// And beside the project, so tomorrow's window opens on today's
 			// files: what was open is a property of the project, not of the
@@ -1518,6 +1535,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		session.terminals = bottomPanel.captureTerminals()
 		session.isPanelVisible = isPanelVisible
 		session.subprojectPath = subprojectRoot.map { Subprojects.relativePath($0, to: root) }
+		session.selectedConfiguration = selectedConfigurationName
 		try? SessionStore.write(session, in: root)
 	}
 

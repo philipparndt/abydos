@@ -48,22 +48,34 @@ public struct ProjectSession: Equatable, Sendable {
 	public var isPanelVisible: Bool
 	/// Which part of the project was being worked on, relative to it.
 	public var subprojectPath: String?
+	/// The launch configuration that was chosen in the titlebar.
+	///
+	/// The name rather than the configuration: what to run is the project's,
+	/// kept in `.ideai/run` and shared with everyone; which of them you had
+	/// picked is this window's, and reopening a project to a play button
+	/// pointing at something else is a run of the wrong thing one click away.
+	public var selectedConfiguration: String?
 
 	public init(
 		files: [OpenFile] = [],
 		activePath: String? = nil,
 		terminals: [OpenTerminal] = [],
 		isPanelVisible: Bool = false,
-		subprojectPath: String? = nil
+		subprojectPath: String? = nil,
+		selectedConfiguration: String? = nil
 	) {
 		self.files = files
 		self.activePath = activePath
 		self.terminals = terminals
 		self.isPanelVisible = isPanelVisible
 		self.subprojectPath = subprojectPath
+		self.selectedConfiguration = selectedConfiguration
 	}
 
-	public var isEmpty: Bool { files.isEmpty && terminals.isEmpty && subprojectPath == nil }
+	public var isEmpty: Bool {
+		files.isEmpty && terminals.isEmpty && subprojectPath == nil
+			&& selectedConfiguration == nil
+	}
 }
 
 /// What was open in each project, for as long as the app is running.
