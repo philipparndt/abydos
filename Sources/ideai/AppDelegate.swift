@@ -717,6 +717,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		for delay in options.breakpointReports {
+			DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+				print("BREAKPOINTS at \(delay)s:")
+				print(controller?.breakpointReportForTesting() ?? "no window")
+			}
+		}
+
 		if options.sidebarCycle {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
 				controller?.showSidebarTool(.changes)

@@ -602,6 +602,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		editor.onLinesChanged = { [weak self] url, first, removed, inserted in
 			self?.moveBreakpoints(inFile: url, editedFrom: first, removed: removed, inserted: inserted)
 		}
+		editor.onFileReloaded = { [weak self] url in
+			self?.reanchorBreakpoints(inFile: url)
+		}
 		editor.onRunLine = { [weak self] url, line in
 			self?.runConfiguration(forFile: url, line: line)
 		}
@@ -1611,6 +1614,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// keyed the same way or they are set against a name nothing else uses.
 		let path = FilePath.canonical(file)
 
+		// Anchored either way: what it was put on is only knowable now, while the
+		// file still looks the way it did when it was clicked.
+		defer { scheduleAnchoring(inFile: file) }
+
 		if let session = bottomPanel.activeDebugSession {
 			session.toggleBreakpoint(file: path, line: line)
 			syncBreakpointsToEditor(from: session)
@@ -1624,6 +1631,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		} else {
 			list.append(Breakpoint(file: path, line: line))
 			list.sort { $0.line < $1.line }
+		}
+		pendingBreakpoints[path] = list.isEmpty ? nil : list
+		publishPendingBreakpoints()
+	}
+
+	/// A file's breakpoints, from the session when one is running and from the
+	/// pending set otherwise — the two are kept in step, so either answers.
+	private func breakpoints(inFile path: String) -> [Breakpoint] {
+		bottomPanel.activeDebugSession?.breakpoints(inFile: path) ?? pendingBreakpoints[path] ?? []
+	}
+
+	/// Puts a file's breakpoints back, wherever they are being kept.
+	private func replaceBreakpoints(inFile path: String, with list: [Breakpoint]) {
+		if let session = bottomPanel.activeDebugSession {
+			session.replaceBreakpoints(inFile: path, with: list)
+			syncBreakpointsToEditor(from: session)
+			return
 		}
 		pendingBreakpoints[path] = list.isEmpty ? nil : list
 		publishPendingBreakpoints()
@@ -1646,39 +1670,124 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	private func moveBreakpoints(inFile url: URL, editedFrom first: Int, removed: Int, inserted: Int) {
 		guard removed != inserted else { return }
 		let path = FilePath.canonical(url)
+		let list = breakpoints(inFile: path)
+		guard !list.isEmpty else { return }
 
-		func move(_ list: [Breakpoint]) -> [Breakpoint] {
-			list.compactMap { breakpoint in
-				guard let line = BreakpointAnchors.moved(
-					line: breakpoint.line, editedFrom: first, removed: removed, inserted: inserted
-				) else { return nil }
-				guard line != breakpoint.line else { return breakpoint }
-				var moved = breakpoint
-				moved = Breakpoint(
-					file: breakpoint.file,
+		replaceBreakpoints(inFile: path, with: list.compactMap { breakpoint in
+			guard let line = BreakpointAnchors.moved(
+				line: breakpoint.line, editedFrom: first, removed: removed, inserted: inserted
+			) else { return nil }
+			guard line != breakpoint.line else { return breakpoint }
+			return Breakpoint(
+				file: breakpoint.file,
+				line: line,
+				isEnabled: breakpoint.isEnabled,
+				// Where it is now is not where the adapter bound it, so it
+				// is drawn as unbound until the adapter says otherwise.
+				isVerified: false,
+				condition: breakpoint.condition,
+				hitCondition: breakpoint.hitCondition,
+				logMessage: breakpoint.logMessage,
+				anchor: breakpoint.anchor
+			)
+		}
+		.sorted { $0.line < $1.line })
+
+		// The anchors now describe where these were before the edit. Taking them
+		// again is a query over the whole file, so it waits for typing to stop.
+		scheduleAnchoring(inFile: url)
+	}
+
+	/// Anchoring waiting for the file to stop changing, per file.
+	private var anchoringWork: [String: DispatchWorkItem] = [:]
+
+	private func scheduleAnchoring(inFile url: URL) {
+		let path = FilePath.canonical(url)
+		anchoringWork[path]?.cancel()
+		let work = DispatchWorkItem { [weak self] in
+			self?.anchoringWork[path] = nil
+			self?.anchorBreakpoints(inFile: url)
+		}
+		anchoringWork[path] = work
+		DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+	}
+
+	/// Records where a file's breakpoints sit in its code.
+	///
+	/// A line number is enough right up until something rewrites the file
+	/// without saying what it changed. What survives that is the symbol the
+	/// breakpoint is inside and the line it is on, which can only be read while
+	/// the file still looks the way the breakpoint was set against.
+	private func anchorBreakpoints(inFile url: URL) {
+		let path = FilePath.canonical(url)
+		let lines = breakpoints(inFile: path).map(\.line)
+		guard !lines.isEmpty, let document = editor.document(for: url) else { return }
+
+		// The symbols come off the parser's own queue, behind whatever reparse
+		// the last edit left running, so this sees the tree for the text as it
+		// is now rather than an outline that is one edit behind.
+		document.symbols { [weak self] symbols in
+			var anchors: [Int: BreakpointAnchors.Anchor] = [:]
+			for line in lines where line <= document.lineCount {
+				anchors[line] = BreakpointAnchors.anchor(
 					line: line,
-					isEnabled: breakpoint.isEnabled,
-					// Where it is now is not where the adapter bound it, so it
-					// is drawn as unbound until the adapter says otherwise.
-					isVerified: false,
-					condition: breakpoint.condition,
-					hitCondition: breakpoint.hitCondition,
-					logMessage: breakpoint.logMessage
+					text: document.lineText(line - 1),
+					in: symbols,
+					lineCount: document.lineCount
 				)
-				return moved
 			}
-			.sorted { $0.line < $1.line }
+			self?.applyAnchors(anchors, inFile: path)
 		}
+	}
 
-		if let list = pendingBreakpoints[path], !list.isEmpty {
-			pendingBreakpoints[path] = move(list)
-		}
-		if let session = bottomPanel.activeDebugSession, !session.breakpoints(inFile: path).isEmpty {
-			session.replaceBreakpoints(inFile: path, with: move(session.breakpoints(inFile: path)))
-			syncBreakpointsToEditor(from: session)
+	private func applyAnchors(_ anchors: [Int: BreakpointAnchors.Anchor], inFile path: String) {
+		if let session = bottomPanel.activeDebugSession {
+			session.setBreakpointAnchors(inFile: path, anchors)
+			pendingBreakpoints = session.breakpoints
 			return
 		}
-		publishPendingBreakpoints()
+		guard var list = pendingBreakpoints[path] else { return }
+		for index in list.indices {
+			guard let anchor = anchors[list[index].line] else { continue }
+			list[index].anchor = anchor
+		}
+		pendingBreakpoints[path] = list
+	}
+
+	/// Puts a file's breakpoints back on the code they were set on, after
+	/// something else rewrote the file.
+	///
+	/// Nothing reported an edit — an agent, a `git checkout` and a formatter all
+	/// just leave a different file behind — so there is nothing to shift the
+	/// lines by. Each breakpoint goes to wherever its anchor now points.
+	private func reanchorBreakpoints(inFile url: URL) {
+		let path = FilePath.canonical(url)
+		guard !breakpoints(inFile: path).isEmpty, let document = editor.document(for: url) else {
+			return
+		}
+
+		// Any anchoring still pending was scheduled against the text this file
+		// has just stopped holding; letting it run would pin the breakpoints to
+		// the new file at the old lines, which is the thing being undone here.
+		anchoringWork[path]?.cancel()
+		anchoringWork[path] = nil
+
+		// The reload abandoned the old tree and queued a parse of the new text;
+		// this query is behind it on the same queue, so it waits for the parse
+		// rather than reading an empty outline and concluding every breakpoint
+		// has lost its symbol.
+		document.symbols { [weak self] symbols in
+			guard let self else { return }
+			let lines = (0..<document.lineCount).map { document.lineText($0) }
+			self.replaceBreakpoints(
+				inFile: path,
+				with: BreakpointAnchors.resolve(
+					// Read again rather than captured: the parse took a moment,
+					// and a breakpoint set in it is one somebody just clicked.
+					breakpoints: self.breakpoints(inFile: path), in: symbols, lines: lines
+				)
+			)
+		}
 	}
 
 	/// Turns a breakpoint off, or on again, wherever it is kept.
@@ -4888,6 +4997,24 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	func toggleBreakpointForTesting(line: Int) {
 		guard let url = editor.activeGroup.activeTabURL else { return }
 		toggleBreakpoint(file: url, line: line)
+	}
+
+	/// Where the open file's breakpoints are and what each is anchored to.
+	///
+	/// Anchoring is invisible until a file is rewritten under it, and the gutter
+	/// only says which line — not what the breakpoint believes it is on. This
+	/// says both, so a rewrite can be checked rather than looked at.
+	func breakpointReportForTesting() -> String {
+		guard let url = editor.activeGroup.activeTabURL else { return "no file open" }
+		let list = breakpoints(inFile: FilePath.canonical(url))
+		guard !list.isEmpty else { return "no breakpoints" }
+
+		return list.map { breakpoint in
+			guard let anchor = breakpoint.anchor else { return "line \(breakpoint.line): unanchored" }
+			let symbol = anchor.path.isEmpty ? "(no symbol)" : anchor.path.joined(separator: ".")
+			return "line \(breakpoint.line): \(symbol)+\(anchor.offset) \"\(anchor.text)\""
+		}
+		.joined(separator: "\n")
 	}
 
 	/// Invokes the gutter's run action, for verifying it end to end.

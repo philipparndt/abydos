@@ -24,6 +24,15 @@ public struct Breakpoint: Equatable, Hashable, Sendable {
 	/// A print statement that needs no rebuild and leaves no mess behind.
 	public var logMessage: String?
 
+	/// Where in the code this was put, rather than at which line number.
+	///
+	/// A line number stops meaning anything once something rewrites the file
+	/// without saying what it changed — an agent, a `git checkout`, a formatter.
+	/// The anchor is what survives that: the symbol the breakpoint was inside,
+	/// how far into it, and what was written on the line. Nil until the file has
+	/// been parsed, and for files with no grammar to parse them.
+	public var anchor: BreakpointAnchors.Anchor?
+
 	/// Whether this breakpoint does anything beyond stopping every time.
 	public var isConditional: Bool {
 		condition?.isEmpty == false || hitCondition?.isEmpty == false || logMessage?.isEmpty == false
@@ -36,7 +45,8 @@ public struct Breakpoint: Equatable, Hashable, Sendable {
 		isVerified: Bool = false,
 		condition: String? = nil,
 		hitCondition: String? = nil,
-		logMessage: String? = nil
+		logMessage: String? = nil,
+		anchor: BreakpointAnchors.Anchor? = nil
 	) {
 		self.file = file
 		self.line = line
@@ -45,6 +55,7 @@ public struct Breakpoint: Equatable, Hashable, Sendable {
 		self.condition = condition
 		self.hitCondition = hitCondition
 		self.logMessage = logMessage
+		self.anchor = anchor
 	}
 
 	/// How the protocol wants it.
@@ -278,6 +289,25 @@ public final class DebugSession {
 		onMain { [weak self] in self?.onBreakpointsChanged?() }
 
 		if isActive { Task { await syncBreakpoints(for: file) } }
+	}
+
+	/// Records where a file's breakpoints sit in the code, keyed by line.
+	///
+	/// Nothing the adapter needs to hear about: the anchor is how a breakpoint
+	/// finds its line again after something else rewrites the file, which is
+	/// this side's problem entirely. Nothing on screen changes either, so no
+	/// redraw is asked for.
+	public func setBreakpointAnchors(
+		inFile file: String,
+		_ anchors: [Int: BreakpointAnchors.Anchor]
+	) {
+		let file = FilePath.canonical(file)
+		guard var list = breakpoints[file] else { return }
+		for index in list.indices {
+			guard let anchor = anchors[list[index].line] else { continue }
+			list[index].anchor = anchor
+		}
+		breakpoints[file] = list
 	}
 
 	/// Puts a file's breakpoints where the text moved them.

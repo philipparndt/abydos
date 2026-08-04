@@ -52,6 +52,11 @@ struct LaunchOptions {
 	var followTerminal = false
 	/// Toggle a breakpoint on this 1-based line before capture.
 	var breakpointLine: Int?
+	/// Print where the open file's breakpoints ended up, after each of these
+	/// many seconds — which is how anchoring is checked without reading a
+	/// gutter. Repeatable, since the interesting thing is what changed between
+	/// before a file was rewritten and after.
+	var breakpointReports: [Double] = []
 	/// Show a sidebar tool before capture: project | changes | branches | structure.
 	var sidebarTool: String?
 	/// Invoke the gutter run action on this 1-based line before capture.
@@ -354,6 +359,8 @@ struct LaunchOptions {
 			case "--maximize-terminal": options.maximizeTerminal = true
 			case "--follow-terminal": options.followTerminal = true
 			case "--breakpoint": options.breakpointLine = next().flatMap(Int.init)
+			case "--breakpoint-report":
+				if let at = next().flatMap(Double.init) { options.breakpointReports.append(at) }
 			case "--breakpoint-off": options.disabledBreakpointLine = next().flatMap(Int.init)
 			case "--stop-after": options.stopAfter = next().flatMap(Double.init)
 			case "--find":       options.findQuery = next()

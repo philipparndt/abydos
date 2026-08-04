@@ -72,6 +72,7 @@ final class EditorAreaController: NSViewController {
 	var onDeleteBreakpoint: ((URL, Int) -> Void)?
 	var onSetOtherBreakpointsEnabled: ((URL, Int, Bool) -> Void)?
 	var onLinesChanged: ((URL, Int, Int, Int) -> Void)?
+	var onFileReloaded: ((URL) -> Void)?
 	var onRunLine: ((URL, Int) -> Void)?
 	var onApplyDiffSelection: ((GitChange, String, Set<Int>) -> Void)?
 	var onDiscardDiffSelection: ((GitChange, String, Set<Int>) -> Void)?
@@ -149,6 +150,9 @@ final class EditorAreaController: NSViewController {
 		}
 		group.onLinesChanged = { [weak self] url, first, removed, inserted in
 			self?.onLinesChanged?(url, first, removed, inserted)
+		}
+		group.onFileReloaded = { [weak self] url in
+			self?.onFileReloaded?(url)
 		}
 		group.onFindUsages = onFindUsages
 		group.onFixWithAI = onFixWithAI
@@ -584,6 +588,11 @@ final class EditorAreaController: NSViewController {
 
 	func reloadExternallyChangedFiles() {
 		for group in groups { group.reloadExternallyChangedFiles() }
+	}
+
+	/// The open document for a file, in whichever pane holds it.
+	func document(for url: URL) -> TextDocument? {
+		groups.lazy.compactMap { $0.document(for: url) }.first
 	}
 
 	func applySettings() {

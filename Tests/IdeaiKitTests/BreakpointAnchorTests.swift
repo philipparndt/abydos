@@ -202,3 +202,280 @@ struct BreakpointSymbolAnchorTests {
 		) == 2)
 	}
 }
+
+/// What lines a symbol covers, which the parser does not say.
+struct SymbolLineSpanTests {
+	private func symbol(
+		_ name: String,
+		line: Int,
+		declaration: Range<Int>,
+		_ children: [DocumentSymbol] = []
+	) -> DocumentSymbol {
+		DocumentSymbol(
+			name: name,
+			kind: children.isEmpty ? .method : .type,
+			line: line,
+			byteRange: declaration,
+			nameRange: (line * 100)..<(line * 100 + name.count),
+			children: children
+		)
+	}
+
+	/// The shape that makes the declaration range useless: Swift's grammar hangs
+	/// every member's `@definition` capture on the enclosing type, so all three
+	/// of these claim bytes 0..<400.
+	private var holder: [DocumentSymbol] {
+		[symbol("Holder", line: 0, declaration: 0..<400, [
+			symbol("first", line: 1, declaration: 0..<400),
+			symbol("second", line: 5, declaration: 0..<400),
+		])]
+	}
+
+	@Test func aMemberCoversItsOwnLinesRatherThanItsTypes() {
+		let spans = SymbolOutline.lineSpans(of: holder, lineCount: 10)
+		#expect(spans[holder[0].children[0].id] == 2..<6, "first runs until second starts")
+		#expect(spans[holder[0].children[1].id] == 6..<11, "second runs to the end of its type")
+	}
+
+	@Test func theLastSymbolRunsToTheEndOfTheFile() {
+		#expect(SymbolOutline.lineSpans(of: holder, lineCount: 10)[holder[0].id] == 1..<11)
+	}
+
+	/// Two declarations on one line — `func a() {}; func b() {}` — still get a
+	/// line each rather than an empty span nothing can be inside.
+	@Test func aSymbolAlwaysCoversItsOwnLine() {
+		let crowded = [
+			symbol("a", line: 3, declaration: 0..<10),
+			symbol("b", line: 3, declaration: 0..<10),
+		]
+		#expect(SymbolOutline.lineSpans(of: crowded, lineCount: 9)[crowded[0].id] == 4..<5)
+	}
+}
+
+/// A whole file's breakpoints, after something else rewrote it.
+struct BreakpointRewriteTests {
+	private func symbol(_ name: String, line: Int, _ children: [DocumentSymbol] = []) -> DocumentSymbol {
+		DocumentSymbol(
+			name: name,
+			kind: children.isEmpty ? .method : .type,
+			line: line,
+			byteRange: 0..<1000,
+			nameRange: (line * 100)..<(line * 100 + name.count),
+			children: children
+		)
+	}
+
+	private func breakpoint(_ line: Int, path: [String], offset: Int, text: String) -> Breakpoint {
+		Breakpoint(
+			file: "/x.swift",
+			line: line,
+			anchor: BreakpointAnchors.Anchor(path: path, offset: offset, text: text)
+		)
+	}
+
+	private func lines(_ count: Int, _ overrides: [Int: String] = [:]) -> [String] {
+		(1...count).map { overrides[$0] ?? "" }
+	}
+
+	@Test func eachGoesWhereItsAnchorPoints() {
+		let symbols = [symbol("Config", line: 9, [symbol("setUp", line: 11)])]
+		let resolved = BreakpointAnchors.resolve(
+			breakpoints: [breakpoint(3, path: ["Config", "setUp"], offset: 2, text: "start()")],
+			in: symbols,
+			lines: lines(20)
+		)
+		#expect(resolved.map(\.line) == [14])
+	}
+
+	/// The anchor is taken again against the file as it is now: measured from
+	/// where the symbol used to be, the next rewrite lands somewhere else again.
+	@Test func whatItFindsIsAnchoredAfresh() {
+		let symbols = [symbol("Config", line: 9, [symbol("setUp", line: 11)])]
+		let resolved = BreakpointAnchors.resolve(
+			breakpoints: [breakpoint(3, path: ["Config", "setUp"], offset: 2, text: "start()")],
+			in: symbols,
+			lines: lines(20, [14: "\tstart()"])
+		)
+		#expect(resolved.first?.anchor?.path == ["Config", "setUp"])
+		#expect(resolved.first?.anchor?.offset == 2)
+		#expect(resolved.first?.anchor?.text == "\tstart()")
+	}
+
+	/// A line taken out of the function above the breakpoint. Counting lines
+	/// from the top of the function puts it one statement past where it was;
+	/// the text says which of the function's lines it actually is.
+	@Test func insideTheFunctionTheTextPicksTheLine() {
+		let symbols = [symbol("Config", line: 9, [symbol("setUp", line: 10)])]
+		let resolved = BreakpointAnchors.resolve(
+			breakpoints: [breakpoint(6, path: ["Config", "setUp"], offset: 2, text: "start()")],
+			in: symbols,
+			lines: lines(20, [12: "start()", 13: "finish()"])
+		)
+		#expect(resolved.map(\.line) == [12], "counting alone would have said 13")
+		#expect(resolved.first?.anchor?.offset == 1, "and it knows it is one line in now")
+	}
+
+	/// The same text in the function below is a different line, so counting
+	/// lines is what is left — a breakpoint in the wrong function is worse than
+	/// one on the wrong line of the right one.
+	@Test func theTextIsOnlyLookedForInsideItsOwnSymbol() {
+		let symbols = [symbol("Config", line: 0, [
+			symbol("setUp", line: 1),
+			symbol("tearDown", line: 4),
+		])]
+		let resolved = BreakpointAnchors.resolve(
+			breakpoints: [breakpoint(3, path: ["Config", "setUp"], offset: 1, text: "start()")],
+			in: symbols,
+			lines: lines(10, [6: "start()"])
+		)
+		#expect(resolved.map(\.line) == [3])
+	}
+
+	/// Neither its symbol nor its text is left. Deleting it would throw away
+	/// something somebody set; it stays where it was, and is not claimed bound.
+	@Test func oneThatCannotBeFoundStaysWhereItWas() {
+		let resolved = BreakpointAnchors.resolve(
+			breakpoints: [breakpoint(3, path: ["Gone"], offset: 3, text: "vanished()")],
+			in: [],
+			lines: lines(20)
+		)
+		#expect(resolved.map(\.line) == [3])
+	}
+
+	/// Half a second of a file being written without a temporary file: it has
+	/// been truncated and the real text has not arrived. Nothing in it can be
+	/// found, and everything about the breakpoint has to survive that or the
+	/// text arriving a moment later has nothing left to be matched against.
+	@Test func aFileCaughtMidWriteMovesNothing() {
+		let one = breakpoint(400, path: ["Config", "setUp"], offset: 2, text: "\t\tstart()")
+		let resolved = BreakpointAnchors.resolve(breakpoints: [one], in: [], lines: [])
+
+		#expect(resolved.map(\.line) == [400])
+		#expect(resolved.first?.anchor == one.anchor, "still describing where it belongs")
+	}
+
+	/// The file lost the code this was on. Putting it on the last line instead
+	/// would be putting it on code nobody chose; it waits where it was, in case
+	/// what it was on comes back.
+	@Test func oneOffTheEndOfAShorterFileWaitsThere() {
+		let resolved = BreakpointAnchors.resolve(
+			breakpoints: [breakpoint(90, path: ["Gone"], offset: 90, text: "vanished()")],
+			in: [],
+			lines: lines(4)
+		)
+		#expect(resolved.map(\.line) == [90])
+	}
+
+	/// Renamed rather than moved: the path is dead, and the text is what finds
+	/// it — searched for around where the breakpoint was, not around an offset
+	/// into a symbol that is not there any more.
+	@Test func aRenamedSymbolLeavesTheTextToFindIt() {
+		let symbols = [symbol("Config", line: 0, [symbol("configure", line: 1)])]
+		let resolved = BreakpointAnchors.resolve(
+			breakpoints: [breakpoint(30, path: ["Config", "setUp"], offset: 2, text: "start()")],
+			in: symbols,
+			lines: lines(40, [33: "start()"])
+		)
+		#expect(resolved.map(\.line) == [33])
+		#expect(resolved.first?.anchor?.path == ["Config", "configure"], "anchored to what is there now")
+	}
+
+	/// Two functions merged into one, and both breakpoints now name the same
+	/// line. A line holds one breakpoint, and the conditions of the first stand.
+	@Test func twoLandingTogetherBecomeOne() {
+		var first = breakpoint(3, path: ["Config", "setUp"], offset: 1, text: "start()")
+		first.condition = "n > 2"
+		let second = breakpoint(8, path: ["Config", "setUp"], offset: 1, text: "start()")
+
+		let symbols = [symbol("Config", line: 0, [symbol("setUp", line: 1)])]
+		let resolved = BreakpointAnchors.resolve(
+			breakpoints: [first, second], in: symbols, lines: lines(10)
+		)
+		#expect(resolved.map(\.line) == [3])
+		#expect(resolved.first?.condition == "n > 2")
+	}
+
+	/// Everything about it but where it is survives the file being rewritten.
+	@Test func whatWasSetOnItComesAlong() {
+		var one = breakpoint(3, path: ["Config", "setUp"], offset: 2, text: "start()")
+		one.isEnabled = false
+		one.logMessage = "here"
+		one.hitCondition = "> 5"
+
+		let symbols = [symbol("Config", line: 9, [symbol("setUp", line: 11)])]
+		let resolved = BreakpointAnchors.resolve(breakpoints: [one], in: symbols, lines: lines(20))
+		#expect(resolved.first?.isEnabled == false)
+		#expect(resolved.first?.logMessage == "here")
+		#expect(resolved.first?.hitCondition == "> 5")
+		#expect(resolved.first?.isVerified == false, "the adapter has not seen this line yet")
+	}
+}
+
+/// Against the real grammar, since anchoring is only worth anything if it
+/// survives what the parser actually reports for a file.
+struct BreakpointAnchorGrammarTests {
+	private func symbols(_ source: String) async -> (symbols: [DocumentSymbol], lines: [String]) {
+		let url = URL(fileURLWithPath: NSTemporaryDirectory())
+			.appendingPathComponent("ideai-anchor-\(UUID().uuidString)")
+			.appendingPathExtension("swift")
+		try? source.write(to: url, atomically: true, encoding: .utf8)
+		guard let document = try? TextDocument(url: url) else { return ([], []) }
+
+		let held = Box(document)
+		let found: [DocumentSymbol] = await withCheckedContinuation { continuation in
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+				held.value.symbols { continuation.resume(returning: $0) }
+			}
+		}
+		return (found, source.components(separatedBy: "\n"))
+	}
+
+	/// The case a text search cannot get right: the function moved, and the line
+	/// it was on is still sitting there in a different function that was put
+	/// where it used to be. The symbol is what tells them apart.
+	@Test func itFollowsItsMethodPastAnIdenticalLine() async {
+		let before = await symbols("""
+		struct Config {
+			func setUp() {
+				start()
+			}
+		}
+		""")
+		let anchor = BreakpointAnchors.anchor(
+			line: 3, text: "\t\tstart()", in: before.symbols, lineCount: before.lines.count
+		)
+		#expect(anchor.path == ["Config", "setUp"])
+
+		let after = await symbols("""
+		struct Decoy {
+			func setUp() {
+				start()
+			}
+		}
+
+		struct Config {
+			func setUp() {
+				start()
+			}
+		}
+		""")
+		#expect(
+			BreakpointAnchors.resolve(anchor, in: after.symbols, lines: after.lines) == 9,
+			"the one inside Config, not the identical line where it used to be"
+		)
+	}
+
+	/// A file with no grammar to parse it has no symbols to anchor to, and falls
+	/// back to the text rather than losing the breakpoint.
+	@Test func withoutSymbolsTheTextStillCarriesIt() async {
+		let after = ["", "", "", "start()"]
+		let anchor = BreakpointAnchors.anchor(line: 1, text: "start()", in: [], lineCount: 2)
+		#expect(anchor.path.isEmpty)
+		#expect(BreakpointAnchors.resolve(anchor, in: [], lines: after) == 4)
+	}
+}
+
+private final class Box<Value>: @unchecked Sendable {
+	let value: Value
+	init(_ value: Value) { self.value = value }
+}

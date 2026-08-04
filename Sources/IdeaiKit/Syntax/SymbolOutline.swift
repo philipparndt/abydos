@@ -142,4 +142,40 @@ public enum SymbolOutline {
 	private static func contains(_ outer: Range<Int>, _ inner: Range<Int>) -> Bool {
 		outer.lowerBound <= inner.lowerBound && outer.upperBound >= inner.upperBound
 	}
+
+	/// The lines each symbol covers, 1-based and half-open, keyed by symbol id.
+	///
+	/// Not the declaration's own byte range: several grammars — Swift's among
+	/// them — hang a method's `@definition` capture on the *enclosing type*, so
+	/// every member of a type claims the type's whole span and a line inside one
+	/// method reads as being inside all of them.
+	///
+	/// What can be trusted is where each name is and how the outline nests, so a
+	/// symbol runs from its own declaration to wherever the next thing at its
+	/// level starts — or to the end of whatever contains it, for the last one.
+	/// That over-claims the blank lines and comments between two functions,
+	/// which is the right way round: a breakpoint on the comment above a
+	/// function belongs to the function above it either way, and no line is left
+	/// belonging to nothing.
+	public static func lineSpans(
+		of symbols: [DocumentSymbol],
+		lineCount: Int
+	) -> [String: Range<Int>] {
+		var spans: [String: Range<Int>] = [:]
+
+		func walk(_ siblings: [DocumentSymbol], endingAt end: Int) {
+			for (index, symbol) in siblings.enumerated() {
+				let start = symbol.line + 1          // outline counts from 0, breakpoints from 1
+				let next = index + 1 < siblings.count ? siblings[index + 1].line + 1 : end
+				// A symbol always covers its own declaration line, even when the
+				// next one starts on it.
+				let span = start..<max(start + 1, next)
+				spans[symbol.id] = span
+				walk(symbol.children, endingAt: span.upperBound)
+			}
+		}
+
+		walk(symbols, endingAt: lineCount + 1)
+		return spans
+	}
 }

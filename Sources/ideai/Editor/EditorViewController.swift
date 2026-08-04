@@ -115,6 +115,10 @@ final class EditorViewController: NSViewController {
 	/// Lines were added or taken out of a file, so anything anchored to them
 	/// has to move. First line 0-based.
 	var onLinesChanged: ((URL, Int, Int, Int) -> Void)?
+	/// A file was re-read after something else wrote it. No edits were reported
+	/// for it — the text is simply different now — so whatever was anchored to
+	/// the old text has to find itself again.
+	var onFileReloaded: ((URL) -> Void)?
 	/// Asked for everywhere a symbol is used, at a zero-based position.
 	var onFindUsages: ((URL, Int, Int) -> Void)?
 	/// Asked to put an agent on a problem: the file, the line, and what the
@@ -158,6 +162,12 @@ final class EditorViewController: NSViewController {
 	var activeTabIndex: Int? { activeIndex }
 	var activeTabURL: URL? { activeTab?.url }
 	var activeDocument: TextDocument? { activeTab?.document }
+
+	/// The open document for a file, if this group is the one holding it.
+	func document(for url: URL) -> TextDocument? {
+		let path = FilePath.canonical(url)
+		return tabs.first { FilePath.canonical($0.url) == path }?.document
+	}
 
 	/// Breakpoints to draw, per absolute file path, with verification state.
 	private var breakpointsByFile: [String: [Int: CodeView.BreakpointMark]] = [:]
@@ -1902,6 +1912,7 @@ final class EditorViewController: NSViewController {
 			guard let document = tab.document, !document.isDirty else { continue }
 			guard document.hasChangedOnDisk else { continue }
 			guard tab.codeView?.reloadFromDisk() == true else { continue }
+			onFileReloaded?(tab.url)
 
 			// And tell the language server, or its diagnostics go on describing
 			// the file as it was — which after something else has just fixed
