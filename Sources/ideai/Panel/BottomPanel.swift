@@ -159,6 +159,26 @@ final class BottomPanel: NSView {
 
 	private func session(at index: Int, in column: Int) -> Session? {
 		let list = sessions(in: column)
+
+		// With tmux's windows on their own strip below, this one is built as
+		// the attached terminal first and everything else after it — so a
+		// position is the list's own index only while that terminal happens to
+		// be first in the list too.
+		//
+		// It was, for as long as only the very first pane could be the one
+		// attached to tmux. Once a terminal opened *after* something else could
+		// be the attached one, every tab from there on answered for its
+		// neighbour: clicking the first activated the second.
+		if let terminal = mirroredTerminal,
+		   mirrorsTmux, column == 0, !tmuxWindows.isEmpty,
+		   Settings.shared.tmuxTabsAtBottom,
+		   list.contains(where: { $0 === terminal }) {
+			if index == 0 { return terminal }
+			let others = list.filter { $0 !== terminal }
+			let position = index - 1
+			return others.indices.contains(position) ? others[position] : nil
+		}
+
 		return list.indices.contains(index) ? list[index] : nil
 	}
 
@@ -274,6 +294,7 @@ final class BottomPanel: NSView {
 			}
 			if let window = self.mirroredWindow(at: index, in: column) {
 				Task {
+					self.mirrorChangedLocally()
 					await TmuxMirror.killWindow(window.index, inSession: self.mirroredSession ?? self.tmuxSession ?? "")
 					self.refreshTmuxWindows()
 				}
@@ -298,6 +319,7 @@ final class BottomPanel: NSView {
 					return
 				}
 				Task {
+					self.mirrorChangedLocally()
 					let made = await TmuxMirror.newWindow(inSession: session)
 					if !made { self.reattachTmux(to: session) }
 					self.refreshTmuxWindows()
@@ -692,15 +714,66 @@ final class BottomPanel: NSView {
 	/// Also called the moment anything might have changed it — a tab clicked,
 	/// output arriving — so the strip keeps up with a hand switching windows
 	/// faster than twice a second.
+	/// One question at a time, with another queued behind it at most.
+	///
+	/// The poll asks twice a second, output arriving asks again, and clicking a
+	/// tab asks a third time — each of those used to start its own pair of
+	/// `tmux` processes, and their answers came back in whatever order they
+	/// finished in.
+	private var mirrorRefreshInFlight = false
+	private var mirrorRefreshWanted = false
+	/// Bumped whenever this app changes tmux's windows itself, so an answer
+	/// worked out before the change can be recognised and dropped.
+	private var mirrorGeneration = 0
+
+	/// Notes that the tabs have just been changed from this side.
+	private func mirrorChangedLocally() {
+		mirrorGeneration &+= 1
+	}
+
+	/// The tty tmux's client is on: the terminal that is actually attached.
+	///
+	/// Not "the first pane in the panel". That was the same thing for as long
+	/// as only the very first one could be the attached one, and once it was
+	/// not, this asked tmux about a search pane's tty — got nothing, concluded
+	/// the client had detached, and emptied the window list. Which took the
+	/// tmux tabs off the strip, took the green strip with them, and left the
+	/// panel's own + as the only one on screen: the button that makes a plain
+	/// terminal, where a tmux window was wanted.
+	private var tmuxClientTTY: String? {
+		mirroredTerminal?.terminal?.ttyName
+			?? sessions.first { $0.terminal != nil }?.terminal?.ttyName
+	}
+
 	func refreshTmuxWindows() {
 		guard mirrorsTmux, let configured = tmuxSession else { return }
+		// Already asking. Answering twice from two overlapping questions is
+		// what made a tab switch flicker: the click moved the highlight, an
+		// answer from before the click moved it back, and the answer from
+		// after moved it again.
+		guard !mirrorRefreshInFlight else {
+			mirrorRefreshWanted = true
+			return
+		}
+		mirrorRefreshInFlight = true
+		let generation = mirrorGeneration
 		// The session the client is *looking at*, which `C-b w` changes: the
 		// tabs should be what is on screen, not what the window was opened
 		// with. The configured one is the fallback for the moment before the
 		// client has attached.
-		let tty = sessions.first?.terminal?.ttyName
+		let tty = tmuxClientTTY
 
 		Task { @MainActor in
+			defer {
+				self.mirrorRefreshInFlight = false
+				// Something asked while this one was out. Ask once for all of
+				// them rather than once each.
+				if self.mirrorRefreshWanted {
+					self.mirrorRefreshWanted = false
+					self.refreshTmuxWindows()
+				}
+			}
+
 			var session = configured
 			var attached: String?
 			if let tty { attached = await TmuxMirror.session(forClient: tty) }
@@ -739,6 +812,11 @@ final class BottomPanel: NSView {
 				self.rebuildColumns()
 				return
 			}
+			// A tab was clicked, or a window made or closed, while this was
+			// being answered: the answer describes tmux as it was before that,
+			// and publishing it would undo what was just done for as long as
+			// it takes to ask again.
+			guard generation == self.mirrorGeneration else { return }
 			guard !windows.isEmpty, windows != self.tmuxWindows else { return }
 			self.tmuxWindows = windows
 			StallWatch.mark("tmux tabs") { self.rebuildColumns() }
@@ -774,6 +852,16 @@ final class BottomPanel: NSView {
 	/// Presses the + on tmux's own strip, for testing what it does.
 	func addTmuxWindowForTesting() {
 		columnViews.first?.mirrorStrip.pressAddForTesting()
+	}
+
+	/// Clicks a tab on the panel's own strip and says what that actually
+	/// brought to the front — the two being the same thing is the point.
+	func clickPanelTabForTesting(_ index: Int) -> String {
+		guard let strip = columnViews.first?.strip else { return "no strip" }
+		let before = strip.itemsForTesting
+		strip.pressSelectForTesting(index)
+		let showing = activeByColumn[0]?.displayTitle ?? "nothing"
+		return "strip: \(before)\n  clicked \(index) -> showing \"\(showing)\""
 	}
 
 	/// Closes a tab on tmux's own strip, as its menu does.
@@ -823,6 +911,7 @@ final class BottomPanel: NSView {
 				return
 			}
 			Task {
+				self.mirrorChangedLocally()
 				let made = await TmuxMirror.newWindow(inSession: session)
 				if !made { self.reattachTmux(to: session) }
 				self.refreshTmuxWindows()
@@ -851,6 +940,7 @@ final class BottomPanel: NSView {
 			guard let self, self.tmuxWindows.indices.contains(index) else { return }
 			let window = self.tmuxWindows[index]
 			Task {
+				self.mirrorChangedLocally()
 				await TmuxMirror.killWindow(
 					window.index, inSession: self.mirroredSession ?? self.tmuxSession ?? ""
 				)
@@ -926,6 +1016,7 @@ final class BottomPanel: NSView {
 	/// without asking, since we are the ones who asked for the switch.
 	private func markMirroredWindowActive(_ index: Int) {
 		guard tmuxWindows.contains(where: { $0.index == index }) else { return }
+		mirrorChangedLocally()
 		// Everything except which one is active is carried over. Rebuilding
 		// these from four fields dropped each window's Claude status, so every
 		// tab switch blanked the badges until the next poll put them back — a
@@ -969,7 +1060,7 @@ final class BottomPanel: NSView {
 		// A dead terminal has no client to switch, and that is exactly when
 		// somebody most needs this menu — picking a session then attaches a
 		// new terminal to it instead of switching one that is not there.
-		let tty = sessions.first?.terminal?.ttyName ?? ""
+		let tty = tmuxClientTTY ?? ""
 
 		Task { @MainActor in
 			let all = await TmuxMirror.sessions()
@@ -1106,6 +1197,7 @@ final class BottomPanel: NSView {
 		let session = mirroredSession ?? tmuxSession ?? ""
 
 		// Moved here first, so the strip does not wait for tmux to answer.
+		mirrorChangedLocally()
 		var reordered = tmuxWindows
 		reordered.remove(at: from)
 		reordered.insert(window, at: clamped)
@@ -2638,6 +2730,17 @@ final class PanelTabStrip: NSView {
 
 	/// Presses the + from a test, without a mouse.
 	func pressAddForTesting() { onAdd?() }
+
+	/// Clicks a tab by its position on the strip, without a mouse — which is
+	/// the only way to catch a strip that answers for the tab next door.
+	func pressSelectForTesting(_ index: Int) { onSelect?(index) }
+
+	/// What the strip is showing, in order, with the active one marked.
+	var itemsForTesting: String {
+		items.enumerated()
+			.map { "\($0.offset == activeIndex ? "*" : " ")\($0.element.title)" }
+			.joined(separator: " | ")
+	}
 
 	/// Picks "Close" from a tab's menu, without a mouse.
 	func pressCloseForTesting(_ index: Int) { onClose?(index) }

@@ -608,6 +608,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let spec = options.clickPanelTab {
+			let parts = spec.split(separator: "@")
+			let index = Int(parts.first ?? "0") ?? 0
+			let at = parts.count > 1 ? Double(parts[1]) ?? 4.0 : 4.0
+			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+				print("PANEL \(controller?.clickPanelTabForTesting(index) ?? "no window")")
+			}
+		}
+
 		if let delay = options.closeTerminals {
 			DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
 				controller?.closeTerminalTabsForTesting()

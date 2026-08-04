@@ -50,6 +50,9 @@ struct LaunchOptions {
 	var maximizeTerminal = false
 	/// Follows the terminal's project, for checking that it does.
 	var followTerminal = false
+	/// Click this panel tab position and report which tab it actually brought
+	/// forward, as "index@seconds".
+	var clickPanelTab: String?
 	/// Show the window as it looks while presenting, without storing the mode.
 	var presentation = false
 	/// Close every terminal tab after this many seconds, leaving the panel
@@ -303,6 +306,7 @@ struct LaunchOptions {
 			case "--tmux-add":   options.addTmuxWindow = true
 			case "--close-terminals": options.closeTerminals = next().flatMap(Double.init)
 			case "--presentation": options.presentation = true
+			case "--click-panel-tab": options.clickPanelTab = next()
 			case "--untmux":     options.toggleStrictTmuxOff = true
 			case "--dump-settings": options.dumpSettings = next()
 			case "--make-run":   options.chooseMakeRun = next()

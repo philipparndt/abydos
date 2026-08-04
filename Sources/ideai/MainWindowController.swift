@@ -280,6 +280,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		bottomPanel.closeTerminalTabsForTesting()
 	}
 
+	func clickPanelTabForTesting(_ index: Int) -> String {
+		bottomPanel.clickPanelTabForTesting(index)
+	}
+
 	/// Brings a tmux window forward, as clicking its tab would.
 	func revealTmuxWindow(_ index: Int) {
 		window?.makeKeyAndOrderFront(nil)
