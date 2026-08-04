@@ -82,6 +82,91 @@ public enum BreakpointAnchors {
 		return nil
 	}
 
+	/// Where a breakpoint sat, described by the code around it rather than by a
+	/// number.
+	///
+	/// A line number says nothing once a file has been rewritten. "Third line
+	/// of `TmuxConfig.setStatusHidden`" survives the function moving four
+	/// hundred lines, which is what an agent editing a file does all the time
+	/// and what the text search — deliberately near-sighted, so a stray `}`
+	/// four hundred lines off is not mistaken for the same one — cannot follow.
+	public struct Anchor: Equatable, Sendable {
+		/// The symbols the line sits inside, outermost first.
+		public let path: [String]
+		/// How far into that symbol the line was.
+		public let offset: Int
+		/// What was written on the line, for when the symbol has gone too.
+		public let text: String
+
+		public init(path: [String], offset: Int, text: String) {
+			self.path = path
+			self.offset = offset
+			self.text = text
+		}
+	}
+
+	/// Describes where a line is, in terms of the symbols around it.
+	///
+	/// The innermost symbol that contains the line wins: a breakpoint in a
+	/// method belongs to the method, not to the type it is in.
+	///
+	/// `lineOf` gives a symbol's lines as a half-open range — first up to but
+	/// not including one past the last.
+	public static func anchor(
+		line: Int,
+		text: String,
+		in symbols: [DocumentSymbol],
+		lineOf: (DocumentSymbol) -> Range<Int>
+	) -> Anchor {
+		var path: [String] = []
+		var offset = line
+		var candidates = symbols
+
+		while true {
+			let containing = candidates.first { symbol in
+				lineOf(symbol).contains(line)
+			}
+			guard let containing else { break }
+			path.append(containing.name)
+			offset = line - lineOf(containing).lowerBound
+			candidates = containing.children
+		}
+		return Anchor(path: path, offset: offset, text: text)
+	}
+
+	/// Where an anchor points now, in a file that has been rewritten.
+	///
+	/// The symbol first, then the text, then nothing: each is a weaker claim
+	/// than the one before it, and a breakpoint moved by a weak claim to the
+	/// wrong place is worse than one that admits it does not know.
+	public static func resolve(
+		_ anchor: Anchor,
+		in symbols: [DocumentSymbol],
+		lines: [String],
+		lineOf: (DocumentSymbol) -> Range<Int>
+	) -> Int? {
+		if !anchor.path.isEmpty, let symbol = find(path: anchor.path, in: symbols) {
+			let span = lineOf(symbol)
+			let line = span.lowerBound + anchor.offset
+			// Inside the symbol it was in. A symbol that lost lines takes the
+			// breakpoint no further than its own end.
+			return min(line, max(span.lowerBound, span.upperBound - 1))
+		}
+		return rebound(line: anchor.offset, text: anchor.text, in: lines)
+	}
+
+	/// Walks a path of names down a tree of symbols.
+	private static func find(path: [String], in symbols: [DocumentSymbol]) -> DocumentSymbol? {
+		var candidates = symbols
+		var found: DocumentSymbol?
+		for name in path {
+			guard let match = candidates.first(where: { $0.name == name }) else { return nil }
+			found = match
+			candidates = match.children
+		}
+		return found
+	}
+
 	/// The same, for a set of breakpoints keyed by line.
 	public static func moved<Value>(
 		lines: [Int: Value],

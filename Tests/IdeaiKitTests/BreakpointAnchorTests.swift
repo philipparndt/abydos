@@ -114,3 +114,91 @@ struct BreakpointReboundTests {
 		#expect(BreakpointAnchors.rebound(line: 2, text: "   ", in: before) == 2)
 	}
 }
+
+/// Anchoring a breakpoint to the code around it rather than to a line number.
+///
+/// The case text matching cannot follow: a function moves four hundred lines
+/// because something above it was rewritten. "Third line of `setUp`" still
+/// points at the same statement; line 42 does not, and a `}` four hundred
+/// lines away is a coincidence rather than the same `}`.
+struct BreakpointSymbolAnchorTests {
+	/// Symbols with the line spans they cover, since a `DocumentSymbol` keeps
+	/// bytes and the anchor thinks in lines.
+	private func symbol(
+		_ name: String,
+		_ range: ClosedRange<Int>,
+		_ children: [DocumentSymbol] = []
+	) -> DocumentSymbol {
+		DocumentSymbol(
+			name: name,
+			kind: .function,
+			line: range.lowerBound,
+			byteRange: range.lowerBound..<(range.upperBound + 1),
+			children: children
+		)
+	}
+
+	/// The span is the byte range here, which the tests use as lines.
+	private func span(_ symbol: DocumentSymbol) -> Range<Int> {
+		symbol.byteRange.lowerBound..<symbol.byteRange.upperBound
+	}
+
+	private var before: [DocumentSymbol] {
+		[symbol("Config", 0...20, [symbol("setUp", 4...9), symbol("tearDown", 12...18)])]
+	}
+
+	@Test func aLineIsDescribedByWhatContainsIt() {
+		let anchor = BreakpointAnchors.anchor(
+			line: 6, text: "    start()", in: before, lineOf: span
+		)
+		#expect(anchor.path == ["Config", "setUp"], "the innermost symbol wins")
+		#expect(anchor.offset == 2, "two lines into setUp")
+	}
+
+	/// The whole point: everything moved, and the breakpoint moved with its
+	/// function rather than staying on a number.
+	@Test func itFollowsItsFunctionAcrossTheFile() {
+		let anchor = BreakpointAnchors.anchor(
+			line: 6, text: "    start()", in: before, lineOf: span
+		)
+		let after = [symbol("Config", 400...460, [symbol("setUp", 420...430)])]
+
+		#expect(BreakpointAnchors.resolve(anchor, in: after, lines: [], lineOf: span) == 422)
+	}
+
+	/// A function that lost lines does not push the breakpoint past its end.
+	@Test func aShorterFunctionKeepsItInside() {
+		let anchor = BreakpointAnchors.anchor(
+			line: 8, text: "    finish()", in: before, lineOf: span
+		)
+		let after = [symbol("Config", 0...10, [symbol("setUp", 4...5)])]
+		#expect(BreakpointAnchors.resolve(anchor, in: after, lines: [], lineOf: span) == 5)
+	}
+
+	/// The symbol is gone — renamed, or deleted. The text is the weaker claim
+	/// that is tried next.
+	@Test func withoutItsSymbolItFallsBackToTheText() {
+		let anchor = BreakpointAnchors.Anchor(path: ["Config", "setUp"], offset: 3, text: "    start()")
+		let lines = ["", "", "func other() {", "    start()", "}"]
+		#expect(BreakpointAnchors.resolve(anchor, in: [], lines: lines, lineOf: span) == 4)
+	}
+
+	/// Neither the symbol nor the text: nothing is claimed, rather than
+	/// putting a breakpoint on code nobody chose.
+	@Test func withNeitherItSaysSoRatherThanGuessing() {
+		let anchor = BreakpointAnchors.Anchor(path: ["Gone"], offset: 3, text: "    vanished()")
+		#expect(BreakpointAnchors.resolve(anchor, in: [], lines: ["a", "b"], lineOf: span) == nil)
+	}
+
+	/// A line outside every symbol — an import at the top — is anchored by its
+	/// text alone, and still finds its way.
+	@Test func aLineOutsideEverySymbolStillHasItsText() {
+		let anchor = BreakpointAnchors.anchor(
+			line: 30, text: "import Foundation", in: before, lineOf: span
+		)
+		#expect(anchor.path.isEmpty)
+		#expect(BreakpointAnchors.resolve(
+			anchor, in: before, lines: ["", "import Foundation"], lineOf: span
+		) == 2)
+	}
+}
