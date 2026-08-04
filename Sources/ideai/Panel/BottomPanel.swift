@@ -2550,15 +2550,46 @@ final class PanelTabStrip: NSView {
 	/// The green a run wears while it is going, matching the titlebar.
 	static var runningGreen: NSColor { .hex(0x4E7A4E) }
 
-	/// What is legible on that green: tmux writes its window list in black on
-	/// green, and so does this.
-	static var onTmuxGreen: NSColor { .hex(0x1D1F21) }
+	/// What is legible on that bar.
+	///
+	/// Follows the bar rather than being picked alongside it. How far the green
+	/// is dimmed is a number somebody will want to turn, and a theme's green can
+	/// be any green at all, so the ink is decided from what the bar actually
+	/// came out as: tmux's own black-on-green while the bar is light enough for
+	/// it, and a pale green once it is not. Chosen either way, one of the two
+	/// would eventually be ink the same colour as the thing it is written on.
+	static var onTmuxGreen: NSColor {
+		let dark = NSColor.hex(0x1D1F21)
+		let pale = tmuxGreen.blended(withFraction: 0.72, of: .white) ?? .hex(0xDCE8CC)
+		guard let bar = tmuxGreenBar.usingColorSpace(.sRGB) else { return dark }
+		let luminance = 0.2126 * bar.redComponent
+			+ 0.7152 * bar.greenComponent
+			+ 0.0722 * bar.blueComponent
+		return luminance > 0.42 ? dark : pale
+	}
 
 	/// The green tmux paints its own status bar with, as this terminal renders
 	/// it: the palette's green, so a theme that has one of its own is honoured.
+	///
+	/// Kept for the things that mean *this window*: the number, and the line
+	/// under the tab you are in. At full strength it says one thing, and it can
+	/// only go on saying it while it is not also the background.
 	static var tmuxGreen: NSColor { TerminalPalette.named.indices.contains(2)
 		? TerminalPalette.named[2]
 		: .hex(0x8FBF5F)
+	}
+
+	/// The bar itself: the same green, sunk into the terminal's own background
+	/// until it is a tone rather than a colour.
+	///
+	/// Full strength across the whole foot of the window, it was the brightest
+	/// thing on screen — a bar that shouts for attention it does not want, and
+	/// which nothing else in the app could then be louder than. Dimmed, it is
+	/// still recognisably tmux's bar: the same hue, over the same background as
+	/// the terminal above it, so it reads as part of the terminal rather than
+	/// as part of the app.
+	static var tmuxGreenBar: NSColor {
+		tmuxGreen.blended(withFraction: 0.35, of: TerminalPalette.background) ?? tmuxGreen
 	}
 
 	override var isFlipped: Bool { true }
@@ -2636,7 +2667,10 @@ final class PanelTabStrip: NSView {
 
 	private func recomputeLayout() {
 		frames.removeAll()
-		var x = Theme.current.scaled(8)
+		// Hard against the left on tmux's strip, for the same reason the tabs
+		// meet each other: the active one is a hole cut in the green, and green
+		// left showing down its outer edge is a frame around that tab alone.
+		var x = isMirroringTmux ? 0 : Theme.current.scaled(8)
 		for item in items {
 			// The editor's own measurement: room for the icon, the name, and
 			// the cross, and never so narrow that a name is all ellipsis.
@@ -2950,8 +2984,10 @@ final class PanelTabStrip: NSView {
 	override func draw(_ dirtyRect: NSRect) {
 		// tmux's strip is green from end to end, not a green tab here and
 		// there on the app's own background: the bar across the foot of the
-		// screen is the thing everybody recognises.
-		(isMirroringTmux ? Self.tmuxGreen : Theme.current.sidebarBackground).setFill()
+		// screen is the thing everybody recognises. Dimmed, though — the shape
+		// is what is recognised, and full green over that width was the
+		// loudest thing in the window.
+		(isMirroringTmux ? Self.tmuxGreenBar : Theme.current.sidebarBackground).setFill()
 		bounds.fill()
 		if !isMirroringTmux {
 			Theme.current.separator.setFill()
@@ -3054,9 +3090,9 @@ final class PanelTabStrip: NSView {
 		isHovered: Bool
 	) {
 		if isMirroringTmux, !isActive, isHovered {
-			// The strip is already green; hovering only darkens the one under
-			// the pointer.
-			Self.onTmuxGreen.withAlphaComponent(0.12).setFill()
+			// The strip is already green; hovering only lifts the one under the
+			// pointer out of it.
+			Self.onTmuxGreen.withAlphaComponent(0.10).setFill()
 			rect.fill()
 		}
 
@@ -3098,7 +3134,7 @@ final class PanelTabStrip: NSView {
 			// On tmux's strip the divider is green and full height, the way
 			// tmux separates the entries in its own window list.
 			if isMirroringTmux {
-				Self.onTmuxGreen.withAlphaComponent(0.35).setFill()
+				Self.onTmuxGreen.withAlphaComponent(0.18).setFill()
 				NSRect(x: rect.maxX - 1, y: 0, width: 1, height: rect.height).fill()
 			} else {
 				Theme.current.separator.withAlphaComponent(0.6).setFill()
