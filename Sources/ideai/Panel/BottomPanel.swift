@@ -340,11 +340,18 @@ final class BottomPanel: NSView {
 			// only thing a + can mean there. That is the whole separation:
 			// mirroring or not, rather than mirroring and a preference about
 			// where the tabs are drawn.
+			Self.trace(
+				"panel + column=\(column) mirrorsTmux=\(self.mirrorsTmux) "
+					+ "strict=\(Settings.shared.strictTmux) starts=\(Settings.shared.startsTmux) "
+					+ "mirrored=\(self.mirroredSession ?? "nil") configured=\(self.tmuxSession ?? "nil")"
+			)
 			if self.mirrorsTmux, column == 0,
 			   let session = self.mirroredSession ?? self.tmuxSession {
 				self.addTmuxWindow(to: session)
 				return
 			}
+			// The only way a + in this panel makes a plain terminal.
+			Self.trace("panel + -> plain terminal")
 			self.focusedColumn = column
 			self.newTerminal()
 		}
@@ -760,13 +767,38 @@ final class BottomPanel: NSView {
 	private func addTmuxWindow(to session: String) {
 		Task {
 			self.mirrorChangedLocally()
-			if await TmuxMirror.newWindow(inSession: session) {
+			let made = await TmuxMirror.newWindow(inSession: session)
+			Self.trace("addTmuxWindow session=\(session) newWindow=\(made)")
+			if made {
 				self.refreshTmuxWindows()
 				self.focusTerminal()
 				return
 			}
 			self.reattachTmux(to: session)
 			self.refreshTmuxWindows()
+		}
+	}
+
+	/// A line in ~/Library/Logs/ideai/tmux.log, written only when one of these
+	/// buttons is pressed.
+	///
+	/// Twice now a fix for this has passed its test and failed on the desk it
+	/// was written for, which means the test and the button are not doing the
+	/// same thing. Rather than guess a third time: every press says which
+	/// branch it took and what tmux answered.
+	static func trace(_ message: String) {
+		let directory = FileManager.default.homeDirectoryForCurrentUser
+			.appendingPathComponent("Library/Logs/ideai", isDirectory: true)
+		try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+		let file = directory.appendingPathComponent("tmux.log")
+		let line = "\(Date()) \(message)\n"
+		guard let data = line.data(using: .utf8) else { return }
+		if let handle = try? FileHandle(forWritingTo: file) {
+			handle.seekToEndOfFile()
+			handle.write(data)
+			try? handle.close()
+		} else {
+			try? data.write(to: file)
 		}
 	}
 
@@ -954,6 +986,7 @@ final class BottomPanel: NSView {
 		}
 		strip.onAdd = { [weak self] in
 			guard let self, let session = self.mirroredSession ?? self.tmuxSession else { return }
+			Self.trace("tmux strip + session=\(session)")
 			self.addTmuxWindow(to: session)
 		}
 		strip.onRename = { [weak self] index, name in
