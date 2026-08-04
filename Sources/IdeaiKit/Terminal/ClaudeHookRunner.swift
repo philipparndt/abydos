@@ -70,6 +70,9 @@ public enum ClaudeHookRunner {
 		let session: String
 		let windowIndex: Int
 		let windowName: String
+		/// What the window's badge says right now, which decides whether an
+		/// idle nudge means anything.
+		let status: TmuxMirror.AIStatus?
 	}
 
 	private static func tmuxPlace() -> Place? {
@@ -79,19 +82,23 @@ public enum ClaudeHookRunner {
 
 		// One call for all three, in the format the rest of the app already
 		// speaks: semicolons, and the name last because it can hold anything.
+		// The badge the window already carries comes back with the rest: it is
+		// the difference between "Claude is waiting mid-turn" and "the turn
+		// ended and nobody has typed since".
 		let printed = run(tmux, [
 			"display-message", "-p", "-t", pane,
-			"#{session_name};#{window_index};#{window_name}",
+			"#{session_name};#{window_index};#{@ai_status};#{window_name}",
 		])
 		let fields = (printed ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-			.split(separator: ";", maxSplits: 2, omittingEmptySubsequences: false)
-		guard fields.count == 3, let index = Int(fields[1]) else { return nil }
+			.split(separator: ";", maxSplits: 3, omittingEmptySubsequences: false)
+		guard fields.count == 4, let index = Int(fields[1]) else { return nil }
 
 		return Place(
 			pane: pane,
 			session: String(fields[0]),
 			windowIndex: index,
-			windowName: String(fields[2])
+			windowName: String(fields[3]),
+			status: TmuxMirror.AIStatus(rawValue: String(fields[2]))
 		)
 	}
 
@@ -102,7 +109,7 @@ public enum ClaudeHookRunner {
 	/// can be swapped without touching `~/.tmux.conf`.
 	private static func mark(event: ClaudeHook.Event, at place: Place) {
 		guard let tmux = Executables.locate("tmux") else { return }
-		guard let status = ClaudeHook.status(after: event) else {
+		guard let status = ClaudeHook.status(after: event, whenWindowSays: place.status) else {
 			// Ended, or an event with nothing to say: the window goes back to
 			// having no badge at all rather than keeping a stale one.
 			if event.name == "SessionEnd" {
@@ -120,7 +127,7 @@ public enum ClaudeHookRunner {
 			"event": event.name,
 			"session": event.sessionID,
 			"cwd": event.cwd,
-			"status": ClaudeHook.status(after: event)?.rawValue ?? "",
+			"status": ClaudeHook.status(after: event, whenWindowSays: place?.status)?.rawValue ?? "",
 		]
 		if let place {
 			payload["tmuxSession"] = place.session
@@ -128,10 +135,13 @@ public enum ClaudeHookRunner {
 			payload["windowName"] = place.windowName
 		}
 		if let message = ClaudeHook.detail(for: event) { payload["message"] = message }
-		if let line = ClaudeHook.announcement(
-			for: event,
-			window: place?.windowName ?? URL(fileURLWithPath: event.cwd).lastPathComponent
-		) {
+		// Nothing announced for a nudge about a turn that already finished: the
+		// tab said ✓ a second ago and nobody needs telling twice.
+		if ClaudeHook.isWorthAnnouncing(event, whenWindowSays: place?.status),
+		   let line = ClaudeHook.announcement(
+			   for: event,
+			   window: place?.windowName ?? URL(fileURLWithPath: event.cwd).lastPathComponent
+		   ) {
 			payload["announce"] = line
 		}
 

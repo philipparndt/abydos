@@ -143,6 +143,37 @@ public enum ClaudeHook {
 			|| message.contains("permission to use")
 	}
 
+	/// Whether a notification is only the nudge Claude sends when nobody has
+	/// answered it yet.
+	///
+	/// It arrives moments after a turn ends as well as when Claude is stopped
+	/// mid-turn waiting, and the two mean different things to a tab: after a
+	/// finished turn there is nothing being waited for that a ✓ does not
+	/// already say. Only the caller knows which of the two happened, because
+	/// only the caller knows what the tab said before.
+	public static func isIdleNudge(_ event: Event) -> Bool {
+		event.notificationType?.lowercased() == "idle_prompt"
+	}
+
+	/// What a nudge means, given what the window already said.
+	///
+	/// A turn that finished stays finished: the badge said ✓ a second ago, and
+	/// turning it amber because nobody has typed since is how a "needs you"
+	/// stops meaning "go and look at this one".
+	public static func status(after event: Event, whenWindowSays current: AIStatusName?) -> TmuxMirror.AIStatus? {
+		if isIdleNudge(event), current == .done { return nil }
+		return status(after: event)
+	}
+
+	/// What the window option currently holds, as far as this cares.
+	public typealias AIStatusName = TmuxMirror.AIStatus
+
+	/// Whether this event should be announced, given what the window said.
+	public static func isWorthAnnouncing(_ event: Event, whenWindowSays current: AIStatusName?) -> Bool {
+		if isIdleNudge(event), current == .done { return false }
+		return isWorthAnnouncing(event)
+	}
+
 	/// The detail behind the line: whatever Claude said, if it said anything.
 	public static func detail(for event: Event) -> String? {
 		guard let message = event.message?.trimmingCharacters(in: .whitespacesAndNewlines),

@@ -67,6 +67,46 @@ struct ClaudeHookTests {
 		))
 	}
 
+	/// The bug from the tab strip: a turn ends (✓), Claude sends its "waiting
+	/// for your input" nudge a moment later, and the tab turned amber as though
+	/// something were being asked. A finished turn stays finished.
+	@Test func anIdleNudgeDoesNotUndoAFinishedTurn() {
+		let nudge = ClaudeHook.Event(
+			name: "Notification",
+			message: "Claude is waiting for your input",
+			notificationType: "idle_prompt"
+		)
+		#expect(ClaudeHook.isIdleNudge(nudge))
+		#expect(ClaudeHook.status(after: nudge, whenWindowSays: .done) == nil)
+		#expect(!ClaudeHook.isWorthAnnouncing(nudge, whenWindowSays: .done))
+	}
+
+	/// The other half: the same nudge while Claude is mid-turn really is
+	/// somebody being waited for — it stopped to ask something.
+	@Test func anIdleNudgeMidTurnStillMeansSomebodyIsWaitedFor() {
+		let nudge = ClaudeHook.Event(
+			name: "Notification",
+			message: "Claude is waiting for your input",
+			notificationType: "idle_prompt"
+		)
+		#expect(ClaudeHook.status(after: nudge, whenWindowSays: .working) == .needsInput)
+		#expect(ClaudeHook.status(after: nudge, whenWindowSays: nil) == .needsInput)
+		#expect(ClaudeHook.isWorthAnnouncing(nudge, whenWindowSays: .working))
+	}
+
+	/// A permission prompt is not a nudge, and is worth the badge whatever the
+	/// tab said before — including after a turn that looked finished.
+	@Test func aPermissionPromptAlwaysCounts() {
+		let asking = ClaudeHook.Event(
+			name: "Notification",
+			message: "Claude needs your permission to use Bash",
+			notificationType: "worker_permission_prompt"
+		)
+		#expect(!ClaudeHook.isIdleNudge(asking))
+		#expect(ClaudeHook.status(after: asking, whenWindowSays: .done) == .needsInput)
+		#expect(ClaudeHook.isWorthAnnouncing(asking, whenWindowSays: .done))
+	}
+
 	/// A version that sends no type at all: the two sentences Claude uses when
 	/// it is waiting, and nothing else.
 	@Test func withoutATypeTheSentenceDecides() {
