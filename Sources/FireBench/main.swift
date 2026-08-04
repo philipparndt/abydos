@@ -36,6 +36,14 @@ enum Mode: String {
 var duration: Double = 20
 var reportPath: String?
 var mode = Mode.fire
+/// Frames a second to hold to, or nil to go as fast as the terminal will take.
+///
+/// The benchmark's whole point is the second one — a number you can only get
+/// by never waiting. But the fire and the rain are also nice to look at, and at
+/// nine hundred frames a second neither of them looks like anything: the fire
+/// is a flat glare and the rain falls faster than it can be read. Held to
+/// sixty they become what they are pictures of.
+var frameRate: Double?
 var arguments = Array(CommandLine.arguments.dropFirst())
 while let flag = arguments.first {
 	arguments.removeFirst()
@@ -53,8 +61,16 @@ while let flag = arguments.first {
 		}
 		mode = chosen
 		arguments.removeFirst()
+	case "--fps":
+		// Bare `--fps` is sixty; a number after it is that instead.
+		if let value = arguments.first.flatMap(Double.init), value > 0 {
+			frameRate = value
+			arguments.removeFirst()
+		} else {
+			frameRate = 60
+		}
 	case "--help", "-h":
-		print("usage: firebench [--mode fire|matrix] [--seconds 20] [--report path]")
+		print("usage: firebench [--mode fire|matrix] [--seconds 20] [--fps [60]] [--report path]")
 		exit(0)
 	default:
 		FileHandle.standardError.write(Data("unknown option \(flag)\n".utf8))
@@ -358,6 +374,16 @@ while -start.timeIntervalSinceNow < duration {
 	totalBytes += output.count
 	flush()
 	frames += 1
+
+	// Watching rather than measuring: sleep out whatever is left of this
+	// frame's share of a second. Measured from the start rather than added up
+	// frame by frame, so a slow frame is caught up with instead of pushing
+	// every frame after it later.
+	if let frameRate {
+		let due = start.addingTimeInterval(Double(frames) / frameRate)
+		let idle = due.timeIntervalSinceNow
+		if idle > 0 { Thread.sleep(forTimeInterval: idle) }
+	}
 }
 
 let elapsed = -start.timeIntervalSinceNow
@@ -366,8 +392,9 @@ restore()
 let fps = Double(frames) / elapsed
 let perFrame = frames > 0 ? totalBytes / frames : 0
 let summary = String(
-	format: "firebench: %@, %d frames in %.1fs [ %.2f fps ] %dx%d, %d B/frame, %.1f MB/s",
-	mode.rawValue, frames, elapsed, fps, columns, rows, perFrame,
+	format: "firebench: %@%@, %d frames in %.1fs [ %.2f fps ] %dx%d, %d B/frame, %.1f MB/s",
+	mode.rawValue, frameRate.map { String(format: " held to %.0f", $0) } ?? "",
+	frames, elapsed, fps, columns, rows, perFrame,
 	Double(totalBytes) / elapsed / 1_048_576
 )
 print(summary)
