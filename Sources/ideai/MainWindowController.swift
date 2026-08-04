@@ -2206,7 +2206,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// Watches a pane's process, so the titlebar says what became of it.
 	private func followRunningPane(_ pane: TerminalPane?) {
 		runningPane = pane
+		// The panel sets this too — it is how a tab learns its process has
+		// gone, and so how a run tab stops wearing the running green. Taking
+		// the handler rather than adding to it left the tab green over
+		// `[process exited]`.
+		let panelHandler = pane?.terminalView.onProcessExit
 		pane?.terminalView.onProcessExit = { [weak self, weak pane] code in
+			panelHandler?(code)
 			MainActor.assumeIsolated {
 				guard let self, self.runningPane === pane else { return }
 				self.runningPane = nil
