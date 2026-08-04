@@ -485,6 +485,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let goal = options.chooseMakeRun {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+				controller?.chooseMakeRunForTesting(goal)
+			}
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+				controller?.describeRunTargetForTesting()
+			}
+		}
+
 		if let goal = options.makeGoal {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
 				controller?.runMakeGoalForTesting(goal, debug: options.makeDebug)

@@ -108,6 +108,39 @@ public enum MakeLaunch {
 
 	/// A launch configuration for a goal, in the same file every other one
 	/// lives in.
+	/// What choosing a goal from the run menu should do.
+	///
+	/// Always something. A goal that can be debugged becomes a launch
+	/// configuration; every other goal is still perfectly runnable — `make dev`
+	/// builds and starts things all day — and becomes a plain run. The one
+	/// answer that was allowed before, and should not have been, is silence:
+	/// deciding at menu-build time that a goal is debuggable and then finding
+	/// at click time that no plan can be made left the click doing nothing at
+	/// all, with no selection and no word about why.
+	public enum Choice: Equatable, Sendable {
+		/// Debuggable: a configuration to save and select.
+		case debug(LaunchConfiguration)
+		/// Not debuggable, but runnable: `make <goal>`, in the terminal.
+		case run(RunConfiguration)
+	}
+
+	public static func choice(
+		for goal: String,
+		in makefile: Makefile,
+		projectRoot: URL
+	) -> Choice {
+		if let configuration = configuration(for: goal, in: makefile, projectRoot: projectRoot) {
+			return .debug(configuration)
+		}
+		return .run(RunConfiguration(
+			name: "make \(goal)",
+			source: .make,
+			executable: "make",
+			arguments: [goal],
+			workingDirectory: makefile.path.deletingLastPathComponent().path
+		))
+	}
+
 	public static func configuration(
 		for goal: String,
 		in makefile: Makefile,

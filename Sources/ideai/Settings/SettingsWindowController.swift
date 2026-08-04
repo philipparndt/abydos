@@ -61,6 +61,7 @@ final class SettingsPaneController: NSViewController {
 			case let .text(title, _, _, _):            return "        text     \(title)"
 			case let .choice(title, _, _, get, _):     return "\(get())  choice   \(title)"
 			case let .button(title, label, _):         return "        [\(label)] \(title)"
+			case let .group(title, _):                 return "── \(title) ──"
 			}
 		}
 	}
@@ -77,6 +78,9 @@ final class SettingsPaneController: NSViewController {
 		case choice(title: String, help: String?, options: [(label: String, value: String)],
 		            get: () -> String, set: (String) -> Void)
 		case button(title: String, label: String, action: () -> Void)
+		/// A heading over the rows that follow, for settings that only make
+		/// sense together.
+		case group(title: String, help: String?)
 	}
 
 	let paneTitle: String
@@ -154,6 +158,14 @@ final class SettingsPaneController: NSViewController {
 
 	private func makeRow(_ row: Row) -> (String, NSView, String?) {
 		switch row {
+		case let .group(title, help):
+			// The window's own settings list has no cards to group inside, so a
+			// group is a labelled gap.
+			let label = NSTextField(labelWithString: title.uppercased())
+			label.font = Theme.current.uiFont(10, weight: .semibold)
+			label.textColor = Theme.current.gitIgnored
+			return ("", label, help)
+
 		case let .toggle(title, help, get, set, isEnabled):
 			let button = NSButton(checkboxWithTitle: "", target: nil, action: nil)
 			button.state = get() ? .on : .off
@@ -381,6 +393,10 @@ final class SettingsPaneController: NSViewController {
 		// one above it is off.
 		if Executables.locate("tmux") != nil {
 			rows.insert(contentsOf: [
+				.group(
+					title: "tmux",
+					help: "Each of these only means anything while the one above it is on."
+				),
 				.toggle(
 					title: "Attach the first terminal to tmux",
 					help: "One session per project, so reopening it comes back to the panes it was "
@@ -523,8 +539,9 @@ enum SettingsSections {
 	}
 
 	static let all: [Section] = [
-		Section(title: "Editor", symbol: "textformat", rows: SettingsPaneController.editorRows),
+		// The terminal first: it is the page people come here for.
 		Section(title: "Terminal", symbol: "terminal", rows: SettingsPaneController.terminalRows),
+		Section(title: "Editor", symbol: "textformat", rows: SettingsPaneController.editorRows),
 		Section(title: "Saving", symbol: "square.and.arrow.down", rows: SettingsPaneController.savingRows),
 		Section(title: "Navigator", symbol: "folder", rows: SettingsPaneController.navigatorRows),
 		Section(title: "Agent", symbol: "sparkles", rows: SettingsPaneController.agentRows),

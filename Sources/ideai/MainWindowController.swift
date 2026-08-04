@@ -2669,6 +2669,30 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	}
 
 	/// Derives a configuration from a make goal and starts it.
+	/// Picks a Makefile goal from the run menu exactly as clicking it does, and
+	/// says what the run control shows afterwards.
+	func chooseMakeRunForTesting(_ goal: String) {
+		let goals = makeGoals()
+		print("MAKE RUNS: \(goals.map(\.name))")
+		guard let found = goals.first(where: { $0.name == goal }) else {
+			print("MAKE: no goal called \(goal)")
+			return
+		}
+		let item = NSMenuItem()
+		item.representedObject = [found.makefile.path.path, found.name]
+		makeGoalChosen(item)
+		print("MAKE SELECTED: \(runControl?.selectedNameForTesting ?? "(none)")")
+	}
+
+	/// What play would start right now, without starting it.
+	func describeRunTargetForTesting() {
+		if let goal = selectedMakeRun, selectedConfigurationName == goal.name {
+			print("MAKE PLAY: \(goal.executable) \(goal.arguments.joined(separator: " "))")
+			return
+		}
+		print("MAKE PLAY: \(selectedConfiguration?.name ?? "(nothing)")")
+	}
+
 	func runMakeGoalForTesting(_ goal: String, debug: Bool) {
 		guard let project else { return }
 		let goals = debuggableMakeGoals()
@@ -3928,11 +3952,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				// the rest run as make runs them, in the terminal, which is
 				// what a `make dev` that builds and launches a Swift app wants
 				// anyway.
+				// One action for all of them: what a goal turns into is decided
+				// when it is clicked, by the same code the tests exercise —
+				// deciding it here, from a list built moments earlier, is how a
+				// goal came to be offered as debuggable and then do nothing.
 				let item = NSMenuItem(
 					title: "make \(goal.name)",
-					action: debuggable.contains(goal.name)
-						? #selector(makeGoalChosen(_:))
-						: #selector(makeGoalRunChosen(_:)),
+					action: #selector(makeGoalChosen(_:)),
 					keyEquivalent: ""
 				)
 				item.target = self
@@ -4036,23 +4062,34 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	@objc private func makeGoalChosen(_ sender: NSMenuItem) {
 		guard let project,
 		      let parts = sender.representedObject as? [String], parts.count == 2,
-		      let makefile = Makefile.read(at: URL(fileURLWithPath: parts[0])),
-		      let configuration = MakeLaunch.configuration(
-		          for: parts[1], in: makefile, projectRoot: project.root
-		      )
-		else { return }
+		      let makefile = Makefile.read(at: URL(fileURLWithPath: parts[0]))
+		else {
+			notify("That Makefile could not be read")
+			return
+		}
 
-		do {
-			_ = try LaunchStore.save(configuration, in: launchRoot)
+		// Chosen, not started: picking something from a list of things to run
+		// says which one, and the play button says when.
+		switch MakeLaunch.choice(for: parts[1], in: makefile, projectRoot: project.root) {
+		case let .run(configuration):
+			selectedMakeRun = configuration
 			selectedConfigurationName = configuration.name
 			refreshRunControl()
-			notify(
-				"Added “\(configuration.name)”",
-				detail: Self.describe(configuration, root: launchRoot),
-				kind: .information
-			)
-		} catch {
-			notify("Could not write launch.json", detail: error.localizedDescription)
+
+		case let .debug(configuration):
+			do {
+				_ = try LaunchStore.save(configuration, in: launchRoot)
+				selectedMakeRun = nil
+				selectedConfigurationName = configuration.name
+				refreshRunControl()
+				notify(
+					"Added “\(configuration.name)”",
+					detail: Self.describe(configuration, root: launchRoot),
+					kind: .information
+				)
+			} catch {
+				notify("Could not write launch.json", detail: error.localizedDescription)
+			}
 		}
 	}
 

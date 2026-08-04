@@ -199,6 +199,8 @@ final class SettingsPage: NSView {
 	/// which reads as one thing rather than as a grid, and leaves the sentence
 	/// the whole width to be a sentence in.
 	private func row(for row: SettingsPaneController.Row) -> NSView {
+		if case let .group(title, help) = row { return groupHeading(title, help: help) }
+
 		let (title, control, help) = build(row)
 
 		let label = NSTextField(labelWithString: title)
@@ -218,12 +220,53 @@ final class SettingsPage: NSView {
 		stack.spacing = Theme.current.scaled(3)
 		top.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
 
+		var helpLabel: NSTextField?
 		if let help {
 			let text = NSTextField(wrappingLabelWithString: help)
 			text.font = Theme.current.uiFont(11)
 			text.textColor = Theme.current.gitIgnored
 			text.isSelectable = false
 			text.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+			stack.addArrangedSubview(text)
+			text.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+			helpLabel = text
+		}
+
+		// A switch that cannot be used is only half the message: a disabled
+		// checkbox on macOS is a subtle thing, and the name beside it in full
+		// strength reads as a setting somebody simply has not turned on.
+		if case let .toggle(_, _, _, _, isEnabled) = row, let isEnabled {
+			let dim = {
+				let on = isEnabled()
+				label.textColor = on
+					? Theme.current.sidebarText
+					: Theme.current.sidebarText.withAlphaComponent(0.35)
+				helpLabel?.textColor = on
+					? Theme.current.gitIgnored
+					: Theme.current.gitIgnored.withAlphaComponent(0.45)
+			}
+			dim()
+			refreshHandlers.append(dim)
+		}
+		return stack
+	}
+
+	/// A heading inside a card, over the settings it gathers.
+	private func groupHeading(_ title: String, help: String?) -> NSView {
+		let label = NSTextField(labelWithString: title.uppercased())
+		label.font = Theme.current.uiFont(10, weight: .semibold)
+		label.textColor = Theme.current.gitIgnored
+
+		let stack = NSStackView(views: [label])
+		stack.orientation = .vertical
+		stack.alignment = .leading
+		stack.spacing = Theme.current.scaled(2)
+
+		if let help {
+			let text = NSTextField(wrappingLabelWithString: help)
+			text.font = Theme.current.uiFont(11)
+			text.textColor = Theme.current.gitIgnored.withAlphaComponent(0.8)
+			text.isSelectable = false
 			stack.addArrangedSubview(text)
 			text.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
 		}
@@ -330,6 +373,9 @@ final class SettingsPage: NSView {
 			}
 			refreshHandlers.append { select(get()) }
 			return (title, popUp, help)
+
+		case let .group(title, _):
+			return (title, NSView(), nil)
 
 		case let .button(title, label, action):
 			let button = NSButton(title: label, target: nil, action: nil)

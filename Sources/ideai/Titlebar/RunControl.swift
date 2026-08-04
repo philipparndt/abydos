@@ -109,6 +109,9 @@ final class RunControl: NSView {
 		)
 	}
 
+	/// What the strip is showing, for tests.
+	var selectedNameForTesting: String? { configurationName }
+
 	func setConfiguration(_ name: String?) {
 		guard name != configurationName else { return }
 		configurationName = name
