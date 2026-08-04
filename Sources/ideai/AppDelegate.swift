@@ -16,6 +16,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		// otherwise look like every preference being forgotten at once.
 		Settings.migrate(from: "dev.philipparndt.ideai")
 
+		// An earlier version turned tmux's bar off for the whole server by
+		// writing to ~/.tmux.conf. It is per session now, so that line goes.
+		TmuxSettings.migrateAwayFromConfigEdit()
+
 		// Claude sessions in the terminal, saying when they need an answer or
 		// have finished. Nothing arrives unless the hooks are installed.
 		let watch = ClaudeWatch()
@@ -538,10 +542,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		}
 
 		if options.toggleStrictTmuxOff {
+			// The checkbox's own path, so what is measured is what a click
+			// does rather than what a test thinks it does.
 			DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
-				Settings.shared.strictTmux = false
-				if TmuxConfig.isStatusHidden() { try? TmuxConfig.setStatusHidden(false) }
-				NotificationCenter.default.post(name: .ideaiSettingsChanged, object: nil)
+				TmuxSettings.setTabsAreTmuxWindows(false)
+			}
+			DispatchQueue.main.asyncAfter(deadline: .now() + 6.0) {
+				TmuxSettings.setTabsAreTmuxWindows(true)
 			}
 		}
 

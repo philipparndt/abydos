@@ -364,16 +364,10 @@ final class SettingsPaneController: NSViewController {
 					help: "The strip shows the session's windows and switching a tab switches tmux. "
 						+ "One terminal, one shell: changing tabs costs nothing.",
 					get: { Settings.shared.strictTmux },
-					set: { on in
-						Settings.shared.strictTmux = on
-						// The bar was hidden because these tabs replaced it. If
-						// they are not replacing it any more, it comes back —
-						// leaving somebody with no window list at all would be
-						// this switch quietly breaking their tmux.
-						if !on, TmuxConfig.isStatusHidden() {
-							try? TmuxConfig.setStatusHidden(false)
-						}
-					}
+					// The status bar goes with it: leaving somebody with no
+					// window list at all — no tabs and no bar — would be this
+					// switch quietly breaking their tmux.
+					set: { TmuxSettings.setTabsAreTmuxWindows($0) }
 				),
 				at: 1
 			)
@@ -386,23 +380,9 @@ final class SettingsPaneController: NSViewController {
 					help: "The tabs already show this session's windows, so tmux's bar is the same "
 						+ "list twice. This adds a marked block to ~/.tmux.conf — backed up first, "
 						+ "and taken out again by unticking this.",
-					get: { TmuxConfig.isStatusHidden() },
-					set: { hide in
-						do {
-							let backup = try TmuxConfig.setStatusHidden(hide)
-							Toast.post(
-								hide ? "tmux's status bar is off" : "tmux's status bar is back",
-								detail: "Changed \(TmuxConfig.configURL.lastPathComponent)."
-									+ (backup.map { " The file as it was: \($0.lastPathComponent)." } ?? "")
-									+ " Sessions already running have been told; anything else picks"
-									+ " it up on the next reload.",
-								kind: .information
-							)
-						} catch {
-							Toast.post("Could not change \(TmuxConfig.configURL.path)")
-						}
-					},
-					isEnabled: { Settings.shared.strictTmux && Settings.shared.startsTmux }
+					get: { TmuxSettings.wantsStatusBarHidden },
+					set: { TmuxSettings.wantsStatusBarHidden = $0 },
+					isEnabled: { TmuxSettings.tabsAreTmuxWindows }
 				),
 				at: 1
 			)

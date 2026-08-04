@@ -598,6 +598,9 @@ final class BottomPanel: NSView {
 	/// Whether a tmux client has ever been seen on this terminal's tty, so a
 	/// client that has gone away can be told from one that has not arrived yet.
 	private var hasAttachedOnce = false
+	/// The session whose status bar this window turned off, so it can be given
+	/// back when the setting changes or the session does.
+	private var statusBarHiddenFor: String?
 
 	/// Whether the strip is a view of tmux rather than a list of terminals.
 	///
@@ -699,6 +702,7 @@ final class BottomPanel: NSView {
 				self.mirroredSession = session
 				self.tmuxWindows = []
 			}
+			await self.applyStatusBarWish(to: session)
 
 			let windows = await TmuxMirror.windows(inSession: session)
 			// Nothing at all usually means tmux is still starting, and the
@@ -814,6 +818,18 @@ final class BottomPanel: NSView {
 			self.refreshTmuxWindows()
 		}
 		focusTerminal()
+	}
+
+	/// Tells this session whether to draw its own status bar.
+	///
+	/// Once per session rather than on every poll: the option sticks, and
+	/// saying it twice a second would be a `tmux` process twice a second for
+	/// nothing.
+	private func applyStatusBarWish(to session: String) async {
+		let wanted = TmuxSettings.shouldHideStatusBar
+		guard statusBarHiddenFor != (wanted ? session : nil) else { return }
+		await TmuxMirror.setStatusBar(!wanted, inSession: session)
+		statusBarHiddenFor = wanted ? session : nil
 	}
 
 	/// Moves the highlight before tmux has answered.
@@ -2179,6 +2195,16 @@ final class BottomPanel: NSView {
 	}
 
 	func applySettings() {
+		// The status bar follows the switches: off while these tabs show the
+		// same windows, back the moment they do not.
+		if let session = mirroredSession ?? tmuxSession {
+			let wanted = TmuxSettings.shouldHideStatusBar
+			if (statusBarHiddenFor != nil) != wanted {
+				statusBarHiddenFor = wanted ? session : nil
+				Task { await TmuxMirror.setStatusBar(!wanted, inSession: session) }
+			}
+		}
+
 		// "Tabs are tmux's windows" switched: start or stop watching the
 		// session, and rebuild the strip so the change is visible now rather
 		// than at the next launch.

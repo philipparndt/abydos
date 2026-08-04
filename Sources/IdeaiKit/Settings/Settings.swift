@@ -82,6 +82,7 @@ public final class Settings {
 		static let followsTerminalProject = "followsTerminalProject"
 		static let terminalAtStartup = "terminalAtStartup"
 		static let tmuxTabsAtBottom = "tmuxTabsAtBottom"
+		static let hidesTmuxStatus = "hidesTmuxStatus"
 		static let startsTmux = "startsTmux"
 		static let strictTmux = "strictTmux"
 		static let terminalScheme = "terminalScheme"
@@ -224,6 +225,17 @@ public final class Settings {
 	/// `closed`, `open`, or `full` — the last giving it the whole window, for
 	/// somebody whose day starts in a shell and who reaches for the editor
 	/// afterwards.
+	/// Whether somebody has asked for tmux's own status bar to be out of the
+	/// way while the panel's tabs are showing the same windows.
+	///
+	/// A wish rather than the state of their tmux: it is remembered while the
+	/// tabs are switched off — when the bar has to come back — so switching
+	/// them on again puts things as they were.
+	public var hidesTmuxStatus: Bool {
+		get { defaults.bool(forKey: Key.hidesTmuxStatus) }
+		set { set(newValue, Key.hidesTmuxStatus) }
+	}
+
 	/// Whether tmux's windows get a strip of their own along the bottom,
 	/// leaving the top strip for what the panel holds.
 	public var tmuxTabsAtBottom: Bool {

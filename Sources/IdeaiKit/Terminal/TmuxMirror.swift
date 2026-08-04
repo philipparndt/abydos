@@ -239,6 +239,19 @@ public enum TmuxMirror {
 		return Int(text) ?? 1
 	}
 
+	/// Hides — or gives back — tmux's own status bar, for one session only.
+	///
+	/// A session option, set at runtime: nothing is written to anybody's
+	/// `.tmux.conf`, every other session on the server keeps its bar, and so
+	/// does every other terminal attached to those. Worth having because in the
+	/// mirrored mode this app draws the same window list as tabs, and two rows
+	/// of the same thing is one row too many.
+	public static func setStatusBar(_ shown: Bool, inSession session: String) async {
+		await command(shown
+			? ["set-option", "-t", session, "-u", "status"]
+			: ["set-option", "-t", session, "status", "off"])
+	}
+
 	/// Whether the server has a session by this name.
 	public static func sessionExists(_ name: String) async -> Bool {
 		guard let tmux = Executables.locate("tmux") else { return false }
