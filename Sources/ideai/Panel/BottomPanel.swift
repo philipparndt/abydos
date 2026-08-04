@@ -729,6 +729,12 @@ final class BottomPanel: NSView {
 		columnViews.first?.strip.pressAddForTesting()
 	}
 
+	/// Drags a tmux tab onto another position, as the mouse does.
+	func dragTmuxTabForTesting(from: Int, to: Int) {
+		guard tmuxWindows.indices.contains(from) else { return }
+		moveMirroredWindow(tmuxWindows[from], from: from, to: to)
+	}
+
 	/// Presses the + on tmux's own strip, for testing what it does.
 	func addTmuxWindowForTesting() {
 		columnViews.first?.mirrorStrip.pressAddForTesting()
@@ -743,6 +749,24 @@ final class BottomPanel: NSView {
 	/// mixed strip has to ask — is this a window, a session, something else —
 	/// do not arise.
 	private func wireMirrorStrip(_ strip: PanelTabStrip) {
+		// Dragging a tab needs both halves: something to pick up, and somewhere
+		// to drop it. The strip had the first — `canDrag` and `onMove` — but was
+		// never registered for the drop, so a dragged tmux tab had nowhere to
+		// land and the reorder that used to work quietly stopped.
+		strip.panelID = panelID
+		strip.column = 0
+		strip.setUpTabDropping()
+		// tmux's windows are tmux's: a tab from another panel or another window
+		// cannot become one, so nothing foreign is taken here.
+		strip.acceptsForeign = { _ in false }
+		strip.onDropTab = { [weak self] payload, position in
+			guard let self, payload.panelID == self.panelID else { return }
+			guard self.tmuxWindows.indices.contains(payload.index) else { return }
+			self.moveMirroredWindow(
+				self.tmuxWindows[payload.index], from: payload.index, to: position
+			)
+		}
+
 		strip.onSelect = { [weak self] index in
 			guard let self, self.tmuxWindows.indices.contains(index) else { return }
 			let window = self.tmuxWindows[index]
@@ -2563,7 +2587,11 @@ final class PanelTabStrip: NSView {
 					+ ceil(text) + Theme.current.scaled(8) + closeSize + badge
 			)
 			frames.append(NSRect(x: x, y: 0, width: ceil(width), height: bounds.height))
-			x += ceil(width) + Theme.current.scaled(2)
+			// Tabs meet on tmux's strip. Anywhere else the gap between them is
+			// the panel's background and reads as a gap; there it is the green
+			// bar, and a sliver of it down the side of the tab you are in looks
+			// like a frame around it.
+			x += ceil(width) + (isMirroringTmux ? 0 : Theme.current.scaled(2))
 		}
 		addButtonFrame = showsAddButton
 			? NSRect(x: x + Theme.current.scaled(4), y: 0, width: Theme.current.scaled(24), height: bounds.height)

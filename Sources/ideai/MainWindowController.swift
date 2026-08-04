@@ -258,6 +258,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// Which of those windows is the active one.
 	var activeTmuxWindow: Int? { bottomPanel.activeTmuxWindow }
 
+	/// Drags a tmux tab from one position to another.
+	func dragTmuxTabForTesting(from: Int, to: Int) {
+		bottomPanel.dragTmuxTabForTesting(from: from, to: to)
+	}
+
 	/// Presses the + on tmux's strip, for testing what it does.
 	func addTmuxWindowForTesting() { bottomPanel.addTmuxWindowForTesting() }
 

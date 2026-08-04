@@ -561,6 +561,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let move = options.dragTmuxTab {
+			let parts = move.split(separator: ":").compactMap { Int($0) }
+			DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
+				guard parts.count == 2 else { return }
+				controller?.dragTmuxTabForTesting(from: parts[0], to: parts[1])
+			}
+		}
+
 		if options.addTmuxWindow {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
 				controller?.addTmuxWindowForTesting()

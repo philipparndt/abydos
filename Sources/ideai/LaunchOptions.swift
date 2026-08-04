@@ -235,6 +235,8 @@ struct LaunchOptions {
 	var dumpSettings: String?
 	/// Pick a Makefile goal from the run menu, the way clicking it does.
 	var chooseMakeRun: String?
+	/// Drag a tmux tab from one position to another: "from:to".
+	var dragTmuxTab: String?
 
 	static func parse(_ arguments: [String] = CommandLine.arguments) -> LaunchOptions {
 		var options = LaunchOptions()
@@ -277,6 +279,7 @@ struct LaunchOptions {
 			case "--untmux":     options.toggleStrictTmuxOff = true
 			case "--dump-settings": options.dumpSettings = next()
 			case "--make-run":   options.chooseMakeRun = next()
+			case "--tmux-drag":  options.dragTmuxTab = next()
 			case "--branch-menu": options.branchMenuRow = next().flatMap(Int.init)
 			case "--push-branch": options.pushBranch = next()
 			case "--report-cwd": options.reportsTerminalDirectory = true
