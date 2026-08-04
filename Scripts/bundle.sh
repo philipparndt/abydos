@@ -17,9 +17,14 @@ APP="build/ideai.app"
 CONTENTS="$APP/Contents"
 
 echo "==> Building ($CONFIG)"
-swift build -c "$CONFIG"
+# Xcode's Swift rather than whatever is first on the PATH: a toolchain manager
+# such as swiftly pins an older release, which cannot compile against a newer
+# SDK and fails here with an error about Foundation rather than about ideai.
+SWIFT=(xcrun swift)
 
-BIN_DIR="$(swift build -c "$CONFIG" --show-bin-path)"
+"${SWIFT[@]}" build -c "$CONFIG"
+
+BIN_DIR="$("${SWIFT[@]}" build -c "$CONFIG" --show-bin-path)"
 
 echo "==> Assembling $APP"
 rm -rf "$APP"

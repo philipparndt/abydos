@@ -6,6 +6,16 @@ APP     := build/ideai.app
 BINARY  := $(APP)/Contents/MacOS/ideai
 CONFIG  ?= release
 
+# Xcode's Swift, not whichever one is first on the PATH.
+#
+# A toolchain manager such as swiftly puts its own `swift` in front, and that
+# one is pinned to a release older than the SDK: on the morning macOS 27
+# arrived it could no longer compile Foundation, and every target here failed
+# with "this SDK is not supported by the compiler" rather than anything to do
+# with this program. `xcrun` asks the selected Xcode, which is the toolchain
+# the SDK belongs to.
+SWIFT   := xcrun swift
+
 .DEFAULT_GOAL := run
 
 .PHONY: help
@@ -35,20 +45,20 @@ open: build ## Build and open a specific project: make open PROJECT=~/dev/foo
 
 .PHONY: test
 test: ## Run the test suite
-	@swift test
+	@$(SWIFT) test
 
 .PHONY: perf
 perf: ## Run the performance suite in release and print timings
-	@swift test -c release --filter PerformanceTests 2>&1 | grep -E '^PERF|Test run with'
+	@$(SWIFT) test -c release --filter PerformanceTests 2>&1 | grep -E '^PERF|Test run with'
 
 .PHONY: fire
 fire: ## Burn the DOOM fire in this terminal, whichever it is (SECONDS=20)
-	@swift build -c release --product firebench
+	@$(SWIFT) build -c release --product firebench
 	@.build/release/firebench --mode fire --seconds $(or $(SECONDS),20)
 
 .PHONY: matrix
 matrix: ## The same benchmark on the glyph cache instead of the colours
-	@swift build -c release --product firebench
+	@$(SWIFT) build -c release --product firebench
 	@.build/release/firebench --mode matrix --seconds $(or $(SECONDS),20)
 
 .PHONY: shot
