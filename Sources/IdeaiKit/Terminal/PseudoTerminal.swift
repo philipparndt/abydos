@@ -39,6 +39,13 @@ public final class PseudoTerminal {
 	public private(set) var slaveName: String?
 	private var childPID: pid_t = -1
 	private var readSource: DispatchSourceRead?
+	/// Whether a drain is already running, so writing again only adds to what
+	/// it is working through.
+	private var isDraining = false
+	/// Bytes the pty could not take yet.
+	private var pendingOutput = Data()
+	private let writeLock = NSRecursiveLock()
+	private let writeQueue = DispatchQueue(label: "ideai.pty.write")
 	private let readQueue = DispatchQueue(label: "ideai.pty.read", qos: .userInitiated)
 	/// Whether reading is paused because the reader has a backlog.
 	///
@@ -204,18 +211,86 @@ public final class PseudoTerminal {
 		}
 	}
 
+	/// Sends bytes to the program, however many there are.
+	///
+	/// The master is non-blocking, so a write that fills the pty's buffer —
+	/// which a pasted crash report does several times over — comes back saying
+	/// "not now". What is left is kept and written when the program has read
+	/// enough to make room, rather than dropped: the old loop broke out on that
+	/// and the rest of a paste simply never arrived.
 	public func write(_ data: Data) {
-		guard masterDescriptor >= 0, isRunning else { return }
-		data.withUnsafeBytes { raw in
-			guard let base = raw.baseAddress else { return }
-			var written = 0
-			// A short write is normal on a pty when the buffer fills.
-			while written < raw.count {
-				let result = Darwin.write(masterDescriptor, base.advanced(by: written), raw.count - written)
-				if result <= 0 { break }
-				written += result
+		guard masterDescriptor >= 0, isRunning, !data.isEmpty else { return }
+		writeLock.lock()
+		pendingOutput.append(data)
+		writeLock.unlock()
+		flushPendingOutput()
+	}
+
+	/// How much is waiting to go to the program.
+	///
+	/// Anything advisory — a mouse moving over the pane — is worth dropping
+	/// while there is a backlog: those reports are about where the pointer was
+	/// a moment ago, and delivering them late is how they end up in the middle
+	/// of somebody's paste.
+	public var pendingInputCount: Int {
+		writeLock.lock()
+		defer { writeLock.unlock() }
+		return pendingOutput.count
+	}
+
+	/// Writes what is queued, waiting for room when there is none.
+	///
+	/// On a queue of its own, and never on the one that reads: waiting for room
+	/// to write while holding up the reading of what the program is sending
+	/// back is how both ends come to wait for each other for ever.
+	private func flushPendingOutput() {
+		writeLock.lock()
+		let alreadyDraining = isDraining
+		isDraining = true
+		writeLock.unlock()
+		guard !alreadyDraining else { return }
+
+		writeQueue.async { [weak self] in
+			while let self, self.drainOnce() {
+				// `poll` rather than a timer: the pty says when it has room,
+				// and a canonical-mode line discipline takes about a line at a
+				// time, so this happens often and should cost nothing while it
+				// waits.
+				var descriptor = pollfd(fd: self.masterDescriptor, events: Int16(POLLOUT), revents: 0)
+				_ = poll(&descriptor, 1, 200)
 			}
+			self?.writeLock.lock()
+			self?.isDraining = false
+			self?.writeLock.unlock()
 		}
+	}
+
+	/// One pass: writes what it can, and says whether anything is still queued.
+	private func drainOnce() -> Bool {
+		writeLock.lock()
+		defer { writeLock.unlock() }
+
+		while !pendingOutput.isEmpty {
+			guard masterDescriptor >= 0 else {
+				pendingOutput.removeAll()
+				return false
+			}
+			let written = pendingOutput.withUnsafeBytes { raw -> Int in
+				guard let base = raw.baseAddress else { return 0 }
+				return Darwin.write(masterDescriptor, base, raw.count)
+			}
+			if written > 0 {
+				pendingOutput.removeFirst(written)
+				continue
+			}
+			let failure = errno
+			// Full, or interrupted: come back when there is room. Anything else
+			// means the program has gone, and what is queued has nowhere to go.
+			if failure == EAGAIN || failure == EWOULDBLOCK || failure == EINTR { return true }
+			pendingOutput.removeAll()
+			return false
+		}
+		return false
 	}
 
 	public func write(_ string: String) {

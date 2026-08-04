@@ -115,3 +115,74 @@ struct MakeChoiceTests {
 		#expect(!FileManager.default.fileExists(atPath: marker.path))
 	}
 }
+
+/// A Makefile goal that builds a macOS app and hands it to `open`.
+///
+/// `open` gives the bundle to the system and returns at once, so running one
+/// that way looked like it had finished the moment it started: the make
+/// process really had, leaving nothing to stop and nothing to debug.
+struct MakeAppLaunchTests {
+	private func makefile(_ text: String) throws -> Makefile {
+		let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+			.appendingPathComponent("make-app-\(UUID().uuidString)")
+		try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+		let path = directory.appendingPathComponent("Makefile")
+		try text.write(to: path, atomically: true, encoding: .utf8)
+		return try #require(Makefile.read(at: path))
+	}
+
+	/// This project's own Makefile, near enough: a variable for the bundle and
+	/// a build step in front.
+	@Test func theBinaryInsideTheBundleIsWhatRuns() throws {
+		let file = try makefile("""
+		APP := build/ideai.app
+
+		build:
+		\t@Scripts/bundle.sh release
+
+		run: build ## Build and launch the app
+		\t@echo "==> Launching $(APP)"
+		\t@open $(APP)
+		""")
+		defer { try? FileManager.default.removeItem(at: file.path.deletingLastPathComponent()) }
+
+		#expect(MakeLaunch.launchedApp(for: "run", in: file)
+			== "build/ideai.app/Contents/MacOS/ideai")
+
+		let choice = MakeLaunch.choice(
+			for: "run", in: file, projectRoot: file.path.deletingLastPathComponent()
+		)
+		guard case let .debug(configuration) = choice else {
+			Issue.record("expected something debuggable, got \(choice)")
+			return
+		}
+		#expect(configuration.program.hasSuffix("build/ideai.app/Contents/MacOS/ideai"))
+		#expect(configuration.type == "lldb", "a macOS app is debugged by lldb")
+		// And it still builds first, as make would.
+		#expect(configuration.makeStep?.targets == ["build"])
+	}
+
+	@Test func openWithFlagsAndArgumentsStillFindsTheBundle() throws {
+		let file = try makefile("""
+		start:
+		\t@open -a build/Thing.app --args --verbose
+		""")
+		defer { try? FileManager.default.removeItem(at: file.path.deletingLastPathComponent()) }
+		#expect(MakeLaunch.launchedApp(for: "start", in: file)
+			== "build/Thing.app/Contents/MacOS/Thing")
+	}
+
+	/// Opening something that is not an app — a folder, a URL, a file — is not
+	/// a program to run.
+	@Test func openingSomethingElseIsNotALaunch() throws {
+		let file = try makefile("""
+		docs:
+		\t@open https://example.com
+		here:
+		\t@open .
+		""")
+		defer { try? FileManager.default.removeItem(at: file.path.deletingLastPathComponent()) }
+		#expect(MakeLaunch.launchedApp(for: "docs", in: file) == nil)
+		#expect(MakeLaunch.launchedApp(for: "here", in: file) == nil)
+	}
+}

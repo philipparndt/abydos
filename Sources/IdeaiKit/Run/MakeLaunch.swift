@@ -124,6 +124,34 @@ public enum MakeLaunch {
 		case run(RunConfiguration)
 	}
 
+	/// The app bundle a goal launches, if that is what it does.
+	///
+	/// `open build/thing.app` hands the app to the system and returns at once,
+	/// which is why running one this way looked like it had finished the moment
+	/// it started: the make process really had. Nothing was left to stop, and
+	/// nothing to attach a debugger to.
+	///
+	/// The binary inside the bundle is a process like any other. Run that and
+	/// the app is ours: its output is in the panel, the stop button stops it,
+	/// and lldb can be told to launch it instead.
+	public static func launchedApp(for goal: String, in makefile: Makefile) -> String? {
+		for target in makefile.chain(from: goal).reversed() {
+			for line in target.recipe.reversed() {
+				let expanded = makefile.expand(line)
+					.trimmingCharacters(in: CharacterSet(charactersIn: "@-\t "))
+				guard expanded.hasPrefix("open ") else { continue }
+				// `open -a Thing.app file`, or a flag before the path: the
+				// bundle is the argument that ends in `.app`.
+				let bundle = ArgumentLine.split(String(expanded.dropFirst("open ".count)))
+					.first { $0.hasSuffix(".app") }
+				guard let bundle else { continue }
+				let name = URL(fileURLWithPath: bundle).deletingPathExtension().lastPathComponent
+				return "\(bundle)/Contents/MacOS/\(name)"
+			}
+		}
+		return nil
+	}
+
 	public static func choice(
 		for goal: String,
 		in makefile: Makefile,
@@ -131,6 +159,33 @@ public enum MakeLaunch {
 	) -> Choice {
 		if let configuration = configuration(for: goal, in: makefile, projectRoot: projectRoot) {
 			return .debug(configuration)
+		}
+
+		// A goal that builds an app and hands it to `open`: run the binary
+		// inside the bundle instead, so the thing that was started is the thing
+		// that can be stopped and debugged.
+		if let program = launchedApp(for: goal, in: makefile) {
+			let directory = relativeToWorkspace(makefile.directory, root: projectRoot)
+			let build = makefile.chain(from: goal)
+				.filter { !$0.recipe.isEmpty && $0.name != goal }
+				.map(\.name)
+
+			var extras: [String: JSONValue] = [:]
+			if !build.isEmpty {
+				extras["ideai.make"] = .object([
+					"targets": .array(build.map(JSONValue.string)),
+					"directory": .string(directory),
+				])
+			}
+			return .debug(LaunchConfiguration(
+				name: "make \(goal)",
+				// lldb, not delve: this is the binary of a macOS app, and what
+				// debugs it is the debugger Xcode uses.
+				type: "lldb",
+				program: directory == "." ? program : directory + "/" + program,
+				workingDirectory: directory,
+				extras: extras
+			))
 		}
 		return .run(RunConfiguration(
 			name: "make \(goal)",

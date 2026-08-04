@@ -1727,6 +1727,11 @@ final class TerminalView: NSView, NSTextInputClient {
 	override func mouseMoved(with event: NSEvent) {
 		updateHoveredLink(at: event)
 		guard emulator.mouseTracking == .anyEvent else { return }
+		// Not while the program is behind on what it has already been sent. A
+		// motion report says where the pointer was; delivered after a long
+		// paste has drained it says something untrue, and lands in the middle
+		// of what was pasted.
+		guard pty.pendingInputCount == 0 else { return }
 		// A button is down: that is a drag, and dragging reports itself.
 		guard NSEvent.pressedMouseButtons == 0 else { return }
 

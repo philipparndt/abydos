@@ -323,7 +323,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		}
 
 		if options.launchRun || options.launchDebug || options.launchMenu || options.launchEditor {
-			DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+			// After anything that chooses what to run, or play would press
+			// before there is a selection to press it on.
+			let delay = options.chooseMakeRun == nil ? 1.2 : 3.0
+			DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
 				// Echoed so a capture run can be read from a terminal: what the
 				// adapter says is half of what is being checked.
 				controller?.echoDebugOutputForTesting()
