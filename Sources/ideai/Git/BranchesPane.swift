@@ -327,7 +327,11 @@ final class BranchesPane: NSView {
 	@objc private func recreateTag() {
 		guard let tag = selectedBranch, case .tag = tag.kind else { return }
 
-		Task { @MainActor in
+		// Weak from the top: the alert is modal and the pane can go while it is
+		// up, and a weak capture inside a scope that already holds a strong one
+		// reads as care that is not being taken.
+		Task { @MainActor [weak self] in
+			guard let self else { return }
 			let suggestion = await GitTags.likelySource(for: tag.name, in: root)
 			let now = await GitTags.describe(tag.name, in: root)
 

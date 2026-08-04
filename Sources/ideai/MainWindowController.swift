@@ -656,10 +656,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		repositoryWatcher?.stop()
 		repositoryWatcher = nil
 
-		Task { @MainActor in
+		// Weak the whole way down. Binding self strongly out here and asking
+		// for a weak one again inside would keep the window alive for as long
+		// as the lookup takes and read as though it did not.
+		Task { @MainActor [weak self] in
 			guard let directory = await RepositoryWatcher.directory(forRepositoryAt: root),
 			      // Another project may have been opened while this was asked.
-			      self.project?.root == root
+			      self?.project?.root == root
 			else { return }
 
 			let watcher = RepositoryWatcher(gitDirectory: directory) { [weak self] in
@@ -677,7 +680,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				}
 			}
 			watcher.start()
-			self.repositoryWatcher = watcher
+			self?.repositoryWatcher = watcher
 		}
 	}
 
