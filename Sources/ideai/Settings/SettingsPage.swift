@@ -159,28 +159,7 @@ final class SettingsPage: NSView {
 		heading.textColor = Theme.current.sidebarHeaderText
 		form.addArrangedSubview(heading)
 
-		let card = ColoredView(color: Theme.current.sidebarBackground)
-		card.wantsLayer = true
-		card.layer?.cornerRadius = 8
-		card.layer?.borderWidth = 1
-		card.layer?.borderColor = Theme.current.separator.withAlphaComponent(0.6).cgColor
-
-		let rows = NSStackView(views: blocks(for: section.rows()))
-		rows.orientation = .vertical
-		rows.alignment = .leading
-		rows.spacing = Theme.current.scaled(16)
-		rows.translatesAutoresizingMaskIntoConstraints = false
-		card.addSubview(rows)
-		NSLayoutConstraint.activate([
-			rows.topAnchor.constraint(equalTo: card.topAnchor, constant: Theme.current.scaled(16)),
-			rows.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -Theme.current.scaled(16)),
-			rows.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: Theme.current.scaled(18)),
-			rows.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -Theme.current.scaled(18)),
-		])
-		for view in rows.arrangedSubviews {
-			view.widthAnchor.constraint(equalTo: rows.widthAnchor).isActive = true
-		}
-		form.addArrangedSubview(card)
+		for block in blocks(for: section.rows()) { form.addArrangedSubview(block) }
 
 		// Wide enough to read and no wider — and the cap is on the card alone,
 		// so nothing here can decide how wide the editor area has to be.
@@ -200,19 +179,66 @@ final class SettingsPage: NSView {
 	/// own rounded rectangle, which is what a group looks like on this
 	/// platform.
 	private func blocks(for rows: [SettingsPaneController.Row]) -> [NSView] {
-		rows.map { row in
-			guard case let .group(title, help, inside) = row else { return self.row(for: row) }
-			return card(titled: title, help: help, rows: inside.map { self.row(for: $0) })
+		var blocks: [NSView] = []
+		var loose: [NSView] = []
+
+		func flushLoose() {
+			guard !loose.isEmpty else { return }
+			blocks.append(card(titled: nil, help: nil, rows: loose))
+			loose = []
 		}
+
+		for row in rows {
+			guard case let .group(title, help, inside) = row else {
+				loose.append(self.row(for: row))
+				continue
+			}
+			// A section of its own: its name above, its settings in a card
+			// under it, the way this platform separates one group from the
+			// next.
+			flushLoose()
+			blocks.append(sectionHeading(title, help: help))
+			blocks.append(card(titled: nil, help: nil, rows: inside.map { self.row(for: $0) }))
+		}
+		flushLoose()
+		return blocks
+	}
+
+	/// The name of a section, over the card that holds it — and what the
+	/// section is about, if that needs saying.
+	///
+	/// Above the card rather than inside it: a sentence about the whole group
+	/// reads as a note on the first setting when it sits in the same box.
+	private func sectionHeading(_ title: String, help: String?) -> NSView {
+		let label = NSTextField(labelWithString: title)
+		label.font = Theme.current.uiFont(13, weight: .semibold)
+		label.textColor = Theme.current.sidebarHeaderText
+
+		guard let help else { return label }
+
+		let text = NSTextField(wrappingLabelWithString: help)
+		text.font = Theme.current.uiFont(11)
+		text.textColor = Theme.current.gitIgnored
+		text.isSelectable = false
+		text.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+		let stack = NSStackView(views: [label, text])
+		stack.orientation = .vertical
+		stack.alignment = .leading
+		stack.spacing = Theme.current.scaled(2)
+		text.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+		return stack
 	}
 
 	/// A group's own card: a heading, a sentence, and the settings it gathers.
-	private func card(titled title: String, help: String?, rows: [NSView]) -> NSView {
-		let heading = NSTextField(labelWithString: title)
-		heading.font = Theme.current.uiFont(11.5, weight: .semibold)
-		heading.textColor = Theme.current.sidebarText
-
-		var top: [NSView] = [heading]
+	private func card(titled title: String?, help: String?, rows: [NSView]) -> NSView {
+		var top: [NSView] = []
+		if let title {
+			let heading = NSTextField(labelWithString: title)
+			heading.font = Theme.current.uiFont(11.5, weight: .semibold)
+			heading.textColor = Theme.current.sidebarText
+			top.append(heading)
+		}
 		if let help {
 			let text = NSTextField(wrappingLabelWithString: help)
 			text.font = Theme.current.uiFont(11)
@@ -226,13 +252,13 @@ final class SettingsPage: NSView {
 		stack.orientation = .vertical
 		stack.alignment = .leading
 		stack.spacing = Theme.current.scaled(14)
-		stack.setCustomSpacing(Theme.current.scaled(4), after: heading)
+		if let heading = top.first { stack.setCustomSpacing(Theme.current.scaled(4), after: heading) }
 		stack.translatesAutoresizingMaskIntoConstraints = false
 
 		// A shade apart from the card it sits in, so the boundary reads without
 		// a heavy line around it.
-		let card = ColoredView(color: Theme.current.editorBackground)
-		card.colourSource = { Theme.current.editorBackground }
+		let card = ColoredView(color: Theme.current.sidebarBackground)
+		card.colourSource = { Theme.current.sidebarBackground }
 		card.wantsLayer = true
 		card.layer?.cornerRadius = 8
 		card.layer?.borderWidth = 1

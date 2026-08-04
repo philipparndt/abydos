@@ -62,7 +62,7 @@ final class SettingsPaneController: NSViewController {
 			case let .choice(title, _, _, get, _):     return "\(get())  choice   \(title)"
 			case let .button(title, label, _):         return "        [\(label)] \(title)"
 			case let .group(title, _, rows):
-				return (["── \(title) ──"] + describe(rows).map { "  " + $0 }).joined(separator: "\n")
+				return (["── \(title) ──"] + describe(rows).map { "  " + $0 }).joined(separator: "\nSETTING ")
 			}
 		}
 	}
@@ -106,7 +106,7 @@ final class SettingsPaneController: NSViewController {
 		grid.rowSpacing = 14
 		grid.columnSpacing = 12
 
-		for row in rows {
+		for row in flattened(rows) {
 			let (label, control, help) = makeRow(row)
 			let labelField = NSTextField(labelWithString: label.isEmpty ? "" : label + ":")
 			labelField.alignment = .right
@@ -157,6 +157,14 @@ final class SettingsPaneController: NSViewController {
 	}
 
 	// MARK: - Row construction
+
+	/// A group's heading followed by the settings inside it.
+	private func flattened(_ rows: [Row]) -> [Row] {
+		rows.flatMap { row -> [Row] in
+			guard case let .group(title, help, inside) = row else { return [row] }
+			return [.group(title: title, help: help, rows: [])] + inside
+		}
+	}
 
 	private func makeRow(_ row: Row) -> (String, NSView, String?) {
 		switch row {
@@ -339,94 +347,101 @@ final class SettingsPaneController: NSViewController {
 
 	/// The terminal's own look, and how it draws.
 	static func terminalRows() -> [Row] {
-		var rows: [Row] = [
-			.choice(
-				title: "Terminal colours",
-				help: "Blue is the palette Ghostty ships with. Dark matches the editor.",
-				options: TerminalScheme.allCases.map { ($0.title, $0.rawValue) },
-				get: { Settings.shared.terminalScheme },
-				set: { Settings.shared.terminalScheme = $0 }
-			),
-			.choice(
-				title: "Terminal bell",
-				help: "VHS shakes the picture and splits its colours, like a worn tape. Needs GPU rendering.",
-				options: [("Sound", "sound"), ("VHS", "vhs"), ("Ignore", "none")],
-				get: { Settings.shared.terminalBellStyle },
-				set: { Settings.shared.terminalBellStyle = $0 }
-			),
-			.text(
-				title: "Terminal font",
-				help: "Leave empty to choose automatically. Powerline prompts need a Nerd Font.",
-				get: { Settings.shared.terminalFontName },
-				set: { Settings.shared.terminalFontName = $0.trimmingCharacters(in: .whitespaces) }
-			),
-			.choice(
-				title: "Terminal when a window opens",
-				help: "Closed, open at its usual height, or filling the window.",
-				options: [
-					(label: "Closed", value: "closed"),
-					(label: "Open", value: "open"),
-					(label: "Filling the window", value: "full"),
-				],
-				get: { Settings.shared.terminalAtStartup },
-				set: { Settings.shared.terminalAtStartup = $0 }
-			),
-			.toggle(
-				title: "Follow the terminal's project",
-				help: "When the terminal moves into another project, the window opens it. "
-					+ "New windows start this way; each window can still be switched by hand.",
-				get: { Settings.shared.followsTerminalProject },
-				set: { Settings.shared.followsTerminalProject = $0 }
-			),
-			.toggle(
-				title: "GPU terminal rendering",
-				help: "Draw the terminal with Metal. Faster when a program repaints the whole screen; still new.",
-				get: { Settings.shared.terminalGPURendering },
-				set: { Settings.shared.terminalGPURendering = $0 }
-			),
+		// Sections rather than one long list: what the terminal looks like,
+		// what it does when a window opens, and the tmux switches that only
+		// mean anything together.
+		var sections: [Row] = [
+			.group(title: "Appearance", help: nil, rows: [
+				.choice(
+					title: "Terminal colours",
+					help: "Blue is the palette Ghostty ships with. Dark matches the editor.",
+					options: TerminalScheme.allCases.map { ($0.title, $0.rawValue) },
+					get: { Settings.shared.terminalScheme },
+					set: { Settings.shared.terminalScheme = $0 }
+				),
+				.text(
+					title: "Terminal font",
+					help: "Leave empty to choose automatically. Powerline prompts need a Nerd Font.",
+					get: { Settings.shared.terminalFontName },
+					set: { Settings.shared.terminalFontName = $0.trimmingCharacters(in: .whitespaces) }
+				),
+				.choice(
+					title: "Terminal bell",
+					help: "VHS shakes the picture and splits its colours, like a worn tape. "
+						+ "Needs GPU rendering.",
+					options: [("Sound", "sound"), ("VHS", "vhs"), ("Ignore", "none")],
+					get: { Settings.shared.terminalBellStyle },
+					set: { Settings.shared.terminalBellStyle = $0 }
+				),
+				.toggle(
+					title: "GPU terminal rendering",
+					help: "Draw the terminal with Metal. Faster when a program repaints the whole "
+						+ "screen; still new.",
+					get: { Settings.shared.terminalGPURendering },
+					set: { Settings.shared.terminalGPURendering = $0 }
+				),
+			]),
+			.group(title: "Behaviour", help: nil, rows: [
+				.choice(
+					title: "Terminal when a window opens",
+					help: "Closed, open at its usual height, or filling the window.",
+					options: [
+						(label: "Closed", value: "closed"),
+						(label: "Open", value: "open"),
+						(label: "Filling the window", value: "full"),
+					],
+					get: { Settings.shared.terminalAtStartup },
+					set: { Settings.shared.terminalAtStartup = $0 }
+				),
+				.toggle(
+					title: "Follow the terminal's project",
+					help: "When the terminal moves into another project, the window opens it. "
+						+ "New windows start this way; each window can still be switched by hand.",
+					get: { Settings.shared.followsTerminalProject },
+					set: { Settings.shared.followsTerminalProject = $0 }
+				),
+			]),
 		]
 
 		// Offered only where there is a tmux to attach to: a switch that can do
-		// nothing is worse than no switch.
-		//
-		// Inserted as a block, in the order they depend on each other: nothing
-		// attaches to tmux, so nothing is showing its windows, so there is no
-		// second copy of its status bar to put away. Each is greyed while the
-		// one above it is off.
+		// nothing is worse than no switch. In the order they depend on each
+		// other, each greyed while the one above it is off.
 		if Executables.locate("tmux") != nil {
-			rows.insert(contentsOf: [
-				.group(title: "tmux", help: "Each of these only means anything while the one above it is on.", rows: [
-				.toggle(
-					title: "Attach the first terminal to tmux",
-					help: "One session per project, so reopening it comes back to the panes it was "
-						+ "left with. Terminals opened afterwards are plain shells.",
-					get: { Settings.shared.startsTmux },
-					set: { Settings.shared.startsTmux = $0 }
-				),
-				.toggle(
-					title: "Tabs are tmux's windows",
-					help: "The strip shows the session's windows and switching a tab switches tmux. "
-						+ "One terminal, one shell: changing tabs costs nothing.",
-					get: { Settings.shared.strictTmux },
-					// The status bar goes with it: leaving somebody with no
-					// window list at all — no tabs and no bar — would be this
-					// switch quietly breaking their tmux.
-					set: { TmuxSettings.setTabsAreTmuxWindows($0) },
-					isEnabled: { Settings.shared.startsTmux }
-				),
-				.toggle(
-					title: "Hide tmux's own status bar",
-					help: "Those tabs already show this session's windows, so tmux's bar is the "
-						+ "same list twice. Set on the session as it is attached — nothing is "
-						+ "written to ~/.tmux.conf, and other sessions keep their bar.",
-					get: { TmuxSettings.wantsStatusBarHidden },
-					set: { TmuxSettings.wantsStatusBarHidden = $0 },
-					isEnabled: { TmuxSettings.tabsAreTmuxWindows }
-				),
-				]),
-			], at: 1)
+			sections.append(.group(
+				title: "tmux",
+				help: "Each of these only means anything while the one above it is on.",
+				rows: [
+					.toggle(
+						title: "Attach the first terminal to tmux",
+						help: "One session per project, so reopening it comes back to the panes it "
+							+ "was left with. Terminals opened afterwards are plain shells.",
+						get: { Settings.shared.startsTmux },
+						set: { Settings.shared.startsTmux = $0 }
+					),
+					.toggle(
+						title: "Tabs are tmux's windows",
+						help: "The strip shows the session's windows and switching a tab switches "
+							+ "tmux. One terminal, one shell: changing tabs costs nothing.",
+						get: { Settings.shared.strictTmux },
+						// The status bar goes with it: leaving somebody with no
+						// window list at all would be this switch quietly
+						// breaking their tmux.
+						set: { TmuxSettings.setTabsAreTmuxWindows($0) },
+						isEnabled: { Settings.shared.startsTmux }
+					),
+					.toggle(
+						title: "Hide tmux's own status bar",
+						help: "Those tabs already show this session's windows, so tmux's bar is the "
+							+ "same list twice. Set on the session as it is attached — nothing is "
+							+ "written to ~/.tmux.conf, and other sessions keep their bar.",
+						get: { TmuxSettings.wantsStatusBarHidden },
+						set: { TmuxSettings.wantsStatusBarHidden = $0 },
+						isEnabled: { TmuxSettings.tabsAreTmuxWindows }
+					),
+				]
+			))
 		}
-		return rows
+		return sections
 	}
 
 	/// What Claude Code is allowed to do on your behalf.
