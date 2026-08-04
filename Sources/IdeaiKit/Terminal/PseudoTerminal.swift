@@ -87,48 +87,57 @@ public final class PseudoTerminal {
 			ws_ypixel: 0
 		)
 
-		var master: Int32 = -1
-		// forkpty does the fork, opens the pty pair, makes the slave the child's
-		// controlling terminal and wires it to stdin/stdout/stderr. Doing that by
-		// hand needs setsid plus TIOCSCTTY in the child, which posix_spawn cannot
-		// express.
-		let pid = forkpty(&master, nil, nil, &size)
-
-		if pid < 0 {
+		// The pair is opened here rather than by `forkpty`, which does the fork
+		// and the pty together — and the fork is the part that has to go. See
+		// `spawn` for why.
+		let master = posix_openpt(O_RDWR | O_NOCTTY)
+		guard master >= 0 else { return false }
+		guard grantpt(master) == 0, unlockpt(master) == 0,
+		      let slave = ptsname(master).map({ String(cString: $0) })
+		else {
+			close(master)
 			return false
 		}
-
-		if pid == 0 {
-			// Child. Only async-signal-safe work is legal here before exec.
-			if let workingDirectory {
-				_ = workingDirectory.withUnsafeFileSystemRepresentation { path in
-					path.map { chdir($0) }
-				}
-			}
-
-			var merged = environment ?? ProcessInfo.processInfo.environment
-			// Claim a capable terminal so tools enable colour and full-screen UI.
-			merged["TERM"] = merged["TERM"] ?? "xterm-256color"
-			merged["COLORTERM"] = merged["COLORTERM"] ?? "truecolor"
-			merged["LANG"] = merged["LANG"] ?? "en_US.UTF-8"
-			// Stop pagers from hanging a pane waiting for a keypress.
-			merged["PAGER"] = merged["PAGER"] ?? "cat"
-
-			let environmentStrings = merged.map { "\($0.key)=\($0.value)" }
-			var environmentPointers: [UnsafeMutablePointer<CChar>?] = environmentStrings.map { strdup($0) }
-			environmentPointers.append(nil)
-
-			var argumentPointers: [UnsafeMutablePointer<CChar>?] = ([executable] + arguments).map { strdup($0) }
-			argumentPointers.append(nil)
-
-			execve(executable, &argumentPointers, &environmentPointers)
-			// Only reached if exec failed; _exit avoids running atexit handlers
-			// inherited from the parent.
-			_exit(127)
+		// The size goes on the *slave*, and the slave has to be open for it to
+		// stick: the first open initialises the tty, which zeroes a size set on
+		// the master beforehand — `stty size` then says "0 0" and every
+		// full-screen program starts by drawing itself into a screen of nothing.
+		//
+		// Held open across the spawn so the tty cannot be torn down in between,
+		// and closed immediately afterwards: while this side holds it, the
+		// master never reports end-of-file when the child exits, because we
+		// would still be a writer.
+		let slaveDescriptor = open(slave, O_RDWR | O_NOCTTY)
+		guard slaveDescriptor >= 0 else {
+			close(master)
+			return false
 		}
+		_ = ioctl(slaveDescriptor, TIOCSWINSZ, &size)
+
+		var merged = environment ?? ProcessInfo.processInfo.environment
+		// Claim a capable terminal so tools enable colour and full-screen UI.
+		merged["TERM"] = merged["TERM"] ?? "xterm-256color"
+		merged["COLORTERM"] = merged["COLORTERM"] ?? "truecolor"
+		merged["LANG"] = merged["LANG"] ?? "en_US.UTF-8"
+		// Stop pagers from hanging a pane waiting for a keypress.
+		merged["PAGER"] = merged["PAGER"] ?? "cat"
+
+		guard let pid = spawn(
+			executable: executable,
+			arguments: arguments,
+			workingDirectory: workingDirectory,
+			environment: merged,
+			slavePath: slave,
+			master: master
+		) else {
+			close(slaveDescriptor)
+			close(master)
+			return false
+		}
+		close(slaveDescriptor)
 
 		masterDescriptor = master
-		slaveName = String(validatingCString: ptsname(master)) ?? nil
+		slaveName = slave
 		childPID = pid
 		state = .running(pid: pid)
 
@@ -136,6 +145,98 @@ public final class PseudoTerminal {
 		startReading()
 		watchForExit(pid: pid)
 		return true
+	}
+
+	/// Spawns the child so that it is responsible for itself.
+	///
+	/// `forkpty` did this before, and did it well: fork, open the pty pair, make
+	/// the slave the child's controlling terminal. What it cannot do is disclaim
+	/// responsibility, because that is a `posix_spawn` attribute and there is no
+	/// equivalent for a plain fork.
+	///
+	/// Responsibility is what macOS attributes a process's behaviour to. A child
+	/// this app forked stays ours as far as the system is concerned, which has
+	/// two consequences worth being rid of: a long-lived thing started from a
+	/// shell — a tmux server above all — is reported as this app running in the
+	/// background, and a permission prompt raised by a program running in a pane
+	/// says *ideai* wants your Documents, recording the grant against the editor
+	/// instead of against the program that asked. Every other terminal on this
+	/// platform disclaims for exactly these reasons.
+	///
+	/// The controlling terminal comes back a different way: `POSIX_SPAWN_SETSID`
+	/// puts the child in a session of its own, and a session leader that opens a
+	/// tty without `O_NOCTTY` acquires it as its controlling terminal. That is
+	/// the same rule `forkpty` relies on internally.
+	private func spawn(
+		executable: String,
+		arguments: [String],
+		workingDirectory: URL?,
+		environment: [String: String],
+		slavePath: String,
+		master: Int32
+	) -> pid_t? {
+		var attributes: posix_spawnattr_t?
+		guard posix_spawnattr_init(&attributes) == 0 else { return nil }
+		defer { posix_spawnattr_destroy(&attributes) }
+
+		// A session of its own, which is the precondition for taking a
+		// controlling terminal and for job control working inside the pane.
+		guard posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETSID)) == 0 else {
+			return nil
+		}
+		Self.disclaimResponsibility(&attributes)
+
+		var actions: posix_spawn_file_actions_t?
+		guard posix_spawn_file_actions_init(&actions) == 0 else { return nil }
+		defer { posix_spawn_file_actions_destroy(&actions) }
+
+		// Opened rather than inherited: this open, in a fresh session, is what
+		// makes the pty the child's controlling terminal. Then the same
+		// descriptor is the child's stdout and stderr.
+		guard posix_spawn_file_actions_addopen(&actions, 0, slavePath, O_RDWR, 0) == 0,
+		      posix_spawn_file_actions_adddup2(&actions, 0, 1) == 0,
+		      posix_spawn_file_actions_adddup2(&actions, 0, 2) == 0,
+		      // Our end of the pair is ours alone. Left open in the child, the
+		      // master never reports end-of-file when the shell exits, because
+		      // the shell would still be holding it.
+		      posix_spawn_file_actions_addclose(&actions, master) == 0
+		else { return nil }
+
+		if let workingDirectory {
+			guard posix_spawn_file_actions_addchdir_np(&actions, workingDirectory.path) == 0 else {
+				return nil
+			}
+		}
+
+		var argumentPointers: [UnsafeMutablePointer<CChar>?] =
+			([executable] + arguments).map { strdup($0) }
+		argumentPointers.append(nil)
+		var environmentPointers: [UnsafeMutablePointer<CChar>?] =
+			environment.map { strdup("\($0.key)=\($0.value)") }
+		environmentPointers.append(nil)
+		defer {
+			for pointer in argumentPointers where pointer != nil { free(pointer) }
+			for pointer in environmentPointers where pointer != nil { free(pointer) }
+		}
+
+		var pid: pid_t = -1
+		let result = posix_spawn(&pid, executable, &actions, &attributes,
+		                         &argumentPointers, &environmentPointers)
+		return result == 0 ? pid : nil
+	}
+
+	/// Marks the spawned process as responsible for itself.
+	///
+	/// Private API, so it is asked for by name and skipped if it is not there —
+	/// on a system without it the terminal still works, exactly as it did
+	/// before. Every terminal emulator on macOS calls this.
+	private static func disclaimResponsibility(_ attributes: inout posix_spawnattr_t?) {
+		typealias Disclaim = @convention(c) (UnsafeMutablePointer<posix_spawnattr_t?>, Int32) -> Int32
+		// RTLD_DEFAULT: search every image already loaded.
+		let handle = UnsafeMutableRawPointer(bitPattern: -2)
+		guard let symbol = dlsym(handle, "responsibility_spawnattrs_setdisclaim") else { return }
+		let disclaim = unsafeBitCast(symbol, to: Disclaim.self)
+		withUnsafeMutablePointer(to: &attributes) { _ = disclaim($0, 1) }
 	}
 
 	/// Launches the user's login shell, which is what a terminal pane wants.

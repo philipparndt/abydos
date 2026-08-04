@@ -865,6 +865,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 				.replacingOccurrences(of: "\\e", with: "\u{1B}")
 				.replacingOccurrences(of: "\\x01", with: "\u{01}")
 				.replacingOccurrences(of: "\\x05", with: "\u{05}")
+				.replacingOccurrences(of: "\\x03", with: "\u{03}")
 				.replacingOccurrences(of: "\\r", with: "\r")
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
 				controller?.sendToTerminal(decoded)
