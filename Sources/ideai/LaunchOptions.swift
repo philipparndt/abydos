@@ -53,6 +53,8 @@ struct LaunchOptions {
 	/// Click this panel tab position and report which tab it actually brought
 	/// forward, as "index@seconds".
 	var clickPanelTab: String?
+	/// Print which build this is and exit.
+	var reportVersion = false
 	/// Show the window as it looks while presenting, without storing the mode.
 	var presentation = false
 	/// Close every terminal tab after this many seconds, leaving the panel
@@ -306,6 +308,7 @@ struct LaunchOptions {
 			case "--tmux-add":   options.addTmuxWindow = true
 			case "--close-terminals": options.closeTerminals = next().flatMap(Double.init)
 			case "--presentation": options.presentation = true
+			case "--version": options.reportVersion = true
 			case "--click-panel-tab": options.clickPanelTab = next()
 			case "--untmux":     options.toggleStrictTmuxOff = true
 			case "--dump-settings": options.dumpSettings = next()

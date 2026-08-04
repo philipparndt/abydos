@@ -10,6 +10,23 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 	/// Claude sessions announcing themselves, from the hook this binary also is.
 	private var claudeWatch: ClaudeWatch?
 
+	@objc func showAbout(_ sender: Any?) {
+		NSApp.orderFrontStandardAboutPanel(options: [
+			.applicationVersion: Self.buildDescription
+				.replacingOccurrences(of: "ideai ", with: ""),
+		])
+		NSApp.activate(ignoringOtherApps: true)
+	}
+
+	/// Which build this is: the version, the commit count, and the commit.
+	static var buildDescription: String {
+		let info = Bundle.main.infoDictionary
+		let version = info?["CFBundleShortVersionString"] as? String ?? "?"
+		let build = info?["CFBundleVersion"] as? String ?? "?"
+		let commit = info?["IdeaiCommit"] as? String ?? "unknown"
+		return "ideai \(version) (build \(build), \(commit))"
+	}
+
 	public func applicationDidFinishLaunching(_ notification: Notification) {
 		// Settings from the identifier this app used to have, before anything
 		// reads one: the move to `de.rnd7.ideai` for the App Store would
@@ -69,6 +86,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		if carried > 0 { print("Moved \(carried) scratch file(s) to \(ScratchFiles.defaultRoot.path)") }
 
 		let options = LaunchOptions.parse()
+
+		// "Is the thing I just installed the thing that is running?" — a
+		// question that has come up once too often to keep answering by
+		// guesswork.
+		if options.reportVersion {
+			print(Self.buildDescription)
+			exit(0)
+		}
+
 		MetalProbe.start()
 		if let zoom = options.zoom { Settings.shared.uiScale = zoom }
 
@@ -1096,7 +1122,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		let appMenuItem = NSMenuItem()
 		let appMenu = NSMenu()
-		appMenu.addItem(withTitle: "About ideai", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+		// Ours rather than the standard panel, which shows the version but not
+		// which build it came from — the one thing worth knowing when the
+		// question is whether an install took.
+		appMenu.addItem(
+			withTitle: "About ideai",
+			action: #selector(showAbout(_:)),
+			keyEquivalent: ""
+		)
 		appMenu.addItem(.separator())
 		let settingsItem = NSMenuItem(title: "Settings…", action: #selector(showSettings(_:)), keyEquivalent: ",")
 		settingsItem.target = self

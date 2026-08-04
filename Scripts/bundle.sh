@@ -101,6 +101,16 @@ fi
 # drifts: the bundle id and the version have to agree wherever the app is built.
 cp Resources/Info.plist "$CONTENTS/Info.plist"
 
+# Stamped with the commit it was built from, so "did my build actually get
+# installed" is a question with an answer. `CFBundleVersion` is the build
+# number, and the count of commits is one that only ever goes up.
+BUILD=$(git rev-list --count HEAD 2>/dev/null || echo 0)
+COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
+DIRTY=$(git diff --quiet 2>/dev/null || echo "+")
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD" "$CONTENTS/Info.plist" >/dev/null
+/usr/libexec/PlistBuddy -c "Add :IdeaiCommit string $COMMIT$DIRTY" "$CONTENTS/Info.plist" >/dev/null
+echo "    build $BUILD ($COMMIT$DIRTY)"
+
 # Ad-hoc signature: without it macOS refuses to launch an unsigned bundle that
 # was assembled by hand rather than by Xcode.
 codesign --force --deep --sign - "$APP" 2>/dev/null || \
