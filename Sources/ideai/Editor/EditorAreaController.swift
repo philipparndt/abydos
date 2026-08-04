@@ -68,6 +68,9 @@ final class EditorAreaController: NSViewController {
 	// Forwarded from the active group.
 	var onActiveFileChanged: ((URL?) -> Void)?
 	var onToggleBreakpoint: ((URL, Int) -> Void)?
+	var onSetBreakpointEnabled: ((URL, Int, Bool) -> Void)?
+	var onDeleteBreakpoint: ((URL, Int) -> Void)?
+	var onSetOtherBreakpointsEnabled: ((URL, Int, Bool) -> Void)?
 	var onRunLine: ((URL, Int) -> Void)?
 	var onApplyDiffSelection: ((GitChange, String, Set<Int>) -> Void)?
 	var onDiscardDiffSelection: ((GitChange, String, Set<Int>) -> Void)?
@@ -134,6 +137,15 @@ final class EditorAreaController: NSViewController {
 			self?.onToggleBreakpoint?(url, line)
 		}
 		group.onEditBreakpoint = onEditBreakpoint
+		group.onSetBreakpointEnabled = { [weak self] url, line, enabled in
+			self?.onSetBreakpointEnabled?(url, line, enabled)
+		}
+		group.onDeleteBreakpoint = { [weak self] url, line in
+			self?.onDeleteBreakpoint?(url, line)
+		}
+		group.onSetOtherBreakpointsEnabled = { [weak self] url, line, enabled in
+			self?.onSetOtherBreakpointsEnabled?(url, line, enabled)
+		}
 		group.onFindUsages = onFindUsages
 		group.onFixWithAI = onFixWithAI
 		group.setConditionalBreakpoints(conditionalBreakpoints)
@@ -589,7 +601,7 @@ final class EditorAreaController: NSViewController {
 	}
 
 	/// Debug state is window-wide: a breakpoint belongs to the file, not a pane.
-	func setBreakpoints(_ breakpoints: [String: [Int: Bool]]) {
+	func setBreakpoints(_ breakpoints: [String: [Int: CodeView.BreakpointMark]]) {
 		for group in groups { group.setBreakpoints(breakpoints) }
 	}
 

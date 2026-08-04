@@ -590,6 +590,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		editor.onToggleBreakpoint = { [weak self] url, line in
 			self?.toggleBreakpoint(file: url, line: line)
 		}
+		editor.onSetBreakpointEnabled = { [weak self] url, line, enabled in
+			self?.setBreakpoint(file: url, line: line, enabled: enabled)
+		}
+		editor.onDeleteBreakpoint = { [weak self] url, line in
+			self?.deleteBreakpoint(file: url, line: line)
+		}
+		editor.onSetOtherBreakpointsEnabled = { [weak self] url, line, enabled in
+			self?.setOtherBreakpoints(file: url, line: line, enabled: enabled)
+		}
 		editor.onRunLine = { [weak self] url, line in
 			self?.runConfiguration(forFile: url, line: line)
 		}
@@ -1617,12 +1626,71 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		publishPendingBreakpoints()
 	}
 
+	/// What the gutter needs to know about a breakpoint.
+	private static func mark(for breakpoint: Breakpoint) -> CodeView.BreakpointMark {
+		CodeView.BreakpointMark(
+			isEnabled: breakpoint.isEnabled,
+			isVerified: breakpoint.isVerified,
+			isConditional: breakpoint.isConditional
+		)
+	}
+
+	/// Turns a breakpoint off, or on again, wherever it is kept.
+	func setBreakpoint(file: URL, line: Int, enabled: Bool) {
+		let path = FilePath.canonical(file)
+		if let session = bottomPanel.activeDebugSession {
+			session.setBreakpoint(file: path, line: line, enabled: enabled)
+			syncBreakpointsToEditor(from: session)
+			return
+		}
+		guard var list = pendingBreakpoints[path],
+		      let index = list.firstIndex(where: { $0.line == line })
+		else { return }
+		list[index].isEnabled = enabled
+		if !enabled { list[index].isVerified = false }
+		pendingBreakpoints[path] = list
+		publishPendingBreakpoints()
+	}
+
+	/// Takes a breakpoint away — dragging it out of the gutter, or Delete.
+	func deleteBreakpoint(file: URL, line: Int) {
+		let path = FilePath.canonical(file)
+		if let session = bottomPanel.activeDebugSession {
+			session.removeBreakpoint(file: path, line: line)
+			syncBreakpointsToEditor(from: session)
+			return
+		}
+		guard var list = pendingBreakpoints[path] else { return }
+		list.removeAll { $0.line == line }
+		pendingBreakpoints[path] = list.isEmpty ? nil : list
+		publishPendingBreakpoints()
+	}
+
+	/// Silences every breakpoint but one, or brings them all back.
+	func setOtherBreakpoints(file: URL, line: Int, enabled: Bool) {
+		let path = FilePath.canonical(file)
+		if let session = bottomPanel.activeDebugSession {
+			session.setOtherBreakpoints(file: path, line: line, enabled: enabled)
+			syncBreakpointsToEditor(from: session)
+			return
+		}
+		for (candidate, list) in pendingBreakpoints {
+			var updated = list
+			for index in updated.indices where !(candidate == path && updated[index].line == line) {
+				updated[index].isEnabled = enabled
+				if !enabled { updated[index].isVerified = false }
+			}
+			pendingBreakpoints[candidate] = updated
+		}
+		publishPendingBreakpoints()
+	}
+
 	/// Draws the breakpoints that exist before anything is running.
 	private func publishPendingBreakpoints() {
-		var mapped: [String: [Int: Bool]] = [:]
+		var mapped: [String: [Int: CodeView.BreakpointMark]] = [:]
 		var conditional: [String: Set<Int>] = [:]
 		for (file, list) in pendingBreakpoints {
-			mapped[file] = Dictionary(uniqueKeysWithValues: list.map { ($0.line, $0.isVerified) })
+			mapped[file] = Dictionary(uniqueKeysWithValues: list.map { ($0.line, Self.mark(for: $0)) })
 			conditional[file] = Set(list.filter(\.isConditional).map(\.line))
 		}
 		editor.setBreakpoints(mapped)
@@ -1630,10 +1698,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	}
 
 	private func syncBreakpointsToEditor(from session: DebugSession) {
-		var mapped: [String: [Int: Bool]] = [:]
+		var mapped: [String: [Int: CodeView.BreakpointMark]] = [:]
 		var conditional: [String: Set<Int>] = [:]
 		for (file, list) in session.breakpoints {
-			mapped[file] = Dictionary(uniqueKeysWithValues: list.map { ($0.line, $0.isVerified) })
+			mapped[file] = Dictionary(uniqueKeysWithValues: list.map { ($0.line, Self.mark(for: $0)) })
 			conditional[file] = Set(list.filter(\.isConditional).map(\.line))
 		}
 		// Kept, so they survive the session ending and are there for the next
@@ -4752,6 +4820,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	}
 
 	/// Sets a breakpoint as a gutter click would, for verifying alignment.
+	/// Sets a breakpoint and turns it off, as clicking its marker does.
+	func disableBreakpointForTesting(line: Int) {
+		guard let url = editor.activeGroup.activeTabURL else { return }
+		toggleBreakpoint(file: url, line: line)
+		setBreakpoint(file: url, line: line, enabled: false)
+	}
+
 	func toggleBreakpointForTesting(line: Int) {
 		guard let url = editor.activeGroup.activeTabURL else { return }
 		toggleBreakpoint(file: url, line: line)

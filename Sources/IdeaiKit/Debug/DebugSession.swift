@@ -259,6 +259,61 @@ public final class DebugSession {
 		if isActive { Task { await syncBreakpoints(for: file) } }
 	}
 
+	/// Turns a breakpoint off without losing it, or on again.
+	///
+	/// A disabled breakpoint stays where it was put, and is not sent to the
+	/// adapter: it is a breakpoint somebody wants back later, not one they want
+	/// now. Xcode's click on the marker means exactly this.
+	public func setBreakpoint(file: String, line: Int, enabled: Bool) {
+		let file = FilePath.canonical(file)
+		guard var list = breakpoints[file], let index = list.firstIndex(where: { $0.line == line })
+		else { return }
+
+		guard list[index].isEnabled != enabled else { return }
+		list[index].isEnabled = enabled
+		// Nothing is bound while it is off; saying otherwise would draw it as
+		// though execution could still stop there.
+		if !enabled { list[index].isVerified = false }
+		breakpoints[file] = list
+		onMain { [weak self] in self?.onBreakpointsChanged?() }
+
+		if isActive { Task { await syncBreakpoints(for: file) } }
+	}
+
+	/// Takes a breakpoint away — what dragging one out of the gutter means.
+	public func removeBreakpoint(file: String, line: Int) {
+		let file = FilePath.canonical(file)
+		guard var list = breakpoints[file], let index = list.firstIndex(where: { $0.line == line })
+		else { return }
+
+		list.remove(at: index)
+		breakpoints[file] = list.isEmpty ? nil : list
+		onMain { [weak self] in self?.onBreakpointsChanged?() }
+
+		if isActive { Task { await syncBreakpoints(for: file) } }
+	}
+
+	/// Turns every breakpoint off except the one named, or every one back on.
+	///
+	/// "Disable other breakpoints" is the thing somebody reaches for when one
+	/// of thirty is the interesting one and stopping at the rest is in the way.
+	public func setOtherBreakpoints(file: String, line: Int, enabled: Bool) {
+		let keep = FilePath.canonical(file)
+		for (path, list) in breakpoints {
+			var updated = list
+			for index in updated.indices where !(path == keep && updated[index].line == line) {
+				updated[index].isEnabled = enabled
+				if !enabled { updated[index].isVerified = false }
+			}
+			breakpoints[path] = updated
+		}
+		onMain { [weak self] in self?.onBreakpointsChanged?() }
+
+		guard isActive else { return }
+		let files = Array(breakpoints.keys)
+		Task { for path in files { await syncBreakpoints(for: path) } }
+	}
+
 	/// Gives a breakpoint a condition, a hit count, or a message to log.
 	///
 	/// Passing nil for everything makes it an ordinary breakpoint again.
@@ -311,11 +366,14 @@ public final class DebugSession {
 			"sourceModified": false,
 		])
 
-		// The adapter reports which it could actually bind.
+		// The adapter reports which it could actually bind — one entry per
+		// breakpoint that was sent, so the answers line up with the enabled
+		// ones rather than with the whole list.
 		guard let verified = response?["breakpoints"] as? [[String: Any]] else { return }
 		var list = breakpoints[file] ?? []
-		for (index, entry) in verified.enumerated() where index < list.count {
-			list[index].isVerified = entry["verified"] as? Bool ?? false
+		let sent = list.indices.filter { list[$0].isEnabled }
+		for (position, index) in sent.enumerated() where position < verified.count {
+			list[index].isVerified = verified[position]["verified"] as? Bool ?? false
 		}
 		breakpoints[file] = list
 		onMain { [weak self] in self?.onBreakpointsChanged?() }

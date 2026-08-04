@@ -35,7 +35,7 @@ final class CodeView: NSView, NSTextInputClient {
 	private var currentMatchIndex: Int?
 
 	/// Debugger state for this file: breakpoint lines and where execution stopped.
-	private var breakpointLines: [Int: Bool] = [:]   // line -> verified
+	private var breakpointLines: [Int: BreakpointMark] = [:]
 	private var executionLine: Int?
 	/// 1-based lines that have something runnable on them, and the click that
 	/// runs it.
@@ -90,6 +90,23 @@ final class CodeView: NSView, NSTextInputClient {
 
 	/// Called when the gutter is clicked in the breakpoint column.
 	var onToggleBreakpoint: ((Int) -> Void)?
+	/// Clicked an existing marker: off if it was on, on if it was off.
+	var onSetBreakpointEnabled: ((Int, Bool) -> Void)?
+	/// Dragged a marker out of the gutter, or chose Delete.
+	var onDeleteBreakpoint: ((Int) -> Void)?
+	/// Chose "Disable other breakpoints" — or the reverse.
+	var onSetOtherBreakpointsEnabled: ((Int, Bool) -> Void)?
+
+	/// What the gutter needs to know about a breakpoint to draw it.
+	struct BreakpointMark: Equatable {
+		var isEnabled = true
+		/// The adapter bound it. An unverified marker is drawn hollow, because
+		/// a solid one where execution can never stop is a lie.
+		var isVerified = false
+		/// It has a condition, a hit count, or a message: worth showing, since
+		/// a breakpoint that does not always stop looks identical otherwise.
+		var isConditional = false
+	}
 
 	// MARK: - Metrics
 
@@ -114,8 +131,15 @@ final class CodeView: NSView, NSTextInputClient {
 	}
 
 	private static let gutterPadding: CGFloat = 10
-	/// Clickable strip on the far left of the gutter for breakpoints.
+	/// Clickable strip on the far left of the gutter, where a runnable line
+	/// gets its play triangle.
 	private static var breakpointColumnWidth: CGFloat { Theme.current.scaled(18) }
+	/// The strip at the right of the gutter that folds and unfolds.
+	///
+	/// Its own column now: a click on the line number makes a breakpoint, so
+	/// folding needs somewhere of its own to be clicked — the chevron, and
+	/// nothing else.
+	private static var foldColumnWidth: CGFloat { Theme.current.scaled(16) }
 	private static let textLeftPadding: CGFloat = 8
 	/// Extra rows drawn beyond the viewport so fast scrolling does not flash.
 	private static let overscanLines = 2
@@ -1051,20 +1075,29 @@ final class CodeView: NSView, NSTextInputClient {
 				drawBreakpoint(docLine: docLine, y: y, scrollX: scrollX + blameWidth)
 			}
 
+			// On the marker when there is one, and the number goes white on it:
+			// the tag is the breakpoint, so it has to be legible on top of it.
+			let mark = breakpointLines[docLine]
+			let colour: NSColor
+			if let mark {
+				colour = mark.isEnabled ? .white : Theme.current.gutterText
+			} else {
+				colour = isCurrent ? Theme.current.gutterCurrentLineText : Theme.current.gutterText
+			}
 			let number = NSAttributedString(string: "\(docLine + 1)", attributes: [
 				.font: font,
-				.foregroundColor: isCurrent ? Theme.current.gutterCurrentLineText : Theme.current.gutterText,
+				.foregroundColor: colour,
 			])
 			let size = number.size()
 			// Right-aligned against the fold column.
 			number.draw(at: NSPoint(
-				x: scrollX + gutterWidth - 14 - Self.gutterPadding - size.width,
+				x: scrollX + gutterWidth - Self.foldColumnWidth - Self.gutterPadding / 2 - size.width,
 				y: y + (lineHeight - size.height) / 2
 			))
 
 			if folding.isFoldable(line: docLine) {
 				drawFoldHandle(
-					at: NSPoint(x: scrollX + gutterWidth - 12, y: y + lineHeight / 2),
+					at: NSPoint(x: scrollX + gutterWidth - Self.foldColumnWidth / 2, y: y + lineHeight / 2),
 					collapsed: folding.isCollapsed(line: docLine)
 				)
 			}
@@ -1087,51 +1120,94 @@ final class CodeView: NSView, NSTextInputClient {
 		triangle.fill()
 	}
 
-	private func drawBreakpoint(docLine: Int, y: CGFloat, scrollX: CGFloat) {
-		let size = Theme.current.scaled(9)
-		let centre = NSPoint(
-			x: scrollX + Self.breakpointColumnWidth / 2,
-			y: y + lineHeight / 2
+	/// Which part of the gutter a point is in.
+	private enum GutterZone {
+		/// The play triangle's strip, on the far left.
+		case run
+		/// The line number: where a breakpoint is made, and where its marker is.
+		case number
+		/// The chevron at the right, which folds and nothing else.
+		case fold
+	}
+
+	private func gutterZone(at point: NSPoint, scrollX: CGFloat) -> GutterZone {
+		if point.x >= scrollX + gutterWidth - Self.foldColumnWidth { return .fold }
+		if point.x < scrollX + blameWidth + Self.breakpointColumnWidth { return .run }
+		return .number
+	}
+
+	/// The tag behind a line number, the way Xcode marks a breakpoint.
+	///
+	/// The number sits inside it rather than beside it: the marker is the line
+	/// number, which is why clicking the number is how one is made and why
+	/// there is no separate little dot to aim at.
+	private func breakpointTag(y: CGFloat, scrollX: CGFloat) -> NSBezierPath {
+		let left = scrollX + blameWidth + Self.gutterPadding / 2
+		let right = scrollX + gutterWidth - Self.foldColumnWidth
+		let rect = NSRect(
+			x: left,
+			y: y + Theme.current.scaled(1.5),
+			width: max(10, right - left),
+			height: lineHeight - Theme.current.scaled(3)
 		)
+		let radius = Theme.current.scaled(3)
+		let point = min(Theme.current.scaled(6), rect.height / 2)
 
-		if let verified = breakpointLines[docLine] {
-			let rect = NSRect(x: centre.x - size / 2, y: centre.y - size / 2, width: size, height: size)
-			let path = NSBezierPath(ovalIn: rect)
-			if verified {
-				NSColor.hex(0xD16969).setFill()
-				path.fill()
-			} else {
-				// Hollow when unbound: a solid marker where execution can never
-				// stop would be a lie.
-				NSColor.hex(0xD16969).withAlphaComponent(0.7).setStroke()
-				path.lineWidth = 1.5
-				path.stroke()
-			}
+		// Rounded on the left, pointed on the right — a tag pointing at the
+		// line it stops on.
+		let path = NSBezierPath()
+		path.move(to: NSPoint(x: rect.minX + radius, y: rect.minY))
+		path.line(to: NSPoint(x: rect.maxX - point, y: rect.minY))
+		path.line(to: NSPoint(x: rect.maxX, y: rect.midY))
+		path.line(to: NSPoint(x: rect.maxX - point, y: rect.maxY))
+		path.line(to: NSPoint(x: rect.minX + radius, y: rect.maxY))
+		path.appendArc(
+			withCenter: NSPoint(x: rect.minX + radius, y: rect.maxY - radius),
+			radius: radius, startAngle: 90, endAngle: 180
+		)
+		path.appendArc(
+			withCenter: NSPoint(x: rect.minX + radius, y: rect.minY + radius),
+			radius: radius, startAngle: 180, endAngle: 270
+		)
+		path.close()
+		return path
+	}
 
-			// A conditional breakpoint is marked, because "why did it not
-			// stop" and "why did it stop" are both answered by remembering
-			// that this one has a condition on it.
-			if conditionalBreakpointLines.contains(docLine) {
-				let tick = NSBezierPath()
-				tick.lineWidth = 1.6
-				tick.move(to: NSPoint(x: rect.minX + 1.5, y: rect.midY + 1))
-				tick.line(to: NSPoint(x: rect.midX, y: rect.maxY - 1.5))
-				tick.line(to: NSPoint(x: rect.maxX - 1, y: rect.minY + 1.5))
-				(verified ? NSColor.hex(0x2B2B2B) : NSColor.hex(0xD16969)).setStroke()
-				tick.stroke()
+	private func drawBreakpoint(docLine: Int, y: CGFloat, scrollX: CGFloat) {
+		guard let mark = breakpointLines[docLine] else { return }
+
+		let tag = breakpointTag(y: y, scrollX: scrollX - blameWidth)
+		let colour = NSColor.hex(0x4C7EDB)
+
+		if mark.isEnabled {
+			(mark.isVerified ? colour : colour.withAlphaComponent(0.75)).setFill()
+			tag.fill()
+			if !mark.isVerified {
+				// Not bound: outlined rather than solid, since execution cannot
+				// actually stop there yet.
+				colour.setStroke()
+				tag.lineWidth = 1
+				tag.stroke()
 			}
+		} else {
+			// Off, but still there: pale, the way Xcode leaves one you have
+			// switched off rather than deleted.
+			colour.withAlphaComponent(0.28).setFill()
+			tag.fill()
 		}
 
-		guard docLine == executionLine else { return }
-		// A small arrow marking the current statement.
-		let arrow = NSBezierPath()
-		let half = size / 2
-		arrow.move(to: NSPoint(x: centre.x - half, y: centre.y - half))
-		arrow.line(to: NSPoint(x: centre.x + half, y: centre.y))
-		arrow.line(to: NSPoint(x: centre.x - half, y: centre.y + half))
-		arrow.close()
-		NSColor.hex(0xE8BF6A).setFill()
-		arrow.fill()
+		// A conditional breakpoint says so, because "why did it not stop" and
+		// "why did it stop" are both answered by remembering it has a
+		// condition on it.
+		guard mark.isConditional else { return }
+		let dot = NSRect(
+			x: tag.bounds.minX + Theme.current.scaled(3),
+			y: tag.bounds.midY - Theme.current.scaled(1.5),
+			width: Theme.current.scaled(3),
+			height: Theme.current.scaled(3)
+		)
+		(mark.isEnabled ? NSColor.white : colour).setFill()
+		NSBezierPath(ovalIn: dot).fill()
 	}
 
 	private func drawFoldHandle(at center: NSPoint, collapsed: Bool) {
@@ -1291,11 +1367,12 @@ final class CodeView: NSView, NSTextInputClient {
 		}
 	}
 
-	/// Breakpoints to draw, keyed by 0-based line, with whether the adapter
-	/// verified each one.
-	func setBreakpoints(_ lines: [Int: Bool]) {
+	/// Breakpoints to draw, keyed by 0-based line.
+	func setBreakpoints(_ lines: [Int: BreakpointMark]) {
+		guard lines != breakpointLines else { return }
 		breakpointLines = lines
 		needsDisplay = true
+		window?.invalidateCursorRects(for: self)
 	}
 
 	/// The line execution is stopped on, or nil when not stopped here.
@@ -1460,9 +1537,13 @@ final class CodeView: NSView, NSTextInputClient {
 
 	// MARK: - Mouse
 
+	/// The breakpoint being dragged out of the gutter, if one is.
+	private var draggingBreakpointLine: Int?
+
 	override func mouseDown(with event: NSEvent) {
 		window?.makeFirstResponder(self)
 		let point = convert(event.locationInWindow, from: nil)
+		draggingBreakpointLine = nil
 
 		// Gutter clicks toggle folds rather than moving the caret. The gutter is
 		// pinned to the clip view, so its hit area moves with horizontal scroll.
@@ -1500,12 +1581,13 @@ final class CodeView: NSView, NSTextInputClient {
 		let point = convert(event.locationInWindow, from: nil)
 		let scrollX = enclosingScrollView?.contentView.bounds.origin.x ?? 0
 
-		// A right-click in the breakpoint column edits that breakpoint. It is
-		// where the breakpoint is, so it is where somebody aims to change it.
-		if point.x < scrollX + Self.breakpointColumnWidth, let document {
+		// A right-click on a marker offers what can be done to it. It is where
+		// the breakpoint is, so it is where somebody aims to change it.
+		if point.x < scrollX + gutterWidth - Self.foldColumnWidth, let document {
 			let visual = max(0, min(visibleLineCount - 1, Int(floor(point.y / lineHeight))))
 			let docLine = min(document.lineCount - 1, documentLine(forVisualRow: visual))
-			onEditBreakpoint?(docLine)
+			guard let mark = breakpointLines[docLine] else { return }
+			showBreakpointMenu(for: docLine, mark: mark, event: event)
 			return
 		}
 
@@ -1516,6 +1598,42 @@ final class CodeView: NSView, NSTextInputClient {
 			setCaret(offset(at: point), extendingSelection: false)
 		}
 		super.rightMouseDown(with: event)
+	}
+
+	/// What can be done to the breakpoint that was right-clicked.
+	private func showBreakpointMenu(for docLine: Int, mark: BreakpointMark, event: NSEvent) {
+		let menu = NSMenu()
+		func add(_ title: String, _ action: @escaping () -> Void) {
+			let item = NSMenuItem(title: title, action: #selector(runBlock(_:)), keyEquivalent: "")
+			item.target = self
+			item.representedObject = Block(action)
+			menu.addItem(item)
+		}
+
+		add("Edit Breakpoint…") { [weak self] in self?.onEditBreakpoint?(docLine) }
+		add(mark.isEnabled ? "Disable Breakpoint" : "Enable Breakpoint") { [weak self] in
+			self?.onSetBreakpointEnabled?(docLine, !mark.isEnabled)
+		}
+		add("Disable Other Breakpoints") { [weak self] in
+			self?.onSetOtherBreakpointsEnabled?(docLine, false)
+		}
+		add("Enable Other Breakpoints") { [weak self] in
+			self?.onSetOtherBreakpointsEnabled?(docLine, true)
+		}
+		menu.addItem(.separator())
+		add("Delete Breakpoint") { [weak self] in self?.onDeleteBreakpoint?(docLine) }
+
+		NSMenu.popUpContextMenu(menu, with: event, for: self)
+	}
+
+	/// A closure a menu item can carry, since `NSMenuItem` takes a selector.
+	private final class Block: NSObject {
+		let run: () -> Void
+		init(_ run: @escaping () -> Void) { self.run = run }
+	}
+
+	@objc private func runBlock(_ sender: NSMenuItem) {
+		(sender.representedObject as? Block)?.run()
 	}
 
 	override func menu(for event: NSEvent) -> NSMenu? {
@@ -1568,8 +1686,34 @@ final class CodeView: NSView, NSTextInputClient {
 
 	override func mouseDragged(with event: NSEvent) {
 		let point = convert(event.locationInWindow, from: nil)
+
+		// A marker dragged out of the gutter is thrown away, as it is in
+		// Xcode. Well clear of it: a wobble while clicking is not somebody
+		// deleting a breakpoint.
+		if let line = draggingBreakpointLine {
+			let scrollX = enclosingScrollView?.contentView.bounds.origin.x ?? 0
+			guard point.x > scrollX + gutterWidth + Theme.current.scaled(24) else { return }
+
+			draggingBreakpointLine = nil
+			onDeleteBreakpoint?(line)
+			// The puff Xcode shows: a marker that simply vanishes reads as a
+			// misclick rather than as something done on purpose.
+			if let window {
+				NSAnimationEffect.disappearingItemDefault.show(
+					centeredAt: window.convertPoint(toScreen: convert(point, to: nil)),
+					size: NSSize(width: Theme.current.scaled(26), height: lineHeight)
+				)
+			}
+			return
+		}
+
 		guard point.x >= gutterWidth || caret != selectionAnchor else { return }
 		setCaret(offset(at: point), extendingSelection: true)
+	}
+
+	override func mouseUp(with event: NSEvent) {
+		draggingBreakpointLine = nil
+		super.mouseUp(with: event)
 	}
 
 	private func handleGutterClick(at point: NSPoint) {
@@ -1588,21 +1732,34 @@ final class CodeView: NSView, NSTextInputClient {
 
 		// The leftmost strip is the breakpoint column, or the run button when
 		// the line has one.
-		if point.x < scrollX + blameWidth + Self.breakpointColumnWidth {
+		switch gutterZone(at: point, scrollX: scrollX) {
+		case .run:
 			if runnableLines.contains(docLine + 1), breakpointLines[docLine] == nil {
 				onRunLine?(docLine + 1)
+			}
+
+		case .number:
+			// Held on an existing marker, this may become a drag out of the
+			// gutter, which is how one is thrown away.
+			if breakpointLines[docLine] != nil { draggingBreakpointLine = docLine }
+			// Xcode's rule: clicking the number makes a breakpoint, and
+			// clicking the marker that is already there turns it off rather
+			// than throwing it away — deleting is dragging it out, or the menu.
+			if let mark = breakpointLines[docLine] {
+				onSetBreakpointEnabled?(docLine, !mark.isEnabled)
 			} else {
 				onToggleBreakpoint?(docLine)
 			}
-			return
+
+		case .fold:
+			// Only here. The line number belongs to breakpoints now, and a
+			// click that folded the code somebody was aiming a breakpoint at
+			// would be maddening.
+			guard folding.isFoldable(line: docLine) else { return }
+			folding.toggle(line: docLine)
+			updateFrameSize()
+			needsDisplay = true
 		}
-
-
-		guard folding.isFoldable(line: docLine) else { return }
-
-		folding.toggle(line: docLine)
-		updateFrameSize()
-		needsDisplay = true
 	}
 
 	private func selectWord(at offset: Int) {

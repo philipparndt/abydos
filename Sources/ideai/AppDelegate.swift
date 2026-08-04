@@ -564,6 +564,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let line = options.disabledBreakpointLine {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
+				controller?.disableBreakpointForTesting(line: line)
+			}
+		}
+
 		if let move = options.dragTmuxTab {
 			let parts = move.split(separator: ":").compactMap { Int($0) }
 			DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {

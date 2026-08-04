@@ -1,0 +1,13 @@
+{
+  "ideai.make" : {
+    "directory" : "${workspaceFolder}",
+    "targets" : [
+      "devpod-chart",
+      "build"
+    ]
+  },
+  "name" : "make run",
+  "program" : "${workspaceFolder}/build/ideai.app/Contents/MacOS/ideai",
+  "request" : "launch",
+  "type" : "lldb"
+}

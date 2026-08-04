@@ -237,6 +237,8 @@ struct LaunchOptions {
 	var chooseMakeRun: String?
 	/// Drag a tmux tab from one position to another: "from:to".
 	var dragTmuxTab: String?
+	/// Set a breakpoint on this line and turn it off, to see how it is drawn.
+	var disabledBreakpointLine: Int?
 
 	static func parse(_ arguments: [String] = CommandLine.arguments) -> LaunchOptions {
 		var options = LaunchOptions()
@@ -350,6 +352,7 @@ struct LaunchOptions {
 			case "--maximize-terminal": options.maximizeTerminal = true
 			case "--follow-terminal": options.followTerminal = true
 			case "--breakpoint": options.breakpointLine = next().flatMap(Int.init)
+			case "--breakpoint-off": options.disabledBreakpointLine = next().flatMap(Int.init)
 			case "--find":       options.findQuery = next()
 			case "--search":     options.searchQuery = next()
 			case "--wrap":       options.wordWrap = true

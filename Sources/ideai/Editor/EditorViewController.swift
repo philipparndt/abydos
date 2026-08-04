@@ -106,6 +106,12 @@ final class EditorViewController: NSViewController {
 	var onToggleBreakpoint: ((URL, Int) -> Void)?
 	/// Right-clicked a breakpoint: edit what it does. 1-based line.
 	var onEditBreakpoint: ((URL, Int) -> Void)?
+	/// Clicked a marker, or chose enable/disable from its menu. 1-based line.
+	var onSetBreakpointEnabled: ((URL, Int, Bool) -> Void)?
+	/// Dragged a marker out of the gutter, or chose Delete. 1-based line.
+	var onDeleteBreakpoint: ((URL, Int) -> Void)?
+	/// Chose to disable — or enable — every breakpoint but this one.
+	var onSetOtherBreakpointsEnabled: ((URL, Int, Bool) -> Void)?
 	/// Asked for everywhere a symbol is used, at a zero-based position.
 	var onFindUsages: ((URL, Int, Int) -> Void)?
 	/// Asked to put an agent on a problem: the file, the line, and what the
@@ -151,7 +157,7 @@ final class EditorViewController: NSViewController {
 	var activeDocument: TextDocument? { activeTab?.document }
 
 	/// Breakpoints to draw, per absolute file path, with verification state.
-	private var breakpointsByFile: [String: [Int: Bool]] = [:]
+	private var breakpointsByFile: [String: [Int: CodeView.BreakpointMark]] = [:]
 	private var runnableLinesByFile: [String: Set<Int>] = [:]
 	/// Where execution is currently stopped.
 	private var executionLocation: (file: String, line: Int)?
@@ -311,6 +317,18 @@ final class EditorViewController: NSViewController {
 		tab.codeView?.onDirtyChanged = { [weak self, weak tab] _ in
 			tab?.isPreview = false
 			self?.refreshTabBar()
+		}
+		tab.codeView?.onSetBreakpointEnabled = { [weak self, weak tab] line, enabled in
+			guard let tab else { return }
+			self?.onSetBreakpointEnabled?(tab.url, line + 1, enabled)
+		}
+		tab.codeView?.onDeleteBreakpoint = { [weak self, weak tab] line in
+			guard let tab else { return }
+			self?.onDeleteBreakpoint?(tab.url, line + 1)
+		}
+		tab.codeView?.onSetOtherBreakpointsEnabled = { [weak self, weak tab] line, enabled in
+			guard let tab else { return }
+			self?.onSetOtherBreakpointsEnabled?(tab.url, line + 1, enabled)
 		}
 		tab.codeView?.onToggleBreakpoint = { [weak self, weak tab] line in
 			guard let tab else { return }
@@ -747,6 +765,15 @@ final class EditorViewController: NSViewController {
 		codeView.onEditBreakpoint = { [weak self] line in
 			self?.onEditBreakpoint?(fileURL, line + 1)
 		}
+		codeView.onSetBreakpointEnabled = { [weak self] line, enabled in
+			self?.onSetBreakpointEnabled?(fileURL, line + 1, enabled)
+		}
+		codeView.onDeleteBreakpoint = { [weak self] line in
+			self?.onDeleteBreakpoint?(fileURL, line + 1)
+		}
+		codeView.onSetOtherBreakpointsEnabled = { [weak self] line, enabled in
+			self?.onSetOtherBreakpointsEnabled?(fileURL, line + 1, enabled)
+		}
 		codeView.onRunLine = { [weak self] line in
 			// Already 1-based: the gutter converts before reporting a run.
 			self?.onRunLine?(fileURL, line)
@@ -1009,7 +1036,7 @@ final class EditorViewController: NSViewController {
 	// MARK: - Debugging
 
 	/// Sets the breakpoints to draw, keyed by absolute path.
-	func setBreakpoints(_ breakpoints: [String: [Int: Bool]]) {
+	func setBreakpoints(_ breakpoints: [String: [Int: CodeView.BreakpointMark]]) {
 		breakpointsByFile = breakpoints
 		for tab in tabs { applyDebugState(to: tab) }
 	}
@@ -1039,9 +1066,9 @@ final class EditorViewController: NSViewController {
 		// always converted — breakpoints did not, so every marker was drawn one
 		// line below the line it was set on.
 		let stored = breakpointsByFile[path] ?? [:]
-		codeView.setBreakpoints(
-			Dictionary(uniqueKeysWithValues: stored.map { ($0.key - 1, $0.value) })
-		)
+		var marks: [Int: CodeView.BreakpointMark] = [:]
+		for (line, mark) in stored { marks[line - 1] = mark }
+		codeView.setBreakpoints(marks)
 		// Keyed by the resolved path: /tmp is a symlink to /private/tmp, and a
 		// project reached through any symlinked directory would otherwise match
 		// nothing and silently show no play buttons.
