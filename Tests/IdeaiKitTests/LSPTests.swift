@@ -562,6 +562,40 @@ struct LanguageServerSuggestionTests {
 	}
 }
 
+/// Which shell a run console runs a command line in.
+///
+/// The failure this exists for: `make run` printed `pnpm: command not found`
+/// for a `pnpm` that `which` finds one tab away. The console used `sh -lc`,
+/// which reads `/etc/profile` and `~/.profile` — and fnm, nvm, mise, asdf and
+/// pnpm all write to `~/.zshrc`, which only an interactive shell reads. fnm
+/// makes it worse by putting its binaries in a directory belonging to one shell
+/// session, so a PATH inherited at launch goes stale when that terminal closes:
+/// the same command worked in the morning and failed in the afternoon.
+struct UserShellTests {
+	@Test func runsACommandInTheUsersOwnShell() {
+		let zsh = UserShell.invocation(for: "make run", shell: "/bin/zsh")
+		#expect(zsh.executable == "/bin/zsh")
+		// Login *and* interactive: the file the tools write to is only read by
+		// an interactive shell, and a run console is a real terminal.
+		#expect(zsh.arguments == ["-lic", "make run"])
+
+		let fish = UserShell.invocation(for: "make run", shell: "/opt/homebrew/bin/fish")
+		#expect(fish.arguments == ["-lic", "make run"])
+	}
+
+	/// `sh` has no interactive-only startup file, so `-i` would buy nothing and
+	/// turn on job-control noise.
+	@Test func plainShellsAreNotAskedToBeInteractive() {
+		#expect(UserShell.invocation(for: "ls", shell: "/bin/sh").arguments == ["-lc", "ls"])
+		#expect(UserShell.invocation(for: "ls", shell: "/bin/dash").arguments == ["-lc", "ls"])
+	}
+
+	@Test func fallsBackToASensibleShell() {
+		#expect(!UserShell.path.isEmpty)
+		#expect(UserShell.path.hasPrefix("/"))
+	}
+}
+
 /// The environment a server is started in.
 ///
 /// The failure this exists for: `gopls` was found, started, and answered the

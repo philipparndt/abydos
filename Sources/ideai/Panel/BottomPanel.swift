@@ -1444,10 +1444,16 @@ final class BottomPanel: NSView {
 			.joined(separator: " ")
 		let line = assignments.isEmpty ? command : "env \(assignments) \(command)"
 
+		// The user's own shell, logged in and interactive — the same one a
+		// terminal pane runs, and for the same reason. `/bin/sh -lc` reads
+		// `/etc/profile` and nothing a version manager has ever written to, so
+		// `make run` here failed on a `pnpm` that the same command finds when
+		// typed one tab away.
+		let shell = UserShell.invocation(for: line)
 		return runCommand(
 			title: title,
-			executable: "/bin/sh",
-			arguments: ["-lc", line],
+			executable: shell.executable,
+			arguments: shell.arguments,
 			workingDirectory: directory,
 			reusing: key
 		)
