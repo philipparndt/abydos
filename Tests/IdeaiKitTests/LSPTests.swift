@@ -466,3 +466,110 @@ struct LanguageServerRootTests {
 		#expect(resolved.root.lastPathComponent == "app")
 	}
 }
+
+/// The environment a server is started in.
+///
+/// The failure this exists for: `gopls` was found, started, and answered the
+/// handshake — and then could not run `go`, because an app launched from the
+/// Dock has `/usr/bin:/bin` and the two sbins. What it says then is "No active
+/// builds contain main.go", which reads as a fact about the project. Nothing
+/// about the editor said otherwise: diagnostics appeared, and every question
+/// about a symbol came back empty.
+struct LanguageServerEnvironmentTests {
+	@Test func putsTheToolchainOnThePath() {
+		let path = LanguageServers.serverEnvironment["PATH"] ?? ""
+		let directories = path.split(separator: ":").map(String.init)
+
+		// Where a compiler actually lives, whichever of these this machine
+		// uses.
+		#expect(directories.contains("/opt/homebrew/bin"))
+		#expect(directories.contains("/usr/local/bin"))
+		#expect(directories.contains("/usr/local/go/bin"))
+		#expect(directories.contains(NSHomeDirectory() + "/go/bin"))
+	}
+
+	/// A `PATH` somebody set deliberately still chooses the toolchain: the
+	/// directories added here go after it, not in front of it.
+	@Test func keepsTheInheritedPathFirst() {
+		let inherited = ProcessInfo.processInfo.environment["PATH"]?
+			.split(separator: ":").map(String.init) ?? []
+		let resolved = (LanguageServers.serverEnvironment["PATH"] ?? "")
+			.split(separator: ":").map(String.init)
+
+		guard let first = inherited.first else { return }
+		#expect(resolved.first == first)
+	}
+
+	/// Everything else the process has — `HOME`, the Go module cache, whatever
+	/// a toolchain manager set — is carried across untouched. A server started
+	/// with only a `PATH` is a server with no `HOME`, and Go puts its cache in
+	/// one.
+	@Test func carriesTheRestOfTheEnvironment() {
+		let environment = LanguageServers.serverEnvironment
+		#expect(environment["HOME"] == ProcessInfo.processInfo.environment["HOME"])
+	}
+
+	/// A server explains itself on standard error, and that used to be read and
+	/// dropped — the one place some of them say why they are about to be
+	/// useless.
+	@Test func handsOnWhatTheServerWroteToStandardError() async throws {
+		let client = LSPClient()
+		defer { client.stop() }
+
+		let said = Mailbox()
+		client.callbackQueue = .main
+		client.onStandardError = { text in Task { await said.put(text) } }
+
+		try client.start(
+			executable: "/bin/sh",
+			arguments: ["-c", "echo 'cannot find the toolchain' >&2; sleep 2"],
+			workingDirectory: nil
+		)
+
+		#expect(await said.wait(seconds: 3)?.contains("cannot find the toolchain") == true)
+	}
+}
+
+/// One value, awaited until it arrives.
+private actor Mailbox {
+	private var value: String?
+
+	func put(_ text: String) { value = value ?? text }
+
+	func wait(seconds: Double) async -> String? {
+		let deadline = Date().addingTimeInterval(seconds)
+		while Date() < deadline {
+			if let value { return value }
+			try? await Task.sleep(nanoseconds: 50_000_000)
+		}
+		return value
+	}
+}
+
+/// The log that makes a failure on somebody else's machine reportable.
+struct DiagnosticLogTests {
+	@Test func writesALineAndStartsAgainWhenItGrows() throws {
+		let name = "test-\(UUID().uuidString)"
+		let file = DiagnosticLog.url(name)
+		defer {
+			try? FileManager.default.removeItem(at: file)
+			try? FileManager.default.removeItem(at: file.appendingPathExtension("1"))
+		}
+
+		DiagnosticLog.write("gopls started", to: name)
+		let written = try String(contentsOf: file, encoding: .utf8)
+		#expect(written.contains("gopls started"))
+		// Stamped, so two runs of the same failure can be told apart.
+		#expect(written.hasPrefix("20"))
+
+		// Past the limit the log starts again, with the old one beside it.
+		try String(repeating: "x", count: DiagnosticLog.sizeLimit + 1)
+			.write(to: file, atomically: true, encoding: .utf8)
+		DiagnosticLog.write("gopls exited", to: name)
+
+		let fresh = try String(contentsOf: file, encoding: .utf8)
+		#expect(fresh.contains("gopls exited"))
+		#expect(!fresh.contains("xxxx"))
+		#expect(FileManager.default.fileExists(atPath: file.appendingPathExtension("1").path))
+	}
+}

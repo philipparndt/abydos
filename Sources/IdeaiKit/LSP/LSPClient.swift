@@ -30,6 +30,14 @@ public final class LSPClient: @unchecked Sendable {
 	public var onDiagnostics: ((_ uri: String, _ diagnostics: [LSPDiagnostic]) -> Void)?
 	/// The server said something to the user — a progress note, a warning.
 	public var onMessage: ((_ level: Int, _ text: String) -> Void)?
+	/// What the server wrote to its standard error.
+	///
+	/// Not protocol traffic and not shown to anybody, but it is where a server
+	/// says why it is about to be useless — a toolchain it cannot run, a
+	/// configuration it will not accept. It used to be read and dropped on the
+	/// floor, which is the same as not reading it except that it looked
+	/// deliberate.
+	public var onStandardError: ((String) -> Void)?
 	public var onExit: (() -> Void)?
 
 	public var callbackQueue: DispatchQueue = .main
@@ -96,11 +104,18 @@ public final class LSPClient: @unchecked Sendable {
 		process.standardInput = input
 		process.standardOutput = output
 		// A server's own logging is not protocol traffic. Drained rather than
-		// inherited: a full pipe would block the server mid-answer.
+		// inherited: a full pipe would block the server mid-answer. Drained into
+		// the log rather than into nothing, because it is the only place some
+		// servers explain themselves.
 		let errors = Pipe()
 		process.standardError = errors
-		errors.fileHandleForReading.readabilityHandler = { handle in
-			_ = handle.availableData
+		errors.fileHandleForReading.readabilityHandler = { [weak self] handle in
+			let data = handle.availableData
+			guard !data.isEmpty, let self else { return }
+			guard let text = String(data: data, encoding: .utf8) else { return }
+			let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+			guard !trimmed.isEmpty else { return }
+			self.callbackQueue.async { self.onStandardError?(trimmed) }
 		}
 
 		output.fileHandleForReading.readabilityHandler = { [weak self] handle in

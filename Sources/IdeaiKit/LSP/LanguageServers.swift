@@ -118,21 +118,45 @@ public enum LanguageServers {
 		if let environment = ProcessInfo.processInfo.environment["PATH"] {
 			paths += environment.split(separator: ":").map(String.init)
 		}
+		paths += toolDirectories
 
+		var seen = Set<String>()
+		return paths.filter { seen.insert($0).inserted }
+	}
+
+	/// Where a toolchain lives when `PATH` does not say.
+	public static var toolDirectories: [String] {
 		let home = FileManager.default.homeDirectoryForCurrentUser.path
-		paths += [
+		return [
 			"/opt/homebrew/bin",
 			"/usr/local/bin",
 			"/usr/bin",
+			"/bin",
+			"/usr/local/go/bin",
 			"\(home)/go/bin",
 			"\(home)/.cargo/bin",
 			"\(home)/.local/bin",
 			"\(home)/.bun/bin",
 			"\(home)/.volta/bin",
 		]
+	}
 
-		var seen = Set<String>()
-		return paths.filter { seen.insert($0).inserted }
+	/// The environment to start a server in.
+	///
+	/// Finding the server is only half of it: a language server is a front end
+	/// for a compiler, and it shells out to the one on its `PATH`. An app
+	/// launched from the Dock has `/usr/bin:/bin` and the two sbins — so `gopls`
+	/// starts, answers the handshake, and then cannot run `go`. What it says
+	/// then is "No active builds contain main.go", which sounds like a fact
+	/// about the project rather than about this app's environment, and the
+	/// symptom is an editor that shows diagnostics and answers nothing else.
+	///
+	/// The same directories the server itself was found in, appended rather than
+	/// prepended: a `PATH` somebody set deliberately still chooses the toolchain.
+	public static var serverEnvironment: [String: String] {
+		var environment = ProcessInfo.processInfo.environment
+		environment["PATH"] = searchPaths.joined(separator: ":")
+		return environment
 	}
 
 	private static func xcrunPath(for tool: String) -> String? {

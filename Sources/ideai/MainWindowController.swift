@@ -305,11 +305,27 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	/// Shows a toast raised from somewhere with no window of its own.
 	///
-	/// Only the key window, so a message does not appear three times on a
-	/// machine with three of them open.
+	/// Exactly one window says it, so a message does not appear three times on
+	/// a machine with three of them open.
 	@objc private func toastPosted(_ notification: Notification) {
-		guard window?.isKeyWindow == true, let toast = notification.userInfo?["toast"] as? Toast else { return }
+		guard speaksForTheApp, let toast = notification.userInfo?["toast"] as? Toast else { return }
 		toasts.show(toast)
+	}
+
+	/// Whether this window is the one to say something the whole app has to
+	/// say.
+	///
+	/// The key window when there is one. When there is not — the app is in the
+	/// background, which is exactly where it is while a language server takes
+	/// its first few seconds to fail — the frontmost window says it instead,
+	/// and it is still there when somebody comes back. "Only the key window"
+	/// meant that news dropped silently whenever nobody was looking, which is
+	/// most of the time news arrives.
+	private var speaksForTheApp: Bool {
+		guard let window else { return false }
+		if let key = NSApp.keyWindow { return window === key }
+		if let main = NSApp.mainWindow { return window === main }
+		return window === NSApp.orderedWindows.first(where: { $0.isVisible })
 	}
 
 	// MARK: - Init
@@ -2694,6 +2710,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			}
 			if let missing = status.missing.first(where: { $0.language == languageId }) {
 				return "No language server for \(missing.language).\n\(missing.hint)"
+			}
+			// A server that has already said it cannot work is the answer to
+			// "why is this empty" — better than the guess that it might still
+			// be starting, which it will never stop doing.
+			if let failure = LanguageService.shared.failures[languageId] {
+				return "The \(languageId) language server cannot read this project.\n\(failure)"
+					+ "\n\n\(LanguageService.logPath) has the rest."
 			}
 			return query.isEmpty
 				? "Nothing declared in this file, or the language server is still starting."

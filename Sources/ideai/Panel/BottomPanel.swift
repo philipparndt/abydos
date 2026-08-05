@@ -797,19 +797,7 @@ final class BottomPanel: NSView {
 	/// same thing. Rather than guess a third time: every press says which
 	/// branch it took and what tmux answered.
 	static func trace(_ message: String) {
-		let directory = FileManager.default.homeDirectoryForCurrentUser
-			.appendingPathComponent("Library/Logs/ideai", isDirectory: true)
-		try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-		let file = directory.appendingPathComponent("tmux.log")
-		let line = "\(Date()) \(message)\n"
-		guard let data = line.data(using: .utf8) else { return }
-		if let handle = try? FileHandle(forWritingTo: file) {
-			handle.seekToEndOfFile()
-			handle.write(data)
-			try? handle.close()
-		} else {
-			try? data.write(to: file)
-		}
+		DiagnosticLog.write(message, to: "tmux")
 	}
 
 	/// Notes that the tabs have just been changed from this side.
