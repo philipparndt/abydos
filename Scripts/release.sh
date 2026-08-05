@@ -33,6 +33,15 @@ DMG="build/ideai-$VERSION.dmg"
 # codesign refuses them ("bundle format unrecognized") and is right to — they
 # are sealed as resources of the app that contains them. Only nested things
 # with a binary inside are signed here.
+#
+# `Contents/MacOS` is in that list for a reason that cost a notarisation: this
+# app ships a second executable there, `ideai-hook`, and it is not a framework,
+# an xpc service, a bundle, a dylib or a .so. Signing the app around it seals
+# it as it is rather than re-signing it, so it kept the ad-hoc signature the
+# bundler gave it and Apple rejected the archive with three errors about one
+# file. Every Mach-O in the bundle has to be signed, whatever it is called.
+MAIN=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$APP/Contents/Info.plist")
+
 echo "==> Signing with: $IDENTITY"
 while IFS= read -r -d '' nested; do
 	if [ -d "$nested" ] && [ ! -d "$nested/Contents/MacOS" ] && [ ! -d "$nested/Versions" ]; then
@@ -42,10 +51,38 @@ while IFS= read -r -d '' nested; do
 	echo "    signed $(basename "$nested")"
 done < <(find "$APP/Contents" \
 	\( -name "*.framework" -o -name "*.xpc" -o -name "*.bundle" \) -type d -print0
-	find "$APP/Contents" \( -name "*.dylib" -o -name "*.so" \) -type f -print0)
+	find "$APP/Contents" \( -name "*.dylib" -o -name "*.so" \) -type f -print0
+	# The helpers beside the main executable, which is signed last with the app.
+	find "$APP/Contents/MacOS" -type f -perm -111 ! -name "$MAIN" -print0)
 
 codesign --force --timestamp --options runtime --sign "$IDENTITY" "$APP"
 codesign --verify --strict --verbose=2 "$APP"
+
+# --- Check before Apple does ------------------------------------------------
+#
+# Notarisation takes minutes and answers "Invalid" with a submission id, and
+# the reason is in a log you have to go and ask for. Every one of those errors
+# is visible here in a second: a Mach-O that is not signed by a Developer ID,
+# or is signed without the hardened runtime, is one Apple will reject.
+echo "==> Checking every Mach-O before uploading"
+FAILED=0
+while IFS= read -r -d '' binary; do
+	file "$binary" | grep -q "Mach-O" || continue
+	DETAILS=$(codesign -dvv "$binary" 2>&1)
+	if ! grep -q "Authority=Developer ID Application" <<< "$DETAILS"; then
+		echo "    NOT signed with a Developer ID: ${binary#"$APP/"}"
+		FAILED=1
+	elif ! grep -q "flags=.*runtime" <<< "$DETAILS"; then
+		echo "    no hardened runtime: ${binary#"$APP/"}"
+		FAILED=1
+	fi
+done < <(find "$APP/Contents" -type f -perm -111 -print0)
+
+if [ "$FAILED" -ne 0 ]; then
+	echo "Stopping: Apple would reject this, and would take several minutes to say so."
+	exit 1
+fi
+echo "    every executable is signed and hardened"
 
 # --- Package ---------------------------------------------------------------
 #
