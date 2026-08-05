@@ -441,6 +441,16 @@ struct LaunchOptions {
 	var isScreenshotRun: Bool { screenshotPath != nil }
 }
 
+/// A view holding something AppKit's own capture cannot see.
+///
+/// `cacheDisplay(in:to:)` walks the view tree and draws what is in it. A
+/// `CAMetalLayer`'s contents are not, so a pane rendering through Metal comes
+/// out empty — and nothing anywhere says why. A view that knows it has such
+/// content answers with a picture of it instead.
+protocol SnapshotDrawable: NSView {
+	func snapshotImage(size: CGSize) -> CGImage?
+}
+
 enum WindowCapture {
 	/// Renders a window to a PNG.
 	///
@@ -468,6 +478,7 @@ enum WindowCapture {
 		target.layoutSubtreeIfNeeded()
 		guard let rep = target.bitmapImageRepForCachingDisplay(in: target.bounds) else { return false }
 		target.cacheDisplay(in: target.bounds, to: rep)
+		drawSnapshots(under: target, into: rep, of: target)
 
 		guard let data = rep.representation(using: .png, properties: [:]) else { return false }
 		do {
@@ -477,5 +488,31 @@ enum WindowCapture {
 			FileHandle.standardError.write(Data("screenshot write failed: \(error)\n".utf8))
 			return false
 		}
+	}
+
+	/// Paints in what the view tree could not draw.
+	///
+	/// After the ordinary capture, because these go *over* the empty rectangles
+	/// it left behind: every view that says it holds Metal content is asked for
+	/// a picture, and it is drawn where that view is.
+	private static func drawSnapshots(under view: NSView, into rep: NSBitmapImageRep, of target: NSView) {
+		var pending: [SnapshotDrawable] = []
+		func collect(_ view: NSView) {
+			if let drawable = view as? SnapshotDrawable { pending.append(drawable) }
+			for subview in view.subviews { collect(subview) }
+		}
+		collect(view)
+		guard !pending.isEmpty, let context = NSGraphicsContext(bitmapImageRep: rep) else { return }
+
+		NSGraphicsContext.saveGraphicsState()
+		NSGraphicsContext.current = context
+		for drawable in pending {
+			let rect = drawable.convert(drawable.bounds, to: target)
+			guard rect.width > 1, rect.height > 1,
+			      let image = drawable.snapshotImage(size: rect.size)
+			else { continue }
+			NSImage(cgImage: image, size: rect.size).draw(in: rect)
+		}
+		NSGraphicsContext.restoreGraphicsState()
 	}
 }

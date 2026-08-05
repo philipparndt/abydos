@@ -1457,7 +1457,9 @@ final class EditorViewController: NSViewController {
 			fileURL: fileURL,
 			embedding: ContentView.EmbeddingOptions(
 				backgroundColor: Theme.current.editorBackground,
-				showsMenuPanel: false
+				showsMenuPanel: false,
+				// Kept so a screenshot of this window can include the model.
+				snapshotHandle: { [weak container] provider in container?.snapshot = provider }
 			)
 		))
 
@@ -2210,9 +2212,18 @@ final class EditorStatusView: NSView {
 /// The preview is a SwiftUI view, and letting it size itself through Auto
 /// Layout puts it in the window's constraint pass — where re-parenting it, as
 /// splitting the editor does, raises.
-private final class ModelContainerView: ColoredView {
+private final class ModelContainerView: ColoredView, SnapshotDrawable {
+	/// GoSTL's way of rendering the current scene into an image.
+	///
+	/// The viewer draws through Metal, and a window capture walks the view
+	/// tree — where a Metal layer's contents are not. Without this the model
+	/// photographs as an empty rectangle.
+	var snapshot: ContentView.EmbeddingOptions.SnapshotProvider?
+
 	override func layout() {
 		super.layout()
 		for subview in subviews { subview.frame = bounds }
 	}
+
+	func snapshotImage(size: CGSize) -> CGImage? { snapshot?(size) }
 }
