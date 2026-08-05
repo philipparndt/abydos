@@ -37,6 +37,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		// writing to ~/.tmux.conf. It is per session now, so that line goes.
 		TmuxSettings.migrateAwayFromConfigEdit()
 
+		// Where the user's tools actually are, asked of their shell before the
+		// first file wants to know.
+		UserShell.warmLoginPath()
+
 		// Claude sessions in the terminal, saying when they need an answer or
 		// have finished. Nothing arrives unless the hooks are installed.
 		let watch = ClaudeWatch()

@@ -50,4 +50,98 @@ public enum UserShell {
 			return (shell, ["-lic", line])
 		}
 	}
+
+	/// The directories on the PATH the person at the keyboard actually has.
+	///
+	/// The same problem the run console had, in the place that looks for a
+	/// language server: a list of well-known directories cannot keep up with
+	/// where version managers put things. `npm install -g
+	/// typescript-language-server` under fnm lands in
+	/// `~/.local/share/fnm/node-versions/v24.15.0/installation/bin`, which no
+	/// fixed list would have guessed, and nvm, mise, asdf, pyenv and rbenv each
+	/// have a layout of their own. Asking the shell is the only answer that
+	/// stays right.
+	///
+	/// Symlinks are resolved, and that is the point rather than tidiness. fnm
+	/// puts a directory belonging to *one shell session* on the PATH —
+	/// `~/.local/state/fnm_multishells/53245_1785944432859/bin` — which is
+	/// created when that shell starts and is not ours to rely on afterwards.
+	/// Resolved, it becomes the version directory it points at, which stays put.
+	///
+	/// Worked out once. Starting an interactive shell means running somebody's
+	/// whole `.zshrc`, which is not free and does not change while the app is
+	/// open.
+	public static let loginPath: [String] = readLoginPath()
+
+	/// Works the PATH out before anything needs it.
+	///
+	/// Whoever asks first pays for it, and the first asker is the editor opening
+	/// a file — on the main thread, where a third of a second spent running
+	/// somebody's `.zshrc` is a visible stall on the very first file of the
+	/// session. Called at launch, the answer is already there.
+	public static func warmLoginPath() {
+		DispatchQueue.global(qos: .utility).async { _ = loginPath }
+	}
+
+	/// Long enough for a slow `.zshrc`, short enough not to be a hang.
+	///
+	/// A startup file can block — waiting on a network mount, on a version
+	/// manager fetching something, on a prompt nobody will answer — and the
+	/// alternative to a timeout is an editor that never opens a file.
+	private static let longestWait: TimeInterval = 5
+
+	private static func readLoginPath() -> [String] {
+		// Fenced, because a startup file is entitled to print things and several
+		// of them do. Without the markers a login banner ends up being treated
+		// as a list of directories.
+		let marker = "__IDEAI_PATH__"
+		let invocation = self.invocation(for: "printf '%s%s%s' '\(marker)' \"$PATH\" '\(marker)'")
+
+		let process = Process()
+		process.executableURL = URL(fileURLWithPath: invocation.executable)
+		process.arguments = invocation.arguments
+		let output = Pipe()
+		process.standardOutput = output
+		process.standardError = Pipe()
+		// No terminal to read from: a startup file that asks a question gets an
+		// immediate end of input rather than waiting for somebody who is not
+		// there.
+		process.standardInput = FileHandle.nullDevice
+
+		guard (try? process.run()) != nil else { return [] }
+
+		// Read on another thread: a shell that writes more than the pipe holds
+		// blocks until somebody drains it, and waiting first would deadlock.
+		var data = Data()
+		let reading = DispatchSemaphore(value: 0)
+		DispatchQueue.global(qos: .userInitiated).async {
+			data = output.fileHandleForReading.readDataToEndOfFile()
+			reading.signal()
+		}
+
+		if reading.wait(timeout: .now() + longestWait) == .timedOut {
+			process.terminate()
+			// Give the read a moment to finish once the pipe closes; if it does
+			// not, there is nothing worth having.
+			guard reading.wait(timeout: .now() + 1) == .success else { return [] }
+		}
+		process.waitUntilExit()
+
+		let text = String(decoding: data, as: UTF8.self)
+		let parts = text.components(separatedBy: marker)
+		guard parts.count >= 3 else { return [] }
+
+		var seen = Set<String>()
+		var directories: [String] = []
+		for entry in parts[1].split(separator: ":").map(String.init) where !entry.isEmpty {
+			// Both forms: the one the shell gave, and the one it points at. The
+			// first is what the user's tools expect to see; the second is what is
+			// still there tomorrow.
+			for candidate in [entry, URL(fileURLWithPath: entry).resolvingSymlinksInPath().path]
+			where seen.insert(candidate).inserted {
+				directories.append(candidate)
+			}
+		}
+		return directories
+	}
 }
