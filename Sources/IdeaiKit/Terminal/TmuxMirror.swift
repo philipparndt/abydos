@@ -259,8 +259,13 @@ public enum TmuxMirror {
 	@discardableResult
 	public static func setStatusBar(_ shown: Bool, inSession session: String) async -> Bool {
 		await succeeds(shown
-			? ["set-option", "-t", "=\(session)", "-u", "status"]
-			: ["set-option", "-t", "=\(session)", "status", "off"])
+			// `=<session>:` — the colon again, and for the same reason as
+			// `new-window`: `set-option`'s target is resolved as a window, and
+			// an exact session name without the colon is "no such session".
+			// Which is silent, because nothing reads this command's stderr, so
+			// the bar simply stayed where it was.
+			? ["set-option", "-t", "=\(session):", "-u", "status"]
+			: ["set-option", "-t", "=\(session):", "status", "off"])
 	}
 
 	/// Whether the server has a session by this name.
