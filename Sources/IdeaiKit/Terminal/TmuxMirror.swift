@@ -257,10 +257,21 @@ public enum TmuxMirror {
 	/// that asks is running before the session it asks about exists. A caller
 	/// that recorded the wish as granted anyway would never ask again.
 	@discardableResult
+	/// Without the `=` every other target here carries.
+	///
+	/// tmux 3.7 rejects it for `set-option` and `show-options` — "no such
+	/// session: =name" — while still accepting it for `list-windows`,
+	/// `new-window` and `display-message`. So the tabs mirrored correctly and
+	/// the status bar quietly never went away, on every session this app
+	/// created, with nothing anywhere saying why.
+	///
+	/// A plain name is a prefix match, which is weaker than what was meant. It
+	/// is safe enough: tmux resolves an exact name before any prefix, so the
+	/// only session this can reach by mistake is one nobody has named exactly.
 	public static func setStatusBar(_ shown: Bool, inSession session: String) async -> Bool {
 		await succeeds(shown
-			? ["set-option", "-t", "=\(session)", "-u", "status"]
-			: ["set-option", "-t", "=\(session)", "status", "off"])
+			? ["set-option", "-t", session, "-u", "status"]
+			: ["set-option", "-t", session, "status", "off"])
 	}
 
 	/// Whether the server has a session by this name.
