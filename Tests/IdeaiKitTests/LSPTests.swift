@@ -467,6 +467,101 @@ struct LanguageServerRootTests {
 	}
 }
 
+/// Offering a server that is not installed.
+///
+/// The bar above the editor is the only place that says why a file has no
+/// completion, no problems and no go-to-declaration — so what it decides to
+/// say, and when it decides to say nothing, is the whole feature.
+struct LanguageServerSuggestionTests {
+	/// Certainly not installed, on this machine or anyone's.
+	private let absent = LanguageServerDefinition(
+		languageIds: ["go"],
+		command: "no-such-language-server-38f1c2",
+		installHint: "go install example.com/no-such-server@latest",
+		rootMarkers: ["go.mod"]
+	)
+
+	private func makeTree(_ paths: [String]) throws -> URL {
+		let root = URL(fileURLWithPath: NSTemporaryDirectory())
+			.appendingPathComponent("suggest-\(UUID().uuidString)")
+		for path in paths {
+			let url = root.appendingPathComponent(path)
+			try FileManager.default.createDirectory(
+				at: url.deletingLastPathComponent(), withIntermediateDirectories: true
+			)
+			try "x".write(to: url, atomically: true, encoding: .utf8)
+		}
+		return root
+	}
+
+	@Test func offersAServerThatIsNotInstalled() throws {
+		let root = try makeTree(["go.mod", "main.go"])
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		let suggestion = LanguageServers.suggestion(
+			absent, forLanguage: "go", root: root, ignoring: []
+		)
+		#expect(suggestion?.command == "no-such-language-server-38f1c2")
+		// Named the way somebody would say it, for a sentence they read once.
+		#expect(suggestion?.languageName == "Go")
+	}
+
+	/// A stray `.go` file in a repository of something else is not a Go project,
+	/// and offering to install a Go server for it is noise about somebody else's
+	/// language.
+	@Test func saysNothingWhereTheProjectIsNotOne() throws {
+		let root = try makeTree(["notes.txt"])
+		defer { try? FileManager.default.removeItem(at: root) }
+		#expect(LanguageServers.suggestion(absent, forLanguage: "go", root: root, ignoring: []) == nil)
+	}
+
+	/// The Ignore button's whole job.
+	@Test func saysNothingAboutAnIgnoredLanguage() throws {
+		let root = try makeTree(["go.mod"])
+		defer { try? FileManager.default.removeItem(at: root) }
+		#expect(
+			LanguageServers.suggestion(absent, forLanguage: "go", root: root, ignoring: ["go"]) == nil
+		)
+	}
+
+	/// An editor that offers to install what you already have is one people
+	/// learn to ignore, so an installed server says nothing at all.
+	@Test func saysNothingWhenTheServerIsInstalled() throws {
+		let root = try makeTree(["go.mod"])
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		let present = LanguageServerDefinition(
+			languageIds: ["go"], command: "sh", installHint: "already here", rootMarkers: ["go.mod"]
+		)
+		#expect(LanguageServers.suggestion(present, forLanguage: "go", root: root, ignoring: []) == nil)
+	}
+
+	/// A language with no server anybody knows about has nothing to offer.
+	@Test func saysNothingAboutALanguageWithNoServer() throws {
+		let root = try makeTree(["notes.txt"])
+		defer { try? FileManager.default.removeItem(at: root) }
+		#expect(LanguageServers.suggestion(forLanguage: "markdown", root: root) == nil)
+	}
+
+	/// What the details panel says has to be actionable on its own: the command
+	/// to run, where the result has to land, and how to check.
+	@Test func theManualSaysWhatToDoAndWhereItGoes() throws {
+		let root = try makeTree(["go.mod"])
+		defer { try? FileManager.default.removeItem(at: root) }
+		let suggestion = try #require(
+			LanguageServers.suggestion(absent, forLanguage: "go", root: root, ignoring: [])
+		)
+
+		let manual = suggestion.manual
+		#expect(manual.contains("go install example.com/no-such-server@latest"))
+		#expect(manual.contains("which no-such-language-server-38f1c2"))
+		// The directories this app searches, which are not the ones a login
+		// shell would — the difference that costs the hours.
+		#expect(manual.contains("/opt/homebrew/bin"))
+		#expect(manual.contains(NSHomeDirectory() + "/go/bin"))
+	}
+}
+
 /// The environment a server is started in.
 ///
 /// The failure this exists for: `gopls` was found, started, and answered the

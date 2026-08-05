@@ -20,6 +20,19 @@ struct SettingsTests {
 		#expect(settings.saveOnFocusLoss)
 	}
 
+	/// Nothing is ignored until somebody says so, and saying so twice is still
+	/// once — the button can be pressed in every window there is.
+	@Test func languageServersAreOfferedUntilIgnored() {
+		let (settings, _) = makeSettings()
+		#expect(settings.ignoredLanguageServers.isEmpty)
+
+		settings.ignoreLanguageServer(for: "typescript")
+		settings.ignoreLanguageServer(for: "python")
+		settings.ignoreLanguageServer(for: "typescript")
+
+		#expect(settings.ignoredLanguageServers == ["python", "typescript"])
+	}
+
 	@Test func hiddenFilesShownByDefault() {
 		let (settings, _) = makeSettings()
 		// .gitignore and .idea are part of a project and appear in IDEA too.

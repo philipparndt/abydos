@@ -67,6 +67,13 @@ final class EditorViewController: NSViewController {
 
 	private var findBar: FindBar!
 	private var findBarHeight: NSLayoutConstraint!
+
+	private var serverBanner: LanguageServerBanner!
+	private var serverBannerHeight: NSLayoutConstraint!
+	/// Languages whose banner was waved away for now. Not written down: "not
+	/// now" means this window, this session — the answer to being asked again
+	/// tomorrow is the Ignore button, which is written down.
+	private var dismissedSuggestions: Set<String> = []
 	/// Matches in the active document, and the one currently selected.
 	private var searchMatches: [SearchMatch] = []
 	private var currentMatchIndex: Int?
@@ -226,10 +233,24 @@ final class EditorViewController: NSViewController {
 		findBar.onPrevious = { [weak self] in self?.stepMatch(by: -1) }
 		findBar.onClose = { [weak self] in self?.closeFind() }
 
+		serverBanner = LanguageServerBanner()
+		serverBanner.isHidden = true
+		serverBanner.onDetails = { [weak self] in self?.showServerManual() }
+		serverBanner.onIgnore = { [weak self] in self?.ignoreServerSuggestion() }
+		serverBanner.onDismiss = { [weak self] in self?.dismissServerSuggestion() }
+
 		NotificationCenter.default.addObserver(
 			self,
 			selector: #selector(diagnosticsChanged(_:)),
 			name: .ideaiDiagnosticsChanged,
+			object: nil
+		)
+		// A server that starts, or is found to be missing, changes what the
+		// banner should say — including making it go away.
+		NotificationCenter.default.addObserver(
+			self,
+			selector: #selector(languageServersChanged),
+			name: .ideaiLanguageServersChanged,
 			object: nil
 		)
 
@@ -246,7 +267,7 @@ final class EditorViewController: NSViewController {
 		scratchButton.bezelStyle = .inline
 		styleScratchButton()
 
-		for subview in [tabBar, findBar, contentArea, placeholder, scratchButton] as [NSView] {
+		for subview in [tabBar, findBar, serverBanner, contentArea, placeholder, scratchButton] as [NSView] {
 			container.addSubview(subview)
 			subview.translatesAutoresizingMaskIntoConstraints = false
 		}
@@ -258,6 +279,7 @@ final class EditorViewController: NSViewController {
 		tabBarHeightConstraint = tabBar.heightAnchor.constraint(equalToConstant: EditorTabBar.height)
 		// Collapsed to zero rather than hidden, so the editor reclaims the space.
 		findBarHeight = findBar.heightAnchor.constraint(equalToConstant: 0)
+		serverBannerHeight = serverBanner.heightAnchor.constraint(equalToConstant: 0)
 
 		NSLayoutConstraint.activate([
 			tabBarTopConstraint,
@@ -270,7 +292,15 @@ final class EditorViewController: NSViewController {
 			findBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
 			findBarHeight,
 
-			contentArea.topAnchor.constraint(equalTo: findBar.bottomAnchor),
+			// Under the find bar, above the file: it is about the file, and it
+			// must not push the thing somebody is searching around while they
+			// search it.
+			serverBanner.topAnchor.constraint(equalTo: findBar.bottomAnchor),
+			serverBanner.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+			serverBanner.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+			serverBannerHeight,
+
+			contentArea.topAnchor.constraint(equalTo: serverBanner.bottomAnchor),
 			contentArea.leadingAnchor.constraint(equalTo: container.leadingAnchor),
 			contentArea.trailingAnchor.constraint(equalTo: container.trailingAnchor),
 			contentArea.bottomAnchor.constraint(equalTo: container.bottomAnchor),
@@ -534,7 +564,87 @@ final class EditorViewController: NSViewController {
 		scratchButton.isHidden = hasTabs
 		tabBar.isHidden = !hasTabs
 		contentArea.isHidden = !hasTabs
+		if !hasTabs { hideServerBanner() }
 		onStatusChanged?(self)
+	}
+
+	// MARK: - The missing-server banner
+
+	@objc private func languageServersChanged() {
+		refreshServerBanner()
+	}
+
+	/// Whether this file's language has a server worth offering, and says so.
+	///
+	/// Asked on every activation rather than once per file: installing the
+	/// server is the whole point of the bar, and somebody who has just done it
+	/// should see it go away by clicking back onto their code rather than by
+	/// restarting the app.
+	private func refreshServerBanner() {
+		guard let project,
+		      let tab = activeTab,
+		      !tab.isDiff,
+		      let languageId = tab.document?.languageId,
+		      !dismissedSuggestions.contains(languageId),
+		      let suggestion = LanguageServers.suggestion(
+		      	forLanguage: languageId,
+		      	root: project.root,
+		      	ignoring: Set(Settings.shared.ignoredLanguageServers)
+		      )
+		else {
+			hideServerBanner()
+			return
+		}
+
+		serverBanner.show(suggestion)
+		serverBanner.isHidden = false
+		serverBannerHeight.constant = LanguageServerBanner.height
+	}
+
+	private func hideServerBanner() {
+		guard serverBanner != nil, !serverBanner.isHidden else { return }
+		serverBanner.isHidden = true
+		serverBannerHeight.constant = 0
+	}
+
+	private func showServerManual() {
+		guard let suggestion = serverBanner.suggestion else { return }
+		DetailDialog(
+			title: "Installing \(suggestion.command)",
+			detail: suggestion.manual,
+			isError: false
+		).show(over: view.window)
+	}
+
+	private func ignoreServerSuggestion() {
+		guard let suggestion = serverBanner.suggestion else { return }
+		Settings.shared.ignoreLanguageServer(for: suggestion.languageId)
+		hideServerBanner()
+		// Every group in every window, not only this one: the answer was about
+		// the language, and being asked again in the split beside it would read
+		// as the button having done nothing.
+		NotificationCenter.default.post(name: .ideaiLanguageServersChanged, object: nil)
+	}
+
+	private func dismissServerSuggestion() {
+		guard let suggestion = serverBanner.suggestion else { return }
+		dismissedSuggestions.insert(suggestion.languageId)
+		hideServerBanner()
+	}
+
+	// MARK: - Testing
+
+	/// What the bar is saying, or that it is not there.
+	var serverBannerReportForTesting: String {
+		serverBanner.isHidden ? "no banner" : serverBanner.textForTesting
+	}
+
+	func pressServerBannerForTesting(_ button: String) {
+		switch button {
+		case "details": serverBanner.pressDetailsForTesting()
+		case "ignore": serverBanner.pressIgnoreForTesting()
+		default: serverBanner.pressDismissForTesting()
+		}
 	}
 
 	/// Distance from the top of the window to the first row of content.
@@ -1472,6 +1582,7 @@ final class EditorViewController: NSViewController {
 		// A binary tab has no language to report.
 		statusLanguage = tab.document?.displayLanguageName
 		onStatusChanged?(self)
+		refreshServerBanner()
 		updateChrome()
 		refreshTabBar()
 		onActivated?(self)
@@ -1935,6 +2046,8 @@ final class EditorViewController: NSViewController {
 		tabBar.applyThemeChange()
 		findBar.applyThemeChange()
 		if !findBar.isHidden { findBarHeight.constant = Theme.current.scaled(34) }
+		serverBanner.applyTheme()
+		if !serverBanner.isHidden { serverBannerHeight.constant = LanguageServerBanner.height }
 		for tab in tabs {
 			tab.codeView?.setWordWrap(Settings.shared.wordWrap)
 			tab.codeView?.applyThemeChange()

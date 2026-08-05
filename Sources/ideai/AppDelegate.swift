@@ -628,6 +628,24 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let goal = options.rerun {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+				controller?.rerunSelectedForTesting(goal == "selected" ? nil : goal)
+			}
+		}
+
+		if let action = options.serverBanner {
+			// After the servers have been looked for, which is what decides
+			// whether there is anything to say.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+				if action == "report" {
+					controller?.reportServerBannerForTesting()
+				} else {
+					controller?.pressServerBannerForTesting(action)
+				}
+			}
+		}
+
 		if let index = options.closeTmuxTab {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
 				controller?.closeTmuxTabForTesting(index)

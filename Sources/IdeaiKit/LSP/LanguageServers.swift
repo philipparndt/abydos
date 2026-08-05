@@ -240,6 +240,98 @@ public enum LanguageServers {
 		return false
 	}
 
+	/// A server that would answer for the file on screen, and is not installed.
+	public struct Suggestion: Equatable, Sendable {
+		public let languageId: String
+		/// What the language is called in a sentence — "Go", not "go".
+		public let languageName: String
+		public let command: String
+		public let installHint: String
+
+		/// The manual, for whoever wants to do something about it.
+		///
+		/// Everything somebody needs and nothing they have to look up: what it
+		/// is for, the one command, where the binary has to end up, and how to
+		/// tell whether it worked. The list of directories is the app's own — a
+		/// GUI app inherits almost no PATH, so "it is on my PATH" and "this app
+		/// can find it" are not the same sentence, and that difference has cost
+		/// real hours.
+		public var manual: String {
+			let directories = LanguageServers.toolDirectories
+				.map { "  \($0)" }
+				.joined(separator: "\n")
+
+			return """
+			\(languageName) files get completion, problems, go-to-declaration and
+			find-usages from \(command), which is not installed on this machine.
+
+			INSTALL
+
+			  \(installHint)
+
+			WHERE IT HAS TO END UP
+
+			This app is usually launched from the Dock, and an app launched that way
+			inherits almost none of a login shell's PATH. So it looks for a server on
+			the PATH it does have, and then in these directories:
+
+			\(directories)
+
+			A server installed by the command above lands in one of them. One built by
+			hand somewhere else will not be found, however well `which \(command)`
+			answers in a terminal.
+
+			CHECKING
+
+			  which \(command)
+
+			AFTERWARDS
+
+			Nothing to restart. The next file of this kind you open starts the server,
+			and this bar stops appearing.
+			"""
+		}
+	}
+
+	/// What is worth saying about the file in front of somebody, if anything.
+	///
+	/// Nil unless all of it holds: this language has a server, this project is
+	/// one that server understands, the server is not installed, and nobody has
+	/// said they do not want to hear about this language. Anything else and
+	/// there is nothing to offer — an editor that suggests installing something
+	/// you already have, or that cannot help with the project you are in, is an
+	/// editor people learn to ignore.
+	///
+	/// `ignoring` is passed in rather than read from the settings so this can
+	/// be decided without one.
+	public static func suggestion(
+		forLanguage languageId: String,
+		root: URL,
+		ignoring: Set<String> = []
+	) -> Suggestion? {
+		guard let definition = definition(forLanguage: languageId) else { return nil }
+		return suggestion(definition, forLanguage: languageId, root: root, ignoring: ignoring)
+	}
+
+	/// Split out so the decision can be tested with a server that is certainly
+	/// missing, on a machine where the real ones may be installed or not.
+	static func suggestion(
+		_ definition: LanguageServerDefinition,
+		forLanguage languageId: String,
+		root: URL,
+		ignoring: Set<String>
+	) -> Suggestion? {
+		guard !ignoring.contains(languageId) else { return nil }
+		guard suits(definition, root: root) else { return nil }
+		guard executable(for: definition) == nil else { return nil }
+		return Suggestion(
+			languageId: languageId,
+			languageName: LanguageRegistry.shared.displayName(for: languageId),
+			command: definition.command,
+			installHint: definition.installHint
+		)
+	}
+
 	/// The server to start for a language in a project, if there is one and it
 	/// is installed.
 	/// The server to start for a language in a project: which one, where it

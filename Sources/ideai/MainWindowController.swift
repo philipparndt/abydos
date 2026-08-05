@@ -5272,6 +5272,33 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		], for: url)
 	}
 
+	/// Presses Run twice on whatever is selected, and says what the panel is
+	/// holding after each — the whole question being whether that is one
+	/// console or two.
+	func rerunSelectedForTesting(_ goal: String?) {
+		if let goal { chooseMakeRunForTesting(goal) }
+		runSelected(nil)
+		DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
+			guard let self else { return }
+			print("RERUN: after one run \(self.bottomPanel.runConsolesForTesting)")
+			self.runSelected(nil)
+			DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
+				print("RERUN: after two runs \(self.bottomPanel.runConsolesForTesting)")
+			}
+		}
+	}
+
+	/// Says whether the missing-server bar is up, and what it says.
+	func reportServerBannerForTesting() {
+		print("BANNER: \(editor.activeGroup?.serverBannerReportForTesting ?? "no editor")")
+	}
+
+	/// Presses one of the bar's buttons: details, ignore, or dismiss.
+	func pressServerBannerForTesting(_ button: String) {
+		editor.activeGroup?.pressServerBannerForTesting(button)
+		print("BANNER: pressed \(button) -> \(editor.activeGroup?.serverBannerReportForTesting ?? "no editor")")
+	}
+
 	/// Says what a real server had to say by the time this ran.
 	func reportDiagnosticsForTesting() {
 		let running = LanguageService.shared.runningNames

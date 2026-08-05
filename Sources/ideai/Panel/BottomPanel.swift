@@ -81,6 +81,10 @@ final class BottomPanel: NSView {
 		/// split, which is the whole of what a split is: some tabs over here
 		/// and some over there.
 		var column = 0
+		/// Which thing this is the console of — a launch configuration, a make
+		/// goal, `go test`. Nil for a plain terminal, which is not the console
+		/// of anything and belongs to whoever opened it.
+		var runKey: String?
 
 		init(title: String, kind: Kind) {
 			self.title = title
@@ -932,6 +936,15 @@ final class BottomPanel: NSView {
 	/// How many panes the panel is holding, so a press that was supposed to
 	/// make a tmux window can be checked for having quietly made a tab.
 	var paneCountForTesting: Int { sessions.count }
+
+	/// The consoles that belong to something being run, and what each is the
+	/// console of.
+	var runConsolesForTesting: String {
+		let consoles = sessions
+			.filter { $0.isRun }
+			.map { "\($0.displayTitle)[\($0.runKey ?? "-")]" }
+		return "\(consoles.count): \(consoles.joined(separator: ", "))"
+	}
 
 	/// Clicks a tab on the panel's own strip and says what that actually
 	/// brought to the front — the two being the same thing is the point.
