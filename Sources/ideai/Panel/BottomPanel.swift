@@ -326,31 +326,32 @@ final class BottomPanel: NSView {
 		}
 		strip.onAdd = { [weak self] in
 			guard let self else { return }
-			// While this panel is a view of tmux, every + in it makes a tmux
-			// window. Both strips, wherever the window list is being drawn.
+			// A + makes another of whatever the tabs beside it are. The tabs on
+			// this strip are the panel's own panes — the terminal attached to
+			// tmux among them, a debugger, a run — so this + makes a terminal,
+			// and the + on tmux's strip below makes a tmux window.
 			//
-			// The + up here used to mean "another terminal of ours" whenever
-			// tmux's windows had a strip of their own — a second meaning for
-			// the same button, decided by a setting, on a strip whose first tab
-			// is the tmux terminal. Pressing it put plain shells in a window
-			// that is supposed to *be* the session, and no amount of pressing
-			// produced the tmux window it looked like it would.
+			// Both meanings have now been on this one button, one after the
+			// other, and each was wrong the same way: the button was told about
+			// tmux rather than about the tabs under it. First it put plain
+			// shells into a strip whose windows were tmux's; then it made tmux
+			// windows from the strip that holds everything except them.
 			//
-			// A panel not mirroring tmux still adds a terminal, which is the
-			// only thing a + can mean there. That is the whole separation:
-			// mirroring or not, rather than mirroring and a preference about
-			// where the tabs are drawn.
+			// The one case where this + does make a window is when tmux's
+			// windows *are* this strip's tabs — the single-strip layout, where
+			// there is no strip below to press.
 			Self.trace(
 				"panel + column=\(column) mirrorsTmux=\(self.mirrorsTmux) "
+					+ "tabsAtBottom=\(Settings.shared.tmuxTabsAtBottom) "
 					+ "strict=\(Settings.shared.strictTmux) starts=\(Settings.shared.startsTmux) "
 					+ "mirrored=\(self.mirroredSession ?? "nil") configured=\(self.tmuxSession ?? "nil")"
 			)
-			if self.mirrorsTmux, column == 0,
+			if self.mirrorsTmux, column == 0, !Settings.shared.tmuxTabsAtBottom,
 			   let session = self.mirroredSession ?? self.tmuxSession {
+				Self.trace("panel + -> tmux window (its windows are this strip's tabs)")
 				self.addTmuxWindow(to: session)
 				return
 			}
-			// The only way a + in this panel makes a plain terminal.
 			Self.trace("panel + -> plain terminal")
 			self.focusedColumn = column
 			self.newTerminal()
@@ -1393,7 +1394,11 @@ final class BottomPanel: NSView {
 			workingDirectory: directory,
 			command: session.map(attachCommand(to:)) ?? (attaches ? startupCommand() : nil)
 		)
-		let session = Session(title: title, kind: .terminal(pane))
+		// The one attached to tmux is called `tmux`, in every project. It was
+		// called after the session — the project's name — which said nothing
+		// about what the tab is, and made the panel's one fixed tab look like a
+		// different tab everywhere.
+		let session = Session(title: attaches ? "tmux" : title, kind: .terminal(pane))
 		if attaches { attachedTerminalID = ObjectIdentifier(session) }
 		session.directory = directory
 		wire(session)
@@ -1861,6 +1866,10 @@ final class BottomPanel: NSView {
 			// A shell reports its running command via the title, which is the
 			// most useful label a terminal tab can carry.
 			guard !session.isRenamed else { return }
+			// Except from tmux, which reports the session and window it is
+			// showing — the tab for the client is called `tmux` and stays that
+			// way, and what it is showing is the strip underneath it.
+			guard ObjectIdentifier(session) != self.attachedTerminalID else { return }
 			let trimmed = title.split(separator: " ").first.map(String.init) ?? title
 			guard !trimmed.isEmpty, session.displayTitle != trimmed else { return }
 			session.displayTitle = trimmed
@@ -2039,15 +2048,23 @@ final class BottomPanel: NSView {
 				}
 
 				if splitStrips {
-					// The terminal itself is one tab up top, called after the
-					// session it is attached to, and tmux's windows are the
-					// strip below it.
+					// The terminal itself is one tab up top, called `tmux`, and
+					// tmux's windows are the strip below it.
+					//
+					// The name is the same in every project. It was the session's
+					// name, which made the one fixed tab of the panel read as a
+					// different thing everywhere — `ideai` beside a debugger says
+					// nothing about what the tab is, and which session it holds is
+					// already written on the tag at the end of the strip below.
+					// A name somebody typed still wins, as everywhere else.
 					// Closable like anything else up here: closing this tab
 					// closes a terminal that is attached to tmux, which costs
 					// nothing — the session and every window in it carry on,
 					// and the tab comes back attached to the same session.
 					var terminal = PanelTabItem(
-						title: mirroredSession ?? tmuxSession ?? "tmux",
+						title: mirroredTerminal?.isRenamed == true
+							? (mirroredTerminal?.displayTitle ?? "tmux")
+							: "tmux",
 						hasExited: mirroredTerminal?.hasExited ?? false,
 						isTerminal: true,
 						symbol: "terminal",
@@ -2460,6 +2477,10 @@ final class BottomPanel: NSView {
 			else { continue }
 			guard let session = sessions.last, session.terminal === pane else { continue }
 			session.isRenamed = terminal.isRenamed
+			// The one that attached to tmux keeps the name it was just given —
+			// `tmux` — unless the stored name was one somebody typed. What it
+			// was called last time was whatever the client happened to report.
+			guard terminal.isRenamed || session !== mirroredTerminal else { continue }
 			session.displayTitle = terminal.name
 		}
 		refreshTabs()
