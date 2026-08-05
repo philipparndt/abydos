@@ -504,6 +504,25 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		// A whole window of a stated size, centred on the screen it is on: two
+		// machines taking the same documentation screenshot should produce the
+		// same image, and the saved frame is per machine.
+		if let size = options.windowSize {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+				guard let window = controller?.window else { return }
+				window.setContentSize(size)
+				window.center()
+			}
+		}
+
+		// The panel, likewise. Its height is remembered per machine, and one
+		// left filling the window hides everything a screenshot is for.
+		if let height = options.panelHeight {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
+				controller?.setPanelHeightForTesting(height)
+			}
+		}
+
 		if let width = options.windowWidth {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
 				guard let window = controller?.window else { return }
@@ -964,6 +983,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 				FileHandle.standardError.write(Data("no window to capture\n".utf8))
 				exit(2)
 			}
+			// Which window this actually is. A capture that photographs the
+			// wrong project is silent otherwise, and one did for an afternoon:
+			// the window followed a restored terminal into another checkout.
+			let title: String = window.title
+			let project: String = controller?.project?.root.lastPathComponent ?? "none"
+			let line = "captured \(title) (project \(project))\n"
+			FileHandle.standardError.write(Data(line.utf8))
 			let ok = WindowCapture.write(window: window, to: path)
 			exit(ok ? 0 : 3)
 		}

@@ -1445,6 +1445,31 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		togglePanelMaximized(nil)
 	}
 
+	/// Puts the panel at a stated height, for a capture that has to look the
+	/// same twice.
+	///
+	/// The split position is remembered per machine, so a screenshot taken
+	/// where somebody had dragged the terminal to the top of the window shows
+	/// the terminal and nothing else. Zero closes it, which is what a shot of
+	/// the editor alone wants.
+	func setPanelHeightForTesting(_ height: Double) {
+		guard height > 0 else {
+			setPanelVisible(false)
+			return
+		}
+		if isPanelMaximized { togglePanelMaximized(nil) }
+		setPanelVisible(true)
+		panelHeight = CGFloat(height)
+
+		DispatchQueue.main.async { [weak self] in
+			guard let self else { return }
+			let total = self.verticalSplitView.bounds.height
+			guard total > 200 else { return }
+			self.verticalSplitView.setPosition(total - CGFloat(height), ofDividerAt: 0)
+			self.tellTerminalsTheySizeChanged()
+		}
+	}
+
 	/// Gives the editor enough of the window to show where execution stopped.
 	///
 	/// Two things can hide the line a breakpoint is on, and both are ordinary:
@@ -1540,6 +1565,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// Only whole projects: moving between directories inside one changes
 	/// nothing, which is what makes this bearable to leave switched on.
 	func terminalDirectoryChanged(to directory: URL) {
+		// Never during a capture. A screenshot is of a project somebody named
+		// on the command line, and a restored tmux session whose shell sits in
+		// another checkout would quietly swap it for that one — which is a
+		// screenshot of the wrong program, taken without complaint.
+		guard !LaunchOptions.parse().isScreenshotRun else { return }
 		guard followsTerminal else { return }
 		guard let root = ProjectRoot.find(from: directory) else { return }
 		switchProject(to: root)

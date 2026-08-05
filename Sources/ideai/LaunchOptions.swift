@@ -172,6 +172,14 @@ struct LaunchOptions {
 	var saveGutterLine: Int?
 	/// Narrow the window, to see what the titlebar does with no room.
 	var windowWidth: Double?
+	/// The whole window, for a capture that has to look the same on two
+	/// machines. A screenshot for the documentation is worthless if its size is
+	/// whatever the last person left the window at.
+	var windowSize: CGSize?
+	/// How tall the bottom panel is, for the same reason: the split position is
+	/// remembered per machine, and one somebody dragged to the top of the
+	/// window hides everything a screenshot is meant to show.
+	var panelHeight: Double?
 	/// Open the list of launch configurations.
 	var launchMenu = false
 	/// Open the editor for the selected configuration.
@@ -348,6 +356,11 @@ struct LaunchOptions {
 			case "--make-debug": options.makeDebug = true
 			case "--save-config": options.saveGutterLine = next().flatMap(Int.init)
 			case "--window-width": options.windowWidth = next().flatMap(Double.init)
+			case "--window-size":
+				// `1600x1000`, the way every other tool spells it.
+				let parts = (next() ?? "").split(separator: "x").compactMap { Double($0) }
+				if parts.count == 2 { options.windowSize = CGSize(width: parts[0], height: parts[1]) }
+			case "--panel-height": options.panelHeight = next().flatMap(Double.init)
 			case "--sidebar":    options.sidebarTool = next()
 			case "--run-line":   options.runLine = next().flatMap(Int.init)
 			case "--debug-line": options.debugLine = next().flatMap(Int.init)
