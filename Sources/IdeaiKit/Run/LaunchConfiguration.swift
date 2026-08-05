@@ -110,7 +110,37 @@ public struct LaunchConfiguration: Equatable, Sendable, Identifiable {
 	}
 
 	/// Whether a debugger can start on this, and which one.
-	public var adapterID: String { type == "go" ? "delve" : "lldb" }
+	public var adapterID: String {
+		switch type {
+		case "go": return "delve"
+		case "java", "kotlin": return "java"
+		default: return "lldb"
+		}
+	}
+
+	/// The class a Java configuration starts.
+	///
+	/// `mainClass` when the configuration spells it that way — which is what a
+	/// launch.json written for VS Code's Java extension does — and otherwise
+	/// `program`, since for a Java configuration that is the only thing it
+	/// could mean. A JVM is not pointed at a file.
+	public var javaMainClass: String? {
+		if case let .string(value)? = extras["mainClass"], !value.isEmpty { return value }
+		guard type == "java" || type == "kotlin", !program.isEmpty,
+		      !program.hasPrefix("$"), !program.hasPrefix("/")
+		else { return nil }
+		return program
+	}
+
+	/// Extra flags for the JVM itself, as a Java launch configuration writes
+	/// them.
+	public var javaVMArguments: [String] {
+		switch extras["vmArgs"] {
+		case let .string(value): return RunConfigurationDiscovery.splitArguments(value)
+		case let .array(values): return values.compactMap { if case let .string(v) = $0 { return v } else { return nil } }
+		default: return []
+		}
+	}
 }
 
 /// Just enough of a JSON value to carry unknown keys through unchanged.

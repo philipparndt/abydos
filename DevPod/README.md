@@ -120,9 +120,34 @@ which is what ideai's debugger does.
 |---|---|
 | `GET /healthz` | always 200 — the probes point here |
 | `GET /status` | state, pid, exit code, binary size and time, arch |
-| `POST /binary?mode=run\|debug&start=true` | receive, replace, restart |
+| `POST /binary?mode=run\|debug\|native-debug\|jvm\|jvm-debug&start=true` | receive, replace, restart |
 | `POST /start?mode=…`, `POST /stop` | without pushing |
 | `GET /logs?tail=N` | the program's recent output |
+
+## A jar instead of a binary
+
+`mode=jvm` runs what was pushed with `java -jar`, and `mode=jvm-debug` runs it
+with JDWP open on the same port every other debugger here listens on, held at
+the first instruction until something attaches. There is no debugger in the
+pod for this: a JVM given the flag is one.
+
+That needs a JVM in the image, which only the `jvm` variant has —
+`pharndt/ideai-devpod:dev-jvm`, and what a Java launch configuration asks for
+by default. It is the one variant that is bigger rather than smaller: a Java 21
+JRE and the four musl libraries it needs come to 167 MB, against the 10 a Go
+pod costs.
+
+The tag has to say `-jvm` as well as the layout, because that is the reference
+the editor asks for:
+
+```sh
+make image VARIANT=jvm VERSION=dev-jvm ARCH=arm64
+make publish VARIANT=jvm VERSION=dev-jvm
+```
+
+A pod restarting on its own runs what it actually has: the supervisor reads
+the first four bytes and starts a jar with the JVM rather than executing it
+and reporting `exec format error`.
 
 Bodies may be gzipped (`Content-Encoding: gzip`) — worth it over anything
 slower than a LAN, and not worth it on the same machine.

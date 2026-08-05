@@ -476,6 +476,14 @@ public final class DebugSession {
 				arguments: adapter.arguments,
 				workingDirectory: workingDirectory
 			)
+		case .languageServer:
+			// Nothing to spawn, and nothing this method can do about it: the
+			// adapter is inside a language server that only the app layer holds.
+			// `startJava` is the way in.
+			state = .idle
+			throw DAPClient.ClientError.adapterError(
+				"\(adapter.name) is started by its language server, not from here."
+			)
 		}
 
 		try await handshake(with: adapter)
@@ -568,6 +576,30 @@ public final class DebugSession {
 		startLaunchWatchdog()
 	}
 
+	/// Starts a Java session on the adapter the language server put up.
+	///
+	/// There is nothing to spawn: jdtls has already started java-debug inside
+	/// itself and answered with a port, so this dials it and says what to do.
+	/// Both shapes go through here — launching a class on this machine and
+	/// attaching to a JVM in a pod — because from this side they differ only in
+	/// the request that follows the handshake.
+	public func startJava(
+		host: String = "127.0.0.1",
+		port: Int,
+		request: JavaDebug.Request
+	) async throws {
+		state = .starting
+		launchGeneration += 1
+		exitCode = nil
+		adapter = DebugAdapters.java
+
+		try await client.connect(host: host, port: port)
+		try await handshake(with: DebugAdapters.java)
+		client.send(request.kind.rawValue, arguments: request.wireFormat)
+
+		startLaunchWatchdog()
+	}
+
 	/// Attaches to a process that is already running.
 	///
 	/// The case launching cannot cover: a server that is already up, something
@@ -586,6 +618,11 @@ public final class DebugSession {
 		case .standardIO:
 			try client.start(
 				executable: executable, arguments: adapter.arguments, workingDirectory: projectRoot
+			)
+		case .languageServer:
+			state = .idle
+			throw DAPClient.ClientError.adapterError(
+				"\(adapter.name) is started by its language server, not from here."
 			)
 		}
 

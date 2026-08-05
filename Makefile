@@ -93,6 +93,14 @@ xcode-build: ## Build the app the way Xcode does, as a check on the package
 release: build ## Sign with Developer ID, notarise and package a DMG
 	@Scripts/release.sh
 
+# The whole of cutting a release, in the one order that keeps the tag and the
+# download honest: stamp the version, tag it, build *from* the tag, notarise,
+# then upload. See Scripts/publish-release.sh for why each step is where it is.
+.PHONY: release-publish
+release-publish: ## Tag VERSION, build, notarise and upload the signed DMG to GitHub
+	@test -n "$(VERSION)" || { echo "usage: make release-publish VERSION=0.2.0"; exit 1; }
+	@Scripts/publish-release.sh $(VERSION)
+
 .PHONY: sign-check
 sign-check: ## Show the signing identity and notary profile the release will use
 	@security find-identity -v -p codesigning | grep "Developer ID Application" \

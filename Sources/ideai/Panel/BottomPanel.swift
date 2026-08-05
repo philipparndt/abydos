@@ -1649,6 +1649,7 @@ final class BottomPanel: NSView {
 			}
 			if case .remote = start { return workingDirectory }
 			if case .nativeRemote = start { return workingDirectory }
+			if case .java = start { return workingDirectory }
 			return FileManager.default.homeDirectoryForCurrentUser
 		}()
 		guard let session = makeDebugSession(breakpoints: breakpoints, fallbackRoot: fallback)
@@ -1676,6 +1677,8 @@ final class BottomPanel: NSView {
 						arguments: arguments, workingDirectory: directory,
 						environment: environment
 					)
+				case let .java(host, port, request):
+					try await session.startJava(host: host, port: port, request: request)
 				}
 			} catch {
 				await MainActor.run {
@@ -1707,6 +1710,11 @@ final class BottomPanel: NSView {
 			workingDirectory: String?,
 			environment: [String: String]
 		)
+		/// Java, where the adapter is hosted by the language server: it is
+		/// already listening on a port by the time this is reached, and the
+		/// request says whether a class is being started here or a JVM
+		/// somewhere else is being attached to.
+		case java(host: String, port: Int, request: JavaDebug.Request)
 	}
 
 	@discardableResult

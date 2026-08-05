@@ -378,6 +378,9 @@ public enum DevPodImage {
 		switch DevPodBuild.debugger(for: configuration, root: root) {
 		case .delve: return "\(repository):\(version)-go"
 		case .gdbserver: return "\(repository):\(version)-native"
+		// The one variant that is bigger rather than smaller: a JRE and its
+		// libraries are 167 MB, and no other language's pod has a use for them.
+		case .jdwp: return "\(repository):\(version)-jvm"
 		case nil: return `default`
 		}
 	}
@@ -437,6 +440,10 @@ public enum DevPodBuild {
 		/// Rust needs its own standard library for the target, which only
 		/// rustup can install.
 		case rust(directory: String)
+		/// Maven, which builds a jar — and a jar is the same file whatever the
+		/// pod's architecture is, so nothing is cross-compiled here.
+		case maven(directory: String)
+		case gradle(directory: String)
 	}
 
 	/// Which debugger has to be in the pod for this project.
@@ -448,18 +455,23 @@ public enum DevPodBuild {
 	public enum Debugger: Equatable {
 		case delve
 		case gdbserver
+		/// A JVM, which needs no debugger in the pod at all — it *is* one, given
+		/// the flag. What the pod needs instead is a Java to run the jar with.
+		case jdwp
 	}
 
 	public static func debugger(for configuration: LaunchConfiguration, root: URL) -> Debugger? {
 		switch strategy(for: configuration, root: root) {
 		case .go: return .delve
 		case .zig, .odin, .clang, .rust: return .gdbserver
+		case .maven, .gradle: return .jdwp
 		case .make, nil:
 			// Nothing was recognised, so the only evidence left is what the
 			// configuration calls itself.
 			switch configuration.type {
 			case "go": return .delve
 			case "lldb", "cppdbg", "codelldb": return .gdbserver
+			case "java", "kotlin": return .jdwp
 			default: return nil
 			}
 		}
@@ -490,6 +502,19 @@ public enum DevPodBuild {
 
 		if configuration.type == "go" || manager.fileExists(atPath: root.appendingPathComponent("go.mod").path) {
 			return .go(package: program)
+		}
+		// A Java configuration names a class, so the directory it belongs to is
+		// the module holding the build file — worked out from `cwd`, which for a
+		// Java configuration is the module, and from the root when it is not.
+		let workingDirectory = URL(fileURLWithPath: configuration.expandedWorkingDirectory(root: root))
+		for candidate in [workingDirectory, directory, root] {
+			if manager.fileExists(atPath: candidate.appendingPathComponent("pom.xml").path) {
+				return .maven(directory: candidate.path)
+			}
+			for name in ["build.gradle.kts", "build.gradle"]
+			where manager.fileExists(atPath: candidate.appendingPathComponent(name).path) {
+				return .gradle(directory: candidate.path)
+			}
 		}
 		if manager.fileExists(atPath: root.appendingPathComponent("build.zig").path) {
 			return .zig(directory: root.path)
@@ -636,7 +661,149 @@ public enum DevPodBuild {
 				output: output,
 				progress: progress
 			)
+		case let .maven(directory):
+			return try await buildMaven(
+				in: URL(fileURLWithPath: directory), root: root, progress: progress
+			)
+		case let .gradle(directory):
+			return try await buildGradle(
+				in: URL(fileURLWithPath: directory), root: root, progress: progress
+			)
 		}
+	}
+
+	/// Packages a Maven module, and finds the jar it produced.
+	///
+	/// Nothing is cross-compiled and nothing is told which architecture the pod
+	/// is: a jar is bytecode, and the same file runs on the arm64 laptop and the
+	/// amd64 node. `-DskipTests` because this is a push into a development pod
+	/// and waiting for the suite is not what run means.
+	static func buildMaven(
+		in directory: URL,
+		root: URL,
+		progress: (@Sendable (String) -> Void)?
+	) async throws -> URL {
+		let maven = MavenProject.executable(for: directory, root: root)
+		let goals = ["package", "-DskipTests", "-q"]
+		progress?("$ \(maven) \(goals.joined(separator: " "))  (in \(directory.lastPathComponent))")
+
+		let result = await ShellEnvironment.run(
+			([maven] + goals).map(shellQuoted).joined(separator: " "),
+			in: directory,
+			environment: javaEnvironment()
+		)
+		guard result.exitCode == 0 else {
+			throw Failure.failed(result.error.isEmpty ? result.output : result.error)
+		}
+
+		// A pod is given the jar and nothing else — no local repository, no
+		// classpath — so a jar with dependencies outside it starts and dies on
+		// its first import. Said before it happens, because the exception that
+		// follows names a class rather than the packaging.
+		if let project = MavenProject.read(at: directory.appendingPathComponent("pom.xml")),
+		   !project.dependencies.isEmpty,
+		   !project.isSpringBoot,
+		   !project.plugins.contains(where: { $0.contains("shade") || $0.contains("assembly") }) {
+			progress?(
+				"note: this module has dependencies and builds a plain jar. The pod runs "
+					+ "`java -jar` with nothing else on the classpath, so it needs a jar that "
+					+ "carries them — the shade or assembly plugin, or Spring Boot's."
+			)
+		}
+		return try jar(in: directory.appendingPathComponent("target"), what: "Maven")
+	}
+
+	/// Builds a Gradle module, and finds the jar it produced.
+	///
+	/// `bootJar` when Spring Boot is there, because its plain `jar` builds
+	/// something with no dependencies in it that dies on its first import;
+	/// otherwise `assemble`, which is the task every Java build has.
+	static func buildGradle(
+		in directory: URL,
+		root: URL,
+		progress: (@Sendable (String) -> Void)?
+	) async throws -> URL {
+		let gradle = GradleBuild.executable(for: directory, root: root)
+		let build = GradleBuild.find(in: directory, maxDepth: 0).first.flatMap(GradleBuild.read(at:))
+		let task = build?.isSpringBoot == true ? "bootJar" : "assemble"
+
+		// The wrapper lives at the root of the build and a module is named the
+		// way Gradle names it, so this runs where gradlew is.
+		let wrapperDirectory = gradle.hasSuffix("gradlew")
+			? URL(fileURLWithPath: gradle).deletingLastPathComponent()
+			: directory
+		let prefix = gradle.hasSuffix("gradlew")
+			? RunConfigurationDiscovery.gradlePath(of: directory, under: wrapperDirectory)
+			: ""
+
+		progress?("$ \(gradle) \(prefix + task)  (in \(wrapperDirectory.lastPathComponent))")
+		let result = await ShellEnvironment.run(
+			([gradle, prefix + task, "-x", "test", "--console=plain"]).map(shellQuoted).joined(separator: " "),
+			in: wrapperDirectory,
+			environment: javaEnvironment()
+		)
+		guard result.exitCode == 0 else {
+			throw Failure.failed(result.error.isEmpty ? result.output : result.error)
+		}
+
+		// The same warning Maven's build gives, for the same reason: `assemble`
+		// on a plain Java build produces a jar with only this module in it.
+		if let build, !build.isSpringBoot,
+		   !build.plugins.contains(where: { $0.contains("shadow") }) {
+			progress?(
+				"note: `assemble` builds a jar holding this module and nothing else. The pod "
+					+ "runs it with `java -jar` and no other classpath, so a build with "
+					+ "dependencies needs the shadow plugin or Spring Boot's `bootJar`."
+			)
+		}
+		return try jar(in: directory.appendingPathComponent("build/libs"), what: "Gradle")
+	}
+
+	/// The jar a build left behind.
+	///
+	/// The newest, and never a `-sources` or `-javadoc` one: those are built
+	/// alongside the real artefact by projects that publish, and pushing one
+	/// into a pod produces a JVM complaining about a missing main class.
+	static func jar(in directory: URL, what: String) throws -> URL {
+		let manager = FileManager.default
+		let entries = (try? manager.contentsOfDirectory(
+			at: directory, includingPropertiesForKeys: [.contentModificationDateKey]
+		)) ?? []
+
+		let jars = entries
+			.filter { $0.pathExtension == "jar" }
+			.filter { !$0.lastPathComponent.hasSuffix("-sources.jar") }
+			.filter { !$0.lastPathComponent.hasSuffix("-javadoc.jar") }
+			.filter { !$0.lastPathComponent.hasSuffix("-plain.jar") }
+			.sorted { left, right in
+				let leftDate = (try? left.resourceValues(forKeys: [.contentModificationDateKey]))?
+					.contentModificationDate ?? .distantPast
+				let rightDate = (try? right.resourceValues(forKeys: [.contentModificationDateKey]))?
+					.contentModificationDate ?? .distantPast
+				return leftDate > rightDate
+			}
+
+		guard let newest = jars.first else {
+			throw Failure.failed(
+				"""
+				\(what) reported success but left no jar in \(directory.path).
+
+				A module that builds a library rather than an application produces \
+				nothing runnable. Point the configuration at the module that does, \
+				or give the build a task that assembles one.
+				"""
+			)
+		}
+		return newest
+	}
+
+	/// A build's environment, with a JDK in it.
+	///
+	/// The same problem the language servers have: a GUI app has no login
+	/// shell, so `mvnw` starts and then cannot find a `java` to run Maven with.
+	static func javaEnvironment() -> [String: String] {
+		guard let home = JavaTooling.javaHome() else { return [:] }
+		return ["JAVA_HOME": home, "PATH": "\(home)/bin:" + LanguageServers.searchPaths.joined(separator: ":")]
 	}
 
 	/// Cross-compiles a Go package, keeping what a debugger needs.

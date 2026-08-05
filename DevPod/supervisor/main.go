@@ -44,7 +44,11 @@ func main() {
 	// restart but not a rescheduled pod — is started again, so a crash does
 	// not need another push.
 	if _, err := os.Stat(options.BinaryPath); err == nil && options.AutoStart {
-		if err := supervisor.Start(ModeRun); err != nil {
+		mode := ModeRun
+		if isJar(options.BinaryPath) {
+			mode = ModeJVM
+		}
+		if err := supervisor.Start(mode); err != nil {
 			log.Printf("could not start the binary that was already here: %v", err)
 		}
 	}
@@ -82,7 +86,14 @@ type Options struct {
 	// Rust. It speaks the protocol LLDB already understands, so the debugger
 	// the developer looks at stays the one on their own machine.
 	GdbServerPath string
-	AutoStart     bool
+	// The JVM, in the image that has one. A jar cannot be executed the way
+	// every other artefact here can — something has to run it — and that
+	// something is also the debugger, given the right flag.
+	JavaPath string
+	// Flags for the JVM rather than for the program: heap sizes, agents, the
+	// profiler somebody is trying out.
+	JavaOptions []string
+	AutoStart   bool
 }
 
 func readOptions() Options {
@@ -93,10 +104,14 @@ func readOptions() Options {
 		DebugAddr:     env("IDEAI_DEBUG_ADDR", ":2345"),
 		DelvePath:     env("IDEAI_DLV", "/usr/local/bin/dlv"),
 		GdbServerPath: env("IDEAI_GDBSERVER", "/usr/local/bin/gdbserver"),
+		JavaPath:      env("IDEAI_JAVA", "/opt/java/bin/java"),
 		AutoStart:     env("IDEAI_AUTOSTART", "true") == "true",
 	}
 	if raw := os.Getenv("IDEAI_ARGS"); raw != "" {
 		options.Args = strings.Fields(raw)
+	}
+	if raw := os.Getenv("JAVA_OPTS"); raw != "" {
+		options.JavaOptions = strings.Fields(raw)
 	}
 	flag.StringVar(&options.ControlAddr, "control", options.ControlAddr, "address for the control API")
 	flag.StringVar(&options.BinaryPath, "binary", options.BinaryPath, "where the program lives")
@@ -126,7 +141,33 @@ const (
 	// which is the same bargain: nothing has happened yet when somebody
 	// arrives.
 	ModeNativeDebug Mode = "native-debug"
+	// ModeJVM runs a pushed jar with `java -jar`.
+	ModeJVM Mode = "jvm"
+	// ModeJVMDebug runs the same jar with JDWP open and the JVM held at the
+	// first instruction, so the editor's debugger can attach before anything
+	// has happened. No debugger runs in the pod: the JVM is one.
+	ModeJVMDebug Mode = "jvm-debug"
 )
+
+// isJar reports whether the file looks like a jar rather than an executable.
+//
+// A jar is a zip, and every zip starts `PK\x03\x04`. Read rather than assumed
+// from the mode, so a pod restarting on its own — which is what auto-start is
+// — runs what it actually has instead of executing a jar and reporting `exec
+// format error`.
+func isJar(path string) bool {
+	file, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+
+	header := make([]byte, 4)
+	if _, err := io.ReadFull(file, header); err != nil {
+		return false
+	}
+	return string(header) == "PK\x03\x04"
+}
 
 // Supervisor owns the child process.
 type Supervisor struct {
@@ -204,7 +245,7 @@ func (s *Supervisor) handleStatus(w http.ResponseWriter, r *http.Request) {
 		status.Mode = string(s.mode)
 		status.PID = s.command.Process.Pid
 		status.UptimeSecs = int(time.Since(s.startedAt).Seconds())
-		if s.mode == ModeDebug {
+		if s.mode == ModeDebug || s.mode == ModeJVMDebug || s.mode == ModeNativeDebug {
 			status.DebugAddr = s.options.DebugAddr
 		}
 	} else if s.exitCode != nil {
@@ -388,6 +429,24 @@ func (s *Supervisor) Start(mode Mode) error {
 			"--listen="+s.options.DebugAddr,
 			"--log-dest=2",
 		)
+	case ModeJVM, ModeJVMDebug:
+		java, err := s.javaPath()
+		if err != nil {
+			return err
+		}
+		arguments := []string{}
+		if mode == ModeJVMDebug {
+			// The same port every other debugger in this pod listens on, so
+			// the chart publishes one debug port and the editor forwards one.
+			// `suspend=y` because the first seconds of a service — its
+			// configuration, its first connection — are the ones worth
+			// watching, and they are over before an attach that waits.
+			arguments = append(arguments, "-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=*"+s.options.DebugAddr)
+		}
+		arguments = append(arguments, s.options.JavaOptions...)
+		arguments = append(arguments, "-jar", s.options.BinaryPath)
+		arguments = append(arguments, s.options.Args...)
+		command = exec.Command(java, arguments...)
 	default:
 		command = exec.Command(s.options.BinaryPath, s.options.Args...)
 	}
@@ -417,6 +476,24 @@ func (s *Supervisor) Start(mode Mode) error {
 
 	log.Printf("started %s (%s), pid %d", command.Path, mode, command.Process.Pid)
 	return nil
+}
+
+// javaPath is the JVM to run a jar with.
+//
+// The image variant with a JVM in it puts one at a known path; anything else
+// has none, and saying so is better than `fork/exec: no such file`, which
+// reads as a missing jar rather than a pod that was never meant to run one.
+func (s *Supervisor) javaPath() (string, error) {
+	if _, err := os.Stat(s.options.JavaPath); err == nil {
+		return s.options.JavaPath, nil
+	}
+	if found, err := exec.LookPath("java"); err == nil {
+		return found, nil
+	}
+	return "", fmt.Errorf(
+		"no JVM in this pod (looked at %s and on PATH): a jar needs the -jvm image",
+		s.options.JavaPath,
+	)
 }
 
 // Stop ends the child, politely and then not.

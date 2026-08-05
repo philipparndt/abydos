@@ -2312,7 +2312,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		let package = MakeLaunch.relativeToWorkspace(
 			path: discovered.workingDirectory, root: project.root
 		)
-		var configuration = LaunchConfiguration(
+		// A Java configuration names a class rather than a directory, and its
+		// arguments are the program's — the goals that got Maven to start it are
+		// not something to carry into a launch configuration.
+		var configuration = discovered.mainClass.map { mainClass in
+			LaunchConfiguration(
+				name: discovered.name,
+				type: "java",
+				request: "launch",
+				program: mainClass,
+				workingDirectory: package,
+				environment: discovered.environment
+			)
+		} ?? LaunchConfiguration(
 			name: discovered.name,
 			type: "go",
 			request: "launch",
@@ -2347,6 +2359,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// Starts the native debugger on a configuration's package.
 	func debug(_ configuration: RunConfiguration) {
 		guard configuration.isDebuggable else { return }
+
+		// Java does not go through Delve, and it does not go through a program
+		// at all: the adapter is inside the language server.
+		if configuration.source == .javaMain, let mainClass = configuration.mainClass {
+			startJavaDebug(
+				name: configuration.name,
+				mainClass: mainClass,
+				anchorFile: configuration.file.map { URL(fileURLWithPath: $0) },
+				workingDirectory: URL(fileURLWithPath: configuration.workingDirectory),
+				arguments: [],
+				environment: configuration.environment
+			)
+			return
+		}
+
 		guard let delve = GoTooling.findDelveExecutable() else {
 			notify(
 				"Delve is not installed",
@@ -2448,10 +2475,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	private func title(for source: RunConfiguration.Source) -> String {
 		switch source {
-		case .intelliJ: return "IntelliJ"
-		case .vscode:   return "VS Code"
-		case .make:     return "Make"
-		case .goModule: return "Go"
+		case .intelliJ:  return "IntelliJ"
+		case .vscode:    return "VS Code"
+		case .make:      return "Make"
+		case .goModule:  return "Go"
+		case .maven:     return "Maven"
+		case .gradle:    return "Gradle"
+		case .javaMain:  return "Java"
 		}
 	}
 
@@ -2773,10 +2803,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			// means the language *is* bash, so the question this used to ask
 			// ("is the language makefile?") had no answer but no, and ⇧⌘O on a
 			// Makefile came back empty in every project.
-			if Makefile.isMakefile(url) {
-				let targets = Makefile.symbols(at: url)
-				guard !query.isEmpty else { return targets }
-				return targets.filter { $0.name.localizedCaseInsensitiveContains(query) }
+			// A build file is in the same position, for the same reason: a POM
+			// borrows HTML's grammar and a Gradle build borrows Groovy's or
+			// Kotlin's, and none of those knows a module from a dependency. The
+			// build files' own parsers do.
+			let buildSymbols: [LSPSymbol]? = {
+				if Makefile.isMakefile(url) { return Makefile.symbols(at: url) }
+				if MavenProject.isPom(url) { return MavenProject.symbols(at: url) }
+				if GradleBuild.isBuildFile(url) { return GradleBuild.symbols(at: url) }
+				return nil
+			}()
+			if let buildSymbols {
+				guard !query.isEmpty else { return buildSymbols }
+				return buildSymbols.filter { $0.name.localizedCaseInsensitiveContains(query) }
 			}
 
 			let all = await LanguageService.shared
@@ -3605,12 +3644,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 					)
 				}
 
-				// Delve debugs Go; everything else is held by gdbserver and
-				// driven by the LLDB on this machine.
+				// Delve debugs Go; a JVM debugs itself, given the flag; and
+				// everything else is held by gdbserver and driven by the LLDB on
+				// this machine.
 				// Nothing recognised means the full image is in the pod, which has
 				// both; gdbserver is the one that works on a binary from anywhere.
-				let isGo = DevPodBuild.debugger(for: configuration, root: root) == .delve
-				let mode = debug ? (isGo ? "debug" : "native-debug") : "run"
+				let debugger = DevPodBuild.debugger(for: configuration, root: root)
+				let isGo = debugger == .delve
+				let isJava = debugger == .jdwp
+				let mode: String
+				switch (debug, debugger) {
+				case (false, .jdwp): mode = "jvm"
+				case (false, _): mode = "run"
+				case (true, .delve): mode = "debug"
+				case (true, .jdwp): mode = "jvm-debug"
+				case (true, _): mode = "native-debug"
+				}
 
 				try Task.checkCancellation()
 				clusterLog("sending the binary, mode \(mode)")
@@ -3633,7 +3682,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 					try await attachDebugger(
 						to: pod, context: context, kubeconfig: kubeconfig,
 						arguments: plan.arguments, environment: environment,
-						nativeBinary: isGo ? nil : binary
+						nativeBinary: isGo || isJava ? nil : binary,
+						java: isJava
+							? JavaDebug.Request(
+								kind: .attach,
+								mainClass: configuration.javaMainClass ?? "",
+								projectName: nil
+							)
+							: nil,
+						root: root
 					)
 				} else {
 					// Busy: the program is up in the cluster until somebody
@@ -4051,7 +4108,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		kubeconfig: String?,
 		arguments: [String],
 		environment: [String: String],
-		nativeBinary: URL? = nil
+		nativeBinary: URL? = nil,
+		java: JavaDebug.Request? = nil,
+		root: URL? = nil
 	) async throws {
 		let debugForward = try await PortForward.start(
 			to: PodTarget(
@@ -4065,6 +4124,33 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		devPodForwards.append(debugForward)
 
 		runControl?.setStatus("Debugging in \(pod.name)…", busy: true)
+
+		// A JVM in a pod holds itself at its first instruction — `suspend=y` —
+		// and waits for a debugger on the port the supervisor opened. What
+		// connects to it is the adapter inside the language server here, so the
+		// sources it shows are the ones on this disk.
+		if var request = java {
+			guard let root else { return }
+			let port = try await LanguageService.shared.startJavaDebugAdapter(project: root)
+			request.host = "127.0.0.1"
+			request.port = debugForward.localPort
+			// The class files here, so a frame from the pod lands on the source
+			// it was compiled from rather than on a decompiled stub.
+			if let anchor = JavaTooling.mainClasses(in: root).first.map({ URL(fileURLWithPath: $0.file) }),
+			   let resolved = await LanguageService.shared.javaClasspath(for: anchor, project: root) {
+				request.classPaths = resolved.classPaths
+				request.projectName = resolved.projectName
+			}
+
+			guard let session = bottomPanel.startDebugging(
+				adapter: DebugAdapters.java,
+				executable: DebugAdapters.java.command,
+				start: .java(host: "127.0.0.1", port: port, request: request),
+				breakpoints: pendingBreakpoints
+			) else { return }
+			wire(session)
+			return
+		}
 
 		// A native program is held by gdbserver in the pod and driven by the
 		// LLDB here, against the binary that was pushed — which was built here,
@@ -4237,6 +4323,30 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		environment: [String: String]
 	) {
 		let adapter = DebugAdapters.adapter(id: configuration.adapterID) ?? DebugAdapters.lldb
+
+		// Nothing to find on disk for Java: the adapter is started by the
+		// language server, which is either running or is the thing to fix.
+		if adapter.transport == .languageServer {
+			guard let mainClass = configuration.javaMainClass else {
+				notify(
+					"This configuration does not say what to start",
+					detail: "A Java configuration needs a mainClass — the fully qualified name of "
+						+ "the class with the main method."
+				)
+				return
+			}
+			startJavaDebug(
+				name: configuration.name,
+				mainClass: mainClass,
+				anchorFile: nil,
+				workingDirectory: URL(fileURLWithPath: configuration.expandedWorkingDirectory(root: root)),
+				arguments: configuration.expandedArguments(root: root),
+				vmArguments: configuration.javaVMArguments,
+				environment: environment
+			)
+			return
+		}
+
 		guard let executable = DebugAdapters.executable(for: adapter) else {
 			notify("\(adapter.name) is not installed", detail: adapter.installHint)
 			return
@@ -4258,6 +4368,79 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			breakpoints: pendingBreakpoints
 		) else { return }
 		wire(session)
+	}
+
+	/// Starts a Java debug session.
+	///
+	/// Two things have to be asked of the language server first, and neither can
+	/// be worked out here: the port its debug adapter is listening on, and the
+	/// classpath of the module the class belongs to. A JVM started without the
+	/// second one fails with `ClassNotFoundException` on the class it was asked
+	/// to run, which reads like the class is missing rather than the classpath.
+	private func startJavaDebug(
+		name: String,
+		mainClass: String,
+		anchorFile: URL?,
+		workingDirectory: URL,
+		arguments: [String],
+		vmArguments: [String] = [],
+		environment: [String: String]
+	) {
+		guard let project else { return }
+		let root = project.root
+
+		setPanelVisible(true)
+		runControl?.setStatus("Debugging \(name)…", busy: true)
+
+		Task { @MainActor in
+			let port: Int
+			do {
+				port = try await LanguageService.shared.startJavaDebugAdapter(project: root)
+			} catch {
+				runControl?.setStatus("Java cannot be debugged yet", failed: true)
+				// The missing bundle gets the whole manual rather than one line:
+				// it is the one failure here nobody can guess the fix for.
+				var detail = error.localizedDescription
+				if let failure = error as? LanguageService.JavaDebugFailure, case .noBundle = failure {
+					detail = JavaTooling.debugPluginManual
+				}
+				notify("Java cannot be debugged yet", detail: detail)
+				return
+			}
+
+			// Any file in the module will do — the question is about the project
+			// the file belongs to, not the file — so the class's own source is
+			// used when there is one and any main class in the project otherwise.
+			let anchor = anchorFile
+				?? JavaTooling.mainClasses(in: root)
+					.first { $0.name == mainClass }
+					.map { URL(fileURLWithPath: $0.file) }
+			var classPaths: [String] = []
+			var projectName: String?
+			if let anchor,
+			   let resolved = await LanguageService.shared.javaClasspath(for: anchor, project: root) {
+				classPaths = resolved.classPaths
+				projectName = resolved.projectName
+			}
+
+			let request = JavaDebug.Request(
+				kind: .launch,
+				mainClass: mainClass,
+				classPaths: classPaths,
+				projectName: projectName,
+				workingDirectory: workingDirectory.path,
+				arguments: arguments,
+				vmArguments: vmArguments,
+				environment: environment
+			)
+			guard let session = bottomPanel.startDebugging(
+				adapter: DebugAdapters.java,
+				executable: DebugAdapters.java.command,
+				start: .java(host: "127.0.0.1", port: port, request: request),
+				breakpoints: pendingBreakpoints
+			) else { return }
+			wire(session)
+		}
 	}
 
 	/// The list of configurations, and the ways to change them.
@@ -4311,6 +4494,28 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				item.target = self
 				item.representedObject = [goal.makefile.path.path, goal.name]
 				item.toolTip = goal.summary.isEmpty ? nil : goal.summary
+				menu.addItem(item)
+			}
+		}
+
+		// The same for a Maven or Gradle project, which says how to run itself
+		// in its build file exactly as a Makefile does.
+		let buildGoals = runConfigurations.filter {
+			$0.source == .maven || $0.source == .gradle || $0.source == .javaMain
+		}
+		if !buildGoals.isEmpty {
+			menu.addItem(.separator())
+			let heading = NSMenuItem(title: "From the build", action: nil, keyEquivalent: "")
+			heading.isEnabled = false
+			menu.addItem(heading)
+
+			for goal in buildGoals where !all.contains(where: { $0.name == goal.name }) {
+				let item = NSMenuItem(
+					title: goal.name, action: #selector(buildGoalChosen(_:)), keyEquivalent: ""
+				)
+				item.target = self
+				item.representedObject = goal.id
+				item.toolTip = goal.commandLine
 				menu.addItem(item)
 			}
 		}
@@ -4469,9 +4674,27 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		refreshRunControl()
 	}
 
-	/// A make goal chosen from the menu that has no launch configuration —
-	/// nothing here can debug it, so play runs it as make would.
+	/// A goal from a build file chosen from the menu that has no launch
+	/// configuration — a make target, a Maven goal, a Gradle task. Play runs it
+	/// the way its build tool would.
+	///
+	/// Named for make because make was the first, and the selection model calls
+	/// it that too. Nothing about it is make-specific.
 	private var selectedMakeRun: RunConfiguration?
+
+	/// Runs a goal of a Maven or Gradle build, chosen from the run menu.
+	///
+	/// Chosen, not started — the same bargain as a make goal: picking from a
+	/// list says which one, and the play button says when.
+	@objc private func buildGoalChosen(_ sender: NSMenuItem) {
+		guard let id = sender.representedObject as? String,
+		      let configuration = runConfigurations.first(where: { $0.id == id })
+		else { return }
+
+		selectedMakeRun = configuration
+		selectedConfigurationName = configuration.name
+		refreshRunControl()
+	}
 
 	@objc private func makeGoalChosen(_ sender: NSMenuItem) {
 		guard let project,

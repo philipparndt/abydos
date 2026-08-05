@@ -26,6 +26,18 @@ let grammars: [(pkg: String, url: String, version: Version, products: [String])]
 	("tree-sitter-openscad",   "https://github.com/openscad/tree-sitter-openscad",          "0.7.1",  ["TreeSitterOpenscad"]),
 	("tree-sitter-odin",       "https://github.com/amaanq/tree-sitter-odin",                "1.3.0",  ["TreeSitterOdin"]),
 	("tree-sitter-zig",        "https://github.com/tree-sitter-grammars/tree-sitter-zig",   "1.1.2",  ["TreeSitterZig"]),
+	// Kotlin, for `.kt` and for the Gradle builds written in it. Twenty
+	// megabytes of generated parser, which is why it is a package rather than
+	// one more vendored grammar in this repository.
+	("tree-sitter-kotlin",     "https://github.com/fwcd/tree-sitter-kotlin",                "0.3.8",  ["TreeSitterKotlin"]),
+]
+
+// Groovy, for `build.gradle`. The one grammar anybody uses for it has never cut
+// a release, so it is pinned by commit — which is the same promise a tag makes
+// and the only one on offer here.
+let revisionGrammars: [(pkg: String, url: String, revision: String, products: [String])] = [
+	("tree-sitter-groovy", "https://github.com/murtaza64/tree-sitter-groovy",
+	 "deb0dcf8c4544f07564060f6e9b9f6e4b0bfc27d", ["TreeSitterGroovy"]),
 ]
 
 // These four are vendored instead of used as packages. Their manifests gate the
@@ -34,6 +46,18 @@ let grammars: [(pkg: String, url: String, version: Version, products: [String])]
 // scanner is dropped and the grammar fails to link. Vendoring lets the source
 // list be stated explicitly. See Scripts/vendor-grammars.sh to update them.
 let vendoredGrammars = ["CSS", "JavaScript", "Python", "YAML"]
+
+// Spelled out rather than concatenated inside the Package literal: the type
+// checker gives up on an expression that large and the manifest stops
+// compiling.
+let grammarPackages: [Package.Dependency] =
+	grammars.map { .package(url: $0.url, exact: $0.version) }
+	+ revisionGrammars.map { .package(url: $0.url, revision: $0.revision) }
+
+let grammarProducts: [Target.Dependency] =
+	grammars.flatMap { g in g.products.map { Target.Dependency.product(name: $0, package: g.pkg) } }
+	+ revisionGrammars.flatMap { g in g.products.map { Target.Dependency.product(name: $0, package: g.pkg) } }
+	+ vendoredGrammars.map { .target(name: "TreeSitter\($0)Vendored") }
 
 let package = Package(
 	name: "ideai",
@@ -53,7 +77,7 @@ let package = Package(
 		// The 3D viewer, hosted in an editor tab. A path dependency for now:
 		// see the note in README about what publishing it would take.
 		.package(path: "../3d/gostl/GoSTL-Swift"),
-	] + grammars.map { .package(url: $0.url, exact: $0.version) },
+	] + grammarPackages,
 	targets: [
 		// The DOOM fire terminal stress test, ported so it can run unattended.
 		.executableTarget(name: "FireBench", path: "Sources/FireBench"),
@@ -64,9 +88,10 @@ let package = Package(
 			dependencies: [
 				.product(name: "SwiftTreeSitter", package: "SwiftTreeSitter"),
 				.product(name: "SwiftTreeSitterLayer", package: "SwiftTreeSitter"),
-			] + grammars.flatMap { g in
-				g.products.map { Target.Dependency.product(name: $0, package: g.pkg) }
-			} + vendoredGrammars.map { .target(name: "TreeSitter\($0)Vendored") },
+			] + grammarProducts,
+			// Queries a grammar does not ship itself. tree-sitter-java has no
+			// `folds.scm`, so without this a Java file cannot be folded at all.
+			resources: [.copy("Queries")],
 			// Language mode 5: AppKit's delegate-and-callback surface predates
 			// strict concurrency checking and fights it constantly. Isolation here
 			// is enforced by design (UI on the main thread, parsing behind an

@@ -19,6 +19,8 @@ import TreeSitterSvelte
 import TreeSitterOpenscad
 import TreeSitterOdin
 import TreeSitterZig
+import TreeSitterKotlin
+import TreeSitterGroovy
 
 // Vendored because their upstream manifests drop the external scanner; see
 // Package.swift and Scripts/vendor-grammars.sh.
@@ -71,6 +73,10 @@ public final class LanguageRegistry {
 		register(id: "c", name: "C", bundle: "TreeSitterC_TreeSitterC") { tree_sitter_c() }
 		register(id: "cpp", name: "C++", bundle: "TreeSitterCPP_TreeSitterCPP") { tree_sitter_cpp() }
 		register(id: "java", name: "Java", bundle: "TreeSitterJava_TreeSitterJava") { tree_sitter_java() }
+		register(id: "kotlin", name: "Kotlin", bundle: "TreeSitterKotlin_TreeSitterKotlin") { tree_sitter_kotlin() }
+		// Groovy is here for `build.gradle` more than for Groovy itself, which is
+		// where nearly every Java project still keeps its build.
+		register(id: "groovy", name: "Groovy", bundle: "TreeSitterGroovy_TreeSitterGroovy") { tree_sitter_groovy() }
 		register(id: "html", name: "HTML", bundle: "TreeSitterHTML_TreeSitterHTML") { tree_sitter_html() }
 		register(id: "css", name: "CSS", bundle: "ideai_TreeSitterCSSVendored") { tree_sitter_css() }
 		register(id: "yaml", name: "YAML", bundle: "ideai_TreeSitterYAMLVendored") { tree_sitter_yaml() }
@@ -209,7 +215,14 @@ public final class LanguageRegistry {
 		"c": "c", "h": "c",
 		"cpp": "cpp", "cc": "cpp", "cxx": "cpp", "hpp": "cpp", "hh": "cpp", "hxx": "cpp",
 		"java": "java",
+		"kt": "kotlin", "kts": "kotlin",
+		// `.gradle` is Groovy; `.gradle.kts` lands on `kts` above.
+		"groovy": "groovy", "gradle": "groovy", "gvy": "groovy", "jenkinsfile": "groovy",
 		"html": "html", "htm": "html", "xhtml": "html", "vue": "html",
+		// XML through the HTML grammar, which reads tags, attributes and text the
+		// same way. It is what a Java project's `pom.xml` needs, and the
+		// alternative is a Maven build displayed as unstructured text.
+		"xml": "html", "xsd": "html", "xsl": "html", "pom": "html",
 		"css": "css", "scss": "css", "sass": "css",
 		"yaml": "yaml", "yml": "yaml",
 		"toml": "toml",
@@ -231,6 +244,10 @@ public final class LanguageRegistry {
 		".gitconfig": "toml",
 		"cargo.lock": "toml",
 		"package.json": "json", "tsconfig.json": "json",
+		// A Jenkinsfile is Groovy and carries no extension.
+		"jenkinsfile": "groovy",
+		// The Gradle wrapper's own files, which are shell and a properties list.
+		"gradlew": "bash", "mvnw": "bash",
 	]
 
 	private static func shebangLanguage(inFirstLine text: String) -> String? {
@@ -304,12 +321,9 @@ public final class LanguageRegistry {
 		guard let definition = definitions[languageId] else { return nil }
 
 		var result: Query?
-		if let directory = Self.queriesDirectory(bundleName: definition.bundleName) {
-			let url = directory.appendingPathComponent("folds.scm")
-			if FileManager.default.isReadableFile(atPath: url.path) {
-				let language = Language(definition.parser())
-				result = try? Query(language: language, url: url)
-			}
+		if let url = Self.queryURL(named: "folds.scm", languageId: languageId, definition: definition) {
+			let language = Language(definition.parser())
+			result = try? Query(language: language, url: url)
 		}
 		foldQueries[languageId] = result
 		return result
@@ -328,15 +342,47 @@ public final class LanguageRegistry {
 		guard let definition = definitions[languageId] else { return nil }
 
 		var result: Query?
-		if let directory = Self.queriesDirectory(bundleName: definition.bundleName) {
-			let url = directory.appendingPathComponent("tags.scm")
-			if FileManager.default.isReadableFile(atPath: url.path) {
-				let language = Language(definition.parser())
-				result = try? Query(language: language, url: url)
-			}
+		if let url = Self.queryURL(named: "tags.scm", languageId: languageId, definition: definition) {
+			let language = Language(definition.parser())
+			result = try? Query(language: language, url: url)
 		}
 		tagsQueries[languageId] = result
 		return result
+	}
+
+	/// Where a named query file is, preferring the grammar's own.
+	///
+	/// Not every grammar ships every query — tree-sitter-java has no `folds.scm`
+	/// and no upstream is going to add one on our schedule — so a query written
+	/// here, under `Sources/IdeaiKit/Queries/<language>/`, stands in. The
+	/// grammar's own always wins, so vendoring a newer version of a grammar
+	/// silently takes over from ours rather than being shadowed by it.
+	private static func queryURL(
+		named name: String,
+		languageId: String,
+		definition: LanguageDefinition
+	) -> URL? {
+		if let directory = queriesDirectory(bundleName: definition.bundleName) {
+			let url = directory.appendingPathComponent(name)
+			if FileManager.default.isReadableFile(atPath: url.path) { return url }
+		}
+		guard let supplement = supplementDirectory(languageId: languageId) else { return nil }
+		let url = supplement.appendingPathComponent(name)
+		return FileManager.default.isReadableFile(atPath: url.path) ? url : nil
+	}
+
+	/// This module's own queries for a language, when it has any.
+	private static func supplementDirectory(languageId: String) -> URL? {
+		for base in searchDirectories {
+			let bundle = base.appendingPathComponent("ideai_IdeaiKit.bundle", isDirectory: true)
+			for layout in ["Contents/Resources/Queries", "Queries"] {
+				let directory = bundle
+					.appendingPathComponent(layout, isDirectory: true)
+					.appendingPathComponent(languageId, isDirectory: true)
+				if FileManager.default.fileExists(atPath: directory.path) { return directory }
+			}
+		}
+		return nil
 	}
 
 	/// Anchor for locating this module's own bundle, which is what makes

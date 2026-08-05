@@ -12,6 +12,13 @@ public struct RunConfiguration: Equatable, Sendable, Identifiable {
 		case make
 		/// A `main` package found by scanning for go.mod.
 		case goModule
+		/// A goal of a `pom.xml`.
+		case maven
+		/// A task of a Gradle build.
+		case gradle
+		/// A class with a `main` method, run through whichever build tool the
+		/// project uses.
+		case javaMain
 	}
 
 	public let name: String
@@ -25,6 +32,12 @@ public struct RunConfiguration: Equatable, Sendable, Identifiable {
 	/// Used to put a play button beside it.
 	public let file: String?
 	public let line: Int?
+	/// The class to start, for a Java configuration.
+	///
+	/// The command line runs Maven or Gradle, and a debugger cannot be attached
+	/// to a build tool — it needs the class, the classpath and a JVM of its own.
+	/// This is what tells the debugger which class was meant.
+	public let mainClass: String?
 
 	public var id: String { "\(source.rawValue):\(name):\(workingDirectory)" }
 
@@ -32,9 +45,11 @@ public struct RunConfiguration: Equatable, Sendable, Identifiable {
 	///
 	/// Delve debugs a Go package, so anything that is not one — a make target
 	/// wrapping a build, a launch.json entry for another language — has nothing
-	/// to hand it.
+	/// to hand it. A Java configuration is debuggable when it says which class
+	/// it starts, whatever the command line runs to get there.
 	public var isDebuggable: Bool {
-		executable == "go" && arguments.first == "run"
+		if source == .javaMain, mainClass != nil { return true }
+		return executable == "go" && arguments.first == "run"
 	}
 
 	/// The command as a shell would show it, for the terminal and for tooltips.
@@ -55,8 +70,10 @@ public struct RunConfiguration: Equatable, Sendable, Identifiable {
 		workingDirectory: String,
 		environment: [String: String] = [:],
 		file: String? = nil,
-		line: Int? = nil
+		line: Int? = nil,
+		mainClass: String? = nil
 	) {
+		self.mainClass = mainClass
 		self.name = name
 		self.source = source
 		self.executable = executable
@@ -111,7 +128,10 @@ public enum RunConfigurationDiscovery {
 		for directory in searchDirectories(from: root) {
 			result += makeTargets(in: directory)
 			result += goModules(in: directory)
+			result += mavenGoals(in: directory, root: root)
+			result += gradleTasks(in: directory, root: root)
 		}
+		result += javaMainClasses(in: root)
 
 		// Stable order: source first, then name, so the list does not reshuffle
 		// between scans.
@@ -427,6 +447,146 @@ public enum RunConfigurationDiscovery {
 			))
 		}
 		return result
+	}
+
+	// MARK: - Java
+
+	/// The goals of a `pom.xml`, if this directory has one.
+	static func mavenGoals(in directory: URL, root: URL) -> [RunConfiguration] {
+		let manifest = directory.appendingPathComponent("pom.xml")
+		guard let project = MavenProject.read(at: manifest) else { return [] }
+
+		let executable = MavenProject.executable(for: directory, root: root)
+		let suffix = moduleSuffix(for: directory, root: root)
+		return project.goals.map { goal in
+			RunConfiguration(
+				name: "mvn \(goal.name)\(suffix)",
+				source: .maven,
+				executable: executable,
+				arguments: [goal.name],
+				workingDirectory: canonicalPath(directory),
+				file: canonicalPath(manifest)
+			)
+		}
+	}
+
+	/// The tasks of a Gradle build, if this directory has one.
+	static func gradleTasks(in directory: URL, root: URL) -> [RunConfiguration] {
+		var buildFile: URL?
+		for name in ["build.gradle.kts", "build.gradle"] {
+			let candidate = directory.appendingPathComponent(name)
+			if FileManager.default.fileExists(atPath: candidate.path) {
+				buildFile = candidate
+				break
+			}
+		}
+		guard let buildFile, let build = GradleBuild.read(at: buildFile) else { return [] }
+
+		let executable = GradleBuild.executable(for: directory, root: root)
+		let suffix = moduleSuffix(for: directory, root: root)
+		// The wrapper is written as `./gradlew`, so it is run from the directory
+		// that holds it rather than from the module — and the module is named
+		// with Gradle's own `:module:task` instead.
+		let wrapperDirectory = URL(fileURLWithPath: executable).deletingLastPathComponent()
+		let isWrapper = executable.hasSuffix("gradlew")
+		let prefix = isWrapper ? gradlePath(of: directory, under: wrapperDirectory) : ""
+
+		return build.runnableTasks.map { task in
+			RunConfiguration(
+				name: "gradle \(task.name)\(suffix)",
+				source: .gradle,
+				executable: executable,
+				arguments: [prefix + task.name],
+				workingDirectory: canonicalPath(isWrapper ? wrapperDirectory : directory),
+				file: canonicalPath(buildFile),
+				line: task.line > 0 ? task.line : nil
+			)
+		}
+	}
+
+	/// Gradle's name for a sub-project: `:api:test` rather than `test` run in
+	/// `api/`, which is the same thing said in the way Gradle understands from
+	/// the root it is invoked at.
+	static func gradlePath(of directory: URL, under root: URL) -> String {
+		let rootPath = FilePath.canonical(root)
+		let path = FilePath.canonical(directory)
+		guard path != rootPath, path.hasPrefix(rootPath + "/") else { return "" }
+		return ":" + String(path.dropFirst(rootPath.count + 1)).replacingOccurrences(of: "/", with: ":") + ":"
+	}
+
+	/// ` (api)` for a module, and nothing for the root — so a multi-module
+	/// build's menu says which module each goal belongs to, and a single-module
+	/// project is not made to read `mvn test (my-project)`.
+	static func moduleSuffix(for directory: URL, root: URL) -> String {
+		let rootPath = FilePath.canonical(root)
+		let path = FilePath.canonical(directory)
+		guard path != rootPath, path.hasPrefix(rootPath + "/") else { return "" }
+		return " (\(String(path.dropFirst(rootPath.count + 1))))"
+	}
+
+	/// A configuration for every class with a `main` method.
+	///
+	/// What it runs is the build tool, because a JVM needs a classpath and only
+	/// the build knows it: Spring Boot's plugin, Gradle's application plugin, or
+	/// Maven's exec plugin, in that order of preference. The class travels with
+	/// the configuration regardless, so the debugger — which builds its own
+	/// classpath from the language server — can start the right one.
+	static func javaMainClasses(in root: URL) -> [RunConfiguration] {
+		JavaTooling.mainClasses(in: root).compactMap { main in
+			let module = URL(fileURLWithPath: main.module)
+			guard let command = javaRunCommand(for: main, module: module, root: root) else { return nil }
+
+			return RunConfiguration(
+				name: "run \(main.simpleName)",
+				source: .javaMain,
+				executable: command.executable,
+				arguments: command.arguments,
+				workingDirectory: canonicalPath(command.directory),
+				file: main.file,
+				line: main.line,
+				mainClass: main.name
+			)
+		}
+	}
+
+	/// How to start one class, given what its module is built with.
+	static func javaRunCommand(
+		for main: JavaTooling.MainClass,
+		module: URL,
+		root: URL
+	) -> (executable: String, arguments: [String], directory: URL)? {
+		let manager = FileManager.default
+
+		if manager.fileExists(atPath: module.appendingPathComponent("pom.xml").path) {
+			let maven = MavenProject.executable(for: module, root: root)
+			let project = MavenProject.read(at: module.appendingPathComponent("pom.xml"))
+			if project?.isSpringBoot == true, project?.mainClass == nil || project?.mainClass == main.name {
+				return (maven, ["spring-boot:run"], module)
+			}
+			// The exec plugin does not have to be declared in the POM — Maven
+			// resolves it — so this works for a module that has said nothing
+			// about how to run itself, which is most of them.
+			return (maven, ["compile", "exec:java", "-Dexec.mainClass=\(main.name)"], module)
+		}
+
+		for name in ["build.gradle.kts", "build.gradle"] {
+			let file = module.appendingPathComponent(name)
+			guard let build = GradleBuild.read(at: file) else { continue }
+			let gradle = GradleBuild.executable(for: module, root: root)
+			let wrapperDirectory = gradle.hasSuffix("gradlew")
+				? URL(fileURLWithPath: gradle).deletingLastPathComponent()
+				: module
+			let prefix = gradle.hasSuffix("gradlew") ? gradlePath(of: module, under: wrapperDirectory) : ""
+
+			if build.isSpringBoot { return (gradle, [prefix + "bootRun"], wrapperDirectory) }
+			if build.isApplication { return (gradle, [prefix + "run"], wrapperDirectory) }
+			// A Gradle module with neither plugin has no task that starts a
+			// class, and inventing a `JavaExec` in somebody's build file is not
+			// this app's business. It can still be debugged: that path builds
+			// its own classpath rather than asking Gradle to run anything.
+			return nil
+		}
+		return nil
 	}
 
 	// MARK: - Go

@@ -14,6 +14,10 @@ public struct DebugAdapter: Equatable, Sendable {
 		case standardIO
 		/// The adapter listens on a port and prints it; we dial in.
 		case socket
+		/// The language server *is* the adapter's host: it is asked to start a
+		/// debug session and answers with a port. Nothing is spawned here, and
+		/// nothing can be debugged until the server is running.
+		case languageServer
 	}
 
 	public let id: String
@@ -74,7 +78,21 @@ public enum DebugAdapters {
 		installHint: "Comes with Xcode; also in LLVM as lldb-dap."
 	)
 
-	public static let all: [DebugAdapter] = [delve, lldb]
+	/// java-debug, which the Java language server hosts.
+	///
+	/// The command is jdtls because that is what has to be installed for this
+	/// to work at all; nothing here ever runs it as a debugger.
+	public static let java = DebugAdapter(
+		id: "java",
+		name: "Java",
+		command: "jdtls",
+		arguments: [],
+		transport: .languageServer,
+		adapterID: "java",
+		installHint: "brew install jdtls, plus the java-debug bundle."
+	)
+
+	public static let all: [DebugAdapter] = [delve, lldb, java]
 
 	public static func adapter(id: String) -> DebugAdapter? {
 		all.first { $0.id == id }
@@ -90,13 +108,17 @@ public enum DebugAdapters {
 			? URL(fileURLWithPath: path)
 			: projectRoot.appendingPathComponent(path)
 
-		// A go.mod anywhere between the program and the project root means Go.
+		// A build file anywhere between the program and the project root says
+		// which language this is: go.mod means Go, a POM or a Gradle build means
+		// Java. The nearest one wins, which is what makes a repository holding
+		// both work.
 		var cursor = directory.hasDirectoryPath ? directory : directory.deletingLastPathComponent()
 		let root = projectRoot.standardizedFileURL.path
 		while cursor.path.hasPrefix(root) || cursor.path == root {
 			if FileManager.default.fileExists(atPath: cursor.appendingPathComponent("go.mod").path) {
 				return delve
 			}
+			if JavaTooling.buildFile(in: cursor) != nil { return java }
 			let parent = cursor.deletingLastPathComponent()
 			if parent.path == cursor.path { break }
 			cursor = parent

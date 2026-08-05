@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ideai — a fast macOS editor with an IDEA layout</title>
+<meta name="description" content="A native macOS project browser, editor, terminal and debugger with an IntelliJ IDEA-style layout. No web view, no Electron.">
+<meta property="og:title" content="ideai">
+<meta property="og:description" content="A fast macOS project browser and code editor with an IntelliJ IDEA-style layout. Native AppKit, no web view.">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1024 1024'%3E%3Crect width='1024' height='1024' rx='230' fill='%231a1b1e'/%3E%3Cpath d='M276 306 L494 512 L276 718' fill='none' stroke='%236eaaf0' stroke-width='104' stroke-linecap='round' stroke-linejoin='round'/%3E%3Crect x='608' y='306' width='160' height='412' rx='34' fill='%23dba04a'/%3E%3C/svg%3E">
+<style>
+	/* The app's own palette — dusk above, daylight below — so the page and
+	   the thing it describes agree about what colour they are. */
+	:root {
+		--bg: #1a1c21;
+		--panel: #24272e;
+		--line: #343842;
+		--text: #c2c6d0;
+		--head: #e3e6ec;
+		--dim: #6c7383;
+		--blue: #6eaaf0;
+		--amber: #dba04a;
+		--green: #71b382;
+		--red: #d6706e;
+		--mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+	}
+	@media (prefers-color-scheme: light) {
+		:root {
+			--bg: #f7f8fa;
+			--panel: #f2f3f5;
+			--line: #d8dae0;
+			--text: #2b2d30;
+			--head: #14161a;
+			--dim: #6b7280;
+			--blue: #1f6fcc;
+			--amber: #a2701f;
+			--green: #2e8b45;
+			--red: #b4553f;
+		}
+	}
+
+	* { box-sizing: border-box; }
+	html { -webkit-text-size-adjust: 100%; }
+	body {
+		margin: 0;
+		background: var(--bg);
+		color: var(--text);
+		font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+	}
+	main { max-width: 62rem; margin: 0 auto; padding: 0 1.25rem 6rem; }
+	a { color: var(--blue); }
+	h1, h2, h3 { color: var(--head); line-height: 1.25; }
+	h2 {
+		margin: 3.5rem 0 1rem;
+		font-size: 1.5rem;
+		padding-bottom: .5rem;
+		border-bottom: 1px solid var(--line);
+	}
+	h3 { margin: 2rem 0 .5rem; font-size: 1.1rem; }
+	code, kbd { font-family: var(--mono); font-size: .9em; }
+	kbd {
+		border: 1px solid var(--line);
+		border-radius: 4px;
+		padding: .05em .35em;
+		background: var(--panel);
+		white-space: nowrap;
+	}
+
+	/* Header */
+	header { padding: 4.5rem 0 1rem; text-align: center; }
+	header svg { width: 104px; height: 104px; border-radius: 23%; }
+	header h1 { margin: 1rem 0 .25rem; font-size: 2.6rem; letter-spacing: -.02em; }
+	header p.tagline { margin: 0 auto; max-width: 40rem; font-size: 1.15rem; color: var(--text); }
+	header p.sub { color: var(--dim); max-width: 42rem; margin: .75rem auto 0; }
+
+	.actions { display: flex; gap: .75rem; justify-content: center; flex-wrap: wrap; margin: 2rem 0 1rem; }
+	.actions a {
+		display: inline-block;
+		padding: .6rem 1.2rem;
+		border-radius: 8px;
+		border: 1px solid var(--line);
+		background: var(--panel);
+		color: var(--head);
+		text-decoration: none;
+		font-weight: 550;
+	}
+	.actions a.primary { background: var(--blue); border-color: var(--blue); color: #0d1117; }
+	.actions a:hover { border-color: var(--blue); }
+
+	/* Tables: the two that answer "can it do X" and "for my language". */
+	.scroll { overflow-x: auto; margin: 1rem 0; }
+	table { border-collapse: collapse; width: 100%; font-size: .92rem; }
+	th, td { text-align: left; padding: .55rem .7rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+	th { color: var(--head); font-weight: 600; white-space: nowrap; }
+	td.mid, th.mid { text-align: center; }
+	tbody tr:hover { background: var(--panel); }
+	.yes { color: var(--green); font-weight: 700; }
+	.no { color: var(--dim); }
+	td .note { color: var(--dim); font-size: .85em; display: block; }
+
+	/* Feature cards */
+	.cards { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); margin: 1.5rem 0; }
+	.card { border: 1px solid var(--line); border-radius: 10px; padding: 1rem 1.1rem; background: var(--panel); }
+	.card h3 { margin: 0 0 .35rem; font-size: 1rem; }
+	.card p { margin: 0; color: var(--text); font-size: .93rem; }
+
+	pre {
+		background: var(--panel);
+		border: 1px solid var(--line);
+		border-radius: 8px;
+		padding: .9rem 1rem;
+		overflow-x: auto;
+		font-family: var(--mono);
+		font-size: .88rem;
+	}
+	pre .c { color: var(--dim); }
+
+	footer {
+		border-top: 1px solid var(--line);
+		margin-top: 4rem;
+		padding: 1.5rem 0;
+		color: var(--dim);
+		font-size: .9rem;
+		text-align: center;
+	}
+	sup { font-size: .7em; }
+	.foot-note { color: var(--dim); font-size: .9rem; }
+</style>
+</head>
+<body>
+<main>
+
+<header>
+	<svg viewBox="0 0 1024 1024" aria-label="ideai">
+		<defs>
+			<linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+				<stop offset="0" stop-color="#2b2d30"/>
+				<stop offset="1" stop-color="#1a1b1e"/>
+			</linearGradient>
+		</defs>
+		<rect width="1024" height="1024" rx="230" fill="url(#bg)"/>
+		<path d="M276 306 L494 512 L276 718" fill="none" stroke="#6eaaf0"
+		      stroke-width="104" stroke-linecap="round" stroke-linejoin="round"/>
+		<rect x="608" y="306" width="160" height="412" rx="34" fill="#dba04a"/>
+	</svg>
+	<h1>ideai</h1>
+	<p class="tagline">A fast macOS project browser, editor, terminal and debugger,
+	   with an IntelliJ IDEA-style layout.</p>
+	<p class="sub">Native AppKit. No web view, no Electron, no subscription. Built for
+	   the case where you mostly <em>read</em> code and lightly edit it — and still want
+	   to run it, step through it, and do both inside a Kubernetes cluster.</p>
+	<div class="actions">
+		<a class="primary" href="https://github.com/philipparndt/ideai/releases/latest">Download the latest release</a>
+		<a href="https://github.com/philipparndt/ideai">Source on GitHub</a>
+	</div>
+	<p class="foot-note">macOS 14 or newer, Apple silicon. Signed with a Developer ID and notarised.</p>
+</header>
+
+<h2>What it is</h2>
+<p>
+	An editor that starts instantly and stays out of the way. The design goal
+	throughout is that cost scales with the <em>viewport</em> rather than the file:
+	a 7 MB file opens in 11 ms, a keystroke costs 0.013 ms on the main thread, and
+	highlighting runs over the bytes on screen instead of the whole document.
+</p>
+<div class="cards">
+	<div class="card">
+		<h3>Navigator</h3>
+		<p>The IDEA tree: version-control colours, lazily-loaded directories, a warm
+		   tint on build output, and full keyboard navigation. FSEvents keeps it live,
+		   so a <code>git checkout</code> in a terminal recolours it.</p>
+	</div>
+	<div class="card">
+		<h3>Editor</h3>
+		<p>tree-sitter highlighting and folding for 23 languages, a persistent rope
+		   behind the text, and a parser that is allowed to land a frame late so
+		   typing never waits for it.</p>
+	</div>
+	<div class="card">
+		<h3>Run and debug</h3>
+		<p>Launch configurations, Makefile goals, Maven goals, Gradle tasks and entry
+		   points found by scanning. Breakpoints — conditional, hit counts, log
+		   points — over DAP, with stack, variables and watches.</p>
+	</div>
+	<div class="card">
+		<h3>In a cluster</h3>
+		<p>Build here, push into a development pod that has the real chart's config,
+		   secrets and neighbours, and run it there. About a second, against the
+		   minutes an image build and rollout costs. Debug it in place.</p>
+	</div>
+	<div class="card">
+		<h3>Terminal</h3>
+		<p>A real PTY with a VT100/xterm emulator: colour, mouse reporting, the
+		   alternate screen, a bundled Nerd Font, and tmux windows as the panel's
+		   own tabs.</p>
+	</div>
+	<div class="card">
+		<h3>Agent review</h3>
+		<p><kbd>⇧⌘R</kbd> has an agent review the branch and report findings over a
+		   local MCP server — typed data rather than scraped text. Click a finding to
+		   jump to the line.</p>
+	</div>
+</div>
+
+<h2>Features</h2>
+<div class="scroll">
+<table>
+	<thead>
+		<tr><th>Feature</th><th>What it does</th><th>What it needs</th></tr>
+	</thead>
+	<tbody>
+		<tr><td><strong>Navigator</strong></td><td>IDEA-style tree, version-control colours, keyboard-driven, FSEvents-live</td><td class="no">—</td></tr>
+		<tr><td><strong>Editor</strong></td><td>tree-sitter highlighting, folding, word wrap, hex viewer, markdown preview</td><td class="no">—</td></tr>
+		<tr><td><strong>Search</strong></td><td>find in file (<kbd>⌘F</kbd>), project-wide streaming search (<kbd>⇧⌘F</kbd>)</td><td class="no">—</td></tr>
+		<tr><td><strong>Outline</strong></td><td><kbd>⇧⌘O</kbd>; symbols from the language server, or from a build file's own parser</td><td>a server, for source files</td></tr>
+		<tr><td><strong>Language servers</strong></td><td>completion, problems, hover, go-to-declaration, find-usages</td><td>the server for that language</td></tr>
+		<tr><td><strong>Run</strong></td><td>launch configurations, imported <code>launch.json</code>, Makefile goals, Maven goals, Gradle tasks, entry points</td><td>that language's toolchain</td></tr>
+		<tr><td><strong>Debug</strong></td><td>breakpoints, stack, variables, watches — over the Debug Adapter Protocol</td><td>Delve, LLDB, or jdtls's java-debug</td></tr>
+		<tr><td><strong>Run in a cluster</strong></td><td>build here, push into a development pod, run it there, follow its output</td><td>kubectl, a cluster</td></tr>
+		<tr><td><strong>Debug in a cluster</strong></td><td>the same pod, held at the first instruction until the debugger arrives</td><td>the above, and that language's pod image</td></tr>
+		<tr><td><strong>Profiler</strong></td><td>CPU, heap, goroutine, block and mutex profiles; flame graph; pods too</td><td>a Go program serving pprof</td></tr>
+		<tr><td><strong>Git</strong></td><td>status, changes, history, blame, branches, worktrees, stash, push</td><td>git</td></tr>
+		<tr><td><strong>Terminal</strong></td><td>real PTY, VT100/xterm, tmux windows as tabs</td><td class="no">—</td></tr>
+		<tr><td><strong>Agent review</strong></td><td><kbd>⇧⌘R</kbd> — findings arrive over MCP as typed data</td><td>Claude Code</td></tr>
+	</tbody>
+</table>
+</div>
+
+<h2>Languages</h2>
+<p>
+	<em>Highlight</em> and <em>fold</em> come from the grammar; <em>outline</em> is
+	<kbd>⇧⌘O</kbd> without a language server; <em>server</em> is what provides
+	completion, problems and usages; <em>cluster</em> is running and debugging the
+	same thing inside a development pod.
+</p>
+<div class="scroll">
+<table>
+	<thead>
+		<tr>
+			<th>Language</th><th class="mid">Highlight</th><th class="mid">Fold</th>
+			<th class="mid">Outline</th><th>Server</th><th>Run</th><th>Debug</th><th class="mid">Cluster</th>
+		</tr>
+	</thead>
+	<tbody>
+		<tr><td><strong>Java</strong></td><td class="mid yes">✓</td><td class="mid yes">✓</td><td class="mid yes">✓</td><td>jdtls</td><td>Maven, Gradle, <code>main</code></td><td>java-debug</td><td class="mid yes">✓</td></tr>
+		<tr><td><strong>Kotlin</strong></td><td class="mid yes">✓</td><td class="mid yes">✓</td><td class="mid no">—</td><td>jdtls<sup>1</sup></td><td>Gradle, <code>main</code></td><td>java-debug</td><td class="mid yes">✓</td></tr>
+		<tr><td><strong>Go</strong></td><td class="mid yes">✓</td><td class="mid">structural</td><td class="mid yes">✓</td><td>gopls</td><td><code>go run</code>, make</td><td>Delve</td><td class="mid yes">✓</td></tr>
+		<tr><td><strong>Swift</strong></td><td class="mid yes">✓</td><td class="mid yes">✓</td><td class="mid yes">✓</td><td>sourcekit-lsp</td><td>make, launch config</td><td>LLDB</td><td class="mid">via make</td></tr>
+		<tr><td><strong>Rust</strong></td><td class="mid yes">✓</td><td class="mid">structural</td><td class="mid yes">✓</td><td>rust-analyzer</td><td>make, launch config</td><td>LLDB</td><td class="mid yes">✓</td></tr>
+		<tr><td><strong>C / C++</strong></td><td class="mid yes">✓</td><td class="mid">structural</td><td class="mid yes">✓</td><td>clangd</td><td>make, launch config</td><td>LLDB</td><td class="mid yes">✓</td></tr>
+		<tr><td><strong>Zig</strong></td><td class="mid yes">✓</td><td class="mid yes">✓</td><td class="mid no">—</td><td class="no">—</td><td>make, launch config</td><td>LLDB</td><td class="mid yes">✓</td></tr>
+		<tr><td><strong>Odin</strong></td><td class="mid yes">✓</td><td class="mid yes">✓</td><td class="mid no">—</td><td class="no">—</td><td>make, launch config</td><td>LLDB</td><td class="mid yes">✓</td></tr>
+		<tr><td><strong>Python</strong></td><td class="mid yes">✓</td><td class="mid">structural</td><td class="mid yes">✓</td><td>pyright</td><td>make</td><td class="no">—</td><td class="mid no">—</td></tr>
+		<tr><td><strong>TypeScript / TSX</strong></td><td class="mid yes">✓</td><td class="mid">structural</td><td class="mid yes">✓</td><td>typescript-language-server</td><td>make</td><td class="no">—</td><td class="mid no">—</td></tr>
+		<tr><td><strong>JavaScript</strong></td><td class="mid yes">✓</td><td class="mid">structural</td><td class="mid yes">✓</td><td>typescript-language-server</td><td>make</td><td class="no">—</td><td class="mid no">—</td></tr>
+		<tr><td><strong>Groovy</strong></td><td class="mid yes">✓</td><td class="mid yes">✓</td><td class="mid">build files<sup>2</sup></td><td class="no">—</td><td>Gradle</td><td class="no">—</td><td class="mid no">—</td></tr>
+		<tr><td><strong>Makefile</strong></td><td class="mid">as shell</td><td class="mid">structural</td><td class="mid"><span class="yes">✓</span> targets</td><td class="no">—</td><td>every goal</td><td>Go goals</td><td class="mid yes">✓</td></tr>
+		<tr><td><strong>JSON</strong></td><td class="mid yes">✓</td><td class="mid">structural</td><td class="mid no">—</td><td>vscode-json-language-server</td><td class="no">—</td><td class="no">—</td><td class="mid no">—</td></tr>
+		<tr><td><strong>Shell</strong></td><td class="mid yes">✓</td><td class="mid">structural</td><td class="mid no">—</td><td class="no">—</td><td>make</td><td class="no">—</td><td class="mid no">—</td></tr>
+		<tr><td><strong>HTML / XML</strong></td><td class="mid yes">✓</td><td class="mid">structural</td><td class="mid no">—</td><td class="no">—</td><td class="no">—</td><td class="no">—</td><td class="mid no">—</td></tr>
+		<tr><td><strong>CSS, YAML, TOML, Markdown, Svelte, OpenSCAD</strong></td><td class="mid yes">✓</td><td class="mid">structural</td><td class="mid no">—</td><td class="no">—</td><td class="no">—</td><td class="no">—</td><td class="mid no">—</td></tr>
+	</tbody>
+</table>
+</div>
+<p class="foot-note">
+	<sup>1</sup> jdtls answers for <code>.java</code>. A Kotlin file is highlighted
+	and folded but not served, and its <code>main</code> functions are still found,
+	run and debugged — the JVM does not care which language produced the class.<br>
+	<sup>2</sup> A <code>pom.xml</code> or Gradle build file has no server, and its
+	grammar knows nothing about modules — so <kbd>⇧⌘O</kbd> over one is answered by
+	that build file's own parser: modules, plugins, dependencies, tasks.<br>
+	"Structural" folding derives regions from any multi-line node in the parse tree,
+	so every language folds; a <code>folds.scm</code> only makes it tidier.
+</p>
+<p>
+	Nothing is bundled. A language server, a debugger and a build tool each have
+	opinions about your toolchain, and the ones already on your machine are the
+	right ones — so what is missing is named in a bar at the top of the editor,
+	with the one command that installs it.
+</p>
+
+<h2>Java, in full</h2>
+<p>
+	The most recent language to be supported end to end, and the one that shows
+	what "supported" means here:
+</p>
+<div class="cards">
+	<div class="card">
+		<h3>The language server</h3>
+		<p><code>brew install jdtls</code>. Each project gets an index of its own,
+		   and the JDKs installed on the machine are reported to it, so a module
+		   targeting 17 compiles against 17.</p>
+	</div>
+	<div class="card">
+		<h3>Maven and Gradle</h3>
+		<p>Read directly — modules, plugins, dependencies, tasks — so their goals
+		   are run configurations and <kbd>⇧⌘O</kbd> works over a build file. The
+		   wrapper wins over anything on the <code>PATH</code>.</p>
+	</div>
+	<div class="card">
+		<h3>Debugging</h3>
+		<p>java-debug is not a program but a bundle the language server loads: jdtls
+		   is asked for a debug session, answers with a port, and the classpath comes
+		   from the same server, because nothing else knows it.</p>
+	</div>
+	<div class="card">
+		<h3>In a cluster</h3>
+		<p>A jar is built here and pushed into a pod that has a JVM. Debugging starts
+		   that JVM suspended with JDWP open, so the attach lands before the program
+		   has done anything — which is the only way to debug a worker.</p>
+	</div>
+</div>
+
+<h2>Performance</h2>
+<p>Measured on Apple silicon, release build:</p>
+<div class="scroll">
+<table>
+	<thead><tr><th>Operation</th><th>File</th><th>Time</th></tr></thead>
+	<tbody>
+		<tr><td>Build rope</td><td>7 MB / 200k lines</td><td><strong>11 ms</strong></td></tr>
+		<tr><td>Keystroke (main thread)</td><td>3.5 MB / 100k lines</td><td><strong>0.013 ms</strong></td></tr>
+		<tr><td>Highlight one viewport (80 lines)</td><td>3.5 MB / 100k lines</td><td><strong>2.5 ms</strong></td></tr>
+		<tr><td>10k random line lookups</td><td>200k lines</td><td><strong>8 ms</strong></td></tr>
+		<tr><td>Edit cost growth over a 200× larger file</td><td>—</td><td><strong>2.8×</strong></td></tr>
+	</tbody>
+</table>
+</div>
+<p>
+	Three decisions do most of that: a persistent rope whose interior nodes sum
+	bytes, UTF-16 units and newlines; highlighting scoped to the bytes on screen;
+	and a parser that runs off the main thread and is allowed to land a frame
+	late. The rope is authoritative for text, the parser only for colour.
+</p>
+
+<h2>Building it yourself</h2>
+<pre><span class="c"># Xcode's Swift, not whichever one is first on the PATH.</span>
+git clone https://github.com/philipparndt/ideai.git
+cd ideai
+make          <span class="c"># build the .app and launch it</span>
+make test     <span class="c"># the suite</span>
+make dev      <span class="c"># debug build, in the foreground, logs on the terminal</span></pre>
+
+<footer>
+	<a href="https://github.com/philipparndt/ideai">GitHub</a> ·
+	<a href="https://github.com/philipparndt/ideai/releases">Releases</a> ·
+	<a href="https://github.com/philipparndt/ideai/blob/main/THIRD-PARTY-NOTICES.md">Third-party notices</a>
+	<br>Not affiliated with JetBrains.
+</footer>
+
+</main>
+</body>
+</html>

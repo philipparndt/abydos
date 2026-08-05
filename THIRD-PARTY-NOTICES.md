@@ -31,7 +31,14 @@ this independently of the fact that ideai is an alternative to their IDE.
 **tree-sitter** and its grammars — MIT.
 
 Grammars consumed as Swift packages: bash, c, cpp, go, html, java, json,
-markdown, openscad, rust, svelte, swift, toml, typescript.
+kotlin, markdown, odin, openscad, rust, svelte, swift, toml, typescript, zig.
+
+Two of those are pinned unusually. **tree-sitter-kotlin** is fwcd's at 0.3.8
+rather than the tree-sitter-grammars fork, which ships no queries at all;
+**tree-sitter-groovy** (murtaza64) has never tagged a release, so it is pinned
+by commit. Both are MIT. Kotlin's `highlights.scm` is derived from
+nvim-treesitter's, which is Apache-2.0, and carries that attribution in its own
+header.
 
 Grammars vendored into `Sources/Grammars/` (see the note in `Package.swift` for
 why): css, javascript, python, yaml. Each keeps its upstream `LICENSE` beside
@@ -46,6 +53,8 @@ apply to this project:
 
 - `git`
 - `go`, `dlv` (Delve)
+- `jdtls` (Eclipse JDT language server) and the java-debug bundle it loads
+- `mvn`, `gradle`, and a project's own `mvnw` or `gradlew`
 - `claude` (Claude Code)
 - Fork, if present, for "Open in Fork"
 

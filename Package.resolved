@@ -1,5 +1,5 @@
 {
-  "originHash" : "9d27bd2e53a16593fa20b2dda5acb95b0754525a6716f87c1f322431c7b3ee29",
+  "originHash" : "7db56ca8254b3d2492cefd1f16d972358ddfca4808f9fb780f79a329448498c9",
   "pins" : [
     {
       "identity" : "swift-argument-parser",
@@ -74,6 +74,14 @@
       }
     },
     {
+      "identity" : "tree-sitter-groovy",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/murtaza64/tree-sitter-groovy",
+      "state" : {
+        "revision" : "deb0dcf8c4544f07564060f6e9b9f6e4b0bfc27d"
+      }
+    },
+    {
       "identity" : "tree-sitter-html",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/tree-sitter/tree-sitter-html",
@@ -98,6 +106,15 @@
       "state" : {
         "revision" : "ee35a6ebefcef0c5c416c0d1ccec7370cfca5a24",
         "version" : "0.24.8"
+      }
+    },
+    {
+      "identity" : "tree-sitter-kotlin",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/fwcd/tree-sitter-kotlin",
+      "state" : {
+        "revision" : "e1a2d5ad1f61f5740677183cd4125bb071cd2f30",
+        "version" : "0.3.8"
       }
     },
     {

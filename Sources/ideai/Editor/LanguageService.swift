@@ -273,6 +273,96 @@ final class LanguageService {
 		diagnostics[uri(for: url)] ?? []
 	}
 
+	// MARK: - Java
+
+	/// What went wrong on the way to a Java debug session.
+	///
+	/// Each case is a different thing to do about it, which is why they are
+	/// separate: install a server, wait for it, or install the bundle it loads
+	/// the debugger from.
+	enum JavaDebugFailure: LocalizedError {
+		case noServer
+		case noBundle
+		case refused(String)
+
+		var errorDescription: String? {
+			switch self {
+			case .noServer:
+				return "The Java language server is not running for this project, "
+					+ "and it is what hosts the debugger. \(LanguageServers.definition(forLanguage: "java")?.installHint ?? "")"
+			case .noBundle:
+				return "The Java language server is running but has no debugger in it: "
+					+ "the java-debug bundle was not found when it started."
+			case let .refused(reason):
+				return reason
+			}
+		}
+	}
+
+	/// Asks jdtls to start a debug session, and returns the port it answers
+	/// with.
+	///
+	/// This is the whole reason Java debugging needs the language server: the
+	/// adapter lives inside it. A server that is still importing the project
+	/// refuses, which is worth saying out loud — it is a wait, not a fault.
+	func startJavaDebugAdapter(project: URL) async throws -> Int {
+		guard let server = server(for: "java", project: project), server.client.isRunning else {
+			throw JavaDebugFailure.noServer
+		}
+		guard JavaTooling.debugPlugin() != nil else { throw JavaDebugFailure.noBundle }
+
+		// Retried, because "not yet" and "never" look the same from here: a
+		// server that is still importing the project refuses, and a few seconds
+		// later the same call succeeds. Pressing debug the moment a project
+		// opens is exactly when this happens.
+		var lastError: Error?
+		for attempt in 0..<5 {
+			if attempt > 0 { try? await Task.sleep(nanoseconds: 2_000_000_000) }
+			do {
+				let result = try await server.client.executeCommand(JavaDebug.startCommand)
+				// The port comes back as a number, and which flavour of number
+				// depends on the JSON decoder's mood.
+				if let port = result as? Int { return port }
+				if let port = result as? NSNumber { return port.intValue }
+				lastError = JavaDebugFailure.refused("The language server started no debug session.")
+			} catch {
+				lastError = error
+				log("java debug session refused (attempt \(attempt + 1)): \(error.localizedDescription)")
+			}
+		}
+
+		throw JavaDebugFailure.refused(
+			"The Java language server would not start a debug session: "
+				+ "\(lastError?.localizedDescription ?? "no reason given"). A project it is still "
+				+ "importing cannot be debugged yet — the status bar says when it has finished."
+		)
+	}
+
+	/// The runtime classpath of the project a file belongs to.
+	///
+	/// Java cannot be started without one and nothing but the build knows it,
+	/// which is why this asks the server that read the build file rather than
+	/// guessing from `target/` and `build/`.
+	func javaClasspath(for url: URL, project: URL) async -> (projectName: String?, classPaths: [String])? {
+		guard let server = server(for: "java", project: project), server.client.isRunning else { return nil }
+		do {
+			let result = try await server.client.executeCommand(
+				JavaDebug.classpathCommand,
+				arguments: [uri(for: url), JavaDebug.classpathOptions()]
+			)
+			guard let object = result as? [String: Any] else { return nil }
+			let paths = object["classpaths"] as? [String] ?? []
+			let modules = object["modulepaths"] as? [String] ?? []
+			let root = (object["projectRoot"] as? String).map {
+				URL(fileURLWithPath: $0).lastPathComponent
+			}
+			return (root, paths + modules)
+		} catch {
+			log("java classpath unavailable for \(url.lastPathComponent): \(error.localizedDescription)")
+			return nil
+		}
+	}
+
 	// MARK: - Servers
 
 	@discardableResult
@@ -337,9 +427,10 @@ final class LanguageService {
 			//
 			// And with a PATH that has the toolchain on it. A language server
 			// runs the compiler; a GUI app's PATH does not have one.
+			LanguageServers.prepare(resolved.definition, root: resolved.root)
 			try client.start(
 				executable: resolved.executable,
-				arguments: resolved.definition.arguments,
+				arguments: LanguageServers.arguments(for: resolved.definition, root: resolved.root),
 				workingDirectory: canonical(resolved.root),
 				environment: LanguageServers.serverEnvironment
 			)
@@ -364,7 +455,17 @@ final class LanguageService {
 			// nothing waits on it: notifications queue up on the pipe in order,
 			// and the first answers simply arrive a moment later.
 			do {
-				_ = try await client.initialize(rootURL: canonical(resolved.root))
+				// A Java server reads the build file before it answers the
+				// handshake, and on a multi-module Maven project that is tens of
+				// seconds. Ten would report a working server as broken.
+				let isJava = resolved.definition.setup == .java
+				_ = try await client.initialize(
+					rootURL: canonical(resolved.root),
+					options: LanguageServers.initializationOptions(
+						for: resolved.definition, root: resolved.root
+					),
+					timeout: isJava ? 120 : 10
+				)
 				log("\(resolved.definition.command) initialized")
 			} catch {
 				log("\(resolved.definition.command) handshake failed: \(error.localizedDescription)")

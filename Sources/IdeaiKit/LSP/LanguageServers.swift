@@ -14,19 +14,38 @@ public struct LanguageServerDefinition: Equatable, Sendable {
 	/// Go server is not started for a repository with one `.go` file in a
 	/// vendored directory.
 	public let rootMarkers: [String]
+	/// Anything this server needs worked out per project rather than stated
+	/// once here.
+	public let setup: Setup
+
+	/// Servers that cannot be started from a fixed command line.
+	///
+	/// Most can: the command takes no arguments, or the same two every time.
+	/// One cannot, and pretending otherwise would mean either a stringly-typed
+	/// escape hatch in the table or a special case at every call site.
+	public enum Setup: String, Equatable, Sendable {
+		case plain
+		/// jdtls keeps a compiled index per project and will not share one
+		/// between two, so each project is given a data directory of its own;
+		/// and its debugger arrives as an Eclipse bundle that has to be named in
+		/// the initialize request or it is never loaded.
+		case java
+	}
 
 	public init(
 		languageIds: [String],
 		command: String,
 		arguments: [String] = [],
 		installHint: String,
-		rootMarkers: [String] = []
+		rootMarkers: [String] = [],
+		setup: Setup = .plain
 	) {
 		self.languageIds = languageIds
 		self.command = command
 		self.arguments = arguments
 		self.installHint = installHint
 		self.rootMarkers = rootMarkers
+		self.setup = setup
 	}
 }
 
@@ -75,6 +94,19 @@ public enum LanguageServers {
 			command: "clangd",
 			installHint: "Comes with Xcode's toolchain, or: brew install llvm",
 			rootMarkers: ["compile_commands.json", "CMakeLists.txt"]
+		),
+		LanguageServerDefinition(
+			languageIds: ["java"],
+			command: "jdtls",
+			installHint: "brew install jdtls",
+			// A build file, and not `*.java`: rooting jdtls at the first
+			// directory that happens to hold a source file gets a project with no
+			// classpath, which answers nothing and explains nothing.
+			rootMarkers: [
+				"pom.xml", "build.gradle", "build.gradle.kts",
+				"settings.gradle", "settings.gradle.kts", ".classpath",
+			],
+			setup: .java
 		),
 		LanguageServerDefinition(
 			languageIds: ["json"],
@@ -141,6 +173,87 @@ public enum LanguageServers {
 		]
 	}
 
+	// MARK: - Starting one
+
+	/// The command line for a server in a project.
+	///
+	/// The same arguments every time for all but one of them. jdtls is told
+	/// where to keep this project's index, which is not something a fixed table
+	/// can say.
+	public static func arguments(for definition: LanguageServerDefinition, root: URL) -> [String] {
+		switch definition.setup {
+		case .plain:
+			return definition.arguments
+		case .java:
+			return definition.arguments + ["-data", JavaTooling.serverWorkspace(for: root).path]
+		}
+	}
+
+	/// Anything that has to exist on disk before the server is started.
+	///
+	/// Only jdtls needs this, and only to be given a directory it can write its
+	/// index into. Failing is not fatal — jdtls creates the directory itself
+	/// when it can — so nothing is thrown.
+	public static func prepare(_ definition: LanguageServerDefinition, root: URL) {
+		guard definition.setup == .java else { return }
+		try? FileManager.default.createDirectory(
+			at: JavaTooling.serverWorkspace(for: root), withIntermediateDirectories: true
+		)
+	}
+
+	/// What to send as `initializationOptions`, or nil when there is nothing to
+	/// say.
+	///
+	/// This is where jdtls learns two things it cannot work out for itself: the
+	/// JDKs installed here, so a project targeting 17 is compiled against 17
+	/// rather than against whatever the server happens to run on, and the
+	/// java-debug bundle, without which there is no debugging at all.
+	public static func initializationOptions(
+		for definition: LanguageServerDefinition,
+		root: URL
+	) -> [String: Any]? {
+		guard definition.setup == .java else { return nil }
+
+		var options: [String: Any] = [:]
+		if let plugin = JavaTooling.debugPlugin() { options["bundles"] = [plugin] }
+		options["workspaceFolders"] = [root.absoluteString]
+
+		let installed = JavaTooling.installedRuntimes()
+		let runtimes = installed.enumerated().map { index, runtime -> [String: Any] in
+			[
+				"name": runtime.name,
+				"path": runtime.home,
+				// The newest is the default a project falls back to when its build
+				// file does not say. They are sorted newest first.
+				"default": index == 0,
+			]
+		}
+
+		options["settings"] = [
+			"java": [
+				"configuration": [
+					"runtimes": runtimes,
+					// The build file is the truth about the classpath, and it
+					// changes while you work. Left to "interactive", jdtls asks
+					// with a dialog this app does not show, so the answer would be
+					// no for ever and the classpath would go stale.
+					"updateBuildConfiguration": "automatic",
+				],
+				"import": [
+					"maven": ["enabled": true],
+					// The wrapper, not whatever gradle is on the path: a project
+					// pins its Gradle version for the same reason it pins its
+					// dependencies.
+					"gradle": ["enabled": true, "wrapper": ["enabled": true]],
+				],
+				// This editor formats nothing, and a server that thinks it does
+				// spends time preparing an answer nobody asks for.
+				"format": ["enabled": false],
+			],
+		]
+		return options
+	}
+
 	/// The environment to start a server in.
 	///
 	/// Finding the server is only half of it: a language server is a front end
@@ -156,6 +269,13 @@ public enum LanguageServers {
 	public static var serverEnvironment: [String: String] {
 		var environment = ProcessInfo.processInfo.environment
 		environment["PATH"] = searchPaths.joined(separator: ":")
+		// jdtls is a Java program before it is a language server, and its
+		// launcher looks for a JVM in `JAVA_HOME` before it looks anywhere else.
+		// Unset — which is what a Dock-launched app has — it falls back to
+		// `/usr/bin/java`, the stub that opens a download page.
+		if environment["JAVA_HOME"] == nil, let home = JavaTooling.javaHome() {
+			environment["JAVA_HOME"] = home
+		}
 		return environment
 	}
 

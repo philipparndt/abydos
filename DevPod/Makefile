@@ -7,8 +7,12 @@
 
 ARCH        ?= arm64
 # Which debuggers the image carries: full (both), go (Delve), native
-# (gdbserver). A pod only ever debugs one language, so a project can have the
-# small one — 10 MB against 32.
+# (gdbserver), jvm (a JRE and no debugger at all — a JVM given a flag is one).
+# A pod only ever debugs one language, so a project can have the small one —
+# 10 MB against 32, or 167 for the JVM, which is what a JRE costs.
+#
+# The tag is not derived from the variant: the editor asks for `:dev-jvm`, so
+# a JVM image built to be imported locally needs VERSION=dev-jvm as well.
 VARIANT     ?= full
 DELVE       ?= v1.26.2
 TAG         ?= $(REPOSITORY):$(VERSION)
@@ -25,7 +29,7 @@ NAMESPACE   ?= devpod
 RELEASE     ?= demo
 
 # What the supervisor needs to know, and where its parts are.
-IMAGE_ENV   := IDEAI_BINARY=/app/current,IDEAI_WORKDIR=/app,IDEAI_CONTROL_ADDR=:7999,IDEAI_DEBUG_ADDR=:2345,IDEAI_DLV=/usr/local/bin/dlv,SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+IMAGE_ENV   := IDEAI_BINARY=/app/current,IDEAI_WORKDIR=/app,IDEAI_CONTROL_ADDR=:7999,IDEAI_DEBUG_ADDR=:2345,IDEAI_DLV=/usr/local/bin/dlv,IDEAI_JAVA=/opt/java/bin/java,SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
 .DEFAULT_GOAL := help
 
@@ -53,8 +57,9 @@ rootfs: binaries ## Lay out the image's files (ARCH, VARIANT=full|go|native)
 	@mkdir -p $(ROOTFS)/usr/local/bin $(ROOTFS)/app $(ROOTFS)/tmp $(ROOTFS)/etc/ssl/certs
 	@cp $(OUT)/linux_$(ARCH)/ideai-supervisor $(ROOTFS)/usr/local/bin/
 	@cp /etc/ssl/cert.pem $(ROOTFS)/etc/ssl/certs/ca-certificates.crt
-	@if [ "$(VARIANT)" != "native" ]; then cp $(OUT)/linux_$(ARCH)/dlv $(ROOTFS)/usr/local/bin/; fi
-	@if [ "$(VARIANT)" != "go" ]; then ./tools/fetch-gdbserver.sh $(ARCH) $(ROOTFS); fi
+	@if [ "$(VARIANT)" = "jvm" ]; then ./tools/fetch-jre.sh $(ARCH) $(ROOTFS); fi
+	@if [ "$(VARIANT)" != "native" ] && [ "$(VARIANT)" != "jvm" ]; then cp $(OUT)/linux_$(ARCH)/dlv $(ROOTFS)/usr/local/bin/; fi
+	@if [ "$(VARIANT)" != "go" ] && [ "$(VARIANT)" != "jvm" ]; then ./tools/fetch-gdbserver.sh $(ARCH) $(ROOTFS); fi
 	@printf '  %s image for linux/%s: %s\n' "$(VARIANT)" "$(ARCH)" "$$(du -sh $(ROOTFS) | cut -f1)"
 
 .PHONY: mkimage
@@ -81,10 +86,11 @@ publish: mkimage ## Push a multi-arch image (REPOSITORY, VERSION, VARIANT)
 	@echo "==> $(REPOSITORY):$(VERSION)"
 
 .PHONY: publish-all
-publish-all: ## Push the full image plus the slim per-language ones
+publish-all: ## Push the full image plus the per-language ones
 	@$(MAKE) --no-print-directory publish VARIANT=full VERSION=$(VERSION)
 	@$(MAKE) --no-print-directory publish VARIANT=go VERSION=$(VERSION)-go
 	@$(MAKE) --no-print-directory publish VARIANT=native VERSION=$(VERSION)-native
+	@$(MAKE) --no-print-directory publish VARIANT=jvm VERSION=$(VERSION)-jvm
 
 .PHONY: import-k3c
 import-k3c: image ## Put the image in a k3c cluster (CLUSTER=demo1)

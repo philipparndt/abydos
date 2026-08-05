@@ -46,6 +46,25 @@ public final class DAPClient: @unchecked Sendable {
 	private var process: Process?
 	private var inputPipe: Pipe?
 	private var outputPipe: Pipe?
+	/// Held only so its readability handler can be taken off again. An adapter
+	/// started by `startListening` has one on stderr too, and a handler nobody
+	/// clears keeps a thread spinning on a closed descriptor.
+	private var errorPipe: Pipe?
+
+	/// How many times a reader callback has run.
+	///
+	/// For one test, and worth the two lines: a handler left on a closed
+	/// descriptor shows up as CPU rather than as a wrong answer, and CPU is the
+	/// one thing a test running beside a thousand others cannot measure. A
+	/// count that stops growing when the adapter does is the same fact, said
+	/// locally.
+	private(set) var readerWakeups = 0
+
+	private func noteReaderWakeup() {
+		lock.lock()
+		readerWakeups += 1
+		lock.unlock()
+	}
 
 	/// Socket transport, used by adapters that speak DAP over TCP rather than
 	/// stdio. `dlv dap` is one: it is a server, and writing to its stdin
@@ -88,7 +107,15 @@ public final class DAPClient: @unchecked Sendable {
 
 		output.fileHandleForReading.readabilityHandler = { [weak self] handle in
 			let data = handle.availableData
-			guard !data.isEmpty else { return }
+			self?.noteReaderWakeup()
+			// Empty means the far end closed. A readability handler is not
+			// removed by that, and one left on a closed descriptor is called
+			// again immediately, for ever — a whole core per dead adapter, in a
+			// process nobody is looking at any more. It has to take itself off.
+			guard !data.isEmpty else {
+				handle.readabilityHandler = nil
+				return
+			}
 			self?.consume(data)
 		}
 
@@ -145,6 +172,7 @@ public final class DAPClient: @unchecked Sendable {
 		try process.run()
 		self.process = process
 		self.outputPipe = output
+		self.errorPipe = errors
 
 		let endpoint = try await Self.readEndpoint(
 			from: output.fileHandleForReading,
@@ -161,13 +189,26 @@ public final class DAPClient: @unchecked Sendable {
 		// one with nothing in the console but Delve's own two lines.
 		output.fileHandleForReading.readabilityHandler = { [weak self] handle in
 			let data = handle.availableData
-			guard let self, !data.isEmpty else { return }
+			self?.noteReaderWakeup()
+			// See `start`: an adapter that has exited leaves this handler on a
+			// closed descriptor, where it spins on empty reads until the app is
+			// quit. Two ended debug sessions were two cores.
+			guard !data.isEmpty else {
+				handle.readabilityHandler = nil
+				return
+			}
+			guard let self else { return }
 			let text = String(decoding: data, as: UTF8.self)
 			self.callbackQueue.async { self.onOutput?("stdout", text) }
 		}
 		errors.fileHandleForReading.readabilityHandler = { [weak self] handle in
 			let data = handle.availableData
-			guard let self, !data.isEmpty else { return }
+			self?.noteReaderWakeup()
+			guard !data.isEmpty else {
+				handle.readabilityHandler = nil
+				return
+			}
+			guard let self else { return }
 			let text = String(decoding: data, as: UTF8.self)
 			// The one line worth hiding: Delve prints its own usage banner at
 			// every launch, which is not about the program being debugged.
@@ -264,7 +305,11 @@ public final class DAPClient: @unchecked Sendable {
 	}
 
 	public func stop() {
+		// Both of them. Clearing stdout and leaving stderr behind is a whole
+		// core, quietly, for as long as the app runs — one per debug session
+		// that has ended.
 		outputPipe?.fileHandleForReading.readabilityHandler = nil
+		errorPipe?.fileHandleForReading.readabilityHandler = nil
 		connection?.cancel()
 		listener?.cancel()
 		if process?.isRunning == true {
@@ -273,6 +318,7 @@ public final class DAPClient: @unchecked Sendable {
 		process = nil
 		inputPipe = nil
 		outputPipe = nil
+		errorPipe = nil
 		connection = nil
 		listener = nil
 		failAllPending(with: ClientError.notRunning)
