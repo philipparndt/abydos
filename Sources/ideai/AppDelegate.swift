@@ -37,6 +37,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		// writing to ~/.tmux.conf. It is per session now, so that line goes.
 		TmuxSettings.migrateAwayFromConfigEdit()
 
+		// Where the user's tools actually are, asked of their shell before the
+		// first file wants to know.
+		UserShell.warmLoginPath()
+
 		// Claude sessions in the terminal, saying when they need an answer or
 		// have finished. Nothing arrives unless the hooks are installed.
 		let watch = ClaudeWatch()
@@ -875,6 +879,24 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if options.startReview {
 			controller?.reviewBranch(nil)
+		}
+
+		if options.detailDialog {
+			// The real thing a missing server offers, so what is captured is what
+			// somebody pressing "How to install" would actually be shown.
+			let suggestion = LanguageServers.Suggestion(
+				languageId: "tsx",
+				languageName: "TSX",
+				command: "typescript-language-server",
+				installHint: "npm install -g typescript-language-server typescript"
+			)
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+				DetailDialog(
+					title: "Installing \(suggestion.command)",
+					detail: suggestion.manual,
+					isError: false
+				).show(over: controller?.window)
+			}
 		}
 
 		if let raw = options.terminalBytes {

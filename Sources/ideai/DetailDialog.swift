@@ -81,6 +81,19 @@ final class DetailDialog: NSObject {
 		let scroll = NSScrollView()
 		scroll.documentView = text
 		scroll.hasVerticalScroller = true
+
+		// Without these the text is laid out into a container of zero width, and
+		// a container that narrow cannot fit a single character: every glyph is
+		// pushed onto a line of its own, off the left edge, and the dialog comes
+		// up empty with a scroller that says there is a great deal of it. Which
+		// is what "the install instructions are missing" turned out to be.
+		//
+		// A plain `NSTextView()` has a zero frame, and a scroll view does not
+		// size its document view unless the view says it tracks the width.
+		text.autoresizingMask = [.width]
+		text.isVerticallyResizable = true
+		text.isHorizontallyResizable = false
+		text.textContainer?.widthTracksTextView = true
 		scroll.drawsBackground = true
 		scroll.backgroundColor = Theme.current.editorBackground
 		scroll.borderType = .noBorder

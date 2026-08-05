@@ -79,7 +79,12 @@ public enum LanguageServers {
 			languageIds: ["typescript", "javascript", "tsx", "jsx"],
 			command: "typescript-language-server",
 			arguments: ["--stdio"],
-			installHint: "npm install -g typescript-language-server typescript",
+			// The 5 is not a preference, it is the only thing that works.
+			// TypeScript 7 is the native compiler and ships no `tsserver.js`;
+			// typescript-language-server drives exactly that file, so the pair
+			// installed without a version starts, answers the handshake with
+			// "Could not find a valid TypeScript installation", and exits.
+			installHint: "npm install -g typescript-language-server typescript@5",
 			rootMarkers: ["package.json", "tsconfig.json"]
 		),
 		LanguageServerDefinition(
@@ -145,11 +150,18 @@ public enum LanguageServers {
 	}
 
 	/// Directories searched for a server, in order.
+	///
+	/// Three sources, and the order is the point. What this process was given
+	/// first, so a PATH somebody set deliberately still chooses the toolchain;
+	/// then the PATH their login shell has, which is where a version manager
+	/// puts things and the only source that keeps up with them; then the
+	/// well-known directories, as a floor for when the shell cannot be asked.
 	public static var searchPaths: [String] {
 		var paths: [String] = []
 		if let environment = ProcessInfo.processInfo.environment["PATH"] {
 			paths += environment.split(separator: ":").map(String.init)
 		}
+		paths += UserShell.loginPath
 		paths += toolDirectories
 
 		var seen = Set<String>()
@@ -367,6 +379,13 @@ public enum LanguageServers {
 		public let languageName: String
 		public let command: String
 		public let installHint: String
+
+		public init(languageId: String, languageName: String, command: String, installHint: String) {
+			self.languageId = languageId
+			self.languageName = languageName
+			self.command = command
+			self.installHint = installHint
+		}
 
 		/// The manual, for whoever wants to do something about it.
 		///
