@@ -47,6 +47,10 @@ final class TerminalView: NSView, NSTextInputClient {
 
 	/// Highlighted while files are held over the view.
 	private var isDropTarget = false
+	/// Pictures turned into something drawable, by the id the program gave them.
+	private var imageCache: [UInt32: CGImage] = [:]
+	/// What the store's generation was when the cache was last checked.
+	private var lastGraphicsGeneration = 0
 	/// Where the cursor was last painted, so the cell it leaves is repainted.
 	private var lastDrawnCursorRow: Int?
 
@@ -206,6 +210,8 @@ final class TerminalView: NSView, NSTextInputClient {
 		updateDisplayLink()
 		watchWindowFocus()
 		guard window != nil else { return }
+		// Only now is the display known, and with it how many pixels a cell is.
+		updateCellPixelSize()
 		guard let launch = pendingLaunch else {
 			updateMetalEnabled()
 			viewportChanged()
@@ -624,15 +630,23 @@ final class TerminalView: NSView, NSTextInputClient {
 
 		let background = TerminalPalette.background.components
 		let buildStart = probing ? Date() : nil
+		let frame = TerminalMetalRenderer.Frame(
+			cellSize: CGSize(width: cellWidth, height: cellHeight),
+			inset: CGPoint(x: Self.horizontalInset, y: Self.verticalInset),
+			origin: visible.origin,
+			background: background,
+			foreground: TerminalPalette.foreground.components
+		)
+		// Before the cells: what this decides about pictures behind the text is
+		// what stops those cells painting over them.
+		metal.renderer.buildImages(
+			placements: emulator.graphics.placements.filter { $0.rowRange.overlaps(first..<last) },
+			store: emulator.graphics,
+			frame: frame
+		)
 		metal.renderer.build(
 			rows: rows,
-			frame: .init(
-				cellSize: CGSize(width: cellWidth, height: cellHeight),
-				inset: CGPoint(x: Self.horizontalInset, y: Self.verticalInset),
-				origin: visible.origin,
-				background: background,
-				foreground: TerminalPalette.foreground.components
-			),
+			frame: frame,
 			faces: faces,
 			overlays: overlays,
 			cursor: cursor
@@ -662,6 +676,7 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// has, which matters most while output streams past: a printed line changes
 	/// one row, and the rest can be scrolled rather than drawn again.
 	private func invalidateChangedRows() {
+		pruneImageCache()
 		if metal != nil {
 			// Nothing to work out: the GPU redraws what is on screen, and what
 			// that costs does not depend on how much of it changed.
@@ -733,6 +748,21 @@ final class TerminalView: NSView, NSTextInputClient {
 		// Where NSAttributedString would have put the baseline had it laid the
 		// line out itself, which is what the glyphs have to line up with.
 		baselineFromTop = (font.ascender + font.leading).rounded()
+		updateCellPixelSize()
+	}
+
+	/// Tells the emulator and the process how large a cell is, in real pixels.
+	///
+	/// Pixels rather than points, and so scaled by the display. A program sizing
+	/// a picture to the cell grid is sizing it to what will actually be shown,
+	/// and reporting points on a Retina screen asks it for an image at half the
+	/// resolution the screen can draw — which is the difference between a sharp
+	/// picture and a soft one.
+	private func updateCellPixelSize() {
+		let scale = window?.backingScaleFactor ?? 2
+		let size = (width: Int((cellWidth * scale).rounded()), height: Int((cellHeight * scale).rounded()))
+		emulator.cellPixelSize = size
+		pty.cellPixelSize = size
 	}
 
 	func applyThemeChange() {
@@ -837,13 +867,108 @@ final class TerminalView: NSView, NSTextInputClient {
 		let lastRow = min(shownLineCount, Int(ceil((dirtyRect.maxY - Self.verticalInset) / cellHeight)) + 1)
 		guard lastRow > firstRow else { return }
 
+		// A picture below the text is drawn first so the characters land on top of
+		// it; one above covers them. That is what the z key means, and it is the
+		// only ordering the protocol asks for.
+		drawImages(from: firstRow, to: lastRow, above: false)
+
 		for index in firstRow..<lastRow {
 			guard let line = screen.line(at: index) else { continue }
 			draw(line: line, atRow: index)
 		}
 
+		drawImages(from: firstRow, to: lastRow, above: true)
+
 		drawCursor()
 		drawDropHighlight()
+	}
+
+	/// Draws the pictures whose rows fall in the band being repainted.
+	private func drawImages(from firstRow: Int, to lastRow: Int, above: Bool) {
+		let placements = emulator.graphics.placements
+		guard !placements.isEmpty else { return }
+		guard let context = NSGraphicsContext.current?.cgContext else { return }
+
+		// Sorted so overlapping pictures stack the way the program asked, and
+		// equal depths keep the order they were placed in.
+		let shown = placements
+			.filter { (above ? $0.z >= 0 : $0.z < 0) && $0.rowRange.overlaps(firstRow..<lastRow) }
+			.sorted { $0.z < $1.z }
+		guard !shown.isEmpty else { return }
+
+		context.saveGState()
+		// A picture is placed on a cell grid, so it is almost always being scaled
+		// by some fraction to reach a whole number of cells. Left to the default
+		// that scaling stair-steps every edge.
+		context.interpolationQuality = .high
+		for placement in shown {
+			guard let image = cachedImage(for: placement.imageID),
+			      let cropped = crop(image, to: placement.source)
+			else { continue }
+			context.draw(cropped, in: rect(for: placement))
+		}
+		context.restoreGState()
+	}
+
+	/// Where on the view a placement goes.
+	private func rect(for placement: TerminalImagePlacement) -> NSRect {
+		let scale = window?.backingScaleFactor ?? 2
+		let x = Self.horizontalInset + CGFloat(placement.column) * cellWidth
+			+ CGFloat(placement.offsetX) / scale
+		let y = Self.verticalInset + CGFloat(placement.row) * cellHeight
+			+ CGFloat(placement.offsetY) / scale
+		return NSRect(
+			x: x.rounded(),
+			y: y.rounded(),
+			width: (CGFloat(placement.columns) * cellWidth).rounded(),
+			height: (CGFloat(placement.rows) * cellHeight).rounded()
+		)
+	}
+
+	/// The image behind an id, built once and kept.
+	///
+	/// Turning a few megabytes of pixels into a `CGImage` on every repaint would
+	/// cost more than everything else the terminal draws put together, and a
+	/// picture on screen is repainted whenever anything near it changes.
+	private func cachedImage(for id: UInt32) -> CGImage? {
+		if let cached = imageCache[id] { return cached }
+		guard let image = emulator.graphics.images[id] else { return nil }
+
+		guard let provider = CGDataProvider(data: Data(image.pixels) as CFData) else { return nil }
+
+		let built = CGImage(
+			width: image.width,
+			height: image.height,
+			bitsPerComponent: 8,
+			bitsPerPixel: 32,
+			bytesPerRow: image.width * 4,
+			space: CGColorSpaceCreateDeviceRGB(),
+			bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+			provider: provider,
+			decode: nil,
+			shouldInterpolate: true,
+			intent: .defaultIntent
+		)
+		imageCache[id] = built
+		return built
+	}
+
+	/// The part of an image a placement shows, or the whole of it.
+	private func crop(_ image: CGImage, to source: TerminalImagePlacement.Rectangle) -> CGImage? {
+		guard source.x != 0 || source.y != 0
+			|| source.width != image.width || source.height != image.height
+		else { return image }
+		return image.cropping(to: CGRect(
+			x: source.x, y: source.y, width: source.width, height: source.height
+		))
+	}
+
+	/// Drops cached images the emulator no longer holds.
+	private func pruneImageCache() {
+		guard emulator.graphics.generation != lastGraphicsGeneration else { return }
+		lastGraphicsGeneration = emulator.graphics.generation
+		let live = emulator.graphics.images
+		imageCache = imageCache.filter { live[$0.key] != nil }
 	}
 
 	/// Draws one row, batching neighbouring cells that share attributes.
@@ -1276,15 +1401,21 @@ final class TerminalView: NSView, NSTextInputClient {
 		}
 
 		let background = TerminalPalette.background.components
+		let frame = TerminalMetalRenderer.Frame(
+			cellSize: CGSize(width: cellWidth, height: cellHeight),
+			inset: CGPoint(x: Self.horizontalInset, y: Self.verticalInset),
+			origin: .zero,
+			background: background,
+			foreground: TerminalPalette.foreground.components
+		)
+		renderer.buildImages(
+			placements: emulator.graphics.placements,
+			store: emulator.graphics,
+			frame: frame
+		)
 		renderer.build(
 			rows: lines,
-			frame: .init(
-				cellSize: CGSize(width: cellWidth, height: cellHeight),
-				inset: CGPoint(x: Self.horizontalInset, y: Self.verticalInset),
-				origin: .zero,
-				background: background,
-				foreground: TerminalPalette.foreground.components
-			),
+			frame: frame,
 			faces: faces,
 			// Drawn whatever has focus: a window rendered offscreen has none,
 			// and the cursor is one of the things worth being able to look at.

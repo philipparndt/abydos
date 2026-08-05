@@ -141,6 +141,17 @@ public final class TerminalEmulator {
 	/// column 223, so modern programs all ask for this one.
 	public private(set) var sgrMouseEncoding = false
 
+	/// How large one character cell is, in pixels.
+	///
+	/// The emulator has no opinion about fonts, so this is told to it by whoever
+	/// is drawing. It is here because two things a program asks about are
+	/// answered in pixels: `CSI t`, and where an image goes — a picture is
+	/// placed on the grid but measured in pixels, and the two only meet through
+	/// this number.
+	public var cellPixelSize: (width: Int, height: Int) = (0, 0) {
+		didSet { graphics.cellPixelSize = cellPixelSize }
+	}
+
 	// MARK: - Parser state
 
 	private enum State {
@@ -148,6 +159,8 @@ public final class TerminalEmulator {
 		case escape
 		case csi
 		case osc
+		/// `ESC _` — where a kitty graphics command arrives.
+		case apc
 		/// Consuming a sequence we recognise but do not implement.
 		case ignore(terminator: UInt8)
 		/// Discards exactly one byte, for charset designators.
@@ -183,6 +196,19 @@ public final class TerminalEmulator {
 	/// Intermediate bytes, such as the `$` that makes `CSI ? p` a mode query.
 	private var intermediateBytes: [UInt8] = []
 	private var oscBytes: [UInt8] = []
+	private var apcBytes: [UInt8] = []
+
+	/// The pictures on the screen, and the ones a program has sent but not shown.
+	///
+	/// Public because drawing them is the view's job: the emulator knows where an
+	/// image goes and what its pixels are, and nothing about how to put them on a
+	/// screen.
+	public let graphics = TerminalImageStore()
+
+	/// Placements belonging to the screen that is not the current one.
+	private var alternateGraphics: [TerminalImagePlacement] = []
+	/// What `screen.discardedLineCount` was when the placements were last moved.
+	private var lastDiscardedLineCount = 0
 
 	/// Partial UTF-8 sequence carried between writes, since a read can split one.
 	/// The UTF-8 sequence being assembled, decoded by hand.
@@ -244,7 +270,21 @@ public final class TerminalEmulator {
 				index += 1
 			}
 		}
+		realignGraphicsForDiscardedLines()
 		onUpdate?()
+	}
+
+	/// Lines dropped off the top of scrollback move every absolute row, and a
+	/// picture is anchored to one.
+	///
+	/// Without this a long-running session slides its images upward relative to
+	/// the text they belong to, a row at a time, until they are drawn over
+	/// something else entirely.
+	private func realignGraphicsForDiscardedLines() {
+		let discarded = screen.discardedLineCount
+		guard discarded != lastDiscardedLineCount else { return }
+		graphics.shiftRows(by: discarded - lastDiscardedLineCount)
+		lastDiscardedLineCount = discarded
 	}
 
 	private var isGround: Bool {
@@ -302,6 +342,8 @@ public final class TerminalEmulator {
 			consumeCSI(byte)
 		case .osc:
 			consumeOSC(byte)
+		case .apc:
+			consumeAPC(byte)
 		case let .ignore(terminator):
 			if byte == terminator { state = .ground }
 		case .skipOne:
@@ -568,7 +610,10 @@ public final class TerminalEmulator {
 		case 0x5D: // ]
 			state = .osc
 			oscBytes = []
-		case 0x50, 0x58, 0x5E, 0x5F: // DCS, SOS, PM, APC — consumed to ST
+		case 0x5F: // _ — APC, which is where a kitty graphics command arrives
+			state = .apc
+			apcBytes = []
+		case 0x50, 0x58, 0x5E: // DCS, SOS, PM — consumed to ST
 			state = .ignore(terminator: 0x5C)
 		case 0x37: // 7 — save cursor
 			savedCursor = (cursorRow, cursorColumn, attributes)
@@ -823,6 +868,8 @@ public final class TerminalEmulator {
 				// Primary DA: VT220 with 132 columns, ANSI colour.
 				onResponse?("\u{1B}[?62;1;6;22c")
 			}
+		case 0x74: // t
+			windowOperation()
 		case 0x70: // p
 			// DECRQM — a mode query. Answering "not recognised" is far better than
 			// silence, which leaves the program waiting.
@@ -838,6 +885,33 @@ public final class TerminalEmulator {
 				}
 				onResponse?("\u{1B}[?\(mode);\(state)$y")
 			}
+		default:
+			break
+		}
+	}
+
+	/// `CSI t` — the window operations that are questions rather than commands.
+	///
+	/// Only the three that report a size are answered. The rest of the set moves,
+	/// resizes, raises and iconifies the window on the program's say-so, which is
+	/// not something a terminal here is going to do.
+	///
+	/// A program drawing pictures needs to know how many pixels a cell is: it has
+	/// to turn "this image is 300 pixels wide" into a number of columns. The
+	/// window size carries it, and this is the fallback for a program that cannot
+	/// read that — or is on the far side of an ssh connection, where the ioctl
+	/// describes the wrong machine.
+	private func windowOperation() {
+		// The two that answer in pixels can only be answered once somebody has
+		// said how large a cell is; the one that answers in cells always can.
+		let knowsPixels = cellPixelSize.width > 0 && cellPixelSize.height > 0
+		switch firstParameter {
+		case 14 where knowsPixels: // Text area, in pixels.
+			onResponse?("\u{1B}[4;\(screen.rows * cellPixelSize.height);\(screen.columns * cellPixelSize.width)t")
+		case 16 where knowsPixels: // One cell, in pixels.
+			onResponse?("\u{1B}[6;\(cellPixelSize.height);\(cellPixelSize.width)t")
+		case 18: // Text area, in cells.
+			onResponse?("\u{1B}[8;\(screen.rows);\(screen.columns)t")
 		default:
 			break
 		}
@@ -890,6 +964,10 @@ public final class TerminalEmulator {
 			cursorRow = 0
 			cursorColumn = 0
 			isAlternateScreen = true
+			// A picture belongs to the screen it was put on. A full-screen program
+			// must not find the ones the shell left behind, and the shell must find
+			// them again when the program exits — the same rule its text follows.
+			alternateGraphics = graphics.takePlacements()
 		} else {
 			guard isAlternateScreen, let saved = alternateSaved else { return }
 			screen = saved.screen
@@ -897,6 +975,8 @@ public final class TerminalEmulator {
 			cursorColumn = min(saved.column, screen.columns - 1)
 			alternateSaved = nil
 			isAlternateScreen = false
+			graphics.restorePlacements(alternateGraphics)
+			alternateGraphics = []
 		}
 		scrollTop = 0
 		scrollBottom = screen.rows - 1
@@ -1042,6 +1122,62 @@ public final class TerminalEmulator {
 				break
 			}
 			index += 1
+		}
+	}
+
+	// MARK: - APC
+
+	/// APC carries the kitty graphics protocol, and nothing else anybody sends.
+	///
+	/// Terminated by ST, exactly as OSC is. It used to be discarded wholesale,
+	/// which is why an image sent to this terminal did nothing at all.
+	private func consumeAPC(_ byte: UInt8) {
+		if byte == 0x1B {
+			finishAPC()
+			state = .escape
+			return
+		}
+		// A transfer arrives in chunks of a few thousand bytes, so one sequence is
+		// bounded; a stream that never terminates is not. Past the cap the rest of
+		// the sequence is swallowed rather than accumulated.
+		guard apcBytes.count < Self.longestAPC else { return }
+		apcBytes.append(byte)
+	}
+
+	/// Longest APC sequence held. Kitty's own limit on one chunk is 4096 bytes of
+	/// base64, and the control data before it is short.
+	private static let longestAPC = 8192
+
+	private func finishAPC() {
+		let bytes = apcBytes
+		apcBytes = []
+		state = .ground
+		// `G` is kitty's; there is no other APC to answer.
+		guard bytes.first == 0x47 else { return }
+
+		let command = KittyGraphicsCommand(Array(bytes.dropFirst()))
+		let result = graphics.apply(command, context: .init(
+			scrollbackCount: screen.scrollback.count,
+			cursorRow: cursorRow,
+			cursorColumn: cursorColumn,
+			rows: screen.rows,
+			columns: screen.columns
+		))
+
+		if let response = result.response { onResponse?(response) }
+		if let dirty = result.dirtyRows { screen.markDirty(absolute: dirty) }
+		if let advance = result.cursorAdvance {
+			// Down first, then across, so a picture wider than what is left of the
+			// row still lands the cursor on the row the image ends on.
+			moveCursor(row: cursorRow + advance.rows, column: cursorColumn)
+			for _ in 0..<advance.columns {
+				if cursorColumn == screen.columns - 1 {
+					cursorColumn = 0
+					lineFeed()
+				} else {
+					cursorColumn += 1
+				}
+			}
 		}
 	}
 
@@ -1205,6 +1341,9 @@ public final class TerminalEmulator {
 		isAlternateScreen = false
 		alternateSaved = nil
 		pendingWrap = false
+		graphics.removeAll()
+		alternateGraphics = []
+		lastDiscardedLineCount = 0
 		onUpdate?()
 	}
 

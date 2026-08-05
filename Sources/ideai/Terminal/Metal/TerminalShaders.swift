@@ -180,5 +180,58 @@ enum TerminalShaders {
 		float4 colour = mix(in.background, in.foreground, coverage * in.foreground.a);
 		return float4(colour.rgb, max(in.background.a, coverage * in.foreground.a));
 	}
+
+	// One picture placed on the grid. Its own quad and its own texture, rather
+	// than anything to do with the glyph atlas: a picture is arbitrarily large,
+	// arrives and leaves at a program's whim, and there are only ever a handful
+	// on screen — so packing them beside the letters would buy nothing and cost
+	// a repack every time one arrived.
+	struct ImageInstance {
+		float2 origin;      // top-left on screen, in pixels
+		float2 size;
+		float2 uvOrigin;    // the part of the picture being shown
+		float2 uvSize;
+	};
+
+	struct ImageVarying {
+		float4 position [[position]];
+		float2 uv;
+	};
+
+	vertex ImageVarying imageVertex(
+		uint vertexID [[vertex_id]],
+		constant ImageInstance &image [[buffer(0)]],
+		constant Uniforms &uniforms [[buffer(1)]]
+	) {
+		float2 corner = corners[vertexID];
+		float2 pixel = image.origin + image.size * corner;
+
+		// The same tracking error the text gets. A picture that stayed rock
+		// steady while the letters around it wobbled would look like it was not
+		// part of the same screen.
+		if (uniforms.bell > 0.0) {
+			float wobble =
+				sin(pixel.y * 0.055 + uniforms.bellTime * 9.0) * 1.6
+				+ sin(pixel.y * 0.013 - uniforms.bellTime * 3.0) * 2.6;
+			pixel.x += wobble * uniforms.bell;
+		}
+
+		ImageVarying out;
+		float2 unit = pixel / uniforms.viewport;
+		out.position = float4(unit.x * 2.0 - 1.0, 1.0 - unit.y * 2.0, 0.0, 1.0);
+		out.uv = image.uvOrigin + image.uvSize * corner;
+		return out;
+	}
+
+	fragment float4 imageFragment(
+		ImageVarying in [[stage_in]],
+		texture2d<float> picture [[texture(0)]]
+	) {
+		// Linear rather than nearest: a picture is placed on a cell grid and so
+		// is usually being scaled by some fraction, and nearest sampling turns
+		// that into visible stair-stepping along every edge.
+		constexpr sampler pictureSampler(filter::linear, address::clamp_to_edge);
+		return picture.sample(pictureSampler, in.uv);
+	}
 	"""
 }

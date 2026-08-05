@@ -16,6 +16,14 @@ struct CellInstance {
 	var isColour: Float
 }
 
+/// One picture as its shader wants it. Must match `ImageInstance` in the shader.
+private struct ImageInstance {
+	var origin: SIMD2<Float>
+	var size: SIMD2<Float>
+	var uvOrigin: SIMD2<Float>
+	var uvSize: SIMD2<Float>
+}
+
 private struct Uniforms {
 	var viewport: SIMD2<Float>
 	/// How much of the bell is left to show, 1 down to 0.
@@ -36,10 +44,31 @@ final class TerminalMetalRenderer {
 	let device: MTLDevice
 	private let queue: MTLCommandQueue
 	private let pipeline: MTLRenderPipelineState
+	/// The kitty graphics protocol's pictures, which are not glyphs and do not
+	/// go through the atlas.
+	private let imagePipeline: MTLRenderPipelineState
 	private(set) var atlas: GlyphAtlas
 
 	private var instances: [CellInstance] = []
 	private var instanceBuffer: MTLBuffer?
+
+	/// One texture per picture the terminal is holding, built the first time it
+	/// is drawn and kept until the program deletes it.
+	private var imageTextures: [UInt32: MTLTexture] = [:]
+	/// What the store's generation was when the textures were last checked.
+	private var lastGraphicsGeneration = -1
+	/// This frame's pictures, split by whether they go under the text or over it.
+	private var imagesBelow: [(payload: ImageInstance, texture: MTLTexture)] = []
+	private var imagesAbove: [(payload: ImageInstance, texture: MTLTexture)] = []
+
+	/// Cells a picture is showing through from behind.
+	///
+	/// Every cell paints its own background here, unlike the CoreGraphics path,
+	/// which skips the fill when the colour is the default one. That is normally
+	/// the cheaper choice — one uniform quad rather than a test per cell — but it
+	/// would paint flat over a picture placed below the text and leave nothing of
+	/// it to see. These are the cells that must leave their background alone.
+	private var cutouts: [(rows: ClosedRange<Int>, columns: Range<Int>)] = []
 
 	/// Points to pixels.
 	var scale: CGFloat {
@@ -77,9 +106,28 @@ final class TerminalMetalRenderer {
 
 		guard let pipeline = try? device.makeRenderPipelineState(descriptor: descriptor) else { return nil }
 
+		// The same target and the same blending, except that a picture's colours
+		// already have their alpha multiplied in — which is the one form both
+		// drawing paths can share — so the source is taken whole rather than
+		// scaled by its alpha a second time.
+		let imageDescriptor = MTLRenderPipelineDescriptor()
+		imageDescriptor.vertexFunction = library.makeFunction(name: "imageVertex")
+		imageDescriptor.fragmentFunction = library.makeFunction(name: "imageFragment")
+		imageDescriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
+		imageDescriptor.colorAttachments[0].isBlendingEnabled = true
+		imageDescriptor.colorAttachments[0].sourceRGBBlendFactor = .one
+		imageDescriptor.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+		imageDescriptor.colorAttachments[0].sourceAlphaBlendFactor = .one
+		imageDescriptor.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
+
+		guard let imagePipeline = try? device.makeRenderPipelineState(descriptor: imageDescriptor) else {
+			return nil
+		}
+
 		self.device = device
 		self.queue = queue
 		self.pipeline = pipeline
+		self.imagePipeline = imagePipeline
 		self.atlas = atlas
 		self.scale = scale
 	}
@@ -192,6 +240,12 @@ final class TerminalMetalRenderer {
 					defaultForeground: frame.foreground,
 					defaultBackground: frame.background
 				)
+				// A cell that asked for no particular colour, over a picture, is
+				// asking for the picture. One that named a colour meant it, and
+				// paints over the picture as it would over anything else.
+				if resolved.background == .default, isCutOut(row: index, column: column) {
+					background.w = 0
+				}
 
 				// The cell under a block cursor is turned inside out: the block
 				// is the cursor's colour and the character is cut out of it in
@@ -345,6 +399,114 @@ final class TerminalMetalRenderer {
 
 	var instanceCount: Int { instances.count }
 
+	// MARK: - Pictures
+
+	/// Works out where this frame's pictures go, and makes textures for any that
+	/// have not been drawn before.
+	///
+	/// Separate from `build` because a picture is not a cell: it has its own
+	/// pipeline, its own texture, and there are a handful of them rather than
+	/// thousands.
+	/// Must run before `build` for the frame: what it works out about pictures
+	/// behind the text is what tells the cells to leave those backgrounds alone.
+	func buildImages(placements: [TerminalImagePlacement], store: TerminalImageStore, frame: Frame) {
+		imagesBelow.removeAll(keepingCapacity: true)
+		imagesAbove.removeAll(keepingCapacity: true)
+		cutouts.removeAll(keepingCapacity: true)
+
+		// A picture the program has deleted must not keep its texture alive; the
+		// store counts every change, so one comparison says whether to look.
+		if store.generation != lastGraphicsGeneration {
+			lastGraphicsGeneration = store.generation
+			let live = store.images
+			imageTextures = imageTextures.filter { live[$0.key] != nil }
+		}
+
+		guard !placements.isEmpty else { return }
+
+		for placement in placements.sorted(by: { $0.z < $1.z }) {
+			guard let image = store.images[placement.imageID],
+			      let texture = texture(for: image)
+			else { continue }
+
+			// Points, as everything else built here is: the offsets the protocol
+			// carries are in the picture's own pixels.
+			let offsetX = Float(placement.offsetX) / Float(scale)
+			let offsetY = Float(placement.offsetY) / Float(scale)
+			let x = Float(frame.inset.x) + Float(placement.column) * Float(frame.cellSize.width) + offsetX
+			let y = Float(frame.inset.y) + Float(placement.row) * Float(frame.cellSize.height) + offsetY
+
+			// Cropping is done by naming the part of the texture to sample rather
+			// than by cutting the picture up, so an image shown in pieces — as a
+			// program redrawing one corner does — still uploads once.
+			let width = Float(image.width)
+			let height = Float(image.height)
+			let payload = ImageInstance(
+				origin: SIMD2(x - Float(frame.origin.x), y - Float(frame.origin.y)),
+				size: SIMD2(
+					Float(placement.columns) * Float(frame.cellSize.width),
+					Float(placement.rows) * Float(frame.cellSize.height)
+				),
+				uvOrigin: SIMD2(Float(placement.source.x) / width, Float(placement.source.y) / height),
+				uvSize: SIMD2(Float(placement.source.width) / width, Float(placement.source.height) / height)
+			)
+
+			if placement.z < 0 {
+				imagesBelow.append((payload, texture))
+				cutouts.append((
+					rows: placement.rowRange,
+					columns: placement.column..<(placement.column + placement.columns)
+				))
+			} else {
+				imagesAbove.append((payload, texture))
+			}
+		}
+	}
+
+	/// Whether a cell has a picture behind it that its background would hide.
+	private func isCutOut(row: Int, column: Int) -> Bool {
+		// Empty for all but the rare screen that has an image behind its text, so
+		// this costs a count check per cell and nothing else.
+		guard !cutouts.isEmpty else { return false }
+		return cutouts.contains { $0.rows.contains(row) && $0.columns.contains(column) }
+	}
+
+	private func texture(for image: TerminalImage) -> MTLTexture? {
+		if let existing = imageTextures[image.id] { return existing }
+
+		let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+			pixelFormat: .rgba8Unorm, width: image.width, height: image.height, mipmapped: false
+		)
+		descriptor.usage = .shaderRead
+		guard let texture = device.makeTexture(descriptor: descriptor) else { return nil }
+		image.pixels.withUnsafeBytes { bytes in
+			texture.replace(
+				region: MTLRegionMake2D(0, 0, image.width, image.height),
+				mipmapLevel: 0,
+				withBytes: bytes.baseAddress!,
+				bytesPerRow: image.width * 4
+			)
+		}
+		imageTextures[image.id] = texture
+		return texture
+	}
+
+	private func encodeImages(
+		_ pictures: [(payload: ImageInstance, texture: MTLTexture)],
+		into encoder: MTLRenderCommandEncoder,
+		uniforms: inout Uniforms
+	) {
+		guard !pictures.isEmpty else { return }
+		encoder.setRenderPipelineState(imagePipeline)
+		encoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
+		for picture in pictures {
+			var payload = picture.payload
+			encoder.setVertexBytes(&payload, length: MemoryLayout<ImageInstance>.stride, index: 0)
+			encoder.setFragmentTexture(picture.texture, index: 0)
+			encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
+		}
+	}
+
 	// MARK: - Drawing
 
 	/// Renders the built instances into a target.
@@ -360,7 +522,7 @@ final class TerminalMetalRenderer {
 		viewport: SIMD2<Float>,
 		drawable: CAMetalDrawable? = nil
 	) {
-		guard !instances.isEmpty else { return }
+		guard !instances.isEmpty || !imagesBelow.isEmpty || !imagesAbove.isEmpty else { return }
 		upload()
 
 		let pass = MTLRenderPassDescriptor()
@@ -376,14 +538,24 @@ final class TerminalMetalRenderer {
 		else { return }
 
 		var uniforms = Uniforms(viewport: viewport, bell: bell.strength, bellTime: bell.elapsed)
-		encoder.setRenderPipelineState(pipeline)
-		encoder.setVertexBuffer(instanceBuffer, offset: 0, index: 0)
-		encoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
-		encoder.setFragmentTexture(atlas.coverageTexture, index: 0)
-		encoder.setFragmentTexture(atlas.colourTexture, index: 1)
-		encoder.drawPrimitives(
-			type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: instances.count
-		)
+
+		// A picture with a negative z goes behind the text, one without goes in
+		// front, and the cells are drawn between them. Three passes in the one
+		// encoder, since only the pipeline and its bindings change.
+		encodeImages(imagesBelow, into: encoder, uniforms: &uniforms)
+
+		if !instances.isEmpty {
+			encoder.setRenderPipelineState(pipeline)
+			encoder.setVertexBuffer(instanceBuffer, offset: 0, index: 0)
+			encoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
+			encoder.setFragmentTexture(atlas.coverageTexture, index: 0)
+			encoder.setFragmentTexture(atlas.colourTexture, index: 1)
+			encoder.drawPrimitives(
+				type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: instances.count
+			)
+		}
+
+		encodeImages(imagesAbove, into: encoder, uniforms: &uniforms)
 		encoder.endEncoding()
 		commands.commit()
 

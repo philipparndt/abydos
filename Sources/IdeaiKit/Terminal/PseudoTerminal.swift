@@ -56,7 +56,32 @@ public final class PseudoTerminal {
 	/// enough writer takes the reader's every cycle and nothing is ever drawn.
 	private var isReadingSuspended = false
 
+	/// How large one character cell is, in pixels.
+	///
+	/// A window size carries the pane in pixels as well as in cells, and that is
+	/// the only way a program can work out how big a cell is. Anything drawing
+	/// pictures needs it: `icat`, `timg` and `chafa` all read it from
+	/// `TIOCGWINSZ` and refuse to size an image without it. Zero — which is
+	/// what this was before — reads to them as "this terminal cannot show
+	/// pictures at all".
+	///
+	/// Set by whoever owns the view, since the cell size is a fact about the
+	/// font and nothing here knows it.
+	public var cellPixelSize: (width: Int, height: Int) = (0, 0)
+
 	public init() {}
+
+	/// The size to hand the kernel: cells, and the pixels they come to.
+	private func windowSize(rows: Int, columns: Int) -> winsize {
+		let rows = max(1, rows)
+		let columns = max(1, columns)
+		return winsize(
+			ws_row: UInt16(rows),
+			ws_col: UInt16(columns),
+			ws_xpixel: UInt16(clamping: columns * max(0, cellPixelSize.width)),
+			ws_ypixel: UInt16(clamping: rows * max(0, cellPixelSize.height))
+		)
+	}
 
 	deinit {
 		terminate()
@@ -80,12 +105,7 @@ public final class PseudoTerminal {
 	) -> Bool {
 		guard case .notStarted = state else { return false }
 
-		var size = winsize(
-			ws_row: UInt16(max(1, rows)),
-			ws_col: UInt16(max(1, columns)),
-			ws_xpixel: 0,
-			ws_ypixel: 0
-		)
+		var size = windowSize(rows: rows, columns: columns)
 
 		var master: Int32 = -1
 		// forkpty does the fork, opens the pty pair, makes the slave the child's
@@ -300,12 +320,7 @@ public final class PseudoTerminal {
 	/// Tells the process the pane changed size, so it can reflow.
 	public func resize(rows: Int, columns: Int) {
 		guard masterDescriptor >= 0 else { return }
-		var size = winsize(
-			ws_row: UInt16(max(1, rows)),
-			ws_col: UInt16(max(1, columns)),
-			ws_xpixel: 0,
-			ws_ypixel: 0
-		)
+		var size = windowSize(rows: rows, columns: columns)
 		_ = ioctl(masterDescriptor, TIOCSWINSZ, &size)
 		// SIGWINCH is what full-screen applications actually listen for.
 		if case let .running(pid) = state {
