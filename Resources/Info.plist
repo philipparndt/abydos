@@ -32,6 +32,14 @@
 	<!-- The palette follows the theme setting, including the system's own. -->
 	<key>NSRequiresAquaSystemAppearance</key>
 	<false/>
+	<!-- Without this key macOS has nothing to put in the Local Network prompt,
+	     so on some releases it never asks and simply denies. The denial is
+	     inherited by everything the app spawns — a debugger, a test run, the
+	     program being debugged — and surfaces there as EHOSTUNREACH, which a
+	     Go program reports as "connect: no route to host" and nothing in the
+	     message points back at a permission the app never asked for. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>ideai builds, runs and debugs your projects. Programs it launches on your behalf may connect to services on your local network, such as a database, a message broker or a Kubernetes cluster.</string>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>

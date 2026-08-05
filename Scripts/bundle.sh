@@ -111,9 +111,35 @@ DIRTY=$(git diff --quiet 2>/dev/null || echo "+")
 /usr/libexec/PlistBuddy -c "Add :IdeaiCommit string $COMMIT$DIRTY" "$CONTENTS/Info.plist" >/dev/null
 echo "    build $BUILD ($COMMIT$DIRTY)"
 
-# Ad-hoc signature: without it macOS refuses to launch an unsigned bundle that
-# was assembled by hand rather than by Xcode.
-codesign --force --deep --sign - "$APP" 2>/dev/null || \
-	echo "    warning: ad-hoc codesign failed; the app may not launch"
+# A signature of some kind is required: macOS refuses to launch an unsigned
+# bundle that was assembled by hand rather than by Xcode.
+#
+# A real certificate rather than ad-hoc wherever one exists, because macOS keys
+# the Local Network privacy grant on the signing identity, and an ad-hoc
+# signature has no team — its identity is the code directory hash, which is a
+# different one after every build. The permission granted to yesterday's build
+# therefore matches nothing today, and because the denial is inherited by every
+# process the app spawns, a debugger or a program under test loses the LAN with
+# EHOSTUNREACH — "connect: no route to host" — and no prompt to re-grant.
+# `tccutil` cannot reset LocalNetwork, so the only way back is the System
+# Settings pane, by hand, after each build. The Apple Development certificate
+# keeps the identity stable across rebuilds and the grant stays granted.
+IDENTITY="${SIGN_IDENTITY:-}"
+if [ -z "$IDENTITY" ]; then
+	if security find-identity -v -p codesigning | grep -q "Apple Development"; then
+		IDENTITY="Apple Development"
+	else
+		IDENTITY="-"
+		echo "    no Apple Development certificate: signing ad-hoc, so Local Network"
+		echo "    access must be re-granted in System Settings after every build"
+	fi
+fi
+
+if ! SIGN_OUT=$(codesign --force --deep --sign "$IDENTITY" "$APP" 2>&1); then
+	echo "    warning: codesign with '$IDENTITY' failed; the app may not launch" >&2
+	echo "$SIGN_OUT" | sed 's/^/    /' >&2
+else
+	echo "    signed with: $IDENTITY"
+fi
 
 echo "==> Done: $APP"
