@@ -2761,8 +2761,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			// bash's, which knows nothing about targets — so the one file in a
 			// project that is a list of named things was the one file this
 			// could not list. Its own parser already reads them.
-			if languageId == "makefile" {
-				let targets = Self.makefileSymbols(at: url)
+			//
+			// Asked of the file, not of the language. Borrowing bash's grammar
+			// means the language *is* bash, so the question this used to ask
+			// ("is the language makefile?") had no answer but no, and ⇧⌘O on a
+			// Makefile came back empty in every project.
+			if Makefile.isMakefile(url) {
+				let targets = Makefile.symbols(at: url)
 				guard !query.isEmpty else { return targets }
 				return targets.filter { $0.name.localizedCaseInsensitiveContains(query) }
 			}
@@ -4347,38 +4352,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	///
 	/// Goals that clean, install or explain themselves are left out: a run
 	/// menu is a list of ways to start the thing being worked on.
-	/// A Makefile's targets, as symbols to jump between.
-	///
-	/// The line is found by looking for the target's own rule rather than
-	/// recorded by the parser, which reads a Makefile for what it runs and has
-	/// no reason to care where in the file that was written.
-	static func makefileSymbols(at url: URL) -> [LSPSymbol] {
-		guard let makefile = Makefile.read(at: url),
-		      let text = try? String(contentsOf: url, encoding: .utf8)
-		else { return [] }
-
-		let lines = text.components(separatedBy: "\n")
-		return makefile.targets.map { target in
-			let line = lines.firstIndex { candidate in
-				guard candidate.hasPrefix(target.name) else { return false }
-				let rest = candidate.dropFirst(target.name.count).drop { $0 == " " || $0 == "\t" }
-				// `install:` and `install::` are rules; `installed: ...` is a
-				// different target that merely starts the same way.
-				return rest.first == ":"
-			} ?? 0
-			let position = LSPPosition(line: line, character: 0)
-			return LSPSymbol(
-				name: target.name,
-				kind: .function,
-				location: LSPLocation(
-					uri: url.absoluteString,
-					range: LSPRange(start: position, end: position)
-				),
-				container: target.summary.isEmpty ? nil : target.summary
-			)
-		}
-	}
-
 	private func makeGoals() -> [(makefile: Makefile, name: String, summary: String)] {
 		guard let project else { return [] }
 		var found: [(Makefile, String, String)] = []

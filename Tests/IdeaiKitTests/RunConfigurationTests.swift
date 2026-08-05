@@ -4,6 +4,70 @@ import Foundation
 
 /// Makefile targets. The file format has more shapes that are *not* targets
 /// than shapes that are.
+/// A Makefile's targets, as things to jump to.
+///
+/// ⇧⌘O on a Makefile listed nothing for as long as this existed, because it
+/// asked whether the language was `makefile` — and a Makefile is highlighted
+/// with bash's grammar, so the language is `bash` and the answer was always no.
+struct MakefileSymbolTests {
+	private func write(_ text: String, named name: String = "Makefile") throws -> URL {
+		let root = URL(fileURLWithPath: NSTemporaryDirectory())
+			.appendingPathComponent("mk-\(UUID().uuidString)")
+		try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+		let url = root.appendingPathComponent(name)
+		try text.write(to: url, atomically: true, encoding: .utf8)
+		return url
+	}
+
+	@Test func recognisesTheNamesMakeItselfLooksFor() {
+		let base = URL(fileURLWithPath: "/tmp/p")
+		#expect(Makefile.isMakefile(base.appendingPathComponent("Makefile")))
+		#expect(Makefile.isMakefile(base.appendingPathComponent("makefile")))
+		#expect(Makefile.isMakefile(base.appendingPathComponent("GNUmakefile")))
+		#expect(Makefile.isMakefile(base.appendingPathComponent("common.mk")))
+		#expect(!Makefile.isMakefile(base.appendingPathComponent("main.go")))
+		#expect(!Makefile.isMakefile(base.appendingPathComponent("Makefile.md")))
+	}
+
+	@Test func everyTargetIsSomethingToJumpTo() throws {
+		let url = try write("""
+		BINARY := build/app
+
+		.PHONY: build
+		build: ## Build it
+		\tgo build -o $(BINARY)
+
+		.PHONY: test
+		test:
+		\tgo test ./...
+		""")
+		defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+
+		let symbols = Makefile.symbols(at: url)
+		#expect(symbols.map(\.name) == ["build", "test"])
+		// The comment beside a target is what tells one apart from another in a
+		// list of twenty.
+		#expect(symbols.first?.container == "Build it")
+	}
+
+	/// The line has to be the rule's own, so jumping to `install` does not land
+	/// on `installed:` further up.
+	@Test func aTargetLandsOnItsOwnRule() throws {
+		let url = try write("""
+		installed:
+		\techo no
+
+		install:
+		\techo yes
+		""")
+		defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+
+		let symbols = Makefile.symbols(at: url)
+		let install = try #require(symbols.first { $0.name == "install" })
+		#expect(install.location.range.start.line == 3)
+	}
+}
+
 struct MakefileParseTests {
 	private func targets(_ text: String) -> [String] {
 		RunConfigurationDiscovery
