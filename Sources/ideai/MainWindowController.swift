@@ -1445,6 +1445,38 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		togglePanelMaximized(nil)
 	}
 
+	/// Gives the editor enough of the window to show where execution stopped.
+	///
+	/// Two things can hide the line a breakpoint is on, and both are ordinary:
+	/// the terminal can have the whole window, in which case the editor is
+	/// hidden rather than small; and the panel can simply be tall, because it
+	/// was dragged that way while reading a log. Neither is a state somebody
+	/// chose *for debugging* — they chose it for the thing they were doing a
+	/// minute ago, and a debugger that stops behind them has nothing to show.
+	///
+	/// Half the window is the most the panel keeps. Not a fixed height: the
+	/// stack, the variables and the console all need room too, and taking the
+	/// panel down to a strip to reveal one line is the opposite mistake.
+	private func makeRoomForTheStoppedLine() {
+		leaveTerminalFullScreen()
+		guard isPanelVisible else { return }
+
+		// After layout: leaving full screen lays out on the next pass, and a
+		// divider position set before that is computed against the old
+		// geometry — which puts it in the wrong place and looks like a bug in
+		// the debugger rather than in the arithmetic.
+		DispatchQueue.main.async { [weak self] in
+			guard let self else { return }
+			let total = self.verticalSplitView.bounds.height
+			guard total > 200 else { return }
+
+			let half = (total / 2).rounded(.down)
+			guard self.bottomPanel.frame.height > half else { return }
+			self.verticalSplitView.setPosition(total - half, ofDividerAt: 0)
+			self.tellTerminalsTheySizeChanged()
+		}
+	}
+
 	@objc func togglePanelMaximized(_ sender: Any? = nil) {
 		if isPanelMaximized {
 			toolPopover?.performClose(nil)
@@ -2102,6 +2134,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 		session.observeStopped { [weak self] file, line in
 			guard let self else { return }
+			// Room to see it, before opening it. Stopping somewhere is the one
+			// moment the editor has to be visible, and the panel is often not
+			// merely tall but the whole window.
+			self.makeRoomForTheStoppedLine()
 			self.executionMarker = (file, line)
 			self.editor.open(fileURL: URL(fileURLWithPath: file), atLine: line)
 			self.editor.setExecutionLocation(file: file, line: line)

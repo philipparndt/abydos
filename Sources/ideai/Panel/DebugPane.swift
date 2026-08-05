@@ -133,6 +133,17 @@ final class DebugPane: NSView {
 		sideTabChanged()
 	}
 
+	/// Shows the variables, which is what stopping somewhere is *for*.
+	///
+	/// The two do not fit side by side at any panel height somebody would
+	/// choose, so the pane follows the session instead of asking: a program
+	/// that is running has a log worth reading and no variables to speak of,
+	/// and the instant it stops that reverses.
+	func showVariables() {
+		sideTabs.selectedSegment = 0
+		sideTabChanged()
+	}
+
 	var toolbarToolTipsForTesting: [String] { toolbar.toolTipsForTesting() }
 
 	/// Copies the first variable row the way the menu does, and says what
@@ -271,7 +282,11 @@ final class DebugPane: NSView {
 			labels: ["Variables", "Console"], trackingMode: .selectOne,
 			target: self, action: #selector(sideTabChanged)
 		)
-		sideTabs.selectedSegment = 0
+		// The log, until there is something to look at. A session that has just
+		// started is compiling, linking and printing — and has no variables at
+		// all until it stops somewhere. `showVariables` takes over the moment
+		// it does.
+		sideTabs.selectedSegment = 1
 		sideTabs.controlSize = .small
 		sideTabs.font = Theme.current.uiFont(10.5)
 		addSubview(sideTabs)
@@ -336,6 +351,11 @@ final class DebugPane: NSView {
 			console.bottomAnchor.constraint(equalTo: rightSide.bottomAnchor),
 		])
 
+		// The views' own hidden flags are set above, one by one; this makes them
+		// agree with whichever segment is selected, so the two cannot drift
+		// apart when the starting tab changes.
+		sideTabChanged()
+
 		DispatchQueue.main.async { [weak split] in
 			guard let split else { return }
 			split.setPosition(split.bounds.width * 0.38, ofDividerAt: 0)
@@ -378,6 +398,11 @@ final class DebugPane: NSView {
 			self?.rebuildThreads()
 		}
 		session.observeStopped { [weak self] file, line in
+			// Stopping is what the variables are for, and the console has
+			// nothing new to say while nothing is running. Switched rather than
+			// shown beside: at any panel height somebody would actually use,
+			// the two together give each half of too little.
+			self?.showVariables()
 			self?.onNavigate?(URL(fileURLWithPath: file), line)
 		}
 	}
