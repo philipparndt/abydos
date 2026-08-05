@@ -240,3 +240,32 @@ struct SpawnDisclaimTests {
 		#expect(result == 0, "the call was refused: \(result)")
 	}
 }
+
+/// Where the pane thinks it is, which is what a window follows.
+struct PseudoTerminalDirectoryTests {
+	@Test func theDirectoryOfThePaneIsFound() async {
+		let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+			.appendingPathComponent("ideai-cwd-\(UUID().uuidString)")
+		try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+		defer { try? FileManager.default.removeItem(at: directory) }
+
+		let pty = PseudoTerminal()
+		pty.callbackQueue = DispatchQueue(label: "ideai.tests.cwd")
+		#expect(pty.start(
+			executable: "/bin/sh",
+			arguments: [],
+			workingDirectory: directory,
+			rows: 24,
+			columns: 80
+		))
+		defer { pty.terminate() }
+		try? await Task.sleep(nanoseconds: 900_000_000)
+
+		let found = pty.currentDirectory()
+		#expect(found != nil, "no directory at all — the foreground group was not found")
+		#expect(
+			found?.resolvingSymlinksInPath().path == directory.resolvingSymlinksInPath().path,
+			"expected \(directory.path), got \(found?.path ?? "nil")"
+		)
+	}
+}
