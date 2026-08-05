@@ -439,7 +439,7 @@ public final class TerminalImageStore {
 	}
 
 	private func decode(_ command: KittyGraphicsCommand, encoded: [UInt8]) -> Decoded {
-		guard var data = Data(base64Encoded: Data(encoded), options: .ignoreUnknownCharacters) else {
+		guard var data = Self.base64(encoded) else {
 			return .failure("EINVAL:payload is not base64")
 		}
 
@@ -496,6 +496,31 @@ public final class TerminalImageStore {
 				pixels: premultiplied(Array(data), channels: channels)
 			))
 		}
+	}
+
+	/// Base64 as the protocol actually carries it, rather than as Foundation
+	/// would like it.
+	///
+	/// `Data(base64Encoded:)` refuses anything whose length is not a multiple of
+	/// four, and kitty leaves the padding off. That is not an edge case: `icat`
+	/// sending a file path — a path is rarely a multiple of three bytes long —
+	/// decoded to nothing at all, so the picture never arrived and, with `q=2`
+	/// set as every real client sets it, nothing was said about why.
+	///
+	/// The padding is put back here instead of being demanded of the sender.
+	static func base64(_ bytes: [UInt8]) -> Data? {
+		// Anything outside the alphabet is dropped first — a chunked transfer may
+		// carry a stray newline, and the padding has to be counted from what is
+		// really there.
+		var cleaned = bytes.filter {
+			($0 >= 0x41 && $0 <= 0x5A) || ($0 >= 0x61 && $0 <= 0x7A)
+				|| ($0 >= 0x30 && $0 <= 0x39) || $0 == 0x2B || $0 == 0x2F
+		}
+		let remainder = cleaned.count % 4
+		if remainder != 0 {
+			cleaned.append(contentsOf: [UInt8](repeating: 0x3D, count: 4 - remainder))
+		}
+		return Data(base64Encoded: Data(cleaned))
 	}
 
 	/// Reads what a transfer points at, honouring the offset and length it gave.

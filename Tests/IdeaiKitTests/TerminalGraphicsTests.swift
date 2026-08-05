@@ -128,6 +128,26 @@ struct TerminalGraphicsTests {
 		#expect(terminal.graphics.images[11]?.width == 4)
 	}
 
+	/// kitty leaves the `=` off the end of its base64, and Foundation refuses
+	/// anything whose length is not a multiple of four. `icat` sending a file
+	/// path hits this every time a path is not a multiple of three bytes long.
+	@Test func base64WithoutItsPaddingIsStillRead() throws {
+		let terminal = emulator()
+		// Two pixels of RGB — six bytes, which is a multiple of three, so the
+		// path below is what carries the odd length.
+		let url = URL(fileURLWithPath: NSTemporaryDirectory())
+			.appendingPathComponent("ideai-unpadded-\(UUID().uuidString)")
+		try Data([UInt8](repeating: 0x40, count: 2 * 1 * 3)).write(to: url)
+		defer { try? FileManager.default.removeItem(at: url) }
+
+		var encoded = Data(url.path.utf8).base64EncodedString()
+		while encoded.hasSuffix("=") { encoded.removeLast() }
+		#expect(encoded.count % 4 != 0, "the test means nothing if it stayed aligned")
+
+		terminal.write(graphics("i=21,s=2,v=1,a=t,t=f,f=24;\(encoded)"))
+		#expect(terminal.graphics.images[21]?.width == 2)
+	}
+
 	@Test func aPictureCanArriveAsAFileOnDisk() throws {
 		let terminal = emulator()
 		let url = URL(fileURLWithPath: NSTemporaryDirectory())
