@@ -1433,7 +1433,8 @@ final class BottomPanel: NSView {
 		title: String,
 		command: String,
 		directory: URL,
-		environment: [String: String] = [:]
+		environment: [String: String] = [:],
+		reusing key: String? = nil
 	) -> TerminalPane? {
 		let assignments = environment
 			.sorted { $0.key < $1.key }
@@ -1447,32 +1448,59 @@ final class BottomPanel: NSView {
 			title: title,
 			executable: "/bin/sh",
 			arguments: ["-lc", line],
-			workingDirectory: directory
+			workingDirectory: directory,
+			reusing: key
 		)
 	}
 
-	/// Runs a command in a new pane. The basis for "Run" and for agent sessions.
+	/// Runs a command in a pane. The basis for "Run" and for agent sessions.
+	///
+	/// - Parameter reusing: what this is the console of. A second run of the
+	///   same thing takes over the tab the last one used, instead of leaving a
+	///   row of finished consoles behind — the tab stays where it was in the
+	///   strip, so the console for a configuration is always in the same place.
+	///   Nil means a pane of its own every time, which is what an agent session
+	///   or a one-off command wants.
 	@discardableResult
 	func runCommand(
 		title: String,
 		executable: String,
 		arguments: [String],
-		workingDirectory: URL? = nil
+		workingDirectory: URL? = nil,
+		reusing key: String? = nil
 	) -> TerminalPane? {
+		// Where the old one was, so the new one lands there rather than at the
+		// end of the strip. Somebody who has just pressed Run is looking at the
+		// place the last run was.
+		var slot: (index: Int, column: Int)?
+		if let key, let index = sessions.firstIndex(where: { $0.runKey == key }) {
+			slot = (index, sessions[index].column)
+			// Whatever it was still doing, it was the previous run of this same
+			// thing, and this is what "run it again" means. Not hidden when it
+			// leaves the panel empty: the replacement is one line below.
+			close(index: index, hidingWhenEmpty: false)
+		}
+
 		let pane = TerminalPane(
 			workingDirectory: workingDirectory ?? self.workingDirectory,
 			command: (executable: executable, arguments: arguments)
 		)
 		let session = Session(title: title, kind: .terminal(pane))
 		session.isRun = true
+		session.runKey = key
 		// The panel's own root, not the parameter: a configuration's working
 		// directory is often a package inside the project, and switching a
 		// window to one of those would be switching it to something that is
 		// not a project at all.
 		session.projectRoot = self.workingDirectory
-		wire(session)
 
-		sessions.append(session)
+		if let slot {
+			session.column = slot.column
+			sessions.insert(session, at: min(slot.index, sessions.count))
+		} else {
+			sessions.append(session)
+		}
+		wire(session)
 		activate(session, focus: true)
 		return pane
 	}

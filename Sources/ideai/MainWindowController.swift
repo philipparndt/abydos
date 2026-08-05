@@ -2066,7 +2066,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			arguments: command.arguments,
 			// In the module, not the project root: `go test ./...` from a
 			// directory with no go.mod fails whatever the arguments say.
-			workingDirectory: moduleRoot
+			workingDirectory: moduleRoot,
+			// One console per Go action per module: `go test` run again lands
+			// where the last one was, and does not sit beside `go run`.
+			reusing: "go:\(command.title):\(moduleRoot.path)"
 		)
 	}
 
@@ -2371,7 +2374,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			title: configuration.name,
 			command: configuration.commandLine,
 			directory: URL(fileURLWithPath: configuration.workingDirectory),
-			environment: configuration.environment
+			environment: configuration.environment,
+			// This configuration's console, and it keeps it. Running the same
+			// thing five times left five finished consoles behind, and the one
+			// being read was whichever was on top.
+			reusing: "run:\(configuration.id)"
 		)
 		followRunningPane(pane)
 	}
@@ -3347,7 +3354,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		let pane = bottomPanel.runCommand(
 			title: "make",
 			command: step.commandLine(root: root),
-			directory: root
+			directory: root,
+			// The build console for this configuration, kept apart from the
+			// console the program itself runs in.
+			reusing: "build:\(configuration.id)"
 		)
 		runningPane = pane
 		pane?.terminalView.onProcessExit = { [weak self, weak pane] code in
@@ -3850,7 +3860,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			title: "coverage",
 			command: "go test ./... -coverprofile='\(profile.path)' -covermode=atomic"
 				+ " && echo && go tool cover -func='\(profile.path)' | tail -30",
-			directory: root
+			directory: root,
+			reusing: "coverage:\(root.path)"
 		)
 	}
 
@@ -4194,7 +4205,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			title: configuration.name,
 			command: words.map(Self.shellQuoted).joined(separator: " "),
 			directory: URL(fileURLWithPath: directory),
-			environment: environment
+			environment: environment,
+			reusing: "run:\(configuration.id)"
 		)
 		// The shell reports what the program exited with, which is the one thing
 		// worth saying in the titlebar once it is over.
