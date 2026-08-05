@@ -466,3 +466,239 @@ struct LanguageServerRootTests {
 		#expect(resolved.root.lastPathComponent == "app")
 	}
 }
+
+/// Offering a server that is not installed.
+///
+/// The bar above the editor is the only place that says why a file has no
+/// completion, no problems and no go-to-declaration — so what it decides to
+/// say, and when it decides to say nothing, is the whole feature.
+struct LanguageServerSuggestionTests {
+	/// Certainly not installed, on this machine or anyone's.
+	private let absent = LanguageServerDefinition(
+		languageIds: ["go"],
+		command: "no-such-language-server-38f1c2",
+		installHint: "go install example.com/no-such-server@latest",
+		rootMarkers: ["go.mod"]
+	)
+
+	private func makeTree(_ paths: [String]) throws -> URL {
+		let root = URL(fileURLWithPath: NSTemporaryDirectory())
+			.appendingPathComponent("suggest-\(UUID().uuidString)")
+		for path in paths {
+			let url = root.appendingPathComponent(path)
+			try FileManager.default.createDirectory(
+				at: url.deletingLastPathComponent(), withIntermediateDirectories: true
+			)
+			try "x".write(to: url, atomically: true, encoding: .utf8)
+		}
+		return root
+	}
+
+	@Test func offersAServerThatIsNotInstalled() throws {
+		let root = try makeTree(["go.mod", "main.go"])
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		let suggestion = LanguageServers.suggestion(
+			absent, forLanguage: "go", root: root, ignoring: []
+		)
+		#expect(suggestion?.command == "no-such-language-server-38f1c2")
+		// Named the way somebody would say it, for a sentence they read once.
+		#expect(suggestion?.languageName == "Go")
+	}
+
+	/// A stray `.go` file in a repository of something else is not a Go project,
+	/// and offering to install a Go server for it is noise about somebody else's
+	/// language.
+	@Test func saysNothingWhereTheProjectIsNotOne() throws {
+		let root = try makeTree(["notes.txt"])
+		defer { try? FileManager.default.removeItem(at: root) }
+		#expect(LanguageServers.suggestion(absent, forLanguage: "go", root: root, ignoring: []) == nil)
+	}
+
+	/// The Ignore button's whole job.
+	@Test func saysNothingAboutAnIgnoredLanguage() throws {
+		let root = try makeTree(["go.mod"])
+		defer { try? FileManager.default.removeItem(at: root) }
+		#expect(
+			LanguageServers.suggestion(absent, forLanguage: "go", root: root, ignoring: ["go"]) == nil
+		)
+	}
+
+	/// An editor that offers to install what you already have is one people
+	/// learn to ignore, so an installed server says nothing at all.
+	@Test func saysNothingWhenTheServerIsInstalled() throws {
+		let root = try makeTree(["go.mod"])
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		let present = LanguageServerDefinition(
+			languageIds: ["go"], command: "sh", installHint: "already here", rootMarkers: ["go.mod"]
+		)
+		#expect(LanguageServers.suggestion(present, forLanguage: "go", root: root, ignoring: []) == nil)
+	}
+
+	/// A language with no server anybody knows about has nothing to offer.
+	@Test func saysNothingAboutALanguageWithNoServer() throws {
+		let root = try makeTree(["notes.txt"])
+		defer { try? FileManager.default.removeItem(at: root) }
+		#expect(LanguageServers.suggestion(forLanguage: "markdown", root: root) == nil)
+	}
+
+	/// What the details panel says has to be actionable on its own: the command
+	/// to run, where the result has to land, and how to check.
+	@Test func theManualSaysWhatToDoAndWhereItGoes() throws {
+		let root = try makeTree(["go.mod"])
+		defer { try? FileManager.default.removeItem(at: root) }
+		let suggestion = try #require(
+			LanguageServers.suggestion(absent, forLanguage: "go", root: root, ignoring: [])
+		)
+
+		let manual = suggestion.manual
+		#expect(manual.contains("go install example.com/no-such-server@latest"))
+		#expect(manual.contains("which no-such-language-server-38f1c2"))
+		// The directories this app searches, which are not the ones a login
+		// shell would — the difference that costs the hours.
+		#expect(manual.contains("/opt/homebrew/bin"))
+		#expect(manual.contains(NSHomeDirectory() + "/go/bin"))
+	}
+}
+
+/// Which shell a run console runs a command line in.
+///
+/// The failure this exists for: `make run` printed `pnpm: command not found`
+/// for a `pnpm` that `which` finds one tab away. The console used `sh -lc`,
+/// which reads `/etc/profile` and `~/.profile` — and fnm, nvm, mise, asdf and
+/// pnpm all write to `~/.zshrc`, which only an interactive shell reads. fnm
+/// makes it worse by putting its binaries in a directory belonging to one shell
+/// session, so a PATH inherited at launch goes stale when that terminal closes:
+/// the same command worked in the morning and failed in the afternoon.
+struct UserShellTests {
+	@Test func runsACommandInTheUsersOwnShell() {
+		let zsh = UserShell.invocation(for: "make run", shell: "/bin/zsh")
+		#expect(zsh.executable == "/bin/zsh")
+		// Login *and* interactive: the file the tools write to is only read by
+		// an interactive shell, and a run console is a real terminal.
+		#expect(zsh.arguments == ["-lic", "make run"])
+
+		let fish = UserShell.invocation(for: "make run", shell: "/opt/homebrew/bin/fish")
+		#expect(fish.arguments == ["-lic", "make run"])
+	}
+
+	/// `sh` has no interactive-only startup file, so `-i` would buy nothing and
+	/// turn on job-control noise.
+	@Test func plainShellsAreNotAskedToBeInteractive() {
+		#expect(UserShell.invocation(for: "ls", shell: "/bin/sh").arguments == ["-lc", "ls"])
+		#expect(UserShell.invocation(for: "ls", shell: "/bin/dash").arguments == ["-lc", "ls"])
+	}
+
+	@Test func fallsBackToASensibleShell() {
+		#expect(!UserShell.path.isEmpty)
+		#expect(UserShell.path.hasPrefix("/"))
+	}
+}
+
+/// The environment a server is started in.
+///
+/// The failure this exists for: `gopls` was found, started, and answered the
+/// handshake — and then could not run `go`, because an app launched from the
+/// Dock has `/usr/bin:/bin` and the two sbins. What it says then is "No active
+/// builds contain main.go", which reads as a fact about the project. Nothing
+/// about the editor said otherwise: diagnostics appeared, and every question
+/// about a symbol came back empty.
+struct LanguageServerEnvironmentTests {
+	@Test func putsTheToolchainOnThePath() {
+		let path = LanguageServers.serverEnvironment["PATH"] ?? ""
+		let directories = path.split(separator: ":").map(String.init)
+
+		// Where a compiler actually lives, whichever of these this machine
+		// uses.
+		#expect(directories.contains("/opt/homebrew/bin"))
+		#expect(directories.contains("/usr/local/bin"))
+		#expect(directories.contains("/usr/local/go/bin"))
+		#expect(directories.contains(NSHomeDirectory() + "/go/bin"))
+	}
+
+	/// A `PATH` somebody set deliberately still chooses the toolchain: the
+	/// directories added here go after it, not in front of it.
+	@Test func keepsTheInheritedPathFirst() {
+		let inherited = ProcessInfo.processInfo.environment["PATH"]?
+			.split(separator: ":").map(String.init) ?? []
+		let resolved = (LanguageServers.serverEnvironment["PATH"] ?? "")
+			.split(separator: ":").map(String.init)
+
+		guard let first = inherited.first else { return }
+		#expect(resolved.first == first)
+	}
+
+	/// Everything else the process has — `HOME`, the Go module cache, whatever
+	/// a toolchain manager set — is carried across untouched. A server started
+	/// with only a `PATH` is a server with no `HOME`, and Go puts its cache in
+	/// one.
+	@Test func carriesTheRestOfTheEnvironment() {
+		let environment = LanguageServers.serverEnvironment
+		#expect(environment["HOME"] == ProcessInfo.processInfo.environment["HOME"])
+	}
+
+	/// A server explains itself on standard error, and that used to be read and
+	/// dropped — the one place some of them say why they are about to be
+	/// useless.
+	@Test func handsOnWhatTheServerWroteToStandardError() async throws {
+		let client = LSPClient()
+		defer { client.stop() }
+
+		let said = Mailbox()
+		client.callbackQueue = .main
+		client.onStandardError = { text in Task { await said.put(text) } }
+
+		try client.start(
+			executable: "/bin/sh",
+			arguments: ["-c", "echo 'cannot find the toolchain' >&2; sleep 2"],
+			workingDirectory: nil
+		)
+
+		#expect(await said.wait(seconds: 3)?.contains("cannot find the toolchain") == true)
+	}
+}
+
+/// One value, awaited until it arrives.
+private actor Mailbox {
+	private var value: String?
+
+	func put(_ text: String) { value = value ?? text }
+
+	func wait(seconds: Double) async -> String? {
+		let deadline = Date().addingTimeInterval(seconds)
+		while Date() < deadline {
+			if let value { return value }
+			try? await Task.sleep(nanoseconds: 50_000_000)
+		}
+		return value
+	}
+}
+
+/// The log that makes a failure on somebody else's machine reportable.
+struct DiagnosticLogTests {
+	@Test func writesALineAndStartsAgainWhenItGrows() throws {
+		let name = "test-\(UUID().uuidString)"
+		let file = DiagnosticLog.url(name)
+		defer {
+			try? FileManager.default.removeItem(at: file)
+			try? FileManager.default.removeItem(at: file.appendingPathExtension("1"))
+		}
+
+		DiagnosticLog.write("gopls started", to: name)
+		let written = try String(contentsOf: file, encoding: .utf8)
+		#expect(written.contains("gopls started"))
+		// Stamped, so two runs of the same failure can be told apart.
+		#expect(written.hasPrefix("20"))
+
+		// Past the limit the log starts again, with the old one beside it.
+		try String(repeating: "x", count: DiagnosticLog.sizeLimit + 1)
+			.write(to: file, atomically: true, encoding: .utf8)
+		DiagnosticLog.write("gopls exited", to: name)
+
+		let fresh = try String(contentsOf: file, encoding: .utf8)
+		#expect(fresh.contains("gopls exited"))
+		#expect(!fresh.contains("xxxx"))
+		#expect(FileManager.default.fileExists(atPath: file.appendingPathExtension("1").path))
+	}
+}

@@ -218,11 +218,15 @@ public final class LanguageRegistry {
 		"scad": "openscad",
 		"odin": "odin",
 		"zig": "zig", "zon": "zig",
+		// make has no grammar vendored here; bash's reads a recipe well enough,
+		// and the targets come from the Makefile parser rather than from any
+		// grammar.
+		"mk": "bash",
 	]
 
 	static let filenameMap: [String: String] = [
 		"dockerfile": "bash",
-		"makefile": "bash",
+		"makefile": "bash", "gnumakefile": "bash",
 		".bashrc": "bash", ".bash_profile": "bash", ".zshrc": "bash", ".profile": "bash",
 		".gitconfig": "toml",
 		"cargo.lock": "toml",

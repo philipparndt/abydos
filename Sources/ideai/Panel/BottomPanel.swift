@@ -81,6 +81,10 @@ final class BottomPanel: NSView {
 		/// split, which is the whole of what a split is: some tabs over here
 		/// and some over there.
 		var column = 0
+		/// Which thing this is the console of — a launch configuration, a make
+		/// goal, `go test`. Nil for a plain terminal, which is not the console
+		/// of anything and belongs to whoever opened it.
+		var runKey: String?
 
 		init(title: String, kind: Kind) {
 			self.title = title
@@ -326,31 +330,32 @@ final class BottomPanel: NSView {
 		}
 		strip.onAdd = { [weak self] in
 			guard let self else { return }
-			// While this panel is a view of tmux, every + in it makes a tmux
-			// window. Both strips, wherever the window list is being drawn.
+			// A + makes another of whatever the tabs beside it are. The tabs on
+			// this strip are the panel's own panes — the terminal attached to
+			// tmux among them, a debugger, a run — so this + makes a terminal,
+			// and the + on tmux's strip below makes a tmux window.
 			//
-			// The + up here used to mean "another terminal of ours" whenever
-			// tmux's windows had a strip of their own — a second meaning for
-			// the same button, decided by a setting, on a strip whose first tab
-			// is the tmux terminal. Pressing it put plain shells in a window
-			// that is supposed to *be* the session, and no amount of pressing
-			// produced the tmux window it looked like it would.
+			// Both meanings have now been on this one button, one after the
+			// other, and each was wrong the same way: the button was told about
+			// tmux rather than about the tabs under it. First it put plain
+			// shells into a strip whose windows were tmux's; then it made tmux
+			// windows from the strip that holds everything except them.
 			//
-			// A panel not mirroring tmux still adds a terminal, which is the
-			// only thing a + can mean there. That is the whole separation:
-			// mirroring or not, rather than mirroring and a preference about
-			// where the tabs are drawn.
+			// The one case where this + does make a window is when tmux's
+			// windows *are* this strip's tabs — the single-strip layout, where
+			// there is no strip below to press.
 			Self.trace(
 				"panel + column=\(column) mirrorsTmux=\(self.mirrorsTmux) "
+					+ "tabsAtBottom=\(Settings.shared.tmuxTabsAtBottom) "
 					+ "strict=\(Settings.shared.strictTmux) starts=\(Settings.shared.startsTmux) "
 					+ "mirrored=\(self.mirroredSession ?? "nil") configured=\(self.tmuxSession ?? "nil")"
 			)
-			if self.mirrorsTmux, column == 0,
+			if self.mirrorsTmux, column == 0, !Settings.shared.tmuxTabsAtBottom,
 			   let session = self.mirroredSession ?? self.tmuxSession {
+				Self.trace("panel + -> tmux window (its windows are this strip's tabs)")
 				self.addTmuxWindow(to: session)
 				return
 			}
-			// The only way a + in this panel makes a plain terminal.
 			Self.trace("panel + -> plain terminal")
 			self.focusedColumn = column
 			self.newTerminal()
@@ -797,19 +802,7 @@ final class BottomPanel: NSView {
 	/// same thing. Rather than guess a third time: every press says which
 	/// branch it took and what tmux answered.
 	static func trace(_ message: String) {
-		let directory = FileManager.default.homeDirectoryForCurrentUser
-			.appendingPathComponent("Library/Logs/ideai", isDirectory: true)
-		try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-		let file = directory.appendingPathComponent("tmux.log")
-		let line = "\(Date()) \(message)\n"
-		guard let data = line.data(using: .utf8) else { return }
-		if let handle = try? FileHandle(forWritingTo: file) {
-			handle.seekToEndOfFile()
-			handle.write(data)
-			try? handle.close()
-		} else {
-			try? data.write(to: file)
-		}
+		DiagnosticLog.write(message, to: "tmux")
 	}
 
 	/// Notes that the tabs have just been changed from this side.
@@ -943,6 +936,15 @@ final class BottomPanel: NSView {
 	/// How many panes the panel is holding, so a press that was supposed to
 	/// make a tmux window can be checked for having quietly made a tab.
 	var paneCountForTesting: Int { sessions.count }
+
+	/// The consoles that belong to something being run, and what each is the
+	/// console of.
+	var runConsolesForTesting: String {
+		let consoles = sessions
+			.filter { $0.isRun }
+			.map { "\($0.displayTitle)[\($0.runKey ?? "-")]" }
+		return "\(consoles.count): \(consoles.joined(separator: ", "))"
+	}
 
 	/// Clicks a tab on the panel's own strip and says what that actually
 	/// brought to the front — the two being the same thing is the point.
@@ -1405,7 +1407,11 @@ final class BottomPanel: NSView {
 			workingDirectory: directory,
 			command: session.map(attachCommand(to:)) ?? (attaches ? startupCommand() : nil)
 		)
-		let session = Session(title: title, kind: .terminal(pane))
+		// The one attached to tmux is called `tmux`, in every project. It was
+		// called after the session — the project's name — which said nothing
+		// about what the tab is, and made the panel's one fixed tab look like a
+		// different tab everywhere.
+		let session = Session(title: attaches ? "tmux" : title, kind: .terminal(pane))
 		if attaches { attachedTerminalID = ObjectIdentifier(session) }
 		session.directory = directory
 		wire(session)
@@ -1427,7 +1433,8 @@ final class BottomPanel: NSView {
 		title: String,
 		command: String,
 		directory: URL,
-		environment: [String: String] = [:]
+		environment: [String: String] = [:],
+		reusing key: String? = nil
 	) -> TerminalPane? {
 		let assignments = environment
 			.sorted { $0.key < $1.key }
@@ -1437,36 +1444,69 @@ final class BottomPanel: NSView {
 			.joined(separator: " ")
 		let line = assignments.isEmpty ? command : "env \(assignments) \(command)"
 
+		// The user's own shell, logged in and interactive — the same one a
+		// terminal pane runs, and for the same reason. `/bin/sh -lc` reads
+		// `/etc/profile` and nothing a version manager has ever written to, so
+		// `make run` here failed on a `pnpm` that the same command finds when
+		// typed one tab away.
+		let shell = UserShell.invocation(for: line)
 		return runCommand(
 			title: title,
-			executable: "/bin/sh",
-			arguments: ["-lc", line],
-			workingDirectory: directory
+			executable: shell.executable,
+			arguments: shell.arguments,
+			workingDirectory: directory,
+			reusing: key
 		)
 	}
 
-	/// Runs a command in a new pane. The basis for "Run" and for agent sessions.
+	/// Runs a command in a pane. The basis for "Run" and for agent sessions.
+	///
+	/// - Parameter reusing: what this is the console of. A second run of the
+	///   same thing takes over the tab the last one used, instead of leaving a
+	///   row of finished consoles behind — the tab stays where it was in the
+	///   strip, so the console for a configuration is always in the same place.
+	///   Nil means a pane of its own every time, which is what an agent session
+	///   or a one-off command wants.
 	@discardableResult
 	func runCommand(
 		title: String,
 		executable: String,
 		arguments: [String],
-		workingDirectory: URL? = nil
+		workingDirectory: URL? = nil,
+		reusing key: String? = nil
 	) -> TerminalPane? {
+		// Where the old one was, so the new one lands there rather than at the
+		// end of the strip. Somebody who has just pressed Run is looking at the
+		// place the last run was.
+		var slot: (index: Int, column: Int)?
+		if let key, let index = sessions.firstIndex(where: { $0.runKey == key }) {
+			slot = (index, sessions[index].column)
+			// Whatever it was still doing, it was the previous run of this same
+			// thing, and this is what "run it again" means. Not hidden when it
+			// leaves the panel empty: the replacement is one line below.
+			close(index: index, hidingWhenEmpty: false)
+		}
+
 		let pane = TerminalPane(
 			workingDirectory: workingDirectory ?? self.workingDirectory,
 			command: (executable: executable, arguments: arguments)
 		)
 		let session = Session(title: title, kind: .terminal(pane))
 		session.isRun = true
+		session.runKey = key
 		// The panel's own root, not the parameter: a configuration's working
 		// directory is often a package inside the project, and switching a
 		// window to one of those would be switching it to something that is
 		// not a project at all.
 		session.projectRoot = self.workingDirectory
-		wire(session)
 
-		sessions.append(session)
+		if let slot {
+			session.column = slot.column
+			sessions.insert(session, at: min(slot.index, sessions.count))
+		} else {
+			sessions.append(session)
+		}
+		wire(session)
 		activate(session, focus: true)
 		return pane
 	}
@@ -1873,6 +1913,10 @@ final class BottomPanel: NSView {
 			// A shell reports its running command via the title, which is the
 			// most useful label a terminal tab can carry.
 			guard !session.isRenamed else { return }
+			// Except from tmux, which reports the session and window it is
+			// showing — the tab for the client is called `tmux` and stays that
+			// way, and what it is showing is the strip underneath it.
+			guard ObjectIdentifier(session) != self.attachedTerminalID else { return }
 			let trimmed = title.split(separator: " ").first.map(String.init) ?? title
 			guard !trimmed.isEmpty, session.displayTitle != trimmed else { return }
 			session.displayTitle = trimmed
@@ -2051,15 +2095,23 @@ final class BottomPanel: NSView {
 				}
 
 				if splitStrips {
-					// The terminal itself is one tab up top, called after the
-					// session it is attached to, and tmux's windows are the
-					// strip below it.
+					// The terminal itself is one tab up top, called `tmux`, and
+					// tmux's windows are the strip below it.
+					//
+					// The name is the same in every project. It was the session's
+					// name, which made the one fixed tab of the panel read as a
+					// different thing everywhere — `ideai` beside a debugger says
+					// nothing about what the tab is, and which session it holds is
+					// already written on the tag at the end of the strip below.
+					// A name somebody typed still wins, as everywhere else.
 					// Closable like anything else up here: closing this tab
 					// closes a terminal that is attached to tmux, which costs
 					// nothing — the session and every window in it carry on,
 					// and the tab comes back attached to the same session.
 					var terminal = PanelTabItem(
-						title: mirroredSession ?? tmuxSession ?? "tmux",
+						title: mirroredTerminal?.isRenamed == true
+							? (mirroredTerminal?.displayTitle ?? "tmux")
+							: "tmux",
 						hasExited: mirroredTerminal?.hasExited ?? false,
 						isTerminal: true,
 						symbol: "terminal",
@@ -2472,6 +2524,10 @@ final class BottomPanel: NSView {
 			else { continue }
 			guard let session = sessions.last, session.terminal === pane else { continue }
 			session.isRenamed = terminal.isRenamed
+			// The one that attached to tmux keeps the name it was just given —
+			// `tmux` — unless the stored name was one somebody typed. What it
+			// was called last time was whatever the client happened to report.
+			guard terminal.isRenamed || session !== mirroredTerminal else { continue }
 			session.displayTitle = terminal.name
 		}
 		refreshTabs()

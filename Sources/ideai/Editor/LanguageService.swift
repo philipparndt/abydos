@@ -40,6 +40,34 @@ final class LanguageService {
 	private(set) var runningNames: [String] = []
 	/// A language whose server is not installed, and how to get it.
 	private(set) var missingHints: [String: String] = [:]
+	/// A server that is running and has said it cannot work, and what it said.
+	///
+	/// The state that had no name before: `gopls` starts, answers the
+	/// handshake, publishes a diagnostic — and knows nothing about any symbol,
+	/// because it could not load the workspace. Everything asking about it saw
+	/// "a server is running", so every empty answer read as "nothing here".
+	private(set) var failures: [String: String] = [:]
+	/// Failures already said out loud, so a server that repeats itself on every
+	/// file does not repeat the toast on every file.
+	private var announced: Set<String> = []
+	/// Files a server has already declared nothing in, so the log says it once
+	/// rather than once per keystroke in the symbol palette.
+	private var emptied: Set<String> = []
+
+	/// Where the log is, for a sentence that tells somebody where to look.
+	static let logPath = DiagnosticLog.path("lsp")
+
+	/// A line in ~/Library/Logs/ideai/lsp.log.
+	///
+	/// Language servers fail on other people's machines: a toolchain that is
+	/// not on this app's PATH, a manifest one directory further down, a server
+	/// that exits on startup. None of that is visible from the editor, and
+	/// without a record the only report anybody can make is "it does not
+	/// work". Lifetime events only — starts, handshakes, failures, exits —
+	/// never a line per keystroke.
+	private func log(_ message: String) {
+		DiagnosticLog.write(message, to: "lsp")
+	}
 
 	private init() {}
 
@@ -139,13 +167,23 @@ final class LanguageService {
 	// MARK: - Questions
 
 	func definition(url: URL, position: LSPPosition, languageId: String, project: URL) async -> [LSPLocation] {
-		guard let server = servers[key(project: project, languageId: languageId)] else { return [] }
-		return (try? await server.client.definition(uri: uri(for: url), position: position)) ?? []
+		guard let server = ready(languageId, project: project, for: "definition") else { return [] }
+		do {
+			return try await server.client.definition(uri: uri(for: url), position: position)
+		} catch {
+			note(error, asked: "definition", of: server, about: url)
+			return []
+		}
 	}
 
 	func hover(url: URL, position: LSPPosition, languageId: String, project: URL) async -> LSPHover? {
-		guard let server = servers[key(project: project, languageId: languageId)] else { return nil }
-		return try? await server.client.hover(uri: uri(for: url), position: position)
+		guard let server = ready(languageId, project: project, for: "hover") else { return nil }
+		do {
+			return try await server.client.hover(uri: uri(for: url), position: position)
+		} catch {
+			note(error, asked: "hover", of: server, about: url)
+			return nil
+		}
 	}
 
 	func completions(
@@ -154,8 +192,13 @@ final class LanguageService {
 		languageId: String,
 		project: URL
 	) async -> [LSPCompletion] {
-		guard let server = servers[key(project: project, languageId: languageId)] else { return [] }
-		return (try? await server.client.completion(uri: uri(for: url), position: position)) ?? []
+		guard let server = ready(languageId, project: project, for: "completion") else { return [] }
+		do {
+			return try await server.client.completion(uri: uri(for: url), position: position)
+		} catch {
+			note(error, asked: "completion", of: server, about: url)
+			return []
+		}
 	}
 
 	/// Symbols anywhere in the project, from whichever servers are running.
@@ -166,15 +209,34 @@ final class LanguageService {
 		let prefix = project.standardizedFileURL.path + "#"
 		var found: [LSPSymbol] = []
 		for (key, server) in servers where key.hasPrefix(prefix) {
-			guard let symbols = try? await server.client.workspaceSymbols(query: query) else { continue }
-			found += symbols
+			do {
+				found += try await server.client.workspaceSymbols(query: query)
+			} catch {
+				log("\(server.definition.command) workspace/symbol failed: \(error.localizedDescription)")
+			}
 		}
 		return found
 	}
 
 	func documentSymbols(url: URL, languageId: String, project: URL) async -> [LSPSymbol] {
-		guard let server = servers[key(project: project, languageId: languageId)] else { return [] }
-		return (try? await server.client.documentSymbols(uri: uri(for: url))) ?? []
+		guard let server = ready(languageId, project: project, for: "documentSymbol") else { return [] }
+		do {
+			let symbols = try await server.client.documentSymbols(uri: uri(for: url))
+			// Empty is an answer, and a suspicious one: it is what a server
+			// that never loaded the workspace says about every file in it.
+			//
+			// Once per file: this is asked again on every keystroke in the
+			// symbol palette, and a log written per keystroke is a log nobody
+			// can read.
+			if symbols.isEmpty, emptied.insert("\(server.definition.command)|\(url.path)").inserted {
+				log("\(server.definition.command) declared nothing in \(url.lastPathComponent)"
+					+ (failures[languageId].map { " — it had already said: \($0)" } ?? ""))
+			}
+			return symbols
+		} catch {
+			note(error, asked: "documentSymbol", of: server, about: url)
+			return []
+		}
 	}
 
 	func references(
@@ -183,8 +245,28 @@ final class LanguageService {
 		languageId: String,
 		project: URL
 	) async -> [LSPLocation] {
-		guard let server = servers[key(project: project, languageId: languageId)] else { return [] }
-		return (try? await server.client.references(uri: uri(for: url), position: position)) ?? []
+		guard let server = ready(languageId, project: project, for: "references") else { return [] }
+		do {
+			return try await server.client.references(uri: uri(for: url), position: position)
+		} catch {
+			note(error, asked: "references", of: server, about: url)
+			return []
+		}
+	}
+
+	/// The server for a question, or nil with a line in the log saying there
+	/// was none — "no answer" and "nobody was asked" look identical on screen.
+	private func ready(_ languageId: String, project: URL, for question: String) -> Server? {
+		guard let server = servers[key(project: project, languageId: languageId)] else {
+			log("no \(languageId) server for \(project.lastPathComponent): \(question) unanswered")
+			return nil
+		}
+		return server
+	}
+
+	private func note(_ error: Error, asked question: String, of server: Server, about url: URL) {
+		log("\(server.definition.command) \(question) failed for \(url.lastPathComponent): "
+			+ error.localizedDescription)
 	}
 
 	func diagnostics(for url: URL) -> [LSPDiagnostic] {
@@ -209,7 +291,16 @@ final class LanguageService {
 			if let definition = LanguageServers.definition(forLanguage: languageId),
 			   LanguageServers.suits(definition, root: project) {
 				missingHints[languageId] = definition.installHint
+				// Logged, not said out loud. Half the projects on a machine
+				// touch a language whose server nobody installed, and a toast
+				// on every open for something that was never going to work is
+				// the notification people turn off. Where it matters — asking
+				// for symbols and getting none — the empty state says it.
+				log("\(definition.command) is not installed — \(languageId) in "
+					+ "\(project.lastPathComponent) has no server. \(definition.installHint)")
 				NotificationCenter.default.post(name: .ideaiLanguageServersChanged, object: nil)
+			} else {
+				log("nothing to start for \(languageId) in \(project.path)")
 			}
 			return nil
 		}
@@ -227,20 +318,41 @@ final class LanguageService {
 			guard let self else { return }
 			self.servers.removeValue(forKey: key)
 			self.runningNames.removeAll { $0 == resolved.definition.command }
+			self.log("\(resolved.definition.command) exited")
 			NotificationCenter.default.post(name: .ideaiLanguageServersChanged, object: nil)
+		}
+		// Everything the server says about itself goes to the log, and the part
+		// of it that means "I cannot work" is said out loud once.
+		client.onMessage = { [weak self] level, text in
+			self?.serverSaid(level: level, text: text, definition: resolved.definition, languageId: languageId)
+		}
+		client.onStandardError = { [weak self] text in
+			self?.log("\(resolved.definition.command) stderr: \(Self.oneLine(text))")
 		}
 
 		do {
 			// Rooted where the manifest is, which is not always the project
 			// root: a server pointed at a directory with no manifest in it
 			// answers nothing and says nothing about why.
+			//
+			// And with a PATH that has the toolchain on it. A language server
+			// runs the compiler; a GUI app's PATH does not have one.
 			try client.start(
 				executable: resolved.executable,
 				arguments: resolved.definition.arguments,
-				workingDirectory: canonical(resolved.root)
+				workingDirectory: canonical(resolved.root),
+				environment: LanguageServers.serverEnvironment
 			)
+			log("\(resolved.definition.command) started for \(languageId) "
+				+ "at \(canonical(resolved.root).path) [\(resolved.executable)]")
 		} catch {
 			unavailable.insert(key)
+			log("\(resolved.definition.command) would not start: \(error.localizedDescription)")
+			Toast.post(
+				"\(resolved.definition.command) would not start",
+				detail: "\(error.localizedDescription)\n\(Self.logPath) has the rest.",
+				kind: .error
+			)
 			return nil
 		}
 
@@ -251,12 +363,80 @@ final class LanguageService {
 			// The handshake has to finish before anything else is sent, but
 			// nothing waits on it: notifications queue up on the pipe in order,
 			// and the first answers simply arrive a moment later.
-			_ = try? await client.initialize(rootURL: canonical(resolved.root))
+			do {
+				_ = try await client.initialize(rootURL: canonical(resolved.root))
+				log("\(resolved.definition.command) initialized")
+			} catch {
+				log("\(resolved.definition.command) handshake failed: \(error.localizedDescription)")
+				failures[languageId] = error.localizedDescription
+				Toast.post(
+					"\(resolved.definition.command) did not answer",
+					detail: "\(error.localizedDescription)\n\(Self.logPath) has the rest.",
+					kind: .error
+				)
+			}
 			runningNames.append(resolved.definition.command)
 			missingHints.removeValue(forKey: languageId)
 			NotificationCenter.default.post(name: .ideaiLanguageServersChanged, object: nil)
 		}
 		return server
+	}
+
+	/// Something the server said about itself.
+	///
+	/// Everything is logged; an error is also said out loud, once. A server
+	/// that cannot load its workspace repeats itself for every file opened
+	/// afterwards, and a toast per file would be worse than the silence it
+	/// replaces.
+	private func serverSaid(
+		level: Int,
+		text: String,
+		definition: LanguageServerDefinition,
+		languageId: String
+	) {
+		let line = Self.oneLine(text)
+		// Everything down to info, which is where a server says what it made of
+		// the project — the view it created, the packages it loaded. Not level
+		// 4: that is the server's own debug logging, and some of them are
+		// generous with it.
+		if level <= 3 { log("\(definition.command) says [\(Self.levelName(level))] \(line)") }
+
+		// 1 is an error in the protocol's numbering, and only an error means
+		// "this server is not going to answer anything". Warnings are ordinary
+		// enough that a toast for each would be the thing people turn off.
+		guard level == 1 else { return }
+		failures[languageId] = line
+		NotificationCenter.default.post(name: .ideaiLanguageServersChanged, object: nil)
+
+		// Once per server, not once per message. A server that cannot load a
+		// workspace says so again for every file opened afterwards, with a
+		// slightly different URI in it each time — so keying this on the text
+		// put the same failure in the corner twice over.
+		guard announced.insert(definition.command).inserted else { return }
+		Toast.post(
+			"\(definition.command) cannot read this project",
+			detail: "\(line)\n\n\(Self.logPath) has the rest.",
+			kind: .error
+		)
+	}
+
+	private static func levelName(_ level: Int) -> String {
+		switch level {
+		case 1: return "error"
+		case 2: return "warning"
+		case 3: return "info"
+		default: return "log"
+		}
+	}
+
+	/// A server's message on one line, short enough to be read in a corner.
+	private static func oneLine(_ text: String) -> String {
+		let collapsed = text
+			.split(whereSeparator: \.isNewline)
+			.map { $0.trimmingCharacters(in: .whitespaces) }
+			.filter { !$0.isEmpty }
+			.joined(separator: " ")
+		return collapsed.count > 300 ? String(collapsed.prefix(300)) + "…" : collapsed
 	}
 
 	/// Stops every server for a project, when its window closes or it is
@@ -270,6 +450,9 @@ final class LanguageService {
 			Task { await client.shutdown() }
 		}
 		unavailable = unavailable.filter { !$0.hasPrefix(prefix) }
+		failures.removeAll()
+		announced.removeAll()
+		emptied.removeAll()
 		NotificationCenter.default.post(name: .ideaiLanguageServersChanged, object: nil)
 	}
 

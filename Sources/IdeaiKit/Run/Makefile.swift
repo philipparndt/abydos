@@ -68,6 +68,55 @@ public struct Makefile: Equatable, Sendable {
 		return parse(text, path: url)
 	}
 
+	/// Whether this file is one, by the names make itself looks for.
+	///
+	/// By the file rather than by its language: a Makefile is highlighted with
+	/// bash's grammar, because a grammar for make is not vendored here and
+	/// bash's is close enough to read. So everything that asked "is the
+	/// language makefile?" was asking a question whose answer is always no —
+	/// including the one that listed a Makefile's targets, which is why the one
+	/// file in a project that is a list of named things was the one file
+	/// go-to-declaration could not list.
+	public static func isMakefile(_ url: URL) -> Bool {
+		let name = url.lastPathComponent.lowercased()
+		return name == "makefile" || name == "gnumakefile" || name.hasSuffix(".mk")
+	}
+
+	/// This Makefile's targets, as symbols to jump between.
+	///
+	/// The line is found by looking for the target's own rule rather than
+	/// recorded by the parser, which reads a Makefile for what it runs and has
+	/// no reason to care where in the file that was written.
+	public static func symbols(at url: URL) -> [LSPSymbol] {
+		guard let makefile = read(at: url),
+		      let text = try? String(contentsOf: url, encoding: .utf8)
+		else { return [] }
+		return symbols(of: makefile, in: text, at: url)
+	}
+
+	static func symbols(of makefile: Makefile, in text: String, at url: URL) -> [LSPSymbol] {
+		let lines = text.components(separatedBy: "\n")
+		return makefile.targets.map { target in
+			let line = lines.firstIndex { candidate in
+				guard candidate.hasPrefix(target.name) else { return false }
+				let rest = candidate.dropFirst(target.name.count).drop { $0 == " " || $0 == "\t" }
+				// `install:` and `install::` are rules; `installed: ...` is a
+				// different target that merely starts the same way.
+				return rest.first == ":"
+			} ?? 0
+			let position = LSPPosition(line: line, character: 0)
+			return LSPSymbol(
+				name: target.name,
+				kind: .function,
+				location: LSPLocation(
+					uri: url.absoluteString,
+					range: LSPRange(start: position, end: position)
+				),
+				container: target.summary.isEmpty ? nil : target.summary
+			)
+		}
+	}
+
 	/// The Makefile a project runs, if it has one.
 	///
 	/// Beside the project, or one level down — `app/Makefile` is where a Go

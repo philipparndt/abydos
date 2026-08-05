@@ -242,6 +242,12 @@ struct LaunchOptions {
 	/// own means three; a number after it says when, for the sequences where
 	/// something has to happen first.
 	var addTerminalTabAt: Double?
+	/// Which button on the missing-server bar to press, if any: `report`,
+	/// `details`, `ignore` or `dismiss`.
+	var serverBanner: String?
+	/// Press Run twice, to see whether the second one reuses the first's
+	/// console. The value is a make goal to select first, or `selected`.
+	var rerun: String?
 	/// Close this tmux tab from its menu before capture.
 	var closeTmuxTab: Int?
 	/// Press the + on tmux's strip before capture.
@@ -304,6 +310,8 @@ struct LaunchOptions {
 				} else {
 					options.addTerminalTabAt = 3.0
 				}
+			case "--lsp-banner":  options.serverBanner = next() ?? "report"
+			case "--rerun":      options.rerun = next() ?? "selected"
 			case "--tmux-close": options.closeTmuxTab = next().flatMap(Int.init)
 			case "--tmux-add":   options.addTmuxWindow = true
 			case "--close-terminals": options.closeTerminals = next().flatMap(Double.init)

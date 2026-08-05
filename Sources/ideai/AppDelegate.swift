@@ -628,6 +628,24 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let goal = options.rerun {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+				controller?.rerunSelectedForTesting(goal == "selected" ? nil : goal)
+			}
+		}
+
+		if let action = options.serverBanner {
+			// After the servers have been looked for, which is what decides
+			// whether there is anything to say.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+				if action == "report" {
+					controller?.reportServerBannerForTesting()
+				} else {
+					controller?.pressServerBannerForTesting(action)
+				}
+			}
+		}
+
 		if let index = options.closeTmuxTab {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
 				controller?.closeTmuxTabForTesting(index)
@@ -638,8 +656,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
 				let before = controller?.paneCountForTesting ?? 0
 				controller?.addTerminalTabForTesting()
-				// The panel's own + must not add a pane either while the panel
-				// is a view of tmux — it makes a window there, like the other.
+				// The panel's own + adds a pane: its strip holds the panel's own
+				// tabs, and tmux's windows have the + on the strip below. The
+				// count goes up by one here and stays put for --tmux-add.
 				DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
 					print("PANELADD: panes \(before) -> \(controller?.paneCountForTesting ?? 0)")
 				}

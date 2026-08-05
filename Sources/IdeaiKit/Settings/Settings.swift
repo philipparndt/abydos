@@ -96,6 +96,7 @@ public final class Settings {
 		static let terminalScheme = "terminalScheme"
 		static let terminalBellStyle = "terminalBellStyle"
 		static let projectSearchPaths = "projectSearchPaths"
+		static let ignoredLanguageServers = "ignoredLanguageServers"
 		static let projectSearchDepth = "projectSearchDepth"
 	}
 
@@ -390,6 +391,21 @@ public final class Settings {
 	public var excludedDirectories: [String] {
 		get { defaults.stringArray(forKey: Key.excludedDirectories) ?? [] }
 		set { set(newValue, Key.excludedDirectories) }
+	}
+
+	/// Languages nobody wants to be told about a missing server for.
+	///
+	/// Per language rather than per file or per project: the answer to "no
+	/// server for JSON" is the same in every project on the machine, and being
+	/// asked again in the next one is the whole complaint.
+	public var ignoredLanguageServers: [String] {
+		get { defaults.stringArray(forKey: Key.ignoredLanguageServers) ?? [] }
+		set { set(Array(Set(newValue)).sorted(), Key.ignoredLanguageServers) }
+	}
+
+	/// Stops offering a server for this language, from anywhere.
+	public func ignoreLanguageServer(for languageId: String) {
+		ignoredLanguageServers = ignoredLanguageServers + [languageId]
 	}
 
 	/// Directories scanned for checkouts the switcher can offer.
