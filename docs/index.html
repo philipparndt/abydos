@@ -106,6 +106,18 @@
 	.card p { margin: 0; color: var(--text); font-size: .93rem; }
 	.card p + p { margin-top: .6rem; }
 
+	/* Screenshots. Taken by `make screenshots` against the examples
+	   repository, so every one is the app doing the thing beside it. */
+	figure { margin: 1.5rem 0; }
+	figure img {
+		width: 100%;
+		height: auto;
+		display: block;
+		border: 1px solid var(--line);
+		border-radius: 10px;
+	}
+	figcaption { color: var(--dim); font-size: .88rem; margin-top: .5rem; text-align: center; }
+
 	pre {
 		background: var(--panel);
 		border: 1px solid var(--line);
@@ -158,6 +170,14 @@
 	<p class="foot-note">macOS 14 or newer, Apple silicon. Signed with a Developer ID and notarised.</p>
 </header>
 
+<figure>
+	<img src="images/debugger.png" alt="ideai stopped on a breakpoint: the editor showing the stopped line, and the panel below it showing the call stack and the local variables."
+	     width="3200" height="2000" loading="lazy">
+	<figcaption>Stopped on a breakpoint. The terminal had the whole window a moment
+	   earlier; stopping gives it back and shows the variables, because that is what
+	   there is to look at now.</figcaption>
+</figure>
+
 <h2>The two claims</h2>
 <p>
 	Everything else here is an editor doing what editors do. These two are why it
@@ -188,6 +208,13 @@
 		   this is a contract instead.</p>
 	</div>
 </div>
+
+<figure>
+	<img src="images/terminal.png" alt="ideai with a tmux session in the bottom panel, the panel's tabs being tmux's own windows."
+	     width="3200" height="2000" loading="lazy">
+	<figcaption>The panel's tabs are tmux's windows: the strip and
+	   <code>tmux list-windows</code> are the same list.</figcaption>
+</figure>
 
 <h2>And the rest of an IDE</h2>
 <div class="cards">
@@ -304,6 +331,12 @@
 	right ones — so what is missing is named in a bar at the top of the editor,
 	with the one command that installs it.
 </p>
+
+<figure>
+	<img src="images/java.png" alt="ideai with a Maven project open: the navigator on the left, a Java source file with syntax highlighting in the editor."
+	     width="3200" height="2000" loading="lazy">
+	<figcaption>A Maven project, opened as it comes.</figcaption>
+</figure>
 
 <h2>Java, in full</h2>
 <p>

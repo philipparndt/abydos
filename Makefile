@@ -61,6 +61,14 @@ matrix: ## The same on the glyph cache (SECONDS=20, FPS=60 to just watch)
 	@$(SWIFT) build -c release --product firebench
 	@.build/release/firebench --mode matrix --seconds $(or $(SECONDS),20) $(if $(FPS),--fps $(FPS))
 
+# The documentation's pictures, taken from the examples repository rather than
+# staged: every shot is the app doing the thing the page claims, on a project
+# anybody can clone. EXAMPLES, OUT, SIZE and SHOT are all overridable.
+.PHONY: screenshots
+screenshots: ## Photograph the app for the docs (EXAMPLES=../ideai-examples, SHOT=one)
+	@$(MAKE) --no-print-directory build CONFIG=debug
+	@Scripts/screenshots.sh
+
 .PHONY: shot
 shot: ## Render the window to a PNG without Screen Recording permission
 	@$(MAKE) build CONFIG=debug
