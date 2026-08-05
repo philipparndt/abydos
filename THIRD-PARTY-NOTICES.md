@@ -23,8 +23,8 @@ not. Two points worth stating, since both are satisfied here:
   for modified versions, and even that restriction is inactive here — the font
   is redistributed unmodified under its own name.
 
-Using it does not require any relationship with JetBrains, and the OFL grants
-this independently of the fact that ideai is an alternative to their IDE.
+Using it does not require any relationship with JetBrains: the OFL grants this
+to anybody, for any program.
 
 ## Parsing
 

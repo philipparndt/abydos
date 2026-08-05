@@ -1,61 +1,70 @@
 # ideai
 
-A fast macOS project browser and code editor with an IntelliJ IDEA-style project
-navigator and titlebar project switcher.
+A terminal-first IDE for AI and cloud development, on macOS.
 
-Native AppKit, no web view, no Electron. Built for the case where you mostly
-*read* and lightly edit code, and want the IDEA layout without the IDEA startup
-time or subscription.
+The terminal is not a strip at the bottom of an editor here. It is where the
+work happens — shells, tmux windows, agents, a program running in a pod — and
+the editor, the debugger and the cluster arrange themselves around it. Native
+AppKit: no web view, no Electron, no subscription.
 
-[The website](https://philipparndt.github.io/ideai/) ·
+Two things follow from that, and they are what this is for:
+
+- **Agents are first-class.** A session is a PTY the app owns, not something a
+  view owns, so it can be hidden, shown, or handed over for manual takeover
+  while its process keeps running. Findings arrive over MCP as typed data
+  rather than scraped from a rendered screen.
+- **The cluster is where the program runs — and where you debug it.** Build
+  here, push into a development pod that has the real chart's config, secrets,
+  service account and sidecars, and run it there: about a second, against the
+  minutes an image build and a rollout cost. Then press debug and stop on a
+  breakpoint *in the pod*, in your own sources, because the binary was compiled
+  on this machine. Go, Java, Rust, C, C++, Zig and Odin.
+
+[The website](https://philipparndt.github.io/ideai-docs/) ·
 [Releases](https://github.com/philipparndt/ideai/releases) ·
 [What is supported](#what-is-supported)
 
 ## What it does
 
-- **IDEA-style project navigator** — bold project root with its `~`-relative
-  path, lazily-loaded directories, per-type file icons, version-control colours
-  (added / modified / unversioned / ignored), and a warm tint on build-output
-  directories. Fully keyboard-navigable: arrows move and expand, Return opens,
-  Space previews, typing jumps to a name. Right-click for open externally,
-  reveal in Finder, copy path, rename, or move to trash.
+- **Terminal** — a real PTY with a VT100/xterm emulator: full colour, mouse
+  reporting, the alternate screen, kitty graphics, and a bundled Nerd Font so
+  powerline prompts render without installing anything. ⌘J opens one; ⌘⏎ gives
+  it the whole window. The panel's tabs can *be* tmux's windows, so the strip
+  and `tmux list-windows` are the same list.
+- **Agents** — ⇧⌘R has an agent review the branch and report findings over a
+  local MCP server, so they arrive as typed data — file, line, severity — and
+  a click jumps to the line. Chat takes the same live session over. The session
+  is a PTY the app owns, so hiding it does not kill it.
+- **In a cluster** — a launch configuration with one extra key builds for the
+  cluster's architecture, pushes into a development pod and runs there, with
+  the pod's output in a panel tab. Press debug instead and the debugger stops
+  on your breakpoints, in your sources. Go, Java, Rust, C, C++, Zig and Odin.
+- **Run and debug** — launch configurations in `.ideai/run`, `.vscode/launch.json`
+  imported, Makefile goals, Maven goals, Gradle tasks, and entry points found by
+  scanning. Breakpoints with conditions, hit counts and log points; stack,
+  variables and watches, over DAP.
+- **Language servers** — completion, problems, hover, go-to-declaration and
+  find-usages for the languages that have one installed. Nothing is bundled;
+  what is missing is named in a bar with the one command that installs it.
+- **Editor** — tree-sitter syntax highlighting and code folding for 23
+  languages, with editing, undo/redo, IME support, and a fixed gutter. Cost
+  scales with the viewport, not the file.
+- **Project navigator** — bold project root with its `~`-relative path,
+  lazily-loaded directories, per-type file icons, version-control colours, and
+  a warm tint on build-output directories. Fully keyboard-navigable. FSEvents
+  keeps it live, so a `git checkout` in a terminal recolours it.
 - **Tabs with preview semantics** — a single click in the tree opens a
   provisional tab (shown in italic) that the next click replaces; a
-  double-click, Return, or editing pins it. Selecting a file that is already
-  open just activates its tab.
-- **Binary and oversized files** — open as a tab explaining themselves, with
-  buttons to open externally or in a built-in hex viewer, rather than as a
-  blocking alert. The hex view memory-maps the file and draws only visible rows,
-  so a 100 MB STL opens instantly.
-- **Titlebar project switcher** — a coloured project badge and the current git
-  branch, both as real `NSToolbar` items on the traffic-light row. The dropdown
-  lists open and recent projects with their paths, and supports arrow keys and
-  type-to-jump.
-- **Recents imported from IDEA** — on first launch, `recentProjects.xml` is read
-  from every installed JetBrains IDE, so the switcher is useful immediately.
-  Project badge colours carry over too.
-- **Editor** — tree-sitter syntax highlighting and code folding for 23
-  languages, with editing, undo/redo, multi-caret-free plain selection, IME
-  support, and a fixed gutter.
-- **Search** — find in file (⌘F) with match highlighting and wrapping
-  navigation, and project-wide search (⇧⌘F) that streams results as it walks,
-  prunes excluded directories, and skips binaries.
-- **Terminal** — a real PTY with a VT100/xterm emulator: full colour, mouse
-  reporting, the alternate screen, and a bundled Nerd Font so powerline prompts
-  render without installing anything. ⌘J.
-- **Agent code review** (⇧⌘R) — an agent reviews the branch and reports findings
-  over a local MCP server, so they arrive as typed data rather than scraped
-  text. Click a finding to jump to the line; click Chat to take the same live
-  session over.
-- **Go** — run, build, test, trace, CPU profile, and debug under Delve.
-- **Java** — jdtls for completion, problems and usages; Maven goals and Gradle
-  tasks as run configurations; a play button beside every `main` method;
-  debugging through java-debug, here and in a cluster.
-- **Word wrap** (⌥⌘Z), **markdown preview** (⇧⌘V), and a **hex viewer** for
-  binary files.
-- **Live refresh** — FSEvents watches the tree; `git checkout` in a terminal
-  updates the navigator colours.
-- **Zoom** — ⌘+ / ⌘− / ⌘0 scale the whole interface, not just text.
+  double-click, Return, or editing pins it.
+- **Git** — status colours, changes, history, blame, branches, worktrees, stash
+  and push, with a titlebar switcher carrying the project badge and branch.
+- **Profiler** — CPU, heap, goroutine, block and mutex profiles with a flame
+  graph, pointed at a program here or at a pod in the cluster.
+- **Binary and oversized files** — open as a tab explaining themselves, with a
+  built-in hex viewer that memory-maps the file and draws only visible rows, so
+  a 100 MB STL opens instantly.
+- **Word wrap** (⌥⌘Z), **markdown preview** (⇧⌘V), and **zoom** (⌘+ / ⌘− / ⌘0)
+  that scales the whole interface rather than only text.
 
 ## What is supported
 
@@ -67,7 +76,7 @@ tick is something with a test behind it.
 
 | | what it does | what it needs |
 |---|---|---|
-| **Navigator** | IDEA-style tree, version-control colours, keyboard-driven, FSEvents-live | — |
+| **Navigator** | project tree, version-control colours, keyboard-driven, FSEvents-live | — |
 | **Editor** | tree-sitter highlighting, folding, word wrap, hex viewer, markdown preview | — |
 | **Search** | find in file (⌘F), project-wide streaming search (⇧⌘F) | — |
 | **Outline** | ⇧⌘O over a file; symbols from the language server, or from the build file's own parser | a server, for source files |
@@ -204,10 +213,20 @@ xcrun notarytool store-credentials notarytool \
 
 ### The website
 
-`docs/` is the GitHub Pages site — one self-contained page, no build step and
-no dependencies, carrying the same two support tables as this README. Turn it
-on in the repository's settings under Pages: *deploy from a branch*, `main`,
-`/docs`.
+[philipparndt.github.io/ideai-docs](https://philipparndt.github.io/ideai-docs/),
+served from its own public repository —
+[philipparndt/ideai-docs](https://github.com/philipparndt/ideai-docs) — because
+Pages will not serve a site from a private repository without a paid plan.
+
+`docs/index.html` here is the same page, kept so it can be edited beside the
+code it describes. It is not what is served: copy it across and push to publish.
+
+```sh
+cp docs/index.html ../ideai-docs/ && git -C ../ideai-docs commit -am "…" && git -C ../ideai-docs push
+```
+
+One self-contained file — no build step, no dependencies, no external requests
+— so `open docs/index.html` renders exactly what visitors get.
 
 ### Opening from a terminal
 

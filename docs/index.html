@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ideai — a fast macOS editor with an IDEA layout</title>
-<meta name="description" content="A native macOS project browser, editor, terminal and debugger with an IntelliJ IDEA-style layout. No web view, no Electron.">
+<title>ideai — a terminal-first IDE for AI and cloud development</title>
+<meta name="description" content="A native macOS IDE built around the terminal: agents as first-class sessions, and a program that runs and stops on breakpoints inside your Kubernetes cluster. No web view, no Electron.">
 <meta property="og:title" content="ideai">
-<meta property="og:description" content="A fast macOS project browser and code editor with an IntelliJ IDEA-style layout. Native AppKit, no web view.">
+<meta property="og:description" content="A terminal-first IDE for AI and cloud development. Agents as first-class sessions; run and debug in a Kubernetes pod in about a second. Native AppKit, no web view.">
 <meta property="og:type" content="website">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1024 1024'%3E%3Crect width='1024' height='1024' rx='230' fill='%231a1b1e'/%3E%3Cpath d='M276 306 L494 512 L276 718' fill='none' stroke='%236eaaf0' stroke-width='104' stroke-linecap='round' stroke-linejoin='round'/%3E%3Crect x='608' y='306' width='160' height='412' rx='34' fill='%23dba04a'/%3E%3C/svg%3E">
 <style>
@@ -104,6 +104,7 @@
 	.card { border: 1px solid var(--line); border-radius: 10px; padding: 1rem 1.1rem; background: var(--panel); }
 	.card h3 { margin: 0 0 .35rem; font-size: 1rem; }
 	.card p { margin: 0; color: var(--text); font-size: .93rem; }
+	.card p + p { margin-top: .6rem; }
 
 	pre {
 		background: var(--panel);
@@ -145,11 +146,11 @@
 		<rect x="608" y="306" width="160" height="412" rx="34" fill="#dba04a"/>
 	</svg>
 	<h1>ideai</h1>
-	<p class="tagline">A fast macOS project browser, editor, terminal and debugger,
-	   with an IntelliJ IDEA-style layout.</p>
-	<p class="sub">Native AppKit. No web view, no Electron, no subscription. Built for
-	   the case where you mostly <em>read</em> code and lightly edit it — and still want
-	   to run it, step through it, and do both inside a Kubernetes cluster.</p>
+	<p class="tagline">A terminal-first IDE for AI and cloud development.</p>
+	<p class="sub">The terminal is not a strip at the bottom of an editor. It is where
+	   the work happens — shells, tmux windows, agents, a program running in a pod —
+	   and the editor, the debugger and the cluster arrange themselves around it.
+	   Native AppKit: no web view, no Electron, no subscription.</p>
 	<div class="actions">
 		<a class="primary" href="https://github.com/philipparndt/ideai/releases/latest">Download the latest release</a>
 		<a href="https://github.com/philipparndt/ideai">Source on GitHub</a>
@@ -157,19 +158,45 @@
 	<p class="foot-note">macOS 14 or newer, Apple silicon. Signed with a Developer ID and notarised.</p>
 </header>
 
-<h2>What it is</h2>
+<h2>The two claims</h2>
 <p>
-	An editor that starts instantly and stays out of the way. The design goal
-	throughout is that cost scales with the <em>viewport</em> rather than the file:
-	a 7 MB file opens in 11 ms, a keystroke costs 0.013 ms on the main thread, and
-	highlighting runs over the bytes on screen instead of the whole document.
+	Everything else here is an editor doing what editors do. These two are why it
+	exists, and both are ordinary to use rather than a mode you enter.
 </p>
 <div class="cards">
 	<div class="card">
-		<h3>Navigator</h3>
-		<p>The IDEA tree: version-control colours, lazily-loaded directories, a warm
-		   tint on build output, and full keyboard navigation. FSEvents keeps it live,
-		   so a <code>git checkout</code> in a terminal recolours it.</p>
+		<h3>Debug your program where it actually runs</h3>
+		<p>A launch configuration with one extra key builds for the cluster's
+		   architecture, pushes the binary into a development pod and runs it there —
+		   <strong>about a second</strong>, against the minutes an image build and a
+		   rollout cost. The pod has the real chart's config, its secrets, its service
+		   account and its sidecars, so the program finds what production would give
+		   it.</p>
+		<p>Then press debug. It stops on your breakpoint <strong>in the pod</strong>,
+		   in your own sources, because the binary was compiled on this machine and
+		   its debug information names these files. A JVM is held suspended until you
+		   attach, so a worker cannot finish before you arrive.</p>
+	</div>
+	<div class="card">
+		<h3>Agents as sessions, not as a sidebar</h3>
+		<p>An agent session is a PTY the app owns rather than something a view owns.
+		   It can be hidden, shown again, or handed over for manual takeover, and its
+		   process keeps running throughout.</p>
+		<p>Results come back over MCP as typed data — file, line, severity, detail —
+		   arriving as the work proceeds, so a click goes to the line. Scraping a
+		   rendered screen would break the first time the tool restyled its output;
+		   this is a contract instead.</p>
+	</div>
+</div>
+
+<h2>And the rest of an IDE</h2>
+<div class="cards">
+	<div class="card">
+		<h3>Terminal</h3>
+		<p>A real PTY with a VT100/xterm emulator: colour, mouse reporting, the
+		   alternate screen, kitty graphics, and a bundled Nerd Font. <kbd>⌘J</kbd>
+		   opens one, <kbd>⌘⏎</kbd> gives it the whole window, and the panel's tabs
+		   can <em>be</em> tmux's windows.</p>
 	</div>
 	<div class="card">
 		<h3>Editor</h3>
@@ -178,28 +205,26 @@
 		   typing never waits for it.</p>
 	</div>
 	<div class="card">
-		<h3>Run and debug</h3>
+		<h3>Run and debug, here too</h3>
 		<p>Launch configurations, Makefile goals, Maven goals, Gradle tasks and entry
 		   points found by scanning. Breakpoints — conditional, hit counts, log
 		   points — over DAP, with stack, variables and watches.</p>
 	</div>
 	<div class="card">
-		<h3>In a cluster</h3>
-		<p>Build here, push into a development pod that has the real chart's config,
-		   secrets and neighbours, and run it there. About a second, against the
-		   minutes an image build and rollout costs. Debug it in place.</p>
+		<h3>Navigator</h3>
+		<p>Version-control colours, lazily-loaded directories, a warm tint on build
+		   output, and full keyboard navigation. FSEvents keeps it live, so a
+		   <code>git checkout</code> in a terminal recolours it.</p>
 	</div>
 	<div class="card">
-		<h3>Terminal</h3>
-		<p>A real PTY with a VT100/xterm emulator: colour, mouse reporting, the
-		   alternate screen, a bundled Nerd Font, and tmux windows as the panel's
-		   own tabs.</p>
+		<h3>Git</h3>
+		<p>Status, changes, history, blame, branches, worktrees, stash and push, with
+		   the project badge and current branch on the traffic-light row.</p>
 	</div>
 	<div class="card">
-		<h3>Agent review</h3>
-		<p><kbd>⇧⌘R</kbd> has an agent review the branch and report findings over a
-		   local MCP server — typed data rather than scraped text. Click a finding to
-		   jump to the line.</p>
+		<h3>Profiler</h3>
+		<p>CPU, heap, goroutine, block and mutex profiles with a flame graph — pointed
+		   at a program here, or at a pod in the cluster through a forwarded port.</p>
 	</div>
 </div>
 
@@ -210,7 +235,7 @@
 		<tr><th>Feature</th><th>What it does</th><th>What it needs</th></tr>
 	</thead>
 	<tbody>
-		<tr><td><strong>Navigator</strong></td><td>IDEA-style tree, version-control colours, keyboard-driven, FSEvents-live</td><td class="no">—</td></tr>
+		<tr><td><strong>Navigator</strong></td><td>project tree, version-control colours, keyboard-driven, FSEvents-live</td><td class="no">—</td></tr>
 		<tr><td><strong>Editor</strong></td><td>tree-sitter highlighting, folding, word wrap, hex viewer, markdown preview</td><td class="no">—</td></tr>
 		<tr><td><strong>Search</strong></td><td>find in file (<kbd>⌘F</kbd>), project-wide streaming search (<kbd>⇧⌘F</kbd>)</td><td class="no">—</td></tr>
 		<tr><td><strong>Outline</strong></td><td><kbd>⇧⌘O</kbd>; symbols from the language server, or from a build file's own parser</td><td>a server, for source files</td></tr>
@@ -345,7 +370,6 @@ make dev      <span class="c"># debug build, in the foreground, logs on the term
 	<a href="https://github.com/philipparndt/ideai">GitHub</a> ·
 	<a href="https://github.com/philipparndt/ideai/releases">Releases</a> ·
 	<a href="https://github.com/philipparndt/ideai/blob/main/THIRD-PARTY-NOTICES.md">Third-party notices</a>
-	<br>Not affiliated with JetBrains.
 </footer>
 
 </main>
