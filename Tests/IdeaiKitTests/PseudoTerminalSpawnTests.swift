@@ -210,3 +210,33 @@ private final class Sink: @unchecked Sendable {
 		return String(decoding: data, as: UTF8.self)
 	}
 }
+
+/// Whether the disclaim is being applied at all.
+///
+/// It is a private symbol, asked for by name and skipped when absent — which
+/// is the right way to depend on one, and also a way to think it is working
+/// when nothing is happening. So the symbol is checked for on its own.
+struct SpawnDisclaimTests {
+	@Test func theDisclaimSymbolIsAvailable() {
+		let handle = UnsafeMutableRawPointer(bitPattern: -2)
+		let symbol = dlsym(handle, "responsibility_spawnattrs_setdisclaim")
+		#expect(symbol != nil, "responsibility_spawnattrs_setdisclaim was not found")
+	}
+
+	/// And that calling it on real attributes is accepted.
+	@Test func theDisclaimIsAccepted() {
+		typealias Disclaim = @convention(c) (UnsafeMutablePointer<posix_spawnattr_t?>, Int32) -> Int32
+		let handle = UnsafeMutableRawPointer(bitPattern: -2)
+		guard let symbol = dlsym(handle, "responsibility_spawnattrs_setdisclaim") else {
+			Issue.record("symbol missing")
+			return
+		}
+		var attributes: posix_spawnattr_t?
+		#expect(posix_spawnattr_init(&attributes) == 0)
+		defer { posix_spawnattr_destroy(&attributes) }
+
+		let disclaim = unsafeBitCast(symbol, to: Disclaim.self)
+		let result = withUnsafeMutablePointer(to: &attributes) { disclaim($0, 1) }
+		#expect(result == 0, "the call was refused: \(result)")
+	}
+}
