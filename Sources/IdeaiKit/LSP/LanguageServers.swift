@@ -120,6 +120,20 @@ public enum LanguageServers {
 			installHint: "npm install -g vscode-langservers-extracted",
 			rootMarkers: []
 		),
+		LanguageServerDefinition(
+			languageIds: ["openscad"],
+			command: "openscad-lsp",
+			// It listens on a TCP port unless told otherwise, and this client
+			// speaks over a pipe. Without this the server starts, waits on
+			// 127.0.0.1:3245 for a client that never arrives, and the editor
+			// waits for a handshake that never comes.
+			arguments: ["--stdio"],
+			installHint: "cargo install openscad-lsp",
+			// OpenSCAD has no manifest to look for — a model is a file, and a
+			// project is a directory of them. Anywhere a `.scad` is opened is a
+			// place this server can answer.
+			rootMarkers: []
+		),
 	]
 
 	public static func definition(forLanguage languageId: String) -> LanguageServerDefinition? {

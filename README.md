@@ -115,7 +115,8 @@ same thing in a development pod.
 | **Shell** | ✓ | structural | — | — | Makefile | — | — |
 | **Makefile** | as shell | structural | ✓ targets | — | every goal | Go goals | ✓ |
 | **HTML / XML** | ✓ | structural | — | — | — | — | — |
-| **CSS**, **YAML**, **TOML**, **Markdown**, **Svelte**, **OpenSCAD** | ✓ | structural | — | — | — | — | — |
+| **OpenSCAD** | ✓ | structural | server | openscad-lsp | — | — | — |
+| **CSS**, **YAML**, **TOML**, **Markdown**, **Svelte** | ✓ | structural | — | — | — | — | — |
 
 ¹ jdtls answers for `.java`; a Kotlin file is highlighted and folded but not
 served, and its `main` functions are still found, run and debugged — the JVM
