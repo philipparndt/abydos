@@ -248,6 +248,13 @@ public enum LanguageServers {
 		public let command: String
 		public let installHint: String
 
+		public init(languageId: String, languageName: String, command: String, installHint: String) {
+			self.languageId = languageId
+			self.languageName = languageName
+			self.command = command
+			self.installHint = installHint
+		}
+
 		/// The manual, for whoever wants to do something about it.
 		///
 		/// Everything somebody needs and nothing they have to look up: what it

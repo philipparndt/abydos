@@ -877,6 +877,24 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			controller?.reviewBranch(nil)
 		}
 
+		if options.detailDialog {
+			// The real thing a missing server offers, so what is captured is what
+			// somebody pressing "How to install" would actually be shown.
+			let suggestion = LanguageServers.Suggestion(
+				languageId: "tsx",
+				languageName: "TSX",
+				command: "typescript-language-server",
+				installHint: "npm install -g typescript-language-server typescript"
+			)
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+				DetailDialog(
+					title: "Installing \(suggestion.command)",
+					detail: suggestion.manual,
+					isError: false
+				).show(over: controller?.window)
+			}
+		}
+
 		if let raw = options.terminalBytes {
 			// \e and \x01-style escapes, so a sequence can be given on the
 			// command line.

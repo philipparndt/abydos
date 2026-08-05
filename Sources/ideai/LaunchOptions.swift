@@ -55,6 +55,9 @@ struct LaunchOptions {
 	var clickPanelTab: String?
 	/// Print which build this is and exit.
 	var reportVersion = false
+	/// Open a detail dialog over the window, for verifying that it shows what it
+	/// was given. It cannot be reached without a click otherwise.
+	var detailDialog = false
 	/// Show the window as it looks while presenting, without storing the mode.
 	var presentation = false
 	/// Close every terminal tab after this many seconds, leaving the panel
@@ -317,6 +320,7 @@ struct LaunchOptions {
 			case "--close-terminals": options.closeTerminals = next().flatMap(Double.init)
 			case "--presentation": options.presentation = true
 			case "--version": options.reportVersion = true
+			case "--detail-dialog": options.detailDialog = true
 			case "--click-panel-tab": options.clickPanelTab = next()
 			case "--untmux":     options.toggleStrictTmuxOff = true
 			case "--dump-settings": options.dumpSettings = next()
