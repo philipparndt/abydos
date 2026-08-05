@@ -202,6 +202,12 @@ struct LaunchOptions {
 	var terminalBytes: String?
 	/// Preview mode to select before capture: source | preview | split.
 	var previewMode: String?
+	/// Ask whether this app can reach the local network: `host:port`.
+	///
+	/// The permission belongs to the app and everything it launches inherits
+	/// the answer, so when a debugged program cannot reach a broker this says
+	/// whether the broker is down or the app was never granted.
+	var probeLAN: String?
 	/// Query for the in-file find bar.
 	var findQuery: String?
 	/// Query for project-wide search.
@@ -401,6 +407,7 @@ struct LaunchOptions {
 			case "--external-edit": options.externalEdit = next().flatMap(Double.init)
 			case "--send-bytes": options.terminalBytes = next()
 			case "--preview-mode": options.previewMode = next()
+			case "--probe-lan":  options.probeLAN = next()
 			case "--sidebar-cycle": options.sidebarCycle = true
 			case "--zoom-cycle":  options.zoomCycle = true
 			case "--tear-off":   options.tearOffFile = next()

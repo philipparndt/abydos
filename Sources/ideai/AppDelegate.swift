@@ -99,6 +99,21 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			exit(0)
 		}
 
+		// Asked before anything else is built: the answer is about this app,
+		// and touching the local network is what makes macOS offer the prompt
+		// that everything it launches then inherits.
+		if let target = options.probeLAN {
+			guard let (host, port) = LocalNetworkProbe.parse(target) else {
+				print("usage: --probe-lan host:port")
+				exit(2)
+			}
+			LocalNetworkProbe.check(host: host, port: port) { result in
+				print("local network \(host):\(port) — \(result.summary)")
+				exit(result == .reachable || result == .refused ? 0 : 1)
+			}
+			return
+		}
+
 		MetalProbe.start()
 		if let zoom = options.zoom { Settings.shared.uiScale = zoom }
 
