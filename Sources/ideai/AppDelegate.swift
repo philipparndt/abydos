@@ -315,6 +315,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let line = options.editBreakpointLine {
+			// The sheet itself, for a capture run: it is drawn by hand and a
+			// hand-drawn thing cannot be checked by reading it.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
+				controller?.editBreakpointForTesting(line: line)
+			}
+		}
+
 		if let condition = options.breakpointCondition, let line = options.breakpointLine {
 			// Before anything is running, which is when conditions are really
 			// set: while writing the code, not while stopped in it.

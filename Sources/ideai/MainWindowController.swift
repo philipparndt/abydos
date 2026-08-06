@@ -2099,44 +2099,28 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 					?? Breakpoint(file: path, line: line)
 			}()
 
-		let alert = NSAlert()
-		alert.messageText = "Breakpoint on line \(line)"
-		alert.informativeText = "Leave a field empty to drop that part."
-		alert.addButton(withTitle: "Apply")
-		alert.addButton(withTitle: "Cancel")
-
-		let width: CGFloat = 320
-		let container = NSView(frame: NSRect(x: 0, y: 0, width: width, height: 96))
-
-		func field(_ placeholder: String, _ value: String?, y: CGFloat) -> NSTextField {
-			let label = NSTextField(labelWithString: placeholder)
-			label.font = .systemFont(ofSize: 10)
-			label.textColor = .secondaryLabelColor
-			label.frame = NSRect(x: 0, y: y + 20, width: width, height: 14)
-			container.addSubview(label)
-
-			let input = NSTextField(frame: NSRect(x: 0, y: y, width: width, height: 22))
-			input.stringValue = value ?? ""
-			container.addSubview(input)
-			return input
-		}
-
-		let logInput = field("Log this and carry on, e.g. i is {i}", existing.logMessage, y: 0)
-		let hitInput = field("Stop after this many hits, e.g. > 5", existing.hitCondition, y: 36)
-		let conditionInput = field("Stop only when true, e.g. i > 5", existing.condition, y: 72)
-		alert.accessoryView = container
-
-		let apply: (NSApplication.ModalResponse) -> Void = { [weak self] response in
-			guard response == .alertFirstButtonReturn, let self else { return }
-			self.setBreakpointOptions(
+		let sheet = BreakpointOptionsSheet(
+			line: line,
+			fileName: file.lastPathComponent,
+			// The file's own language, so a Go condition is coloured as Go and
+			// a Swift one as Swift.
+			languageId: LanguageRegistry.shared.languageId(for: file) ?? "",
+			existing: existing
+		) { [weak self] condition, hits, message in
+			self?.setBreakpointOptions(
 				file: path,
 				line: line,
-				condition: conditionInput.stringValue,
-				hitCondition: hitInput.stringValue,
-				logMessage: logInput.stringValue
+				condition: condition,
+				hitCondition: hits,
+				logMessage: message
 			)
 		}
-		if let window { alert.beginSheetModal(for: window, completionHandler: apply) } else { apply(alert.runModal()) }
+		// A window of its own, begun on this one. `presentAsSheet` needs a view
+		// controller to present from and this window has a content view rather
+		// than a controller — asking for one returns nil, and the sheet simply
+		// never appeared.
+		guard let window else { return }
+		window.beginSheet(NSWindow(contentViewController: sheet), completionHandler: nil)
 	}
 
 	private enum GoAction { case run, build, test, trace, profile, debug }
@@ -5792,6 +5776,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		guard let url = editor.activeGroup.activeTabURL else { return }
 		toggleBreakpoint(file: url, line: line)
 		setBreakpoint(file: url, line: line, enabled: false)
+	}
+
+	/// Opens the breakpoint options sheet, as right-clicking the gutter does.
+	func editBreakpointForTesting(line: Int) {
+		guard let url = editor.activeGroup.activeTabURL else { return }
+		editBreakpoint(file: url, line: line)
 	}
 
 	func toggleBreakpointForTesting(line: Int) {

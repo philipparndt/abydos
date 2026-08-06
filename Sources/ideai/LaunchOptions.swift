@@ -106,6 +106,8 @@ struct LaunchOptions {
 	var typeBlock = false
 	/// Put a condition on the breakpoint before starting, and say where it stopped.
 	var breakpointCondition: String?
+	/// Opens the breakpoint options sheet on a line, so it can be looked at.
+	var editBreakpointLine: Int?
 	/// Start the debugger and inspect where it stopped, without stepping.
 	var debugInspect = false
 	/// Debug this binary with whichever adapter suits it.
@@ -385,6 +387,7 @@ struct LaunchOptions {
 			case "--terminal-tab-key": options.terminalTabKey = true
 			case "--type-block": options.typeBlock = true
 			case "--bp-condition": options.breakpointCondition = next()
+			case "--bp-edit": options.editBreakpointLine = next().flatMap(Int.init)
 			case "--debug-inspect": options.debugInspect = true
 			case "--debug-binary": options.debugBinary = next()
 			case "--toast":      options.showToast = true
