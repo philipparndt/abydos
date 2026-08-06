@@ -4459,6 +4459,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	}
 
 	/// Connects the debugger to the `dlv dap` the pod is now running.
+	/// How a pod is named in the toolbar: the namespace and the pod, which is
+	/// what `kubectl` would want to be told to find it again.
+	private func label(for pod: DevPodTarget) -> String {
+		"\(pod.namespace)/\(pod.name)"
+	}
+
 	private func attachDebugger(
 		to pod: DevPodTarget,
 		context: String?,
@@ -4503,7 +4509,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				adapter: DebugAdapters.java,
 				executable: DebugAdapters.java.command,
 				start: .java(host: "127.0.0.1", port: port, request: request),
-				breakpoints: pendingBreakpoints
+				breakpoints: pendingBreakpoints,
+				location: label(for: pod)
 			) else { return }
 			wire(session)
 			return
@@ -4525,7 +4532,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				start: .nativeRemote(
 					host: "127.0.0.1", port: debugForward.localPort, binary: nativeBinary
 				),
-				breakpoints: pendingBreakpoints
+				breakpoints: pendingBreakpoints,
+				location: label(for: pod)
 			) else { return }
 			wire(session)
 			return
@@ -4543,7 +4551,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				workingDirectory: "/app",
 				environment: environment
 			),
-			breakpoints: pendingBreakpoints
+			breakpoints: pendingBreakpoints,
+			location: label(for: pod)
 		) else { return }
 		wire(session)
 	}

@@ -1638,7 +1638,8 @@ final class BottomPanel: NSView {
 		adapter: DebugAdapter,
 		executable: String,
 		start: DebugStart,
-		breakpoints: [String: [Breakpoint]] = [:]
+		breakpoints: [String: [Breakpoint]] = [:],
+		location: String? = nil
 	) -> DebugSession? {
 		// With no project open there is no working directory, and the program's
 		// own is the sensible stand-in — debugging a binary should not require
@@ -1654,6 +1655,7 @@ final class BottomPanel: NSView {
 		}()
 		guard let session = makeDebugSession(breakpoints: breakpoints, fallbackRoot: fallback)
 		else { return nil }
+		session.location = location
 
 		Task {
 			do {

@@ -108,6 +108,9 @@ struct LaunchOptions {
 	var breakpointCondition: String?
 	/// Opens the breakpoint options sheet on a line, so it can be looked at.
 	var editBreakpointLine: Int?
+	/// Writes the debug toolbar to a PNG, with a location tag when given one.
+	var toolbarImage: String?
+	var toolbarLocation: String?
 	/// Start the debugger and inspect where it stopped, without stepping.
 	var debugInspect = false
 	/// Debug this binary with whichever adapter suits it.
@@ -388,6 +391,8 @@ struct LaunchOptions {
 			case "--type-block": options.typeBlock = true
 			case "--bp-condition": options.breakpointCondition = next()
 			case "--bp-edit": options.editBreakpointLine = next().flatMap(Int.init)
+			case "--toolbar-image": options.toolbarImage = next()
+			case "--toolbar-location": options.toolbarLocation = next()
 			case "--debug-inspect": options.debugInspect = true
 			case "--debug-binary": options.debugBinary = next()
 			case "--toast":      options.showToast = true

@@ -315,6 +315,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let path = options.toolbarImage {
+			DebugToolbarPreview.write(to: path, location: options.toolbarLocation)
+			print("TOOLBAR: \(path)")
+			exit(0)
+		}
+
 		if let line = options.editBreakpointLine {
 			// The sheet itself, for a capture run: it is drawn by hand and a
 			// hand-drawn thing cannot be checked by reading it.

@@ -177,6 +177,14 @@ public final class DebugSession {
 		}
 	}
 
+	/// Where this is running, when that is not here.
+	///
+	/// A session in a pod looks exactly like one on this machine: the same
+	/// toolbar, the same stack, the same variables — which is the point, and
+	/// also how somebody comes to read a stack from a cluster believing it is
+	/// their laptop. Nil means here, and here needs no saying.
+	public var location: String?
+
 	/// Breakpoints by file, kept across runs so they survive restarting.
 	public private(set) var breakpoints: [String: [Breakpoint]] = [:]
 

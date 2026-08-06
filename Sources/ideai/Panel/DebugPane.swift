@@ -193,6 +193,8 @@ final class DebugPane: NSView {
 		// the window is what holds those.
 		toolbar.onRunAgain = { [weak self] in self?.onRunAgain?() }
 		toolbar.onDebugAgain = { [weak self] in self?.onDebugAgain?() }
+		// Where this session runs, when that is somewhere else.
+		toolbar.location = session.location
 
 		// Stack on the left, variables on the right — the arrangement every
 		// debugger uses, because you pick a frame and then read its values.
@@ -1009,6 +1011,37 @@ private final class DebugToolbar: NSView {
 			.foregroundColor: failed ? NSColor.hex(0xE05252) : Theme.current.sidebarText,
 		])
 		label.draw(at: NSPoint(x: labelOrigin, y: bounds.midY - label.size().height / 2))
+
+		guard let location, !location.isEmpty else { return }
+		drawTag(location, after: labelOrigin + label.size().width)
+	}
+
+	/// The tag: a rounded chip in the colour the rest of this app uses for
+	/// something running elsewhere.
+	private func drawTag(_ text: String, after x: CGFloat) {
+		let attributes: [NSAttributedString.Key: Any] = [
+			.font: Theme.current.uiFont(10),
+			.foregroundColor: Theme.current.sidebarBackground,
+		]
+		let label = NSAttributedString(string: text, attributes: attributes)
+		let size = label.size()
+		let padding = Theme.current.scaled(6)
+		let gap = Theme.current.scaled(10)
+
+		let chip = NSRect(
+			x: x + gap,
+			y: bounds.midY - (size.height + Theme.current.scaled(3)) / 2,
+			width: size.width + padding * 2,
+			height: size.height + Theme.current.scaled(3)
+		)
+		// Not drawn at all rather than clipped: a pod name cut in half is worse
+		// than no tag, and the toolbar is narrow when the panel is.
+		guard chip.maxX < bounds.width - Theme.current.scaled(120) else { return }
+
+		let path = NSBezierPath(roundedRect: chip, xRadius: chip.height / 2, yRadius: chip.height / 2)
+		Theme.current.gitModified.setFill()
+		path.fill()
+		label.draw(at: NSPoint(x: chip.minX + padding, y: chip.midY - size.height / 2))
 	}
 
 	/// The three stepping glyphs are drawn rather than borrowed.
@@ -1119,7 +1152,9 @@ private final class DebugToolbar: NSView {
 	/// Draws the toolbar to a PNG, so the glyphs can be looked at.
 	@discardableResult
 	func writeImageForTesting(to path: String, state: DebugSession.State, exitCode: Int? = nil) -> Bool {
-		frame = NSRect(x: 0, y: 0, width: 360, height: 30)
+		// Wide enough for the tag to have somewhere to go: it is left out when
+		// the toolbar is narrow, which is right in the panel and useless here.
+		frame = NSRect(x: 0, y: 0, width: location == nil ? 360 : 620, height: 30)
 		self.state = state
 		self.exitCode = exitCode
 		rebuild()
@@ -1128,6 +1163,11 @@ private final class DebugToolbar: NSView {
 		guard let data = rep.representation(using: .png, properties: [:]) else { return false }
 		return (try? data.write(to: URL(fileURLWithPath: path))) != nil
 	}
+
+	/// Where this is running, when it is not here. Drawn as a tag beside the
+	/// state, because a session in a pod is otherwise indistinguishable from
+	/// one on this machine — same toolbar, same stack, same variables.
+	var location: String? { didSet { needsDisplay = true } }
 
 	private var statusText: String {
 		switch state {
@@ -1139,6 +1179,22 @@ private final class DebugToolbar: NSView {
 			guard let exitCode else { return "Finished" }
 			return exitCode == 0 ? "Finished — exit code 0" : "Failed — exit code \(exitCode)"
 		}
+	}
+}
+
+/// The toolbar on its own, for looking at.
+///
+/// A session in a pod cannot be conjured in a capture run — it needs a cluster
+/// — so the one thing that differs is drawn directly: the state it would be in,
+/// and the tag saying where.
+enum DebugToolbarPreview {
+	@discardableResult
+	static func write(to path: String, location: String?) -> Bool {
+		let toolbar = DebugToolbar()
+		toolbar.location = location
+		return toolbar.writeImageForTesting(
+			to: path, state: .stopped(reason: "breakpoint"), exitCode: nil
+		)
 	}
 }
 
