@@ -54,7 +54,9 @@ shoot() {
 	if [ -n "$ONLY" ] && [ "$ONLY" != "$name" ]; then return 0; fi
 
 	printf '  %-12s ' "$name"
-	"$APP" --window-size "$SIZE" --screenshot "$OUT/$name.png" "$@" >/dev/null 2>&1 || true
+	# In the app's own palette, so the pictures do not depend on whichever
+	# theme the machine taking them happens to be set to.
+	"$APP" --window-size "$SIZE" --theme abydos --screenshot "$OUT/$name.png" "$@" >/dev/null 2>&1 || true
 	if [ -f "$OUT/$name.png" ]; then
 		printf '%s\n' "$(du -h "$OUT/$name.png" | cut -f1)"
 	else

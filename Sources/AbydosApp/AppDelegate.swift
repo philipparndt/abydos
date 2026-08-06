@@ -134,6 +134,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			return
 		}
 
+		// Before anything is drawn: a palette applied after the first window is
+		// a window drawn twice, and the capture can catch the first one.
+		if let theme = options.theme {
+			Settings.shared.appearance = theme
+			Settings.shared.terminalScheme = theme == "abydos" ? "abydos" : Settings.shared.terminalScheme
+			Theme.apply()
+		}
+
 		MetalProbe.start()
 		if let zoom = options.zoom { Settings.shared.uiScale = zoom }
 

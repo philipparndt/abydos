@@ -117,6 +117,9 @@ struct LaunchOptions {
 	var indentBlock: String?
 	/// Prints what the editor is holding, saved or not.
 	var printText = false
+	/// The palette to run in, so a capture does not depend on whoever's
+	/// settings the machine happens to have.
+	var theme: String?
 	/// Start the debugger and inspect where it stopped, without stepping.
 	var debugInspect = false
 	/// Debug this binary with whichever adapter suits it.
@@ -402,6 +405,7 @@ struct LaunchOptions {
 			case "--option-key": if let pair = next() { options.optionKeys.append(pair) }
 			case "--indent-block": options.indentBlock = next()
 			case "--print-text": options.printText = true
+			case "--theme": options.theme = next()
 			case "--debug-inspect": options.debugInspect = true
 			case "--debug-binary": options.debugBinary = next()
 			case "--toast":      options.showToast = true

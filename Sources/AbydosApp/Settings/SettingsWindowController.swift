@@ -292,6 +292,7 @@ final class SettingsPaneController: NSViewController {
 					(label: "System", value: "system"),
 					(label: "Dark", value: "dark"),
 					(label: "Light", value: "light"),
+					(label: "Abydos", value: "abydos"),
 				],
 				get: { Settings.shared.appearance },
 				set: { Settings.shared.appearance = $0 }
@@ -354,7 +355,7 @@ final class SettingsPaneController: NSViewController {
 			.group(title: "Appearance", help: nil, rows: [
 				.choice(
 					title: "Terminal colours",
-					help: "Blue is the palette Ghostty ships with. Dark matches the editor.",
+					help: "Blue is the palette Ghostty ships with. Dark matches the editor. Abydos is this app's own.",
 					options: TerminalScheme.allCases.map { ($0.title, $0.rawValue) },
 					get: { Settings.shared.terminalScheme },
 					set: { Settings.shared.terminalScheme = $0 }

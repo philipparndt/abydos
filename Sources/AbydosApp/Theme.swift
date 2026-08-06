@@ -18,6 +18,7 @@ struct Theme {
 		switch Settings.shared.activeAppearance {
 		case "light": wanted = .daylight
 		case "dark": wanted = .dusk
+		case "abydos": wanted = .abydos
 		default: wanted = systemIsDark ? .dusk : .daylight
 		}
 
@@ -27,7 +28,7 @@ struct Theme {
 		// time, since the first call is what establishes it at all.
 		NSApp.appearance = NSAppearance(named: wanted.isLight ? .aqua : .darkAqua)
 
-		guard wanted.isLight != current.isLight else { return false }
+		guard wanted.name != current.name else { return false }
 		previous = current
 		current = wanted
 		return true
@@ -42,6 +43,13 @@ struct Theme {
 		let match = NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua])
 		return match == .darkAqua
 	}
+
+	/// Which palette this is.
+	///
+	/// The switch used to compare light against dark, which is all there was.
+	/// With two dark palettes that comparison says they are the same and the
+	/// change is dropped, so they are compared by name.
+	var name = "dusk"
 
 	/// Whether this palette is a light one.
 	///
@@ -181,6 +189,7 @@ struct Theme {
 	/// little more blue, and the syntax hues are pulled apart so that keyword,
 	/// type and call read as three colours rather than three shades.
 	static let dusk = Theme(
+		name: "dusk",
 		windowBackground: .hex(0x1A1C21),
 		sidebarBackground: .hex(0x24272E),
 		editorBackground: .hex(0x1A1C21),
@@ -210,12 +219,56 @@ struct Theme {
 		indentGuide: .hex(0x2F323B)
 	)
 
+	/// The app's own palette: a sun on the horizon.
+	///
+	/// Amber earns its place three times over — it is CRT phosphor, it is
+	/// desert, and it is a warm ground in a category that is wall to wall blue.
+	/// Built from six colours: a core light, an amber, an ember, sandstone, a
+	/// deep brown and the ground everything sits on.
+	///
+	/// The surfaces are nearly black with warmth in them rather than brown:
+	/// a brown editor is tiring within the hour, and what should be warm is the
+	/// light falling on it, not the paper.
+	static let abydos = Theme(
+		name: "abydos",
+		windowBackground: .hex(0x151210),
+		sidebarBackground: .hex(0x1C1712),
+		editorBackground: .hex(0x151210),
+		toolbarBackground: .hex(0x1C1712),
+		separator: .hex(0x33240F),
+
+		sidebarText: .hex(0xCDBFA9),
+		sidebarHeaderText: .hex(0xFFE0AC),
+		selectionActive: .hex(0x6B3B10),
+		selectionInactive: .hex(0x2A2018),
+		excludedDirectoryTint: .hex(0x33240F),
+
+		// Semantic before decorative: a conflict is red wherever it happens,
+		// and green is the only colour "added" can be. The rest lean warm.
+		gitAdded: .hex(0x9FB37A),
+		gitModified: .hex(0xF7B44E),
+		gitUnversioned: .hex(0xD97F18),
+		gitIgnored: .hex(0x7A6A55),
+		gitConflict: .hex(0xD6706E),
+
+		editorText: .hex(0xE8D9C0),
+		gutterText: .hex(0x6E5B45),
+		gutterCurrentLineText: .hex(0xC6A97D),
+		currentLineBackground: .hex(0x1E1813),
+		caret: .hex(0xF7B44E),
+		selectionBackground: .hex(0x4A2C0E),
+		foldPlaceholderBackground: .hex(0x2A2118),
+		foldPlaceholderText: .hex(0xC0A582),
+		indentGuide: .hex(0x2A2118)
+	)
+
 	/// The same interface in daylight.
 	///
 	/// Not the dark palette inverted: a light theme wants more contrast in the
 	/// text and less in the surfaces, or every panel edge shouts. The greys are
 	/// close together and the colours do the separating.
 	static let daylight = Theme(
+		name: "daylight",
 		isLight: true,
 
 		windowBackground: .hex(0xF7F8FA),
@@ -251,6 +304,7 @@ struct Theme {
 	/// from tree-sitter capture names, so the theme never sees grammar details.
 	func color(for kind: HighlightKind) -> NSColor {
 		if isLight { return lightColor(for: kind) }
+		if name == "abydos" { return abydosColor(for: kind) }
 		switch kind {
 		// Keyword warm, string green, call blue: the arrangement every dark
 		// scheme has settled on, in our own values. Parameters are tinted
@@ -279,6 +333,44 @@ struct Theme {
 		case .heading:      return .hex(0xE5BE72)
 		case .link:         return .hex(0x6E97F0)
 		case .emphasis:     return .hex(0xC2C6D0)
+		case .error:        return .hex(0xD6706E)
+		case .plain:        return editorText
+		}
+	}
+
+	/// The same arrangement on a warm ground.
+	///
+	/// Not the dusk palette reused: those colours are chosen against a
+	/// blue-grey, and a blue call on an amber background is the one pairing
+	/// that looks like a mistake rather than a choice. Keywords take the ember,
+	/// strings a desert green, calls a pale gold — the hues are near each other
+	/// and the work is done by lightness, which is what makes a warm scheme
+	/// readable rather than muddy.
+	private func abydosColor(for kind: HighlightKind) -> NSColor {
+		switch kind {
+		case .keyword:      return .hex(0xE0913A)
+		case .type:         return .hex(0xD8C08A)
+		case .function:     return .hex(0xF7B44E)
+		case .method:       return .hex(0xF7B44E)
+		case .property:     return .hex(0xD9A05B)
+		case .variable:     return editorText
+		case .parameter:    return .hex(0xC3B192)
+		case .constant:     return .hex(0xE8A05C)
+		case .string:       return .hex(0x9FB37A)
+		case .escape:       return .hex(0xC98A4B)
+		case .number:       return .hex(0xC5A572)
+		case .boolean:      return .hex(0xE0913A)
+		case .comment:      return .hex(0x7A6A55)
+		case .documentation:return .hex(0x8A9A6B)
+		case .operatorToken:return .hex(0xC3B192)
+		case .punctuation:  return .hex(0xA6947A)
+		case .tag:          return .hex(0xE0913A)
+		case .attribute:    return .hex(0xC3B192)
+		case .label:        return .hex(0xD9A05B)
+		case .namespace:    return .hex(0xC0A582)
+		case .heading:      return .hex(0xFFE0AC)
+		case .link:         return .hex(0xE8A05C)
+		case .emphasis:     return .hex(0xE8D9C0)
 		case .error:        return .hex(0xD6706E)
 		case .plain:        return editorText
 		}

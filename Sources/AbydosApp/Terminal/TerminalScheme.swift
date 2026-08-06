@@ -14,6 +14,11 @@ enum TerminalScheme: String, CaseIterable {
 	/// the syntax highlighting beside it — including in daylight, where a
 	/// terminal that stayed black would be the one dark rectangle on screen.
 	case dark
+	/// The app's own: amber on a warm near-black, to sit beside the Abydos
+	/// editor palette. ANSI still means what ANSI means — red is red, and a
+	/// failing test has to look like one — but the hues lean towards the
+	/// desert and the greys are warm rather than blue.
+	case abydos
 
 	static let `default` = TerminalScheme.blue
 
@@ -21,6 +26,7 @@ enum TerminalScheme: String, CaseIterable {
 		switch self {
 		case .blue: return "Blue"
 		case .dark: return "Dark"
+		case .abydos: return "Abydos"
 		}
 	}
 
@@ -70,6 +76,27 @@ enum TerminalScheme: String, CaseIterable {
 				.hex(0xC397D8), // 13 bright magenta
 				.hex(0x70C0B1), // 14 bright cyan
 				.hex(0xEAEAEA), // 15 bright white
+			]
+		case .abydos:
+			return [
+				.hex(0x1C1712), // 0 black — the ground, warmed
+				.hex(0xD6706E), // 1 red — a failure is red anywhere
+				.hex(0x9FB37A), // 2 green
+				.hex(0xF7B44E), // 3 yellow — the amber itself
+				.hex(0xC9944A), // 4 blue → sand: the one hue that cannot stay,
+				               //   since blue on this ground is the pairing
+				               //   that looks like a mistake
+				.hex(0xC98A9E), // 5 magenta
+				.hex(0x8FB3A6), // 6 cyan
+				.hex(0xCDBFA9), // 7 white
+				.hex(0x7A6A55), // 8 bright black
+				.hex(0xE58B87), // 9 bright red
+				.hex(0xB4C78D), // 10 bright green
+				.hex(0xFFE0AC), // 11 bright yellow — the core light
+				.hex(0xE0A85E), // 12 bright blue → bright sand
+				.hex(0xDFA0B2), // 13 bright magenta
+				.hex(0xA6C7B8), // 14 bright cyan
+				.hex(0xF3E7D3), // 15 bright white
 			]
 		case .dark where Theme.current.isLight:
 			// As above: a middle lightness, so the same colour serves as text
@@ -122,6 +149,10 @@ enum TerminalScheme: String, CaseIterable {
 		// it stops reading as a terminal. A hint of the same blue does it.
 		case .blue: return Theme.current.isLight ? .hex(0xF4F6FB) : .hex(0x282935)
 		case .dark: return Theme.current.editorBackground
+		// A shade off the editor's, for the same reason the blue one is: a
+		// terminal exactly the colour of the editor beside it stops reading as
+		// a terminal.
+		case .abydos: return .hex(0x1A1512)
 		}
 	}
 
@@ -130,6 +161,7 @@ enum TerminalScheme: String, CaseIterable {
 		switch self {
 		case .blue: return Theme.current.isLight ? .hex(0x24262B) : .hex(0xFFFFFF)
 		case .dark: return Theme.current.editorText
+		case .abydos: return .hex(0xE8D9C0)
 		}
 	}
 
@@ -138,6 +170,7 @@ enum TerminalScheme: String, CaseIterable {
 		switch self {
 		case .blue: return Theme.current.isLight ? .hex(0x3B3E45) : .hex(0xC5C8C6)
 		case .dark: return Theme.current.caret
+		case .abydos: return .hex(0xF7B44E)
 		}
 	}
 
