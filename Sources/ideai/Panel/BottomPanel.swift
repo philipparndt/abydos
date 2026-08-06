@@ -2973,10 +2973,12 @@ final class PanelTabStrip: NSView {
 
 	private func recomputeLayout() {
 		frames.removeAll()
-		// Hard against the left on tmux's strip, for the same reason the tabs
-		// meet each other: the active one is a hole cut in the green, and green
-		// left showing down its outer edge is a frame around that tab alone.
-		var x = isMirroringTmux ? 0 : Theme.current.scaled(8)
+		// Hard against the left, as tmux's strip already was — there for a
+		// reason of its own, since the active tab is a hole cut in the green
+		// and green down its outer edge frames that one tab. The rest of the
+		// panel starts at the edge too: the terminal below has no margin, and a
+		// strip that begins eight points in sits on nothing.
+		var x: CGFloat = 0
 		for item in items {
 			// The editor's own measurement: room for the icon, the name, and
 			// the cross, and never so narrow that a name is all ellipsis.
