@@ -1606,6 +1606,29 @@ final class TerminalView: NSView, NSTextInputClient {
 		)
 	}
 
+	/// What a key with Option held would send, for checking the wiring.
+	///
+	/// Through the same translation a keystroke goes through, because what was
+	/// wrong was not the rule but which rule the view asked: a test of the rule
+	/// alone would have passed while a German keyboard still could not type a
+	/// brace.
+	func optionKeyForTesting(bare: String, composed: String) -> String {
+		let event = NSEvent.keyEvent(
+			with: .keyDown,
+			location: .zero,
+			modifierFlags: [.option],
+			timestamp: 0,
+			windowNumber: 0,
+			context: nil,
+			characters: composed,
+			charactersIgnoringModifiers: bare,
+			isARepeat: false,
+			keyCode: 0
+		)
+		guard let event else { return "no event" }
+		return encode(event: event) ?? "nothing"
+	}
+
 	/// Translates a key event into the bytes a terminal would send.
 	private func encode(event: NSEvent) -> String? {
 		let flags = event.modifierFlags
@@ -1659,10 +1682,15 @@ final class TerminalView: NSView, NSTextInputClient {
 			}
 		}
 
-		// Option is Meta: prefix with ESC, which is what shells expect for
-		// word-wise editing (⌥B, ⌥F).
+		// Option: what the layout composed, or Meta when it composed nothing.
+		// A German keyboard reaches `{` at ⌥8 and could not type one at all
+		// while this prefixed ESC unconditionally.
 		if flags.contains(.option) {
-			return "\u{1B}" + characters
+			return TerminalKeys.optionOutput(
+				composed: event.characters,
+				bare: characters,
+				asMeta: Settings.shared.terminalOptionAsMeta
+			)
 		}
 
 		// Otherwise send what was actually typed, so dead keys and IME work.

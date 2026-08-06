@@ -53,6 +53,7 @@ public final class Settings {
 			Key.terminalFontName: "",
 			Key.wordWrap: false,
 			Key.terminalGPURendering: false,
+			Key.terminalOptionAsMeta: false,
 			Key.appearance: "system",
 			Key.followsTerminalProject: false,
 			Key.terminalAtStartup: "open",
@@ -86,6 +87,7 @@ public final class Settings {
 		static let terminalFontName = "terminalFontName"
 		static let wordWrap = "wordWrap"
 		static let terminalGPURendering = "terminalGPURendering"
+		static let terminalOptionAsMeta = "terminalOptionAsMeta"
 		static let appearance = "appearance"
 		static let followsTerminalProject = "followsTerminalProject"
 		static let terminalAtStartup = "terminalAtStartup"
@@ -279,6 +281,17 @@ public final class Settings {
 	public var terminalGPURendering: Bool {
 		get { defaults.bool(forKey: Key.terminalGPURendering) }
 		set { set(newValue, Key.terminalGPURendering) }
+	}
+
+	/// Whether Option means Meta rather than what the keyboard layout says.
+	///
+	/// Off, because a layout that puts `{` behind ⌥8 — German, Swiss, Nordic —
+	/// otherwise cannot type a brace into a shell at all. On, for anybody who
+	/// would rather have ⌥B and ⌥F move by words, which is what a US layout
+	/// gives up nothing for.
+	public var terminalOptionAsMeta: Bool {
+		get { defaults.bool(forKey: Key.terminalOptionAsMeta) }
+		set { set(newValue, Key.terminalOptionAsMeta) }
 	}
 
 	/// How the terminal arrives when a window opens.

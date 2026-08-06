@@ -374,6 +374,14 @@ final class SettingsPaneController: NSViewController {
 					set: { Settings.shared.terminalBellStyle = $0 }
 				),
 				.toggle(
+					title: "Option sends Meta",
+					help: "Off, so Option types what your keyboard says it does — on a German "
+						+ "layout that is where the braces and brackets are. On, so ⌥B and ⌥F "
+						+ "move by words instead.",
+					get: { Settings.shared.terminalOptionAsMeta },
+					set: { Settings.shared.terminalOptionAsMeta = $0 }
+				),
+				.toggle(
 					title: "GPU terminal rendering",
 					help: "Draw the terminal with Metal. Faster when a program repaints the whole "
 						+ "screen; still new.",

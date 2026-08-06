@@ -5802,6 +5802,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		editBreakpoint(file: url, line: line)
 	}
 
+	/// Presses a key with Option held in the terminal, and says what it sent.
+	func optionKeyForTesting(bare: String, composed: String) -> String {
+		setPanelVisible(true)
+		return bottomPanel.optionKeyForTesting(bare: bare, composed: composed)
+	}
+
 	func toggleBreakpointForTesting(line: Int) {
 		guard let url = editor.activeGroup.activeTabURL else { return }
 		toggleBreakpoint(file: url, line: line)

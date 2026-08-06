@@ -660,6 +660,15 @@ final class BottomPanel: NSView {
 	/// How many sessions are open, for checking a new tab arrived.
 	var sessionCountForTesting: Int { sessions.count }
 
+	/// Asks the terminal in front what a key with Option held would send.
+	func optionKeyForTesting(bare: String, composed: String) -> String {
+		let index = activeIndex ?? 0
+		guard index >= 0, index < sessions.count,
+		      let terminal = sessions[index].terminal
+		else { return "no terminal" }
+		return terminal.terminalView.optionKeyForTesting(bare: bare, composed: composed)
+	}
+
 	/// Opens a shell, or focuses the existing one if there already is a terminal.
 	/// tmux's windows, when the strip is showing those rather than our own
 	/// terminals.

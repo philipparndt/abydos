@@ -111,6 +111,8 @@ struct LaunchOptions {
 	/// Writes the debug toolbar to a PNG, with a location tag when given one.
 	var toolbarImage: String?
 	var toolbarLocation: String?
+	/// `bare:composed` pairs to press with Option held, for the key path.
+	var optionKeys: [String] = []
 	/// Start the debugger and inspect where it stopped, without stepping.
 	var debugInspect = false
 	/// Debug this binary with whichever adapter suits it.
@@ -393,6 +395,7 @@ struct LaunchOptions {
 			case "--bp-edit": options.editBreakpointLine = next().flatMap(Int.init)
 			case "--toolbar-image": options.toolbarImage = next()
 			case "--toolbar-location": options.toolbarLocation = next()
+			case "--option-key": if let pair = next() { options.optionKeys.append(pair) }
 			case "--debug-inspect": options.debugInspect = true
 			case "--debug-binary": options.debugBinary = next()
 			case "--toast":      options.showToast = true

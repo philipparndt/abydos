@@ -337,6 +337,18 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if !options.optionKeys.isEmpty {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+				for pair in options.optionKeys {
+					let parts = pair.split(separator: ":", maxSplits: 1).map(String.init)
+					guard parts.count == 2 else { continue }
+					let sent = controller?.optionKeyForTesting(bare: parts[0], composed: parts[1])
+					print("OPTIONKEY ⌥\(parts[0]) → \(sent ?? "no window") "
+						+ "(bytes: \(Array((sent ?? "").utf8)))")
+				}
+			}
+		}
+
 		if let path = options.toolbarImage {
 			DebugToolbarPreview.write(to: path, location: options.toolbarLocation)
 			print("TOOLBAR: \(path)")

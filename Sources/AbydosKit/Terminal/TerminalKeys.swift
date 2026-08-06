@@ -110,4 +110,41 @@ public enum TerminalKeys {
 		guard optionHeld, takesMetaPrefix(key) else { return sequence }
 		return "\u{1B}" + sequence
 	}
+
+	/// What Option and a key should send.
+	///
+	/// Two things want the same modifier and only one of them can have it.
+	/// Shells use Option as Meta — ⌥B and ⌥F move by words — and keyboard
+	/// layouts outside the US put characters there: on a German layout `{` is
+	/// ⌥8, `[` is ⌥5, `}` is ⌥9, `]` is ⌥6, `|` is ⌥7 and `@` is ⌥L.
+	///
+	/// Meta won unconditionally here, which meant a German keyboard could not
+	/// type a brace into a terminal at all — ⌥8 sent `ESC 8`, and the only way
+	/// to get a `{` into a shell was to paste it. That is the wrong way round:
+	/// a character somebody's keyboard is telling us they typed is not a
+	/// modifier gesture, and word-motion is the thing to make optional.
+	///
+	/// - Parameters:
+	///   - composed: what the layout produced with Option held — `event.characters`.
+	///   - bare: the same key without modifiers — `event.charactersIgnoringModifiers`.
+	///   - asMeta: whether somebody has asked for Option to mean Meta anyway.
+	public static func optionOutput(composed: String?, bare: String, asMeta: Bool) -> String {
+		guard !asMeta else { return "\u{1B}" + bare }
+
+		// A layout composed something of its own: send that, and nothing else.
+		if let composed, composed != bare, isTypable(composed) { return composed }
+
+		// Option added nothing — ⌥B on a US layout gives "∫", but ⌥Left gives
+		// no character at all — so it can only have meant Meta.
+		return "\u{1B}" + bare
+	}
+
+	/// Whether a string is something a program would want as input rather than
+	/// as a control code.
+	static func isTypable(_ text: String) -> Bool {
+		guard !text.isEmpty else { return false }
+		return text.unicodeScalars.allSatisfy { scalar in
+			scalar.value >= 0x20 && scalar.value != 0x7F
+		}
+	}
 }
