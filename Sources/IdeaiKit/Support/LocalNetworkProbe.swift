@@ -103,6 +103,42 @@ public enum LocalNetworkProbe {
 		}
 	}
 
+	/// The same question asked with a plain socket, for running as a child.
+	///
+	/// A program the app launches does not use Network.framework and does not
+	/// inherit its niceties — it calls `connect` and is told `EHOSTUNREACH`.
+	/// This is that, so the answer from a child is comparable with the answer
+	/// from the app itself. The difference between the two is the whole
+	/// question: the permission belongs to the app, and what is in doubt is
+	/// whether what it launches inherits it.
+	public static func checkWithSocket(host: String, port: UInt16, timeout: TimeInterval = 5) -> Result {
+		var hints = addrinfo(
+			ai_flags: 0, ai_family: AF_UNSPEC, ai_socktype: SOCK_STREAM,
+			ai_protocol: 0, ai_addrlen: 0, ai_canonname: nil, ai_addr: nil, ai_next: nil
+		)
+		var list: UnsafeMutablePointer<addrinfo>?
+		guard getaddrinfo(host, String(port), &hints, &list) == 0, let first = list else {
+			return .unreachable("cannot resolve \(host)")
+		}
+		defer { freeaddrinfo(list) }
+
+		let descriptor = socket(first.pointee.ai_family, first.pointee.ai_socktype, first.pointee.ai_protocol)
+		guard descriptor >= 0 else { return .unreachable("socket: \(errno)") }
+		defer { close(descriptor) }
+
+		var deadline = timeval(tv_sec: Int(timeout), tv_usec: 0)
+		setsockopt(descriptor, SOL_SOCKET, SO_SNDTIMEO, &deadline, socklen_t(MemoryLayout<timeval>.size))
+
+		guard connect(descriptor, first.pointee.ai_addr, first.pointee.ai_addrlen) == 0 else {
+			switch errno {
+			case ECONNREFUSED: return .refused
+			case ETIMEDOUT: return .timedOut
+			default: return .unreachable("errno \(errno) — \(String(cString: strerror(errno)))")
+			}
+		}
+		return .reachable
+	}
+
 	/// `host:port`, as somebody would type it.
 	public static func parse(_ target: String) -> (host: String, port: UInt16)? {
 		guard let colon = target.lastIndex(of: ":") else { return nil }

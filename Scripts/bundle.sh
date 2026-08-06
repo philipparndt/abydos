@@ -135,7 +135,12 @@ if [ -z "$IDENTITY" ]; then
 	fi
 fi
 
-if ! SIGN_OUT=$(codesign --force --deep --sign "$IDENTITY" "$APP" 2>&1); then
+# With the hardened runtime, which is what the release build has signed with
+# all along. macOS decides whether an app may use the local network partly on
+# what its signature says about it, and a development build that differs from
+# the shipped one there is a build whose network failures nobody can reproduce
+# in the thing they will actually run.
+if ! SIGN_OUT=$(codesign --force --deep --options runtime --sign "$IDENTITY" "$APP" 2>&1); then
 	echo "    warning: codesign with '$IDENTITY' failed; the app may not launch" >&2
 	echo "$SIGN_OUT" | sed 's/^/    /' >&2
 else

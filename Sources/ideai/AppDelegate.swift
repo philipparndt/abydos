@@ -107,9 +107,25 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 				print("usage: --probe-lan host:port")
 				exit(2)
 			}
-			LocalNetworkProbe.check(host: host, port: port) { result in
-				print("local network \(host):\(port) — \(result.summary)")
-				exit(result == .reachable || result == .refused ? 0 : 1)
+			// The app's own answer, and then a child's. The permission belongs
+			// to the app; whether what it launches inherits it is the question,
+			// and a debugger, a test run or a program under test is a child.
+			LocalNetworkProbe.check(host: host, port: port) { own in
+				let child = LocalNetworkProbe.checkWithSocket(host: host, port: port)
+				let report = """
+				local network \(host):\(port)
+				  the app itself:      \(own.summary)
+				  a program it starts: \(child.summary)
+				"""
+				print(report)
+				// Written as well as printed: launched from the Dock — which is
+				// the only launch whose answer is about this app rather than
+				// about whatever started it — there is nowhere for stdout to go.
+				DiagnosticLog.write(report, to: "network")
+				// Refused counts as a pass: something answered, which is only
+				// possible when the connection was allowed to be made at all.
+				let allowed = { (r: LocalNetworkProbe.Result) in r == .reachable || r == .refused }
+				exit(allowed(own) && allowed(child) ? 0 : 1)
 			}
 			return
 		}
