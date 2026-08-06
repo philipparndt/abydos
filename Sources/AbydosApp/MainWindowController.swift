@@ -733,6 +733,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// show through, with the sidebar's colour meeting the editor's part
 		// way along a row that belongs to neither.
 		let backdrop = ColoredView(color: Theme.current.windowBackground)
+		backdrop.actsAsTitlebar = true
 		backdrop.translatesAutoresizingMaskIntoConstraints = false
 		contentView.addSubview(backdrop, positioned: .above, relativeTo: nil)
 
@@ -6327,6 +6328,14 @@ extension MainWindowController: NSToolbarDelegate {
 /// A view that fills itself with a flat colour. Used instead of relying on
 /// `NSBox` or vibrancy so the palette matches the theme exactly.
 class ColoredView: NSView {
+	/// Whether a double-click here means what one in a titlebar means.
+	///
+	/// The strip across the top of this window is a view of this app's, drawn
+	/// where the titlebar would be — `fullSizeContentView` puts the content
+	/// there. A view swallows a double-click, so the one gesture every macOS
+	/// window has, and which people use without thinking, did nothing at all.
+	var actsAsTitlebar = false
+
 	private var color: NSColor
 
 	/// What it is painted with, for anything swapping palettes.
@@ -6344,6 +6353,14 @@ class ColoredView: NSView {
 	func refreshColour() {
 		guard let colourSource else { return }
 		setColor(colourSource())
+	}
+
+	override func mouseDown(with event: NSEvent) {
+		guard actsAsTitlebar, event.clickCount == 2 else {
+			super.mouseDown(with: event)
+			return
+		}
+		TitlebarDoubleClick.perform(on: window)
 	}
 
 	/// Repaints in another colour, for a strip that means something by it.
