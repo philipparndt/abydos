@@ -2171,9 +2171,18 @@ final class EditorStatusView: NSView {
 	// MARK: - Drawing
 
 	override func draw(_ dirtyRect: NSRect) {
-		Theme.current.sidebarBackground.setFill()
+		// The editor's own background, not the sidebar's. This bar and the
+		// panel's tab strip sat one on top of the other in the same shade with
+		// the same hairline, so the pair read as a single band and the strip
+		// took double-clicks meant for the bar — which maximises the panel.
+		// Belonging to the editor is also what this bar is: it says where the
+		// caret is.
+		Theme.current.editorBackground.setFill()
 		bounds.fill()
 
+		// Along the top, between the text and this. The panel below draws its
+		// own; two lines with nothing between them was the other half of the
+		// problem.
 		Theme.current.separator.setFill()
 		NSRect(x: 0, y: 0, width: bounds.width, height: 1).fill()
 
