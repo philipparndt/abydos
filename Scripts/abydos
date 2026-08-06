@@ -1,0 +1,28 @@
+#!/bin/sh
+# Opens a project or a file in Abydos, from wherever you are.
+#
+# `Abydos` with nothing after it means here, which is what somebody standing in
+# a project directory wants. Anything else is a path: a directory opens as a
+# project, a file opens in the project that contains it.
+set -eu
+
+app="${IDEAI_APP:-/Applications/Abydos.app}"
+if [ ! -d "$app" ]; then
+	echo "Abydos: $app is not installed (run 'make install', or set IDEAI_APP)" >&2
+	exit 1
+fi
+
+if [ "$#" -eq 0 ]; then
+	set -- .
+fi
+
+for target; do
+	if [ ! -e "$target" ]; then
+		echo "Abydos: $target does not exist" >&2
+		exit 1
+	fi
+done
+
+# -a rather than a bare exec: an instance that is already running takes the
+# path and raises the window, instead of a second copy of the app starting up.
+exec open -a "$app" "$@"

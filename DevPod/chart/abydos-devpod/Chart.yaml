@@ -1,0 +1,7 @@
+apiVersion: v2
+name: abydos-devpod
+description: A pod that waits for a binary, runs it, and lets a debugger in
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords: [development, debugging, go]

@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ideai — a terminal-first IDE for AI and cloud development</title>
+<title>Abydos — a terminal-first IDE for AI and cloud development</title>
 <meta name="description" content="A native macOS IDE built around the terminal: agents as first-class sessions, and a program that runs and stops on breakpoints inside your Kubernetes cluster. No web view, no Electron.">
-<meta property="og:title" content="ideai">
+<meta property="og:title" content="Abydos">
 <meta property="og:description" content="A terminal-first IDE for AI and cloud development. Agents as first-class sessions; run and debug in a Kubernetes pod in about a second. Native AppKit, no web view.">
 <meta property="og:type" content="website">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1024 1024'%3E%3Crect width='1024' height='1024' rx='230' fill='%231a1b1e'/%3E%3Cpath d='M276 306 L494 512 L276 718' fill='none' stroke='%236eaaf0' stroke-width='104' stroke-linecap='round' stroke-linejoin='round'/%3E%3Crect x='608' y='306' width='160' height='412' rx='34' fill='%23dba04a'/%3E%3C/svg%3E">
@@ -145,7 +145,7 @@
 <main>
 
 <header>
-	<svg viewBox="0 0 1024 1024" aria-label="ideai">
+	<svg viewBox="0 0 1024 1024" aria-label="Abydos">
 		<defs>
 			<linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
 				<stop offset="0" stop-color="#2b2d30"/>
@@ -157,7 +157,7 @@
 		      stroke-width="104" stroke-linecap="round" stroke-linejoin="round"/>
 		<rect x="608" y="306" width="160" height="412" rx="34" fill="#dba04a"/>
 	</svg>
-	<h1>ideai</h1>
+	<h1>Abydos</h1>
 	<p class="tagline">A terminal-first IDE for AI and cloud development.</p>
 	<p class="sub">The terminal is not a strip at the bottom of an editor. It is where
 	   the work happens — shells, tmux windows, agents, a program running in a pod —
@@ -173,7 +173,7 @@
 </header>
 
 <figure>
-	<img src="images/debugger.png" alt="ideai stopped on a breakpoint: the editor showing the stopped line, and the panel below it showing the call stack and the local variables."
+	<img src="images/debugger.png" alt="Abydos stopped on a breakpoint: the editor showing the stopped line, and the panel below it showing the call stack and the local variables."
 	     width="3200" height="2000" loading="lazy">
 	<figcaption>Stopped on a breakpoint. The terminal had the whole window a moment
 	   earlier; stopping gives it back and shows the variables, because that is what
@@ -212,7 +212,7 @@
 </div>
 
 <figure>
-	<img src="images/terminal.png" alt="ideai with a tmux session in the bottom panel, the panel's tabs being tmux's own windows."
+	<img src="images/terminal.png" alt="Abydos with a tmux session in the bottom panel, the panel's tabs being tmux's own windows."
 	     width="3200" height="2000" loading="lazy">
 	<figcaption>The panel's tabs are tmux's windows: the strip and
 	   <code>tmux list-windows</code> are the same list.</figcaption>
@@ -336,7 +336,7 @@
 </p>
 
 <figure>
-	<img src="images/java.png" alt="ideai with a Maven project open: the navigator on the left, a Java source file with syntax highlighting in the editor."
+	<img src="images/java.png" alt="Abydos with a Maven project open: the navigator on the left, a Java source file with syntax highlighting in the editor."
 	     width="3200" height="2000" loading="lazy">
 	<figcaption>A Maven project, opened as it comes.</figcaption>
 </figure>
@@ -397,7 +397,7 @@
 <h2>Building it yourself</h2>
 <pre><span class="c"># Xcode's Swift, not whichever one is first on the PATH.</span>
 git clone https://github.com/philipparndt/ideai.git
-cd ideai
+cd Abydos
 make          <span class="c"># build the .app and launch it</span>
 make test     <span class="c"># the suite</span>
 make dev      <span class="c"># debug build, in the foreground, logs on the terminal</span></pre>

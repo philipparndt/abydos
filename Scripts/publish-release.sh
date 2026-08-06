@@ -23,7 +23,7 @@ VERSION="${1:-}"
 VERSION="${VERSION#v}"
 TAG="v$VERSION"
 PLIST="Resources/Info.plist"
-DMG="build/ideai-$VERSION.dmg"
+DMG="build/Abydos-$VERSION.dmg"
 
 command -v gh >/dev/null || { echo "gh is not installed — brew install gh"; exit 1; }
 gh auth status >/dev/null 2>&1 || { echo "gh is not logged in — gh auth login"; exit 1; }
@@ -59,7 +59,7 @@ if [ "$CURRENT" != "$VERSION" ]; then
 	echo "    version $CURRENT → $VERSION"
 fi
 
-git tag -a "$TAG" -m "ideai $VERSION"
+git tag -a "$TAG" -m "Abydos $VERSION"
 
 # --- Build, sign, notarise --------------------------------------------------
 #
@@ -86,7 +86,7 @@ NOTES=$(mktemp)
 {
 	echo "### Install"
 	echo
-	echo "Download \`$(basename "$DMG")\`, open it and drag ideai to Applications."
+	echo "Download \`$(basename "$DMG")\`, open it and drag Abydos to Applications."
 	echo "The build is signed with a Developer ID and notarised, so Gatekeeper opens it"
 	echo "without a detour through System Settings."
 	echo
@@ -97,7 +97,7 @@ NOTES=$(mktemp)
 
 gh release create "$TAG" \
 	"$DMG" "$DMG.sha256" \
-	--title "ideai $VERSION" \
+	--title "Abydos $VERSION" \
 	--notes-file "$NOTES" \
 	--generate-notes
 rm -f "$NOTES"

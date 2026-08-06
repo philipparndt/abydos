@@ -1,4 +1,4 @@
-# ideai
+# Abydos
 
 A terminal-first IDE for AI and cloud development, on macOS.
 
@@ -20,7 +20,7 @@ Two things follow from that, and they are what this is for:
   breakpoint *in the pod*, in your own sources, because the binary was compiled
   on this machine. Go, Java, Rust, C, C++, Zig and Odin.
 
-[The website](https://philipparndt.github.io/ideai-docs/) ·
+[The website](https://philipparndt.github.io/Abydos-docs/) ·
 [Releases](https://github.com/philipparndt/ideai/releases) ·
 [What is supported](#what-is-supported)
 
@@ -39,7 +39,7 @@ Two things follow from that, and they are what this is for:
   cluster's architecture, pushes into a development pod and runs there, with
   the pod's output in a panel tab. Press debug instead and the debugger stops
   on your breakpoints, in your sources. Go, Java, Rust, C, C++, Zig and Odin.
-- **Run and debug** — launch configurations in `.ideai/run`, `.vscode/launch.json`
+- **Run and debug** — launch configurations in `.Abydos/run`, `.vscode/launch.json`
   imported, Makefile goals, Maven goals, Gradle tasks, and entry points found by
   scanning. Breakpoints with conditions, hit counts and log points; stack,
   variables and watches, over DAP.
@@ -81,7 +81,7 @@ tick is something with a test behind it.
 | **Search** | find in file (⌘F), project-wide streaming search (⇧⌘F) | — |
 | **Outline** | ⇧⌘O over a file; symbols from the language server, or from the build file's own parser | a server, for source files |
 | **Language servers** | completion, problems, hover, go-to-declaration, find-usages | the server for that language |
-| **Run** | launch configurations in `.ideai/run`, `.vscode/launch.json` imported, Makefile goals, Maven goals, Gradle tasks, entry points found by scanning | the language's own toolchain |
+| **Run** | launch configurations in `.Abydos/run`, `.vscode/launch.json` imported, Makefile goals, Maven goals, Gradle tasks, entry points found by scanning | the language's own toolchain |
 | **Debug** | breakpoints (conditional, hit counts, log points), stack, variables, watches — over DAP | Delve, LLDB, or jdtls's java-debug |
 | **Run in a cluster** | build here, push into a development pod, run it there, follow its output | kubectl, a cluster |
 | **Debug in a cluster** | the same pod, held at the first instruction until the debugger arrives | the above, and the pod image for that language |
@@ -172,7 +172,7 @@ make dev        # debug build, run in foreground with logs
 make test       # the suite
 make perf       # performance suite with timings
 make install    # copy to /Applications
-make install-cli # put the `ideai` command on the PATH
+make install-cli # put the `Abydos` command on the PATH
 make help       # all targets
 ```
 
@@ -181,7 +181,7 @@ Or without make:
 ```sh
 swift build
 swift test
-Scripts/bundle.sh [debug|release]   # assembles build/ideai.app
+Scripts/bundle.sh [debug|release]   # assembles build/Abydos.app
 ```
 
 `make` uses `xcrun swift` rather than whichever `swift` is first on the `PATH`:
@@ -193,7 +193,7 @@ by the compiler" rather than anything about this program.
 
 ```sh
 make sign-check                     # the identity and notary profile it will use
-make release                        # sign, notarise, package build/ideai-<version>.dmg
+make release                        # sign, notarise, package build/Abydos-<version>.dmg
 make release-publish VERSION=0.2.0  # all of that, tagged and uploaded to GitHub
 ```
 
@@ -214,16 +214,16 @@ xcrun notarytool store-credentials notarytool \
 
 ### The website
 
-[philipparndt.github.io/ideai-docs](https://philipparndt.github.io/ideai-docs/),
+[philipparndt.github.io/Abydos-docs](https://philipparndt.github.io/Abydos-docs/),
 served from its own public repository —
-[philipparndt/ideai-docs](https://github.com/philipparndt/ideai-docs) — because
+[philipparndt/abydos-docs](https://github.com/philipparndt/abydos-docs) — because
 Pages will not serve a site from a private repository without a paid plan.
 
 `docs/index.html` here is the same page, kept so it can be edited beside the
 code it describes. It is not what is served: copy it across and push to publish.
 
 ```sh
-cp docs/index.html ../ideai-docs/ && git -C ../ideai-docs commit -am "…" && git -C ../ideai-docs push
+cp docs/index.html ../Abydos-docs/ && git -C ../Abydos-docs commit -am "…" && git -C ../Abydos-docs push
 ```
 
 One self-contained file — no build step, no dependencies, no external requests
@@ -232,9 +232,9 @@ One self-contained file — no build step, no dependencies, no external requests
 ### Opening from a terminal
 
 ```sh
-ideai                  # this directory
-ideai ~/dev/thing      # that project
-ideai cmd/app/main.go  # that file, in the repository around it
+Abydos                  # this directory
+Abydos ~/dev/thing      # that project
+Abydos cmd/app/main.go  # that file, in the repository around it
 ```
 
 An instance that is already running takes the path and raises its window
@@ -246,17 +246,17 @@ Useful for development; `--screenshot` renders the window in-process, so it
 works without Screen Recording permission.
 
 ```sh
-ideai --open <project-dir> [--file <path>] [--expand]
+Abydos --open <project-dir> [--file <path>] [--expand]
       [--screenshot <out.png>] [--delay <seconds>]
       [--type <text>] [--collapse]
 ```
 
-### The .ideai folder
+### The .Abydos folder
 
-A project ideai has been opened in keeps one folder beside its code:
+A project Abydos has been opened in keeps one folder beside its code:
 
 ```
-.ideai/
+.Abydos/
   .gitignore     # commits run/, ignores the rest
   run/           # one file per launch configuration — shared
   session.json   # which files were open here — this machine only
@@ -277,7 +277,7 @@ program. Choosing one writes a launch configuration that:
   including `VAR=$(...)` assignments, which are evaluated in a login shell at
   launch, so a password out of `sops` still reaches the program
 
-The extra keys are `ideai.make` and `ideai.envCommands`; anything else reading
+The extra keys are `Abydos.make` and `Abydos.envCommands`; anything else reading
 `launch.json` ignores them.
 
 ### Profiling
@@ -372,7 +372,7 @@ Sources/IdeaiKit/     engine — no view code, so all of it is testable headless
   Git/                GitRepository
   Project/            Project, FileNode, RecentProjects, FileSystemWatcher
   Settings/           Settings
-Sources/ideai/        AppKit — window, navigator, titlebar, editor, terminal, panel
+Sources/Abydos/        AppKit — window, navigator, titlebar, editor, terminal, panel
 Sources/Grammars/     vendored tree-sitter grammars
 Resources/Fonts/      bundled Hack Nerd Font (MIT / Bitstream Vera)
 ```
@@ -384,11 +384,11 @@ Resources/Fonts/      bundled Hack Nerd Font (MIT / Bitstream Vera)
 The design point is that agent tools are first-class rather than something you
 shell out to.
 
-An agent session is a PTY that *ideai* owns, not something a view owns. That one
+An agent session is a PTY that *Abydos* owns, not something a view owns. That one
 decision is what makes the rest work: a session can be hidden and shown again,
 or handed over for manual takeover, while its process keeps running throughout.
 
-Structured results come over MCP rather than by parsing rendered output. ideai
+Structured results come over MCP rather than by parsing rendered output. Abydos
 runs a per-session HTTP MCP server on loopback and launches the agent pointed at
 it with `--strict-mcp-config`, so the user's own MCP servers stay out of the
 session. The agent calls `report_review_findings` and the UI receives typed

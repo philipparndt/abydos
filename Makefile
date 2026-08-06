@@ -2,7 +2,7 @@
 #
 # Common entry points. `make` builds and launches the app.
 
-APP     := build/ideai.app
+APP     := build/Abydos.app
 BINARY  := $(APP)/Contents/MacOS/ideai
 CONFIG  ?= release
 
@@ -120,22 +120,22 @@ sign-check: ## Show the signing identity and notary profile the release will use
 
 .PHONY: install
 install: build ## Copy the app into /Applications
-	@rm -rf /Applications/ideai.app
+	@rm -rf /Applications/Abydos.app
 	@cp -R $(APP) /Applications/
-	@echo "==> Installed /Applications/ideai.app"
+	@echo "==> Installed /Applications/Abydos.app"
 
 .PHONY: install-cli
 install-cli: ## Put the `ideai` command on the PATH (PREFIX=/usr/local)
 	@mkdir -p $(or $(PREFIX),/usr/local)/bin
-	@install -m 755 Scripts/ideai $(or $(PREFIX),/usr/local)/bin/ideai
-	@echo "==> Installed $(or $(PREFIX),/usr/local)/bin/ideai"
+	@install -m 755 Scripts/abydos $(or $(PREFIX),/usr/local)/bin/abydos
+	@echo "==> Installed $(or $(PREFIX),/usr/local)/bin/abydos"
 
 # The development pod has a Makefile of its own; these are the two goals
 # somebody standing in the repository root wants from it.
 # The app ships the chart, so the copy it ships has to be the chart.
 .PHONY: devpod-chart
 devpod-chart: ## Copy the dev pod chart into the app's resources
-	@rsync -a --delete DevPod/chart/ideai-devpod/ Sources/ideai/Resources/devpod-chart/
+	@rsync -a --delete DevPod/chart/abydos-devpod/ Sources/AbydosApp/Resources/devpod-chart/
 	@echo "==> Synced the dev pod chart"
 
 .PHONY: devpod-image

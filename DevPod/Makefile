@@ -104,7 +104,7 @@ import-k3d: image ## Put the image in a k3d cluster (CLUSTER=name)
 
 .PHONY: install
 install: ## Install the chart (CLUSTER, NAMESPACE, RELEASE)
-	@helm --kube-context $(KUBECONTEXT) upgrade --install $(RELEASE) chart/ideai-devpod \
+	@helm --kube-context $(KUBECONTEXT) upgrade --install $(RELEASE) chart/abydos-devpod \
 		--namespace $(NAMESPACE) --create-namespace $(HELM_ARGS)
 
 .PHONY: uninstall

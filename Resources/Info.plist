@@ -3,19 +3,19 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleName</key>
-	<string>ideai</string>
+	<string>Abydos</string>
 	<key>CFBundleDisplayName</key>
-	<string>ideai</string>
+	<string>Abydos</string>
 	<key>CFBundleIdentifier</key>
 	<string>dev.philipparndt.ideai</string>
 	<key>CFBundleExecutable</key>
-	<string>ideai</string>
+	<string>Abydos</string>
 	<!-- The catalog, which Xcode compiles and the App Store reads. -->
 	<key>CFBundleIconName</key>
 	<string>AppIcon</string>
 	<!-- The loose .icns, for the bundle `make bundle` assembles by hand. -->
 	<key>CFBundleIconFile</key>
-	<string>ideai</string>
+	<string>Abydos</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<!-- Required by App Store Connect, and the shelf the app belongs on. -->
@@ -39,7 +39,7 @@
 	     Go program reports as "connect: no route to host" and nothing in the
 	     message points back at a permission the app never asked for. -->
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>ideai builds, runs and debugs your projects. Programs it launches on your behalf may connect to services on your local network, such as a database, a message broker or a Kubernetes cluster.</string>
+	<string>Abydos builds, runs and debugs your projects. Programs it launches on your behalf may connect to services on your local network, such as a database, a message broker or a Kubernetes cluster.</string>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>

@@ -23,7 +23,7 @@ EXAMPLES="${EXAMPLES:-../ideai-examples}"
 OUT="${OUT:-docs/images}"
 SIZE="${SIZE:-1600x1000}"
 ONLY="${SHOT:-}"
-APP="build/ideai.app/Contents/MacOS/ideai"
+APP="build/Abydos.app/Contents/MacOS/Abydos"
 
 test -d "$EXAMPLES" || {
 	echo "no examples at $EXAMPLES — clone philipparndt/ideai-examples or set EXAMPLES="
@@ -44,7 +44,7 @@ prepare() {
 	local example="$1" name="$2"
 	rm -rf "${WORK:?}/$name"
 	cp -R "$EXAMPLES/$example" "$WORK/$name"
-	rm -rf "$WORK/$name/.ideai/session.json" "$WORK/$name/build" "$WORK/$name/target"
+	rm -rf "$WORK/$name/.abydos/session.json" "$WORK/$name/.ideai/session.json" "$WORK/$name/build" "$WORK/$name/target"
 	echo "$WORK/$name"
 }
 
@@ -108,8 +108,8 @@ shoot java --open "$JAVA" --file "$JAVA/src/main/java/com/example/api/Server.jav
 # rather than described — and the values come from the session file, which is
 # also how anybody's would.
 BP="$(prepare go-service bp-options)"
-mkdir -p "$BP/.ideai"
-cat > "$BP/.ideai/session.json" <<'SESSION'
+mkdir -p "$BP/.abydos"
+cat > "$BP/.abydos/session.json" <<'SESSION'
 {
   "files": [{ "path": "REPLACED/main.go", "line": 25 }],
   "active": "REPLACED/main.go",
@@ -127,7 +127,7 @@ REAL="$(cd "$BP" && pwd -P)"
 # Rewritten with python rather than sed: the path holds slashes and the shell
 # quoting around `sed -i ''` on macOS is one mistake away from an empty
 # expression, which is what happened.
-python3 - "$BP/.ideai/session.json" "$REAL" <<'PYTHON'
+python3 - "$BP/.abydos/session.json" "$REAL" <<'PYTHON'
 import sys
 path, real = sys.argv[1], sys.argv[2]
 text = open(path).read().replace("REPLACED", real)

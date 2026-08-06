@@ -17,7 +17,7 @@ program normally runs.
 - `supervisor/` — PID 1 in the pod. Receives a binary over HTTP, writes it
   atomically, runs it, and answers the probes itself so a breakpoint never
   costs you the pod.
-- `chart/ideai-devpod/` — a Helm chart that runs one.
+- `chart/abydos-devpod/` — a Helm chart that runs one.
 - `tools/mkimage/` — assembles the image without a Docker daemon.
 - `Dockerfile` — the same image for a registry, when you have a builder.
 
@@ -68,7 +68,7 @@ A configuration can name a different one in its Image field, or:
 ## Installing
 
 ```sh
-helm upgrade --install dev chart/ideai-devpod -n devpod --create-namespace \
+helm upgrade --install dev chart/abydos-devpod -n devpod --create-namespace \
   --set image.pullPolicy=Never \
   --values my-service-dev.yaml
 ```
@@ -88,11 +88,11 @@ A launch configuration with one extra key runs in the cluster instead of here:
   "request": "launch",
   "program": "${workspaceFolder}/app",
   "args": ["/etc/config.json"],
-  "ideai.devPod": { "context": "k3c-demo1", "namespace": "devpod" }
+  "Abydos.devPod": { "context": "k3c-demo1", "namespace": "devpod" }
 }
 ```
 
-Press run and ideai asks the cluster what its nodes are, cross-compiles for
+Press run and Abydos asks the cluster what its nodes are, cross-compiles for
 that, opens a port-forward, pushes the binary and starts it — the pod's output
 arrives in a panel tab. Press debug and the pod starts `dlv dap` instead; the
 editor attaches through a second forward and stops on your breakpoints, in
@@ -108,13 +108,13 @@ namespace and a kubeconfig when it is not the default one.
 The pod starts empty — that is a healthy state, not a failure.
 
 ```sh
-kubectl port-forward deploy/dev-ideai-devpod 7999
+kubectl port-forward deploy/dev-Abydos-devpod 7999
 GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -gcflags 'all=-N -l' -o /tmp/svc .
 curl --data-binary @/tmp/svc 'http://localhost:7999/binary?mode=run'
 ```
 
 `mode=debug` starts `dlv dap` instead; forward 2345 and attach a DAP client,
-which is what ideai's debugger does.
+which is what Abydos's debugger does.
 
 | endpoint | what it does |
 |---|---|
@@ -159,7 +159,7 @@ is worse than one you have to ask. Turned on, the kind of object is worked out
 from what the cluster has:
 
 ```sh
-helm upgrade --install dev chart/ideai-devpod -n devpod \
+helm upgrade --install dev chart/abydos-devpod -n devpod \
   --set ingress.enabled=true --set ingress.host=my-service.dev.example.com
 ```
 
@@ -193,8 +193,8 @@ swapped for the supervisor:
   "name": "app in the cluster",
   "type": "go",
   "program": "${workspaceFolder}/app",
-  "ideai.devPod": { "context": "${currentContext}", "namespace": "dev" },
-  "ideai.helm": {
+  "Abydos.devPod": { "context": "${currentContext}", "namespace": "dev" },
+  "Abydos.helm": {
     "chart": "deploy/chart",
     "release": "smarthome",
     "values": ["deploy/values-dev.yaml"],

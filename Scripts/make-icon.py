@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Draws the app icon and builds Resources/Icon/ideai.icns.
+"""Draws the app icon and builds Resources/Icon/Abydos.icns.
 
 Rendered rather than checked in as a binary blob so the artwork stays
 reviewable and editable: the icon is a handful of shapes, and a diff of the
@@ -140,7 +140,7 @@ def main():
     master = draw().resize((1024, 1024), Image.LANCZOS)
     master.save(os.path.join(destination, "icon-1024.png"))
 
-    iconset = os.path.join(destination, "ideai.iconset")
+    iconset = os.path.join(destination, "Abydos.iconset")
     os.makedirs(iconset, exist_ok=True)
     # The sizes macOS asks for; anything missing is scaled badly at runtime.
     for size in [16, 32, 64, 128, 256, 512, 1024]:
@@ -166,10 +166,10 @@ def main():
 
     subprocess.run(
         ["iconutil", "-c", "icns", iconset,
-         "-o", os.path.join(destination, "ideai.icns")],
+         "-o", os.path.join(destination, "Abydos.icns")],
         check=True,
     )
-    print("==> Resources/Icon/ideai.icns")
+    print("==> Resources/Icon/Abydos.icns")
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 # Third-party notices
 
-ideai redistributes the components below. Every one permits redistribution in an
+Abydos redistributes the components below. Every one permits redistribution in an
 open-source project, commercial or otherwise. Their licence texts ship with the
 source and inside the built `.app`.
 
@@ -46,7 +46,7 @@ its sources.
 
 **SwiftTreeSitter** (ChimeHQ) — BSD.
 
-## What ideai does *not* bundle
+## What Abydos does *not* bundle
 
 These are invoked if installed, never redistributed, so their licences do not
 apply to this project:

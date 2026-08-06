@@ -1,0 +1,121 @@
+# A development pod.
+#
+# It runs the supervisor and nothing else until a binary is pushed into it, so
+# the deployment can exist before anything has been built. Everything below is
+# meant to be set to whatever the real chart sets, because the point is a pod
+# that differs from production in one way only: what runs inside it.
+
+image:
+  # Published, so a cluster that cannot be handed a tarball — anything not on
+  # this machine — has somewhere to pull from. A local cluster given the same
+  # reference by `k3c image import` keeps its own copy: IfNotPresent means what
+  # is already there wins, which is what makes working on the supervisor
+  # itself possible.
+  # Still the old name: this is an image that exists on a registry, and
+  # renaming the string here would only mean pulling one that does not. It
+  # follows when the next image is published.
+  repository: pharndt/ideai-devpod
+  tag: dev
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+# What the program is given, exactly as the recipe or the real chart gives it.
+app:
+  args: []
+  workdir: /app
+  env: {}
+  # The real ConfigMaps and Secrets, so the pod sees the configuration
+  # production sees.
+  envFrom: []
+  # Ports the program itself serves. The Service publishes these.
+  ports:
+    - name: http
+      containerPort: 8080
+    - name: pprof
+      containerPort: 6060
+
+supervisor:
+  controlPort: 7999
+  debugPort: 2345
+  # A binary already in the pod is started again when the container restarts.
+  autoStart: true
+
+service:
+  enabled: true
+  type: ClusterIP
+  annotations: {}
+  # Published in addition to the app's ports, so a profiler or a debugger can
+  # be reached without a port-forward when the cluster allows it.
+  exposeControlPorts: false
+
+# Extra labels on the pod. Set these to the real workload's selector labels to
+# have its Service send traffic here instead.
+podLabels: {}
+podAnnotations:
+  # Read by ideai's profiler when it lists pods.
+  goprofiler.io/port: "6060"
+
+replicaCount: 1
+
+# Answered by the supervisor, never by the program: a pod whose readiness
+# depends on a program somebody is stepping through gets restarted in the
+# middle of the session.
+probes:
+  enabled: true
+
+resources: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podSecurityContext: {}
+securityContext: {}
+
+# Publishing the pod outside the cluster.
+#
+# Off unless asked: a development pod that puts itself on a hostname by
+# accident is worse than one you have to ask to publish. When it is on, the
+# kind of object is worked out from what the cluster actually has —
+# `helm template` sees the API groups — and can be forced with `mode`.
+ingress:
+  enabled: false
+  # auto | gateway | traefik | ingress
+  #
+  # auto prefers a Gateway API route when a parent gateway is named (a route
+  # without one routes nothing), then Traefik's own CRD where the cluster has
+  # it, and otherwise a plain Ingress, which every controller understands.
+  mode: auto
+  host: ""
+  path: /
+  pathType: Prefix
+  # Which of app.ports the traffic goes to.
+  port: http
+  className: ""
+  annotations: {}
+  tls:
+    enabled: false
+    secretName: ""
+  # Gateway API. Without a name there is nothing to attach a route to, which
+  # is why auto falls through to the others.
+  gateway:
+    name: ""
+    namespace: ""
+    sectionName: ""
+  # Traefik's IngressRoute.
+  traefik:
+    entryPoints: [websecure]
+    middlewares: []
+    tlsSecretName: ""
+
+# Where the pushed binary lives.
+#
+# An emptyDir by default. On a cluster running on the same machine as the
+# editor, point this at a directory the editor writes to and the binary needs
+# no transfer at all — the fastest loop there is.
+storage:
+  hostPath: ""
+
+volumes: []
+volumeMounts: []

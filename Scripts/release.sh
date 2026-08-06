@@ -14,14 +14,14 @@
 #       --apple-id <Apple ID> --team-id 643R6YSRER --password <app-specific>
 set -euo pipefail
 
-APP="build/ideai.app"
+APP="build/Abydos.app"
 PROFILE="${NOTARY_PROFILE:-notarytool}"
 IDENTITY="${SIGN_IDENTITY:-Developer ID Application}"
 
 test -d "$APP" || { echo "no $APP — run make build first"; exit 1; }
 
 VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Contents/Info.plist")
-DMG="build/ideai-$VERSION.dmg"
+DMG="build/Abydos-$VERSION.dmg"
 
 # The identifier the app ships under, checked rather than assumed. `BUNDLE_ID`
 # exists so a local build can carry the identifier this app used to have, and
@@ -61,7 +61,7 @@ fi
 # with a binary inside are signed here.
 #
 # `Contents/MacOS` is in that list for a reason that cost a notarisation: this
-# app ships a second executable there, `ideai-hook`, and it is not a framework,
+# app ships a second executable there, `abydos-hook`, and it is not a framework,
 # an xpc service, a bundle, a dylib or a .so. Signing the app around it seals
 # it as it is rather than re-signing it, so it kept the ad-hoc signature the
 # bundler gave it and Apple rejected the archive with three errors about one
@@ -120,7 +120,7 @@ rm -f "$DMG"
 STAGE=$(mktemp -d)
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
-hdiutil create -quiet -volname "ideai" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
+hdiutil create -quiet -volname "Abydos" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
 rm -rf "$STAGE"
 codesign --force --timestamp --sign "$IDENTITY" "$DMG"
 

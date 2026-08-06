@@ -60,17 +60,17 @@ let grammarProducts: [Target.Dependency] =
 	+ vendoredGrammars.map { .target(name: "TreeSitter\($0)Vendored") }
 
 let package = Package(
-	name: "ideai",
+	name: "Abydos",
 	platforms: [.macOS(.v14)],
 	products: [
-		.executable(name: "ideai", targets: ["ideai"]),
+		.executable(name: "Abydos", targets: ["Abydos"]),
 		// The window layer, so an Xcode app target can be built from the same
 		// sources without a second copy of the dependency graph.
-		.library(name: "IdeaiApp", targets: ["IdeaiApp"]),
-		.executable(name: "ideai-hook", targets: ["ideaiHook"]),
+		.library(name: "AbydosApp", targets: ["AbydosApp"]),
+		.executable(name: "abydos-hook", targets: ["AbydosHook"]),
 		// A terminal stress test, run against the app's own terminal.
 		.executable(name: "firebench", targets: ["FireBench"]),
-		.library(name: "IdeaiKit", targets: ["IdeaiKit"]),
+		.library(name: "AbydosKit", targets: ["AbydosKit"]),
 	],
 	dependencies: [
 		.package(url: "https://github.com/ChimeHQ/SwiftTreeSitter", from: "0.25.0"),
@@ -84,7 +84,7 @@ let package = Package(
 		// Editor engine: text storage, syntax, folding, git, project model.
 		// Kept free of view code so it can be unit-tested without a window.
 		.target(
-			name: "IdeaiKit",
+			name: "AbydosKit",
 			dependencies: [
 				.product(name: "SwiftTreeSitter", package: "SwiftTreeSitter"),
 				.product(name: "SwiftTreeSitterLayer", package: "SwiftTreeSitter"),
@@ -105,12 +105,12 @@ let package = Package(
 		// dependency graph a second time — two declarations of the same path
 		// package build it twice and the link fails.
 		.target(
-			name: "IdeaiApp",
+			name: "AbydosApp",
 			dependencies: [
-				"IdeaiKit",
+				"AbydosKit",
 				.product(name: "GoSTLKit", package: "GoSTL-Swift"),
 			],
-			path: "Sources/ideai",
+			path: "Sources/AbydosApp",
 			// The development pod's chart travels with the app: installing it
 			// should not mean finding a checkout of this repository first.
 			resources: [.copy("Resources/devpod-chart")],
@@ -118,9 +118,9 @@ let package = Package(
 		),
 		// Four lines: make an application, give it the delegate, run it.
 		.executableTarget(
-			name: "ideai",
-			dependencies: ["IdeaiApp"],
-			path: "Sources/ideaiMain",
+			name: "Abydos",
+			dependencies: ["AbydosApp"],
+			path: "Sources/AbydosMain",
 			swiftSettings: [.swiftLanguageMode(.v5)]
 		),
 		// The Claude Code hook, kept apart from the app on purpose: Claude runs
@@ -128,14 +128,14 @@ let package = Package(
 		// AppKit and a syntax engine to read one line of JSON would be felt in
 		// every session on the machine.
 		.executableTarget(
-			name: "ideaiHook",
-			dependencies: ["IdeaiKit"],
-			path: "Sources/ideaiHook",
+			name: "AbydosHook",
+			dependencies: ["AbydosKit"],
+			path: "Sources/AbydosHook",
 			swiftSettings: [.swiftLanguageMode(.v5)]
 		),
 		.testTarget(
-			name: "IdeaiKitTests",
-			dependencies: ["IdeaiKit"],
+			name: "AbydosKitTests",
+			dependencies: ["AbydosKit"],
 			// Real profiles, written by Go: the decoder is only worth anything
 			// if it reads what the runtime actually produces.
 			resources: [.copy("Fixtures")],
