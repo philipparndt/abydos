@@ -745,6 +745,9 @@ public final class DebugSession {
 			// `exited` event, which it never sends — the same place VS Code
 			// reads it from.
 			self.noteExitCode(inOutput: text)
+			// Kept for the watchdog, which otherwise has to guess why nothing
+			// started when the adapter has already said why.
+			self.lastAdapterOutput = LaunchStall.remember(text, after: self.lastAdapterOutput)
 			self.onOutput?(text)
 		}
 		client.onTerminated = { [weak self] in
@@ -796,6 +799,9 @@ public final class DebugSession {
 	/// Reports a launch that never produced an event.
 	public var onLaunchStalled: ((String) -> Void)?
 
+	/// The last thing the adapter said, which is usually why nothing started.
+	private var lastAdapterOutput: String?
+
 	/// Gives up on a launch that has gone quiet.
 	///
 	/// The usual cause is macOS's developer-tools authorization: the debuggee
@@ -809,13 +815,7 @@ public final class DebugSession {
 			guard case .starting = self.state else { return }
 
 			self.state = .terminated
-			self.onMainLaunchStalled("""
-			The debugger built the program but never started it.
-
-			macOS asks for permission the first time a process is debugged, and 			holds the program until that is answered. If developer mode is off, 			it asks every time. Enabling it once removes the prompt:
-
-			    sudo DevToolsSecurity -enable
-			""")
+			self.onMainLaunchStalled(LaunchStall.explain(lastOutput: self.lastAdapterOutput))
 		}
 	}
 

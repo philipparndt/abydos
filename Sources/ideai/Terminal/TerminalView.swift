@@ -65,6 +65,8 @@ final class TerminalView: NSView, NSTextInputClient {
 	private var pendingBytes = 0
 	private var drainScheduled = false
 	private var isReadingSuspended = false
+	/// When the screen was last drawn, for pacing redraws while catching up.
+	private var lastRedrawAt = Date.distantPast
 
 	/// How long parsing may take before yielding so the screen can be drawn.
 	private static let parseBudget: TimeInterval = 0.006
@@ -321,15 +323,33 @@ final class TerminalView: NSView, NSTextInputClient {
 			isReadingSuspended = false
 			pty.setReadingSuspended(false)
 		}
+
+		// Caught up: draw what it all came to. Redraws asked for while there
+		// was still a backlog were skipped, and this is the one that shows the
+		// picture they were each a step towards.
+		if pending.isEmpty { scheduleRedraw() }
 		scheduleDrain()
 	}
 
 	private func scheduleRedraw() {
 		guard !redrawScheduled else { return }
+
+		// Not for every batch while there is a backlog: each one would paint a
+		// screen the program has already replaced, at over a hundred a second,
+		// which is what a screen that has been locked for a while looks like
+		// when it comes back — a spinner's whole history, flickering past. The
+		// drain draws once more when it has caught up, so nothing is lost by
+		// skipping here.
+		guard RedrawThrottle.shouldDraw(
+			isBehind: !pending.isEmpty,
+			sinceLastDraw: Date().timeIntervalSince(lastRedrawAt)
+		) else { return }
+
 		redrawScheduled = true
 		DispatchQueue.main.async { [weak self] in
 			guard let self else { return }
 			self.redrawScheduled = false
+			self.lastRedrawAt = Date()
 
 			// The alternate screen is one screenful that never scrolls: the
 			// document is exactly the grid and the view sits at the top of it.
