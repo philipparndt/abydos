@@ -28,11 +28,24 @@ DMG="build/ideai-$VERSION.dmg"
 # an exported one would otherwise reach this build too — releasing under a name
 # that is not the app's, which every grant, receipt and update on a user's
 # machine is keyed to. Cheaper to refuse than to explain afterwards.
-SHIPPING_ID="de.rnd7.ideai"
+SHIPPING_ID="dev.philipparndt.ideai"
 BUILT_ID=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP/Contents/Info.plist")
 if [ "$BUILT_ID" != "$SHIPPING_ID" ]; then
 	echo "refusing to release: $APP is $BUILT_ID, not $SHIPPING_ID" >&2
 	echo "  rebuild without BUNDLE_ID set: unset BUNDLE_ID && make build" >&2
+	exit 1
+fi
+
+# And that this build's UUID is its own. `PIN_UUID` exists so a local build
+# keeps the Local Network grant that is filed against a particular UUID, and a
+# release carrying a borrowed one is a release whose crash reports cannot say
+# which build they came from. `make release` builds with PIN_UUID=0; this is for
+# the times somebody runs the two steps by hand.
+PINNED="C94373A9-FCB2-3966-B045-208B26A4CA30"
+BUILT_UUID=$(dwarfdump --uuid "$APP/Contents/MacOS/$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$APP/Contents/Info.plist")" 2>/dev/null | awk '{print $2}')
+if [ "$BUILT_UUID" = "$PINNED" ]; then
+	echo "refusing to release: the executable carries the pinned development UUID" >&2
+	echo "  rebuild without it: make build PIN_UUID=0" >&2
 	exit 1
 fi
 

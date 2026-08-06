@@ -101,18 +101,20 @@ fi
 # drifts: the bundle id and the version have to agree wherever the app is built.
 cp Resources/Info.plist "$CONTENTS/Info.plist"
 
-# Under a different identifier when asked, which is a workaround for a machine
-# rather than a change to what ships. macOS files the Local Network grant under
-# the bundle identifier and cannot carry one from an app's old name to its new
-# one, so the rename to `de.rnd7.ideai` for the App Store left the permission
-# behind on `dev.philipparndt.ideai`. That normally costs nothing — a renamed
-# app is asked about again — but the prompt is presented by UserEventAgent
-# through nehelper, and on macOS 27 beta nehelper refuses it the connection:
-# every request defaults to denied and no dialog can appear, for any app that
-# does not already hold a grant. Since the denial is inherited by everything
-# the app launches, a debugger or a program under test loses the LAN with
-# EHOSTUNREACH. Building under the old identifier inherits the grant that is
-# still there and still works.
+# Under a different identifier when asked.
+#
+# The app ships as `dev.philipparndt.ideai`, which it went back to: macOS files
+# the Local Network grant under the bundle identifier and cannot carry one from
+# an app's old name to its new one, so the rename to `de.rnd7.ideai` for the App
+# Store left the permission behind. That normally costs nothing — a renamed app
+# is asked about again — but the prompt is presented by UserEventAgent through
+# nehelper, and on macOS 27 beta nehelper refuses it the connection: every
+# request defaults to denied and no dialog can appear for an app that holds no
+# grant. The denial is inherited by everything the app launches, so a debugger
+# or a program under test loses the LAN with EHOSTUNREACH.
+#
+# This override is what tries the other identifier — the App Store one, once
+# that prompt works again — without editing the plist by hand.
 if [ -n "${BUNDLE_ID:-}" ]; then
 	/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$CONTENTS/Info.plist" >/dev/null
 	echo "    bundle id: $BUNDLE_ID"
@@ -141,6 +143,21 @@ echo "    build $BUILD ($COMMIT$DIRTY)"
 # `tccutil` cannot reset LocalNetwork, so the only way back is the System
 # Settings pane, by hand, after each build. The Apple Development certificate
 # keeps the identity stable across rebuilds and the grant stays granted.
+# Before signing, because patching a binary afterwards breaks the signature.
+#
+# The Local Network grant is filed against the executable's UUID, which the
+# linker derives from content — so a rebuild loses it, and on this macOS beta no
+# new one can be granted, since the prompt cannot be presented. Everything the
+# app launches inherits the denial, which is a debugger reporting "connect: no
+# route to host" about a broker that is up. Pinning the UUID to one that is
+# already associated keeps a build compiled a minute ago able to reach the
+# network. `PIN_UUID=0` turns it off, which is what a release does: identical
+# UUIDs make crash reports ambiguous about which build produced them.
+PIN_UUID="${PIN_UUID:-C94373A9-FCB2-3966-B045-208B26A4CA30}"
+if [ "$PIN_UUID" != "0" ]; then
+	python3 Scripts/pin-uuid.py "$CONTENTS/MacOS/ideai" "$PIN_UUID"
+fi
+
 IDENTITY="${SIGN_IDENTITY:-}"
 if [ -z "$IDENTITY" ]; then
 	if security find-identity -v -p codesigning | grep -q "Apple Development"; then

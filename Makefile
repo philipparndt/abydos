@@ -98,7 +98,8 @@ xcode-build: ## Build the app the way Xcode does, as a check on the package
 		-destination 'platform=macOS' -derivedDataPath build/xcode | tail -3
 
 .PHONY: release
-release: build ## Sign with Developer ID, notarise and package a DMG
+release: ## Sign with Developer ID, notarise and package a DMG
+	@$(MAKE) --no-print-directory build PIN_UUID=0
 	@Scripts/release.sh
 
 # The whole of cutting a release, in the one order that keeps the tag and the
@@ -122,21 +123,6 @@ install: build ## Copy the app into /Applications
 	@rm -rf /Applications/ideai.app
 	@cp -R $(APP) /Applications/
 	@echo "==> Installed /Applications/ideai.app"
-
-# The identifier this app carried before the App Store rename, which is where
-# its Local Network grant still is. macOS files that grant under the bundle id
-# and cannot carry one from an app's old name to its new one — normally free,
-# because a renamed app is asked about again. On macOS 27 beta it is not: the
-# prompt is presented by UserEventAgent through nehelper, nehelper refuses it
-# the connection, and every request defaults to denied with no dialog for any
-# app that holds no grant. The denial is inherited by everything the app
-# launches, which is how a debugger reports "connect: no route to host" about
-# a broker that is up. Installing under the old name inherits the grant that
-# still works. Releases are unaffected: Scripts/release.sh refuses to sign any
-# identifier but the shipping one.
-.PHONY: install-legacy
-install-legacy: ## Install under the pre-rename bundle id, which still holds the Local Network grant
-	@$(MAKE) --no-print-directory install BUNDLE_ID=dev.philipparndt.ideai
 
 .PHONY: install-cli
 install-cli: ## Put the `ideai` command on the PATH (PREFIX=/usr/local)

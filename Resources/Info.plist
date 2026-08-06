@@ -7,7 +7,7 @@
 	<key>CFBundleDisplayName</key>
 	<string>ideai</string>
 	<key>CFBundleIdentifier</key>
-	<string>de.rnd7.ideai</string>
+	<string>dev.philipparndt.ideai</string>
 	<key>CFBundleExecutable</key>
 	<string>ideai</string>
 	<!-- The catalog, which Xcode compiles and the App Store reads. -->

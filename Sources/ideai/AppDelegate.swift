@@ -28,10 +28,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 	}
 
 	public func applicationDidFinishLaunching(_ notification: Notification) {
-		// Settings from the identifier this app used to have, before anything
-		// reads one: the move to `de.rnd7.ideai` for the App Store would
-		// otherwise look like every preference being forgotten at once.
-		Settings.migrate(from: "dev.philipparndt.ideai")
+		// Settings from the other identifier this app has had, before anything
+		// reads one: a change of identifier would otherwise look like every
+		// preference being forgotten at once. The App Store rename to
+		// `de.rnd7.ideai` has been reversed for now — macOS files the Local
+		// Network grant under the identifier and cannot move one between names,
+		// and this macOS beta cannot create a new grant at all — so settings
+		// come back from where that rename left them.
+		Settings.migrate(from: "de.rnd7.ideai")
 
 		// An earlier version turned tmux's bar off for the whole server by
 		// writing to ~/.tmux.conf. It is per session now, so that line goes.
