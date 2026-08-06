@@ -24,8 +24,8 @@ help: ## Show this help
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
 .PHONY: build
-build: devpod-chart ## Build the .app bundle (CONFIG=debug|release, default release)
-	@Scripts/bundle.sh $(CONFIG)
+build: devpod-chart ## Build the .app bundle (CONFIG=debug|release, BUNDLE_ID=... to override the identifier)
+	@BUNDLE_ID="$(BUNDLE_ID)" Scripts/bundle.sh $(CONFIG)
 
 .PHONY: run
 run: build ## Build and launch the app

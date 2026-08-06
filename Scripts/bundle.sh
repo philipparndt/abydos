@@ -101,6 +101,23 @@ fi
 # drifts: the bundle id and the version have to agree wherever the app is built.
 cp Resources/Info.plist "$CONTENTS/Info.plist"
 
+# Under a different identifier when asked, which is a workaround for a machine
+# rather than a change to what ships. macOS files the Local Network grant under
+# the bundle identifier and cannot carry one from an app's old name to its new
+# one, so the rename to `de.rnd7.ideai` for the App Store left the permission
+# behind on `dev.philipparndt.ideai`. That normally costs nothing — a renamed
+# app is asked about again — but the prompt is presented by UserEventAgent
+# through nehelper, and on macOS 27 beta nehelper refuses it the connection:
+# every request defaults to denied and no dialog can appear, for any app that
+# does not already hold a grant. Since the denial is inherited by everything
+# the app launches, a debugger or a program under test loses the LAN with
+# EHOSTUNREACH. Building under the old identifier inherits the grant that is
+# still there and still works.
+if [ -n "${BUNDLE_ID:-}" ]; then
+	/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$CONTENTS/Info.plist" >/dev/null
+	echo "    bundle id: $BUNDLE_ID"
+fi
+
 # Stamped with the commit it was built from, so "did my build actually get
 # installed" is a question with an answer. `CFBundleVersion` is the build
 # number, and the count of commits is one that only ever goes up.

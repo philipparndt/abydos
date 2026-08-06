@@ -23,6 +23,19 @@ test -d "$APP" || { echo "no $APP — run make build first"; exit 1; }
 VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Contents/Info.plist")
 DMG="build/ideai-$VERSION.dmg"
 
+# The identifier the app ships under, checked rather than assumed. `BUNDLE_ID`
+# exists so a local build can carry the identifier this app used to have, and
+# an exported one would otherwise reach this build too — releasing under a name
+# that is not the app's, which every grant, receipt and update on a user's
+# machine is keyed to. Cheaper to refuse than to explain afterwards.
+SHIPPING_ID="de.rnd7.ideai"
+BUILT_ID=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP/Contents/Info.plist")
+if [ "$BUILT_ID" != "$SHIPPING_ID" ]; then
+	echo "refusing to release: $APP is $BUILT_ID, not $SHIPPING_ID" >&2
+	echo "  rebuild without BUNDLE_ID set: unset BUNDLE_ID && make build" >&2
+	exit 1
+fi
+
 # --- Sign ------------------------------------------------------------------
 #
 # Inside out, and without `--deep`: Apple deprecated it, and it signs nested
