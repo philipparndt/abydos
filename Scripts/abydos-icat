@@ -1,0 +1,153 @@
+#!/bin/sh
+# Prints an image in the terminal, using the kitty graphics protocol.
+#
+# The terminal in this app draws pictures on the character grid; nothing on a
+# Mac ships a command that asks it to. kitty's own `icat` comes with kitty,
+# `chafa` and `timg` draw with blocks instead, and a one-liner with `base64`
+# is the sort of thing nobody remembers twice.
+#
+#   abydos-icat picture.png            print it
+#   abydos-icat -w 40 picture.jpg      forty columns wide
+#   abydos-icat *.png                  one after another
+#
+# Anything that is not a PNG is converted with `sips`, which every Mac has.
+#
+# Inside tmux the escape has to be wrapped so tmux hands it through rather than
+# eating it, and tmux needs `allow-passthrough on` — which this says, once,
+# when it is not set.
+set -eu
+
+width=""
+height=""
+
+usage() {
+	cat >&2 <<'USAGE'
+usage: abydos-icat [-w columns] [-h rows] <image> [image ...]
+
+  -w  width in terminal columns  (default: the image's own size)
+  -h  height in terminal rows
+USAGE
+	exit 2
+}
+
+while getopts "w:h:" option; do
+	case "$option" in
+		w) width="$OPTARG" ;;
+		h) height="$OPTARG" ;;
+		*) usage ;;
+	esac
+done
+shift $((OPTIND - 1))
+[ "$#" -gt 0 ] || usage
+
+# tmux eats an escape sequence it does not know unless it is wrapped in its own
+# passthrough, and refuses to pass anything through at all unless told to.
+in_tmux() { [ -n "${TMUX:-}" ]; }
+
+if in_tmux; then
+	if [ "$(tmux show -Apv allow-passthrough 2>/dev/null || echo off)" = "off" ]; then
+		echo "abydos-icat: tmux is not passing escapes through; run:" >&2
+		echo "    tmux set -p allow-passthrough on" >&2
+		echo "  (or put 'set -g allow-passthrough on' in ~/.tmux.conf)" >&2
+	fi
+fi
+
+esc=$(printf '\033')
+
+# One graphics command: the keys, then the payload, wrapped for tmux when
+# tmux is in the way.
+emit() {
+	keys="$1"
+	payload="$2"
+	if in_tmux; then
+		# tmux passthrough: every ESC in the payload doubled, the whole thing
+		# between `DCS tmux;` and `ST`.
+		printf '%sPtmux;%s%s_G%s;%s%s%s\\%s\\' \
+			"$esc" "$esc" "$esc" "$keys" "$payload" "$esc" "$esc" "$esc"
+	else
+		printf '%s_G%s;%s%s\\' "$esc" "$keys" "$payload" "$esc"
+	fi
+}
+
+print_image() {
+	source_file="$1"
+
+	# PNG straight through; anything else converted, since the protocol's
+	# direct format is PNG and `sips` is on every Mac.
+	case "$source_file" in
+		*.png|*.PNG) file="$source_file" ;;
+		*)
+			file="$(mktemp -t abydos-icat).png"
+			sips -s format png "$source_file" --out "$file" >/dev/null 2>&1 || {
+				echo "abydos-icat: cannot read $source_file" >&2
+				return 1
+			}
+			;;
+	esac
+
+	encoded="$(base64 < "$file" | tr -d '\n')"
+	[ "$file" = "$source_file" ] || rm -f "$file"
+
+	# f=100: the payload is a PNG. a=T: transmit and place it here.
+	keys="f=100,a=T"
+	[ -z "$width" ] || keys="$keys,c=$width"
+	[ -z "$height" ] || keys="$keys,r=$height"
+
+	# How many rows it will take, so the cursor can be moved below it
+	# afterwards. The protocol draws where the cursor is and leaves it there,
+	# so without this the next prompt is written over the picture — which is
+	# what the first version did, and it looks like a drawing bug rather than a
+	# missing newline.
+	rows="$height"
+	if [ -z "$rows" ]; then
+		pixels=$(sips -g pixelWidth -g pixelHeight "$file" 2>/dev/null |
+			awk '/pixelWidth/ {w=$2} /pixelHeight/ {h=$2} END {print w" "h}')
+		image_width=${pixels%% *}
+		image_height=${pixels##* }
+		if [ -n "${image_width:-}" ] && [ -n "${image_height:-}" ] && [ "$image_width" -gt 0 ]; then
+			columns=${width:-$image_width}
+			# A cell is about twice as tall as it is wide, which is what turns
+			# a pixel ratio into a row count.
+			rows=$(( (image_height * columns) / (image_width * 2) + 1 ))
+		else
+			rows=10
+		fi
+	fi
+
+	# 4096 bytes of base64 at a time, which is what the protocol asks for, with
+	# `m=1` on every chunk but the last.
+	total=${#encoded}
+	offset=0
+	first=1
+	while [ "$offset" -lt "$total" ]; do
+		chunk=$(printf '%s' "$encoded" | cut -c $((offset + 1))-$((offset + 4096)))
+		offset=$((offset + 4096))
+		more=1
+		[ "$offset" -lt "$total" ] || more=0
+
+		if [ "$first" -eq 1 ]; then
+			emit "$keys,m=$more" "$chunk"
+			first=0
+		else
+			emit "m=$more" "$chunk"
+		fi
+	done
+
+	# Down past the picture, so the shell's next prompt is under it.
+	index=0
+	while [ "$index" -lt "$rows" ]; do
+		printf '\n'
+		index=$((index + 1))
+	done
+}
+
+status=0
+for image in "$@"; do
+	if [ ! -f "$image" ]; then
+		echo "abydos-icat: $image does not exist" >&2
+		status=1
+		continue
+	fi
+	print_image "$image" || status=1
+done
+exit "$status"

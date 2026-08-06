@@ -125,10 +125,21 @@ install: build ## Copy the app into /Applications
 	@echo "==> Installed /Applications/Abydos.app"
 
 .PHONY: install-cli
-install-cli: ## Put the `ideai` command on the PATH (PREFIX=/usr/local)
+install-cli: ## Put the `abydos` commands on the PATH (PREFIX=/usr/local)
 	@mkdir -p $(or $(PREFIX),/usr/local)/bin
 	@install -m 755 Scripts/abydos $(or $(PREFIX),/usr/local)/bin/abydos
 	@echo "==> Installed $(or $(PREFIX),/usr/local)/bin/abydos"
+	@install -m 755 Scripts/abydos-icat $(or $(PREFIX),/usr/local)/bin/abydos-icat
+	@echo "==> Installed $(or $(PREFIX),/usr/local)/bin/abydos-icat"
+	@# Also as `icat`, but only when nothing else answers to it: kitty ships
+	@# one, and taking a name somebody's tools already use is not this app's
+	@# business.
+	@if command -v icat >/dev/null 2>&1; then \
+		echo "    icat is already something else; use abydos-icat"; \
+	else \
+		ln -sf abydos-icat $(or $(PREFIX),/usr/local)/bin/icat; \
+		echo "    also as icat, since nothing else answered to it"; \
+	fi
 
 # The development pod has a Makefile of its own; these are the two goals
 # somebody standing in the repository root wants from it.

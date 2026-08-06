@@ -38,6 +38,13 @@ cp "$BIN_DIR/Abydos" "$CONTENTS/MacOS/Abydos"
 # session on the machine.
 cp "$BIN_DIR/abydos-hook" "$CONTENTS/MacOS/abydos-hook"
 
+# The commands a shell in this app can use. Bundled rather than installed, so
+# they are there for anybody who runs the app without running `make
+# install-cli` — and so the copy that ships is the copy that was built.
+mkdir -p "$CONTENTS/Resources/bin"
+cp Scripts/abydos-icat "$CONTENTS/Resources/bin/abydos-icat"
+chmod +x "$CONTENTS/Resources/bin/abydos-icat"
+
 # Grammar query bundles. Without these every file opens uncoloured, so treat a
 # missing set as a hard failure rather than shipping a broken app.
 COUNT=0

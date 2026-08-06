@@ -506,3 +506,72 @@ struct TerminalGraphicsTests {
 		return (b << 16) | a
 	}
 }
+
+/// Sizing a placement, which is where a picture comes out squashed.
+struct TerminalGraphicsSizingTests {
+	private func emulator() -> TerminalEmulator {
+		let terminal = TerminalEmulator(rows: 20, columns: 60)
+		// Cells twice as tall as they are wide, which is roughly true of every
+		// monospaced font and is what makes the arithmetic interesting.
+		terminal.cellPixelSize = (width: 10, height: 20)
+		return terminal
+	}
+
+	private func rawRGB(width: Int, height: Int) -> String {
+		Data([UInt8](repeating: 0x40, count: width * height * 3)).base64EncodedString()
+	}
+
+	private func place(_ keys: String, width: Int, height: Int, in terminal: TerminalEmulator) {
+		terminal.write(
+			"\u{1B}_Gf=24,a=T,s=\(width),v=\(height),\(keys);\(rawRGB(width: width, height: height))\u{1B}\\"
+		)
+	}
+
+	/// A square image given a width comes out square. Taking the pixel height
+	/// instead drew a 32×32 picture twenty columns wide and two rows tall — a
+	/// letterbox, which reads as a drawing bug rather than as arithmetic.
+	@Test func aWidthAloneKeepsTheAspectRatio() throws {
+		let terminal = emulator()
+		place("c=20", width: 32, height: 32, in: terminal)
+
+		let placement = try #require(terminal.graphics.placements.last)
+		#expect(placement.columns == 20)
+		// Twenty columns is 200 pixels wide; square means 200 tall; a cell is
+		// 20 tall, so ten rows.
+		#expect(placement.rows == 10)
+	}
+
+	@Test func aHeightAloneKeepsItToo() throws {
+		let terminal = emulator()
+		// Small on purpose: one command carries a limited payload, and a
+		// hundred pixels of raw RGB is past it.
+		place("r=4", width: 20, height: 10, in: terminal)
+
+		let placement = try #require(terminal.graphics.placements.last)
+		#expect(placement.rows == 4)
+		// Four rows is 80 pixels; twice as wide is 160; a cell is 10 wide.
+		#expect(placement.columns == 16)
+	}
+
+	/// Both given is both obeyed, however odd the result: a program that asked
+	/// for a shape wanted that shape.
+	@Test func bothGivenAreBothObeyed() throws {
+		let terminal = emulator()
+		place("c=8,r=8", width: 32, height: 32, in: terminal)
+
+		let placement = try #require(terminal.graphics.placements.last)
+		#expect(placement.columns == 8)
+		#expect(placement.rows == 8)
+	}
+
+	/// Neither given is the picture at its own size, which is what it always
+	/// was and what a program printing an icon expects.
+	@Test func neitherGivenIsItsOwnSize() throws {
+		let terminal = emulator()
+		place("", width: 40, height: 40, in: terminal)
+
+		let placement = try #require(terminal.graphics.placements.last)
+		#expect(placement.columns == 4)
+		#expect(placement.rows == 2)
+	}
+}

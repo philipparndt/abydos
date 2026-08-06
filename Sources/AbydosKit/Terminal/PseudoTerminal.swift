@@ -107,6 +107,13 @@ public final class PseudoTerminal {
 
 		var size = windowSize(rows: rows, columns: columns)
 
+		// Before the fork. The child may only make async-signal-safe calls, and
+		// `Bundle` and `FileManager` take locks — if another thread held one at
+		// the moment of the fork, the child waits for a lock nobody will ever
+		// release, never reaches `execve`, and the pane stays empty. Which is
+		// exactly what happened when this was asked for on the other side.
+		let bundledCommands = BundledCommands.directory
+
 		var master: Int32 = -1
 		// forkpty does the fork, opens the pty pair, makes the slave the child's
 		// controlling terminal and wires it to stdin/stdout/stderr. Doing that by
@@ -133,6 +140,17 @@ public final class PseudoTerminal {
 			merged["LANG"] = merged["LANG"] ?? "en_US.UTF-8"
 			// Stop pagers from hanging a pane waiting for a keypress.
 			merged["PAGER"] = merged["PAGER"] ?? "cat"
+
+			// The commands this app ships — `abydos-icat` — on the PATH of every
+			// shell it starts, without an install step. Appended rather than
+			// prepended: a command somebody already has wins, since shadowing
+			// what is on somebody's PATH is not this app's business.
+			if let bundled = bundledCommands {
+				let path = merged["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+				if !path.split(separator: ":").contains(Substring(bundled)) {
+					merged["PATH"] = path + ":" + bundled
+				}
+			}
 
 			let environmentStrings = merged.map { "\($0.key)=\($0.value)" }
 			var environmentPointers: [UnsafeMutablePointer<CChar>?] = environmentStrings.map { strdup($0) }

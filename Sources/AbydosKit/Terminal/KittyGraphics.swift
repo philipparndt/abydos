@@ -729,15 +729,35 @@ public final class TerminalImageStore {
 			return respond(command, "EINVAL:the source rectangle is empty")
 		}
 
-		// How many cells it covers. Given explicitly the image is scaled to fit;
-		// otherwise it is drawn at its own size and covers however many cells
-		// that comes to, the offset within the first cell included.
-		let columns = command.columns > 0
-			? command.columns
-			: cellsNeeded(pixels: width + command.cellOffsetX, per: cellPixelSize.width)
-		let rows = command.rows > 0
-			? command.rows
-			: cellsNeeded(pixels: height + command.cellOffsetY, per: cellPixelSize.height)
+		// How many cells it covers. Given both, the image is scaled to fit them.
+		// Given one, the other follows from the aspect ratio — which is what
+		// the protocol says and what every client relies on: `icat -w 20` on a
+		// square image means twenty columns and a square, not twenty columns of
+		// whatever height the pixels happened to be, which draws it squashed.
+		// Given neither, it is drawn at its own size and covers however many
+		// cells that comes to, the offset within the first cell included.
+		let columns: Int
+		let rows: Int
+		switch (command.columns > 0, command.rows > 0) {
+		case (true, true):
+			columns = command.columns
+			rows = command.rows
+		case (true, false):
+			columns = command.columns
+			let targetWidth: Double = Double(columns) * Double(cellPixelSize.width)
+			let ratio: Double = targetWidth / Double(width)
+			let scaledHeight: Double = Double(height) * ratio
+			rows = Swift.max(1, cellsNeeded(pixels: Int(scaledHeight.rounded()), per: cellPixelSize.height))
+		case (false, true):
+			rows = command.rows
+			let targetHeight: Double = Double(rows) * Double(cellPixelSize.height)
+			let ratio: Double = targetHeight / Double(height)
+			let scaledWidth: Double = Double(width) * ratio
+			columns = Swift.max(1, cellsNeeded(pixels: Int(scaledWidth.rounded()), per: cellPixelSize.width))
+		case (false, false):
+			columns = cellsNeeded(pixels: width + command.cellOffsetX, per: cellPixelSize.width)
+			rows = cellsNeeded(pixels: height + command.cellOffsetY, per: cellPixelSize.height)
+		}
 
 		let placement = TerminalImagePlacement(
 			imageID: image.id,
