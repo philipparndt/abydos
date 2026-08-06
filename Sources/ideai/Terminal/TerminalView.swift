@@ -80,7 +80,10 @@ final class TerminalView: NSView, NSTextInputClient {
 	private var cursorVisible = true
 	private var cursorTimer: Timer?
 
-	private static let horizontalInset: CGFloat = 8
+	// No left margin: the terminal's own first column is where a terminal's
+	// text starts, and an inset makes the panel look like a document with a
+	// gutter rather than a screen. Set it back to 8 to have the breathing room.
+	private static let horizontalInset: CGFloat = 0
 	private static let verticalInset: CGFloat = 4
 
 	/// When a key was last pressed, and what has happened to it since.

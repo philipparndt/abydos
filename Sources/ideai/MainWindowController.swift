@@ -977,6 +977,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				refreshRunControl()
 			}
 			xcodeDestinations = remembered.xcodeDestinations
+
+			// The gutter, from what was there last time. Only when nothing has
+			// set any yet: a window that already has breakpoints is one where
+			// somebody has been working, and a file restored over that would
+			// take them away.
+			if pendingBreakpoints.isEmpty, !remembered.breakpoints.isEmpty {
+				pendingBreakpoints = remembered.breakpoints
+				showPendingBreakpoints()
+			}
 		}
 
 		// The terminal is where half the work happens, so a window arrives with
@@ -1599,6 +1608,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			session.subprojectPath = subprojectRoot.map { Subprojects.relativePath($0, to: current) }
 			session.selectedConfiguration = selectedConfigurationName
 			session.xcodeDestinations = xcodeDestinations
+			session.breakpoints = breakpointsToRemember()
 			sessions.store(session, for: current)
 			// And beside the project, so tomorrow's window opens on today's
 			// files: what was open is a property of the project, not of the
@@ -1645,6 +1655,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		session.subprojectPath = subprojectRoot.map { Subprojects.relativePath($0, to: root) }
 		session.selectedConfiguration = selectedConfigurationName
 		session.xcodeDestinations = xcodeDestinations
+		session.breakpoints = breakpointsToRemember()
 		try? SessionStore.write(session, in: root)
 	}
 
@@ -1749,6 +1760,36 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// — would be dropped on the way in.
 	private var pendingBreakpoints: [String: [Breakpoint]] = [:]
 
+	/// The breakpoints worth writing down: the running session's if there is
+	/// one, since it holds what the adapter has confirmed, and the pending set
+	/// otherwise.
+	private func breakpointsToRemember() -> [String: [Breakpoint]] {
+		bottomPanel.activeDebugSession?.breakpoints ?? pendingBreakpoints
+	}
+
+	/// Draws the pending breakpoints in the gutter, which is what makes a
+	/// restored one visible rather than merely remembered.
+	/// Writes them down as soon as they change, the way the terminals do.
+	///
+	/// Not only when the window closes: a breakpoint costs a moment to place
+	/// and is worth nothing after a crash that took the note of it, and the
+	/// window may be closed by something that never asks — a restart, a build
+	/// that replaces the app underneath it.
+	private func rememberBreakpoints() {
+		rememberOpenEditors()
+	}
+
+	private func showPendingBreakpoints() {
+		var marks: [String: [Int: CodeView.BreakpointMark]] = [:]
+		var conditional: [String: Set<Int>] = [:]
+		for (file, list) in pendingBreakpoints {
+			marks[file] = Dictionary(uniqueKeysWithValues: list.map { ($0.line, Self.mark(for: $0)) })
+			conditional[file] = Set(list.filter(\.isConditional).map(\.line))
+		}
+		editor.setBreakpoints(marks)
+		editor.setConditionalBreakpoints(conditional)
+	}
+
 	private func toggleBreakpoint(file: URL, line: Int) {
 		// The debugger reports files by their real path, so breakpoints are
 		// keyed the same way or they are set against a name nothing else uses.
@@ -1761,6 +1802,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		if let session = bottomPanel.activeDebugSession {
 			session.toggleBreakpoint(file: path, line: line)
 			syncBreakpointsToEditor(from: session)
+			rememberBreakpoints()
 			return
 		}
 
@@ -1774,6 +1816,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 		pendingBreakpoints[path] = list.isEmpty ? nil : list
 		publishPendingBreakpoints()
+		rememberBreakpoints()
 	}
 
 	/// A file's breakpoints, from the session when one is running and from the

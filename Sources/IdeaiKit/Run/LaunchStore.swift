@@ -162,9 +162,31 @@ public enum SessionStore {
 			isPanelVisible: object["panel"] as? Bool ?? false,
 			subprojectPath: object["subproject"] as? String,
 			selectedConfiguration: object["run"] as? String,
-			xcodeDestinations: object["destinations"] as? [String: String] ?? [:]
+			xcodeDestinations: object["destinations"] as? [String: String] ?? [:],
+			breakpoints: readBreakpoints(object["breakpoints"])
 		)
 		return session.isEmpty ? nil : session
+	}
+
+	/// The breakpoints a session file lists, back into what the debugger holds.
+	///
+	/// Unverified, always: whether the adapter can put a breakpoint on a line is
+	/// a fact about a program that is running, and nothing is running yet. Drawn
+	/// hollow until one says so, which is what an unverified breakpoint means.
+	static func readBreakpoints(_ value: Any?) -> [String: [Breakpoint]] {
+		guard let entries = value as? [[String: Any]] else { return [:] }
+
+		var found: [String: [Breakpoint]] = [:]
+		for entry in entries {
+			guard let path = entry["path"] as? String, let line = entry["line"] as? Int else { continue }
+			var breakpoint = Breakpoint(file: path, line: line)
+			breakpoint.isEnabled = (entry["disabled"] as? Bool) != true
+			breakpoint.condition = entry["condition"] as? String
+			breakpoint.hitCondition = entry["hits"] as? String
+			breakpoint.logMessage = entry["log"] as? String
+			found[path, default: []].append(breakpoint)
+		}
+		return found
 	}
 
 	/// Writes what is open, or removes the file when nothing is.
@@ -188,6 +210,24 @@ public enum SessionStore {
 		if let subproject = session.subprojectPath { object["subproject"] = subproject }
 		if let run = session.selectedConfiguration { object["run"] = run }
 		if !session.xcodeDestinations.isEmpty { object["destinations"] = session.xcodeDestinations }
+		if !session.breakpoints.isEmpty {
+			// Flat rather than grouped by file, because that is what a breakpoint
+			// is: one line in one file, and a file with none should leave nothing
+			// behind. Sorted, so a file that gains and loses one does not rewrite
+			// itself in a different order each time and turn into a diff.
+			object["breakpoints"] = session.breakpoints
+				.sorted { $0.key < $1.key }
+				.flatMap { file, list in
+					list.sorted { $0.line < $1.line }.map { breakpoint -> [String: Any] in
+						var entry: [String: Any] = ["path": file, "line": breakpoint.line]
+						if !breakpoint.isEnabled { entry["disabled"] = true }
+						if let condition = breakpoint.condition { entry["condition"] = condition }
+						if let hits = breakpoint.hitCondition { entry["hits"] = hits }
+						if let message = breakpoint.logMessage { entry["log"] = message }
+						return entry
+					}
+				}
+		}
 		if !session.terminals.isEmpty {
 			object["terminals"] = session.terminals.map { terminal -> [String: Any] in
 				var entry: [String: Any] = ["name": terminal.name]

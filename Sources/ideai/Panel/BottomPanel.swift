@@ -1779,19 +1779,8 @@ final class BottomPanel: NSView {
 		// for breakpoints once, between `initialized` and `configurationDone`,
 		// and both arrive within milliseconds — anything added afterwards is
 		// simply too late, and the program runs to completion instead.
-		for (file, list) in breakpoints {
-			for breakpoint in list.sorted(by: { $0.line < $1.line }) {
-				session.toggleBreakpoint(file: file, line: breakpoint.line)
-				guard breakpoint.isConditional else { continue }
-				session.setBreakpointOptions(
-					file: file,
-					line: breakpoint.line,
-					condition: breakpoint.condition,
-					hitCondition: breakpoint.hitCondition,
-					logMessage: breakpoint.logMessage
-				)
-			}
-		}
+		session.adopt(breakpoints)
+
 
 		let panelSession = Session(title: "Debug", kind: .debug(pane))
 		// Bound to the sources it is stopped in.

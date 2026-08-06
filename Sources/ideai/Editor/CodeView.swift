@@ -1549,8 +1549,13 @@ final class CodeView: NSView, NSTextInputClient {
 
 	/// The breakpoint being dragged out of the gutter, if one is.
 	private var draggingBreakpointLine: Int?
-	/// Whether this drag threw one away, and so is showing the puff cursor.
-	private var threwBreakpointAway = false
+	/// Whether letting go now would throw the dragged breakpoint away.
+	///
+	/// A drag is not a decision until it ends. Deleting the moment the pointer
+	/// passed the gutter meant a breakpoint was gone before the mouse button
+	/// came up, with no way back but to put it on again — so the pointer says
+	/// what will happen, and the button says whether to do it.
+	private var breakpointWouldBeRemoved = false
 
 	override func mouseDown(with event: NSEvent) {
 		window?.makeFirstResponder(self)
@@ -1710,21 +1715,21 @@ final class CodeView: NSView, NSTextInputClient {
 	override func mouseDragged(with event: NSEvent) {
 		let point = convert(event.locationInWindow, from: nil)
 
-		// A marker dragged out of the gutter is thrown away, as it is in
-		// Xcode. Well clear of it: a wobble while clicking is not somebody
-		// deleting a breakpoint.
-		if let line = draggingBreakpointLine {
+		// A marker dragged out of the gutter is thrown away, as it is in Xcode.
+		// Well clear of it: a wobble while clicking is not somebody deleting a
+		// breakpoint. Shown while dragging and done on release — dragging back
+		// into the gutter takes it back.
+		if draggingBreakpointLine != nil {
 			let scrollX = enclosingScrollView?.contentView.bounds.origin.x ?? 0
-			guard point.x > scrollX + gutterWidth + Theme.current.scaled(24) else { return }
+			let wouldRemove = point.x > scrollX + gutterWidth + Theme.current.scaled(24)
+			guard wouldRemove != breakpointWouldBeRemoved else { return }
 
-			draggingBreakpointLine = nil
-			onDeleteBreakpoint?(line)
-			// The puff cursor Xcode shows: a marker that simply vanishes reads as
-			// a misclick rather than as something done on purpose. This is the
-			// cursor rather than the animation `NSAnimationEffect` used to play,
-			// which macOS 14 deprecated in favour of exactly this.
-			threwBreakpointAway = true
-			NSCursor.disappearingItem.set()
+			breakpointWouldBeRemoved = wouldRemove
+			// The puff cursor Xcode shows: a marker that simply vanishes reads
+			// as a misclick rather than as something done on purpose. This is
+			// the cursor rather than the animation `NSAnimationEffect` used to
+			// play, which macOS 14 deprecated in favour of exactly this.
+			if wouldRemove { NSCursor.disappearingItem.set() } else { NSCursor.arrow.set() }
 			return
 		}
 
@@ -1733,12 +1738,19 @@ final class CodeView: NSView, NSTextInputClient {
 	}
 
 	override func mouseUp(with event: NSEvent) {
+		// Where a drag out of the gutter is decided: let go beyond it and the
+		// breakpoint is thrown away, let go anywhere else — including back over
+		// the gutter — and it stays exactly where it was.
+		if let line = draggingBreakpointLine, breakpointWouldBeRemoved {
+			onDeleteBreakpoint?(line)
+		}
 		draggingBreakpointLine = nil
+
 		// The puff belongs to the drag that ended. Left set, it would follow the
 		// pointer around the file as though everything under it were about to be
 		// thrown away too.
-		if threwBreakpointAway {
-			threwBreakpointAway = false
+		if breakpointWouldBeRemoved {
+			breakpointWouldBeRemoved = false
 			NSCursor.arrow.set()
 		}
 		super.mouseUp(with: event)

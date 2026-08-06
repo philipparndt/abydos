@@ -64,6 +64,14 @@ public struct ProjectSession: Equatable, Sendable {
 	/// have — and an identifier that no longer exists simply falls back to the
 	/// default, which is what unplugging a phone should do.
 	public var xcodeDestinations: [String: String]
+	/// The breakpoints that were set, by file.
+	///
+	/// A breakpoint is a note about where to look, and the looking takes more
+	/// than one sitting: closing a project to answer something else and coming
+	/// back to a gutter swept clean is the sort of thing that teaches people to
+	/// keep a scratch file of line numbers. Conditions come too — those are the
+	/// ones that took thought.
+	public var breakpoints: [String: [Breakpoint]]
 
 	public init(
 		files: [OpenFile] = [],
@@ -72,9 +80,11 @@ public struct ProjectSession: Equatable, Sendable {
 		isPanelVisible: Bool = false,
 		subprojectPath: String? = nil,
 		selectedConfiguration: String? = nil,
-		xcodeDestinations: [String: String] = [:]
+		xcodeDestinations: [String: String] = [:],
+		breakpoints: [String: [Breakpoint]] = [:]
 	) {
 		self.xcodeDestinations = xcodeDestinations
+		self.breakpoints = breakpoints
 		self.files = files
 		self.activePath = activePath
 		self.terminals = terminals
@@ -86,6 +96,7 @@ public struct ProjectSession: Equatable, Sendable {
 	public var isEmpty: Bool {
 		files.isEmpty && terminals.isEmpty && subprojectPath == nil
 			&& selectedConfiguration == nil && xcodeDestinations.isEmpty
+			&& breakpoints.isEmpty
 	}
 }
 

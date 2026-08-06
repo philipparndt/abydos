@@ -270,6 +270,32 @@ public final class DebugSession {
 		if isActive { Task { await syncBreakpoints(for: file) } }
 	}
 
+	/// Takes over a set of breakpoints whole, before anything is running.
+	///
+	/// Replaying them as toggles loses everything a `Breakpoint` carries beyond
+	/// its line: `toggleBreakpoint` builds a fresh one, which is enabled, so a
+	/// breakpoint somebody had switched off came back on the moment a session
+	/// started — and it was sent to the adapter, and it stopped there.
+	///
+	/// Nothing is verified here. Whether a line can be bound is a fact about a
+	/// program that is not running yet; the adapter says so when the
+	/// breakpoints are sent.
+	public func adopt(_ incoming: [String: [Breakpoint]]) {
+		var adopted: [String: [Breakpoint]] = [:]
+		for (file, list) in incoming {
+			let canonical = FilePath.canonical(file)
+			adopted[canonical] = list
+				.sorted { $0.line < $1.line }
+				.map { breakpoint in
+					var copy = breakpoint
+					copy.isVerified = false
+					return copy
+				}
+		}
+		breakpoints = adopted
+		onMain { [weak self] in self?.onBreakpointsChanged?() }
+	}
+
 	/// Turns a breakpoint off without losing it, or on again.
 	///
 	/// A disabled breakpoint stays where it was put, and is not sent to the
