@@ -2022,10 +2022,20 @@ final class EditorViewController: NSViewController {
 		return codeView.textForTesting
 	}
 
+	/// What the editor is holding, saved or not — for checking what typing did.
+	var textForTesting: String? { activeTab?.codeView?.textForTesting }
+
 	func simulateTyping(_ text: String) {
 		guard let tab = activeTab, let codeView = tab.codeView else { return }
 		view.window?.makeFirstResponder(codeView)
 		for character in text {
+			// A newline is the return key, not a character. Inserted directly
+			// it skips everything return does — the indent, the closing brace
+			// — so a test that typed one was testing something nobody does.
+			if character == "\n" {
+				codeView.doCommand(by: #selector(NSStandardKeyBindingResponding.insertNewline(_:)))
+				continue
+			}
 			codeView.insertText(String(character), replacementRange: NSRange(location: NSNotFound, length: 0))
 		}
 	}

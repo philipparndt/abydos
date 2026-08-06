@@ -5808,6 +5808,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		return bottomPanel.optionKeyForTesting(bare: bare, composed: composed)
 	}
 
+	/// What the editor is holding, saved or not.
+	func editorTextForTesting() -> String? { editor.textForTesting }
+
 	/// Indents or outdents a block, and prints what the file became.
 	func exerciseIndentForTesting(from: Int, to: Int, outdent: Bool) {
 		guard let text = editor.indentForTesting(fromLine: from, toLine: to, outdent: outdent) else {

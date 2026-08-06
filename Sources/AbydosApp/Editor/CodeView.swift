@@ -2103,11 +2103,23 @@ final class CodeView: NSView, NSTextInputClient {
 			.trimmingCharacters(in: CharacterSet(charactersIn: "\n"))
 		_ = lineEnd
 
+		// Whether this block is waiting to be closed, asked of the file rather
+		// than assumed: a `{` typed inside an already-balanced block would
+		// otherwise gain a `}` nothing needs.
+		let unclosed = ReturnIndent.closingCharacter(for: before).map { closing in
+			ReturnIndent.isUnclosed(
+				document.rope.string(in: 0..<document.rope.byteCount),
+				opening: closing == "}" ? "{" : (closing == ")" ? "(" : "["),
+				closing: closing
+			)
+		} ?? false
+
 		let result = ReturnIndent.result(
 			before: before,
 			after: after,
 			usesTabs: usesTabsForIndent,
-			indentWidth: Theme.current.tabWidth
+			indentWidth: Theme.current.tabWidth,
+			unclosed: unclosed
 		)
 
 		let newCaret = document.replace(

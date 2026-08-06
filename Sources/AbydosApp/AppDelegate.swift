@@ -337,6 +337,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if options.printText {
+			DispatchQueue.main.asyncAfter(deadline: .now() + max(2.0, options.screenshotDelay - 0.2)) {
+				let text = controller?.editorTextForTesting() ?? "no editor"
+				print("TEXT ----------")
+				for line in text.components(separatedBy: "\n") {
+					print("| " + line.replacingOccurrences(of: "\t", with: "→"))
+				}
+				print("---------------")
+			}
+		}
+
 		if let spec = options.indentBlock {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
 				let parts = spec.split(separator: ":").map(String.init)
