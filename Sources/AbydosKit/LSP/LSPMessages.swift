@@ -295,6 +295,12 @@ public struct LSPCompletion: Equatable, Sendable {
 	public var kind: Int?
 	/// What the server wants it sorted by, which is rarely alphabetical.
 	public var sortText: String?
+	/// Whether `insertText` is a snippet rather than plain text.
+	///
+	/// `insertTextFormat: 2` in the protocol. Ignored, it is the difference
+	/// between `union() ` with the caret in the right place and the literal
+	/// text `union() $0` in somebody's file.
+	public var isSnippet: Bool
 
 	public init(
 		label: String,
@@ -302,8 +308,10 @@ public struct LSPCompletion: Equatable, Sendable {
 		detail: String? = nil,
 		documentation: String? = nil,
 		kind: Int? = nil,
-		sortText: String? = nil
+		sortText: String? = nil,
+		isSnippet: Bool = false
 	) {
+		self.isSnippet = isSnippet
 		self.label = label
 		self.insertText = insertText ?? label
 		self.detail = detail
@@ -326,7 +334,8 @@ public struct LSPCompletion: Equatable, Sendable {
 			detail: dictionary["detail"] as? String,
 			documentation: LSPHover.text(from: dictionary["documentation"]),
 			kind: dictionary["kind"] as? Int,
-			sortText: dictionary["sortText"] as? String
+			sortText: dictionary["sortText"] as? String,
+			isSnippet: (dictionary["insertTextFormat"] as? Int) == 2
 		)
 	}
 

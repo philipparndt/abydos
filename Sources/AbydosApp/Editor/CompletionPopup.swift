@@ -10,12 +10,22 @@ struct CompletionItem: Equatable {
 	let detail: String?
 	/// Whether this came from a language server or from the words in the file.
 	let isFromServer: Bool
+	/// Whether `insertText` is a snippet — placeholders and a caret position
+	/// rather than text to paste.
+	let isSnippet: Bool
 
-	init(label: String, insertText: String? = nil, detail: String? = nil, isFromServer: Bool) {
+	init(
+		label: String,
+		insertText: String? = nil,
+		detail: String? = nil,
+		isFromServer: Bool,
+		isSnippet: Bool = false
+	) {
 		self.label = label
 		self.insertText = insertText ?? label
 		self.detail = detail
 		self.isFromServer = isFromServer
+		self.isSnippet = isSnippet
 	}
 
 	init(_ completion: LSPCompletion) {
@@ -23,7 +33,8 @@ struct CompletionItem: Equatable {
 			label: completion.label,
 			insertText: completion.insertText,
 			detail: completion.detail,
-			isFromServer: true
+			isFromServer: true,
+			isSnippet: completion.isSnippet
 		)
 	}
 }

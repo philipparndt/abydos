@@ -1112,7 +1112,17 @@ final class EditorViewController: NSViewController {
 		completionPrefixLength = prefix.utf16.count
 		completions.onCommit = { [weak codeView, weak self] item in
 			guard let self else { return }
-			codeView?.applyCompletion(item.insertText, replacingPrefixOfLength: self.completionPrefixLength)
+			// A snippet is not text to paste: `union() $0` means "put the caret
+			// between the braces", and inserted as written it is a syntax
+			// error somebody has to go back and delete.
+			let snippet = item.isSnippet
+				? Snippet.expand(item.insertText)
+				: Snippet(text: item.insertText, caret: item.insertText.utf16.count)
+			codeView?.applyCompletion(
+				snippet.text,
+				replacingPrefixOfLength: self.completionPrefixLength,
+				caretOffset: snippet.caret
+			)
 		}
 		guard let point = codeView.caretScreenPoint() else { return }
 		completions.show(

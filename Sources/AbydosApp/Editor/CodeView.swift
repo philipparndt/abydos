@@ -2205,11 +2205,22 @@ final class CodeView: NSView, NSTextInputClient {
 	}
 
 	/// Replaces the word being typed with what was chosen.
-	func applyCompletion(_ text: String, replacingPrefixOfLength length: Int) {
+	/// - Parameter caretOffset: where in the inserted text the caret belongs,
+	///   which a snippet decides — the end, unless it said otherwise.
+	func applyCompletion(
+		_ text: String,
+		replacingPrefixOfLength length: Int,
+		caretOffset: Int? = nil
+	) {
 		guard let document else { return }
 		let start = max(0, caret - length)
 		let newCaret = document.replace(utf16Range: start..<caret, with: text, caretBefore: caret)
-		afterEdit(caret: newCaret)
+
+		guard let caretOffset, caretOffset < text.utf16.count else {
+			afterEdit(caret: newCaret)
+			return
+		}
+		afterEdit(caret: start + caretOffset)
 	}
 
 	/// Where the caret is on screen, for putting the list under it.
