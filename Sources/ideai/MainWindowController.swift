@@ -2318,15 +2318,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		menu.autoenablesItems = false
 
 		for (index, configuration) in matching.enumerated() {
-			if matching.count > 1 {
-				if index > 0 { menu.addItem(.separator()) }
-				let header = NSMenuItem(title: configuration.name, action: nil, keyEquivalent: "")
-				header.isEnabled = false
-				menu.addItem(header)
-			}
+			// The name above the verbs rather than inside them. A Go
+			// configuration is called "go run app", because that is what it
+			// does, and putting it after a verb produced "Run go run app" —
+			// which reads as a stutter and gets longer with every source that
+			// names its configurations after a command line.
+			if index > 0 { menu.addItem(.separator()) }
+			let header = NSMenuItem(title: configuration.name, action: nil, keyEquivalent: "")
+			header.isEnabled = false
+			menu.addItem(header)
 
 			let runItem = NSMenuItem(
-				title: matching.count > 1 ? "Run" : "Run \(configuration.name)",
+				title: "Run",
 				action: #selector(runMenuItem(_:)),
 				keyEquivalent: ""
 			)
@@ -2339,7 +2342,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			// Debug that cannot start would be worse than leaving it out.
 			if configuration.isDebuggable {
 				let debugItem = NSMenuItem(
-					title: matching.count > 1 ? "Debug" : "Debug \(configuration.name)",
+					title: "Debug",
 					action: #selector(debugMenuItem(_:)),
 					keyEquivalent: ""
 				)
@@ -2574,13 +2577,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	func start(_ configuration: RunConfiguration, target: XcodeTarget, on destination: XcodeDestination) {
 		xcodeDestinations[target.scheme.name] = destination.id
 
-		// Before the build, because everything after this point takes minutes
-		// and the install at the end is where it would otherwise be found out.
-		if let device = XcodeDestinations.shared.attachment(of: destination), !device.isConnected {
-			runControl?.setStatus("\(device.name) is not reachable", failed: true)
-			notify("Cannot run on \(device.name)", detail: XcodeDevices.unreachable(device))
-			return
-		}
 
 		let directory = URL(fileURLWithPath: configuration.workingDirectory)
 		let derived = XcodeRun.derivedDataPath(for: target.scheme, in: directory)

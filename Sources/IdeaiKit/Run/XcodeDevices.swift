@@ -18,7 +18,13 @@ public enum XcodeDevices {
 		public let name: String
 		/// `wired`, `localNetwork`, or whatever else a future one reports.
 		public let transport: String
-		/// Whether it can be reached right now.
+		/// Whether a tunnel to it happens to be up.
+		///
+		/// Not whether it can be reached: the tunnel is established when
+		/// something needs it and torn down when idle, so a phone sitting on
+		/// the desk paired over Wi-Fi reads `disconnected` most of the time.
+		/// Treating this as reachability refused runs to a device that was
+		/// perfectly available.
 		public let isConnected: Bool
 
 		public init(udid: String, name: String, transport: String, isConnected: Bool) {
@@ -29,11 +35,16 @@ public enum XcodeDevices {
 		}
 
 		/// How to say where it is, in a menu.
+		///
+		/// The transport and nothing more. Whether the thing can be reached in
+		/// the next minute is not knowable from here — only `devicectl` trying
+		/// it knows that — and a menu that claims otherwise is a menu that
+		/// tells somebody their phone is away while it is in their hand.
 		public var attachment: String? {
 			switch transport {
-			case "wired": return isConnected ? "USB" : "USB, unplugged"
-			case "localNetwork": return isConnected ? "Wi-Fi" : "Wi-Fi, not reachable"
-			default: return isConnected ? nil : "not reachable"
+			case "wired": return "USB"
+			case "localNetwork": return "Wi-Fi"
+			default: return nil
 			}
 		}
 	}
@@ -62,19 +73,18 @@ public enum XcodeDevices {
 				udid: udid,
 				name: properties["name"] as? String ?? udid,
 				transport: transport,
-				// The tunnel rather than the pairing: paired is a lasting fact
-				// about a device, and connected is whether it can be installed
-				// to in the next minute.
+				// Recorded, but only as a tiebreak. The tunnel comes up when
+				// something needs it, so this says whether one is up now and
+				// not whether the device is there.
 				isConnected: (connection["tunnelState"] as? String) == "connected"
 			)
 		}
 	}
 
-	/// What to say when a run is aimed at a device that cannot be reached.
+	/// What to say when `devicectl` could not reach a device it was given.
 	///
-	/// Named for what it is rather than "an error occurred": everything after
-	/// this point takes minutes — a build, then an install that times out — so
-	/// the sentence has to arrive before the build does.
+	/// Said after an attempt rather than instead of one: whether a device can
+	/// be reached is only known by trying, and the run is the trying.
 	public static func unreachable(_ device: Device) -> String {
 		switch device.transport {
 		case "localNetwork":

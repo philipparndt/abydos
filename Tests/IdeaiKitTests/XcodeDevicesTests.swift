@@ -27,10 +27,11 @@ struct XcodeDevicesTests {
 
 		let pad = try #require(devices.first { $0.name.contains("iPad von Philipp") })
 		#expect(pad.transport == "localNetwork")
-		// Paired for Wi-Fi and asleep somewhere: offered, but said to be out of
-		// reach rather than silently attempted.
+		// Paired for Wi-Fi with no tunnel up, which is the resting state of a
+		// device that is right there: offered as Wi-Fi, with no claim about
+		// whether it can be reached this second.
 		#expect(!pad.isConnected)
-		#expect(pad.attachment == "Wi-Fi, not reachable")
+		#expect(pad.attachment == "Wi-Fi")
 	}
 
 	/// Simulators come back from the same command as `sameMachine`. They are

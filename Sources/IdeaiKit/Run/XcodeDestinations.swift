@@ -30,7 +30,14 @@ public final class XcodeDestinations {
 		refresh: Bool = false
 	) async -> [XcodeDestination] {
 		let key = "\(target.project.path):\(target.scheme.name)"
-		if !refresh, let known = cache[key] { return known }
+		if !refresh, let known = cache[key] {
+			// The destinations keep, the attachments do not: a phone moves
+			// between the cable and the network, and a label from twenty
+			// minutes ago is how a menu comes to describe somewhere the device
+			// no longer is.
+			for device in await Self.askDevices() { attachments[device.udid] = device }
+			return known
+		}
 
 		// Both questions at once: what this scheme can run on, and how each of
 		// those is attached. A phone on a cable and one asleep in another room
@@ -81,14 +88,17 @@ public final class XcodeDestinations {
 		// default lands on whichever device sorts first — an iPad asleep in
 		// another room — while the phone on the desk sits below it, and the
 		// first run of the day fails on a device nobody chose.
-		func reachable(_ destination: XcodeDestination) -> Bool {
-			attached[destination.id].map(\.isConnected) ?? true
+		// A device on a cable is certainly there. One paired over the network
+		// probably is, and only trying finds out — which is why this orders
+		// them rather than ruling any out.
+		func isWired(_ destination: XcodeDestination) -> Bool {
+			attached[destination.id]?.transport == "wired"
 		}
 
 		return destinations.first { $0.kind == .mac }
-			?? destinations.first { $0.kind == .device && reachable($0) }
-			?? destinations.first { $0.kind == .simulator }
+			?? destinations.first { $0.kind == .device && isWired($0) }
 			?? destinations.first { $0.kind == .device }
+			?? destinations.first { $0.kind == .simulator }
 	}
 
 	/// The same, using what is known about how each device is attached.

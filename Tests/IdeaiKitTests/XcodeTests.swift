@@ -187,13 +187,17 @@ struct XcodeDestinationTests {
 		#expect(XcodeDestinations.preferred(among: []) == nil)
 	}
 
-	/// A device that can be reached beats one that cannot, whatever the order.
-	/// Without this the default lands on whichever device sorts first — an iPad
-	/// asleep in another room — while the phone on the desk sits below it, and
-	/// the first run of the day fails on a device nobody chose.
-	@Test func prefersADeviceThatCanActuallyBeReached() {
-		let asleep = XcodeDestination(id: "PAD", name: "iPad von Philipp", platform: "iOS")
-		let awake = XcodeDestination(id: "PHONE", name: "p.iphone", platform: "iOS")
+	/// A device on a cable beats one on the network, and both beat a simulator.
+	///
+	/// Not "a device that can be reached beats one that cannot", which is what
+	/// this said until the machine disagreed: `devicectl` raises the tunnel to
+	/// a network device when something needs it and drops it when idle, so a
+	/// phone lying on the desk reads `disconnected` nearly always. Ordering by
+	/// it is fine — a cable is certain — but ruling anything out by it refuses
+	/// runs to devices that are right there.
+	@Test func prefersACableThenTheNetworkThenASimulator() {
+		let network = XcodeDestination(id: "PAD", name: "iPad von Philipp", platform: "iOS")
+		let cable = XcodeDestination(id: "PHONE", name: "p.iphone", platform: "iOS")
 		let simulator = XcodeDestination(id: "S", name: "iPhone 17", platform: "iOS Simulator", os: "26.2")
 
 		let attached = [
@@ -201,17 +205,16 @@ struct XcodeDestinationTests {
 				udid: "PAD", name: "iPad von Philipp", transport: "localNetwork", isConnected: false
 			),
 			"PHONE": XcodeDevices.Device(
-				udid: "PHONE", name: "p.iphone", transport: "localNetwork", isConnected: true
+				udid: "PHONE", name: "p.iphone", transport: "wired", isConnected: true
 			),
 		]
-		#expect(XcodeDestinations.preferred(among: [asleep, awake, simulator], attached: attached)?.id
+		#expect(XcodeDestinations.preferred(among: [network, cable, simulator], attached: attached)?.id
 			== "PHONE")
 
-		// With nothing reachable, a simulator is better than a device that
-		// cannot be installed to — and a device is still offered over nothing.
-		let none = ["PAD": attached["PAD"]!]
-		#expect(XcodeDestinations.preferred(among: [asleep, simulator], attached: none)?.id == "S")
-		#expect(XcodeDestinations.preferred(among: [asleep], attached: none)?.id == "PAD")
+		// With only a network device, it is still chosen over a simulator: an
+		// idle tunnel is not an absent phone.
+		let idle = ["PAD": attached["PAD"]!]
+		#expect(XcodeDestinations.preferred(among: [network, simulator], attached: idle)?.id == "PAD")
 	}
 
 	@Test func tellsTwoSimulatorsOfTheSameModelApart() {
