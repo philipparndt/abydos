@@ -71,7 +71,19 @@ public enum XcodeRun {
 			// The window, which is a separate thing from the simulator running:
 			// installing and launching work headless, and an app nobody can see
 			// is not what "run it on a simulator" means.
-			steps.append("open -a Simulator")
+			//
+			// Attempted rather than required, and by path before name. This
+			// Xcode beta ships no Simulator.app at all — not in
+			// `Contents/Developer/Applications`, not anywhere — so `open -a
+			// Simulator` fails, and a step that fails here is a build that
+			// succeeded followed by a run that never installed anything.
+			steps.append(
+				// Double quotes, because the path is one the shell has to work
+				// out: single quotes would look right and pass the substitution
+				// through as a filename nobody has.
+				"{ open -a \"$(xcode-select -p)/Applications/Simulator.app\" >/dev/null 2>&1"
+					+ " || open -a Simulator >/dev/null 2>&1 || true; }"
+			)
 			steps.append("xcrun simctl install \(quoted(destination.id)) \(quoted(app))")
 			steps.append(
 				"xcrun simctl launch --console-pty --terminate-running-process "

@@ -233,7 +233,13 @@ struct XcodeRunTests {
 		// The path quoted, the flag itself not.
 		#expect(steps[0].contains("xcodebuild -project '/p/Thing.xcodeproj'"))
 		#expect(steps[1].contains("simctl bootstatus"))
-		#expect(steps[2] == "open -a Simulator")
+		// Attempted, never required: this Xcode beta ships no Simulator.app,
+		// and a step that fails here is a build that succeeded followed by a
+		// run that installed nothing.
+		#expect(steps[2].contains("xcode-select -p"))
+		#expect(steps[2].hasSuffix("|| true; }"))
+		// Double quotes around the substitution, or it is a filename nobody has.
+		#expect(!steps[2].contains("'$(xcode-select"))
 		#expect(steps[3].contains("simctl install 'UDID' '/dd/Build/Products/Debug-iphonesimulator/Thing.app'"))
 		#expect(steps[4].contains("simctl launch --console-pty"))
 		// The identifier is read from what was just built rather than written
