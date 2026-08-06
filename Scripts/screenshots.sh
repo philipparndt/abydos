@@ -79,14 +79,65 @@ shoot editor --open "$GO" --file "$GO/main.go" --expand --panel-height 0 --delay
 shoot debugger --open "$GO" \
 	--maximize-terminal --breakpoint 25 --debug-line 18 --delay 40
 
-# A terminal that is a terminal: tmux's own windows as the panel's tabs.
-shoot terminal --open "$GO" --terminal --panel-height 420 --delay 6
+# A terminal that is a terminal: tmux's own windows as the panel's tabs, with
+# something in them. The first version photographed one empty window, which
+# proves the tabs exist and nothing about what they are for — so a second
+# window is opened from inside the terminal, the way anybody would, and a real
+# build runs in it.
+#
+# Typed at the shell rather than with `--type`, which types wherever the
+# keyboard is — and that is the editor, so the first attempt photographed two
+# tmux commands inserted into main.go.
+#
+# The session is named after the project and outlives the app, so a second run
+# found the window from the first and made another beside it — three tabs
+# saying "build". Killed first, so the picture is of one run.
+tmux kill-session -t "$(basename "$GO")" 2>/dev/null || true
+shoot terminal --open "$GO" --file "$GO/main.go" --terminal --panel-height 420 \
+	--run "tmux new-window -n build -c '$GO'" \
+	--send-bytes 'go build -v -o /dev/null ./... && go vet ./... && echo "  build ok"\r' \
+	--delay 16
 
 # Java, because "a language is supported" is a claim about a build file as much
 # as about source: the outline over a POM comes from Maven's own structure.
 JAVA="$(prepare java/maven-service maven-service)"
 shoot java --open "$JAVA" --file "$JAVA/src/main/java/com/example/api/Server.java" \
 	--expand --panel-height 0 --delay 5
+
+# What a breakpoint can be told to do. Drawn by hand, so it is photographed
+# rather than described — and the values come from the session file, which is
+# also how anybody's would.
+BP="$(prepare go-service bp-options)"
+mkdir -p "$BP/.ideai"
+cat > "$BP/.ideai/session.json" <<'SESSION'
+{
+  "files": [{ "path": "REPLACED/main.go", "line": 25 }],
+  "active": "REPLACED/main.go",
+  "breakpoints": [{
+    "path": "REPLACED/main.go",
+    "line": 25,
+    "condition": "stage == \"local\" && len(os.Args) > 1",
+    "hits": "> 5",
+    "log": "stage is {stage} after {time.Since(started)}"
+  }]
+}
+SESSION
+# The path is only knowable now: these are copies in a temporary directory.
+REAL="$(cd "$BP" && pwd -P)"
+# Rewritten with python rather than sed: the path holds slashes and the shell
+# quoting around `sed -i ''` on macOS is one mistake away from an empty
+# expression, which is what happened.
+python3 - "$BP/.ideai/session.json" "$REAL" <<'PYTHON'
+import sys
+path, real = sys.argv[1], sys.argv[2]
+text = open(path).read().replace("REPLACED", real)
+open(path, "w").write(text)
+PYTHON
+shoot breakpoint --open "$BP" --panel-height 200 --bp-edit 25 --delay 8
+# The sheet is a window of its own, so it lands beside the capture.
+if [ -f "$OUT/breakpoint-sheet.png" ]; then
+	mv "$OUT/breakpoint-sheet.png" "$OUT/breakpoint.png"
+fi
 
 # No git shot. These are copies, and a copy has no `.git` — the changes pane
 # would be photographed empty, which says the opposite of what it is for.

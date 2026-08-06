@@ -204,6 +204,14 @@ final class CodeField: NSTextView {
 		isHorizontallyResizable = false
 		textContainer?.widthTracksTextView = true
 		textContainer?.lineFragmentPadding = Theme.current.scaled(6)
+		// Down the middle of the box. A text view lays its first line against
+		// the top, so in a field one line tall the text sat on the upper edge
+		// with the rest of the height empty under it.
+		let lineHeight = Theme.terminalFont(size: Theme.current.fontSize).boundingRectForFont.height
+		textContainerInset = NSSize(
+			width: 0,
+			height: max(0, (Theme.current.scaled(26) - lineHeight) / 2)
+		)
 		font = Theme.terminalFont(size: Theme.current.fontSize)
 		textColor = Theme.current.sidebarText
 		insertionPointColor = Theme.current.sidebarText
