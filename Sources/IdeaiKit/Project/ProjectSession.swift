@@ -55,6 +55,15 @@ public struct ProjectSession: Equatable, Sendable {
 	/// picked is this window's, and reopening a project to a play button
 	/// pointing at something else is a run of the wrong thing one click away.
 	public var selectedConfiguration: String?
+	/// Where each Xcode scheme was last run, by scheme name.
+	///
+	/// The destination and not the scheme, because they are chosen separately:
+	/// picking `docscanner-ios` again should send it to the phone it went to
+	/// last time rather than back to a simulator. Identifiers rather than names,
+	/// since two simulators of the same model differ only by the runtime they
+	/// have — and an identifier that no longer exists simply falls back to the
+	/// default, which is what unplugging a phone should do.
+	public var xcodeDestinations: [String: String]
 
 	public init(
 		files: [OpenFile] = [],
@@ -62,8 +71,10 @@ public struct ProjectSession: Equatable, Sendable {
 		terminals: [OpenTerminal] = [],
 		isPanelVisible: Bool = false,
 		subprojectPath: String? = nil,
-		selectedConfiguration: String? = nil
+		selectedConfiguration: String? = nil,
+		xcodeDestinations: [String: String] = [:]
 	) {
+		self.xcodeDestinations = xcodeDestinations
 		self.files = files
 		self.activePath = activePath
 		self.terminals = terminals
@@ -74,7 +85,7 @@ public struct ProjectSession: Equatable, Sendable {
 
 	public var isEmpty: Bool {
 		files.isEmpty && terminals.isEmpty && subprojectPath == nil
-			&& selectedConfiguration == nil
+			&& selectedConfiguration == nil && xcodeDestinations.isEmpty
 	}
 }
 

@@ -19,6 +19,9 @@ public struct RunConfiguration: Equatable, Sendable, Identifiable {
 		/// A class with a `main` method, run through whichever build tool the
 		/// project uses.
 		case javaMain
+		/// A scheme of an Xcode project or workspace, run on a destination
+		/// chosen beside it.
+		case xcodeScheme
 	}
 
 	public let name: String
@@ -38,6 +41,14 @@ public struct RunConfiguration: Equatable, Sendable, Identifiable {
 	/// to a build tool — it needs the class, the classpath and a JVM of its own.
 	/// This is what tells the debugger which class was meant.
 	public let mainClass: String?
+
+	/// The scheme this runs, and the project it belongs to.
+	///
+	/// Kept rather than folded into the command line, because the command
+	/// depends on something this does not know yet: where it is going to run.
+	/// A scheme is one entry whichever destination is chosen, and the
+	/// destination is answered when there is somebody to ask.
+	public let xcode: XcodeTarget?
 
 	public var id: String { "\(source.rawValue):\(name):\(workingDirectory)" }
 
@@ -71,9 +82,11 @@ public struct RunConfiguration: Equatable, Sendable, Identifiable {
 		environment: [String: String] = [:],
 		file: String? = nil,
 		line: Int? = nil,
-		mainClass: String? = nil
+		mainClass: String? = nil,
+		xcode: XcodeTarget? = nil
 	) {
 		self.mainClass = mainClass
+		self.xcode = xcode
 		self.name = name
 		self.source = source
 		self.executable = executable
@@ -130,6 +143,7 @@ public enum RunConfigurationDiscovery {
 			result += goModules(in: directory)
 			result += mavenGoals(in: directory, root: root)
 			result += gradleTasks(in: directory, root: root)
+			result += xcodeSchemes(in: directory)
 		}
 		result += javaMainClasses(in: root)
 
@@ -447,6 +461,31 @@ public enum RunConfigurationDiscovery {
 			))
 		}
 		return result
+	}
+
+	// MARK: - Xcode
+
+	/// The schemes of an Xcode project or workspace in this directory.
+	///
+	/// Only the ones that launch something. A project with Swift package
+	/// dependencies has a scheme for each of them, and a library scheme in a
+	/// list of things to run is an entry that builds and then has nowhere to go.
+	static func xcodeSchemes(in directory: URL) -> [RunConfiguration] {
+		guard let project = XcodeProject.find(in: directory) else { return [] }
+
+		return project.schemes().filter(\.isRunnable).map { scheme in
+			RunConfiguration(
+				name: scheme.name,
+				source: .xcodeScheme,
+				// What it does before a destination is chosen, which is also
+				// what it falls back to: a build is the part of running a
+				// scheme that does not depend on where it is going.
+				executable: "xcodebuild",
+				arguments: ["-scheme", scheme.name, "build"],
+				workingDirectory: directory.path,
+				xcode: XcodeTarget(project: project, scheme: scheme)
+			)
+		}
 	}
 
 	// MARK: - Java

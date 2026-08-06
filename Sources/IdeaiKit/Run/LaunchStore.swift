@@ -161,7 +161,8 @@ public enum SessionStore {
 			terminals: terminals,
 			isPanelVisible: object["panel"] as? Bool ?? false,
 			subprojectPath: object["subproject"] as? String,
-			selectedConfiguration: object["run"] as? String
+			selectedConfiguration: object["run"] as? String,
+			xcodeDestinations: object["destinations"] as? [String: String] ?? [:]
 		)
 		return session.isEmpty ? nil : session
 	}
@@ -186,6 +187,7 @@ public enum SessionStore {
 		if session.isPanelVisible { object["panel"] = true }
 		if let subproject = session.subprojectPath { object["subproject"] = subproject }
 		if let run = session.selectedConfiguration { object["run"] = run }
+		if !session.xcodeDestinations.isEmpty { object["destinations"] = session.xcodeDestinations }
 		if !session.terminals.isEmpty {
 			object["terminals"] = session.terminals.map { terminal -> [String: Any] in
 				var entry: [String: Any] = ["name": terminal.name]

@@ -973,6 +973,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				selectedConfigurationName = chosen
 				refreshRunControl()
 			}
+			xcodeDestinations = remembered.xcodeDestinations
 		}
 
 		// The terminal is where half the work happens, so a window arrives with
@@ -1586,6 +1587,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			session.isPanelVisible = isPanelVisible
 			session.subprojectPath = subprojectRoot.map { Subprojects.relativePath($0, to: current) }
 			session.selectedConfiguration = selectedConfigurationName
+			session.xcodeDestinations = xcodeDestinations
 			sessions.store(session, for: current)
 			// And beside the project, so tomorrow's window opens on today's
 			// files: what was open is a property of the project, not of the
@@ -1631,6 +1633,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		session.isPanelVisible = isPanelVisible
 		session.subprojectPath = subprojectRoot.map { Subprojects.relativePath($0, to: root) }
 		session.selectedConfiguration = selectedConfigurationName
+		session.xcodeDestinations = xcodeDestinations
 		try? SessionStore.write(session, in: root)
 	}
 
@@ -2258,6 +2261,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// What this project can run, refreshed off the main thread.
 	private(set) var runConfigurations: [RunConfiguration] = []
 
+	/// Where each Xcode scheme was last sent, by scheme name. Kept with the
+	/// project's session, so a scheme that went to the phone yesterday goes
+	/// there again today rather than back to a simulator.
+	var xcodeDestinations: [String: String] = [:]
+
 	func refreshRunConfigurations() {
 		guard let project else { return }
 		let root = project.root
@@ -2457,6 +2465,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// usually interactive, or prints as it goes, and watching it in a real
 	/// shell is what makes it debuggable.
 	func run(_ configuration: RunConfiguration) {
+		// A scheme is not a command line until somewhere to run it is known,
+		// and finding that out means asking `xcodebuild`, which takes long
+		// enough that it cannot happen while a list of runnable things is being
+		// drawn. So it happens here, once, on the way to the first run.
+		if let target = configuration.xcode {
+			runScheme(configuration, target: target)
+			return
+		}
+
 		setPanelVisible(true)
 		// Through the same reporting as anything else started here: a run from
 		// the gutter is a run, and it should colour the titlebar, offer a stop
@@ -2471,6 +2488,82 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			// This configuration's console, and it keeps it. Running the same
 			// thing five times left five finished consoles behind, and the one
 			// being read was whichever was on top.
+			reusing: "run:\(configuration.id)"
+		)
+		followRunningPane(pane)
+	}
+
+	/// Runs a scheme where it went last time, or where it makes sense to.
+	///
+	/// The destination is asked for rather than assumed even when one is
+	/// remembered, because a remembered one can be a simulator that has been
+	/// deleted or a phone that is in somebody's pocket, and a build aimed at a
+	/// destination that is not there fails several minutes in with a message
+	/// about a scheme.
+	func runScheme(_ configuration: RunConfiguration, target: XcodeTarget) {
+		setPanelVisible(true)
+		let directory = URL(fileURLWithPath: configuration.workingDirectory)
+		let remembered = xcodeDestinations[target.scheme.name]
+
+		// Asked once per project per session: the second run of a scheme starts
+		// building immediately rather than spending twelve seconds finding out
+		// what it already knows.
+		let known = XcodeDestinations.shared.known(for: target)
+		if let chosen = known.first(where: { $0.id == remembered })
+			?? (remembered == nil ? XcodeDestinations.preferred(among: known) : nil)
+		{
+			start(configuration, target: target, on: chosen)
+			return
+		}
+
+		runControl?.setStatus("Finding where \(configuration.name) can run…", busy: true)
+		Task { @MainActor in
+			let found = await XcodeDestinations.shared.destinations(
+				for: target, workingDirectory: directory
+			)
+			guard let destination = found.first(where: { $0.id == remembered })
+				?? XcodeDestinations.preferred(among: found)
+			else {
+				self.runControl?.setStatus("No destination for \(configuration.name)", failed: true)
+				self.notify(
+					"Nowhere to run \(configuration.name)",
+					detail: "xcodebuild lists no destination for this scheme. "
+						+ "A device has to be connected and unlocked, and a simulator has to be "
+						+ "installed for the deployment target."
+				)
+				return
+			}
+			self.start(configuration, target: target, on: destination)
+		}
+	}
+
+	/// Builds, installs and launches, in the terminal where the output is.
+	func start(_ configuration: RunConfiguration, target: XcodeTarget, on destination: XcodeDestination) {
+		xcodeDestinations[target.scheme.name] = destination.id
+
+		let directory = URL(fileURLWithPath: configuration.workingDirectory)
+		let derived = XcodeRun.derivedDataPath(for: target.scheme, in: directory)
+		let command = XcodeRun.command(
+			project: target.project,
+			scheme: target.scheme,
+			destination: destination,
+			derivedData: derived
+		) ?? XcodeRun.build(
+			project: target.project,
+			scheme: target.scheme,
+			destination: destination,
+			derivedData: derived
+		)
+
+		runControl?.setStatus("Running \(configuration.name) on \(destination.title)…", busy: true)
+		let pane = bottomPanel.runCommand(
+			// The destination in the title, because "docscanner-ios" twice over
+			// is two tabs nobody can tell apart, and where it went is the thing
+			// that differs.
+			title: "\(configuration.name) · \(destination.title)",
+			command: command,
+			directory: directory,
+			environment: configuration.environment,
 			reusing: "run:\(configuration.id)"
 		)
 		followRunningPane(pane)
@@ -2524,6 +2617,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			item.target = self
 			item.representedObject = configuration.id
 			item.toolTip = configuration.commandLine
+
+			// A scheme runs somewhere, and where is a second choice beside it
+			// rather than an entry of its own for each combination: a machine
+			// with several simulator runtimes offers dozens, and a list of
+			// dozens is not a list anybody reads.
+			if let target = configuration.xcode {
+				item.submenu = destinationMenu(for: configuration, target: target)
+			}
 			menu.addItem(item)
 		}
 
@@ -2539,6 +2640,100 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		)
 	}
 
+	/// Where a scheme can go, with a tick beside where it went last.
+	///
+	/// Filled in as the answer arrives rather than before the menu opens: the
+	/// question takes about twelve seconds and a menu that waits for it is a
+	/// menu that does not open. Items are added to a menu that may already be
+	/// on screen, which AppKit allows and which is the whole point — the list
+	/// grows under the pointer instead of appearing a keystroke later.
+	private func destinationMenu(for configuration: RunConfiguration, target: XcodeTarget) -> NSMenu {
+		let menu = NSMenu()
+		menu.autoenablesItems = false
+
+		let known = XcodeDestinations.shared.known(for: target)
+		if known.isEmpty {
+			let waiting = NSMenuItem(title: "Finding destinations…", action: nil, keyEquivalent: "")
+			waiting.isEnabled = false
+			menu.addItem(waiting)
+
+			let directory = URL(fileURLWithPath: configuration.workingDirectory)
+			Task { @MainActor in
+				let found = await XcodeDestinations.shared.destinations(
+					for: target, workingDirectory: directory
+				)
+				menu.removeAllItems()
+				if found.isEmpty {
+					let empty = NSMenuItem(title: "No destinations", action: nil, keyEquivalent: "")
+					empty.isEnabled = false
+					menu.addItem(empty)
+					return
+				}
+				self.fill(menu, with: found, for: configuration, target: target)
+			}
+		} else {
+			fill(menu, with: known, for: configuration, target: target)
+		}
+		return menu
+	}
+
+	private func fill(
+		_ menu: NSMenu,
+		with destinations: [XcodeDestination],
+		for configuration: RunConfiguration,
+		target: XcodeTarget
+	) {
+		let remembered = xcodeDestinations[target.scheme.name]
+			?? XcodeDestinations.preferred(among: destinations)?.id
+
+		// This Mac, then the phones and iPads, then the simulators — the order
+		// somebody scans in, and the one that keeps forty simulators from
+		// burying the two devices on the desk. `xcodebuild` happens to answer
+		// in this order; sorting says so rather than relying on it.
+		let order: [XcodeDestination.Kind] = [.mac, .device, .simulator]
+		let sorted = destinations.enumerated().sorted { left, right in
+			let a = order.firstIndex(of: left.element.kind) ?? order.count
+			let b = order.firstIndex(of: right.element.kind) ?? order.count
+			// Within a kind, the order they came in: simulators arrive grouped
+			// by model and sorted by runtime, which is more useful than
+			// alphabetical.
+			return a != b ? a < b : left.offset < right.offset
+		}.map(\.element)
+
+		var lastKind: XcodeDestination.Kind?
+		for destination in sorted {
+			if destination.kind != lastKind {
+				if lastKind != nil { menu.addItem(.separator()) }
+				lastKind = destination.kind
+			}
+
+			let item = NSMenuItem(
+				title: destination.title,
+				action: #selector(runOnDestination(_:)),
+				keyEquivalent: ""
+			)
+			item.target = self
+			item.representedObject = [configuration.id, destination.id]
+			item.state = destination.id == remembered ? .on : .off
+			menu.addItem(item)
+		}
+	}
+
+	@objc private func runOnDestination(_ sender: NSMenuItem) {
+		guard let pair = sender.representedObject as? [String],
+		      pair.count == 2,
+		      let configuration = runConfigurations.first(where: { $0.id == pair[0] }),
+		      let target = configuration.xcode
+		else { return }
+
+		let chosen = XcodeDestinations.shared.known(for: target).first { $0.id == pair[1] }
+		guard let chosen else { return }
+
+		// Chosen on purpose, so it becomes what the play button repeats.
+		selectedConfigurationName = configuration.name
+		start(configuration, target: target, on: chosen)
+	}
+
 	private func title(for source: RunConfiguration.Source) -> String {
 		switch source {
 		case .intelliJ:  return "IntelliJ"
@@ -2548,6 +2743,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		case .maven:     return "Maven"
 		case .gradle:    return "Gradle"
 		case .javaMain:  return "Java"
+		case .xcodeScheme: return "Schemes"
 		}
 	}
 
