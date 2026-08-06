@@ -44,6 +44,8 @@ final class LaunchConfigurationsPage: NSView {
 	private var secretsBox: NSButton!
 	private var installBox: NSButton!
 	private var emptyLabel: NSTextField!
+	/// What is wrong with the configuration being edited, if anything.
+	private var warningsStack: NSStackView!
 	private var headerTitle: NSTextField!
 	private var scroll: NSScrollView!
 
@@ -259,12 +261,19 @@ final class LaunchConfigurationsPage: NSView {
 
 		form.addArrangedSubview(makeHeader())
 
+		warningsStack = NSStackView()
+		warningsStack.orientation = .vertical
+		warningsStack.alignment = .leading
+		warningsStack.spacing = Theme.current.scaled(4)
+		warningsStack.isHidden = true
+		form.addArrangedSubview(warningsStack)
+
 		form.addArrangedSubview(section("Target", rows: [
 			field("Name", key: "name"),
 			labelled("What it runs", kindPopUp),
-			field("Package or program", key: "program", monospaced: true),
+			field("Package or program", key: "program", monospaced: true, chooses: .directory),
 			field("Arguments", key: "arguments", monospaced: true),
-			field("Working directory", key: "cwd", monospaced: true),
+			field("Working directory", key: "cwd", monospaced: true, chooses: .directory),
 		]))
 
 		form.addArrangedSubview(section("Environment", caption: "One KEY=value per line.", rows: [
@@ -295,7 +304,7 @@ final class LaunchConfigurationsPage: NSView {
 			"Chart",
 			caption: "The project's own chart: its values, its secrets, its neighbours.",
 			rows: [
-				field("Chart", key: "chart", monospaced: true, placeholder: "deploy/chart"),
+				field("Chart", key: "chart", monospaced: true, placeholder: "deploy/chart", chooses: .directory),
 				field("Release", key: "release", monospaced: true, placeholder: "smarthome"),
 				field(
 					"Values files", key: "valueFiles", monospaced: true,
@@ -311,7 +320,9 @@ final class LaunchConfigurationsPage: NSView {
 		)
 		form.addArrangedSubview(chartSection)
 
-		let hint = NSTextField(labelWithString: "${workspaceFolder} stands for the project directory.")
+		let hint = NSTextField(labelWithString: TemplatePath.variables
+			.map { "\($0.name) — \($0.meaning)" }
+			.joined(separator: "     "))
 		hint.font = Theme.current.uiFont(10.5)
 		hint.textColor = Theme.current.gitIgnored
 		form.addArrangedSubview(hint)
@@ -417,7 +428,8 @@ final class LaunchConfigurationsPage: NSView {
 		_ label: String,
 		key: String,
 		monospaced: Bool = false,
-		placeholder: String = ""
+		placeholder: String = "",
+		chooses: FileChoice? = nil
 	) -> NSView {
 		let input = NSTextField()
 		input.font = monospaced
@@ -438,7 +450,57 @@ final class LaunchConfigurationsPage: NSView {
 		input.cell?.isScrollable = true
 		input.cell?.wraps = false
 		fields[key] = input
-		return labelled(label, input)
+
+		// A field that names a path gets a way to pick one, because the value
+		// it wants is not the path a chooser returns: it is that path written
+		// with a variable, so the configuration still means something on
+		// somebody else's machine. Typing that from memory is the part nobody
+		// should have to do.
+		guard let chooses else { return labelled(label, input) }
+
+		let choose = NSButton(title: "Choose…", target: self, action: #selector(chooseFile(_:)))
+		choose.font = Theme.current.uiFont(11)
+		choose.bezelStyle = .rounded
+		choose.identifier = NSUserInterfaceItemIdentifier(key)
+		choosers[key] = chooses
+		choose.setContentHuggingPriority(.required, for: .horizontal)
+
+		let row = NSStackView(views: [input, choose])
+		row.orientation = .horizontal
+		row.spacing = Theme.current.scaled(6)
+		input.heightAnchor.constraint(equalToConstant: Theme.current.scaled(24)).isActive = true
+		return labelled(label, row)
+	}
+
+	/// What a field's chooser may pick.
+	enum FileChoice {
+		case file
+		case directory
+	}
+
+	private var choosers: [String: FileChoice] = [:]
+
+	@objc private func chooseFile(_ sender: NSButton) {
+		guard let key = sender.identifier?.rawValue,
+		      let field = fields[key],
+		      let root,
+		      let window
+		else { return }
+
+		let panel = NSOpenPanel()
+		panel.canChooseFiles = choosers[key] != .directory
+		panel.canChooseDirectories = choosers[key] != .file
+		panel.allowsMultipleSelection = false
+		// Where the field already points, so picking the file beside it is one
+		// click rather than a walk from the project root.
+		panel.directoryURL = TemplatePath.startingDirectory(for: field.stringValue, root: root)
+
+		panel.beginSheetModal(for: window) { [weak self] response in
+			guard response == .OK, let url = panel.url else { return }
+			field.stringValue = TemplatePath.shareable(url.path, root: root)
+			self?.commit()
+			self?.refreshWarnings()
+		}
 	}
 
 	private func checkbox(_ title: String) -> NSButton {
@@ -484,6 +546,7 @@ final class LaunchConfigurationsPage: NSView {
 	private func show(_ configuration: LaunchConfiguration) {
 		scroll.isHidden = false
 		emptyLabel.isHidden = true
+		defer { refreshWarnings() }
 
 		headerTitle.stringValue = configuration.name
 		fields["name"]?.stringValue = configuration.name
@@ -581,12 +644,65 @@ final class LaunchConfigurationsPage: NSView {
 	}
 
 	/// Writes the edited configuration, if anything about it changed.
+	/// Says what is wrong with this configuration, where it is being edited.
+	///
+	/// Every one of these fails at run time in a way that points somewhere
+	/// else: LLDB on a Go package starts nothing and says nothing, an argument
+	/// naming a file that is not there is passed through as written so the
+	/// program complains about its own configuration, and a file that cannot be
+	/// sent is skipped without a word. Read here, each is a sentence; met at run
+	/// time, each was an hour.
+	private func refreshWarnings() {
+		for view in warningsStack.arrangedSubviews {
+			warningsStack.removeArrangedSubview(view)
+			view.removeFromSuperview()
+		}
+
+		guard let index = selected, configurations.indices.contains(index), let root else {
+			warningsStack.isHidden = true
+			return
+		}
+
+		let problems = LaunchConfigurationCheck.problems(for: configurations[index], root: root)
+		warningsStack.isHidden = problems.isEmpty
+
+		for problem in problems {
+			// Named, because the list sits above the fields rather than beside
+			// them: "Nothing at nowhere" is a puzzle, "Working directory:
+			// nothing at nowhere" is an instruction.
+			let text = problem.fix.map { "\(problem.message) \($0)" } ?? problem.message
+			let label = NSTextField(
+				wrappingLabelWithString: "⚠︎  \(Self.fieldLabel(problem.field)): \(text)"
+			)
+			label.font = Theme.current.uiFont(11)
+			// System orange rather than a theme colour: the palette has none for
+			// a warning, and this one follows light and dark on its own.
+			label.textColor = .systemOrange
+			label.isSelectable = true
+			warningsStack.addArrangedSubview(label)
+			label.widthAnchor.constraint(equalTo: warningsStack.widthAnchor).isActive = true
+		}
+	}
+
+	/// What each field is called on this page, so a warning can point at one.
+	static func fieldLabel(_ field: String) -> String {
+		switch field {
+		case "type": return "What it runs"
+		case "program": return "Package or program"
+		case "cwd": return "Working directory"
+		case "arguments": return "Arguments"
+		case "files": return "Files to send"
+		default: return field
+		}
+	}
+
 	private func commit() {
 		guard let index = selected, configurations.indices.contains(index) else { return }
 		let updated = collect(from: configurations[index])
 		guard updated != configurations[index] else { return }
 
 		configurations[index] = updated
+		refreshWarnings()
 		onSave?(updated, originalName)
 		originalName = updated.name
 		list.reloadData()
