@@ -10,7 +10,7 @@ import IdeaiKit
 /// nothing to hide it into, and following a shell's project belongs to a
 /// window that has a project.
 @MainActor
-final class TerminalWindowController: NSWindowController, NSWindowDelegate {
+final class TerminalWindowController: NSWindowController, NSWindowDelegate, NSMenuItemValidation {
 	/// Kept alive while it is on screen — nothing else owns it.
 	private static var open: [TerminalWindowController] = []
 
@@ -90,6 +90,40 @@ final class TerminalWindowController: NSWindowController, NSWindowDelegate {
 		window?.makeKeyAndOrderFront(nil)
 		panel.focusActive()
 	}
+
+	// MARK: - Menu
+
+	/// The terminal commands, out here too.
+	///
+	/// Every one of these is written against `MainWindowController`, because
+	/// that is where a panel normally lives — so in a window that is nothing
+	/// but a panel they reached nobody and the menu items were greyed out. A
+	/// terminal dragged onto a second display is still a terminal, and the
+	/// thing somebody does next in one is open another tab.
+	@objc func newTerminalTab(_ sender: Any?) {
+		_ = panel.newTerminal()
+	}
+
+	@objc func splitTerminalRight(_ sender: Any?) {
+		panel.splitActiveBesideForTesting()
+	}
+
+	func validateMenuItem(_ item: NSMenuItem) -> Bool {
+		switch item.action {
+		case #selector(newTerminalTab(_:)), #selector(splitTerminalRight(_:)):
+			return true
+		default:
+			return true
+		}
+	}
+
+	/// The window most recently torn off, and how many terminals are in it.
+	///
+	/// For checking that a menu command reaches out here at all, which is the
+	/// thing that was broken: the items existed, the window existed, and the
+	/// two never met.
+	static var lastOpenedForTesting: TerminalWindowController? { open.last }
+	var terminalCountForTesting: Int { panel.sessionCountForTesting }
 
 	/// Closing the window ends its shells: they have nowhere else to be.
 	func windowWillClose(_ notification: Notification) {

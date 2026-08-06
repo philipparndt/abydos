@@ -203,6 +203,28 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
 				controller?.tearOffTerminalForTesting()
 			}
+			// And then the command a person reaches for out there, through the
+			// responder chain the menu uses rather than by calling the method:
+			// calling it proves the method exists, which was never in doubt.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+				let item = NSMenuItem(
+					title: "New Terminal Tab",
+					action: Selector(("newTerminalTab:")),
+					keyEquivalent: "t"
+				)
+				let window = TerminalWindowController.lastOpenedForTesting
+				let before = window?.terminalCountForTesting ?? -1
+				let enabled = window?.validateMenuItem(item) ?? false
+				// Down that window's own responder chain rather than the
+				// application's: a capture run has no key window, so an
+				// app-wide send starts nowhere and proves nothing.
+				window?.window?.makeKeyAndOrderFront(nil)
+				let delivered = window?.window?.tryToPerform(item.action!, with: item) ?? false
+				DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+					print("TORNOFF: enabled=\(enabled) delivered=\(delivered) "
+						+ "terminals \(before) -> \(window?.terminalCountForTesting ?? -1)")
+				}
+			}
 		}
 
 		if let name = options.renameTerminal {
@@ -1505,9 +1527,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		// The same thing on ⌘T, but only while the terminal has the keyboard —
 		// where that is the key everybody's fingers already reach for.
+		// Not written against a class: the same command has to reach the main
+		// window's panel and a terminal window torn out of it, and a selector
+		// typed as `MainWindowController.newTerminalTab` reaches only the
+		// first — which is why a torn-off window's menu items were greyed out.
+		// Sent to nil, it goes down the responder chain to whichever window
+		// controller answers.
 		let terminalTabItem = NSMenuItem(
 			title: "New Terminal Tab",
-			action: #selector(MainWindowController.newTerminalTab(_:)),
+			action: Selector(("newTerminalTab:")),
 			keyEquivalent: "t"
 		)
 		terminalTabItem.keyEquivalentModifierMask = [.command]
