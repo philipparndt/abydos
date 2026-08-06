@@ -1534,7 +1534,21 @@ public enum DevPodFiles {
 			let expanded = LaunchConfiguration.expand(entry, root: root)
 			let parts = expanded.split(separator: ":", maxSplits: 1).map(String.init)
 			let localPath = parts[0]
-			let local = URL(fileURLWithPath: localPath)
+			// Against the project, because that is what `entry(for:in:)` wrote:
+			// anything inside the project is stored relative so the
+			// configuration can be shared, and read back against this process's
+			// own directory instead it names nothing. The transfer is then
+			// dropped without a word and the pod starts with no configuration,
+			// which the program reports as a missing argument — about a file
+			// the configuration does list.
+			//
+			// Canonical, because the arguments below are expanded against the
+			// canonical root and the two are compared by path to send a file
+			// once. Resolved any other way, a file both listed and named is
+			// sent twice.
+			let local = localPath.hasPrefix("/")
+				? URL(fileURLWithPath: localPath)
+				: URL(fileURLWithPath: FilePath.canonical(root)).appendingPathComponent(localPath)
 			guard FileManager.default.fileExists(atPath: local.path) else { continue }
 
 			let remote = parts.count > 1 ? parts[1] : directory + "/" + local.lastPathComponent

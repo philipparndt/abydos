@@ -260,6 +260,53 @@ struct DevPodFileTests {
 		#expect(plan.arguments == ["--verbose", "8080", "/does/not/exist", "${workspaceFolder}"])
 	}
 
+	/// The form this app writes itself. `entry(for:in:)` stores anything inside
+	/// the project relative to it, so the configuration can be committed and
+	/// shared, and every other test here spells its entries out in full — which
+	/// is why reading the relative form back against the wrong directory went
+	/// unnoticed. Nothing about the failure points here: the file is listed, the
+	/// pod has no configuration, and the program says an argument is missing.
+	@Test func sendsAFileListedRelativeToTheProject() throws {
+		let root = try project()
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		let plan = DevPodFiles.plan(
+			files: ["config/config.json"],
+			arguments: [],
+			root: root
+		)
+		#expect(plan.transfers.count == 1)
+		#expect(plan.transfers.first?.remote == "/app/files/config.json")
+		#expect(plan.transfers.first?.local.path.hasSuffix("/config/config.json") == true)
+	}
+
+	/// A relative entry with a destination still gets one, and a relative entry
+	/// naming nothing is still ignored rather than sent as an empty file.
+	@Test func readsRelativeEntriesTheSameWayAsAbsoluteOnes() throws {
+		let root = try project()
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		#expect(DevPodFiles.plan(
+			files: ["config/config.json:/etc/app/config.json"],
+			arguments: [],
+			root: root
+		).transfers.first?.remote == "/etc/app/config.json")
+
+		#expect(DevPodFiles.plan(files: ["config/missing.json"], arguments: [], root: root)
+			.transfers.isEmpty)
+
+		// Listed relative and named in full is one file, not two: the shape a
+		// configuration takes when the program is told where its configuration
+		// is and the configuration also says to send it.
+		let both = DevPodFiles.plan(
+			files: ["config/config.json"],
+			arguments: ["${workspaceFolder}/config/config.json"],
+			root: root
+		)
+		#expect(both.transfers.count == 1)
+		#expect(both.arguments == ["/app/files/config.json"])
+	}
+
 	@Test func ignoresSomethingThatIsNotThere() throws {
 		let root = try project()
 		defer { try? FileManager.default.removeItem(at: root) }
