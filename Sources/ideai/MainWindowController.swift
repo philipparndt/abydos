@@ -2543,7 +2543,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// what it already knows.
 		let known = XcodeDestinations.shared.known(for: target)
 		if let chosen = known.first(where: { $0.id == remembered })
-			?? (remembered == nil ? XcodeDestinations.preferred(among: known) : nil)
+			?? (remembered == nil ? XcodeDestinations.shared.preferred(among: known) : nil)
 		{
 			start(configuration, target: target, on: chosen)
 			return
@@ -2555,7 +2555,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				for: target, workingDirectory: directory
 			)
 			guard let destination = found.first(where: { $0.id == remembered })
-				?? XcodeDestinations.preferred(among: found)
+				?? XcodeDestinations.shared.preferred(among: found)
 			else {
 				self.runControl?.setStatus("No destination for \(configuration.name)", failed: true)
 				self.notify(
@@ -2573,6 +2573,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// Builds, installs and launches, in the terminal where the output is.
 	func start(_ configuration: RunConfiguration, target: XcodeTarget, on destination: XcodeDestination) {
 		xcodeDestinations[target.scheme.name] = destination.id
+
+		// Before the build, because everything after this point takes minutes
+		// and the install at the end is where it would otherwise be found out.
+		if let device = XcodeDestinations.shared.attachment(of: destination), !device.isConnected {
+			runControl?.setStatus("\(device.name) is not reachable", failed: true)
+			notify("Cannot run on \(device.name)", detail: XcodeDevices.unreachable(device))
+			return
+		}
 
 		let directory = URL(fileURLWithPath: configuration.workingDirectory)
 		let derived = XcodeRun.derivedDataPath(for: target.scheme, in: directory)
@@ -2717,7 +2725,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		target: XcodeTarget
 	) {
 		let remembered = xcodeDestinations[target.scheme.name]
-			?? XcodeDestinations.preferred(among: destinations)?.id
+			?? XcodeDestinations.shared.preferred(among: destinations)?.id
 
 		// This Mac, then the phones and iPads, then the simulators — the order
 		// somebody scans in, and the one that keeps forty simulators from
@@ -2740,8 +2748,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				lastKind = destination.kind
 			}
 
+			// How it is attached, beside its name: a phone on a cable and one
+			// paired over Wi-Fi are offered identically by `xcodebuild`, and
+			// the difference only shows up minutes later as an install that
+			// times out.
+			let attachment = XcodeDestinations.shared.attachment(of: destination)?.attachment
 			let item = NSMenuItem(
-				title: destination.title,
+				title: attachment.map { "\(destination.title) — \($0)" } ?? destination.title,
 				action: #selector(runOnDestination(_:)),
 				keyEquivalent: ""
 			)
@@ -3547,9 +3560,35 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 	}
 
+	/// Prints what the run control's menu offers, rather than opening it.
+	///
+	/// Opening it is what a person does and exactly what a capture run cannot:
+	/// a menu runs a nested event loop, so the window is never drawn, the
+	/// screenshot never taken, and the run has to be killed — which throws away
+	/// the output that would have said what was in the menu.
 	func showConfigurationMenuForTesting() {
-		guard let control = runControl else { return }
-		showConfigurationMenu(at: NSPoint(x: 0, y: control.bounds.height), in: control)
+		// The destinations first, because they are the part worth checking and
+		// they arrive about twelve seconds after the menu is drawn — printing
+		// before they land prints "Finding destinations…" and proves nothing.
+		Task { @MainActor in
+			for configuration in self.runConfigurations where configuration.source == .xcodeScheme {
+				guard let target = configuration.xcode else { continue }
+				_ = await XcodeDestinations.shared.destinations(
+					for: target,
+					workingDirectory: URL(fileURLWithPath: configuration.workingDirectory)
+				)
+			}
+			self.printConfigurationMenuForTesting()
+		}
+	}
+
+	private func printConfigurationMenuForTesting() {
+		for item in configurationMenu().items {
+			print("MENU: \(item.isSeparatorItem ? "—" : item.title)\(item.state == .on ? " ✓" : "")")
+			for entry in item.submenu?.items ?? [] {
+				print("MENU:     \(entry.isSeparatorItem ? "—" : entry.title)\(entry.state == .on ? " ✓" : "")")
+			}
+		}
 	}
 
 	/// Opens the editor on the selected configuration, making one if there is
@@ -4740,6 +4779,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	/// The list of configurations, and the ways to change them.
 	private func showConfigurationMenu(at point: NSPoint, in view: NSView) {
+		configurationMenu().popUp(positioning: nil, at: point, in: view)
+	}
+
+	/// Everything the run control offers: the project's configurations, its
+	/// schemes and where each can go, and the Makefile's goals.
+	private func configurationMenu() -> NSMenu {
 		let menu = NSMenu()
 		let all = launchConfigurations
 
@@ -4756,6 +4801,33 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			let empty = NSMenuItem(title: "No configurations yet", action: nil, keyEquivalent: "")
 			empty.isEnabled = false
 			menu.addItem(empty)
+		}
+
+		// The schemes of an Xcode project, each with the destinations it can go
+		// to. Here as well as in the Run menu, because this is the control
+		// somebody presses to choose what runs, and a device picker reachable
+		// only from a menu bar is a device picker nobody finds.
+		let schemes = runConfigurations.filter { $0.source == .xcodeScheme }
+		if !schemes.isEmpty {
+			menu.addItem(.separator())
+			let heading = NSMenuItem(title: "Schemes", action: nil, keyEquivalent: "")
+			heading.isEnabled = false
+			menu.addItem(heading)
+
+			for configuration in schemes {
+				let item = NSMenuItem(
+					title: configuration.name,
+					action: #selector(runMenuItem(_:)),
+					keyEquivalent: ""
+				)
+				item.target = self
+				item.representedObject = configuration.id
+				item.state = configuration.name == selectedConfigurationName ? .on : .off
+				if let target = configuration.xcode {
+					item.submenu = destinationMenu(for: configuration, target: target)
+				}
+				menu.addItem(item)
+			}
 		}
 
 		// The goals a Makefile already defines, so a project that says how to
@@ -4842,8 +4914,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		reveal.target = self
 		menu.addItem(reveal)
 
-
-		menu.popUp(positioning: nil, at: point, in: view)
+		return menu
 	}
 
 	/// The goals in the project's Makefiles that start a Go program.

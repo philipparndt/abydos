@@ -1,0 +1,81 @@
+{
+  "result": {
+    "devices": [
+      {
+        "identifier": "4DFB2EF8-F108-4A6B-8312-E974A0C9EF76",
+        "deviceProperties": {
+          "name": "Apple TV 4K (3rd generation)"
+        },
+        "hardwareProperties": {
+          "udid": "4DFB2EF8-F108-4A6B-8312-E974A0C9EF76",
+          "deviceType": "appleTV"
+        },
+        "connectionProperties": {
+          "transportType": "sameMachine",
+          "tunnelState": "disconnected",
+          "pairingState": "paired"
+        }
+      },
+      {
+        "identifier": "839A4E7D-C221-5AC0-98C9-D567C8DD4DF7",
+        "deviceProperties": {
+          "name": "Apple\u00a0Watch von Philipp"
+        },
+        "hardwareProperties": {
+          "udid": "00008310-0008629E3E08A01E",
+          "deviceType": "appleWatch"
+        },
+        "connectionProperties": {
+          "transportType": "localNetwork",
+          "tunnelState": "disconnected",
+          "pairingState": "paired"
+        }
+      },
+      {
+        "identifier": "E3E13F48-0185-57B7-B50D-1CBF47B69708",
+        "deviceProperties": {
+          "name": "Wohnzimmer"
+        },
+        "hardwareProperties": {
+          "udid": "00008110-001C093136F2401E",
+          "deviceType": "appleTV"
+        },
+        "connectionProperties": {
+          "transportType": "localNetwork",
+          "tunnelState": "disconnected",
+          "pairingState": "paired"
+        }
+      },
+      {
+        "identifier": "4D73B3FA-45EC-50C2-A89B-1AEE8C01E59E",
+        "deviceProperties": {
+          "name": "iPad von Philipp"
+        },
+        "hardwareProperties": {
+          "udid": "00008132-000E44DE1E69001C",
+          "deviceType": "iPad"
+        },
+        "connectionProperties": {
+          "transportType": "localNetwork",
+          "tunnelState": "disconnected",
+          "pairingState": "paired"
+        }
+      },
+      {
+        "identifier": "A5D45677-CA24-5BFD-A935-5DCA0360314B",
+        "deviceProperties": {
+          "name": "p.iphone"
+        },
+        "hardwareProperties": {
+          "udid": "00008140-000E45CC3690801C",
+          "deviceType": "iPhone"
+        },
+        "connectionProperties": {
+          "transportType": "wired",
+          "tunnelState": "connected",
+          "pairingState": "paired"
+        }
+      }
+    ]
+  }
+}

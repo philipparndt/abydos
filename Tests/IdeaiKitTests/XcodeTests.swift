@@ -187,6 +187,33 @@ struct XcodeDestinationTests {
 		#expect(XcodeDestinations.preferred(among: []) == nil)
 	}
 
+	/// A device that can be reached beats one that cannot, whatever the order.
+	/// Without this the default lands on whichever device sorts first — an iPad
+	/// asleep in another room — while the phone on the desk sits below it, and
+	/// the first run of the day fails on a device nobody chose.
+	@Test func prefersADeviceThatCanActuallyBeReached() {
+		let asleep = XcodeDestination(id: "PAD", name: "iPad von Philipp", platform: "iOS")
+		let awake = XcodeDestination(id: "PHONE", name: "p.iphone", platform: "iOS")
+		let simulator = XcodeDestination(id: "S", name: "iPhone 17", platform: "iOS Simulator", os: "26.2")
+
+		let attached = [
+			"PAD": XcodeDevices.Device(
+				udid: "PAD", name: "iPad von Philipp", transport: "localNetwork", isConnected: false
+			),
+			"PHONE": XcodeDevices.Device(
+				udid: "PHONE", name: "p.iphone", transport: "localNetwork", isConnected: true
+			),
+		]
+		#expect(XcodeDestinations.preferred(among: [asleep, awake, simulator], attached: attached)?.id
+			== "PHONE")
+
+		// With nothing reachable, a simulator is better than a device that
+		// cannot be installed to — and a device is still offered over nothing.
+		let none = ["PAD": attached["PAD"]!]
+		#expect(XcodeDestinations.preferred(among: [asleep, simulator], attached: none)?.id == "S")
+		#expect(XcodeDestinations.preferred(among: [asleep], attached: none)?.id == "PAD")
+	}
+
 	@Test func tellsTwoSimulatorsOfTheSameModelApart() {
 		let simulator = XcodeDestination(id: "x", name: "iPhone 17 Pro", platform: "iOS Simulator", os: "26.2")
 		let device = XcodeDestination(id: "y", name: "p.iphone", platform: "iOS")
