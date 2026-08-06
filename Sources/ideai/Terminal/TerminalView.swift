@@ -1835,6 +1835,21 @@ final class TerminalView: NSView, NSTextInputClient {
 		return true
 	}
 
+	/// The click that activates the window also lands in the terminal.
+	///
+	/// macOS swallows that first click by default, so clicking into an inactive
+	/// window puts the app in front and nothing else — and the click has to be
+	/// made again to reach what it was aimed at. In a terminal that is worse
+	/// than elsewhere: the thing being aimed at is usually a tmux pane, and
+	/// selecting one is what the click is *for*. The pane change goes to tmux
+	/// on its own, since a click in a terminal with mouse reporting on is
+	/// forwarded to whatever is running in it.
+	///
+	/// Safe here because a click in a terminal moves a selection or tells tmux
+	/// which pane has the keyboard. Nothing is closed, deleted or run by one,
+	/// which is what the default is guarding against.
+	override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
 	override func mouseDown(with event: NSEvent) {
 		window?.makeFirstResponder(self)
 

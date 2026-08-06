@@ -1557,6 +1557,17 @@ final class CodeView: NSView, NSTextInputClient {
 	/// what will happen, and the button says whether to do it.
 	private var breakpointWouldBeRemoved = false
 
+	/// The click that activates the window also places the caret.
+	///
+	/// Clicking into an inactive window otherwise brings the app forward and
+	/// throws the click away, so somebody who clicked at a line to start typing
+	/// there is left with the caret wherever it was — and finds out a keystroke
+	/// later, in the wrong place.
+	///
+	/// A click in text moves a caret and nothing else, which is what the
+	/// default behaviour exists to protect against elsewhere.
+	override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
 	override func mouseDown(with event: NSEvent) {
 		window?.makeFirstResponder(self)
 		let point = convert(event.locationInWindow, from: nil)
