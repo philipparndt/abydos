@@ -2014,6 +2014,14 @@ final class EditorViewController: NSViewController {
 		return codeView.caretReportForTesting
 	}
 
+	/// Indents or outdents whole lines, the way Tab and ⇧Tab do.
+	func indentForTesting(fromLine: Int, toLine: Int, outdent: Bool) -> String? {
+		guard let tab = activeTab, let codeView = tab.codeView else { return nil }
+		view.window?.makeFirstResponder(codeView)
+		codeView.indentForTesting(fromLine: fromLine, toLine: toLine, outdent: outdent)
+		return codeView.textForTesting
+	}
+
 	func simulateTyping(_ text: String) {
 		guard let tab = activeTab, let codeView = tab.codeView else { return }
 		view.window?.makeFirstResponder(codeView)

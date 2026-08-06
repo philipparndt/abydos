@@ -337,6 +337,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let spec = options.indentBlock {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+				let parts = spec.split(separator: ":").map(String.init)
+				guard parts.count == 3, let from = Int(parts[0]), let to = Int(parts[1]) else { return }
+				controller?.exerciseIndentForTesting(from: from, to: to, outdent: parts[2] == "out")
+			}
+		}
+
 		if !options.optionKeys.isEmpty {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
 				for pair in options.optionKeys {

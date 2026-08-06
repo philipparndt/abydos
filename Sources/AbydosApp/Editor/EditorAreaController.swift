@@ -704,6 +704,9 @@ final class EditorAreaController: NSViewController {
 	func setPreviewMode(_ mode: PreviewMode) { activeGroup.setPreviewMode(mode) }
 	func focusActiveEditor() { activeGroup.focusActiveEditor() }
 	func simulateTyping(_ text: String) { activeGroup.simulateTyping(text) }
+	func indentForTesting(fromLine: Int, toLine: Int, outdent: Bool) -> String? {
+		activeGroup.indentForTesting(fromLine: fromLine, toLine: toLine, outdent: outdent)
+	}
 
 	func showFind() { activeGroup.showFind() }
 	func setFindQuery(_ query: String) { activeGroup.setFindQuery(query) }

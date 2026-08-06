@@ -5808,6 +5808,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		return bottomPanel.optionKeyForTesting(bare: bare, composed: composed)
 	}
 
+	/// Indents or outdents a block, and prints what the file became.
+	func exerciseIndentForTesting(from: Int, to: Int, outdent: Bool) {
+		guard let text = editor.indentForTesting(fromLine: from, toLine: to, outdent: outdent) else {
+			print("INDENT: no editor")
+			return
+		}
+		let lines = text.components(separatedBy: "\n").prefix(6)
+		print("INDENT\(outdent ? "-OUT" : "-IN"):")
+		for (index, line) in lines.enumerated() {
+			print("  \(index): \(line.replacingOccurrences(of: "\t", with: "→"))")
+		}
+	}
+
 	func toggleBreakpointForTesting(line: Int) {
 		guard let url = editor.activeGroup.activeTabURL else { return }
 		toggleBreakpoint(file: url, line: line)

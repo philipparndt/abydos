@@ -113,6 +113,8 @@ struct LaunchOptions {
 	var toolbarLocation: String?
 	/// `bare:composed` pairs to press with Option held, for the key path.
 	var optionKeys: [String] = []
+	/// `from:to:in|out` — indent or outdent a block, for checking Tab.
+	var indentBlock: String?
 	/// Start the debugger and inspect where it stopped, without stepping.
 	var debugInspect = false
 	/// Debug this binary with whichever adapter suits it.
@@ -396,6 +398,7 @@ struct LaunchOptions {
 			case "--toolbar-image": options.toolbarImage = next()
 			case "--toolbar-location": options.toolbarLocation = next()
 			case "--option-key": if let pair = next() { options.optionKeys.append(pair) }
+			case "--indent-block": options.indentBlock = next()
 			case "--debug-inspect": options.debugInspect = true
 			case "--debug-binary": options.debugBinary = next()
 			case "--toast":      options.showToast = true

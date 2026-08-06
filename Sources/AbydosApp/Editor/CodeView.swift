@@ -1919,7 +1919,8 @@ final class CodeView: NSView, NSTextInputClient {
 		case #selector(deleteBackward(_:)):      deleteBackward()
 		case #selector(deleteForward(_:)):       deleteForward()
 		case #selector(insertNewline(_:)):       insertNewlineWithIndent()
-		case #selector(insertTab(_:)):           insertTextAtCaret("\t")
+		case #selector(insertTab(_:)):           indentSelectionOrInsertTab()
+		case #selector(insertBacktab(_:)):       outdentSelection()
 		case #selector(selectAll(_:)):           selectAllText()
 		case #selector(insertLineBreak(_:)):     insertTextAtCaret("\n")
 		default:
@@ -2155,6 +2156,77 @@ final class CodeView: NSView, NSTextInputClient {
 		return ReturnIndent.usesTabs(in: sample, default: false)
 	}
 
+	/// Tab: one tab where the caret is, or a level of indentation on every line
+	/// the selection touches.
+	///
+	/// Pressing it with a block selected used to replace the block with a
+	/// single tab — the selection gone and the work with it, which is the sort
+	/// of thing that costs an undo and a moment's fright.
+	private func indentSelectionOrInsertTab() {
+		guard shiftLines(by: .indent) else {
+			insertTextAtCaret("\t")
+			return
+		}
+	}
+
+	/// ⇧Tab: a level off every line the selection touches, or off the line the
+	/// caret is on when nothing is selected.
+	private func outdentSelection() {
+		_ = shiftLines(by: .outdent, includingCaretLine: true)
+	}
+
+	private enum LineShift { case indent, outdent }
+
+	/// Moves the lines a selection covers, and keeps them selected.
+	///
+	/// Returns false when there is nothing to do — no selection and no line to
+	/// outdent — so Tab can fall back to inserting one.
+	@discardableResult
+	private func shiftLines(by shift: LineShift, includingCaretLine: Bool = false) -> Bool {
+		guard let document else { return false }
+		let selection = selectedUTF16Range()
+		guard !selection.isEmpty || includingCaretLine else { return false }
+
+		let rope = document.rope
+		let firstLine = rope.line(atByteOffset: rope.byteOffset(fromUTF16: selection.lowerBound))
+		// A selection ending exactly at a line's start stops at the line above:
+		// dragging to the beginning of the next line is not selecting it.
+		let lastOffset = max(selection.lowerBound, selection.upperBound - (selection.isEmpty ? 0 : 1))
+		let lastLine = rope.line(atByteOffset: rope.byteOffset(fromUTF16: lastOffset))
+
+		let start = rope.utf16Offset(fromByte: rope.byteOffset(ofLine: firstLine))
+		let endByte = rope.lineByteRange(lastLine).upperBound
+		var end = rope.utf16Offset(fromByte: endByte)
+		// Without the line's own break, so replacing does not eat it.
+		if end > start, rope.string(in: rope.byteOffset(fromUTF16: end - 1)..<endByte) == "\n" {
+			end -= 1
+		}
+		guard end >= start else { return false }
+
+		let before = rope.string(
+			in: rope.byteOffset(fromUTF16: start)..<rope.byteOffset(fromUTF16: end)
+		)
+		let after = shift == .indent
+			? LineIndent.indent(before, using: "\t")
+			: LineIndent.outdent(before, tabWidth: Settings.shared.tabWidth)
+		guard after != before else { return false }
+
+		_ = document.replace(utf16Range: start..<end, with: after, caretBefore: caret)
+
+		// The same lines, still selected — an indent that dropped the selection
+		// could not be pressed twice.
+		let grew = after.utf16.count - before.utf16.count
+		if selection.isEmpty {
+			let shifted = LineIndent.firstLineShift(from: before, to: after)
+			afterEdit(caret: max(start, caret + shifted))
+		} else {
+			selectionAnchor = start
+			afterEdit(caret: end + grew)
+			selectionAnchor = start
+		}
+		return true
+	}
+
 	private func insertTextAtCaret(_ text: String) {
 		guard let document else { return }
 		let selection = selectedUTF16Range()
@@ -2231,6 +2303,23 @@ final class CodeView: NSView, NSTextInputClient {
 	}
 
 	var lineHeightForTesting: CGFloat { lineHeight }
+
+	/// Selects whole lines and presses Tab or ⇧Tab, the way somebody would.
+	func indentForTesting(fromLine: Int, toLine: Int, outdent: Bool) {
+		guard let document else { return }
+		let rope = document.rope
+		let start = rope.utf16Offset(fromByte: rope.byteOffset(ofLine: fromLine))
+		let end = rope.utf16Offset(fromByte: rope.lineByteRange(toLine).upperBound)
+		selectionAnchor = start
+		setCaret(end, extendingSelection: true)
+		if outdent { outdentSelection() } else { indentSelectionOrInsertTab() }
+	}
+
+	/// The document as it stands, for a test to read back.
+	var textForTesting: String {
+		guard let document else { return "" }
+		return document.rope.string(in: 0..<document.rope.byteCount)
+	}
 
 	func setCaretForTesting(_ offset: Int) {
 		setCaret(offset, extendingSelection: false)
