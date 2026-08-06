@@ -144,6 +144,19 @@ final class DebugPane: NSView {
 		sideTabChanged()
 	}
 
+	/// Watches something chosen in the editor.
+	///
+	/// The tab changes with it, because a watch added from the editor is added
+	/// by somebody looking at the editor: leaving it on the console would put
+	/// the answer somewhere they are not looking, and the question would seem
+	/// to have done nothing.
+	func watch(_ expression: String) {
+		let trimmed = expression.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !trimmed.isEmpty else { return }
+		showVariables()
+		session.addWatch(trimmed)
+	}
+
 	var toolbarToolTipsForTesting: [String] { toolbar.toolTipsForTesting() }
 
 	/// Copies the first variable row the way the menu does, and says what

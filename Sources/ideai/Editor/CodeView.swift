@@ -58,6 +58,8 @@ final class CodeView: NSView, NSTextInputClient {
 	var onFindUsages: ((_ line: Int, _ character: Int) -> Void)?
 	/// Asked to put an agent on the problem the caret is in.
 	var onFixWithAI: ((_ line: Int, _ diagnostic: LSPDiagnostic) -> Void)?
+	/// Asked to watch what is selected while debugging.
+	var onWatch: ((_ expression: String) -> Void)?
 	/// The text changed and the caret is in a word: offer completions for it.
 	var onRequestCompletions: ((_ prefix: String, _ caret: NSPoint) -> Void)?
 	/// A key the completion list wants first. Returns true if it took it.
@@ -1658,6 +1660,12 @@ final class CodeView: NSView, NSTextInputClient {
 
 		menu.addItem(item("Go to Definition", #selector(goToDefinitionFromMenu)))
 		menu.addItem(item("Find Usages", #selector(findUsagesFromMenu)))
+		// Only with a selection, because what would be watched is the selection:
+		// an expression is `things[i].name`, which no rule about identifiers
+		// under the caret would have picked out on its own.
+		if onWatch != nil, selectedText() != nil {
+			menu.addItem(item("Watch", #selector(watchFromMenu)))
+		}
 		if diagnosticAtCaret() != nil {
 			menu.addItem(.separator())
 			menu.addItem(item("Fix with AI", #selector(fixWithAIFromMenu)))
@@ -1687,6 +1695,11 @@ final class CodeView: NSView, NSTextInputClient {
 	@objc private func fixWithAIFromMenu() {
 		guard let found = diagnosticAtCaret() else { return }
 		onFixWithAI?(found.line, found.diagnostic)
+	}
+
+	@objc private func watchFromMenu() {
+		guard let expression = selectedText() else { return }
+		onWatch?(expression)
 	}
 
 	@objc private func findUsagesFromMenu() {

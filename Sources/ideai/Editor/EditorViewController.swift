@@ -128,6 +128,8 @@ final class EditorViewController: NSViewController {
 	var onFileReloaded: ((URL) -> Void)?
 	/// Asked for everywhere a symbol is used, at a zero-based position.
 	var onFindUsages: ((URL, Int, Int) -> Void)?
+	/// Watch what is selected, while something is being debugged.
+	var onWatch: ((String) -> Void)?
 	/// Asked to put an agent on a problem: the file, the line, and what the
 	/// language server said about it.
 	var onFixWithAI: ((URL, Int, LSPDiagnostic) -> Void)?
@@ -913,6 +915,9 @@ final class EditorViewController: NSViewController {
 		}
 		codeView.onFindUsages = { [weak self] line, character in
 			self?.onFindUsages?(tab.url, line, character)
+		}
+		codeView.onWatch = { [weak self] expression in
+			self?.onWatch?(expression)
 		}
 		codeView.onFixWithAI = { [weak self] line, diagnostic in
 			self?.onFixWithAI?(tab.url, line, diagnostic)

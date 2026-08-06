@@ -1807,8 +1807,14 @@ final class BottomPanel: NSView {
 
 	/// The running debug session, if any.
 	var activeDebugSession: DebugSession? {
+		activeDebugPane?.debugSession
+	}
+
+	/// The pane itself, for the things that are the pane's rather than the
+	/// session's — which tab is showing, and what has just been added to it.
+	var activeDebugPane: DebugPane? {
 		for session in sessions {
-			if case let .debug(pane) = session.kind { return pane.debugSession }
+			if case let .debug(pane) = session.kind { return pane }
 		}
 		return nil
 	}

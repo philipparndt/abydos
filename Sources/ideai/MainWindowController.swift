@@ -628,6 +628,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		editor.onFindUsages = { [weak self] url, line, character in
 			self?.findUsages(in: url, line: line, character: character)
 		}
+		editor.onWatch = { [weak self] expression in
+			self?.watchFromEditor(expression)
+		}
 		editor.onFixWithAI = { [weak self] url, line, diagnostic in
 			self?.fixWithAI(url: url, line: line, diagnostic: diagnostic)
 		}
@@ -1349,6 +1352,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			?? "not stopped"
 		print("INSPECT: stopped at \(stoppedAt)")
 		bottomPanel.exerciseDebugExtrasForTesting()
+
+		// And the editor's way in, which is the one somebody actually uses:
+		// select an expression, ask to watch it, and the answer should be in
+		// front of them rather than behind the console tab.
+		watchFromEditor("answer * 3")
+		let pane = bottomPanel.activeDebugPane
+		let added = pane?.debugSession.watches.contains { $0.expression == "answer * 3" } ?? false
+		print("EDITORWATCH: added=\(added) showsConsole=\(pane?.showsConsoleForTesting ?? true)")
 	}
 
 	/// Puts a condition on a breakpoint before the program runs.
@@ -2491,6 +2502,28 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			reusing: "run:\(configuration.id)"
 		)
 		followRunningPane(pane)
+	}
+
+	/// Watches what is selected in the editor.
+	///
+	/// Selecting an expression and asking to watch it is the short way round:
+	/// the long way is reading it, remembering it, finding the watch field and
+	/// typing it back in — during which the thing being debugged has not moved,
+	/// but the attention has.
+	func watchFromEditor(_ expression: String) {
+		guard let pane = bottomPanel.activeDebugPane else {
+			// Rather than nothing at all: the menu item is offered whenever
+			// something is selected, so the answer to "why did that do nothing"
+			// has to come from somewhere.
+			notify(
+				"Nothing to watch it in",
+				detail: "Watching an expression needs a debug session. Start one and try again."
+			)
+			return
+		}
+
+		setPanelVisible(true)
+		pane.watch(expression)
 	}
 
 	/// Runs a scheme where it went last time, or where it makes sense to.

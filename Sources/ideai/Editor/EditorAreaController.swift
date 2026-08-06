@@ -155,6 +155,7 @@ final class EditorAreaController: NSViewController {
 			self?.onFileReloaded?(url)
 		}
 		group.onFindUsages = onFindUsages
+		group.onWatch = onWatch
 		group.onFixWithAI = onFixWithAI
 		group.setConditionalBreakpoints(conditionalBreakpoints)
 		group.onRunLine = { [weak self] url, line in
@@ -645,6 +646,10 @@ final class EditorAreaController: NSViewController {
 
 	var onFindUsages: ((URL, Int, Int) -> Void)? {
 		didSet { for group in groups { group.onFindUsages = onFindUsages } }
+	}
+
+	var onWatch: ((String) -> Void)? {
+		didSet { for group in groups { group.onWatch = onWatch } }
 	}
 
 	private var runnableLines: [String: Set<Int>] = [:]
