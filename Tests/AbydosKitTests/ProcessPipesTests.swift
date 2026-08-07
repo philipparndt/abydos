@@ -93,6 +93,34 @@ struct ProcessPipesTests {
 		#expect(result != nil, "runSync waited for input nobody was going to send")
 	}
 
+	/// A stray process holding the pipe open does not hang the caller.
+	///
+	/// Foundation does not mark a pipe's descriptors close-on-exec, so a
+	/// subprocess started while this one was being set up inherits them and
+	/// holds them open for as long as it runs. Waiting for end of file then
+	/// means waiting for a stranger to quit. Two `/bin/cat` processes left
+	/// behind by another test did exactly that and hung the suite for twenty
+	/// minutes.
+	@Test func aStrayHolderOfThePipeDoesNotHangTheCaller() throws {
+		let root = try repository()
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		// A `cat` that outlives the command, holding the write end.
+		let stray = Process()
+		stray.executableURL = URL(fileURLWithPath: "/bin/sh")
+		stray.arguments = ["-c", "sleep 60 &"]
+
+		let result = finished(within: 30) {
+			// The stray is started from inside the same window the command's
+			// pipes live in.
+			try? stray.run()
+			return GitRepository.runSync(["rev-parse", "--is-inside-work-tree"], in: root)
+		}
+		stray.terminate()
+		let answered = try #require(result, "runSync waited on a process that was not its own")
+		#expect(answered.stdout.contains("true"))
+	}
+
 	/// The caller's environment reaches git. It used to be merged and then
 	/// thrown away by a second assignment a few lines below, so nothing that
 	/// passed one ever had it applied.

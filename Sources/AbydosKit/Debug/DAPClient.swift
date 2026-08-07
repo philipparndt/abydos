@@ -312,8 +312,26 @@ public final class DAPClient: @unchecked Sendable {
 		errorPipe?.fileHandleForReading.readabilityHandler = nil
 		connection?.cancel()
 		listener?.cancel()
-		if process?.isRunning == true {
-			process?.terminate()
+		// Told to go, and then made to.
+		//
+		// `terminate()` is a SIGTERM and an adapter is entitled to ignore one;
+		// dropping the reference afterwards leaves it running with nobody left
+		// to ask. That is not a tidiness problem: Foundation does not mark a
+		// pipe's descriptors close-on-exec, so a process that outlives its
+		// session holds open every pipe that existed when it started — and a
+		// stray one is enough to hang an unrelated `git` on a read that never
+		// reaches end of file. Two of them, left behind by a test, cost twenty
+		// minutes of a suite that should take fourteen seconds.
+		if let running = process, running.isRunning {
+			running.terminate()
+			// A moment to go quietly, then not a moment more.
+			let deadline = Date().addingTimeInterval(0.5)
+			while running.isRunning, Date() < deadline {
+				usleep(20_000)
+			}
+			if running.isRunning {
+				kill(running.processIdentifier, SIGKILL)
+			}
 		}
 		process = nil
 		inputPipe = nil

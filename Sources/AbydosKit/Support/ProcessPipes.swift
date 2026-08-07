@@ -37,8 +37,11 @@ public enum ProcessPipes {
 		stdin: Pipe? = nil
 	) -> (stdout: Data, stderr: Data) {
 		let group = DispatchGroup()
-		let errors = Box()
+		let output = Box(), errors = Box()
 
+		DispatchQueue.global(qos: .userInitiated).async(group: group) {
+			output.data = out.fileHandleForReading.readDataToEndOfFile()
+		}
 		DispatchQueue.global(qos: .userInitiated).async(group: group) {
 			errors.data = err.fileHandleForReading.readDataToEndOfFile()
 		}
@@ -55,10 +58,36 @@ public enum ProcessPipes {
 			}
 		}
 
-		let outData = out.fileHandleForReading.readDataToEndOfFile()
-		group.wait()
+		// What is actually being waited for is the program finishing. The reads
+		// are waiting for end of file, which is a different thing and can be a
+		// great deal longer.
+		//
+		// End of file needs *every* copy of the write end to be closed, and
+		// Foundation does not mark a pipe's descriptors close-on-exec — so any
+		// other subprocess that happened to be started while this one was being
+		// set up inherited them, and holds them open for as long as it runs. A
+		// language server or a debug adapter that outlives the command is
+		// enough to pin the pipe open forever. That is not hypothetical: two
+		// stray `/bin/cat` processes left behind by a test held a `git` pipe
+		// open and hung the suite for twenty minutes, with `lsof` showing them
+		// holding five pipes rather than their own three.
+		//
+		// So: wait for the program, then give the readers a moment to finish
+		// draining what it left, and then take the descriptors away from them.
+		// A truncated capture from a program that has already exited beats
+		// waiting for a stranger to quit.
 		process.waitUntilExit()
-		return (outData, errors.data)
+		let drained = DispatchSemaphore(value: 0)
+		DispatchQueue.global(qos: .userInitiated).async {
+			group.wait()
+			drained.signal()
+		}
+		if drained.wait(timeout: .now() + .seconds(2)) == .timedOut {
+			try? out.fileHandleForReading.close()
+			try? err.fileHandleForReading.close()
+			_ = drained.wait(timeout: .now() + .seconds(2))
+		}
+		return (output.data, errors.data)
 	}
 
 	/// The same, decoded, which is what every caller here wants.
