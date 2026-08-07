@@ -257,6 +257,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 						ProjectSwitcherPopover.applyFilterForTesting(filter)
 					}
 				}
+				if let keys = options.switcherKeys {
+					DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+						for key in keys.split(separator: ",") {
+							print("SWITCHER \(key): \(ProjectSwitcherPopover.pressForTesting(String(key)))")
+						}
+						fflush(stdout)
+						if options.isScreenshotRun { return }
+						exit(0)
+					}
+				}
 			}
 		}
 		if let split = options.split {

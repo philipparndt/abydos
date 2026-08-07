@@ -127,6 +127,9 @@ struct LaunchOptions {
 	/// Print the palette's commands for this query.
 	var paletteQuery: String?
 
+	/// Keys to press in the palette's list, comma separated.
+	var switcherKeys: String?
+
 	/// Apply these theme settings in turn and say what each resolved to.
 	var appearanceWalk: String?
 
@@ -478,6 +481,7 @@ struct LaunchOptions {
 			case "--search":     options.searchQuery = next()
 			case "--wrap":       options.wordWrap = true
 			case "--switcher":   options.switcherFilter = next()
+			case "--switcher-keys": options.switcherKeys = next()
 			case "--switch-to":  options.switchTo = next()
 			case "--rename-terminal": options.renameTerminal = next()
 			case "--split-terminals": options.splitTerminals = true

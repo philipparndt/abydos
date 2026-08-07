@@ -702,3 +702,52 @@ struct DiagnosticLogTests {
 		#expect(FileManager.default.fileExists(atPath: file.appendingPathExtension("1").path))
 	}
 }
+
+/// Where the Swift indexer builds.
+///
+/// It builds the package to index it, and by default into the package's own
+/// `.build` — the directory a terminal build uses. Two builds in one directory
+/// take turns holding its lock and invalidate each other's work; where the
+/// toolchains differ they rebuild the world in turn. On the machine this was
+/// written on, a nine-second incremental build took ten minutes while the
+/// indexer had the directory.
+struct IndexScratchPathTests {
+	private let project = URL(fileURLWithPath: "/Users/me/dev/abydos")
+
+	@Test func theIndexerIsToldToBuildSomewhereElse() throws {
+		let definition = LanguageServers.definition(forLanguage: "swift")
+		#expect(definition?.setup == .swift)
+
+		let arguments = LanguageServers.arguments(for: try #require(definition), root: project)
+		#expect(arguments.contains("--scratch-path"))
+		let path = arguments.last ?? ""
+		#expect(!path.hasPrefix(project.path), "the indexer must not build inside the project")
+	}
+
+	/// Derived data lives with the caches, not in the checkout: it can be
+	/// thrown away at any time, and a directory inside the project is one more
+	/// thing to ignore and one more thing to search by accident.
+	@Test func itLivesWithTheCaches() {
+		let path = LanguageServers.indexScratchPath(for: project).path
+		#expect(path.contains("Caches") || path.contains("/tmp") || path.contains("/var/folders"))
+		#expect(path.contains("abydos/index"))
+	}
+
+	/// Two projects of the same name are two directories, or one would index
+	/// the other's sources.
+	@Test func twoProjectsOfTheSameNameAreKeptApart() {
+		let one = LanguageServers.indexScratchPath(for: URL(fileURLWithPath: "/Users/me/a/service"))
+		let other = LanguageServers.indexScratchPath(for: URL(fileURLWithPath: "/Users/me/b/service"))
+		#expect(one != other)
+		#expect(one.lastPathComponent.hasPrefix("service-"))
+	}
+
+	/// The same project is the same directory every time, or every launch
+	/// indexes from nothing.
+	@Test func theSameProjectKeepsItsIndex() {
+		#expect(
+			LanguageServers.indexScratchPath(for: project)
+				== LanguageServers.indexScratchPath(for: project)
+		)
+	}
+}

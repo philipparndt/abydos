@@ -30,6 +30,14 @@ public struct LanguageServerDefinition: Equatable, Sendable {
 		/// and its debugger arrives as an Eclipse bundle that has to be named in
 		/// the initialize request or it is never loaded.
 		case java
+		/// sourcekit-lsp builds the package to index it, and by default builds
+		/// it into the package's own `.build` — the directory a terminal build
+		/// uses. Two builds in one directory take turns holding its lock and
+		/// invalidate each other's work, and where the toolchains differ they
+		/// rebuild the world in turn: on this machine a nine-second incremental
+		/// build took ten minutes while the indexer had it. It is given a
+		/// directory of its own.
+		case swift
 	}
 
 	public init(
@@ -61,7 +69,8 @@ public enum LanguageServers {
 			languageIds: ["swift"],
 			command: "sourcekit-lsp",
 			installHint: "Comes with Xcode and with the Swift toolchain.",
-			rootMarkers: ["Package.swift", "*.xcodeproj", "compile_commands.json"]
+			rootMarkers: ["Package.swift", "*.xcodeproj", "compile_commands.json"],
+			setup: .swift
 		),
 		LanguageServerDefinition(
 			languageIds: ["go"],
@@ -218,7 +227,34 @@ public enum LanguageServers {
 			return definition.arguments
 		case .java:
 			return definition.arguments + ["-data", JavaTooling.serverWorkspace(for: root).path]
+		case .swift:
+			return definition.arguments + ["--scratch-path", indexScratchPath(for: root).path]
 		}
+	}
+
+	/// Where the Swift indexer builds, which is not where anybody else does.
+	///
+	/// Beside the caches rather than in the project: it is derived data, it can
+	/// be thrown away at any time, and a directory inside the checkout is one
+	/// more thing to add to an ignore file and one more thing to search by
+	/// accident.
+	public static func indexScratchPath(for root: URL) -> URL {
+		let path = FilePath.canonical(root)
+		let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+			?? URL(fileURLWithPath: NSTemporaryDirectory())
+		return caches
+			.appendingPathComponent("abydos/index", isDirectory: true)
+			.appendingPathComponent("\(root.lastPathComponent)-\(shortHash(path))", isDirectory: true)
+	}
+
+	/// Enough of a hash to keep two projects of the same name apart.
+	static func shortHash(_ text: String) -> String {
+		var hash: UInt64 = 0xCBF2_9CE4_8422_2325
+		for byte in text.utf8 {
+			hash ^= UInt64(byte)
+			hash = hash &* 0x0000_0100_0000_01B3
+		}
+		return String(hash, radix: 36)
 	}
 
 	/// Anything that has to exist on disk before the server is started.
@@ -227,10 +263,18 @@ public enum LanguageServers {
 	/// index into. Failing is not fatal — jdtls creates the directory itself
 	/// when it can — so nothing is thrown.
 	public static func prepare(_ definition: LanguageServerDefinition, root: URL) {
-		guard definition.setup == .java else { return }
-		try? FileManager.default.createDirectory(
-			at: JavaTooling.serverWorkspace(for: root), withIntermediateDirectories: true
-		)
+		switch definition.setup {
+		case .java:
+			try? FileManager.default.createDirectory(
+				at: JavaTooling.serverWorkspace(for: root), withIntermediateDirectories: true
+			)
+		case .swift:
+			try? FileManager.default.createDirectory(
+				at: indexScratchPath(for: root), withIntermediateDirectories: true
+			)
+		case .plain:
+			break
+		}
 	}
 
 	/// What to send as `initializationOptions`, or nil when there is nothing to

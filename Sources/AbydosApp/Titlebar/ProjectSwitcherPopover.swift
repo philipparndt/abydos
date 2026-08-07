@@ -12,6 +12,28 @@ enum ProjectSwitcherPopover {
 		activeController?.setFilter(text)
 	}
 
+	/// Presses a key in the list and says where the selection ended up.
+	///
+	/// Through the same door the keyboard uses — the field editor's
+	/// `doCommandBy` — because the question is not whether the movement rule is
+	/// right but whether Page Down reaches it at all: which selector that key
+	/// sends depends on the field it lands in.
+	static func pressForTesting(_ command: String) -> String {
+		guard let controller = activeController else { return "no palette" }
+		let selectors: [String: Selector] = [
+			"down": #selector(NSResponder.moveDown(_:)),
+			"up": #selector(NSResponder.moveUp(_:)),
+			"pageDown": #selector(NSResponder.pageDown(_:)),
+			"pageUp": #selector(NSResponder.pageUp(_:)),
+			"scrollPageDown": #selector(NSResponder.scrollPageDown(_:)),
+			"scrollPageUp": #selector(NSResponder.scrollPageUp(_:)),
+			"end": #selector(NSResponder.moveToEndOfDocument(_:)),
+			"start": #selector(NSResponder.moveToBeginningOfDocument(_:)),
+		]
+		guard let selector = selectors[command] else { return "unknown key \(command)" }
+		return controller.pressForTesting(selector)
+	}
+
 	/// - Parameter anchorRect: which part of the control the popover points at,
 	///   for one that is wider than the half being clicked.
 	static func show(
@@ -655,6 +677,23 @@ private final class SwitcherViewController: NSViewController {
 
 	// MARK: - Keyboard
 
+	/// Sends the field editor's command, and reports the row it left selected.
+	func pressForTesting(_ selector: Selector) -> String {
+		let handled = control(filterField, textView: NSTextView(), doCommandBy: selector)
+		let row = tableView.selectedRow
+		let what = rows.indices.contains(row) ? describeForTesting(rows[row]) : "none"
+		return "handled=\(handled) row=\(row) of \(rows.count): \(what)"
+	}
+
+	private func describeForTesting(_ row: Row) -> String {
+		switch row {
+		case let .action(title, _, _, _, _): return "action \(title)"
+		case let .header(title):             return "header \(title)"
+		case let .project(project, _):       return "project \(project.path)"
+		case let .branch(name, _):           return "branch \(name)"
+		}
+	}
+
 	private func selectFirstSelectableRow() {
 		if let index = rows.firstIndex(where: { $0.isSelectable }) {
 			tableView.selectRowIndexes([index], byExtendingSelection: false)
@@ -682,16 +721,27 @@ private final class SwitcherViewController: NSViewController {
 		}
 	}
 
+	/// Moves the selection by that many *selectable* rows — headers are stepped
+	/// over rather than landed on.
 	private func moveSelection(by delta: Int) {
-		var index = tableView.selectedRow
-		// Step past headers so selection never lands on a non-selectable row.
-		repeat {
-			index += delta
-		} while rows.indices.contains(index) && !rows[index].isSelectable
+		guard let index = ListSelection.move(
+			from: tableView.selectedRow,
+			by: delta,
+			count: rows.count,
+			isSelectable: { rows[$0].isSelectable }
+		) else { return }
 
-		guard rows.indices.contains(index) else { return }
 		tableView.selectRowIndexes([index], byExtendingSelection: false)
 		tableView.scrollRowToVisible(index)
+	}
+
+	/// How far a page moves: what fits in the list, less one row of overlap so
+	/// the place somebody was reading is still on screen afterwards.
+	private var pageSize: Int {
+		ListSelection.pageSize(
+			viewportHeight: tableView.enclosingScrollView?.contentSize.height ?? tableView.bounds.height,
+			rowHeight: rows.first?.height ?? Theme.current.scaled(26)
+		)
 	}
 
 }
@@ -712,6 +762,25 @@ extension SwitcherViewController: NSSearchFieldDelegate {
 			return true
 		case #selector(NSResponder.moveUp(_:)):
 			moveSelection(by: -1)
+			return true
+		// Both spellings: which one a key sends depends on the field it is sent
+		// to, and a list that answers only one of them works in some places and
+		// not others.
+		case #selector(NSResponder.pageDown(_:)), #selector(NSResponder.scrollPageDown(_:)):
+			moveSelection(by: pageSize)
+			return true
+		case #selector(NSResponder.pageUp(_:)), #selector(NSResponder.scrollPageUp(_:)):
+			moveSelection(by: -pageSize)
+			return true
+		// ⌘↑ and ⌘↓ — the ends of the list, which is what somebody reaches for
+		// after paging twice.
+		case #selector(NSResponder.moveToBeginningOfDocument(_:)),
+		     #selector(NSResponder.scrollToBeginningOfDocument(_:)):
+			moveSelection(by: -rows.count)
+			return true
+		case #selector(NSResponder.moveToEndOfDocument(_:)),
+		     #selector(NSResponder.scrollToEndOfDocument(_:)):
+			moveSelection(by: rows.count)
 			return true
 		case #selector(NSResponder.insertNewline(_:)):
 			activateRow(at: tableView.selectedRow)
