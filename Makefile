@@ -1,9 +1,9 @@
-# ideai
+# Abydos
 #
 # Common entry points. `make` builds and launches the app.
 
 APP     := build/Abydos.app
-BINARY  := $(APP)/Contents/MacOS/ideai
+BINARY  := $(APP)/Contents/MacOS/Abydos
 CONFIG  ?= release
 
 # Xcode's Swift, not whichever one is first on the PATH.
