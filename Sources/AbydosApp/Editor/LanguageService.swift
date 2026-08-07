@@ -29,6 +29,9 @@ final class LanguageService {
 	/// Which languages have already been looked for and not found, so a missing
 	/// server is reported once rather than on every keystroke.
 	private var unavailable: Set<String> = []
+	/// The last thing each server wrote to standard error, so a failure can be
+	/// reported in the server's own words.
+	private var lastStandardError: [String: String] = [:]
 
 	/// Diagnostics per file, newest wins.
 	private(set) var diagnostics: [String: [LSPDiagnostic]] = [:]
@@ -417,7 +420,13 @@ final class LanguageService {
 			self?.serverSaid(level: level, text: text, definition: resolved.definition, languageId: languageId)
 		}
 		client.onStandardError = { [weak self] text in
-			self?.log("\(resolved.definition.command) stderr: \(Self.oneLine(text))")
+			guard let self else { return }
+			let line = Self.oneLine(text)
+			self.log("\(resolved.definition.command) stderr: \(line)")
+			// Kept for the message. A server that dies on the way up says why
+			// here and nowhere else: "the language server is not running" is
+			// what the client knows, and it is the one thing nobody can act on.
+			if !line.isEmpty { self.lastStandardError[key] = line }
 		}
 
 		do {
@@ -469,10 +478,25 @@ final class LanguageService {
 				log("\(resolved.definition.command) initialized")
 			} catch {
 				log("\(resolved.definition.command) handshake failed: \(error.localizedDescription)")
-				failures[languageId] = error.localizedDescription
+
+				// Not tried again for this project. A server that dies on the
+				// way up dies the same way every time — a rustup shim with no
+				// rust-analyzer behind it exits in a second, for ever — and the
+				// restart-on-demand rule that brings a crashed server back was
+				// turning that into a toast every few seconds. Opening the
+				// project again is what asks for another go, which is also when
+				// somebody has had the chance to install the thing.
+				unavailable.insert(key)
+				servers.removeValue(forKey: key)
+
+				// In the server's own words where it left any: "Unknown binary
+				// 'rust-analyzer' in official toolchain" says what to do, and
+				// "the language server is not running" does not.
+				let said = lastStandardError[key] ?? error.localizedDescription
+				failures[languageId] = said
 				Toast.post(
 					"\(resolved.definition.command) did not answer",
-					detail: "\(error.localizedDescription)\n\(Self.logPath) has the rest.",
+					detail: "\(said)\n\(Self.logPath) has the rest.",
 					kind: .error
 				)
 			}
@@ -551,6 +575,7 @@ final class LanguageService {
 			Task { await client.shutdown() }
 		}
 		unavailable = unavailable.filter { !$0.hasPrefix(prefix) }
+		lastStandardError = lastStandardError.filter { !$0.key.hasPrefix(prefix) }
 		failures.removeAll()
 		announced.removeAll()
 		emptied.removeAll()
