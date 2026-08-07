@@ -706,6 +706,13 @@ final class EditorAreaController: NSViewController {
 	func simulateTyping(_ text: String) { activeGroup.simulateTyping(text) }
 	var textForTesting: String? { activeGroup.textForTesting }
 	func clickBelowLastLineForTesting() -> String { activeGroup.clickBelowLastLineForTesting() }
+	func globalScratchDirectoryForTesting() -> String {
+		activeGroup.globalScratchDirectoryForTesting()
+	}
+	func layoutReportForTesting() -> String { activeGroup.layoutReportForTesting() }
+	func tabMenuTitlesForTesting(overTab: Bool) -> [String] {
+		activeGroup.tabMenuTitlesForTesting(overTab: overTab)
+	}
 	func indentForTesting(fromLine: Int, toLine: Int, outdent: Bool) -> String? {
 		activeGroup.indentForTesting(fromLine: fromLine, toLine: toLine, outdent: outdent)
 	}

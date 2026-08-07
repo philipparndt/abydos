@@ -207,6 +207,7 @@ final class EditorViewController: NSViewController {
 		}
 		tabBar.onPromote = { [weak self] index in self?.promoteToPermanent(index: index) }
 		tabBar.onNewScratch = { [weak self] in self?.newScratch() }
+		tabBar.onNewGlobalScratch = { [weak self] in self?.newScratch(global: true) }
 		tabBar.groupID = groupID
 		tabBar.onTearOff = { [weak self] index, screenPoint in
 			guard let self else { return }
@@ -669,10 +670,19 @@ final class EditorViewController: NSViewController {
 	///
 	/// A real file, so it highlights, folds and searches like anything else —
 	/// but one kept outside the repository, where it cannot end up in a commit.
-	func newScratch() {
-		guard let root = project?.root else { return }
+	/// A global one belongs to no project: notes about a language or a way of
+	/// doing something, which outlive whichever checkout they were written in.
+	func newScratch(global: Bool = false) {
+		let files: ScratchFiles
+		if global {
+			files = .global()
+		} else {
+			guard let root = project?.root else { return }
+			files = ScratchFiles(projectRoot: root)
+		}
+
 		do {
-			let url = try ScratchFiles(projectRoot: root).create()
+			let url = try files.create()
 			open(fileURL: url, focusEditor: true)
 			NotificationCenter.default.post(name: .ideaiScratchesChanged, object: nil)
 		} catch {
@@ -797,7 +807,18 @@ final class EditorViewController: NSViewController {
 		// before the size and binary tests, both of which an STL fails on its
 		// way to being useful.
 		if FilePreview.defaultMode(for: fileURL) == .preview, FilePreview.hasPreview(fileURL) {
-			return makeModelTab(for: fileURL, preview: preview)
+			// A picture opens as the picture; a mesh opens rendered. Both skip
+			// the size and binary tests below, which each of them fails on the
+			// way to being useful.
+			if FilePreview.kind(for: fileURL) == .image {
+				// Unless it is a drawing with text behind it, which goes the
+				// ordinary way and comes back rendered at the end.
+				if !FilePreview.hasReadableSource(fileURL) {
+					return makeImageTab(for: fileURL, preview: preview)
+				}
+			} else {
+				return makeModelTab(for: fileURL, preview: preview)
+			}
 		}
 
 		let byteSize = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
@@ -945,6 +966,14 @@ final class EditorViewController: NSViewController {
 				url: fileURL, languageId: languageId, text: text(of: document), project: project.root
 			)
 			codeView.setDiagnostics(LanguageService.shared.diagnostics(for: fileURL))
+		}
+
+		// A file whose rendered form is the point of it opens rendered, with the
+		// text a click away: an SVG in a documentation folder is a picture
+		// first, and the path data behind it second.
+		if FilePreview.defaultMode(for: fileURL) == .preview, FilePreview.hasPreview(fileURL) {
+			tab.previewMode = .preview
+			tab.contentView = makeContentView(for: tab, mode: .preview)
 		}
 		return tab
 	}
@@ -1380,6 +1409,8 @@ final class EditorViewController: NSViewController {
 		switch FilePreview.kind(for: tab.url) {
 		case .model:
 			return makeModelView(for: tab.url)
+		case .image:
+			return ImageFileViewer(url: tab.url).scrollView
 		case .markdown, .none:
 			return makePreviewView(for: tab)
 		}
@@ -1521,6 +1552,23 @@ final class EditorViewController: NSViewController {
 		return tabs.first { $0.pageTitle != nil && $0.url == url }?.contentView
 	}
 
+	/// A tab showing a picture.
+	///
+	/// An SVG keeps its source: the control offers it and a split, since it is
+	/// a drawing somebody may well have written by hand. A PNG has none, so the
+	/// tab is the picture and nothing else.
+	private func makeImageTab(for fileURL: URL, preview: Bool) -> Tab {
+		let tab = Tab(
+			url: fileURL,
+			document: nil,
+			codeView: nil,
+			contentView: ImageFileViewer(url: fileURL).scrollView,
+			isPreview: preview
+		)
+		tab.previewMode = .preview
+		return tab
+	}
+
 	private func makeModelTab(for fileURL: URL, preview: Bool) -> Tab {
 		let tab = Tab(
 			url: fileURL,
@@ -1642,8 +1690,12 @@ final class EditorViewController: NSViewController {
 		// The control belongs to the active tab: a file with no rendered form
 		// shows none, so the strip does not offer something that does nothing.
 		if let tab = activeTab, !tab.isDiff {
+			let modes = FilePreview.availableModes(for: tab.url)
 			tabBar.setPreview(
-				modes: FilePreview.availableModes(for: tab.url),
+				// One mode is no choice: a PNG and a binary mesh each have only
+				// their rendered form, and a control whose menu holds the item
+				// that is already chosen is a button that does nothing.
+				modes: modes.count > 1 ? modes : [],
 				current: tab.previewMode
 			)
 		} else {
@@ -2024,6 +2076,36 @@ final class EditorViewController: NSViewController {
 
 	/// What the editor is holding, saved or not — for checking what typing did.
 	var textForTesting: String? { activeTab?.codeView?.textForTesting }
+
+	/// Presses the strip menu's global item, says where the file landed, and
+	/// takes it away again — a check that leaves nothing behind in somebody's
+	/// notes.
+	func globalScratchDirectoryForTesting() -> String {
+		let before = Set(ScratchFiles.global().all())
+		tabBar.contextMenuTitlesForTesting(overTab: false)  // builds the same menu
+		newScratch(global: true)
+		guard let made = ScratchFiles.global().all().first(where: { !before.contains($0) })
+		else { return "nothing created" }
+		defer { try? FileManager.default.removeItem(at: made) }
+		return made.deletingLastPathComponent().path
+	}
+
+	/// Where the strip and the file's view actually ended up.
+	func layoutReportForTesting() -> String {
+		let content = activeTab?.contentView
+		let centre = tabBar.convert(NSPoint(x: tabBar.bounds.midX, y: tabBar.bounds.midY), to: nil)
+		let onTop = view.window?.contentView?.hitTest(centre)
+		return "strip hidden=\(tabBar.isHidden) alpha=\(tabBar.alphaValue) items=\(tabBar.items.count)"
+			+ " frame=\(NSStringFromRect(tabBar.frame))"
+			+ " onTopOfStrip=\(onTop.map { String(describing: type(of: $0)) } ?? "nothing")"
+			+ " content=\(content.map { String(describing: type(of: $0)) } ?? "none")"
+			+ " area=\(NSStringFromRect(contentArea.frame))"
+	}
+
+	/// What the tab strip's menu offers over a tab and over its empty part.
+	func tabMenuTitlesForTesting(overTab: Bool) -> [String] {
+		tabBar.contextMenuTitlesForTesting(overTab: overTab)
+	}
 
 	/// Clicks under the last line of the file that is showing.
 	func clickBelowLastLineForTesting() -> String {

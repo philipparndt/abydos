@@ -505,6 +505,51 @@ struct TerminalGraphicsTests {
 		}
 		return (b << 16) | a
 	}
+	// MARK: - Getting rid of one
+
+
+	/// Clearing the screen takes the picture with it.
+	///
+	/// It did not, and that is how a picture printed inside tmux stayed on
+	/// screen: tmux repaints over what it cannot see, no program sends a delete
+	/// for a picture it drew, and nothing short of restarting the app removed
+	/// it.
+	@Test func clearingTheScreenRemovesThePicture() {
+		let terminal = emulator()
+		terminal.write(graphics("a=T,s=20,v=20,f=24;\(rawRGB(width: 20, height: 20))"))
+		#expect(!terminal.graphics.placements.isEmpty)
+
+		terminal.write("\u{1B}[2J")
+		#expect(terminal.graphics.placements.isEmpty)
+	}
+
+	/// Erasing from the cursor down takes the pictures below it, and leaves the
+	/// ones above alone — the rows above were not erased.
+	@Test func erasingPartOfTheScreenTakesOnlyWhatStoodThere() {
+		let terminal = emulator(rows: 20, columns: 40)
+		// One at the top, one further down.
+		terminal.write(graphics("a=T,s=20,v=20,f=24;\(rawRGB(width: 20, height: 20))"))
+		terminal.write("\u{1B}[10;1H")
+		terminal.write(graphics("a=T,s=20,v=20,f=24;\(rawRGB(width: 20, height: 20))"))
+		#expect(terminal.graphics.placements.count == 2)
+
+		// From row 10 down.
+		terminal.write("\u{1B}[10;1H\u{1B}[0J")
+		#expect(terminal.graphics.placements.count == 1)
+	}
+
+	/// A picture that scrolled up into the scrollback is not erased by clearing
+	/// the screen: the rows it stands on are still there to scroll back to.
+	@Test func keepsWhatHasScrolledOutOfTheScreen() {
+		let terminal = emulator(rows: 5, columns: 40)
+		terminal.write(graphics("a=T,s=20,v=20,f=24;\(rawRGB(width: 20, height: 20))"))
+		#expect(!terminal.graphics.placements.isEmpty)
+
+		// Ten fresh lines push it into the scrollback.
+		terminal.write(String(repeating: "line\r\n", count: 10))
+		terminal.write("\u{1B}[2J")
+		#expect(!terminal.graphics.placements.isEmpty)
+	}
 }
 
 /// Sizing a placement, which is where a picture comes out squashed.

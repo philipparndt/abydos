@@ -120,6 +120,12 @@ struct LaunchOptions {
 
 	/// Click in the empty space under the last line of a short file.
 	var clickBelowLastLine = false
+
+	/// Print what a right-click on the tab strip offers.
+	var tabMenu = false
+
+	/// Click into the commit details field and type this.
+	var commitBody: String?
 	/// `from:to:in|out` — indent or outdent a block, for checking Tab.
 	var indentBlock: String?
 	/// Prints what the editor is holding, saved or not.
@@ -412,6 +418,8 @@ struct LaunchOptions {
 			case "--option-key": if let pair = next() { options.optionKeys.append(pair) }
 			case "--dead-key": options.deadKeys = next()
 			case "--click-below": options.clickBelowLastLine = true
+			case "--tab-menu": options.tabMenu = true
+			case "--commit-body": options.commitBody = next()
 			case "--indent-block": options.indentBlock = next()
 			case "--print-text": options.printText = true
 			case "--theme": options.theme = next()

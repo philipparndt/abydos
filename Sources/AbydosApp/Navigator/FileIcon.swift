@@ -37,8 +37,19 @@ enum FileIcon {
 			return render(key: key, spec: spec)
 		} else {
 			let ext = node.url.pathExtension.lowercased()
-			key = "file.\(ext)"
-			spec = specification(forExtension: ext, filename: node.name.lowercased())
+			let file = specification(forExtension: ext, filename: node.name.lowercased())
+
+			// A scratch belonging to no project keeps its glyph and changes its
+			// colour. In a strip of tabs it is the one file that is not part of
+			// what is being worked on, and a note meant to outlive this checkout
+			// is easy to mistake for one of its files when the two look alike.
+			if ScratchFiles.global().contains(node.url) {
+				key = "file.global-scratch.\(ext)"
+				spec = Spec(symbol: file.symbol, color: .hex(0x9B6FD0))
+			} else {
+				key = "file.\(ext)"
+				spec = file
+			}
 		}
 
 		return render(key: key, spec: spec)

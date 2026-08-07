@@ -991,18 +991,32 @@ public final class TerminalEmulator {
 			for row in (cursorRow + 1)..<screen.rows {
 				screen[row] = screen.blankLine(attributes: attributes)
 			}
+			erasePictures(from: cursorRow, to: screen.rows - 1)
 		case 1: // start to cursor
 			eraseInLine(mode: 1)
 			for row in 0..<cursorRow {
 				screen[row] = screen.blankLine(attributes: attributes)
 			}
+			erasePictures(from: 0, to: cursorRow)
 		case 2, 3:
 			for row in 0..<screen.rows {
 				screen[row] = screen.blankLine(attributes: attributes)
 			}
+			erasePictures(from: 0, to: screen.rows - 1)
 		default:
 			break
 		}
+	}
+
+	/// Takes the pictures standing on erased rows with them.
+	///
+	/// Erasing text is how a program says "there is nothing here now", and a
+	/// picture left behind by it cannot be got rid of by any means the program
+	/// has — which is what left one on screen until the app was restarted.
+	private func erasePictures(from first: Int, to last: Int) {
+		guard first <= last else { return }
+		let offset = screen.scrollback.count
+		graphics.removePlacements(inRows: (offset + first)...(offset + last))
 	}
 
 	private func eraseInLine(mode: Int) {

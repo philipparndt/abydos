@@ -376,6 +376,29 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let text = options.commitBody {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+				print("COMMITBODY \(controller?.typeInCommitBodyForTesting(text) ?? "no window")")
+				fflush(stdout)
+				if options.isScreenshotRun { return }
+				exit(0)
+			}
+		}
+
+		if options.tabMenu {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+				for over in [true, false] {
+					let titles = controller?.tabMenuTitlesForTesting(overTab: over) ?? []
+					print("TABMENU \(over ? "tab" : "empty"): \(titles.joined(separator: " | "))")
+				}
+				print("LAYOUT \(controller?.layoutReportForTesting() ?? "no window")")
+				print("GLOBALSCRATCH \(controller?.globalScratchDirectoryForTesting() ?? "no window")")
+				fflush(stdout)
+				if options.isScreenshotRun { return }
+				exit(0)
+			}
+		}
+
 		if options.clickBelowLastLine {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
 				print("CLICKBELOW \(controller?.clickBelowLastLineForTesting() ?? "no window")")

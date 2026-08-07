@@ -102,6 +102,23 @@ final class ChangesPane: NSView {
 		bodyView.isRichText = false
 		bodyView.textContainerInset = NSSize(width: 4, height: 4)
 
+		// What a text view in a scroll view needs before it is any size at all.
+		// Without it the view keeps its empty starting frame however large the
+		// box around it looks, so every click in the details field landed on the
+		// scroll view behind it and the caret never arrived — the field looked
+		// like a field and refused to be typed in.
+		bodyView.isEditable = true
+		bodyView.isSelectable = true
+		bodyView.isVerticallyResizable = true
+		bodyView.isHorizontallyResizable = false
+		bodyView.autoresizingMask = [.width]
+		bodyView.minSize = .zero
+		bodyView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+		bodyView.textContainer?.widthTracksTextView = true
+		bodyView.textContainer?.containerSize = NSSize(
+			width: 0, height: CGFloat.greatestFiniteMagnitude
+		)
+
 		let bodyScroll = NSScrollView()
 		bodyScroll.documentView = bodyView
 		bodyScroll.hasVerticalScroller = true
@@ -497,6 +514,29 @@ final class ChangesPane: NSView {
 		let paths = selectedChanges(in: stagedTable).map(\.path)
 		guard !paths.isEmpty else { return }
 		run { await GitWorkingCopy.unstage(paths: paths, in: self.root) }
+	}
+
+	/// Clicks into the details field and types, and says what happened.
+	///
+	/// Through the window's hit testing, because what was wrong was that the
+	/// click never reached the text view: a test that typed into it directly
+	/// would have passed while the field stayed impossible to use.
+	func typeInCommitBodyForTesting(_ text: String) -> String {
+		guard let window, let root = window.contentView else { return "no window" }
+
+		let middle = NSPoint(x: bodyView.bounds.midX, y: bodyView.bounds.midY)
+		let inWindow = bodyView.convert(middle, to: nil)
+		let hit = root.hitTest(inWindow)
+		let landed = hit === bodyView || (hit?.isDescendant(of: bodyView) ?? false)
+
+		if landed {
+			window.makeFirstResponder(bodyView)
+			bodyView.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
+		}
+
+		let name = hit.map { String(describing: type(of: $0)) } ?? "nothing"
+		return "hit=\(landed ? "body" : name) frame=\(NSStringFromRect(bodyView.frame))"
+			+ " body=\(bodyView.string.debugDescription)"
 	}
 
 	@objc private func amendToggled() {

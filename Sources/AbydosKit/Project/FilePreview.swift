@@ -51,6 +51,10 @@ public enum FilePreview {
 		case markdown
 		/// A 3D model, either a mesh or a script that produces one.
 		case model
+		/// A picture. Documentation is full of them, and a project that keeps
+		/// its diagrams beside its text should be able to look at them without
+		/// leaving for Preview and back.
+		case image
 	}
 
 	public static func kind(for url: URL) -> Kind? {
@@ -59,6 +63,11 @@ public enum FilePreview {
 			return .markdown
 		case "scad", "stl", "3mf":
 			return .model
+		case "png", "jpg", "jpeg", "gif", "heic", "heif", "tiff", "tif", "bmp", "webp", "ico", "icns":
+			return .image
+		case "svg":
+			// A drawing that is also a file somebody edits, so it has both.
+			return .image
 		default:
 			return nil
 		}
@@ -72,9 +81,16 @@ public enum FilePreview {
 	/// it opens rendered. Anything written by hand opens as what it is, and the
 	/// preview is asked for.
 	public static func defaultMode(for url: URL) -> PreviewMode {
-		switch url.pathExtension.lowercased() {
-		case "stl", "3mf": return .preview
-		default:           return .source
+		switch kind(for: url) {
+		case .image:
+			// Opening a picture shows the picture. An SVG has text worth
+			// reading and the control offers it, but nobody clicks a diagram
+			// in a documentation folder hoping to see its path data.
+			return .preview
+		case .model:
+			return hasReadableSource(url) ? .source : .preview
+		case .markdown, .none:
+			return .source
 		}
 	}
 
@@ -82,7 +98,10 @@ public enum FilePreview {
 	///
 	/// A binary mesh cannot, so the control offers no source or split for it.
 	public static func hasReadableSource(_ url: URL) -> Bool {
-		!["stl", "3mf"].contains(url.pathExtension.lowercased())
+		// A picture is pixels; an SVG is a drawing written down, and reading it
+		// is a reasonable thing to want.
+		if kind(for: url) == .image { return url.pathExtension.lowercased() == "svg" }
+		return !["stl", "3mf"].contains(url.pathExtension.lowercased())
 	}
 
 	/// Modes worth offering for a file.

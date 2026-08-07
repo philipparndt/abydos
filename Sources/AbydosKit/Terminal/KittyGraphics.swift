@@ -347,6 +347,21 @@ public final class TerminalImageStore {
 		generation += 1
 	}
 
+	/// Drops the pictures standing on rows that have just been erased.
+	///
+	/// Erasing the text under a picture used to leave the picture: nothing in
+	/// the protocol says clearing the screen takes one away, and no program
+	/// sends a delete for a picture it drew — least of all tmux, which repaints
+	/// over what it does not know is there. So a picture printed inside tmux
+	/// stayed on the screen through `clear` and every redraw after it, and the
+	/// only way to be rid of it was to restart the terminal.
+	public func removePlacements(inRows rows: ClosedRange<Int>) {
+		let before = placements.count
+		placements.removeAll { $0.rowRange.overlaps(rows) }
+		guard placements.count != before else { return }
+		generation += 1
+	}
+
 	/// Lines fell off the top of scrollback, so every absolute row moved.
 	public func shiftRows(by delta: Int) {
 		guard delta != 0, !placements.isEmpty else { return }

@@ -44,6 +44,8 @@ final class EditorTabBar: NSView {
 	var onPromote: ((Int) -> Void)?
 	/// The empty part of the strip was double-clicked: make a scratch.
 	var onNewScratch: (() -> Void)?
+	/// Asked for a scratch belonging to no project, from that strip's menu.
+	var onNewGlobalScratch: (() -> Void)?
 	/// Identifies the group this strip belongs to, carried on the pasteboard so
 	/// a drop knows where the tab came from.
 	var groupID: UUID = UUID()
@@ -291,8 +293,13 @@ final class EditorTabBar: NSView {
 	/// side — plus the two things anybody wants from a tab that names a file.
 	override func rightMouseDown(with event: NSEvent) {
 		let point = convert(event.locationInWindow, from: nil)
+		NSMenu.popUpContextMenu(menu(at: point), with: event, for: self)
+	}
+
+	/// The menu for a point on the strip: the tab under it, or the strip itself.
+	private func menu(at point: NSPoint) -> NSMenu {
 		guard let index = frames.firstIndex(where: { $0.contains(point) }), index < items.count
-		else { return super.rightMouseDown(with: event) }
+		else { return emptyStripMenu() }
 
 		let menu = NSMenu()
 		func add(_ title: String, _ action: Selector, enabled: Bool = true) {
@@ -314,9 +321,40 @@ final class EditorTabBar: NSView {
 		menu.addItem(.separator())
 		add("Copy Path", #selector(copyPathFromMenu(_:)))
 		add("Reveal in Finder", #selector(revealFromMenu(_:)))
-
-		NSMenu.popUpContextMenu(menu, with: event, for: self)
+		return menu
 	}
+
+	/// The titles a right-click offers at a point, for checking that the empty
+	/// part of the strip offers something rather than falling through.
+	func contextMenuTitlesForTesting(overTab: Bool) -> [String] {
+		let point = overTab && !frames.isEmpty
+			? NSPoint(x: frames[0].midX, y: bounds.midY)
+			: NSPoint(x: bounds.maxX - Theme.current.scaled(4), y: bounds.midY)
+		return menu(at: point).items.map(\.title)
+	}
+
+	/// What a right-click on the empty part of the strip offers.
+	///
+	/// The same thing double-clicking there already does, plus the scratch that
+	/// belongs to no project. Double-click is the shortcut for people who know
+	/// it; a menu is how anybody else finds out either exists — and it is the
+	/// only way to reach the global one without the Scratches pane.
+	private func emptyStripMenu() -> NSMenu {
+		let menu = NSMenu()
+		for (title, action) in [
+			("New Scratch File", #selector(newScratchFromMenu(_:))),
+			("New Global Scratch File", #selector(newGlobalScratchFromMenu(_:))),
+		] {
+			let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+			item.target = self
+			menu.addItem(item)
+		}
+		return menu
+	}
+
+	@objc private func newScratchFromMenu(_ sender: NSMenuItem) { onNewScratch?() }
+
+	@objc private func newGlobalScratchFromMenu(_ sender: NSMenuItem) { onNewGlobalScratch?() }
 
 	private func index(of sender: NSMenuItem) -> Int? { sender.representedObject as? Int }
 

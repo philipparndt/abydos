@@ -3280,6 +3280,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	func pushChangesForTesting() { changesPane?.pushForTesting() }
 
+	/// Clicks into the commit details field and types there.
+	///
+	/// Opens the pane first: it is only built once the repository has been
+	/// read, so asking too early finds nothing and says so.
+	func typeInCommitBodyForTesting(_ text: String) -> String {
+		if changesPane == nil { showSidebarTool(.changes) }
+		guard let pane = changesPane else { return "no changes pane" }
+		window?.layoutIfNeeded()
+		return pane.typeInCommitBodyForTesting(text)
+	}
+
 	/// Runs a tab's close command and prints what is left.
 	func closeTabsForTesting(_ command: String, at index: Int) {
 		guard let group = editor.activeGroup else { return }
@@ -5819,6 +5830,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	/// Clicks below the last line of the open file, and says what happened.
 	func clickBelowLastLineForTesting() -> String { editor.clickBelowLastLineForTesting() }
+
+	func globalScratchDirectoryForTesting() -> String { editor.globalScratchDirectoryForTesting() }
+
+	func layoutReportForTesting() -> String { editor.layoutReportForTesting() }
+
+	/// What a right-click on the tab strip offers, over a tab and over the rest.
+	func tabMenuTitlesForTesting(overTab: Bool) -> [String] {
+		editor.tabMenuTitlesForTesting(overTab: overTab)
+	}
 
 	/// Indents or outdents a block, and prints what the file became.
 	func exerciseIndentForTesting(from: Int, to: Int, outdent: Bool) {
