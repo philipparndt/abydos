@@ -54,7 +54,10 @@ final class PlantUMLPreviewView: NSView {
 		addSubview(spinner)
 		NSLayoutConstraint.activate([
 			spinner.centerXAnchor.constraint(equalTo: centerXAnchor),
-			spinner.centerYAnchor.constraint(equalTo: centerYAnchor),
+			// Above the message rather than behind it: both are shown while a
+			// diagram is being drawn, and centred on the same point the text
+			// runs straight through the spinner.
+			spinner.centerYAnchor.constraint(equalTo: centerYAnchor, constant: -18),
 		])
 
 		if tool == nil { notice = PlantUML.installHint }
@@ -222,7 +225,11 @@ final class PlantUMLPreviewView: NSView {
 			with: NSSize(width: width, height: .greatestFiniteMagnitude),
 			options: [.usesLineFragmentOrigin]
 		).height
-		text.draw(with: NSRect(x: 32, y: (bounds.height - height) / 2, width: width, height: height),
+		// Below the spinner's place, whether or not one is turning: the message
+		// sits in the same spot either way, so it does not jump when the
+		// drawing finishes.
+		let top = (bounds.height - height) / 2 + 12
+		text.draw(with: NSRect(x: 32, y: top, width: width, height: height),
 		          options: [.usesLineFragmentOrigin])
 	}
 }

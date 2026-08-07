@@ -173,8 +173,13 @@ print_image() {
 			;;
 	esac
 
-	encoded="$(base64 < "$file" | tr -d '\n')"
-	[ "$file" = "$source_file" ] || rm -f "$file"
+	# The payload, already split into the 4096-character pieces the protocol
+	# asks for. Split once by `fold` rather than by taking a slice of a shell
+	# variable per piece: `cut -c` re-scans the whole string every time, so a
+	# five-megabyte picture — seven megabytes of base64, eighteen hundred
+	# pieces — spent five minutes re-reading itself.
+	chunks="$(mktemp -t abydos-icat-chunks)"
+	base64 < "$file" | tr -d '\n' | fold -w 4096 > "$chunks"
 
 	pixels=$(sips -g pixelWidth -g pixelHeight "$file" 2>/dev/null |
 		awk '/pixelWidth/ {w=$2} /pixelHeight/ {h=$2} END {print w" "h}')
@@ -182,6 +187,12 @@ print_image() {
 	image_height=${pixels##* }
 	[ "${image_width:-0}" -gt 0 ] 2>/dev/null || image_width=0
 	[ "${image_height:-0}" -gt 0 ] 2>/dev/null || image_height=0
+
+	# The converted copy goes now, and not before the line above: its size is
+	# what decides how many columns the picture takes, and asking a file that
+	# has just been deleted answers nothing — which quietly turned every JPEG
+	# into a picture the width of the window.
+	[ "$file" = "$source_file" ] || rm -f "$file"
 
 	# How wide to draw it, in columns.
 	#
@@ -235,24 +246,26 @@ print_image() {
 		"cell ${cell_w}x${cell_h}px term ${term_columns} cols" \
 		"-> c=${columns:-none} rows=${rows}" >&2
 
-	# 4096 bytes of base64 at a time, which is what the protocol asks for, with
-	# `m=1` on every chunk but the last.
-	total=${#encoded}
-	offset=0
+	# One piece at a time, with `m=1` on every one but the last — which is why
+	# each is held back until the next has been read: the last one is only
+	# recognisable by there being nothing after it.
 	first=1
-	while [ "$offset" -lt "$total" ]; do
-		chunk=$(printf '%s' "$encoded" | cut -c $((offset + 1))-$((offset + 4096)))
-		offset=$((offset + 4096))
-		more=1
-		[ "$offset" -lt "$total" ] || more=0
-
+	send_chunk() {
 		if [ "$first" -eq 1 ]; then
-			emit "$keys,m=$more" "$chunk"
+			emit "$keys,m=$2" "$1"
 			first=0
 		else
-			emit "m=$more" "$chunk"
+			emit "m=$2" "$1"
 		fi
-	done
+	}
+
+	held=""
+	while IFS= read -r piece; do
+		[ -z "$held" ] || send_chunk "$held" 1
+		held="$piece"
+	done < "$chunks"
+	[ -z "$held" ] || send_chunk "$held" 0
+	rm -f "$chunks"
 
 	# Down past the picture, so the shell's next prompt is under it.
 	index=0
