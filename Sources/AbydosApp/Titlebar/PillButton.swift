@@ -1,8 +1,17 @@
 import AppKit
 
+/// A titlebar control a menu can be anchored to, kept lit while that menu is up.
+///
+/// The pills and the capsule are drawn differently and share no code, but a
+/// menu does not care which it was opened from — only that it can say when it
+/// closed again.
+protocol TitlebarMenuAnchor: AnyObject {
+	var isMenuOpen: Bool { get set }
+}
+
 /// Base class for the titlebar pills: a rounded hit area that highlights on
 /// hover and stays highlighted while its menu is open.
-class PillButton: NSView {
+class PillButton: NSView, TitlebarMenuAnchor {
 	var onClick: (() -> Void)?
 
 	/// Kept lit while the popover is open so the pill reads as the menu's anchor.
@@ -107,125 +116,6 @@ class PillButton: NSView {
 		path.lineJoinStyle = .round
 		color.setStroke()
 		path.stroke()
-	}
-}
-
-/// Titlebar pill showing the project badge, name, and a disclosure chevron.
-final class ProjectPillButton: PillButton {
-	private var name: String = ""
-	private var badge: NSImage?
-
-	private static var badgeSize: CGFloat { Theme.current.scaled(18) }
-	private static var horizontalPadding: CGFloat { Theme.current.scaled(8) }
-	private static var gap: CGFloat { Theme.current.scaled(7) }
-
-	func configure(name: String, colorIndex: Int?) {
-		self.name = name
-		self.badge = ProjectBadge.image(for: name, colorIndex: colorIndex, size: Self.badgeSize)
-		invalidateIntrinsicContentSize()
-		needsDisplay = true
-	}
-
-	override var intrinsicContentSize: NSSize {
-		let textWidth = (name as NSString).size(withAttributes: [.font: Self.labelFont]).width
-		return NSSize(
-			width: PillButton.inset * 2 + Self.horizontalPadding * 2 + Self.badgeSize
-				+ Self.gap + ceil(textWidth) + Self.gap + Theme.current.scaled(9),
-			height: Theme.current.scaled(30)
-		)
-	}
-
-	override func drawContent(in rect: NSRect) {
-		var x = Self.horizontalPadding + PillButton.inset
-
-		if let badge {
-			badge.draw(in: NSRect(
-				x: x,
-				y: rect.midY - Self.badgeSize / 2,
-				width: Self.badgeSize,
-				height: Self.badgeSize
-			))
-			x += Self.badgeSize + Self.gap
-		}
-
-		let attributes: [NSAttributedString.Key: Any] = [
-			.font: Self.labelFont,
-			.foregroundColor: Theme.current.sidebarHeaderText,
-		]
-		let attributed = NSAttributedString(string: name, attributes: attributes)
-		let textSize = attributed.size()
-		attributed.draw(at: NSPoint(x: x, y: rect.midY - textSize.height / 2))
-		x += ceil(textSize.width) + Self.gap
-
-		drawChevron(
-			at: NSPoint(x: x, y: rect.midY),
-			color: Theme.current.sidebarText.withAlphaComponent(0.8)
-		)
-	}
-}
-
-/// Titlebar pill showing the current git branch.
-final class BranchPillButton: PillButton {
-	private var branch: String?
-
-	private static var iconSize: CGFloat { Theme.current.scaled(14) }
-	private static var horizontalPadding: CGFloat { Theme.current.scaled(7) }
-	private static var gap: CGFloat { Theme.current.scaled(6) }
-
-	/// Whether there is anything to show. The toolbar item is added and taken
-	/// away with it, since an item with nothing in it still draws a frame.
-	var hasBranch: Bool { branch != nil }
-
-	func setBranch(_ branch: String?) {
-		self.branch = branch
-		// A directory that is not a work tree has no branch to show, so the pill
-		// disappears rather than showing an empty state.
-		isHidden = (branch == nil)
-		invalidateIntrinsicContentSize()
-		needsDisplay = true
-	}
-
-	override var intrinsicContentSize: NSSize {
-		// NSToolbar measures the view even while hidden and warns about a zero
-		// dimension, so report a sliver rather than nothing when there is no branch.
-		guard let branch else { return NSSize(width: 1, height: Theme.current.scaled(28)) }
-		let textWidth = (branch as NSString).size(withAttributes: [.font: PillButton.labelFont]).width
-		return NSSize(
-			width: PillButton.inset * 2 + Self.horizontalPadding * 2 + Self.iconSize
-				+ Self.gap + ceil(textWidth) + Self.gap + Theme.current.scaled(9),
-			height: Theme.current.scaled(30)
-		)
-	}
-
-	override func drawContent(in rect: NSRect) {
-		guard let branch else { return }
-		var x = Self.horizontalPadding + PillButton.inset
-
-		let tint = Theme.current.sidebarText
-		// Colour baked into the symbol configuration — see Theme.symbol.
-		if let rendered = Theme.symbol("arrow.trianglehead.branch", size: 12 * Theme.current.scale, color: tint)
-			?? Theme.symbol("arrow.triangle.branch", size: 12 * Theme.current.scale, color: tint) {
-			let iconRect = NSRect(
-				x: x,
-				y: rect.midY - Self.iconSize / 2,
-				width: Self.iconSize,
-				height: Self.iconSize
-			)
-			// respectFlipped: this view is flipped; without it the glyph mirrors.
-			rendered.drawFitted(in: iconRect)
-			x += Self.iconSize + Self.gap
-		}
-
-		let attributes: [NSAttributedString.Key: Any] = [
-			.font: PillButton.labelFont,
-			.foregroundColor: Theme.current.sidebarHeaderText,
-		]
-		let attributed = NSAttributedString(string: branch, attributes: attributes)
-		let textSize = attributed.size()
-		attributed.draw(at: NSPoint(x: x, y: rect.midY - textSize.height / 2))
-		x += ceil(textSize.width) + Self.gap
-
-		drawChevron(at: NSPoint(x: x, y: rect.midY), color: tint.withAlphaComponent(0.8))
 	}
 }
 

@@ -69,6 +69,22 @@ struct GitForgeTests {
 			== "https://github.com/me/thing/tree/feature/a%20b")
 	}
 
+	@Test func aBranchAlsoHasAListOfWhatLandedOnIt() {
+		let repository = GitForge.Repository(host: "github.com", owner: "me", name: "thing")
+		#expect(repository.url(forCommitsOn: "main")?.absoluteString
+			== "https://github.com/me/thing/commits/main")
+		#expect(repository.url(forCommitsOn: "feature/a b")?.absoluteString
+			== "https://github.com/me/thing/commits/feature/a%20b")
+	}
+
+	/// The list, not this branch's own: which pull request belongs to a branch
+	/// is a question only an authenticated host can answer.
+	@Test func pullRequestsAreTheList() {
+		let repository = GitForge.Repository(host: "ghe.example.com", owner: "team/sub", name: "thing")
+		#expect(repository.pullRequestsURL?.absoluteString
+			== "https://ghe.example.com/team/sub/thing/pulls")
+	}
+
 	// MARK: - Nothing to open
 
 	/// A local clone is a real remote and has no web page at all; saying so is

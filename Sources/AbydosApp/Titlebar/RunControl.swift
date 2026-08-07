@@ -37,7 +37,15 @@ final class RunControl: NSView {
 	private var schemeRect: NSRect = .zero
 	private var toolTips: [NSView.ToolTipTag: String] = [:]
 	/// Told when a run starts or ends, so the titlebar can take the colour.
-	var onBusyChanged: ((Bool) -> Void)?
+	/// Told when the run state changes, so the line under the titlebar can show
+	/// it. A failure is part of it: it is not a kind of busyness, but it is
+	/// something the window should go on saying after the run has ended.
+	var onRunStateChanged: ((TitlebarSeam.State) -> Void)?
+
+	private var runState: TitlebarSeam.State {
+		if isBusy { return .running }
+		return failed ? .failed : .idle
+	}
 
 	override init(frame frameRect: NSRect) {
 		super.init(frame: frameRect)
@@ -127,6 +135,7 @@ final class RunControl: NSView {
 			.trimmingCharacters(in: .whitespaces)
 		guard text != status || busy != isBusy || failed != self.failed else { return }
 		let wasBusy = isBusy
+		let wasState = runState
 		status = text
 		if !busy { isStopping = false }
 		rebuildToolTips()
@@ -136,7 +145,9 @@ final class RunControl: NSView {
 		// The run button is a stop button while busy, and says so.
 		if wasBusy != busy {
 			rebuildToolTips()
-			onBusyChanged?(busy)
+		}
+		if wasState != runState {
+			onRunStateChanged?(runState)
 		}
 	}
 
@@ -209,12 +220,12 @@ final class RunControl: NSView {
 				// actually stopped. Starting means building, and stopping in a
 				// cluster means asking a pod on the other side of a network:
 				// both are long enough that silence reads as a missed click.
-				onBusyChanged?(false)
+				onRunStateChanged?(.idle)
 				setStatus("Stopping\u{2026}", busy: true)
 				onStop?()
 			} else {
 				press(runRect)
-				onBusyChanged?(true)
+				onRunStateChanged?(.running)
 				setStatus("Starting\u{2026}", busy: true)
 				onRun?()
 			}
@@ -222,7 +233,7 @@ final class RunControl: NSView {
 			showStartMenu()
 		} else if debugRect.contains(point) {
 			press(debugRect)
-			onBusyChanged?(true)
+			onRunStateChanged?(.running)
 			setStatus("Starting\u{2026}", busy: true)
 			onDebug?()
 		} else if schemeRect.contains(point) {

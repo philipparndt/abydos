@@ -24,10 +24,30 @@ public enum GitForge {
 
 		/// The branch's own page.
 		public func url(forBranch branch: String) -> URL? {
+			page("tree", branch)
+		}
+
+		/// What has landed on a branch.
+		public func url(forCommitsOn branch: String) -> URL? {
+			page("commits", branch)
+		}
+
+		/// The list of open pull requests.
+		///
+		/// The list rather than this branch's own: which pull request belongs to
+		/// a branch is a question only the host can answer, and answering it
+		/// needs a token this app deliberately does not hold.
+		public var pullRequestsURL: URL? {
+			URL(string: "https://\(host)/\(owner)/\(name)/pulls")
+		}
+
+		/// A page about one ref, with the ref escaped — branch names contain
+		/// slashes, and may contain worse.
+		private func page(_ section: String, _ branch: String) -> URL? {
 			guard let escaped = branch.addingPercentEncoding(
 				withAllowedCharacters: .urlPathAllowed
 			) else { return nil }
-			return URL(string: "https://\(host)/\(owner)/\(name)/tree/\(escaped)")
+			return URL(string: "https://\(host)/\(owner)/\(name)/\(section)/\(escaped)")
 		}
 
 		/// What to call the place, for a menu: the name of the host, unless it

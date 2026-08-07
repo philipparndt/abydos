@@ -3,7 +3,14 @@ import AbydosKit
 
 /// Dropdown for the branch pill: lists local branches and checks one out.
 enum BranchMenu {
-	static func show(relativeTo pill: PillButton, project: Project) {
+	/// - Parameter anchorRect: where the menu should hang from, for a control
+	///   that is bigger than the part being pointed at. Its whole bounds when
+	///   nothing is given.
+	static func show(
+		relativeTo pill: some NSView & TitlebarMenuAnchor,
+		anchorRect: NSRect? = nil,
+		project: Project
+	) {
 		pill.isMenuOpen = true
 
 		Task { @MainActor in
@@ -33,6 +40,12 @@ enum BranchMenu {
 			let menu = NSMenu()
 			menu.autoenablesItems = false
 
+			// The handoffs: places this repository also exists, offered only when
+			// they are really there. Fork when it is installed, the remote's own
+			// site when the remote is one — a repository with no remote, or one
+			// that is a path on this disk, has nowhere to be opened.
+			var handedOff = false
+
 			// Fork is a common companion for anything git can't do well inline,
 			// so offer a handoff when it is actually installed.
 			if let fork = ForkIntegration.applicationURL() {
@@ -45,8 +58,29 @@ enum BranchMenu {
 				item.representedObject = ForkRequest(application: fork, repository: root)
 				item.image = ForkIntegration.icon()
 				menu.addItem(item)
-				menu.addItem(.separator())
+				handedOff = true
 			}
+
+			if let repository = await GitForge.repository(in: root) {
+				// Named after the host rather than after a vendor: an Enterprise
+				// install is `git.example.com` and calling it GitHub would be a
+				// guess, while the address is a fact and the thing you would
+				// recognise anyway.
+				let item = NSMenuItem(
+					title: "Open on \(repository.displayName)",
+					action: nil,
+					keyEquivalent: ""
+				)
+				item.submenu = hostMenu(for: repository, branch: current)
+				item.image = NSImage(
+					systemSymbolName: "globe",
+					accessibilityDescription: nil
+				)
+				menu.addItem(item)
+				handedOff = true
+			}
+
+			if handedOff { menu.addItem(.separator()) }
 
 			for branch in branches {
 				let item = NSMenuItem(
@@ -60,13 +94,58 @@ enum BranchMenu {
 				menu.addItem(item)
 			}
 
+			let from = anchorRect ?? pill.bounds
 			menu.popUp(
 				positioning: nil,
-				at: NSPoint(x: 0, y: pill.bounds.maxY + 4),
+				at: NSPoint(x: from.minX, y: from.maxY + 4),
 				in: pill
 			)
 			pill.isMenuOpen = false
 		}
+	}
+
+	/// What there is to look at on the host.
+	///
+	/// Every entry is drawn twice: the plain one, and an alternate that copies
+	/// the address instead of opening it. Half the time the link is wanted for a
+	/// message rather than for a browser tab, and ⌥ is where a Mac user already
+	/// looks for the variant of a command.
+	private static func hostMenu(for repository: GitForge.Repository, branch: String?) -> NSMenu {
+		let menu = NSMenu()
+		menu.autoenablesItems = false
+
+		var entries: [(String, URL?)] = []
+		if let branch {
+			entries.append(("This Branch", repository.url(forBranch: branch)))
+			entries.append(("Commits", repository.url(forCommitsOn: branch)))
+		}
+		entries.append(("Pull Requests", repository.pullRequestsURL))
+		entries.append(("Repository Home", repository.webURL))
+
+		for (title, url) in entries {
+			guard let url else { continue }
+
+			let open = NSMenuItem(
+				title: title,
+				action: #selector(BranchMenuTarget.openLink(_:)),
+				keyEquivalent: ""
+			)
+			open.target = BranchMenuTarget.shared
+			open.representedObject = url
+			menu.addItem(open)
+
+			let copy = NSMenuItem(
+				title: "Copy Link to \(title)",
+				action: #selector(BranchMenuTarget.copyLink(_:)),
+				keyEquivalent: ""
+			)
+			copy.target = BranchMenuTarget.shared
+			copy.representedObject = url
+			copy.keyEquivalentModifierMask = .option
+			copy.isAlternate = true
+			menu.addItem(copy)
+		}
+		return menu
 	}
 }
 
@@ -123,6 +202,19 @@ enum ForkIntegration {
 
 private final class BranchMenuTarget: NSObject {
 	static let shared = BranchMenuTarget()
+
+	@objc func openLink(_ sender: NSMenuItem) {
+		guard let url = sender.representedObject as? URL else { return }
+		NSWorkspace.shared.open(url)
+	}
+
+	@objc func copyLink(_ sender: NSMenuItem) {
+		guard let url = sender.representedObject as? URL else { return }
+		NSPasteboard.general.clearContents()
+		NSPasteboard.general.setString(url.absoluteString, forType: .string)
+		// Copying leaves nothing on screen to show for itself, so say so.
+		Toast.post("Copied link", detail: url.absoluteString)
+	}
 
 	@objc func openInFork(_ sender: NSMenuItem) {
 		guard let request = sender.representedObject as? ForkRequest else { return }

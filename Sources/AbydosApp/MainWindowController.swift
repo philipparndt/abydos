@@ -181,6 +181,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	private var repositoryWatcher: RepositoryWatcher?
 	private var titlebarBackdrop: ColoredView?
 	private var titlebarBackdropHeight: NSLayoutConstraint?
+	private var titlebarSeam: TitlebarSeam?
 	/// Held while open: the panel is a child window and nothing else owns it.
 	/// Held while open, for the same reason.
 	private var processPicker: ProcessPicker?
@@ -195,8 +196,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			rememberOpenEditors()
 		}
 	}
-	private var projectPill: ProjectPillButton!
-	private var branchPill: BranchPillButton!
+	private var capsule: TitlebarCapsule!
 	private var subprojectPill: SubprojectPillButton!
 	/// Reading the repository, as a job rather than an answer.
 	///
@@ -713,7 +713,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				// terminal is exactly the case this watcher exists for.
 				Task { @MainActor in
 					await current.loadGit()
-					self.branchPill?.setBranch(await current.git?.currentBranch())
+					self.capsule?.setBranch(await current.git?.currentBranch())
 					self.layoutTitlebarPills()
 				}
 			}
@@ -746,24 +746,29 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		])
 		titlebarBackdrop = backdrop
 		titlebarBackdropHeight = height
+
+		// The line along the bottom of the strip, which is both the boundary
+		// under the titlebar and the only thing in the window that says a run is
+		// happening.
+		let seam = TitlebarSeam()
+		seam.translatesAutoresizingMaskIntoConstraints = false
+		backdrop.addSubview(seam)
+		NSLayoutConstraint.activate([
+			seam.leadingAnchor.constraint(equalTo: backdrop.leadingAnchor),
+			seam.trailingAnchor.constraint(equalTo: backdrop.trailingAnchor),
+			seam.bottomAnchor.constraint(equalTo: backdrop.bottomAnchor),
+			seam.heightAnchor.constraint(equalToConstant: TitlebarSeam.height),
+		])
+		titlebarSeam = seam
 	}
 
-	/// Green while something is running: the whole bar, not a badge on it.
-	private func setTitlebarRunning(_ running: Bool) {
+	/// Says what the run is doing, on the line under the titlebar.
+	private func setTitlebarRunState(_ state: TitlebarSeam.State) {
 		guard let backdrop = titlebarBackdrop else { return }
 		// Everything added since sits above it, so it is raised each time
 		// rather than once.
 		backdrop.superview?.addSubview(backdrop, positioned: .above, relativeTo: nil)
-
-		// The darker of the two backgrounds when nothing is running, so the bar
-		// reads as its own strip rather than as more sidebar. Green when
-		// something is: dark enough to keep the pills legible, green enough to
-		// be unmistakable from across the room.
-		let colour = running
-			? Theme.current.gitAdded.blended(withFraction: 0.55, of: Theme.current.toolbarBackground)
-				?? Theme.current.windowBackground
-			: Theme.current.windowBackground
-		backdrop.setColor(colour)
+		titlebarSeam?.set(state)
 	}
 
 	private func buildToolbar() {
@@ -771,6 +776,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		toolbar.delegate = self
 		toolbar.displayMode = .iconOnly
 		toolbar.allowsUserCustomization = false
+		// Held in the window's middle whatever the run strip is showing.
+		toolbar.centeredItemIdentifiers = [Self.capsuleItem]
 		window?.toolbar = toolbar
 		// .unified keeps the items on the traffic-light row rather than in a
 		// second bar below it — the arrangement in the reference screenshot.
@@ -780,34 +787,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// Re-measures the pills after their content changes, so the toolbar item
 	/// grows to fit a longer project name or a branch that arrived late.
 	private func layoutTitlebarPills() {
-		projectPill?.invalidateIntrinsicContentSize()
-		branchPill?.invalidateIntrinsicContentSize()
+		capsule?.invalidateIntrinsicContentSize()
 		subprojectPill?.invalidateIntrinsicContentSize()
 		// The run strip measures itself from the theme's scale, so it has to be
 		// asked again — otherwise zooming the window leaves the one control
 		// that is always on screen at the old size.
 		runControl?.invalidateIntrinsicContentSize()
 		runControl?.applyThemeChange()
-		updateBranchItemPresence()
-	}
-
-	/// Takes the branch item out of the toolbar when there is no branch.
-	///
-	/// Hiding its view is not enough: the toolbar still draws a background for
-	/// the item, and an item one point wide is a vertical line in the middle
-	/// of the titlebar that means nothing to anybody.
-	private func updateBranchItemPresence() {
-		guard let toolbar = window?.toolbar else { return }
-		let wanted = branchPill?.hasBranch == true
-		let index = toolbar.items.firstIndex { $0.itemIdentifier == Self.branchItem }
-
-		if wanted, index == nil {
-			// Straight after the project it belongs to.
-			let after = toolbar.items.firstIndex { $0.itemIdentifier == Self.projectItem }
-			toolbar.insertItem(withItemIdentifier: Self.branchItem, at: (after ?? -1) + 1)
-		} else if !wanted, let index {
-			toolbar.removeItem(at: index)
-		}
 	}
 
 	/// Pushes the measured titlebar height down to the navigator and editor.
@@ -891,8 +877,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		Task { @MainActor [weak self] in
 			let branch = await read.value
 			guard let self, !Task.isCancelled else { return }
-			self.branchPill?.setBranch(branch)
-			// The pill only gets a width once it has a name to show.
+			self.capsule?.setBranch(branch)
+			// The capsule only gets its width once it has a name to show.
 			self.layoutTitlebarPills()
 			self.navigator.refreshGitStatus()
 
@@ -904,6 +890,44 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			self.refreshRunConfigurations()
 		}
 		return read
+	}
+
+	/// Names the window after the repository rather than after the directory.
+	///
+	/// A linked worktree is another checkout of the same project, so
+	/// `ideai/.claude/worktrees/titlebar-capsule` is still ideai — naming it
+	/// after its folder would name the checkout and lose the project. The chip
+	/// beside the name says which checkout it is.
+	///
+	/// Asked of git rather than read off the path: a worktree can be created
+	/// anywhere, including outside the repository it belongs to.
+	private func readWorktree() {
+		guard let project else { return }
+		let root = project.root
+
+		Task { @MainActor [weak self] in
+			let worktrees = await GitWorktrees.list(in: root)
+			// Another project may have been opened while git was answering.
+			guard let self, self.project?.root == root else { return }
+
+			// The window may be opened at the worktree itself or somewhere
+			// inside it, so the deepest one containing this root is the one.
+			let containing = worktrees
+				.filter { root.path == $0.path.path || root.path.hasPrefix($0.path.path + "/") }
+				.max { $0.path.path.count < $1.path.path.count }
+
+			guard let containing, !containing.isPrimary,
+			      let primary = worktrees.first(where: { $0.isPrimary })
+			else {
+				self.capsule?.setWorktree(nil)
+				self.layoutTitlebarPills()
+				return
+			}
+
+			self.capsule?.setProject(name: primary.name)
+			self.capsule?.setWorktree(containing.name)
+			self.layoutTitlebarPills()
+		}
 	}
 
 	/// Points everything scoped at the current scope.
@@ -938,12 +962,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		subprojectPill?.setSubproject(nil)
 		window?.title = project.name
 
-		projectPill?.configure(
-			name: project.name,
-			colorIndex: RecentProjects.shared.entries.first { $0.path == project.root.path }?.colorIndex
-		)
-		branchPill?.setBranch(nil)
+		// No badge and no colour: which project this is gets stated once, by the
+		// name, and colour is kept for the switcher — where there is more than
+		// one project on screen and it has something to tell apart.
+		capsule?.setProject(name: project.name)
+		capsule?.setWorktree(nil)
+		capsule?.setBranch(nil)
 		layoutTitlebarPills()
+		readWorktree()
 
 		navigator.load(project: project)
 		editor.setProject(project)
@@ -3472,8 +3498,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	var editorForTesting: EditorAreaController { editor }
 
 	func highlightPillsForTesting() {
-		projectPill?.isMenuOpen = true
-		branchPill?.isMenuOpen = true
+		capsule?.isMenuOpen = true
 	}
 
 	func showAttachPickerForTesting(filter: String) {
@@ -6154,8 +6179,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	}
 
 	@objc func showProjectSwitcher(_ sender: Any?) {
-		guard let pill = projectPill else { return }
-		ProjectSwitcherPopover.show(relativeTo: pill, currentProject: project, owner: self)
+		guard let capsule else { return }
+		capsule.menuHalf = .project
+		ProjectSwitcherPopover.show(
+			relativeTo: capsule,
+			anchorRect: capsule.projectRect,
+			currentProject: project,
+			owner: self
+		)
 	}
 
 	// MARK: - NSWindowDelegate
@@ -6194,13 +6225,18 @@ extension MainWindowController: NSToolbarDelegate {
 	// These identifiers keep their old spelling for the same reason the window
 	// autosave names do: AppKit stores a toolbar's arrangement under them, and
 	// renaming would rebuild everybody's toolbar from the default.
-	private static let projectItem = NSToolbarItem.Identifier("ideai.project")
-	private static let branchItem = NSToolbarItem.Identifier("ideai.branch")
+	private static let capsuleItem = NSToolbarItem.Identifier("ideai.capsule")
 	private static let subprojectItem = NSToolbarItem.Identifier("ideai.subproject")
 	private static let runItem = NSToolbarItem.Identifier("ideai.run")
 
+	/// The capsule is centred on the window, not on the space left over.
+	///
+	/// `centeredItemIdentifiers` rather than a flexible space on either side:
+	/// those centre an item between its neighbours, so the run strip — which
+	/// grows with the length of a configuration's name — pushes the capsule off
+	/// the middle by half of whatever it is currently carrying.
 	func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-		[Self.projectItem, Self.subprojectItem, Self.branchItem, .flexibleSpace, Self.runItem]
+		[Self.capsuleItem, Self.subprojectItem, .flexibleSpace, Self.runItem]
 	}
 
 	func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -6213,23 +6249,30 @@ extension MainWindowController: NSToolbarDelegate {
 		willBeInsertedIntoToolbar flag: Bool
 	) -> NSToolbarItem? {
 		switch identifier {
-		case Self.projectItem:
+		case Self.capsuleItem:
 			let item = NSToolbarItem(itemIdentifier: identifier)
-			let pill = ProjectPillButton()
-			pill.onClick = { [weak self] in self?.showProjectSwitcher(nil) }
-			if let project {
-				pill.configure(
-					name: project.name,
-					colorIndex: RecentProjects.shared.entries.first { $0.path == project.root.path }?.colorIndex
-				)
+			let capsule = TitlebarCapsule()
+			capsule.onProject = { [weak self] in self?.showProjectSwitcher(nil) }
+			capsule.onBranch = { [weak self] in self?.showBranchMenu() }
+			if let project { capsule.setProject(name: project.name) }
+			// Whatever the current read of the repository says, whenever it
+			// says it: this item may be built before or after git answers.
+			if let read = branchRead {
+				Task { @MainActor in capsule.setBranch(await read.value) }
 			}
-			projectPill = pill
-			item.view = pill
+			self.capsule = capsule
+			item.view = capsule
+
 			// What the overflow menu shows when the window is too narrow to
 			// hold this. Without it AppKit drops the item and says nothing.
-			item.menuFormRepresentation = menuItem(
-				"Project", #selector(showProjectSwitcher(_:))
-			)
+			let menu = NSMenuItem(title: "Project", action: nil, keyEquivalent: "")
+			menu.submenu = {
+				let submenu = NSMenu()
+				submenu.addItem(menuItem("Switch Project…", #selector(showProjectSwitcher(_:))))
+				submenu.addItem(menuItem("Branch…", #selector(showBranchMenuItem(_:))))
+				return submenu
+			}()
+			item.menuFormRepresentation = menu
 			// The switcher is also in the menu bar, so this is the first thing
 			// that can go when there is no room.
 			item.visibilityPriority = .standard
@@ -6246,8 +6289,8 @@ extension MainWindowController: NSToolbarDelegate {
 			control.onChooseConfiguration = { [weak self] point in
 				self?.showConfigurationMenu(at: point, in: control)
 			}
-			control.onBusyChanged = { [weak self] running in
-				self?.setTitlebarRunning(running)
+			control.onRunStateChanged = { [weak self] state in
+				self?.setTitlebarRunState(state)
 			}
 			runControl = control
 			item.view = control
@@ -6277,21 +6320,6 @@ extension MainWindowController: NSToolbarDelegate {
 			subprojectPill = pill
 			item.view = pill
 			item.menuFormRepresentation = menuItem("Subproject", #selector(showSubprojectMenuItem(_:)))
-			item.visibilityPriority = .low
-			return item
-
-		case Self.branchItem:
-			let item = NSToolbarItem(itemIdentifier: identifier)
-			let pill = BranchPillButton()
-			pill.onClick = { [weak self] in self?.showBranchMenu() }
-			// Whatever the current read of the repository says, whenever it
-			// says it: this item may be built before or after git answers.
-			if let read = branchRead {
-				Task { @MainActor in pill.setBranch(await read.value) }
-			}
-			branchPill = pill
-			item.view = pill
-			item.menuFormRepresentation = menuItem("Branch", #selector(showBranchMenuItem(_:)))
 			item.visibilityPriority = .low
 			return item
 
@@ -6337,7 +6365,7 @@ extension MainWindowController: NSToolbarDelegate {
 			menu.addItem(item)
 		}
 
-		let anchor = subprojectPill ?? projectPill
+		let anchor: NSView? = subprojectPill ?? capsule
 		menu.popUp(
 			positioning: nil,
 			at: NSPoint(x: 0, y: (anchor?.bounds.maxY ?? 0) + Theme.current.scaled(4)),
@@ -6375,8 +6403,9 @@ extension MainWindowController: NSToolbarDelegate {
 	}
 
 	fileprivate func showBranchMenu() {
-		guard let project, let branchPill else { return }
-		BranchMenu.show(relativeTo: branchPill, project: project)
+		guard let project, let capsule else { return }
+		capsule.menuHalf = .branch
+		BranchMenu.show(relativeTo: capsule, anchorRect: capsule.branchRect, project: project)
 	}
 }
 

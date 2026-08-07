@@ -12,8 +12,11 @@ enum ProjectSwitcherPopover {
 		activeController?.setFilter(text)
 	}
 
+	/// - Parameter anchorRect: which part of the control the popover points at,
+	///   for one that is wider than the half being clicked.
 	static func show(
-		relativeTo pill: PillButton,
+		relativeTo pill: some NSView & TitlebarMenuAnchor,
+		anchorRect: NSRect? = nil,
 		currentProject: Project?,
 		owner: MainWindowController? = nil
 	) {
@@ -39,7 +42,7 @@ enum ProjectSwitcherPopover {
 
 		active = popover
 		activeController = controller
-		popover.show(relativeTo: pill.bounds, of: pill, preferredEdge: .maxY)
+		popover.show(relativeTo: anchorRect ?? pill.bounds, of: pill, preferredEdge: .maxY)
 		// The table needs to be first responder for arrow keys to work immediately.
 		controller.focusTable()
 	}
@@ -89,8 +92,9 @@ private final class SwitcherViewController: NSViewController {
 		var height: CGFloat {
 			switch self {
 			case .action: return Theme.current.scaled(26)
-			case .header: return Theme.current.scaled(28)
-			case .project: return Theme.current.scaled(42)
+			case .header: return Theme.current.scaled(26)
+			// One line, not two: the path moved onto the name's row.
+			case .project: return Theme.current.scaled(26)
 			}
 		}
 	}
@@ -265,20 +269,7 @@ private final class SwitcherViewController: NSViewController {
 			return
 		}
 
-		rows = [
-			.action(title: "New Project…", symbol: "plus") { [weak self] in
-				self?.onDismiss?()
-				self?.newProject()
-			},
-			.action(title: "Open…", symbol: "folder") { [weak self] in
-				self?.onDismiss?()
-				delegate?.openProjectPanel(nil)
-			},
-			.action(title: "Clone Repository…", symbol: "arrow.trianglehead.branch") { [weak self] in
-				self?.onDismiss?()
-				self?.cloneRepository()
-			},
-		]
+		rows = []
 
 		let openRoots = delegate?.openProjectRoots ?? []
 		let openPaths = Set(openRoots.map(\.path))
@@ -314,6 +305,32 @@ private final class SwitcherViewController: NSViewController {
 				rows.append(.project(entry, isOpen: false))
 			}
 		}
+
+		// Underneath, not on top. This list is opened to reach a project, and
+		// the three commands that are not one were standing in front of them.
+		// They stay here rather than moving to the menu bar because only Open
+		// is there today.
+		rows.append(.header("Elsewhere"))
+		if let root = currentProject?.root {
+			// The folder this window is actually looking at, which on a linked
+			// worktree is the worktree rather than the repository it came from.
+			rows.append(.action(title: "Reveal in Finder", symbol: "magnifyingglass") { [weak self] in
+				self?.onDismiss?()
+				NSWorkspace.shared.activateFileViewerSelecting([root])
+			})
+		}
+		rows.append(.action(title: "Open…", symbol: "folder") { [weak self] in
+			self?.onDismiss?()
+			delegate?.openProjectPanel(nil)
+		})
+		rows.append(.action(title: "New Project…", symbol: "plus") { [weak self] in
+			self?.onDismiss?()
+			self?.newProject()
+		})
+		rows.append(.action(title: "Clone Repository…", symbol: "arrow.trianglehead.branch") { [weak self] in
+			self?.onDismiss?()
+			self?.cloneRepository()
+		})
 	}
 
 	/// Matches on both name and path, so "3d" finds everything under ~/dev/3d.
@@ -520,7 +537,7 @@ extension SwitcherViewController: NSTableViewDataSource, NSTableViewDelegate {
 		case let .header(title):
 			return SwitcherHeaderCell(title: title)
 		case let .project(entry, isOpen):
-			return SwitcherProjectCell(entry: entry, isOpen: isOpen)
+			return SwitcherProjectCell(entry: entry, isOpen: isOpen, filter: filterText)
 		}
 	}
 }
@@ -667,15 +684,22 @@ private final class SwitcherHeaderCell: NSView {
 	}
 }
 
+/// One project, on one line.
+///
+/// The colour is a rail on the leading edge rather than a lettered square: the
+/// initials never said anything the name beside them did not, and the square is
+/// most of what made this list look like somebody else's IDE. On one line
+/// instead of two, twice as many projects fit — and the paths, right-aligned in
+/// a fixed face, line up into a column that can be read down.
 private final class SwitcherProjectCell: NSView {
 	private let entry: RecentProject
 	private let isOpen: Bool
-	private let badge: NSImage
+	private let filter: String
 
-	init(entry: RecentProject, isOpen: Bool) {
+	init(entry: RecentProject, isOpen: Bool, filter: String) {
 		self.entry = entry
 		self.isOpen = isOpen
-		self.badge = ProjectBadge.image(for: entry.name, colorIndex: entry.colorIndex, size: Theme.current.scaled(22))
+		self.filter = filter
 		super.init(frame: .zero)
 	}
 
@@ -683,21 +707,52 @@ private final class SwitcherProjectCell: NSView {
 
 	override var isFlipped: Bool { true }
 
-	override func draw(_ dirtyRect: NSRect) {
-		let badgeSize = Theme.current.scaled(22)
-		badge.draw(in: NSRect(x: Theme.current.scaled(12), y: bounds.midY - badgeSize / 2, width: badgeSize, height: badgeSize))
+	private static var railWidth: CGFloat { Theme.current.scaled(3) }
+	private static var leading: CGFloat { Theme.current.scaled(13) }
+	private static var trailing: CGFloat { Theme.current.scaled(12) }
 
-		let name = NSAttributedString(string: entry.name, attributes: [
-			.font: Theme.current.uiFont(13),
+	override func draw(_ dirtyRect: NSRect) {
+		ProjectBadge.color(for: entry.name, colorIndex: entry.colorIndex).setFill()
+		NSRect(x: 0, y: 0, width: Self.railWidth, height: bounds.height).fill()
+
+		let name = NSMutableAttributedString(string: entry.name, attributes: [
+			.font: Theme.current.uiFont(13, weight: isOpen ? .semibold : .regular),
 			.foregroundColor: Theme.current.sidebarHeaderText,
 		])
-		let path = NSAttributedString(string: entry.displayPath, attributes: [
-			.font: Theme.current.uiFont(11),
-			.foregroundColor: Theme.current.gitIgnored,
-		])
+		// What the typing matched, lit — so it is clear why this row is here.
+		if !filter.isEmpty,
+		   let range = entry.name.range(of: filter, options: [.caseInsensitive, .diacriticInsensitive]) {
+			name.addAttribute(
+				.foregroundColor,
+				value: Theme.current.gitModified,
+				range: NSRange(range, in: entry.name)
+			)
+		}
 
-		// Name and path stacked, matching the reference menu.
-		name.draw(at: NSPoint(x: Theme.current.scaled(44), y: bounds.midY - name.size().height - 1))
-		path.draw(at: NSPoint(x: Theme.current.scaled(44), y: bounds.midY + 2))
+		let nameSize = name.size()
+		let nameX = Self.leading
+		name.draw(at: NSPoint(x: nameX, y: bounds.midY - nameSize.height / 2))
+
+		// A fixed face, right-aligned, truncated at the front: the tail of a
+		// path is the part that says which one this is, and `/var/folders/…`
+		// is never it.
+		let paragraph = NSMutableParagraphStyle()
+		paragraph.alignment = .right
+		paragraph.lineBreakMode = .byTruncatingHead
+
+		let path = NSAttributedString(string: entry.displayPath, attributes: [
+			.font: NSFont.monospacedSystemFont(ofSize: Theme.current.scaled(11), weight: .regular),
+			.foregroundColor: Theme.current.gitIgnored,
+			.paragraphStyle: paragraph,
+		])
+		let left = nameX + ceil(nameSize.width) + Theme.current.scaled(12)
+		let available = bounds.maxX - Self.trailing - left
+		guard available > Theme.current.scaled(30) else { return }
+		path.draw(in: NSRect(
+			x: left,
+			y: bounds.midY - path.size().height / 2,
+			width: available,
+			height: path.size().height
+		))
 	}
 }
