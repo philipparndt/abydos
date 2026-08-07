@@ -1359,6 +1359,15 @@ final class EditorViewController: NSViewController {
 		}
 	}
 
+	/// Puts the caret on a 1-based line of the file being edited.
+	///
+	/// Nothing happens when no file is open: `:` in the palette is a question
+	/// about a document, and there is no document to ask it of.
+	func goTo(line: Int) {
+		activeTab?.codeView?.reveal(line: line)
+		activeTab?.codeView?.window?.makeFirstResponder(activeTab?.codeView)
+	}
+
 	// MARK: - Markdown preview
 
 	/// Swaps the active markdown tab between source and rendered preview.

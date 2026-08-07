@@ -3495,6 +3495,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	var editorForTesting: EditorAreaController { editor }
 
+	/// Puts the caret on a line of the file being edited, for `:` in the palette.
+	func goTo(line: Int) { editor.goTo(line: line) }
+
 	func highlightPillsForTesting() {
 		capsule?.isMenuOpen = true
 	}

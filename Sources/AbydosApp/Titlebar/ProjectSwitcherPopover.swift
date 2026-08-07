@@ -180,7 +180,7 @@ private final class SwitcherViewController: NSViewController {
 		// A visible field, so what you type is on screen and obviously a filter,
 		// rather than an invisible jump-to-match you have to guess at.
 		let field = NSSearchField()
-		field.placeholderString = "Projects, branches, actions"
+		field.placeholderString = "Search  ·  > actions  ·  : line"
 		field.font = Theme.current.uiFont(12)
 		field.delegate = self
 		field.focusRingType = .none
@@ -361,9 +361,49 @@ private final class SwitcherViewController: NSViewController {
 	/// actions below them would be pushed off the end.
 	private static let projectLimit = 8
 
+	/// What the typing is asking for.
+	///
+	/// The prefixes are VS Code's, because this is the field VS Code taught
+	/// people to open and they arrive already knowing what `>` does.
+	private enum Scope {
+		/// Everything at once, ranked: projects, then branches, then actions.
+		case everything(String)
+		/// `>` — actions only, which is what a command palette normally is.
+		case commands(String)
+		/// `:` — a line in the file being edited.
+		case line(Int?)
+	}
+
+	private var scope: Scope {
+		if filterText.hasPrefix(">") {
+			return .commands(rest(after: ">").lowercased())
+		}
+		if filterText.hasPrefix(":") {
+			let digits = rest(after: ":")
+			return .line(digits.isEmpty ? nil : Int(digits))
+		}
+		return .everything(filterText.lowercased())
+	}
+
+	private func rest(after prefix: String) -> String {
+		String(filterText.dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces)
+	}
+
 	/// Matches on both name and path, so "3d" finds everything under ~/dev/3d.
 	private func buildFilteredRows(delegate: AppDelegate?) {
-		let needle = filterText.lowercased()
+		let needle: String
+		switch scope {
+		case let .commands(query):
+			rows = [.header("Actions")]
+			rows.append(contentsOf: matchingActions(query))
+			return
+		case let .line(number):
+			buildLineRows(number)
+			return
+		case let .everything(query):
+			needle = query
+		}
+
 		let openPaths = Set((delegate?.openProjectRoots ?? []).map(\.path))
 
 		var candidates = RecentProjects.shared.entries
@@ -410,6 +450,20 @@ private final class SwitcherViewController: NSViewController {
 			rows.append(.header("Actions"))
 			rows.append(contentsOf: actions)
 		}
+	}
+
+	/// What `:` offers: one row, once there is a number to go to.
+	private func buildLineRows(_ number: Int?) {
+		rows = [.header("Go to Line")]
+		guard let number, number > 0 else {
+			// Nothing to do yet, but the header alone reads as a broken list.
+			rows.append(.action(title: "Type a line number", symbol: "number", handler: {}))
+			return
+		}
+		rows.append(.action(title: "Line \(number)", symbol: "arrow.right", handler: { [weak self] in
+			self?.onDismiss?()
+			self?.owner?.goTo(line: number)
+		}))
 	}
 
 	/// The things this window can be asked to do, as rows.
@@ -464,8 +518,11 @@ private final class SwitcherViewController: NSViewController {
 			self?.cloneRepository()
 		}))
 
+		// An empty needle keeps everything, which has to be said: Swift's
+		// `contains("")` is false, so filtering on nothing would return nothing
+		// and a bare `>` would list no commands at all.
 		return actions
-			.filter { $0.title.lowercased().contains(needle) }
+			.filter { needle.isEmpty || $0.title.lowercased().contains(needle) }
 			.map { .action(title: $0.title, symbol: $0.symbol, handler: $0.handler) }
 	}
 

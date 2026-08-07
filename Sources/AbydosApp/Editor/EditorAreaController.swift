@@ -693,6 +693,10 @@ final class EditorAreaController: NSViewController {
 		activeGroup.open(fileURL: fileURL, atLine: line)
 	}
 
+	/// Puts the caret on a 1-based line of whatever is open, for `:` in the
+	/// palette.
+	func goTo(line: Int) { activeGroup?.goTo(line: line) }
+
 	func save() { activeGroup.save() }
 	func closeActiveTab() { activeGroup.closeActiveTab() }
 	func selectNextTab(offset: Int) { activeGroup.selectNextTab(offset: offset) }
