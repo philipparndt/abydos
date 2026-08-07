@@ -27,6 +27,7 @@ import TreeSitterGroovy
 import TreeSitterCSSVendored
 import TreeSitterJavaScriptVendored
 import TreeSitterPythonVendored
+import TreeSitterMakeVendored
 import TreeSitterYAMLVendored
 
 /// A language ideai can parse, plus the queries used to highlight and fold it.
@@ -80,6 +81,7 @@ public final class LanguageRegistry {
 		register(id: "html", name: "HTML", bundle: "TreeSitterHTML_TreeSitterHTML") { tree_sitter_html() }
 		register(id: "css", name: "CSS", bundle: "Abydos_TreeSitterCSSVendored") { tree_sitter_css() }
 		register(id: "yaml", name: "YAML", bundle: "Abydos_TreeSitterYAMLVendored") { tree_sitter_yaml() }
+		register(id: "make", name: "Makefile", bundle: "Abydos_TreeSitterMakeVendored") { tree_sitter_make() }
 		register(id: "toml", name: "TOML", bundle: "TreeSitterTOML_TreeSitterTOML") { tree_sitter_toml() }
 		register(id: "markdown", name: "Markdown", bundle: "TreeSitterMarkdown_TreeSitterMarkdown") { tree_sitter_markdown() }
 		register(id: "markdown_inline", name: "Markdown (inline)", bundle: "TreeSitterMarkdown_TreeSitterMarkdownInline") { tree_sitter_markdown_inline() }
@@ -231,15 +233,15 @@ public final class LanguageRegistry {
 		"scad": "openscad",
 		"odin": "odin",
 		"zig": "zig", "zon": "zig",
-		// make has no grammar vendored here; bash's reads a recipe well enough,
-		// and the targets come from the Makefile parser rather than from any
-		// grammar.
-		"mk": "bash",
+		"mk": "make", "make": "make",
 	]
 
 	static let filenameMap: [String: String] = [
 		"dockerfile": "bash",
-		"makefile": "bash", "gnumakefile": "bash",
+		// A recipe is shell, and everything around it is not: targets,
+		// prerequisites and the three kinds of assignment are what a Makefile
+		// is mostly made of, and bash's grammar reads none of them.
+		"makefile": "make", "gnumakefile": "make", "makefile.am": "make", "makefile.in": "make",
 		".bashrc": "bash", ".bash_profile": "bash", ".zshrc": "bash", ".profile": "bash",
 		".gitconfig": "toml",
 		"cargo.lock": "toml",

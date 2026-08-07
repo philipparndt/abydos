@@ -41,7 +41,7 @@ nvim-treesitter's, which is Apache-2.0, and carries that attribution in its own
 header.
 
 Grammars vendored into `Sources/Grammars/` (see the note in `Package.swift` for
-why): css, javascript, python, yaml. Each keeps its upstream `LICENSE` beside
+why): css, javascript, make, python, yaml. Each keeps its upstream `LICENSE` beside
 its sources.
 
 **SwiftTreeSitter** (ChimeHQ) — BSD.

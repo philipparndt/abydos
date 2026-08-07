@@ -27,6 +27,7 @@ GRAMMARS=(
 	"JavaScript|https://github.com/tree-sitter/tree-sitter-javascript|v0.25.0|javascript"
 	"Python|https://github.com/tree-sitter/tree-sitter-python|v0.25.0|python"
 	"YAML|https://github.com/tree-sitter-grammars/tree-sitter-yaml|v0.7.2|yaml"
+	"Make|https://github.com/tree-sitter-grammars/tree-sitter-make|v1.1.1|make"
 )
 
 for entry in "${GRAMMARS[@]}"; do

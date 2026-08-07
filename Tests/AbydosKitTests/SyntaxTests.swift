@@ -11,7 +11,7 @@ struct SyntaxTests {
 	static let allLanguages = [
 		"swift", "rust", "typescript", "tsx", "javascript", "python", "go",
 		"json", "bash", "c", "cpp", "java", "html", "css", "yaml", "toml",
-		"markdown", "svelte", "openscad", "odin", "zig",
+		"markdown", "svelte", "openscad", "odin", "zig", "make",
 	]
 
 	@Test(arguments: allLanguages)
@@ -207,7 +207,11 @@ struct SyntaxTests {
 			("script.py", "python"),
 			("config.yaml", "yaml"),
 			("config.yml", "yaml"),
-			("Makefile", "bash"),
+			// A Makefile is not shell: a recipe is, and the targets, the
+			// prerequisites and the three kinds of assignment around it are not.
+			("Makefile", "make"),
+			("GNUmakefile", "make"),
+			("rules.mk", "make"),
 			("package.json", "json"),
 			("README.md", "markdown"),
 			("Component.svelte", "svelte"),

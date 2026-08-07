@@ -45,7 +45,7 @@ let revisionGrammars: [(pkg: String, url: String, revision: String, products: [S
 // — a relative path that never resolves during manifest evaluation, so the
 // scanner is dropped and the grammar fails to link. Vendoring lets the source
 // list be stated explicitly. See Scripts/vendor-grammars.sh to update them.
-let vendoredGrammars = ["CSS", "JavaScript", "Python", "YAML"]
+let vendoredGrammars = ["CSS", "JavaScript", "Make", "Python", "YAML"]
 
 // Spelled out rather than concatenated inside the Package literal: the type
 // checker gives up on an expression that large and the manifest stops
