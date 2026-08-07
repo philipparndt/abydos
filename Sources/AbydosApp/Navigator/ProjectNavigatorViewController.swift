@@ -92,6 +92,16 @@ final class ProjectNavigatorViewController: NSViewController {
 		outline.target = self
 		outline.doubleAction = #selector(rowDoubleClicked)
 		outline.onKeyDown = { [weak self] event in self?.handleKeyDown(event) ?? false }
+		// The absolute path, which is what "copy path" has always meant here and
+		// what a terminal, a Finder window or another program can be given. The
+		// menu still offers the relative one, which is the one a commit message
+		// or an import wants.
+		outline.copyText = { [weak self] in
+			guard let row = self?.outlineView.selectedRow, row >= 0,
+			      let node = self?.outlineView.item(atRow: row) as? FileNode
+			else { return nil }
+			return node.url.path
+		}
 		outline.menu = makeContextMenu()
 		outlineView = outline
 
@@ -1185,8 +1195,27 @@ private final class NavigatorHeaderView: NSView {
 /// Outline view that hands key events to the controller before acting on them.
 final class NavigatorOutlineView: NSOutlineView {
 	var onKeyDown: ((NSEvent) -> Bool)?
+	/// What ⌘C should put on the pasteboard, or nil when nothing is selected.
+	var copyText: (() -> String?)?
 
 	override var acceptsFirstResponder: Bool { true }
+
+	/// ⌘C copies the selected file's path.
+	///
+	/// Answered here rather than bound to a key, so it arrives the way copying
+	/// arrives everywhere else: the Edit menu sends `copy:` down the responder
+	/// chain, this is the responder when the tree has the keyboard, and the
+	/// menu item greys itself out when there is nothing selected to copy.
+	@objc func copy(_ sender: Any?) {
+		guard let text = copyText?() else { return }
+		NSPasteboard.general.clearContents()
+		NSPasteboard.general.setString(text, forType: .string)
+	}
+
+	override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+		if item.action == #selector(copy(_:)) { return copyText?() != nil }
+		return super.validateUserInterfaceItem(item)
+	}
 
 	override func keyDown(with event: NSEvent) {
 		if onKeyDown?(event) == true { return }

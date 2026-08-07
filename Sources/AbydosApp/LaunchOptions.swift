@@ -124,6 +124,9 @@ struct LaunchOptions {
 	/// Print what a right-click on the tab strip offers.
 	var tabMenu = false
 
+	/// Move down the tree this many steps, then copy with ⌘C.
+	var copyPath: String?
+
 	/// Feed the terminal this many frames at once, and report the redraws.
 	var burstFrames: Int?
 
@@ -422,6 +425,7 @@ struct LaunchOptions {
 			case "--dead-key": options.deadKeys = next()
 			case "--click-below": options.clickBelowLastLine = true
 			case "--tab-menu": options.tabMenu = true
+			case "--copy-path": options.copyPath = next() ?? "down"
 			case "--burst": options.burstFrames = next().flatMap(Int.init)
 			case "--commit-body": options.commitBody = next()
 			case "--indent-block": options.indentBlock = next()

@@ -401,6 +401,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let steps = options.copyPath {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+				print("COPYPATH \(controller?.copyPathForTesting(steps: steps) ?? "no window")")
+				fflush(stdout)
+				if options.isScreenshotRun { return }
+				exit(0)
+			}
+		}
+
 		if options.tabMenu {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
 				for over in [true, false] {

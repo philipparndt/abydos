@@ -3526,6 +3526,31 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	///
 	/// Arrowing through the tree is supposed to show each file it lands on, and
 	/// that is a claim about two views at once — which is why this prints both.
+	/// Selects a row in the tree and copies it the way ⌘C does, then says what
+	/// landed on the pasteboard.
+	///
+	/// Through `NSApp.sendAction`, which is exactly what the Edit menu's Copy
+	/// does: what could be wrong here is not the copying but whether the tree
+	/// is ever asked, and calling the method directly would answer the wrong
+	/// question. The pasteboard is put back afterwards — a test has no business
+	/// throwing away whatever somebody had copied.
+	func copyPathForTesting(steps: String) -> String {
+		let saved = NSPasteboard.general.string(forType: .string)
+		defer {
+			NSPasteboard.general.clearContents()
+			if let saved { NSPasteboard.general.setString(saved, forType: .string) }
+		}
+
+		navigator.focusTree()
+		for step in steps.split(separator: ",") where step == "down" {
+			navigator.pressKeyForTesting(125)
+		}
+
+		let sent = NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil)
+		let copied = NSPasteboard.general.string(forType: .string) ?? "nothing"
+		return "sent=\(sent) clipboard=\(copied)"
+	}
+
 	func treeStepsForTesting(_ steps: String) {
 		for step in steps.split(separator: ",") {
 			switch step {
