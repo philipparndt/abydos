@@ -57,9 +57,9 @@ final class TitlebarCapsule: NSView, TitlebarMenuAnchor {
 	private static var nameFont: NSFont { Theme.current.uiFont(13, weight: .semibold) }
 	private static var hintFont: NSFont { Theme.current.uiFont(10.5, weight: .medium) }
 
-	/// Matches the File menu's Go to Project…, which is shifted because plain
-	/// ⌘K clears the terminal.
-	private static let hint = "⇧⌘K"
+	/// Matches the File menu's Go to Anything…, which sits on VS Code's palette
+	/// shortcut because that is the one people's hands already know.
+	private static let hint = "⇧⌘P"
 
 	override init(frame frameRect: NSRect) {
 		super.init(frame: frameRect)

@@ -1399,14 +1399,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		// view, so it works wherever the keyboard focus happens to be and can be
 		// found by somebody who never reads a titlebar.
 		//
-		// Shifted because plain ⌘K clears the terminal, as it does in Terminal
-		// and every console — and a menu's key equivalent is matched before any
-		// view sees the key, so taking it here would have quietly stopped that
-		// working.
+		// ⇧⌘P, where a decade of VS Code has taught everybody's hands to reach
+		// for a palette. Presentation Mode had it and moved to ⌃⌘P: that is
+		// wanted a few times a year and this a few times an hour.
+		//
+		// Not plain ⌘K, which clears the terminal as it does in Terminal and
+		// every console — a menu's key equivalent is matched before any view
+		// sees the key, so taking it would have quietly stopped that working.
 		let switcherItem = NSMenuItem(
-			title: "Go to Project…",
+			title: "Go to Anything…",
 			action: #selector(MainWindowController.showProjectSwitcher(_:)),
-			keyEquivalent: "k"
+			keyEquivalent: "p"
 		)
 		switcherItem.keyEquivalentModifierMask = [.command, .shift]
 		fileMenu.addItem(switcherItem)
@@ -1699,7 +1702,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			action: #selector(MainWindowController.togglePresentationMode(_:)),
 			keyEquivalent: "p"
 		)
-		presentation.keyEquivalentModifierMask = [.command, .shift]
+		// Moved off ⇧⌘P, which the palette took: that is where VS Code put its
+		// own, and this is wanted once a quarter.
+		presentation.keyEquivalentModifierMask = [.command, .control]
 		viewMenu.addItem(presentation)
 		viewMenu.addItem(.separator())
 		let blameItem = NSMenuItem(

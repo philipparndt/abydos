@@ -23,14 +23,7 @@ enum BranchMenu {
 
 			// `git branch` sorted by most recent commit puts the branches the user
 			// actually moves between at the top.
-			let result = await GitRepository.run(
-				["branch", "--sort=-committerdate", "--format=%(refname:short)"],
-				in: root
-			)
-			let branches = result.stdout
-				.split(separator: "\n")
-				.map { $0.trimmingCharacters(in: .whitespaces) }
-				.filter { !$0.isEmpty }
+			let branches = await Self.branches(in: root)
 
 			guard !branches.isEmpty else {
 				pill.isMenuOpen = false
@@ -102,6 +95,55 @@ enum BranchMenu {
 			)
 			pill.isMenuOpen = false
 		}
+	}
+
+	/// Moves the work tree onto another branch.
+	///
+	/// Shared with the switcher, which lists branches beside projects: a branch
+	/// chosen by typing its name has to end up in exactly the same place as one
+	/// chosen from this menu.
+	static func checkout(_ branch: String, in root: URL) {
+		Task { @MainActor in
+			let result = await GitRepository.run(["checkout", branch], in: root)
+			if result.exitCode != 0 {
+				// Most often a dirty work tree; git's own message is the clearest
+				// explanation we could show.
+				Toast.post(
+					"Could not switch to \(branch)",
+					detail: result.stderr.isEmpty
+						? "git exited with code \(result.exitCode)."
+						: result.stderr
+				)
+				return
+			}
+			// The working tree changed underneath every open window on this repo.
+			NotificationCenter.default.post(name: .abydosRepositoryChanged, object: root)
+		}
+	}
+
+	/// Which branch the work tree is on.
+	///
+	/// Asked of git rather than of `GitRepository.currentBranch()`, which
+	/// answers from a cache that only a loaded repository has filled — a fresh
+	/// one says nil however checked out it is.
+	static func currentBranch(in root: URL) async -> String? {
+		let result = await GitRepository.run(["rev-parse", "--abbrev-ref", "HEAD"], in: root)
+		guard result.exitCode == 0 else { return nil }
+		let name = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+		// `HEAD` is git's way of saying it is detached, which is not a branch.
+		return (name.isEmpty || name == "HEAD") ? nil : name
+	}
+
+	/// The branches this repository has, most recently committed to first.
+	static func branches(in root: URL) async -> [String] {
+		let result = await GitRepository.run(
+			["branch", "--sort=-committerdate", "--format=%(refname:short)"],
+			in: root
+		)
+		return result.stdout
+			.split(separator: "\n")
+			.map { $0.trimmingCharacters(in: .whitespaces) }
+			.filter { !$0.isEmpty }
 	}
 
 	/// What there is to look at on the host.
@@ -223,23 +265,7 @@ private final class BranchMenuTarget: NSObject {
 
 	@objc func checkout(_ sender: NSMenuItem) {
 		guard let request = sender.representedObject as? BranchCheckout else { return }
-
-		Task { @MainActor in
-			let result = await GitRepository.run(["checkout", request.branch], in: request.root)
-			if result.exitCode != 0 {
-				// Most often a dirty work tree; git's own message is the clearest
-				// explanation we could show.
-				Toast.post(
-					"Could not switch to \(request.branch)",
-					detail: result.stderr.isEmpty
-						? "git exited with code \(result.exitCode)."
-						: result.stderr
-				)
-				return
-			}
-			// The working tree changed underneath every open window on this repo.
-			NotificationCenter.default.post(name: .abydosRepositoryChanged, object: request.root)
-		}
+		BranchMenu.checkout(request.branch, in: request.root)
 	}
 }
 

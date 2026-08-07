@@ -83,20 +83,14 @@ private final class SwitcherViewController: NSViewController {
 		case action(title: String, symbol: String, handler: () -> Void)
 		case header(String)
 		case project(RecentProject, isOpen: Bool)
+		case branch(String, isCurrent: Bool)
 
 		var isSelectable: Bool {
 			if case .header = self { return false }
 			return true
 		}
 
-		var height: CGFloat {
-			switch self {
-			case .action: return Theme.current.scaled(26)
-			case .header: return Theme.current.scaled(26)
-			// One line, not two: the path moved onto the name's row.
-			case .project: return Theme.current.scaled(26)
-			}
-		}
+		var height: CGFloat { Theme.current.scaled(26) }
 	}
 
 	var onDismiss: (() -> Void)?
@@ -109,7 +103,14 @@ private final class SwitcherViewController: NSViewController {
 	private var tableView: NSTableView!
 	private var filterField: NSSearchField!
 	/// What the user has typed. Empty shows the full menu.
-	private var filterText = "" 
+	private var filterText = ""
+
+	/// The current repository's branches, and where it lives on the web. Both
+	/// arrive after the popover is on screen — git is asked once, and the list
+	/// is rebuilt when it answers.
+	private var branches: [String] = []
+	private var currentBranch: String?
+	private var forge: GitForge.Repository?
 
 	init(currentProject: Project?, owner: MainWindowController?) {
 		self.currentProject = currentProject
@@ -119,8 +120,31 @@ private final class SwitcherViewController: NSViewController {
 
 	required init?(coder: NSCoder) { fatalError("not used") }
 
+	/// Asks git what this repository has, once, and rebuilds when it answers.
+	private func readRepository() {
+		guard let root = currentProject?.root else { return }
+		Task { @MainActor [weak self] in
+			async let names = BranchMenu.branches(in: root)
+			async let current = BranchMenu.currentBranch(in: root)
+			async let repository = GitForge.repository(in: root)
+
+			let (branches, head, forge) = await (names, current, repository)
+			guard let self, self.isViewLoaded else { return }
+			self.branches = branches
+			self.currentBranch = head
+			self.forge = forge
+			// Only the filtered list shows any of this, so there is nothing to
+			// redraw until something has been typed.
+			guard !self.filterText.isEmpty else { return }
+			self.buildRows()
+			self.tableView.reloadData()
+			self.updatePreferredSize()
+		}
+	}
+
 	override func loadView() {
 		buildRows()
+		readRepository()
 
 		// The cached scan is shown immediately and refreshed behind it, so the
 		// popover never waits on the file system to appear.
@@ -156,7 +180,7 @@ private final class SwitcherViewController: NSViewController {
 		// A visible field, so what you type is on screen and obviously a filter,
 		// rather than an invisible jump-to-match you have to guess at.
 		let field = NSSearchField()
-		field.placeholderString = "Filter projects"
+		field.placeholderString = "Projects, branches, actions"
 		field.font = Theme.current.uiFont(12)
 		field.delegate = self
 		field.focusRingType = .none
@@ -333,6 +357,10 @@ private final class SwitcherViewController: NSViewController {
 		})
 	}
 
+	/// How many matching projects a filtered list shows before the branches and
+	/// actions below them would be pushed off the end.
+	private static let projectLimit = 8
+
 	/// Matches on both name and path, so "3d" finds everything under ~/dev/3d.
 	private func buildFilteredRows(delegate: AppDelegate?) {
 		let needle = filterText.lowercased()
@@ -347,8 +375,98 @@ private final class SwitcherViewController: NSViewController {
 		let known = Set(candidates.map(\.path))
 		candidates.append(contentsOf: discoveredProjects(excluding: known))
 
-		rows = ProjectFilter.match(candidates, query: needle)
-			.map { .project($0, isOpen: openPaths.contains($0.path)) }
+		let projects = ProjectFilter.match(candidates, query: needle)
+
+		rows = []
+		if !projects.isEmpty {
+			// Capped, and the header says so. A short query matches half the
+			// disk, and without a limit the branches and actions underneath sit
+			// below a hundred rows of projects, which is the same as not being
+			// there. Narrowing the query is how the rest are reached.
+			let shown = projects.prefix(Self.projectLimit)
+			rows.append(.header(
+				projects.count > shown.count
+					? "Projects — \(shown.count) of \(projects.count)"
+					: "Projects"
+			))
+			rows.append(contentsOf: shown.map {
+				Row.project($0, isOpen: openPaths.contains($0.path))
+			})
+		}
+
+		// Branches of the repository already open. Typing a branch name is the
+		// same gesture as typing a project's, and ends in the same place the
+		// branch menu would have.
+		let matched = branches.filter { $0.lowercased().contains(needle) }
+		if !matched.isEmpty {
+			rows.append(.header("Branches"))
+			for branch in matched {
+				rows.append(.branch(branch, isCurrent: branch == currentBranch))
+			}
+		}
+
+		let actions = matchingActions(needle)
+		if !actions.isEmpty {
+			rows.append(.header("Actions"))
+			rows.append(contentsOf: actions)
+		}
+	}
+
+	/// The things this window can be asked to do, as rows.
+	///
+	/// The same two handoffs the branch menu offers, flattened: a submenu cannot
+	/// be typed at, so the host's pages become rows of their own and are found
+	/// by the words in them.
+	private func matchingActions(_ needle: String) -> [Row] {
+		var actions: [(title: String, symbol: String, handler: () -> Void)] = []
+
+		if let root = currentProject?.root {
+			if let fork = ForkIntegration.applicationURL() {
+				actions.append((title: "Open in Fork", symbol: "arrow.up.forward.app", handler: {
+					ForkIntegration.open(repository: root, application: fork)
+				}))
+			}
+			actions.append((title: "Reveal in Finder", symbol: "magnifyingglass", handler: {
+				NSWorkspace.shared.activateFileViewerSelecting([root])
+			}))
+		}
+
+		if let forge {
+			let host = forge.displayName
+			if let branch = currentBranch, let url = forge.url(forBranch: branch) {
+				actions.append((title: "Open Branch on \(host)", symbol: "globe", handler: {
+					NSWorkspace.shared.open(url)
+				}))
+			}
+			if let url = forge.pullRequestsURL {
+				actions.append((title: "Open Pull Requests on \(host)", symbol: "globe", handler: {
+					NSWorkspace.shared.open(url)
+				}))
+			}
+			if let url = forge.webURL {
+				actions.append((title: "Open Repository on \(host)", symbol: "globe", handler: {
+					NSWorkspace.shared.open(url)
+				}))
+			}
+		}
+
+		let delegate = NSApp.delegate as? AppDelegate
+		actions.append((title: "Open…", symbol: "folder", handler: { [weak self] in
+			self?.onDismiss?()
+			delegate?.openProjectPanel(nil)
+		}))
+		actions.append((title: "New Project…", symbol: "plus", handler: { [weak self] in
+			self?.onDismiss?()
+			self?.newProject()
+		}))
+		actions.append((title: "Clone Repository…", symbol: "arrow.trianglehead.branch", handler: { [weak self] in
+			self?.onDismiss?()
+			self?.cloneRepository()
+		}))
+
+		return actions
+			.filter { $0.title.lowercased().contains(needle) }
+			.map { .action(title: $0.title, symbol: $0.symbol, handler: $0.handler) }
 	}
 
 	private func applyFilter(_ text: String) {
@@ -375,6 +493,11 @@ private final class SwitcherViewController: NSViewController {
 		case let .project(entry, _):
 			onDismiss?()
 			(NSApp.delegate as? AppDelegate)?.open(projectAt: entry.url, from: owner)
+		case let .branch(branch, isCurrent):
+			onDismiss?()
+			// Checking out the branch already on is a slow way of doing nothing.
+			guard !isCurrent, let root = currentProject?.root else { return }
+			BranchMenu.checkout(branch, in: root)
 		}
 	}
 
@@ -538,6 +661,8 @@ extension SwitcherViewController: NSTableViewDataSource, NSTableViewDelegate {
 			return SwitcherHeaderCell(title: title)
 		case let .project(entry, isOpen):
 			return SwitcherProjectCell(entry: entry, isOpen: isOpen, filter: filterText)
+		case let .branch(name, isCurrent):
+			return SwitcherBranchCell(name: name, isCurrent: isCurrent, filter: filterText)
 		}
 	}
 }
@@ -681,6 +806,64 @@ private final class SwitcherHeaderCell: NSView {
 			.foregroundColor: Theme.current.gitIgnored,
 		])
 		attributed.draw(at: NSPoint(x: 12, y: bounds.height - attributed.size().height - 4))
+	}
+}
+
+/// One branch, laid out like a project so the two lists read as one.
+private final class SwitcherBranchCell: NSView {
+	private let name: String
+	private let isCurrent: Bool
+	private let filter: String
+
+	init(name: String, isCurrent: Bool, filter: String) {
+		self.name = name
+		self.isCurrent = isCurrent
+		self.filter = filter
+		super.init(frame: .zero)
+	}
+
+	required init?(coder: NSCoder) { fatalError("not used") }
+
+	override var isFlipped: Bool { true }
+
+	override func draw(_ dirtyRect: NSRect) {
+		let tint = Theme.current.sidebarText
+		let iconSize = Theme.current.scaled(13)
+		if let icon = Theme.symbol("arrow.trianglehead.branch", size: 11 * Theme.current.scale, color: tint)
+			?? Theme.symbol("arrow.triangle.branch", size: 11 * Theme.current.scale, color: tint) {
+			icon.drawFitted(in: NSRect(
+				x: Theme.current.scaled(12),
+				y: bounds.midY - iconSize / 2,
+				width: iconSize,
+				height: iconSize
+			))
+		}
+
+		let text = NSMutableAttributedString(string: name, attributes: [
+			.font: Theme.current.uiFont(13, weight: isCurrent ? .semibold : .regular),
+			.foregroundColor: Theme.current.sidebarHeaderText,
+		])
+		if !filter.isEmpty,
+		   let range = name.range(of: filter, options: [.caseInsensitive, .diacriticInsensitive]) {
+			text.addAttribute(
+				.foregroundColor,
+				value: Theme.current.gitModified,
+				range: NSRange(range, in: name)
+			)
+		}
+		let size = text.size()
+		text.draw(at: NSPoint(x: Theme.current.scaled(33), y: bounds.midY - size.height / 2))
+
+		guard isCurrent else { return }
+		let marker = NSAttributedString(string: "current", attributes: [
+			.font: NSFont.monospacedSystemFont(ofSize: Theme.current.scaled(11), weight: .regular),
+			.foregroundColor: Theme.current.gitIgnored,
+		])
+		let markerSize = marker.size()
+		marker.draw(at: NSPoint(
+			x: bounds.maxX - Theme.current.scaled(12) - ceil(markerSize.width),
+			y: bounds.midY - markerSize.height / 2
+		))
 	}
 }
 
