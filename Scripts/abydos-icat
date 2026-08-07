@@ -259,8 +259,16 @@ print_image() {
 		fi
 	}
 
+	# `|| [ -n "$piece" ]` because the last piece has no newline after it.
+	#
+	# `base64 | tr -d '\n'` produces one unterminated line, so `fold` ends the
+	# same way, and `read` returns false on a final line with no newline even
+	# though it read one. The body is then skipped and that piece is never sent
+	# — so every picture arrived missing its last few kilobytes and no terminal
+	# could decode it. It went unnoticed because the one image this was tried on
+	# encoded to exactly fifty-seven whole chunks.
 	held=""
-	while IFS= read -r piece; do
+	while IFS= read -r piece || [ -n "$piece" ]; do
 		[ -z "$held" ] || send_chunk "$held" 1
 		held="$piece"
 	done < "$chunks"
