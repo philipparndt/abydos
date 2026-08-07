@@ -15,11 +15,19 @@ enum MarkdownRenderer {
 
 		// Foundation's parser does not understand GFM pipe tables — they arrive
 		// as ordinary paragraphs with the bars intact, which reads as mangled
-		// prose. They are pulled out first and rendered as aligned monospace.
+		// prose. They are pulled out first and laid out as a real table.
 		for block in splitOutTables(markdown) {
 			switch block {
 			case let .table(text):
-				output.append(renderTable(text))
+				// A table's first cell has to begin a paragraph of its own: a
+				// paragraph takes the style of its first character, so a cell
+				// appended to an unterminated heading joins that heading instead
+				// of opening the grid — which put "file" beside "The diagrams"
+				// and shifted every column one to the left.
+				if output.length > 0, !output.string.hasSuffix("\n") {
+					output.append(NSAttributedString(string: "\n"))
+				}
+				output.append(renderTable(text, baseURL: baseURL))
 			case let .markdown(text):
 				output.append(renderBlocks(text, baseURL: baseURL))
 			}
@@ -300,7 +308,7 @@ enum MarkdownRenderer {
 	}
 
 	/// Renders a pipe table as column-aligned monospace text.
-	private static func renderTable(_ text: String) -> NSAttributedString {
+	private static func renderTable(_ text: String, baseURL: URL?) -> NSAttributedString {
 		let rows = text.components(separatedBy: "\n").compactMap { line -> [String]? in
 			let trimmed = line.trimmingCharacters(in: .whitespaces)
 			guard trimmed.hasPrefix("|") else { return nil }
@@ -318,47 +326,94 @@ enum MarkdownRenderer {
 		let header = rows[0]
 		let body = Array(rows.dropFirst(2))
 		let columnCount = rows.map(\.count).max() ?? 0
+		guard columnCount > 0 else { return NSAttributedString(string: text + "\n") }
 
-		var widths = [Int](repeating: 0, count: columnCount)
-		for row in ([header] + body) {
-			for (column, cell) in row.enumerated() where column < columnCount {
-				widths[column] = max(widths[column], cell.count)
-			}
-		}
-
-		func line(_ cells: [String]) -> String {
-			var parts: [String] = []
-			for column in 0..<columnCount {
-				let cell = column < cells.count ? cells[column] : ""
-				parts.append(cell.padding(toLength: widths[column], withPad: " ", startingAt: 0))
-			}
-			return "  " + parts.joined(separator: "  │  ")
-		}
-
-		let paragraph = NSMutableParagraphStyle()
-		paragraph.paragraphSpacingBefore = 8
-		paragraph.paragraphSpacing = 8
+		// A real text table rather than cells padded with spaces. Padding only
+		// holds while no line wraps, and in a pane narrower than the widest row
+		// every long cell wrapped back to the left margin — which is what turned
+		// a three-column table into a paragraph with bars in it. A table block
+		// wraps inside its own column and keeps the grid.
+		let table = NSTextTable()
+		table.numberOfColumns = columnCount
+		table.layoutAlgorithm = .automaticLayoutAlgorithm
+		table.collapsesBorders = true
+		table.hidesEmptyCells = false
 
 		let output = NSMutableAttributedString()
-		output.append(NSAttributedString(string: line(header) + "\n", attributes: [
-			.font: NSFont.monospacedSystemFont(ofSize: bodySize - 1, weight: .bold),
-			.foregroundColor: Theme.current.sidebarHeaderText,
-			.paragraphStyle: paragraph,
-		]))
-
-		let rule = "  " + widths.map { String(repeating: "─", count: $0) }.joined(separator: "──┼──")
-		output.append(NSAttributedString(string: rule + "\n", attributes: [
-			.font: monoFont,
-			.foregroundColor: Theme.current.separator,
-		]))
-
-		for row in body {
-			output.append(NSAttributedString(string: line(row) + "\n", attributes: [
-				.font: monoFont,
-				.foregroundColor: Theme.current.editorText,
-			]))
+		for (rowIndex, cells) in ([header] + body).enumerated() {
+			let isHeader = rowIndex == 0
+			for column in 0..<columnCount {
+				let cell = column < cells.count ? cells[column] : ""
+				output.append(tableCell(
+					cell,
+					in: table,
+					row: rowIndex,
+					column: column,
+					isHeader: isHeader,
+					baseURL: baseURL
+				))
+			}
 		}
 		output.append(NSAttributedString(string: "\n"))
 		return output
+	}
+
+	/// One cell, as its own paragraph inside the table's grid.
+	private static func tableCell(
+		_ text: String,
+		in table: NSTextTable,
+		row: Int,
+		column: Int,
+		isHeader: Bool,
+		baseURL: URL?
+	) -> NSAttributedString {
+		let block = NSTextTableBlock(
+			table: table, startingRow: row, rowSpan: 1, startingColumn: column, columnSpan: 1
+		)
+		block.setBorderColor(Theme.current.separator)
+		block.setWidth(1, type: .absoluteValueType, for: .border)
+		block.setWidth(6, type: .absoluteValueType, for: .padding)
+		if isHeader {
+			block.backgroundColor = Theme.current.selectionInactive.withAlphaComponent(0.35)
+		}
+
+		let paragraph = NSMutableParagraphStyle()
+		paragraph.textBlocks = [block]
+		// Inside a cell, wrapping is the point: a long sentence wraps within its
+		// own column instead of running under the one beside it.
+		paragraph.lineBreakMode = .byWordWrapping
+
+		// The cell's own markdown — a link in a table is still a link, and it
+		// read as `[name](name)` before.
+		let rendered = NSMutableAttributedString(
+			attributedString: renderBlocks(text, baseURL: baseURL)
+		)
+		trimTrailingNewlines(rendered)
+		if rendered.length == 0 { rendered.append(NSAttributedString(string: " ")) }
+
+		let range = NSRange(location: 0, length: rendered.length)
+		rendered.addAttribute(.paragraphStyle, value: paragraph, range: range)
+		if isHeader {
+			rendered.addAttribute(
+				.font,
+				value: NSFont.systemFont(ofSize: bodySize, weight: .semibold),
+				range: range
+			)
+			rendered.addAttribute(
+				.foregroundColor, value: Theme.current.sidebarHeaderText, range: range
+			)
+		}
+
+		// A newline ends every cell, and the last one in a row ends the row.
+		rendered.append(NSAttributedString(string: "\n", attributes: [.paragraphStyle: paragraph]))
+		return rendered
+	}
+
+	/// Blocks come back with the trailing newlines a paragraph needs, which
+	/// inside a cell would be blank lines in the grid.
+	private static func trimTrailingNewlines(_ text: NSMutableAttributedString) {
+		while text.length > 0, text.string.hasSuffix("\n") {
+			text.deleteCharacters(in: NSRange(location: text.length - 1, length: 1))
+		}
 	}
 }
