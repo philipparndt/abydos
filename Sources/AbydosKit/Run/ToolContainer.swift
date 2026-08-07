@@ -35,19 +35,50 @@ public enum ContainerRuntime: Equatable, Sendable {
 		}
 	}
 
+	/// What a person can ask for, rather than what happened to be found.
+	public enum Preference: String, CaseIterable, Sendable {
+		/// Whichever is installed, Apple's first.
+		case automatic
+		case apple
+		case docker
+
+		public var title: String {
+			switch self {
+			case .automatic: return "Whichever is installed"
+			case .apple:     return "Apple container"
+			case .docker:    return "Docker"
+			}
+		}
+	}
+
 	/// The runtimes to look for, in the order they are preferred.
 	///
-	/// Apple's first on macOS: it is the one that needs no daemon running
-	/// before it will answer, which is the difference between a feature that
-	/// works after a restart and one that says "cannot connect".
+	/// Apple's first when nothing was asked for: it is the one that needs no
+	/// daemon running before it will answer, which is the difference between a
+	/// feature that works after a restart and one that says "cannot connect".
+	///
+	/// A stated preference is honoured exactly, including by finding nothing:
+	/// somebody who says Docker and has none has a problem worth being told
+	/// about, not a silent substitution of the other one.
 	public static func discover(
+		preference: Preference = .automatic,
 		locate: (String) -> String? = { Executables.locate($0) }
 	) -> ContainerRuntime? {
-		if let apple = locate("container") { return .apple(apple) }
-		for name in ["docker", "nerdctl", "podman"] {
-			if let found = locate(name) { return .docker(found) }
+		switch preference {
+		case .apple:
+			return locate("container").map { .apple($0) }
+		case .docker:
+			for name in ["docker", "nerdctl", "podman"] {
+				if let found = locate(name) { return .docker(found) }
+			}
+			return nil
+		case .automatic:
+			if let apple = locate("container") { return .apple(apple) }
+			for name in ["docker", "nerdctl", "podman"] {
+				if let found = locate(name) { return .docker(found) }
+			}
+			return nil
 		}
-		return nil
 	}
 }
 

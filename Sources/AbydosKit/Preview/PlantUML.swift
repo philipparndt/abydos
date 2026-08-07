@@ -98,14 +98,15 @@ public enum PlantUML {
 		environment: [String: String] = ProcessInfo.processInfo.environment,
 		locate: (String) -> String? = { Executables.locate($0) },
 		fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) },
-		runtime: ContainerRuntime? = nil
+		runtime: ContainerRuntime? = nil,
+		runtimePreference: ContainerRuntime.Preference = .automatic
 	) -> Tool? {
 		// An image that was asked for wins over anything installed. Naming one
 		// is a decision — this project's diagrams are drawn by that version —
 		// and a local copy quietly overriding it would make the same file look
 		// different on two machines, which is what naming it was meant to stop.
 		if let image, !image.isEmpty,
-		   let runtime = runtime ?? ContainerRuntime.discover(locate: locate) {
+		   let runtime = runtime ?? ContainerRuntime.discover(preference: runtimePreference, locate: locate) {
 			return .image(ToolContainer(image: image), runtime)
 		}
 

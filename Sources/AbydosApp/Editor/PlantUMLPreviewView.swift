@@ -41,7 +41,11 @@ final class PlantUMLPreviewView: NSView {
 			project: projectRoot.map { ToolImages.inProject($0) } ?? ToolImages(),
 			settings: ToolImages(images: Settings.shared.toolImages)
 		)
-		tool = PlantUML.discover(image: images.image(for: "plantuml"))
+		tool = PlantUML.discover(
+			image: images.image(for: "plantuml"),
+			runtimePreference: ContainerRuntime.Preference(rawValue: Settings.shared.containerRuntime)
+				?? .automatic
+		)
 		super.init(frame: .zero)
 		spinner.style = .spinning
 		spinner.controlSize = .small

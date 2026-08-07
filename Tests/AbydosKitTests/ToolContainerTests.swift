@@ -125,3 +125,66 @@ struct ToolContainerTests {
 		])
 	}
 }
+
+/// Which runtime, and which image — both asked rather than guessed.
+struct ToolChoiceTests {
+	/// Nothing said: Apple's first, since it needs no daemon running before it
+	/// will answer.
+	@Test func automaticPrefersTheOneWithNoDaemon() {
+		let found = ContainerRuntime.discover(preference: .automatic) { name in
+			["container": "/usr/local/bin/container", "docker": "/usr/bin/docker"][name]
+		}
+		#expect(found == .apple("/usr/local/bin/container"))
+	}
+
+	/// Somebody who says Docker gets Docker, even where Apple's is installed.
+	@Test func aStatedPreferenceIsHonoured() {
+		let both: (String) -> String? = { name in
+            ["container": "/usr/local/bin/container", "docker": "/usr/bin/docker"][name]
+        }
+		#expect(ContainerRuntime.discover(preference: .docker, locate: both) == .docker("/usr/bin/docker"))
+		#expect(ContainerRuntime.discover(preference: .apple, locate: both) == .apple("/usr/local/bin/container"))
+	}
+
+	/// And somebody who says Docker and has none finds none — a problem worth
+	/// being told about, not a silent substitution of the other one.
+	@Test func aPreferenceIsNotQuietlySubstituted() {
+		let onlyApple: (String) -> String? = { $0 == "container" ? "/usr/local/bin/container" : nil }
+		#expect(ContainerRuntime.discover(preference: .docker, locate: onlyApple) == nil)
+
+		let onlyDocker: (String) -> String? = { $0 == "docker" ? "/usr/bin/docker" : nil }
+		#expect(ContainerRuntime.discover(preference: .apple, locate: onlyDocker) == nil)
+	}
+
+	/// The list a settings page offers: the installed copy, the known images,
+	/// and naming one yourself.
+	@Test func offersTheInstalledCopyTheKnownImagesAndACustomOne() throws {
+		let tool = try #require(ToolImageCatalogue.tool(forKey: "plantuml"))
+		let options = ToolImageCatalogue.options(for: tool)
+
+		#expect(options.first?.value == ToolImageCatalogue.useInstalled)
+		#expect(options.last?.value == ToolImageCatalogue.custom)
+		#expect(options.contains { $0.value == "plantuml/plantuml" })
+	}
+
+	/// A pinned version is not on the list and is still a real choice: it shows
+	/// as custom, with the name in the field beside it, rather than as nothing.
+	@Test func anUnknownImageIsCustomRatherThanNothing() throws {
+		let tool = try #require(ToolImageCatalogue.tool(forKey: "plantuml"))
+		#expect(ToolImageCatalogue.selection(for: "", tool: tool) == ToolImageCatalogue.useInstalled)
+		#expect(ToolImageCatalogue.selection(for: "plantuml/plantuml", tool: tool) == "plantuml/plantuml")
+		#expect(
+			ToolImageCatalogue.selection(for: "ghcr.io/me/plantuml:1.2025.4", tool: tool)
+				== ToolImageCatalogue.custom
+		)
+	}
+
+	/// What a custom image has to do is written down, not left to be discovered
+	/// through an empty pane.
+	@Test func saysWhatACustomImageMustProvide() throws {
+		let tool = try #require(ToolImageCatalogue.tool(forKey: "plantuml"))
+		#expect(tool.requirement.contains("entry point"))
+		#expect(tool.requirement.contains("standard input"))
+		#expect(tool.requirement.contains("Graphviz"))
+	}
+}

@@ -479,21 +479,63 @@ final class SettingsPaneController: NSViewController {
 	/// pairs: a settings page is for the things somebody actually sets, and a
 	/// free-form map of tool names invites typing one that means nothing.
 	static func toolRows() -> [Row] {
-		[
-			.text(
-				title: "PlantUML image",
-				help: "Draw diagrams in a container instead of installing PlantUML — "
-					+ "for example plantuml/plantuml. Needs Apple's container or docker. "
-					+ "A project naming its own in .abydos/tools.json overrides this.",
-				get: { Settings.shared.toolImages["plantuml"] ?? "" },
-				set: { image in
-					var images = Settings.shared.toolImages
-					let wanted = image.trimmingCharacters(in: .whitespaces)
-					if wanted.isEmpty { images["plantuml"] = nil } else { images["plantuml"] = wanted }
-					Settings.shared.toolImages = images
-				}
+		var rows: [Row] = [
+			.choice(
+				title: "Container runtime",
+				help: "Where a tool that comes from an image is run. Apple's needs no daemon; "
+					+ "docker needs its own running. Saying which means being told when it is "
+					+ "missing, rather than quietly getting the other one.",
+				options: ContainerRuntime.Preference.allCases.map { ($0.title, $0.rawValue) },
+				get: { Settings.shared.containerRuntime },
+				set: { Settings.shared.containerRuntime = $0 }
 			),
 		]
+
+		// One card per tool: the image to use, and the field for naming one
+		// that is not on the list. The requirement is spelled out beside it,
+		// because an image that does not meet it fails as an empty pane and
+		// nothing on screen would say why.
+		for tool in ToolImageCatalogue.tools {
+			rows.append(.group(title: tool.title, help: nil, rows: [
+				.choice(
+					title: "\(tool.title) from",
+					help: "Installed on this machine is used unless an image is chosen. "
+						+ "A project naming its own in .abydos/tools.json overrides both.",
+					options: ToolImageCatalogue.options(for: tool),
+					get: {
+						ToolImageCatalogue.selection(
+							for: Settings.shared.toolImages[tool.key] ?? "", tool: tool
+						)
+					},
+					set: { value in
+						var images = Settings.shared.toolImages
+						switch value {
+						case ToolImageCatalogue.useInstalled:
+							images[tool.key] = nil
+						case ToolImageCatalogue.custom:
+							// Keep whatever is in the field: choosing "custom"
+							// is saying "the one I typed", not clearing it.
+							if images[tool.key] == nil { images[tool.key] = "" }
+						default:
+							images[tool.key] = value
+						}
+						Settings.shared.toolImages = images
+					}
+				),
+				.text(
+					title: "Custom image",
+					help: tool.requirement,
+					get: { Settings.shared.toolImages[tool.key] ?? "" },
+					set: { image in
+						var images = Settings.shared.toolImages
+						let wanted = image.trimmingCharacters(in: .whitespaces)
+						images[tool.key] = wanted.isEmpty ? nil : wanted
+						Settings.shared.toolImages = images
+					}
+				),
+			]))
+		}
+		return rows
 	}
 
 	static func agentRows() -> [Row] {

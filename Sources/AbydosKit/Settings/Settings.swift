@@ -103,6 +103,7 @@ public final class Settings {
 		static let terminalGPURendering = "terminalGPURendering"
 		static let terminalOptionAsMeta = "terminalOptionAsMeta"
 		static let toolImages = "toolImages"
+		static let containerRuntime = "containerRuntime"
 		static let appearance = "appearance"
 		static let followsTerminalProject = "followsTerminalProject"
 		static let terminalAtStartup = "terminalAtStartup"
@@ -335,6 +336,16 @@ public final class Settings {
 	/// A project that names its own in `.abydos/tools.json` overrides this —
 	/// what a checked-in diagram is drawn by is the project's business, not a
 	/// personal preference.
+	/// Which container runtime tools come from, when they come from an image.
+	///
+	/// "Whichever is installed" unless somebody says otherwise — and somebody
+	/// who says Docker and has none is told so, rather than quietly given the
+	/// other one.
+	public var containerRuntime: String {
+		get { defaults.string(forKey: Key.containerRuntime) ?? "automatic" }
+		set { set(newValue, Key.containerRuntime) }
+	}
+
 	public var toolImages: [String: String] {
 		get { defaults.dictionary(forKey: Key.toolImages) as? [String: String] ?? [:] }
 		set { set(newValue, Key.toolImages) }
