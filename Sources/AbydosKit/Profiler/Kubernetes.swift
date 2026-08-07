@@ -258,14 +258,12 @@ public enum Kubernetes {
 					return
 				}
 
-				let outData = out.fileHandleForReading.readDataToEndOfFile()
-				let errData = err.fileHandleForReading.readDataToEndOfFile()
-				process.waitUntilExit()
+				let captured = ProcessPipes.drainText(process, out: out, err: err)
 
 				continuation.resume(returning: Result(
 					exitCode: process.terminationStatus,
-					stdout: String(decoding: outData, as: UTF8.self),
-					stderr: String(decoding: errData, as: UTF8.self)
+					stdout: captured.stdout,
+					stderr: captured.stderr
 				))
 			}
 		}

@@ -530,14 +530,12 @@ public enum ShellEnvironment {
 					continuation.resume(returning: (127, "", error.localizedDescription))
 					return
 				}
-				let outData = out.fileHandleForReading.readDataToEndOfFile()
-				let errData = err.fileHandleForReading.readDataToEndOfFile()
-				process.waitUntilExit()
+				let captured = ProcessPipes.drainText(process, out: out, err: err)
 
 				continuation.resume(returning: (
 					process.terminationStatus,
-					String(decoding: outData, as: UTF8.self),
-					String(decoding: errData, as: UTF8.self)
+					captured.stdout,
+					captured.stderr
 				))
 			}
 		}

@@ -338,12 +338,9 @@ public enum DevPodInstall {
 						continuation.resume(returning: (127, "", error.localizedDescription))
 						return
 					}
-					let outData = out.fileHandleForReading.readDataToEndOfFile()
-					let errData = err.fileHandleForReading.readDataToEndOfFile()
-					process.waitUntilExit()
-
-					let output = String(decoding: outData, as: UTF8.self)
-					let error = String(decoding: errData, as: UTF8.self)
+					let captured = ProcessPipes.drainText(process, out: out, err: err)
+					let output = captured.stdout
+					let error = captured.stderr
 					for line in (output + error).split(separator: "\n") where !line.isEmpty {
 						progress?(String(line))
 					}

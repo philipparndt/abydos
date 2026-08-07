@@ -138,14 +138,17 @@ final class PlantUMLPreviewView: NSView {
 			var complaint = ""
 			do {
 				try process.run()
-				// Written and closed before reading, or a diagram larger than
-				// the pipe's buffer deadlocks: PlantUML is waiting to be given
-				// the rest while this waits to be given the picture.
-				input.fileHandleForWriting.write(Data(source.utf8))
-				input.fileHandleForWriting.closeFile()
-				drawn = output.fileHandleForReading.readDataToEndOfFile()
-				complaint = String(data: errors.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-				process.waitUntilExit()
+				// The diagram goes in and both pipes come out at the same time.
+				// Anything in sequence here deadlocks — a diagram larger than
+				// the pipe leaves PlantUML waiting to be given the rest, and a
+				// complaint longer than the pipe leaves it waiting to finish
+				// saying it while this waits for the picture.
+				let captured = ProcessPipes.drain(
+					process, out: output, err: errors,
+					input: Data(source.utf8), stdin: input
+				)
+				drawn = captured.stdout
+				complaint = String(decoding: captured.stderr, as: UTF8.self)
 			} catch {
 				complaint = error.localizedDescription
 			}

@@ -228,23 +228,27 @@ public actor GitRepository {
 		process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
 		process.arguments = arguments
 		process.currentDirectoryURL = directory
-		if !environment.isEmpty {
-			process.environment = ProcessInfo.processInfo.environment.merging(environment) { _, new in new }
-		}
+
+		// Keep git from consulting the terminal or a credential helper, with
+		// whatever the caller asked for on top.
+		//
+		// This used to be assigned twice — the caller's merge first, then this
+		// one — so the second assignment silently threw the caller's
+		// environment away and nothing that passed one ever had it applied.
+		var env = ProcessInfo.processInfo.environment
+		env["GIT_TERMINAL_PROMPT"] = "0"
+		env["GIT_OPTIONAL_LOCKS"] = "0"
+		for (key, value) in environment { env[key] = value }
+		process.environment = env
 
 		let out = Pipe(), err = Pipe()
 		process.standardOutput = out
 		process.standardError = err
 
-		// A patch arrives on stdin. Without a pipe here git would inherit ours
-		// and block reading from a terminal that is not there.
+		// stdin is a pipe whether or not there is anything to send: git that
+		// inherited ours would read from whatever the app was started with.
 		let stdin = Pipe()
-		if input != nil { process.standardInput = stdin }
-		// Keep git from consulting the terminal or a credential helper.
-		var env = ProcessInfo.processInfo.environment
-		env["GIT_TERMINAL_PROMPT"] = "0"
-		env["GIT_OPTIONAL_LOCKS"] = "0"
-		process.environment = env
+		process.standardInput = stdin
 
 		do {
 			try process.run()
@@ -252,21 +256,17 @@ public actor GitRepository {
 			return ProcessResult(stdout: "", stderr: "\(error)", exitCode: -1)
 		}
 
-		if let input {
-			// Written before the pipes are drained, and closed so git sees EOF.
-			stdin.fileHandleForWriting.write(input)
-			try? stdin.fileHandleForWriting.close()
-		}
-
-		// Read both pipes before waiting; a full pipe buffer would otherwise
-		// deadlock against a process that is still writing.
-		let outData = out.fileHandleForReading.readDataToEndOfFile()
-		let errData = err.fileHandleForReading.readDataToEndOfFile()
-		process.waitUntilExit()
+		// Both pipes drained at the same time, and stdin written on a thread of
+		// its own. Reading stdout to the end and stderr afterwards deadlocks
+		// against a program blocked writing to the pipe nobody is reading —
+		// see ProcessPipes, and the several afternoons it cost.
+		let captured = ProcessPipes.drainText(
+			process, out: out, err: err, input: input, stdin: stdin
+		)
 
 		return ProcessResult(
-			stdout: String(decoding: outData, as: UTF8.self),
-			stderr: String(decoding: errData, as: UTF8.self),
+			stdout: captured.stdout,
+			stderr: captured.stderr,
 			exitCode: process.terminationStatus
 		)
 	}
