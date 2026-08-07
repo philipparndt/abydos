@@ -776,8 +776,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		toolbar.delegate = self
 		toolbar.displayMode = .iconOnly
 		toolbar.allowsUserCustomization = false
-		// Held in the window's middle whatever the run strip is showing.
-		toolbar.centeredItemIdentifiers = [Self.capsuleItem]
 		window?.toolbar = toolbar
 		// .unified keeps the items on the traffic-light row rather than in a
 		// second bar below it — the arrangement in the reference screenshot.
@@ -6229,12 +6227,11 @@ extension MainWindowController: NSToolbarDelegate {
 	private static let subprojectItem = NSToolbarItem.Identifier("ideai.subproject")
 	private static let runItem = NSToolbarItem.Identifier("ideai.run")
 
-	/// The capsule is centred on the window, not on the space left over.
+	/// Next to the traffic lights, where a window says what it is.
 	///
-	/// `centeredItemIdentifiers` rather than a flexible space on either side:
-	/// those centre an item between its neighbours, so the run strip — which
-	/// grows with the length of a configuration's name — pushes the capsule off
-	/// the middle by half of whatever it is currently carrying.
+	/// Centred was tried and reads as decoration: the eye starts at the top left
+	/// of a window, and putting the one thing that answers "where am I" anywhere
+	/// else makes it something to go looking for.
 	func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
 		[Self.capsuleItem, Self.subprojectItem, .flexibleSpace, Self.runItem]
 	}

@@ -1394,6 +1394,22 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		let openItem = NSMenuItem(title: "Open…", action: #selector(openProjectPanel(_:)), keyEquivalent: "o")
 		openItem.target = self
 		fileMenu.addItem(openItem)
+
+		// The shortcut the capsule advertises. In the menu rather than on the
+		// view, so it works wherever the keyboard focus happens to be and can be
+		// found by somebody who never reads a titlebar.
+		//
+		// Shifted because plain ⌘K clears the terminal, as it does in Terminal
+		// and every console — and a menu's key equivalent is matched before any
+		// view sees the key, so taking it here would have quietly stopped that
+		// working.
+		let switcherItem = NSMenuItem(
+			title: "Go to Project…",
+			action: #selector(MainWindowController.showProjectSwitcher(_:)),
+			keyEquivalent: "k"
+		)
+		switcherItem.keyEquivalentModifierMask = [.command, .shift]
+		fileMenu.addItem(switcherItem)
 		let scratchItem = NSMenuItem(
 			title: "New Scratch File",
 			action: #selector(MainWindowController.newScratchFile(_:)),

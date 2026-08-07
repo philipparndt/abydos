@@ -1,15 +1,15 @@
 {
   "args" : [
     "-from",
-    "out/rootfs_arm64",
+    "out/rootfs_arm64_full",
     "-out",
-    "out/ideai-devpod-arm64.tar",
+    "out/ideai-devpod-arm64-full.tar",
     "-tag",
     "pharndt/ideai-devpod:dev",
     "-arch",
     "arm64",
     "-env",
-    "IDEAI_BINARY=/app/current,IDEAI_WORKDIR=/app,IDEAI_CONTROL_ADDR=:7999,IDEAI_DEBUG_ADDR=:2345,IDEAI_DLV=/usr/local/bin/dlv,SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt"
+    "IDEAI_BINARY=/app/current,IDEAI_WORKDIR=/app,IDEAI_CONTROL_ADDR=:7999,IDEAI_DEBUG_ADDR=:2345,IDEAI_DLV=/usr/local/bin/dlv,IDEAI_JAVA=/opt/java/bin/java,SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt"
   ],
   "cwd" : "${workspaceFolder}/DevPod",
   "ideai.make" : {

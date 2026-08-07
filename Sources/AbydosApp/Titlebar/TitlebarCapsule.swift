@@ -49,7 +49,9 @@ final class TitlebarCapsule: NSView, TitlebarMenuAnchor {
 	private static var nameFont: NSFont { Theme.current.uiFont(13, weight: .semibold) }
 	private static var hintFont: NSFont { Theme.current.uiFont(10.5, weight: .medium) }
 
-	private static let hint = "⌘K"
+	/// Matches the File menu's Go to Project…, which is shifted because plain
+	/// ⌘K clears the terminal.
+	private static let hint = "⇧⌘K"
 
 	override init(frame frameRect: NSRect) {
 		super.init(frame: frameRect)
@@ -127,10 +129,15 @@ final class TitlebarCapsule: NSView, TitlebarMenuAnchor {
 			+ Self.gap + Self.chevronWidth + Self.padding
 	}
 
+	/// Tall enough to read as a field rather than as a label.
+	///
+	/// The drawn shape is this less the inset at top and bottom, so it wants to
+	/// be the height wanted plus eight: a 22-point capsule in a titlebar this
+	/// deep looks like something that shrank.
 	override var intrinsicContentSize: NSSize {
 		NSSize(
 			width: Self.inset * 2 + max(Self.minimumWidth, projectWidth + branchWidth),
-			height: Theme.current.scaled(30)
+			height: Self.inset * 2 + Theme.current.scaled(28)
 		)
 	}
 
