@@ -968,12 +968,14 @@ final class EditorViewController: NSViewController {
 			codeView.setDiagnostics(LanguageService.shared.diagnostics(for: fileURL))
 		}
 
-		// A file whose rendered form is the point of it opens rendered, with the
-		// text a click away: an SVG in a documentation folder is a picture
-		// first, and the path data behind it second.
-		if FilePreview.defaultMode(for: fileURL) == .preview, FilePreview.hasPreview(fileURL) {
-			tab.previewMode = .preview
-			tab.contentView = makeContentView(for: tab, mode: .preview)
+		// A file whose rendered form is the point of it does not open as text:
+		// an SVG in a documentation folder is a picture first and its path data
+		// second, and a PlantUML file is a diagram somebody is checking against
+		// the lines that describe it, so it opens with both.
+		let opening = FilePreview.defaultMode(for: fileURL)
+		if opening != .source, FilePreview.hasPreview(fileURL) {
+			tab.previewMode = opening
+			tab.contentView = makeContentView(for: tab, mode: opening)
 		}
 		return tab
 	}
@@ -1411,6 +1413,8 @@ final class EditorViewController: NSViewController {
 			return makeModelView(for: tab.url)
 		case .image:
 			return ImageFileViewer(url: tab.url).scrollView
+		case .plantuml:
+			return makeDiagramView(for: tab)
 		case .markdown, .none:
 			return makePreviewView(for: tab)
 		}
@@ -1452,6 +1456,23 @@ final class EditorViewController: NSViewController {
 			self.schedulePreviewRefresh(textView: textView, tab: tab)
 		}
 		return scrollView
+	}
+
+	/// The diagram a PlantUML file describes, kept current while it is edited.
+	private func makeDiagramView(for tab: Tab) -> NSView {
+		let view = PlantUMLPreviewView()
+		if let document = tab.document {
+			view.show(document.rope.string)
+
+			// Every edit, not every reparse: PlantUML has no grammar here, so
+			// there is no parser whose finishing could be waited for. Drawing
+			// means starting a JVM, so the view debounces on top of this.
+			document.onTextChanged = { [weak view, weak document] in
+				guard let view, let document else { return }
+				view.show(document.rope.string)
+			}
+		}
+		return view
 	}
 
 	private func renderPreview(into textView: NSTextView, tab: Tab) {

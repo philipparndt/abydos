@@ -24,6 +24,8 @@ public final class TextDocument {
 
 	/// Fired when new highlights or folds are available and the view should redraw.
 	public var onSyntaxUpdated: (() -> Void)?
+	/// The text changed, whether or not anything can parse it.
+	public var onTextChanged: (() -> Void)?
 
 	/// Fired after an automatic save, so the tab can drop its dirty marker.
 	public var onAutoSaved: (() -> Void)?
@@ -348,6 +350,12 @@ public final class TextDocument {
 			newEndPoint: newEndPoint
 		)
 
+		// Said for every edit, grammar or no grammar. `onSyntaxUpdated` cannot
+		// carry this: it is fired by the parser finishing, and a language with
+		// no grammar of its own — PlantUML, whose preview is the point of
+		// editing it — has no parser to finish.
+		onTextChanged?()
+
 		guard let engine else { return }
 		let snapshot = rope
 		// Serial queue, so edits reparse in the order they were made and each
@@ -514,6 +522,9 @@ public final class TextDocument {
 		folds = []
 		startInitialParse()
 		onSyntaxUpdated?()
+		// Somebody else wrote the file: that is a change to the text like any
+		// other, and a preview drawn from it has to follow.
+		onTextChanged?()
 		return true
 	}
 }

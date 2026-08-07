@@ -121,6 +121,12 @@ public enum LanguageServers {
 			rootMarkers: []
 		),
 		LanguageServerDefinition(
+			languageIds: ["plantuml"],
+			command: "plantuml-lsp",
+			installHint: "go install github.com/ptdewey/plantuml-lsp@latest",
+			rootMarkers: []
+		),
+		LanguageServerDefinition(
 			languageIds: ["openscad"],
 			command: "openscad-lsp",
 			// It listens on a TCP port unless told otherwise, and this client

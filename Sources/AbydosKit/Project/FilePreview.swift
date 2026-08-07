@@ -55,6 +55,9 @@ public enum FilePreview {
 		/// its diagrams beside its text should be able to look at them without
 		/// leaving for Preview and back.
 		case image
+		/// A PlantUML diagram: text that describes a picture, where both halves
+		/// are worth having on screen at once.
+		case plantuml
 	}
 
 	public static func kind(for url: URL) -> Kind? {
@@ -68,6 +71,8 @@ public enum FilePreview {
 		case "svg":
 			// A drawing that is also a file somebody edits, so it has both.
 			return .image
+		case "puml", "plantuml", "pu", "iuml", "wsd":
+			return .plantuml
 		default:
 			return nil
 		}
@@ -87,6 +92,11 @@ public enum FilePreview {
 			// reading and the control offers it, but nobody clicks a diagram
 			// in a documentation folder hoping to see its path data.
 			return .preview
+		case .plantuml:
+			// Both halves at once: the text is what is edited and the diagram
+			// is what it is for, and checking one against the other is the
+			// whole of the work.
+			return .splitRight
 		case .model:
 			return hasReadableSource(url) ? .source : .preview
 		case .markdown, .none:

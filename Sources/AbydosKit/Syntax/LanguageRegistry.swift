@@ -234,6 +234,11 @@ public final class LanguageRegistry {
 		"odin": "odin",
 		"zig": "zig", "zon": "zig",
 		"mk": "make", "make": "make",
+		// PlantUML has no grammar here — the ones that exist are stale and
+		// partial — so this is a name for the language server's benefit, and
+		// the file is shown uncoloured until a grammar is worth vendoring.
+		"puml": "plantuml", "plantuml": "plantuml", "pu": "plantuml",
+		"iuml": "plantuml", "wsd": "plantuml",
 	]
 
 	static let filenameMap: [String: String] = [
@@ -275,8 +280,14 @@ public final class LanguageRegistry {
 	// MARK: - Loading
 
 	public func displayName(for languageId: String) -> String {
-		definitions[languageId]?.displayName ?? languageId
+		if let known = definitions[languageId]?.displayName { return known }
+		return Self.grammarlessNames[languageId] ?? languageId
 	}
+
+	/// Languages the editor knows by name but has no grammar for. They open,
+	/// they are sent to a language server, and the status bar can still say
+	/// what they are rather than showing an internal id.
+	static let grammarlessNames = ["plantuml": "PlantUML"]
 
 	/// Loads and caches a language's parser and queries.
 	///
