@@ -33,10 +33,37 @@ DESTINATION="$DESTINATION_DIR/Abydos.app"
 
 [ -d "$SOURCE" ] || { echo "install: $SOURCE does not exist — run make build first" >&2; exit 1; }
 
-# Staged in the destination's own directory, because a rename is only atomic
-# within one filesystem: /Applications and build/ need not be on the same one.
-STAGING="$DESTINATION_DIR/.Abydos.app.incoming.$$"
-RETIRED="$DESTINATION_DIR/.Abydos.app.replaced.$$"
+# Nothing is installed over a copy that is running.
+#
+# The swap below leaves a running app's own bundle intact, and it still is not
+# enough: the old bundle is deleted afterwards, and an application that has not
+# yet loaded every nib, framework and resource it is going to load needs the
+# files it started with to still be there. There is no way to know when it is
+# finished with them, and a program that quietly loses half its bundle fails
+# later and somewhere else — which is what "it crashed during make install and
+# there is no crash report" looks like.
+#
+# Quitting first is needed to get the new build in any case, so this asks for it
+# rather than working around it. FORCE=1 for somebody who means it.
+running() {
+	pgrep -f "^$DESTINATION/Contents/MacOS/Abydos" >/dev/null 2>&1
+}
+
+if running && [ "${FORCE:-0}" != "1" ]; then
+	echo "install: Abydos is running from $DESTINATION" >&2
+	echo "  Quit it first — the running copy keeps the old build until it is quit anyway." >&2
+	echo "  Or: make install FORCE=1" >&2
+	exit 1
+fi
+
+# Staged beside the destination rather than inside its directory, and on the
+# same filesystem so the swap is a rename.
+#
+# Not inside /Applications: a second bundle appearing there with the same
+# identifier is a second registration, however briefly, and LaunchServices is
+# entitled to decide what that means for the copy already running.
+STAGING="${TMPDIR:-/tmp}/abydos-install.$$"
+RETIRED="${TMPDIR:-/tmp}/abydos-replaced.$$"
 
 cleanup() { rm -rf "$STAGING"; }
 trap cleanup EXIT
@@ -47,16 +74,19 @@ rm -rf "$STAGING"
 # without them is a bundle Gatekeeper refuses.
 ditto "$SOURCE" "$STAGING"
 
+# The swap. A rename unlinks the old bundle rather than overwriting it, so even
+# with FORCE a running copy keeps every file it started with — and the old
+# bundle is only deleted when nothing is running from it.
 if [ -e "$DESTINATION" ]; then
 	mv "$DESTINATION" "$RETIRED"
 fi
 mv "$STAGING" "$DESTINATION"
-rm -rf "$RETIRED"
 
-echo "==> Installed $DESTINATION"
-
-# Anybody still running the old one is running something that no longer exists
-# on disk. It will not be killed for it, but it will not have this build either.
-if pgrep -f "^$DESTINATION/Contents/MacOS/Abydos" >/dev/null 2>&1; then
+if running; then
+	echo "==> Installed $DESTINATION"
 	echo "    a copy is still running the previous build — quit and reopen it to get this one"
+	echo "    the build it is running is kept at $RETIRED until then"
+else
+	rm -rf "$RETIRED"
+	echo "==> Installed $DESTINATION"
 fi
