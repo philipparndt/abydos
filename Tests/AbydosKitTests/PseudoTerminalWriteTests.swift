@@ -82,3 +82,64 @@ struct PseudoTerminalWriteTests {
 		}
 	}
 }
+
+/// What a shell is started with, and where it is built.
+///
+/// The environment used to be merged on the child side of the fork, which is a
+/// place where almost nothing is legal: the child is one thread in a copy of a
+/// process whose other threads stopped wherever they were, including inside
+/// locks. Merging maps a dictionary — `(key, value)` tuples — and instantiating
+/// tuple metadata takes one of those locks, which is how a terminal came to
+/// abort with "crashed on child side of fork pre-exec".
+struct PseudoTerminalEnvironmentTests {
+	@Test func claimsATerminalThatToolsWillUse() {
+		let merged = PseudoTerminal.mergedEnvironment(nil, bundled: nil, inherited: [:])
+		#expect(merged["TERM"] == "xterm-256color")
+		#expect(merged["COLORTERM"] == "truecolor")
+		#expect(merged["PAGER"] == "cat")
+	}
+
+	/// What somebody already has wins: this is claiming a capable terminal, not
+	/// overruling a choice.
+	@Test func leavesWhatIsAlreadySetAlone() {
+		let merged = PseudoTerminal.mergedEnvironment(
+			["TERM": "dumb", "PAGER": "less"], bundled: nil
+		)
+		#expect(merged["TERM"] == "dumb")
+		#expect(merged["PAGER"] == "less")
+	}
+
+	/// The bundled commands go on the end of the PATH, so a command somebody
+	/// already has still wins.
+	@Test func appendsTheBundledCommands() {
+		let merged = PseudoTerminal.mergedEnvironment(
+			["PATH": "/usr/bin:/bin"], bundled: "/Apps/Abydos.app/Contents/Resources/bin"
+		)
+		#expect(merged["PATH"] == "/usr/bin:/bin:/Apps/Abydos.app/Contents/Resources/bin")
+	}
+
+	/// And only once, however many shells are started.
+	@Test func doesNotAddThemTwice() {
+		let bundled = "/Apps/Abydos.app/Contents/Resources/bin"
+		let once = PseudoTerminal.mergedEnvironment(["PATH": "/usr/bin"], bundled: bundled)
+		let twice = PseudoTerminal.mergedEnvironment(once, bundled: bundled)
+		#expect(once["PATH"] == twice["PATH"])
+	}
+
+	/// The C arrays the child is handed: null-terminated, in order, and holding
+	/// copies rather than pointers into Swift strings that may move.
+	@Test func buildsANullTerminatedArgumentList() {
+		let array = PseudoTerminal.cStrings(["/bin/zsh", "-l"])
+		defer { PseudoTerminal.free(array) }
+
+		#expect(String(cString: array[0]!) == "/bin/zsh")
+		#expect(String(cString: array[1]!) == "-l")
+		#expect(array[2] == nil)
+	}
+
+	@Test func buildsAnEmptyListThatIsStillTerminated() {
+		let array = PseudoTerminal.cStrings([])
+		defer { PseudoTerminal.free(array) }
+		#expect(array[0] == nil)
+	}
+}

@@ -423,7 +423,14 @@ final class EditorTabBar: NSView {
 		menu.autoenablesItems = false
 
 		for mode in previewModes {
-			let item = NSMenuItem(title: mode.title, action: #selector(choosePreviewMode(_:)), keyEquivalent: "")
+			// The key it already answers to, shown here rather than only in the
+			// menu bar: this dropdown is where somebody is looking when they
+			// wonder how to do it again without the mouse.
+			let index = PreviewMode.allCases.firstIndex(of: mode).map { String($0 + 1) } ?? ""
+			let item = NSMenuItem(
+				title: mode.title, action: #selector(choosePreviewMode(_:)), keyEquivalent: index
+			)
+			item.keyEquivalentModifierMask = [.control, .command]
 			item.target = self
 			item.representedObject = mode.rawValue
 			item.state = mode == previewMode ? .on : .off

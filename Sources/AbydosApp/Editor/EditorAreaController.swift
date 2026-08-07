@@ -706,6 +706,7 @@ final class EditorAreaController: NSViewController {
 	func toggleBlame() { activeGroup.toggleBlame() }
 	func toggleMarkdownPreview() { activeGroup.toggleMarkdownPreview() }
 	func setPreviewMode(_ mode: PreviewMode) { activeGroup.setPreviewMode(mode) }
+	var currentPreviewMode: PreviewMode { activeGroup.currentPreviewMode }
 	func focusActiveEditor() { activeGroup.focusActiveEditor() }
 	func simulateTyping(_ text: String) { activeGroup.simulateTyping(text) }
 	var textForTesting: String? { activeGroup.textForTesting }

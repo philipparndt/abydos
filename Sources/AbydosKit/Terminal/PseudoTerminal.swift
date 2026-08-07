@@ -107,12 +107,31 @@ public final class PseudoTerminal {
 
 		var size = windowSize(rows: rows, columns: columns)
 
-		// Before the fork. The child may only make async-signal-safe calls, and
-		// `Bundle` and `FileManager` take locks — if another thread held one at
-		// the moment of the fork, the child waits for a lock nobody will ever
-		// release, never reaches `execve`, and the pane stays empty. Which is
-		// exactly what happened when this was asked for on the other side.
+		// Everything the child needs is built here, before the fork, and the
+		// child then does nothing but `chdir`, `execve` and `_exit`.
+		//
+		// After a fork the child is one thread in a copy of a process whose
+		// other threads were stopped wherever they happened to be — including
+		// inside a lock. Anything that allocates, reads Foundation or asks
+		// Swift for type metadata can then wait for a lock nobody will release,
+		// or find one already corrupt and abort. That is not theoretical: this
+		// used to merge the environment on the far side, and merging it maps a
+		// dictionary, which yields `(key, value)` tuples, and instantiating
+		// tuple metadata takes exactly the lock a crash report named as
+		// corrupt — "crashed on child side of fork pre-exec".
 		let bundledCommands = BundledCommands.directory
+		let environmentArray = Self.cStrings(
+			Self.mergedEnvironment(environment, bundled: bundledCommands).map { "\($0.key)=\($0.value)" }
+		)
+		let argumentArray = Self.cStrings([executable] + arguments)
+		let executablePath = strdup(executable)
+		let directoryPath = workingDirectory.map { strdup($0.path) } ?? nil
+		defer {
+			Self.free(environmentArray)
+			Self.free(argumentArray)
+			Foundation.free(executablePath)
+			directoryPath.map { Foundation.free($0) }
+		}
 
 		var master: Int32 = -1
 		// forkpty does the fork, opens the pty pair, makes the slave the child's
@@ -126,40 +145,10 @@ public final class PseudoTerminal {
 		}
 
 		if pid == 0 {
-			// Child. Only async-signal-safe work is legal here before exec.
-			if let workingDirectory {
-				_ = workingDirectory.withUnsafeFileSystemRepresentation { path in
-					path.map { chdir($0) }
-				}
-			}
-
-			var merged = environment ?? ProcessInfo.processInfo.environment
-			// Claim a capable terminal so tools enable colour and full-screen UI.
-			merged["TERM"] = merged["TERM"] ?? "xterm-256color"
-			merged["COLORTERM"] = merged["COLORTERM"] ?? "truecolor"
-			merged["LANG"] = merged["LANG"] ?? "en_US.UTF-8"
-			// Stop pagers from hanging a pane waiting for a keypress.
-			merged["PAGER"] = merged["PAGER"] ?? "cat"
-
-			// The commands this app ships — `abydos-icat` — on the PATH of every
-			// shell it starts, without an install step. Appended rather than
-			// prepended: a command somebody already has wins, since shadowing
-			// what is on somebody's PATH is not this app's business.
-			if let bundled = bundledCommands {
-				let path = merged["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
-				if !path.split(separator: ":").contains(Substring(bundled)) {
-					merged["PATH"] = path + ":" + bundled
-				}
-			}
-
-			let environmentStrings = merged.map { "\($0.key)=\($0.value)" }
-			var environmentPointers: [UnsafeMutablePointer<CChar>?] = environmentStrings.map { strdup($0) }
-			environmentPointers.append(nil)
-
-			var argumentPointers: [UnsafeMutablePointer<CChar>?] = ([executable] + arguments).map { strdup($0) }
-			argumentPointers.append(nil)
-
-			execve(executable, &argumentPointers, &environmentPointers)
+			// Child. Three C calls on memory that already existed before the
+			// fork, and nothing else — see the note above the fork.
+			if let directoryPath { chdir(directoryPath) }
+			execve(executablePath, argumentArray, environmentArray)
 			// Only reached if exec failed; _exit avoids running atexit handlers
 			// inherited from the parent.
 			_exit(127)
@@ -174,6 +163,53 @@ public final class PseudoTerminal {
 		startReading()
 		watchForExit(pid: pid)
 		return true
+	}
+
+	/// The environment a shell in this app is started with.
+	///
+	/// Built before the fork, and separated out so what it puts there can be
+	/// checked without starting anything.
+	static func mergedEnvironment(
+		_ given: [String: String]?,
+		bundled: String?,
+		inherited: [String: String] = ProcessInfo.processInfo.environment
+	) -> [String: String] {
+		var merged = given ?? inherited
+		// Claim a capable terminal so tools enable colour and full-screen UI.
+		merged["TERM"] = merged["TERM"] ?? "xterm-256color"
+		merged["COLORTERM"] = merged["COLORTERM"] ?? "truecolor"
+		merged["LANG"] = merged["LANG"] ?? "en_US.UTF-8"
+		// Stop pagers from hanging a pane waiting for a keypress.
+		merged["PAGER"] = merged["PAGER"] ?? "cat"
+
+		// The commands this app ships — `abydos-icat`, `abydos-bench` — on the
+		// PATH of every shell it starts, without an install step. Appended
+		// rather than prepended: a command somebody already has wins, since
+		// shadowing what is on somebody's PATH is not this app's business.
+		if let bundled {
+			let path = merged["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+			if !path.split(separator: ":").contains(Substring(bundled)) {
+				merged["PATH"] = path + ":" + bundled
+			}
+		}
+		return merged
+	}
+
+	/// A null-terminated C array of copies, for `execve`.
+	static func cStrings(_ strings: [String]) -> UnsafeMutablePointer<UnsafeMutablePointer<CChar>?> {
+		let array = UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>.allocate(capacity: strings.count + 1)
+		for (index, string) in strings.enumerated() { array[index] = strdup(string) }
+		array[strings.count] = nil
+		return array
+	}
+
+	static func free(_ array: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>) {
+		var index = 0
+		while let element = array[index] {
+			Foundation.free(element)
+			index += 1
+		}
+		array.deallocate()
 	}
 
 	/// Launches the user's login shell, which is what a terminal pane wants.

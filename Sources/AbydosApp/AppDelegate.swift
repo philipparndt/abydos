@@ -410,6 +410,24 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let steps = options.appearanceWalk {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+				print("APPEARANCE \(controller?.appearanceWalkForTesting(steps) ?? "no window")")
+				fflush(stdout)
+				if options.isScreenshotRun { return }
+				exit(0)
+			}
+		}
+
+		if let query = options.paletteQuery {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+				print("PALETTE \(controller?.paletteCommandsForTesting(query: query) ?? "no window")")
+				fflush(stdout)
+				if options.isScreenshotRun { return }
+				exit(0)
+			}
+		}
+
 		if options.tabMenu {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
 				for over in [true, false] {
@@ -1369,6 +1387,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 	// MARK: - Menu
 
+	/// What the app is called, for the three menu items that say so.
+	///
+	/// From the bundle rather than written out: they said "ideai" for as long
+	/// as it took somebody to open the menu after the rename, and the bundle
+	/// has been right the whole time.
+	static var applicationName: String {
+		Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
+			?? Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String
+			?? ProcessInfo.processInfo.processName
+	}
+
 	private func buildMenu() {
 		let mainMenu = NSMenu()
 
@@ -1378,7 +1407,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		// which build it came from — the one thing worth knowing when the
 		// question is whether an install took.
 		appMenu.addItem(
-			withTitle: "About ideai",
+			withTitle: "About \(Self.applicationName)",
 			action: #selector(showAbout(_:)),
 			keyEquivalent: ""
 		)
@@ -1387,8 +1416,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		settingsItem.target = self
 		appMenu.addItem(settingsItem)
 		appMenu.addItem(.separator())
-		appMenu.addItem(withTitle: "Hide ideai", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
-		appMenu.addItem(withTitle: "Quit ideai", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+		appMenu.addItem(withTitle: "Hide \(Self.applicationName)", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+		appMenu.addItem(withTitle: "Quit \(Self.applicationName)", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
 		appMenuItem.submenu = appMenu
 		mainMenu.addItem(appMenuItem)
 
@@ -1651,6 +1680,28 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		viewMenu.addItem(withTitle: "Structure", action: #selector(MainWindowController.toggleStructureView(_:)), keyEquivalent: "4")
 		viewMenu.addItem(withTitle: "Scratches", action: #selector(MainWindowController.toggleScratchesView(_:)), keyEquivalent: "5")
 		viewMenu.addItem(withTitle: "History", action: #selector(MainWindowController.toggleHistoryView(_:)), keyEquivalent: "6")
+		viewMenu.addItem(.separator())
+		// How a file with a rendered form is shown. In a submenu of their own
+		// because "Split Right" is also what a second editor pane is called:
+		// two commands with one name in one menu is a coin toss in the palette.
+		//
+		// ⌘1…⌘6 are the sidebar's, so these take the same numbers a modifier
+		// along, in the order the tab strip's own dropdown lists them.
+		let previewItem = NSMenuItem()
+		let previewMenu = NSMenu(title: "Preview")
+		for (index, mode) in PreviewMode.allCases.enumerated() {
+			let item = NSMenuItem(
+				title: mode.title,
+				action: #selector(MainWindowController.choosePreviewMode(_:)),
+				keyEquivalent: String(index + 1)
+			)
+			item.keyEquivalentModifierMask = [.control, .command]
+			item.representedObject = mode.rawValue
+			previewMenu.addItem(item)
+		}
+		previewItem.submenu = previewMenu
+		viewMenu.addItem(previewItem)
+
 		viewMenu.addItem(.separator())
 		let terminalItem = NSMenuItem(title: "Toggle Terminal", action: #selector(MainWindowController.toggleTerminal(_:)), keyEquivalent: "j")
 		viewMenu.addItem(terminalItem)

@@ -1280,6 +1280,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			return false
 		}
 
+		if item.action == #selector(choosePreviewMode(_:)) {
+			guard let state = previewModeState(),
+			      let raw = item.representedObject as? String,
+			      let mode = PreviewMode(rawValue: raw)
+			else {
+				item.state = .off
+				return false
+			}
+			item.state = mode == state.current ? .on : .off
+			return state.available.contains(mode)
+		}
+
 		switch item.action {
 		case #selector(debugContinue(_:)), #selector(debugPause(_:)),
 		     #selector(debugStepOver(_:)), #selector(debugStepInto(_:)),
@@ -6131,6 +6143,28 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		editor.setPreviewMode(mode)
 	}
 
+	/// The four preview modes, as menu commands.
+	///
+	/// One action rather than four: the mode is on the item, which is what the
+	/// tab strip's own dropdown already does, and it keeps the four of them
+	/// from drifting apart. Being menu commands is what gives them keys at all,
+	/// and — since the palette is the menus — what puts them in the palette.
+	@objc func choosePreviewMode(_ sender: Any?) {
+		guard let item = sender as? NSMenuItem,
+		      let raw = item.representedObject as? String,
+		      let mode = PreviewMode(rawValue: raw)
+		else { return }
+		setPreviewMode(mode)
+	}
+
+	/// Which modes the file in front can be shown in, and which it is in now.
+	func previewModeState() -> (available: [PreviewMode], current: PreviewMode)? {
+		guard let url = editor.activeGroup?.activeTabURL else { return nil }
+		let modes = FilePreview.availableModes(for: url)
+		guard modes.count > 1 else { return nil }
+		return (modes, editor.activeGroup?.currentPreviewMode ?? .source)
+	}
+
 	@objc func toggleBlame(_ sender: Any?) {
 		editor.toggleBlame()
 	}
@@ -6202,6 +6236,41 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	@objc func expandAllFolds(_ sender: Any?) {
 		editor.expandAllFolds()
+	}
+
+	/// Walks a sequence of theme settings and says what each one resolved to.
+	///
+	/// The sequence is the point: switching to "system" after a fixed theme is
+	/// the case that was broken, and asking about "system" on its own would
+	/// never have shown it — the app only answers with the appearance it was
+	/// forced once something has forced one.
+	func appearanceWalkForTesting(_ steps: String) -> String {
+		var said: [String] = ["system is \(Theme.systemIsDark ? "dark" : "light")"]
+		for step in steps.split(separator: ",") {
+			Settings.shared.appearance = String(step)
+			Theme.apply()
+			said.append("\(step) → \(Theme.current.name)")
+		}
+		return said.joined(separator: " | ")
+	}
+
+	/// What the palette offers for a query, with the keys each answers to.
+	///
+	/// Read from the menus, which is where they come from: a list that says how
+	/// many there are and what they are called is the only way to see that a
+	/// command added to a menu arrived here without anybody doing anything.
+	func paletteCommandsForTesting(query: String) -> String {
+		// Menu validation answers about the responder chain of the key window,
+		// so a run that never came to the front sees every item disabled and
+		// the palette reports nothing at all.
+		NSApp.activate(ignoringOtherApps: true)
+		window?.makeKeyAndOrderFront(nil)
+
+		let commands = CommandSearch.match(MenuCommands.all().map(\.descriptor), query: query)
+		let lines = commands.prefix(12).map { command in
+			"  \(command.qualifiedTitle)\(command.shortcut.map { "  [\($0)]" } ?? "")"
+		}
+		return "\(commands.count) commands\n" + lines.joined(separator: "\n")
 	}
 
 	@objc func showProjectSwitcher(_ sender: Any?) {

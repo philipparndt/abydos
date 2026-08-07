@@ -124,6 +124,12 @@ struct LaunchOptions {
 	/// Print what a right-click on the tab strip offers.
 	var tabMenu = false
 
+	/// Print the palette's commands for this query.
+	var paletteQuery: String?
+
+	/// Apply these theme settings in turn and say what each resolved to.
+	var appearanceWalk: String?
+
 	/// Move down the tree this many steps, then copy with ⌘C.
 	var copyPath: String?
 
@@ -425,6 +431,8 @@ struct LaunchOptions {
 			case "--dead-key": options.deadKeys = next()
 			case "--click-below": options.clickBelowLastLine = true
 			case "--tab-menu": options.tabMenu = true
+			case "--palette": options.paletteQuery = next() ?? ""
+			case "--appearance-walk": options.appearanceWalk = next()
 			case "--copy-path": options.copyPath = next() ?? "down"
 			case "--burst": options.burstFrames = next().flatMap(Int.init)
 			case "--commit-body": options.commitBody = next()

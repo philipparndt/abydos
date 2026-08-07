@@ -80,7 +80,7 @@ private final class PopoverCloseObserver: NSObject, NSPopoverDelegate {
 
 private final class SwitcherViewController: NSViewController {
 	enum Row {
-		case action(title: String, symbol: String, handler: () -> Void)
+		case action(title: String, symbol: String, shortcut: String?, detail: String?, handler: () -> Void)
 		case header(String)
 		case project(RecentProject, isOpen: Bool)
 		case branch(String, isCurrent: Bool)
@@ -338,20 +338,20 @@ private final class SwitcherViewController: NSViewController {
 		if let root = currentProject?.root {
 			// The folder this window is actually looking at, which on a linked
 			// worktree is the worktree rather than the repository it came from.
-			rows.append(.action(title: "Reveal in Finder", symbol: "magnifyingglass") { [weak self] in
+			rows.append(.action(title: "Reveal in Finder", symbol: "magnifyingglass", shortcut: nil, detail: nil) { [weak self] in
 				self?.onDismiss?()
 				NSWorkspace.shared.activateFileViewerSelecting([root])
 			})
 		}
-		rows.append(.action(title: "Open…", symbol: "folder") { [weak self] in
+		rows.append(.action(title: "Open…", symbol: "folder", shortcut: nil, detail: nil) { [weak self] in
 			self?.onDismiss?()
 			delegate?.openProjectPanel(nil)
 		})
-		rows.append(.action(title: "New Project…", symbol: "plus") { [weak self] in
+		rows.append(.action(title: "New Project…", symbol: "plus", shortcut: nil, detail: nil) { [weak self] in
 			self?.onDismiss?()
 			self?.newProject()
 		})
-		rows.append(.action(title: "Clone Repository…", symbol: "arrow.trianglehead.branch") { [weak self] in
+		rows.append(.action(title: "Clone Repository…", symbol: "arrow.trianglehead.branch", shortcut: nil, detail: nil) { [weak self] in
 			self?.onDismiss?()
 			self?.cloneRepository()
 		})
@@ -457,10 +457,10 @@ private final class SwitcherViewController: NSViewController {
 		rows = [.header("Go to Line")]
 		guard let number, number > 0 else {
 			// Nothing to do yet, but the header alone reads as a broken list.
-			rows.append(.action(title: "Type a line number", symbol: "number", handler: {}))
+			rows.append(.action(title: "Type a line number", symbol: "number", shortcut: nil, detail: nil, handler: {}))
 			return
 		}
-		rows.append(.action(title: "Line \(number)", symbol: "arrow.right", handler: { [weak self] in
+		rows.append(.action(title: "Line \(number)", symbol: "arrow.right", shortcut: nil, detail: nil, handler: { [weak self] in
 			self?.onDismiss?()
 			self?.owner?.goTo(line: number)
 		}))
@@ -518,12 +518,48 @@ private final class SwitcherViewController: NSViewController {
 			self?.cloneRepository()
 		}))
 
-		// An empty needle keeps everything, which has to be said: Swift's
-		// `contains("")` is false, so filtering on nothing would return nothing
-		// and a bare `>` would list no commands at all.
-		return actions
-			.filter { needle.isEmpty || $0.title.lowercased().contains(needle) }
-			.map { .action(title: $0.title, symbol: $0.symbol, handler: $0.handler) }
+		// Everything the menus offer, which is everything the app can do: a
+		// command added to a menu tomorrow is in here the moment it is added,
+		// with whatever key it answers to, and nobody has to remember this
+		// list exists. The few above are the ones with no menu item of their
+		// own — what this project's forge can do, which depends on the
+		// repository rather than on the app.
+		let contextual = actions.map {
+			CommandDescriptor(title: $0.title, path: ["Project"], shortcut: nil)
+		}
+		let fromMenus = MenuCommands.all()
+
+		let ranked = CommandSearch.match(contextual + fromMenus.map(\.descriptor), query: needle)
+
+		return ranked.compactMap { command -> Row? in
+			if let contextualIndex = actions.firstIndex(where: {
+				$0.title == command.title && command.path == ["Project"]
+			}) {
+				let action = actions[contextualIndex]
+				return .action(
+					title: action.title, symbol: action.symbol,
+					shortcut: nil, detail: nil, handler: action.handler
+				)
+			}
+
+			guard let entry = fromMenus.first(where: {
+				$0.descriptor.title == command.title && $0.descriptor.path == command.path
+			}) else { return nil }
+
+			return .action(
+				title: command.title,
+				symbol: "command",
+				shortcut: command.shortcut,
+				detail: command.path.joined(separator: " › "),
+				handler: { [weak self] in
+					self?.onDismiss?()
+					// After the popover has gone: a menu action that opens a
+					// sheet or moves the keyboard cannot do it while a popover
+					// still has the window.
+					DispatchQueue.main.async { entry.perform() }
+				}
+			)
+		}
 	}
 
 	private func applyFilter(_ text: String) {
@@ -543,7 +579,7 @@ private final class SwitcherViewController: NSViewController {
 	private func activateRow(at index: Int) {
 		guard rows.indices.contains(index) else { return }
 		switch rows[index] {
-		case let .action(_, _, handler):
+		case let .action(_, _, _, _, handler):
 			handler()
 		case .header:
 			break
@@ -712,8 +748,8 @@ extension SwitcherViewController: NSTableViewDataSource, NSTableViewDelegate {
 
 	func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
 		switch rows[row] {
-		case let .action(title, symbol, _):
-			return SwitcherActionCell(title: title, symbol: symbol)
+		case let .action(title, symbol, shortcut, detail, _):
+			return SwitcherActionCell(title: title, symbol: symbol, shortcut: shortcut, detail: detail)
 		case let .header(title):
 			return SwitcherHeaderCell(title: title)
 		case let .project(entry, isOpen):
@@ -809,10 +845,18 @@ private final class SwitcherRowView: NSTableRowView {
 private final class SwitcherActionCell: NSView {
 	private let title: String
 	private let symbol: String
+	/// The key this already answers to, so the palette teaches it rather than
+	/// being the only way to reach it.
+	private let shortcut: String?
+	/// Where it lives — the menu it was found under — for telling two commands
+	/// of the same name apart.
+	private let detail: String?
 
-	init(title: String, symbol: String) {
+	init(title: String, symbol: String, shortcut: String? = nil, detail: String? = nil) {
 		self.title = title
 		self.symbol = symbol
+		self.shortcut = shortcut
+		self.detail = detail
 		super.init(frame: .zero)
 	}
 
@@ -831,11 +875,34 @@ private final class SwitcherActionCell: NSView {
 		}
 		x += 22
 
+		// The shortcut first, from the right, so the name can be shortened
+		// against it rather than drawn underneath it.
+		var rightEdge = bounds.maxX - 12
+		if let shortcut, !shortcut.isEmpty {
+			let keys = NSAttributedString(string: shortcut, attributes: [
+				.font: Theme.current.uiFont(12),
+				.foregroundColor: tint.withAlphaComponent(0.75),
+			])
+			let size = keys.size()
+			keys.draw(at: NSPoint(x: rightEdge - size.width, y: bounds.midY - size.height / 2))
+			rightEdge -= size.width + 14
+		}
+
 		let attributed = NSAttributedString(string: title, attributes: [
 			.font: Theme.current.uiFont(13),
 			.foregroundColor: Theme.current.sidebarHeaderText,
 		])
 		attributed.draw(at: NSPoint(x: x, y: bounds.midY - attributed.size().height / 2))
+		x += attributed.size().width + 8
+
+		guard let detail, !detail.isEmpty, x < rightEdge - 20 else { return }
+		let where_ = NSAttributedString(string: detail, attributes: [
+			.font: Theme.current.uiFont(11),
+			.foregroundColor: tint.withAlphaComponent(0.55),
+		])
+		where_.draw(with: NSRect(x: x, y: bounds.midY - where_.size().height / 2,
+		                        width: rightEdge - x, height: where_.size().height),
+		            options: [.usesLineFragmentOrigin])
 	}
 }
 

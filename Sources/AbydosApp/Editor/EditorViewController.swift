@@ -170,6 +170,8 @@ final class EditorViewController: NSViewController {
 	var tabCount: Int { tabs.count }
 	var activeTabIndex: Int? { activeIndex }
 	var activeTabURL: URL? { activeTab?.url }
+	/// Which of source, preview or a split the file in front is being shown in.
+	var currentPreviewMode: PreviewMode { activeTab?.previewMode ?? .source }
 	var activeDocument: TextDocument? { activeTab?.document }
 
 	/// The open document for a file, if this group is the one holding it.

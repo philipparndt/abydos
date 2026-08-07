@@ -28,9 +28,16 @@ struct Theme {
 
 		// Native controls — fields, alerts, scrollers, the titlebar — take
 		// their look from the app's appearance rather than from this palette,
-		// and a light window with dark scrollbars in it looks broken. Set every
-		// time, since the first call is what establishes it at all.
-		NSApp.appearance = NSAppearance(named: wanted.isLight ? .aqua : .darkAqua)
+		// and a light window with dark scrollbars in it looks broken.
+		//
+		// Except when the theme follows the system, where the app is left to
+		// follow it too: that way the controls change when somebody changes the
+		// system, without this having to be told.
+		if Appearance.mode(of: Settings.shared.activeAppearance) == .system {
+			NSApp.appearance = nil
+		} else {
+			NSApp.appearance = NSAppearance(named: wanted.isLight ? .aqua : .darkAqua)
+		}
 
 		guard wanted.name != current.name else { return false }
 		previous = current
@@ -43,9 +50,22 @@ struct Theme {
 	static var previous = Theme.dusk
 
 	/// What the system is set to right now.
+	///
+	/// Asked of the system rather than of `NSApp.effectiveAppearance`. Every
+	/// theme that is not "system" forces an appearance on the app, and once one
+	/// is forced the app answers with what it was given — so a theme that
+	/// follows the system was following itself, and switching from Light to
+	/// System stayed light on a machine set to dark.
 	static var systemIsDark: Bool {
-		let match = NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua])
-		return match == .darkAqua
+		if let style = UserDefaults.standard.string(forKey: "AppleInterfaceStyle") {
+			return style.lowercased().contains("dark")
+		}
+		// The key is absent in light mode, and also absent when nothing has
+		// ever set it — in which case the app's own appearance is the best
+		// answer left, and it is unforced here by definition.
+		return NSApp.appearance == nil
+			? NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+			: false
 	}
 
 	/// Which palette this is.

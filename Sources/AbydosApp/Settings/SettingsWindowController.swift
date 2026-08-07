@@ -306,8 +306,10 @@ final class SettingsPaneController: NSViewController {
 				),
 				.choice(
 					title: "Terminal colours",
-					help: "Following the theme is the point of having one. The others are for "
-						+ "anybody who arrived with a palette they already know.",
+					help: "Same as the theme uses the palette that belongs to it. Editor colours "
+						+ "paints the terminal in the editor's own background and text instead, so "
+						+ "the two panes are one surface. Blue is the palette Ghostty ships with. "
+						+ "All of them have a light and a dark form.",
 					options: [("Same as the theme", Appearance.followsEditor)]
 						+ TerminalScheme.allCases.map { ($0.title, $0.rawValue) },
 					get: { Settings.shared.terminalScheme },
