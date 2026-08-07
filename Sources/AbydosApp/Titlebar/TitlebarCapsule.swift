@@ -40,7 +40,15 @@ final class TitlebarCapsule: NSView, TitlebarMenuAnchor {
 	private static var gap: CGFloat { Theme.current.scaled(7) }
 	private static var chevronWidth: CGFloat { Theme.current.scaled(9) }
 	private static var minimumWidth: CGFloat { Theme.current.scaled(300) }
-	private static var inset: CGFloat { Theme.current.scaled(4) }
+
+	/// How far the drawn shape sits inside the frame the toolbar hands over.
+	///
+	/// Small, because that frame is all there is: a toolbar clamps its items to
+	/// the row's height whatever they ask for, so asking to be taller does
+	/// nothing and the only way to a taller capsule is to stop giving the height
+	/// away. Not zero — a hairline of air keeps the shape from touching the
+	/// capsule macOS paints behind the item.
+	private static var inset: CGFloat { Theme.current.scaled(1) }
 
 	private static var chipPadding: CGFloat { Theme.current.scaled(6) }
 	private static var chipFont: NSFont { Theme.current.uiFont(11, weight: .medium) }
@@ -129,15 +137,10 @@ final class TitlebarCapsule: NSView, TitlebarMenuAnchor {
 			+ Self.gap + Self.chevronWidth + Self.padding
 	}
 
-	/// Tall enough to read as a field rather than as a label.
-	///
-	/// The drawn shape is this less the inset at top and bottom, so it wants to
-	/// be the height wanted plus eight: a 22-point capsule in a titlebar this
-	/// deep looks like something that shrank.
 	override var intrinsicContentSize: NSSize {
 		NSSize(
 			width: Self.inset * 2 + max(Self.minimumWidth, projectWidth + branchWidth),
-			height: Self.inset * 2 + Theme.current.scaled(28)
+			height: Theme.current.scaled(30)
 		)
 	}
 
@@ -226,7 +229,7 @@ final class TitlebarCapsule: NSView, TitlebarMenuAnchor {
 	// MARK: - Drawing
 
 	override func draw(_ dirtyRect: NSRect) {
-		let radius = Theme.current.scaled(7)
+		let radius = Theme.current.scaled(8)
 		let shape = shapeRect
 		let path = NSBezierPath(roundedRect: shape, xRadius: radius, yRadius: radius)
 

@@ -21,50 +21,17 @@ final class TitlebarSeam: NSView {
 	}
 
 	private(set) var state: State = .idle
-	/// How far along the sweep is, 0...1, for a run whose progress is unknown —
-	/// which is every run, until something starts reporting one.
-	private var phase: CGFloat = 0
-	private var timer: Timer?
 
-	/// Tall enough for the run line; the track sits inside it.
-	static var height: CGFloat { Theme.current.scaled(2) }
+	/// Thick enough to be seen from the other side of the room, which is the
+	/// whole point of putting it across the window rather than in the strip.
+	static var height: CGFloat { Theme.current.scaled(4) }
 
 	override var isFlipped: Bool { true }
-
-	deinit { timer?.invalidate() }
 
 	func set(_ state: State) {
 		guard state != self.state else { return }
 		self.state = state
 		needsDisplay = true
-
-		if state == .running {
-			startSweeping()
-		} else {
-			timer?.invalidate()
-			timer = nil
-			phase = 0
-		}
-	}
-
-	/// A moving segment rather than a filled bar: nothing here knows how far
-	/// along a build is, and a bar that fills at a made-up rate is a lie told
-	/// slowly.
-	private func startSweeping() {
-		guard timer == nil else { return }
-		// Somebody who has asked for less movement gets a plain line instead.
-		guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
-
-		let timer = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
-			guard let self else { return }
-			phase += 0.012
-			if phase > 1 { phase -= 1 }
-			needsDisplay = true
-		}
-		// .common so it keeps moving while a menu is down or the window is being
-		// dragged, which is exactly when somebody is waiting for a build.
-		RunLoop.main.add(timer, forMode: .common)
-		self.timer = timer
 	}
 
 	override func draw(_ dirtyRect: NSRect) {
@@ -73,24 +40,18 @@ final class TitlebarSeam: NSView {
 		Theme.current.separator.setFill()
 		NSRect(x: 0, y: bounds.maxY - 1, width: bounds.width, height: 1).fill()
 
+		// Held still. A bar that crawls says a percentage nothing here knows,
+		// and a titlebar is the wrong place for something that moves in the
+		// corner of the eye for as long as a build takes.
 		switch state {
 		case .idle:
 			return
+		case .running:
+			Theme.current.gitAdded.setFill()
+			bounds.fill()
 		case .failed:
 			Theme.current.gitConflict.setFill()
 			bounds.fill()
-		case .running:
-			Theme.current.gitAdded.setFill()
-			guard timer != nil else {
-				// Reduced motion: the whole width, held still.
-				bounds.fill()
-				return
-			}
-			// The segment runs off one end and back on at the other, so the
-			// wrap is a movement rather than a jump.
-			let width = max(bounds.width * 0.22, Theme.current.scaled(60))
-			let x = phase * (bounds.width + width) - width
-			NSRect(x: x, y: 0, width: width, height: bounds.height).fill()
 		}
 	}
 }
