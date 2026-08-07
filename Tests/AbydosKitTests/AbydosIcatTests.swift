@@ -96,7 +96,7 @@ struct AbydosIcatTests {
 
 		let output = try run(on: file)
 		let text = String(decoding: output, as: UTF8.self)
-		#expect(text.contains("f=100,a=T"))
+		#expect(text.contains("f=100,a=T,c="))
 		#expect(text.contains("m=0"))
 		#expect(payload(of: output).count == 400)
 	}

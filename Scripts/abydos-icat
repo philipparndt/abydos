@@ -263,8 +263,15 @@ print_image() {
 	else
 		# Without a cell size there is nothing to work a height back from; the
 		# terminal keeps the proportions and this falls back to the old guess
-		# that a cell is about twice as tall as it is wide.
-		rows=$(( (image_height * columns) / (image_width * 2) + 1 ))
+		# that a cell is about twice as tall as it is wide. And with no size
+		# for the picture either — `sips` could not read it — there is nothing
+		# to guess from at all, so a few lines, which is better than dividing
+		# by a width of zero and taking the whole script down with it.
+		if [ "$image_width" -gt 0 ] && [ "$image_height" -gt 0 ]; then
+			rows=$(( (image_height * columns) / (image_width * 2) + 1 ))
+		else
+			rows=10
+		fi
 		[ "$rows" -gt 0 ] || rows=1
 	fi
 
