@@ -234,7 +234,14 @@ public final class PseudoTerminal {
 
 	// MARK: - IO
 
+	/// Set before the first byte goes anywhere near a descriptor. The app does
+	/// this at launch; a tool that only uses the kit gets it here.
+	private func ignoreBrokenPipes() {
+		BrokenPipes.ignore()
+	}
+
 	private func startReading() {
+		ignoreBrokenPipes()
 		let source = DispatchSource.makeReadSource(fileDescriptor: masterDescriptor, queue: readQueue)
 		source.setEventHandler { [weak self] in
 			guard let self else { return }

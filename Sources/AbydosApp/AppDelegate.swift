@@ -45,6 +45,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 	}
 
 	public func applicationDidFinishLaunching(_ notification: Notification) {
+		// Before anything writes to a pipe, which is nearly the first thing
+		// this app does: a shell that has just exited, or a tmux server that
+		// has stopped, would otherwise take the whole app with it and leave
+		// nothing behind to say why.
+		BrokenPipes.ignore()
 		Self.recordUncaughtExceptions()
 		// Settings from the other identifier this app has had, before anything
 		// reads one: a change of identifier would otherwise look like every
