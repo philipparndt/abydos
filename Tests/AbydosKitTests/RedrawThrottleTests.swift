@@ -4,46 +4,52 @@ import Testing
 
 /// The rule that decides whether a terminal which is behind should draw what it
 /// has so far. What it exists to prevent is a screen flickering through its own
-/// history: a locked screen stops the drawing and not the program, so a spinner
-/// arrives as minutes of frames at once, and drawing each of them is over a
-/// hundred pictures a second that were each replaced before anybody saw them.
+/// history: a locked screen stops the drawing and not the program, so an agent's
+/// spinner and clock arrive as minutes of frames at once, and drawing them is a
+/// screen replaying time that has already passed.
 struct RedrawThrottleTests {
 	/// Caught up is always drawn, however recently the last one was: this is
 	/// the final picture, and skipping it leaves the screen showing a step on
 	/// the way to it.
 	@Test func caughtUpAlwaysDraws() {
-		#expect(RedrawThrottle.shouldDraw(isBehind: false, sinceLastDraw: 0))
-		#expect(RedrawThrottle.shouldDraw(isBehind: false, sinceLastDraw: 0.001))
-		#expect(RedrawThrottle.shouldDraw(isBehind: false, sinceLastDraw: 10))
+		#expect(RedrawThrottle.shouldDraw(isBehind: false, sinceLastDraw: 0, behindFor: 0))
+		#expect(RedrawThrottle.shouldDraw(isBehind: false, sinceLastDraw: 0.001, behindFor: 5))
+		#expect(RedrawThrottle.shouldDraw(isBehind: false, sinceLastDraw: 10, behindFor: 0))
 	}
 
-	/// Behind and drawn a moment ago: skip. Parsing carries on either way, so
-	/// what is skipped is a picture and never any output.
-	@Test func behindAndJustDrawnSkips() {
-		#expect(!RedrawThrottle.shouldDraw(isBehind: true, sinceLastDraw: 0))
-		#expect(!RedrawThrottle.shouldDraw(isBehind: true, sinceLastDraw: 0.008))
-		#expect(!RedrawThrottle.shouldDraw(isBehind: true, sinceLastDraw: 0.049))
+	/// A burst is not drawn at all while it drains, however long ago the last
+	/// picture was. Every frame in it is one the program has already replaced —
+	/// which is what made the clock in an agent's window race through the
+	/// minutes it spent while the screen was locked.
+	@Test func aBurstIsHeldUntilItDrains() {
+		#expect(!RedrawThrottle.shouldDraw(isBehind: true, sinceLastDraw: 0, behindFor: 0))
+		#expect(!RedrawThrottle.shouldDraw(isBehind: true, sinceLastDraw: 1, behindFor: 0.05))
+		#expect(!RedrawThrottle.shouldDraw(isBehind: true, sinceLastDraw: 10, behindFor: 0.24))
 	}
 
-	/// Behind for long enough still draws. A program producing output faster
-	/// than it can be parsed would otherwise show nothing at all, and a build
-	/// that appears frozen is worse than one that scrolls coarsely.
-	@Test func behindForLongEnoughStillDraws() {
-		#expect(RedrawThrottle.shouldDraw(isBehind: true, sinceLastDraw: 0.05))
-		#expect(RedrawThrottle.shouldDraw(isBehind: true, sinceLastDraw: 1))
+	/// Behind for longer than a burst lasts still gets a heartbeat: a build
+	/// showing nothing at all looks frozen, and looking frozen is worse than a
+	/// picture that only changes once a second.
+	@Test func stillBehindGetsAHeartbeat() {
+		#expect(RedrawThrottle.shouldDraw(isBehind: true, sinceLastDraw: 1, behindFor: 0.25))
+		#expect(RedrawThrottle.shouldDraw(isBehind: true, sinceLastDraw: 2, behindFor: 3))
 	}
 
-	/// Fast enough to follow, slow enough to see. The parse budget is 6 ms, so
-	/// a backlog produced a picture about every eight — this is the number that
-	/// turns that into something the eye can read.
-	@Test func drawsAtAPaceAPersonCanSee() {
-		#expect(RedrawThrottle.catchUpInterval >= 0.02)
-		#expect(RedrawThrottle.catchUpInterval <= 0.1)
+	/// One a second and no more. Twenty was what made a backlog replay: each
+	/// picture had already been replaced by the time it was drawn, so what
+	/// somebody saw was an agent's clock racing through minutes it had spent
+	/// while the screen was locked.
+	@Test func theHeartbeatIsSlowEnoughNotToReplayAnything() {
+		#expect(!RedrawThrottle.shouldDraw(isBehind: true, sinceLastDraw: 0.05, behindFor: 3))
+		#expect(!RedrawThrottle.shouldDraw(isBehind: true, sinceLastDraw: 0.5, behindFor: 3))
+		#expect(!RedrawThrottle.shouldDraw(isBehind: true, sinceLastDraw: 0.99, behindFor: 3))
+		#expect(RedrawThrottle.shouldDraw(isBehind: true, sinceLastDraw: 1, behindFor: 3))
+	}
 
-		// A minute of buffered spinner frames, drawn at this pace, is a couple
-		// of dozen pictures rather than several thousand.
-		let batchesPerSecond = 1.0 / 0.008
-		let drawnPerSecond = 1.0 / RedrawThrottle.catchUpInterval
-		#expect(drawnPerSecond < batchesPerSecond / 5)
+	/// The numbers themselves, because both are chosen rather than derived and
+	/// changing either changes what somebody sees.
+	@Test func holdsABurstForAQuarterOfASecondAndThenBeatsOnceASecond() {
+		#expect(RedrawThrottle.burstHoldOff == 0.25)
+		#expect(RedrawThrottle.catchUpInterval == 1.0)
 	}
 }

@@ -385,6 +385,20 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let frames = options.burstFrames {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+				let sent = controller?.burstForTesting(frames: frames) ?? -1
+				// A second later: long enough for the backlog to drain and for
+				// the picture at the end of it to be drawn.
+				DispatchQueue.main.asyncAfter(deadline: .now() + 8.0) {
+					print("BURST frames=\(sent) draws=\(TerminalView.drawCountForTesting)")
+					fflush(stdout)
+					if options.isScreenshotRun { return }
+					exit(0)
+				}
+			}
+		}
+
 		if options.tabMenu {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
 				for over in [true, false] {

@@ -669,6 +669,16 @@ final class BottomPanel: NSView {
 		return terminal.terminalView.optionKeyForTesting(bare: bare, composed: composed)
 	}
 
+	/// Feeds the terminal in front a burst of frames.
+	func burstForTesting(frames: Int) -> Int {
+		let index = activeIndex ?? 0
+		guard index >= 0, index < sessions.count,
+		      let terminal = sessions[index].terminal
+		else { return -1 }
+		terminal.terminalView.burstForTesting(frames: frames)
+		return frames
+	}
+
 	/// Presses keys by key code in the terminal in front.
 	func deadKeyForTesting(presses: [(code: UInt16, shift: Bool)]) -> String {
 		let index = activeIndex ?? 0

@@ -5819,6 +5819,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		return bottomPanel.optionKeyForTesting(bare: bare, composed: composed)
 	}
 
+	/// Feeds the terminal a burst of frames, as a program running unwatched does.
+	func burstForTesting(frames: Int) -> Int {
+		setPanelVisible(true)
+		return bottomPanel.burstForTesting(frames: frames)
+	}
+
 	/// Presses keys by key code in the terminal, and says what each one did.
 	func deadKeyForTesting(presses: [(code: UInt16, shift: Bool)]) -> String {
 		setPanelVisible(true)

@@ -124,6 +124,9 @@ struct LaunchOptions {
 	/// Print what a right-click on the tab strip offers.
 	var tabMenu = false
 
+	/// Feed the terminal this many frames at once, and report the redraws.
+	var burstFrames: Int?
+
 	/// Click into the commit details field and type this.
 	var commitBody: String?
 	/// `from:to:in|out` — indent or outdent a block, for checking Tab.
@@ -419,6 +422,7 @@ struct LaunchOptions {
 			case "--dead-key": options.deadKeys = next()
 			case "--click-below": options.clickBelowLastLine = true
 			case "--tab-menu": options.tabMenu = true
+			case "--burst": options.burstFrames = next().flatMap(Int.init)
 			case "--commit-body": options.commitBody = next()
 			case "--indent-block": options.indentBlock = next()
 			case "--print-text": options.printText = true

@@ -67,6 +67,13 @@ final class TerminalView: NSView, NSTextInputClient {
 	private var isReadingSuspended = false
 	/// When the screen was last drawn, for pacing redraws while catching up.
 	private var lastRedrawAt = Date.distantPast
+	/// How many times the screen has actually been drawn, for a test to say
+	/// whether a burst was replayed or held.
+	static var drawCountForTesting = 0
+
+	/// When the backlog started, or nil while caught up. A burst is held back
+	/// rather than drawn frame by frame, and this is how long it has lasted.
+	private var behindSince: Date?
 
 	/// How long parsing may take before yielding so the screen can be drawn.
 	private static let parseBudget: TimeInterval = 0.006
@@ -275,6 +282,7 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// Takes output from the process and asks for it to be parsed soon.
 	private func enqueue(_ data: Data) {
 		if InputProbe.enabled, keyPressedAt != nil, keyEchoedAt == nil { keyEchoedAt = Date() }
+		if pending.isEmpty, behindSince == nil { behindSince = Date() }
 		pending.append(data)
 		pendingBytes += data.count
 
@@ -330,22 +338,26 @@ final class TerminalView: NSView, NSTextInputClient {
 		// Caught up: draw what it all came to. Redraws asked for while there
 		// was still a backlog were skipped, and this is the one that shows the
 		// picture they were each a step towards.
-		if pending.isEmpty { scheduleRedraw() }
+		if pending.isEmpty {
+			behindSince = nil
+			scheduleRedraw()
+		}
 		scheduleDrain()
 	}
 
 	private func scheduleRedraw() {
 		guard !redrawScheduled else { return }
 
-		// Not for every batch while there is a backlog: each one would paint a
-		// screen the program has already replaced, at over a hundred a second,
-		// which is what a screen that has been locked for a while looks like
-		// when it comes back — a spinner's whole history, flickering past. The
-		// drain draws once more when it has caught up, so nothing is lost by
-		// skipping here.
+		// Not for every batch while there is a backlog: each one paints a screen
+		// the program has already replaced, which is what a locked screen looks
+		// like when it comes back — an agent's clock sprinting through minutes
+		// it already spent. A burst is held until it drains and drawn once; a
+		// program that keeps outrunning the parser goes back to showing progress
+		// after a quarter of a second, so a long build never looks frozen.
 		guard RedrawThrottle.shouldDraw(
 			isBehind: !pending.isEmpty,
-			sinceLastDraw: Date().timeIntervalSince(lastRedrawAt)
+			sinceLastDraw: Date().timeIntervalSince(lastRedrawAt),
+			behindFor: behindSince.map { -$0.timeIntervalSinceNow } ?? 0
 		) else { return }
 
 		redrawScheduled = true
@@ -353,6 +365,7 @@ final class TerminalView: NSView, NSTextInputClient {
 			guard let self else { return }
 			self.redrawScheduled = false
 			self.lastRedrawAt = Date()
+			TerminalView.drawCountForTesting += 1
 
 			// The alternate screen is one screenful that never scrolls: the
 			// document is exactly the grid and the view sits at the top of it.
@@ -1673,6 +1686,25 @@ final class TerminalView: NSView, NSTextInputClient {
 		)
 		guard let event else { return "no event" }
 		return encode(event: event) ?? "nothing"
+	}
+
+	/// Feeds the view a burst of frames the way a program that has been
+	/// running unwatched does, and says how many pictures came out of it.
+	///
+	/// Through `enqueue`, which is the path output actually takes: what was
+	/// wrong was not the rule but how often it was consulted, and a test of the
+	/// rule alone would have passed while the screen still replayed a minute of
+	/// somebody's afternoon.
+	func burstForTesting(frames: Int) {
+		TerminalView.drawCountForTesting = 0
+		for frame in 0..<frames {
+			// A repaint of the kind an agent's window sends: home the cursor,
+			// draw a spinner and a clock, over and over.
+			let seconds = frame % 600
+			let spinner = ["|", "/", "-", "\\"][frame % 4]
+			let picture = "\u{1B}[H\u{1B}[2J\(spinner) working (\(seconds)s)\r\n"
+			enqueue(Data(picture.utf8))
+		}
 	}
 
 	/// Presses keys by their key code and says what each one did.
