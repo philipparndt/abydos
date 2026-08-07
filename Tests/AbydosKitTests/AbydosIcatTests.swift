@@ -96,8 +96,50 @@ struct AbydosIcatTests {
 
 		let output = try run(on: file)
 		let text = String(decoding: output, as: UTF8.self)
-		#expect(text.contains("f=100,a=T,c="))
+		#expect(text.contains("f=100,a=T,U=1"))
 		#expect(text.contains("m=0"))
 		#expect(payload(of: output).count == 400)
+	}
+
+	/// The picture is shown by writing placeholder cells, and there are exactly
+	/// as many of them as the size it told the terminal.
+	///
+	/// This is what stops the picture being followed by a field of blank lines
+	/// or scrolling away before it can be looked at: the rows written are the
+	/// rows it covers, so there is no second number that has to agree.
+	@Test func thePlaceholderCellsMatchTheSizeItAskedFor() throws {
+		let file = FileManager.default.temporaryDirectory
+			.appendingPathComponent("icat-\(UUID().uuidString).png")
+		defer { try? FileManager.default.removeItem(at: file) }
+		try Data([UInt8](repeating: 0x7A, count: 5_000)).write(to: file)
+
+		let output = try run(on: file)
+		let text = String(decoding: output, as: UTF8.self)
+
+		let keys = try #require(
+			text.split(separator: ";").first.map(String.init),
+			"no control data"
+		)
+		let columns = try #require(value(of: "c", in: keys))
+		let rows = try #require(value(of: "r", in: keys))
+		#expect(columns > 0 && rows > 0)
+
+		// Scalars, not characters: the first cell of a row carries combining
+		// marks, and base-plus-mark is one Character that is not the bare one.
+		let placeholders = text.unicodeScalars.filter { $0.value == 0x10EEEE }.count
+		#expect(placeholders == columns * rows)
+		// One line per row of the picture, and no more: anything extra is the
+		// gap after the image.
+		#expect(text.unicodeScalars.filter { $0 == "\n" }.count == rows)
+	}
+
+	/// The value of one key in the control data.
+	private func value(of key: String, in keys: String) -> Int? {
+		for pair in keys.split(separator: ",") {
+			let parts = pair.split(separator: "=")
+			guard parts.count == 2, parts[0].hasSuffix(key), parts[0].count <= 3 else { continue }
+			if String(parts[0]).hasSuffix(key) { return Int(parts[1]) }
+		}
+		return nil
 	}
 }
