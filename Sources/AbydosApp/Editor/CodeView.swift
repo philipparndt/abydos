@@ -391,9 +391,18 @@ final class CodeView: NSView, NSTextInputClient {
 	/// the old width, and rows it allocated for a wider line have nothing left
 	/// to show.
 	func viewportChanged() {
-		guard isWordWrapEnabled, availableColumns != wrapLayout.columns else { return }
-		updateFrameSize()
-		needsDisplay = true
+		if isWordWrapEnabled, availableColumns != wrapLayout.columns {
+			updateFrameSize()
+			needsDisplay = true
+			return
+		}
+
+		// Nothing re-wrapped, but a viewport that grew taller than the document
+		// leaves the view short of the space under the last line — which is
+		// space a click has to land in.
+		let wanted = frameHeight()
+		guard abs(frame.height - wanted) > 0.5 else { return }
+		setFrameSize(NSSize(width: frame.width, height: wanted))
 	}
 
 	/// Turns soft wrap on or off and re-lays out.
@@ -415,7 +424,7 @@ final class CodeView: NSView, NSTextInputClient {
 
 		if isWordWrapEnabled { rebuildWrapLayout() }
 
-		let height = CGFloat(visibleLineCount) * lineHeight + lineHeight
+		let height = frameHeight()
 		let clipWidth = enclosingScrollView?.contentSize.width ?? bounds.width
 
 		// Wrapped text never scrolls horizontally, so the document is exactly as
@@ -425,6 +434,19 @@ final class CodeView: NSView, NSTextInputClient {
 			: gutterWidth + Self.textLeftPadding + CGFloat(longestLineColumns) * charWidth + 40
 
 		setFrameSize(NSSize(width: max(width, clipWidth), height: max(height, 10)))
+	}
+
+	/// How tall the view is: the text, or the viewport when the text is shorter.
+	///
+	/// A ten-line file left the view ten lines tall, and everything under it
+	/// belonged to the scroll view — so clicking in the empty space below the
+	/// last line reached nothing and the caret stayed where it was. Filling the
+	/// viewport puts that space inside the text view, where a click lands on the
+	/// last line, which is what it looks like it should do.
+	private func frameHeight() -> CGFloat {
+		let text = CGFloat(visibleLineCount) * lineHeight + lineHeight
+		let viewport = enclosingScrollView?.contentSize.height ?? 0
+		return max(text, viewport)
 	}
 
 	override func setFrameSize(_ newSize: NSSize) {
@@ -1315,6 +1337,7 @@ final class CodeView: NSView, NSTextInputClient {
 
 	override func becomeFirstResponder() -> Bool {
 		restartCaretBlink()
+		announceKeyboardFocusChange()
 		return true
 	}
 
@@ -1322,6 +1345,7 @@ final class CodeView: NSView, NSTextInputClient {
 		caretTimer?.invalidate()
 		caretVisible = false
 		needsDisplay = true
+		announceKeyboardFocusChange()
 		return true
 	}
 
@@ -2328,6 +2352,47 @@ final class CodeView: NSView, NSTextInputClient {
 	}
 
 	/// The document as it stands, for a test to read back.
+	/// Clicks in the empty space under the last line and says where the caret
+	/// went, and what the click landed on.
+	///
+	/// Through the window's hit testing rather than by calling `mouseDown`
+	/// directly: what was wrong was not where the click was translated to but
+	/// that the click never reached this view at all, and a test that dispatched
+	/// the event by hand would have agreed with the view while the empty space
+	/// under a short file still did nothing.
+	func clickBelowLastLineForTesting() -> String {
+		guard let window, let root = window.contentView else { return "no window" }
+
+		// A point in the gap: below the text, inside the viewport, and to the
+		// right of the gutter so it counts as text rather than as a fold.
+		let textBottom = CGFloat(visibleLineCount) * lineHeight
+		let viewport = enclosingScrollView?.contentSize.height ?? bounds.height
+		guard viewport > textBottom + lineHeight else { return "no empty space below the text" }
+		let target = NSPoint(x: gutterWidth + 60, y: textBottom + (viewport - textBottom) / 2)
+
+		let inWindow = convert(target, to: nil)
+		let hit = root.hitTest(inWindow)
+		let landedHere = hit === self
+
+		if let hit, landedHere {
+			hit.mouseDown(with: NSEvent.mouseEvent(
+				with: .leftMouseDown, location: inWindow, modifierFlags: [],
+				timestamp: ProcessInfo.processInfo.systemUptime,
+				windowNumber: window.windowNumber, context: nil,
+				eventNumber: 0, clickCount: 1, pressure: 1
+			) ?? NSEvent())
+		}
+
+		let line = document.map { document -> Int in
+			document.rope.line(atByteOffset: document.rope.byteOffset(fromUTF16: caret)) + 1
+		} ?? 0
+		let hitName = hit.map { String(describing: type(of: $0)) } ?? "nothing"
+		return "hit=\(landedHere ? "editor" : hitName)"
+			+ " caretLine=\(line) of \(document?.lineCount ?? 0)"
+			+ " frame=\(Int(frame.height)) viewport=\(Int(enclosingScrollView?.contentSize.height ?? -1))"
+			+ " text=\(Int(textBottom)) point=\(Int(target.x)),\(Int(target.y))"
+	}
+
 	var textForTesting: String {
 		guard let document else { return "" }
 		return document.rope.string(in: 0..<document.rope.byteCount)

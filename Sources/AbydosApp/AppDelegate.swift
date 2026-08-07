@@ -376,6 +376,33 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if options.clickBelowLastLine {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+				print("CLICKBELOW \(controller?.clickBelowLastLineForTesting() ?? "no window")")
+				fflush(stdout)
+				if options.isScreenshotRun { return }
+				exit(0)
+			}
+		}
+
+		if let spec = options.deadKeys {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+				let presses = spec.split(separator: ",").compactMap { part -> (code: UInt16, shift: Bool)? in
+					let shift = part.hasSuffix("s")
+					guard let code = UInt16(shift ? part.dropLast() : part) else { return nil }
+					return (code, shift)
+				}
+				let report = controller?.deadKeyForTesting(presses: presses)
+				print("DEADKEY \(report ?? "no window")")
+				// Piped output is held until the process ends, and a test that
+				// is killed on a timeout takes the answer with it.
+				fflush(stdout)
+				// Unless a picture is being taken of what it left on screen.
+				if options.isScreenshotRun { return }
+				exit(0)
+			}
+		}
+
 		if let path = options.toolbarImage {
 			DebugToolbarPreview.write(to: path, location: options.toolbarLocation)
 			print("TOOLBAR: \(path)")

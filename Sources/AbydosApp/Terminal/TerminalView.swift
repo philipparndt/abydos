@@ -928,7 +928,19 @@ final class TerminalView: NSView, NSTextInputClient {
 			guard let image = cachedImage(for: placement.imageID),
 			      let cropped = crop(image, to: placement.source)
 			else { continue }
-			context.draw(cropped, in: rect(for: placement))
+
+			// Turned over inside its own box: this view counts rows from the
+			// top, and CoreGraphics draws a picture up from the bottom, so
+			// without this every image comes out upside down. The Metal
+			// renderer has its own orientation and gets it right, which is why
+			// it showed in screenshots and not on screen.
+			let box = rect(for: placement)
+			context.saveGState()
+			context.translateBy(x: 0, y: box.midY)
+			context.scaleBy(x: 1, y: -1)
+			context.translateBy(x: 0, y: -box.midY)
+			context.draw(cropped, in: box)
+			context.restoreGState()
 		}
 		context.restoreGState()
 	}
@@ -1340,12 +1352,14 @@ final class TerminalView: NSView, NSTextInputClient {
 		cursorVisible = true
 		reportFocus(true)
 		repaint()
+		announceKeyboardFocusChange()
 		return true
 	}
 
 	override func resignFirstResponder() -> Bool {
 		reportFocus(false)
 		repaint()
+		announceKeyboardFocusChange()
 		return true
 	}
 
@@ -1528,14 +1542,46 @@ final class TerminalView: NSView, NSTextInputClient {
 			clear()
 			return
 		}
+		// A dead key or an input method has to compose before there is anything
+		// to send. `^` and `` ` `` on a German layout could not be typed at all
+		// while every event was encoded here: they carry no character of their
+		// own, so there was nothing to encode.
+		if TerminalKeys.needsComposition(
+			characters: event.characters,
+			keyCode: event.keyCode,
+			control: event.modifierFlags.contains(.control),
+			command: event.modifierFlags.contains(.command),
+			option: event.modifierFlags.contains(.option),
+			optionAsMeta: Settings.shared.terminalOptionAsMeta,
+			composing: hasMarkedText()
+		) {
+			composingEvent = event
+			let handled = inputContext?.handleEvent(event)
+			composingEvent = nil
+			TerminalView.compositionRouteForTesting = handled.map { "im:\($0)" } ?? "no context"
+			return
+		}
+
 		guard let bytes = encode(event: event) else { return }
+		send(typed: bytes)
+	}
+
+	/// What has been typed at the program while a test is watching.
+	static var typedForTesting: [String]?
+
+	/// Where the last key went, for a test to say why nothing was composed.
+	static var compositionRouteForTesting = "encoded"
+
+	/// Writes typed text to the program, and starts the stopwatch on it.
+	private func send(typed text: String) {
+		TerminalView.typedForTesting?.append(text)
 		keyPressedAt = Date()
 		keyEchoedAt = nil
 		keyParsedAt = nil
 		hasDrawnEcho = false
 		// Typing always jumps back to the prompt, as every terminal does.
 		isPinnedToBottom = true
-		pty.write(bytes)
+		pty.write(text)
 		scrollToBottom()
 	}
 
@@ -1627,6 +1673,48 @@ final class TerminalView: NSView, NSTextInputClient {
 		)
 		guard let event else { return "no event" }
 		return encode(event: event) ?? "nothing"
+	}
+
+	/// Presses keys by their key code and says what each one did.
+	///
+	/// Through `keyDown`, not through the encoder: what was wrong was never the
+	/// encoding but that the layout was never asked, and a test that called the
+	/// encoder would have agreed with the view while `^` still typed nothing.
+	/// The layout itself does the composing here — whichever one the machine is
+	/// set to — so this shows what the keyboard in front of the user does.
+	func deadKeyForTesting(presses: [(code: UInt16, shift: Bool)]) -> String {
+		NSApp.activate(ignoringOtherApps: true)
+		window?.makeKeyAndOrderFront(nil)
+		window?.makeFirstResponder(self)
+		var report: [String] = []
+		for press in presses {
+			TerminalView.typedForTesting = []
+			TerminalView.compositionRouteForTesting = "encoded"
+			// Built as a real keyboard event rather than by hand: the input
+			// manager translates through the layout using what the event source
+			// carries, and an NSEvent made from parts carries none of it — it
+			// accepts the key and composes nothing, which looks exactly like the
+			// bug this is here to catch.
+			guard let raw = CGEvent(
+				keyboardEventSource: CGEventSource(stateID: .combinedSessionState),
+				virtualKey: press.code,
+				keyDown: true
+			) else { return "no event" }
+			if press.shift { raw.flags.insert(.maskShift) }
+			guard let event = NSEvent(cgEvent: raw) else { return "no event" }
+			keyDown(with: event)
+			let typed = (TerminalView.typedForTesting ?? []).joined()
+			report.append(
+				"key \(press.code): \(TerminalView.compositionRouteForTesting) "
+					+ "marked=\(markedText.isEmpty ? "-" : markedText) "
+					// Escaped: a carriage return typed at the end of the report
+					// would print as the cursor going back to the margin, which
+					// reads as nothing having been sent at all.
+					+ "typed=\(typed.isEmpty ? "-" : typed.debugDescription)"
+			)
+		}
+		TerminalView.typedForTesting = nil
+		return report.joined(separator: " | ")
 	}
 
 	/// Translates a key event into the bytes a terminal would send.
@@ -2150,21 +2238,100 @@ final class TerminalView: NSView, NSTextInputClient {
 		scrollToBottom()
 	}
 
+	// MARK: - Composition
+
+	/// The text being composed, which no program has been told about yet.
+	private var markedText = ""
+
+	/// The key the input manager is being asked about, kept so a key it hands
+	/// back can still be sent.
+	private var composingEvent: NSEvent?
+
+	/// A key the input manager refused rather than composed.
+	///
+	/// Return pressed while an accent is pending: the layout commits the accent
+	/// and passes the Return on as an editing command. Nothing here edits text,
+	/// but the program is still owed that keystroke.
+	override func doCommand(by selector: Selector) {
+		guard let event = composingEvent, let bytes = encode(event: event) else { return }
+		send(typed: bytes)
+	}
+
+	/// Shows or hides the composed text at the cursor.
+	///
+	/// A label on top rather than characters written into the screen: the grid
+	/// belongs to the program, and a pending accent is not something the program
+	/// has been sent. It also keeps working when the Metal renderer is drawing,
+	/// which paints from the grid and knows nothing about this.
+	private func setComposition(_ text: String) {
+		guard markedText != text else { return }
+		markedText = text
+
+		guard !text.isEmpty, let place = cursorPlace(), place.row < shownLineCount else {
+			compositionLabel.isHidden = true
+			return
+		}
+
+		compositionLabel.attributedStringValue = NSAttributedString(
+			string: text,
+			attributes: [
+				.font: font,
+				.foregroundColor: TerminalPalette.foreground,
+				.backgroundColor: TerminalPalette.background,
+				// Underlined, which is how every input method says "not typed yet".
+				.underlineStyle: NSUnderlineStyle.single.rawValue,
+				.underlineColor: TerminalPalette.cursor,
+			]
+		)
+		compositionLabel.sizeToFit()
+		compositionLabel.frame.origin = CGPoint(
+			x: (Self.horizontalInset + CGFloat(place.column) * cellWidth).rounded(),
+			y: (Self.verticalInset + CGFloat(place.row) * cellHeight).rounded()
+		)
+		compositionLabel.frame.size.height = cellHeight
+		if compositionLabel.superview !== self {
+			addSubview(compositionLabel, positioned: .above, relativeTo: nil)
+		}
+		compositionLabel.isHidden = false
+	}
+
+	private lazy var compositionLabel: NSTextField = {
+		let label = NSTextField(labelWithString: "")
+		label.drawsBackground = true
+		label.isBordered = false
+		label.isHidden = true
+		return label
+	}()
+
 	// MARK: - NSTextInputClient
 
 	// Minimal conformance so IME candidates commit into the terminal.
 
 	func insertText(_ string: Any, replacementRange: NSRange) {
 		let text = (string as? String) ?? (string as? NSAttributedString)?.string ?? ""
+		setComposition("")
 		guard !text.isEmpty else { return }
-		pty.write(text)
+		send(typed: text)
 	}
 
-	func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {}
-	func unmarkText() {}
+	/// The half-finished text the layout is holding.
+	///
+	/// A dead key composes in two presses: the first shows the accent, the
+	/// second decides whether it becomes `â` or stays `^` in front of whatever
+	/// followed. The first press has to be visible or the keyboard looks broken,
+	/// and the terminal itself must not see it — nothing has been typed yet.
+	func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+		setComposition((string as? String) ?? (string as? NSAttributedString)?.string ?? "")
+	}
+
+	func unmarkText() { setComposition("") }
 	func selectedRange() -> NSRange { NSRange(location: NSNotFound, length: 0) }
-	func markedRange() -> NSRange { NSRange(location: NSNotFound, length: 0) }
-	func hasMarkedText() -> Bool { false }
+
+	func markedRange() -> NSRange {
+		markedText.isEmpty ? NSRange(location: NSNotFound, length: 0) : NSRange(location: 0, length: markedText.utf16.count)
+	}
+
+	func hasMarkedText() -> Bool { !markedText.isEmpty }
 	func attributedSubstring(forProposedRange range: NSRange, actualRange: NSRangePointer?) -> NSAttributedString? { nil }
 	func validAttributesForMarkedText() -> [NSAttributedString.Key] { [] }
 	func characterIndex(for point: NSPoint) -> Int { 0 }

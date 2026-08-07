@@ -113,6 +113,13 @@ struct LaunchOptions {
 	var toolbarLocation: String?
 	/// `bare:composed` pairs to press with Option held, for the key path.
 	var optionKeys: [String] = []
+
+	/// Key codes to press in the terminal, as `10,14` — with an `s` after a code
+	/// for Shift, which is where a German layout keeps its grave accent.
+	var deadKeys: String?
+
+	/// Click in the empty space under the last line of a short file.
+	var clickBelowLastLine = false
 	/// `from:to:in|out` — indent or outdent a block, for checking Tab.
 	var indentBlock: String?
 	/// Prints what the editor is holding, saved or not.
@@ -403,6 +410,8 @@ struct LaunchOptions {
 			case "--toolbar-image": options.toolbarImage = next()
 			case "--toolbar-location": options.toolbarLocation = next()
 			case "--option-key": if let pair = next() { options.optionKeys.append(pair) }
+			case "--dead-key": options.deadKeys = next()
+			case "--click-below": options.clickBelowLastLine = true
 			case "--indent-block": options.indentBlock = next()
 			case "--print-text": options.printText = true
 			case "--theme": options.theme = next()

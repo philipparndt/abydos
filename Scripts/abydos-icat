@@ -54,6 +54,94 @@ fi
 
 esc=$(printf '\033')
 
+# How large one character cell is, in pixels, and how wide the terminal is.
+#
+# A picture is placed on the character grid, so this is what turns "1000 pixels
+# wide" into a number of columns. Without it the only thing left is a guess, and
+# the guess was that a column is a pixel — which printed a picture followed by
+# five hundred blank lines.
+#
+# The pty carries it: the same ioctl that reports rows and columns reports the
+# window in pixels too. Where it does not — an older tmux, or a terminal that
+# never filled it in — the terminal is asked directly, which is what the
+# protocol provides `CSI 16 t` for.
+cell_w=0
+cell_h=0
+term_columns=0
+
+read_winsize() {
+	python3 - <<'PY' 2>/dev/null
+import fcntl, struct, sys, termios
+try:
+	with open('/dev/tty') as tty:
+		rows, columns, xpixel, ypixel = struct.unpack(
+			'HHHH', fcntl.ioctl(tty, termios.TIOCGWINSZ, b'\0' * 8)
+		)
+except Exception:
+	sys.exit(1)
+if not (rows and columns and xpixel and ypixel):
+	sys.exit(1)
+print(xpixel // columns, ypixel // rows, columns)
+PY
+}
+
+ask_cell_size() {
+	# Raw, so the answer is not echoed and arrives without waiting for a return
+	# that nobody is going to press. `time 3` is three tenths of a second, after
+	# which a terminal that does not answer has answered.
+	saved=$(stty -g 2>/dev/null) || return 1
+	stty raw -echo min 0 time 3 2>/dev/null || return 1
+	printf '%s[16t' "$esc" > /dev/tty
+	reply=$(dd bs=1 count=16 2>/dev/null < /dev/tty)
+	stty "$saved" 2>/dev/null
+	# ESC [ 6 ; height ; width t
+	echo "$reply" | awk -v RS='t' -F';' '/\[6/ { print $3, $2; exit }'
+}
+
+measure_terminal() {
+	# tmux knows, and knows better than the ioctl does: it keeps the size of the
+	# terminal it is attached to, while the pty it hands the shell is its own and
+	# carries no pixels at all.
+	if in_tmux; then
+		size=$(tmux display -p '#{client_cell_width} #{client_cell_height} #{window_width}' 2>/dev/null || true)
+		case "${size:-}" in
+			[0-9]*\ [0-9]*\ [0-9]*)
+				cell_w=${size%% *}
+				rest=${size#* }
+				cell_h=${rest%% *}
+				term_columns=${rest##* }
+				;;
+		esac
+	fi
+
+	[ "$cell_w" -gt 0 ] 2>/dev/null && [ "$cell_h" -gt 0 ] 2>/dev/null && return 0
+
+	size=$(read_winsize || true)
+	if [ -n "${size:-}" ]; then
+		cell_w=${size%% *}
+		rest=${size#* }
+		cell_h=${rest%% *}
+		term_columns=${rest##* }
+	fi
+
+	[ "$term_columns" -gt 0 ] 2>/dev/null || term_columns=$(tput cols 2>/dev/null || echo 80)
+
+	if ! [ "$cell_w" -gt 0 ] 2>/dev/null || ! [ "$cell_h" -gt 0 ] 2>/dev/null; then
+		asked=$(ask_cell_size 2>/dev/null || true)
+		if [ -n "${asked:-}" ]; then
+			cell_w=${asked%% *}
+			cell_h=${asked##* }
+		fi
+	fi
+
+	# Still nothing: a picture at a size nobody chose is worse than one at the
+	# width of the window, which is at least a size that fits.
+	[ "$cell_w" -gt 0 ] 2>/dev/null || cell_w=0
+	[ "$cell_h" -gt 0 ] 2>/dev/null || cell_h=0
+}
+
+measure_terminal
+
 # One graphics command: the keys, then the payload, wrapped for tmux when
 # tmux is in the way.
 emit() {
@@ -88,31 +176,64 @@ print_image() {
 	encoded="$(base64 < "$file" | tr -d '\n')"
 	[ "$file" = "$source_file" ] || rm -f "$file"
 
-	# f=100: the payload is a PNG. a=T: transmit and place it here.
-	keys="f=100,a=T"
-	[ -z "$width" ] || keys="$keys,c=$width"
-	[ -z "$height" ] || keys="$keys,r=$height"
+	pixels=$(sips -g pixelWidth -g pixelHeight "$file" 2>/dev/null |
+		awk '/pixelWidth/ {w=$2} /pixelHeight/ {h=$2} END {print w" "h}')
+	image_width=${pixels%% *}
+	image_height=${pixels##* }
+	[ "${image_width:-0}" -gt 0 ] 2>/dev/null || image_width=0
+	[ "${image_height:-0}" -gt 0 ] 2>/dev/null || image_height=0
 
-	# How many rows it will take, so the cursor can be moved below it
-	# afterwards. The protocol draws where the cursor is and leaves it there,
-	# so without this the next prompt is written over the picture — which is
-	# what the first version did, and it looks like a drawing bug rather than a
-	# missing newline.
+	# How wide to draw it, in columns.
+	#
+	# Its own size where that fits, and the width of the window where it does
+	# not — a photograph is four thousand pixels across and the window is a few
+	# hundred, and drawing it at its own size would leave most of it off the
+	# right-hand edge.
+	columns="$width"
+	if [ -z "$columns" ] && [ -z "$height" ]; then
+		if [ "$cell_w" -gt 0 ] && [ "$image_width" -gt 0 ]; then
+			columns=$(( (image_width + cell_w - 1) / cell_w ))
+			[ "$columns" -le "$term_columns" ] || columns="$term_columns"
+		else
+			# Nothing known about the cells: the window's width is the one size
+			# that is certain to fit.
+			columns="$term_columns"
+		fi
+	fi
+
+	# f=100: the payload is a PNG. a=T: transmit and place it here. One of the
+	# two dimensions only, so the terminal keeps the picture's proportions
+	# rather than stretching it into whatever box was named.
+	keys="f=100,a=T"
+	[ -z "$columns" ] || keys="$keys,c=$columns"
+	[ -n "$columns" ] || [ -z "$height" ] || keys="$keys,r=$height"
+
+	# How many rows it will cover, so the cursor can be moved below it. The
+	# protocol draws where the cursor is and leaves it there, so without this
+	# the next prompt is written over the picture.
 	rows="$height"
-	if [ -z "$rows" ]; then
-		pixels=$(sips -g pixelWidth -g pixelHeight "$file" 2>/dev/null |
-			awk '/pixelWidth/ {w=$2} /pixelHeight/ {h=$2} END {print w" "h}')
-		image_width=${pixels%% *}
-		image_height=${pixels##* }
-		if [ -n "${image_width:-}" ] && [ -n "${image_height:-}" ] && [ "$image_width" -gt 0 ]; then
-			columns=${width:-$image_width}
-			# A cell is about twice as tall as it is wide, which is what turns
-			# a pixel ratio into a row count.
+	if [ -n "$columns" ]; then
+		if [ "$cell_h" -gt 0 ] && [ "$image_width" -gt 0 ]; then
+			# The height the terminal will scale it to, in cells — the same sum
+			# the terminal does, so the cursor lands one line under the picture
+			# rather than through it.
+			scaled_height=$(( image_height * columns * cell_w / image_width ))
+			rows=$(( (scaled_height + cell_h - 1) / cell_h ))
+		elif [ "$image_width" -gt 0 ]; then
+			# A cell is about twice as tall as it is wide, which is the only
+			# thing left to go on.
 			rows=$(( (image_height * columns) / (image_width * 2) + 1 ))
 		else
 			rows=10
 		fi
 	fi
+	[ "${rows:-0}" -gt 0 ] 2>/dev/null || rows=1
+
+	# What it decided, for working out a picture that came out the wrong size or
+	# a prompt that landed in the wrong place.
+	[ -z "${ABYDOS_ICAT_DEBUG:-}" ] || echo "abydos-icat: image ${image_width}x${image_height}px" \
+		"cell ${cell_w}x${cell_h}px term ${term_columns} cols" \
+		"-> c=${columns:-none} rows=${rows}" >&2
 
 	# 4096 bytes of base64 at a time, which is what the protocol asks for, with
 	# `m=1` on every chunk but the last.

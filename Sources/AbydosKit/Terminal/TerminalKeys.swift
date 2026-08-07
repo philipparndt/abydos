@@ -139,6 +139,45 @@ public enum TerminalKeys {
 		return "\u{1B}" + bare
 	}
 
+	/// Whether a key event has to be handed to the input manager instead of
+	/// being turned into bytes here.
+	///
+	/// A dead key produces no character of its own: pressing `^` on a German
+	/// layout, or ⌥e on a US one, holds the accent back until the next key says
+	/// whether it becomes `ê` or `^e`. The layout makes that decision, and only
+	/// when the event reaches the input manager. Encoding events ourselves is
+	/// why `^` and `` ` `` typed nothing at all — there was no character in the
+	/// event to send, so there was nothing to send.
+	///
+	/// The same door is what a Japanese or Chinese input method comes through,
+	/// which is the other thing that could not be typed here.
+	public static func needsComposition(
+		characters: String?,
+		keyCode: UInt16,
+		control: Bool,
+		command: Bool,
+		option: Bool,
+		optionAsMeta: Bool,
+		composing: Bool
+	) -> Bool {
+		// A control or command combination is a command, not text.
+		if control || command { return false }
+
+		// Option is Meta when it has been asked to be, and Meta never composes.
+		if option, optionAsMeta { return false }
+
+		// Once something is being composed every key belongs to it — including
+		// the space that turns a pending `^` into a bare circumflex, and the
+		// escape that abandons it.
+		if composing { return true }
+
+		// A key with a sequence of its own stands for itself. Return carries no
+		// character either, and it is not waiting for a second key.
+		if Key(rawValue: keyCode) != nil { return false }
+
+		return (characters ?? "").isEmpty
+	}
+
 	/// Whether a string is something a program would want as input rather than
 	/// as a control code.
 	static func isTypable(_ text: String) -> Bool {

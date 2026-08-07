@@ -45,6 +45,13 @@ mkdir -p "$CONTENTS/Resources/bin"
 cp Scripts/abydos-icat "$CONTENTS/Resources/bin/abydos-icat"
 chmod +x "$CONTENTS/Resources/bin/abydos-icat"
 
+# The benchmark, under the same prefix as the rest. It is what to reach for
+# when the terminal feels slow, and one that lives in a checkout behind
+# `swift run` is one nobody runs — least of all against the build that is
+# actually installed, which is the build the question is about.
+cp "$BIN_DIR/firebench" "$CONTENTS/Resources/bin/abydos-bench"
+chmod +x "$CONTENTS/Resources/bin/abydos-bench"
+
 # Grammar query bundles. Without these every file opens uncoloured, so treat a
 # missing set as a hard failure rather than shipping a broken app.
 COUNT=0

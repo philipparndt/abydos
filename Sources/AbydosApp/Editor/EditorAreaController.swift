@@ -705,6 +705,7 @@ final class EditorAreaController: NSViewController {
 	func focusActiveEditor() { activeGroup.focusActiveEditor() }
 	func simulateTyping(_ text: String) { activeGroup.simulateTyping(text) }
 	var textForTesting: String? { activeGroup.textForTesting }
+	func clickBelowLastLineForTesting() -> String { activeGroup.clickBelowLastLineForTesting() }
 	func indentForTesting(fromLine: Int, toLine: Int, outdent: Bool) -> String? {
 		activeGroup.indentForTesting(fromLine: fromLine, toLine: toLine, outdent: outdent)
 	}

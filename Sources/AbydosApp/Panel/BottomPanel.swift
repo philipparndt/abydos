@@ -669,6 +669,15 @@ final class BottomPanel: NSView {
 		return terminal.terminalView.optionKeyForTesting(bare: bare, composed: composed)
 	}
 
+	/// Presses keys by key code in the terminal in front.
+	func deadKeyForTesting(presses: [(code: UInt16, shift: Bool)]) -> String {
+		let index = activeIndex ?? 0
+		guard index >= 0, index < sessions.count,
+		      let terminal = sessions[index].terminal
+		else { return "no terminal" }
+		return terminal.terminalView.deadKeyForTesting(presses: presses)
+	}
+
 	/// Opens a shell, or focuses the existing one if there already is a terminal.
 	/// tmux's windows, when the strip is showing those rather than our own
 	/// terminals.
@@ -2808,6 +2817,35 @@ final class PanelTabStrip: NSView {
 
 	private var mirrorTagFrame: NSRect = .zero
 
+	/// Whether the keyboard is in the panel this strip belongs to.
+	///
+	/// The whole panel, not one terminal: a split has two of them and one tab
+	/// stands for both. A torn-off terminal has no panel, and there everything
+	/// in the window counts.
+	private var hasKeyboardFocus: Bool {
+		// Not conditional on the window being in front: leaving the app does
+		// not move the cursor out of the pane it is in.
+		guard let window, let responder = window.firstResponder as? NSView
+		else { return false }
+
+		var found: NSView? = self
+		while let view = found, !(view is BottomPanel) { found = view.superview }
+		guard let container = found ?? window.contentView else { return false }
+		return responder === container || responder.isDescendant(of: container)
+	}
+
+	override func viewDidMoveToWindow() {
+		super.viewDidMoveToWindow()
+		// Nothing tells a view when the first responder moves elsewhere, and the
+		// line under the active tab is what says where it went.
+		NotificationCenter.default.removeObserver(self, name: .keyboardFocusChanged, object: nil)
+		NotificationCenter.default.addObserver(
+			forName: .keyboardFocusChanged, object: nil, queue: .main
+		) { [weak self] _ in
+			MainActor.assumeIsolated { self?.needsDisplay = true }
+		}
+	}
+
 	/// The tag was clicked, with where it is on screen so a menu can hang off
 	/// it. The tag says which session these tabs belong to; being able to
 	/// change it there is where somebody would look for it.
@@ -3422,15 +3460,16 @@ final class PanelTabStrip: NSView {
 			// the step between the two read as a gap under the green line.
 			(isMirroringTmux ? TerminalPalette.background : Theme.current.editorBackground).setFill()
 			rect.fill()
-			(isMirroringTmux ? Self.tmuxGreen : Theme.current.gitModified).setFill()
+			// In colour only when the keyboard is down here: the editor's strip
+			// marks its own tab the same way, and two coloured lines at once say
+			// the cursor is in both places.
+			TabSelectionLine.color(
+				focused: hasKeyboardFocus,
+				accent: isMirroringTmux ? Self.tmuxGreen : nil
+			).setFill()
 			// On tmux's strip the line goes along the top, since the strip is
 			// under what it belongs to rather than over it.
-			NSRect(
-				x: rect.minX,
-				y: isMirroringTmux ? rect.minY : rect.maxY - 2,
-				width: rect.width,
-				height: 2
-			).fill()
+			TabSelectionLine.rect(in: rect, alongTop: isMirroringTmux).fill()
 		} else if item.isShowing {
 			// The other half of a split: on screen, but not the one the
 			// keyboard is in.

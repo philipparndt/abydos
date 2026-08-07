@@ -5808,8 +5808,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		return bottomPanel.optionKeyForTesting(bare: bare, composed: composed)
 	}
 
+	/// Presses keys by key code in the terminal, and says what each one did.
+	func deadKeyForTesting(presses: [(code: UInt16, shift: Bool)]) -> String {
+		setPanelVisible(true)
+		return bottomPanel.deadKeyForTesting(presses: presses)
+	}
+
 	/// What the editor is holding, saved or not.
 	func editorTextForTesting() -> String? { editor.textForTesting }
+
+	/// Clicks below the last line of the open file, and says what happened.
+	func clickBelowLastLineForTesting() -> String { editor.clickBelowLastLineForTesting() }
 
 	/// Indents or outdents a block, and prints what the file became.
 	func exerciseIndentForTesting(from: Int, to: Int, outdent: Bool) {

@@ -7,6 +7,11 @@ import Foundation
 /// that: kitty's `icat` comes with kitty, and the alternatives draw with
 /// blocks instead.
 ///
+/// `abydos-bench` fills the screen as fast as it can and says how many frames
+/// it managed, which is the question to ask when the terminal feels slow. It
+/// ships with the app so it can be run against the build that is installed
+/// rather than against a checkout somebody still has to find.
+///
 /// Put on the PATH of every shell the app starts — including the ones tmux
 /// starts, since tmux inherits the environment of whatever launched the
 /// server — and appended rather than prepended, so a command somebody already
@@ -22,5 +27,5 @@ public enum BundledCommands {
 	}
 
 	/// The names it provides, for anything that wants to say so.
-	public static let names = ["abydos-icat"]
+	public static let names = ["abydos-icat", "abydos-bench"]
 }

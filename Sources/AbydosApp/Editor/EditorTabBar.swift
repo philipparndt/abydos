@@ -63,6 +63,23 @@ final class EditorTabBar: NSView {
 	private(set) var items: [EditorTabItem] = []
 	private var activeIndex: Int?
 
+	/// Whether the cursor is in the pane this strip belongs to.
+	///
+	/// Asked of the group's own container rather than of a particular view, so
+	/// anything the group holds — the code, the find bar, a preview — counts as
+	/// the keyboard being here. In a split each group has its own container, so
+	/// only one of them can answer yes.
+	private var hasKeyboardFocus: Bool {
+		// Whether the window is in front does not come into it: switching to
+		// another app does not move the cursor, and a strip that drops the
+		// accent when it goes behind says it did.
+		guard let window,
+		      let responder = window.firstResponder as? NSView,
+		      let group = superview
+		else { return false }
+		return responder === self || responder.isDescendant(of: group)
+	}
+
 	private var hoveredIndex: Int?
 	private var hoveredClose: Bool = false
 	private var trackingArea: NSTrackingArea?
@@ -96,6 +113,15 @@ final class EditorTabBar: NSView {
 		// a tab into this group rather than falling through to the pane beneath,
 		// which would read the tab bar as the pane's top edge and split.
 		registerForDraggedTypes([EditorTabDrag.pasteboardType])
+
+		// The line under the active tab says where the keyboard is, so it has to
+		// be redrawn when the keyboard moves — including into another pane,
+		// which this strip is told nothing about otherwise.
+		NotificationCenter.default.addObserver(
+			forName: .keyboardFocusChanged, object: nil, queue: .main
+		) { [weak self] _ in
+			MainActor.assumeIsolated { self?.needsDisplay = true }
+		}
 	}
 
 	required init?(coder: NSCoder) { fatalError("not used") }
@@ -450,6 +476,15 @@ final class EditorTabBar: NSView {
 			let rect = frames[activeIndex]
 			Theme.current.editorBackground.setFill()
 			NSRect(x: rect.minX, y: bounds.maxY - 1, width: rect.width, height: 1).fill()
+
+			// The line under the tab that is showing, drawn after the hairline
+			// rather than with the tab: filling the hairline back in over the
+			// active tab painted out the bottom half of it, which is why it
+			// came out thinner than the panel's. In the accent colour when the
+			// cursor is in this pane and plain when it is not — otherwise a
+			// split and a terminal show three tabs all claiming the keyboard.
+			TabSelectionLine.color(focused: hasKeyboardFocus).setFill()
+			TabSelectionLine.rect(in: rect, alongTop: false).fill()
 		}
 
 		drawPreviewControl()
@@ -500,9 +535,6 @@ final class EditorTabBar: NSView {
 		if isActive {
 			Theme.current.editorBackground.setFill()
 			rect.fill()
-			// Accent along the bottom of the active tab.
-			Theme.current.gitModified.setFill()
-			NSRect(x: rect.minX, y: rect.maxY - 2, width: rect.width, height: 2).fill()
 		} else if hoveredIndex == index {
 			NSColor.white.withAlphaComponent(0.05).setFill()
 			rect.fill()

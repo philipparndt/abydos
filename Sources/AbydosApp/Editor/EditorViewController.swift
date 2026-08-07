@@ -2025,6 +2025,13 @@ final class EditorViewController: NSViewController {
 	/// What the editor is holding, saved or not — for checking what typing did.
 	var textForTesting: String? { activeTab?.codeView?.textForTesting }
 
+	/// Clicks under the last line of the file that is showing.
+	func clickBelowLastLineForTesting() -> String {
+		guard let codeView = activeTab?.codeView else { return "no editor" }
+		view.window?.makeFirstResponder(codeView)
+		return codeView.clickBelowLastLineForTesting()
+	}
+
 	func simulateTyping(_ text: String) {
 		guard let tab = activeTab, let codeView = tab.codeView else { return }
 		view.window?.makeFirstResponder(codeView)
