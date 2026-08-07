@@ -27,7 +27,25 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		return "Abydos \(version) (build \(build), \(commit))"
 	}
 
+	/// Writes down what an uncaught exception was, before the process goes.
+	///
+	/// A crash report symbolicates a release build by nearest exported symbol,
+	/// which for a Swift binary is frequently a function that has nothing to do
+	/// with the crash: a report of a nil in a text attribute pointed at a menu
+	/// action fifty lines from any drawing. The exception itself knows better —
+	/// its own stack is captured where it was raised — so it is written to a log
+	/// that survives the process.
+	private static func recordUncaughtExceptions() {
+		NSSetUncaughtExceptionHandler { exception in
+			let lines = [
+				"uncaught \(exception.name.rawValue): \(exception.reason ?? "no reason given")",
+			] + exception.callStackSymbols.map { "    \($0)" }
+			DiagnosticLog.write(lines.joined(separator: "\n"), to: "crash")
+		}
+	}
+
 	public func applicationDidFinishLaunching(_ notification: Notification) {
+		Self.recordUncaughtExceptions()
 		// Settings from the other identifier this app has had, before anything
 		// reads one: a change of identifier would otherwise look like every
 		// preference being forgotten at once. The App Store rename to
