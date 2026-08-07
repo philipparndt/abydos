@@ -138,7 +138,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		// a window drawn twice, and the capture can catch the first one.
 		if let theme = options.theme {
 			Settings.shared.appearance = theme
-			Settings.shared.terminalScheme = theme == "abydos" ? "abydos" : Settings.shared.terminalScheme
+			// The terminal follows, which is what it does by default now. A run
+			// that wants them apart says so by setting the scheme itself.
+			Settings.shared.terminalScheme = Appearance.followsEditor
 			Theme.apply()
 		}
 

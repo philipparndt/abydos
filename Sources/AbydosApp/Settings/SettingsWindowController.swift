@@ -283,46 +283,67 @@ final class SettingsPaneController: NSViewController {
 	// MARK: - Pane definitions
 
 	/// How code is shown and how big everything is.
+	/// What the app looks like: one page for the editor and the terminal
+	/// together, since they are one thing to look at.
+	static func appearanceRows() -> [Row] {
+		[
+			.group(title: "Theme", help: nil, rows: [
+				.choice(
+					title: "Theme",
+					help: "The editor's palette. The terminal follows it unless it is set to something of its own.",
+					options: Appearance.Theme.allCases.map { ($0.title, $0.rawValue) },
+					get: { Settings.shared.appearance },
+					set: { Settings.shared.appearance = $0 }
+				),
+				.choice(
+					title: "Terminal colours",
+					help: "Following the theme is the point of having one. Blue is the palette "
+						+ "Ghostty ships with, for anybody who arrived with it.",
+					options: [("Same as the theme", Appearance.followsEditor)]
+						+ TerminalScheme.allCases.map { ($0.title, $0.rawValue) },
+					get: { Settings.shared.terminalScheme },
+					set: { Settings.shared.terminalScheme = $0 }
+				),
+			]),
+			.group(title: "Size", help: nil, rows: [
+				.slider(
+					title: "UI zoom",
+					help: "Scales the whole window. Also ⌘+ / ⌘− / ⌘0.",
+					// Continuous here rather than the discrete keyboard steps, since a
+					// slider invites fine adjustment.
+					range: 0.75...2.0, step: 0.05,
+					format: { String(format: "%.0f%%", $0 * 100) },
+					get: { Settings.shared.uiScale },
+					set: { Settings.shared.uiScale = $0 }
+				),
+				.slider(
+					title: "Editor font size",
+					help: nil,
+					range: 9...20, step: 0.5,
+					format: { String(format: "%.1f pt", $0) },
+					get: { Settings.shared.editorFontSize },
+					set: { Settings.shared.editorFontSize = $0 }
+				),
+				.slider(
+					title: "Editor line height",
+					help: nil,
+					range: 1.0...2.0, step: 0.1,
+					format: { String(format: "%.1f×", $0) },
+					get: { Settings.shared.editorLineHeight },
+					set: { Settings.shared.editorLineHeight = $0 }
+				),
+				.text(
+					title: "Terminal font",
+					help: "Leave empty to choose automatically. Powerline prompts need a Nerd Font.",
+					get: { Settings.shared.terminalFontName },
+					set: { Settings.shared.terminalFontName = $0.trimmingCharacters(in: .whitespaces) }
+				),
+			]),
+		]
+	}
+
 	static func editorRows() -> [Row] {
 		[
-			.choice(
-				title: "Appearance",
-				help: "Dark, light, or whatever the system is set to.",
-				options: [
-					(label: "System", value: "system"),
-					(label: "Dark", value: "dark"),
-					(label: "Light", value: "light"),
-					(label: "Abydos", value: "abydos"),
-				],
-				get: { Settings.shared.appearance },
-				set: { Settings.shared.appearance = $0 }
-			),
-			.slider(
-				title: "UI zoom",
-				help: "Scales the whole window. Also ⌘+ / ⌘− / ⌘0.",
-				// Continuous here rather than the discrete keyboard steps, since a
-				// slider invites fine adjustment.
-				range: 0.75...2.0, step: 0.05,
-				format: { String(format: "%.0f%%", $0 * 100) },
-				get: { Settings.shared.uiScale },
-				set: { Settings.shared.uiScale = $0 }
-			),
-			.slider(
-				title: "Font size",
-				help: "Applies to the code editor.",
-				range: 9...20, step: 0.5,
-				format: { String(format: "%.1f pt", $0) },
-				get: { Settings.shared.editorFontSize },
-				set: { Settings.shared.editorFontSize = $0 }
-			),
-			.slider(
-				title: "Line height",
-				help: nil,
-				range: 1.0...2.0, step: 0.1,
-				format: { String(format: "%.1f×", $0) },
-				get: { Settings.shared.editorLineHeight },
-				set: { Settings.shared.editorLineHeight = $0 }
-			),
 			.toggle(
 				title: "Word wrap",
 				help: "Soft-wrap long lines instead of scrolling sideways (⌥⌘Z).",
@@ -352,20 +373,7 @@ final class SettingsPaneController: NSViewController {
 		// what it does when a window opens, and the tmux switches that only
 		// mean anything together.
 		var sections: [Row] = [
-			.group(title: "Appearance", help: nil, rows: [
-				.choice(
-					title: "Terminal colours",
-					help: "Blue is the palette Ghostty ships with. Dark matches the editor. Abydos is this app's own.",
-					options: TerminalScheme.allCases.map { ($0.title, $0.rawValue) },
-					get: { Settings.shared.terminalScheme },
-					set: { Settings.shared.terminalScheme = $0 }
-				),
-				.text(
-					title: "Terminal font",
-					help: "Leave empty to choose automatically. Powerline prompts need a Nerd Font.",
-					get: { Settings.shared.terminalFontName },
-					set: { Settings.shared.terminalFontName = $0.trimmingCharacters(in: .whitespaces) }
-				),
+			.group(title: "Bell and keys", help: "Colours and fonts are on the Appearance page.", rows: [
 				.choice(
 					title: "Terminal bell",
 					help: "VHS shakes the picture and splits its colours, like a worn tape. "
@@ -586,7 +594,11 @@ enum SettingsSections {
 	}
 
 	static let all: [Section] = [
-		// The terminal first: it is the page people come here for.
+		// What the app looks like, first and in one place. It used to be split
+		// between the editor's page and the terminal's, which is how somebody
+		// ended up with a warm amber editor beside a deep blue terminal without
+		// ever choosing that.
+		Section(title: "Appearance", symbol: "paintpalette", rows: SettingsPaneController.appearanceRows),
 		Section(title: "Terminal", symbol: "terminal", rows: SettingsPaneController.terminalRows),
 		Section(title: "Editor", symbol: "textformat", rows: SettingsPaneController.editorRows),
 		Section(title: "Saving", symbol: "square.and.arrow.down", rows: SettingsPaneController.savingRows),

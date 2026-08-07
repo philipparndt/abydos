@@ -77,6 +77,29 @@ enum TerminalScheme: String, CaseIterable {
 				.hex(0x70C0B1), // 14 bright cyan
 				.hex(0xEAEAEA), // 15 bright white
 			]
+		case .abydos where Theme.current.isLight:
+			// The same sixteen meanings on paper. Backgrounds matter as much as
+			// foregrounds here — a powerline prompt is nothing but coloured
+			// backgrounds — so these sit where white text on them still reads
+			// and where they still read on cream.
+			return [
+				.hex(0x3A2E22), // 0 black — warm ink rather than soot
+				.hex(0xB33A36), // 1 red
+				.hex(0x5E7A34), // 2 green
+				.hex(0xB07407), // 3 yellow — the amber, in shadow
+				.hex(0xA8600A), // 4 blue → sand, as in the dark one
+				.hex(0xA24E6A), // 5 magenta
+				.hex(0x2F7A6B), // 6 cyan
+				.hex(0x6B5741), // 7 white → brown, since white on paper is not a colour
+				.hex(0x8A8266), // 8 bright black
+				.hex(0xC24B47), // 9 bright red
+				.hex(0x6E8C3E), // 10 bright green
+				.hex(0xC98A1E), // 11 bright yellow
+				.hex(0xC07414), // 12 bright blue → bright sand
+				.hex(0xB55C7A), // 13 bright magenta
+				.hex(0x3A8C7C), // 14 bright cyan
+				.hex(0x40342A), // 15 bright white → near-black ink
+			]
 		case .abydos:
 			return [
 				.hex(0x1C1712), // 0 black — the ground, warmed
@@ -152,7 +175,7 @@ enum TerminalScheme: String, CaseIterable {
 		// A shade off the editor's, for the same reason the blue one is: a
 		// terminal exactly the colour of the editor beside it stops reading as
 		// a terminal.
-		case .abydos: return .hex(0x1A1512)
+		case .abydos: return Theme.current.isLight ? .hex(0xFDF8EE) : .hex(0x1A1512)
 		}
 	}
 
@@ -161,7 +184,7 @@ enum TerminalScheme: String, CaseIterable {
 		switch self {
 		case .blue: return Theme.current.isLight ? .hex(0x24262B) : .hex(0xFFFFFF)
 		case .dark: return Theme.current.editorText
-		case .abydos: return .hex(0xE8D9C0)
+		case .abydos: return Theme.current.isLight ? .hex(0x2E241B) : .hex(0xE8D9C0)
 		}
 	}
 
@@ -170,12 +193,20 @@ enum TerminalScheme: String, CaseIterable {
 		switch self {
 		case .blue: return Theme.current.isLight ? .hex(0x3B3E45) : .hex(0xC5C8C6)
 		case .dark: return Theme.current.caret
-		case .abydos: return .hex(0xF7B44E)
+		case .abydos: return Theme.current.isLight ? .hex(0xB07407) : .hex(0xF7B44E)
 		}
 	}
 
 	/// The one in use.
+	///
+	/// The setting may say "follow the editor", which is what a new
+	/// installation gets: one decision about what the app looks like, rather
+	/// than a warm amber editor beside a deep blue terminal that nobody chose.
 	static var current: TerminalScheme {
-		TerminalScheme(rawValue: Settings.shared.terminalScheme) ?? .default
+		let theme = Appearance.Theme(rawValue: Settings.shared.appearance) ?? .system
+		let resolved = Appearance.resolvedTerminalScheme(
+			setting: Settings.shared.terminalScheme, theme: theme
+		)
+		return TerminalScheme(rawValue: resolved) ?? .default
 	}
 }

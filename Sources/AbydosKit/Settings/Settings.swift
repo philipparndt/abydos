@@ -35,6 +35,20 @@ public final class Settings {
 
 	public init(defaults: UserDefaults = .standard) {
 		self.defaults = defaults
+
+		// Before the defaults are registered, which is the only moment the
+		// difference is visible: a registered value answers `object(forKey:)`
+		// exactly as a chosen one does. Somebody who never picked a terminal
+		// palette now follows the editor — that is what "by default they change
+		// together" means — and somebody who picked one keeps it, because an
+		// upgrade that repaints a terminal they chose is a bug with a nice
+		// explanation.
+		if defaults.object(forKey: Key.terminalSchemeFollowed) == nil {
+			let chosen = defaults.object(forKey: Key.terminalScheme) as? String
+			defaults.set(Appearance.migratedTerminalSetting(stored: chosen), forKey: Key.terminalScheme)
+			defaults.set(true, forKey: Key.terminalSchemeFollowed)
+		}
+
 		defaults.register(defaults: [
 			Key.autoSaveEnabled: true,
 			Key.autoSaveDelay: 15.0,
@@ -60,7 +74,7 @@ public final class Settings {
 			Key.tmuxTabsAtBottom: true,
 			Key.startsTmux: false,
 			Key.strictTmux: false,
-			Key.terminalScheme: "blue",
+			Key.terminalScheme: Appearance.defaultTerminalSetting,
 			Key.terminalBellStyle: "sound",
 			Key.opensProjectsInNewWindow: false,
 			Key.showsInlineDiagnostics: true,
@@ -97,6 +111,8 @@ public final class Settings {
 		static let startsTmux = "startsTmux"
 		static let strictTmux = "strictTmux"
 		static let terminalScheme = "terminalScheme"
+		/// Set once, when the choice above was allowed to mean "follow the editor".
+		static let terminalSchemeFollowed = "terminalSchemeFollowed"
 		static let terminalBellStyle = "terminalBellStyle"
 		static let projectSearchPaths = "projectSearchPaths"
 		static let ignoredLanguageServers = "ignoredLanguageServers"
@@ -260,7 +276,7 @@ public final class Settings {
 	/// Its own setting rather than the editor's theme: a terminal's palette is
 	/// a language of its own, and people arrive with one they already know.
 	public var terminalScheme: String {
-		get { defaults.string(forKey: Key.terminalScheme) ?? "blue" }
+		get { defaults.string(forKey: Key.terminalScheme) ?? Appearance.defaultTerminalSetting }
 		set { set(newValue, Key.terminalScheme) }
 	}
 

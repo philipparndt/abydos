@@ -19,6 +19,7 @@ struct Theme {
 		case "light": wanted = .daylight
 		case "dark": wanted = .dusk
 		case "abydos": wanted = .abydos
+		case "abydos-light": wanted = .abydosLight
 		default: wanted = systemIsDark ? .dusk : .daylight
 		}
 
@@ -262,6 +263,49 @@ struct Theme {
 		indentGuide: .hex(0x2A2118)
 	)
 
+	/// Abydos in daylight.
+	///
+	/// Not the dark one inverted. Amber on near-black works because the amber
+	/// is the light in the room; on paper the same amber is a highlighter pen.
+	/// So the warmth moves into the surfaces — unbleached paper rather than
+	/// white — and the ink is a dark brown that reads as black until it is next
+	/// to one. The accent stays amber but is taken down to where it can be read
+	/// on paper, which is roughly the colour of the same pigment in shadow.
+	static let abydosLight = Theme(
+		name: "abydos-light",
+		isLight: true,
+
+		windowBackground: .hex(0xFAF5EC),
+		sidebarBackground: .hex(0xF3EBDD),
+		editorBackground: .hex(0xFFFBF3),
+		toolbarBackground: .hex(0xF3EBDD),
+		separator: .hex(0xE0D2BB),
+
+		sidebarText: .hex(0x40342A),
+		sidebarHeaderText: .hex(0x241C14),
+		selectionActive: .hex(0xF2D9A8),
+		selectionInactive: .hex(0xE9E0CF),
+		excludedDirectoryTint: .hex(0xEADCC0),
+
+		// The same semantics as everywhere else — a conflict is red, added is
+		// green — at a weight that survives being read on paper.
+		gitAdded: .hex(0x5E7A34),
+		gitModified: .hex(0xB07407),
+		gitUnversioned: .hex(0xA85A12),
+		gitIgnored: .hex(0x9A8B74),
+		gitConflict: .hex(0xB33A36),
+
+		editorText: .hex(0x2E241B),
+		gutterText: .hex(0xB0A28C),
+		gutterCurrentLineText: .hex(0x6B5741),
+		currentLineBackground: .hex(0xFBF3E3),
+		caret: .hex(0xB07407),
+		selectionBackground: .hex(0xF6E3BC),
+		foldPlaceholderBackground: .hex(0xEFE4CE),
+		foldPlaceholderText: .hex(0x6B5741),
+		indentGuide: .hex(0xEAE0CC)
+	)
+
 	/// The same interface in daylight.
 	///
 	/// Not the dark palette inverted: a light theme wants more contrast in the
@@ -303,6 +347,7 @@ struct Theme {
 	/// Maps a syntax token to a colour. `HighlightKind` is produced by AbydosKit
 	/// from tree-sitter capture names, so the theme never sees grammar details.
 	func color(for kind: HighlightKind) -> NSColor {
+		if name == "abydos-light" { return abydosLightColor(for: kind) }
 		if isLight { return lightColor(for: kind) }
 		if name == "abydos" { return abydosColor(for: kind) }
 		switch kind {
@@ -346,6 +391,43 @@ struct Theme {
 	/// strings a desert green, calls a pale gold — the hues are near each other
 	/// and the work is done by lightness, which is what makes a warm scheme
 	/// readable rather than muddy.
+	/// The warm palette at daylight weights.
+	///
+	/// The same roles in the same hues as the dark one — keywords amber,
+	/// strings green, calls the accent — but each taken to where it can be read
+	/// on unbleached paper. Comments are the one thing that moves rather than
+	/// darkens: a grey-brown at this weight disappears, so they keep a little
+	/// green and sit clearly behind the code.
+	private func abydosLightColor(for kind: HighlightKind) -> NSColor {
+		switch kind {
+		case .keyword:      return .hex(0x9A5B0C)
+		case .type:         return .hex(0x7A5A16)
+		case .function:     return .hex(0xA8600A)
+		case .method:       return .hex(0xA8600A)
+		case .property:     return .hex(0x8A5A22)
+		case .variable:     return editorText
+		case .parameter:    return .hex(0x5C4A33)
+		case .constant:     return .hex(0xA2521A)
+		case .string:       return .hex(0x4F6B2A)
+		case .escape:       return .hex(0x9A5B2A)
+		case .number:       return .hex(0x7A5A16)
+		case .boolean:      return .hex(0x9A5B0C)
+		case .comment:      return .hex(0x8A8266)
+		case .documentation:return .hex(0x6A7A4A)
+		case .operatorToken:return .hex(0x5C4A33)
+		case .punctuation:  return .hex(0x6E5F49)
+		case .tag:          return .hex(0x9A5B0C)
+		case .attribute:    return .hex(0x5C4A33)
+		case .label:        return .hex(0x8A5A22)
+		case .namespace:    return .hex(0x6B5741)
+		case .heading:      return .hex(0x7A4A08)
+		case .link:         return .hex(0xA2521A)
+		case .emphasis:     return .hex(0x2E241B)
+		case .error:        return .hex(0xB33A36)
+		case .plain:        return editorText
+		}
+	}
+
 	private func abydosColor(for kind: HighlightKind) -> NSColor {
 		switch kind {
 		case .keyword:      return .hex(0xE0913A)
