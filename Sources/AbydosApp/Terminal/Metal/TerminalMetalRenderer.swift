@@ -276,7 +276,11 @@ final class TerminalMetalRenderer {
 					isColour: 0
 				)
 
-				if !cell.attributes.hidden, cell.scalar != 0x20, cell.scalar != 0 {
+				// A placeholder is a piece of a picture, not a character: drawn
+				// as one it is a private-use codepoint no font has, and the
+				// picture arrives under a grid of missing-glyph boxes.
+				if !cell.attributes.hidden, cell.scalar != 0x20, cell.scalar != 0,
+				   cell.scalar != UnicodePlaceholder.scalar {
 					let faceIndex = TerminalFaces.index(
 						bold: cell.attributes.bold, italic: cell.attributes.italic
 					)

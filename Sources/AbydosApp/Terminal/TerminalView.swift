@@ -676,7 +676,8 @@ final class TerminalView: NSView, NSTextInputClient {
 		// Before the cells: what this decides about pictures behind the text is
 		// what stops those cells painting over them.
 		metal.renderer.buildImages(
-			placements: emulator.graphics.placements.filter { $0.rowRange.overlaps(first..<last) },
+			placements: emulator.graphics.placements.filter { $0.rowRange.overlaps(first..<last) }
+				+ placeholderPlacements(from: first, to: last),
 			store: emulator.graphics,
 			frame: frame
 		)
@@ -936,7 +937,7 @@ final class TerminalView: NSView, NSTextInputClient {
 
 	/// Draws the pictures whose rows fall in the band being repainted.
 	private func drawImages(from firstRow: Int, to lastRow: Int, above: Bool) {
-		let placements = emulator.graphics.placements
+		let placements = emulator.graphics.placements + placeholderPlacements(from: firstRow, to: lastRow)
 		guard !placements.isEmpty else { return }
 		guard let context = NSGraphicsContext.current?.cgContext else { return }
 
@@ -971,6 +972,25 @@ final class TerminalView: NSView, NSTextInputClient {
 			context.restoreGState()
 		}
 		context.restoreGState()
+	}
+
+	/// The pictures spelled out by placeholder characters on the rows being
+	/// repainted.
+	///
+	/// Worked out from the grid every time rather than remembered, which is the
+	/// point of the whole mechanism: the cells are ordinary text, so whatever
+	/// moved them — scrolling, tmux redrawing its pane, a narrower window —
+	/// has already moved the picture, and reading where they are now is reading
+	/// where the picture is now.
+	private func placeholderPlacements(from firstRow: Int, to lastRow: Int) -> [TerminalImagePlacement] {
+		guard emulator.graphics.hasVirtualPlacements else { return [] }
+		var runs: [UnicodePlaceholder.Run] = []
+		for index in firstRow..<lastRow {
+			guard let line = emulator.screen.line(at: index) else { continue }
+			runs += UnicodePlaceholder.runs(in: line.cells, screenRow: index)
+		}
+		guard !runs.isEmpty else { return [] }
+		return emulator.graphics.placements(for: runs)
 	}
 
 	/// Where on the view a placement goes.
@@ -1194,6 +1214,10 @@ final class TerminalView: NSView, NSTextInputClient {
 			if cell.isWideTrailer { continue }
 			// Blanks have nothing to draw, and separators are drawn as geometry.
 			if cell.scalar == 0x20 || cell.scalar == 0 { continue }
+			// A placeholder is a piece of a picture, not a character. Drawn as
+			// one it is a private-use codepoint no font has, so the picture
+			// arrives under a grid of missing-glyph boxes.
+			if cell.scalar == UnicodePlaceholder.scalar { continue }
 			if PowerlineGlyph.isSeparator(cell.scalar) { continue }
 
 			guard let found = glyphs.glyph(for: cell.scalar, face: drawFont, faceIndex: faceIndex) else {
@@ -1442,11 +1466,14 @@ final class TerminalView: NSView, NSTextInputClient {
 		// edge instead of wrapping, because the program was told the width the
 		// pane used to be and is writing to it.
 		let fits = Int(floor((clip.width - Self.horizontalInset * 2) / max(1, cellWidth)))
+		let windowWidth = window?.frame.width ?? 0
 		return String(
-			format: "alt=%@ rows=%d columns=%d fits=%d frame=%.1f clip=%.1f origin=%.1f "
+			format: "alt=%@ rows=%d columns=%d fits=%d window=%.0f clipW=%.0f cell=%.1f "
+				+ "frame=%.1f clip=%.1f origin=%.1f "
 				+ "lastRowBottom=%.1f visible=%@ widthOK=%@",
 			emulator.isAlternateScreen ? "yes" : "no",
 			emulator.screen.rows, emulator.screen.columns, max(20, fits),
+			windowWidth, clip.width, cellWidth,
 			frame.height, clip.height, clip.origin.y, bottomOfLastRow,
 			bottomOfLastRow <= clip.origin.y + clip.height + 0.5 ? "yes" : "NO",
 			max(20, fits) == emulator.screen.columns ? "yes" : "NO"
@@ -1481,7 +1508,8 @@ final class TerminalView: NSView, NSTextInputClient {
 			foreground: TerminalPalette.foreground.components
 		)
 		renderer.buildImages(
-			placements: emulator.graphics.placements,
+			placements: emulator.graphics.placements
+				+ placeholderPlacements(from: 0, to: emulator.screen.scrollback.count + emulator.screen.rows),
 			store: emulator.graphics,
 			frame: frame
 		)

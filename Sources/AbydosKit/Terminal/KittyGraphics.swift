@@ -105,6 +105,11 @@ public struct KittyGraphicsCommand: Equatable, Sendable {
 	public var deletion: UInt8 = 0x61 // a
 	/// `q` — how much of an answer the program wants.
 	public var quiet = 0
+	/// `U` — a virtual placement, shown by writing placeholder characters
+	/// rather than at the cursor. This is what kitty's own `icat` sends, and
+	/// ignoring it drew the picture at the cursor for the moment before the
+	/// placeholders were written over it.
+	public var isVirtual = false
 
 	/// The bytes after the `;`, still base64.
 	public var payload: [UInt8] = []
@@ -197,6 +202,7 @@ public struct KittyGraphicsCommand: Equatable, Sendable {
 		case 0x43: leavesCursor = integer() == 1               // C
 		case 0x64: deletion = value.first ?? 0x61              // d
 		case 0x71: quiet = integer()                           // q
+		case 0x55: isVirtual = integer() == 1                  // U
 		default: break
 		}
 	}
@@ -339,6 +345,7 @@ public final class TerminalImageStore {
 	public func removeAll() {
 		images = [:]
 		placements = []
+		virtualPlacements = [:]
 		idsByNumber = [:]
 		useOrder = []
 		storedBytes = 0
@@ -360,6 +367,97 @@ public final class TerminalImageStore {
 		placements.removeAll { $0.rowRange.overlaps(rows) }
 		guard placements.count != before else { return }
 		generation += 1
+	}
+
+	// MARK: Virtual placements
+
+	/// Which image a virtual placement belongs to. A program may have several
+	/// of the same image at different sizes.
+	public struct VirtualKey: Hashable, Sendable {
+		public var imageID: UInt32
+		public var placementID: UInt32
+
+		public init(imageID: UInt32, placementID: UInt32) {
+			self.imageID = imageID
+			self.placementID = placementID
+		}
+	}
+
+	/// A placement with a size but no position: how large the picture is in
+	/// cells, waiting for placeholder characters to say where it goes.
+	public struct VirtualPlacement: Equatable, Sendable {
+		public var columns: Int
+		public var rows: Int
+		public var source: TerminalImagePlacement.Rectangle
+		public var z: Int32
+
+		public init(
+			columns: Int, rows: Int, source: TerminalImagePlacement.Rectangle, z: Int32 = 0
+		) {
+			self.columns = columns
+			self.rows = rows
+			self.source = source
+			self.z = z
+		}
+	}
+
+	public private(set) var virtualPlacements: [VirtualKey: VirtualPlacement] = [:]
+
+	/// Whether any image is waiting on placeholder cells, so a repaint that has
+	/// no reason to look at the grid does not.
+	public var hasVirtualPlacements: Bool { !virtualPlacements.isEmpty }
+
+	/// Turns placeholder runs into things that can be drawn.
+	///
+	/// A run names a strip of one image's cells; what comes back is the piece
+	/// of the picture that strip stands for, at the place on the screen the
+	/// characters are. Everything that moves the characters — scrolling, tmux
+	/// redrawing a pane, a window getting narrower — moves the picture with
+	/// them, because the picture is worked out from where they ended up rather
+	/// than remembered from where they started.
+	public func placements(for runs: [UnicodePlaceholder.Run]) -> [TerminalImagePlacement] {
+		guard !virtualPlacements.isEmpty else { return [] }
+		var built: [TerminalImagePlacement] = []
+		built.reserveCapacity(runs.count)
+
+		for run in runs {
+			// The placement id is not carried in the cells here, so the one
+			// without an id is preferred and any other will do.
+			let key = VirtualKey(imageID: run.imageID, placementID: 0)
+			guard let virtual = virtualPlacements[key]
+				?? virtualPlacements.first(where: { $0.key.imageID == run.imageID })?.value
+			else { continue }
+			guard virtual.columns > 0, virtual.rows > 0 else { continue }
+			// A cell beyond the picture's own size is a cell the program wrote
+			// by mistake; there is nothing to draw for it.
+			guard run.imageRow < virtual.rows, run.imageColumn < virtual.columns else { continue }
+
+			let length = Swift.min(run.length, virtual.columns - run.imageColumn)
+			guard length > 0 else { continue }
+
+			// The strip's rectangle inside the source, in the image's pixels.
+			let left = virtual.source.x + run.imageColumn * virtual.source.width / virtual.columns
+			let right = virtual.source.x
+				+ (run.imageColumn + length) * virtual.source.width / virtual.columns
+			let top = virtual.source.y + run.imageRow * virtual.source.height / virtual.rows
+			let bottom = virtual.source.y
+				+ (run.imageRow + 1) * virtual.source.height / virtual.rows
+			guard right > left, bottom > top else { continue }
+
+			built.append(TerminalImagePlacement(
+				imageID: run.imageID,
+				placementID: 0,
+				row: run.screenRow,
+				column: run.column,
+				columns: length,
+				rows: 1,
+				source: .init(x: left, y: top, width: right - left, height: bottom - top),
+				offsetX: 0,
+				offsetY: 0,
+				z: virtual.z
+			))
+		}
+		return built
 	}
 
 	/// Lines fell off the top of scrollback, so every absolute row moved.
@@ -774,6 +872,24 @@ public final class TerminalImageStore {
 			rows = cellsNeeded(pixels: height + command.cellOffsetY, per: cellPixelSize.height)
 		}
 
+		// A virtual placement belongs to no position: it is a size, waiting for
+		// placeholder cells to say where the picture goes. Placing it at the
+		// cursor as well is what made kitty's `icat` draw a picture for the
+		// instant before its own placeholders were written over it.
+		if command.isVirtual {
+			virtualPlacements[VirtualKey(imageID: image.id, placementID: command.placementID)] =
+				VirtualPlacement(
+					columns: Swift.max(1, columns),
+					rows: Swift.max(1, rows),
+					source: .init(x: x, y: y, width: width, height: height),
+					z: command.z
+				)
+			generation += 1
+			var result = TerminalGraphicsResult()
+			result.response = respond(command, "OK").response
+			return result
+		}
+
 		let placement = TerminalImagePlacement(
 			imageID: image.id,
 			placementID: command.placementID,
@@ -908,6 +1024,7 @@ public final class TerminalImageStore {
 		storedBytes -= image.byteCount
 		useOrder.removeAll { $0 == id }
 		idsByNumber = idsByNumber.filter { $0.value != id }
+		virtualPlacements = virtualPlacements.filter { $0.key.imageID != id }
 	}
 
 	// MARK: Answering
