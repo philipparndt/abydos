@@ -127,6 +127,9 @@ struct LaunchOptions {
 	/// Print the palette's commands for this query.
 	var paletteQuery: String?
 
+	/// Print what the project offers to run.
+	var listRunConfigurations = false
+
 	/// Keys to press in the palette's list, comma separated.
 	var switcherKeys: String?
 
@@ -435,6 +438,7 @@ struct LaunchOptions {
 			case "--click-below": options.clickBelowLastLine = true
 			case "--tab-menu": options.tabMenu = true
 			case "--palette": options.paletteQuery = next() ?? ""
+			case "--run-configs": options.listRunConfigurations = true
 			case "--appearance-walk": options.appearanceWalk = next()
 			case "--copy-path": options.copyPath = next() ?? "down"
 			case "--burst": options.burstFrames = next().flatMap(Int.init)

@@ -2696,6 +2696,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 	}
 
+	/// What this project offers to run, as the picker would group it.
+	func runConfigurationsForTesting() -> String {
+		guard !runConfigurations.isEmpty else { return "nothing" }
+		return runConfigurations
+			.map { "\(title(for: $0.source)): \($0.name) → \($0.executable) \($0.arguments.joined(separator: " "))" }
+			.joined(separator: "\n  ")
+	}
+
 	/// Shows every configuration, for the Run menu.
 	@objc func showRunConfigurations(_ sender: Any?) {
 		guard !runConfigurations.isEmpty else {
@@ -2855,6 +2863,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		case .gradle:    return "Gradle"
 		case .javaMain:  return "Java"
 		case .xcodeScheme: return "Schemes"
+		case .bazel:     return "Bazel"
+		case .conan:     return "Conan"
 		}
 	}
 

@@ -429,6 +429,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if options.listRunConfigurations {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+				print("RUNCONFIGS\n  \(controller?.runConfigurationsForTesting() ?? "no window")")
+				fflush(stdout)
+				if options.isScreenshotRun { return }
+				exit(0)
+			}
+		}
+
 		if let query = options.paletteQuery {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
 				print("PALETTE \(controller?.paletteCommandsForTesting(query: query) ?? "no window")")

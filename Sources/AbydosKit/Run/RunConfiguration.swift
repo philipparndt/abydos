@@ -22,6 +22,10 @@ public struct RunConfiguration: Equatable, Sendable, Identifiable {
 		/// A scheme of an Xcode project or workspace, run on a destination
 		/// chosen beside it.
 		case xcodeScheme
+		/// A `*_binary` or `*_test` rule in a Bazel `BUILD` file.
+		case bazel
+		/// What a Conan package can be asked to do: install, build, create.
+		case conan
 	}
 
 	public let name: String
@@ -144,6 +148,8 @@ public enum RunConfigurationDiscovery {
 			result += mavenGoals(in: directory, root: root)
 			result += gradleTasks(in: directory, root: root)
 			result += xcodeSchemes(in: directory)
+			result += bazelTargets(in: directory)
+			result += conanActions(in: directory)
 		}
 		result += javaMainClasses(in: root)
 
@@ -461,6 +467,67 @@ public enum RunConfigurationDiscovery {
 			))
 		}
 		return result
+	}
+
+	// MARK: - Bazel
+
+	/// The runnable rules declared in this directory's build file.
+	///
+	/// Read from the file rather than asked of `bazel query`: the query is the
+	/// correct answer and it is also a build-graph load that needs Bazel
+	/// installed and can take a minute on a large repository, which is too much
+	/// to spend filling in a menu.
+	static func bazelTargets(in directory: URL) -> [RunConfiguration] {
+		for name in BazelBuild.buildFileNames {
+			let url = directory.appendingPathComponent(name)
+			guard let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
+			guard let workspace = BazelBuild.workspaceRoot(for: directory) else { continue }
+
+			return BazelBuild.targets(in: url, contents: text, workspace: workspace).map { target in
+				let command = BazelBuild.command(for: target)
+				return RunConfiguration(
+					name: target.label,
+					source: .bazel,
+					executable: command.executable,
+					arguments: command.arguments,
+					// From the workspace root, which is where labels resolve
+					// from and where Bazel expects to be run.
+					workingDirectory: canonicalPath(workspace),
+					file: canonicalPath(url),
+					line: target.line
+				)
+			}
+		}
+		return []
+	}
+
+	// MARK: - Conan
+
+	/// What the Conan package in this directory can be asked to do.
+	static func conanActions(in directory: URL) -> [RunConfiguration] {
+		guard let project = ConanProject.find(in: directory) else { return [] }
+
+		// Named after the package where it says what it is called, so two
+		// packages in one repository are told apart in the list.
+		let packageName: String? = {
+			guard case let .recipe(url) = project,
+			      let text = try? String(contentsOf: url, encoding: .utf8)
+			else { return nil }
+			return ConanProject.packageName(inRecipe: text)
+		}()
+
+		return project.actions.map { action in
+			let command = project.command(for: action)
+			return RunConfiguration(
+				name: packageName.map { "\(action.title) (\($0))" } ?? action.title,
+				source: .conan,
+				executable: command.executable,
+				arguments: command.arguments,
+				workingDirectory: canonicalPath(project.directory),
+				file: canonicalPath(project.file),
+				line: 1
+			)
+		}
 	}
 
 	// MARK: - Xcode
