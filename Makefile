@@ -120,9 +120,7 @@ sign-check: ## Show the signing identity and notary profile the release will use
 
 .PHONY: install
 install: build ## Copy the app into /Applications
-	@rm -rf /Applications/Abydos.app
-	@cp -R $(APP) /Applications/
-	@echo "==> Installed /Applications/Abydos.app"
+	@Scripts/install.sh $(APP)
 
 .PHONY: install-cli
 install-cli: ## Put the `abydos` commands on the PATH (PREFIX=/usr/local)
