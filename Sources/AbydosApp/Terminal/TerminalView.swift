@@ -820,6 +820,21 @@ final class TerminalView: NSView, NSTextInputClient {
 		emulator.screen.totalLineCount
 	}
 
+	/// Keeps the grid the size of the pane, whatever else happened.
+	///
+	/// Everything that changes the pane's size or the size of a cell already
+	/// asks for this, and a missed one is invisible until somebody types: the
+	/// grid stays as wide as the pane used to be, the program is told the same,
+	/// and every line then runs off the right-hand edge instead of wrapping —
+	/// while the program's own idea of the text stays perfectly correct, so
+	/// pressing return shows it laid out properly and nothing looks broken
+	/// afterwards. Checking here costs a comparison per layout pass and repairs
+	/// it whatever the cause was.
+	override func layout() {
+		super.layout()
+		recomputeGridSize()
+	}
+
 	/// Derives rows and columns from the pane size and tells both the emulator
 	/// and the process.
 	private func recomputeGridSize() {
@@ -1422,12 +1437,19 @@ final class TerminalView: NSView, NSTextInputClient {
 		let clip = enclosingScrollView?.contentView.bounds ?? .zero
 		let bottomOfLastRow = Self.verticalInset
 			+ CGFloat(shownLineCount) * cellHeight
+		// The width as well as the height. A grid wider than the pane is
+		// invisible until somebody types: every line runs off the right-hand
+		// edge instead of wrapping, because the program was told the width the
+		// pane used to be and is writing to it.
+		let fits = Int(floor((clip.width - Self.horizontalInset * 2) / max(1, cellWidth)))
 		return String(
-			format: "alt=%@ rows=%d frame=%.1f clip=%.1f origin=%.1f lastRowBottom=%.1f visible=%@",
+			format: "alt=%@ rows=%d columns=%d fits=%d frame=%.1f clip=%.1f origin=%.1f "
+				+ "lastRowBottom=%.1f visible=%@ widthOK=%@",
 			emulator.isAlternateScreen ? "yes" : "no",
-			emulator.screen.rows,
+			emulator.screen.rows, emulator.screen.columns, max(20, fits),
 			frame.height, clip.height, clip.origin.y, bottomOfLastRow,
-			bottomOfLastRow <= clip.origin.y + clip.height + 0.5 ? "yes" : "NO"
+			bottomOfLastRow <= clip.origin.y + clip.height + 0.5 ? "yes" : "NO",
+			max(20, fits) == emulator.screen.columns ? "yes" : "NO"
 		)
 	}
 

@@ -20,6 +20,9 @@ struct Theme {
 		case "dark": wanted = .dusk
 		case "abydos": wanted = .abydos
 		case "abydos-light": wanted = .abydosLight
+		// Abydos, following the system — which the old single list could not
+		// say at all, since it had one entry per palette-and-lightness pair.
+		case "abydos-system": wanted = systemIsDark ? .abydos : .abydosLight
 		default: wanted = systemIsDark ? .dusk : .daylight
 		}
 

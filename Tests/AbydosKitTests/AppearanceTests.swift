@@ -2,70 +2,121 @@ import Foundation
 import Testing
 @testable import AbydosKit
 
-/// One decision about what the app looks like, with the terminal free to differ.
+/// Two questions about what the app looks like — which palette, and how light —
+/// where there used to be one list with an entry per pairing.
 struct AppearanceTests {
-	@Test func offersTheDarkAndLightOfEachPalette() {
-		let names = Appearance.Theme.allCases.map(\.rawValue)
-		#expect(names == ["system", "dark", "light", "abydos", "abydos-light"])
-		#expect(Appearance.Theme.abydosLight.title == "Abydos Light")
+	@Test func offersTwoPalettesAndThreeLightnesses() {
+		#expect(Appearance.Family.allCases.map(\.rawValue) == ["abydos", "blue"])
+		#expect(Appearance.Mode.allCases.map(\.rawValue) == ["system", "light", "dark"])
+	}
+
+	/// Every pairing has a name, including the one the old list could not say
+	/// at all: Abydos, following the system.
+	@Test func namesEveryPairing() {
+		#expect(Appearance.name(family: .blue, mode: .system) == "system")
+		#expect(Appearance.name(family: .blue, mode: .light) == "light")
+		#expect(Appearance.name(family: .blue, mode: .dark) == "dark")
+		#expect(Appearance.name(family: .abydos, mode: .system) == "abydos-system")
+		#expect(Appearance.name(family: .abydos, mode: .light) == "abydos-light")
+		#expect(Appearance.name(family: .abydos, mode: .dark) == "abydos")
+	}
+
+	/// And every name decomposes again, which is also the whole of the
+	/// migration: whatever was stored when this was one list means the same
+	/// pair now.
+	@Test func everyStoredValueDecomposes() {
+		for family in Appearance.Family.allCases {
+			for mode in Appearance.Mode.allCases {
+				let stored = Appearance.name(family: family, mode: mode)
+				#expect(Appearance.family(of: stored) == family)
+				#expect(Appearance.mode(of: stored) == mode)
+			}
+		}
+	}
+
+	/// Something unknown is the system's business rather than a crash or a
+	/// silent swap to another palette.
+	@Test func treatsAnUnknownValueAsFollowingTheSystem() {
+		#expect(Appearance.mode(of: "something-else") == .system)
+		#expect(Appearance.family(of: "something-else") == .blue)
 	}
 
 	@Test func knowsWhichWayRoundTheContrastGoes() {
-		#expect(!Appearance.Theme.abydos.isLight(systemIsDark: false))
-		#expect(Appearance.Theme.abydosLight.isLight(systemIsDark: true))
-		#expect(Appearance.Theme.light.isLight(systemIsDark: true))
-		// The one that defers takes the system's answer, whichever it is.
-		#expect(Appearance.Theme.system.isLight(systemIsDark: false))
-		#expect(!Appearance.Theme.system.isLight(systemIsDark: true))
+		#expect(Appearance.isLight("abydos-light", systemIsDark: true))
+		#expect(!Appearance.isLight("abydos", systemIsDark: false))
+		#expect(Appearance.isLight("abydos-system", systemIsDark: false))
+		#expect(!Appearance.isLight("abydos-system", systemIsDark: true))
+		#expect(!Appearance.isLight("system", systemIsDark: true))
 	}
 
-	/// Abydos pairs with Abydos; the plain palettes pair with the terminal
-	/// scheme that takes the editor's own colours, so light and dark follow by
-	/// themselves.
-	@Test func pairsEachThemeWithATerminalPalette() {
-		#expect(Appearance.terminalScheme(following: .abydos) == "abydos")
-		#expect(Appearance.terminalScheme(following: .abydosLight) == "abydos")
-		#expect(Appearance.terminalScheme(following: .dark) == "dark")
-		#expect(Appearance.terminalScheme(following: .light) == "dark")
-		#expect(Appearance.terminalScheme(following: .system) == "dark")
+	/// Each family has a terminal palette of its own, and each of those knows
+	/// what to do in daylight — so following the theme survives the light
+	/// switch without being asked again.
+	@Test func pairsEachFamilyWithATerminalPalette() {
+		#expect(Appearance.terminalScheme(following: "abydos") == "abydos")
+		#expect(Appearance.terminalScheme(following: "abydos-light") == "abydos")
+		#expect(Appearance.terminalScheme(following: "abydos-system") == "abydos")
+		#expect(Appearance.terminalScheme(following: "dark") == "blue")
+		#expect(Appearance.terminalScheme(following: "light") == "blue")
+		#expect(Appearance.terminalScheme(following: "system") == "blue")
 	}
 
 	/// "Follow" is a value the setting can hold, not a second switch beside it.
-	@Test func resolvesFollowingToWhateverTheThemeUses() {
-		#expect(Appearance.resolvedTerminalScheme(setting: "follow", theme: .abydosLight) == "abydos")
-		#expect(Appearance.resolvedTerminalScheme(setting: "", theme: .dark) == "dark")
+	@Test func resolvesFollowingToTheThemesOwnPalette() {
+		#expect(Appearance.resolvedTerminalScheme(setting: "follow", stored: "abydos-light") == "abydos")
+		#expect(Appearance.resolvedTerminalScheme(setting: "", stored: "dark") == "blue")
 	}
 
 	/// A palette somebody chose is used, whatever the theme is. A green-on-black
 	/// terminal beside a light editor is a preference, not a mistake.
 	@Test func leavesAChosenPaletteAlone() {
-		#expect(Appearance.resolvedTerminalScheme(setting: "blue", theme: .abydosLight) == "blue")
-		#expect(Appearance.resolvedTerminalScheme(setting: "abydos", theme: .light) == "abydos")
+		#expect(Appearance.resolvedTerminalScheme(setting: "blue", stored: "abydos-light") == "blue")
+		#expect(Appearance.resolvedTerminalScheme(setting: "dark", stored: "abydos") == "dark")
 	}
 
-	/// A new installation follows the theme…
 	@Test func startsByFollowingTheTheme() {
 		#expect(Appearance.defaultTerminalSetting == Appearance.followsEditor)
 		#expect(Appearance.migratedTerminalSetting(stored: nil) == "follow")
 		#expect(Appearance.migratedTerminalSetting(stored: "") == "follow")
 	}
 
-	/// …and somebody who picked one two months ago keeps it. An upgrade that
-	/// repaints a terminal they chose is a bug with a nice explanation.
+	/// Somebody who picked one two months ago keeps it.
 	@Test func neverTakesAwayAChoiceAlreadyMade() {
 		#expect(Appearance.migratedTerminalSetting(stored: "blue") == "blue")
 		#expect(Appearance.migratedTerminalSetting(stored: "dark") == "dark")
 	}
 }
 
-/// The same, through the settings store, since the migration turns on a
-/// difference that is only visible before the defaults are registered.
+/// The same through the settings store, where the two questions are written
+/// into the one value everything downstream reads.
 struct AppearanceSettingsTests {
 	private func store(_ existing: [String: Any] = [:]) -> Settings {
 		let name = "abydos-appearance-\(UUID().uuidString)"
 		let defaults = UserDefaults(suiteName: name)!
 		for (key, value) in existing { defaults.set(value, forKey: key) }
 		return Settings(defaults: defaults)
+	}
+
+	@Test func changingOneQuestionLeavesTheOtherAlone() {
+		let settings = store(["appearance": "abydos-light"])
+		#expect(settings.themeFamily == "abydos")
+		#expect(settings.appearanceMode == "light")
+
+		settings.appearanceMode = "dark"
+		#expect(settings.appearance == "abydos")
+		#expect(settings.themeFamily == "abydos")
+
+		settings.themeFamily = "blue"
+		#expect(settings.appearance == "dark")
+		#expect(settings.appearanceMode == "dark")
+	}
+
+	/// Somebody on the plain dark theme keeps it, and now has a palette named
+	/// for it rather than an entry that only said "dark".
+	@Test func anOldValueMeansTheSameThing() {
+		let settings = store(["appearance": "dark"])
+		#expect(settings.themeFamily == "blue")
+		#expect(settings.appearanceMode == "dark")
 	}
 
 	@Test func aFreshInstallationHasTheTerminalFollowing() {
@@ -76,8 +127,6 @@ struct AppearanceSettingsTests {
 		#expect(store(["terminalScheme": "blue"]).terminalScheme == "blue")
 	}
 
-	/// And it stays survived: the migration runs once, so a later "follow" set
-	/// by hand is not undone by the next launch.
 	@Test func theMigrationOnlyHappensOnce() {
 		let name = "abydos-appearance-\(UUID().uuidString)"
 		let defaults = UserDefaults(suiteName: name)!

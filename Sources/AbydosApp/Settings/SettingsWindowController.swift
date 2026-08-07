@@ -290,15 +290,24 @@ final class SettingsPaneController: NSViewController {
 			.group(title: "Theme", help: nil, rows: [
 				.choice(
 					title: "Theme",
-					help: "The editor's palette. The terminal follows it unless it is set to something of its own.",
-					options: Appearance.Theme.allCases.map { ($0.title, $0.rawValue) },
-					get: { Settings.shared.appearance },
-					set: { Settings.shared.appearance = $0 }
+					help: "Abydos is this app's own, warm. Blue is the one it started with, "
+						+ "and the palette most editors' dark themes are a version of.",
+					options: Appearance.Family.allCases.map { ($0.title, $0.rawValue) },
+					get: { Settings.shared.themeFamily },
+					set: { Settings.shared.themeFamily = $0 }
+				),
+				.choice(
+					title: "Light or dark",
+					help: "Each theme has both. Following the system switches between them "
+						+ "without changing which theme it is.",
+					options: Appearance.Mode.allCases.map { ($0.title, $0.rawValue) },
+					get: { Settings.shared.appearanceMode },
+					set: { Settings.shared.appearanceMode = $0 }
 				),
 				.choice(
 					title: "Terminal colours",
-					help: "Following the theme is the point of having one. Blue is the palette "
-						+ "Ghostty ships with, for anybody who arrived with it.",
+					help: "Following the theme is the point of having one. The others are for "
+						+ "anybody who arrived with a palette they already know.",
 					options: [("Same as the theme", Appearance.followsEditor)]
 						+ TerminalScheme.allCases.map { ($0.title, $0.rawValue) },
 					get: { Settings.shared.terminalScheme },

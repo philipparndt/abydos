@@ -191,6 +191,24 @@ public final class Settings {
 		presenting ? presentationAppearance : appearance
 	}
 
+	/// Which palette, and how light, as two settings over the one that is
+	/// stored. Everything downstream still reads a single name.
+	public var themeFamily: String {
+		get { Appearance.family(of: appearance).rawValue }
+		set {
+			let family = Appearance.Family(rawValue: newValue) ?? .blue
+			appearance = Appearance.name(family: family, mode: Appearance.mode(of: appearance))
+		}
+	}
+
+	public var appearanceMode: String {
+		get { Appearance.mode(of: appearance).rawValue }
+		set {
+			let mode = Appearance.Mode(rawValue: newValue) ?? .system
+			appearance = Appearance.name(family: Appearance.family(of: appearance), mode: mode)
+		}
+	}
+
 	@discardableResult
 	public func zoomIn() -> Double {
 		let next = Self.zoomSteps.first { $0 > activeScale + 0.001 } ?? Self.zoomSteps.last!

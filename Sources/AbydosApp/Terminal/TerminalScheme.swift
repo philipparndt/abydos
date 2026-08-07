@@ -25,7 +25,10 @@ enum TerminalScheme: String, CaseIterable {
 	var title: String {
 		switch self {
 		case .blue: return "Blue"
-		case .dark: return "Dark"
+		// Not "Dark": it is the editor's own colours, which in daylight are a
+		// light terminal. Beside a control that asks light or dark, the old
+		// name read as an answer to that question.
+		case .dark: return "Editor colours"
 		case .abydos: return "Abydos"
 		}
 	}
@@ -203,9 +206,8 @@ enum TerminalScheme: String, CaseIterable {
 	/// installation gets: one decision about what the app looks like, rather
 	/// than a warm amber editor beside a deep blue terminal that nobody chose.
 	static var current: TerminalScheme {
-		let theme = Appearance.Theme(rawValue: Settings.shared.appearance) ?? .system
 		let resolved = Appearance.resolvedTerminalScheme(
-			setting: Settings.shared.terminalScheme, theme: theme
+			setting: Settings.shared.terminalScheme, stored: Settings.shared.activeAppearance
 		)
 		return TerminalScheme(rawValue: resolved) ?? .default
 	}

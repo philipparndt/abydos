@@ -2,88 +2,121 @@ import Foundation
 
 /// What the app looks like: the editor's palette, and the terminal's.
 ///
-/// The two used to be set in two places, which is how somebody ended up with a
-/// warm amber editor beside a deep blue terminal without ever choosing that.
-/// They are one decision now, made once, with the terminal free to differ where
-/// somebody wants it to — a palette is a language people arrive already knowing,
-/// and a green-on-black terminal beside a light editor is a real preference and
-/// not a mistake.
+/// Two questions, not one list. *Which* palette — the app's own warm one, or
+/// the blue-grey it started with — and *how light* it should be. Asked
+/// separately because they are separate: somebody who wants Abydos wants it in
+/// the morning as well, and somebody who follows the system wants whichever
+/// palette they chose to follow along rather than to be swapped for another.
+///
+/// The two used to be a single list with "Abydos" and "Abydos Light" in it,
+/// which is five entries to say four things and no way at all to say "Abydos,
+/// and follow the system".
 public enum Appearance {
-	/// The palettes the editor offers.
-	public enum Theme: String, CaseIterable, Sendable {
-		/// Whatever the system is set to, in the plain dark and light palettes.
-		case system
-		case dark
-		case light
-		/// The app's own, warm: amber on near-black.
+	/// Which palette.
+	public enum Family: String, CaseIterable, Sendable {
+		/// The app's own: amber, warm greys, ink on unbleached paper by day.
 		case abydos
-		/// The same warmth in daylight: ink on paper, still amber.
-		case abydosLight = "abydos-light"
+		/// The blue-grey one the app started with, and the palette most
+		/// editors' dark themes are a version of.
+		case blue
 
 		public var title: String {
 			switch self {
-			case .system:      return "System"
-			case .dark:        return "Dark"
-			case .light:       return "Light"
-			case .abydos:      return "Abydos"
-			case .abydosLight: return "Abydos Light"
+			case .abydos: return "Abydos"
+			case .blue:   return "Blue"
 			}
 		}
+	}
 
-		/// Whether this palette is a light one, given what the system says for
-		/// the one that defers to it.
-		public func isLight(systemIsDark: Bool) -> Bool {
+	/// How light.
+	public enum Mode: String, CaseIterable, Sendable {
+		case system
+		case light
+		case dark
+
+		public var title: String {
 			switch self {
-			case .system:      return !systemIsDark
-			case .dark:        return false
-			case .light:       return true
-			case .abydos:      return false
-			case .abydosLight: return true
+			case .system: return "System"
+			case .light:  return "Light"
+			case .dark:   return "Dark"
 			}
+		}
+	}
+
+	/// The stored value, which is one string because everything downstream —
+	/// presentation mode, the `--theme` flag, the palette lookup — has always
+	/// been given one.
+	public static func name(family: Family, mode: Mode) -> String {
+		switch (family, mode) {
+		case (.blue, .system):   return "system"
+		case (.blue, .light):    return "light"
+		case (.blue, .dark):     return "dark"
+		case (.abydos, .system): return "abydos-system"
+		case (.abydos, .light):  return "abydos-light"
+		case (.abydos, .dark):   return "abydos"
+		}
+	}
+
+	/// Which palette a stored value names.
+	///
+	/// This is also the whole of the migration from when the two questions were
+	/// one list: every value that could have been stored then decomposes into
+	/// the pair that means the same thing now.
+	public static func family(of stored: String) -> Family {
+		stored.hasPrefix("abydos") ? .abydos : .blue
+	}
+
+	/// How light a stored value asks for.
+	public static func mode(of stored: String) -> Mode {
+		switch stored {
+		case "light", "abydos-light":   return .light
+		case "dark", "abydos":          return .dark
+		case "system", "abydos-system": return .system
+		default:                        return .system
+		}
+	}
+
+	/// Whether a stored value is a light one, given what the system says for
+	/// the pair that defers to it.
+	public static func isLight(_ stored: String, systemIsDark: Bool) -> Bool {
+		switch mode(of: stored) {
+		case .light:  return true
+		case .dark:   return false
+		case .system: return !systemIsDark
 		}
 	}
 
 	/// The value that means "whatever the editor is using".
 	///
 	/// A value rather than a separate switch: one control that lists the
-	/// palettes and has "Same as the editor" at the top of them says both what
+	/// palettes and has "Same as the theme" at the top of them says both what
 	/// is being used and that it follows, where a toggle beside a list leaves
 	/// somebody wondering which of the two is in charge.
 	public static let followsEditor = "follow"
 
-	/// The terminal palette that goes with an editor palette.
-	///
-	/// The plain themes pair with the terminal scheme that takes the editor's
-	/// own colours, so light and dark follow along by themselves. Abydos pairs
-	/// with Abydos, whose own light and dark variants do the same.
-	public static func terminalScheme(following theme: Theme) -> String {
-		switch theme {
-		case .abydos, .abydosLight: return "abydos"
-		case .system, .dark, .light: return "dark"
-		}
+	/// The terminal palette that goes with a family. Each has one of its own,
+	/// and each of those knows what to do in daylight.
+	public static func terminalScheme(following stored: String) -> String {
+		family(of: stored) == .abydos ? "abydos" : "blue"
 	}
 
 	/// Which terminal palette to actually use.
 	///
 	/// - Parameter setting: what is stored, which may be `followsEditor`.
-	public static func resolvedTerminalScheme(setting: String, theme: Theme) -> String {
+	public static func resolvedTerminalScheme(setting: String, stored: String) -> String {
 		guard setting == followsEditor || setting.isEmpty else { return setting }
-		return terminalScheme(following: theme)
+		return terminalScheme(following: stored)
 	}
 
-	/// What a project opened for the first time should get.
-	///
-	/// Following the editor, because that is the answer somebody who has not
-	/// thought about it wants. Somebody who has thought about it says so, and
-	/// then it is never taken away from them again — see `migrate`.
+	/// What a fresh installation gets: the terminal following the theme,
+	/// because that is the answer somebody who has not thought about it wants.
 	public static let defaultTerminalSetting = followsEditor
 
 	/// Whether an existing terminal choice should be left alone.
 	///
-	/// Making "follow the editor" the default is right for a new installation
+	/// Making "follow the theme" the default is right for a new installation
 	/// and wrong for somebody who picked Blue two months ago: an upgrade that
-	/// quietly repaints their terminal is a bug with a nice explanation. A
-	/// choice that was stored stays stored.
+	/// quietly repaints their terminal is a bug with a nice explanation.
 	public static func migratedTerminalSetting(stored: String?) -> String {
 		guard let stored, !stored.isEmpty else { return followsEditor }
 		return stored
