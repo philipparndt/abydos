@@ -23,6 +23,9 @@ struct Theme {
 		// Abydos, following the system — which the old single list could not
 		// say at all, since it had one entry per palette-and-lightness pair.
 		case "abydos-system": wanted = systemIsDark ? .abydos : .abydosLight
+		case "dracula": wanted = .dracula
+		case "dracula-light": wanted = .draculaLight
+		case "dracula-system": wanted = systemIsDark ? .dracula : .draculaLight
 		default: wanted = systemIsDark ? .dusk : .daylight
 		}
 
@@ -329,6 +332,85 @@ struct Theme {
 		indentGuide: .hex(0xEAE0CC)
 	)
 
+	/// Dracula, as its authors publish it.
+	///
+	/// The one palette here that is not ours. People arrive with it — from a
+	/// terminal, an editor, a whole desktop — and the point of offering it is
+	/// that it is the same Dracula they already have, so the six accent hues
+	/// and the two greys are upstream's values rather than something adjusted
+	/// to taste. Only the roles this app has and Dracula does not — a git
+	/// status, a fold placeholder — are placed, and each of those is given the
+	/// accent that already means it elsewhere.
+	static let dracula = Theme(
+		name: "dracula",
+		windowBackground: .hex(0x282A36),
+		sidebarBackground: .hex(0x21222C),
+		editorBackground: .hex(0x282A36),
+		toolbarBackground: .hex(0x21222C),
+		separator: .hex(0x191A21),
+
+		sidebarText: .hex(0xF8F8F2),
+		sidebarHeaderText: .hex(0xBD93F9),
+		selectionActive: .hex(0x44475A),
+		selectionInactive: .hex(0x343746),
+		excludedDirectoryTint: .hex(0x44475A),
+
+		gitAdded: .hex(0x50FA7B),
+		gitModified: .hex(0xFFB86C),
+		gitUnversioned: .hex(0x8BE9FD),
+		gitIgnored: .hex(0x6272A4),
+		gitConflict: .hex(0xFF5555),
+
+		editorText: .hex(0xF8F8F2),
+		gutterText: .hex(0x6272A4),
+		gutterCurrentLineText: .hex(0xF8F8F2),
+		currentLineBackground: .hex(0x2E3040),
+		caret: .hex(0xF8F8F2),
+		selectionBackground: .hex(0x44475A),
+		foldPlaceholderBackground: .hex(0x343746),
+		foldPlaceholderText: .hex(0xBD93F9),
+		indentGuide: .hex(0x3B3E4F)
+	)
+
+	/// Dracula in daylight, which upstream calls Alucard.
+	///
+	/// Not the dark one inverted, and not invented here either: Dracula
+	/// publishes this palette precisely because inverting the dark one gives
+	/// neon on white. The accents are darkened versions of the same six hues
+	/// and the ground is a warm off-white rather than paper.
+	static let draculaLight = Theme(
+		name: "dracula-light",
+		isLight: true,
+
+		windowBackground: .hex(0xFFFBEB),
+		sidebarBackground: .hex(0xF5F1E1),
+		editorBackground: .hex(0xFFFBEB),
+		toolbarBackground: .hex(0xF5F1E1),
+		separator: .hex(0xDEDACC),
+
+		sidebarText: .hex(0x1F1F1F),
+		sidebarHeaderText: .hex(0x644AC9),
+		selectionActive: .hex(0xCFCFDE),
+		selectionInactive: .hex(0xE4E2D5),
+		excludedDirectoryTint: .hex(0xCFCFDE),
+
+		gitAdded: .hex(0x14710A),
+		gitModified: .hex(0xA34D14),
+		gitUnversioned: .hex(0x036A96),
+		gitIgnored: .hex(0x6C664B),
+		gitConflict: .hex(0xCB3A2A),
+
+		editorText: .hex(0x1F1F1F),
+		gutterText: .hex(0x9A9484),
+		gutterCurrentLineText: .hex(0x1F1F1F),
+		currentLineBackground: .hex(0xF7F3E3),
+		caret: .hex(0x644AC9),
+		selectionBackground: .hex(0xCFCFDE),
+		foldPlaceholderBackground: .hex(0xEAE7D8),
+		foldPlaceholderText: .hex(0x644AC9),
+		indentGuide: .hex(0xE4E1D2)
+	)
+
 	/// The same interface in daylight.
 	///
 	/// Not the dark palette inverted: a light theme wants more contrast in the
@@ -371,8 +453,10 @@ struct Theme {
 	/// from tree-sitter capture names, so the theme never sees grammar details.
 	func color(for kind: HighlightKind) -> NSColor {
 		if name == "abydos-light" { return abydosLightColor(for: kind) }
+		if name == "dracula-light" { return draculaLightColor(for: kind) }
 		if isLight { return lightColor(for: kind) }
 		if name == "abydos" { return abydosColor(for: kind) }
+		if name == "dracula" { return draculaColor(for: kind) }
 		switch kind {
 		// Keyword warm, string green, call blue: the arrangement every dark
 		// scheme has settled on, in our own values. Parameters are tinted
@@ -421,6 +505,79 @@ struct Theme {
 	/// on unbleached paper. Comments are the one thing that moves rather than
 	/// darkens: a grey-brown at this weight disappears, so they keep a little
 	/// green and sit clearly behind the code.
+	/// Dracula's syntax colours, as upstream assigns them.
+	///
+	/// Dracula names six accents and says what each is for: pink for keywords,
+	/// green for strings, purple for constants and numbers, cyan for types,
+	/// orange for parameters, yellow for functions. Following that mapping is
+	/// the whole point — somebody who picks Dracula here should see the same
+	/// file in the same colours as in the editor they came from.
+	private func draculaColor(for kind: HighlightKind) -> NSColor {
+		switch kind {
+		case .keyword:      return .hex(0xFF79C6)
+		case .type:         return .hex(0x8BE9FD)
+		case .function:     return .hex(0x50FA7B)
+		case .method:       return .hex(0x50FA7B)
+		case .property:     return .hex(0xF8F8F2)
+		case .variable:     return editorText
+		case .parameter:    return .hex(0xFFB86C)
+		case .constant:     return .hex(0xBD93F9)
+		case .string:       return .hex(0xF1FA8C)
+		case .escape:       return .hex(0xFF79C6)
+		case .number:       return .hex(0xBD93F9)
+		case .boolean:      return .hex(0xBD93F9)
+		case .comment:      return .hex(0x6272A4)
+		case .documentation:return .hex(0x6272A4)
+		case .operatorToken:return .hex(0xFF79C6)
+		case .punctuation:  return .hex(0xF8F8F2)
+		case .tag:          return .hex(0xFF79C6)
+		case .attribute:    return .hex(0x50FA7B)
+		case .label:        return .hex(0xBD93F9)
+		case .namespace:    return .hex(0x8BE9FD)
+		case .heading:      return .hex(0xBD93F9)
+		case .link:         return .hex(0x8BE9FD)
+		case .emphasis:     return .hex(0xF1FA8C)
+		case .error:        return .hex(0xFF5555)
+		case .plain:        return editorText
+		}
+	}
+
+	/// The same assignment in Alucard's values.
+	///
+	/// Role for role with the dark one — keywords pink, strings yellow,
+	/// constants purple — in the darkened hues Dracula publishes for daylight,
+	/// because the neon ones on off-white are unreadable rather than merely
+	/// bright.
+	private func draculaLightColor(for kind: HighlightKind) -> NSColor {
+		switch kind {
+		case .keyword:      return .hex(0xA3144D)
+		case .type:         return .hex(0x036A96)
+		case .function:     return .hex(0x14710A)
+		case .method:       return .hex(0x14710A)
+		case .property:     return .hex(0x1F1F1F)
+		case .variable:     return editorText
+		case .parameter:    return .hex(0xA34D14)
+		case .constant:     return .hex(0x644AC9)
+		case .string:       return .hex(0x846E15)
+		case .escape:       return .hex(0xA3144D)
+		case .number:       return .hex(0x644AC9)
+		case .boolean:      return .hex(0x644AC9)
+		case .comment:      return .hex(0x6C664B)
+		case .documentation:return .hex(0x6C664B)
+		case .operatorToken:return .hex(0xA3144D)
+		case .punctuation:  return .hex(0x1F1F1F)
+		case .tag:          return .hex(0xA3144D)
+		case .attribute:    return .hex(0x14710A)
+		case .label:        return .hex(0x644AC9)
+		case .namespace:    return .hex(0x036A96)
+		case .heading:      return .hex(0x644AC9)
+		case .link:         return .hex(0x036A96)
+		case .emphasis:     return .hex(0x846E15)
+		case .error:        return .hex(0xCB3A2A)
+		case .plain:        return editorText
+		}
+	}
+
 	private func abydosLightColor(for kind: HighlightKind) -> NSColor {
 		switch kind {
 		case .keyword:      return .hex(0x9A5B0C)

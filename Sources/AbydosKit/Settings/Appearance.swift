@@ -19,11 +19,15 @@ public enum Appearance {
 		/// The blue-grey one the app started with, and the palette most
 		/// editors' dark themes are a version of.
 		case blue
+		/// Dracula, which people arrive with rather than discover here — and
+		/// its daylight half, which upstream calls Alucard.
+		case dracula
 
 		public var title: String {
 			switch self {
-			case .abydos: return "Abydos"
-			case .blue:   return "Blue"
+			case .abydos:  return "Abydos"
+			case .blue:    return "Blue"
+			case .dracula: return "Dracula"
 			}
 		}
 	}
@@ -54,6 +58,9 @@ public enum Appearance {
 		case (.abydos, .system): return "abydos-system"
 		case (.abydos, .light):  return "abydos-light"
 		case (.abydos, .dark):   return "abydos"
+		case (.dracula, .system): return "dracula-system"
+		case (.dracula, .light):  return "dracula-light"
+		case (.dracula, .dark):   return "dracula"
 		}
 	}
 
@@ -63,16 +70,18 @@ public enum Appearance {
 	/// one list: every value that could have been stored then decomposes into
 	/// the pair that means the same thing now.
 	public static func family(of stored: String) -> Family {
-		stored.hasPrefix("abydos") ? .abydos : .blue
+		if stored.hasPrefix("abydos") { return .abydos }
+		if stored.hasPrefix("dracula") { return .dracula }
+		return .blue
 	}
 
 	/// How light a stored value asks for.
 	public static func mode(of stored: String) -> Mode {
 		switch stored {
-		case "light", "abydos-light":   return .light
-		case "dark", "abydos":          return .dark
-		case "system", "abydos-system": return .system
-		default:                        return .system
+		case "light", "abydos-light", "dracula-light":   return .light
+		case "dark", "abydos", "dracula":               return .dark
+		case "system", "abydos-system", "dracula-system": return .system
+		default:                                        return .system
 		}
 	}
 
@@ -97,7 +106,11 @@ public enum Appearance {
 	/// The terminal palette that goes with a family. Each has one of its own,
 	/// and each of those knows what to do in daylight.
 	public static func terminalScheme(following stored: String) -> String {
-		family(of: stored) == .abydos ? "abydos" : "blue"
+		switch family(of: stored) {
+		case .abydos:  return "abydos"
+		case .dracula: return "dracula"
+		case .blue:    return "blue"
+		}
 	}
 
 	/// Which terminal palette to actually use.

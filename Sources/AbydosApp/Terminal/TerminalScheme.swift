@@ -19,6 +19,10 @@ enum TerminalScheme: String, CaseIterable {
 	/// failing test has to look like one — but the hues lean towards the
 	/// desert and the greys are warm rather than blue.
 	case abydos
+	/// Dracula's own sixteen, which is where most people met Dracula in the
+	/// first place — and Alucard's for daylight, since Dracula publishes one
+	/// rather than leaving the dark palette to be inverted.
+	case dracula
 
 	static let `default` = TerminalScheme.blue
 
@@ -30,6 +34,7 @@ enum TerminalScheme: String, CaseIterable {
 		// name read as an answer to that question.
 		case .dark: return "Editor colours"
 		case .abydos: return "Abydos"
+		case .dracula: return "Dracula"
 		}
 	}
 
@@ -124,6 +129,51 @@ enum TerminalScheme: String, CaseIterable {
 				.hex(0xA6C7B8), // 14 bright cyan
 				.hex(0xF3E7D3), // 15 bright white
 			]
+		case .dracula where Theme.current.isLight:
+			// Alucard's named colours put in ANSI order. Dracula publishes the
+			// eight hues rather than a table of sixteen, so the bright half is
+			// each of them lifted by the same amount — which is what the dark
+			// scheme's own bright half is.
+			return [
+				.hex(0x1F1F1F), // 0 black
+				.hex(0xCB3A2A), // 1 red
+				.hex(0x14710A), // 2 green
+				.hex(0x846E15), // 3 yellow
+				.hex(0x644AC9), // 4 blue → purple, which is Dracula's blue
+				.hex(0xA3144D), // 5 magenta → pink
+				.hex(0x036A96), // 6 cyan
+				.hex(0x6C664B), // 7 white → the comment brown, since white on
+				               //   off-white is not a colour
+				.hex(0x4D4D4D), // 8 bright black
+				.hex(0xE35142), // 9 bright red
+				.hex(0x1D8E10), // 10 bright green
+				.hex(0x9C851B), // 11 bright yellow
+				.hex(0x7862D4), // 12 bright blue
+				.hex(0xC01B5E), // 13 bright magenta
+				.hex(0x0480B5), // 14 bright cyan
+				.hex(0x1F1F1F), // 15 bright white → the ink
+			]
+		case .dracula:
+			// Upstream's table, unchanged. The point of offering Dracula is
+			// that it is the Dracula somebody already has.
+			return [
+				.hex(0x21222C), // 0 black
+				.hex(0xFF5555), // 1 red
+				.hex(0x50FA7B), // 2 green
+				.hex(0xF1FA8C), // 3 yellow
+				.hex(0xBD93F9), // 4 blue → purple
+				.hex(0xFF79C6), // 5 magenta → pink
+				.hex(0x8BE9FD), // 6 cyan
+				.hex(0xF8F8F2), // 7 white
+				.hex(0x6272A4), // 8 bright black
+				.hex(0xFF6E6E), // 9 bright red
+				.hex(0x69FF94), // 10 bright green
+				.hex(0xFFFFA5), // 11 bright yellow
+				.hex(0xD6ACFF), // 12 bright blue
+				.hex(0xFF92DF), // 13 bright magenta
+				.hex(0xA4FFFF), // 14 bright cyan
+				.hex(0xFFFFFF), // 15 bright white
+			]
 		case .dark where Theme.current.isLight:
 			// As above: a middle lightness, so the same colour serves as text
 			// on white and as something to write black on.
@@ -179,6 +229,7 @@ enum TerminalScheme: String, CaseIterable {
 		// terminal exactly the colour of the editor beside it stops reading as
 		// a terminal.
 		case .abydos: return Theme.current.isLight ? .hex(0xFDF8EE) : .hex(0x1A1512)
+		case .dracula: return Theme.current.isLight ? .hex(0xFFFDF5) : .hex(0x22242E)
 		}
 	}
 
@@ -188,6 +239,7 @@ enum TerminalScheme: String, CaseIterable {
 		case .blue: return Theme.current.isLight ? .hex(0x24262B) : .hex(0xFFFFFF)
 		case .dark: return Theme.current.editorText
 		case .abydos: return Theme.current.isLight ? .hex(0x2E241B) : .hex(0xE8D9C0)
+		case .dracula: return Theme.current.isLight ? .hex(0x1F1F1F) : .hex(0xF8F8F2)
 		}
 	}
 
@@ -197,6 +249,7 @@ enum TerminalScheme: String, CaseIterable {
 		case .blue: return Theme.current.isLight ? .hex(0x3B3E45) : .hex(0xC5C8C6)
 		case .dark: return Theme.current.caret
 		case .abydos: return Theme.current.isLight ? .hex(0xB07407) : .hex(0xF7B44E)
+		case .dracula: return Theme.current.isLight ? .hex(0x644AC9) : .hex(0xF8F8F2)
 		}
 	}
 

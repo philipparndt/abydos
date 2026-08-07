@@ -5,8 +5,8 @@ import Testing
 /// Two questions about what the app looks like — which palette, and how light —
 /// where there used to be one list with an entry per pairing.
 struct AppearanceTests {
-	@Test func offersTwoPalettesAndThreeLightnesses() {
-		#expect(Appearance.Family.allCases.map(\.rawValue) == ["abydos", "blue"])
+	@Test func offersThreePalettesAndThreeLightnesses() {
+		#expect(Appearance.Family.allCases.map(\.rawValue) == ["abydos", "blue", "dracula"])
 		#expect(Appearance.Mode.allCases.map(\.rawValue) == ["system", "light", "dark"])
 	}
 
@@ -31,6 +31,27 @@ struct AppearanceTests {
 				#expect(Appearance.family(of: stored) == family)
 				#expect(Appearance.mode(of: stored) == mode)
 			}
+		}
+	}
+
+	/// Dracula, which people arrive with rather than discover here — and its
+	/// daylight half, which upstream calls Alucard.
+	@Test func draculaDecomposesLikeTheRest() {
+		#expect(Appearance.name(family: .dracula, mode: .dark) == "dracula")
+		#expect(Appearance.name(family: .dracula, mode: .light) == "dracula-light")
+		#expect(Appearance.name(family: .dracula, mode: .system) == "dracula-system")
+		#expect(Appearance.family(of: "dracula-light") == .dracula)
+		#expect(Appearance.isLight("dracula-light", systemIsDark: true))
+		#expect(!Appearance.isLight("dracula", systemIsDark: false))
+	}
+
+	/// Every palette names a terminal palette of its own. A family added
+	/// without one silently falls back to blue, which is how somebody ends up
+	/// with a Dracula editor beside a terminal nobody chose.
+	@Test func everyFamilyNamesItsOwnTerminalPalette() {
+		for family in Appearance.Family.allCases {
+			let stored = Appearance.name(family: family, mode: .dark)
+			#expect(Appearance.terminalScheme(following: stored) == family.rawValue)
 		}
 	}
 
