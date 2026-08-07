@@ -454,6 +454,29 @@ final class SettingsPaneController: NSViewController {
 	}
 
 	/// What Claude Code is allowed to do on your behalf.
+	/// Tools that can come from a container image instead of from this machine.
+	///
+	/// One row per tool that supports it, rather than a table of arbitrary
+	/// pairs: a settings page is for the things somebody actually sets, and a
+	/// free-form map of tool names invites typing one that means nothing.
+	static func toolRows() -> [Row] {
+		[
+			.text(
+				title: "PlantUML image",
+				help: "Draw diagrams in a container instead of installing PlantUML — "
+					+ "for example plantuml/plantuml. Needs Apple's container or docker. "
+					+ "A project naming its own in .abydos/tools.json overrides this.",
+				get: { Settings.shared.toolImages["plantuml"] ?? "" },
+				set: { image in
+					var images = Settings.shared.toolImages
+					let wanted = image.trimmingCharacters(in: .whitespaces)
+					if wanted.isEmpty { images["plantuml"] = nil } else { images["plantuml"] = wanted }
+					Settings.shared.toolImages = images
+				}
+			),
+		]
+	}
+
 	static func agentRows() -> [Row] {
 		[
 			.choice(
@@ -569,5 +592,6 @@ enum SettingsSections {
 		Section(title: "Saving", symbol: "square.and.arrow.down", rows: SettingsPaneController.savingRows),
 		Section(title: "Navigator", symbol: "folder", rows: SettingsPaneController.navigatorRows),
 		Section(title: "Agent", symbol: "sparkles", rows: SettingsPaneController.agentRows),
+		Section(title: "Tools", symbol: "shippingbox", rows: SettingsPaneController.toolRows),
 	]
 }

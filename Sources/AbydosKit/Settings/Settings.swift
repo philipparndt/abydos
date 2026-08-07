@@ -88,6 +88,7 @@ public final class Settings {
 		static let wordWrap = "wordWrap"
 		static let terminalGPURendering = "terminalGPURendering"
 		static let terminalOptionAsMeta = "terminalOptionAsMeta"
+		static let toolImages = "toolImages"
 		static let appearance = "appearance"
 		static let followsTerminalProject = "followsTerminalProject"
 		static let terminalAtStartup = "terminalAtStartup"
@@ -292,6 +293,17 @@ public final class Settings {
 	public var terminalOptionAsMeta: Bool {
 		get { defaults.bool(forKey: Key.terminalOptionAsMeta) }
 		set { set(newValue, Key.terminalOptionAsMeta) }
+	}
+
+	/// Container images to get tools from, for somebody who would rather not
+	/// install them: tool name to image, as `docker pull` would name it.
+	///
+	/// A project that names its own in `.abydos/tools.json` overrides this —
+	/// what a checked-in diagram is drawn by is the project's business, not a
+	/// personal preference.
+	public var toolImages: [String: String] {
+		get { defaults.dictionary(forKey: Key.toolImages) as? [String: String] ?? [:] }
+		set { set(newValue, Key.toolImages) }
 	}
 
 	/// How the terminal arrives when a window opens.

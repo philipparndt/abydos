@@ -25,13 +25,24 @@ final class PlantUMLPreviewView: NSView {
 	/// What was last drawn, so an unchanged document is not drawn again.
 	private var lastSource: String?
 
-	/// Whichever PlantUML is on this machine, looked up once per view: the
+	/// How long to wait for a picture before saying so. Long, because the first
+	/// run of a container image fetches it.
+	private static let deadline: TimeInterval = 30
+
+	/// Whichever PlantUML this project can reach, looked up once per view: the
 	/// answer does not change while a window is open, and looking it up per
 	/// keystroke means walking the PATH per keystroke.
-	private let tool = PlantUML.discover()
+	private let tool: PlantUML.Tool?
 
-	override init(frame frameRect: NSRect) {
-		super.init(frame: frameRect)
+	/// - Parameter projectRoot: whose `.abydos/tools.json` may name an image to
+	///   draw with, so a machine with no PlantUML on it still shows diagrams.
+	init(projectRoot: URL?) {
+		let images = ToolImages.resolve(
+			project: projectRoot.map { ToolImages.inProject($0) } ?? ToolImages(),
+			settings: ToolImages(images: Settings.shared.toolImages)
+		)
+		tool = PlantUML.discover(image: images.image(for: "plantuml"))
+		super.init(frame: .zero)
 		spinner.style = .spinning
 		spinner.controlSize = .small
 		spinner.isDisplayedWhenStopped = false
@@ -82,6 +93,9 @@ final class PlantUMLPreviewView: NSView {
 		// otherwise leave a JVM running for every keystroke that started one.
 		running?.terminate()
 		spinner.startAnimation(nil)
+		notice = "Drawing with \(tool.description)…"
+		image = nil
+		needsDisplay = true
 
 		let run = PlantUML.invocation(for: tool)
 		let process = Process()
@@ -95,6 +109,22 @@ final class PlantUMLPreviewView: NSView {
 		process.standardOutput = output
 		process.standardError = errors
 		running = process
+
+		// A deadline, because the thing being run may never answer: a container
+		// runtime whose service is not up accepts the command and then waits
+		// for a daemon that is never coming, and a preview that spins for ever
+		// tells somebody nothing about why. Generous, since the first run of an
+		// image has to fetch it first.
+		let watchdog = DispatchWorkItem { [weak self] in
+			guard let self, self.running === process, process.isRunning else { return }
+			process.terminate()
+			self.spinner.stopAnimation(nil)
+			self.running = nil
+			self.image = nil
+			self.notice = "\(tool.description) did not answer within \(Int(Self.deadline)) seconds."
+			self.needsDisplay = true
+		}
+		DispatchQueue.main.asyncAfter(deadline: .now() + Self.deadline, execute: watchdog)
 
 		DispatchQueue.global(qos: .userInitiated).async { [weak self] in
 			var drawn = Data()
@@ -115,6 +145,7 @@ final class PlantUMLPreviewView: NSView {
 
 			DispatchQueue.main.async {
 				guard let self else { return }
+				watchdog.cancel()
 				self.spinner.stopAnimation(nil)
 				self.running = nil
 				self.finish(drawn: drawn, complaint: complaint)
@@ -123,6 +154,7 @@ final class PlantUMLPreviewView: NSView {
 	}
 
 	private func finish(drawn: Data, complaint: String) {
+		let tool = self.tool
 		// An error picture is still a picture, and it names the line that is
 		// wrong — which is more useful in the pane than any message here.
 		if PlantUML.isPicture(drawn), let picture = NSImage(data: drawn) {
@@ -137,7 +169,17 @@ final class PlantUMLPreviewView: NSView {
 			// Graphviz looks like. Whatever it said on the way out is the only
 			// clue there is.
 			let said = complaint.trimmingCharacters(in: .whitespacesAndNewlines)
-			notice = said.isEmpty ? "PlantUML drew nothing." : said
+			if !said.isEmpty {
+				notice = said
+			} else if case .image = tool {
+				// Naming the command is the whole message: a container runtime
+				// that is installed but not running fails silently, and "drew
+				// nothing" gives nobody anywhere to look.
+				notice = "\(tool?.description ?? "The image") produced no picture. "
+					+ "Is the container runtime running?"
+			} else {
+				notice = "PlantUML drew nothing. Graphviz may be missing."
+			}
 		}
 		needsDisplay = true
 	}

@@ -1460,7 +1460,7 @@ final class EditorViewController: NSViewController {
 
 	/// The diagram a PlantUML file describes, kept current while it is edited.
 	private func makeDiagramView(for tab: Tab) -> NSView {
-		let view = PlantUMLPreviewView()
+		let view = PlantUMLPreviewView(projectRoot: project?.root)
 		if let document = tab.document {
 			view.show(document.rope.string)
 

@@ -31,12 +31,16 @@ public enum PlantUML {
 		case command(String)
 		/// A jar, run with the `java` at this path.
 		case jar(path: String, java: String)
+		/// An image, run by whichever container runtime is here. Nothing has to
+		/// be installed for this one — which is the point of it.
+		case image(ToolContainer, ContainerRuntime)
 
 		/// What to say it is, for a pane that has to explain itself.
 		public var description: String {
 			switch self {
 			case let .command(path): return path
 			case let .jar(path, _):  return "java -jar \(path)"
+			case let .image(container, runtime): return "\(runtime.name) run \(container.image)"
 			}
 		}
 	}
@@ -62,6 +66,12 @@ public enum PlantUML {
 			// `-Djava.awt.headless=true` or the JVM bounces the Dock icon and
 			// steals focus every time a preview refreshes.
 			return (java, ["-Djava.awt.headless=true", "-jar", path] + common)
+		case let .image(container, runtime):
+			// The image's own entry point is PlantUML, so the same flags go to
+			// it. Nothing is mounted: the diagram arrives on standard input and
+			// the picture leaves on standard output, so the container never
+			// needs to see the project at all.
+			return container.invocation(using: runtime, arguments: common)
 		}
 	}
 
@@ -84,11 +94,22 @@ public enum PlantUML {
 	///   - locate: how to find a command on the PATH.
 	///   - fileExists: how to check a jar is there.
 	public static func discover(
+		image: String? = nil,
 		environment: [String: String] = ProcessInfo.processInfo.environment,
 		locate: (String) -> String? = { Executables.locate($0) },
-		fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }
+		fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) },
+		runtime: ContainerRuntime? = nil
 	) -> Tool? {
-		// The command first: somebody who installed it that way expects that
+		// An image that was asked for wins over anything installed. Naming one
+		// is a decision — this project's diagrams are drawn by that version —
+		// and a local copy quietly overriding it would make the same file look
+		// different on two machines, which is what naming it was meant to stop.
+		if let image, !image.isEmpty,
+		   let runtime = runtime ?? ContainerRuntime.discover(locate: locate) {
+			return .image(ToolContainer(image: image), runtime)
+		}
+
+		// The command next: somebody who installed it that way expects that
 		// one to run, including whatever options its wrapper script sets.
 		if let command = locate("plantuml") { return .command(command) }
 
@@ -108,8 +129,11 @@ public enum PlantUML {
 	}
 
 	/// The one sentence somebody needs when there is no PlantUML here.
-	public static let installHint =
-		"PlantUML is not installed. `brew install plantuml`, or point PLANTUML_JAR at a plantuml.jar."
+	public static let installHint = """
+		PlantUML is not installed. Either `brew install plantuml`, or name an \
+		image in .abydos/tools.json — {"plantuml": "plantuml/plantuml"} — and \
+		it will be drawn in a container instead.
+		"""
 
 	/// Whether a file is a diagram this draws.
 	public static func isDiagram(_ url: URL) -> Bool {
