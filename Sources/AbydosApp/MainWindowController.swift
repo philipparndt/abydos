@@ -4139,6 +4139,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 							: nil,
 						root: root
 					)
+					// What the program prints goes to the pod's stdout, which
+					// the debugger never sees. Followed into the console beside
+					// the debugger's own output, so one pane has both.
+					if let started = bottomPanel.activeDebugSession {
+						followDevPodLogs(client, pod: pod, debugging: started)
+					}
 				} else {
 					// Busy: the program is up in the cluster until somebody
 					// stops it, and the strip is where that is said and done.
@@ -4651,15 +4657,42 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	}
 
 	/// Shows what the program in the pod is printing.
-	private func followDevPodLogs(_ client: DevPodClient, pod: DevPodTarget) {
+	///
+	/// While debugging it goes to the debug console rather than to a tab of its
+	/// own. The adapter's output events carry what the *debugger* says; a
+	/// program in a pod writes to the pod's stdout, which the debugger never
+	/// sees — so the console sat empty through a whole session while
+	/// `kubectl logs` had the story.
+	private func followDevPodLogs(
+		_ client: DevPodClient,
+		pod: DevPodTarget,
+		debugging debugSession: DebugSession? = nil
+	) {
 		Task { @MainActor in
 			// A poll rather than a stream: the supervisor keeps a tail, the
 			// interesting output arrives in the first seconds, and a websocket
 			// for this would be a protocol to maintain.
-			for _ in 0..<20 {
+			//
+			// A run is watched for a while; a debug session for as long as it
+			// lasts, since the line worth reading is often the one printed just
+			// before a breakpoint somebody took ten minutes to reach.
+			var remaining = debugSession == nil ? 20 : Int.max
+			// The console is appended to rather than replaced, so the same two
+			// hundred lines must not arrive every second — and cannot simply be
+			// replaced either, since the debugger's own output is interleaved
+			// with the program's.
+			var tail = LogTail()
+			while remaining > 0 {
+				remaining -= 1
 				try? await Task.sleep(nanoseconds: 1_000_000_000)
+				if let debugSession, debugSession.state == .terminated { return }
 				guard let text = try? await client.logs(tail: 200), !text.isEmpty else { continue }
-				bottomPanel.showDevPodOutput(text, from: "\(pod.namespace)/\(pod.name)")
+				guard debugSession != nil else {
+					bottomPanel.showDevPodOutput(text, from: "\(pod.namespace)/\(pod.name)")
+					continue
+				}
+				let fresh = tail.newText(in: text)
+				if !fresh.isEmpty { bottomPanel.activeDebugPane?.appendOutput(fresh) }
 			}
 		}
 	}
