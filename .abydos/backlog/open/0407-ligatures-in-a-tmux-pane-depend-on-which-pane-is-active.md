@@ -21,8 +21,31 @@ out the setting, the font, and the shaper being asked at all, and points at
 enters the window both of them join — the same rows, the same text, no output
 in between. Whatever a row was painted with, it keeps.
 
-Which points at the invalidation rather than at the shaper. On the CG path
-only the rows that changed are repainted:
+**But it survives a restart**, which kills the two easy explanations. Stale
+pixels do not outlive the process, and neither does a stale font — every view
+builds its own from `Theme.terminalFont`, which reads the switch at the moment
+it is built. Whatever this is, it is decided again on every launch and comes
+out the same way, per pane.
+
+Ruled out on the machine it happens on: tmux is not styling its panes
+differently. `tmux show -gw window-style window-active-style` prints nothing,
+so the active and inactive panes are not being sent different attributes by
+tmux's own configuration — which was the obvious candidate, since a run ends
+where the cell attributes change and a dimmed pane would end every run.
+
+That leaves what the *program in the pane* is sending, which differs with
+focus for a reason of its own: mode 1004. tmux passes focus in and focus out
+through to whatever is running there, and a full-screen program told it has
+lost focus commonly redraws itself more plainly — fewer colours, no bold. If
+that is what is happening, the ligatures are following the attributes of the
+redraw rather than the focus, and the pane that "only ligates unfocused" is the
+one whose program draws *fewer* attribute changes in that state.
+
+Which is checkable without guessing: e42eb08 records what the terminal was
+given. Capture the same line focused and unfocused and diff the attributes per
+cell.
+
+Below, the earlier reasoning, which still applies to the repaint half:
 
     setNeedsDisplay(rect(forAbsoluteRows: range))
 
