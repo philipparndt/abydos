@@ -853,15 +853,24 @@ final class ProjectNavigatorViewController: NSViewController {
 		// says what kind of thing is being renamed.
 		let cell = outlineView.frameOfCell(atColumn: 0, row: index)
 		let inset = Theme.current.scaled(22)
-		let frame = NSRect(
-			x: cell.minX + inset,
-			y: cell.minY + 1,
-			width: max(60, cell.width - inset - Theme.current.scaled(8)),
-			height: cell.height - 2
-		)
 
-		let field = NSTextField(frame: frame)
+		let field = NSTextField(frame: .zero)
 		field.font = Theme.current.uiFont(12)
+		// As tall as the text it holds, centred in the row rather than filling
+		// it. A field given the row's whole height draws its text against the
+		// top, which puts the name a few points above where it was a moment ago
+		// — and the taller the row, the further it jumps.
+		let height = min(cell.height - 2, ceil(field.fittingSize.height))
+		field.frame = NSRect(
+			x: cell.minX + inset,
+			y: (cell.minY + (cell.height - height) / 2).rounded(),
+			// To the row's right edge, not the cell's: the column is only as
+			// wide as its widest name, and a field that stopped there could not
+			// be typed a longer name into.
+			width: max(60, outlineView.rect(ofRow: index).maxX - cell.minX - inset
+				- Theme.current.scaled(8)),
+			height: height
+		)
 		field.stringValue = node.name
 		// Not bezeled: a bezel in a dark appearance is translucent and draws its
 		// own background, so `drawsBackground` is ignored and the row's label
