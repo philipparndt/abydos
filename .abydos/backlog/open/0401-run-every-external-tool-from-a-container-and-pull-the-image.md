@@ -1,4 +1,4 @@
-# 390. Run every external tool from a container, and pull the image
+# 401. Run every external tool from a container, and pull the image
 
 **Pulling is done** (0a76af8). A named image that is not on the machine is
 fetched before first use, once however many panes ask, with the image name on
@@ -52,5 +52,4 @@ in that message, or look for the image in whichever runtime has it.
 
 ---
 
-Numbered 53 while it was being worked on, which is what a
-commit message citing it means.
+Previously numbered 53, 390.

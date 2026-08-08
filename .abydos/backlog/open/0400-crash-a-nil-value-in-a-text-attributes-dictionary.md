@@ -1,4 +1,4 @@
-# 389. Crash: a nil value in a text attributes dictionary
+# 400. Crash: a nil value in a text attributes dictionary
 
 SIGABRT, report `Abydos-2026-08-07-142800.ips`, from the installed build.
 
@@ -68,5 +68,4 @@ whether anything writes it there.
 
 ---
 
-Numbered 42 while it was being worked on, which is what a
-commit message citing it means.
+Previously numbered 42, 389.

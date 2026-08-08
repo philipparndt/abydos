@@ -1,4 +1,4 @@
-# 395. Tool containers outlive the app, and enough of them wedge the runtime
+# 406. Tool containers outlive the app, and enough of them wedge the runtime
 
 Found on this machine on 2026-08-08: eleven `container run --rm -i
 plantuml/plantuml` processes, four of them a day old, the rest from a run of
@@ -42,3 +42,4 @@ normally have removed.
 ---
 
 Its number is where it sits in the queue, not what it is worth doing next.
+Previously numbered 395.

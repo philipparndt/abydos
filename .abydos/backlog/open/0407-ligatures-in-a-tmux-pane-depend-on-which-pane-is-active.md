@@ -1,4 +1,4 @@
-# 396. Ligatures in a tmux pane depend on which pane is active
+# 407. Ligatures in a tmux pane depend on which pane is active
 
 Two screenshots of the same `brew upgrade` output in the same pane, one while
 the pane held the cursor and one while it did not, disagree about which
@@ -50,3 +50,4 @@ asked about would say it outright.
 ---
 
 Its number is where it sits in the queue, not what it is worth doing next.
+Previously numbered 396.

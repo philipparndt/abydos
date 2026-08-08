@@ -2,7 +2,7 @@
 
 `7b2834e37` · 2026-08-01
 
-make fire
+    make fire
     SECONDS=60 make fire
     PROJECT=~/dev/foo make fire
 

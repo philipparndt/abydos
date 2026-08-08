@@ -1,4 +1,4 @@
-# 397. A glyph is painted twice where two operators meet
+# 408. A glyph is painted twice where two operators meet
 
 In `repository("!! app/build/\n")` the first `!` is drawn twice, a fraction of
 a cell apart, so it reads as bold or smeared beside its neighbour. Reported
@@ -57,3 +57,4 @@ empty on the machine this was seen on, so it was the bundled one.
 ---
 
 Its number is where it sits in the queue, not what it is worth doing next.
+Previously numbered 397.

@@ -1,4 +1,4 @@
-# 387. The settings page fixes the width of the split it is in
+# 399. The settings page fixes the width of the split it is in
 
 Settings opened as a tab in a split editor cannot be widened: the divider will
 not move while it is showing. Widening the split first and then navigating to
@@ -45,5 +45,4 @@ asserted.
 
 ---
 
-Numbered 56 while it was being worked on, which is what a
-commit message citing it means.
+Previously numbered 56, 387.

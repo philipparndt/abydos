@@ -1,4 +1,4 @@
-# 393. tmux's own prompts have nowhere to appear when its bar is off
+# 404. tmux's own prompts have nowhere to appear when its bar is off
 
 Pressing prefix-`,` to rename a window, or prefix-`:` to run a command, inside
 a pane where something is busy — Claude Code working — leaves no prompt worth
@@ -57,3 +57,7 @@ writing every frame has not fixed this.
 Its number is where it sits in the queue, not what it is worth doing next —
 by the ordering the README describes, a bug that stops somebody working
 belongs above the three tasks before it.
+
+---
+
+Previously numbered 393.

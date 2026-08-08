@@ -14,33 +14,38 @@ as what the task is. A task that has been looked at and not solved is worth
 more than a title — several of these have most of a day of searching in them,
 and the point is that the next person does not repeat it.
 
-Numbered on from where `completed` ends — one sequence across the whole
-backlog, so 0385 is simply what comes after the 384 commits behind it. Within
-that, the order is what they are worth doing in: what stops somebody working
-first, then what is missing, then what is only untidy.
-
-The numbers are the list's, not an identity. Two things follow, and both are
-fine as long as they are known:
-
-- They shift. Landing a task turns it into commits, which take the next numbers
-  in `completed`, and the open list is renumbered from the new end. Rebuild
-  both together or they will collide — `completed` numbers by commit ordinal
-  and does not know the open list exists.
-- A commit message citing a number is citing the number of that moment. Each
-  file says at the bottom what it has been called before, which is the only
-  reason those references still lead anywhere.
-
-The durable identifiers are the commit hashes. Everything else here is a
-position in a queue.
+The order within the list is what they are worth doing in: what stops somebody
+working first, then what is missing, then what is only untidy. Putting an item
+where it belongs is a judgement, so it stays a hand movement.
 
 ## completed
 
-Generated from the git history, one file per commit, oldest first. Every commit
-message in this project says what changed and why, so the history already is
-the record of what was done; this only puts it where the rest of the backlog
-is. It can be rebuilt at any time and nothing is lost by deleting it:
+Where an item goes when it is done, keeping the number it had. Moved, not
+rewritten: what it says is what somebody knew while working on it, and the
+commits it turned into say the rest.
+
+## history
+
+One file per commit, oldest first, 0001 to 0396 — the project up to the point
+this backlog was written down, seeded once from:
 
     git log --reverse --date=short --format='%H %ad %s%n%b'
 
-Which is also why nothing is written here by hand. A file that could not be
-regenerated would quietly become the only copy of something.
+**Not a list of finished tasks, and not regenerated.** It is the commit log in
+the backlog's shape, so an entry there is a change that was made rather than a
+task that was closed — several of them are commits that only *filed* a bug, and
+read exactly like the bug being fixed. That is the trap this folder's name
+exists to avoid.
+
+## numbers
+
+One sequence across the whole backlog, carrying on from where `history` ends:
+0397 is what comes after the 396 commits behind it. A number is given once,
+when the item is written, and never changes again — finishing an item moves its
+file and takes its number with it.
+
+They were not always durable. Before this, `completed` was regenerated from the
+git log and the open list was renumbered from its new end, so landing anything
+shifted every number after it. Files that lived through that say at the bottom
+what they were called before, which is why a commit message citing an older
+number still leads somewhere.

@@ -1,4 +1,4 @@
-# 385. kitty's own icat works once, then degrades
+# 397. kitty's own icat works once, then degrades
 
 Two causes fixed in 8efac01: SGR `38:2:r:g:b` written with colons was not
 read, so the placeholder cells carried no image id; and the APC cap of 8192
@@ -38,5 +38,4 @@ off the pane, which is also what "images are cut off" looks like.
 
 ---
 
-Numbered 50 while it was being worked on, which is what a
-commit message citing it means.
+Previously numbered 50, 385.

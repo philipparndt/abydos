@@ -2,7 +2,7 @@
 
 `99f73696a` · 2026-08-01
 
-make fire
+    make fire
     SECONDS=60 make fire
 
 It ran inside the app's own terminal before, through the screenshot harness,

@@ -1,4 +1,4 @@
-# 391. Move each scheme into its own JSON file
+# 402. Move each scheme into its own JSON file
 
 The user's idea: one file per scheme, two sections — app and terminal — with
 each colour given as a light/dark pair, so a scheme is data rather than four
@@ -16,5 +16,4 @@ refused.
 
 ---
 
-Numbered 51 while it was being worked on, which is what a
-commit message citing it means.
+Previously numbered 51, 391.
