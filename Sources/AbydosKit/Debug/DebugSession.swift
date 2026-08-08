@@ -894,24 +894,60 @@ public final class DebugSession {
 	// MARK: - Watches
 
 	/// Expressions being watched, in the order they were added.
-	public private(set) var watches: [WatchExpression] = []
+	///
+	/// Behind a lock, and every change made through the helpers below, because
+	/// more than one refresh can be in the air at once: adding a watch starts
+	/// one, and a stop or a change of frame starts another. Two of them writing
+	/// into the same array from two threads is not a wrong value — it is the
+	/// array's own storage being freed twice, which crashed the test suite with
+	/// a bad access inside `Array._makeMutableAndUnique` and would crash a
+	/// debugging session the same way.
+	public var watches: [WatchExpression] {
+		watchLock.lock()
+		defer { watchLock.unlock() }
+		return storedWatches
+	}
+
+	private var storedWatches: [WatchExpression] = []
+	private let watchLock = NSLock()
+
+	/// Changes the watch with this id, if it is still there.
+	///
+	/// By id rather than by index: a refresh evaluates one expression at a time
+	/// and waits for the debugger between them, and a watch removed while it
+	/// waits leaves every index after it pointing at the wrong row — or past the
+	/// end.
+	private func updateWatch(id: UUID, _ change: (inout WatchExpression) -> Void) {
+		watchLock.lock()
+		if let index = storedWatches.firstIndex(where: { $0.id == id }) {
+			change(&storedWatches[index])
+		}
+		watchLock.unlock()
+	}
+
+	private func withWatches(_ change: (inout [WatchExpression]) -> Void) {
+		watchLock.lock()
+		change(&storedWatches)
+		watchLock.unlock()
+	}
+
 	public var onWatchesChanged: (() -> Void)?
 
 	public func addWatch(_ expression: String) {
 		let trimmed = expression.trimmingCharacters(in: .whitespacesAndNewlines)
 		guard !trimmed.isEmpty else { return }
-		watches.append(WatchExpression(expression: trimmed))
+		withWatches { $0.append(WatchExpression(expression: trimmed)) }
 		onMain { [weak self] in self?.onWatchesChanged?() }
 		Task { await refreshWatches() }
 	}
 
 	public func removeWatch(id: UUID) {
-		watches.removeAll { $0.id == id }
+		withWatches { $0.removeAll { $0.id == id } }
 		onMain { [weak self] in self?.onWatchesChanged?() }
 	}
 
 	public func removeAllWatches() {
-		watches.removeAll()
+		withWatches { $0.removeAll() }
 		onMain { [weak self] in self?.onWatchesChanged?() }
 	}
 
@@ -920,33 +956,43 @@ public final class DebugSession {
 	/// After every stop and every frame change, because a watch that still
 	/// shows the value from two stops ago is worse than no watch at all.
 	public func refreshWatches() async {
-		guard !watches.isEmpty else { return }
+		// A snapshot, since the list can be added to or emptied while this runs.
+		// What comes back is applied to the watch it was asked about, by id, and
+		// dropped if that watch has gone.
+		let current = watches
+		guard !current.isEmpty else { return }
 		guard let frame = selectedFrameID else {
-			for index in watches.indices {
-				watches[index].value = nil
-				watches[index].failed = false
+			withWatches {
+				for index in $0.indices {
+					$0[index].value = nil
+					$0[index].failed = false
+				}
 			}
 			onMain { [weak self] in self?.onWatchesChanged?() }
 			return
 		}
 
-		for index in watches.indices {
+		for watch in current {
 			let response = try? await client.request("evaluate", arguments: [
-				"expression": watches[index].expression,
+				"expression": watch.expression,
 				"frameId": frame,
 				"context": "watch",
 			])
 			if let result = response?["result"] as? String {
-				watches[index].value = result
-				watches[index].failed = false
-				watches[index].variablesReference = response?["variablesReference"] as? Int ?? 0
+				updateWatch(id: watch.id) {
+					$0.value = result
+					$0.failed = false
+					$0.variablesReference = response?["variablesReference"] as? Int ?? 0
+				}
 			} else {
 				// An expression that does not compile here is not an error to
 				// report; it is simply out of scope in this frame, which is
 				// worth saying quietly rather than clearing the row.
-				watches[index].failed = true
-				watches[index].value = "not available here"
-				watches[index].variablesReference = 0
+				updateWatch(id: watch.id) {
+					$0.failed = true
+					$0.value = "not available here"
+					$0.variablesReference = 0
+				}
 			}
 		}
 		onMain { [weak self] in self?.onWatchesChanged?() }

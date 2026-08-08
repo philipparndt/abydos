@@ -129,6 +129,29 @@ struct WatchExpressionTests {
 		#expect(session.watches.isEmpty)
 	}
 
+	/// Several refreshes at once, which is the ordinary case rather than an
+	/// exotic one: adding a watch starts a refresh, and so does every stop and
+	/// every change of frame.
+	///
+	/// This crashed — a bad access inside `Array._makeMutableAndUnique`, from
+	/// two threads writing into the same array — and it crashed the whole test
+	/// process rather than failing a test, which is the sort of failure that
+	/// gets blamed on the runner. It is a race, so passing once proves less than
+	/// failing once does; twenty watches and eight refreshes is enough that it
+	/// showed up reliably before the lock.
+	@Test func refreshesFromEveryDirectionAtOnceLeaveTheListWhole() async {
+		let session = makeSession()
+		for index in 0..<20 { session.addWatch("total\(index)") }
+
+		await withTaskGroup(of: Void.self) { group in
+			for _ in 0..<8 {
+				group.addTask { await session.refreshWatches() }
+			}
+		}
+		#expect(session.watches.count == 20)
+		#expect(session.watches.map(\.expression).first == "total0")
+	}
+
 	/// With nothing running there is no frame, so a watch has no value rather
 	/// than a stale one.
 	@Test func clearsValuesWhenThereIsNoFrame() async {
