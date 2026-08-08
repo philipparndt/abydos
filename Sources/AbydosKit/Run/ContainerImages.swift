@@ -43,9 +43,7 @@ public enum ContainerImages {
 	public static func explain(_ output: String, image: String) -> String {
 		let text = output.lowercased()
 
-		if text.contains("manifest unknown") || text.contains("not found")
-			|| text.contains("no such image") || text.contains("manifest for")
-			&& text.contains("not found") {
+		if isUnknownImage(output) {
 			return "There is no image called \(image). Check the name and the tag."
 		}
 		if text.contains("unauthorized") || text.contains("authentication required")
@@ -71,6 +69,54 @@ public enum ContainerImages {
 		return first.isEmpty
 			? "Could not fetch \(image), and the runtime said nothing about why."
 			: "Could not fetch \(image): \(first)"
+	}
+
+	/// Whether the runtime's words mean it has never heard of the image.
+	///
+	/// Its own sentence, because two different answers turn on it: an image that
+	/// is genuinely nowhere, and one that is on the machine in the *other*
+	/// runtime's store.
+	public static func isUnknownImage(_ output: String) -> Bool {
+		let text = output.lowercased()
+		return text.contains("manifest unknown") || text.contains("not found")
+			|| text.contains("no such image")
+	}
+
+	/// The other runtime on this machine, if there is one.
+	///
+	/// Apple's and docker's are the two families, and what makes them worth
+	/// telling apart here is that neither can see into the other's store.
+	public static func alternative(
+		to runtime: ContainerRuntime,
+		locate: (String) -> String? = { Executables.locate($0) }
+	) -> ContainerRuntime? {
+		switch runtime {
+		case .apple:
+			return ContainerRuntime.discover(preference: .docker, locate: locate)
+		case .docker:
+			return ContainerRuntime.discover(preference: .apple, locate: locate)
+		}
+	}
+
+	/// What to say when the image is missing here and present in the other one.
+	///
+	/// The case somebody actually hits: an image built locally with docker, and
+	/// Apple's `container` preferred because it needs no daemon. It is not on
+	/// the machine as far as that runtime is concerned, so it says the name is
+	/// wrong and then tries to fetch something that is already here — two
+	/// sentences that are both true and together point the wrong way.
+	///
+	/// A local build is the likely reason for a name no registry has, so the
+	/// first thing offered is the one that needs no push.
+	public static func visibleElsewhere(
+		_ image: String,
+		missingFrom: ContainerRuntime,
+		presentIn: ContainerRuntime
+	) -> String {
+		"\(missingFrom.name) has no image called \(image), but \(presentIn.name) does — "
+			+ "they keep separate stores and neither can see into the other. "
+			+ "Choose \(presentIn.name) as the container runtime in settings, "
+			+ "or push \(image) somewhere both can pull it from."
 	}
 
 	/// What to say about a runtime that has stopped answering at all.
@@ -138,16 +184,24 @@ public actor ContainerImageStore {
 
 	private let inspectDeadline: TimeInterval
 	private let pullDeadline: TimeInterval
+	private let alternative: @Sendable (ContainerRuntime) -> ContainerRuntime?
 
 	/// - Parameters:
 	///   - inspectDeadline: given so a test can watch this happen in a second
 	///     rather than in twenty. Nothing in the app passes either.
+	///   - alternative: the other runtime on this machine, asked for only when
+	///     an image was not found — so a test can say there is one, or none,
+	///     without a runtime being installed.
 	public init(
 		inspectDeadline: TimeInterval = ContainerImageStore.inspectDeadline,
-		pullDeadline: TimeInterval = ContainerImageStore.pullDeadline
+		pullDeadline: TimeInterval = ContainerImageStore.pullDeadline,
+		alternative: @escaping @Sendable (ContainerRuntime) -> ContainerRuntime? = {
+			ContainerImages.alternative(to: $0)
+		}
 	) {
 		self.inspectDeadline = inspectDeadline
 		self.pullDeadline = pullDeadline
+		self.alternative = alternative
 	}
 
 	/// Forgets what is on the machine, for a test or after somebody has been
@@ -169,7 +223,7 @@ public actor ContainerImageStore {
 		if let said = silent[runtime.path] { return .failed(said) }
 		if let running = inFlight[image] { return await running.value }
 
-		let task = Task<Outcome, Never> { [runtime, inspectDeadline, pullDeadline] in
+		let task = Task<Outcome, Never> { [runtime, inspectDeadline, pullDeadline, alternative] in
 			let inspect = Self.run(
 				ContainerImages.inspect(image, using: runtime), deadline: inspectDeadline
 			)
@@ -186,6 +240,19 @@ public actor ContainerImageStore {
 				return .failed(ContainerImages.notAnswering(runtime, after: Int(pullDeadline)))
 			}
 			guard pull.exitCode == 0 else {
+				// Only once it has failed, and only for the one answer that could
+				// be a store rather than a name: asking the other runtime costs a
+				// process launch, and the ordinary first-run pull should not pay
+				// it. A hit here changes the sentence completely.
+				if ContainerImages.isUnknownImage(pull.output),
+					let other = alternative(runtime),
+					Self.run(
+						ContainerImages.inspect(image, using: other), deadline: inspectDeadline
+					).exitCode == 0 {
+					return .failed(ContainerImages.visibleElsewhere(
+						image, missingFrom: runtime, presentIn: other
+					))
+				}
 				return .failed(ContainerImages.explain(pull.output, image: image))
 			}
 			return .fetched

@@ -41,11 +41,15 @@ being an `NSTabViewController` — which cannot show a page under a page at all 
 and hosts the same `SettingsPage` the editor does, so there is one navigation
 over one list rather than two.
 
-*Apple's runtime is preferred, and cannot see a docker image.* `discover`
-prefers `container` because it needs no daemon. An image built locally with
-docker is invisible to it, so a project naming one gets "there is no image
-called…" and a pull attempt for something that is already here. Either say so
-in that message, or look for the image in whichever runtime has it.
+*Apple's runtime is preferred, and cannot see a docker image — done.* Both
+halves, since one without the other is still wrong: when a pull fails with the
+one answer that could be a store rather than a name, the other family is asked
+whether it has the image, and if it does the sentence says so and offers the
+runtime choice in settings before offering a push. Asked only after a failure
+and only for that one answer, so an ordinary first-run pull still costs one
+process. What made this worth more than a reworded string is that both of the
+old sentences were true: the name was fine, and the pull that followed was for
+something already on the machine.
 
 ## Decided
 

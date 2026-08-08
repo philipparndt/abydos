@@ -59,6 +59,33 @@ struct ContainerImageTests {
 		#expect(ContainerImages.explain("   \n  ", image: "a/b").contains("said nothing"))
 	}
 
+	/// The two runtimes keep separate stores, so "which one was asked" is part
+	/// of the answer rather than a detail.
+	@Test func anImageInTheOtherRuntimeIsSaidToBeThere() {
+		let said = ContainerImages.visibleElsewhere(
+			"abydos/gopls:dev",
+			missingFrom: .apple("/usr/local/bin/container"),
+			presentIn: .docker("/usr/bin/docker")
+		)
+		#expect(said.contains("container has no image called abydos/gopls:dev"))
+		#expect(said.contains("docker does"))
+		// The point of the sentence: it is not the name that is wrong.
+		#expect(!said.contains("Check the name"))
+	}
+
+	/// Looking for the other family, not the other command: nerdctl and podman
+	/// are docker's for this purpose, and asking Apple's about a docker image
+	/// is the case worth catching.
+	@Test func theAlternativeIsTheOtherFamily() {
+		let both: (String) -> String? = { "/usr/bin/\($0)" }
+		#expect(ContainerImages.alternative(to: .apple("/x"), locate: both)
+			== .docker("/usr/bin/docker"))
+		#expect(ContainerImages.alternative(to: .docker("/x"), locate: both)
+			== .apple("/usr/bin/container"))
+		// Nothing else installed is nothing to suggest.
+		#expect(ContainerImages.alternative(to: .apple("/x"), locate: { _ in nil }) == nil)
+	}
+
 	@Test func itSaysWhichImageItIsFetching() {
 		#expect(ContainerImages.progressMessage(for: "plantuml/plantuml")
 			== "Fetching plantuml/plantuml…")
@@ -125,6 +152,54 @@ struct ContainerImageStoreTests {
 		// Present, because the stand-in exits 0 as an inspect that found it
 		// would — and above all, present rather than still waiting.
 		#expect(outcome == .present)
+	}
+
+	/// An image built locally with docker, asked for through Apple's runtime.
+	///
+	/// The whole failure this catches is that both of the old sentences were
+	/// true and pointed the wrong way: the name is fine, and the pull it then
+	/// tried was for something already on the machine. Stood in for by two
+	/// scripts, so no runtime has to be installed.
+	@Test func anImageTheOtherRuntimeHasIsNotCalledAWrongName() async throws {
+		let directory = FileManager.default.temporaryDirectory
+			.appendingPathComponent("stores-\(UUID().uuidString)")
+		try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+		defer { try? FileManager.default.removeItem(at: directory) }
+
+		func script(_ name: String, _ body: String) throws -> String {
+			let url = directory.appendingPathComponent(name)
+			try Data("#!/bin/sh\n\(body)\n".utf8).write(to: url)
+			try FileManager.default.setAttributes(
+				[.posixPermissions: 0o755], ofItemAtPath: url.path
+			)
+			return url.path
+		}
+
+		// Never heard of it, for both the inspect and the pull.
+		let blind = try script("blind", "echo 'Error: no such image' >&2\nexit 1")
+		// Has it.
+		let holder = try script("holder", "exit 0")
+
+		let store = ContainerImageStore(
+			alternative: { _ in .docker(holder) }
+		)
+		let outcome = await store.ensure("abydos/gopls:dev", using: .apple(blind))
+		guard case let .failed(reason) = outcome else {
+			Issue.record("expected a failure, got \(outcome)")
+			return
+		}
+		#expect(reason.contains("separate stores"))
+		#expect(!reason.contains("Check the name"))
+
+		// With nothing else on the machine it stays the plain answer, rather
+		// than a suggestion to switch to a runtime that is not there.
+		let alone = ContainerImageStore(alternative: { _ in nil })
+		let second = await alone.ensure("abydos/gopls:dev", using: .apple(blind))
+		guard case let .failed(plain) = second else {
+			Issue.record("expected a failure, got \(second)")
+			return
+		}
+		#expect(plain.contains("Check the name"))
 	}
 
 	/// Two askers for the same image wait on one fetch rather than starting two.
