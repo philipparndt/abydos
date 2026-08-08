@@ -2,9 +2,22 @@
 
 In `repository("!! app/build/\n")` the first `!` is drawn twice, a fraction of
 a cell apart, so it reads as bold or smeared beside its neighbour. Reported
-again a minute later in a terminal pane, on the ellipsis in
-`container-apiserver…`, which is the same shape: one character carrying a
-second copy of itself.
+again a minute later in a terminal pane, on `container-apiserver...`, and that
+one says more: what is on screen is an ellipsis glyph *and* a dot after it.
+
+**Not a merge, measured.** The obvious explanation — the font turning three
+characters into one glyph and the other two cells failing to be suppressed —
+is wrong for the font this ships. Shaping `...`, `!!`, `->` and `==` with
+`JetBrainsMonoNerdFontMono-Regular` returns one glyph per character every time,
+each with the same 8.4pt advance:
+
+    3 chars "..." -> glyphs=3 indices=[0, 1, 2] advances=[840, 840, 840]
+    2 chars "!!" -> glyphs=2 indices=[0, 1] advances=[840, 840]
+
+which is the property the code relies on and states. So the count is right and
+something else about where a shaped glyph is *placed* is not. Two cells' worth
+of ink in one cell, with the neighbour still drawing its own, is what an offset
+by one cell would look like.
 
 **Both places at once is the useful part.** One report is the editor's code
 view and the other is a terminal pane, and they do not share a renderer — so
@@ -37,7 +50,9 @@ for anybody hitting it in the meantime.
 
 Worth capturing the run either way — e42eb08 records what the terminal was
 given — so the exact cells, attributes and the pieces the shaper returned can
-be read rather than guessed at.
+be read rather than guessed at. The probe above is four lines of CoreText and
+can be pointed at whichever font is actually in use: `terminalFontName` was
+empty on the machine this was seen on, so it was the bundled one.
 
 ---
 
