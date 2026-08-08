@@ -50,6 +50,19 @@ docker is invisible to it, so a project naming one gets "there is no image
 called…" and a pull attempt for something that is already here. Either say so
 in that message, or look for the image in whichever runtime has it.
 
+## Decided
+
+**A tree, and one navigation over it.** `SettingsSections.Section` gains
+children, the in-editor page's sidebar becomes an outline, and the ⌘, window
+hosts the same `SettingsPage` instead of its own tab bar — so the two surfaces
+are the same thing rather than two navigations over one list, which is the
+drift the "named once" comment exists to prevent. The macOS toolbar style goes
+with it; this app does not otherwise wear it.
+
+One child per tool: PlantUML and the six servers, each owning its image choice
+and the requirement text beside it. The parent keeps what is genuinely shared —
+the container runtime — and becomes short instead of a wall of cards.
+
 ---
 
 Previously numbered 53, 390.

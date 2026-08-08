@@ -13,6 +13,21 @@ without pulling the rest in.
 
 Measure before and after with the same clean build, and say the numbers.
 
+## Decided
+
+**Measure, split the terminal, measure again.** Time a clean build first; pull
+out only the terminal — emulator, pty, tmux, graphics, already nearly
+self-contained and the largest thing nothing else needs to know about — then
+time it again. If that does not move the number, that is the answer about the
+whole plan, learned cheaply.
+
+Before starting: say where `Theme` and `Settings` live. Everything depends on
+them, so they belong in a base module underneath, and nothing may depend
+upward. If that cannot be stated, the split is not ready.
+
+Worth timing at the same time, since it may be most of it: whole-module
+optimisation and the tree-sitter grammars rebuilding.
+
 ---
 
 Previously numbered 36, 392.
