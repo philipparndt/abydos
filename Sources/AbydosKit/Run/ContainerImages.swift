@@ -73,6 +73,21 @@ public enum ContainerImages {
 			: "Could not fetch \(image): \(first)"
 	}
 
+	/// What to say about a runtime that has stopped answering at all.
+	///
+	/// Not a failure of the image or of the network: the command was accepted
+	/// and nothing came back. Apple's `container` does this when its service is
+	/// down — every subcommand waits, `container ls` included — and docker does
+	/// it when its daemon is starting or wedged. The answer is the same shape
+	/// for both, and it is not something this app can do anything about.
+	public static func notAnswering(_ runtime: ContainerRuntime, after seconds: Int) -> String {
+		"\(runtime.name) did not answer within \(seconds) seconds, so nothing can be run "
+			+ "from an image until it does. Its service is usually the reason: "
+			+ (runtime.name == "container"
+				? "`container system start` brings Apple's back."
+				: "starting Docker brings it back.")
+	}
+
 	/// What to say while it is happening.
 	///
 	/// A pull is the one part of this that takes long enough to need saying,
@@ -103,13 +118,43 @@ public actor ContainerImageStore {
 
 	private var known: Set<String> = []
 	private var inFlight: [String: Task<Outcome, Never>] = [:]
+	/// Runtimes that were asked something and never answered, by path.
+	///
+	/// Asked again would mean waiting again, for every pane and every server
+	/// that wants an image, and each wait is a process left behind holding
+	/// whatever the runtime is stuck on. One report and then a fast no is the
+	/// useful behaviour; the app has to be restarted to try again, by which
+	/// time somebody has had the chance to start the service.
+	private var silent: [String: String] = [:]
 
-	public init() {}
+	/// How long a runtime gets to answer.
+	///
+	/// Asking whether an image is here is a local question and takes
+	/// milliseconds when anything is working at all. Fetching one is a download
+	/// of a gigabyte or more, so it is given as long as it plausibly needs and
+	/// no longer.
+	public static let inspectDeadline: TimeInterval = 20
+	public static let pullDeadline: TimeInterval = 900
+
+	private let inspectDeadline: TimeInterval
+	private let pullDeadline: TimeInterval
+
+	/// - Parameters:
+	///   - inspectDeadline: given so a test can watch this happen in a second
+	///     rather than in twenty. Nothing in the app passes either.
+	public init(
+		inspectDeadline: TimeInterval = ContainerImageStore.inspectDeadline,
+		pullDeadline: TimeInterval = ContainerImageStore.pullDeadline
+	) {
+		self.inspectDeadline = inspectDeadline
+		self.pullDeadline = pullDeadline
+	}
 
 	/// Forgets what is on the machine, for a test or after somebody has been
 	/// deleting images behind our back.
 	public func forgetAll() {
 		known.removeAll()
+		silent.removeAll()
 	}
 
 	public func ensure(
@@ -119,14 +164,27 @@ public actor ContainerImageStore {
 	) async -> Outcome {
 		guard !image.isEmpty else { return .failed("No image was named.") }
 		if known.contains(image) { return .present }
+		// A runtime that has already been found not to answer is not asked
+		// again, and the second asker is told the same thing as the first.
+		if let said = silent[runtime.path] { return .failed(said) }
 		if let running = inFlight[image] { return await running.value }
 
-		let task = Task<Outcome, Never> { [runtime] in
-			if Self.run(ContainerImages.inspect(image, using: runtime)).exitCode == 0 {
-				return .present
+		let task = Task<Outcome, Never> { [runtime, inspectDeadline, pullDeadline] in
+			let inspect = Self.run(
+				ContainerImages.inspect(image, using: runtime), deadline: inspectDeadline
+			)
+			if inspect.timedOut {
+				return .failed(ContainerImages.notAnswering(runtime, after: Int(inspectDeadline)))
 			}
+			if inspect.exitCode == 0 { return .present }
+
 			progress?(ContainerImages.progressMessage(for: image))
-			let pull = Self.run(ContainerImages.pull(image, using: runtime))
+			let pull = Self.run(
+				ContainerImages.pull(image, using: runtime), deadline: pullDeadline
+			)
+			if pull.timedOut {
+				return .failed(ContainerImages.notAnswering(runtime, after: Int(pullDeadline)))
+			}
 			guard pull.exitCode == 0 else {
 				return .failed(ContainerImages.explain(pull.output, image: image))
 			}
@@ -135,13 +193,28 @@ public actor ContainerImageStore {
 		inFlight[image] = task
 		let outcome = await task.value
 		inFlight[image] = nil
-		if outcome == .present || outcome == .fetched { known.insert(image) }
+		if outcome == .present || outcome == .fetched {
+			known.insert(image)
+			// It answered, so whatever was wrong with it is over.
+			silent.removeValue(forKey: runtime.path)
+		}
+		if case let .failed(reason) = outcome, reason.contains("did not answer") {
+			silent[runtime.path] = reason
+		}
 		return outcome
 	}
 
+	/// Runs a command with a deadline, and does not leave it behind.
+	///
+	/// The deadline is the whole point: a runtime whose service is down accepts
+	/// the command and then waits for something that is not coming, and a
+	/// process waiting on that outlives whatever asked for it. Terminated
+	/// first and killed after, because a program stuck in a system call does
+	/// not always get round to noticing the polite one.
 	private static func run(
-		_ command: (executable: String, arguments: [String])
-	) -> (output: String, exitCode: Int32) {
+		_ command: (executable: String, arguments: [String]),
+		deadline: TimeInterval
+	) -> (output: String, exitCode: Int32, timedOut: Bool) {
 		let process = Process()
 		process.executableURL = URL(fileURLWithPath: command.executable)
 		process.arguments = command.arguments
@@ -156,10 +229,44 @@ public actor ContainerImageStore {
 		// held open never answers at all — and every caller waits with it.
 		process.standardInput = FileHandle.nullDevice
 		do { try process.run() } catch {
-			return ("\(error.localizedDescription)", -1)
+			return ("\(error.localizedDescription)", -1, false)
 		}
+
+		// Whether the deadline is what ended it, recorded where both threads can
+		// see it: `terminationReason` cannot tell a program this killed from one
+		// that died of its own accord.
+		let expired = Expired()
+		let watchdog = DispatchWorkItem {
+			guard process.isRunning else { return }
+			expired.record()
+			process.terminate()
+			DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
+				if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+			}
+		}
+		DispatchQueue.global().asyncAfter(deadline: .now() + deadline, execute: watchdog)
+
 		let captured = ProcessPipes.drainText(process, out: out, err: err)
+		watchdog.cancel()
 		// Both, since the runtimes disagree about which one a failure goes to.
-		return (captured.stderr + captured.stdout, process.terminationStatus)
+		return (captured.stderr + captured.stdout, process.terminationStatus, expired.happened)
+	}
+
+	/// One bool, written by the deadline and read by whoever was waiting.
+	private final class Expired: @unchecked Sendable {
+		private let lock = NSLock()
+		private var value = false
+
+		func record() {
+			lock.lock()
+			value = true
+			lock.unlock()
+		}
+
+		var happened: Bool {
+			lock.lock()
+			defer { lock.unlock() }
+			return value
+		}
 	}
 }

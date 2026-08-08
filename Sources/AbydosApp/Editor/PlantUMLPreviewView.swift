@@ -154,6 +154,18 @@ final class PlantUMLPreviewView: NSView {
 		process.standardError = errors
 		running = process
 
+		// Registered before it is started, so it is ended with the app however
+		// the app ends — including the way that runs no `deinit` at all. The
+		// refusal is worth showing: a dozen tools running and none finishing is
+		// a runtime that has stopped answering, not a diagram that is hard.
+		guard ToolProcesses.shared.adopt(process) else {
+			running = nil
+			spinner.stopAnimation(nil)
+			notice = ToolProcesses.tooManyMessage
+			needsDisplay = true
+			return
+		}
+
 		// A deadline, because the thing being run may never answer: a container
 		// runtime whose service is not up accepts the command and then waits
 		// for a daemon that is never coming, and a preview that spins for ever
@@ -204,6 +216,7 @@ final class PlantUMLPreviewView: NSView {
 				complaint = error.localizedDescription
 			}
 
+			ToolProcesses.shared.forget(process)
 			DispatchQueue.main.async {
 				guard let self else { return }
 				watchdog.cancel()

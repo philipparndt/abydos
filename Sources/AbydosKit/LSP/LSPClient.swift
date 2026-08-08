@@ -173,12 +173,17 @@ public final class LSPClient: @unchecked Sendable {
 			self?.consume(data)
 		}
 
-		process.terminationHandler = { [weak self] _ in
+		process.terminationHandler = { [weak self] exited in
+			ToolProcesses.shared.forget(exited)
 			guard let self else { return }
 			self.failAllPending(with: ClientError.notRunning)
 			self.callbackQueue.async { self.onExit?() }
 		}
 
+		// A language server is the longest-lived child this app has, and one
+		// started from an image is a container. Registered so that the app
+		// going takes it too, however the app goes.
+		ToolProcesses.shared.track(process)
 		try process.run()
 
 		lock.lock()

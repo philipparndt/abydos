@@ -47,6 +47,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 				"    \(LastDrawn.description)",
 			] + exception.callStackSymbols.map { "    \($0)" }
 			DiagnosticLog.write(lines.joined(separator: "\n"), to: "crash")
+			// And take the tools with it. This is the exit that runs no
+			// `deinit` and no `applicationWillTerminate`, so it is the one that
+			// leaves containers running until somebody finds them by hand.
+			ToolProcesses.shared.terminateAll()
 		}
 	}
 
@@ -1299,6 +1303,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			controller.autoSaveAll()
 			controller.rememberOpenEditors()
 		}
+		// Nothing this app started outlives it. A subprocess is handed to
+		// launchd rather than killed when its parent goes, and a container that
+		// keeps running holds whatever it was doing — enough of them and the
+		// runtime's own service stops answering, which is what happened here.
+		ToolProcesses.shared.terminateAll()
 	}
 
 	public func application(_ application: NSApplication, open urls: [URL]) {
