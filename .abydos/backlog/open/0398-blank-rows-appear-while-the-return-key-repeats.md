@@ -26,8 +26,29 @@ issues no cursor-position query anywhere in the capture, so it is not
 reacting to an answer we gave. Leading candidate: it is reacting to terminal
 state we set — a spurious SIGWINCH makes zsh redraw its prompt.
 
-**Ask first:** do the blank rows appear in Ghostty with the same shell
-config? If they do, this is the prompt's own behaviour and not ours.
+**Asked and answered: Ghostty does not do it**, with the same shell and the
+same prompt. So the extra line feeds are zsh's, but something about this
+terminal is what makes zsh send them — or what makes them land as blank rows
+here and not there. It is ours.
+
+Two ways it could have been ours, both now ruled out by reading:
+
+- **A spurious resize.** `recomputeGridSize` returns before touching the pty
+  unless the row or column count actually changed, so nothing sends `TIOCSWINSZ`
+  or `SIGWINCH` for a redraw.
+- **A scrollbar taking width.** That would change the column count as the
+  document grows past the pane — exactly while somebody holds Return — but the
+  terminal's scroll view is `scrollerStyle = .overlay`, so the clip's width
+  never changes.
+
+Which leaves the two halves of the question sharper than before. Either zsh is
+reacting to something this terminal answers and Ghostty does not — the capture
+shows no cursor-position query, so look at what is sent *unasked*: device
+attributes, mode reports, focus events (1004), bracketed paste — or zsh sends
+the same three or four line feeds to both and Ghostty absorbs one where this
+does not. The second is worth testing first because it is cheap: replay
+`return-burst.bin` into both and compare the resulting grids row by row, rather
+than comparing what each looks like.
 
 ---
 
