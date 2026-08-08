@@ -259,6 +259,7 @@ public final class PseudoTerminal {
 				if count < buffer.count { break }
 			}
 			guard !gathered.isEmpty else { return }
+			self.recordRawOutput(gathered)
 
 			self.callbackQueue.async {
 				self.onOutput?(gathered)
@@ -266,6 +267,27 @@ public final class PseudoTerminal {
 		}
 		source.resume()
 		readSource = source
+	}
+
+	/// Every byte the program produced, appended to a file, when asked.
+	///
+	/// `ABYDOS_TERM_LOG=<path>` and nothing otherwise — one `getenv` per read of
+	/// a pty, which is nothing beside the read. It exists because the questions
+	/// worth asking about a terminal are about the bytes it was given, and
+	/// reproducing those from the program that sent them is guesswork: what
+	/// `script` records is what the program wrote, not what arrived here after
+	/// tmux and the line discipline had their turn.
+	private func recordRawOutput(_ data: Data) {
+		guard let path = ProcessInfo.processInfo.environment["ABYDOS_TERM_LOG"],
+		      !path.isEmpty
+		else { return }
+		if let handle = FileHandle(forWritingAtPath: path) {
+			handle.seekToEndOfFile()
+			try? handle.write(contentsOf: data)
+			try? handle.close()
+		} else {
+			try? data.write(to: URL(fileURLWithPath: path))
+		}
 	}
 
 	/// Stops or resumes taking bytes out of the pty.
