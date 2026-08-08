@@ -225,6 +225,16 @@ final class ProjectNavigatorViewController: NSViewController {
 		}
 	}
 
+	/// The submenu under "New", filled in as it is about to be shown.
+	private var newMenu: NSMenu?
+	/// The kinds this project is made of, counted once and kept.
+	///
+	/// Counted lazily and not at open: walking a project to fill in a menu
+	/// nobody has asked for yet is work for nothing. Dropped when the tree
+	/// changes, so the first file of a new kind shows up in the menu after it
+	/// exists rather than after the project is reopened.
+	private var fileKinds: [NewFileKind]?
+
 	private var isReadingGitStatus = false
 	private var wantsAnotherGitStatus = false
 	private var hasScheduledGitStatusRefresh = false
@@ -293,6 +303,9 @@ final class ProjectNavigatorViewController: NSViewController {
 		// `git status` at a time with at most one queued — which is what makes
 		// asking on every event affordable.
 		refreshGitStatus()
+		// And the first file of a new kind should be offered as one, without
+		// the project being reopened. Counted again when a menu next asks.
+		fileKinds = nil
 
 		guard let rootNode else { return }
 
@@ -455,8 +468,17 @@ final class ProjectNavigatorViewController: NSViewController {
 			return item
 		}
 
-		menu.addItem(item("New File…", #selector(contextNewFile)))
-		menu.addItem(item("New Folder…", #selector(contextNewFolder)))
+		// One "New", with what this project is made of under it. The two
+		// original items are the first things in the submenu and behave exactly
+		// as they did: the kinds below them are a shortcut past typing an
+		// extension, not another way of creating things.
+		let new = NSMenuItem(title: "New", action: nil, keyEquivalent: "")
+		let kinds = NSMenu()
+		kinds.addItem(item("File…", #selector(contextNewFile)))
+		kinds.addItem(item("Folder…", #selector(contextNewFolder)))
+		new.submenu = kinds
+		newMenu = kinds
+		menu.addItem(new)
 		menu.addItem(.separator())
 		menu.addItem(item("Open", #selector(contextOpen)))
 		menu.addItem(item("Open Externally", #selector(contextOpenExternally)))
@@ -687,10 +709,55 @@ final class ProjectNavigatorViewController: NSViewController {
 		Toast.post("Cannot create that \(kind == .file ? "file" : "folder")", detail: problem)
 	}
 
+	/// Puts this project's own kinds under "New", below File… and Folder….
+	///
+	/// Rebuilt as the menu opens rather than kept in step with the tree: the
+	/// count is cached, so this is a few string comparisons unless something
+	/// has changed, and a menu that is right whenever it is looked at needs no
+	/// invalidation rules of its own.
+	private func refreshNewMenu() {
+		guard let menu = newMenu, let root = project?.root else { return }
+		while menu.numberOfItems > 2 { menu.removeItem(at: menu.numberOfItems - 1) }
+
+		let kinds = fileKinds ?? NewFileKinds.inProject(root)
+		fileKinds = kinds
+		guard !kinds.isEmpty else { return }
+
+		menu.addItem(.separator())
+		for kind in kinds {
+			let item = NSMenuItem(
+				title: kind.title, action: #selector(contextNewFileOfKind(_:)), keyEquivalent: ""
+			)
+			item.target = self
+			item.representedObject = kind.name
+			menu.addItem(item)
+		}
+	}
+
+	/// A new file whose extension is already decided.
+	///
+	/// Everything else is what File… does — the same prompt, the same
+	/// validation, the same intermediate folders — because the shortcut is
+	/// about the extension and nothing else.
+	@objc private func contextNewFileOfKind(_ sender: NSMenuItem) {
+		guard let suffix = sender.representedObject as? String else { return }
+		let kind = NewFileKind(name: suffix, count: 0, title: sender.title)
+		createFile(named: { NewFileKinds.name($0, endingIn: kind) })
+	}
+
 	@objc private func contextNewFile() {
+		createFile(named: { $0 })
+	}
+
+	/// Asks for a name, makes the file, and opens it.
+	///
+	/// - Parameter named: what to call it, given what was typed. The plain item
+	///   takes it as it comes; a kind adds its extension.
+	private func createFile(named: (String) -> String) {
 		guard let parent = contextParentDirectory,
-		      let name = askForName(kind: .file, in: parent)
+		      let typed = askForName(kind: .file, in: parent)
 		else { return }
+		let name = named(typed)
 
 		let destination = parent.appendingPathComponent(name)
 		// Intermediate folders as well, so "src/new/thing.swift" works the way
@@ -1057,6 +1124,7 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 	}
 
 	func menuNeedsUpdate(_ menu: NSMenu) {
+		refreshNewMenu()
 		let node = contextNode
 		let isRoot = node === rootNode
 
