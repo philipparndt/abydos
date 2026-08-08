@@ -3594,13 +3594,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 
 		navigator.focusTree()
-		for step in steps.split(separator: ",") where step == "down" {
-			navigator.pressKeyForTesting(125)
+		for step in steps.split(separator: ",") {
+			switch step {
+			case "down": navigator.pressKeyForTesting(125)
+			// So that copying several rows can be asked for at all.
+			case "shift-down": navigator.pressKeyForTesting(125, extendingSelection: true)
+			default: continue
+			}
 		}
 
 		let sent = NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil)
 		let copied = NSPasteboard.general.string(forType: .string) ?? "nothing"
-		return "sent=\(sent) clipboard=\(copied)"
+		// Newlines would break the one-line report into several that look like
+		// separate answers.
+		let onOneLine = (copied as String).replacingOccurrences(of: "\n", with: " | ")
+		return "sent=\(sent) clipboard=\(onOneLine)"
 	}
 
 	func treeStepsForTesting(_ steps: String) {
@@ -3612,6 +3620,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			case "right": navigator.pressKeyForTesting(124)
 			case "left": navigator.pressKeyForTesting(123)
 			case "return": navigator.pressKeyForTesting(36)
+			// ⇧↓ and ⇧↑: a run of rows, selected the way somebody selects one.
+			case "shift-down": navigator.pressKeyForTesting(125, extendingSelection: true)
+			case "shift-up": navigator.pressKeyForTesting(126, extendingSelection: true)
+			// What a build writing files does to the tree, on demand: the point
+			// is what is still selected afterwards.
+			case "reload": navigator.reloadForTesting()
+			case "copy":
+				print("TREE copy: clipboard=\(navigator.copyTextForTesting().replacingOccurrences(of: "\n", with: " | "))")
+				continue
 			case "collapse": navigator.collapseAll()
 			case "locate": navigator.selectFileInEditor()
 			default:

@@ -55,16 +55,17 @@ enum FileIcon {
 		return render(key: key, spec: spec)
 	}
 
+	/// Rendered through `Theme.symbol`, so a row's icon obeys the same optical
+	/// weight as every other symbol in the window: at 2× a fixed `.regular`
+	/// makes `text.alignleft` four thick bars rather than four lines of text,
+	/// and a folder of markdown becomes a column of blue dashes beside the tree.
 	private static func render(key: String, spec: Spec) -> NSImage? {
 		let scale = Theme.current.scale
 		let scaledKey = "\(key)@\(scale)"
 		if let cached = cache[scaledKey] { return cached }
-		guard let base = NSImage(systemSymbolName: spec.symbol, accessibilityDescription: nil) else {
+		guard let image = Theme.symbol(spec.symbol, size: 13 * scale, color: spec.color) else {
 			return nil
 		}
-		let config = NSImage.SymbolConfiguration(pointSize: 13 * scale, weight: .regular)
-			.applying(.init(paletteColors: [spec.color]))
-		let image = base.withSymbolConfiguration(config) ?? base
 		cache[scaledKey] = image
 		return image
 	}
