@@ -64,6 +64,19 @@ Checkable without guessing: e42eb08 records what the terminal was given.
 Capture a line where one operator joins and another does not, and compare the
 attributes either side of each.
 
+**One more pair, and a caveat about it.** Unfocused, the build output above the
+prompt reads `==> Done:` and `==> Installed` plainly while the prompt line
+typed a moment ago joins its `==>`; focused, all of them join. Older rows
+plain, newest row joined, is the signature of the CG path, which repaints only
+the rows that changed — so the pane to suspect is one where `metal == nil`,
+and `updateMetalEnabled()` is per view: a view made before the GPU switch was
+flipped keeps the path it was made with.
+
+The caveat is in the screenshot itself, three lines up: *"a copy is still
+running the previous build — quit and reopen it to get this one"*. Both shots
+are of the binary from before the carrier fix, so whatever they show has to be
+confirmed against a build that has it.
+
 Below, the earlier reasoning, which still applies to the repaint half:
 
     setNeedsDisplay(rect(forAbsoluteRows: range))
