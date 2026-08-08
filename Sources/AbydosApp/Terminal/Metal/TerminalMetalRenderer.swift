@@ -174,7 +174,11 @@ final class TerminalMetalRenderer {
 				else { usable = false; break }
 				let piece = cell.combining ?? String(Character(scalar))
 				text += piece
-				cellOfOffset.append(contentsOf: Array(repeating: column, count: piece.utf16.count))
+				// Relative to the run, so the cache can be keyed by the text
+				// alone and still be right for the same run somewhere else.
+				cellOfOffset.append(
+					contentsOf: Array(repeating: column - start, count: piece.utf16.count)
+				)
 			}
 			guard usable, !text.isEmpty else { continue }
 
@@ -193,7 +197,7 @@ final class TerminalMetalRenderer {
 			// glyphs are simply used — identical to the per-cell ones wherever
 			// nothing did.
 			for column in start..<end { map[column] = .some(nil) }
-			for piece in pieces { map[piece.cellOffset] = piece }
+			for piece in pieces { map[start + piece.cellOffset] = piece }
 		}
 		return map
 	}
