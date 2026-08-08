@@ -1,4 +1,5 @@
 import Foundation
+import Testing
 
 /// Preferences that live in memory and nowhere else.
 ///
@@ -77,5 +78,28 @@ final class TestDefaults: UserDefaults {
 		case let string as NSString: return NSNumber(value: string.doubleValue)
 		default: return nil
 		}
+	}
+}
+
+/// That nothing goes back to a named suite.
+///
+/// This has now been fixed twice. A `UserDefaults(suiteName:)` in a test looks
+/// harmless and costs nothing until somebody counts the plists: three and a
+/// half thousand the first time, three hundred and thirty-five the second,
+/// left in `~/Library/Preferences` on the machine of whoever ran the suite.
+/// Nothing in the tests notices, which is exactly why it needs saying here
+/// rather than in a comment.
+struct NamedSuiteTests {
+	@Test func noTestTakesAPreferenceDomainOfItsOwn() throws {
+		let tests = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+		let names = try FileManager.default.contentsOfDirectory(atPath: tests.path)
+			.filter { $0.hasSuffix(".swift") && $0 != "TestDefaults.swift" }
+
+		var offenders: [String] = []
+		for name in names {
+			let text = try String(contentsOf: tests.appendingPathComponent(name), encoding: .utf8)
+			if text.contains("UserDefaults(suiteName") { offenders.append(name) }
+		}
+		#expect(offenders.isEmpty, "use TestDefaults.make() instead: \(offenders.joined(separator: ", "))")
 	}
 }

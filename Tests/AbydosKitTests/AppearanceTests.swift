@@ -128,8 +128,9 @@ struct AppearanceTests {
 /// into the one value everything downstream reads.
 struct AppearanceSettingsTests {
 	private func store(_ existing: [String: Any] = [:]) -> Settings {
-		let name = "abydos-appearance-\(UUID().uuidString)"
-		let defaults = UserDefaults(suiteName: name)!
+		// In memory rather than a named suite: a suite leaves a plist behind for
+		// every test that ever ran, which `TestDefaults` exists to say.
+		let defaults = TestDefaults.make()
 		for (key, value) in existing { defaults.set(value, forKey: key) }
 		return Settings(defaults: defaults)
 	}
@@ -165,8 +166,7 @@ struct AppearanceSettingsTests {
 	}
 
 	@Test func theMigrationOnlyHappensOnce() {
-		let name = "abydos-appearance-\(UUID().uuidString)"
-		let defaults = UserDefaults(suiteName: name)!
+		let defaults = TestDefaults.make()
 		defaults.set("blue", forKey: "terminalScheme")
 
 		let first = Settings(defaults: defaults)

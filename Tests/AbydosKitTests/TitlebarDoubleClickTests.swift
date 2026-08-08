@@ -10,7 +10,9 @@ import Testing
 /// else, which is a setting rather than a preference of this app's.
 struct TitlebarDoubleClickTests {
 	static func defaults(_ value: String?) -> UserDefaults {
-		let suite = UserDefaults(suiteName: "titlebar-\(UUID().uuidString)")!
+		// In memory rather than a named suite: a suite leaves a plist behind for
+		// every test that ever ran, which `TestDefaults` exists to say.
+		let suite = TestDefaults.make()
 		if let value { suite.set(value, forKey: "AppleActionOnDoubleClick") }
 		return suite
 	}
