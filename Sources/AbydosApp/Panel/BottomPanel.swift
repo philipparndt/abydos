@@ -2566,6 +2566,31 @@ final class BottomPanel: NSView {
 		refreshTabs()
 	}
 
+	/// tmux's own id for the window being shown, when one is.
+	///
+	/// Worth remembering across a launch: reopening a project into a window
+	/// nobody chose, when the one they were in is still sitting there, is the
+	/// sort of thing that makes somebody hunt through a tab strip for the work
+	/// they left ten seconds ago.
+	var currentTmuxWindowID: String? {
+		let active = tmuxWindows.first(where: \.isActive)?.windowID
+		return (active?.isEmpty ?? true) ? nil : active
+	}
+
+	/// Goes back to the window a project was left in, if it is still there.
+	///
+	/// Quietly when it is not: the server may have been restarted or the window
+	/// closed, and neither is something the person did wrong. tmux's own choice
+	/// stands in that case, which is the same as what happened before any of
+	/// this was remembered.
+	func restoreTmuxWindow(_ windowID: String) {
+		guard let session = mirroredSession ?? tmuxSession, !windowID.isEmpty else { return }
+		Task { @MainActor in
+			guard await TmuxMirror.select(windowID: windowID, inSession: session) else { return }
+			self.refreshTmuxWindows()
+		}
+	}
+
 	/// Whether any plain terminal is open.
 	var hasTerminals: Bool {
 		sessions.contains { if case .terminal = $0.kind { return true }; return false }

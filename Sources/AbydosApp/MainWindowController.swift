@@ -1647,6 +1647,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			var session = editor.captureSession()
 			session.terminals = bottomPanel.captureTerminals()
 			session.isPanelVisible = isPanelVisible
+			session.tmuxWindow = bottomPanel.currentTmuxWindowID
 			session.subprojectPath = subprojectRoot.map { Subprojects.relativePath($0, to: current) }
 			session.selectedConfiguration = selectedConfigurationName
 			session.xcodeDestinations = xcodeDestinations
@@ -1679,6 +1680,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// window follows the shell around when that is turned on, so closing
 		// the shell that just changed directory would kill the thing doing the
 		// navigating — and with it any way of navigating back.
+		// The window it was left in, before the terminals — tmux has to be
+		// attached for either, and going back to the right window first means
+		// the tabs come up showing it rather than showing one and then moving.
+		if let window = previous?.tmuxWindow {
+			bottomPanel.restoreTmuxWindow(window)
+		}
+
 		if !bottomPanel.hasTerminals, let previous, !previous.terminals.isEmpty {
 			bottomPanel.restoreTerminals(previous.terminals)
 			// And the panel itself, if it was showing: terminals that came back
@@ -1694,6 +1702,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		var session = editor.captureSession()
 		session.terminals = bottomPanel.captureTerminals()
 		session.isPanelVisible = isPanelVisible
+		session.tmuxWindow = bottomPanel.currentTmuxWindowID
 		session.subprojectPath = subprojectRoot.map { Subprojects.relativePath($0, to: root) }
 		session.selectedConfiguration = selectedConfigurationName
 		session.xcodeDestinations = xcodeDestinations

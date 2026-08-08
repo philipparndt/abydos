@@ -135,3 +135,39 @@ struct TmuxWindowIdentityTests {
 		#expect(windows.first?.windowID == "")
 	}
 }
+
+/// Remembering the window a project was left in.
+struct SessionTmuxWindowTests {
+	private func roundTrip(_ session: ProjectSession) throws -> ProjectSession? {
+		let root = FileManager.default.temporaryDirectory
+			.appendingPathComponent("session-\(UUID().uuidString)")
+		try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+		defer { try? FileManager.default.removeItem(at: root) }
+		try SessionStore.write(session, in: root)
+		return SessionStore.read(in: root)
+	}
+
+	@Test func theWindowSurvivesBeingWrittenAndRead() throws {
+		let written = ProjectSession(
+			terminals: [ProjectSession.OpenTerminal(name: "tmux")],
+			tmuxWindow: "@7"
+		)
+		#expect(try roundTrip(written)?.tmuxWindow == "@7")
+	}
+
+	/// On its own it is still worth keeping: coming back to the window somebody
+	/// was in should work for a project with nothing else open.
+	@Test func aWindowOnItsOwnIsWorthWriting() throws {
+		let written = ProjectSession(tmuxWindow: "@3")
+		#expect(!written.isEmpty)
+		#expect(try roundTrip(written)?.tmuxWindow == "@3")
+	}
+
+	/// A session saved before any of this existed reads as having none, rather
+	/// than failing to read.
+	@Test func anOlderSessionSimplyHasNoWindow() throws {
+		let written = ProjectSession(terminals: [ProjectSession.OpenTerminal(name: "tmux")])
+		#expect(written.tmuxWindow == nil)
+		#expect(try roundTrip(written)?.tmuxWindow == nil)
+	}
+}

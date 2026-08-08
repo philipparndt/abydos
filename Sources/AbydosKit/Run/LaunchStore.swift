@@ -160,6 +160,7 @@ public enum SessionStore {
 			activePath: object["active"] as? String,
 			terminals: terminals,
 			isPanelVisible: object["panel"] as? Bool ?? false,
+			tmuxWindow: object["tmuxWindow"] as? String,
 			subprojectPath: object["subproject"] as? String,
 			selectedConfiguration: object["run"] as? String,
 			xcodeDestinations: object["destinations"] as? [String: String] ?? [:],
@@ -207,6 +208,7 @@ public enum SessionStore {
 		]
 		if let active = session.activePath { object["active"] = active }
 		if session.isPanelVisible { object["panel"] = true }
+		if let window = session.tmuxWindow { object["tmuxWindow"] = window }
 		if let subproject = session.subprojectPath { object["subproject"] = subproject }
 		if let run = session.selectedConfiguration { object["run"] = run }
 		if !session.xcodeDestinations.isEmpty { object["destinations"] = session.xcodeDestinations }

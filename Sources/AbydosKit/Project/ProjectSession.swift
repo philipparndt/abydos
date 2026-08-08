@@ -46,6 +46,13 @@ public struct ProjectSession: Equatable, Sendable {
 	public var terminals: [OpenTerminal]
 	/// Whether the panel the terminals live in was showing.
 	public var isPanelVisible: Bool
+	/// Which tmux window the terminal was showing — tmux's own id, `@7`.
+	///
+	/// The id and not the index, because an index is where a window sits and
+	/// somebody's window does not stay there: close the one before it and
+	/// everything after moves down. Nil for a project whose terminal was not
+	/// mirroring a session, and for one saved before this was written.
+	public var tmuxWindow: String?
 	/// Which part of the project was being worked on, relative to it.
 	public var subprojectPath: String?
 	/// The launch configuration that was chosen in the titlebar.
@@ -78,6 +85,7 @@ public struct ProjectSession: Equatable, Sendable {
 		activePath: String? = nil,
 		terminals: [OpenTerminal] = [],
 		isPanelVisible: Bool = false,
+		tmuxWindow: String? = nil,
 		subprojectPath: String? = nil,
 		selectedConfiguration: String? = nil,
 		xcodeDestinations: [String: String] = [:],
@@ -89,6 +97,7 @@ public struct ProjectSession: Equatable, Sendable {
 		self.activePath = activePath
 		self.terminals = terminals
 		self.isPanelVisible = isPanelVisible
+		self.tmuxWindow = tmuxWindow
 		self.subprojectPath = subprojectPath
 		self.selectedConfiguration = selectedConfiguration
 	}
@@ -96,7 +105,7 @@ public struct ProjectSession: Equatable, Sendable {
 	public var isEmpty: Bool {
 		files.isEmpty && terminals.isEmpty && subprojectPath == nil
 			&& selectedConfiguration == nil && xcodeDestinations.isEmpty
-			&& breakpoints.isEmpty
+			&& breakpoints.isEmpty && tmuxWindow == nil
 	}
 }
 
