@@ -1467,13 +1467,19 @@ final class TerminalView: NSView, NSTextInputClient {
 		// pane used to be and is writing to it.
 		let fits = Int(floor((clip.width - Self.horizontalInset * 2) / max(1, cellWidth)))
 		let windowWidth = window?.frame.width ?? 0
+		// The clip view's bounds *and* its frame. They are the same number
+		// unless something has scaled the view, and a scaled clip view is
+		// exactly how a grid comes out a factor of the backing scale too wide.
+		let clipFrame = enclosingScrollView?.contentView.frame.width ?? 0
+		let scale = window?.backingScaleFactor ?? 0
 		return String(
-			format: "alt=%@ rows=%d columns=%d fits=%d window=%.0f clipW=%.0f cell=%.1f "
+			format: "alt=%@ rows=%d columns=%d fits=%d window=%.0f clipW=%.0f clipFrameW=%.0f "
+				+ "scale=%.1f cell=%.1f "
 				+ "frame=%.1f clip=%.1f origin=%.1f "
 				+ "lastRowBottom=%.1f visible=%@ widthOK=%@",
 			emulator.isAlternateScreen ? "yes" : "no",
 			emulator.screen.rows, emulator.screen.columns, max(20, fits),
-			windowWidth, clip.width, cellWidth,
+			windowWidth, clip.width, clipFrame, scale, cellWidth,
 			frame.height, clip.height, clip.origin.y, bottomOfLastRow,
 			bottomOfLastRow <= clip.origin.y + clip.height + 0.5 ? "yes" : "NO",
 			max(20, fits) == emulator.screen.columns ? "yes" : "NO"
