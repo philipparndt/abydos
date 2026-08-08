@@ -360,13 +360,34 @@ final class TerminalMetalRenderer {
 						bold: cell.attributes.bold, italic: cell.attributes.italic
 					)
 					let face = faces.face(bold: cell.attributes.bold, italic: cell.attributes.italic)
-					// A cell inside a ligature draws nothing of its own: the
-					// glyph standing for the whole group is drawn at the first
-					// of them.
-					if let shaped = ligated[column], shaped == nil { continue }
-					let entry = ligated[column].flatMap { $0 }.flatMap {
-						atlas.entry(forGlyph: $0.glyph, in: $0.font, faceIndex: faceIndex)
-					} ?? atlas.entry(for: cell.scalar, font: face, faceIndex: faceIndex)
+					// A cell the shaper covered draws what the shaper chose, and
+					// nothing at all when that choice has no ink.
+					//
+					// The second half is the whole of a bug worth remembering.
+					// These fonts do not merge cells: a ligature is one glyph
+					// carrying the ink for the group, sitting on the *last*
+					// cell with a bearing that reaches back over the others —
+					// `...` is 16pt of ink hanging off a cell 8.4pt wide — and
+					// every cell before it gets a carrier glyph that is
+					// deliberately empty. The atlas has nothing to rasterise for
+					// an empty glyph and answers nil, which used to fall through
+					// to "then draw the character itself". So the first cell
+					// drew a plain `.` and the last drew the ligature over it:
+					// two dots for `..`, three for `...`, and the first of `!!`
+					// painted twice. Only here, because the editor hands the
+					// whole line to CoreText, which draws an empty glyph as
+					// nothing without being told.
+					let entry: AtlasEntry?
+					if let covered = ligated[column] {
+						guard let piece = covered,
+						      let shaped = atlas.entry(
+								forGlyph: piece.glyph, in: piece.font, faceIndex: faceIndex
+						      )
+						else { continue }
+						entry = shaped
+					} else {
+						entry = atlas.entry(for: cell.scalar, font: face, faceIndex: faceIndex)
+					}
 					if let entry {
 						// A glyph hangs off the baseline, which sits a fixed
 						// distance down the cell; a separator is the cell.
