@@ -104,6 +104,43 @@ final class PlantUMLPreviewView: NSView {
 		image = nil
 		needsDisplay = true
 
+		// An image that is not on the machine yet is fetched first, once,
+		// however many panes ask. This is the ordinary case the first time
+		// anybody opens a project that names one — and a pull with nothing on
+		// screen is indistinguishable from a tool that has hung, so it says
+		// what it is doing while it happens.
+		if case let .image(container, runtime) = tool {
+			Task { [weak self] in
+				let outcome = await ContainerImageStore.shared.ensure(
+					container.image,
+					using: runtime,
+					progress: { message in
+						DispatchQueue.main.async {
+							guard let self, self.tool == tool else { return }
+							self.notice = message
+							self.needsDisplay = true
+						}
+					}
+				)
+				await MainActor.run {
+					guard let self else { return }
+					if case let .failed(reason) = outcome {
+						self.spinner.stopAnimation(nil)
+						self.running = nil
+						self.notice = reason
+						self.needsDisplay = true
+						return
+					}
+					self.draw(source, with: tool)
+				}
+			}
+			return
+		}
+		draw(source, with: tool)
+	}
+
+	/// Runs the tool over the diagram. The image it needs is already here.
+	private func draw(_ source: String, with tool: PlantUML.Tool) {
 		let run = PlantUML.invocation(for: tool)
 		let process = Process()
 		process.executableURL = URL(fileURLWithPath: run.executable)
