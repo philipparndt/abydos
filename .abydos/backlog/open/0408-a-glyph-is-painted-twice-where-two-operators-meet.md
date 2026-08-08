@@ -14,10 +14,34 @@ each with the same 8.4pt advance:
     3 chars "..." -> glyphs=3 indices=[0, 1, 2] advances=[840, 840, 840]
     2 chars "!!" -> glyphs=2 indices=[0, 1] advances=[840, 840]
 
-which is the property the code relies on and states. So the count is right and
-something else about where a shaped glyph is *placed* is not. Two cells' worth
-of ink in one cell, with the neighbour still drawing its own, is what an offset
-by one cell would look like.
+which is the property the code relies on and states.
+
+**What it does instead is substitute, and the ink is on the last glyph.**
+Shaping the same text with `calt` on and off gives different glyphs, and the
+shape of the difference is the thing to know:
+
+    "!!"  calt on [12137, 11948]         off [5, 5]
+    "..." calt on [12137, 12137, 11934]  off [18, 18, 18]
+    "->"  calt on [12137, 11919]         off [17, 34]
+    "!="  calt on [12137, 11950]         off [5, 33]
+    "a!"  calt on [69, 5]                off [69, 5]      (nothing to join)
+
+Glyph 12137 is the first glyph of *four different pairs* whose first characters
+are `!`, `.` and `-`, so it is not any of them: it is the blank carrier these
+fonts use, and the whole ligature's ink lives on the last glyph, reaching back
+over the cells before it. Which means the cells a ligature covers are
+**supposed** to draw a blank glyph rather than nothing, and one cell drawn from
+the per-cell path instead of from the shaper puts a real `!` under ink that
+already covers it. That is what "the first of the two is painted double" is.
+
+**Not reproduced yet, and that is a fact about the bug.** With ligatures on,
+photographed at 1× and 2×: the same `repository("!! app/build/\n")` line in the
+editor, the same text in a terminal pane, and the same line after typing into
+the file to force an incremental redraw. All three render correctly. So it is
+not the text, the font, or the zoom — something about the state when it happens
+matters, and a first paint of a freshly opened file never has it. A repaint
+that covers part of a line, over ink already there, is the obvious candidate
+and is what to try next.
 
 **Both places at once is the useful part.** One report is the editor's code
 view and the other is a terminal pane, and they do not share a renderer — so
