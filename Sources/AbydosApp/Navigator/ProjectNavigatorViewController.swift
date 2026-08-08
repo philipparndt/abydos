@@ -829,30 +829,142 @@ final class ProjectNavigatorViewController: NSViewController {
 		pendingReveal = destination
 	}
 
-	@objc private func contextRename() {
-		guard let node = contextNode else { return }
+	// MARK: - Renaming on the row
 
-		let alert = NSAlert()
-		alert.messageText = "Rename \(node.name)"
-		alert.addButton(withTitle: "Rename")
-		alert.addButton(withTitle: "Cancel")
+	/// The field standing in for a row's label while its name is being edited.
+	private var renameField: NSTextField?
+	/// What is being renamed, and what it was called.
+	private var renaming: (node: FileNode, original: String)?
 
-		let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+	/// Edits a name where the name is.
+	///
+	/// The Finder's gesture, and the reason it is the right one here: the file
+	/// stays in its place in the tree while it is renamed, so what is being
+	/// renamed is never in doubt and the files around it stay readable. A sheet
+	/// in the middle of the window answers the same question with less of the
+	/// answer on screen.
+	func beginRename(row: Int? = nil) {
+		let index = row ?? outlineView.selectedRow
+		guard index >= 0, let node = outlineView.item(atRow: index) as? FileNode,
+		      node !== rootNode, renameField == nil
+		else { return }
+
+		// Over the label, not the whole row: the icon stays, so the row still
+		// says what kind of thing is being renamed.
+		let cell = outlineView.frameOfCell(atColumn: 0, row: index)
+		let inset = Theme.current.scaled(22)
+		let frame = NSRect(
+			x: cell.minX + inset,
+			y: cell.minY + 1,
+			width: max(60, cell.width - inset - Theme.current.scaled(8)),
+			height: cell.height - 2
+		)
+
+		let field = NSTextField(frame: frame)
+		field.font = Theme.current.uiFont(12)
 		field.stringValue = node.name
-		alert.accessoryView = field
-		alert.window.initialFirstResponder = field
+		// Not bezeled: a bezel in a dark appearance is translucent and draws its
+		// own background, so `drawsBackground` is ignored and the row's label
+		// shows through — the old name and the new one on top of each other.
+		field.isBezeled = false
+		field.isBordered = false
+		field.focusRingType = .none
+		field.wantsLayer = true
+		field.layer?.cornerRadius = 3
+		field.layer?.borderWidth = 1
+		field.layer?.borderColor = Theme.current.caret.cgColor
+		// Opaque, in the sidebar's own colours: the row keeps drawing its label
+		// underneath, and a field that lets it through shows the old name and
+		// the new one on top of each other.
+		field.drawsBackground = true
+		field.backgroundColor = Theme.current.editorBackground
+		field.textColor = Theme.current.sidebarText
+		field.delegate = self
+		// Above the rows: they are subviews too, and a field merely added is
+		// behind the label it is standing in for.
+		outlineView.addSubview(field, positioned: .above, relativeTo: nil)
+		renameField = field
+		renaming = (node, node.name)
 
-		guard alert.runModal() == .alertFirstButtonReturn else { return }
-		let newName = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-		guard !newName.isEmpty, newName != node.name else { return }
+		outlineView.window?.makeFirstResponder(field)
+		// The stem, the way the Finder does it: the extension is nearly never
+		// what somebody meant to change, and having it selected is how a `.swift`
+		// gets typed over by accident.
+		if let editor = field.currentEditor(), !node.isDirectory {
+			let stem = (node.name as NSString).deletingPathExtension
+			editor.selectedRange = NSRange(location: 0, length: (stem as NSString).length)
+		}
+	}
 
-		let destination = node.url.deletingLastPathComponent().appendingPathComponent(newName)
+	/// Renames the selected row, for the capture harness: the same three steps
+	/// somebody takes, without a keyboard.
+	func renameSelectionForTesting(_ name: String) {
+		beginRename()
+		renameField?.stringValue = name
+		commitRename()
+	}
+
+	/// Takes the field away, whether the name was changed or not.
+	private func endRename() {
+		renameField?.removeFromSuperview()
+		renameField = nil
+		renaming = nil
+		outlineView.window?.makeFirstResponder(outlineView)
+	}
+
+	/// Renames the file, or says why it cannot be renamed.
+	///
+	/// Validated before the field goes: a name that is refused leaves the field
+	/// up with the name still in it, since taking it away would look like a
+	/// rename that happened.
+	private func commitRename() {
+		guard let field = renameField, let (node, original) = renaming else { return }
+		let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+
+		// An empty field, or the name it already had, is a cancel rather than an
+		// error: neither is somebody asking for anything.
+		guard !name.isEmpty, name != original else {
+			endRename()
+			return
+		}
+
+		let kind: EntryName.Kind = node.isDirectory ? .folder : .file
+		if let problem = EntryName.problem(
+			name, kind: kind, showingHiddenFiles: Settings.shared.showHiddenFiles
+		) {
+			report(problem: problem, kind: kind)
+			// The field stays, and takes the keyboard back: a refused name is
+			// still there to be corrected rather than quietly thrown away.
+			outlineView.window?.makeFirstResponder(field)
+			return
+		}
+
+		let destination = node.url.deletingLastPathComponent().appendingPathComponent(name)
+		guard !FileManager.default.fileExists(atPath: destination.path) else {
+			report(problem: "“\(name)” already exists here.", kind: kind)
+			outlineView.window?.makeFirstResponder(field)
+			return
+		}
+
 		do {
 			try FileManager.default.moveItem(at: node.url, to: destination)
-			// The filesystem watcher refreshes the tree on its own.
 		} catch {
-			Toast.post("Could not create the folder", detail: error.localizedDescription)
+			report(problem: error.localizedDescription, kind: kind)
+			outlineView.window?.makeFirstResponder(field)
+			return
 		}
+		// The watcher rebuilds the tree, and the row is a different object
+		// afterwards — so the selection follows the path rather than the node.
+		pendingReveal = destination
+		endRename()
+	}
+
+	@objc private func contextRename() {
+		// The same gesture from the menu, so there is one way it works.
+		let row = contextNode.map { outlineView.row(forItem: $0) } ?? -1
+		guard row >= 0 else { return }
+		outlineView.selectRowIndexes([row], byExtendingSelection: false)
+		beginRename(row: row)
 	}
 
 	@objc private func contextTrash() {
@@ -876,6 +988,17 @@ final class ProjectNavigatorViewController: NSViewController {
 	private func handleKeyDown(_ event: NSEvent) -> Bool {
 		switch event.keyCode {
 		case 36, 76: // Return, Keypad Enter
+			// Rename, as everywhere else on this machine. Opening is not lost by
+			// it: arrowing onto a row already shows the file, Space commits to
+			// it, and ⌘↓ is the Finder's own "open this" for when the editor
+			// should take the keyboard as well.
+			if event.modifierFlags.contains(.command) {
+				openSelection(focusEditor: true)
+			} else {
+				beginRename()
+			}
+			return true
+		case 125 where event.modifierFlags.contains(.command): // ⌘↓
 			openSelection(focusEditor: true)
 			return true
 		case 49: // Space — the same provisional open, for a row already selected
@@ -1035,6 +1158,35 @@ private extension FileNode {
 }
 
 // MARK: - Outline data
+
+/// The row's name field while it is being edited.
+///
+/// Return commits, Escape puts the name back, and clicking elsewhere commits —
+/// which is what every other in-place rename on this machine does, and what
+/// somebody who has typed a name and looked away expects to have happened.
+extension ProjectNavigatorViewController: NSTextFieldDelegate {
+	func control(
+		_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector
+	) -> Bool {
+		switch selector {
+		case #selector(NSResponder.insertNewline(_:)):
+			commitRename()
+			return true
+		case #selector(NSResponder.cancelOperation(_:)):
+			endRename()
+			return true
+		default:
+			return false
+		}
+	}
+
+	func controlTextDidEndEditing(_ notification: Notification) {
+		// Only when the field is going of its own accord — committing already
+		// takes it away, and this would otherwise commit a name it just refused.
+		guard renameField != nil, notification.object as? NSTextField === renameField else { return }
+		commitRename()
+	}
+}
 
 extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineViewDelegate, NSMenuDelegate {
 	func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {

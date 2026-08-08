@@ -3614,7 +3614,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			case "return": navigator.pressKeyForTesting(36)
 			case "collapse": navigator.collapseAll()
 			case "locate": navigator.selectFileInEditor()
-			default: continue
+			default:
+				// `rename:new-name.swift`, which is the whole gesture: the field
+				// appears on the row, takes the name, and commits it.
+				guard step.hasPrefix("rename:") else { continue }
+				navigator.renameSelectionForTesting(String(step.dropFirst("rename:".count)))
 			}
 			let selection = navigator.selectionForTesting
 			let showing = editor.activeGroup?.activeTabURL?.lastPathComponent ?? "nothing"
