@@ -6,251 +6,65 @@ import AbydosKit
 /// Kept apart from the editor's theme. A terminal's palette is a language of
 /// its own — prompts, diffs and full-screen tools all mean something by it —
 /// and people arrive with one they already know.
-enum TerminalScheme: String, CaseIterable {
-	/// Ghostty's palette on a deep blue. What most people coming from Ghostty
-	/// will recognise, and the default.
-	case blue
-	/// The editor's own colours, so the terminal sits in the same palette as
-	/// the syntax highlighting beside it — including in daylight, where a
-	/// terminal that stayed black would be the one dark rectangle on screen.
-	case dark
-	/// The app's own: amber on a warm near-black, to sit beside the Abydos
-	/// editor palette. ANSI still means what ANSI means — red is red, and a
-	/// failing test has to look like one — but the hues lean towards the
-	/// desert and the greys are warm rather than blue.
-	case abydos
-	/// Dracula's own sixteen, which is where most people met Dracula in the
-	/// first place — and Alucard's for daylight, since Dracula publishes one
-	/// rather than leaving the dark palette to be inverted.
-	case dracula
+///
+/// The colours are the `terminal` section of a scheme file; this is what turns
+/// one into `NSColor`s and what decides which file is in force. A scheme may
+/// have that section and no `app` one — "Editor colours" is exactly that, a
+/// terminal palette whose ground, text and cursor follow whatever the editor is
+/// wearing.
+struct TerminalScheme: Equatable {
+	let id: String
+	let title: String
+	private let colours: SchemeTerminal
 
-	static let `default` = TerminalScheme.blue
+	init(scheme: Scheme) {
+		id = scheme.id
+		title = scheme.title
+		colours = scheme.terminal ?? Scheme.fallback.terminal!
+	}
 
-	var title: String {
-		switch self {
-		case .blue: return "Blue"
-		// Not "Dark": it is the editor's own colours, which in daylight are a
-		// light terminal. Beside a control that asks light or dark, the old
-		// name read as an answer to that question.
-		case .dark: return "Editor colours"
-		case .abydos: return "Abydos"
-		case .dracula: return "Dracula"
-		}
+	/// Compared by name: two values for the same scheme are the same palette,
+	/// and the light/dark half of it is settled by the theme in force, which
+	/// tells `TerminalPalette` to build its tables again when it changes.
+	static func == (left: TerminalScheme, right: TerminalScheme) -> Bool {
+		left.id == right.id
+	}
+
+	static var all: [TerminalScheme] {
+		SchemeLibrary.shared.terminalSchemes.map(TerminalScheme.init)
+	}
+
+	static var `default`: TerminalScheme {
+		TerminalScheme(scheme: SchemeLibrary.shared.defaultTerminalScheme)
 	}
 
 	/// ANSI 0–15.
 	var named: [NSColor] {
-		switch self {
-		case .blue where Theme.current.isLight:
-			// The hues kept, at a lightness that works both ways round. A
-			// terminal colour is as often a background as a foreground — a
-			// powerline prompt is nothing but coloured backgrounds — so these
-			// sit in the middle: dark enough to read on paper-white, light
-			// enough that black text on them is not a smudge.
-			return [
-				.hex(0x2B2D30), // 0 black — properly black, since a prompt
-				               //   writes it on top of its own colours
-				.hex(0xCB4B3C), // 1 red
-				.hex(0x74A62F), // 2 green
-				.hex(0xC08A00), // 3 yellow
-				.hex(0x3E86C4), // 4 blue
-				.hex(0xB65AAE), // 5 magenta
-				.hex(0x3AA79E), // 6 cyan
-				.hex(0x8B919B), // 7 white
-				.hex(0x6B7078), // 8 bright black
-				.hex(0xE0685A), // 9 bright red
-				.hex(0x8CBF45), // 10 bright green
-				.hex(0xDBA318), // 11 bright yellow
-				.hex(0x5B9FD8), // 12 bright blue
-				.hex(0xC97BC2), // 13 bright magenta
-				.hex(0x54BDB4), // 14 bright cyan
-				.hex(0x2B2D30), // 15 bright white
-			]
-		case .blue:
-			return [
-				.hex(0x1D1F21), // 0 black
-				.hex(0xCC6666), // 1 red
-				.hex(0xB5BD68), // 2 green
-				.hex(0xF0C674), // 3 yellow
-				.hex(0x81A2BE), // 4 blue
-				.hex(0xED73BD), // 5 magenta
-				.hex(0x8ABEB7), // 6 cyan
-				.hex(0x999999), // 7 white
-				.hex(0x666666), // 8 bright black
-				.hex(0xD54E53), // 9 bright red
-				.hex(0xB9CA4A), // 10 bright green
-				.hex(0xE7C547), // 11 bright yellow
-				.hex(0x7AA6DA), // 12 bright blue
-				.hex(0xC397D8), // 13 bright magenta
-				.hex(0x70C0B1), // 14 bright cyan
-				.hex(0xEAEAEA), // 15 bright white
-			]
-		case .abydos where Theme.current.isLight:
-			// The same sixteen meanings on paper. Backgrounds matter as much as
-			// foregrounds here — a powerline prompt is nothing but coloured
-			// backgrounds — so these sit where white text on them still reads
-			// and where they still read on cream.
-			return [
-				.hex(0x3A2E22), // 0 black — warm ink rather than soot
-				.hex(0xB33A36), // 1 red
-				.hex(0x5E7A34), // 2 green
-				.hex(0xB07407), // 3 yellow — the amber, in shadow
-				.hex(0xA8600A), // 4 blue → sand, as in the dark one
-				.hex(0xA24E6A), // 5 magenta
-				.hex(0x2F7A6B), // 6 cyan
-				.hex(0x6B5741), // 7 white → brown, since white on paper is not a colour
-				.hex(0x8A8266), // 8 bright black
-				.hex(0xC24B47), // 9 bright red
-				.hex(0x6E8C3E), // 10 bright green
-				.hex(0xC98A1E), // 11 bright yellow
-				.hex(0xC07414), // 12 bright blue → bright sand
-				.hex(0xB55C7A), // 13 bright magenta
-				.hex(0x3A8C7C), // 14 bright cyan
-				.hex(0x40342A), // 15 bright white → near-black ink
-			]
-		case .abydos:
-			return [
-				.hex(0x1C1712), // 0 black — the ground, warmed
-				.hex(0xD6706E), // 1 red — a failure is red anywhere
-				.hex(0x9FB37A), // 2 green
-				.hex(0xF7B44E), // 3 yellow — the amber itself
-				.hex(0xC9944A), // 4 blue → sand: the one hue that cannot stay,
-				               //   since blue on this ground is the pairing
-				               //   that looks like a mistake
-				.hex(0xC98A9E), // 5 magenta
-				.hex(0x8FB3A6), // 6 cyan
-				.hex(0xCDBFA9), // 7 white
-				.hex(0x7A6A55), // 8 bright black
-				.hex(0xE58B87), // 9 bright red
-				.hex(0xB4C78D), // 10 bright green
-				.hex(0xFFE0AC), // 11 bright yellow — the core light
-				.hex(0xE0A85E), // 12 bright blue → bright sand
-				.hex(0xDFA0B2), // 13 bright magenta
-				.hex(0xA6C7B8), // 14 bright cyan
-				.hex(0xF3E7D3), // 15 bright white
-			]
-		case .dracula where Theme.current.isLight:
-			// Alucard's named colours put in ANSI order. Dracula publishes the
-			// eight hues rather than a table of sixteen, so the bright half is
-			// each of them lifted by the same amount — which is what the dark
-			// scheme's own bright half is.
-			return [
-				.hex(0x1F1F1F), // 0 black
-				.hex(0xCB3A2A), // 1 red
-				.hex(0x14710A), // 2 green
-				.hex(0x846E15), // 3 yellow
-				.hex(0x644AC9), // 4 blue → purple, which is Dracula's blue
-				.hex(0xA3144D), // 5 magenta → pink
-				.hex(0x036A96), // 6 cyan
-				.hex(0x6C664B), // 7 white → the comment brown, since white on
-				               //   off-white is not a colour
-				.hex(0x4D4D4D), // 8 bright black
-				.hex(0xE35142), // 9 bright red
-				.hex(0x1D8E10), // 10 bright green
-				.hex(0x9C851B), // 11 bright yellow
-				.hex(0x7862D4), // 12 bright blue
-				.hex(0xC01B5E), // 13 bright magenta
-				.hex(0x0480B5), // 14 bright cyan
-				.hex(0x1F1F1F), // 15 bright white → the ink
-			]
-		case .dracula:
-			// Upstream's table, unchanged. The point of offering Dracula is
-			// that it is the Dracula somebody already has.
-			return [
-				.hex(0x21222C), // 0 black
-				.hex(0xFF5555), // 1 red
-				.hex(0x50FA7B), // 2 green
-				.hex(0xF1FA8C), // 3 yellow
-				.hex(0xBD93F9), // 4 blue → purple
-				.hex(0xFF79C6), // 5 magenta → pink
-				.hex(0x8BE9FD), // 6 cyan
-				.hex(0xF8F8F2), // 7 white
-				.hex(0x6272A4), // 8 bright black
-				.hex(0xFF6E6E), // 9 bright red
-				.hex(0x69FF94), // 10 bright green
-				.hex(0xFFFFA5), // 11 bright yellow
-				.hex(0xD6ACFF), // 12 bright blue
-				.hex(0xFF92DF), // 13 bright magenta
-				.hex(0xA4FFFF), // 14 bright cyan
-				.hex(0xFFFFFF), // 15 bright white
-			]
-		case .dark where Theme.current.isLight:
-			// As above: a middle lightness, so the same colour serves as text
-			// on white and as something to write black on.
-			return [
-				.hex(0x2B2D30), // 0 black — properly black, since a prompt
-				               //   writes it on top of its own colours
-				.hex(0xC8503F), // 1 red
-				.hex(0x5FA03A), // 2 green
-				.hex(0xB8860B), // 3 yellow
-				.hex(0x3B82C4), // 4 blue
-				.hex(0xB158AE), // 5 magenta
-				.hex(0x2FA39A), // 6 cyan
-				.hex(0x8B919B), // 7 white
-				.hex(0x6B7078), // 8 bright black
-				.hex(0xDD6A58), // 9 bright red
-				.hex(0x7FBE55), // 10 bright green
-				.hex(0xD3A017), // 11 bright yellow
-				.hex(0x589CD6), // 12 bright blue
-				.hex(0xC77BC0), // 13 bright magenta
-				.hex(0x4FBAB1), // 14 bright cyan
-				.hex(0x2B2D30), // 15 bright white
-			]
-		case .dark:
-			return [
-				.hex(0x2B2D30), // 0 black
-				.hex(0xC7756B), // 1 red
-				.hex(0x6AAB73), // 2 green
-				.hex(0xB58A2B), // 3 yellow
-				.hex(0x3592C4), // 4 blue
-				.hex(0xC77DBB), // 5 magenta
-				.hex(0x2AACB8), // 6 cyan
-				.hex(0xBCBEC4), // 7 white
-				.hex(0x5A5D63), // 8 bright black
-				.hex(0xE06C60), // 9 bright red
-				.hex(0x7FCC89), // 10 bright green
-				.hex(0xE8BF6A), // 11 bright yellow
-				.hex(0x56A8F5), // 12 bright blue
-				.hex(0xE18FD8), // 13 bright magenta
-				.hex(0x4BD4E0), // 14 bright cyan
-				.hex(0xDFE1E5), // 15 bright white
-			]
-		}
+		colours.named(isLight: Theme.current.isLight).map { NSColor.hex($0) }
 	}
 
 	/// What a cell with no colour of its own sits on.
+	///
+	/// Not the editor's own, for most schemes: a terminal that is exactly the
+	/// colour of the editor beside it stops reading as a terminal, so each
+	/// palette states a ground a shade off it. The one that says it follows the
+	/// editor means the opposite on purpose — one surface rather than two.
 	var background: NSColor {
-		switch self {
-		// Not white: a terminal that is exactly the colour of the editor beside
-		// it stops reading as a terminal. A hint of the same blue does it.
-		case .blue: return Theme.current.isLight ? .hex(0xF4F6FB) : .hex(0x282935)
-		case .dark: return Theme.current.editorBackground
-		// A shade off the editor's, for the same reason the blue one is: a
-		// terminal exactly the colour of the editor beside it stops reading as
-		// a terminal.
-		case .abydos: return Theme.current.isLight ? .hex(0xFDF8EE) : .hex(0x1A1512)
-		case .dracula: return Theme.current.isLight ? .hex(0xFFFDF5) : .hex(0x22242E)
-		}
+		colour(colours.background) ?? Theme.current.editorBackground
 	}
 
 	/// What a cell with no colour of its own is written in.
 	var foreground: NSColor {
-		switch self {
-		case .blue: return Theme.current.isLight ? .hex(0x24262B) : .hex(0xFFFFFF)
-		case .dark: return Theme.current.editorText
-		case .abydos: return Theme.current.isLight ? .hex(0x2E241B) : .hex(0xE8D9C0)
-		case .dracula: return Theme.current.isLight ? .hex(0x1F1F1F) : .hex(0xF8F8F2)
-		}
+		colour(colours.foreground) ?? Theme.current.editorText
 	}
 
 	/// The block cursor.
 	var cursor: NSColor {
-		switch self {
-		case .blue: return Theme.current.isLight ? .hex(0x3B3E45) : .hex(0xC5C8C6)
-		case .dark: return Theme.current.caret
-		case .abydos: return Theme.current.isLight ? .hex(0xB07407) : .hex(0xF7B44E)
-		case .dracula: return Theme.current.isLight ? .hex(0x644AC9) : .hex(0xF8F8F2)
-		}
+		colour(colours.cursor) ?? Theme.current.caret
+	}
+
+	private func colour(_ pair: SchemePair?) -> NSColor? {
+		pair.map { NSColor.hex($0.value(isLight: Theme.current.isLight)) }
 	}
 
 	/// The one in use.
@@ -262,6 +76,10 @@ enum TerminalScheme: String, CaseIterable {
 		let resolved = Appearance.resolvedTerminalScheme(
 			setting: Settings.shared.terminalScheme, stored: Settings.shared.activeAppearance
 		)
-		return TerminalScheme(rawValue: resolved) ?? .default
+		let wanted = Appearance.terminalSchemeIdentifier(for: resolved)
+		guard let scheme = SchemeLibrary.shared.scheme(id: wanted), scheme.terminal != nil else {
+			return .default
+		}
+		return TerminalScheme(scheme: scheme)
 	}
 }

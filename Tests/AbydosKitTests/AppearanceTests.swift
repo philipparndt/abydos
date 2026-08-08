@@ -6,29 +6,30 @@ import Testing
 /// where there used to be one list with an entry per pairing.
 struct AppearanceTests {
 	@Test func offersThreePalettesAndThreeLightnesses() {
-		#expect(Appearance.Family.allCases.map(\.rawValue) == ["abydos", "blue", "dracula"])
+		#expect(Appearance.families.map(\.id) == ["abydos", "blue", "dracula"])
+		#expect(Appearance.families.map(\.title) == ["Abydos", "Blue", "Dracula"])
 		#expect(Appearance.Mode.allCases.map(\.rawValue) == ["system", "light", "dark"])
 	}
 
 	/// Every pairing has a name, including the one the old list could not say
 	/// at all: Abydos, following the system.
 	@Test func namesEveryPairing() {
-		#expect(Appearance.name(family: .blue, mode: .system) == "system")
-		#expect(Appearance.name(family: .blue, mode: .light) == "light")
-		#expect(Appearance.name(family: .blue, mode: .dark) == "dark")
-		#expect(Appearance.name(family: .abydos, mode: .system) == "abydos-system")
-		#expect(Appearance.name(family: .abydos, mode: .light) == "abydos-light")
-		#expect(Appearance.name(family: .abydos, mode: .dark) == "abydos")
+		#expect(Appearance.name(family: "blue", mode: .system) == "system")
+		#expect(Appearance.name(family: "blue", mode: .light) == "light")
+		#expect(Appearance.name(family: "blue", mode: .dark) == "dark")
+		#expect(Appearance.name(family: "abydos", mode: .system) == "abydos-system")
+		#expect(Appearance.name(family: "abydos", mode: .light) == "abydos-light")
+		#expect(Appearance.name(family: "abydos", mode: .dark) == "abydos")
 	}
 
 	/// And every name decomposes again, which is also the whole of the
 	/// migration: whatever was stored when this was one list means the same
 	/// pair now.
 	@Test func everyStoredValueDecomposes() {
-		for family in Appearance.Family.allCases {
+		for family in Appearance.families {
 			for mode in Appearance.Mode.allCases {
-				let stored = Appearance.name(family: family, mode: mode)
-				#expect(Appearance.family(of: stored) == family)
+				let stored = Appearance.name(family: family.id, mode: mode)
+				#expect(Appearance.family(of: stored) == family.id)
 				#expect(Appearance.mode(of: stored) == mode)
 			}
 		}
@@ -37,10 +38,10 @@ struct AppearanceTests {
 	/// Dracula, which people arrive with rather than discover here — and its
 	/// daylight half, which upstream calls Alucard.
 	@Test func draculaDecomposesLikeTheRest() {
-		#expect(Appearance.name(family: .dracula, mode: .dark) == "dracula")
-		#expect(Appearance.name(family: .dracula, mode: .light) == "dracula-light")
-		#expect(Appearance.name(family: .dracula, mode: .system) == "dracula-system")
-		#expect(Appearance.family(of: "dracula-light") == .dracula)
+		#expect(Appearance.name(family: "dracula", mode: .dark) == "dracula")
+		#expect(Appearance.name(family: "dracula", mode: .light) == "dracula-light")
+		#expect(Appearance.name(family: "dracula", mode: .system) == "dracula-system")
+		#expect(Appearance.family(of: "dracula-light") == "dracula")
 		#expect(Appearance.isLight("dracula-light", systemIsDark: true))
 		#expect(!Appearance.isLight("dracula", systemIsDark: false))
 	}
@@ -49,9 +50,9 @@ struct AppearanceTests {
 	/// without one silently falls back to blue, which is how somebody ends up
 	/// with a Dracula editor beside a terminal nobody chose.
 	@Test func everyFamilyNamesItsOwnTerminalPalette() {
-		for family in Appearance.Family.allCases {
-			let stored = Appearance.name(family: family, mode: .dark)
-			#expect(Appearance.terminalScheme(following: stored) == family.rawValue)
+		for family in Appearance.families {
+			let stored = Appearance.name(family: family.id, mode: .dark)
+			#expect(Appearance.terminalScheme(following: stored) == family.id)
 		}
 	}
 
@@ -59,7 +60,7 @@ struct AppearanceTests {
 	/// silent swap to another palette.
 	@Test func treatsAnUnknownValueAsFollowingTheSystem() {
 		#expect(Appearance.mode(of: "something-else") == .system)
-		#expect(Appearance.family(of: "something-else") == .blue)
+		#expect(Appearance.family(of: "something-else") == "blue")
 	}
 
 	@Test func knowsWhichWayRoundTheContrastGoes() {
@@ -93,6 +94,21 @@ struct AppearanceTests {
 	@Test func leavesAChosenPaletteAlone() {
 		#expect(Appearance.resolvedTerminalScheme(setting: "blue", stored: "abydos-light") == "blue")
 		#expect(Appearance.resolvedTerminalScheme(setting: "dark", stored: "abydos") == "dark")
+	}
+
+	/// The palettes are files now, so a name nobody ships resolves to the one
+	/// the app had before it had a second.
+	@Test func anUnknownFamilyMeansTheDefaultOne() {
+		#expect(Appearance.name(family: "nord", mode: .dark) == "dark")
+		#expect(Appearance.defaultFamily == "blue")
+	}
+
+	/// "Editor colours" was called "dark" while the terminal palettes were an
+	/// enum, and somebody who chose it then still has that word stored.
+	@Test func answersToWhatTheEditorPaletteUsedToBeCalled() {
+		#expect(Appearance.terminalSchemeIdentifier(for: "dark") == "editor")
+		#expect(Appearance.terminalSchemeIdentifier(for: "abydos") == "abydos")
+		#expect(Appearance.terminalSchemeIdentifier(for: Appearance.followsEditor) == "follow")
 	}
 
 	@Test func startsByFollowingTheTheme() {

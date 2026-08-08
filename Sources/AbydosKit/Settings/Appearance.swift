@@ -11,27 +11,11 @@ import Foundation
 /// The two used to be a single list with "Abydos" and "Abydos Light" in it,
 /// which is five entries to say four things and no way at all to say "Abydos,
 /// and follow the system".
+///
+/// Which palettes there are is no longer written here. A palette is a file —
+/// see `Scheme` and `SchemeLibrary` — and this is only the arithmetic on the
+/// one string everything downstream is given.
 public enum Appearance {
-	/// Which palette.
-	public enum Family: String, CaseIterable, Sendable {
-		/// The app's own: amber, warm greys, ink on unbleached paper by day.
-		case abydos
-		/// The blue-grey one the app started with, and the palette most
-		/// editors' dark themes are a version of.
-		case blue
-		/// Dracula, which people arrive with rather than discover here — and
-		/// its daylight half, which upstream calls Alucard.
-		case dracula
-
-		public var title: String {
-			switch self {
-			case .abydos:  return "Abydos"
-			case .blue:    return "Blue"
-			case .dracula: return "Dracula"
-			}
-		}
-	}
-
 	/// How light.
 	public enum Mode: String, CaseIterable, Sendable {
 		case system
@@ -47,42 +31,53 @@ public enum Appearance {
 		}
 	}
 
+	/// What an unrecognised stored value means, and what a fresh installation
+	/// gets: the blue-grey the app shipped with before it had a second palette.
+	///
+	/// A constant here rather than a flag in a file, because it is a fact about
+	/// this app's history — which stored values existed before schemes were
+	/// files — and not something a scheme somebody writes gets to claim.
+	public static let defaultFamily = "blue"
+
+	private static var library: SchemeLibrary { .shared }
+
+	/// Which palettes there are, in the order the settings window lists them.
+	public static var families: [(id: String, title: String)] {
+		library.appSchemes.map { ($0.id, $0.title) }
+	}
+
 	/// The stored value, which is one string because everything downstream —
 	/// presentation mode, the `--theme` flag, the palette lookup — has always
 	/// been given one.
-	public static func name(family: Family, mode: Mode) -> String {
-		switch (family, mode) {
-		case (.blue, .system):   return "system"
-		case (.blue, .light):    return "light"
-		case (.blue, .dark):     return "dark"
-		case (.abydos, .system): return "abydos-system"
-		case (.abydos, .light):  return "abydos-light"
-		case (.abydos, .dark):   return "abydos"
-		case (.dracula, .system): return "dracula-system"
-		case (.dracula, .light):  return "dracula-light"
-		case (.dracula, .dark):   return "dracula"
-		}
+	public static func name(family: String, mode: Mode) -> String {
+		let scheme = library.appScheme(id: family) ?? library.defaultAppScheme
+		return (scheme.app?.stored ?? SchemeApp.Stored(id: scheme.id)).name(for: mode)
 	}
 
 	/// Which palette a stored value names.
 	///
 	/// This is also the whole of the migration from when the two questions were
 	/// one list: every value that could have been stored then decomposes into
-	/// the pair that means the same thing now.
-	public static func family(of stored: String) -> Family {
-		if stored.hasPrefix("abydos") { return .abydos }
-		if stored.hasPrefix("dracula") { return .dracula }
-		return .blue
+	/// the pair that means the same thing now — `abydos-light` because the
+	/// Abydos scheme says so by default, `light` because the blue one still
+	/// names its three the way it always did.
+	public static func family(of stored: String) -> String {
+		decompose(stored)?.family ?? defaultFamily
 	}
 
 	/// How light a stored value asks for.
 	public static func mode(of stored: String) -> Mode {
-		switch stored {
-		case "light", "abydos-light", "dracula-light":   return .light
-		case "dark", "abydos", "dracula":               return .dark
-		case "system", "abydos-system", "dracula-system": return .system
-		default:                                        return .system
+		decompose(stored)?.mode ?? .system
+	}
+
+	private static func decompose(_ stored: String) -> (family: String, mode: Mode)? {
+		for scheme in library.appSchemes {
+			guard let names = scheme.app?.stored else { continue }
+			for mode in Mode.allCases where names.name(for: mode) == stored {
+				return (scheme.id, mode)
+			}
 		}
+		return nil
 	}
 
 	/// Whether a stored value is a light one, given what the system says for
@@ -103,14 +98,27 @@ public enum Appearance {
 	/// somebody wondering which of the two is in charge.
 	public static let followsEditor = "follow"
 
-	/// The terminal palette that goes with a family. Each has one of its own,
-	/// and each of those knows what to do in daylight.
+	/// The terminal palette that goes with a family: the one from the same
+	/// file, since a scheme dresses both halves of the window.
+	///
+	/// A family whose file has no terminal section falls back to the default
+	/// one, which is how somebody ends up with a Dracula editor beside a
+	/// terminal nobody chose — so the suite checks that the shipped ones all
+	/// have one.
 	public static func terminalScheme(following stored: String) -> String {
-		switch family(of: stored) {
-		case .abydos:  return "abydos"
-		case .dracula: return "dracula"
-		case .blue:    return "blue"
-		}
+		let family = family(of: stored)
+		if library.scheme(id: family)?.terminal != nil { return family }
+		return library.defaultTerminalScheme.id
+	}
+
+	/// The scheme a stored terminal setting names.
+	///
+	/// "dark" is what "Editor colours" was called while the terminal palettes
+	/// were an enum, and somebody who chose it two months ago still has that
+	/// word in their preferences. Translated rather than migrated: rewriting
+	/// what somebody chose is a worse habit than answering to both names.
+	public static func terminalSchemeIdentifier(for setting: String) -> String {
+		setting == "dark" ? "editor" : setting
 	}
 
 	/// Which terminal palette to actually use.

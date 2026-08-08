@@ -1,10 +1,15 @@
 import AppKit
 import AbydosKit
 
-/// Colours and metrics matching JetBrains' "New UI" dark theme, which is what the
-/// reference screenshots show.
+/// The palette in force: one scheme file, at one lightness.
+///
+/// The colours themselves are not here. Each scheme is a JSON file with an
+/// `app` section — see `Scheme` in AbydosKit and `Schemes/README.md` beside the
+/// files — and this is what turns one of those into the `NSColor`s the window
+/// draws with, plus the metrics, which are read from Settings rather than
+/// stored.
 struct Theme {
-	static var current = Theme.dusk
+	static var current = Theme(scheme: SchemeLibrary.shared.defaultAppScheme, isLight: false)
 
 	/// Chooses the palette from the setting, and from the system when the
 	/// setting defers to it.
@@ -14,20 +19,13 @@ struct Theme {
 	/// there is something to see.
 	@discardableResult
 	static func apply() -> Bool {
-		let wanted: Theme
-		switch Settings.shared.activeAppearance {
-		case "light": wanted = .daylight
-		case "dark": wanted = .dusk
-		case "abydos": wanted = .abydos
-		case "abydos-light": wanted = .abydosLight
-		// Abydos, following the system — which the old single list could not
-		// say at all, since it had one entry per palette-and-lightness pair.
-		case "abydos-system": wanted = systemIsDark ? .abydos : .abydosLight
-		case "dracula": wanted = .dracula
-		case "dracula-light": wanted = .draculaLight
-		case "dracula-system": wanted = systemIsDark ? .dracula : .draculaLight
-		default: wanted = systemIsDark ? .dusk : .daylight
-		}
+		let stored = Settings.shared.activeAppearance
+		let library = SchemeLibrary.shared
+		let scheme = library.appScheme(id: Appearance.family(of: stored)) ?? library.defaultAppScheme
+		let wanted = Theme(
+			scheme: scheme,
+			isLight: Appearance.isLight(stored, systemIsDark: systemIsDark)
+		)
 
 		// Native controls — fields, alerts, scrollers, the titlebar — take
 		// their look from the app's appearance rather than from this palette,
@@ -50,7 +48,7 @@ struct Theme {
 
 	/// The palette that was in use before the last change, so what was drawn in
 	/// it can be recognised and swapped.
-	static var previous = Theme.dusk
+	static var previous = Theme.current
 
 	/// What the system is set to right now.
 	///
@@ -75,46 +73,92 @@ struct Theme {
 	///
 	/// The switch used to compare light against dark, which is all there was.
 	/// With two dark palettes that comparison says they are the same and the
-	/// change is dropped, so they are compared by name.
-	var name = "dusk"
+	/// change is dropped, so they are compared by name — the scheme's, and
+	/// which way round it is.
+	let name: String
 
 	/// Whether this palette is a light one.
 	///
 	/// Syntax colours are chosen from it rather than stored twenty-odd times
 	/// over, and a few places need to know which way round the contrast goes.
-	var isLight = false
+	let isLight: Bool
+
+	/// The file this was read from, which is also where the syntax colours are
+	/// looked up as they are asked for.
+	private let palette: SchemeApp
 
 	// Surfaces
-	var windowBackground: NSColor
-	var sidebarBackground: NSColor
-	var editorBackground: NSColor
-	var toolbarBackground: NSColor
-	var separator: NSColor
+	let windowBackground: NSColor
+	let sidebarBackground: NSColor
+	let editorBackground: NSColor
+	let toolbarBackground: NSColor
+	let separator: NSColor
 
 	// Sidebar / navigator
-	var sidebarText: NSColor
-	var sidebarHeaderText: NSColor
-	var selectionActive: NSColor
-	var selectionInactive: NSColor
-	var excludedDirectoryTint: NSColor
+	let sidebarText: NSColor
+	let sidebarHeaderText: NSColor
+	let selectionActive: NSColor
+	let selectionInactive: NSColor
+	let excludedDirectoryTint: NSColor
 
 	// Version control states
-	var gitAdded: NSColor
-	var gitModified: NSColor
-	var gitUnversioned: NSColor
-	var gitIgnored: NSColor
-	var gitConflict: NSColor
+	let gitAdded: NSColor
+	let gitModified: NSColor
+	let gitUnversioned: NSColor
+	let gitIgnored: NSColor
+	let gitConflict: NSColor
 
 	// Editor chrome
-	var editorText: NSColor
-	var gutterText: NSColor
-	var gutterCurrentLineText: NSColor
-	var currentLineBackground: NSColor
-	var caret: NSColor
-	var selectionBackground: NSColor
-	var foldPlaceholderBackground: NSColor
-	var foldPlaceholderText: NSColor
-	var indentGuide: NSColor
+	let editorText: NSColor
+	let gutterText: NSColor
+	let gutterCurrentLineText: NSColor
+	let currentLineBackground: NSColor
+	let caret: NSColor
+	let selectionBackground: NSColor
+	let foldPlaceholderBackground: NSColor
+	let foldPlaceholderText: NSColor
+	let indentGuide: NSColor
+
+	/// One scheme, at one lightness.
+	///
+	/// The surfaces are read out once rather than looked up per draw: every one
+	/// of these is asked for thousands of times a second while a window is being
+	/// scrolled, and a dictionary lookup for each would be felt.
+	init(scheme: Scheme, isLight: Bool) {
+		let palette = scheme.app ?? Scheme.fallback.app!
+		self.palette = palette
+		self.isLight = isLight
+		name = "\(scheme.id)-\(isLight ? "light" : "dark")"
+
+		func colour(_ role: SchemeRole) -> NSColor { .hex(palette.colour(role, isLight: isLight)) }
+		windowBackground = colour(.windowBackground)
+		sidebarBackground = colour(.sidebarBackground)
+		editorBackground = colour(.editorBackground)
+		toolbarBackground = colour(.toolbarBackground)
+		separator = colour(.separator)
+
+		sidebarText = colour(.sidebarText)
+		sidebarHeaderText = colour(.sidebarHeaderText)
+		selectionActive = colour(.selectionActive)
+		selectionInactive = colour(.selectionInactive)
+		excludedDirectoryTint = colour(.excludedDirectoryTint)
+
+		gitAdded = colour(.gitAdded)
+		gitModified = colour(.gitModified)
+		gitUnversioned = colour(.gitUnversioned)
+		gitIgnored = colour(.gitIgnored)
+		gitConflict = colour(.gitConflict)
+
+		editorText = colour(.editorText)
+		gutterText = colour(.gutterText)
+		gutterCurrentLineText = colour(.gutterCurrentLineText)
+		currentLineBackground = colour(.currentLineBackground)
+		caret = colour(.caret)
+		selectionBackground = colour(.selectionBackground)
+		foldPlaceholderBackground = colour(.foldPlaceholderBackground)
+		foldPlaceholderText = colour(.foldPlaceholderText)
+		indentGuide = colour(.indentGuide)
+	}
 
 	// Metrics. Read from Settings rather than stored, so a preference change
 	// applies on the next redraw without a restart.
@@ -207,470 +251,11 @@ struct Theme {
 			.honouringLigatureSetting()
 	}
 
-	/// The one theme, and ours rather than borrowed.
-	///
-	/// It started as IDEA's palette value for value, which is a fine place to
-	/// learn from and a poor place to stay: those colours are that product's
-	/// signature. The shape of the scheme is kept — dark and quiet chrome, one
-	/// warm colour for keywords, green for text you wrote, blue for things
-	/// that are called — while every value is our own: the greys carry a
-	/// little more blue, and the syntax hues are pulled apart so that keyword,
-	/// type and call read as three colours rather than three shades.
-	static let dusk = Theme(
-		name: "dusk",
-		windowBackground: .hex(0x1A1C21),
-		sidebarBackground: .hex(0x24272E),
-		editorBackground: .hex(0x1A1C21),
-		toolbarBackground: .hex(0x24272E),
-		separator: .hex(0x343842),
-
-		sidebarText: .hex(0xC2C6D0),
-		sidebarHeaderText: .hex(0xE3E6EC),
-		selectionActive: .hex(0x3A5691),
-		selectionInactive: .hex(0x343842),
-		excludedDirectoryTint: .hex(0x4A3B24),
-
-		gitAdded: .hex(0x71B382),
-		gitModified: .hex(0x4E9ED4),
-		gitUnversioned: .hex(0xCE7C6E),
-		gitIgnored: .hex(0x6C7383),
-		gitConflict: .hex(0xD6706E),
-
-		editorText: .hex(0xC2C6D0),
-		gutterText: .hex(0x5C6270),
-		gutterCurrentLineText: .hex(0xA7ACBA),
-		currentLineBackground: .hex(0x22252C),
-		caret: .hex(0xD4D8E2),
-		selectionBackground: .hex(0x2C4269),
-		foldPlaceholderBackground: .hex(0x363A45),
-		foldPlaceholderText: .hex(0xA0A5B3),
-		indentGuide: .hex(0x2F323B)
-	)
-
-	/// The app's own palette: a sun on the horizon.
-	///
-	/// Amber earns its place three times over — it is CRT phosphor, it is
-	/// desert, and it is a warm ground in a category that is wall to wall blue.
-	/// Built from six colours: a core light, an amber, an ember, sandstone, a
-	/// deep brown and the ground everything sits on.
-	///
-	/// The surfaces are nearly black with warmth in them rather than brown:
-	/// a brown editor is tiring within the hour, and what should be warm is the
-	/// light falling on it, not the paper.
-	static let abydos = Theme(
-		name: "abydos",
-		windowBackground: .hex(0x151210),
-		sidebarBackground: .hex(0x1C1712),
-		editorBackground: .hex(0x151210),
-		toolbarBackground: .hex(0x1C1712),
-		separator: .hex(0x33240F),
-
-		sidebarText: .hex(0xCDBFA9),
-		sidebarHeaderText: .hex(0xFFE0AC),
-		selectionActive: .hex(0x6B3B10),
-		selectionInactive: .hex(0x2A2018),
-		excludedDirectoryTint: .hex(0x33240F),
-
-		// Semantic before decorative: a conflict is red wherever it happens,
-		// and green is the only colour "added" can be. The rest lean warm.
-		gitAdded: .hex(0x9FB37A),
-		gitModified: .hex(0xF7B44E),
-		gitUnversioned: .hex(0xD97F18),
-		gitIgnored: .hex(0x7A6A55),
-		gitConflict: .hex(0xD6706E),
-
-		editorText: .hex(0xE8D9C0),
-		gutterText: .hex(0x6E5B45),
-		gutterCurrentLineText: .hex(0xC6A97D),
-		currentLineBackground: .hex(0x1E1813),
-		caret: .hex(0xF7B44E),
-		selectionBackground: .hex(0x4A2C0E),
-		foldPlaceholderBackground: .hex(0x2A2118),
-		foldPlaceholderText: .hex(0xC0A582),
-		indentGuide: .hex(0x2A2118)
-	)
-
-	/// Abydos in daylight.
-	///
-	/// Not the dark one inverted. Amber on near-black works because the amber
-	/// is the light in the room; on paper the same amber is a highlighter pen.
-	/// So the warmth moves into the surfaces — unbleached paper rather than
-	/// white — and the ink is a dark brown that reads as black until it is next
-	/// to one. The accent stays amber but is taken down to where it can be read
-	/// on paper, which is roughly the colour of the same pigment in shadow.
-	static let abydosLight = Theme(
-		name: "abydos-light",
-		isLight: true,
-
-		windowBackground: .hex(0xFAF5EC),
-		sidebarBackground: .hex(0xF3EBDD),
-		editorBackground: .hex(0xFFFBF3),
-		toolbarBackground: .hex(0xF3EBDD),
-		separator: .hex(0xE0D2BB),
-
-		sidebarText: .hex(0x40342A),
-		sidebarHeaderText: .hex(0x241C14),
-		selectionActive: .hex(0xF2D9A8),
-		selectionInactive: .hex(0xE9E0CF),
-		excludedDirectoryTint: .hex(0xEADCC0),
-
-		// The same semantics as everywhere else — a conflict is red, added is
-		// green — at a weight that survives being read on paper.
-		gitAdded: .hex(0x5E7A34),
-		gitModified: .hex(0xB07407),
-		gitUnversioned: .hex(0xA85A12),
-		gitIgnored: .hex(0x9A8B74),
-		gitConflict: .hex(0xB33A36),
-
-		editorText: .hex(0x2E241B),
-		gutterText: .hex(0xB0A28C),
-		gutterCurrentLineText: .hex(0x6B5741),
-		currentLineBackground: .hex(0xFBF3E3),
-		caret: .hex(0xB07407),
-		selectionBackground: .hex(0xF6E3BC),
-		foldPlaceholderBackground: .hex(0xEFE4CE),
-		foldPlaceholderText: .hex(0x6B5741),
-		indentGuide: .hex(0xEAE0CC)
-	)
-
-	/// Dracula, as its authors publish it.
-	///
-	/// The one palette here that is not ours. People arrive with it — from a
-	/// terminal, an editor, a whole desktop — and the point of offering it is
-	/// that it is the same Dracula they already have, so the six accent hues
-	/// and the two greys are upstream's values rather than something adjusted
-	/// to taste. Only the roles this app has and Dracula does not — a git
-	/// status, a fold placeholder — are placed, and each of those is given the
-	/// accent that already means it elsewhere.
-	static let dracula = Theme(
-		name: "dracula",
-		windowBackground: .hex(0x282A36),
-		sidebarBackground: .hex(0x21222C),
-		editorBackground: .hex(0x282A36),
-		toolbarBackground: .hex(0x21222C),
-		separator: .hex(0x191A21),
-
-		sidebarText: .hex(0xF8F8F2),
-		sidebarHeaderText: .hex(0xBD93F9),
-		selectionActive: .hex(0x44475A),
-		selectionInactive: .hex(0x343746),
-		excludedDirectoryTint: .hex(0x44475A),
-
-		gitAdded: .hex(0x50FA7B),
-		gitModified: .hex(0xFFB86C),
-		gitUnversioned: .hex(0x8BE9FD),
-		gitIgnored: .hex(0x6272A4),
-		gitConflict: .hex(0xFF5555),
-
-		editorText: .hex(0xF8F8F2),
-		gutterText: .hex(0x6272A4),
-		gutterCurrentLineText: .hex(0xF8F8F2),
-		currentLineBackground: .hex(0x2E3040),
-		caret: .hex(0xF8F8F2),
-		selectionBackground: .hex(0x44475A),
-		foldPlaceholderBackground: .hex(0x343746),
-		foldPlaceholderText: .hex(0xBD93F9),
-		indentGuide: .hex(0x3B3E4F)
-	)
-
-	/// Dracula in daylight, which upstream calls Alucard.
-	///
-	/// Not the dark one inverted, and not invented here either: Dracula
-	/// publishes this palette precisely because inverting the dark one gives
-	/// neon on white. The accents are darkened versions of the same six hues
-	/// and the ground is a warm off-white rather than paper.
-	static let draculaLight = Theme(
-		name: "dracula-light",
-		isLight: true,
-
-		windowBackground: .hex(0xFFFBEB),
-		sidebarBackground: .hex(0xF5F1E1),
-		editorBackground: .hex(0xFFFBEB),
-		toolbarBackground: .hex(0xF5F1E1),
-		separator: .hex(0xDEDACC),
-
-		sidebarText: .hex(0x1F1F1F),
-		sidebarHeaderText: .hex(0x644AC9),
-		selectionActive: .hex(0xCFCFDE),
-		selectionInactive: .hex(0xE4E2D5),
-		excludedDirectoryTint: .hex(0xCFCFDE),
-
-		gitAdded: .hex(0x14710A),
-		gitModified: .hex(0xA34D14),
-		gitUnversioned: .hex(0x036A96),
-		gitIgnored: .hex(0x6C664B),
-		gitConflict: .hex(0xCB3A2A),
-
-		editorText: .hex(0x1F1F1F),
-		gutterText: .hex(0x9A9484),
-		gutterCurrentLineText: .hex(0x1F1F1F),
-		currentLineBackground: .hex(0xF7F3E3),
-		caret: .hex(0x644AC9),
-		selectionBackground: .hex(0xCFCFDE),
-		foldPlaceholderBackground: .hex(0xEAE7D8),
-		foldPlaceholderText: .hex(0x644AC9),
-		indentGuide: .hex(0xE4E1D2)
-	)
-
-	/// The same interface in daylight.
-	///
-	/// Not the dark palette inverted: a light theme wants more contrast in the
-	/// text and less in the surfaces, or every panel edge shouts. The greys are
-	/// close together and the colours do the separating.
-	static let daylight = Theme(
-		name: "daylight",
-		isLight: true,
-
-		windowBackground: .hex(0xF7F8FA),
-		sidebarBackground: .hex(0xF2F3F5),
-		editorBackground: .hex(0xFFFFFF),
-		toolbarBackground: .hex(0xF2F3F5),
-		separator: .hex(0xD8DAE0),
-
-		sidebarText: .hex(0x2B2D30),
-		sidebarHeaderText: .hex(0x14161A),
-		selectionActive: .hex(0xBFD5F5),
-		selectionInactive: .hex(0xE1E3E8),
-		excludedDirectoryTint: .hex(0xF6E9CC),
-
-		gitAdded: .hex(0x2E8B45),
-		gitModified: .hex(0x1F6FCC),
-		gitUnversioned: .hex(0xB4553F),
-		gitIgnored: .hex(0x8A8F98),
-		gitConflict: .hex(0xC5372F),
-
-		editorText: .hex(0x2B2D30),
-		gutterText: .hex(0xA1A5AE),
-		gutterCurrentLineText: .hex(0x5A5F6A),
-		currentLineBackground: .hex(0xF3F6FB),
-		caret: .hex(0x1F2126),
-		selectionBackground: .hex(0xCBDEFB),
-		foldPlaceholderBackground: .hex(0xE4E6EA),
-		foldPlaceholderText: .hex(0x5A5F6A),
-		indentGuide: .hex(0xE6E8EC)
-	)
-
 	/// Maps a syntax token to a colour. `HighlightKind` is produced by AbydosKit
-	/// from tree-sitter capture names, so the theme never sees grammar details.
+	/// from tree-sitter capture names, so the theme never sees grammar details,
+	/// and the scheme file gives one colour per kind at each lightness.
 	func color(for kind: HighlightKind) -> NSColor {
-		if name == "abydos-light" { return abydosLightColor(for: kind) }
-		if name == "dracula-light" { return draculaLightColor(for: kind) }
-		if isLight { return lightColor(for: kind) }
-		if name == "abydos" { return abydosColor(for: kind) }
-		if name == "dracula" { return draculaColor(for: kind) }
-		switch kind {
-		// Keyword warm, string green, call blue: the arrangement every dark
-		// scheme has settled on, in our own values. Parameters are tinted
-		// away from plain text — they are the one identifier whose meaning
-		// comes from where it sits rather than from what it says.
-		case .keyword:      return .hex(0xD8926B)
-		case .type:         return .hex(0xAFB3EC)
-		case .function:     return .hex(0x62B4F0)
-		case .method:       return .hex(0x62B4F0)
-		case .property:     return .hex(0xC983C5)
-		case .variable:     return editorText
-		case .parameter:    return .hex(0xB6BDD0)
-		case .constant:     return .hex(0xC983C5)
-		case .string:       return .hex(0x7FB98C)
-		case .escape:       return .hex(0xE0A87E)
-		case .number:       return .hex(0x46BDB6)
-		case .boolean:      return .hex(0xD8926B)
-		case .comment:      return .hex(0x71798B)
-		case .documentation:return .hex(0x6B8F84)
-		case .operatorToken:return .hex(0xB6BDD0)
-		case .punctuation:  return .hex(0x9BA2B2)
-		case .tag:          return .hex(0xE5BE72)
-		case .attribute:    return .hex(0xB6BDD0)
-		case .label:        return .hex(0xC983C5)
-		case .namespace:    return .hex(0xA9B4C6)
-		case .heading:      return .hex(0xE5BE72)
-		case .link:         return .hex(0x6E97F0)
-		case .emphasis:     return .hex(0xC2C6D0)
-		case .error:        return .hex(0xD6706E)
-		case .plain:        return editorText
-		}
-	}
-
-	/// The same arrangement on a warm ground.
-	///
-	/// Not the dusk palette reused: those colours are chosen against a
-	/// blue-grey, and a blue call on an amber background is the one pairing
-	/// that looks like a mistake rather than a choice. Keywords take the ember,
-	/// strings a desert green, calls a pale gold — the hues are near each other
-	/// and the work is done by lightness, which is what makes a warm scheme
-	/// readable rather than muddy.
-	/// The warm palette at daylight weights.
-	///
-	/// The same roles in the same hues as the dark one — keywords amber,
-	/// strings green, calls the accent — but each taken to where it can be read
-	/// on unbleached paper. Comments are the one thing that moves rather than
-	/// darkens: a grey-brown at this weight disappears, so they keep a little
-	/// green and sit clearly behind the code.
-	/// Dracula's syntax colours, as upstream assigns them.
-	///
-	/// Dracula names six accents and says what each is for: pink for keywords,
-	/// green for strings, purple for constants and numbers, cyan for types,
-	/// orange for parameters, yellow for functions. Following that mapping is
-	/// the whole point — somebody who picks Dracula here should see the same
-	/// file in the same colours as in the editor they came from.
-	private func draculaColor(for kind: HighlightKind) -> NSColor {
-		switch kind {
-		case .keyword:      return .hex(0xFF79C6)
-		case .type:         return .hex(0x8BE9FD)
-		case .function:     return .hex(0x50FA7B)
-		case .method:       return .hex(0x50FA7B)
-		case .property:     return .hex(0xF8F8F2)
-		case .variable:     return editorText
-		case .parameter:    return .hex(0xFFB86C)
-		case .constant:     return .hex(0xBD93F9)
-		case .string:       return .hex(0xF1FA8C)
-		case .escape:       return .hex(0xFF79C6)
-		case .number:       return .hex(0xBD93F9)
-		case .boolean:      return .hex(0xBD93F9)
-		case .comment:      return .hex(0x6272A4)
-		case .documentation:return .hex(0x6272A4)
-		case .operatorToken:return .hex(0xFF79C6)
-		case .punctuation:  return .hex(0xF8F8F2)
-		case .tag:          return .hex(0xFF79C6)
-		case .attribute:    return .hex(0x50FA7B)
-		case .label:        return .hex(0xBD93F9)
-		case .namespace:    return .hex(0x8BE9FD)
-		case .heading:      return .hex(0xBD93F9)
-		case .link:         return .hex(0x8BE9FD)
-		case .emphasis:     return .hex(0xF1FA8C)
-		case .error:        return .hex(0xFF5555)
-		case .plain:        return editorText
-		}
-	}
-
-	/// The same assignment in Alucard's values.
-	///
-	/// Role for role with the dark one — keywords pink, strings yellow,
-	/// constants purple — in the darkened hues Dracula publishes for daylight,
-	/// because the neon ones on off-white are unreadable rather than merely
-	/// bright.
-	private func draculaLightColor(for kind: HighlightKind) -> NSColor {
-		switch kind {
-		case .keyword:      return .hex(0xA3144D)
-		case .type:         return .hex(0x036A96)
-		case .function:     return .hex(0x14710A)
-		case .method:       return .hex(0x14710A)
-		case .property:     return .hex(0x1F1F1F)
-		case .variable:     return editorText
-		case .parameter:    return .hex(0xA34D14)
-		case .constant:     return .hex(0x644AC9)
-		case .string:       return .hex(0x846E15)
-		case .escape:       return .hex(0xA3144D)
-		case .number:       return .hex(0x644AC9)
-		case .boolean:      return .hex(0x644AC9)
-		case .comment:      return .hex(0x6C664B)
-		case .documentation:return .hex(0x6C664B)
-		case .operatorToken:return .hex(0xA3144D)
-		case .punctuation:  return .hex(0x1F1F1F)
-		case .tag:          return .hex(0xA3144D)
-		case .attribute:    return .hex(0x14710A)
-		case .label:        return .hex(0x644AC9)
-		case .namespace:    return .hex(0x036A96)
-		case .heading:      return .hex(0x644AC9)
-		case .link:         return .hex(0x036A96)
-		case .emphasis:     return .hex(0x846E15)
-		case .error:        return .hex(0xCB3A2A)
-		case .plain:        return editorText
-		}
-	}
-
-	private func abydosLightColor(for kind: HighlightKind) -> NSColor {
-		switch kind {
-		case .keyword:      return .hex(0x9A5B0C)
-		case .type:         return .hex(0x7A5A16)
-		case .function:     return .hex(0xA8600A)
-		case .method:       return .hex(0xA8600A)
-		case .property:     return .hex(0x8A5A22)
-		case .variable:     return editorText
-		case .parameter:    return .hex(0x5C4A33)
-		case .constant:     return .hex(0xA2521A)
-		case .string:       return .hex(0x4F6B2A)
-		case .escape:       return .hex(0x9A5B2A)
-		case .number:       return .hex(0x7A5A16)
-		case .boolean:      return .hex(0x9A5B0C)
-		case .comment:      return .hex(0x8A8266)
-		case .documentation:return .hex(0x6A7A4A)
-		case .operatorToken:return .hex(0x5C4A33)
-		case .punctuation:  return .hex(0x6E5F49)
-		case .tag:          return .hex(0x9A5B0C)
-		case .attribute:    return .hex(0x5C4A33)
-		case .label:        return .hex(0x8A5A22)
-		case .namespace:    return .hex(0x6B5741)
-		case .heading:      return .hex(0x7A4A08)
-		case .link:         return .hex(0xA2521A)
-		case .emphasis:     return .hex(0x2E241B)
-		case .error:        return .hex(0xB33A36)
-		case .plain:        return editorText
-		}
-	}
-
-	private func abydosColor(for kind: HighlightKind) -> NSColor {
-		switch kind {
-		case .keyword:      return .hex(0xE0913A)
-		case .type:         return .hex(0xD8C08A)
-		case .function:     return .hex(0xF7B44E)
-		case .method:       return .hex(0xF7B44E)
-		case .property:     return .hex(0xD9A05B)
-		case .variable:     return editorText
-		case .parameter:    return .hex(0xC3B192)
-		case .constant:     return .hex(0xE8A05C)
-		case .string:       return .hex(0x9FB37A)
-		case .escape:       return .hex(0xC98A4B)
-		case .number:       return .hex(0xC5A572)
-		case .boolean:      return .hex(0xE0913A)
-		case .comment:      return .hex(0x7A6A55)
-		case .documentation:return .hex(0x8A9A6B)
-		case .operatorToken:return .hex(0xC3B192)
-		case .punctuation:  return .hex(0xA6947A)
-		case .tag:          return .hex(0xE0913A)
-		case .attribute:    return .hex(0xC3B192)
-		case .label:        return .hex(0xD9A05B)
-		case .namespace:    return .hex(0xC0A582)
-		case .heading:      return .hex(0xFFE0AC)
-		case .link:         return .hex(0xE8A05C)
-		case .emphasis:     return .hex(0xE8D9C0)
-		case .error:        return .hex(0xD6706E)
-		case .plain:        return editorText
-		}
-	}
-
-	/// The same arrangement on white: keyword blue, string green, call teal.
-	///
-	/// Darker and more saturated than the dark theme's, because a colour that
-	/// reads well against near-black washes out against white.
-	private func lightColor(for kind: HighlightKind) -> NSColor {
-		switch kind {
-		case .keyword:      return .hex(0x0033B3)
-		case .type:         return .hex(0x7A3E9D)
-		case .function:     return .hex(0x00627A)
-		case .method:       return .hex(0x00627A)
-		case .property:     return .hex(0x871094)
-		case .variable:     return editorText
-		case .parameter:    return .hex(0x4B5563)
-		case .constant:     return .hex(0x871094)
-		case .string:       return .hex(0x067D17)
-		case .escape:       return .hex(0x0037A6)
-		case .number:       return .hex(0x1750EB)
-		case .boolean:      return .hex(0x0033B3)
-		case .comment:      return .hex(0x8A8F98)
-		case .documentation:return .hex(0x3D7A4E)
-		case .operatorToken:return .hex(0x4B5563)
-		case .punctuation:  return .hex(0x6B7280)
-		case .tag:          return .hex(0x0033B3)
-		case .attribute:    return .hex(0x4B5563)
-		case .label:        return .hex(0x871094)
-		case .namespace:    return .hex(0x374151)
-		case .heading:      return .hex(0x0033B3)
-		case .link:         return .hex(0x1750EB)
-		case .emphasis:     return editorText
-		case .error:        return .hex(0xC5372F)
-		case .plain:        return editorText
-		}
+		.hex(palette.colour(kind, isLight: isLight))
 	}
 
 	/// Colour for a file's version-control state in the navigator.
@@ -688,7 +273,7 @@ struct Theme {
 }
 
 extension NSColor {
-	/// 0xRRGGBB literal, which keeps the palette above readable.
+	/// 0xRRGGBB, which is how a scheme file states a colour.
 	static func hex(_ value: UInt32, alpha: CGFloat = 1.0) -> NSColor {
 		NSColor(
 			srgbRed: CGFloat((value >> 16) & 0xFF) / 255.0,

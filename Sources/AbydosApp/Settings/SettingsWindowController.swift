@@ -288,7 +288,7 @@ final class SettingsPaneController: NSViewController {
 					title: "Theme",
 					help: "Abydos is this app's own, warm. Blue is the one it started with, "
 						+ "and the palette most editors' dark themes are a version of.",
-					options: Appearance.Family.allCases.map { ($0.title, $0.rawValue) },
+					options: Appearance.families.map { ($0.title, $0.id) },
 					get: { Settings.shared.themeFamily },
 					set: { Settings.shared.themeFamily = $0 }
 				),
@@ -307,8 +307,10 @@ final class SettingsPaneController: NSViewController {
 						+ "the two panes are one surface. Blue is the palette Ghostty ships with. "
 						+ "All of them have a light and a dark form.",
 					options: [("Same as the theme", Appearance.followsEditor)]
-						+ TerminalScheme.allCases.map { ($0.title, $0.rawValue) },
-					get: { Settings.shared.terminalScheme },
+						+ TerminalScheme.all.map { ($0.title, $0.id) },
+					// Through the identifier, so a preference still holding what
+					// "Editor colours" used to be called selects the right row.
+					get: { Appearance.terminalSchemeIdentifier(for: Settings.shared.terminalScheme) },
 					set: { Settings.shared.terminalScheme = $0 }
 				),
 			]),
