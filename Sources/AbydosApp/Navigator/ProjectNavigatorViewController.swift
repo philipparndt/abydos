@@ -47,6 +47,21 @@ final class ProjectNavigatorViewController: NSViewController {
 	private var headerHeightConstraint: NSLayoutConstraint!
 	private var gitRoot: URL?
 
+	/// The one column follows the view's width.
+	///
+	/// Left to itself an outline column stays as wide as the widest name it has
+	/// been given, so a longer name truncates with an ellipsis while empty pane
+	/// sits beside it — and anything measuring against the cell, such as the
+	/// rename field, is cut to the same wrong width. Most visible at a large
+	/// zoom, where the names grow and the column does not.
+	override func viewDidLayout() {
+		super.viewDidLayout()
+		guard let column = outlineView?.tableColumns.first else { return }
+		let width = outlineView.bounds.width
+		guard width > 0, abs(column.width - width) > 0.5 else { return }
+		column.width = width
+	}
+
 	/// Distance from the top of the window to the "Project" header.
 	func setTopInset(_ inset: CGFloat) {
 		headerTopConstraint.constant = inset + 4

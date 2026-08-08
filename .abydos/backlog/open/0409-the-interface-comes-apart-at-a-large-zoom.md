@@ -28,8 +28,12 @@ Where to look, roughly in the order the screenshot complains:
   suggests these are not ours at all — an `NSOutlineView` drawing its own
   indentation marks once the row height is far from what it expects would look
   exactly like this.
-- **The truncation.** Names are cut earlier than the row's width explains, so
-  something is measuring with an unscaled font or reserving unscaled padding.
+- **The truncation is fixed.** It was neither the font nor the padding: an
+  outline column left to itself stays as wide as the widest name it has been
+  given, so the cells were narrower than the pane and every measurement against
+  them was too. The column follows the view's width now, and names truncate at
+  the pane's edge rather than well inside it. The same fault was cutting the
+  rename field to a third of the row.
 - **The icons.** `Theme.symbol(_:size:color:weight:)` takes a point size; a
   symbol asked for at 28pt with a weight chosen for 14 comes out heavy and
   square-shouldered.
