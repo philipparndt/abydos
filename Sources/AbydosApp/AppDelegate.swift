@@ -39,6 +39,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		NSSetUncaughtExceptionHandler { exception in
 			let lines = [
 				"uncaught \(exception.name.rawValue): \(exception.reason ?? "no reason given")",
+				// What was on screen a moment ago, which the stack cannot say.
+				// The one crash that keeps coming back is raised inside CoreText
+				// on a value nothing in this app can be seen to have produced,
+				// and the row being drawn plus the font it was drawn with is
+				// what nobody has been able to read off a report yet.
+				"    \(LastDrawn.description)",
 			] + exception.callStackSymbols.map { "    \($0)" }
 			DiagnosticLog.write(lines.joined(separator: "\n"), to: "crash")
 		}

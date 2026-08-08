@@ -769,6 +769,11 @@ private final class CommitFileRowView: NSView {
 		let left = Theme.current.scaled(10)
 		let colour = Self.color(for: file.kind)
 
+		// Noted before the measuring, not after: this row is where the CoreText
+		// abort has twice been raised, and a note written afterwards would never
+		// be written at all.
+		LastDrawn.note("commit file row \(file.path)", font: Theme.current.uiFont(11.5))
+
 		let letter = NSAttributedString(string: Self.letter(for: file.kind), attributes: [
 			.font: NSFont.monospacedSystemFont(ofSize: Theme.current.scaled(10), weight: .bold),
 			.foregroundColor: colour,
