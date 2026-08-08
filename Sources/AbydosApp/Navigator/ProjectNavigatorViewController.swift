@@ -283,6 +283,17 @@ final class ProjectNavigatorViewController: NSViewController {
 		// expanded.
 		onFilesChanged?()
 
+		// And so does the colouring, for a reason that is easy to miss: an edit
+		// to an ignore file changes the status of files that did not themselves
+		// change. Saving `.abydos/.gitignore` with `!backlog/` in it makes two
+		// folders elsewhere in the tree stop being ignored, and nothing about
+		// those folders was written. This used to be asked only when a directory
+		// somebody had expanded was re-read, so the answer depended on which
+		// parts of the tree happened to be open. The refresh coalesces — one
+		// `git status` at a time with at most one queued — which is what makes
+		// asking on every event affordable.
+		refreshGitStatus()
+
 		guard let rootNode else { return }
 
 		// Only re-read directories the user has actually expanded.
@@ -300,7 +311,9 @@ final class ProjectNavigatorViewController: NSViewController {
 		outlineView.reloadData()
 		restore(expandedPaths: expanded)
 		restoreSelection(path: selected)
-		refreshGitStatus()
+		// The status was already asked for above, for every change rather than
+		// only the ones that landed here; rows that have just appeared are
+		// covered by the same read.
 	}
 
 	/// Re-reads the tree after a settings change.

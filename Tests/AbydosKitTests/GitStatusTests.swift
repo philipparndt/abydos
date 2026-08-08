@@ -51,6 +51,27 @@ struct GitStatusTests {
 		#expect(await repo.status(forRelativePath: "app/web/node_modules", isDirectory: true) == .ignored)
 	}
 
+	/// A directory that stops being ignored stops being drawn as ignored.
+	///
+	/// Editing an ignore file changes the status of things that did not
+	/// themselves change — `!backlog/` un-ignores two folders nobody touched —
+	/// and re-reading the status has to be enough to see it. It was not: the
+	/// directory entries were kept across reads rather than replaced, so a
+	/// folder that had once been ignored stayed grey for the life of the
+	/// project, however many times git was asked.
+	@Test func aDirectoryThatStopsBeingIgnoredIsNotStillIgnored() async {
+		let repo = await repository("!! .abydos/backlog/\n!! app/build/\n")
+		#expect(await repo.status(forRelativePath: ".abydos/backlog", isDirectory: true) == .ignored)
+
+		// The same repository after `!backlog/` was added and saved.
+		await repo.parse(porcelain: "!! app/build/\n?? .abydos/backlog/open/0001.md\n")
+		#expect(await repo.status(forRelativePath: ".abydos/backlog", isDirectory: true) != .ignored)
+		#expect(await repo.status(forRelativePath: ".abydos/backlog/open/0001.md", isDirectory: false)
+			== .unversioned)
+		// And what is still ignored still is.
+		#expect(await repo.status(forRelativePath: "app/build", isDirectory: true) == .ignored)
+	}
+
 	@Test func filesInsideAnIgnoredDirectoryInheritIgnored() async {
 		let repo = await repository("!! app/build/\n")
 		// git does not list files inside an ignored directory, so the status has

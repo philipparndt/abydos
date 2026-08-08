@@ -103,6 +103,11 @@ public actor GitRepository {
 		// the status rules are tested against.
 		let separator: Character = porcelain.contains("\0") ? "\0" : "\n"
 		var files: [String: GitFileStatus] = [:]
+		// Built fresh beside the files, and for the same reason. What was here
+		// before is what git said last time, and an ignore rule that has since
+		// been changed makes that a statement about a state of the world that no
+		// longer exists.
+		var directories: [String: GitFileStatus] = [:]
 
 		for line in porcelain.split(separator: separator, omittingEmptySubsequences: true) {
 			guard line.count > 3 else { continue }
@@ -117,13 +122,19 @@ public actor GitRepository {
 			let status = Self.status(forCodes: String(codes))
 			files[path] = status
 			if isDirectory {
-				directoryCache[path] = status
+				directories[path] = status
 			}
 		}
 
 		statusCache = files
-		// Directory rollups are recomputed lazily; drop the memoised values.
-		directoryCache = directoryCache.filter { _, v in v == .ignored }
+		// Replaced, not filtered. This used to keep every ignored directory it
+		// had ever seen — the filter dropped the memoised rollups and left the
+		// explicit entries from earlier parses behind — so a folder that stopped
+		// being ignored stayed grey however many times the status was re-read.
+		// Adding `!backlog/` to an ignore file and saving it looked like nothing
+		// happening at all, until the project was closed and opened again.
+		directoryCache = directories
+		// The rollups are derived from both, and are recomputed lazily.
 		rollupCache = [:]
 	}
 
