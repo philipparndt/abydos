@@ -197,6 +197,9 @@ public final class TerminalEmulator {
 	private var intermediateBytes: [UInt8] = []
 	private var oscBytes: [UInt8] = []
 	private var apcBytes: [UInt8] = []
+	/// Whether the sequence being gathered ran past the cap, in which case it
+	/// is dropped whole rather than acted on short.
+	private var apcOverflowed = false
 
 	/// The pictures on the screen, and the ones a program has sent but not shown.
 	///
@@ -726,6 +729,16 @@ public final class TerminalEmulator {
 		return Int(parameterValues[start])
 	}
 
+	/// How many `:` subparameters a component carried.
+	private func subparameterCount(_ index: Int) -> Int {
+		guard index >= 0, index < componentTotal else { return 0 }
+		let start = Int(componentStarts[index]) + 1
+		let end = index + 1 < componentTotal
+			? Int(componentStarts[index + 1])
+			: parameterCount
+		return Swift.max(0, end - start)
+	}
+
 	private var isPrivateSequence: Bool {
 		guard let introducer else { return false }
 		return (0x3C...0x3F).contains(introducer)
@@ -1113,8 +1126,46 @@ public final class TerminalEmulator {
 			case 90...97: attributes.foreground = .indexed(UInt8(value - 90 + 8))
 			case 100...107: attributes.background = .indexed(UInt8(value - 100 + 8))
 			case 38, 48:
-				// Extended colour: 5;n for the 256 palette, 2;r;g;b for true colour.
+				// Extended colour, in either of the two spellings.
+				//
+				// `38;2;r;g;b` separates with semicolons, which is what almost
+				// everything writes. `38:2:r:g:b` separates with colons, which
+				// is what the standard actually specifies and what kitty's own
+				// `icat` uses for the colour that names an image — so ignoring
+				// it meant the placeholder cells had no id, and kitty's icat
+				// drew nothing here while working everywhere else.
+				//
+				// The colon form may carry a colour space before the channels:
+				// `38:2::r:g:b` is the full spelling and `38:2:r:g:b` the
+				// common short one. Five subparameters means the long form.
 				let isForeground = value == 38
+				if let kind = subparameter(index, at: 0) {
+					let colour: TerminalColor?
+					if kind == 5 {
+						colour = subparameter(index, at: 1)
+							.map { .indexed(UInt8(clamping: $0)) }
+					} else if kind == 2 {
+						// With a colour space the channels start one later.
+						let offset = subparameterCount(index) >= 5 ? 2 : 1
+						if let red = subparameter(index, at: offset),
+						   let green = subparameter(index, at: offset + 1),
+						   let blue = subparameter(index, at: offset + 2) {
+							colour = .rgb(
+								UInt8(clamping: red), UInt8(clamping: green), UInt8(clamping: blue)
+							)
+						} else {
+							colour = nil
+						}
+					} else {
+						colour = nil
+					}
+					if let colour {
+						if isForeground { attributes.foreground = colour }
+						else { attributes.background = colour }
+					}
+					index += 1
+					continue
+				}
 				guard index + 1 < count else { index = count; break }
 				let kind = componentValue(index + 1)
 				if kind == 5, index + 2 < count {
@@ -1151,20 +1202,41 @@ public final class TerminalEmulator {
 			state = .escape
 			return
 		}
-		// A transfer arrives in chunks of a few thousand bytes, so one sequence is
-		// bounded; a stream that never terminates is not. Past the cap the rest of
-		// the sequence is swallowed rather than accumulated.
-		guard apcBytes.count < Self.longestAPC else { return }
+		// A stream that never terminates must not be accumulated forever. Past
+		// the cap the sequence is marked and dropped whole at the end rather
+		// than delivered short: a truncated payload is a picture that fails to
+		// decode, or worse decodes to something wrong, and neither says why.
+		guard apcBytes.count < Self.longestAPC else {
+			apcOverflowed = true
+			return
+		}
 		apcBytes.append(byte)
 	}
 
-	/// Longest APC sequence held. Kitty's own limit on one chunk is 4096 bytes of
-	/// base64, and the control data before it is short.
-	private static let longestAPC = 8192
+	/// Longest APC sequence held.
+	///
+	/// The protocol says a chunk should be at most 4096 bytes of base64, and
+	/// this was 8192 on the strength of it. kitty's own `icat` does not follow
+	/// its own recommendation when it believes the terminal can cope: it sends
+	/// the whole image in two chunks of 131072. Everything past 8192 was
+	/// swallowed, the base64 was truncated, the PNG did not decode and no
+	/// picture appeared — which is why kitty's icat drew nothing here and
+	/// everything in the terminals it was tested against.
+	///
+	/// Eight megabytes is far past any real chunk and still a bound. What a
+	/// picture actually costs is capped separately, by the image store's own
+	/// budget, once it is decoded.
+	private static let longestAPC = 8 * 1024 * 1024
 
 	private func finishAPC() {
 		let bytes = apcBytes
+		let overflowed = apcOverflowed
 		apcBytes = []
+		apcOverflowed = false
+		guard !overflowed else {
+			state = .ground
+			return
+		}
 		state = .ground
 		// `G` is kitty's; there is no other APC to answer.
 		guard bytes.first == 0x47 else { return }
