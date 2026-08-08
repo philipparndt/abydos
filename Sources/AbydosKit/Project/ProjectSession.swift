@@ -107,6 +107,28 @@ public struct ProjectSession: Equatable, Sendable {
 			&& selectedConfiguration == nil && xcodeDestinations.isEmpty
 			&& breakpoints.isEmpty && tmuxWindow == nil
 	}
+
+	/// Which window a project being left should be remembered in.
+	///
+	/// The window on screen, except when the project is being left *because* the
+	/// terminal moved — a shell that changed checkout, or a tmux window somebody
+	/// selected. Then the window showing belongs to the project being opened,
+	/// not to the one being put away, and writing it down is how two projects
+	/// come to hold each other's window.
+	///
+	/// Which does not stay a wrong note for later: each project then selects the
+	/// other's window when it opens, selecting a window moves the shell, the
+	/// shell moving switches the project, and the two swap places for ever a
+	/// directory poll apart — about once a second, with nobody touching
+	/// anything, and every switch reopening every editor tab. That is worth a
+	/// function of its own with a test on it.
+	public static func rememberedWindow(
+		showing: String?,
+		stored: String?,
+		followingTerminal: Bool
+	) -> String? {
+		followingTerminal ? stored : showing
+	}
 }
 
 /// What was open in each project, for as long as the app is running.

@@ -170,4 +170,31 @@ struct SessionTmuxWindowTests {
 		#expect(written.tmuxWindow == nil)
 		#expect(try roundTrip(written)?.tmuxWindow == nil)
 	}
+
+	/// Leaving a project by hand records the window that was on screen.
+	@Test func closingAProjectRemembersTheWindowShowing() {
+		#expect(ProjectSession.rememberedWindow(
+			showing: "@2", stored: "@2", followingTerminal: false
+		) == "@2")
+	}
+
+	/// And leaving it because the terminal moved records nothing new.
+	///
+	/// This is the ping-pong: the window showing (`@2`) belongs to the project
+	/// being *opened*, since selecting it is what caused the switch. Written
+	/// down here, the project being closed would select `@2` when it next
+	/// opened, moving the shell into the other checkout, switching the project
+	/// back, and round again about once a second.
+	@Test func followingTheTerminalDoesNotRecordTheWindowItMovedTo() {
+		#expect(ProjectSession.rememberedWindow(
+			showing: "@2", stored: "@0", followingTerminal: true
+		) == "@0")
+	}
+
+	/// Nothing stored and nothing to keep: better no window than the wrong one.
+	@Test func followingWithNothingRememberedStaysNothing() {
+		#expect(ProjectSession.rememberedWindow(
+			showing: "@2", stored: nil, followingTerminal: true
+		) == nil)
+	}
 }

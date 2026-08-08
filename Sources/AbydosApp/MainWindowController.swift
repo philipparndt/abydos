@@ -538,7 +538,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// which is the only time it is anywhere else.
 		bottomPanel.onPaneNeedsProject = { [weak self] root in
 			guard let self, self.followsTerminal else { return }
-			self.switchProject(to: root)
+			// Following, so the same rule as a shell that moved: the panel is
+			// where the change came from and is not to be moved by it.
+			self.switchProject(to: root, followingTerminal: true)
 		}
 		bottomPanel.onRunAgain = { [weak self] in self?.runSelectedConfiguration(debug: false) }
 		bottomPanel.onDebugAgain = { [weak self] in self?.runSelectedConfiguration(debug: true) }
@@ -1635,11 +1637,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		guard !LaunchOptions.parse().isScreenshotRun else { return }
 		guard followsTerminal else { return }
 		guard let root = ProjectRoot.find(from: directory) else { return }
-		switchProject(to: root)
+		switchProject(to: root, followingTerminal: true)
 	}
 
 	/// Swaps one project for another in place, keeping what each had open.
-	func switchProject(to root: URL) {
+	///
+	/// - Parameter followingTerminal: whether the terminal is what moved. Then
+	///   the window it is showing is the one somebody just chose, and neither
+	///   half of remembering a tmux window applies: see the two notes below,
+	///   which between them are why this parameter exists.
+	func switchProject(to root: URL, followingTerminal: Bool = false) {
 		let root = root.standardizedFileURL
 		guard root.path != project?.root.standardizedFileURL.path else { return }
 
@@ -1647,7 +1654,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			var session = editor.captureSession()
 			session.terminals = bottomPanel.captureTerminals()
 			session.isPanelVisible = isPanelVisible
-			session.tmuxWindow = bottomPanel.currentTmuxWindowID
+			// The window it was left in, which is not the one showing when the
+			// switch is *because* the terminal moved: see the rule itself, in
+			// ProjectSession, for what recording that leads to.
+			session.tmuxWindow = ProjectSession.rememberedWindow(
+				showing: bottomPanel.currentTmuxWindowID,
+				stored: sessions.session(for: current)?.tmuxWindow
+					?? SessionStore.read(in: current)?.tmuxWindow,
+				followingTerminal: followingTerminal
+			)
 			session.subprojectPath = subprojectRoot.map { Subprojects.relativePath($0, to: current) }
 			session.selectedConfiguration = selectedConfigurationName
 			session.xcodeDestinations = xcodeDestinations
@@ -1683,7 +1698,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// The window it was left in, before the terminals — tmux has to be
 		// attached for either, and going back to the right window first means
 		// the tabs come up showing it rather than showing one and then moving.
-		if let window = previous?.tmuxWindow {
+		//
+		// Never while following the terminal: the window showing then is the one
+		// somebody selected a moment ago, and this is the app arguing with them
+		// about it. It is also the other half of the loop described above —
+		// selecting a window moves the shell, which moves the project, which
+		// selects a window.
+		if !followingTerminal, let window = previous?.tmuxWindow {
 			bottomPanel.restoreTmuxWindow(window)
 		}
 
