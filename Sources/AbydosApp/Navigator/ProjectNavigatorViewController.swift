@@ -89,7 +89,11 @@ final class ProjectNavigatorViewController: NSViewController {
 		outline.autoresizesOutlineColumn = false
 		outline.gridStyleMask = []
 		outline.usesAutomaticRowHeights = false
-		outline.allowsMultipleSelection = false
+		// ⇧-click a run of files, ⌘-click a handful of them, and ⌘A takes
+		// everything the tree is showing — which is everything *visible*,
+		// because an unexpanded folder's children are not rows and have not
+		// been read off the disk. Trashing four files is one gesture now.
+		outline.allowsMultipleSelection = true
 		outline.focusRingType = .none
 
 		let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("name"))
@@ -111,11 +115,13 @@ final class ProjectNavigatorViewController: NSViewController {
 		// what a terminal, a Finder window or another program can be given. The
 		// menu still offers the relative one, which is the one a commit message
 		// or an import wants.
+		//
+		// Several rows join with newlines, in the order they appear in the tree
+		// rather than the order they were clicked: what is being copied is a
+		// list of files, and the tree's order is the one that reads.
 		outline.copyText = { [weak self] in
-			guard let row = self?.outlineView.selectedRow, row >= 0,
-			      let node = self?.outlineView.item(atRow: row) as? FileNode
-			else { return nil }
-			return node.url.path
+			guard let paths = self?.selectedPaths(), !paths.isEmpty else { return nil }
+			return paths.joined(separator: "\n")
 		}
 		outline.menu = makeContextMenu()
 		outlineView = outline
@@ -335,10 +341,10 @@ final class ProjectNavigatorViewController: NSViewController {
 
 		// A reload drops the selection, so it is captured by path and restored.
 		let expanded = expandedPaths()
-		let selected = selectedPath()
+		let selected = selectedPaths()
 		outlineView.reloadData()
 		restore(expandedPaths: expanded)
-		restoreSelection(path: selected)
+		restoreSelection(paths: selected)
 		// The status was already asked for above, for every change rather than
 		// only the ones that landed here; rows that have just appeared are
 		// covered by the same read.
@@ -355,12 +361,12 @@ final class ProjectNavigatorViewController: NSViewController {
 		headerView.restyle()
 		guard let rootNode else { return }
 		let expanded = expandedPaths()
-		let selected = selectedPath()
+		let selected = selectedPaths()
 		rootNode.invalidate()
 		outlineView.reloadData()
 		outlineView.expandItem(rootNode)
 		restore(expandedPaths: expanded)
-		restoreSelection(path: selected)
+		restoreSelection(paths: selected)
 		refreshGitStatus()
 	}
 
@@ -386,7 +392,7 @@ final class ProjectNavigatorViewController: NSViewController {
 	private func reloadTreeMarked() {
 		guard let rootNode else { return }
 		let expanded = expandedPaths()
-		let selected = selectedPath()
+		let selected = selectedPaths()
 		rootNode.reloadPreservingIdentity()
 		outlineView.reloadData()
 		restore(expandedPaths: expanded)
@@ -395,30 +401,37 @@ final class ProjectNavigatorViewController: NSViewController {
 			pendingReveal = nil
 			selectWithoutOpening(url: pending)
 		} else {
-			restoreSelection(path: selected)
+			restoreSelection(paths: selected)
 		}
 		refreshGitStatus()
 	}
 
-	private func selectedPath() -> String? {
-		let row = outlineView.selectedRow
-		guard row >= 0, let node = outlineView.item(atRow: row) as? FileNode else { return nil }
-		return node.url.path
+	/// Every selected path, in tree order.
+	///
+	/// All of them, not the first: the tree reloads on every filesystem event,
+	/// and a build writing files reloads it dozens of times a minute. A capture
+	/// that kept one path would shrink a selection of five to one while nobody
+	/// was looking at it, which is the kind of fault nobody reports precisely.
+	private func selectedPaths() -> [String] {
+		TreeSelection.paths(rows: Array(outlineView.selectedRowIndexes)) { row in
+			(outlineView.item(atRow: row) as? FileNode)?.url.path
+		}
 	}
 
 	/// Reselects by path, since reloadData replaces the row indices.
-	private func restoreSelection(path: String?) {
-		guard let path, let rootNode,
-		      let node = rootNode.node(for: URL(fileURLWithPath: path))
-		else { return }
-		let row = outlineView.row(forItem: node)
-		guard row >= 0 else { return }
+	private func restoreSelection(paths: [String]) {
+		guard !paths.isEmpty, let rootNode else { return }
+		let rows = TreeSelection.rows(for: paths) { path in
+			guard let node = rootNode.node(for: URL(fileURLWithPath: path)) else { return -1 }
+			return outlineView.row(forItem: node)
+		}
+		guard !rows.isEmpty else { return }
 
 		// Restoring must not be mistaken for somebody choosing the file, which
 		// would reopen it in the editor.
 		let wasSilent = isSelectingSilently
 		isSelectingSilently = true
-		outlineView.selectRowIndexes([row], byExtendingSelection: false)
+		outlineView.selectRowIndexes(IndexSet(rows), byExtendingSelection: false)
 		isSelectingSilently = wasSilent
 	}
 
@@ -533,12 +546,34 @@ final class ProjectNavigatorViewController: NSViewController {
 		onLeaveSubproject?()
 	}
 
-	/// The row the menu applies to: the right-clicked row, or the selection when
-	/// the menu was opened from the keyboard.
+	/// Every row the menu applies to, in tree order.
+	///
+	/// Right-clicking inside the selection means all of it — the gesture every
+	/// file manager has, and the reason ⇧-clicking four files and asking for the
+	/// trash works. Right-clicking a row *outside* the selection means that row
+	/// alone: the pointer is the more recent statement of what is meant.
+	private var contextNodes: [FileNode] {
+		let clicked = outlineView.clickedRow
+		if clicked >= 0, !outlineView.selectedRowIndexes.contains(clicked) {
+			return (outlineView.item(atRow: clicked) as? FileNode).map { [$0] } ?? []
+		}
+		if outlineView.selectedRowIndexes.isEmpty, clicked >= 0 {
+			return (outlineView.item(atRow: clicked) as? FileNode).map { [$0] } ?? []
+		}
+		return outlineView.selectedRowIndexes.sorted().compactMap {
+			outlineView.item(atRow: $0) as? FileNode
+		}
+	}
+
+	/// The one row the menu applies to, or nil when it applies to several.
+	///
+	/// Rename, "open terminal here", "open as subproject" and "reveal" are all
+	/// single-row gestures: there is no sensible answer for four, and doing it
+	/// to whichever came first is worse than not offering it. `validateMenuItem`
+	/// switches them off from the same answer.
 	private var contextNode: FileNode? {
-		let row = outlineView.clickedRow >= 0 ? outlineView.clickedRow : outlineView.selectedRow
-		guard row >= 0 else { return nil }
-		return outlineView.item(atRow: row) as? FileNode
+		let nodes = contextNodes
+		return nodes.count == 1 ? nodes.first : nil
 	}
 
 	@objc private func contextOpen() {
@@ -573,20 +608,28 @@ final class ProjectNavigatorViewController: NSViewController {
 		NSWorkspace.shared.activateFileViewerSelecting([node.url])
 	}
 
+	/// One path a line, in tree order — the shape a list of files is wanted in.
 	@objc private func contextCopyPath() {
-		guard let node = contextNode else { return }
-		NSPasteboard.general.clearContents()
-		NSPasteboard.general.setString(node.url.path, forType: .string)
+		let paths = contextNodes.map(\.url.path)
+		guard !paths.isEmpty else { return }
+		copyToPasteboard(paths)
 	}
 
 	@objc private func contextCopyRelativePath() {
-		guard let node = contextNode, let root = project?.root else { return }
-		let path = node.url.path
-		let relative = path.hasPrefix(root.path + "/")
-			? String(path.dropFirst(root.path.count + 1))
-			: path
+		guard let root = project?.root else { return }
+		let paths = contextNodes.map { node -> String in
+			let path = node.url.path
+			return path.hasPrefix(root.path + "/")
+				? String(path.dropFirst(root.path.count + 1))
+				: path
+		}
+		guard !paths.isEmpty else { return }
+		copyToPasteboard(paths)
+	}
+
+	private func copyToPasteboard(_ paths: [String]) {
 		NSPasteboard.general.clearContents()
-		NSPasteboard.general.setString(relative, forType: .string)
+		NSPasteboard.general.setString(paths.joined(separator: "\n"), forType: .string)
 	}
 
 	/// Creates a folder inside the clicked directory.
@@ -617,9 +660,11 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// Where a new entry from the context menu goes.
 	///
 	/// Beside the file that was clicked, or inside the folder — which is what
-	/// "new file here" means when the thing under the pointer is a file.
+	/// "new file here" means when the thing under the pointer is a file. The
+	/// first of several, since a new file has one place to go and the topmost
+	/// row is the one somebody would point at.
 	private var contextParentDirectory: URL? {
-		if let node = contextNode {
+		if let node = contextNodes.first {
 			return node.isDirectory ? node.url : node.url.deletingLastPathComponent()
 		}
 		return project?.root
@@ -788,7 +833,7 @@ final class ProjectNavigatorViewController: NSViewController {
 			return
 		}
 
-		if let node = contextNode, node.isDirectory { outlineView.expandItem(node) }
+		if let node = contextNodes.first, node.isDirectory { outlineView.expandItem(node) }
 		pendingReveal = destination
 		// Opened straight away: a new file is made in order to write in it.
 		onSelectFile?(destination, true)
@@ -796,7 +841,7 @@ final class ProjectNavigatorViewController: NSViewController {
 
 	@objc private func contextNewFolder() {
 		let parent: URL
-		if let node = contextNode {
+		if let node = contextNodes.first {
 			parent = node.isDirectory ? node.url : node.url.deletingLastPathComponent()
 		} else if let root = project?.root {
 			parent = root
@@ -838,7 +883,7 @@ final class ProjectNavigatorViewController: NSViewController {
 		}
 
 		// The watcher reloads the tree; the new folder is revealed once it has.
-		if let node = contextNode, node.isDirectory {
+		if let node = contextNodes.first, node.isDirectory {
 			outlineView.expandItem(node)
 		}
 		pendingReveal = destination
@@ -859,6 +904,10 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// in the middle of the window answers the same question with less of the
 	/// answer on screen.
 	func beginRename(row: Int? = nil) {
+		// A row named explicitly, or the selection when it is one row. Renaming
+		// is a single-row gesture: with several selected Return does nothing
+		// rather than renaming whichever came first.
+		if row == nil, outlineView.numberOfSelectedRows > 1 { return }
 		let index = row ?? outlineView.selectedRow
 		guard index >= 0, let node = outlineView.item(atRow: index) as? FileNode,
 		      node !== rootNode, renameField == nil
@@ -992,12 +1041,17 @@ final class ProjectNavigatorViewController: NSViewController {
 	}
 
 	@objc private func contextTrash() {
-		guard let node = contextNode else { return }
+		// All of them, and the project root is never one of them. This is the one
+		// place several rows makes the work smaller rather than larger: `recycle`
+		// already takes an array, and moving three files to the trash stops being
+		// three gestures.
+		let urls = contextNodes.filter { $0 !== rootNode }.map(\.url)
+		guard !urls.isEmpty else { return }
 		// Trash rather than delete: recoverable, and no confirmation needed.
-		NSWorkspace.shared.recycle([node.url]) { _, error in
+		NSWorkspace.shared.recycle(urls) { _, error in
 			guard let error else { return }
 			DispatchQueue.main.async {
-				Toast.post("Could not rename that", detail: error.localizedDescription)
+				Toast.post("Could not move that to the trash", detail: error.localizedDescription)
 			}
 		}
 	}
@@ -1034,6 +1088,10 @@ final class ProjectNavigatorViewController: NSViewController {
 	}
 
 	private func openSelection(focusEditor: Bool) {
+		// One row, for the same reason a selection change opens only one: four
+		// tabs from one keystroke, and the last one to arrive is whichever the
+		// tree happened to order last.
+		guard outlineView.numberOfSelectedRows == 1 else { return }
 		let row = outlineView.selectedRow
 		guard row >= 0, let node = outlineView.item(atRow: row) as? FileNode else { return }
 
@@ -1120,7 +1178,7 @@ final class ProjectNavigatorViewController: NSViewController {
 
 	/// Sends a key to the tree as the keyboard would, so what arrowing through
 	/// it actually does can be checked from outside.
-	func pressKeyForTesting(_ keyCode: UInt16) {
+	func pressKeyForTesting(_ keyCode: UInt16, extendingSelection: Bool = false) {
 		view.window?.makeFirstResponder(outlineView)
 		// The characters matter: `interpretKeyEvents` maps those, not the key
 		// code, and an event with none does nothing at all.
@@ -1134,8 +1192,13 @@ final class ProjectNavigatorViewController: NSViewController {
 		case 49: characters = " "
 		default: characters = ""
 		}
+		// ⇧ with an arrow is how a run of rows is selected, so the harness can
+		// make a multi-row selection the way somebody does rather than by
+		// reaching into the outline view.
+		let modifiers: NSEvent.ModifierFlags = extendingSelection ? .shift : []
 		guard let event = NSEvent.keyEvent(
-			with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+			with: .keyDown, location: .zero, modifierFlags: modifiers,
+			timestamp: ProcessInfo.processInfo.systemUptime,
 			windowNumber: view.window?.windowNumber ?? 0, context: nil,
 			characters: characters, charactersIgnoringModifiers: characters,
 			isARepeat: false, keyCode: keyCode
@@ -1143,11 +1206,33 @@ final class ProjectNavigatorViewController: NSViewController {
 		outlineView.keyDown(with: event)
 	}
 
+	/// Rebuilds the tree the way a filesystem event does, so a selection can be
+	/// checked to have survived one.
+	func reloadForTesting() {
+		reloadTree()
+	}
+
+	/// What ⌘C would put on the pasteboard — the same closure the Edit menu
+	/// reaches, asked directly, so what several selected rows copy can be read
+	/// without a key window to send an action through.
+	func copyTextForTesting() -> String {
+		(outlineView as? NavigatorOutlineView)?.copyText?() ?? "nothing"
+	}
+
 	/// What the tree has highlighted, and how many rows it is showing.
+	///
+	/// Every selected row, joined — one row reads exactly as it always did, so
+	/// the harness's existing output is unchanged, and several are visible at
+	/// all, which is what checking that a multi-row selection survives a reload
+	/// needs.
 	var selectionForTesting: (name: String, rows: Int) {
-		let row = outlineView.selectedRow
-		let node = row >= 0 ? outlineView.item(atRow: row) as? FileNode : nil
-		return ("\(node?.name ?? "nothing")@\(row)", outlineView.numberOfRows)
+		let selected = outlineView.selectedRowIndexes.sorted()
+		guard !selected.isEmpty else { return ("nothing@-1", outlineView.numberOfRows) }
+		let names = selected.map { row -> String in
+			let node = outlineView.item(atRow: row) as? FileNode
+			return "\(node?.name ?? "nothing")@\(row)"
+		}
+		return (names.joined(separator: "+"), outlineView.numberOfRows)
 	}
 
 	/// Selects and scrolls to a file, expanding ancestors as needed.
@@ -1280,6 +1365,12 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 		// Unless the tree is moving its own selection to follow something else.
 		guard !isSelectingSilently else { return }
 
+		// One row shows the file it landed on, which is what makes arrowing
+		// through the tree feel like browsing. Several show nothing new: a
+		// ⇧-click over four files that opened four tabs would be a surprise, and
+		// the last one opened would not be the one under the pointer.
+		guard outlineView.numberOfSelectedRows == 1 else { return }
+
 		let row = outlineView.selectedRow
 		guard row >= 0, let node = outlineView.item(atRow: row) as? FileNode, !node.isDirectory else { return }
 		// Provisionally, and without taking focus: a click or an arrow key shows
@@ -1299,8 +1390,15 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 		(item as? FileNode)?.url as NSURL?
 	}
 
+	/// Tailors each item to how many rows the menu was opened over.
+	///
+	/// `node` is the single row, and nil when there are several — so everything
+	/// that only makes sense one at a time switches itself off without being
+	/// told about the count. `nodes` is all of them, for the two that take a
+	/// list.
 	func menuNeedsUpdate(_ menu: NSMenu) {
 		refreshNewMenu()
+		let nodes = contextNodes
 		let node = contextNode
 		let isRoot = node === rootNode
 
@@ -1317,14 +1415,25 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 				item.isHidden = !folder || node?.url.path == subprojectRoot?.path
 			case #selector(contextLeaveSubproject):
 				item.isHidden = subprojectRoot == nil
-			case #selector(contextRename), #selector(contextTrash):
+			case #selector(contextRename):
+				// One row. Renaming whichever came first is worse than not
+				// offering it.
 				item.isEnabled = node != nil && !isRoot
+			case #selector(contextTrash):
+				// All of them, less the project root, which never trashes itself.
+				item.isEnabled = nodes.contains { $0 !== rootNode }
+			case #selector(contextCopyPath), #selector(contextCopyRelativePath):
+				item.isEnabled = !nodes.isEmpty
 			case #selector(contextCollapseAll):
 				// About the tree, not about a row: right-clicking empty space
 				// still offers it.
 				item.isEnabled = rootNode != nil
 			case #selector(contextSelectOpenFile):
 				item.isEnabled = currentEditorFile?() != nil
+			case nil where item.submenu === newMenu:
+				// A new file has one place to go whatever is selected: beside the
+				// topmost row, or in the project root when nothing is.
+				item.isEnabled = rootNode != nil
 			default:
 				item.isEnabled = node != nil
 			}

@@ -44,6 +44,37 @@ a multi-row selection survives a reload without anything new being added to it.
 - **What the status bar and the editor's "locate" do** when several rows are
   selected — probably nothing, but say so rather than leaving it.
 
+## Decided
+
+**⌘A takes everything visible**, which needed no code: `selectAll:` on an
+outline view selects its rows, and a row is a thing the tree is showing. An
+unexpanded folder's children are not rows and have not been read off the disk,
+so "visible" and "loaded" are the same set and the shortcut means what a tree
+usually means by it.
+
+**The status bar and "locate" do nothing new.** The status bar is the editor's
+— line, column, language — and never showed what the tree had highlighted, so
+several rows change nothing there. "Locate" replaces the selection with the one
+row the editor is showing, because that is the whole of what it is for: it is
+the way back to where you were, and leaving four other rows selected around it
+would be answering a question nobody asked.
+
+**Opening stays one row**, and that covers the explicit gestures too — Space
+and ⌘↓ do nothing with several selected, for the same reason a ⇧-click does:
+four tabs from one keystroke, and the last one to arrive is whichever the tree
+happened to order last. Double-clicking and the menu's "Open" still work,
+because a click names a row.
+
+**Right-clicking inside the selection means all of it**; right-clicking a row
+outside it means that row alone, and the selection is left where it was. The
+pointer is the more recent statement of what is meant.
+
+One thing was reasoned about rather than exercised: **dragging**.
+`pasteboardWriterForItem` is asked per item and returns the URL, and an
+`NSTableView` drags the whole selection when the drag begins on a selected row,
+so several rows should write several URLs — but the harness cannot start a drag,
+so nobody has watched it happen.
+
 ---
 
 Its number is where it sits in the queue, not what it is worth doing next.
