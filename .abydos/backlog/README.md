@@ -33,9 +33,16 @@ this backlog was written down, seeded once from:
 
 **Not a list of finished tasks, and not regenerated.** It is the commit log in
 the backlog's shape, so an entry there is a change that was made rather than a
-task that was closed — several of them are commits that only *filed* a bug, and
-read exactly like the bug being fixed. That is the trap this folder's name
-exists to avoid.
+task that was closed. That is the trap this folder's name exists to avoid, and
+renaming it was only half of getting out of it: six entries were commits that
+did nothing but write in this folder — filing a bug, renumbering the list — and
+they read exactly like the bugs they filed being fixed. They are gone from
+here, which is why the numbering has holes in it. `git log` still has them, and
+that is the right place for a note about the notes.
+
+Nothing is added here again. It stops at the commit the backlog was written
+down in; what is finished after that moves into `completed` as a file with the
+number it was given.
 
 ## numbers
 
