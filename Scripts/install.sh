@@ -33,28 +33,20 @@ DESTINATION="$DESTINATION_DIR/Abydos.app"
 
 [ -d "$SOURCE" ] || { echo "install: $SOURCE does not exist — run make build first" >&2; exit 1; }
 
-# Nothing is installed over a copy that is running.
+# A copy that is running is left able to keep running.
 #
-# The swap below leaves a running app's own bundle intact, and it still is not
-# enough: the old bundle is deleted afterwards, and an application that has not
-# yet loaded every nib, framework and resource it is going to load needs the
-# files it started with to still be there. There is no way to know when it is
-# finished with them, and a program that quietly loses half its bundle fails
-# later and somewhere else — which is what "it crashed during make install and
-# there is no crash report" looks like.
+# The swap below is a rename, so the old bundle is unlinked rather than
+# overwritten and whatever is running keeps every file it started with. That is
+# the whole of what is needed. This used to refuse outright unless FORCE=1 was
+# set, on the theory that installing was what kept killing the app — it was not.
+# The app was dying of SIGPIPE, and refusing to install was a toll charged for a
+# crossing that was never the problem.
 #
-# Quitting first is needed to get the new build in any case, so this asks for it
-# rather than working around it. FORCE=1 for somebody who means it.
+# What is still true, and worth saying once: the running copy is running the old
+# build until it is quit.
 running() {
 	pgrep -f "^$DESTINATION/Contents/MacOS/Abydos" >/dev/null 2>&1
 }
-
-if running && [ "${FORCE:-0}" != "1" ]; then
-	echo "install: Abydos is running from $DESTINATION" >&2
-	echo "  Quit it first — the running copy keeps the old build until it is quit anyway." >&2
-	echo "  Or: make install FORCE=1" >&2
-	exit 1
-fi
 
 # Staged beside the destination rather than inside its directory, and on the
 # same filesystem so the swap is a rename.
