@@ -179,6 +179,39 @@ struct ToolChoiceTests {
 		)
 	}
 
+	/// The language servers are offered, and none of them claims a known-good
+	/// image.
+	///
+	/// The point of that list is that somebody has run the thing. Listing one
+	/// nobody has tried would be the failure the list exists to prevent, so
+	/// they offer the installed copy and a custom image and nothing else.
+	@Test func languageServersAreOfferedWithoutPretendingAboutImages() throws {
+		for key in ["gopls", "rust-analyzer", "pyright", "typescript-language-server",
+		            "clangd", "jdtls"] {
+			let tool = try #require(ToolImageCatalogue.tool(forKey: key), "\(key) is not offered")
+			#expect(tool.choices.isEmpty, "\(key) claims an image nobody has run")
+
+			let options = ToolImageCatalogue.options(for: tool)
+			#expect(options.first?.value == ToolImageCatalogue.useInstalled)
+			#expect(options.last?.value == ToolImageCatalogue.custom)
+			#expect(options.count == 2)
+		}
+	}
+
+	/// And each says the same three things an image has to do, since getting
+	/// any of them wrong is a server that starts and never answers.
+	@Test func everyLanguageServerSaysWhatItsImageMustDo() throws {
+		for key in ["gopls", "rust-analyzer", "clangd"] {
+			let tool = try #require(ToolImageCatalogue.tool(forKey: key))
+			#expect(tool.requirement.contains("entry point"))
+			#expect(tool.requirement.contains("standard input and output"))
+			#expect(tool.requirement.contains("/workspace"))
+			// The one that is easy to miss: a wrapper printing anything before
+			// the protocol starts breaks the first header.
+			#expect(tool.requirement.contains("banner"))
+		}
+	}
+
 	/// What a custom image has to do is written down, not left to be discovered
 	/// through an empty pane.
 	@Test func saysWhatACustomImageMustProvide() throws {

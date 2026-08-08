@@ -83,7 +83,65 @@ public enum ToolImageCatalogue {
 			class, state and component diagrams do; sequence diagrams do not.
 			"""
 		),
+		// The language servers, which are the tools somebody would otherwise
+		// have to install by hand — a Go toolchain to get gopls, a Rust one for
+		// rust-analyzer, a JDK for jdtls. None lists a known-good image: the
+		// point of that list is that somebody has run the thing, and nobody
+		// has. What is written down instead is exactly what an image has to do,
+		// which is the same for all of them and short.
+		Tool(
+			key: "gopls",
+			title: "Go — gopls",
+			choices: [],
+			requirement: languageServerRequirement("gopls")
+		),
+		Tool(
+			key: "rust-analyzer",
+			title: "Rust — rust-analyzer",
+			choices: [],
+			requirement: languageServerRequirement("rust-analyzer")
+		),
+		Tool(
+			key: "pyright",
+			title: "Python — pyright",
+			choices: [],
+			requirement: languageServerRequirement("pyright-langserver --stdio")
+		),
+		Tool(
+			key: "typescript-language-server",
+			title: "TypeScript — typescript-language-server",
+			choices: [],
+			requirement: languageServerRequirement("typescript-language-server --stdio")
+		),
+		Tool(
+			key: "clangd",
+			title: "C and C++ — clangd",
+			choices: [],
+			requirement: languageServerRequirement("clangd")
+		),
+		Tool(
+			key: "jdtls",
+			title: "Java — jdtls",
+			choices: [],
+			requirement: languageServerRequirement("jdtls")
+		),
 	]
+
+	/// What every language server image has to do, which is the same for all of
+	/// them: speak the protocol on standard input and output, and see the
+	/// project. Written once because repeating it six times would let the six
+	/// drift apart.
+	private static func languageServerRequirement(_ command: String) -> String {
+		"""
+		The image must run `\(command)` as its entry point, speaking the \
+		language server protocol on standard input and output — not a wrapper \
+		that prints a banner first, since the first thing sent is a header. The \
+		project is mounted at /workspace and the server is started there, so it \
+		has to be able to read it. Anything it needs beyond the project — a \
+		toolchain, a module cache, an index — has to be in the image, because \
+		nothing else on this machine is visible from inside it.
+		"""
+	}
 
 	public static func tool(forKey key: String) -> Tool? {
 		tools.first { $0.key == key }
