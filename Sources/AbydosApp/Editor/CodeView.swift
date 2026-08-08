@@ -936,11 +936,6 @@ final class CodeView: NSView, NSTextInputClient {
 			.font: font,
 			.foregroundColor: Theme.current.editorText,
 			.paragraphStyle: paragraph,
-			// CoreText ligates by default, so this only ever turns it off. One
-			// switch for the app: reading `->` as an arrow here and as two
-			// characters in the terminal beside it is the arrangement nobody
-			// asked for.
-			.ligature: Settings.shared.fontLigatures ? 1 : 0,
 		])
 
 		let length = attributed.length

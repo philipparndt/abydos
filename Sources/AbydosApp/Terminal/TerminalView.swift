@@ -1208,6 +1208,23 @@ final class TerminalView: NSView, NSTextInputClient {
 			runFont = nil
 		}
 
+		// Ligatures, where they are asked for and where they can happen.
+		//
+		// Shaping is the opposite of what the rest of this does — it decides
+		// its own positions, and those drift off a whole-point grid — so the
+		// shaper is asked only *which* characters join, and the result is put
+		// back on the columns. A run with no two ligature-forming marks side by
+		// side cannot join anything, and that is nearly every run.
+		if Settings.shared.fontLigatures,
+		   Ligatures.mayLigate(line.cells[start..<end].lazy.map(\.scalar)),
+		   drawLigated(of: line, from: start, to: end, font: drawFont, baseline: baseline, context: context) {
+			context.restoreGState()
+			if attributes.underline || attributes.strikethrough {
+				drawTextDecoration(from: start, to: end, y: y, colour: foreground, attributes: attributes)
+			}
+			return
+		}
+
 		for cellIndex in start..<end {
 			let cell = line.cells[cellIndex]
 			// The trailing half of a wide glyph carries no character of its own.
@@ -1242,6 +1259,71 @@ final class TerminalView: NSView, NSTextInputClient {
 		if attributes.underline || attributes.strikethrough {
 			drawTextDecoration(from: start, to: end, y: y, colour: foreground, attributes: attributes)
 		}
+	}
+
+	/// Draws a run with its ligatures joined, and says whether it could.
+	///
+	/// The shaper is asked what joins; where each piece goes is decided here.
+	/// A ligature glyph replaces the characters it covers, so it is drawn at
+	/// the column of the first of them — and in a monospaced font its advance
+	/// is exactly that many cells, so the grid is kept without forcing it.
+	///
+	/// Returns false for a run this cannot handle — anything drawn as geometry
+	/// rather than from the font, or a picture's placeholder — leaving the
+	/// per-cell path to do it.
+	private func drawLigated(
+		of line: TerminalLine,
+		from start: Int,
+		to end: Int,
+		font drawFont: NSFont,
+		baseline: CGFloat,
+		context: CGContext
+	) -> Bool {
+		var text = ""
+		// Which cell each UTF-16 offset of `text` came from.
+		var cellOfOffset: [Int] = []
+		for cellIndex in start..<end {
+			let cell = line.cells[cellIndex]
+			if cell.isWideTrailer { continue }
+			if cell.scalar == 0 { return false }
+			if cell.scalar == UnicodePlaceholder.scalar { return false }
+			if PowerlineGlyph.isSeparator(cell.scalar) || BoxDrawing.draws(cell.scalar) { return false }
+			guard let scalar = UnicodeScalar(cell.scalar) else { return false }
+			let piece = cell.combining ?? String(Character(scalar))
+			text += piece
+			cellOfOffset.append(contentsOf: Array(repeating: cellIndex, count: piece.utf16.count))
+		}
+		guard !text.isEmpty else { return false }
+
+		let attributed = NSAttributedString(string: text, attributes: [.font: drawFont])
+		let ctLine = CTLineCreateWithAttributedString(attributed)
+		guard let runs = CTLineGetGlyphRuns(ctLine) as? [CTRun] else { return false }
+
+		for run in runs {
+			let count = CTRunGetGlyphCount(run)
+			guard count > 0 else { continue }
+			var glyphs = [CGGlyph](repeating: 0, count: count)
+			var indices = [CFIndex](repeating: 0, count: count)
+			CTRunGetGlyphs(run, CFRange(location: 0, length: count), &glyphs)
+			CTRunGetStringIndices(run, CFRange(location: 0, length: count), &indices)
+
+			let attributes = CTRunGetAttributes(run) as NSDictionary
+			guard let runFont = attributes[kCTFontAttributeName as String] as! CTFont? else { continue }
+
+			var positions = [CGPoint]()
+			positions.reserveCapacity(count)
+			for index in 0..<count {
+				let offset = Int(indices[index])
+				guard offset >= 0, offset < cellOfOffset.count else { return false }
+				let column = cellOfOffset[offset]
+				positions.append(CGPoint(
+					x: (Self.horizontalInset + CGFloat(column) * cellWidth).rounded(),
+					y: -baseline
+				))
+			}
+			CTFontDrawGlyphs(runFont, glyphs, positions, count, context)
+		}
+		return true
 	}
 
 	/// Underlines and strikethroughs, which the glyphs no longer carry with them.

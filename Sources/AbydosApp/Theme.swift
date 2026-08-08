@@ -177,7 +177,7 @@ struct Theme {
 		let descriptor = base.fontDescriptor.addingAttributes([
 			.cascadeList: powerlineFallbackDescriptors,
 		])
-		return NSFont(descriptor: descriptor, size: size) ?? base
+		return (NSFont(descriptor: descriptor, size: size) ?? base).honouringLigatureSetting()
 	}
 
 	/// Installed fonts known to carry powerline/Nerd glyphs, most preferred first.
@@ -202,8 +202,9 @@ struct Theme {
 		// arithmetically instead of measuring, which is a large part of why
 		// scrolling stays cheap. The bundled font is fixed-advance and gives the
 		// editor the same typeface as the terminal.
-		NSFont(name: FontRegistry.bundledMonospaceFamily, size: fontSize)
-			?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+		(NSFont(name: FontRegistry.bundledMonospaceFamily, size: fontSize)
+			?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular))
+			.honouringLigatureSetting()
 	}
 
 	/// The one theme, and ours rather than borrowed.

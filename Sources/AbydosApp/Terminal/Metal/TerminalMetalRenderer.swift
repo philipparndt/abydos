@@ -132,7 +132,72 @@ final class TerminalMetalRenderer {
 		self.scale = scale
 	}
 
-	func clearGlyphs() { atlas.removeAll() }
+	private var shapedRuns = ShapedRuns()
+
+	func clearGlyphs() {
+		atlas.removeAll()
+		shapedRuns.removeAll()
+	}
+
+	/// Which cells of a line draw a shaped glyph instead of their own, and
+	/// which draw nothing because a ligature covers them.
+	///
+	/// A present value of `.some(piece)` is a glyph to draw at that cell; a
+	/// present `.some(nil)` is a cell a ligature has swallowed. A cell missing
+	/// from the map is untouched and drawn the usual way, which is every cell
+	/// when ligatures are off or nothing on the line can join.
+	private func ligatures(
+		in line: TerminalLine, faces: TerminalFaces
+	) -> [Int: ShapedRuns.Piece?] {
+		guard Settings.shared.fontLigatures else { return [:] }
+
+		var map: [Int: ShapedRuns.Piece?] = [:]
+		var start = 0
+		let cells = line.cells
+		while start < cells.count {
+			var end = start + 1
+			while end < cells.count, cells[end].attributes == cells[start].attributes { end += 1 }
+			defer { start = end }
+			guard Ligatures.mayLigate(cells[start..<end].lazy.map(\.scalar)) else { continue }
+
+			// The run's characters, one per cell, and where each came from.
+			var text = ""
+			var cellOfOffset: [Int] = []
+			var usable = true
+			for column in start..<end {
+				let cell = cells[column]
+				if cell.isWideTrailer { continue }
+				guard cell.scalar != 0, cell.scalar != UnicodePlaceholder.scalar,
+				      !PowerlineGlyph.isSeparator(cell.scalar), !BoxDrawing.draws(cell.scalar),
+				      !GlyphAtlas.tiles(cell.scalar),
+				      let scalar = UnicodeScalar(cell.scalar)
+				else { usable = false; break }
+				let piece = cell.combining ?? String(Character(scalar))
+				text += piece
+				cellOfOffset.append(contentsOf: Array(repeating: column, count: piece.utf16.count))
+			}
+			guard usable, !text.isEmpty else { continue }
+
+			let faceIndex = TerminalFaces.index(
+				bold: cells[start].attributes.bold, italic: cells[start].attributes.italic
+			)
+			let face = faces.face(
+				bold: cells[start].attributes.bold, italic: cells[start].attributes.italic
+			)
+			guard let pieces = shapedRuns.pieces(
+				for: text, cellOfOffset: cellOfOffset, font: face, faceIndex: faceIndex
+			) else { continue }
+			// One glyph per character, still: these fonts substitute shapes
+			// rather than merging cells, which is what keeps the grid. So the
+			// count is no guide to whether anything joined, and the shaped
+			// glyphs are simply used — identical to the per-cell ones wherever
+			// nothing did.
+			for column in start..<end { map[column] = .some(nil) }
+			for piece in pieces { map[piece.cellOffset] = piece }
+		}
+		return map
+	}
+
 
 	// MARK: - Building
 
@@ -219,6 +284,12 @@ final class TerminalMetalRenderer {
 			// Just below the baseline, where an underline belongs.
 			let underlineOffset = min(rowHeight - 1, Float(faces.baselineFromTop) + 2)
 
+			// What the shaper made of this row's runs, if ligatures are wanted
+			// and any run could have one. Empty otherwise, and the per-cell path
+			// below is unchanged — which is also where anything this cannot
+			// handle ends up, since every step of it can decline.
+			let ligated = ligatures(in: line, faces: faces)
+
 			for (column, cell) in line.cells.enumerated() {
 				if cell.isWideTrailer { continue }
 
@@ -285,7 +356,14 @@ final class TerminalMetalRenderer {
 						bold: cell.attributes.bold, italic: cell.attributes.italic
 					)
 					let face = faces.face(bold: cell.attributes.bold, italic: cell.attributes.italic)
-					if let entry = atlas.entry(for: cell.scalar, font: face, faceIndex: faceIndex) {
+					// A cell inside a ligature draws nothing of its own: the
+					// glyph standing for the whole group is drawn at the first
+					// of them.
+					if let shaped = ligated[column], shaped == nil { continue }
+					let entry = ligated[column].flatMap { $0 }.flatMap {
+						atlas.entry(forGlyph: $0.glyph, in: $0.font, faceIndex: faceIndex)
+					} ?? atlas.entry(for: cell.scalar, font: face, faceIndex: faceIndex)
+					if let entry {
 						// A glyph hangs off the baseline, which sits a fixed
 						// distance down the cell; a separator is the cell.
 						// A separator or a tiling character is the cell; anything

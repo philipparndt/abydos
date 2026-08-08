@@ -106,6 +106,15 @@ final class GlyphAtlas {
 		let face: UInt8
 	}
 
+	/// A shaped glyph is identified by its number in the face, not by a
+	/// character: a ligature stands for several and belongs to none of them.
+	private struct GlyphKey: Hashable {
+		let glyph: CGGlyph
+		let face: UInt8
+	}
+
+	private var glyphEntries: [GlyphKey: AtlasEntry?] = [:]
+
 	init?(device: MTLDevice, scale: CGFloat, side: Int = 2048) {
 		// The colour sheet is smaller: a terminal shows a handful of emoji, and
 		// each costs four bytes a pixel rather than one.
@@ -121,6 +130,7 @@ final class GlyphAtlas {
 
 	func removeAll() {
 		entries.removeAll(keepingCapacity: true)
+		glyphEntries.removeAll(keepingCapacity: true)
 		coverage.reset()
 		colour.reset()
 	}
@@ -233,7 +243,21 @@ final class GlyphAtlas {
 			}
 		}
 
-		var glyph = glyphs[0]
+		return rasterise(glyph: glyphs[0], in: ctFont)
+	}
+
+	/// A glyph the shaper already chose, which is how a ligature arrives: it
+	/// belongs to no single character and cannot be looked up by one.
+	func entry(forGlyph glyph: CGGlyph, in ctFont: CTFont, faceIndex: UInt8) -> AtlasEntry? {
+		let key = GlyphKey(glyph: glyph, face: faceIndex)
+		if let known = glyphEntries[key] { return known }
+		let made = rasterise(glyph: glyph, in: ctFont)
+		glyphEntries[key] = made
+		return made
+	}
+
+	private func rasterise(glyph incoming: CGGlyph, in ctFont: CTFont) -> AtlasEntry? {
+		var glyph = incoming
 		var bounds = CGRect.zero
 		CTFontGetBoundingRectsForGlyphs(ctFont, .horizontal, &glyph, &bounds, 1)
 		guard bounds.width > 0, bounds.height > 0 else { return nil }
