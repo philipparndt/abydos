@@ -23,6 +23,10 @@ public enum TmuxMirror {
 	/// One window of a session.
 	public struct Window: Equatable, Sendable, Identifiable {
 		public let index: Int
+		/// tmux's own name for it — `@7` — which survives a window being
+		/// renamed, renumbered or moved. An index does not, so an index is the
+		/// wrong thing to remember somebody's window by.
+		public let windowID: String
 		public let name: String
 		public let isActive: Bool
 		/// What is running in its active pane, for a tab that has no name of
@@ -44,6 +48,7 @@ public enum TmuxMirror {
 
 		public init(
 			index: Int,
+			windowID: String = "",
 			name: String,
 			isActive: Bool,
 			command: String = "",
@@ -51,6 +56,7 @@ public enum TmuxMirror {
 			silentFor: TimeInterval = 0
 		) {
 			self.index = index
+			self.windowID = windowID
 			self.name = name
 			self.isActive = isActive
 			self.command = command
@@ -219,7 +225,7 @@ public enum TmuxMirror {
 		// Semicolons, not tabs: tmux replaces a tab in a format with an
 		// underscore, and a name with a semicolon in it is rarer than one with
 		// a space. The name comes last so what is left of the line is all of it.
-		let format = "#{window_index};#{?window_active,1,0};#{pane_current_command}"
+		let format = "#{window_id};#{window_index};#{?window_active,1,0};#{pane_current_command}"
 			+ ";#{@ai_status};#{window_activity};#{window_name}"
 		let result = await run(tmux, ["list-windows", "-t", "=\(session)", "-F", format])
 		guard let result, result.exitCode == 0 else { return [] }
@@ -240,11 +246,24 @@ public enum TmuxMirror {
 			// name — which can hold anything — has to stay whole. tmux prints
 			// an empty field for an option that is not set, so a window with
 			// no Claude session in it still arrives as six.
-			let fields = line.split(separator: ";", maxSplits: 5, omittingEmptySubsequences: false)
+			// tmux's own window id comes first, and is taken off before the
+			// rest is split — not by asking for one more field. A window name
+			// can hold a semicolon, so the number of fields is not a thing to
+			// count on; the id is recognisable instead, since it always begins
+			// with `@`. A line without one is the older shape, which the
+			// fixtures are written in.
+			var rest = line[...]
+			var windowID = ""
+			if rest.hasPrefix("@"), let separator = rest.firstIndex(of: ";") {
+				windowID = String(rest[..<separator])
+				rest = rest[rest.index(after: separator)...]
+			}
+			let fields = rest.split(separator: ";", maxSplits: 5, omittingEmptySubsequences: false)
 			guard fields.count == 6, let index = Int(fields[0]) else { continue }
 			let activity = Double(fields[4]) ?? 0
 			windows.append(Window(
 				index: index,
+				windowID: windowID,
 				name: String(fields[5]),
 				isActive: fields[1] == "1",
 				command: String(fields[2]),
@@ -259,6 +278,23 @@ public enum TmuxMirror {
 
 	public static func select(window index: Int, inSession session: String) async {
 		await command(["select-window", "-t", "\(session):\(index)"])
+	}
+
+	/// Goes back to a window by tmux's own name for it.
+	///
+	/// By id rather than index, because an index is where a window sits and
+	/// somebody's window does not stay there: close the one before it and every
+	/// index after moves down. Coming back to "window 3" would then be coming
+	/// back to whatever slid into the gap.
+	///
+	/// - Returns: whether the window was still there. A no is ordinary — the
+	///   server was restarted, or the window was closed — and means carry on
+	///   with whatever tmux chose.
+	public static func select(windowID: String, inSession session: String) async -> Bool {
+		guard windowID.hasPrefix("@") else { return false }
+		let windows = await windows(inSession: session)
+		guard windows.contains(where: { $0.windowID == windowID }) else { return false }
+		return await succeeds(["select-window", "-t", windowID])
 	}
 
 	/// Makes a window in a session, saying whether it could.

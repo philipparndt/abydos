@@ -96,3 +96,42 @@ struct TmuxWindowCopyTests {
 		#expect(after.shownStatus == .needsInput)
 	}
 }
+
+/// Remembering which window somebody was in.
+struct TmuxWindowIdentityTests {
+	@Test func theWindowIdIsReadWhenItIsThere() throws {
+		let windows = TmuxMirror.parse("@7;2;1;zsh;;0;editing\n@9;3;0;vim;;0;notes")
+		#expect(windows.count == 2)
+		#expect(windows.first?.windowID == "@7")
+		#expect(windows.first?.index == 2)
+		#expect(windows.first?.name == "editing")
+		#expect(windows.last?.windowID == "@9")
+	}
+
+	/// A line without one is the older shape, and still reads.
+	@Test func aLineWithoutAnIdStillReads() {
+		let windows = TmuxMirror.parse("2;1;zsh;;0;editing")
+		#expect(windows.first?.index == 2)
+		#expect(windows.first?.name == "editing")
+		#expect(windows.first?.windowID == "")
+	}
+
+	/// A name can hold a semicolon, so the id is taken off by recognising it
+	/// rather than by counting fields — which is how the first attempt at this
+	/// dropped every window whose name had one in it.
+	@Test func aNameWithSeparatorsSurvivesEitherShape() {
+		let withID = TmuxMirror.parse("@4;1;1;zsh;;0;one; two; three")
+		#expect(withID.first?.windowID == "@4")
+		#expect(withID.first?.name == "one; two; three")
+
+		let without = TmuxMirror.parse("1;1;zsh;;0;one; two; three")
+		#expect(without.first?.name == "one; two; three")
+	}
+
+	/// And a name that merely starts with an at sign is a name, not an id.
+	@Test func aNameBeginningWithAnAtSignIsNotAnId() {
+		let windows = TmuxMirror.parse("1;1;zsh;;0;@home")
+		#expect(windows.first?.name == "@home")
+		#expect(windows.first?.windowID == "")
+	}
+}
