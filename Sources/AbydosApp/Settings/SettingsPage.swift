@@ -58,6 +58,9 @@ final class SettingsPage: NSView {
 		let sidebar = makeSidebar()
 		scroll = NSScrollView()
 		scroll.hasVerticalScroller = true
+		// Sideways too, for the case below: a pane narrower than the widest
+		// control has to scroll rather than refuse to be that narrow.
+		scroll.hasHorizontalScroller = true
 		scroll.drawsBackground = false
 		scroll.borderType = .noBorder
 
@@ -93,7 +96,23 @@ final class SettingsPage: NSView {
 			scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
 
 			clip.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
-			clip.trailingAnchor.constraint(equalTo: scroll.contentView.trailingAnchor),
+			// At least as wide as the pane, and exactly as wide whenever it
+			// fits — which is every ordinary case, so this looks like nothing
+			// changed. Pinned to *equal* on both sides, the content could never
+			// be narrower than the widest control in it, and that width left the
+			// scroll view, left this page and reached the split it sits in: a
+			// settings tab beside an editor could not be made narrower, and
+			// widening the split first and then coming back to settings snapped
+			// it shut again. A page decides how tall it is; the split decides
+			// how wide.
+			clip.trailingAnchor.constraint(
+				greaterThanOrEqualTo: scroll.contentView.trailingAnchor
+			),
+			{
+				let fits = clip.trailingAnchor.constraint(equalTo: scroll.contentView.trailingAnchor)
+				fits.priority = .defaultLow
+				return fits
+			}(),
 			clip.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
 
 			form.leadingAnchor.constraint(equalTo: clip.leadingAnchor),
