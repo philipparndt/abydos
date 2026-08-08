@@ -377,14 +377,18 @@ final class TerminalMetalRenderer {
 					// painted twice. Only here, because the editor hands the
 					// whole line to CoreText, which draws an empty glyph as
 					// nothing without being told.
+					//
+					// Nil either way is a cell with nothing to draw — and it
+					// falls through rather than skipping the cell, because the
+					// cell still has a background. Skipping it left a black
+					// column down every `///` in a diff: three cells, two of
+					// them carriers, and the green they were sitting on never
+					// painted.
 					let entry: AtlasEntry?
 					if let covered = ligated[column] {
-						guard let piece = covered,
-						      let shaped = atlas.entry(
-								forGlyph: piece.glyph, in: piece.font, faceIndex: faceIndex
-						      )
-						else { continue }
-						entry = shaped
+						entry = covered.flatMap {
+							atlas.entry(forGlyph: $0.glyph, in: $0.font, faceIndex: faceIndex)
+						}
 					} else {
 						entry = atlas.entry(for: cell.scalar, font: face, faceIndex: faceIndex)
 					}
