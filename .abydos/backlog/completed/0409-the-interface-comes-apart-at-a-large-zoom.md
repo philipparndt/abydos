@@ -22,21 +22,31 @@ chosen. Those were tuned at one size and are being asked to hold at another.
 
 Where to look, roughly in the order the screenshot complains:
 
-- **The guides.** `indentationPerLevel` is `scaled(14)`, so the columns move,
-  but whatever draws the guide inside a row is drawing at its own idea of a
-  dash length. Blue is not a palette colour anywhere near the navigator, which
-  suggests these are not ours at all — an `NSOutlineView` drawing its own
-  indentation marks once the row height is far from what it expects would look
-  exactly like this.
+- **The guides are not guides.** The theory here was `NSOutlineView` drawing
+  its own indentation marks, and it was wrong: the navigator draws no guides at
+  all, and neither does AppKit. Photographed at 2× against 1×, the blue dashes
+  are the *markdown icon*. `text.alignleft` is four lines of text at 13pt and
+  four thick bars at 26, and a folder of `.md` files — the backlog, which is
+  what was on screen — is a column of those running down the side of the tree.
+  Blue is not a palette colour because it is not from the palette: `FileIcon`
+  carries its own `0x4C7EE0`. So this bullet and the one below are the same
+  fault, and the weight fixes both.
 - **The truncation is fixed.** It was neither the font nor the padding: an
   outline column left to itself stays as wide as the widest name it has been
   given, so the cells were narrower than the pane and every measurement against
   them was too. The column follows the view's width now, and names truncate at
   the pane's edge rather than well inside it. The same fault was cutting the
   rename field to a third of the row.
-- **The icons.** `Theme.symbol(_:size:color:weight:)` takes a point size; a
-  symbol asked for at 28pt with a weight chosen for 14 comes out heavy and
-  square-shouldered.
+- **The icons are fixed.** `Theme.symbol(_:size:color:weight:)` derives the
+  weight it draws at from the size it was given: a notch lighter per √2 above
+  16pt, which is the largest anything is asked for at 1×, so nothing at a
+  design size moves and 1× is exactly what it was. `FileIcon` built its own
+  configuration at a fixed `.regular` and now goes through the same call.
+
+What is left of the opening paragraph is the terminal clipped mid-line, which
+is not in the list below and was not fixed here: at 2× a full terminal shows a
+part-row against the top of the viewport, because the height is not a whole
+number of rows. Its own thing.
 
 **Worth deciding first:** whether 2× is meant to be the same interface twice
 the size, or a different interface for the same person at a distance. The

@@ -149,11 +149,42 @@ struct Theme {
 	/// image — AppKit only applies template tinting when a control draws it, so
 	/// hand-drawn symbols come out black and vanish against a dark background.
 	/// Baking the colour into the symbol configuration is what actually works.
+	///
+	/// The weight asked for is the weight at a design size; what is actually
+	/// drawn comes from `opticalWeight(_:at:)`, since the size here has usually
+	/// been through the zoom already.
 	static func symbol(_ name: String, size: CGFloat, color: NSColor, weight: NSFont.Weight = .regular) -> NSImage? {
 		guard let base = NSImage(systemSymbolName: name, accessibilityDescription: nil) else { return nil }
-		let config = NSImage.SymbolConfiguration(pointSize: size, weight: weight)
+		let config = NSImage.SymbolConfiguration(pointSize: size, weight: opticalWeight(weight, at: size))
 			.applying(.init(paletteColors: [color]))
 		return base.withSymbolConfiguration(config) ?? base
+	}
+
+	/// The largest point size any symbol in this interface is asked for at 1×.
+	private static let symbolDesignSize: CGFloat = 16
+
+	/// The weight a symbol is drawn at, given the size it came out at.
+	///
+	/// A weight is chosen against a size — `.regular` is what looks unremarkable
+	/// at 13pt — and SF Symbols keeps the stroke proportional to the point size.
+	/// So the zoom multiplies the ink along with everything else, and past about
+	/// twenty points the glyphs stop reading as drawings of things and start
+	/// reading as shapes: heavy, square-shouldered, the corners gone. The
+	/// markdown icon is the one that gives it away. `text.alignleft` is four
+	/// lines of text at 13pt and four thick bars at 26, and a folder of `.md`
+	/// files at 2× is a column of those down the side of the tree — which is
+	/// what was reported as the tree drawing blue dashes instead of guides.
+	///
+	/// One notch lighter per √2 the size grows past the largest anything is
+	/// asked for at 1×, so nothing at a design size moves at all and the whole
+	/// interface at 1× is exactly what it was.
+	static func opticalWeight(_ weight: NSFont.Weight, at size: CGFloat) -> NSFont.Weight {
+		let ladder: [NSFont.Weight] = [
+			.ultraLight, .thin, .light, .regular, .medium, .semibold, .bold, .heavy, .black,
+		]
+		guard size > symbolDesignSize, let index = ladder.firstIndex(of: weight) else { return weight }
+		let steps = Int((log2(size / symbolDesignSize) * 2).rounded(.down))
+		return ladder[max(0, index - steps)]
 	}
 
 	/// Font for the terminal, with a fallback chain for powerline glyphs.
