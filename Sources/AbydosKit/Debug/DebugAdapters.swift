@@ -148,8 +148,7 @@ public enum DebugAdapters {
 		process.standardError = Pipe()
 
 		guard (try? process.run()) != nil else { return nil }
-		let data = output.fileHandleForReading.readDataToEndOfFile()
-		process.waitUntilExit()
+		let data = ProcessPipes.drain(process, out: output)
 		guard process.terminationStatus == 0 else { return nil }
 
 		let path = String(data: data, encoding: .utf8)?

@@ -337,8 +337,7 @@ public enum TmuxMirror {
 					continuation.resume(returning: nil)
 					return
 				}
-				let data = pipe.fileHandleForReading.readDataToEndOfFile()
-				process.waitUntilExit()
+				let data = ProcessPipes.drain(process, out: pipe)
 				continuation.resume(returning: (
 					String(decoding: data, as: UTF8.self), process.terminationStatus
 				))

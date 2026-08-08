@@ -103,8 +103,7 @@ public enum TerminalDirectory {
 		process.standardError = FileHandle.nullDevice
 
 		do { try process.run() } catch { return nil }
-		let data = pipe.fileHandleForReading.readDataToEndOfFile()
-		process.waitUntilExit()
+		let data = ProcessPipes.drain(process, out: pipe)
 		guard process.terminationStatus == 0 else { return nil }
 		return String(decoding: data, as: UTF8.self)
 	}

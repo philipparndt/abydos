@@ -162,8 +162,7 @@ public final class XcodeDestinations {
 					return
 				}
 
-				let data = out.fileHandleForReading.readDataToEndOfFile()
-				process.waitUntilExit()
+				let data = ProcessPipes.drain(process, out: out)
 				continuation.resume(
 					returning: XcodeDestination.parse(String(decoding: data, as: UTF8.self))
 				)

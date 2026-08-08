@@ -90,6 +90,30 @@ public enum ProcessPipes {
 		return (output.data, errors.data)
 	}
 
+	/// For a program whose errors go somewhere else — `/dev/null`, or the same
+	/// pipe as its output — where there is only one thing to read.
+	///
+	/// Still waits for the program rather than for end of file, which is the
+	/// point: one pipe is no protection from a stray process holding it open.
+	public static func drain(_ process: Process, out: Pipe) -> Data {
+		let group = DispatchGroup()
+		let output = Box()
+		DispatchQueue.global(qos: .userInitiated).async(group: group) {
+			output.data = out.fileHandleForReading.readDataToEndOfFile()
+		}
+		process.waitUntilExit()
+		let drained = DispatchSemaphore(value: 0)
+		DispatchQueue.global(qos: .userInitiated).async {
+			group.wait()
+			drained.signal()
+		}
+		if drained.wait(timeout: .now() + .seconds(2)) == .timedOut {
+			try? out.fileHandleForReading.close()
+			_ = drained.wait(timeout: .now() + .seconds(2))
+		}
+		return output.data
+	}
+
 	/// The same, decoded, which is what every caller here wants.
 	public static func drainText(
 		_ process: Process,
