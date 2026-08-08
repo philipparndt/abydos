@@ -53,13 +53,7 @@ public struct ScratchFiles {
 	}
 
 	/// `$XDG_CONFIG_HOME`, or `~/.config` when it is not set.
-	public static var configurationDirectory: URL {
-		if let xdg = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"], !xdg.isEmpty {
-			return URL(fileURLWithPath: xdg, isDirectory: true)
-		}
-		return FileManager.default.homeDirectoryForCurrentUser
-			.appendingPathComponent(".config", isDirectory: true)
-	}
+	public static var configurationDirectory: URL { UserConfiguration.directory }
 
 	/// Where they used to live, before the move to `~/.config`.
 	public static var legacyRoot: URL {
