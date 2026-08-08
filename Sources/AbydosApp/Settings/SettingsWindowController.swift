@@ -10,24 +10,20 @@ final class SettingsWindowController: NSWindowController {
 	static let shared = SettingsWindowController()
 
 	private init() {
-		let tabController = NSTabViewController()
-		tabController.tabStyle = .toolbar
+		// The same page the editor shows, in a window of its own.
+		//
+		// It used to be an `NSTabViewController` in toolbar style, which is the
+		// standard preferences shape and cannot show a page under a page at all
+		// — so the moment Tools grew children there were two navigations over
+		// one list, which is the drift the shared section list exists to
+		// prevent. One page, one order, one place to add a setting.
+		let controller = NSViewController()
+		controller.view = SettingsPage()
 
-		let panes = SettingsSections.all.map {
-			SettingsPaneController(title: $0.title, symbol: $0.symbol, rows: $0.rows())
-		}
-
-		for pane in panes {
-			let item = NSTabViewItem(viewController: pane)
-			item.label = pane.paneTitle
-			item.image = NSImage(systemSymbolName: pane.paneSymbol, accessibilityDescription: pane.paneTitle)
-			tabController.addTabViewItem(item)
-		}
-
-		let window = NSWindow(contentViewController: tabController)
+		let window = NSWindow(contentViewController: controller)
 		window.title = "Settings"
-		window.styleMask = [.titled, .closable]
-		window.setContentSize(NSSize(width: 520, height: 300))
+		window.styleMask = [.titled, .closable, .resizable]
+		window.setContentSize(NSSize(width: 720, height: 520))
 		window.center()
 		window.isReleasedWhenClosed = false
 
@@ -487,63 +483,64 @@ final class SettingsPaneController: NSViewController {
 	/// pairs: a settings page is for the things somebody actually sets, and a
 	/// free-form map of tool names invites typing one that means nothing.
 	static func toolRows() -> [Row] {
-		var rows: [Row] = [
+		[
 			.choice(
 				title: "Container runtime",
 				help: "Where a tool that comes from an image is run. Apple's needs no daemon; "
 					+ "docker needs its own running. Saying which means being told when it is "
-					+ "missing, rather than quietly getting the other one.",
+					+ "missing, rather than quietly getting the other one. Each tool below "
+					+ "chooses whether it comes from an image at all.",
 				options: ContainerRuntime.Preference.allCases.map { ($0.title, $0.rawValue) },
 				get: { Settings.shared.containerRuntime },
 				set: { Settings.shared.containerRuntime = $0 }
 			),
 		]
+	}
 
-		// One card per tool: the image to use, and the field for naming one
-		// that is not on the list. The requirement is spelled out beside it,
-		// because an image that does not meet it fails as an empty pane and
-		// nothing on screen would say why.
-		for tool in ToolImageCatalogue.tools {
-			rows.append(.group(title: tool.title, help: nil, rows: [
-				.choice(
-					title: "\(tool.title) from",
-					help: "Installed on this machine is used unless an image is chosen. "
-						+ "A project naming its own in .abydos/tools.json overrides both.",
-					options: ToolImageCatalogue.options(for: tool),
-					get: {
-						ToolImageCatalogue.selection(
-							for: Settings.shared.toolImages[tool.key] ?? "", tool: tool
-						)
-					},
-					set: { value in
-						var images = Settings.shared.toolImages
-						switch value {
-						case ToolImageCatalogue.useInstalled:
-							images[tool.key] = nil
-						case ToolImageCatalogue.custom:
-							// Keep whatever is in the field: choosing "custom"
-							// is saying "the one I typed", not clearing it.
-							if images[tool.key] == nil { images[tool.key] = "" }
-						default:
-							images[tool.key] = value
-						}
-						Settings.shared.toolImages = images
+	/// One tool's page: where it comes from, and what an image has to do.
+	///
+	/// The requirement is spelled out beside the field, because an image that
+	/// does not meet it fails as an empty pane and nothing on screen would say
+	/// why.
+	static func rows(for tool: ToolImageCatalogue.Tool) -> [Row] {
+		[
+			.choice(
+				title: "\(tool.title) from",
+				help: "Installed on this machine is used unless an image is chosen. "
+					+ "A project naming its own in .abydos/tools.json overrides both.",
+				options: ToolImageCatalogue.options(for: tool),
+				get: {
+					ToolImageCatalogue.selection(
+						for: Settings.shared.toolImages[tool.key] ?? "", tool: tool
+					)
+				},
+				set: { value in
+					var images = Settings.shared.toolImages
+					switch value {
+					case ToolImageCatalogue.useInstalled:
+						images[tool.key] = nil
+					case ToolImageCatalogue.custom:
+						// Keep whatever is in the field: choosing "custom" is
+						// saying "the one I typed", not clearing it.
+						if images[tool.key] == nil { images[tool.key] = "" }
+					default:
+						images[tool.key] = value
 					}
-				),
-				.text(
-					title: "Custom image",
-					help: tool.requirement,
-					get: { Settings.shared.toolImages[tool.key] ?? "" },
-					set: { image in
-						var images = Settings.shared.toolImages
-						let wanted = image.trimmingCharacters(in: .whitespaces)
-						images[tool.key] = wanted.isEmpty ? nil : wanted
-						Settings.shared.toolImages = images
-					}
-				),
-			]))
-		}
-		return rows
+					Settings.shared.toolImages = images
+				}
+			),
+			.text(
+				title: "Custom image",
+				help: tool.requirement,
+				get: { Settings.shared.toolImages[tool.key] ?? "" },
+				set: { image in
+					var images = Settings.shared.toolImages
+					let wanted = image.trimmingCharacters(in: .whitespaces)
+					images[tool.key] = wanted.isEmpty ? nil : wanted
+					Settings.shared.toolImages = images
+				}
+			),
+		]
 	}
 
 	static func agentRows() -> [Row] {
@@ -652,6 +649,27 @@ enum SettingsSections {
 		let title: String
 		let symbol: String
 		let rows: () -> [SettingsPaneController.Row]
+		/// Pages that belong under this one. Two levels is all this needs and
+		/// all it allows: a page with a page under it is a place to look, and a
+		/// tree deeper than that is a place to get lost in.
+		let children: [Section]
+
+		init(
+			title: String,
+			symbol: String,
+			rows: @escaping () -> [SettingsPaneController.Row],
+			children: [Section] = []
+		) {
+			self.title = title
+			self.symbol = symbol
+			self.rows = rows
+			self.children = children
+		}
+	}
+
+	/// Every page in the order they are shown, each with how deep it sits.
+	static var flattened: [(section: Section, depth: Int)] {
+		all.flatMap { [($0, 0)] + $0.children.map { child in (child, 1) } }
 	}
 
 	static let all: [Section] = [
@@ -665,6 +683,21 @@ enum SettingsSections {
 		Section(title: "Saving", symbol: "square.and.arrow.down", rows: SettingsPaneController.savingRows),
 		Section(title: "Navigator", symbol: "folder", rows: SettingsPaneController.navigatorRows),
 		Section(title: "Agent", symbol: "sparkles", rows: SettingsPaneController.agentRows),
-		Section(title: "Tools", symbol: "shippingbox", rows: SettingsPaneController.toolRows),
+		Section(
+			title: "Tools",
+			symbol: "shippingbox",
+			rows: SettingsPaneController.toolRows,
+			// One page per tool rather than one page of every tool. The list
+			// only grows — six language servers, a renderer, and whatever comes
+			// next — and a page somebody has to scroll past six things to reach
+			// the seventh is a page they stop reading.
+			children: ToolImageCatalogue.tools.map { tool in
+				Section(
+					title: tool.title,
+					symbol: "shippingbox",
+					rows: { SettingsPaneController.rows(for: tool) }
+				)
+			}
+		),
 	]
 }

@@ -14,7 +14,12 @@ import AbydosKit
 /// uses, so the two cannot drift apart.
 @MainActor
 final class SettingsPage: NSView {
-	private var sections: [SettingsSections.Section] = SettingsSections.all
+	/// Every page, parents and their children, in the order they are listed.
+	///
+	/// Flattened rather than an outline view: two levels, nothing to collapse,
+	/// and a list somebody can see all of beats a tree they have to open. The
+	/// depth is what the row draws itself with.
+	private var sections = SettingsSections.flattened
 	private var selected = 0
 	/// Controls that have to be re-read when something changes them from
 	/// outside — Restore Defaults, or the other window.
@@ -41,7 +46,7 @@ final class SettingsPage: NSView {
 	/// Shows a section by name, for the capture harness.
 	func show(named name: String) {
 		guard let index = sections.firstIndex(where: {
-			$0.title.lowercased() == name.lowercased()
+			$0.section.title.lowercased() == name.lowercased()
 		}) else { return }
 		list.selectRowIndexes([index], byExtendingSelection: false)
 		show(section: index)
@@ -88,7 +93,11 @@ final class SettingsPage: NSView {
 			sidebar.leadingAnchor.constraint(equalTo: leadingAnchor),
 			sidebar.topAnchor.constraint(equalTo: topAnchor),
 			sidebar.bottomAnchor.constraint(equalTo: bottomAnchor),
-			sidebar.widthAnchor.constraint(equalToConstant: Theme.current.scaled(190)),
+			// Wide enough for a child's name at its own indentation: "Rust —
+			// rust-analyzer" under "Tools" is the longest thing this list has to
+			// hold, and a sidebar that truncates the names is a list you have to
+			// click through to read.
+			sidebar.widthAnchor.constraint(equalToConstant: Theme.current.scaled(232)),
 
 			scroll.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor),
 			scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -172,7 +181,7 @@ final class SettingsPage: NSView {
 		refreshHandlers.removeAll()
 		for view in form.arrangedSubviews { view.removeFromSuperview() }
 
-		let section = sections[index]
+		let section = sections[index].section
 		let heading = NSTextField(labelWithString: section.title)
 		heading.font = Theme.current.uiFont(17, weight: .semibold)
 		heading.textColor = Theme.current.sidebarHeaderText
@@ -482,15 +491,22 @@ final class SettingsPage: NSView {
 extension SettingsPage: NSTableViewDataSource, NSTableViewDelegate {
 	func numberOfRows(in tableView: NSTableView) -> Int { sections.count }
 
+	/// A child sits under its parent rather than beside it.
+	private func indent(forRow row: Int) -> CGFloat {
+		Theme.current.scaled(12) + Theme.current.scaled(14) * CGFloat(sections[row].depth)
+	}
+
 	func tableView(_ tableView: NSTableView, viewFor column: NSTableColumn?, row: Int) -> NSView? {
 		let cell = NSTableCellView()
-		let text = NSTextField(labelWithString: sections[row].title)
+		let text = NSTextField(labelWithString: sections[row].section.title)
 		text.font = Theme.current.uiFont(12)
 		text.textColor = Theme.current.sidebarText
 
 		let icon = NSImageView()
 		icon.image = Theme.symbol(
-			sections[row].symbol, size: 11 * Theme.current.scale, color: Theme.current.gitIgnored
+			sections[row].section.symbol,
+			size: 11 * Theme.current.scale,
+			color: Theme.current.gitIgnored
 		)
 
 		for view in [icon, text] as [NSView] {
@@ -498,7 +514,7 @@ extension SettingsPage: NSTableViewDataSource, NSTableViewDelegate {
 			cell.addSubview(view)
 		}
 		NSLayoutConstraint.activate([
-			icon.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: Theme.current.scaled(12)),
+			icon.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: indent(forRow: row)),
 			icon.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
 			icon.widthAnchor.constraint(equalToConstant: Theme.current.scaled(14)),
 			text.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: Theme.current.scaled(7)),

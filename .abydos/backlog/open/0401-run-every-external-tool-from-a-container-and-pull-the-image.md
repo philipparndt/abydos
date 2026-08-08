@@ -35,14 +35,11 @@ a builder, while gopls needs the Go toolchain beside it and so has a base image
 under it. `make tool-image-gopls` builds it; publishing is the next step, and
 then the other five.
 
-*One page per language.* The Tools page is one long list of cards and will only
-get longer — six servers, PlantUML, and whatever comes next. It should become a
-tree: Tools with a child per tool. Both settings surfaces are built from
-`SettingsSections.all`, so the sections need children and the two views need to
-show them — `SettingsPage` uses a table for the sidebar and would become an
-outline; the ⌘, window is an `NSTabViewController` in toolbar style, which
-cannot show a tree at all and would have to become a split view with a source
-list.
+*One page per language — done.* `SettingsSections.Section` carries children,
+Tools has one per tool, and the sidebar indents them. The ⌘, window stopped
+being an `NSTabViewController` — which cannot show a page under a page at all —
+and hosts the same `SettingsPage` the editor does, so there is one navigation
+over one list rather than two.
 
 *Apple's runtime is preferred, and cannot see a docker image.* `discover`
 prefers `container` because it needs no daemon. An image built locally with
