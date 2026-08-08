@@ -349,6 +349,14 @@ final class SettingsPaneController: NSViewController {
 					get: { Settings.shared.terminalFontName },
 					set: { Settings.shared.terminalFontName = $0.trimmingCharacters(in: .whitespaces) }
 				),
+				.toggle(
+					title: "Ligatures",
+					help: "Draws -> and != and =~ as one shape, in the editor and the terminal "
+						+ "both. Needs a font that has them — JetBrains Mono, Fira Code, "
+						+ "Cascadia and Iosevka all do.",
+					get: { Settings.shared.fontLigatures },
+					set: { Settings.shared.fontLigatures = $0 }
+				),
 			]),
 		]
 	}

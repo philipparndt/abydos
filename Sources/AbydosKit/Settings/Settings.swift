@@ -66,6 +66,7 @@ public final class Settings {
 			Key.presentationAppearance: "light",
 			Key.terminalFontName: "",
 			Key.wordWrap: false,
+			Key.fontLigatures: true,
 			Key.terminalGPURendering: false,
 			Key.terminalOptionAsMeta: false,
 			Key.appearance: "system",
@@ -100,6 +101,7 @@ public final class Settings {
 		static let presentationAppearance = "presentationAppearance"
 		static let terminalFontName = "terminalFontName"
 		static let wordWrap = "wordWrap"
+		static let fontLigatures = "fontLigatures"
 		static let terminalGPURendering = "terminalGPURendering"
 		static let terminalOptionAsMeta = "terminalOptionAsMeta"
 		static let toolImages = "toolImages"
@@ -285,6 +287,21 @@ public final class Settings {
 	}
 
 	/// Soft-wrap long lines in the editor.
+	/// Whether `->` and `!=` are drawn as one shape.
+	///
+	/// One switch for the whole app rather than one per pane. A ligature is a
+	/// decision about how code should read, and reading it one way in the editor
+	/// and another in the terminal beside it is the one arrangement nobody
+	/// wants.
+	///
+	/// On by default, which is what the editor has always done. The terminal is
+	/// the one that changes: it drew a glyph per cell, deliberately, because
+	/// that is what its column arithmetic is built on.
+	public var fontLigatures: Bool {
+		get { defaults.bool(forKey: Key.fontLigatures) }
+		set { set(newValue, Key.fontLigatures) }
+	}
+
 	public var wordWrap: Bool {
 		get { defaults.bool(forKey: Key.wordWrap) }
 		set { set(newValue, Key.wordWrap) }
@@ -510,7 +527,7 @@ public final class Settings {
 			Key.autoSaveEnabled, Key.autoSaveDelay, Key.saveOnFocusLoss,
 			Key.editorFontSize, Key.editorLineHeight, Key.tabWidth,
 			Key.showHiddenFiles, Key.excludedDirectories,
-			Key.uiScale, Key.terminalFontName, Key.wordWrap,
+			Key.uiScale, Key.terminalFontName, Key.wordWrap, Key.fontLigatures,
 			Key.terminalScheme, Key.terminalGPURendering, Key.terminalBellStyle,
 		] {
 			defaults.removeObject(forKey: key)

@@ -794,7 +794,13 @@ public final class TerminalImageStore {
 	/// for one they cannot.
 	private func evictIfNeeded() {
 		guard storedBytes > KittyGraphics.memoryBudget else { return }
+		// Virtual placements count as shown too. An image put on the screen with
+		// placeholder cells has no entry in `placements` — that is the whole
+		// point of it — so counting only those made every kitty-style picture
+		// look like one nobody was looking at, and the first squeeze on memory
+		// would have taken the one on screen in front of somebody.
 		let shown = Set(placements.map(\.imageID))
+			.union(virtualPlacements.keys.map(\.imageID))
 		for id in useOrder where storedBytes > KittyGraphics.memoryBudget {
 			guard !shown.contains(id), let image = images[id] else { continue }
 			images[id] = nil
