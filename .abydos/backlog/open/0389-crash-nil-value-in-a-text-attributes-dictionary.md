@@ -1,4 +1,4 @@
-# 5. Crash: a nil value in a text attributes dictionary
+# 389. Crash: a nil value in a text attributes dictionary
 
 SIGABRT, report `Abydos-2026-08-07-142800.ips`, from the installed build.
 

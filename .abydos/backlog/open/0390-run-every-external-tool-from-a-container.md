@@ -1,4 +1,4 @@
-# 6. Run every external tool from a container, and pull the image
+# 390. Run every external tool from a container, and pull the image
 
 **Pulling is done** (0a76af8). A named image that is not on the machine is
 fetched before first use, once however many panes ask, with the image name on

@@ -1,4 +1,4 @@
-# 3. The settings page fixes the width of the split it is in
+# 387. The settings page fixes the width of the split it is in
 
 Settings opened as a tab in a split editor cannot be widened: the divider will
 not move while it is showing. Widening the split first and then navigating to

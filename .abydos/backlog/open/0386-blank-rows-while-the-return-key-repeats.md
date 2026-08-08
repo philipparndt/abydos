@@ -1,4 +1,4 @@
-# 2. Blank rows appear while the Return key repeats
+# 386. Blank rows appear while the Return key repeats
 
 Holding Return produces a full-width blank row between prompt lines,
 irregularly. In tmux and in a plain tab.

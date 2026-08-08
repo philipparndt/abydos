@@ -14,11 +14,24 @@ as what the task is. A task that has been looked at and not solved is worth
 more than a title — several of these have most of a day of searching in them,
 and the point is that the next person does not repeat it.
 
-Numbered from 1, in the order they are worth doing: what stops somebody working
-first, then what is missing, then what is only untidy. The numbers are the
-list's, not a record — closing a task and renumbering the rest is expected, and
-each file says at the bottom what it was called before, so a commit message
-citing an old number still leads somewhere.
+Numbered on from where `completed` ends — one sequence across the whole
+backlog, so 0385 is simply what comes after the 384 commits behind it. Within
+that, the order is what they are worth doing in: what stops somebody working
+first, then what is missing, then what is only untidy.
+
+The numbers are the list's, not an identity. Two things follow, and both are
+fine as long as they are known:
+
+- They shift. Landing a task turns it into commits, which take the next numbers
+  in `completed`, and the open list is renumbered from the new end. Rebuild
+  both together or they will collide — `completed` numbers by commit ordinal
+  and does not know the open list exists.
+- A commit message citing a number is citing the number of that moment. Each
+  file says at the bottom what it has been called before, which is the only
+  reason those references still lead anywhere.
+
+The durable identifiers are the commit hashes. Everything else here is a
+position in a queue.
 
 ## completed
 

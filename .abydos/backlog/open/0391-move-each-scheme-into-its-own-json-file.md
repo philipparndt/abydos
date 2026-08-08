@@ -1,4 +1,4 @@
-# 7. Move each scheme into its own JSON file
+# 391. Move each scheme into its own JSON file
 
 The user's idea: one file per scheme, two sections — app and terminal — with
 each colour given as a light/dark pair, so a scheme is data rather than four

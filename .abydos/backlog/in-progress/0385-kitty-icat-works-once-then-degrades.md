@@ -1,4 +1,4 @@
-# 1. kitty's own icat works once, then degrades
+# 385. kitty's own icat works once, then degrades
 
 Two causes fixed in 8efac01: SGR `38:2:r:g:b` written with colons was not
 read, so the placeholder cells carried no image id; and the APC cap of 8192

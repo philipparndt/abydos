@@ -1,4 +1,4 @@
-# 4. Editing .gitignore does not un-grey the files it now includes
+# 388. Editing .gitignore does not un-grey the files it now includes
 
 Adding `!backlog/` to `.abydos/.gitignore` and saving leaves the folders drawn
 as ignored. They stay grey until something else forces a refresh.
