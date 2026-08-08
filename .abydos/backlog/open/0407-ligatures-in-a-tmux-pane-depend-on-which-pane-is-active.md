@@ -41,9 +41,28 @@ that is what is happening, the ligatures are following the attributes of the
 redraw rather than the focus, and the pane that "only ligates unfocused" is the
 one whose program draws *fewer* attribute changes in that state.
 
-Which is checkable without guessing: e42eb08 records what the terminal was
-given. Capture the same line focused and unfocused and diff the attributes per
-cell.
+**And it is not the whole pane — only some positions in it.** Within one pane,
+with one setting and one font, some operators join and others do not. That
+rules out everything global and leaves one thing: a ligature is shaped inside
+a *run*, and a run ends where the cell attributes change.
+
+    while end < cells.count, cells[end].attributes == cells[start].attributes { end += 1 }
+
+An operator with a colour change in the middle of it is two runs of one
+character each, `mayLigate` says no to both, and it draws plainly — while the
+identical operator a few columns along, inside one run, joins. Which is
+position-dependent, per pane, survives a restart, and moves when the program
+repaints itself with different attributes on focus. All four of the things
+this bug does.
+
+If that is it, the fix is not in the ligature code but in what it is given:
+shape the line's text and apply the colours per cell afterwards, rather than
+shaping each colour separately. A ligature is a property of the characters and
+a colour is a property of the cell, and today the second decides the first.
+
+Checkable without guessing: e42eb08 records what the terminal was given.
+Capture a line where one operator joins and another does not, and compare the
+attributes either side of each.
 
 Below, the earlier reasoning, which still applies to the repaint half:
 
