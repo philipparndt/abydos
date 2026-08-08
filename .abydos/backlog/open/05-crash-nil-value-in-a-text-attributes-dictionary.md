@@ -1,4 +1,4 @@
-# 42. Crash: a nil value in a text attributes dictionary
+# 5. Crash: a nil value in a text attributes dictionary
 
 SIGABRT, report `Abydos-2026-08-07-142800.ips`, from the installed build.
 
@@ -30,3 +30,8 @@ Next: the app writes `~/Library/Logs/Abydos/crash.log` for uncaught
 exceptions but this never reached it, because the throw goes straight to
 `std::terminate` from inside CoreText. Reproducing it by resizing the git
 panels under the screenshot harness is the way in.
+
+---
+
+Numbered 42 while it was being worked on, which is what a
+commit message citing it means.

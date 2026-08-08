@@ -14,6 +14,12 @@ as what the task is. A task that has been looked at and not solved is worth
 more than a title — several of these have most of a day of searching in them,
 and the point is that the next person does not repeat it.
 
+Numbered from 1, in the order they are worth doing: what stops somebody working
+first, then what is missing, then what is only untidy. The numbers are the
+list's, not a record — closing a task and renumbering the rest is expected, and
+each file says at the bottom what it was called before, so a commit message
+citing an old number still leads somewhere.
+
 ## completed
 
 Generated from the git history, one file per commit, oldest first. Every commit

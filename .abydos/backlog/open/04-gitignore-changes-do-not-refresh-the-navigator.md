@@ -1,4 +1,4 @@
-# 57. Editing .gitignore does not un-grey the files it now includes
+# 4. Editing .gitignore does not un-grey the files it now includes
 
 Adding `!backlog/` to `.abydos/.gitignore` and saving leaves the folders drawn
 as ignored. They stay grey until something else forces a refresh.
@@ -17,3 +17,8 @@ where the event arrives.
 
 Worth checking `.git/info/exclude` and a global ignore file on the same path,
 which have the same property.
+
+---
+
+Numbered 57 while it was being worked on, which is what a
+commit message citing it means.

@@ -1,4 +1,4 @@
-# 56. The settings page fixes the width of the split it is in
+# 3. The settings page fixes the width of the split it is in
 
 Settings opened as a tab in a split editor cannot be widened: the divider will
 not move while it is showing. Widening the split first and then navigating to
@@ -15,3 +15,8 @@ back to a tab should never move a divider at all.
 `SettingsPage` and `SettingsWindowController.appearanceRows` build the
 content; the tab lives in the editor's split, so `EditorAreas` and
 `PreviewSplitView` are where the constraint is honoured or ignored.
+
+---
+
+Numbered 56 while it was being worked on, which is what a
+commit message citing it means.

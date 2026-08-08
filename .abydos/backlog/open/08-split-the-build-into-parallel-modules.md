@@ -1,4 +1,4 @@
-# 36. Split the build into parallel modules
+# 8. Split the build into parallel modules
 
 The build is slow enough to hold work up. AbydosApp is one target of some
 hundred and fifty files, so every change recompiles all of it, and AbydosKit
@@ -12,3 +12,8 @@ sit under all of them and would have to go somewhere they can be depended on
 without pulling the rest in.
 
 Measure before and after with the same clean build, and say the numbers.
+
+---
+
+Numbered 36 while it was being worked on, which is what a
+commit message citing it means.

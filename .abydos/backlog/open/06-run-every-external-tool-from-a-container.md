@@ -1,4 +1,4 @@
-# 53. Run every external tool from a container, and pull the image
+# 6. Run every external tool from a container, and pull the image
 
 **Pulling is done** (0a76af8). A named image that is not on the machine is
 fetched before first use, once however many panes ask, with the image name on
@@ -27,3 +27,8 @@ inside results — locations, edits, diagnostics.
 Suggested next step: build one image for one server, gopls being the
 smallest, prove the round trip, then list it in the catalogue as known-good
 and repeat.
+
+---
+
+Numbered 53 while it was being worked on, which is what a
+commit message citing it means.

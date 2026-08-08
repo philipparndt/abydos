@@ -1,4 +1,4 @@
-# 50. kitty's own icat works once, then degrades
+# 1. kitty's own icat works once, then degrades
 
 Two causes fixed in 8efac01: SGR `38:2:r:g:b` written with colons was not
 read, so the placeholder cells carried no image id; and the APC cap of 8192
@@ -35,3 +35,8 @@ before this terminal, in what tmux believes about the cursor.
 
 An image pushed 62 columns right is an image whose right-hand columns fall
 off the pane, which is also what "images are cut off" looks like.
+
+---
+
+Numbered 50 while it was being worked on, which is what a
+commit message citing it means.

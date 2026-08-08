@@ -1,4 +1,4 @@
-# 52. Blank rows appear while the Return key repeats
+# 2. Blank rows appear while the Return key repeats
 
 Holding Return produces a full-width blank row between prompt lines,
 irregularly. In tmux and in a plain tab.
@@ -28,3 +28,8 @@ state we set — a spurious SIGWINCH makes zsh redraw its prompt.
 
 **Ask first:** do the blank rows appear in Ghostty with the same shell
 config? If they do, this is the prompt's own behaviour and not ours.
+
+---
+
+Numbered 52 while it was being worked on, which is what a
+commit message citing it means.
