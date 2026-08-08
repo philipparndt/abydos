@@ -91,7 +91,13 @@ let package = Package(
 			] + grammarProducts,
 			// Queries a grammar does not ship itself. tree-sitter-java has no
 			// `folds.scm`, so without this a Java file cannot be folded at all.
-			resources: [.copy("Queries")],
+			//
+			// And the colour schemes, which are data rather than four places in
+			// two Swift files. Copied into the module's bundle, which
+			// Scripts/bundle.sh carries into the .app beside the grammars — an
+			// app that cannot find them draws in the grey fallback and says so
+			// in ~/Library/Logs/Abydos/schemes.log.
+			resources: [.copy("Queries"), .copy("Settings/Schemes")],
 			// Language mode 5: AppKit's delegate-and-callback surface predates
 			// strict concurrency checking and fights it constantly. Isolation here
 			// is enforced by design (UI on the main thread, parsing behind an

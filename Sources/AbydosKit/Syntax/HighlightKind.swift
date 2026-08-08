@@ -33,6 +33,41 @@ public enum HighlightKind: UInt8, Sendable, CaseIterable {
 	case emphasis
 	case error
 
+	/// What a scheme file calls this token.
+	///
+	/// Written out rather than reflected from the case name: these are keys in a
+	/// file format somebody edits by hand, so renaming a case here must be a
+	/// decision about their files rather than a side effect.
+	public var schemeKey: String {
+		switch self {
+		case .plain:         return "plain"
+		case .keyword:       return "keyword"
+		case .type:          return "type"
+		case .function:      return "function"
+		case .method:        return "method"
+		case .property:      return "property"
+		case .variable:      return "variable"
+		case .parameter:     return "parameter"
+		case .constant:      return "constant"
+		case .string:        return "string"
+		case .escape:        return "escape"
+		case .number:        return "number"
+		case .boolean:       return "boolean"
+		case .comment:       return "comment"
+		case .documentation: return "documentation"
+		case .operatorToken: return "operatorToken"
+		case .punctuation:   return "punctuation"
+		case .tag:           return "tag"
+		case .attribute:     return "attribute"
+		case .label:         return "label"
+		case .namespace:     return "namespace"
+		case .heading:       return "heading"
+		case .link:          return "link"
+		case .emphasis:      return "emphasis"
+		case .error:         return "error"
+		}
+	}
+
 	/// Resolves a capture name to a category, most specific component first.
 	///
 	/// Capture names are dot-separated and ordered general→specific

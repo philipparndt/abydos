@@ -1,0 +1,27 @@
+{
+	"id": "editor",
+	"title": "Editor colours",
+	"order": 4,
+	"about": "A terminal in whatever the editor is wearing, so the two panes are one surface rather than two windows that happen to touch. The background, the text and the cursor follow the theme in force — which is what `follows` says — while the sixteen ANSI colours are stated here, because ANSI still has to mean what ANSI means: red is red, and a failing test has to look like one. In daylight they sit at a middle lightness, since a terminal colour is as often a background as a foreground — a powerline prompt is nothing but coloured backgrounds — so each has to read on white and still take black text on top of it.",
+	"terminal": {
+		"follows": "editor",
+		"ansi": {
+			"black": { "light": "#2B2D30", "dark": "#2B2D30" },
+			"red": { "light": "#C8503F", "dark": "#C7756B" },
+			"green": { "light": "#5FA03A", "dark": "#6AAB73" },
+			"yellow": { "light": "#B8860B", "dark": "#B58A2B" },
+			"blue": { "light": "#3B82C4", "dark": "#3592C4" },
+			"magenta": { "light": "#B158AE", "dark": "#C77DBB" },
+			"cyan": { "light": "#2FA39A", "dark": "#2AACB8" },
+			"white": { "light": "#8B919B", "dark": "#BCBEC4" },
+			"brightBlack": { "light": "#6B7078", "dark": "#5A5D63" },
+			"brightRed": { "light": "#DD6A58", "dark": "#E06C60" },
+			"brightGreen": { "light": "#7FBE55", "dark": "#7FCC89" },
+			"brightYellow": { "light": "#D3A017", "dark": "#E8BF6A" },
+			"brightBlue": { "light": "#589CD6", "dark": "#56A8F5" },
+			"brightMagenta": { "light": "#C77BC0", "dark": "#E18FD8" },
+			"brightCyan": { "light": "#4FBAB1", "dark": "#4BD4E0" },
+			"brightWhite": { "light": "#2B2D30", "dark": "#DFE1E5" }
+		}
+	}
+}

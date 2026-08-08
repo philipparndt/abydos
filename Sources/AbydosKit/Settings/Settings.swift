@@ -197,11 +197,8 @@ public final class Settings {
 	/// Which palette, and how light, as two settings over the one that is
 	/// stored. Everything downstream still reads a single name.
 	public var themeFamily: String {
-		get { Appearance.family(of: appearance).rawValue }
-		set {
-			let family = Appearance.Family(rawValue: newValue) ?? .blue
-			appearance = Appearance.name(family: family, mode: Appearance.mode(of: appearance))
-		}
+		get { Appearance.family(of: appearance) }
+		set { appearance = Appearance.name(family: newValue, mode: Appearance.mode(of: appearance)) }
 	}
 
 	public var appearanceMode: String {
