@@ -39,6 +39,21 @@ final class LanguageService {
 	/// Documents this service has told a server about, and their version.
 	private var openDocuments: [String: Int] = [:]
 
+	/// Servers whose image is being fetched, so nothing starts a second fetch
+	/// and nothing reports the server missing while it is on its way.
+	private var fetching: Set<String> = []
+	/// What was opened while a server's image was still being fetched, by server
+	/// and then by URI.
+	///
+	/// A fetch is minutes the first time, and the file somebody opened is on
+	/// screen for all of them. Without this the server finally starts knowing
+	/// about no documents at all — running, answering the handshake, and saying
+	/// nothing about the file in front of them.
+	private var deferredOpens: [String: [String: (languageId: String, text: String)]] = [:]
+	/// Which images a project asks for, read once: it is a file on disk, and the
+	/// answer does not change while a project is open.
+	private var toolImages: [String: ToolImages] = [:]
+
 	/// What to say in the status bar about servers: names of those running.
 	private(set) var runningNames: [String] = []
 	/// A language whose server is not installed, and how to get it.
@@ -110,6 +125,10 @@ final class LanguageService {
 
 			if servers[prefix + languageId] != nil {
 				running.append(definition.command)
+			} else if images(for: project).image(for: definition.toolKey) != nil {
+				// An image is named for it, so it is not missing: it is either
+				// being fetched or about to start. Nothing to install.
+				continue
 			} else if LanguageServers.executable(for: definition) == nil {
 				missing.append((definition.languageIds.first ?? "?", definition.installHint))
 			}
@@ -136,14 +155,30 @@ final class LanguageService {
 	/// A file was opened. Starts a server for it if this is the first of its
 	/// language, and hands it the text.
 	func opened(url: URL, languageId: String, text: String, project: URL) {
-		guard let server = server(for: languageId, project: project) else { return }
+		guard let server = server(for: languageId, project: project) else {
+			// A server whose image is still being fetched will want this as soon
+			// as it starts, which may be minutes from now.
+			let key = key(project: project, languageId: languageId)
+			if fetching.contains(key) {
+				deferredOpens[key, default: [:]][uri(for: url)] = (languageId, text)
+			}
+			return
+		}
 		let uri = uri(for: url)
 		openDocuments[uri] = 1
 		server.client.didOpen(uri: uri, languageId: languageId, version: 1, text: text)
 	}
 
 	func changed(url: URL, languageId: String, text: String, project: URL) {
-		guard let server = servers[key(project: project, languageId: languageId)] else { return }
+		let waiting = key(project: project, languageId: languageId)
+		guard let server = servers[waiting] else {
+			// Still being fetched: the text that will be sent as the didOpen is
+			// the text as it is now, not as it was when the file was opened.
+			if deferredOpens[waiting]?[uri(for: url)] != nil {
+				deferredOpens[waiting]?[uri(for: url)] = (languageId, text)
+			}
+			return
+		}
 		let uri = uri(for: url)
 		let version = (openDocuments[uri] ?? 0) + 1
 		openDocuments[uri] = version
@@ -156,6 +191,10 @@ final class LanguageService {
 	}
 
 	func closed(url: URL, languageId: String, project: URL) {
+		// A file closed before its server ever started is not one to announce
+		// when it does.
+		deferredOpens[key(project: project, languageId: languageId)]?
+			.removeValue(forKey: uri(for: url))
 		guard let server = servers[key(project: project, languageId: languageId)] else { return }
 		let uri = uri(for: url)
 		openDocuments.removeValue(forKey: uri)
@@ -378,8 +417,11 @@ final class LanguageService {
 			servers.removeValue(forKey: key)
 		}
 		guard !unavailable.contains(key) else { return nil }
+		// One already on its way. Not missing, not started: it arrives when the
+		// image does, and asking again would start a second fetch.
+		guard !fetching.contains(key) else { return nil }
 
-		guard let resolved = LanguageServers.resolve(languageId: languageId, root: project) else {
+		guard let resolved = resolution(for: languageId, project: project) else {
 			unavailable.insert(key)
 			if let definition = LanguageServers.definition(forLanguage: languageId),
 			   LanguageServers.suits(definition, root: project) {
@@ -398,7 +440,61 @@ final class LanguageService {
 			return nil
 		}
 
+		guard let image = resolved.launch.image else {
+			return start(resolved, languageId: languageId, key: key)
+		}
+
+		// An image that is not on the machine is fetched first, and the first
+		// time that is minutes rather than seconds. Nothing waits on it: the
+		// fetch runs on its own and the server starts when the image lands,
+		// which is the same shape a slow handshake already has. What was opened
+		// meanwhile is kept and sent then.
+		fetching.insert(key)
+		log("\(resolved.definition.command) comes from \(image.name); making sure it is here")
+		Task { @MainActor in
+			let outcome = await ContainerImageStore.shared.ensure(
+				image.name,
+				using: image.runtime,
+				progress: { message in
+					// A pull with nothing on screen is indistinguishable from a
+					// feature that does not work.
+					Task { @MainActor in Toast.post(message, kind: .information) }
+				}
+			)
+			// Gone while the image was on its way: the project was closed, and a
+			// server started for it now would be a process nobody is waiting for.
+			guard fetching.remove(key) != nil else { return }
+			if case let .failed(reason) = outcome {
+				// Not tried again for this project: a name that is wrong is
+				// wrong every time, and a registry that wants a sign-in wants
+				// one until somebody gives it. Reopening the project asks again.
+				unavailable.insert(key)
+				failures[languageId] = reason
+				log("\(resolved.definition.command): \(reason)")
+				Toast.post(
+					"\(resolved.definition.command) could not be fetched",
+					detail: reason,
+					kind: .error
+				)
+				NotificationCenter.default.post(name: .ideaiLanguageServersChanged, object: nil)
+				return
+			}
+			guard let server = start(resolved, languageId: languageId, key: key) else { return }
+			replayDeferredOpens(to: server, key: key)
+		}
+		return nil
+	}
+
+	/// Starts a server whose image, if it has one, is already here.
+	private func start(
+		_ resolved: LanguageServers.Resolution,
+		languageId: String,
+		key: String
+	) -> Server? {
 		let client = LSPClient()
+		// Before anything is sent, including the handshake: from here on every
+		// path going out is the container's and every one coming back is ours.
+		client.containerPaths = resolved.launch.paths
 		client.onDiagnostics = { [weak self] uri, diagnostics in
 			guard let self else { return }
 			self.diagnostics[uri] = diagnostics
@@ -429,6 +525,7 @@ final class LanguageService {
 			if !line.isEmpty { self.lastStandardError[key] = line }
 		}
 
+		let run = resolved.launch.invocation
 		do {
 			// Rooted where the manifest is, which is not always the project
 			// root: a server pointed at a directory with no manifest in it
@@ -436,15 +533,25 @@ final class LanguageService {
 			//
 			// And with a PATH that has the toolchain on it. A language server
 			// runs the compiler; a GUI app's PATH does not have one.
-			LanguageServers.prepare(resolved.definition, root: resolved.root)
+			//
+			// Nothing to prepare for a container: what jdtls would be given a
+			// directory for is inside the image, and a directory made out here
+			// for it would be litter nothing ever reads.
+			if resolved.launch.paths == nil {
+				LanguageServers.prepare(resolved.definition, root: resolved.root)
+			}
 			try client.start(
-				executable: resolved.executable,
-				arguments: LanguageServers.arguments(for: resolved.definition, root: resolved.root),
+				executable: run.executable,
+				arguments: run.arguments,
+				// The runtime's own working directory, in the container's case,
+				// which it does not mind: where the server starts is `-w`, and
+				// that is in the command line already. The environment is the
+				// same story — the runtime needs it to find its socket.
 				workingDirectory: canonical(resolved.root),
 				environment: LanguageServers.serverEnvironment
 			)
 			log("\(resolved.definition.command) started for \(languageId) "
-				+ "at \(canonical(resolved.root).path) [\(resolved.executable)]")
+				+ "at \(canonical(resolved.root).path) [\(resolved.launch.description)]")
 		} catch {
 			unavailable.insert(key)
 			log("\(resolved.definition.command) would not start: \(error.localizedDescription)")
@@ -471,7 +578,9 @@ final class LanguageService {
 				_ = try await client.initialize(
 					rootURL: canonical(resolved.root),
 					options: LanguageServers.initializationOptions(
-						for: resolved.definition, root: resolved.root
+						for: resolved.definition,
+						root: canonical(resolved.root),
+						inContainer: resolved.launch.paths != nil
 					),
 					timeout: isJava ? 120 : 10
 				)
@@ -505,6 +614,62 @@ final class LanguageService {
 			NotificationCenter.default.post(name: .ideaiLanguageServersChanged, object: nil)
 		}
 		return server
+	}
+
+	/// Which server to start, and whether it comes from an image.
+	///
+	/// An image is named per project in `.abydos/tools.json` or once in
+	/// settings, under the tool's own name rather than its command — `pyright`,
+	/// not `pyright-langserver`.
+	private func resolution(for languageId: String, project: URL) -> LanguageServers.Resolution? {
+		let image = LanguageServers.definition(forLanguage: languageId)
+			.flatMap { images(for: project).image(for: $0.toolKey) }
+
+		// Looked for only when one is named: finding a runtime means walking the
+		// PATH, and most projects name no image at all.
+		var runtime: ContainerRuntime?
+		if let image, !image.isEmpty {
+			runtime = ContainerRuntime.discover(
+				preference: ContainerRuntime.Preference(rawValue: Settings.shared.containerRuntime)
+					?? .automatic
+			)
+			if runtime == nil {
+				// Said, because the alternative is a project that pinned a
+				// version quietly getting whatever is installed instead.
+				log("\(image) is named for \(languageId) but nothing here can run a "
+					+ "container; using what is installed instead")
+			}
+		}
+		return LanguageServers.resolve(
+			languageId: languageId, project: project, image: image, runtime: runtime
+		)
+	}
+
+	/// The images a project asks for, project first and settings behind it.
+	private func images(for project: URL) -> ToolImages {
+		let path = project.standardizedFileURL.path
+		if let known = toolImages[path] { return known }
+		let resolved = ToolImages.resolve(
+			project: ToolImages.inProject(project),
+			settings: ToolImages(images: Settings.shared.toolImages)
+		)
+		toolImages[path] = resolved
+		return resolved
+	}
+
+	/// Tells a server that has just started about the files opened while its
+	/// image was being fetched.
+	private func replayDeferredOpens(to server: Server, key: String) {
+		let waiting = deferredOpens.removeValue(forKey: key) ?? [:]
+		guard !waiting.isEmpty else { return }
+		for (uri, document) in waiting {
+			openDocuments[uri] = 1
+			server.client.didOpen(
+				uri: uri, languageId: document.languageId, version: 1, text: document.text
+			)
+		}
+		log("\(server.definition.command) was told about \(waiting.count) file(s) "
+			+ "opened while its image was being fetched")
 	}
 
 	/// Something the server said about itself.
@@ -576,6 +741,12 @@ final class LanguageService {
 		}
 		unavailable = unavailable.filter { !$0.hasPrefix(prefix) }
 		lastStandardError = lastStandardError.filter { !$0.key.hasPrefix(prefix) }
+		// A fetch still running is left to finish — the image is worth having on
+		// the machine either way — but nothing is waiting for it any more, and
+		// the project is read again next time it opens.
+		fetching = fetching.filter { !$0.hasPrefix(prefix) }
+		deferredOpens = deferredOpens.filter { !$0.key.hasPrefix(prefix) }
+		toolImages.removeValue(forKey: project.standardizedFileURL.path)
 		failures.removeAll()
 		announced.removeAll()
 		emptied.removeAll()
@@ -589,6 +760,9 @@ final class LanguageService {
 		}
 		servers.removeAll()
 		runningNames.removeAll()
+		fetching.removeAll()
+		deferredOpens.removeAll()
+		toolImages.removeAll()
 	}
 
 	// MARK: - Testing

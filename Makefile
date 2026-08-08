@@ -164,6 +164,16 @@ devpod-image: ## Build the dev pod image tarball (ARCH=arm64|amd64)
 devpod-publish: ## Push a multi-arch dev pod image (REPOSITORY, VERSION)
 	@$(MAKE) -C DevPod publish
 
+# The images a tool can come from, for a machine that would rather not install
+# the toolchain behind a language server. Built with a real builder rather than
+# assembled the way the pod image is: gopls needs the Go toolchain beside it, so
+# there is a base image under it and no way around a build.
+.PHONY: tool-image-gopls
+tool-image-gopls: ## Build the gopls image (TAG=abydos/gopls:dev)
+	@docker build -t $(or $(TAG),abydos/gopls:dev) ToolImages/gopls
+	@echo "==> $(or $(TAG),abydos/gopls:dev)"
+	@echo "    name it for a project in .abydos/tools.json: {\"gopls\": \"$(or $(TAG),abydos/gopls:dev)\"}"
+
 .PHONY: clean
 clean: ## Remove build output
 	@rm -rf .build build

@@ -74,6 +74,20 @@ public final class LSPClient: @unchecked Sendable {
 	/// What the server said it can do, from the initialize reply.
 	public private(set) var capabilities: [String: Any] = [:]
 
+	/// The two names for the project, when the server is in a container.
+	///
+	/// Nil for a server on this machine, where there is only one name for
+	/// everything and no translation to do. Set before `start`: everything sent
+	/// after that is rewritten to the container's side and everything arriving
+	/// is brought home, so nothing above this class ever sees a path that does
+	/// not exist here.
+	public var containerPaths: ContainerPaths? {
+		get { locked { paths } }
+		set { locked { paths = newValue } }
+	}
+
+	private var paths: ContainerPaths?
+
 	/// Whether the handshake has finished.
 	private var isInitialized = false
 	/// Notifications sent before it did.
@@ -188,8 +202,16 @@ public final class LSPClient: @unchecked Sendable {
 		options: [String: Any]? = nil,
 		timeout: TimeInterval = 10
 	) async throws -> [String: Any] {
+		// The editor's process id, so a server outliving it can stop. Not sent
+		// from a container: that number means nothing in another process
+		// namespace, and a server that watches it there finds no such process
+		// and exits during the handshake — which looks exactly like an image
+		// that does not work.
+		let watched: Any = containerPaths == nil
+			? Int(ProcessInfo.processInfo.processIdentifier)
+			: NSNull()
 		var parameters: [String: Any] = [
-			"processId": Int(ProcessInfo.processInfo.processIdentifier),
+			"processId": watched,
 			"rootUri": rootURL.absoluteString,
 			"workspaceFolders": [["uri": rootURL.absoluteString, "name": rootURL.lastPathComponent]],
 			"capabilities": Self.clientCapabilities,
@@ -420,7 +442,11 @@ public final class LSPClient: @unchecked Sendable {
 	}
 
 	private func write(_ message: [String: Any]) {
-		guard let payload = try? JSONSerialization.data(withJSONObject: message) else { return }
+		// Everything, on the way out: a request, a notification, and a reply to
+		// something the server asked. A container server knows the project by
+		// one name only, and it is not this one.
+		let outgoing = containerPaths.map { $0.containerSide(of: message) } ?? message
+		guard let payload = try? JSONSerialization.data(withJSONObject: outgoing) else { return }
 		var framed = Data("Content-Length: \(payload.count)\r\n\r\n".utf8)
 		framed.append(payload)
 
@@ -503,7 +529,13 @@ public final class LSPClient: @unchecked Sendable {
 		}
 		lock.unlock()
 
-		for message in messages { dispatch(message) }
+		// Home again before anything looks at it, so a diagnostic, a location or
+		// an edit names a file that exists on this machine. Read after the
+		// unlock: the accessor takes the same lock.
+		let paths = containerPaths
+		for message in messages {
+			dispatch(paths.map { $0.hostSide(of: message) } ?? message)
+		}
 	}
 
 	private func dispatch(_ message: [String: Any]) {

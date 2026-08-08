@@ -14,19 +14,41 @@ first on purpose: it is the part that fails silently rather than loudly.
 
 **The tools are declared** (3ace522). gopls, rust-analyzer, pyright,
 typescript-language-server, clangd and jdtls appear in the tool settings, each
-offering the installed copy or a custom image. None claims a known-good image
-— the point of that list is that somebody has run the thing, and nobody has.
+offering the installed copy or a custom image.
 
-**What is left: the launch.** `LSPClient.start` takes an executable and
-arguments, so handing it `ToolContainer.invocation(using:arguments:)` with
-`ContainerPaths.mount` is small. The work is in the message path: every
-`file:` URI going out mapped to the container's side and every one coming
-back mapped home, in requests and notifications, including the ones nested
-inside results — locations, edits, diagnostics.
+**The launch is done, and proved.** A server named in `.abydos/tools.json` is
+started from its image with the project mounted, every `file:` URI is rewritten
+at the edge of `LSPClient` — going out and coming back, keys as well as values,
+so a workspace edit's `changes` map crosses too — and `ToolImages/gopls`
+builds an image that `ContainerLSPLiveTests` drives end to end: diagnostics,
+symbols and a go-to-declaration all naming files on this machine.
 
-Suggested next step: build one image for one server, gopls being the
-smallest, prove the round trip, then list it in the catalogue as known-good
-and repeat.
+**What is left.**
+
+*A known-good image, published.* The catalogue still lists none for any
+language server, and that is still right — the list means somebody has run the
+thing — but now something has. `ToolImages/gopls/Dockerfile` is what ran; what
+is missing is pushing it somewhere anybody can pull from and listing that name.
+The dev pod already publishes multi-architecture images from its own Makefile,
+but not this way: its images are two static binaries and are assembled without
+a builder, while gopls needs the Go toolchain beside it and so has a base image
+under it. `make tool-image-gopls` builds it; publishing is the next step, and
+then the other five.
+
+*One page per language.* The Tools page is one long list of cards and will only
+get longer — six servers, PlantUML, and whatever comes next. It should become a
+tree: Tools with a child per tool. Both settings surfaces are built from
+`SettingsSections.all`, so the sections need children and the two views need to
+show them — `SettingsPage` uses a table for the sidebar and would become an
+outline; the ⌘, window is an `NSTabViewController` in toolbar style, which
+cannot show a tree at all and would have to become a split view with a source
+list.
+
+*Apple's runtime is preferred, and cannot see a docker image.* `discover`
+prefers `container` because it needs no daemon. An image built locally with
+docker is invisible to it, so a project naming one gets "there is no image
+called…" and a pull attempt for something that is already here. Either say so
+in that message, or look for the image in whichever runtime has it.
 
 ---
 

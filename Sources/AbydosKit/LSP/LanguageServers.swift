@@ -14,6 +14,13 @@ public struct LanguageServerDefinition: Equatable, Sendable {
 	/// Go server is not started for a repository with one `.go` file in a
 	/// vendored directory.
 	public let rootMarkers: [String]
+	/// What this server is called where an image is chosen for it — in settings
+	/// and in `.abydos/tools.json`.
+	///
+	/// Usually the command, and not always: Python's server ships a binary
+	/// called `pyright-langserver`, and the tool everybody means by that is
+	/// `pyright`. A key nobody would think to type is a setting nothing reads.
+	public let toolKey: String
 	/// Anything this server needs worked out per project rather than stated
 	/// once here.
 	public let setup: Setup
@@ -46,6 +53,7 @@ public struct LanguageServerDefinition: Equatable, Sendable {
 		arguments: [String] = [],
 		installHint: String,
 		rootMarkers: [String] = [],
+		toolKey: String? = nil,
 		setup: Setup = .plain
 	) {
 		self.languageIds = languageIds
@@ -53,6 +61,7 @@ public struct LanguageServerDefinition: Equatable, Sendable {
 		self.arguments = arguments
 		self.installHint = installHint
 		self.rootMarkers = rootMarkers
+		self.toolKey = toolKey ?? command
 		self.setup = setup
 	}
 }
@@ -101,7 +110,8 @@ public enum LanguageServers {
 			command: "pyright-langserver",
 			arguments: ["--stdio"],
 			installHint: "npm install -g pyright",
-			rootMarkers: ["pyproject.toml", "setup.py", "requirements.txt"]
+			rootMarkers: ["pyproject.toml", "setup.py", "requirements.txt"],
+			toolKey: "pyright"
 		),
 		LanguageServerDefinition(
 			languageIds: ["c", "cpp", "objc"],
@@ -284,17 +294,23 @@ public enum LanguageServers {
 	/// JDKs installed here, so a project targeting 17 is compiled against 17
 	/// rather than against whatever the server happens to run on, and the
 	/// java-debug bundle, without which there is no debugging at all.
+	/// - Parameter inContainer: whether the server is running from an image, in
+	///   which case the things on this machine cannot be offered to it. The JDKs
+	///   and the debug bundle are paths, and a path here names nothing there —
+	///   an image that wants a JDK has to carry one, which is what the tool
+	///   catalogue tells whoever builds it.
 	public static func initializationOptions(
 		for definition: LanguageServerDefinition,
-		root: URL
+		root: URL,
+		inContainer: Bool = false
 	) -> [String: Any]? {
 		guard definition.setup == .java else { return nil }
 
 		var options: [String: Any] = [:]
-		if let plugin = JavaTooling.debugPlugin() { options["bundles"] = [plugin] }
+		if !inContainer, let plugin = JavaTooling.debugPlugin() { options["bundles"] = [plugin] }
 		options["workspaceFolders"] = [root.absoluteString]
 
-		let installed = JavaTooling.installedRuntimes()
+		let installed = inContainer ? [] : JavaTooling.installedRuntimes()
 		let runtimes = installed.enumerated().map { index, runtime -> [String: Any] in
 			[
 				"name": runtime.name,
@@ -534,18 +550,84 @@ public enum LanguageServers {
 		)
 	}
 
-	/// The server to start for a language in a project, if there is one and it
-	/// is installed.
+	/// A server to start: which one, where it is rooted, and how it starts.
+	public struct Resolution: Equatable, Sendable {
+		public let definition: LanguageServerDefinition
+		/// Where the server is rooted, named on this machine. The launch says
+		/// what the server itself will call it.
+		public let root: URL
+		public let launch: LanguageServerLaunch
+
+		public init(definition: LanguageServerDefinition, root: URL, launch: LanguageServerLaunch) {
+			self.definition = definition
+			self.root = root
+			self.launch = launch
+		}
+	}
+
 	/// The server to start for a language in a project: which one, where it
 	/// lives, and which directory to root it at.
+	///
+	/// - Parameters:
+	///   - project: the checkout. This is what gets mounted, not the directory
+	///     the server is rooted at: the manifest is often a level or two down,
+	///     and a mount of that subdirectory would leave every file outside it
+	///     with no name the container could use.
+	///   - image: the image named for this server, if any.
+	///   - runtime: what would run it. Nil — nothing installed to run a
+	///     container with — falls back to the copy on this machine, since an
+	///     image nothing can run is not an answer.
+	public static func resolve(
+		languageId: String,
+		project: URL,
+		image: String? = nil,
+		runtime: ContainerRuntime? = nil
+	) -> Resolution? {
+		guard let definition = definition(forLanguage: languageId),
+		      let root = markerDirectory(for: definition, in: project)
+		else { return nil }
+
+		// An image the project named wins over a copy installed here, the same
+		// way it does for a diagram: naming one is a statement about what this
+		// project needs, and a local copy quietly overriding it would mean the
+		// same code getting different answers on two machines.
+		if let image, !image.isEmpty, let runtime {
+			// Canonical, both sides. A server resolves a package by realpath,
+			// and a mount named `/tmp/x` while the file it is sent is
+			// `/private/tmp/x` is a mapping that matches nothing.
+			let paths = ContainerPaths(host: FilePath.canonical(project))
+			let container = ToolContainer(
+				image: image,
+				mounts: [paths.mount],
+				// Started where the manifest is, in the container's own names.
+				workingDirectory: paths.toContainer(path: FilePath.canonical(root))
+			)
+			return Resolution(
+				definition: definition,
+				root: root,
+				launch: .image(container: container, runtime: runtime, paths: paths)
+			)
+		}
+
+		guard let executable = executable(for: definition) else { return nil }
+		return Resolution(
+			definition: definition,
+			root: root,
+			launch: .installed(
+				executable: executable,
+				arguments: arguments(for: definition, root: root)
+			)
+		)
+	}
+
+	/// The same, for a caller that only wants a server from this machine.
 	public static func resolve(
 		languageId: String,
 		root: URL
 	) -> (definition: LanguageServerDefinition, executable: String, root: URL)? {
-		guard let definition = definition(forLanguage: languageId),
-		      let serverRoot = markerDirectory(for: definition, in: root),
-		      let executable = executable(for: definition)
+		guard let resolution = resolve(languageId: languageId, project: root),
+		      case let .installed(executable, _) = resolution.launch
 		else { return nil }
-		return (definition, executable, serverRoot)
+		return (resolution.definition, executable, resolution.root)
 	}
 }

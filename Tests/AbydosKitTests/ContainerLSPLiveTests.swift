@@ -1,0 +1,187 @@
+import Foundation
+import Testing
+@testable import AbydosKit
+
+/// Against a real language server running from a container image.
+///
+/// This is the test the whole container path exists for, and the one thing it
+/// proves that nothing else can: that a server which has never seen this
+/// machine's filesystem answers about files on it. Every URI going out is
+/// rewritten to the mount and every one coming back is rewritten home, so a
+/// mapping that is subtly wrong shows up here as a diagnostic against a path
+/// that does not exist — which is exactly how it would show up in the editor,
+/// except that here it fails a test instead of looking like an unreliable
+/// server.
+///
+/// Skipped unless the image is already on this machine, the way the other live
+/// tests are skipped without their server. Build it with:
+///
+///     make tool-image-gopls
+struct ContainerLSPLiveTests {
+	/// What `ToolImages/gopls/Dockerfile` builds.
+	static let image = "abydos/gopls:dev"
+
+	/// A runtime that already has the image, or nil when none does.
+	///
+	/// Every runtime installed rather than only the preferred one, and it has to
+	/// hold the image rather than merely exist: an image built with docker is
+	/// not visible to Apple's `container`, and preferring Apple's — which is
+	/// what the app does — would skip this test on a machine that can run it.
+	private var available: ContainerRuntime? {
+		for preference in [ContainerRuntime.Preference.apple, .docker] {
+			guard let runtime = ContainerRuntime.discover(preference: preference),
+			      holdsImage(runtime)
+			else { continue }
+			return runtime
+		}
+		return nil
+	}
+
+	private func holdsImage(_ runtime: ContainerRuntime) -> Bool {
+		let process = Process()
+		let command = ContainerImages.inspect(Self.image, using: runtime)
+		process.executableURL = URL(fileURLWithPath: command.executable)
+		process.arguments = command.arguments
+		// Nowhere rather than into pipes. Only the exit status is wanted, and a
+		// pipe nobody drains is how a subprocess capture hangs — see
+		// `ProcessPipes`, which exists because of exactly that.
+		process.standardOutput = FileHandle.nullDevice
+		process.standardError = FileHandle.nullDevice
+		// Not a `Pipe()`: this process would hold its write end open, and a
+		// runtime that reads standard input then waits for an end that never
+		// comes. Apple's `container` does exactly that.
+		process.standardInput = FileHandle.nullDevice
+		guard (try? process.run()) != nil else { return false }
+
+		// With a deadline of its own, because asking a runtime a question is not
+		// always answered: Apple's `container` talks to a service that can wedge
+		// — every subcommand then waits, `container ls` included — and a test
+		// that waits with it is the hang this suite is meant not to have. A
+		// runtime that cannot answer whether it has the image is a runtime this
+		// test cannot use, which is the same as not having it.
+		let deadline = Date().addingTimeInterval(5)
+		while process.isRunning, Date() < deadline {
+			Thread.sleep(forTimeInterval: 0.05)
+		}
+		guard !process.isRunning else {
+			process.terminate()
+			return false
+		}
+		return process.terminationStatus == 0
+	}
+
+	/// A Go module with one function calling another, which is the smallest
+	/// project a server can say something interesting about.
+	private func makeProject() throws -> URL {
+		let root = try JavaTestDirectory.make()
+		try JavaTestDirectory.write(
+			"module example.com/probe\n\ngo 1.24\n",
+			to: root.appendingPathComponent("go.mod")
+		)
+		try JavaTestDirectory.write("""
+		package main
+
+		import "fmt"
+
+		func greeting() string {
+			return "hello"
+		}
+
+		func main() {
+			fmt.Println(greeting())
+		}
+		""", to: root.appendingPathComponent("main.go"))
+		// Canonical, because that is what the mount and every URI will use: a
+		// temporary directory on macOS is under `/var`, which is a symlink.
+		return URL(fileURLWithPath: FilePath.canonical(root), isDirectory: true)
+	}
+
+	@Test func goplsInAContainerAnswersAboutFilesOnThisMachine() async throws {
+		guard let runtime = available else { return }
+		let root = try makeProject()
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		let resolved = try #require(LanguageServers.resolve(
+			languageId: "go", project: root, image: Self.image, runtime: runtime
+		))
+
+		// The image was chosen over anything installed, and the project is
+		// mounted where the catalogue says it will be.
+		let paths = try #require(resolved.launch.paths)
+		#expect(paths.host == root.path)
+		#expect(paths.container == "/workspace")
+
+		let run = resolved.launch.invocation
+		#expect(run.executable == runtime.path)
+		#expect(run.arguments.contains("--rm"))
+		#expect(run.arguments.contains("\(root.path):/workspace"))
+		#expect(run.arguments.contains(Self.image))
+		// Nothing after the image: the server is the entry point.
+		#expect(run.arguments.last == Self.image)
+
+		let client = LSPClient()
+		client.containerPaths = paths
+		client.callbackQueue = .global()
+		defer { client.stop() }
+
+		let file = root.appendingPathComponent("main.go")
+		let fileURI = URL(fileURLWithPath: FilePath.canonical(file)).absoluteString
+
+		let diagnosed = Diagnosed()
+		client.onDiagnostics = { uri, _ in diagnosed.record(uri) }
+
+		try client.start(
+			executable: run.executable,
+			arguments: run.arguments,
+			workingDirectory: root,
+			environment: LanguageServers.serverEnvironment
+		)
+
+		// Generous: starting a container and loading a module's packages is
+		// seconds rather than milliseconds, and the machine running this may be
+		// doing something else.
+		let capabilities = try await client.initialize(rootURL: root, timeout: 60)
+		#expect(capabilities["definitionProvider"] != nil)
+		#expect(capabilities["documentSymbolProvider"] != nil)
+
+		let text = try String(contentsOf: file, encoding: .utf8)
+		client.didOpen(uri: fileURI, languageId: "go", version: 1, text: text)
+
+		// Diagnostics are the server's first unprompted word about a file, and
+		// the first chance to see a URI it chose rather than one it was given.
+		for _ in 0..<120 where diagnosed.uri == nil {
+			try? await Task.sleep(nanoseconds: 250_000_000)
+		}
+		// Named as this machine names it, not as /workspace/main.go.
+		#expect(diagnosed.uri == fileURI)
+
+		let symbols = try await client.documentSymbols(uri: fileURI)
+		#expect(symbols.contains { $0.name == "greeting" })
+		#expect(symbols.contains { $0.name == "main" })
+
+		// And the answer that is a place rather than a name: the declaration of
+		// `greeting`, from the call to it on the last line.
+		let locations = try await client.definition(
+			uri: fileURI, position: LSPPosition(line: 9, character: 14)
+		)
+		let declaration = try #require(locations.first)
+		#expect(declaration.uri == fileURI)
+		#expect(declaration.url?.path == file.path)
+		// `func greeting()` is the fifth line, and lines are 0-based on the wire.
+		#expect(declaration.range.start.line == 4)
+	}
+
+	/// Collects the callback from whichever thread it arrives on.
+	private final class Diagnosed: @unchecked Sendable {
+		private let lock = NSLock()
+		private var value: String?
+
+		var uri: String? { lock.lock(); defer { lock.unlock() }; return value }
+
+		func record(_ uri: String) {
+			lock.lock()
+			value = uri
+			lock.unlock()
+		}
+	}
+}

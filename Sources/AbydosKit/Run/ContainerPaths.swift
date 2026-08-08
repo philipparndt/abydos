@@ -72,6 +72,61 @@ public struct ContainerPaths: Equatable, Sendable {
 		rewrite(uri: uri) { toHost(path: $0) }
 	}
 
+	// MARK: - Whole messages
+
+	/// A message on its way to the server, with every `file:` URI in it moved to
+	/// the container's side.
+	///
+	/// Done here, over the whole message, rather than at each place that sends
+	/// one: a URI turns up in more shapes than anybody can keep a list of —
+	/// inside a location, inside an edit, inside a diagnostic's related
+	/// information, as the *key* of a workspace edit's `changes` — and a list
+	/// that misses one goes wrong silently. Walking the message needs no list.
+	public func containerSide(of message: [String: Any]) -> [String: Any] {
+		mapped(message) { toContainer(uri: $0) }
+	}
+
+	/// The same for a message coming back, moved home.
+	public func hostSide(of message: [String: Any]) -> [String: Any] {
+		mapped(message) { toHost(uri: $0) }
+	}
+
+	private func mapped(
+		_ message: [String: Any], _ transform: (String) -> String?
+	) -> [String: Any] {
+		rewriting(message, transform) as? [String: Any] ?? message
+	}
+
+	/// Every `file:` URI in a JSON value, moved.
+	///
+	/// Anything that does not look like one is left exactly as it was, and so is
+	/// one that does not map: a URI naming something the other side cannot see
+	/// stays as it is rather than being moved to a path that is a different
+	/// file. The server then says it cannot open that, which is the truth.
+	private func rewriting(_ value: Any, _ transform: (String) -> String?) -> Any {
+		switch value {
+		case let text as String:
+			guard text.hasPrefix("file:") else { return text }
+			return transform(text) ?? text
+		case let array as [Any]:
+			return array.map { rewriting($0, transform) }
+		case let table as [String: Any]:
+			var rewritten: [String: Any] = [:]
+			rewritten.reserveCapacity(table.count)
+			for (key, inner) in table {
+				// Keys as well as values. A workspace edit is keyed by URI —
+				// `changes: {"file:///workspace/a.go": [...]}` — so a walk that
+				// looked only at values would bring every edit home and leave
+				// the file it belongs to on the container's side.
+				let moved = key.hasPrefix("file:") ? (transform(key) ?? key) : key
+				rewritten[moved] = rewriting(inner, transform)
+			}
+			return rewritten
+		default:
+			return value
+		}
+	}
+
 	private func rewrite(uri: String, _ transform: (String) -> String?) -> String? {
 		guard let components = URLComponents(string: uri), components.scheme == "file" else {
 			return nil
