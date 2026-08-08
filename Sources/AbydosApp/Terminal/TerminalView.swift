@@ -2375,14 +2375,41 @@ final class TerminalView: NSView, NSTextInputClient {
 	@objc func paste(_ sender: Any?) {
 		guard let text = NSPasteboard.general.string(forType: .string) else { return }
 		isPinnedToBottom = true
-		// Bracketed paste tells the program the text arrived at once, which stops
+		scrollToBottom()
+
+		// Through tmux, tmux does the pasting.
+		//
+		// Bracketed paste is a promise to the program reading the keyboard, and
+		// through tmux there are two of them: tmux, which asks for the markers
+		// so it can receive a paste, and whatever is in the pane, which asks
+		// separately and changes its mind constantly — a shell turns them off
+		// while a command runs and on while it is editing a line. What this
+		// terminal sees is tmux's answer, so writing the markers ourselves is
+		// answering the wrong program, and losing that race puts `^[[200~` in
+		// the command line.
+		if let tty = pty.ttyName {
+			Task { @MainActor [weak self] in
+				if let session = await TmuxMirror.session(forClient: tty),
+				   await TmuxMirror.paste(text, intoSession: session) {
+					return
+				}
+				self?.sendPaste(text)
+			}
+			return
+		}
+		sendPaste(text)
+	}
+
+	/// Types the text at the program, which is what a terminal does when there
+	/// is nothing in the way that knows better.
+	private func sendPaste(_ text: String) {
+		// The markers tell the program the text arrived at once, which stops
 		// shells from executing every pasted line as it lands.
 		if emulator.bracketedPaste {
 			pty.write("\u{1B}[200~" + text + "\u{1B}[201~")
 		} else {
 			pty.write(text)
 		}
-		scrollToBottom()
 	}
 
 	func sendInterrupt() {

@@ -82,6 +82,58 @@ public enum TmuxMirror {
 	/// Not the one it was started with: `C-b w` and `switch-client` move a
 	/// client between sessions, and the tabs should follow what is on screen
 	/// rather than what was asked for when the window opened.
+	/// Hands text to tmux to paste, rather than typing it at tmux.
+	///
+	/// Bracketed paste is a promise to the program reading the keyboard that
+	/// what follows arrived at once, so it should not run every line of it. The
+	/// markers are only wanted where the program asked for them, and through
+	/// tmux there are two programs: tmux, which asks for them so it can receive
+	/// a paste, and whatever is inside the pane, which asks separately and
+	/// changes its mind constantly — a shell turns them off while a command
+	/// runs and on while it is editing a line. Writing the markers ourselves
+	/// means guessing which of the two we are answering, and losing that guess
+	/// puts `^[[200~` in the command line.
+	///
+	/// So tmux is given the text and asked to paste it. It knows what the pane
+	/// wants and brackets it or does not, and there is nothing left to race.
+	///
+	/// - Returns: whether tmux took it. False means paste the ordinary way.
+	public static func paste(_ text: String, intoSession session: String) async -> Bool {
+		guard let tmux = Executables.locate("tmux"), !text.isEmpty else { return false }
+		let buffer = "abydos-paste"
+		guard await load(text, intoBuffer: buffer, using: tmux) else { return false }
+		// `-p` brackets it where the pane asked for that; `-d` takes the buffer
+		// away afterwards rather than leaving it on tmux's stack.
+		return await succeeds(["paste-buffer", "-d", "-p", "-b", buffer, "-t", "\(session):"])
+	}
+
+	/// Puts text in a tmux buffer, by way of its standard input so that nothing
+	/// has to be quoted.
+	private static func load(
+		_ text: String, intoBuffer buffer: String, using tmux: String
+	) async -> Bool {
+		await withCheckedContinuation { continuation in
+			DispatchQueue.global(qos: .userInitiated).async {
+				let process = Process()
+				process.executableURL = URL(fileURLWithPath: tmux)
+				process.arguments = ["load-buffer", "-b", buffer, "-"]
+				let input = Pipe(), output = Pipe()
+				process.standardInput = input
+				process.standardOutput = output
+				process.standardError = FileHandle.nullDevice
+				do { try process.run() } catch {
+					continuation.resume(returning: false)
+					return
+				}
+				_ = ProcessPipes.drain(
+					process, out: output, err: output,
+					input: Data(text.utf8), stdin: input
+				)
+				continuation.resume(returning: process.terminationStatus == 0)
+			}
+		}
+	}
+
 	public static func session(forClient tty: String) async -> String? {
 		guard let tmux = Executables.locate("tmux") else { return nil }
 		let result = await run(tmux, [
