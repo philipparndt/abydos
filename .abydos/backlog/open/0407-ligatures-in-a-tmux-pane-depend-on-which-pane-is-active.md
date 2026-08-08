@@ -1,16 +1,5 @@
 # 407. Ligatures in a tmux pane depend on which pane is active
 
-**Two fixes are in, believed to cover it; awaiting confirmation on the machine
-it happens on.** A colour boundary through the middle of an operator no longer
-splits it — runs are shaped over the whole span that shares a face, on both
-paths, and each colour paints its own cells of the shared shaping. And every
-terminal view now observes the settings change itself instead of relying on
-the window-to-panel fan-out, which any pane living elsewhere missed — that is
-what let rows painted under different settings coexist in one pane until focus
-forced a full repaint. Verified with a forced repro: `==>` split red/green,
-`!!` split across colours, and bold `==>` all join. If the flicker survives
-this build, what is below is the evidence gathered so far.
-
 Two screenshots of the same `brew upgrade` output in the same pane, one while
 the pane held the cursor and one while it did not, disagree about which
 operators join:
@@ -70,6 +59,32 @@ If that is it, the fix is not in the ligature code but in what it is given:
 shape the line's text and apply the colours per cell afterwards, rather than
 shaping each colour separately. A ligature is a property of the characters and
 a colour is a property of the cell, and today the second decides the first.
+
+**That was tried and reverted — read this before trying it again.** Runs were
+widened to every neighbouring cell sharing a *face* (bold, italic, hidden),
+with each run painting only its own cells of the shared shaping. It worked on
+the case it was written for: `==>` split red/green mid-operator joined, and so
+did `!!` split across colours. And it broke the ordinary case — a plain `==>`
+with no boundary in it stopped joining, on both renderers, while the split one
+still did. So widening the run inverted which operators join rather than fixing
+which, and whatever is wrong is in how the widened span maps back to cells, not
+in the idea.
+
+Two things were learned on the way and are worth keeping:
+
+- Widening the span makes the bail-outs far more expensive than they look.
+  `drawLigated` returns false for a whole span holding a powerline separator, a
+  box drawing or a placeholder, and a wide span in a prompt or beside a pane
+  border always holds one — so ligatures vanish from the line entirely.
+  Stopping the span at those cells rather than failing on them is necessary but
+  was not sufficient.
+- The Metal path and the CG path agreed exactly, before and after, which says
+  the fault is in the shared idea rather than in either renderer.
+
+Next time: get the evidence first. Record the span text, the `cellOfOffset` it
+is given and the pieces that come back for a plain `==>` and for a split one,
+and find out why the plain one produces no join, before changing how runs are
+built.
 
 Checkable without guessing: e42eb08 records what the terminal was given.
 Capture a line where one operator joins and another does not, and compare the

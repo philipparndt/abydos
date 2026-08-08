@@ -139,22 +139,6 @@ final class TerminalMetalRenderer {
 		shapedRuns.removeAll()
 	}
 
-	/// Whether two neighbouring cells can be shaped as one run.
-	///
-	/// Only what changes the glyphs ends a run: the face — bold, italic — and
-	/// visibility. Colours do not, and letting them was a bug with a shape
-	/// nobody could see: a ligature is a property of the characters, but an
-	/// attribute boundary through the middle of an operator split it into two
-	/// runs of one character each, and neither could join. The boundary is
-	/// invisible — the same `==>` joined at one position and not another,
-	/// depending on who wrote the cells last, since a program repainting on
-	/// focus and tmux replaying a line do not colour them identically. The ink
-	/// of a joined group sits on its last cell and takes that cell's colour,
-	/// which is what other terminals do with a group that crosses a boundary.
-	private func canShareShaping(_ a: TerminalAttributes, _ b: TerminalAttributes) -> Bool {
-		a.bold == b.bold && a.italic == b.italic && a.hidden == b.hidden
-	}
-
 	/// Which cells of a line draw a shaped glyph instead of their own, and
 	/// which draw nothing because a ligature covers them.
 	///
@@ -172,9 +156,7 @@ final class TerminalMetalRenderer {
 		let cells = line.cells
 		while start < cells.count {
 			var end = start + 1
-			while end < cells.count, canShareShaping(cells[end].attributes, cells[start].attributes) {
-				end += 1
-			}
+			while end < cells.count, cells[end].attributes == cells[start].attributes { end += 1 }
 			defer { start = end }
 			guard Ligatures.mayLigate(cells[start..<end].lazy.map(\.scalar)) else { continue }
 
