@@ -1,5 +1,66 @@
 # 407. Ligatures in a tmux pane depend on which pane is active
 
+**It was the pane border, and it was the second candidate on the list below
+rather than the first.** The run boundaries were right all along; what was
+wrong is what a run did when it met a character the terminal draws itself.
+
+tmux paints the border of the pane that is *not* active with
+`pane-border-style`, and that option is `default` out of the box — the same
+attributes as ordinary text. So the border column lands in the *same* run as
+the text either side of it. The border is a box drawing, and a run holding one
+gave up whole: `usable = false` in `ligatures(in:faces:)`, `return false` in
+`drawLigated`. Every line the border crossed lost its ligatures. Making the
+other pane active paints that border green, which ends the run before it, and
+they all came back.
+
+`tmux show -gw window-style window-active-style` printing nothing was true and
+was the wrong option to look at: a border is not a window style, and
+`pane-active-border-style` is `fg=green` on a stock tmux.
+
+The evidence, recorded before anything was changed, from a real tmux 3.7
+attach on 80x24 with one vertical split, the same three rows replayed through
+the emulator with each pane active in turn:
+
+    === left pane active (border green: fg=i2) ===
+    row 1 run 0..<40 fg=def bg=def
+      text "node 2.1.224 -> 2.1.226                 "
+      cellOfOffset [0, 1, 2, … 39]
+      pieces 40, carriers (no ink) at columns [4, 12, 13, 15, 23 …]
+                                                      ^^ the `-` of `->` joins
+
+    === right pane active (border default: fg=def) ===
+    row 1 run 0..<80
+      REFUSED: tiles U+2502 at column 40 — the whole run draws per cell
+
+Same bytes, same row, same font, same setting. The only difference between the
+two is which pane tmux thinks is active, and it moves the *run boundary*, not
+the shaping. The blue `==>` above it is `fg=i4`, a run of three cells that
+never touches the border, and it joins in both — which is the report's "only
+some positions" exactly.
+
+The fix is the opposite of the one that was reverted: a span **stops** at a
+character that cannot be shaped instead of the run giving up on it.
+`Ligatures.spans(in:canShape:)` cuts a run into the stretches a font can be
+asked about, and both paths shape those. Runs holding nothing of the sort —
+which is nearly all of them, and every plain `==>` — are shaped exactly as
+before, so this can only ever add ligatures, never take one away. That is the
+difference from the widening attempt, which changed what a *good* run was
+given and inverted which operators joined.
+
+Two things fall out of it that also match the report: the same is true of a
+powerline separator in a prompt and of a picture's placeholder, which is why
+the prompt line in the screenshots behaved the same way; and it survives a
+restart because it is decided by what is in the cells, which tmux replays the
+same way every time.
+
+Photographed before and after in a real tmux split, on both renderers: with
+the right pane active the unfixed build draws `-> != |>` plainly and the fixed
+one draws them joined, while the left pane active joins them either way.
+
+Below, what was known while it was being looked for.
+
+---
+
 Two screenshots of the same `brew upgrade` output in the same pane, one while
 the pane held the cursor and one while it did not, disagree about which
 operators join:

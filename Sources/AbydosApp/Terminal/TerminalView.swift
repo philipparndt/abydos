@@ -1215,17 +1215,32 @@ final class TerminalView: NSView, NSTextInputClient {
 		// shaper is asked only *which* characters join, and the result is put
 		// back on the columns. A run with no two ligature-forming marks side by
 		// side cannot join anything, and that is nearly every run.
-		if Settings.shared.fontLigatures,
-		   Ligatures.mayLigate(line.cells[start..<end].lazy.map(\.scalar)),
-		   drawLigated(of: line, from: start, to: end, font: drawFont, baseline: baseline, context: context) {
-			context.restoreGState()
-			if attributes.underline || attributes.strikethrough {
-				drawTextDecoration(from: start, to: end, y: y, colour: foreground, attributes: attributes)
+		//
+		// Shaped in the stretches of the run the font can be asked about,
+		// rather than in one piece. One character it cannot be asked about
+		// used to take the whole run's ligatures with it, and that is the bug
+		// this had: a tmux pane border is drawn in the *default* colour while
+		// its pane is not the active one, so it shares the attributes of the
+		// text either side and lands in the same run. Every line the border
+		// crossed lost its ligatures, and making the other pane active —
+		// which paints the border green — gave them back.
+		var ligated = [Bool](repeating: false, count: max(0, end - start))
+		if Settings.shared.fontLigatures {
+			let spans = Ligatures.spans(in: start..<end) { canShape(line.cells[$0]) }
+			for span in spans {
+				guard Ligatures.mayLigate(line.cells[span].lazy.map(\.scalar)),
+				      drawLigated(
+					of: line, from: span.lowerBound, to: span.upperBound,
+					font: drawFont, baseline: baseline, context: context
+				      )
+				else { continue }
+				for cellIndex in span { ligated[cellIndex - start] = true }
 			}
-			return
 		}
 
 		for cellIndex in start..<end {
+			// Already drawn, by the shaper, with whatever it chose to join.
+			if ligated[cellIndex - start] { continue }
 			let cell = line.cells[cellIndex]
 			// The trailing half of a wide glyph carries no character of its own.
 			if cell.isWideTrailer { continue }
@@ -1261,16 +1276,29 @@ final class TerminalView: NSView, NSTextInputClient {
 		}
 	}
 
-	/// Draws a run with its ligatures joined, and says whether it could.
+	/// Whether a cell's character can be handed to the font at all.
+	///
+	/// A powerline separator is drawn as geometry, a box drawing is not
+	/// something to let a shaper join, and a placeholder is a piece of a
+	/// picture rather than a character. None of them belongs in a shaped span,
+	/// and a span stops at one rather than giving up on the whole run.
+	private func canShape(_ cell: TerminalCell) -> Bool {
+		cell.scalar != 0 && cell.scalar != UnicodePlaceholder.scalar
+			&& !PowerlineGlyph.isSeparator(cell.scalar) && !BoxDrawing.draws(cell.scalar)
+			&& UnicodeScalar(cell.scalar) != nil
+	}
+
+	/// Draws a span with its ligatures joined, and says whether it could.
 	///
 	/// The shaper is asked what joins; where each piece goes is decided here.
 	/// A ligature glyph replaces the characters it covers, so it is drawn at
 	/// the column of the first of them — and in a monospaced font its advance
 	/// is exactly that many cells, so the grid is kept without forcing it.
 	///
-	/// Returns false for a run this cannot handle — anything drawn as geometry
+	/// Returns false for a span this cannot handle — anything drawn as geometry
 	/// rather than from the font, or a picture's placeholder — leaving the
-	/// per-cell path to do it.
+	/// per-cell path to do it. Callers hand it spans that hold none of those,
+	/// so this is a guard rather than the way out of a run.
 	private func drawLigated(
 		of line: TerminalLine,
 		from start: Int,

@@ -139,6 +139,18 @@ final class TerminalMetalRenderer {
 		shapedRuns.removeAll()
 	}
 
+	/// Whether a cell's character can be handed to the font at all.
+	///
+	/// A powerline separator, a box drawing and a block element are drawn here
+	/// as geometry rather than taken from the font, and a placeholder is a
+	/// piece of a picture rather than a character. None of them belongs in a
+	/// shaped span.
+	private func canShape(_ cell: TerminalCell) -> Bool {
+		cell.scalar != 0 && cell.scalar != UnicodePlaceholder.scalar
+			&& !PowerlineGlyph.isSeparator(cell.scalar) && !BoxDrawing.draws(cell.scalar)
+			&& !GlyphAtlas.tiles(cell.scalar) && UnicodeScalar(cell.scalar) != nil
+	}
+
 	/// Which cells of a line draw a shaped glyph instead of their own, and
 	/// which draw nothing because a ligature covers them.
 	///
@@ -160,44 +172,56 @@ final class TerminalMetalRenderer {
 			defer { start = end }
 			guard Ligatures.mayLigate(cells[start..<end].lazy.map(\.scalar)) else { continue }
 
-			// The run's characters, one per cell, and where each came from.
-			var text = ""
-			var cellOfOffset: [Int] = []
-			var usable = true
-			for column in start..<end {
-				let cell = cells[column]
-				if cell.isWideTrailer { continue }
-				guard cell.scalar != 0, cell.scalar != UnicodePlaceholder.scalar,
-				      !PowerlineGlyph.isSeparator(cell.scalar), !BoxDrawing.draws(cell.scalar),
-				      !GlyphAtlas.tiles(cell.scalar),
-				      let scalar = UnicodeScalar(cell.scalar)
-				else { usable = false; break }
-				let piece = cell.combining ?? String(Character(scalar))
-				text += piece
-				// Relative to the run, so the cache can be keyed by the text
-				// alone and still be right for the same run somewhere else.
-				cellOfOffset.append(
-					contentsOf: Array(repeating: column - start, count: piece.utf16.count)
-				)
-			}
-			guard usable, !text.isEmpty else { continue }
-
 			let faceIndex = TerminalFaces.index(
 				bold: cells[start].attributes.bold, italic: cells[start].attributes.italic
 			)
 			let face = faces.face(
 				bold: cells[start].attributes.bold, italic: cells[start].attributes.italic
 			)
-			guard let pieces = shapedRuns.pieces(
-				for: text, cellOfOffset: cellOfOffset, font: face, faceIndex: faceIndex
-			) else { continue }
-			// One glyph per character, still: these fonts substitute shapes
-			// rather than merging cells, which is what keeps the grid. So the
-			// count is no guide to whether anything joined, and the shaped
-			// glyphs are simply used — identical to the per-cell ones wherever
-			// nothing did.
-			for column in start..<end { map[column] = .some(nil) }
-			for piece in pieces { map[start + piece.cellOffset] = piece }
+
+			// A run is shaped in the stretches of it the font can be asked
+			// about, not in one piece. One character it cannot be asked about
+			// used to take the whole run's ligatures, and that is the bug: a
+			// tmux pane border is drawn in the *default* colour while its pane
+			// is not the active one, so it shares the attributes of the text
+			// on either side of it and lands in the same run. Every line the
+			// border crossed lost its ligatures, and making the other pane
+			// active — which paints the border green — gave them back. The
+			// same for a prompt's separators and for a picture.
+			for span in Ligatures.spans(in: start..<end, canShape: { canShape(cells[$0]) }) {
+				let spanStart = span.lowerBound
+				let spanEnd = span.upperBound
+				guard Ligatures.mayLigate(cells[span].lazy.map(\.scalar)) else { continue }
+
+				// The span's characters, one per cell, and where each came from.
+				var text = ""
+				var cellOfOffset: [Int] = []
+				for column in spanStart..<spanEnd {
+					let cell = cells[column]
+					if cell.isWideTrailer { continue }
+					guard let scalar = UnicodeScalar(cell.scalar) else { continue }
+					let piece = cell.combining ?? String(Character(scalar))
+					text += piece
+					// Relative to the span, so the cache can be keyed by the
+					// text alone and still be right for the same span somewhere
+					// else.
+					cellOfOffset.append(
+						contentsOf: Array(repeating: column - spanStart, count: piece.utf16.count)
+					)
+				}
+				guard !text.isEmpty else { continue }
+
+				guard let pieces = shapedRuns.pieces(
+					for: text, cellOfOffset: cellOfOffset, font: face, faceIndex: faceIndex
+				) else { continue }
+				// One glyph per character, still: these fonts substitute shapes
+				// rather than merging cells, which is what keeps the grid. So the
+				// count is no guide to whether anything joined, and the shaped
+				// glyphs are simply used — identical to the per-cell ones wherever
+				// nothing did.
+				for column in spanStart..<spanEnd { map[column] = .some(nil) }
+				for piece in pieces { map[spanStart + piece.cellOffset] = piece }
+			}
 		}
 		return map
 	}

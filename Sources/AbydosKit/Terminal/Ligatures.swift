@@ -47,4 +47,35 @@ public enum Ligatures {
 		}
 		return false
 	}
+
+	/// The stretches of a run that can be handed to a font, split at the cells
+	/// that cannot.
+	///
+	/// A terminal draws some of its characters itself — powerline separators,
+	/// box drawings, the placeholders a picture is made of — so those cannot be
+	/// part of a shaped span. Ending the whole run at one of them is what this
+	/// exists to stop: an inactive tmux pane border is painted in the *default*
+	/// colour, so it shares the attributes of the text either side of it and
+	/// lands in the same run as that text. One column of border took the
+	/// ligatures off every line it crossed, and making the other pane active —
+	/// which paints the border green, ending the run before it — gave them
+	/// back. Position-dependent, focus-dependent, and the same after a restart,
+	/// because it is decided by what is in the cells.
+	///
+	/// - Parameter canShape: whether the cell at a column may be shaped.
+	/// - Returns: the maximal shapeable stretches of `columns`, in order.
+	public static func spans(
+		in columns: Range<Int>, canShape: (Int) -> Bool
+	) -> [Range<Int>] {
+		var spans: [Range<Int>] = []
+		var start = columns.lowerBound
+		while start < columns.upperBound {
+			guard canShape(start) else { start += 1; continue }
+			var end = start
+			while end < columns.upperBound, canShape(end) { end += 1 }
+			spans.append(start..<end)
+			start = end
+		}
+		return spans
+	}
 }
