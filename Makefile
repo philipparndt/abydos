@@ -43,9 +43,15 @@ open: build ## Build and open a specific project: make open PROJECT=~/dev/foo
 	@test -n "$(PROJECT)" || { echo "usage: make open PROJECT=<dir>"; exit 1; }
 	@open -a $(abspath $(APP)) $(PROJECT)
 
+# No test run may go on for ever. The suite is a couple of minutes on a cold
+# build and seconds on a warm one, so five is a ceiling nothing legitimate
+# reaches — and a run that does reach it is a hang, which is worth being told
+# about rather than waited on.
+TEST_TIMEOUT ?= 300
+
 .PHONY: test
-test: ## Run the test suite
-	@$(SWIFT) test
+test: ## Run the test suite (FILTER=name, TEST_TIMEOUT=seconds)
+	@Scripts/run-tests.sh $(TEST_TIMEOUT) $(SWIFT) test $(if $(FILTER),--filter $(FILTER))
 
 .PHONY: perf
 perf: ## Run the performance suite in release and print timings

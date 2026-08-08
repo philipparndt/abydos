@@ -148,9 +148,13 @@ public actor ContainerImageStore {
 		let out = Pipe(), err = Pipe()
 		process.standardOutput = out
 		process.standardError = err
-		// Closed at once: a runtime that wanted to ask something would
-		// otherwise wait for an answer nobody is there to give.
-		process.standardInput = Pipe()
+		// Nothing on standard input, and said in the one way that means it.
+		//
+		// A `Pipe()` here reads as "no input" and is the opposite: this process
+		// holds the write end, so the child sees an input that never ends. Apple's
+		// `container` then waits for it — `container images inspect` with a pipe
+		// held open never answers at all — and every caller waits with it.
+		process.standardInput = FileHandle.nullDevice
 		do { try process.run() } catch {
 			return ("\(error.localizedDescription)", -1)
 		}

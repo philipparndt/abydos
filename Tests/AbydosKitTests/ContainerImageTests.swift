@@ -87,6 +87,46 @@ struct ContainerImageStoreTests {
 		#expect(!reason.isEmpty)
 	}
 
+	/// A runtime that reads standard input still finishes.
+	///
+	/// The bug this pins cost an afternoon. `standardInput = Pipe()` reads as
+	/// "nothing on standard input" and means the opposite: this process holds
+	/// the write end, so the child is given an input that never ends. Apple's
+	/// `container` waits for that end — `container images inspect` with a pipe
+	/// held open never answers — so the first check of whether an image was on
+	/// the machine hung for ever, taking the pane, the test, or the language
+	/// server that asked with it.
+	///
+	/// Stood in for by a script that reads to end of file, so the test needs no
+	/// container runtime and fails on any machine if this comes back.
+	@Test func aRuntimeThatReadsItsInputIsGivenAnEnd() async throws {
+		let directory = FileManager.default.temporaryDirectory
+			.appendingPathComponent("runtime-\(UUID().uuidString)")
+		try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+		defer { try? FileManager.default.removeItem(at: directory) }
+
+		let script = directory.appendingPathComponent("reads-stdin")
+		try Data("#!/bin/sh\ncat > /dev/null\nexit 0\n".utf8).write(to: script)
+		try FileManager.default.setAttributes(
+			[.posixPermissions: 0o755], ofItemAtPath: script.path
+		)
+
+		let store = ContainerImageStore()
+		let outcome = await withTaskGroup(of: ContainerImageStore.Outcome?.self) { group in
+			group.addTask { await store.ensure("a/b", using: .docker(script.path)) }
+			group.addTask {
+				try? await Task.sleep(nanoseconds: 10_000_000_000)
+				return nil
+			}
+			let first = await group.next() ?? nil
+			group.cancelAll()
+			return first
+		}
+		// Present, because the stand-in exits 0 as an inspect that found it
+		// would — and above all, present rather than still waiting.
+		#expect(outcome == .present)
+	}
+
 	/// Two askers for the same image wait on one fetch rather than starting two.
 	@Test func askersForTheSameImageShareTheAnswer() async {
 		let store = ContainerImageStore()

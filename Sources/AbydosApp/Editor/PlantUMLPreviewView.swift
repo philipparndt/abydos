@@ -159,9 +159,23 @@ final class PlantUMLPreviewView: NSView {
 		// for a daemon that is never coming, and a preview that spins for ever
 		// tells somebody nothing about why. Generous, since the first run of an
 		// image has to fetch it first.
+		// The process is stopped whether or not this view is still here to be
+		// told about it. It used to be the first thing the deadline checked —
+		// `guard let self` — so a pane closed while its render hung left the
+		// render running, and a container that hangs hangs for ever: eleven of
+		// them were found on this machine, the oldest a day old, and enough of
+		// them wedge the runtime's service so that every later render hangs too.
+		// That is the shape of "it spawned endless containers".
 		let watchdog = DispatchWorkItem { [weak self] in
-			guard let self, self.running === process, process.isRunning else { return }
+			guard process.isRunning else { return }
 			process.terminate()
+			// And then for certain. A runtime waiting on a service that is not
+			// coming does not always answer a polite ask, and what is left
+			// behind is exactly what this deadline exists to prevent.
+			DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
+				if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+			}
+			guard let self, self.running === process else { return }
 			self.spinner.stopAnimation(nil)
 			self.running = nil
 			self.image = nil
