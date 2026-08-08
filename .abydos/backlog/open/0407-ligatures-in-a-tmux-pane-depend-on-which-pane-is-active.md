@@ -16,7 +16,34 @@ other does not, and which is which is not stable. Which is the useful part of th
 out the setting, the font, and the shaper being asked at all, and points at
 *what the shaper is being given*.
 
-**Where to look.** A run is the unit shaped, and a run ends where the cell
+**What the two screenshots of the same pane show** is a repaint, not shaping:
+`==> Done:` and `==> Installed` sit there unligated, and the moment focus
+enters the window both of them join — the same rows, the same text, no output
+in between. Whatever a row was painted with, it keeps.
+
+Which points at the invalidation rather than at the shaper. On the CG path
+only the rows that changed are repainted:
+
+    setNeedsDisplay(rect(forAbsoluteRows: range))
+
+so a row painted while ligatures were off stays that way for as long as
+nothing touches it, and taking focus repaints the view whole. The Metal path
+redraws everything every frame and cannot show this. So the first thing to
+find out is whether the panes that differ are the ones on different renderers
+— `updateMetalEnabled()` is per view, and `terminalGPURendering` is global but
+only applied when a view is made or the setting changes.
+
+`applyThemeChange()` is the existing "start again" hook: it clears the glyph
+atlas *and* the shaped-run cache and repaints in full. If the answer is that
+a setting change has to reach every pane, that is the thing to call, and
+`BottomPanel.applySettings` already calls it for terminal panes — worth
+checking whether the ligature switch goes through there at all.
+
+Separately: the doubling this was confused with — one dot too many for `..`,
+the first of `!!` painted twice — was a different bug in the Metal path and
+is fixed. This entry is only about ligatures appearing and disappearing.
+
+**Where to look next.** A run is the unit shaped, and a run ends where the cell
 attributes change:
 
     while end < cells.count, cells[end].attributes == cells[start].attributes { end += 1 }
