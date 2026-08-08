@@ -1,5 +1,16 @@
 # 407. Ligatures in a tmux pane depend on which pane is active
 
+**Two fixes are in, believed to cover it; awaiting confirmation on the machine
+it happens on.** A colour boundary through the middle of an operator no longer
+splits it — runs are shaped over the whole span that shares a face, on both
+paths, and each colour paints its own cells of the shared shaping. And every
+terminal view now observes the settings change itself instead of relying on
+the window-to-panel fan-out, which any pane living elsewhere missed — that is
+what let rows painted under different settings coexist in one pane until focus
+forced a full repaint. Verified with a forced repro: `==>` split red/green,
+`!!` split across colours, and bold `==>` all join. If the flicker survives
+this build, what is below is the evidence gathered so far.
+
 Two screenshots of the same `brew upgrade` output in the same pane, one while
 the pane held the cursor and one while it did not, disagree about which
 operators join:

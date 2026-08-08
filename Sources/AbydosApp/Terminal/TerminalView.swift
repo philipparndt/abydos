@@ -136,6 +136,19 @@ final class TerminalView: NSView, NSTextInputClient {
 		layer?.backgroundColor = TerminalPalette.background.cgColor
 		updateMetrics()
 
+		// Every view hears a settings change itself, rather than being told by
+		// whoever owns it. The fan-out — window to panel to its panes — misses
+		// any view living somewhere else, and a terminal that misses it keeps
+		// drawing rows under the old settings while new output arrives under
+		// the new ones: flipping the ligature switch left one pane showing
+		// joined and unjoined operators in alternate rows, depending on when
+		// each row had last been painted, until taking focus repainted the lot.
+		settingsObserver = NotificationCenter.default.addObserver(
+			forName: .abydosSettingsChanged, object: nil, queue: .main
+		) { [weak self] _ in
+			self?.applyThemeChange()
+		}
+
 		emulator.onUpdate = { [weak self] in
 			self?.realignSelectionForDiscardedLines()
 			self?.scheduleRedraw()
@@ -187,7 +200,12 @@ final class TerminalView: NSView, NSTextInputClient {
 
 	required init?(coder: NSCoder) { fatalError("not used") }
 
+	/// The token for the settings observer; a block observer is only removed by
+	/// its token, and one left behind calls into a deallocated view.
+	private var settingsObserver: NSObjectProtocol?
+
 	deinit {
+		if let settingsObserver { NotificationCenter.default.removeObserver(settingsObserver) }
 		displayLink?.invalidate()
 		cursorTimer?.invalidate()
 		pty.terminate()
@@ -1215,14 +1233,27 @@ final class TerminalView: NSView, NSTextInputClient {
 		// shaper is asked only *which* characters join, and the result is put
 		// back on the columns. A run with no two ligature-forming marks side by
 		// side cannot join anything, and that is nearly every run.
-		if Settings.shared.fontLigatures,
-		   Ligatures.mayLigate(line.cells[start..<end].lazy.map(\.scalar)),
-		   drawLigated(of: line, from: start, to: end, font: drawFont, baseline: baseline, context: context) {
-			context.restoreGState()
-			if attributes.underline || attributes.strikethrough {
-				drawTextDecoration(from: start, to: end, y: y, colour: foreground, attributes: attributes)
+		// Shaped over the whole span that shares this run's face, not only this
+		// run. This run ends where any attribute changes, and most of those
+		// changes — colours, underline — do not change the glyphs; a colour
+		// boundary through the middle of an operator split it into two runs of
+		// one character each and neither could join, so the same `==>` joined
+		// at one position and drew plainly at another, depending on who had
+		// coloured the cells last. Each run still draws only its own cells, in
+		// its own colour, from the shared shaping.
+		if Settings.shared.fontLigatures {
+			let span = shapingSpan(of: line, around: start, end)
+			if Ligatures.mayLigate(line.cells[span].lazy.map(\.scalar)),
+			   drawLigated(
+				of: line, from: span.lowerBound, to: span.upperBound,
+				drawOnly: start..<end, font: drawFont, baseline: baseline, context: context
+			   ) {
+				context.restoreGState()
+				if attributes.underline || attributes.strikethrough {
+					drawTextDecoration(from: start, to: end, y: y, colour: foreground, attributes: attributes)
+				}
+				return
 			}
-			return
 		}
 
 		for cellIndex in start..<end {
@@ -1261,12 +1292,33 @@ final class TerminalView: NSView, NSTextInputClient {
 		}
 	}
 
+	/// How far either side of a run the same glyphs would be chosen.
+	///
+	/// Bold, italic and hidden are the attributes the *font* sees; everything
+	/// else is paint. Cells that agree on those shape as one piece of text,
+	/// however many colours they are drawn in.
+	private func shapingSpan(of line: TerminalLine, around start: Int, _ end: Int) -> Range<Int> {
+		let anchor = line.cells[start].attributes
+		func shares(_ other: TerminalAttributes) -> Bool {
+			other.bold == anchor.bold && other.italic == anchor.italic
+				&& other.hidden == anchor.hidden
+		}
+		var lower = start
+		while lower > 0, shares(line.cells[lower - 1].attributes) { lower -= 1 }
+		var upper = end
+		while upper < line.cells.count, shares(line.cells[upper].attributes) { upper += 1 }
+		return lower..<upper
+	}
+
 	/// Draws a run with its ligatures joined, and says whether it could.
 	///
 	/// The shaper is asked what joins; where each piece goes is decided here.
 	/// A ligature glyph replaces the characters it covers, so it is drawn at
 	/// the column of the first of them — and in a monospaced font its advance
 	/// is exactly that many cells, so the grid is kept without forcing it.
+	///
+	/// `drawOnly` is the run being painted; the rest of the span is shaped for
+	/// context and left for the runs that own it, each in its own colour.
 	///
 	/// Returns false for a run this cannot handle — anything drawn as geometry
 	/// rather than from the font, or a picture's placeholder — leaving the
@@ -1275,6 +1327,7 @@ final class TerminalView: NSView, NSTextInputClient {
 		of line: TerminalLine,
 		from start: Int,
 		to end: Int,
+		drawOnly: Range<Int>,
 		font drawFont: NSFont,
 		baseline: CGFloat,
 		context: CGContext
@@ -1310,18 +1363,24 @@ final class TerminalView: NSView, NSTextInputClient {
 			let attributes = CTRunGetAttributes(run) as NSDictionary
 			guard let runFont = attributes[kCTFontAttributeName as String] as! CTFont? else { continue }
 
+			// Only this run's cells. The span was shaped whole so groups can
+			// cross colour boundaries, and each run paints its own share of it.
+			var kept = [CGGlyph]()
 			var positions = [CGPoint]()
+			kept.reserveCapacity(count)
 			positions.reserveCapacity(count)
 			for index in 0..<count {
 				let offset = Int(indices[index])
 				guard offset >= 0, offset < cellOfOffset.count else { return false }
 				let column = cellOfOffset[offset]
+				guard drawOnly.contains(column) else { continue }
+				kept.append(glyphs[index])
 				positions.append(CGPoint(
 					x: (Self.horizontalInset + CGFloat(column) * cellWidth).rounded(),
 					y: -baseline
 				))
 			}
-			CTFontDrawGlyphs(runFont, glyphs, positions, count, context)
+			CTFontDrawGlyphs(runFont, kept, positions, kept.count, context)
 		}
 		return true
 	}
