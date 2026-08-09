@@ -338,13 +338,6 @@ final class PdfFileView: NSView, ScalingPage {
 		updateCaption()
 	}
 
-	// MARK: - For a test that has no window
-
-	/// How many pages are showing, and at what scale — the two things a
-	/// screenshot is checked for, so a test can ask for them instead.
-	var stateForTesting: (pages: Int, scale: CGFloat, notice: String?) {
-		(pdfView.document?.pageCount ?? 0, pdfView.scaleFactor, notice.isHidden ? nil : notice.stringValue)
-	}
 }
 
 /// A `PDFView` that can be photographed.
