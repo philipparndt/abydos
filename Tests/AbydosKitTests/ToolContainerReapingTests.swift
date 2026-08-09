@@ -63,17 +63,54 @@ struct ToolContainerNameTests {
 		)
 		#expect(docker.executable == "/usr/bin/docker")
 		#expect(docker.arguments == ["rm", "-f", "abydos-a", "abydos-b"])
+
+		// And Apple's, which spells the same thing differently and is now proven
+		// to do it — see `ToolContainerAppleLiveTests`.
+		let apple = ToolContainers.removal(
+			of: ["abydos-a", "abydos-b"], using: .apple("/usr/local/bin/container")
+		)
+		#expect(apple.executable == "/usr/local/bin/container")
+		#expect(apple.arguments == ["rm", "--force", "abydos-a", "abydos-b"])
 	}
 
-	/// Docker's listing says exactly what is wanted. Apple's is not guessed at:
-	/// its output format could not be checked while its service was wedged, and
-	/// a sweep that parses a format nobody has seen removes either nothing or
-	/// the wrong thing.
-	@Test func theSweepOnlyReadsAListItHasSeen() {
-		let docker = try? #require(ToolContainers.listing(using: .docker("/usr/bin/docker")))
-		#expect(docker?.arguments.contains("{{.Names}}") == true)
-		#expect(docker?.arguments.contains("name=abydos-") == true)
-		#expect(ToolContainers.listing(using: .apple("/usr/local/bin/container")) == nil)
+	/// Both are asked for names and nothing else, so neither answer has to be
+	/// read out of a table — and both are asked for the stopped ones too, which
+	/// is most of what a crashed run leaves behind.
+	@Test func theSweepAsksBothRuntimesForNamesAndNothingElse() throws {
+		let docker = try #require(ToolContainers.listing(using: .docker("/usr/bin/docker")))
+		#expect(docker.arguments.contains("{{.Names}}"))
+		#expect(docker.arguments.contains("name=abydos-"))
+		#expect(docker.arguments.contains("-a"))
+
+		// Apple's `--quiet` prints one container id per line, and for everything
+		// this app starts the id is the name. It has no filter, which costs
+		// nothing: `stale` keeps only our own names anyway.
+		let apple = try #require(ToolContainers.listing(using: .apple("/usr/local/bin/container")))
+		#expect(apple.arguments == ["ls", "--all", "--quiet"])
+	}
+
+	/// Apple's `inspect` has no `--format`, so the whole record comes back and
+	/// the two things wanted are read out of it.
+	@Test func applesInspectIsReadRatherThanSearched() {
+		let record = """
+		[{"id":"abydos-plantuml-1-1","configuration":{"image":{"reference":"plantuml/plantuml"}},
+		  "status":{"state":"running","networks":[{"ipv4Address":"192.168.64.14/24",
+		  "ipv4Gateway":"192.168.64.1","network":"default"}]}}]
+		"""
+		#expect(AppleInspection.state(record) == "running")
+		#expect(AppleInspection.isRunning(record))
+		// Without the prefix length, which is not part of an address to ask.
+		#expect(AppleInspection.address(record) == "192.168.64.14")
+
+		// Whatever the CLI wrote before the JSON is stepped over: both of a
+		// command's streams arrive here together.
+		#expect(AppleInspection.address("[6/6] Starting container\n" + record) == "192.168.64.14")
+
+		// And nothing readable is nil rather than a guess.
+		#expect(AppleInspection.state("Error: container not found") == nil)
+		#expect(AppleInspection.address("") == nil)
+		#expect(AppleInspection.address(#"[{"id":"x","status":{"state":"stopped","networks":[]}}]"#)
+			== nil)
 	}
 
 	/// What a previous run left is what nothing is running any more. Two copies
@@ -123,28 +160,30 @@ struct ToolContainerNameTests {
 	}
 }
 
-/// Which runtime, now that a container has to be removable again.
+/// Which runtime, now that a container can be removed on either.
 struct ContainerRuntimePreferenceTests {
-	/// Docker first when nothing is asked for — a reversal, and the reason is
-	/// removal: it is the runtime this app can prove it can clean up after.
-	@Test func automaticPrefersTheOneWhoseCleanupIsProven() {
+	/// Docker first when nothing is asked for. The reason is no longer cleanup —
+	/// that is proven on both — but the one thing that does not work on Apple's:
+	/// nothing here can reach one of its containers over the network.
+	@Test func automaticPrefersTheOneItsContainersCanBeReachedOn() {
 		let found = ContainerRuntime.discover(locate: { name in
 			["container": "/usr/local/bin/container", "docker": "/usr/bin/docker"][name]
 		})
 		#expect(found == .docker("/usr/bin/docker"))
 	}
 
-	/// Apple's is still found when it is the only one here: an app that draws no
-	/// diagrams would be a worse answer than one that draws them and says what
-	/// it cannot promise.
+	/// Apple's is still found when it is the only one here, and everything except
+	/// a published port works on it.
 	@Test func appleIsStillFoundWhenItIsAllThereIs() {
 		let found = ContainerRuntime.discover(
 			locate: { $0 == "container" ? "/usr/local/bin/container" : nil }
 		)
 		#expect(found == .apple("/usr/local/bin/container"))
-		// And it is not silent about it.
-		let caveat = found?.caveat
-		#expect(caveat?.contains("removing a container by name") == true)
+		// And it is not silent about the one thing it cannot do. It no longer
+		// warns about removal, which is proven.
+		let caveat = try? #require(found?.caveat)
+		#expect(caveat?.contains("over the network") == true)
+		#expect(caveat?.contains("removing a container by name") == false)
 		#expect(ContainerRuntime.docker("/usr/bin/docker").caveat == nil)
 	}
 
@@ -163,25 +202,62 @@ struct ContainerRuntimePreferenceTests {
 /// Against a real runtime: that a container outlives the process which started
 /// it, and that removing it by name is what actually ends it.
 ///
-/// Skipped unless docker and a small image are both here, the way the other
-/// live tests are skipped without their server.
-struct ToolContainerLiveTests {
+/// **Run for both runtimes**, which is the point of it. This was docker's proof
+/// alone, and 0406 set Apple's aside because its service was wedged badly enough
+/// that `--help` never returned — the one state in which a cleanup cannot be
+/// demonstrated. It answers again, so it gets the same test rather than a
+/// promise, and `rm --force` is no longer read off documentation.
+///
+/// Skipped, per runtime, unless that runtime and a small image are both here.
+/// To run all of it:
+///
+///     docker pull alpine:3
+///     container image pull alpine:3
+///
+/// Serialized: two of these on the same runtime at once are two sweeps, and a
+/// sweep is a machine-wide thing.
+@Suite(.serialized) struct ToolContainerLiveTests {
 	static let image = "alpine:3"
 
-	/// Docker, and only docker: the removal verb is proven there, and this test
-	/// is the proof. See 0406's decision.
-	private var runtime: ContainerRuntime? {
-		guard let docker = ContainerRuntime.discover(preference: .docker) else { return nil }
+	/// That runtime, if it is here and already holds the image.
+	private func runtime(_ preference: ContainerRuntime.Preference) -> ContainerRuntime? {
+		guard let found = ContainerRuntime.discover(preference: preference) else { return nil }
 		let inspect = RuntimeCommand.run(
-			ContainerImages.inspect(Self.image, using: docker), deadline: 10
+			ContainerImages.inspect(Self.image, using: found), deadline: 20
 		)
-		return inspect.succeeded ? docker : nil
+		return inspect.succeeded ? found : nil
 	}
 
 	private func exists(_ name: String, using runtime: ContainerRuntime) -> Bool {
-		RuntimeCommand.run(
-			(runtime.path, ["inspect", "--type", "container", name]), deadline: 10
-		).succeeded
+		switch runtime {
+		case .docker:
+			return RuntimeCommand.run(
+				(runtime.path, ["inspect", "--type", "container", name]), deadline: 10
+			).succeeded
+		case .apple:
+			return RuntimeCommand.run(
+				ToolContainers.inspection(of: name, using: runtime), deadline: 10
+			).succeeded
+		}
+	}
+
+	/// Whether the runtime says the container is up, rather than merely there.
+	private func isRunning(_ name: String, using runtime: ContainerRuntime) -> Bool {
+		let asked = RuntimeCommand.run(
+			DevContainers.stateCommand(name: name, using: runtime), deadline: 15
+		)
+		return asked.succeeded && DevContainers.isRunning(asked.output, using: runtime)
+	}
+
+	/// Whether a sweep would find this name at all — the listing that a sweep
+	/// starts from, asked directly.
+	private func listed(_ name: String, using runtime: ContainerRuntime) -> Bool {
+		guard let listing = ToolContainers.listing(using: runtime) else { return false }
+		let found = RuntimeCommand.run(listing, deadline: 20)
+		return found.succeeded && found.output
+			.split(separator: "\n")
+			.map { $0.trimmingCharacters(in: .whitespaces) }
+			.contains(name)
 	}
 
 	/// Waits for something to become true, rather than sleeping a guessed
@@ -196,8 +272,11 @@ struct ToolContainerLiveTests {
 		return condition()
 	}
 
-	@Test func killingTheProcessLeavesTheContainerAndRemovingItByNameDoesNot() throws {
-		guard let runtime else { return }
+	@Test(arguments: [ContainerRuntime.Preference.docker, .apple])
+	func killingTheProcessLeavesTheContainerAndRemovingItByNameDoesNot(
+		_ preference: ContainerRuntime.Preference
+	) throws {
+		guard let runtime = runtime(preference) else { return }
 		let name = ToolContainers.mint("probe-outlives")
 		let containers = ToolContainers()
 		defer {
@@ -221,26 +300,38 @@ struct ToolContainerLiveTests {
 		containers.register(name, runtime: runtime)
 		try process.run()
 
-		#expect(waitFor(60) { exists(name, using: runtime) }, "the container never started")
+		#expect(
+			waitFor(120) { isRunning(name, using: runtime) },
+			"the container never started on \(runtime.name)"
+		)
 
 		// The bug, demonstrated: the process is killed outright and the
 		// container carries on. `--rm` only fires for a container that ends of
 		// its own accord.
 		kill(process.processIdentifier, SIGKILL)
 		process.waitUntilExit()
-		Thread.sleep(forTimeInterval: 1)
+		Thread.sleep(forTimeInterval: 3)
 		#expect(exists(name, using: runtime), "a killed `run` used to be the whole story")
+		// Not merely still listed — still *running*, minutes of `sleep` later,
+		// with nothing left on this side that could stop it.
+		#expect(isRunning(name, using: runtime), "the container should outlive its starter")
+		// And a sweep can see it, which is the other half of not leaving one
+		// behind: a listing that misses it is a sweep that removes nothing.
+		#expect(listed(name, using: runtime), "the listing a sweep starts from cannot see it")
 
 		// And the fix: asked by name, the runtime removes it.
 		containers.release(name)
 		#expect(!exists(name, using: runtime))
+		#expect(!listed(name, using: runtime))
 		#expect(containers.names.isEmpty)
 	}
 
 	/// What an app that was killed outright leaves behind, cleared by the next
-	/// one to start.
-	@Test func theSweepTakesWhatAnEarlierRunLeft() throws {
-		guard let runtime else { return }
+	/// one to start — on a container the sweep did not start and knows nothing
+	/// about except its name.
+	@Test(arguments: [ContainerRuntime.Preference.docker, .apple])
+	func theSweepTakesWhatAnEarlierRunLeft(_ preference: ContainerRuntime.Preference) throws {
+		guard let runtime = runtime(preference) else { return }
 		// A name of ours whose owner is a process id this test declares dead.
 		// Only that one: every other `abydos-…` on this machine belongs to
 		// somebody whose app may well be running, and a sweep that took those
@@ -264,6 +355,7 @@ struct ToolContainerLiveTests {
 		)
 		#expect(started.succeeded, "could not start the container: \(started.output)")
 		#expect(exists(name, using: runtime))
+		#expect(listed(name, using: runtime), "the sweep's listing cannot see it")
 
 		let removed = ToolContainers().sweep(using: runtime, isAlive: { $0 != dead })
 		// Contains rather than equals: every other `abydos-…` is reported alive

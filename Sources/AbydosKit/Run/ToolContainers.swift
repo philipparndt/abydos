@@ -96,25 +96,36 @@ public final class ToolContainers: @unchecked Sendable {
 		case .docker:
 			return (runtime.path, ["rm", "-f"] + names)
 		case .apple:
-			// Unverified, and said so out loud: Apple's `container` was wedged
-			// badly enough while this was written that even `--help` never
-			// returned, so this spelling is read off its documentation rather
-			// than off a machine. If it is wrong the command fails and nothing is
-			// worse than it is today — which is why the runtime it is *proven*
-			// for is the one now preferred. See 0406's decision.
+			// Proven now, against `container` 1.2.2, the same way docker's was:
+			// a named container started by a CLI, that CLI killed with `SIGKILL`,
+			// the container still `running` three seconds later — and then gone,
+			// from `inspect` and from `ls --all` both, the moment this command was
+			// run. `ToolContainerAppleLiveTests` is that transcript as a test.
 			return (runtime.path, ["rm", "--force"] + names)
 		}
 	}
 
-	/// The command that lists the containers on the machine, when there is one
-	/// whose output can be read.
+	/// The command that lists the containers on the machine.
 	///
-	/// Docker's `--format` says exactly what is wanted and nothing else. Apple's
-	/// prints a table whose columns could not be checked here for the same
-	/// reason the removal verb could not, and a sweep that parses a format
-	/// nobody has seen would remove either nothing or the wrong thing. So it
-	/// returns nil, and a container left behind by Apple's runtime stays until
-	/// somebody removes it by hand — set aside, rather than half-supported.
+	/// Both are asked for names and nothing else, so neither answer has to be
+	/// parsed out of a table. Docker's `--format` says exactly that; Apple's
+	/// `--quiet` prints one container id per line, and for everything this app
+	/// starts the id *is* the name, because `--name` on its `run` is documented
+	/// as "use the specified name as the container ID".
+	///
+	/// **`--all` on both, and it is the whole point.** Each of them lists only
+	/// running containers otherwise, and what a crashed run leaves behind is
+	/// mostly stopped ones — a sweep that cannot see those sweeps nothing.
+	///
+	/// Apple's has no `--filter`, so its list arrives with everything else on the
+	/// machine in it. That costs nothing: `stale(among:)` already keeps only the
+	/// `abydos-` names, because docker's filter is a prefix match rather than a
+	/// promise and was never trusted on its own.
+	///
+	/// `container ls` also offers `--format json`, which is the fuller answer and
+	/// the one to reach for if a state or an address is ever wanted here. It is
+	/// not wanted here: names are the whole of what a sweep needs, and a line per
+	/// name cannot be misparsed.
 	public static func listing(
 		using runtime: ContainerRuntime
 	) -> (executable: String, arguments: [String])? {
@@ -122,7 +133,7 @@ public final class ToolContainers: @unchecked Sendable {
 		case .docker:
 			return (runtime.path, ["ps", "-a", "--format", "{{.Names}}", "--filter", "name=\(prefix)"])
 		case .apple:
-			return nil
+			return (runtime.path, ["ls", "--all", "--quiet"])
 		}
 	}
 
@@ -262,6 +273,17 @@ public final class ToolContainers: @unchecked Sendable {
 		return dead
 	}
 
+	/// The command that says what a container is doing, and where it is.
+	///
+	/// Docker answers one field at a time and Apple's answers the whole record;
+	/// `AppleInspection` is what reads the second, and `stateCommand` on
+	/// `DevContainers` is what asks the first.
+	public static func inspection(
+		of name: String, using runtime: ContainerRuntime
+	) -> (executable: String, arguments: [String]) {
+		(runtime.path, ["inspect", name])
+	}
+
 	/// A number that only goes up, for the names.
 	private final class Counter: @unchecked Sendable {
 		private let lock = NSLock()
@@ -273,5 +295,72 @@ public final class ToolContainers: @unchecked Sendable {
 			value += 1
 			return value
 		}
+	}
+}
+
+/// Reading what Apple's `container inspect` says about a container.
+///
+/// Its `inspect` has no `--format`, so there is no asking it for one field the
+/// way docker's is asked: it prints the whole record as JSON and the two things
+/// wanted out of it are picked here. Docker's answers stay one-field commands
+/// and never come through this.
+///
+/// Everything is nil rather than thrown. Each caller's answer to "the runtime
+/// said something I could not read" is the same as its answer to "the container
+/// is not there", and both are already handled.
+enum AppleInspection {
+	/// Whether the container is running.
+	static func isRunning(_ output: String) -> Bool {
+		state(output) == "running"
+	}
+
+	/// What it says the container is doing — `running`, `stopped`.
+	static func state(_ output: String) -> String? {
+		guard let record = first(in: output),
+		      let status = record["status"] as? [String: Any]
+		else { return nil }
+		return status["state"] as? String
+	}
+
+	/// The address the container answers on, without the prefix length.
+	///
+	/// Apple's runtime gives every container an address of its own on the
+	/// machine's `bridge100` — `192.168.64.14` — which is how a server inside one
+	/// is reached, since its published ports do not work here.
+	static func address(_ output: String) -> String? {
+		guard let record = first(in: output),
+		      let status = record["status"] as? [String: Any],
+		      let networks = status["networks"] as? [[String: Any]]
+		else { return nil }
+		for network in networks {
+			guard let address = network["ipv4Address"] as? String else { continue }
+			let bare = address.split(separator: "/").first.map(String.init) ?? address
+			if !bare.isEmpty { return bare }
+		}
+		return nil
+	}
+
+	/// The first record in the array the CLI prints.
+	///
+	/// What arrives here is both of the command's streams together — that is how
+	/// `RuntimeCommand` hands back a result, since the runtimes disagree about
+	/// which stream a failure goes to — so the JSON has whatever the CLI wrote to
+	/// standard error in front of it. Its progress lines are `[6/6] Starting
+	/// container`, which is to say they start with the same bracket the array
+	/// does, so "from the first `[`" is not good enough.
+	///
+	/// Every `[` is tried instead, and the first one that parses as an array of
+	/// records is the answer. The output is one container's description, so there
+	/// is nothing here worth being cleverer about.
+	private static func first(in output: String) -> [String: Any]? {
+		var searched = output.startIndex
+		while let start = output[searched...].firstIndex(of: "[") {
+			if let parsed = try? JSONSerialization.jsonObject(with: Data(output[start...].utf8)),
+			   let array = parsed as? [[String: Any]] {
+				return array.first
+			}
+			searched = output.index(after: start)
+		}
+		return nil
 	}
 }
