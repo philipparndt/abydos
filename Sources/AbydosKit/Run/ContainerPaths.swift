@@ -13,6 +13,21 @@ import Foundation
 /// part worth getting exactly right: a mapping that is subtly wrong does not
 /// fail, it silently opens the wrong file or reports a diagnostic against
 /// nothing, and both look like the language server being unreliable.
+///
+/// **Every path here is canonical, and the caller is what makes it so.** What
+/// decides whether a file is inside the project is a prefix comparison against
+/// `host`, and a comparison between two paths reached different ways answers
+/// no: on macOS `/tmp` and `/var` are symlinks, so a `host` of `/tmp/x` shares
+/// no prefix with the `/private/tmp/x/main.go` a tool reports, and the file is
+/// refused as outside a project it is plainly in. Both construction sites pass
+/// `FilePath.canonical` and both `toContainer(path:)` callers do too — see
+/// `LanguageServers.resolve` and `DevContainerFile.parse`, which say so where
+/// they do it.
+///
+/// Canonicalising in here instead would be wrong: this maps paths that need
+/// not exist — a file about to be written, a diagnostic about one just deleted
+/// — and `realpath` cannot answer for those. So the rule is at the edge, where
+/// a path is turned into one of these, and it is stated at both ends.
 public struct ContainerPaths: Equatable, Sendable {
 	/// Where the project lives on this machine.
 	public let host: String

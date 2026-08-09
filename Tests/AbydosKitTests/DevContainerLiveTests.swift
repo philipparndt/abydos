@@ -123,6 +123,75 @@ import Testing
 		#expect(isGone(session.name, using: runtime), "the container was not removed")
 	}
 
+	/// A project reached through a symlink, built from the Dockerfile its own
+	/// devcontainer.json names.
+	///
+	/// 0430, end to end, and the reason it is a live test rather than only a
+	/// parse one: what went wrong was not visible in the configuration unless
+	/// you knew what to look at — it was visible as a runtime refusing to build,
+	/// saying a Dockerfile that is plainly on disk does not exist. `relative()`
+	/// canonicalised the project root and not the file, so under `/tmp` or
+	/// `/var` — both symlinks on macOS, and so the shape of every scratch
+	/// project this harness makes — the file's folder fell off `shown` and the
+	/// Dockerfile resolved to `<project>/Dockerfile`.
+	///
+	/// The project is opened *by the link*, which is the whole point.
+	@Test(arguments: [ContainerRuntime.Preference.docker, .apple])
+	func buildsTheDockerfileOfAProjectReachedThroughASymlink(
+		_ preference: ContainerRuntime.Preference
+	) async throws {
+		guard let runtime = available(preference) else { return }
+		let base = URL(
+			fileURLWithPath: FilePath.canonical(try JavaTestDirectory.make()), isDirectory: true
+		)
+		defer { try? FileManager.default.removeItem(at: base) }
+		let real = base.appendingPathComponent("checkout")
+		try FileManager.default.createDirectory(at: real, withIntermediateDirectories: true)
+		let root = base.appendingPathComponent("opened-through-here")
+		try FileManager.default.createSymbolicLink(at: root, withDestinationURL: real)
+
+		try JavaTestDirectory.write("""
+		{
+			"name": "Linked",
+			// Relative to this file, not to the project — which is what the
+			// subtraction that went wrong was for.
+			"build": { "dockerfile": "Dockerfile", "context": ".." }
+		}
+		""", to: root.appendingPathComponent(".devcontainer/devcontainer.json"))
+		try JavaTestDirectory.write("""
+		FROM \(Self.image)
+		RUN echo built-from-the-dockerfile > /built.txt
+		""", to: root.appendingPathComponent(".devcontainer/Dockerfile"))
+		try JavaTestDirectory.write(
+			"the checkout is here\n", to: root.appendingPathComponent("marker.txt")
+		)
+
+		let outcome = await DevContainers.shared.session(for: root, using: runtime)
+		guard case let .running(session)? = outcome else {
+			Issue.record("the devcontainer did not start: \(String(describing: outcome))")
+			return
+		}
+
+		// The image is the one the Dockerfile built, not the base it came from.
+		let built = RuntimeCommand.run(
+			DevContainers.execCommand(session, arguments: ["cat", "/built.txt"]), deadline: 30
+		)
+		#expect(built.output.contains("built-from-the-dockerfile"))
+		// And the checkout is mounted by its real name, which is what the
+		// runtime knows the directory as.
+		let contents = RuntimeCommand.run(
+			DevContainers.execCommand(session, arguments: ["cat", "marker.txt"]), deadline: 30
+		)
+		#expect(contents.output.contains("the checkout is here"))
+
+		await DevContainers.shared.stop(project: root)
+		#expect(isGone(session.name, using: runtime), "the container was not removed")
+		// The image was made by this test, so this test takes it away again.
+		_ = RuntimeCommand.run(
+			(runtime.path, ["rmi", "-f", session.configuration.builtImageName]), deadline: 60
+		)
+	}
+
 	/// A shell in the container, on a real pty, typed at and read back.
 	///
 	/// The moment this becomes useful to somebody: not "a command ran inside the

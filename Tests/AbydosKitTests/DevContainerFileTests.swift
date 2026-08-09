@@ -286,6 +286,87 @@ struct DevContainerFileTests {
 		#expect(both.contains("both an image and a Dockerfile"))
 	}
 
+	// MARK: - A project reached through a symlink
+
+	/// A project directory reached through a symlink, which is one `ln -s`
+	/// rather than anything exotic — and the shape every scratch project on this
+	/// machine already has, since `/tmp` and `/var` are both symlinks on macOS.
+	///
+	/// Returns the link to open the project through, and the directory to delete
+	/// afterwards.
+	private func makeProjectBehindASymlink() throws -> (project: URL, cleanUp: URL) {
+		let base = try makeProject()
+		let real = base.appendingPathComponent("checkout")
+		try FileManager.default.createDirectory(at: real, withIntermediateDirectories: true)
+		let link = base.appendingPathComponent("opened-through-here")
+		try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
+		return (link, base)
+	}
+
+	/// 0430: the file is named with the folder it is in, however the project was
+	/// reached.
+	///
+	/// The refusal is what shows it: `shown` is the file relative to the
+	/// project, and when the two sides of that subtraction disagree about
+	/// symlinks it collapses to a bare `devcontainer.json` — a sentence about a
+	/// file the project has two of.
+	@Test func namesTheFileWithItsFolderThroughASymlinkedRoot() throws {
+		let (project, cleanUp) = try makeProjectBehindASymlink()
+		defer { try? FileManager.default.removeItem(at: cleanUp) }
+		try JavaTestDirectory.write(
+			#"{"name": "Nothing"}"#,
+			to: project.appendingPathComponent(".devcontainer/devcontainer.json")
+		)
+
+		let reason = try #require(DevContainerFile.read(project: project)?.refusal)
+		#expect(reason.hasPrefix(".devcontainer/devcontainer.json names neither"))
+	}
+
+	/// 0430: and the Dockerfile it names is the one that is there.
+	///
+	/// The paths in a `build` are relative to the *file*, so a `shown` that has
+	/// lost its folder puts the Dockerfile at `<project>/Dockerfile` instead of
+	/// at `<project>/.devcontainer/Dockerfile`, and the build then fails saying
+	/// a file that is plainly there does not exist.
+	@Test func findsItsOwnDockerfileThroughASymlinkedRoot() throws {
+		let (project, cleanUp) = try makeProjectBehindASymlink()
+		defer { try? FileManager.default.removeItem(at: cleanUp) }
+		try JavaTestDirectory.write("""
+		{"build": {"dockerfile": "Dockerfile", "context": ".."}}
+		""", to: project.appendingPathComponent(".devcontainer/devcontainer.json"))
+		try JavaTestDirectory.write(
+			"FROM alpine:3\n", to: project.appendingPathComponent(".devcontainer/Dockerfile")
+		)
+
+		let configuration = try #require(DevContainerFile.read(project: project)?.configuration)
+		let real = FilePath.canonical(project)
+		#expect(configuration.file.path == real + "/.devcontainer/devcontainer.json")
+		let build = try #require(configuration.build)
+		#expect(build.dockerfile == real + "/.devcontainer/Dockerfile")
+		#expect(build.context == real)
+		// The point of all of it: the path names a file that exists.
+		#expect(FileManager.default.fileExists(atPath: build.dockerfile))
+	}
+
+	/// And the mount is the project, whichever of its two names it was opened by
+	/// — `ContainerPaths` decides what is inside the project by the same kind of
+	/// prefix comparison, so a root it held uncanonicalised would refuse a file
+	/// that is in the project.
+	@Test func mountsTheProjectItselfThroughASymlinkedRoot() throws {
+		let (project, cleanUp) = try makeProjectBehindASymlink()
+		defer { try? FileManager.default.removeItem(at: cleanUp) }
+		try JavaTestDirectory.write(
+			#"{"image": "alpine:3.20"}"#,
+			to: project.appendingPathComponent(".devcontainer/devcontainer.json")
+		)
+
+		let configuration = try #require(DevContainerFile.read(project: project)?.configuration)
+		let real = FilePath.canonical(project)
+		#expect(configuration.paths.host == real)
+		#expect(configuration.paths.toContainer(path: real + "/main.go")
+			== configuration.paths.container + "/main.go")
+	}
+
 	// MARK: - The boundary of the subset
 
 	/// Features are a package manager, and a container built without the tools
