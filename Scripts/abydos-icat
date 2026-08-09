@@ -15,6 +15,10 @@
 # Inside tmux the escape has to be wrapped so tmux hands it through rather than
 # eating it, and tmux needs `allow-passthrough on` — which this says, once,
 # when it is not set.
+#
+# A terminal without the protocol is told so in a sentence rather than shown
+# fourteen kilobytes of base64: the terminal is asked first, and what it answers
+# — or does not answer, within three tenths of a second — decides.
 set -eu
 
 width=""
@@ -30,6 +34,84 @@ USAGE
 	exit 2
 }
 
+# What to do, from everything that is known about where the picture would go.
+#
+# One word out, and nothing but its arguments in: no terminal is asked, no
+# environment is read, nothing is written. That is deliberate. This is the part
+# with all the cases in it, and the cases are the part that gets a person sent
+# to fix the wrong thing — so it is a function of five answers, and the tests
+# put it through every combination of them without needing a terminal to do it
+# on.
+#
+#   $1  whether standard output is a terminal      yes | no
+#   $2  what TERM says
+#   $3  whether tmux is in the way                 yes | no
+#   $4  whether tmux is passing escapes through    yes | no
+#   $5  whether the terminal answered the query    yes | no
+#
+# The order is cheapest first, and each one rules out the next: there is no
+# point asking a pipe what it can draw, and no point believing the silence of a
+# terminal whose answer tmux was never going to carry.
+support_decision() {
+	[ "$1" = "yes" ] || { echo not-a-terminal; return 0; }
+	case "$2" in
+		"") echo no-terminal-type; return 0 ;;
+		dumb|unknown) echo text-only-terminal; return 0 ;;
+	esac
+	if [ "$3" = "yes" ] && [ "$4" != "yes" ]; then
+		echo tmux-in-the-way
+		return 0
+	fi
+	[ "$5" = "yes" ] || {
+		# Two different sentences, because they send a person to two different
+		# places. tmux passing escapes through and the terminal still saying
+		# nothing means the terminal is the one that cannot do this, and telling
+		# somebody to fix their tmux config at that point wastes their evening.
+		if [ "$3" = "yes" ]; then echo terminal-behind-tmux-silent; else echo terminal-silent; fi
+		return 0
+	}
+	echo supported
+}
+
+# The one sentence that goes with a decision. `$2` is what the terminal is
+# called, as far as anything here can tell, and `$3` is what TERM said.
+support_message() {
+	case "$1" in
+		not-a-terminal)
+			echo "abydos-icat: standard output is a file or a pipe rather than a terminal," \
+				"so there is nowhere to draw a picture; run it in a terminal." ;;
+		no-terminal-type)
+			echo "abydos-icat: TERM is not set, so there is no telling what this terminal can" \
+				"draw; run it in Abydos's terminal, or kitty, Ghostty or WezTerm." ;;
+		text-only-terminal)
+			echo "abydos-icat: TERM is $3, which is a terminal that has said it draws nothing" \
+				"but text; run it in Abydos's terminal, or kitty, Ghostty or WezTerm." ;;
+		tmux-in-the-way)
+			echo "abydos-icat: tmux is not passing escapes through, so the picture would never" \
+				"reach $2; run 'tmux set -g allow-passthrough on', or put it in ~/.tmux.conf." ;;
+		terminal-behind-tmux-silent)
+			echo "abydos-icat: tmux is passing escapes through, but $2 behind it did not answer" \
+				"the graphics query — so it is the terminal rather than tmux that cannot draw" \
+				"pictures; run it in Abydos's terminal, or kitty, Ghostty or WezTerm." ;;
+		terminal-silent)
+			echo "abydos-icat: $2 did not answer the graphics query, so it cannot draw pictures;" \
+				"run it in Abydos's terminal, or kitty, Ghostty or WezTerm." ;;
+		supported)
+			echo "abydos-icat: $2 answered the graphics query." ;;
+	esac
+}
+
+# Not in the usage above: this is how the tests ask the decision what it would
+# do, since a test can bring every one of its five answers and none of them can
+# bring a terminal.
+if [ "${1:-}" = "--explain-support" ]; then
+	shift
+	decision=$(support_decision "${1:-}" "${2:-}" "${3:-}" "${4:-}" "${5:-}")
+	echo "$decision"
+	support_message "$decision" "${6:-this terminal}" "${2:-}"
+	exit 0
+fi
+
 while getopts "w:h:" option; do
 	case "$option" in
 		w) width="$OPTARG" ;;
@@ -43,14 +125,6 @@ shift $((OPTIND - 1))
 # tmux eats an escape sequence it does not know unless it is wrapped in its own
 # passthrough, and refuses to pass anything through at all unless told to.
 in_tmux() { [ -n "${TMUX:-}" ]; }
-
-if in_tmux; then
-	if [ "$(tmux show -Apv allow-passthrough 2>/dev/null || echo off)" = "off" ]; then
-		echo "abydos-icat: tmux is not passing escapes through; run:" >&2
-		echo "    tmux set -p allow-passthrough on" >&2
-		echo "  (or put 'set -g allow-passthrough on' in ~/.tmux.conf)" >&2
-	fi
-fi
 
 esc=$(printf '\033')
 
@@ -66,6 +140,125 @@ if [ ! -x "$PYTHON" ]; then
 	echo "abydos-icat: python3 is needed to draw the image and was not found" >&2
 	exit 1
 fi
+
+# Whatever the terminal's settings were before anything here touched them.
+#
+# Asking a terminal a question means turning off echo and line editing first,
+# and a command that leaves a terminal like that is a worse bug than any it
+# could be fixing: the shell that comes back does not echo what is typed at it
+# and does not act on return, which looks like the machine has died. So the
+# settings are put back on every way out of here — the answer, the deadline, an
+# error, and the signals that would otherwise skip all three — and put back
+# twice over, since the query below restores them itself as well. Two restores
+# cost nothing; a missed one costs somebody their terminal.
+saved_termios=""
+restore_termios() {
+	[ -z "$saved_termios" ] || stty "$saved_termios" < /dev/tty 2>/dev/null || true
+	saved_termios=""
+}
+trap 'restore_termios' EXIT
+# Re-raised after restoring, so the exit status is still the signal's and
+# whatever started this can tell it was interrupted.
+trap 'restore_termios; trap - INT; kill -INT $$' INT
+trap 'restore_termios; trap - TERM; kill -TERM $$' TERM
+trap 'restore_termios; trap - HUP; kill -HUP $$' HUP
+trap 'restore_termios; trap - QUIT; kill -QUIT $$' QUIT
+
+# Asks the terminal whether it has the graphics protocol. True if it said so.
+#
+# `a=q` is the protocol's own query: a one-pixel image that is only ever
+# answered for, never drawn. A terminal that has the protocol replies
+# `ESC _ G i=31;OK ESC \`; one that does not replies nothing whatsoever — and
+# the nothing is the entire difficulty, because a read waiting for it waits
+# forever, with echo already off and no keystroke that can end it. Afternoons
+# have gone into that exact shape here; `Sources/AbydosKit/Support/ProcessPipes.swift`
+# is the long version of the same lesson.
+#
+# So there is a deadline, and it is three tenths of a second — an age for a
+# program on the other end of the same machine, and long enough that a terminal
+# under load still gets its word in. Past it, silence is the answer.
+ask_terminal() {
+	saved_termios=$(stty -g < /dev/tty 2>/dev/null) || return 1
+	status=0
+	"$PYTHON" - "$1" <<'PY' 2>/dev/null || status=$?
+import os, select, signal, sys, termios, time
+
+DEADLINE = 0.3
+query = sys.argv[1].encode("utf-8", "surrogateescape")
+
+# The terminal itself rather than standard output: the picture goes to standard
+# output, but the answer comes back on the terminal's own input, which is a
+# different descriptor and may be a different file.
+try:
+	terminal = os.open("/dev/tty", os.O_RDWR | os.O_NOCTTY)
+	saved = termios.tcgetattr(terminal)
+except (OSError, termios.error):
+	sys.exit(1)
+
+def restore():
+	try:
+		termios.tcsetattr(terminal, termios.TCSADRAIN, saved)
+	except Exception:
+		pass
+
+# A signal landing between the line that turns echo off and the `finally` that
+# turns it back on would leave the terminal that way for whatever runs next.
+# Restore, then let the signal do what it was going to do.
+def on_signal(number, frame):
+	restore()
+	signal.signal(number, signal.SIG_DFL)
+	os.kill(os.getpid(), number)
+
+for number in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT):
+	try:
+		signal.signal(number, on_signal)
+	except (OSError, ValueError):
+		pass
+
+answered = False
+try:
+	# Echo off so the reply is not printed as rubbish, and line editing off so
+	# it arrives as it is typed rather than waiting for a return nobody is
+	# going to press. Interrupts are deliberately left working: three tenths of
+	# a second is short, but a terminal that cannot be ⌃C'd out of is not worth
+	# the difference.
+	raw = list(saved)
+	raw[3] &= ~(termios.ECHO | termios.ICANON)
+	termios.tcsetattr(terminal, termios.TCSANOW, raw)
+
+	os.write(terminal, query)
+
+	reply = b""
+	deadline = time.monotonic() + DEADLINE
+	while True:
+		remaining = deadline - time.monotonic()
+		if remaining <= 0:
+			break
+		ready, _, _ = select.select([terminal], [], [], remaining)
+		if not ready:
+			break
+		try:
+			chunk = os.read(terminal, 256)
+		except OSError:
+			break
+		if not chunk:
+			break
+		reply += chunk
+		# `ESC _ G i=31;OK ESC \` — the id is ours, so this cannot be somebody
+		# else's answer, and stopping on it means a terminal that has the
+		# protocol costs nothing rather than three tenths of a second.
+		if b"i=31;OK" in reply:
+			answered = True
+			break
+finally:
+	restore()
+	os.close(terminal)
+
+sys.exit(0 if answered else 1)
+PY
+	restore_termios
+	return $status
+}
 
 # How large one character cell is, in pixels, and how wide the terminal is.
 #
@@ -100,14 +293,22 @@ PY
 }
 
 ask_cell_size() {
-	# Raw, so the answer is not echoed and arrives without waiting for a return
-	# that nobody is going to press. `time 3` is three tenths of a second, after
-	# which a terminal that does not answer has answered.
-	saved=$(stty -g 2>/dev/null) || return 1
-	stty raw -echo min 0 time 3 2>/dev/null || return 1
+	# Echo and line editing off, so the answer is not printed as rubbish and
+	# arrives as it comes rather than waiting for a return nobody is going to
+	# press. `time 3` is three tenths of a second, after which a terminal that
+	# has not answered has answered.
+	#
+	# The terminal, not standard input: standard input here is whatever the
+	# command was given, which for `abydos-icat x.png < /dev/null` is not a
+	# terminal at all — and `stty` on it either fails or, worse, quietly
+	# configures the wrong thing. The saved settings go in the same place the
+	# traps above read from, so an interrupt in the next three tenths of a
+	# second still puts them back.
+	saved_termios=$(stty -g < /dev/tty 2>/dev/null) || return 1
+	stty -echo -icanon min 0 time 3 < /dev/tty 2>/dev/null || { restore_termios; return 1; }
 	printf '%s[16t' "$esc" > /dev/tty
 	reply=$(dd bs=1 count=16 2>/dev/null < /dev/tty)
-	stty "$saved" 2>/dev/null
+	restore_termios
 	# ESC [ 6 ; height ; width t
 	echo "$reply" | awk -v RS='t' -F';' '/\[6/ { print $3, $2; exit }'
 }
@@ -158,6 +359,79 @@ measure_terminal() {
 	[ "$cell_w" -gt 0 ] 2>/dev/null || cell_w=0
 	[ "$cell_h" -gt 0 ] 2>/dev/null || cell_h=0
 }
+
+# What this terminal is called, as far as anything here can tell.
+#
+# Inside tmux the useful name is the one tmux is talking to, not the one tmux
+# hands its panes: `TERM` in a pane is tmux's own, and `TERM_PROGRAM` is the
+# word "tmux". Naming tmux back at somebody who is being told tmux is not the
+# problem is exactly the sentence that sends them to the wrong place.
+terminal_name() {
+	if in_tmux; then
+		outer=$(tmux display -p '#{client_termname}' 2>/dev/null || true)
+		if [ -n "${outer:-}" ]; then
+			echo "$outer"
+			return 0
+		fi
+	fi
+	if [ -n "${TERM_PROGRAM:-}" ] && [ "${TERM_PROGRAM}" != "tmux" ]; then
+		echo "$TERM_PROGRAM"
+		return 0
+	fi
+	echo "${TERM:-this terminal}"
+}
+
+# Whether there is anything here that can draw a picture — asked once, before a
+# single byte of one is written.
+#
+# Everything below emits escape sequences that a terminal without the graphics
+# protocol has no idea what to do with. In a pipe they are fourteen kilobytes of
+# base64 in a file; on a screen they are that, or three thousand placeholder
+# cells drawn as tofu, depending on how much of it the terminal's parser
+# swallows. Either way it reads as a broken command rather than as a terminal
+# that cannot do this — which is the thing worth saying, and the only thing this
+# can usefully say.
+stdout_is_terminal=no
+[ -t 1 ] && stdout_is_terminal=yes
+
+tmux_present=no
+in_tmux && tmux_present=yes
+
+tmux_passthrough=no
+if [ "$tmux_present" = yes ]; then
+	case "$(tmux show -Apv allow-passthrough 2>/dev/null || echo off)" in
+		on|all) tmux_passthrough=yes ;;
+	esac
+fi
+
+# Asked with the answer set to "no", which is what the terminal will have said
+# if it is never asked. Only the two decisions that turn on the answer are worth
+# a query — there is nothing to learn by interrogating a pipe, and a query tmux
+# is about to eat would answer "no" for a reason that is not the terminal's.
+support=$(support_decision "$stdout_is_terminal" "${TERM:-}" "$tmux_present" "$tmux_passthrough" no)
+case "$support" in
+	terminal-silent|terminal-behind-tmux-silent)
+		if in_tmux; then
+			query=$(printf '%sPtmux;%s%s_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA%s%s\\%s\\' \
+				"$esc" "$esc" "$esc" "$esc" "$esc" "$esc")
+		else
+			query=$(printf '%s_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA%s\\' "$esc" "$esc")
+		fi
+		answered=no
+		ask_terminal "$query" && answered=yes
+		support=$(support_decision \
+			"$stdout_is_terminal" "${TERM:-}" "$tmux_present" "$tmux_passthrough" "$answered")
+		;;
+esac
+
+[ -z "${ABYDOS_ICAT_DEBUG:-}" ] || echo "abydos-icat: support ${support}" \
+	"(tty=${stdout_is_terminal} TERM=${TERM:-unset} tmux=${tmux_present}" \
+	"passthrough=${tmux_passthrough})" >&2
+
+if [ "$support" != supported ]; then
+	support_message "$support" "$(terminal_name)" "${TERM:-}" >&2
+	exit 1
+fi
 
 measure_terminal
 
