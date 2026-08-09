@@ -81,19 +81,32 @@ rather than by reading:
   unclosed `pendingWrap` after a carriage return, a spurious resize from
   `recomputeGridSize`, and a scrollbar taking width.
 
-## The one next step
+## Answered, and it is not ours
 
-The two halves no longer meet: the bytes carry the blank rows, no terminal is
-needed to produce those bytes, and yet Ghostty is reported not to show them.
-One of those is wrong, and one capture settles which.
+The capture was run in Ghostty — `script -q /tmp/ghostty-burst.bin zsh -l`,
+same prompt, holding Return — and **Ghostty shows the blank rows too**. That
+was the first of the two outcomes this entry named, so it settles it: the bytes
+carry the blank rows, no terminal is needed to produce them, and the terminal
+that was thought not to show them does.
 
-Hold Return in Ghostty under `script -q /tmp/ghostty-burst.bin zsh -l`, with
-the same starship prompt and the same 100 columns, and count the line feeds
-between `\r \r` and `ESC[J`. If they are there, Ghostty shows blank rows too
-and this belongs to starship — close it, and tell starship. If they are not,
-the difference is what makes zsh *slower* under this terminal than under that
-one, and the thing to measure is the wall time from the filler being written to
-the next `ESC[J`, not anything about the grid.
+What produces them, from the evidence above: zsh's `PROMPT_SP` filler writes a
+row and blanks it, starship's prompt then emits extra line feeds, and the
+`ESC[J` that was meant to wipe the filler row lands that many rows lower. One
+blank row per extra feed. It is rate-dependent, which is why it looked
+irregular — 45 line feeds for 45 presses under `zsh -f`, around 300 under
+starship at key-repeat speed, since starship runs a subprocess per prompt.
+
+**For anybody who wants their own terminal to stop doing it:** `unsetopt
+PROMPT_SP` in `.zshrc` removes the filler, and with it the row that survives.
+The trade is what `PROMPT_SP` is for — output that ends without a newline gets
+written over by the next prompt instead of being preserved with a `%` marker.
+Nothing in this app can fix it, because nothing in this app causes it.
+
+**What was kept.** `Tests/AbydosKitTests/ReturnBurstTests.swift` — five tests
+over the recorded capture, including the one that mattered: our grid and tmux's
+`capture-pane`, given the same bytes at the same size, agree on all thirty
+rows. That is worth keeping whatever the cause turned out to be, since it pins
+the emulator against a second implementation.
 
 ---
 
