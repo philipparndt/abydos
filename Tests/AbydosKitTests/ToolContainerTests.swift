@@ -163,14 +163,15 @@ struct ToolChoiceTests {
 		)
 	}
 
-	/// The language servers are offered, and none of them claims a known-good
-	/// image.
+	/// The language servers are offered, and only the one that has been run
+	/// claims an image.
 	///
 	/// The point of that list is that somebody has run the thing. Listing one
-	/// nobody has tried would be the failure the list exists to prevent, so
-	/// they offer the installed copy and a custom image and nothing else.
+	/// nobody has tried would be the failure the list exists to prevent, so the
+	/// five with no image behind them offer the installed copy and a custom
+	/// image and nothing else.
 	@Test func languageServersAreOfferedWithoutPretendingAboutImages() throws {
-		for key in ["gopls", "rust-analyzer", "pyright", "typescript-language-server",
+		for key in ["rust-analyzer", "pyright", "typescript-language-server",
 		            "clangd", "jdtls"] {
 			let tool = try #require(ToolImageCatalogue.tool(forKey: key), "\(key) is not offered")
 			#expect(tool.choices.isEmpty, "\(key) claims an image nobody has run")
@@ -180,6 +181,35 @@ struct ToolChoiceTests {
 			#expect(options.last?.value == ToolImageCatalogue.custom)
 			#expect(options.count == 2)
 		}
+	}
+
+	/// gopls is the one that has, and this is what says so.
+	///
+	/// Tied to `ContainerLSPLiveTests` rather than written out twice: that test
+	/// is the only evidence any of these images work, and an entry the live test
+	/// does not drive is back to being a claim nobody has checked. So the image
+	/// offered here has to be one of the images that test would pull and run.
+	/// Adding a second server to the catalogue means teaching that test about it
+	/// first, which is the order this whole list exists to enforce.
+	@Test func goplsOffersTheImageThatWasPublishedAndDriven() throws {
+		let tool = try #require(ToolImageCatalogue.tool(forKey: "gopls"))
+		let choice = try #require(tool.choices.first)
+		#expect(tool.choices.count == 1)
+		#expect(choice.image == "pharndt/abydos-gopls:dev")
+		#expect(ContainerLSPLiveTests.images.contains(choice.image))
+		// Ours, so it is our own word that it works — and the label says the tag
+		// moves, since a `:dev` known-good today is whatever was pushed last by
+		// the time somebody picks it.
+		#expect(choice.publisher == "the Abydos project")
+		#expect(choice.label.contains("moves"))
+
+		let options = ToolImageCatalogue.options(for: tool)
+		#expect(options.map(\.value) == [
+			ToolImageCatalogue.useInstalled, choice.image, ToolImageCatalogue.custom,
+		])
+		// And a project that names it in `.abydos/tools.json` shows as that
+		// choice rather than as a custom image somebody typed.
+		#expect(ToolImageCatalogue.selection(for: choice.image, tool: tool) == choice.image)
 	}
 
 	/// And each says the same three things an image has to do, since getting

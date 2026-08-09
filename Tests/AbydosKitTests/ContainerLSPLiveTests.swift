@@ -13,33 +13,51 @@ import Testing
 /// except that here it fails a test instead of looking like an unreliable
 /// server.
 ///
-/// Skipped unless the image is already on this machine, the way the other live
-/// tests are skipped without their server. Build it with:
+/// Skipped unless one of the images is already on this machine, the way the
+/// other live tests are skipped without their server. Get one with:
 ///
-///     make tool-image-gopls
+///     docker pull pharndt/abydos-gopls:dev    # what the catalogue lists
+///     make tool-image-gopls                   # a build of ToolImages/gopls
 struct ContainerLSPLiveTests {
-	/// What `ToolImages/gopls/Dockerfile` builds.
-	static let image = "abydos/gopls:dev"
+	/// The images this will drive, best first.
+	///
+	/// Either, and the published one first, because the two answer different
+	/// questions and only one of them is the question the catalogue asks.
+	/// `abydos/gopls:dev` is whatever this machine last built, so a pass against
+	/// it says the Dockerfile in this repository works — worth having while
+	/// somebody is changing it, and no evidence at all about what a stranger
+	/// pulls. `pharndt/abydos-gopls:dev` is the artefact in the registry, the
+	/// one `ToolImageCatalogue` names, and the only one whose passing means the
+	/// entry in that list is true. So it is tried first: on a machine that has
+	/// both, the published image is the one that gets driven.
+	static let images = ["pharndt/abydos-gopls:dev", "abydos/gopls:dev"]
 
-	/// A runtime that already has the image, or nil when none does.
+	/// An image on this machine and a runtime that has it, or nil when there is
+	/// no such pair.
 	///
 	/// Every runtime installed rather than only the preferred one, and it has to
 	/// hold the image rather than merely exist: an image built with docker is
 	/// not visible to Apple's `container`, and preferring Apple's — which is
 	/// what the app does — would skip this test on a machine that can run it.
-	private var available: ContainerRuntime? {
-		for preference in [ContainerRuntime.Preference.apple, .docker] {
-			guard let runtime = ContainerRuntime.discover(preference: preference),
-			      holdsImage(runtime)
-			else { continue }
-			return runtime
+	///
+	/// Image outermost, runtime innermost: the published image under whichever
+	/// runtime has it beats the locally built one under the preferred runtime,
+	/// because which image ran is what this test is evidence about.
+	private var available: (runtime: ContainerRuntime, image: String)? {
+		for image in Self.images {
+			for preference in [ContainerRuntime.Preference.apple, .docker] {
+				guard let runtime = ContainerRuntime.discover(preference: preference),
+				      holdsImage(image, in: runtime)
+				else { continue }
+				return (runtime, image)
+			}
 		}
 		return nil
 	}
 
-	private func holdsImage(_ runtime: ContainerRuntime) -> Bool {
+	private func holdsImage(_ image: String, in runtime: ContainerRuntime) -> Bool {
 		let process = Process()
-		let command = ContainerImages.inspect(Self.image, using: runtime)
+		let command = ContainerImages.inspect(image, using: runtime)
 		process.executableURL = URL(fileURLWithPath: command.executable)
 		process.arguments = command.arguments
 		// Nowhere rather than into pipes. Only the exit status is wanted, and a
@@ -71,12 +89,22 @@ struct ContainerLSPLiveTests {
 	}
 
 	/// A Go module with one function calling another, which is the smallest
-	/// project a server can say something interesting about.
-	private func makeProject() throws -> URL {
+	/// project a server can say something interesting about — and an
+	/// `.abydos/tools.json` naming the image, which is how somebody actually
+	/// asks for one.
+	private func makeProject(image: String) throws -> URL {
 		let root = try JavaTestDirectory.make()
 		try JavaTestDirectory.write(
 			"module example.com/probe\n\ngo 1.24\n",
 			to: root.appendingPathComponent("go.mod")
+		)
+		// The per-project route rather than the settings one. They meet at
+		// `LanguageServers.resolve`, but everything before that differs: a file
+		// on disk, parsed, keyed by the tool's name rather than the server's
+		// command. A test that handed `resolve` a string would prove the half
+		// that was never in doubt.
+		try JavaTestDirectory.write(
+			"{\"gopls\": \"\(image)\"}\n", to: ToolImages.url(in: root)
 		)
 		try JavaTestDirectory.write("""
 		package main
@@ -97,12 +125,19 @@ struct ContainerLSPLiveTests {
 	}
 
 	@Test func goplsInAContainerAnswersAboutFilesOnThisMachine() async throws {
-		guard let runtime = available else { return }
-		let root = try makeProject()
+		guard let (runtime, image) = available else { return }
+		let root = try makeProject(image: image)
 		defer { try? FileManager.default.removeItem(at: root) }
 
+		// Read back out of the project, the way the editor reads it: the tool's
+		// key is `gopls`, which is the server definition's `toolKey`, and a file
+		// that named it anything else would resolve to no image at all.
+		let go = try #require(LanguageServers.definition(forLanguage: "go"))
+		let named = try #require(ToolImages.inProject(root).image(for: go.toolKey))
+		#expect(named == image)
+
 		let resolved = try #require(LanguageServers.resolve(
-			languageId: "go", project: root, image: Self.image, runtime: runtime
+			languageId: "go", project: root, image: named, runtime: runtime
 		))
 
 		// The image was chosen over anything installed, and the project is
@@ -115,9 +150,9 @@ struct ContainerLSPLiveTests {
 		#expect(run.executable == runtime.path)
 		#expect(run.arguments.contains("--rm"))
 		#expect(run.arguments.contains("\(root.path):/workspace"))
-		#expect(run.arguments.contains(Self.image))
+		#expect(run.arguments.contains(image))
 		// Nothing after the image: the server is the entry point.
-		#expect(run.arguments.last == Self.image)
+		#expect(run.arguments.last == image)
 
 		let client = LSPClient()
 		client.containerPaths = paths
