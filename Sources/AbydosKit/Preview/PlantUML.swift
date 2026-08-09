@@ -73,14 +73,17 @@ public enum PlantUML {
 	/// - Parameter name: what to call the container, for the image form. A
 	///   render that hangs is stopped by removing the container by name, and a
 	///   container with no name cannot be found again at all — see 0406.
+	/// - Parameter theme: which way round to draw it, or nil to impose nothing —
+	///   which is what a file that states its own look gets.
 	public static func invocation(
 		for tool: Tool,
 		format: Format = .png,
-		name: String? = nil
+		name: String? = nil,
+		theme: DiagramTheme? = nil
 	) -> (executable: String, arguments: [String]) {
 		// `-charset UTF-8` because a diagram with a German label in it is not
 		// exotic, and the default depends on the platform's locale.
-		let common = ["-pipe", "-t\(format.rawValue)", "-charset", "UTF-8"]
+		let common = ["-pipe", "-t\(format.rawValue)", "-charset", "UTF-8"] + darkFlag(theme)
 		switch tool {
 		case let .command(path):
 			return (path, common)
@@ -95,6 +98,87 @@ public enum PlantUML {
 			// needs to see the project at all.
 			return container.named(name).invocation(using: runtime, arguments: common)
 		}
+	}
+
+	// MARK: - Which way round it is drawn
+
+	/// PlantUML's own name for "draw this dark", and it is a command-line flag
+	/// rather than anything that can be written in a diagram.
+	///
+	/// **Measured, on `plantuml/plantuml:1.2026.6`, before any of this was
+	/// designed** — because 0429 asked for that and because the answer decided
+	/// the shape of the whole change:
+	///
+	///  * `--dark-mode` exists, and so does `--theme <name>`. Either draws a dark
+	///    picture; `--dark-mode` is PlantUML's own idea of dark rather than one of
+	///    the forty-odd shipped themes, so it is the one that does not overrule an
+	///    author by picking a palette for them.
+	///  * `--dark-mode` emits an actual `<rect fill="#1B1B1B">` as the first thing
+	///    in the drawing. That matters more than it sounds: the light output
+	///    states its background as CSS on the root element, which CoreSVG ignores
+	///    — which is exactly why the pane paints paper by hand. The dark output
+	///    needs no paper painted for it, and covers whatever is painted anyway.
+	///  * **There is no way to say it in a diagram.** There is no `!pragma` for
+	///    it (the whole `PragmaKey` list was read out of the jar), no `skinparam`,
+	///    and no preprocessor variable — dark mode is global configuration that
+	///    the `%is_dark()` builtin can only *read*. So the only source-level dark
+	///    is `!theme <one of the dark ones>`, which is picking somebody's palette
+	///    for them.
+	///  * **The kept-warm HTTP route cannot carry it.** `/plantuml/<format>/~h<hex>`
+	///    is the source and nothing else: `?dark=true` on the end is answered 500,
+	///    and there is no `/plantuml/dsvg/…`. Measured against a live server.
+	///
+	/// Those two together are why nothing is injected into anybody's source, not
+	/// even into the copy sent to the renderer: the flag goes on the command line
+	/// for `-pipe`, and the kept-warm server is started with it and kept per
+	/// theme — see `PlantUMLServers`. Both routes then draw the same picture,
+	/// which is the property the format already had and would have lost.
+	static func darkFlag(_ theme: DiagramTheme?) -> [String] {
+		theme?.isDark == true ? ["--dark-mode"] : []
+	}
+
+	/// What in a diagram states a look of its own, or nil when it says nothing.
+	///
+	/// The question is about PlantUML's language, so the answer is here. Three
+	/// things count, and the third is the one 0429 named explicitly — a diagram
+	/// that sets only a background colour has still chosen:
+	///
+	///  * `!theme <name>`, which is the whole of choosing a palette.
+	///  * `skinparam backgroundColor <colour>`, in either of its two spellings —
+	///    on its own line, or inside a `skinparam { … }` block.
+	///  * `BackgroundColor` inside a `<style>` block, which is the same decision
+	///    in PlantUML's newer style language.
+	///
+	/// What does *not* count is a `skinparam` that colours one thing —
+	/// `sequenceArrowColor red` is somebody colouring an arrow, not somebody
+	/// choosing how the diagram is lit, and treating it as a choice would take
+	/// the app's theme away from most real diagrams.
+	public static func statedLook(in source: String) -> String? {
+		var inSkinparamBlock = false
+		var inStyleBlock = false
+		for raw in source.split(separator: "\n", omittingEmptySubsequences: false) {
+			let line = raw.trimmingCharacters(in: .whitespaces)
+			let lower = line.lowercased()
+			if lower.hasPrefix("'") { continue }
+
+			if lower.hasPrefix("!theme ") {
+				return line.split(separator: " ").prefix(2).joined(separator: " ")
+			}
+			if lower.hasPrefix("<style") { inStyleBlock = true; continue }
+			if lower.hasPrefix("</style") { inStyleBlock = false; continue }
+			if lower.hasPrefix("skinparam"), line.hasSuffix("{") {
+				inSkinparamBlock = true
+				continue
+			}
+			if inSkinparamBlock, lower.hasPrefix("}") { inSkinparamBlock = false; continue }
+
+			if lower.hasPrefix("skinparam backgroundcolor") { return "skinparam backgroundColor" }
+			if inSkinparamBlock, lower.hasPrefix("backgroundcolor") {
+				return "skinparam backgroundColor"
+			}
+			if inStyleBlock, lower.hasPrefix("backgroundcolor") { return "<style> BackgroundColor" }
+		}
+		return nil
 	}
 
 	/// Where a downloaded jar usually is.

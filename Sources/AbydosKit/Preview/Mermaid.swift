@@ -53,6 +53,100 @@ public enum Mermaid {
 		return false
 	}
 
+	// MARK: - Which way round it is drawn
+
+	/// What `mermaid.initialize({ theme: … })` is given for a theme of ours.
+	///
+	/// Two of the five Mermaid offers. `forest`, `neutral` and `base` are
+	/// perfectly good and are somebody's own taste rather than an answer to "is
+	/// this window light or dark", which is the only question being asked here.
+	public static func themeName(_ theme: DiagramTheme) -> String {
+		theme.isDark ? "dark" : "default"
+	}
+
+	/// What in a diagram states a look of its own, or nil when it says nothing.
+	///
+	/// Mermaid has two ways of saying it and both count:
+	///
+	///  * **Front matter** — a `---` block at the top of the file with a
+	///    `config:` in it naming a `theme:` or `themeVariables:`.
+	///  * **An init directive** — `%%{init: {'theme': 'forest'}}%%`, which is the
+	///    older spelling and still the commoner one in the wild.
+	///
+	/// `themeVariables` counts as much as `theme` does, and that is the same rule
+	/// PlantUML's background colour gets: somebody who has set the node fill and
+	/// the line colour by hand has chosen how their diagram is lit, whether or
+	/// not they also named one of the five.
+	///
+	/// It matters twice over rather than only for the notice. Mermaid's own
+	/// directive wins over `initialize`, so a file that names a theme would draw
+	/// in its own colours regardless — but the **paper** behind it is this app's
+	/// to paint, and painting a dark one behind somebody's `forest` diagram would
+	/// be this app overruling them by the back door.
+	public static func statedLook(in source: String) -> String? {
+		if let stated = statedInFrontMatter(source) { return stated }
+		return statedInInitDirective(source)
+	}
+
+	/// `---\nconfig:\n  theme: dark\n---`, which is Mermaid's newer spelling.
+	private static func statedInFrontMatter(_ source: String) -> String? {
+		let lines = source.split(separator: "\n", omittingEmptySubsequences: false)
+		guard let opening = lines.firstIndex(where: {
+			!$0.trimmingCharacters(in: .whitespaces).isEmpty
+		}), lines[opening].trimmingCharacters(in: .whitespaces) == "---" else { return nil }
+
+		for line in lines[(opening + 1)...] {
+			let trimmed = line.trimmingCharacters(in: .whitespaces)
+			if trimmed == "---" { return nil }
+			for key in ["theme:", "themeVariables:"] where trimmed.hasPrefix(key) {
+				return "front matter \(trimmed)"
+			}
+		}
+		return nil
+	}
+
+	/// `%%{init: {'theme': 'forest'}}%%`, anywhere in the file.
+	private static func statedInInitDirective(_ source: String) -> String? {
+		for raw in source.split(separator: "\n") {
+			let line = raw.trimmingCharacters(in: .whitespaces)
+			guard line.hasPrefix("%%{"), line.contains("init") else { continue }
+			for key in ["theme", "themeVariables"] where line.contains(key) {
+				return "%%{init: … \(key) … }%%"
+			}
+		}
+		return nil
+	}
+
+	/// A drawing put on paper of its own.
+	///
+	/// Mermaid emits no background at all: `mermaid.render` hands back shapes on
+	/// nothing, which is why the pane paints white behind it and why the canvas
+	/// that rasterises a PNG fills white first. An SVG written to disk had
+	/// neither, and got away with it only because a transparent drawing of dark
+	/// lines happens to be legible on most viewers' white.
+	///
+	/// A dark one is not. So when this app has chosen the look, it says so in the
+	/// file: one rectangle over the whole `viewBox`, first, under everything. A
+	/// file that stated its own look gets none — which is what keeps "unchanged"
+	/// literally true for it.
+	public static func onPaper(_ svg: String, colour: String) -> String {
+		guard let open = svg.range(of: "<svg"),
+		      let close = svg[open.upperBound...].firstIndex(of: ">")
+		else { return svg }
+		let attributes = String(svg[open.upperBound..<close])
+		// The `viewBox`'s own coordinates rather than 0,0,100%,100%: the box may
+		// start anywhere, and a percentage rectangle in a translated group is not
+		// where the drawing is.
+		let box = Mermaid.attribute("viewBox", in: attributes) ?? "0 0 100 100"
+		let numbers = box.split(whereSeparator: { $0 == " " || $0 == "," }).compactMap { Double($0) }
+		guard numbers.count == 4 else { return svg }
+		let rect = "<rect x=\"\(number(numbers[0]))\" y=\"\(number(numbers[1]))\" "
+			+ "width=\"\(number(numbers[2]))\" height=\"\(number(numbers[3]))\" "
+			+ "fill=\"\(colour)\" stroke=\"none\"/>"
+		let after = svg.index(after: close)
+		return svg.replacingCharacters(in: after..<after, with: rect)
+	}
+
 	/// The one sentence somebody needs when the bundle is not in the app.
 	///
 	/// It should be impossible — the file is a resource of this module — but a
@@ -114,7 +208,13 @@ public enum Mermaid {
 		<style>html,body{margin:0;padding:0;background:#fff}</style>
 		<script>\(bundle)</script>
 		<script>
-		mermaid.initialize({
+		// Kept rather than passed once, because the theme changes while the page
+		// stays: `mermaid.initialize` does not merge into what it was given
+		// before, it replaces it — so a second call carrying only a theme would
+		// quietly put `htmlLabels` back on and every exported label would become a
+		// `foreignObject` again. Everything is passed every time, and only the
+		// theme differs.
+		const ABYDOS_OPTIONS = {
 			startOnLoad: false,
 			securityLevel: 'strict',
 			suppressErrorRendering: true,
@@ -122,7 +222,17 @@ public enum Mermaid {
 			flowchart: { htmlLabels: false },
 			class: { htmlLabels: false },
 			state: { htmlLabels: false }
-		});
+		};
+		function abydosInit(theme) {
+			const options = Object.assign({}, ABYDOS_OPTIONS);
+			// No theme at all when the file states its own, which is not the same
+			// as naming Mermaid's default: a diagram's own `%%{init}%%` wins over
+			// this either way, and saying nothing is what keeps the picture byte
+			// for byte the one this app drew before it had themes.
+			if (theme) { options.theme = theme; }
+			mermaid.initialize(options);
+		}
+		abydosInit(null);
 		window.__abydosDrew = 0;
 		// Every property that decides what a shape looks like, copied out of the
 		// browser's own stylesheet resolution and onto the element as an
@@ -353,8 +463,9 @@ public enum Mermaid {
 				}
 			}
 		}
-		async function abydosDraw(source) {
+		async function abydosDraw(source, theme) {
 			const id = 'abydos-' + (window.__abydosDrew++);
+			abydosInit(theme || null);
 			try {
 				const drawn = await mermaid.render(id, source);
 				return JSON.stringify({ svg: abydosInline(drawn.svg) });
@@ -369,7 +480,7 @@ public enum Mermaid {
 				return JSON.stringify({ error: said, line: line });
 			}
 		}
-		async function abydosRaster(svg, scale) {
+		async function abydosRaster(svg, scale, paper) {
 			// Through an <img> and a <canvas> rather than through a snapshot of
 			// the page: an off-screen web view with no window attached snapshots
 			// blank, and this needs no window at all.
@@ -386,8 +497,10 @@ public enum Mermaid {
 			canvas.height = Math.max(1, Math.round(picture.naturalHeight * scale));
 			const pen = canvas.getContext('2d');
 			// Paper. A drawing has a transparent background and a PNG of black
-			// lines on nothing is invisible in half the places it will be pasted.
-			pen.fillStyle = '#ffffff';
+			// lines on nothing is invisible in half the places it will be pasted —
+			// and a PNG of *light* lines on white is invisible everywhere, which
+			// is what a dark diagram on the old fixed white would have been.
+			pen.fillStyle = paper || '#ffffff';
 			pen.fillRect(0, 0, canvas.width, canvas.height);
 			pen.drawImage(picture, 0, 0, canvas.width, canvas.height);
 			return canvas.toDataURL('image/png').split(',')[1];

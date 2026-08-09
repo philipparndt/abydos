@@ -90,16 +90,34 @@ public actor PlantUMLServers {
 
 	private struct Warm: Sendable {
 		let name: String
+		let image: String
 		let port: Int
 		let runtime: ContainerRuntime
 		var lastUsed: Date
 	}
 
-	/// One per image, since two projects naming different versions of PlantUML
-	/// must not be drawn by the same one.
+	/// One per image *and per theme*, since two projects naming different
+	/// versions of PlantUML must not be drawn by the same one — and since a
+	/// server's theme is fixed when it starts.
+	///
+	/// That second half is a fact about PlantUML rather than a choice, and it was
+	/// measured before this was designed: the render route
+	/// `/plantuml/<format>/~h<hex>` carries the source and nothing else, so there
+	/// is no asking one server for a dark picture. `--dark-mode` is a flag on the
+	/// process, so a dark picture means a process started with it.
+	///
+	/// The alternative was to inject `!theme <something dark>` into the copy of
+	/// the source sent over, which would need no second container — and it was
+	/// not taken. It would mean *choosing a palette* for somebody out of the
+	/// forty PlantUML ships, which is a much larger thing than "draw this dark",
+	/// and it would make the warm route draw a different picture from the `-pipe`
+	/// route beside it, which is the fault the shared `previewFormat` exists to
+	/// avoid. Nothing of anybody's diagram is rewritten anywhere, and what it
+	/// costs is at most one extra JVM for five minutes after somebody has drawn
+	/// both ways.
 	private var warm: [String: Warm] = [:]
-	/// The start already under way for an image, so that two renders asking at
-	/// once wait on one container rather than starting two.
+	/// The start already under way for a key, so that two renders asking at once
+	/// wait on one container rather than starting two.
 	private var beingStarted: [String: Task<Warm?, Never>] = [:]
 	private var reaper: Task<Void, Never>?
 
@@ -188,14 +206,22 @@ public actor PlantUMLServers {
 	/// a port picked here would be a port that could be taken between choosing
 	/// it and using it, and the failure that produces is a container that starts
 	/// and is unreachable.
+	/// - Parameter theme: fixed for the life of the server, because the render
+	///   route cannot carry one. See `warm`.
 	public static func startCommand(
-		image: String, name: String, using runtime: ContainerRuntime
+		image: String, name: String, using runtime: ContainerRuntime,
+		theme: DiagramTheme? = nil
 	) -> (executable: String, arguments: [String]) {
 		(runtime.path, [
 			"run", "-d", "--rm", "--name", name,
 			"-p", "127.0.0.1::\(containerPort)",
 			image, "--http-server:\(containerPort)",
-		])
+		] + PlantUML.darkFlag(theme))
+	}
+
+	/// Which kept server a request belongs to.
+	static func key(image: String, theme: DiagramTheme?) -> String {
+		theme?.isDark == true ? "\(image)#dark" : image
 	}
 
 	/// The command that says which port the runtime chose.
@@ -228,9 +254,12 @@ public actor PlantUMLServers {
 		_ source: String,
 		image: String,
 		using runtime: ContainerRuntime,
-		format: PlantUML.Format = .png
+		format: PlantUML.Format = .png,
+		theme: DiagramTheme? = nil
 	) async -> Data? {
-		guard let drawing = await draw(source, image: image, using: runtime, format: format) else {
+		guard let drawing = await draw(
+			source, image: image, using: runtime, format: format, theme: theme
+		) else {
 			return nil
 		}
 		// A picture of an error is a picture, and the preview shows it — but it
@@ -246,37 +275,40 @@ public actor PlantUMLServers {
 		_ source: String,
 		image: String,
 		using runtime: ContainerRuntime,
-		format: PlantUML.Format = .png
+		format: PlantUML.Format = .png,
+		theme: DiagramTheme? = nil
 	) async -> Drawing? {
 		guard Self.canKeepWarm(runtime), !image.isEmpty else { return nil }
 		guard Self.path(for: source, format: format) != nil else { return nil }
+		let key = Self.key(image: image, theme: theme)
 
-		if let existing = warm[image] {
+		if let existing = warm[key] {
 			if let drawn = await fetch(source, format: format, from: existing, starting: false) {
-				touch(image)
+				touch(key)
 				return drawn
 			}
 			// It was there and it is not answering: killed behind our back, or
 			// wedged. Forget it, remove whatever is left of it, and try once with
 			// a new one — a preview that goes slow for ever because a container
 			// was removed once would be its own bug.
-			forget(image)
+			forget(key)
 		}
 
-		guard let started = await starting(image: image, using: runtime) else { return nil }
+		guard let started = await starting(key: key, image: image, using: runtime, theme: theme)
+		else { return nil }
 		// It may have become the kept one while this was waiting — two panes
 		// opening together ask at the same moment — in which case that one is
 		// asked and this one is not started twice.
 		guard let drawn = await fetch(source, format: format, from: started, starting: true) else {
 			// It started and would not draw. Nothing is kept, so the next render
 			// tries again from nothing rather than asking a broken server twice.
-			if warm[image]?.name != started.name {
+			if warm[key]?.name != started.name {
 				ToolContainers.shared.releaseInBackground(started.name)
 			}
 			return nil
 		}
-		warm[image] = started
-		touch(image)
+		warm[key] = started
+		touch(key)
 		startReaping()
 		return drawn
 	}
@@ -287,13 +319,14 @@ public actor PlantUMLServers {
 	/// the idle timeout. The app going does not need it — every container is
 	/// registered with `ToolContainers`, which the app's exit already empties.
 	public func stopAll() {
-		for (image, _) in warm { forget(image) }
+		for (key, _) in warm { forget(key) }
 		reaper?.cancel()
 		reaper = nil
 	}
 
-	/// Which images have a server up, for a test.
-	public var images: [String] { warm.keys.sorted() }
+	/// Which images have a server up, for a test. One entry per image however
+	/// many themes of it are warm — the theme is this type's business.
+	public var images: [String] { Array(Set(warm.values.map(\.image))).sorted() }
 
 	/// What those servers' containers are called — for a test that wants to
 	/// remove one behind this actor's back, which is the failure the fallback
@@ -309,12 +342,14 @@ public actor PlantUMLServers {
 	/// started one, and the second overwrote the first — leaving a JVM nothing
 	/// would ever ask anything of again until the app quit. Seen: two servers up
 	/// from one launch.
-	private func starting(image: String, using runtime: ContainerRuntime) async -> Warm? {
-		if let already = beingStarted[image] { return await already.value }
-		let task = Task { await start(image: image, using: runtime) }
-		beingStarted[image] = task
+	private func starting(
+		key: String, image: String, using runtime: ContainerRuntime, theme: DiagramTheme?
+	) async -> Warm? {
+		if let already = beingStarted[key] { return await already.value }
+		let task = Task { await start(image: image, using: runtime, theme: theme) }
+		beingStarted[key] = task
 		let started = await task.value
-		beingStarted[image] = nil
+		beingStarted[key] = nil
 		return started
 	}
 
@@ -323,9 +358,13 @@ public actor PlantUMLServers {
 	/// Everything here waits on a subprocess, and a thread from the cooperative
 	/// pool is not the thread to wait on one with: a few seconds of `docker run`
 	/// held there is a few seconds every other task in the app spends behind it.
-	private func start(image: String, using runtime: ContainerRuntime) async -> Warm? {
+	private func start(
+		image: String, using runtime: ContainerRuntime, theme: DiagramTheme?
+	) async -> Warm? {
 		let name = ToolContainers.mint("plantuml-server")
-		let startCommand = Self.startCommand(image: image, name: name, using: runtime)
+		let startCommand = Self.startCommand(
+			image: image, name: name, using: runtime, theme: theme
+		)
 		let portCommand = Self.portCommand(name: name, using: runtime)
 
 		return await withCheckedContinuation { continuation in
@@ -352,7 +391,9 @@ public actor PlantUMLServers {
 					return
 				}
 				continuation.resume(
-					returning: Warm(name: name, port: port, runtime: runtime, lastUsed: Date())
+					returning: Warm(
+						name: name, image: image, port: port, runtime: runtime, lastUsed: Date()
+					)
 				)
 			}
 		}
@@ -413,12 +454,12 @@ public actor PlantUMLServers {
 		}
 	}
 
-	private func touch(_ image: String) {
-		warm[image]?.lastUsed = Date()
+	private func touch(_ key: String) {
+		warm[key]?.lastUsed = Date()
 	}
 
-	private func forget(_ image: String) {
-		guard let server = warm.removeValue(forKey: image) else { return }
+	private func forget(_ key: String) {
+		guard let server = warm.removeValue(forKey: key) else { return }
 		ToolContainers.shared.releaseInBackground(server.name)
 	}
 
@@ -439,8 +480,8 @@ public actor PlantUMLServers {
 	/// Removes what has gone cold, and says whether anything is left to watch.
 	private func reapIdle() -> Bool {
 		let cutoff = Date().addingTimeInterval(-Self.idleTimeout)
-		for (image, server) in warm where server.lastUsed < cutoff {
-			forget(image)
+		for (key, server) in warm where server.lastUsed < cutoff {
+			forget(key)
 		}
 		return !warm.isEmpty
 	}

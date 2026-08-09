@@ -73,6 +73,56 @@ struct DiagramExportTests {
 			== ["diagram.png", "diagram_001.png", "diagram_002.png"])
 	}
 
+	/// The second picture of the same diagram, and the name says what is in it.
+	///
+	/// `diagram.png` keeps meaning what it has always meant, so a README already
+	/// pointing at it does not become a dark picture the day somebody switches
+	/// theme — and a light re-export still replaces it rather than accumulating.
+	@Test func aDarkPictureIsTheSameNameWithDarkOnIt() {
+		let source = URL(fileURLWithPath: "/w/docs/diagram.puml")
+		#expect(DiagramExport.destinations(for: source, format: .png, diagrams: 1, theme: .light)
+			== [URL(fileURLWithPath: "/w/docs/diagram.png")])
+		#expect(DiagramExport.destinations(for: source, format: .png, diagrams: 1, theme: .dark)
+			== [URL(fileURLWithPath: "/w/docs/diagram-dark.png")])
+		// Nothing imposed — a file that stated its own look — is the plain name,
+		// because there is only one picture of it.
+		#expect(DiagramExport.destinations(for: source, format: .svg, diagrams: 1, theme: nil)
+			== [URL(fileURLWithPath: "/w/docs/diagram.svg")])
+	}
+
+	/// And it composes with the numbering rather than fighting it.
+	@Test func darkComposesWithPlantUMLsOwnNumbering() {
+		let source = URL(fileURLWithPath: "/w/docs/diagram.puml")
+		#expect(
+			DiagramExport.destinations(for: source, format: .png, diagrams: 3, theme: .dark)
+				.map(\.lastPathComponent)
+				== ["diagram-dark.png", "diagram_001-dark.png", "diagram_002-dark.png"]
+		)
+	}
+
+	/// **A second name is not a second thing to recognise**, which is the one
+	/// worry 0429 raised about naming a pair. The refusal reads the bytes of
+	/// whatever is already there and never the name, so `diagram-dark.png` is
+	/// protected and replaceable by exactly the rules `diagram.png` is — with no
+	/// new stamp and no new `DiagramStamp.Tool` case to keep in step.
+	@Test func theDarkNameIsProtectedByTheSameStampAsThePlainOne() {
+		let ours = DiagramStamp.sign(svg: "<svg/>", tool: .mermaid)
+		let strangers = "<svg><text>a screenshot with an unlucky name</text></svg>"
+		var files: [String: Data] = [
+			"/w/diagram.svg": Data(ours.utf8),
+			"/w/diagram-dark.svg": Data(ours.utf8),
+		]
+		func reading(_ url: URL) -> Data? { files[url.path] }
+
+		let both = [URL(fileURLWithPath: "/w/diagram.svg"),
+		            URL(fileURLWithPath: "/w/diagram-dark.svg")]
+		#expect(DiagramExport.refusal(toWrite: both, reading: reading) == nil)
+
+		files["/w/diagram-dark.svg"] = Data(strangers.utf8)
+		let refused = DiagramExport.refusal(toWrite: both, reading: reading)
+		#expect(refused?.contains("diagram-dark.svg") == true)
+	}
+
 	/// The other extensions PlantUML recognises lose their own and gain the
 	/// picture's, rather than becoming `diagram.wsd.png`.
 	@Test func theSourcesExtensionIsReplaced() {

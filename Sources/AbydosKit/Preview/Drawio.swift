@@ -393,6 +393,37 @@ public enum Drawio {
 		return found.sorted()
 	}
 
+	// MARK: - Which way round it is drawn
+
+	/// What in a document states a look of its own, or nil when it says nothing.
+	///
+	/// draw.io has no `!theme` and no front matter: a `.drawio` is an editor's
+	/// document, and the one thing in it that is a decision about how the whole
+	/// picture is lit is the page's own background — `<mxGraphModel
+	/// background="#000000">`, which is what somebody sets in Format ▸ Diagram ▸
+	/// Background. Everything else in the file is a colour on a shape, which is
+	/// the same as PlantUML's `sequenceArrowColor`: colouring a thing rather than
+	/// choosing a light.
+	///
+	/// It is also exactly the value the renderer already reads — `graph.background`
+	/// is this attribute — so the file that has chosen is the file whose own
+	/// background is painted, and the two can never disagree.
+	public static func statedLook(in document: Document) -> String? {
+		for page in document.pages {
+			guard let open = page.model.range(of: "<mxGraphModel"),
+			      let close = page.model[open.upperBound...].firstIndex(of: ">"),
+			      let value = Mermaid.attribute(
+			      	"background", in: String(page.model[open.upperBound..<close])
+			      )
+			else { continue }
+			let stated = value.trimmingCharacters(in: .whitespaces)
+			guard !stated.isEmpty, stated.lowercased() != "none", stated.lowercased() != "default"
+			else { continue }
+			return "a page background of \(stated)"
+		}
+		return nil
+	}
+
 	/// The sentence for the above, or nil when nothing is missing.
 	public static func clipartNotice(for document: Document) -> String? {
 		let count = missingClipart(in: document)

@@ -542,12 +542,11 @@ final class ProjectNavigatorViewController: NSViewController {
 		// Only ever shown over a diagram, so it costs nothing to be here for
 		// every other file: `menuNeedsUpdate` hides it.
 		let export = NSMenuItem(title: "Export", action: nil, keyEquivalent: "")
+		// Filled in by `menuNeedsUpdate`, from the same list the preview pane's
+		// own menu is built from: what it offers depends on the theme and on
+		// whether the file has stated a look, and both change while a menu exists.
 		let formats = NSMenu()
-		for format in DiagramFormat.allCases {
-			let entry = item(format.rawValue.uppercased(), #selector(contextExport(_:)))
-			entry.representedObject = format.rawValue
-			formats.addItem(entry)
-		}
+		formats.autoenablesItems = false
 		export.submenu = formats
 		exportMenu = formats
 		menu.addItem(export)
@@ -1167,19 +1166,36 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// is the one that is looking at them.
 	@objc private func contextExport(_ sender: NSMenuItem) {
 		guard let node = contextNode, !node.isDirectory,
-		      let raw = sender.representedObject as? String,
-		      let format = DiagramFormat(rawValue: raw)
+		      let code = sender.representedObject as? String,
+		      let choice = DiagramExportMenu.choice(for: code)
 		else { return }
-		DiagramExportCommand.run(url: node.url, format: format, projectRoot: project?.root)
+		DiagramExportCommand.run(
+			url: node.url, format: choice.format, theme: choice.theme, projectRoot: project?.root
+		)
+	}
+
+	/// What a file states about its own look, read from disk.
+	///
+	/// From disk rather than from an editor, for the same reason the export from
+	/// here is: the tree is about files. It costs one read of a text file while a
+	/// menu is being filled in, and only over a diagram.
+	private func statedLook(of node: FileNode?) -> String? {
+		guard let node, let text = try? String(contentsOf: node.url, encoding: .utf8) else {
+			return nil
+		}
+		return DiagramExport.statedLook(of: node.url, source: text)
 	}
 
 	/// The same gesture without the menu, for verifying it end to end.
-	func exportSelectionForTesting(_ format: DiagramFormat) {
+	func exportSelectionForTesting(_ format: DiagramFormat, theme: DiagramTheme? = nil) {
 		guard let node = contextNode, !node.isDirectory, DiagramExport.isDiagram(node.url) else {
 			print("EXPORT: nothing to export")
 			return
 		}
-		DiagramExportCommand.run(url: node.url, format: format, projectRoot: project?.root) { written in
+		DiagramExportCommand.run(
+			url: node.url, format: format, theme: theme ?? (Theme.current.isLight ? .light : .dark),
+			projectRoot: project?.root
+		) { written in
 			print("EXPORT: \(written.map(\.lastPathComponent).joined(separator: ", "))")
 		}
 	}
@@ -1680,7 +1696,13 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 				item.isHidden = !nodes.contains { !$0.isDirectory && DiagramExport.isDiagram($0.url) }
 				let single = node.map { !$0.isDirectory && DiagramExport.isDiagram($0.url) } ?? false
 				item.isEnabled = single
-				for format in item.submenu?.items ?? [] { format.isEnabled = single }
+				if let submenu = item.submenu {
+					DiagramExportMenu.fill(
+						submenu, theme: Theme.current.isLight ? .light : .dark,
+						stated: single ? statedLook(of: node) : nil,
+						target: self, action: #selector(contextExport(_:)), enabled: single
+					)
+				}
 				continue
 			}
 			if item.submenu === newMenu {

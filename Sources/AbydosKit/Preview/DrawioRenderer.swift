@@ -46,8 +46,10 @@ public final class DrawioRenderer {
 	///   - mxfile: the `<mxfile>` element as it stands. draw.io decompresses the
 	///     payload and counts the pages itself, so nothing here has to.
 	///   - page: which page, counting from zero.
+	///   - theme: which way round to draw it, or nil to impose nothing — which is
+	///     what a document with a background of its own gets.
 	public func draw(
-		_ mxfile: String, page: Int = 0, format: DiagramFormat,
+		_ mxfile: String, page: Int = 0, format: DiagramFormat, theme: DiagramTheme? = nil,
 		scale: Double = DrawioRenderer.rasterScale
 	) async -> Result<Data, Failure> {
 		guard mxfile.contains("<mxfile") || mxfile.contains("<mxGraphModel") else {
@@ -57,8 +59,12 @@ public final class DrawioRenderer {
 		let answer: Any?
 		do {
 			answer = try await surface.call(
-				"return await abydosDrawio(xml, page)",
-				arguments: ["xml": mxfile, "page": page]
+				"return await abydosDrawio(xml, page, dark, paper)",
+				arguments: [
+					"xml": mxfile, "page": page,
+					"dark": theme?.isDark ?? false,
+					"paper": theme?.paper ?? "#ffffff",
+				]
 			)
 		} catch let trouble as WebRenderer.Trouble {
 			return .failure(.trouble(said(about: trouble)))
@@ -82,7 +88,8 @@ public final class DrawioRenderer {
 		let rastered: Any?
 		do {
 			rastered = try await surface.call(
-				"return await abydosRaster(svg, scale)", arguments: ["svg": svg, "scale": scale]
+				"return await abydosRaster(svg, scale, paper)",
+				arguments: ["svg": svg, "scale": scale, "paper": theme?.paper ?? "#ffffff"]
 			)
 		} catch let trouble as WebRenderer.Trouble {
 			return .failure(.trouble(said(about: trouble)))
@@ -247,6 +254,23 @@ public final class DrawioRenderer {
 	/// It is written here rather than fixed up in the serialised output because
 	/// a search-and-replace over somebody's diagram is a worse thing to own than
 	/// a flag draw.io provides for exactly this.
+	///
+	/// **A theme does not undo this, and that is the whole of how draw.io is
+	/// drawn dark here.** The flag is what decides the *form* the colour is
+	/// written in; the second flag beside it, `mxUtils.preferDarkColor`, decides
+	/// *which of the pair* is written when the form is a single value. Read out
+	/// of draw.io's own SVG export, which does exactly this and nothing else:
+	///
+	///     if ("light" == theme || "dark" == theme) {
+	///         mxUtils.lightDarkColorSupported = false;
+	///         mxUtils.preferDarkColor = ("dark" == theme);
+	///     }
+	///
+	/// So dark mode here is `preferDarkColor = true` with `lightDarkColorSupported`
+	/// staying false — every colour still written once, as itself, and CoreSVG
+	/// still able to read all of it. `EditorUi.setDarkMode` would have been the
+	/// obvious thing to reach for and is a **no-op** with the flag off: its whole
+	/// body is inside `mxUtils.lightDarkColorSupported && (…)`.
 	static let plainColours = """
 		mxUtils.lightDarkColorSupported = false;
 		Graph.defaultAdaptiveColors = 'none';
@@ -266,7 +290,7 @@ public final class DrawioRenderer {
 		mxClient.NO_FO = true;
 		\(plainColours)
 
-		function abydosViewer(xml, page) {
+		function abydosViewer(xml, page, dark) {
 			const holder = document.createElement('div');
 			holder.style.position = 'absolute';
 			holder.style.left = '-100000px';
@@ -281,28 +305,42 @@ public final class DrawioRenderer {
 			const viewer = new GraphViewer(holder, parsed, {
 				page: page || 0, border: 0, 'auto-fit': false,
 				resize: false, nav: false, toolbar: null, lightbox: false,
-				'toolbar-nohide': true, highlight: null, 'check-visible-state': false
+				'toolbar-nohide': true, highlight: null, 'check-visible-state': false,
+				'dark-mode': dark ? 'dark' : 'light'
 			});
 			return { viewer: viewer, holder: holder };
 		}
 
-		async function abydosDrawio(xml, page) {
+		async function abydosDrawio(xml, page, dark, paper) {
 			let made = null;
+			// Set before the viewer is built, because the stylesheet is resolved
+			// while it is built. Put back in the `finally`: this page is kept warm
+			// and draws every diagram somebody opens, so a flag left on would make
+			// the *next* light diagram dark — which is precisely the kind of fault
+			// that reads as intermittent.
+			const wasDark = mxUtils.preferDarkColor;
+			const wasEditorDark = Editor.darkMode;
+			mxUtils.preferDarkColor = !!dark;
+			Editor.darkMode = !!dark;
 			try {
-				made = abydosViewer(xml, page);
+				made = abydosViewer(xml, page, dark);
 				const graph = made.viewer.graph;
 				// Everything laid out before anything is measured. The viewer draws
 				// synchronously, but a stencil arriving from the registry replaces a
 				// shape after the fact, so the view is revalidated once more.
 				graph.view.validate();
+				// The document's own background first, which is the file having
+				// chosen — and the paper this app picked only when it has not.
 				const drawn = graph.getSvg(
-					graph.background || '#ffffff', 1, 4, false, null, true,
+					graph.background || paper || '#ffffff', 1, 4, false, null, true,
 					null, null, null, null, null, null, null
 				);
 				return JSON.stringify({ svg: new XMLSerializer().serializeToString(drawn) });
 			} catch (thrown) {
 				return JSON.stringify({ error: String((thrown && thrown.message) || thrown) });
 			} finally {
+				mxUtils.preferDarkColor = wasDark;
+				Editor.darkMode = wasEditorDark;
 				// `GraphViewer` has no teardown of its own — the graph does, and
 				// it is the thing holding listeners on the document. Tidying is
 				// not optional here: this page is kept warm and draws every
@@ -338,7 +376,7 @@ public final class DrawioRenderer {
 			return 1;
 		}
 
-		async function abydosRaster(svg, scale) {
+		async function abydosRaster(svg, scale, paper) {
 			// Through an <img> and a <canvas> rather than a snapshot of the page:
 			// an off-screen web view with no window attached snapshots blank.
 			const source = 'data:image/svg+xml;base64,'
@@ -354,8 +392,10 @@ public final class DrawioRenderer {
 			canvas.height = Math.max(1, Math.round(picture.naturalHeight * scale));
 			const pen = canvas.getContext('2d');
 			// Paper: a PNG of black lines on nothing is invisible half the places
-			// it will be pasted.
-			pen.fillStyle = '#ffffff';
+			// it will be pasted. `getSvg` has already painted the background into
+			// the drawing, so this is only the belt to that pair of braces — but a
+			// white one under a dark drawing would show at every rounded corner.
+			pen.fillStyle = paper || '#ffffff';
 			pen.fillRect(0, 0, canvas.width, canvas.height);
 			pen.drawImage(picture, 0, 0, canvas.width, canvas.height);
 			return canvas.toDataURL('image/png').split(',')[1];

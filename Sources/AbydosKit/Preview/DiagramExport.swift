@@ -183,17 +183,38 @@ public enum DiagramExport {
 	/// `@startuml`, which PlantUML would also honour, is deliberately not used:
 	/// `diagram.puml` exporting to something other than `diagram.png` is a rule
 	/// nobody would guess from the menu item they clicked.
+	/// - Parameter theme: which way round the picture is drawn. A dark one is
+	///   `diagram-dark.png` and every other case is the name it always was.
+	///
+	/// **`-dark` and nothing else, and the name says what is in the picture.**
+	/// Three things decided that. `diagram.png` keeps meaning what it has always
+	/// meant, so a README that already points at it does not quietly become a
+	/// dark picture the day somebody switches theme — and re-exporting light
+	/// still replaces the same file rather than accumulating. `-dark` is the
+	/// suffix repositories already use for the second half of a pair, because it
+	/// is the one GitHub's own `#gh-dark-mode-only` convention produced. And it
+	/// composes with the existing numbering rather than fighting it: a file with
+	/// three diagrams in it gives `diagram-dark.png`, `diagram_001-dark.png`,
+	/// `diagram_002-dark.png`, in the same order and by the same rule.
+	///
+	/// **A second name is not a second thing to recognise**, which is the one
+	/// worry 0429 raised about it. `refusal` reads the *bytes* of whatever is
+	/// already there — PlantUML's own marker, `DiagramStamp`'s, or draw.io's
+	/// `mxfile` chunk — and never the name. So `diagram-dark.png` is protected
+	/// and replaceable by exactly the rules `diagram.png` is, with no new stamp,
+	/// no new `DiagramStamp.Tool` case, and nothing to keep in step.
 	public static func destinations(
-		for source: URL, format: PlantUML.Format, diagrams: Int
+		for source: URL, format: PlantUML.Format, diagrams: Int, theme: DiagramTheme? = nil
 	) -> [URL] {
 		let folder = source.deletingLastPathComponent()
 		let base = source.deletingPathExtension().lastPathComponent
+		let suffix = theme?.isDark == true ? "-dark" : ""
 		guard diagrams > 1 else {
-			return [folder.appendingPathComponent("\(base).\(format.rawValue)")]
+			return [folder.appendingPathComponent("\(base)\(suffix).\(format.rawValue)")]
 		}
 		return (0..<diagrams).map { index in
 			let name = index == 0 ? base : String(format: "%@_%03d", base, index)
-			return folder.appendingPathComponent("\(name).\(format.rawValue)")
+			return folder.appendingPathComponent("\(name)\(suffix).\(format.rawValue)")
 		}
 	}
 
@@ -279,11 +300,15 @@ public enum DiagramExport {
 	///   - progress: for the one thing worth saying while this happens, which is
 	///     that a container image is being fetched.
 	/// - Returns: the files written, in order.
+	///   - theme: which way round to draw it. Ignored, along with the `-dark`
+	///     naming, when the diagram states a look of its own — the file wins, so
+	///     there is only one picture of it and it keeps the plain name.
 	public static func export(
 		source: String,
 		of url: URL,
 		format: PlantUML.Format,
 		tool: PlantUML.Tool,
+		theme: DiagramTheme? = nil,
 		progress: @escaping @Sendable (String) -> Void = { _ in }
 	) async -> Result<[URL], Failure> {
 		let name = url.lastPathComponent
@@ -293,8 +318,11 @@ public enum DiagramExport {
 				"There is no diagram in \(name) — a diagram starts with @startuml."
 			))
 		}
+		let imposed = imposed(theme, when: PlantUML.statedLook(in: source))
 
-		let destinations = destinations(for: url, format: format, diagrams: blocks.count)
+		let destinations = destinations(
+			for: url, format: format, diagrams: blocks.count, theme: imposed
+		)
 		if let refused = refusal(toWrite: destinations) { return .failure(Failure(refused)) }
 
 		// The image first, once, however many diagrams the file holds: a project
@@ -318,7 +346,7 @@ public enum DiagramExport {
 
 		var pictures: [Data] = []
 		for piece in pieces {
-			switch await draw(piece.text, format: format, tool: tool) {
+			switch await draw(piece.text, format: format, tool: tool, theme: imposed) {
 			case let .success(data):
 				pictures.append(data)
 			case let .failure(.fault(fault)):
@@ -351,6 +379,29 @@ public enum DiagramExport {
 		PlantUML.isDiagram(url) || Mermaid.isDiagram(url) || Drawio.isDiagram(url)
 	}
 
+	/// What in a file states a look of its own, whichever language it is in.
+	///
+	/// The deciding is each renderer's — `PlantUML.statedLook`,
+	/// `Mermaid.statedLook`, `Drawio.statedLook`, each about its own language and
+	/// each with its own tests. This is only the one place that picks which to
+	/// ask, for the same reason `isDiagram` is: the pane, the pane's menu, the
+	/// tree's menu and the export itself all have to answer it the same way, and
+	/// four copies of the question is how a `.mmd` came to have a preview and no
+	/// way to export it.
+	public static func statedLook(of url: URL, source: String) -> String? {
+		if Drawio.isDiagram(url) {
+			return Drawio.read(Data(source.utf8)).flatMap(Drawio.statedLook)
+		}
+		if Mermaid.isDiagram(url) { return Mermaid.statedLook(in: source) }
+		return PlantUML.statedLook(in: source)
+	}
+
+	/// The theme to actually draw in: the one asked for, unless the file has
+	/// stated a look — in which case nothing at all is imposed.
+	static func imposed(_ theme: DiagramTheme?, when stated: String?) -> DiagramTheme? {
+		stated == nil ? theme : nil
+	}
+
 	/// Draws every page of a `.drawio` and writes the pictures beside it.
 	///
 	/// **Every page, not the one on screen**, and that is the decision 0426 left
@@ -370,14 +421,17 @@ public enum DiagramExport {
 	/// export does — so `architecture.png` is not only a picture of the diagram
 	/// but the diagram, and opens again in draw.io with all its pages.
 	public static func export(
-		drawio data: Data, of url: URL, format: DiagramFormat
+		drawio data: Data, of url: URL, format: DiagramFormat, theme: DiagramTheme? = nil
 	) async -> Result<[URL], Failure> {
 		let name = url.lastPathComponent
 		guard let document = Drawio.read(data), !document.pages.isEmpty else {
 			return .failure(Failure("There is no diagram in \(name)."))
 		}
+		let imposed = imposed(theme, when: Drawio.statedLook(in: document))
 
-		let destinations = destinations(for: url, format: format, diagrams: document.pages.count)
+		let destinations = destinations(
+			for: url, format: format, diagrams: document.pages.count, theme: imposed
+		)
 		if let refused = refusal(toWrite: destinations) { return .failure(Failure(refused)) }
 
 		// Everything drawn before anything is written, so a three-page file
@@ -385,7 +439,7 @@ public enum DiagramExport {
 		var pictures: [Data] = []
 		for (index, page) in document.pages.enumerated() {
 			let drawn = await DrawioRenderer.shared.draw(
-				document.mxfile, page: index, format: format
+				document.mxfile, page: index, format: format, theme: imposed
 			)
 			switch drawn {
 			case let .success(picture):
@@ -438,17 +492,18 @@ public enum DiagramExport {
 	/// fetch**: the renderer is in the app, so there is no tool to discover, no
 	/// image to pull, and no sentence to say about what to install.
 	public static func export(
-		mermaid source: String, of url: URL, format: DiagramFormat
+		mermaid source: String, of url: URL, format: DiagramFormat, theme: DiagramTheme? = nil
 	) async -> Result<[URL], Failure> {
 		let name = url.lastPathComponent
 		guard Mermaid.hasDiagram(source) else {
 			return .failure(Failure("There is no diagram in \(name) yet."))
 		}
+		let imposed = imposed(theme, when: Mermaid.statedLook(in: source))
 
-		let destinations = destinations(for: url, format: format, diagrams: 1)
+		let destinations = destinations(for: url, format: format, diagrams: 1, theme: imposed)
 		if let refused = refusal(toWrite: destinations) { return .failure(Failure(refused)) }
 
-		let drawn = await MermaidRenderer.shared.draw(source, format: format)
+		let drawn = await MermaidRenderer.shared.draw(source, format: format, theme: imposed)
 		let picture: Data
 		switch drawn {
 		case let .success(data):
@@ -486,34 +541,36 @@ public enum DiagramExport {
 	/// that can go wrong with it is a reason to draw the diagram the way this
 	/// app always did.
 	static func draw(
-		_ text: String, format: PlantUML.Format, tool: PlantUML.Tool
+		_ text: String, format: PlantUML.Format, tool: PlantUML.Tool, theme: DiagramTheme? = nil
 	) async -> Result<Data, DrawFailure> {
 		if case let .image(container, runtime) = tool,
 		   let drawing = await PlantUMLServers.shared.draw(
-		   	text, image: container.image, using: runtime, format: format
+		   	text, image: container.image, using: runtime, format: format, theme: theme
 		   ) {
 			if let fault = drawing.fault { return .failure(.fault(fault)) }
 			return .success(drawing.data)
 		}
-		return await pipe(text, format: format, tool: tool)
+		return await pipe(text, format: format, tool: tool, theme: theme)
 	}
 
 	/// The old route: the diagram on standard input, the picture on standard
 	/// output, and the complaint on standard error.
 	private static func pipe(
-		_ text: String, format: PlantUML.Format, tool: PlantUML.Tool
+		_ text: String, format: PlantUML.Format, tool: PlantUML.Tool, theme: DiagramTheme?
 	) async -> Result<Data, DrawFailure> {
 		await withCheckedContinuation { continuation in
 			// Off the cooperative pool: everything here waits on a subprocess, and
 			// a thread held there is a thread every other task queues behind.
 			DispatchQueue.global(qos: .userInitiated).async {
-				continuation.resume(returning: runPipe(text, format: format, tool: tool))
+				continuation.resume(
+					returning: runPipe(text, format: format, tool: tool, theme: theme)
+				)
 			}
 		}
 	}
 
 	private static func runPipe(
-		_ text: String, format: PlantUML.Format, tool: PlantUML.Tool
+		_ text: String, format: PlantUML.Format, tool: PlantUML.Tool, theme: DiagramTheme?
 	) -> Result<Data, DrawFailure> {
 		// A name for the container, when there is one: killing `docker run` does
 		// not stop what it started, and a container with no name cannot be
@@ -526,7 +583,9 @@ public enum DiagramExport {
 		}
 		defer { if let containerName { ToolContainers.shared.releaseInBackground(containerName) } }
 
-		let run = PlantUML.invocation(for: tool, format: format, name: containerName)
+		let run = PlantUML.invocation(
+			for: tool, format: format, name: containerName, theme: theme
+		)
 		let process = Process()
 		process.executableURL = URL(fileURLWithPath: run.executable)
 		process.arguments = run.arguments
