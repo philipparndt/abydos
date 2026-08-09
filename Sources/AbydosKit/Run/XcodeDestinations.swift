@@ -235,9 +235,22 @@ public enum XcodeDestinationMenu {
 	/// "Newest" is the runtime, compared as numbers rather than as text: "26.5"
 	/// against "27.0" sorts correctly either way, but "9.0" against "10.0" does
 	/// not, and an OS numbering that has been to double digits twice will go
-	/// there again. A model present in one runtime and absent from another is
-	/// not a comparison at all, which is why this picks the newest *runtime*
-	/// first and then a model within it.
+	/// there again.
+	///
+	/// A model present in one runtime and absent from another is not that
+	/// comparison, and it is the case with a rule of its own: **the newest
+	/// runtime the model itself has**, never the newest runtime installed.
+	/// Which is why the comparing happens inside a family and nowhere else —
+	/// a watch simulator's newest is 12.0 while an iPhone's is 27.0, and
+	/// "newest installed" would mean the menu has no watch on it at all.
+	/// Within a family it means the same thing one step down: whichever model
+	/// gets furthest is offered, at the last runtime it shipped for, and a
+	/// model that stopped shipping keeps its own last runtime in the dialog
+	/// rather than disappearing because something newer exists without it.
+	///
+	/// The entry this returns is therefore always its model at that model's
+	/// newest runtime — no entry of the same name has a newer one, because the
+	/// winner already holds the newest runtime in the family.
 	public static func newestOfEachFamily(
 		among destinations: [XcodeDestination]
 	) -> [XcodeDestination] {
