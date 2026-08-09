@@ -35,8 +35,18 @@ public final class XcodeDestinations {
 			// between the cable and the network, and a label from twenty
 			// minutes ago is how a menu comes to describe somewhere the device
 			// no longer is.
-			for device in await Self.askDevices() { attachments[device.udid] = device }
-			return known
+			let devices = await Self.askDevices()
+			for device in devices { attachments[device.udid] = device }
+			// Unless something is here that was not here before.
+			//
+			// Asking `xcodebuild` costs about twelve seconds, which is why the
+			// answer is kept — but kept for ever meant a phone plugged in after
+			// the first look never appeared at all, and nothing on screen said
+			// why. `devicectl` costs a fraction of that and is already being
+			// asked, so it is the one that notices: when it names a device the
+			// kept answer does not have, the kept answer is out of date and the
+			// expensive question is worth paying for again.
+			if !Self.hasUnknownDevice(among: devices, known: known) { return known }
 		}
 
 		// Both questions at once: what this scheme can run on, and how each of
@@ -51,6 +61,19 @@ public final class XcodeDestinations {
 		// while Xcode was updating.
 		if !found.isEmpty { cache[key] = found }
 		return found
+	}
+
+	/// Whether `devicectl` names a device the kept destinations do not have.
+	///
+	/// Only appearing matters. A device that has gone stays in the list and
+	/// fails to be run on with a message saying so, which is a better answer
+	/// than a menu that quietly loses the phone somebody is holding.
+	nonisolated static func hasUnknownDevice(
+		among devices: [XcodeDevices.Device], known: [XcodeDestination]
+	) -> Bool {
+		guard !devices.isEmpty else { return false }
+		let ids = Set(known.filter { $0.kind == .device }.map(\.id))
+		return devices.contains { !ids.contains($0.udid) }
 	}
 
 	/// How a destination is attached, when it is a device and the answer is

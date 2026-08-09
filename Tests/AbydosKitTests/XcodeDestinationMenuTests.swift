@@ -123,3 +123,42 @@ struct MacCatalystDestinationTests {
 		#expect(plain.destinationArgument == "id=0002")
 	}
 }
+
+/// Noticing a device that was plugged in after the first look.
+///
+/// `xcodebuild -showdestinations` costs about twelve seconds, so its answer is
+/// kept — and kept for ever meant a phone connected later never appeared in the
+/// menu at all, with nothing on screen saying why. `devicectl` is asked every
+/// time the menu opens and is quick, so it is the one that notices.
+struct DestinationStalenessTests {
+	private func device(_ udid: String) -> XcodeDevices.Device {
+		XcodeDevices.Device(
+			udid: udid, name: "a phone", transport: "wired", isConnected: true
+		)
+	}
+
+	@Test func aDeviceThatIsNotInTheKeptAnswerMakesItStale() {
+		let known = [
+			XcodeDestination(id: "phone-1", name: "iPhone", platform: "iOS"),
+			XcodeDestination(id: "sim-1", name: "iPhone 17", platform: "iOS Simulator", os: "27.0"),
+		]
+		// The one it already knows about: nothing to do.
+		#expect(!XcodeDestinations.hasUnknownDevice(among: [device("phone-1")], known: known))
+		// One it does not: the kept answer is out of date.
+		#expect(XcodeDestinations.hasUnknownDevice(among: [device("phone-2")], known: known))
+		// Nothing attached at all is not a reason to ask again.
+		#expect(!XcodeDestinations.hasUnknownDevice(among: [], known: known))
+	}
+
+	/// Simulator ids are not device ids, and must not be mistaken for them.
+	///
+	/// Matching a `devicectl` udid against every destination rather than only
+	/// the devices would compare it with simulator identifiers too — the same
+	/// shape of string — and a coincidence there would mean never refreshing.
+	@Test func onlyDevicesAreComparedWithDevices() {
+		let simulatorsOnly = [
+			XcodeDestination(id: "abc", name: "iPhone 17", platform: "iOS Simulator", os: "27.0")
+		]
+		#expect(XcodeDestinations.hasUnknownDevice(among: [device("abc")], known: simulatorsOnly))
+	}
+}

@@ -2907,6 +2907,38 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		more.target = self
 		more.representedObject = [configuration.id]
 		menu.addItem(more)
+
+		// A device plugged in since is noticed on its own — `devicectl` is
+		// asked every time this menu opens and is quick about it. A simulator
+		// installed since is not: nothing cheap reports one, and asking
+		// `xcodebuild` costs twelve seconds, which is not a thing to spend
+		// every time somebody looks at a menu. So it is offered.
+		let again = NSMenuItem(
+			title: "Look Again…",
+			action: #selector(refreshDestinations(_:)),
+			keyEquivalent: ""
+		)
+		again.target = self
+		again.representedObject = [configuration.id]
+		menu.addItem(again)
+	}
+
+	@objc private func refreshDestinations(_ sender: NSMenuItem) {
+		guard let pair = sender.representedObject as? [String], let id = pair.first,
+		      let configuration = runConfigurations.first(where: { $0.id == id }),
+		      let target = configuration.xcode
+		else { return }
+
+		Task { @MainActor in
+			_ = await XcodeDestinations.shared.destinations(
+				for: target,
+				workingDirectory: URL(fileURLWithPath: configuration.workingDirectory),
+				refresh: true
+			)
+			// Rebuilt rather than left to the next opening: somebody who asks
+			// for this is standing in front of the menu waiting for it.
+			refreshRunConfigurations()
+		}
 	}
 
 	@objc private func chooseOtherDestination(_ sender: NSMenuItem) {
