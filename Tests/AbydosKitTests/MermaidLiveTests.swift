@@ -231,6 +231,207 @@ struct MermaidLiveTests {
 		#expect(try String(contentsOf: theirs, encoding: .utf8).contains("by hand"))
 	}
 
+	// MARK: - Exporting a document full of fences
+
+	/// `Tests/AbydosKitTests/Fixtures/diagrams.md`, read from where it is written
+	/// rather than from a copy in here — the preview is looked at in that file,
+	/// and the export has to agree with it.
+	private func fixture(_ name: String) throws -> String {
+		let url = try #require(Bundle.module.url(
+			forResource: name, withExtension: "md", subdirectory: "Fixtures"
+		))
+		return try String(contentsOf: url, encoding: .utf8)
+	}
+
+	/// Three fences of three kinds in one document, written out and read back.
+	///
+	/// The thing no rule test can say: that what lands beside a README is three
+	/// pictures rather than three files. A PNG of nought bytes and an SVG holding
+	/// an error message both look like success from everywhere except here.
+	@Test func everyFenceInADocumentIsWrittenAndEveryFileIsAPicture() async throws {
+		guard await canDraw() else { return }
+		let folder = try madeFolder()
+		defer { try? FileManager.default.removeItem(at: folder) }
+		let document = try fixture("diagrams")
+		let source = folder.appendingPathComponent("README.md")
+		try document.write(to: source, atomically: true, encoding: .utf8)
+
+		for format in DiagramFormat.allCases {
+			let written = await DiagramExport.export(
+				markdown: document, of: source, format: format, theme: .light
+			)
+			guard case let .success(files) = written else {
+				Issue.record("\(format) did not export: \(written)")
+				continue
+			}
+			#expect(files.map(\.lastPathComponent) == [
+				"README-1.\(format.rawValue)",
+				"README-2.\(format.rawValue)",
+				"README-3.\(format.rawValue)",
+			])
+			// Every one opened and looked at, which is the whole point of this
+			// test: the file is a picture, it is signed, and it is not tiny.
+			for file in files {
+				let onDisk = try Data(contentsOf: file)
+				#expect(onDisk.count > 500, "\(file.lastPathComponent) is \(onDisk.count) bytes")
+				#expect(DiagramExport.isDrawnHere(onDisk))
+				if format == .png {
+					#expect(Array(onDisk.prefix(8)) == DiagramStamp.pngSignature)
+				} else {
+					let svg = String(decoding: onDisk, as: UTF8.self)
+					#expect(svg.contains("<svg"))
+					#expect(svg.contains("</svg>"))
+					// The flattening, which a fence goes through exactly as a `.mmd`
+					// does: no stylesheet left to apply and no HTML labels in it.
+					#expect(!svg.contains("<style"))
+					#expect(!svg.contains("foreignObject"))
+					#expect(!svg.lowercased().contains("syntax error"))
+				}
+			}
+			// Each of the three is its own diagram rather than three copies of the
+			// first, which is what a wrong offset into the document would produce.
+			let sizes = try files.map { try Data(contentsOf: $0).count }
+			#expect(Set(sizes).count == 3, "three fences came out as \(sizes)")
+		}
+
+		// A dark export writes the pair beside them rather than over them, and the
+		// light pictures are still there afterwards.
+		let dark = await DiagramExport.export(
+			markdown: document, of: source, format: .svg, theme: .dark
+		)
+		guard case let .success(files) = dark else {
+			Issue.record("the dark export did not happen: \(dark)")
+			return
+		}
+		#expect(files.map(\.lastPathComponent)
+			== ["README-1-dark.svg", "README-2-dark.svg", "README-3-dark.svg"])
+		#expect(FileManager.default.fileExists(
+			atPath: folder.appendingPathComponent("README-1.svg").path
+		))
+	}
+
+	/// One fence that does not parse, and the whole document is refused.
+	///
+	/// The complaint names the line of the *file* rather than of the block, which
+	/// is the number in the editor beside it — and not one of the three good
+	/// diagrams above it is written, because everything is drawn before anything
+	/// is written.
+	@Test func oneBrokenFenceWritesNothingAtAllAndNamesTheLineOfTheFile() async throws {
+		guard await canDraw() else { return }
+		let folder = try madeFolder()
+		defer { try? FileManager.default.removeItem(at: folder) }
+		let document = try fixture("diagrams") + """
+
+		## And one that does not parse
+
+		```mermaid
+		sequenceDiagram
+		    Customer->>Shop: Order a shelf
+		    Shop ??? Workshop
+		```
+		"""
+		let source = folder.appendingPathComponent("README.md")
+		try document.write(to: source, atomically: true, encoding: .utf8)
+
+		let written = await DiagramExport.export(markdown: document, of: source, format: .png)
+		guard case let .failure(failure) = written else {
+			Issue.record("a document with a broken fence in it was exported anyway")
+			return
+		}
+		// Printed rather than only asserted: the sentence is the whole of what
+		// somebody gets, and a test that only checks its prefix cannot show that
+		// it reads as one.
+		print("MERMAID: \(failure.message)")
+		#expect(!failure.message.contains("\n"))
+		// The line is the one in the editor, which is inside the fourth block
+		// rather than inside a diagram counted from its own first line.
+		let offending = try #require(document.components(separatedBy: "\n")
+			.firstIndex(where: { $0.contains("Shop ??? Workshop") })) + 1
+		#expect(failure.message.hasPrefix("README.md line \(offending):"),
+		        "\(failure.message)")
+
+		// Nothing written, not even the three that drew perfectly well.
+		let leftBehind = try FileManager.default
+			.contentsOfDirectory(atPath: folder.path)
+			.filter { $0 != "README.md" }
+		#expect(leftBehind.isEmpty, "these were written anyway: \(leftBehind)")
+	}
+
+	/// A picture nobody here drew stops the whole document, by the same rule and
+	/// the same reading of the bytes that protects `diagram.png`.
+	@Test func aStrangersPictureStopsAWholeDocument() async throws {
+		guard await canDraw() else { return }
+		let folder = try madeFolder()
+		defer { try? FileManager.default.removeItem(at: folder) }
+		let document = try fixture("diagrams")
+		let source = folder.appendingPathComponent("README.md")
+		try document.write(to: source, atomically: true, encoding: .utf8)
+		let theirs = folder.appendingPathComponent("README-2.svg")
+		try "<svg>a drawing somebody made by hand</svg>".write(
+			to: theirs, atomically: true, encoding: .utf8
+		)
+
+		let written = await DiagramExport.export(markdown: document, of: source, format: .svg)
+		guard case let .failure(failure) = written else {
+			Issue.record("somebody's own drawing was overwritten")
+			return
+		}
+		#expect(failure.message.contains("README-2.svg"))
+		#expect(try String(contentsOf: theirs, encoding: .utf8).contains("by hand"))
+		#expect(!FileManager.default.fileExists(
+			atPath: folder.appendingPathComponent("README-1.svg").path
+		))
+	}
+
+	/// A fence that named itself is named after itself on disk, and the fence
+	/// beside it that chose its own look keeps the plain name while the other
+	/// gains `-dark`.
+	@Test func aNamedFenceAndAFenceThatChoseAreBothWrittenAsTheyAsked() async throws {
+		guard await canDraw() else { return }
+		let folder = try madeFolder()
+		defer { try? FileManager.default.removeItem(at: folder) }
+		let document = """
+		# Two diagrams
+
+		```mermaid
+		---
+		title: Ordering a shelf
+		---
+		flowchart TD
+		    A[Order placed] --> B[Pack it]
+		```
+
+		```mermaid
+		%%{init: {'theme': 'forest'}}%%
+		flowchart TD
+		    C[Cut] --> D[Post]
+		```
+		"""
+		let source = folder.appendingPathComponent("README.md")
+		try document.write(to: source, atomically: true, encoding: .utf8)
+
+		let written = await DiagramExport.export(
+			markdown: document, of: source, format: .svg, theme: .dark
+		)
+		guard case let .success(files) = written else {
+			Issue.record("the export did not happen: \(written)")
+			return
+		}
+		#expect(files.map(\.lastPathComponent)
+			== ["README-ordering-a-shelf-dark.svg", "README-2.svg"])
+		for file in files {
+			let svg = try String(contentsOf: file, encoding: .utf8)
+			#expect(svg.contains("<svg"))
+			#expect(!svg.lowercased().contains("syntax error"))
+		}
+		// The one that chose is drawn in its own colours, so it has no paper of
+		// this app's painted under it; the one that did not is on dark paper.
+		#expect(try String(contentsOf: files[0], encoding: .utf8)
+			.contains(DiagramTheme.dark.paper))
+		#expect(try !String(contentsOf: files[1], encoding: .utf8)
+			.contains(DiagramTheme.dark.paper))
+	}
+
 	/// The measurement the whole decision rests on: the second diagram and every
 	/// one after it costs hundredths of a second, against a second a piece from
 	/// a container that has no server mode to keep warm.

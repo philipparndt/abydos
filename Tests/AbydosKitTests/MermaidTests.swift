@@ -46,6 +46,40 @@ struct MermaidTests {
 		#expect(Mermaid.hasDiagram("sequenceDiagram\n  A->>B: hi\n"))
 	}
 
+	// MARK: - What a diagram calls itself
+
+	/// Front matter, which is the one spelling every diagram type understands.
+	@Test func aDiagramNamesItselfInItsFrontMatter() {
+		#expect(Mermaid.statedTitle(in: """
+		---
+		title: Ordering a shelf
+		---
+		flowchart TD
+		    A --> B
+		""") == "Ordering a shelf")
+		// YAML's own quotes are not part of the name.
+		#expect(Mermaid.statedTitle(in: "---\ntitle: \"Checkout\"\n---\nflowchart TD\n A --> B")
+			== "Checkout")
+		#expect(Mermaid.statedTitle(in: "---\ntitle: ''\n---\nflowchart TD\n A --> B") == nil)
+	}
+
+	/// Everything that is not a name, and the last one is the reason the `title`
+	/// *line* directive is deliberately not read at all: in a flowchart it is two
+	/// nodes, so a picture named after it would be named after part of itself.
+	@Test func nothingElseIsADiagramsName() {
+		#expect(Mermaid.statedTitle(in: "flowchart TD\n    A --> B") == nil)
+		// Nested under `config:`, which is somebody's theme rather than a title.
+		#expect(Mermaid.statedTitle(in: """
+		---
+		config:
+		  title: not this one
+		---
+		flowchart TD
+		    A --> B
+		""") == nil)
+		#expect(Mermaid.statedTitle(in: "flowchart TD\n    title Overview\n    A --> B") == nil)
+	}
+
 	// MARK: - A drawing with a size of its own
 
 	/// `mermaid.render` returns `width="100%"` with the real width hidden in a
