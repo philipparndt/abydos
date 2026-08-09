@@ -22,9 +22,11 @@ echo "==> Building ($CONFIG)"
 # SDK and fails here with an error about Foundation rather than about Abydos.
 SWIFT=(xcrun swift)
 
-"${SWIFT[@]}" build -c "$CONFIG"
+# Passed by the Makefile; empty when somebody runs this script directly.
+read -ra JOB_FLAGS <<< "${SWIFT_JOBS:-}"
+"${SWIFT[@]}" build "${JOB_FLAGS[@]}" -c "$CONFIG"
 
-BIN_DIR="$("${SWIFT[@]}" build -c "$CONFIG" --show-bin-path)"
+BIN_DIR="$("${SWIFT[@]}" build "${JOB_FLAGS[@]}" -c "$CONFIG" --show-bin-path)"
 
 echo "==> Assembling $APP"
 rm -rf "$APP"

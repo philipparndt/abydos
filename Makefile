@@ -30,6 +30,21 @@ DEV_CONFIG = $(if $(filter command line,$(origin CONFIG)),$(CONFIG),debug)
 # the SDK belongs to.
 SWIFT   := xcrun swift
 
+# How many compiler processes a build may run at once.
+#
+# SwiftPM takes every core by default, which is right for one build on an idle
+# machine and wrong for everything else: two cold builds side by side put this
+# project's ~150 files into ~140 concurrent `swift-frontend` processes, 26 GB
+# resident, and a load average in the hundreds — measured, on a ten-core
+# machine, while somebody was trying to work on it.
+#
+# Four is polite rather than optimal. Say otherwise when a build is the only
+# thing happening and speed is what matters:
+#
+#     make build JOBS=10        # or any number, or JOBS= for SwiftPM's default
+JOBS    ?= 4
+SWIFT_JOBS := $(if $(JOBS),-j $(JOBS),)
+
 .DEFAULT_GOAL := run
 
 .PHONY: help
@@ -39,7 +54,7 @@ help: ## Show this help
 
 .PHONY: build
 build: devpod-chart ## Build the .app bundle (CONFIG=debug|release, BUNDLE_ID=... to override the identifier)
-	@BUNDLE_ID="$(BUNDLE_ID)" Scripts/bundle.sh $(CONFIG)
+	@BUNDLE_ID="$(BUNDLE_ID)" SWIFT_JOBS="$(SWIFT_JOBS)" Scripts/bundle.sh $(CONFIG)
 
 .PHONY: run
 run: ## Build and launch the app (debug; CONFIG=release to override)
@@ -67,20 +82,20 @@ TEST_TIMEOUT ?= 300
 
 .PHONY: test
 test: ## Run the test suite (FILTER=name, TEST_TIMEOUT=seconds)
-	@Scripts/run-tests.sh $(TEST_TIMEOUT) $(SWIFT) test $(if $(FILTER),--filter $(FILTER))
+	@Scripts/run-tests.sh $(TEST_TIMEOUT) $(SWIFT) test $(SWIFT_JOBS) $(if $(FILTER),--filter $(FILTER))
 
 .PHONY: perf
 perf: ## Run the performance suite in release and print timings
-	@$(SWIFT) test -c release --filter PerformanceTests 2>&1 | grep -E '^PERF|Test run with'
+	@$(SWIFT) test $(SWIFT_JOBS) -c release --filter PerformanceTests 2>&1 | grep -E '^PERF|Test run with'
 
 .PHONY: fire
 fire: ## Burn the DOOM fire in this terminal (SECONDS=20, FPS=60 to just watch)
-	@$(SWIFT) build -c release --product firebench
+	@$(SWIFT) build $(SWIFT_JOBS) -c release --product firebench
 	@.build/release/firebench --mode fire --seconds $(or $(SECONDS),20) $(if $(FPS),--fps $(FPS))
 
 .PHONY: matrix
 matrix: ## The same on the glyph cache (SECONDS=20, FPS=60 to just watch)
-	@$(SWIFT) build -c release --product firebench
+	@$(SWIFT) build $(SWIFT_JOBS) -c release --product firebench
 	@.build/release/firebench --mode matrix --seconds $(or $(SECONDS),20) $(if $(FPS),--fps $(FPS))
 
 # The documentation's pictures, taken from the examples repository rather than
@@ -151,7 +166,7 @@ install-cli: ## Put the `abydos` commands on the PATH (PREFIX=/usr/local)
 	@echo "==> Installed $(or $(PREFIX),/usr/local)/bin/abydos"
 	@install -m 755 Scripts/abydos-icat $(or $(PREFIX),/usr/local)/bin/abydos-icat
 	@echo "==> Installed $(or $(PREFIX),/usr/local)/bin/abydos-icat"
-	@$(SWIFT) build -c release --product firebench >/dev/null
+	@$(SWIFT) build $(SWIFT_JOBS) -c release --product firebench >/dev/null
 	@install -m 755 .build/release/firebench $(or $(PREFIX),/usr/local)/bin/abydos-bench
 	@echo "==> Installed $(or $(PREFIX),/usr/local)/bin/abydos-bench"
 	@# Also as `icat`, but only when nothing else answers to it: kitty ships
