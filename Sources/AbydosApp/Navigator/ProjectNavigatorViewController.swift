@@ -1188,7 +1188,7 @@ final class ProjectNavigatorViewController: NSViewController {
 
 	/// The same gesture without the menu, for verifying it end to end.
 	func exportSelectionForTesting(_ format: DiagramFormat, theme: DiagramTheme? = nil) {
-		guard let node = contextNode, !node.isDirectory, DiagramExport.isDiagram(node.url) else {
+		guard let node = contextNode, !node.isDirectory, DiagramExport.holdsADiagram(node.url) else {
 			print("EXPORT: nothing to export")
 			return
 		}
@@ -1693,8 +1693,12 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 				// Hidden unless a diagram was clicked — it means nothing over a
 				// Swift file — and greyed when several rows were, for the same
 				// reason Rename is: one file, one answer.
-				item.isHidden = !nodes.contains { !$0.isDirectory && DiagramExport.isDiagram($0.url) }
-				let single = node.map { !$0.isDirectory && DiagramExport.isDiagram($0.url) } ?? false
+				// `holdsADiagram` rather than `isDiagram`, because a Markdown file
+				// is one only when somebody has written a ```mermaid block in it —
+				// and an Export over every `.md` in a repository would be wrong far
+				// more often than right.
+				item.isHidden = !nodes.contains { !$0.isDirectory && DiagramExport.holdsADiagram($0.url) }
+				let single = node.map { !$0.isDirectory && DiagramExport.holdsADiagram($0.url) } ?? false
 				item.isEnabled = single
 				if let submenu = item.submenu {
 					DiagramExportMenu.fill(

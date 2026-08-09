@@ -119,6 +119,56 @@ public enum Mermaid {
 		return nil
 	}
 
+	// MARK: - What a diagram calls itself
+
+	/// The name a diagram gives itself, or nil when it does not give one.
+	///
+	/// Mermaid's front matter, and **only** its front matter:
+	///
+	///     ---
+	///     title: Ordering a shelf
+	///     ---
+	///     flowchart TD
+	///
+	/// That is the one spelling every diagram type understands — Mermaid draws it
+	/// above the picture — and the one that is unambiguously a name rather than a
+	/// piece of the drawing. The `title Something` *line* directive is
+	/// deliberately not read: it exists in some diagram types and not others, and
+	/// in a `flowchart` a line reading `title Overview` is two nodes called
+	/// `title` and `Overview`. Naming a picture after that would name it after
+	/// part of itself.
+	///
+	/// Only a key at the front matter's own indentation counts, so the `title:`
+	/// somebody nests under `config:` is not mistaken for the diagram's.
+	///
+	/// This is what `DiagramExport` names a fence's picture after when a Markdown
+	/// document holds several of them — see the naming rule there, which is where
+	/// the decision is written down.
+	public static func statedTitle(in source: String) -> String? {
+		let lines = source.split(separator: "\n", omittingEmptySubsequences: false)
+		guard let opening = lines.firstIndex(where: {
+			!$0.trimmingCharacters(in: .whitespaces).isEmpty
+		}), lines[opening].trimmingCharacters(in: .whitespaces) == "---" else { return nil }
+
+		for line in lines[(opening + 1)...] {
+			let trimmed = line.trimmingCharacters(in: .whitespaces)
+			if trimmed == "---" { return nil }
+			guard line.first != " ", line.first != "\t", trimmed.hasPrefix("title:") else { continue }
+			let said = trimmed.dropFirst("title:".count).trimmingCharacters(in: .whitespaces)
+			let named = unquoted(said)
+			return named.isEmpty ? nil : named
+		}
+		return nil
+	}
+
+	/// A YAML scalar with its own quotes taken off, and nothing else done to it.
+	private static func unquoted(_ value: String) -> String {
+		guard value.count >= 2, let first = value.first, first == "\"" || first == "'",
+		      value.last == first
+		else { return value }
+		return String(value.dropFirst().dropLast())
+	}
+
 	/// A drawing put on paper of its own.
 	///
 	/// Mermaid emits no background at all: `mermaid.render` hands back shapes on

@@ -75,4 +75,17 @@ public enum DiagramLook {
 		"\(name) sets its own look (\(stated)), so the picture was drawn that way rather than "
 			+ "in the theme that was asked for."
 	}
+
+	/// The same again, for a document whose diagrams did not all agree.
+	///
+	/// A Markdown file holds several diagrams and a look is stated one at a time,
+	/// so a document can be half in the app's theme and half in its own. That is
+	/// the rule working rather than a fault, and it is only obvious to somebody
+	/// who is told: asking for Dark and finding `README-2.png` — light, and under
+	/// a name with no `-dark` in it — is otherwise a bug report waiting to happen.
+	public static func exportNotice(for name: String, chose: Int, of total: Int) -> String {
+		"\(chose) of the \(total) diagrams in \(name) set their own look, so those were drawn "
+			+ "that way rather than in the theme that was asked for, and their pictures keep the "
+			+ "plain name."
+	}
 }
