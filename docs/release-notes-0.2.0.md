@@ -22,8 +22,15 @@ instead of starting a fresh one per diagram, which was two seconds each time.
 Diagrams are now drawn as vector and are sharp on a Retina screen; they follow
 the window's zoom, which they previously ignored.
 
+**Diagrams follow the app's theme** — dark window, dark diagram, for all three
+tools. A diagram that states its own look keeps it, and the pane says so rather
+than leaving you to wonder: *"This diagram sets its own look (`!theme
+reddress-darkblue`), so it is drawn that way rather than in the app's theme."*
+
 **Export** from either the preview or the file's menu in the tree, as PNG or
-SVG, written beside the source. It replaces only pictures the app drew, refuses
+SVG, and in **either theme** — `Export ▸ PNG (Dark)` writes `diagram-dark.png`
+beside `diagram.png`, because which of a README, a wiki or a slide wants dark is
+not something the app can know. Written beside the source. It replaces only pictures the app drew, refuses
 a file it did not, and reports the line a broken diagram failed on rather than
 writing a picture of the error.
 
@@ -41,6 +48,21 @@ stay on your machine, bind-mounted, so the tree, search and git keep working at
 local speed; only the tools move inside. A file naming features or Docker
 Compose is refused with a sentence saying which, rather than starting something
 half-configured.
+
+**The lifecycle commands run**, each at its own moment: `postCreateCommand` once
+when the container is made, `postStartCommand` on every start, and the rest as
+the specification says. A command that fails names the field it came from, its
+exit status and the last line it wrote — and nothing after it runs.
+
+**The terminal shows the container coming up.** The tab opens at once and holds
+the pull, the build and each lifecycle command as they happen, then becomes the
+shell in that container with all of it still in the scrollback. The panel's `+`
+grows a chevron beside it offering a terminal in the devcontainer, the way the
+run button does.
+
+**Language servers run inside it**, so a project's toolchain is the container's
+rather than the machine's, while every path they report is still named the way
+this machine names it.
 
 **Every container the app starts is named** `abydos-…` and removed when it is
 done with, including containers left behind by a run that crashed. Before this,
