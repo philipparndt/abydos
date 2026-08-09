@@ -205,6 +205,16 @@ tool-image-gopls: ## Build the gopls image (TAG=abydos/gopls:dev)
 	@echo "==> $(or $(TAG),abydos/gopls:dev)"
 	@echo "    name it for a project in .abydos/tools.json: {\"gopls\": \"$(or $(TAG),abydos/gopls:dev)\"}"
 
+# Publishing one of them takes the pod's two words — REPOSITORY and VERSION —
+# and one more. TOOL, because each tool is its own repository: a goal that
+# looped over ToolImages/*/Dockerfile would push six different servers to
+# whichever one name it was given. The default repository is named after the
+# tool for the same reason.
+.PHONY: toolimage-publish
+toolimage-publish: ## Push a multi-arch tool image (TOOL=gopls, REPOSITORY, VERSION; DRY_RUN=1 to build both and stop)
+	@Scripts/publish-tool-image.sh $(or $(TOOL),gopls) \
+		$(or $(REPOSITORY),pharndt/abydos-$(or $(TOOL),gopls)) $(or $(VERSION),dev)
+
 .PHONY: clean
 clean: ## Remove build output
 	@rm -rf .build build
