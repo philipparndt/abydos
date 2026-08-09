@@ -85,14 +85,42 @@ public enum ToolImageCatalogue {
 		),
 		// The language servers, which are the tools somebody would otherwise
 		// have to install by hand — a Go toolchain to get gopls, a Rust one for
-		// rust-analyzer, a JDK for jdtls. None lists a known-good image: the
-		// point of that list is that somebody has run the thing, and nobody
-		// has. What is written down instead is exactly what an image has to do,
+		// rust-analyzer, a JDK for jdtls. Only gopls lists an image: the point
+		// of that list is that somebody has run the thing, and gopls is the one
+		// that has been built, pushed, pulled back and driven. What is written
+		// down for the other five instead is exactly what an image has to do,
 		// which is the same for all of them and short.
 		Tool(
 			key: "gopls",
 			title: "Go — gopls",
-			choices: [],
+			// Built by `ToolImages/gopls/Dockerfile`, pushed by
+			// `make toolimage-publish TOOL=gopls`, and — the part that earns it a
+			// line here — pulled back from Docker Hub on this machine and driven
+			// end to end by `ContainerLSPLiveTests`: diagnostics, symbols and a
+			// go-to-declaration, every one of them naming a file on the host.
+			// The requirement below is a description of it rather than a wish:
+			// `gopls` is the entry point with no arguments and no wrapper, the
+			// project is read at /workspace, and the Go toolchain it shells out
+			// to is in the image, which is the whole reason the image exists.
+			//
+			// The tag is `dev` because that is the only tag in the repository —
+			// `VERSION` defaulted, and listing `:0.23.0` because it reads better
+			// would be listing something nobody can pull, which is the exact
+			// failure this list exists to prevent. That it moves is said in the
+			// label rather than here, because the person it matters to is
+			// choosing it in a menu and will never read this. When a version tag
+			// is pushed, that becomes this entry and `:dev` stops being offered.
+			choices: [
+				Choice(
+					// The image's own name, the way the PlantUML labels are, so what
+					// is on screen is what would be pulled — 0401 drafted this as
+					// "abydos/gopls", which is neither the repository nor anything
+					// somebody could type.
+					label: "pharndt/abydos-gopls:dev (gopls 0.23.0, Go 1.26 — a tag that moves)",
+					image: "pharndt/abydos-gopls:dev",
+					publisher: "the Abydos project"
+				),
+			],
 			requirement: languageServerRequirement("gopls")
 		),
 		Tool(
