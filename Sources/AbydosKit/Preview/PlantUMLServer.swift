@@ -19,10 +19,15 @@ import Foundation
 ///
 ///  * **It goes away when nobody is drawing.** Otherwise every project somebody
 ///    opens leaves a JVM resident for the rest of the day. `idleTimeout`.
-///  * **It is docker only, for now.** A kept container is one that *must* be
-///    removable, and the removal verb is proven for docker and not for Apple's
-///    — see 0406. On Apple's runtime this refuses, and the old render draws the
-///    diagram exactly as it does today.
+///  * **It is docker only, and the reason has changed.** It used to be that a
+///    kept container must be removable and that verb was unproven against
+///    Apple's runtime; that is proven now (0406). What keeps this docker-only is
+///    that on Apple's runtime there is no address to ask. Its `-p` will not take
+///    an empty host port, so there is no letting it choose one; a port it does
+///    publish never reaches the host; and its containers' own addresses are
+///    refused to this app with `EHOSTUNREACH`. All three are the same cause and
+///    it is written out under `canKeepWarm`. On Apple's runtime this refuses,
+///    and the old render draws the diagram exactly as it does today.
 ///  * **Anything unexpected falls back rather than fails.** A server that has
 ///    died, a port that is taken, a runtime that has stopped answering: the old
 ///    way works and is only slow, so `render` answers nil and the caller draws
@@ -114,10 +119,37 @@ public actor PlantUMLServers {
 
 	/// Whether a kept server is offered for this runtime at all.
 	///
-	/// Docker only, and deliberately: keeping a container alive is only
-	/// defensible where killing it again is proven, and that is the whole of
-	/// 0406's decision. Apple's `container` case is untouched — this is a
-	/// preference to revisit, not a direction taken.
+	/// Docker only, still — but not for the reason it was. 0406's reason was that
+	/// keeping a container alive is only defensible where killing it again is
+	/// proven, and against Apple's runtime it was not. **That reason is gone:**
+	/// `container rm --force` is proven, end to end, and everything else this
+	/// would need — `-d`, `--rm`, `--name`, the image's `--http-server` — works
+	/// there too. A server was started on Apple's runtime and drew the same 1595
+	/// bytes as docker's, so the container is not the problem.
+	///
+	/// **What is left is that this app cannot reach it.** Three attempts, one
+	/// cause:
+	///
+	///  * `-p 127.0.0.1::8080` is rejected outright — `invalid publish host
+	///    port` — so there is no asking the runtime to choose a free one, which
+	///    is the only form that is safe against a port taken between choosing and
+	///    using.
+	///  * A port published at a number chosen here *is* listened on, and every
+	///    connection to it is accepted and then reset. The runtime's own log says
+	///    why: its forwarder cannot connect to the container, `No route to host`.
+	///  * The container's own address — Apple's runtime gives each one an address
+	///    on `bridge100` — answers `curl` with a picture and answers this app
+	///    with nothing. A plain `connect(2)` from a freshly built binary to that
+	///    address returns `EHOSTUNREACH`, the same errno the runtime's forwarder
+	///    reports, while `curl` from an approved terminal reaches it in the same
+	///    second. That is macOS's local-network privacy, and the runtime's helper
+	///    is subject to it as much as this app is.
+	///
+	/// So the third bullet explains the second, and until something on this
+	/// machine may talk to `192.168.64.0/24` there is no address for a kept
+	/// server to be at. Nothing here is about PlantUML or about cleanup, and one
+	/// permission would lift all of it — which is why the `apple` case stays
+	/// exactly where it is.
 	public static func canKeepWarm(_ runtime: ContainerRuntime) -> Bool {
 		if case .docker = runtime { return true }
 		return false

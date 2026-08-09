@@ -53,22 +53,40 @@ public enum ContainerRuntime: Equatable, Sendable {
 
 	/// The runtimes to look for, in the order they are preferred.
 	///
-	/// Docker first when nothing was asked for, and that is a reversal worth
-	/// reading before it is undone. Apple's used to be first, because it is the
-	/// one that needs no daemon running before it will answer — the difference
-	/// between a feature that works after a restart and one that says "cannot
-	/// connect" — and *that reasoning is still sound*. What outweighs it for now
-	/// is that every container started here has to be removable again, and the
-	/// removal verb could not be proven against Apple's CLI: its service was
-	/// unresponsive for a whole day, answering `--version` and hanging on
-	/// `--help`, which is exactly the state a cleanup cannot be demonstrated in.
-	/// So the runtime whose cleanup is proven is the one preferred, and the day
-	/// Apple's service is well the paragraph above is the argument for putting
-	/// it back.
+	/// Docker first when nothing was asked for. Apple's used to be first, because
+	/// it is the one that needs no daemon running before it will answer — the
+	/// difference between a feature that works after a restart and one that says
+	/// "cannot connect" — and *that reasoning is still sound*, which is why this
+	/// is worth reading before it is either undone or left alone.
 	///
-	/// Apple's is still found when it is the only one here — an app that draws
-	/// no diagrams at all would be a worse answer than one that draws them and
-	/// says what it cannot promise. `caveat` is what it says.
+	/// What put docker first was that a container had to be removable and the
+	/// removal verb could not be proven against Apple's CLI while its service was
+	/// wedged. **That reason is gone**: `container rm --force` is proven now, end
+	/// to end, against `container` 1.2.2 — as are the sweep, the image pull,
+	/// bind mounts, `exec -it` onto a pty, and a container kept detached with a
+	/// keep-alive. Every one of those has a live test beside its docker twin.
+	///
+	/// What keeps docker first is one thing and it is not about cleanup:
+	/// **nothing here can talk to one of Apple's containers over the network.**
+	/// A published port is listened on and every connection to it is accepted and
+	/// reset, because the runtime's own forwarder cannot reach the container it
+	/// forwards to — `No route to host`, in its log. A container's own address on
+	/// `bridge100` is the same story from this side: `connect(2)` from a freshly
+	/// built binary returns `EHOSTUNREACH` while `curl` from an approved terminal
+	/// fetches a picture from it in the same second. One cause, macOS's
+	/// local-network privacy, and the runtime's helper is subject to it as much
+	/// as this app is.
+	///
+	/// Two features want that and get refused for it: the kept PlantUML server
+	/// (0422) and a devcontainer's `forwardPorts` (0424). Preferring a runtime
+	/// two features quietly degrade on is worse than saying so, so this line
+	/// stays as it is — and the day something on this machine may reach
+	/// `192.168.64.0/24`, it is the one line to change, because everything else
+	/// is proven there.
+	///
+	/// Apple's is found first when it is the only one here, and everything that
+	/// does not go over the network works on it — the removal, the sweep, the
+	/// image pull, bind mounts, a shell. `caveat` is what it says about the rest.
 	///
 	/// A stated preference is honoured exactly, including by finding nothing:
 	/// somebody who says Docker and has none has a problem worth being told
@@ -99,17 +117,21 @@ public enum ContainerRuntime: Equatable, Sendable {
 	/// What this app cannot promise about this runtime, or nil when it can
 	/// promise everything.
 	///
-	/// One sentence, and only for Apple's: what is not proven there is the
-	/// removal of a container by name, which is the whole of how this app stops
-	/// leaving them behind.
+	/// One sentence, and only for Apple's. It used to be about removing a
+	/// container by name, which is proven now and no longer worth warning anybody
+	/// about. What is left is that nothing here can reach one of its containers
+	/// over the network — which is what a kept PlantUML and a forwarded port both
+	/// need, and what a pipe, a mount and a shell all do not.
 	public var caveat: String? {
 		switch self {
 		case .docker: return nil
 		case .apple:
-			return "Apple's container runtime is used as it was found here, but removing a "
-				+ "container by name has not been proven against it — so one may be left "
-				+ "running after a crash, and `container ls` will show it. Docker is the "
-				+ "one this app can currently tidy up after."
+			return "Apple's container runtime does everything here except be talked to over "
+				+ "the network: its published ports are accepted and then reset, and its "
+				+ "containers' own addresses are refused to this app. So diagrams are drawn "
+				+ "the slow way, one container each, and a devcontainer that forwards a port "
+				+ "will not open. Allowing local network access to `container` in Privacy & "
+				+ "Security is what is worth trying."
 		}
 	}
 }

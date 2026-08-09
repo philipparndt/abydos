@@ -68,10 +68,12 @@ struct PlantUMLServerAddressTests {
 		#expect(PlantUMLServers.port(from: "no such container") == nil)
 	}
 
-	/// Docker only, and on purpose: a container kept alive is one that must be
-	/// removable again, and that is proven for docker and not for Apple's. The
-	/// case itself stays — this is a preference to revisit. See 0406.
-	@Test func onlyTheRuntimeThisAppCanTidyUpAfterKeepsAServer() async {
+	/// Docker only, and on purpose — but no longer because of cleanup, which is
+	/// proven on both now (0406). What is left is that a server kept on Apple's
+	/// runtime has no address this app may ask: its published ports are accepted
+	/// and reset, and its containers' own addresses answer a plain `connect` with
+	/// `EHOSTUNREACH`. `canKeepWarm` writes that out in full.
+	@Test func onlyTheRuntimeThisAppCanReachAServerOnKeepsOne() async {
 		#expect(PlantUMLServers.canKeepWarm(.docker("/usr/bin/docker")))
 		#expect(!PlantUMLServers.canKeepWarm(.apple("/usr/local/bin/container")))
 
@@ -129,11 +131,19 @@ struct PlantUMLServerAddressTests {
 
 	/// Nothing of this test's left behind, however it ended.
 	private func removeAll(_ started: Started, using runtime: ContainerRuntime) {
-		// What the test saw, and anything still registered by this process that
-		// nothing has got round to removing — a test that fails part way through
-		// must not leave a container behind either.
-		let mine = ToolContainers.shared.names.filter {
-			ToolContainers.owner(of: $0) == ProcessInfo.processInfo.processIdentifier
+		// What the test saw, and any *server or pipe of this suite's* still
+		// registered by this process that nothing has got round to removing — a
+		// test that fails part way through must not leave a container behind
+		// either.
+		//
+		// Named, rather than everything this process registered: that took the
+		// devcontainer out from under `DevContainerLiveTests` running beside it,
+		// and the shell in it then answered "No such container". Sharing a pid is
+		// not owning each other's containers.
+		let ours = ["abydos-plantuml-server-", "abydos-probe-pipe-"]
+		let mine = ToolContainers.shared.names.filter { name in
+			ToolContainers.owner(of: name) == ProcessInfo.processInfo.processIdentifier
+				&& ours.contains { name.hasPrefix($0) }
 		}
 		let names = Set(started.all).union(mine).sorted()
 		if names.isEmpty { return }
