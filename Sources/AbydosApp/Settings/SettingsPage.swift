@@ -37,7 +37,7 @@ final class SettingsPage: NSView {
 	/// outside — Restore Defaults, or the other window.
 	private var refreshHandlers: [() -> Void] = []
 
-	private let list = NSTableView()
+	private let list = SettingsSidebarTable()
 	private let form = NSStackView()
 	private var scroll: NSScrollView!
 
@@ -94,6 +94,47 @@ final class SettingsPage: NSView {
 		toggleFold(at: index)
 	}
 
+	// MARK: - Testing
+
+	/// Presses arrow keys on the sidebar, as a capture run does instead of using
+	/// a keyboard.
+	///
+	/// The events go to the table rather than to `fold(_:)` directly, so what a
+	/// run exercises is the path a keyboard takes: up and down are the table's
+	/// own and have to keep working, and proving that is half the point.
+	func pressArrowsForTesting(_ keys: [String]) {
+		let arrows: [String: (character: Int, code: UInt16)] = [
+			"left": (NSLeftArrowFunctionKey, 123),
+			"right": (NSRightArrowFunctionKey, 124),
+			"down": (NSDownArrowFunctionKey, 125),
+			"up": (NSUpArrowFunctionKey, 126),
+		]
+		for key in keys {
+			guard let arrow = arrows[key.lowercased()],
+			      let scalar = UnicodeScalar(UInt32(arrow.character))
+			else { continue }
+			let text = String(Character(scalar))
+			guard let event = NSEvent.keyEvent(
+				with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+				windowNumber: window?.windowNumber ?? 0, context: nil,
+				characters: text, charactersIgnoringModifiers: text,
+				isARepeat: false, keyCode: arrow.code
+			) else { continue }
+			list.keyDown(with: event)
+		}
+	}
+
+	/// Which page is showing, what the sidebar has left in it, and the sizes the
+	/// zoom was supposed to reach.
+	var reportForTesting: String {
+		let showing = rows.map { sections[$0].section.title }
+		return "selected=\(sections[selected].section.title)"
+			+ " rows=\(showing.count)"
+			+ " row-height=\(Int(list.rowHeight))"
+			+ " sidebar=\(Int(list.enclosingScrollView?.superview?.frame.width ?? 0))"
+			+ " showing=[\(showing.joined(separator: " | "))]"
+	}
+
 	private func toggleFold(at index: Int) {
 		guard SettingsOutline.hasChildren(depths: sections.map(\.depth), at: index) else { return }
 		if collapsed.contains(index) {
@@ -118,6 +159,38 @@ final class SettingsPage: NSView {
 	private func refreshRows() {
 		rows = SettingsOutline.visible(depths: sections.map(\.depth), collapsed: collapsed)
 		list.reloadData()
+	}
+
+	/// Left and right in the sidebar, with an outline view's meaning.
+	///
+	/// The decision is arithmetic over the depths and lives in `SettingsOutline`
+	/// beside the rest of the folding, so what the keys do is settled by a test
+	/// rather than by a window; this only carries it out. Up and down are never
+	/// here — the table already walks the rows that are showing, which is
+	/// exactly the list folding leaves behind.
+	///
+	/// Answers whether the key was used, so one that does nothing — right on a
+	/// leaf, left at the top of the list — goes back to the table rather than
+	/// being swallowed.
+	@discardableResult
+	func fold(_ key: SettingsOutline.Fold) -> Bool {
+		let depths = sections.map(\.depth)
+		let before = SettingsOutline.FoldState(collapsed: collapsed, selected: selected)
+		let after = SettingsOutline.fold(
+			depths: depths, collapsed: collapsed, selected: selected, key
+		)
+		guard after != before else { return false }
+
+		collapsed = after.collapsed
+		refreshRows()
+		// The page first, so that selecting the row finds it already showing and
+		// does not build the same section a second time.
+		show(section: after.selected)
+		if let row = rows.firstIndex(of: after.selected) {
+			list.selectRowIndexes([row], byExtendingSelection: false)
+			list.scrollRowToVisible(row)
+		}
+		return true
 	}
 
 	deinit { NotificationCenter.default.removeObserver(self) }
@@ -212,6 +285,7 @@ final class SettingsPage: NSView {
 		list.addTableColumn(NSTableColumn(identifier: NSUserInterfaceItemIdentifier("section")))
 		list.delegate = self
 		list.dataSource = self
+		list.onFold = { [weak self] key in self?.fold(key) ?? false }
 		list.selectRowIndexes([0], byExtendingSelection: false)
 
 		let scroll = NSScrollView()
@@ -652,6 +726,34 @@ extension SettingsPage: NSTableViewDataSource, NSTableViewDelegate {
 		let row = list.selectedRow
 		guard rows.indices.contains(row), rows[row] != selected else { return }
 		show(section: rows[row])
+	}
+}
+
+/// The settings sidebar's table, so the arrow keys fold as well as move.
+///
+/// An `NSOutlineView` has this behaviour for nothing, and this list is
+/// deliberately not one (0421): two levels over a flat array is a list somebody
+/// can see all of, and the depth is drawn by the row. What an outline view has
+/// that is worth keeping is what hands already expect from one — right opens,
+/// left closes, and the row you land on is the one you would have clicked. So
+/// that is the part written out, and only that part: up and down go to
+/// `super`, where the table walks the rows that are showing.
+private final class SettingsSidebarTable: NSTableView {
+	/// Asked what a sideways arrow should do; answers whether it did anything,
+	/// so a key that means nothing here is still the table's to refuse.
+	var onFold: ((SettingsOutline.Fold) -> Bool)?
+
+	override func keyDown(with event: NSEvent) {
+		let pressed = event.charactersIgnoringModifiers?.unicodeScalars.first.map { Int($0.value) }
+		let key: SettingsOutline.Fold? = switch pressed {
+		case NSRightArrowFunctionKey: .open
+		case NSLeftArrowFunctionKey: .close
+		default: nil
+		}
+		guard let key, onFold?(key) == true else {
+			super.keyDown(with: event)
+			return
+		}
 	}
 }
 
