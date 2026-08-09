@@ -7,18 +7,56 @@ struct ContainerImageTests {
 	private let apple = ContainerRuntime.apple("/usr/local/bin/container")
 	private let docker = ContainerRuntime.docker("/usr/bin/docker")
 
-	/// The two runtimes spell the same thing differently, and both were tried
-	/// against the real commands rather than guessed from the docs.
+	/// The two runtimes spell the same thing differently — and this said they
+	/// were "tried against the real commands rather than guessed from the docs"
+	/// while sending Apple's a plural subcommand it does not have. The noun is
+	/// singular in both. `ContainerImageLiveTests` is what "tried" means now.
 	@Test func eachRuntimeIsAskedInItsOwnWords() {
 		let appleInspect = ContainerImages.inspect("plantuml/plantuml", using: apple)
 		#expect(appleInspect.executable == "/usr/local/bin/container")
-		#expect(appleInspect.arguments == ["images", "inspect", "plantuml/plantuml"])
+		#expect(appleInspect.arguments == ["image", "inspect", "plantuml/plantuml"])
 
 		let dockerInspect = ContainerImages.inspect("plantuml/plantuml", using: docker)
 		#expect(dockerInspect.arguments == ["image", "inspect", "plantuml/plantuml"])
 
-		#expect(ContainerImages.pull("x:1", using: apple).arguments == ["images", "pull", "x:1"])
+		// Pull is where they do differ: docker's is a verb of its own, Apple's
+		// lives under `image` with the rest of them.
+		#expect(ContainerImages.pull("x:1", using: apple).arguments == ["image", "pull", "x:1"])
 		#expect(ContainerImages.pull("x:1", using: docker).arguments == ["pull", "x:1"])
+	}
+
+	/// A runtime complaining about itself is not an image that does not exist.
+	///
+	/// This is the predicate that turned `Plugin 'container-images' not found`
+	/// into "There is no image called plantuml/plantuml:1.2026.6. Check the name
+	/// and the tag" — a confident falsehood about a name that was correct, said
+	/// to somebody who then went and checked it.
+	@Test func aRuntimeComplainingAboutItselfIsNotAMissingImage() {
+		// The one that caused it, and its family.
+		#expect(!ContainerImages.isUnknownImage("Error: Plugin 'container-images' not found."))
+		#expect(!ContainerImages.isUnknownImage("container: command not found"))
+		#expect(!ContainerImages.isUnknownImage(
+			"docker: executable file not found in $PATH"
+		))
+
+		// And the ones that really are a missing image, in both runtimes' words.
+		#expect(ContainerImages.isUnknownImage("Error: image not found: nope/nope:1"))
+		#expect(ContainerImages.isUnknownImage(
+			"Error response from daemon: manifest for nope/nope:1 not found"
+		))
+		#expect(ContainerImages.isUnknownImage(
+			"Error: HTTP request to https://registry-1.docker.io/v2/library/alpine/manifests/"
+				+ "99.99 failed with response: 404 Not Found."
+		))
+		#expect(ContainerImages.isUnknownImage("Error: No such image: a/b:1"))
+
+		// A wrong-verb failure therefore reaches the honest branch instead, which
+		// quotes what the runtime actually said.
+		let plugin = ContainerImages.explain(
+			"Error: Plugin 'container-images' not found.", image: "plantuml/plantuml:1.2026.6"
+		)
+		#expect(plugin.contains("Plugin 'container-images' not found"))
+		#expect(!plugin.contains("Check the name"))
 	}
 
 	/// Four things go wrong and each has a different answer: fix the name, sign
@@ -209,5 +247,63 @@ struct ContainerImageStoreTests {
 		async let second = store.ensure("a/b", using: .docker("/nonexistent/docker"))
 		let outcomes = await [first, second]
         #expect(outcomes[0] == outcomes[1])
+	}
+}
+
+/// Against a real runtime: that the commands this sends are ones the runtime
+/// has, which is the thing no comparison of strings can tell you.
+///
+/// It is here because the alternative was believed for a whole feature's
+/// lifetime: `container images inspect` is not a subcommand, every image-backed
+/// thing failed on Apple's runtime because of it, and the failure arrived as a
+/// sentence blaming the image's name. A test that asks the real CLI would have
+/// caught it the day it was written.
+///
+/// Skipped, per runtime, unless that runtime is here.
+@Suite(.serialized) struct ContainerImageLiveTests {
+	/// Small, and pulled by the other live tests anyway.
+	static let image = "alpine:3"
+
+	private func runtime(_ preference: ContainerRuntime.Preference) -> ContainerRuntime? {
+		ContainerRuntime.discover(preference: preference)
+	}
+
+	/// An image the runtime has, found by the command this app sends it.
+	@Test(arguments: [ContainerRuntime.Preference.docker, .apple])
+	func theInspectCommandIsOneTheRuntimeHas(
+		_ preference: ContainerRuntime.Preference
+	) async throws {
+		guard let runtime = runtime(preference) else { return }
+		let asked = RuntimeCommand.run(
+			ContainerImages.inspect(Self.image, using: runtime), deadline: 30
+		)
+		// Either the image is here and it answered, or it is honestly not here —
+		// but never "that subcommand does not exist", which is what this is for
+		// and is what a wrong verb looks like on both of them.
+		guard asked.succeeded else {
+			#expect(
+				ContainerImages.isUnknownImage(asked.output),
+				"\(runtime.name) did not understand the command: \(asked.output.prefix(200))"
+			)
+			return
+		}
+		// It is here, so the store says so without fetching anything.
+		let store = ContainerImageStore()
+		#expect(await store.ensure(Self.image, using: runtime) == .present)
+	}
+
+	/// And an image no registry has, which must come back as a missing image
+	/// rather than as whatever the runtime says about itself.
+	@Test(arguments: [ContainerRuntime.Preference.docker, .apple])
+	func anImageNobodyHasIsSaidToBeMissingRatherThanBlamedOnTheRuntime(
+		_ preference: ContainerRuntime.Preference
+	) async throws {
+		guard let runtime = runtime(preference) else { return }
+		let missing = "abydos-probe/definitely-not-an-image:1"
+		let asked = RuntimeCommand.run(
+			ContainerImages.inspect(missing, using: runtime), deadline: 30
+		)
+		#expect(!asked.succeeded)
+		#expect(ContainerImages.isUnknownImage(asked.output), "\(asked.output.prefix(200))")
 	}
 }

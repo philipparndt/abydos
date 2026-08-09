@@ -13,26 +13,38 @@ import Foundation
 public enum ContainerImages {
 	/// The command that says whether an image is already on the machine.
 	///
-	/// Both runtimes take a subcommand and a reference; they differ only in
-	/// whether the noun is singular.
+	/// The noun is **singular in both** — `container image inspect`, `docker
+	/// image inspect`. This said the opposite and sent Apple's runtime a plural
+	/// that does not exist, which is worth spelling out because of how it
+	/// failed: `container` resolves an unknown subcommand as a plugin, so the
+	/// answer was `Plugin 'container-images' not found`, and `isUnknownImage`
+	/// read the words "not found" and reported a perfectly correct image name as
+	/// wrong. Nothing image-backed had ever worked on Apple's runtime.
 	public static func inspect(
 		_ image: String, using runtime: ContainerRuntime
 	) -> (executable: String, arguments: [String]) {
 		switch runtime {
-		case .apple:  return (runtime.path, ["images", "inspect", image])
+		case .apple:  return (runtime.path, ["image", "inspect", image])
 		case .docker: return (runtime.path, ["image", "inspect", image])
 		}
 	}
 
 	/// The command that fetches it.
+	///
+	/// Here they do differ: docker's `pull` is a verb of its own, and Apple's
+	/// lives under `image` with the rest of them.
 	public static func pull(
 		_ image: String, using runtime: ContainerRuntime
 	) -> (executable: String, arguments: [String]) {
 		switch runtime {
-		case .apple:  return (runtime.path, ["images", "pull", image])
+		case .apple:  return (runtime.path, ["image", "pull", image])
 		case .docker: return (runtime.path, ["pull", image])
 		}
 	}
+	// Nothing here lists the images on the machine, so there is no command for
+	// it. If something ever needs one, Apple's `container image list --quiet`
+	// prints one `repository:tag` per line and `--format json` prints the whole
+	// record — both were checked while the two above were being fixed.
 
 	/// Why a pull failed, in a sentence somebody can act on.
 	///
@@ -76,10 +88,30 @@ public enum ContainerImages {
 	/// Its own sentence, because two different answers turn on it: an image that
 	/// is genuinely nowhere, and one that is on the machine in the *other*
 	/// runtime's store.
+	///
+	/// A bare "not found" is not enough, and getting that wrong was expensive:
+	/// Apple's CLI answers an unknown subcommand with `Plugin 'container-images'
+	/// not found`, so a spelling mistake in this app's own command line came back
+	/// to somebody as "there is no image called plantuml/plantuml:1.2026.6.
+	/// Check the name and the tag" — a confident falsehood about a name that was
+	/// correct, and one that also stopped the cross-runtime hint from ever being
+	/// reached. So "not found" counts only when the sentence is about a manifest,
+	/// a reference, an image or a tag, and never when it is about the runtime's
+	/// own plumbing.
 	public static func isUnknownImage(_ output: String) -> Bool {
 		let text = output.lowercased()
-		return text.contains("manifest unknown") || text.contains("not found")
-			|| text.contains("no such image")
+		if text.contains("plugin") || text.contains("command not found")
+			|| text.contains("executable file not found") || text.contains("no such file") {
+			return false
+		}
+		if text.contains("manifest unknown") || text.contains("no such image")
+			|| text.contains("repository does not exist") {
+			return true
+		}
+		guard text.contains("not found") else { return false }
+		return ["manifest", "reference", "image", "tag", "repository"].contains {
+			text.contains($0)
+		}
 	}
 
 	/// The other runtime on this machine, if there is one.

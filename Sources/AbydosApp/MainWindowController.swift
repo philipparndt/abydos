@@ -3142,8 +3142,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			) else {
 				Toast.post(
 					"No container runtime",
-					detail: "Opening a project in its devcontainer needs Docker, and none was "
-						+ "found on this machine.",
+					detail: "Opening a project in its devcontainer needs a container runtime, "
+						+ "and neither Docker nor Apple's `container` was found on this machine.",
 					kind: .error
 				)
 				return
