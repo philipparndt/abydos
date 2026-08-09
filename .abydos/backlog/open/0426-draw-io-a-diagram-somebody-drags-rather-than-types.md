@@ -40,7 +40,7 @@ one file that GitHub renders *and* draw.io reopens.
 
 ## How far to go, which is the decision
 
-### 1. View only
+### 1. ~~View only~~ — done, 2026-08-09
 
 Draw a `.drawio` to a picture in the preview pane, and `Export ▸ PNG` / `SVG`
 beside it exactly as PlantUML and Mermaid do. The file is read-only input, like
@@ -63,7 +63,7 @@ AWS-stencil file with **nothing fetched at all**. `GraphViewer` decompresses the
 payload and counts the pages itself, so the app does not have to implement the
 format above merely to show one.
 
-### 2. View, and edit in place
+### 2. ~~View, and edit in place~~ — done, 2026-08-09
 
 Embed the draw.io **editor** in the pane — the real one, sidebar and all — and
 write the file back. This is what people actually want from draw.io support, and
@@ -283,6 +283,181 @@ honest, and that control does not exist for any current file type.
 
 **A note for whoever wires this up:** `WebRenderer`'s own doc comment points at
 "backlog 0425" for what draw.io would need. It means this entry, which is 0426.
+
+---
+
+## What was built, and what it cost — 2026-08-09
+
+Both levels, in one sitting, and the second was smaller than this entry feared.
+`.drawio` and `.dio` open in draw.io's real editor — sidebar, format panel, page
+tabs, the lot — over a `TextDocument` this app still owns, and
+`Export ▸ PNG` / `SVG` writes every page beside the file.
+
+### The vendored set: 27 MB, not 11.3 or 18
+
+`Scripts/vendor-drawio.sh`, `Sources/AbydosKit/Preview/drawio/`, v31.1.8.
+Measured in SI megabytes, where this entry's figures above were MiB:
+
+| | |
+|---|---|
+| `js/app.min.js` | 9.60 |
+| `js/stencils.min.js` | 7.59 |
+| `js/viewer-static.min.js` | 4.14 |
+| `js/extensions.min.js` | 3.85 |
+| `js/shapes-14-6-5.min.js` | 1.48 |
+| `images/` less `sidebar-*.png` | 0.28 |
+| `styles/`, `mxgraph/`, `resources/dia.txt` | 0.22 |
+| **total** | **27.1** |
+
+Three things in that table are corrections to what is written above.
+
+- **`extensions.min.js` is not optional, and this entry has it as a nicety.**
+  `App.main` loads `shapes-14-6-5.min.js`, `stencils.min.js` **and**
+  `extensions.min.js` itself and does not reach its own callback until all three
+  have arrived. Without the third the editor loads, builds no `EditorUi`, and
+  the pane says "Opening draw.io…" for ever with nothing in the console.
+- **`images/sidebar-*.png` is 6.12 MB of the 6.40**, and it is only the preview
+  sprites in the More Shapes dialogue. Dropping it costs one dialogue's
+  thumbnails and saves a quarter of the whole vendoring.
+- **The viewer needs `shapes-14-6-5.min.js` too**, which the 11.3 MB figure
+  above does not include. `stencils.min.js` covers stencils, which are XML;
+  shapes implemented in *JavaScript* — `mxgraph.aws4.resourceIcon`, most of the
+  cloud icon sets — would be fetched one file at a time from `SHAPES_PATH`, and
+  a cell whose shape does not resolve is drawn as a **plain rectangle** with
+  nothing said. That is the same silent gap the stencils would have, one layer
+  up, and it was found by a test rather than by looking at a picture.
+
+### `img/lib` and `math4`: not carried, and made to say so
+
+Both are answered 404 by the editor's own scheme handler, which **writes down
+every path it cannot serve** — so a third thing going missing is a failing test
+(`everythingTheEditorNeedsIsInThisBuild`) rather than a diagram with a hole in
+it. `Drawio.notCarried` names them in one place.
+
+- **`img/lib/`** — 5.95 MB of clipart. `Drawio.clipartNotice` reads the model
+  for `img/lib/` references, and the pane says so once rather than drawing an
+  empty box in silence.
+- **`math4/`** — 3.3 MB of MathJax, which draw.io asks for on *every* load and
+  which only a diagram typesetting LaTeX uses. One that does draws its formulas
+  as the text they are written as.
+
+### The two settings that make a picture a picture
+
+Level 1's real work turned out not to be the vendoring. It was the same lesson
+0425 learned about Mermaid, twice:
+
+- **`mxSvgCanvas2D.prototype.foEnabled = false`.** mxGraph's default puts every
+  label in a `foreignObject` full of HTML. Mermaid's `htmlLabels`, in a
+  different tool.
+- **`mxUtils.lightDarkColorSupported = false`**, and this one is new. Recent
+  draw.io writes every colour **twice** — the plain value as a `fill` attribute
+  and `style="fill: light-dark(rgb(237,113,0), rgb(216,109,12))"` beside it — so
+  one file follows the reader's theme. WebKit understands `light-dark()`, so the
+  pane and the rasterised PNG were both correct; **CoreSVG does not, and paints
+  the element black rather than falling back to the attribute.** The exported
+  AWS diagram opened in Preview.app as five solid black boxes with its labels
+  gone. Turned off, every colour is written once, as itself, and the CoreSVG
+  rendering is pixel-identical to the browser's.
+
+Both are flags draw.io provides. Neither is a search-and-replace over somebody's
+diagram, which would have been the worse thing to own.
+
+### The decisions this entry left open, and how they went
+
+- **`FilePreview.Kind.drawio`**, `.preview` and **no source half at all**
+  (`hasReadableSource` is false). Not a nicety: a `CodeView` and draw.io over
+  the same file, neither aware of the other's edits, is the one way this feature
+  could lose work. It also means the app's own undo stack has nothing to act on
+  in a `.drawio` tab, which is how ⌘Z stays draw.io's without arbitration.
+- **`architecture.drawio.svg` and `.drawio.png` stay `Kind.image`.**
+  `pathExtension` says `svg`, they render on GitHub, and the editor is one
+  `.drawio` away. What the app *does* take out of one is its `<mxfile>`, so a
+  picture it exported is recognised as a diagram rather than a screenshot.
+- **Pages: no control of this app's.** draw.io's own page tabs are along the
+  bottom of the editor, so the thing this entry asked for already exists inside
+  the pane. **Export writes every page**, `x.png` then `x_001.png`, and the
+  notice says how many — the tree's Export has no page on screen to mean, and a
+  folder holding a third of a document is exactly the quiet wrongness the export
+  rules exist to avoid.
+- **The stamp is per-tool** (`DiagramStamp.Tool`), and the export *also*
+  recognises draw.io's own `mxfile` chunk, which this entry was right that it is
+  better: the chunk is proof the file came from a diagram. Every picture
+  exported from a `.drawio` carries it, so `architecture.png` is not only a
+  picture of the diagram but the diagram, and opens again in draw.io with all
+  its pages. "Save a copy as an editable PNG" needs no menu item — the ordinary
+  export is one.
+
+### Level 2, and why "the app stops owning the document" did not happen
+
+The premise above is that a `.drawio` needs a second kind of document beside
+`TextDocument`, or a `TextDocument` driven by 1.5-second `autosave` events.
+**Neither.** `TextDocument` is already the right model: the file is UTF-8 XML,
+it tracks dirty state, it writes atomically, and it records what it wrote so
+`hasChangedOnDisk` is false afterwards. What changes is only which *view* edits
+it. So:
+
+- The pane listens to **mxGraph's own model change event**, not draw.io's
+  autosave timer, and calls `TextDocument.setContents` — a new method that
+  replaces the buffer without touching the undo history and without firing
+  `onTextChanged`, because that notification is how an *external* change reaches
+  the pane and a loop between an editor and its document is how drawings get
+  lost. The edited dot appears when the shape is dropped.
+- **⌘S, the close prompt and auto-save are unchanged code.** `save()` gained one
+  branch that asks the editor for its document first, because somebody may press
+  ⌘S while still holding the shape they dragged.
+- **The watcher does not bounce.** The app's own write goes through
+  `TextDocument.save`, which records the disk state. A genuine external change
+  reaches the pane as `onTextChanged` and is loaded into draw.io, losing its
+  undo stack — the same trade the text editor already makes.
+- **Round-trip.** `Editor.defaultCompressed` is set from what was read.
+  draw.io's own default is *plain*, so without this every file draw.io ever
+  wrote would become a diff thousands of lines long the first time somebody
+  moved a box.
+
+### What the embed protocol actually is, read out of `app.min.js`
+
+Three things cost real time and are worth having written down:
+
+1. **`initializeEmbedMode` refuses unless
+   `(this.embedMessageSource || window.opener || window.parent) != window`** —
+   and what it leaves behind when the test fails is not "no protocol" but a
+   **disabled graph**. A top-level `WKWebView` is its own parent and has no
+   opener, so the editor loaded, drew nothing and could not be clicked. The
+   editor therefore runs in an **iframe** and the app talks to its host page,
+   which is what the protocol was written for. The two are same-origin, so the
+   host also reaches the `EditorUi` directly for what the protocol has no
+   message for.
+2. **`App.main` takes a callback carrying the `EditorUi`**, and draw.io's own
+   `main.js` throws it away. It is called by hand for that reason.
+3. **A `WKURLSchemeHandler` must answer with an `HTTPURLResponse`.** draw.io
+   fetches its string bundle with `XMLHttpRequest` and checks `status` against
+   200–299; a bare `URLResponse` reports **0**, `App.main` never calls back, and
+   the pane says "Opening draw.io…" with nothing in the console. Half an hour.
+
+Also: `bootstrap.js`'s `mxscript` is **not** safely stubbed out. draw.io calls it
+for optional extras and *waits on the callback*; a stub that does nothing hangs
+`App.main`. `DrawioEditorPage` implements it.
+
+### What it costs and what it is worth
+
+`Sources/` was 12 MB; Mermaid took it to 16 and this takes it to 43.2, and the
+built `.app` is 122 MB. That is the argument against, and it has not gone away —
+it is now a fact rather than an estimate. Against it: a repository full of
+architecture diagrams is readable *and editable* without leaving the editor, on
+a machine with nothing installed and no network at all, and the four commits
+below are the whole of it.
+
+### Still open
+
+- **An example to work against.** The fixtures used here are
+  `Tests/AbydosKitTests/Fixtures/{plain,pages,stencils}.drawio` — a plain page, a
+  compressed three-page file and one using both a stencil and a JavaScript
+  shape. The examples repository still has none, and the screenshot harness
+  points there.
+- **A `.drawio.svg` the app writes as a file somebody edits.** It reads one; it
+  does not offer to save one under that name.
+- **The More Shapes dialogue's thumbnails**, which are the 6.12 MB left behind.
+- **MathJax**, likewise, at 3.3 MB.
 
 ---
 
