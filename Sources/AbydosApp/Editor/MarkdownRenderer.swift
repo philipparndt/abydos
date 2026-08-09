@@ -58,7 +58,13 @@ enum MarkdownRenderer {
 		options.failurePolicy = .returnPartiallyParsedIfPossible
 		options.allowsExtendedAttributes = true
 
-		guard let parsed = try? AttributedString(markdown: markdown, options: options, baseURL: baseURL) else {
+		// Foundation flattens a link's label and lets a stray `~` eat the
+		// emphasis around it. Neither is reachable through the options above, so
+		// the parser is handed a repaired copy — of this string, never of the
+		// file or of what is in the editor. See `MarkdownSource`.
+		let source = MarkdownSource.repaired(markdown)
+
+		guard let parsed = try? AttributedString(markdown: source, options: options, baseURL: baseURL) else {
 			// Even unparseable input should still be readable.
 			return NSAttributedString(string: markdown, attributes: [
 				.font: bodyFont,
@@ -284,9 +290,7 @@ enum MarkdownRenderer {
 			let line = lines[index].trimmingCharacters(in: .whitespaces)
 			let next = index + 1 < lines.count ? lines[index + 1].trimmingCharacters(in: .whitespaces) : ""
 
-			let looksLikeTable = line.hasPrefix("|")
-				&& next.hasPrefix("|")
-				&& next.allSatisfy { "|-: \t".contains($0) }
+			let looksLikeTable = line.hasPrefix("|") && MarkdownTable.isDelimiterRow(next)
 
 			guard looksLikeTable else {
 				current.append(lines[index])
@@ -309,21 +313,17 @@ enum MarkdownRenderer {
 
 	/// Renders a pipe table as column-aligned monospace text.
 	private static func renderTable(_ text: String, baseURL: URL?) -> NSAttributedString {
-		let rows = text.components(separatedBy: "\n").compactMap { line -> [String]? in
-			let trimmed = line.trimmingCharacters(in: .whitespaces)
-			guard trimmed.hasPrefix("|") else { return nil }
-			// Drop the leading and trailing bar before splitting.
-			var body = trimmed
-			if body.hasPrefix("|") { body.removeFirst() }
-			if body.hasSuffix("|") { body.removeLast() }
-			return body.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
-		}
+		let lines = text.components(separatedBy: "\n")
+			.filter { $0.trimmingCharacters(in: .whitespaces).hasPrefix("|") }
+		let rows = lines.map { MarkdownTable.cells(in: $0) }
 		guard rows.count >= 2 else {
 			return NSAttributedString(string: text + "\n", attributes: [.font: monoFont])
 		}
 
-		// Row 1 is the delimiter; it carries alignment, not content.
+		// Row 1 is the delimiter: it carries alignment rather than content, and
+		// until this was read the `---:` in a price column did nothing at all.
 		let header = rows[0]
+		let alignments = MarkdownTable.alignments(inDelimiterRow: lines[1])
 		let body = Array(rows.dropFirst(2))
 		let columnCount = rows.map(\.count).max() ?? 0
 		guard columnCount > 0 else { return NSAttributedString(string: text + "\n") }
@@ -350,6 +350,7 @@ enum MarkdownRenderer {
 					row: rowIndex,
 					column: column,
 					isHeader: isHeader,
+					alignment: column < alignments.count ? alignments[column] : .leading,
 					baseURL: baseURL
 				))
 			}
@@ -365,6 +366,7 @@ enum MarkdownRenderer {
 		row: Int,
 		column: Int,
 		isHeader: Bool,
+		alignment: MarkdownTable.Alignment,
 		baseURL: URL?
 	) -> NSAttributedString {
 		let block = NSTextTableBlock(
@@ -382,6 +384,13 @@ enum MarkdownRenderer {
 		// Inside a cell, wrapping is the point: a long sentence wraps within its
 		// own column instead of running under the one beside it.
 		paragraph.lineBreakMode = .byWordWrapping
+		// What the delimiter row's colons asked for. The header goes with its
+		// column, as it does everywhere else that renders GFM.
+		switch alignment {
+		case .leading: paragraph.alignment = .left
+		case .center: paragraph.alignment = .center
+		case .trailing: paragraph.alignment = .right
+		}
 
 		// The cell's own markdown — a link in a table is still a link, and it
 		// read as `[name](name)` before.
