@@ -311,6 +311,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 				}
 			}
 		}
+		if let position = options.settingsDivider {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+				controller?.dragSettingsDividerForTesting(to: position)
+			}
+		}
+		if let position = options.editorDivider {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+				controller?.dragSettingsDividerForTesting(to: position, settings: false)
+			}
+		}
 		if let name = options.dropZone {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
 				let zone: EditorTabDrag.Zone

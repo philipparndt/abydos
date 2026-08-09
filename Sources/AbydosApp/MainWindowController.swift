@@ -3509,6 +3509,91 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 	}
 
+	/// Puts settings in a group beside the editor and drags the divider between
+	/// them, which is the only way to see this without a hand on the mouse.
+	///
+	/// A drag is a `setPosition` and the layout passes that follow it, so the
+	/// position is set and then every stage is measured: the moment it is set,
+	/// after the split has laid out, after the window has, and again once the
+	/// run loop has been round. A width that is right at one stage and wrong at
+	/// the next says which pass took it back.
+	///
+	/// `settings: false` is the control: the same two panes with a file in each,
+	/// which says whether what happens is the page's doing or the split's.
+	func dragSettingsDividerForTesting(to position: Double, settings: Bool = true) {
+		guard editor.activeGroup?.activeTabURL != nil else {
+			print("DIVIDER: nothing open to split")
+			return
+		}
+		splitEditorRight(nil)
+		DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+			guard let self else { return }
+			if settings { self.showSettingsPage(nil) }
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+				self.reportDividerDrag(to: CGFloat(position))
+			}
+		}
+	}
+
+	private func reportDividerDrag(to position: CGFloat) {
+		guard let split = editor.rootSplitForTesting, split.arrangedSubviews.count == 2 else {
+			print("DIVIDER: no split of two groups")
+			return
+		}
+		func report(_ stage: String) {
+			let panes = split.arrangedSubviews
+				.map { String(format: "%.0f", $0.frame.width) }
+				.joined(separator: "|")
+			print(String(
+				format: "DIVIDER %@: window=%.0f total=%.0f panes=%@",
+				stage, self.window?.frame.width ?? 0, split.bounds.width, panes
+			))
+		}
+		for (index, pane) in split.arrangedSubviews.enumerated() {
+			print(String(
+				format: "DIVIDER pane%d: autoresizing=%@ fitting=%.0f",
+				index,
+				pane.translatesAutoresizingMaskIntoConstraints ? "yes" : "no",
+				pane.fittingSize.width
+			))
+		}
+		report("before")
+		if let groups = split as? EditorGroupSplitView {
+			groups.dragDividerForTesting(to: position)
+		} else {
+			split.setPosition(position, ofDividerAt: 0)
+		}
+		report("set")
+		split.layoutSubtreeIfNeeded()
+		report("split laid out")
+		window?.contentView?.layoutSubtreeIfNeeded()
+		report("window laid out")
+		DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+			report("settled")
+			// And what a narrower window does to the position somebody set,
+			// which is the other half of a divider staying where it was put.
+			// Put back afterwards, since the window remembers its size and a
+			// run that measures something should not change it.
+			if let window = self.window {
+				let frame = window.frame
+				var narrower = frame
+				narrower.size.width -= 300
+				window.setFrame(narrower, display: true, animate: false)
+				window.contentView?.layoutSubtreeIfNeeded()
+				report("window narrowed")
+				window.setFrame(frame, display: true, animate: false)
+				window.contentView?.layoutSubtreeIfNeeded()
+				report("window back")
+			}
+			for (index, pane) in split.arrangedSubviews.enumerated() {
+				for constraint in pane.constraintsAffectingLayout(for: .horizontal) {
+					print("DIVIDER pane\(index) width: \(constraint)")
+				}
+			}
+			fflush(stdout)
+		}
+	}
+
 	/// Shows the split preview a drag would show.
 	func previewTerminalDropForTesting() {
 		setPanelVisible(true)
@@ -6779,24 +6864,6 @@ enum TmuxSessionName {
 final class ThinDividerSplitView: NSSplitView {
 	override var dividerColor: NSColor { Theme.current.separator }
 	override var dividerThickness: CGFloat { 1 }
-
-	/// Put the divider in the middle as soon as there is a middle to put it in.
-	///
-	/// A split made in response to a gesture has no size yet, and dividing
-	/// nothing in half gives the new pane nothing — which is the split that
-	/// opens so narrow that only a sliver of text shows. Waiting for layout is
-	/// the difference between halving the pane and halving zero.
-	var wantsEvenSplit = false
-
-	override func layout() {
-		super.layout()
-		guard wantsEvenSplit, arrangedSubviews.count == 2 else { return }
-		let total = isVertical ? bounds.width : bounds.height
-		// Still without a size: this runs again when there is one.
-		guard total > 1 else { return }
-		wantsEvenSplit = false
-		setPosition(total / 2, ofDividerAt: 0)
-	}
 }
 
 

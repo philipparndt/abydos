@@ -294,6 +294,11 @@ struct LaunchOptions {
 	var previewTerminalDrop = false
 	/// Split the editor before capture: "right" or "down".
 	var split: String?
+	/// Put settings in a group beside the editor and drag the divider between
+	/// them to this position, reporting the widths at every stage.
+	var settingsDivider: Double?
+	/// The same with a file in both panes, as the control it needs.
+	var editorDivider: Double?
 	/// Draw a tab drop preview before capture, without a real drag.
 	var dropZone: String?
 	/// Block the main thread for this many milliseconds, to see the stall
@@ -495,6 +500,8 @@ struct LaunchOptions {
 			case "--tearoff-terminal": options.tearOffTerminal = true
 			case "--terminal-drop-preview": options.previewTerminalDrop = true
 			case "--split":      options.split = next()
+			case "--settings-divider": options.settingsDivider = next().flatMap(Double.init)
+			case "--editor-divider": options.editorDivider = next().flatMap(Double.init)
 			case "--dropzone":   options.dropZone = next()
 			default:
 				// A bare path is treated as the project to open.
