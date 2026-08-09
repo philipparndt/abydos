@@ -1503,17 +1503,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			guard let self, let controller else { return }
 			self.windowControllers.removeAll { $0 === controller }
 		}
-		// Every window but this one, so a window letting a project go can tell
-		// whether anybody else is still showing it before it stops its servers.
-		// Itself is left out rather than relied upon to have gone: this is asked
-		// mid-switch as well as on the way out, and mid-switch the window is
-		// still on the list, still holding the project it is leaving.
-		controller.projectRootsElsewhere = { [weak self, weak controller] in
-			guard let self else { return [] }
-			return self.windowControllers
-				.filter { $0 !== controller }
-				.compactMap { $0.project?.root }
-		}
 		controller.onTearOffTab = { [weak self] tab, screenPoint, source in
 			self?.tearOff(tab: tab, at: screenPoint, from: source)
 		}

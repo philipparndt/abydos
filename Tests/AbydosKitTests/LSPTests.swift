@@ -374,33 +374,47 @@ struct LanguageServerKeyTests {
 	}
 }
 
-/// When a project's servers may be stopped, and when they may not.
-struct LanguageServerReapingTests {
+/// How long a language server lives: until the app does, and no sooner.
+///
+/// These were the reaping tests, and they asked the opposite question — which
+/// window was still showing a project, and whether its servers could go. 0427
+/// decided that none of that is asked any more: switching a project away and
+/// closing its window both leave the servers running, because coming back has
+/// to be instant and stopping one costs a re-index. What is left to hold is the
+/// two things that decision rests on.
+struct LanguageServerLifetimeTests {
 	private let project = URL(fileURLWithPath: "/tmp/project")
 
-	@Test func aProjectNothingElseIsShowingLetsItsServersGo() {
-		#expect(!LanguageServers.serversAreStillWanted(for: project, shownBy: []))
-		#expect(!LanguageServers.serversAreStillWanted(
-			for: project, shownBy: [URL(fileURLWithPath: "/tmp/other")]
-		))
+	/// The torn-off window, which used to be the case that made "this window has
+	/// closed" too blunt a reason to stop a server. It is settled by the key
+	/// instead: a window torn off shares its project with the one it came from,
+	/// two windows can be opened on one checkout, and both find the same server
+	/// however the path is spelled. So closing either takes nothing away, and
+	/// nothing has to ask what the other windows are showing.
+	@Test func twoWindowsOnOneProjectHoldTheSameServer() {
+		#expect(LanguageServers.serverKey(project: project, languageId: "swift")
+			== LanguageServers.serverKey(
+				project: URL(fileURLWithPath: "/tmp/project/"), languageId: "swift"
+			))
 	}
 
-	/// A torn-off window closing must not take the servers of the project it was
-	/// torn from: the leak is visible in `ps`, and a missing answer is visible
-	/// nowhere.
-	@Test func aProjectAnotherWindowIsShowingKeepsThem() {
-		#expect(LanguageServers.serversAreStillWanted(
-			for: project,
-			shownBy: [URL(fileURLWithPath: "/tmp/other"), URL(fileURLWithPath: "/tmp/project/")]
-		))
-	}
+	/// The count that must still be zero after the app has gone, asserted where
+	/// it is decided: starting a server hands the process to `ToolProcesses`,
+	/// which `applicationWillTerminate`, the `atexit` handler and the
+	/// uncaught-exception handler each empty. That a process which will not go
+	/// on its own is ended anyway is `ToolProcessTests`; that a server is in the
+	/// set to begin with is this.
+	@Test func aServerIsHandedToTheThingThatEndsItWithTheApp() throws {
+		let client = LSPClient()
+		defer { client.stop() }
 
-	/// Two spellings of one directory are one project.
-	@Test func theSameProjectSaidTwoWaysIsStillTheSameProject() {
-		#expect(LanguageServers.serversAreStillWanted(
-			for: URL(fileURLWithPath: "/tmp/project/"),
-			shownBy: [URL(fileURLWithPath: "/tmp/project")]
-		))
+		try client.start(
+			executable: "/bin/sh",
+			arguments: ["-c", "sleep 120"],
+			workingDirectory: nil
+		)
+		let pid = try #require(client.processIdentifier)
+		#expect(ToolProcesses.shared.isTracking(pid: pid))
 	}
 }
 

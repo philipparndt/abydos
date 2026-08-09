@@ -348,10 +348,10 @@ struct LaunchOptions {
 
 	/// Close the window opened last, this many seconds in.
 	///
-	/// For counting what a closed window takes with it. A torn-off window shares
-	/// its project with the one it came from, so closing it must leave that
-	/// project's language servers running — which is a thing only `ps` can say,
-	/// and only if something closes a window without a hand on the mouse.
+	/// For counting what a closed window takes with it, which is now nothing:
+	/// a language server outlives the window that started it and ends with the
+	/// app. That is a thing only `ps` can say, and only if something closes a
+	/// window without a hand on the mouse.
 	var closeLastWindowAt: Double?
 
 	static func parse(_ arguments: [String] = CommandLine.arguments) -> LaunchOptions {

@@ -176,27 +176,13 @@ public enum LanguageServers {
 	///
 	/// The tool's key rather than its command, since that is the name the same
 	/// server is already called everywhere an image is chosen for it.
+	///
+	/// The project is standardized, so two windows on one checkout — a torn-off
+	/// window and the one it came from, the same path spelled with and without a
+	/// trailing slash — hold the same server rather than one each.
 	public static func serverKey(project: URL, languageId: String) -> String {
 		let server = definition(forLanguage: languageId)?.toolKey ?? languageId
 		return "\(project.standardizedFileURL.path)#\(server)"
-	}
-
-	/// Whether a project's servers are still somebody's, now that one window has
-	/// finished with it.
-	///
-	/// The question that has to be asked before stopping them, and the reason it
-	/// is not simply "this window has closed": a torn-off window shares its
-	/// project with the window it was dragged out of, and two windows can be
-	/// opened on the same checkout. Stopping a server that another window is
-	/// still asking questions of is worse than leaving it running, because a
-	/// leak shows up in `ps` and a missing answer shows up as nothing at all.
-	///
-	/// - Parameter others: what the other windows are showing. The window doing
-	///   the asking is not among them — mid-switch it is still holding the
-	///   project it is leaving.
-	public static func serversAreStillWanted(for project: URL, shownBy others: [URL]) -> Bool {
-		let path = project.standardizedFileURL.path
-		return others.contains { $0.standardizedFileURL.path == path }
 	}
 
 	/// Where the command lives, or nil if it is not installed.
