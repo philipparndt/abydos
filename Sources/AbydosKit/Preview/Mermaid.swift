@@ -299,7 +299,16 @@ public enum Mermaid {
 				if (typeof shape.getTotalLength !== 'function') { continue; }
 				let total = 0;
 				try { total = shape.getTotalLength(); } catch (ignored) { continue; }
-				if (!(total > 0)) { continue; }
+				// A line with no length at all is not a mistake to skip past.
+				// `autonumber` in a sequence diagram is drawn as a line from a
+				// point to itself carrying nothing but a `marker-start`, and the
+				// badge is that marker's circle. Bailing out here left the
+				// reference standing on a marker that is removed a moment later,
+				// so every badge became white text on white paper — the numbers
+				// were in the file and nowhere in the picture. The direction of a
+				// line with no length is nought, which is what `atan2(0, 0)`
+				// gives, so the rest of this works unchanged.
+				if (!Number.isFinite(total) || total < 0) { continue; }
 				const width = parseFloat(shape.getAttribute('stroke-width')) || 1;
 				for (const end of ends) {
 					const reference = shape.getAttribute(end);
