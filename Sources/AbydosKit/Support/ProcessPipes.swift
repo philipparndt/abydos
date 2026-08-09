@@ -38,12 +38,18 @@ public enum ProcessPipes {
 	) -> (stdout: Data, stderr: Data) {
 		let group = DispatchGroup()
 		let output = Box(), errors = Box()
+		let stop = Flag()
+
+		// Taken before anything can be closed: asking a closed `FileHandle` for
+		// its descriptor is its own kind of trouble.
+		let outDescriptor = out.fileHandleForReading.fileDescriptor
+		let errDescriptor = err.fileHandleForReading.fileDescriptor
 
 		DispatchQueue.global(qos: .userInitiated).async(group: group) {
-			output.data = out.fileHandleForReading.readDataToEndOfFile()
+			output.data = readToEnd(outDescriptor, until: stop)
 		}
 		DispatchQueue.global(qos: .userInitiated).async(group: group) {
-			errors.data = err.fileHandleForReading.readDataToEndOfFile()
+			errors.data = readToEnd(errDescriptor, until: stop)
 		}
 		if let stdin {
 			if let input {
@@ -73,9 +79,13 @@ public enum ProcessPipes {
 		// holding five pipes rather than their own three.
 		//
 		// So: wait for the program, then give the readers a moment to finish
-		// draining what it left, and then take the descriptors away from them.
-		// A truncated capture from a program that has already exited beats
-		// waiting for a stranger to quit.
+		// draining what it left, and then tell them to stop. A truncated
+		// capture from a program that has already exited beats waiting for a
+		// stranger to quit.
+		//
+		// *Tell*, not close. Closing the descriptor under a blocked reader was
+		// how this used to end the read, and it ended the app instead: see
+		// `readToEnd`.
 		process.waitUntilExit()
 		let drained = DispatchSemaphore(value: 0)
 		DispatchQueue.global(qos: .userInitiated).async {
@@ -83,8 +93,7 @@ public enum ProcessPipes {
 			drained.signal()
 		}
 		if drained.wait(timeout: .now() + .seconds(2)) == .timedOut {
-			try? out.fileHandleForReading.close()
-			try? err.fileHandleForReading.close()
+			stop.set()
 			_ = drained.wait(timeout: .now() + .seconds(2))
 		}
 		return (output.data, errors.data)
@@ -98,8 +107,10 @@ public enum ProcessPipes {
 	public static func drain(_ process: Process, out: Pipe) -> Data {
 		let group = DispatchGroup()
 		let output = Box()
+		let stop = Flag()
+		let descriptor = out.fileHandleForReading.fileDescriptor
 		DispatchQueue.global(qos: .userInitiated).async(group: group) {
-			output.data = out.fileHandleForReading.readDataToEndOfFile()
+			output.data = readToEnd(descriptor, until: stop)
 		}
 		process.waitUntilExit()
 		let drained = DispatchSemaphore(value: 0)
@@ -108,7 +119,7 @@ public enum ProcessPipes {
 			drained.signal()
 		}
 		if drained.wait(timeout: .now() + .seconds(2)) == .timedOut {
-			try? out.fileHandleForReading.close()
+			stop.set()
 			_ = drained.wait(timeout: .now() + .seconds(2))
 		}
 		return output.data
@@ -127,6 +138,72 @@ public enum ProcessPipes {
 			String(decoding: data.stdout, as: UTF8.self),
 			String(decoding: data.stderr, as: UTF8.self)
 		)
+	}
+
+	/// Reads a descriptor to the end, and can be told to give up.
+	///
+	/// POSIX rather than `readDataToEndOfFile()`, and the reason is a crash
+	/// report. Ending a read by closing the descriptor under it — which is what
+	/// the timeout above did, deliberately and with a comment explaining why —
+	/// makes Foundation *raise* `NSFileHandleOperationException`. An
+	/// Objective-C exception cannot be caught in Swift, so it went straight to
+	/// the uncaught handler and aborted the app, from a path written to make it
+	/// more robust. `read(2)` returns -1 and sets `errno` instead, and here
+	/// nothing has to be closed at all.
+	///
+	/// The tick is what makes "give up" possible: a blocking read cannot be
+	/// interrupted without doing something to the descriptor, which is the
+	/// thing that was wrong. Polling costs nothing while output is flowing,
+	/// since `poll` returns the moment there is anything to read.
+	private static func readToEnd(_ descriptor: Int32, until stop: Flag) -> Data {
+		var data = Data()
+		var buffer = [UInt8](repeating: 0, count: 64 * 1024)
+
+		while !stop.isSet {
+			var watched = pollfd(fd: descriptor, events: Int16(POLLIN), revents: 0)
+			let ready = withUnsafeMutablePointer(to: &watched) { poll($0, 1, 100) }
+			if ready < 0 {
+				if errno == EINTR { continue }
+				break
+			}
+			// Nothing yet — round again, and look at `stop` on the way past.
+			if ready == 0 { continue }
+			// The descriptor is gone from under us. Not expected any more, but
+			// it is one comparison to be sure of never spinning on it.
+			if watched.revents & Int16(POLLNVAL) != 0 { break }
+
+			let count = buffer.withUnsafeMutableBytes { raw in
+				Darwin.read(descriptor, raw.baseAddress, raw.count)
+			}
+			// POLLHUP arrives with the last of the data rather than instead of
+			// it, so end of file is a read of zero, not a flag.
+			if count > 0 {
+				data.append(contentsOf: buffer[0 ..< count])
+				continue
+			}
+			if count == 0 { break }
+			if errno == EINTR || errno == EAGAIN { continue }
+			break
+		}
+		return data
+	}
+
+	/// One bool, set by whoever gave up and read by the threads still reading.
+	private final class Flag: @unchecked Sendable {
+		private let lock = NSLock()
+		private var value = false
+
+		func set() {
+			lock.lock()
+			value = true
+			lock.unlock()
+		}
+
+		var isSet: Bool {
+			lock.lock()
+			defer { lock.unlock() }
+			return value
+		}
 	}
 
 	/// Somewhere for the background read to put what it read.

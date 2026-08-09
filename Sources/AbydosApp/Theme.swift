@@ -40,7 +40,13 @@ struct Theme {
 			NSApp.appearance = NSAppearance(named: wanted.isLight ? .aqua : .darkAqua)
 		}
 
-		guard wanted.name != current.name else { return false }
+		// The name is not enough. A scheme keeps its name when its file is
+		// edited, so somebody who has just changed a colour in their own scheme
+		// and pressed reload asks for the palette it already thinks it has —
+		// same name, different colours, and nothing would repaint.
+		guard wanted.name != current.name || wanted.palette != current.palette else {
+			return false
+		}
 		previous = current
 		current = wanted
 		return true

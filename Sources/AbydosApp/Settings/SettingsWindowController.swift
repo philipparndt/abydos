@@ -56,6 +56,8 @@ final class SettingsPaneController: NSViewController {
 			case let .stepper(title, _, _, _, _):      return "        stepper  \(title)"
 			case let .text(title, _, _, _):            return "        text     \(title)"
 			case let .choice(title, _, _, get, _):     return "\(get())  choice   \(title)"
+			case let .choiceWithActions(title, _, _, get, _, actions):
+				return "\(get())  choice   \(title) [\(actions.map(\.symbol).joined(separator: " "))]"
 			case let .button(title, label, _):         return "        [\(label)] \(title)"
 			case let .group(title, _, rows):
 				return (["── \(title) ──"] + describe(rows).map { "  " + $0 }).joined(separator: "\nSETTING ")
@@ -74,6 +76,17 @@ final class SettingsPaneController: NSViewController {
 		/// One of a fixed set, each with a label and the value it stands for.
 		case choice(title: String, help: String?, options: [(label: String, value: String)],
 		            get: () -> String, set: (String) -> Void)
+		/// The same, with small symbol buttons beside it.
+		///
+		/// For the things somebody does *to* the list rather than with it —
+		/// re-reading it, or opening the folder it comes from. Beside the
+		/// control because that is what they are about; small because they are
+		/// not the reason anybody opened this page.
+		case choiceWithActions(
+			title: String, help: String?, options: [(label: String, value: String)],
+			get: () -> String, set: (String) -> Void,
+			actions: [(symbol: String, help: String, action: () -> Void)]
+		)
 		case button(title: String, label: String, action: () -> Void)
 		/// Settings that only mean anything together, shown in a card of their
 		/// own. The rows are inside it rather than following it: a group that
@@ -268,12 +281,73 @@ final class SettingsPaneController: NSViewController {
 			refreshHandlers.append { select(get()) }
 			return (title, popUp, help)
 
+		case let .choiceWithActions(title, help, options, get, set, actions):
+			let (_, control, _) = makeRow(
+				.choice(title: title, help: help, options: options, get: get, set: set)
+			)
+			let stack = NSStackView(views: [control] + actions.map { item in
+				let button = NSButton(
+					image: NSImage(
+						systemSymbolName: item.symbol, accessibilityDescription: item.help
+					) ?? NSImage(),
+					target: nil, action: nil
+				)
+				button.bezelStyle = .rounded
+				button.toolTip = item.help
+				button.onAction = item.action
+				return button
+			})
+			stack.orientation = .horizontal
+			stack.spacing = 6
+			return (title, stack, help)
+
 		case let .button(title, label, action):
 			let button = NSButton(title: label, target: nil, action: nil)
 			button.bezelStyle = .rounded
 			button.onAction = action
 			return (title, button, nil)
 		}
+	}
+
+	// MARK: - Somebody's own schemes
+
+	/// Reads the scheme files again, and repaints what they describe.
+	///
+	/// A scheme is not edited often enough to be worth watching the folder all
+	/// day, so this is the moment somebody says they have changed one. Three
+	/// things have to happen together, and the middle one is the one that was
+	/// missing when this was only `reload()`: the library re-reads, the list of
+	/// themes is rebuilt so a new file appears in it, and the palette is taken
+	/// again so an edited colour lands on the window that is already open.
+	static func reloadSchemes() {
+		let library = SchemeLibrary.shared
+		library.reload()
+		NotificationCenter.default.post(name: .abydosSettingsRowsChanged, object: nil)
+		NotificationCenter.default.post(name: .abydosSettingsChanged, object: nil)
+
+		// Said now rather than only in the log. The reload is a moment somebody
+		// chose, which is what makes this the one point where a refused file can
+		// be reported without a message appearing and clearing while they type.
+		if let problem = library.problems.first {
+			Toast.post(
+				"A scheme was not read",
+				detail: library.problems.count > 1
+					? "\(problem) — and \(library.problems.count - 1) more, in the log."
+					: problem
+			)
+		}
+	}
+
+	/// Opens the folder somebody's own schemes live in.
+	///
+	/// Made first if it is not there: somebody who has never written one has no
+	/// folder, and a button that opens nothing is a bug report.
+	static func revealSchemes() {
+		let folder = SchemeLibrary.personalDirectory
+		try? FileManager.default.createDirectory(
+			at: folder, withIntermediateDirectories: true
+		)
+		NSWorkspace.shared.open(folder)
 	}
 
 	// MARK: - Pane definitions
@@ -284,13 +358,27 @@ final class SettingsPaneController: NSViewController {
 	static func appearanceRows() -> [Row] {
 		[
 			.group(title: "Theme", help: nil, rows: [
-				.choice(
+				.choiceWithActions(
 					title: "Theme",
 					help: "Abydos is this app's own, warm. Blue is the one it started with, "
-						+ "and the palette most editors' dark themes are a version of.",
+						+ "and the palette most editors' dark themes are a version of. "
+						+ "Your own go in ~/.config/abydos/schemes — the folder button opens it, "
+						+ "and the arrows read it again.",
 					options: Appearance.families.map { ($0.title, $0.id) },
 					get: { Settings.shared.themeFamily },
-					set: { Settings.shared.themeFamily = $0 }
+					set: { Settings.shared.themeFamily = $0 },
+					actions: [
+						(
+							symbol: "arrow.triangle.2.circlepath",
+							help: "Read the schemes folder again",
+							action: { reloadSchemes() }
+						),
+						(
+							symbol: "folder",
+							help: "Open the folder your own schemes live in",
+							action: { revealSchemes() }
+						),
+					]
 				),
 				.choice(
 					title: "Light or dark",

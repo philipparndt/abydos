@@ -39,6 +39,20 @@ final class SettingsPage: NSView {
 		) { [weak self] _ in
 			MainActor.assumeIsolated { self?.refreshHandlers.forEach { $0() } }
 		}
+
+		// A row's *options* can change too, and re-reading the controls does not
+		// touch those: the list of themes is fixed when the page is built, so a
+		// scheme dropped into the folder and reloaded would not appear in it
+		// however many times the values were refreshed. The page is built again
+		// instead, which is cheap and only happens when somebody asks.
+		NotificationCenter.default.addObserver(
+			forName: .abydosSettingsRowsChanged, object: nil, queue: .main
+		) { [weak self] _ in
+			MainActor.assumeIsolated {
+				guard let self else { return }
+				self.show(section: self.selected)
+			}
+		}
 	}
 
 	required init?(coder: NSCoder) { fatalError("not used") }
@@ -460,6 +474,28 @@ final class SettingsPage: NSView {
 			}
 			refreshHandlers.append { select(get()) }
 			return (title, popUp, help)
+
+		case let .choiceWithActions(title, help, options, get, set, actions):
+			let (_, control, _) = build(
+				.choice(title: title, help: help, options: options, get: get, set: set)
+			)
+			let stack = NSStackView(views: [control] + actions.map { item in
+				let button = NSButton(
+					image: Theme.symbol(
+						item.symbol,
+						size: Theme.current.scaled(12),
+						color: Theme.current.sidebarText
+					) ?? NSImage(),
+					target: nil, action: nil
+				)
+				button.bezelStyle = .rounded
+				button.toolTip = item.help
+				button.onAction = item.action
+				return button
+			})
+			stack.orientation = .horizontal
+			stack.spacing = Theme.current.scaled(6)
+			return (title, stack, help)
 
 		case let .group(title, _, _):
 			return (title, NSView(), nil)

@@ -535,4 +535,11 @@ public final class Settings {
 
 public extension Notification.Name {
 	static let abydosSettingsChanged = Notification.Name("abydos.settingsChanged")
+	/// Not the values — what a setting can *be*.
+	///
+	/// Re-reading a control cannot show a choice that did not exist when the
+	/// page was built, which is what a newly written scheme is. Kept apart from
+	/// the one above because rebuilding a page on every toggle would take the
+	/// focus out of whatever somebody was in the middle of.
+	static let abydosSettingsRowsChanged = Notification.Name("abydos.settingsRowsChanged")
 }

@@ -147,3 +147,63 @@ struct ProcessPipesTests {
 		#expect(author.stdout.contains("Someone Else <else@example.com>"))
 	}
 }
+
+/// Giving up on a read, and the crash that came out of how it used to be done.
+///
+/// A crash report from a real session, in the code that makes the drain robust:
+///
+///     _NSFileHandleRaiseOperationExceptionWhileReading
+///     -[NSConcreteFileHandle readDataOfLength:]
+///     closure #1 in static ProcessPipes.drain (ProcessPipes.swift:43)
+///
+/// `readDataToEndOfFile()` *raises* an Objective-C exception when its read
+/// fails, and Swift cannot catch one — so a failed read in a background drain
+/// went to the uncaught handler and aborted the app. The read is `read(2)` now,
+/// which returns -1 and sets `errno`, so no read here can end the process
+/// however it fails.
+///
+/// **What these do not do is reproduce that crash.** Three attempts, all of
+/// which pass against the old code and are written down so nobody spends the
+/// afternoon again: closing the descriptor under a reader blocked in
+/// `readDataToEndOfFile` (the read simply ends), the same with a process
+/// writing continuously so the reader is between reads rather than inside one,
+/// and letting the `Pipe` go out of scope so its `FileHandle` closes the
+/// descriptor in `deinit` under an abandoned reader. None raises on this
+/// machine.
+///
+/// So the condition is still unknown, and the fix is not aimed at it: it
+/// removes the API that can raise at all, which is a stronger claim than
+/// patching whichever read failed. What is tested below is the path the crash
+/// was on — a drain that gives up on a reader and returns what it had.
+struct DrainGivingUpTests {
+	/// Runs something whose pipes are local, exactly as every caller here does.
+	///
+	/// That the pipes are local is the whole point: `drain` gives up after four
+	/// seconds and returns, and the reader thread it gave up on is still
+	/// running. The caller then goes out of scope, the `Pipe` is released, its
+	/// `FileHandle`s close the descriptors in `deinit` — and the read still
+	/// blocked on one of them raises.
+	private func runWithLocalPipes() -> String {
+		let process = Process()
+		process.executableURL = URL(fileURLWithPath: "/bin/sh")
+		// A writer that outlives the shell, so end of file never comes and the
+		// reader is still there to be surprised.
+		process.arguments = ["-c", "(while :; do echo hello; sleep 0.02; done) &"]
+		let out = Pipe(), err = Pipe()
+		process.standardOutput = out
+		process.standardError = err
+		process.standardInput = FileHandle.nullDevice
+		guard (try? process.run()) != nil else { return "" }
+		return ProcessPipes.drainText(process, out: out, err: err).stdout
+	}
+
+	@Test func aReadThatIsGivenUpOnReturnsWhatItHad() {
+		let said = runWithLocalPipes()
+		// The point of giving up: a truncated capture from a program that has
+		// already exited, rather than waiting for a stranger to quit.
+		#expect(said.contains("hello"))
+		// The pipes are gone by now, and an abandoned reader is still running
+		// on their descriptors. It must not take the process with it.
+		Thread.sleep(forTimeInterval: 3)
+	}
+}
