@@ -1222,6 +1222,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if options.openSettings {
 			controller?.settingsSectionForTesting = options.settingsSection
+			controller?.settingsFoldForTesting = options.settingsFold
 			controller?.showSettingsPage(nil)
 		}
 

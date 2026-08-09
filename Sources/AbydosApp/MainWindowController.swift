@@ -5582,10 +5582,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		let page = (group.page(identifier: "settings") as? SettingsPage) ?? SettingsPage()
 		group.openPage(page, title: "Settings", identifier: "settings", symbol: "gearshape")
 		if let section = settingsSectionForTesting { page.show(named: section) }
+		if let folded = settingsFoldForTesting { page.toggleFold(named: folded) }
 	}
 
 	/// Which section a capture run asked for.
 	var settingsSectionForTesting: String?
+
+	/// And which one it asked to be folded away, since a triangle needs a click.
+	var settingsFoldForTesting: String?
 
 	/// Opens the launch configurations as a page in the editor.
 	///

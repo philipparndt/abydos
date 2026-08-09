@@ -16,10 +16,22 @@ import AbydosKit
 final class SettingsPage: NSView {
 	/// Every page, parents and their children, in the order they are listed.
 	///
-	/// Flattened rather than an outline view: two levels, nothing to collapse,
-	/// and a list somebody can see all of beats a tree they have to open. The
-	/// depth is what the row draws itself with.
-	private var sections = SettingsSections.flattened
+	/// Flattened rather than an outline view: two levels is all this nests, and
+	/// a table over an array with a depth in it is a list somebody can see all
+	/// of. The depth is what the row draws itself with, and folding is a filter
+	/// over this array rather than a different kind of view.
+	private let sections = SettingsSections.flattened
+	/// Which rows are folded, by their place in the list above.
+	///
+	/// Not remembered between launches, deliberately: there are seven sections
+	/// and one of them folds, so opening settings to find a section missing
+	/// because of something done last week costs more than folding Tools again
+	/// costs. It is a click, and it is where it was left for as long as the
+	/// page is open.
+	private var collapsed: Set<Int> = []
+	/// The rows showing, as places in `sections`.
+	private var rows: [Int] = []
+	/// Which page is showing, as a place in `sections`.
 	private var selected = 0
 	/// Controls that have to be re-read when something changes them from
 	/// outside — Restore Defaults, or the other window.
@@ -31,6 +43,7 @@ final class SettingsPage: NSView {
 
 	override init(frame: NSRect) {
 		super.init(frame: frame)
+		rows = SettingsOutline.visible(depths: sections.map(\.depth), collapsed: collapsed)
 		build()
 		show(section: 0)
 
@@ -62,8 +75,49 @@ final class SettingsPage: NSView {
 		guard let index = sections.firstIndex(where: {
 			$0.section.title.lowercased() == name.lowercased()
 		}) else { return }
-		list.selectRowIndexes([index], byExtendingSelection: false)
+		// Whatever it sits under has to be open, or it is being selected out of
+		// sight.
+		collapsed.subtract(SettingsOutline.ancestors(depths: sections.map(\.depth), of: index))
+		refreshRows()
+		if let row = rows.firstIndex(of: index) {
+			list.selectRowIndexes([row], byExtendingSelection: false)
+		}
 		show(section: index)
+	}
+
+	/// Folds a section away, or opens it again — the disclosure triangle, and
+	/// what a capture run presses instead of it.
+	func toggleFold(named name: String) {
+		guard let index = sections.firstIndex(where: {
+			$0.section.title.lowercased() == name.lowercased()
+		}) else { return }
+		toggleFold(at: index)
+	}
+
+	private func toggleFold(at index: Int) {
+		guard SettingsOutline.hasChildren(depths: sections.map(\.depth), at: index) else { return }
+		if collapsed.contains(index) {
+			collapsed.remove(index)
+		} else {
+			collapsed.insert(index)
+		}
+		refreshRows()
+
+		// Folding away the page somebody is reading would leave the page
+		// showing with nothing selected. It shows the section it folded into
+		// instead, which is the row still under the pointer.
+		if !rows.contains(selected) {
+			selected = index
+			show(section: index)
+		}
+		if let row = rows.firstIndex(of: selected) {
+			list.selectRowIndexes([row], byExtendingSelection: false)
+		}
+	}
+
+	private func refreshRows() {
+		rows = SettingsOutline.visible(depths: sections.map(\.depth), collapsed: collapsed)
+		list.reloadData()
 	}
 
 	deinit { NotificationCenter.default.removeObserver(self) }
@@ -525,22 +579,25 @@ final class SettingsPage: NSView {
 }
 
 extension SettingsPage: NSTableViewDataSource, NSTableViewDelegate {
-	func numberOfRows(in tableView: NSTableView) -> Int { sections.count }
+	func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
 
-	/// A child sits under its parent rather than beside it.
+	/// A child sits under its parent rather than beside it, and every name
+	/// leaves room for a triangle whether or not it has one, so the icons line
+	/// up down the list.
 	private func indent(forRow row: Int) -> CGFloat {
-		Theme.current.scaled(12) + Theme.current.scaled(14) * CGFloat(sections[row].depth)
+		Theme.current.scaled(12) + Theme.current.scaled(14) * CGFloat(sections[rows[row]].depth)
 	}
 
 	func tableView(_ tableView: NSTableView, viewFor column: NSTableColumn?, row: Int) -> NSView? {
+		let index = rows[row]
 		let cell = NSTableCellView()
-		let text = NSTextField(labelWithString: sections[row].section.title)
+		let text = NSTextField(labelWithString: sections[index].section.title)
 		text.font = Theme.current.uiFont(12)
 		text.textColor = Theme.current.sidebarText
 
 		let icon = NSImageView()
 		icon.image = Theme.symbol(
-			sections[row].section.symbol,
+			sections[index].section.symbol,
 			size: 11 * Theme.current.scale,
 			color: Theme.current.gitIgnored
 		)
@@ -549,21 +606,52 @@ extension SettingsPage: NSTableViewDataSource, NSTableViewDelegate {
 			view.translatesAutoresizingMaskIntoConstraints = false
 			cell.addSubview(view)
 		}
+		let triangleWidth = Theme.current.scaled(13)
 		NSLayoutConstraint.activate([
-			icon.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: indent(forRow: row)),
+			icon.leadingAnchor.constraint(
+				equalTo: cell.leadingAnchor, constant: indent(forRow: row) + triangleWidth
+			),
 			icon.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
 			icon.widthAnchor.constraint(equalToConstant: Theme.current.scaled(14)),
 			text.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: Theme.current.scaled(7)),
 			text.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -Theme.current.scaled(8)),
 			text.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
 		])
+
+		guard SettingsOutline.hasChildren(depths: sections.map(\.depth), at: index) else { return cell }
+
+		// A button rather than the row watching for clicks near its left edge:
+		// the button takes the click, so folding a section does not also select
+		// it, and the pointer says what it will do before it is pressed.
+		let triangle = NSButton(
+			image: Theme.symbol(
+				collapsed.contains(index) ? "chevron.right" : "chevron.down",
+				size: 8 * Theme.current.scale,
+				color: Theme.current.gitIgnored
+			) ?? NSImage(),
+			target: nil, action: nil
+		)
+		triangle.isBordered = false
+		triangle.setButtonType(.momentaryChange)
+		triangle.toolTip = collapsed.contains(index) ? "Show what is under this" : "Fold this away"
+		triangle.onAction = { [weak self] in self?.toggleFold(at: index) }
+		triangle.translatesAutoresizingMaskIntoConstraints = false
+		cell.addSubview(triangle)
+		NSLayoutConstraint.activate([
+			triangle.leadingAnchor.constraint(
+				equalTo: cell.leadingAnchor, constant: indent(forRow: row) - Theme.current.scaled(2)
+			),
+			triangle.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+			triangle.widthAnchor.constraint(equalToConstant: triangleWidth),
+			triangle.heightAnchor.constraint(equalToConstant: Theme.current.scaled(18)),
+		])
 		return cell
 	}
 
 	func tableViewSelectionDidChange(_ notification: Notification) {
 		let row = list.selectedRow
-		guard row >= 0, row != selected else { return }
-		show(section: row)
+		guard rows.indices.contains(row), rows[row] != selected else { return }
+		show(section: rows[row])
 	}
 }
 

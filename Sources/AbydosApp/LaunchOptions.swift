@@ -261,6 +261,8 @@ struct LaunchOptions {
 	var subproject: String?
 	/// Which settings section to show.
 	var settingsSection: String?
+	/// Which settings section to fold away, as its triangle does.
+	var settingsFold: String?
 	/// Print where the development pod's chart was found.
 	var reportChart = false
 	/// Press the window's zoom button before capture.
@@ -356,6 +358,7 @@ struct LaunchOptions {
 			case "--markdown":   options.markdownPreview = true
 			case "--subproject": options.subproject = next()
 			case "--settings-section": options.settingsSection = next()
+			case "--settings-fold": options.settingsFold = next()
 			case "--settings":   options.openSettings = true
 			case "--zoom":       options.zoom = next().flatMap(Double.init)
 			case "--terminal":   options.openTerminal = true
