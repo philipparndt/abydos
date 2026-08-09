@@ -245,7 +245,12 @@ struct ToolContainerLiveTests {
 		// Only that one: every other `abydos-…` on this machine belongs to
 		// somebody whose app may well be running, and a sweep that took those
 		// would be a worse bug than the one being fixed.
-		let dead: pid_t = 424242
+		// Unique per run, both of them. Two suites running at once — two agents,
+		// or a suite beside a `make test` — otherwise pick the same dead pid and
+		// the same container name, and each sweeps the other's container out
+		// from under it. That is not a fault in the sweep; it is this test
+		// having claimed a name it does not own.
+		let dead = pid_t(400_000 + Int.random(in: 1 ... 99_999))
 		let name = "abydos-probe-sweep-\(dead)-1"
 		defer {
 			_ = RuntimeCommand.run(
@@ -261,7 +266,10 @@ struct ToolContainerLiveTests {
 		#expect(exists(name, using: runtime))
 
 		let removed = ToolContainers().sweep(using: runtime, isAlive: { $0 != dead })
-		#expect(removed == [name])
+		// Contains rather than equals: every other `abydos-…` is reported alive
+		// by the closure above and so must be left alone, but a container this
+		// test did not make is not this test's to assert about.
+		#expect(removed.contains(name))
 		#expect(!exists(name, using: runtime))
 	}
 }
