@@ -3195,7 +3195,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			action: #selector(newTerminalInContainer(_:)),
 			keyEquivalent: ""
 		)
-		print("DEVCONTAINER: file=\(hasDevContainer) enabled=\(validateMenuItem(item))")
+		// The root as well as the answer: "there is no devcontainer here" is not
+		// actionable without "here", and the project that is open is not always
+		// the folder that was asked for.
+		print("DEVCONTAINER: root=\(project?.root.path ?? "-") file=\(hasDevContainer) "
+			+ "enabled=\(validateMenuItem(item))")
 		fflush(stdout)
 		guard validateMenuItem(item) else { return }
 		newTerminalInContainer(nil)

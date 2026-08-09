@@ -134,11 +134,18 @@ struct DevContainerLiveTests {
 		defer { terminal.terminate() }
 
 		// A shell has to have got as far as reading its input before anything
-		// typed at it means anything.
-		terminal.write("printf 'IN:%s:%s\\n' \"$(pwd)\" \"$(cat marker.txt)\"\n")
+		// typed at it means anything — and on a loaded machine `docker exec` and
+		// then a login shell can take seconds to get there. Written once and
+		// waited on, the line lands in a shell that is not listening yet and
+		// nothing ever answers; so it is typed again until something does.
+		//
+		// The answer is looked for as `IN:/`, not as `IN:`, because a pty echoes
+		// what was typed: the command itself contains `IN:` and would satisfy a
+		// test of its own input.
 		let deadline = Date().addingTimeInterval(30)
-		while Date() < deadline, !seen.text.contains("IN:") {
-			try? await Task.sleep(nanoseconds: 200_000_000)
+		while Date() < deadline, !seen.text.contains("IN:/") {
+			terminal.write("printf 'IN:%s:%s\\n' \"$(pwd)\" \"$(cat marker.txt)\"\n")
+			try? await Task.sleep(nanoseconds: 500_000_000)
 		}
 		// The prompt is in the workspace folder, and the checkout is under it.
 		#expect(seen.text.contains("IN:\(session.configuration.workspaceFolder):"))
