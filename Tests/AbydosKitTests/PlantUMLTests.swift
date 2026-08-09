@@ -68,6 +68,27 @@ struct PlantUMLTests {
 		#expect(svg.arguments.contains("-tsvg"))
 	}
 
+	/// A preview asks for a drawing, and asks both ways of drawing it for the
+	/// same thing.
+	///
+	/// PlantUML sizes a PNG in points, so on a screen with a backing scale
+	/// factor of 2 every pixel of it is stretched over two — which is what made
+	/// previews look soft. A drawing has no resolution to be wrong about.
+	///
+	/// The two paths are checked together on purpose: a diagram is drawn either
+	/// by the warm server or by `-pipe` behind it, and one of them asking for a
+	/// picture while the other asked for a drawing would make sharpness depend
+	/// on which answered.
+	@Test func asksBothWaysOfDrawingForTheSameThing() {
+		#expect(PlantUML.previewFormat == .svg)
+
+		let piped = PlantUML.invocation(for: .command("/bin/plantuml"), format: PlantUML.previewFormat)
+		#expect(piped.arguments.contains("-tsvg"))
+
+		let served = PlantUMLServers.path(for: "@startuml\n@enduml\n", format: PlantUML.previewFormat)
+		#expect(served?.hasPrefix("/plantuml/svg/~h") == true)
+	}
+
 	/// A jar is run headless, or the JVM takes the focus every time a preview
 	/// refreshes — which, while somebody is typing, is every few keystrokes.
 	@Test func runsAJarWithoutADockIcon() {
