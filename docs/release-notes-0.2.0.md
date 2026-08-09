@@ -13,6 +13,11 @@ render takes about ten milliseconds. The alternative — the official
 `mermaid-cli` image — was measured at 2.16 GB on disk and a second per render,
 which is why it is not what shipped.
 
+**A ```` ```mermaid ```` block in a Markdown file draws as the diagram**, in the
+preview, where the block is — which is where most Mermaid actually lives. A
+block that does not parse keeps its code and says which line of the file is
+wrong, rather than leaving a hole in the page.
+
 **draw.io**, in draw.io's own editor. A `.drawio` file opens with the shape
 sidebar, the format panel and page tabs, and saves back to the file the app
 still owns — compressed if it arrived compressed. Export writes every page.
