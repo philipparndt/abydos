@@ -2790,7 +2790,43 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		)
 	}
 
-	/// Where a scheme can go, with a tick beside where it went last.
+	/// The one run mark, kept between menus and remade when the zoom changes.
+	private static var cachedRunMark: (scale: CGFloat, image: NSImage?) = (0, nil)
+
+	/// The mark on a menu item that will run something, in place of a tick.
+	///
+	/// A ticked list is what a settings menu looks like — "Word Wrap", "Show
+	/// Invisibles", things somebody turns on — and neither the schemes nor the
+	/// destinations under them are that: clicking one runs the app. The glyph is
+	/// the play button's own, in the play button's own green, so the menu and
+	/// the button it hangs off say the same thing. It goes in the tick's column
+	/// rather than beside the title, which is what keeps the titles lined up
+	/// with each other and with the headings above them.
+	///
+	/// One image rather than one per item, which is also what lets a printed
+	/// dump tell a run mark from a tick.
+	private static func runMark() -> NSImage? {
+		let scale = Theme.current.scale
+		if cachedRunMark.scale == scale { return cachedRunMark.image }
+		let image = Theme.symbol("play.fill", size: 10 * scale, color: Theme.current.gitAdded)
+		// Not a template: AppKit re-tints a template state image with the menu's
+		// own ink, and the colour is half of what this glyph is for.
+		image?.isTemplate = false
+		cachedRunMark = (scale, image)
+		return image
+	}
+
+	/// Marks the one item a click would actually start, the way the tick used to.
+	///
+	/// The tick is left alone if there is no glyph to put there: a menu item
+	/// whose on-state image is nil shows nothing at all, and an unmarked list is
+	/// worse than the one this was meant to fix.
+	private func markWillRun(_ item: NSMenuItem, _ willRun: Bool) {
+		item.state = willRun ? .on : .off
+		if let mark = MainWindowController.runMark() { item.onStateImage = mark }
+	}
+
+	/// Where a scheme can go, with a run mark beside where it went last.
 	///
 	/// Filled in as the answer arrives rather than before the menu opens: the
 	/// question takes about twelve seconds and a menu that waits for it is a
@@ -2891,7 +2927,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			)
 			item.target = self
 			item.representedObject = [configuration.id, destination.id]
-			item.state = destination.id == remembered ? .on : .off
+			// The same mark as the scheme above it, because it means the same
+			// thing one level down: the scheme says what will run and the
+			// destination says where, and together they are the single path the
+			// play button takes. Two different marks for one sentence is what
+			// made this pair read as two unrelated settings.
+			markWillRun(item, destination.id == remembered)
 			menu.addItem(item)
 		}
 
@@ -3843,11 +3884,26 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	private func printConfigurationMenuForTesting() {
 		for item in configurationMenu().items {
-			print("MENU: \(item.isSeparatorItem ? "—" : item.title)\(item.state == .on ? " ✓" : "")")
+			print("MENU: \(item.isSeparatorItem ? "—" : item.title)\(markForTesting(item))")
 			for entry in item.submenu?.items ?? [] {
-				print("MENU:     \(entry.isSeparatorItem ? "—" : entry.title)\(entry.state == .on ? " ✓" : "")")
+				print("MENU:     \(entry.isSeparatorItem ? "—" : entry.title)\(markForTesting(entry))")
 			}
 		}
+		// Redirected to a file, stdout is fully buffered, and this run has no
+		// natural end — the window stays up until it is killed, which throws the
+		// buffer away along with the only thing the run was for.
+		fflush(stdout)
+	}
+
+	/// What is drawn in an item's mark column, as something printable.
+	///
+	/// The two marks are the point of the dump: ▶ is the run glyph, on the
+	/// things a click starts, and ✓ is the tick that still means "this one is
+	/// selected". A list where they are muddled is the bug, and a picture of a
+	/// menu is not something a test can read.
+	private func markForTesting(_ item: NSMenuItem) -> String {
+		guard item.state == .on else { return "" }
+		return item.onStateImage === MainWindowController.runMark() ? " ▶" : " ✓"
 	}
 
 	/// Opens the editor on the selected configuration, making one if there is
@@ -5098,6 +5154,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			)
 			item.target = self
 			item.representedObject = configuration.name
+			// A tick here, and it is the right mark: clicking one of these
+			// selects it and nothing starts. The schemes below start when they
+			// are clicked, which is why they are marked differently.
 			item.state = configuration.name == selectedConfiguration?.name ? .on : .off
 			menu.addItem(item)
 		}
@@ -5126,7 +5185,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				)
 				item.target = self
 				item.representedObject = configuration.id
-				item.state = configuration.name == selectedConfigurationName ? .on : .off
+				markWillRun(item, configuration.name == selectedConfigurationName)
 				if let target = configuration.xcode {
 					item.submenu = destinationMenu(for: configuration, target: target)
 				}
