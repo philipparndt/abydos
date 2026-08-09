@@ -329,29 +329,116 @@ struct DevContainerFileTests {
 		#expect(list.contains("base.yml"))
 	}
 
-	/// `postCreateCommand` is where a project runs `go mod download`. A
-	/// container up without it has tools missing for a reason nothing on screen
-	/// explains, so it refuses until step five of 0424 runs them.
-	@Test func refusesALifecycleCommandItCannotRunYet() throws {
+	// MARK: - The lifecycle commands
+
+	/// All six, each read into the moment it belongs to.
+	///
+	/// This was a refusal until step five of 0424, and the refusal was the right
+	/// call while nothing ran them: `postCreateCommand` is where a project runs
+	/// `go mod download`, and a container up without it has tools missing for a
+	/// reason nothing on screen explains.
+	@Test func readsEverySixOfTheLifecycleCommands() throws {
+		let project = try makeProject()
+		defer { try? FileManager.default.removeItem(at: project) }
+
+		let configuration = try #require(read("""
+		{
+			"image": "alpine:3.20",
+			"initializeCommand": "mkdir -p .cache",
+			"onCreateCommand": "apk add git",
+			"updateContentCommand": ["go", "mod", "download"],
+			"postCreateCommand": { "tools": "npm ci", "fetch": ["go", "mod", "tidy"] },
+			"postStartCommand": "service start",
+			"postAttachCommand": "echo attached",
+		}
+		""", in: project).configuration)
+		let lifecycle = configuration.lifecycle
+
+		#expect(lifecycle[.initializeCommand] == .shell("mkdir -p .cache"))
+		#expect(lifecycle[.onCreateCommand] == .shell("apk add git"))
+		// The array form is argv, with no shell between: a file that writes it
+		// this way is saying "do not parse these again".
+		#expect(lifecycle[.updateContentCommand] == .argv(["go", "mod", "download"]))
+		#expect(lifecycle[.postCreateCommand] == .named([
+			"tools": .shell("npm ci"),
+			"fetch": .argv(["go", "mod", "tidy"]),
+		]))
+		#expect(lifecycle[.postStartCommand] == .shell("service start"))
+		#expect(lifecycle[.postAttachCommand] == .shell("echo attached"))
+		#expect(lifecycle.stages == DevContainerStage.allCases)
+		#expect(lifecycle.hasCreationCommands)
+	}
+
+	/// What each shape becomes when it is run, which is the thing that has to be
+	/// right rather than how it was parsed.
+	@Test func eachShapeBecomesTheCommandLineItMeans() throws {
+		#expect(DevContainerCommand.shell("npm ci && npm test").invocation
+			== ["/bin/sh", "-c", "npm ci && npm test"])
+		#expect(DevContainerCommand.argv(["go", "mod", "download"]).invocation
+			== ["go", "mod", "download"])
+
+		// The object form is several commands, reported in a fixed order so that
+		// which one is named first is a fact about the names.
+		let named = DevContainerCommand.named(["b": .shell("two"), "a": .shell("one")])
+		#expect(named.members.map(\.name) == ["a", "b"])
+		#expect(named.members.map(\.command) == [.shell("one"), .shell("two")])
+	}
+
+	/// The substitutions reach into them, because a command is a string in the
+	/// file like any other.
+	@Test func substitutesInsideALifecycleCommand() throws {
+		let project = try makeProject()
+		defer { try? FileManager.default.removeItem(at: project) }
+
+		let configuration = try #require(read("""
+		{
+			"image": "alpine:3.20",
+			"postCreateCommand": ["sh", "-c", "cd ${containerWorkspaceFolder} && make"],
+		}
+		""", in: project).configuration)
+		#expect(configuration.lifecycle[.postCreateCommand]
+			== .argv(["sh", "-c", "cd /workspaces/\(project.lastPathComponent) && make"]))
+	}
+
+	/// A shape the spec has no meaning for is refused rather than guessed at.
+	@Test func refusesALifecycleCommandItCannotRead() throws {
 		let project = try makeProject()
 		defer { try? FileManager.default.removeItem(at: project) }
 
 		let reason = try #require(read("""
-		{"image": "alpine:3.20", "postCreateCommand": "go mod download"}
+		{"image": "alpine:3.20", "postCreateCommand": 17}
 		""", in: project).refusal)
-		#expect(reason == ".devcontainer/devcontainer.json has a postCreateCommand, and this app "
-			+ "does not run the lifecycle commands yet — the container would come up without "
-			+ "whatever that command installs.")
+		#expect(reason == ".devcontainer/devcontainer.json has a postCreateCommand this app could "
+			+ "not read — the spec allows a string, a list of arguments, or an object of named "
+			+ "commands.")
 
-		for command in [
-			"initializeCommand", "onCreateCommand", "updateContentCommand",
-			"postStartCommand", "postAttachCommand",
-		] {
-			let refusal = read(
-				#"{"image": "alpine:3.20", "\#(command)": "true"}"#, in: project
-			).refusal
-			#expect(refusal?.contains(command) == true)
-		}
+		// Nested objects have no meaning in the spec, and inventing one would be
+		// this app deciding what somebody else's file meant.
+		#expect(read("""
+		{"image": "alpine:3.20", "onCreateCommand": {"a": {"b": "true"}}}
+		""", in: project).refusal?.contains("onCreateCommand") == true)
+	}
+
+	/// `waitFor` names one of the five, and anything else is a file saying
+	/// something this app would otherwise silently ignore.
+	@Test func readsWaitForAndRefusesOneThatNamesNothing() throws {
+		let project = try makeProject()
+		defer { try? FileManager.default.removeItem(at: project) }
+
+		let configuration = try #require(read("""
+		{"image": "alpine:3.20", "waitFor": "onCreateCommand"}
+		""", in: project).configuration)
+		#expect(configuration.lifecycle.waitFor == .onCreateCommand)
+
+		let reason = try #require(read("""
+		{"image": "alpine:3.20", "waitFor": "buildCommand"}
+		""", in: project).refusal)
+		#expect(reason.contains("waits for buildCommand"))
+		// initializeCommand runs before the container exists, so waiting for it
+		// is not a thing a container can be ready after.
+		#expect(read("""
+		{"image": "alpine:3.20", "waitFor": "initializeCommand"}
+		""", in: project).refusal != nil)
 	}
 
 	// MARK: - The rest of the subset

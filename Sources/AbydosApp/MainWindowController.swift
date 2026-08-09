@@ -3206,6 +3206,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			case let .refused(reason):
 				Toast.post("This project's devcontainer was not started", detail: reason, kind: .error)
 			case let .running(session):
+				// A terminal is an attach, which is the moment `postAttachCommand`
+				// names. Not waited for: it is the one lifecycle command whose job
+				// is to greet somebody, and a shell that opens a second later
+				// because of it is worse than one that opens now.
+				Task { await DevContainers.shared.attach(to: session) }
 				let name = session.configuration.name.map { "\($0) ⬢" } ?? "container ⬢"
 				bottomPanel.newTerminal(
 					title: name, running: DevContainers.terminalCommand(session)

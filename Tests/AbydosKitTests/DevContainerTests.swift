@@ -240,4 +240,115 @@ struct DevContainerTests {
 		#expect(DevContainers.explainStart("", project: "service")
 			.contains("said nothing about why"))
 	}
+
+	// MARK: - The language servers inside it
+
+	/// A server `exec`'d into the container the project is already open in,
+	/// rather than started beside it in one of its own.
+	///
+	/// Every assertion here is one of the three things that hold on this machine
+	/// and not in there, and each of them is a bug that would show up as a
+	/// language server which starts and then answers nothing.
+	@Test func startsALanguageServerInsideTheContainerTheProjectIsOpenIn() throws {
+		let project = try #require(makeGoProject())
+		defer { try? FileManager.default.removeItem(at: project) }
+
+		let configuration = try read("""
+		{
+			"image": "golang:1.24-alpine",
+			"workspaceMount": "source=${localWorkspaceFolder},target=/src,type=bind",
+			"workspaceFolder": "/src",
+			"remoteUser": "vscode",
+			"remoteEnv": {"GOFLAGS": "-mod=mod"}
+		}
+		""", project: project.path)
+		let session = session(configuration)
+
+		let resolved = try #require(LanguageServers.resolve(
+			languageId: "go", project: project, inDevContainer: session
+		))
+
+		// The devcontainer's own mapping, which is the file's rather than
+		// `/workspace` — a server told anything else names files that exist on
+		// neither side.
+		#expect(resolved.launch.paths == ContainerPaths(host: project.path, container: "/src"))
+		// Nothing is fetched for it and nothing is removed with it: the
+		// container belongs to the project, and taking it away when a server
+		// stops would take somebody's terminal with it.
+		#expect(resolved.launch.image == nil)
+		#expect(resolved.launch.container == nil)
+
+		let run = resolved.launch.invocation
+		#expect(run.executable == "/usr/bin/docker")
+		#expect(run.arguments == [
+			"exec", "-i",
+			// Rooted where the manifest is, in the container's own names.
+			"-w", "/src",
+			// `remoteUser` and `remoteEnv`, which are what things attached to a
+			// running container get.
+			"-u", "vscode",
+			"-e", "GOFLAGS=-mod=mod",
+			"abydos-devcontainer-4242-1",
+			// The bare command. Not a path from this machine, and above all not
+			// one from `xcrun`: the server is not here.
+			"gopls",
+		])
+	}
+
+	/// A directory with a go.mod in it, so the Go server has a root to be
+	/// rooted at — the resolution asks the file system, not the file.
+	private func makeGoProject() -> URL? {
+		guard let root = try? JavaTestDirectory.make() else { return nil }
+		try? JavaTestDirectory.write(
+			"module example.com/probe\n", to: root.appendingPathComponent("go.mod")
+		)
+		return URL(fileURLWithPath: FilePath.canonical(root), isDirectory: true)
+	}
+
+	/// A lifecycle command that failed, in one sentence somebody can act on.
+	///
+	/// What this has to get right is not classifying the failure — there is only
+	/// one kind — but *naming* it: which of six commands that all look alike from
+	/// outside, what it exited with, and the line it wrote before it gave up.
+	@Test func namesTheLifecycleCommandThatFailedAndWhatItSaid() {
+		let failed = RuntimeCommand.Result(
+			// The order `RuntimeCommand` puts them in, which is why the two are
+			// kept apart: the last line of standard output is only how far the
+			// command got, and the line worth reading is on the other stream.
+			output: "error: no such package: a-package-that-does-not-exist\n"
+				+ "post-create: step 1 of 3 — this works\n"
+				+ "post-create: step 2 of 3 — this works too\n"
+				+ "post-create: step 3 of 3 — fetching a dependency that is not there\n",
+			errorOutput: "error: no such package: a-package-that-does-not-exist\n",
+			exitCode: 3,
+			timedOut: false
+		)
+		#expect(DevContainers.explainLifecycle(
+			label: "postCreateCommand",
+			line: "sh .devcontainer/post-create.sh",
+			result: failed,
+			project: "post-create-fails"
+		) == "post-create-fails's postCreateCommand exited 3: error: no such package: "
+			+ "a-package-that-does-not-exist. The container was removed and nothing after it was "
+			+ "run — fix `sh .devcontainer/post-create.sh` in the devcontainer.json and open the "
+			+ "project again.")
+
+		// The object form names the member too, because "postCreateCommand
+		// failed" of a file with three of them is not enough to go on.
+		#expect(DevContainers.explainLifecycle(
+			label: "postCreateCommand (install)",
+			line: "npm ci",
+			result: failed,
+			project: "web"
+		).hasPrefix("web's postCreateCommand (install) exited 3:"))
+
+		// A command that never finished says so, rather than reporting the
+		// terminate signal as an exit status somebody would go looking for.
+		let stuck = RuntimeCommand.Result(
+			output: "", errorOutput: "", exitCode: 15, timedOut: true
+		)
+		#expect(DevContainers.explainLifecycle(
+			label: "postCreateCommand", line: "npm ci", result: stuck, project: "web"
+		).contains("took longer than 30 minutes and was stopped"))
+	}
 }

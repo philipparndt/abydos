@@ -54,6 +54,29 @@ final class LanguageService {
 	/// answer does not change while a project is open.
 	private var toolImages: [String: ToolImages] = [:]
 
+	// MARK: - The projects worked on in a container
+
+	/// Whether a project's servers belong inside its devcontainer, by project
+	/// path. Read once — it is a file on disk — and set to false when the
+	/// container turns out not to be startable, which is what makes the fallback
+	/// to this machine happen once rather than per language.
+	private var devcontainerProjects: [String: Bool] = [:]
+	/// The container each such project's servers run in, once it is up.
+	private var devcontainerSessions: [String: DevContainers.Session] = [:]
+	/// Which language servers that container actually has, asked once.
+	///
+	/// The question nobody can answer by reading: an image carries what it
+	/// carries. Without it, every language the project touches starts a server
+	/// that fails its handshake ten seconds later with the runtime's own
+	/// `executable file not found` — which says nothing about the project.
+	private var devcontainerCommands: [String: Set<String>] = [:]
+	/// Projects whose container is on its way up, so that ten files opened at
+	/// once ask for one container rather than ten.
+	private var devcontainerStarting: Set<String> = []
+	/// Which languages were asked for while it was coming up, so they can be
+	/// started when it lands.
+	private var devcontainerWaiting: [String: Set<String>] = [:]
+
 	/// What to say in the status bar about servers: names of those running.
 	private(set) var runningNames: [String] = []
 	/// A language whose server is not installed, and how to get it.
@@ -130,6 +153,19 @@ final class LanguageService {
 				// An image is named for it, so it is not missing: it is either
 				// being fetched or about to start. Nothing to install.
 				continue
+			} else if usesDevContainer(project) {
+				// In a project worked on in a container, "installed" is a
+				// question about the container. Installing it here would change
+				// nothing, so the hint has to be about the file that builds it.
+				let path = project.standardizedFileURL.path
+				guard let inside = devcontainerCommands[path] else { continue }
+				if !inside.contains(definition.command) {
+					missing.append((
+						definition.languageIds.first ?? "?",
+						missingHints[definition.languageIds.first ?? ""]
+							?? "\(definition.command) is not in this project's devcontainer."
+					))
+				}
 			} else if LanguageServers.executable(for: definition) == nil {
 				missing.append((definition.languageIds.first ?? "?", definition.installHint))
 			}
@@ -422,6 +458,11 @@ final class LanguageService {
 		// image does, and asking again would start a second fetch.
 		guard !fetching.contains(key) else { return nil }
 
+		// A project that says what it is worked on in has its servers in there.
+		if usesDevContainer(project) {
+			return serverInDevContainer(for: languageId, project: project, key: key)
+		}
+
 		guard let resolved = resolution(for: languageId, project: project) else {
 			unavailable.insert(key)
 			if let definition = LanguageServers.definition(forLanguage: languageId),
@@ -484,6 +525,152 @@ final class LanguageService {
 			replayDeferredOpens(to: server, key: key)
 		}
 		return nil
+	}
+
+	// MARK: - Servers inside the project's devcontainer
+
+	/// Whether this project's language servers belong in a container.
+	///
+	/// **A project with a devcontainer this app can honour gets its servers
+	/// inside it, and the container is started for them.** That is a decision
+	/// and it could be reversed, so here is the reasoning. A devcontainer.json
+	/// is a project saying which toolchain it is worked on with; running the
+	/// editor's servers against a different one is how the errors on screen stop
+	/// being the errors from the build, which is 0427's fault one floor up and
+	/// worse than a slow machine because a red squiggle is believed. The
+	/// alternative — servers on this machine beside a container that is up — is
+	/// exactly that state. Projects without a devcontainer.json, which is nearly
+	/// all of them, are untouched.
+	private func usesDevContainer(_ project: URL) -> Bool {
+		let path = project.standardizedFileURL.path
+		if let known = devcontainerProjects[path] { return known }
+		let uses = DevContainerFile.exists(in: project)
+		devcontainerProjects[path] = uses
+		return uses
+	}
+
+	/// The server for a language, inside the project's own container.
+	private func serverInDevContainer(
+		for languageId: String, project: URL, key: String
+	) -> Server? {
+		let path = project.standardizedFileURL.path
+		guard let session = devcontainerSessions[path] else {
+			// Not up yet, and bringing one up is a pull the first time. Held the
+			// way a fetched image already is: nothing waits, what is opened
+			// meanwhile is kept, and the server starts when the container lands.
+			fetching.insert(key)
+			devcontainerWaiting[path, default: []].insert(languageId)
+			startDevContainer(project)
+			return nil
+		}
+		guard let resolved = LanguageServers.resolve(
+			languageId: languageId, project: project, inDevContainer: session
+		) else {
+			unavailable.insert(key)
+			log("nothing to start for \(languageId) in \(project.path)")
+			return nil
+		}
+
+		// The container has it or it does not, and the file is what decides.
+		// Falling back to a copy on this machine would be the thing this whole
+		// path exists to avoid: the same code getting different answers
+		// depending on whose laptop it is on.
+		guard devcontainerCommands[path]?.contains(resolved.definition.command) == true else {
+			unavailable.insert(key)
+			let hint = "\(resolved.definition.command) is not in this project's devcontainer. "
+				+ "Add it to the image or the Dockerfile that "
+				+ "\(session.configuration.file.lastPathComponent) names, or run its "
+				+ "postCreateCommand — the copy on this machine is not used for a project that "
+				+ "says which toolchain it is worked on with."
+			missingHints[languageId] = hint
+			log("\(resolved.definition.command) is not in \(session.name) — \(languageId) in "
+				+ "\(project.lastPathComponent) has no server")
+			NotificationCenter.default.post(name: .ideaiLanguageServersChanged, object: nil)
+			return nil
+		}
+		return start(resolved, languageId: languageId, key: key)
+	}
+
+	/// Brings the project's devcontainer up, once, however many languages ask.
+	private func startDevContainer(_ project: URL) {
+		let path = project.standardizedFileURL.path
+		guard devcontainerStarting.insert(path).inserted else { return }
+		guard let runtime = ContainerRuntime.discover(
+			preference: ContainerRuntime.Preference(rawValue: Settings.shared.containerRuntime)
+				?? .automatic
+		) else {
+			devcontainerStarting.remove(path)
+			runOnThisMachineInstead(project, because: "nothing here can run a container")
+			return
+		}
+		log("\(project.lastPathComponent) is worked on in a devcontainer; "
+			+ "its language servers go inside it")
+
+		Task { @MainActor in
+			let outcome = await DevContainers.shared.session(
+				for: project,
+				using: runtime,
+				progress: { message in
+					// A pull and a postCreateCommand are both minutes, and a
+					// minute with nothing on screen is a feature that looks
+					// broken.
+					Task { @MainActor in Toast.post(message, kind: .information) }
+				}
+			)
+			devcontainerStarting.remove(path)
+			switch outcome {
+			case let .running(session)?:
+				devcontainerSessions[path] = session
+				// A language server is something attaching to the container, and
+				// `postAttachCommand` is the moment that names.
+				await DevContainers.shared.attach(to: session)
+				// One question for every server there is, rather than one failed
+				// handshake per language.
+				devcontainerCommands[path] = await DevContainers.shared.provides(
+					LanguageServers.known.map(\.command), in: session
+				)
+				log("\(session.name) is up; it has "
+					+ "\(devcontainerCommands[path]?.sorted().joined(separator: ", ") ?? "no")"
+					+ " language server(s)")
+				startWhatWasWaiting(for: project)
+			case let .refused(reason)?:
+				Toast.post(
+					"\(project.lastPathComponent)'s devcontainer was not started",
+					detail: "\(reason)\nIts language servers run on this machine instead.",
+					kind: .error
+				)
+				runOnThisMachineInstead(project, because: reason)
+			case .none:
+				// The file went away between the check and the ask, which is not
+				// a failure and must not be reported as one.
+				runOnThisMachineInstead(project, because: "it has no devcontainer.json")
+			}
+		}
+	}
+
+	/// The project's servers run here after all, and the reason is said once.
+	private func runOnThisMachineInstead(_ project: URL, because reason: String) {
+		let path = project.standardizedFileURL.path
+		devcontainerProjects[path] = false
+		log("\(project.lastPathComponent)'s devcontainer is not available (\(reason)); "
+			+ "its language servers run on this machine")
+		startWhatWasWaiting(for: project)
+	}
+
+	/// Starts the servers asked for while the container was coming up, and
+	/// hands each the files opened meanwhile.
+	private func startWhatWasWaiting(for project: URL) {
+		let path = project.standardizedFileURL.path
+		// Gone while the container was on its way — the project was closed — so
+		// there is nobody to start a server for.
+		let waiting = devcontainerWaiting.removeValue(forKey: path) ?? []
+		for languageId in waiting.sorted() {
+			let key = key(project: project, languageId: languageId)
+			guard fetching.remove(key) != nil else { continue }
+			guard let server = server(for: languageId, project: project) else { continue }
+			replayDeferredOpens(to: server, key: key)
+		}
+		NotificationCenter.default.post(name: .ideaiLanguageServersChanged, object: nil)
 	}
 
 	/// Starts a server whose image, if it has one, is already here.
@@ -752,6 +939,16 @@ final class LanguageService {
 		fetching = fetching.filter { !$0.hasPrefix(prefix) }
 		deferredOpens = deferredOpens.filter { !$0.key.hasPrefix(prefix) }
 		toolImages.removeValue(forKey: project.standardizedFileURL.path)
+		// The servers inside the project's devcontainer went with the rest of
+		// them, above — the protocol's own `exit` is what ends one in there, and
+		// it travels down the same pipe. **The container itself is left up**, for
+		// the reason 0424 records: switching away and back has to be instant, and
+		// there is somebody's terminal in it. `ToolContainers.removeAll` on the
+		// way out and 0406's sweep are what end it.
+		let path = project.standardizedFileURL.path
+		devcontainerProjects.removeValue(forKey: path)
+		devcontainerCommands.removeValue(forKey: path)
+		devcontainerWaiting.removeValue(forKey: path)
 		failures.removeAll()
 		announced.removeAll()
 		emptied.removeAll()
@@ -768,6 +965,10 @@ final class LanguageService {
 		fetching.removeAll()
 		deferredOpens.removeAll()
 		toolImages.removeAll()
+		devcontainerProjects.removeAll()
+		devcontainerSessions.removeAll()
+		devcontainerCommands.removeAll()
+		devcontainerWaiting.removeAll()
 	}
 
 	// MARK: - Testing

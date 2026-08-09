@@ -43,6 +43,43 @@ public actor DevContainers {
 	/// a download plus everything the Dockerfile does.
 	public static let buildDeadline: TimeInterval = 900
 
+	/// How long one lifecycle command gets.
+	///
+	/// Half an hour, which is longer than anything else here waits for anything,
+	/// because this is the one command whose length is somebody else's decision:
+	/// `postCreateCommand` is where `npm ci`, `go mod download` and `bundle
+	/// install` live, on whatever network the machine is on. Ending one early
+	/// leaves a container that came up without what it was told to install,
+	/// which is the failure this whole step exists to prevent — so the deadline
+	/// is here to stop a wedged command holding a project open for ever, not to
+	/// judge how long an install ought to take.
+	public static let lifecycleDeadline: TimeInterval = 1800
+
+	/// Where a container records that its creation commands have been run.
+	///
+	/// **Inside the container, not on the bind mount, and not in `.abydos/`.**
+	/// The question being asked is "has *this container* been created?", and the
+	/// only thing whose lifetime is the container's is the container's own
+	/// writable layer. A marker beside the checkout survives `docker rm`, so the
+	/// next container — a rebuild, a machine restarted, a crash swept up by
+	/// 0406 — would skip an installer it has never run, and a container missing
+	/// its tools with nothing on screen saying so is exactly the "looks like a
+	/// broken editor" this feature is about.
+	///
+	/// `/tmp` because it is the one directory every image has and every user can
+	/// write to, and because its lifetime is exactly right: it survives a stop
+	/// and start, which is not creation, and dies with the container, which is.
+	static let creationMarker = "/tmp/.abydos-devcontainer"
+
+	/// Where the lifecycle commands' own output goes.
+	///
+	/// On screen there is one line per command, because that is what somebody
+	/// watching wants. Everything the command printed goes here, because that is
+	/// what somebody debugging wants, and a `postCreateCommand` is the one thing
+	/// in this app that can print for ten minutes.
+	public static let logName = "devcontainer"
+	public static let logPath = DiagnosticLog.path(logName)
+
 	/// What the container is told to run so that it stays up.
 	///
 	/// The image's own command is replaced, which is what every devcontainer
@@ -152,15 +189,19 @@ public actor DevContainers {
 	/// `containerEnv` are what the container itself is, and the remote pair are
 	/// what the things attached to it afterwards get — a terminal, a language
 	/// server, a build.
+	/// - Parameter workingDirectory: where to run it, in the container's own
+	///   names, when it is not the workspace folder. A language server is rooted
+	///   where the manifest is, which is commonly a directory or two down.
 	public static func execCommand(
 		_ session: Session,
 		arguments: [String],
-		interactive: Bool = false
+		interactive: Bool = false,
+		workingDirectory: String? = nil
 	) -> (executable: String, arguments: [String]) {
 		let configuration = session.configuration
 		var line = ["exec"]
 		line.append(interactive ? "-it" : "-i")
-		line += ["-w", configuration.workspaceFolder]
+		line += ["-w", workingDirectory ?? configuration.workspaceFolder]
 		if let user = configuration.remoteUser ?? configuration.containerUser {
 			line += ["-u", user]
 		}
@@ -245,6 +286,54 @@ public actor DevContainers {
 			? "The devcontainer for \(project) would not start, and the runtime said nothing "
 				+ "about why."
 			: "The devcontainer for \(project) would not start: \(first)"
+	}
+
+	/// Why a lifecycle command did not finish, naming the command and what the
+	/// runtime made of it.
+	///
+	/// The same job `ContainerImages.explain` does for a pull, and the thing it
+	/// has to get right is different: a pull has four ways to fail and this has
+	/// one, so what matters is not classifying it but *naming it* — which
+	/// command, out of six that all look alike from outside, and what it said
+	/// before it gave up. "The container could not be created" is the message
+	/// that sends somebody to read a log nobody kept.
+	///
+	/// - Parameter label: the field name, with the member in brackets when the
+	///   file used the object form — `postCreateCommand (install)`.
+	static func explainLifecycle(
+		label: String,
+		line: String,
+		result: RuntimeCommand.Result,
+		project: String
+	) -> String {
+		let what = result.timedOut
+			? "took longer than \(Int(lifecycleDeadline / 60)) minutes and was stopped"
+			: "exited \(result.exitCode)"
+		// Standard error first: a command that fails writes the reason there and
+		// its progress to standard output, so the last line of the one it was
+		// printing to is "step 3 of 3" and the line worth reading is beside it.
+		let said = lastLine(result.errorOutput) ?? lastLine(result.output)
+		let saying = said.map { ": \($0)" } ?? ""
+		return "\(project)'s \(label) \(what)\(saying). The container was removed and nothing "
+			+ "after it was run — fix `\(shortened(line))` in the devcontainer.json and open the "
+			+ "project again."
+	}
+
+	/// The last line of some output that has anything in it.
+	private static func lastLine(_ output: String) -> String? {
+		output
+			.split(separator: "\n", omittingEmptySubsequences: true)
+			.last { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+			.map { $0.trimmingCharacters(in: .whitespaces) }
+	}
+
+	/// A command short enough to read in one line of a message.
+	static func shortened(_ line: String, to limit: Int = 80) -> String {
+		let collapsed = line
+			.split(whereSeparator: \.isNewline)
+			.map { $0.trimmingCharacters(in: .whitespaces) }
+			.joined(separator: " ")
+		return collapsed.count > limit ? String(collapsed.prefix(limit)) + "…" : collapsed
 	}
 
 	/// Why the image would not build.
@@ -339,6 +428,12 @@ public actor DevContainers {
 		using runtime: ContainerRuntime,
 		progress: (@Sendable (String) -> Void)?
 	) async -> Outcome {
+		// On this machine, before anything else exists — which is what the spec
+		// says of it and why it is here rather than with the other five.
+		if let failure = await runInitialize(configuration, progress: progress) {
+			return .refused(failure)
+		}
+
 		// The image first, through the store that fetches one once however many
 		// things ask for it — or a build, when the file names a Dockerfile.
 		if configuration.build != nil {
@@ -368,7 +463,17 @@ public actor DevContainers {
 				started.output, project: configuration.project.lastPathComponent, runtime: runtime
 			))
 		}
-		return .running(Session(name: name, configuration: configuration, runtime: runtime))
+
+		let session = Session(name: name, configuration: configuration, runtime: runtime)
+		// Everything the file asked to have run before anybody works in it. A
+		// failure takes the container with it: a half-installed container that the
+		// next open would find running and reuse is the state this refuses into
+		// existence rather than out of it.
+		if let failure = await runLifecycle(session, progress: progress) {
+			ToolContainers.shared.releaseInBackground(name)
+			return .refused(failure)
+		}
+		return .running(session)
 	}
 
 	private func build(
@@ -386,6 +491,272 @@ public actor DevContainers {
 			return Self.explainBuild(built.output, dockerfile: dockerfile)
 		}
 		return nil
+	}
+
+	// MARK: - The lifecycle commands
+
+	/// Everything the file asked to have run, at the moment it asked for it.
+	///
+	/// Two groups, and telling them apart is the whole of this: the three
+	/// creation commands run once for the life of a container, and
+	/// `postStartCommand` runs every time it starts. Which group a command is in
+	/// is decided by the marker inside the container — see `creationMarker`,
+	/// where the reason for putting it there is written down — and the marker is
+	/// written *after* they have all succeeded, so a `postCreateCommand` that
+	/// failed is tried again next time rather than skipped for ever.
+	///
+	/// **`waitFor` is honoured as a floor rather than as a starting gun.** The
+	/// spec has it name the command after which the container may be handed to
+	/// somebody, with anything later still running behind them; VS Code needs
+	/// that because it has already opened a window. This app hands the container
+	/// out at the moment somebody asks to work in it — a terminal, a language
+	/// server — so it waits for all of them, which is never less than the file
+	/// asked for, and never gives anybody a shell in a container that is still
+	/// installing the toolchain they are about to use.
+	///
+	/// Returns nil when everything ran, or the sentence saying which command did
+	/// not.
+	@discardableResult
+	func runLifecycle(
+		_ session: Session, progress: (@Sendable (String) -> Void)? = nil
+	) async -> String? {
+		let lifecycle = session.configuration.lifecycle
+		if lifecycle.hasCreationCommands, await !hasBeenCreated(session) {
+			for stage in DevContainerStage.creation {
+				guard let command = lifecycle[stage] else { continue }
+				if let failure = await run(command, at: stage, in: .container(session), progress: progress) {
+					return failure
+				}
+			}
+			await markCreated(session)
+		}
+		guard let onStart = lifecycle[.postStartCommand] else { return nil }
+		return await run(onStart, at: .postStartCommand, in: .container(session), progress: progress)
+	}
+
+	/// What runs each time something attaches to the container.
+	///
+	/// Its own call rather than part of `runLifecycle` because it is the one
+	/// stage whose moment is not the container's: a second terminal is a second
+	/// attach, and the container did not start again in between.
+	@discardableResult
+	public func attach(
+		to session: Session, progress: (@Sendable (String) -> Void)? = nil
+	) async -> String? {
+		guard let command = session.configuration.lifecycle[.postAttachCommand] else { return nil }
+		return await run(command, at: .postAttachCommand, in: .container(session), progress: progress)
+	}
+
+	/// Whether this container has already had its creation commands run.
+	private func hasBeenCreated(_ session: Session) async -> Bool {
+		let command = Self.execCommand(
+			session, arguments: ["/bin/sh", "-c", "test -f \(Self.creationMarker)"]
+		)
+		return await offMainThread { RuntimeCommand.run(command, deadline: 30) }.succeeded
+	}
+
+	private func markCreated(_ session: Session) async {
+		let stamp = ISO8601DateFormatter().string(from: Date())
+		let command = Self.execCommand(session, arguments: [
+			"/bin/sh", "-c",
+			"printf '%s\\n' 'created by Abydos at \(stamp)' > \(Self.creationMarker)",
+		])
+		let written = await offMainThread { RuntimeCommand.run(command, deadline: 30) }
+		if !written.succeeded {
+			// Not fatal, and said rather than swallowed: the cost is running the
+			// creation commands again on a container that has already had them,
+			// which is slow rather than wrong.
+			log("could not write \(Self.creationMarker) in \(session.name): \(written.output)")
+		}
+	}
+
+	/// The two places a lifecycle command can run, which is five stages against
+	/// one.
+	private enum Place {
+		case container(Session)
+		/// This machine, which is `initializeCommand` and only that.
+		case host(DevContainerConfiguration)
+
+		var configuration: DevContainerConfiguration {
+			switch self {
+			case let .container(session): return session.configuration
+			case let .host(configuration): return configuration
+			}
+		}
+
+		/// What to write in the log beside each line.
+		var name: String {
+			switch self {
+			case let .container(session): return session.name
+			case let .host(configuration): return configuration.project.lastPathComponent
+			}
+		}
+	}
+
+	/// One stage, which is one command or several named ones.
+	private func run(
+		_ command: DevContainerCommand,
+		at stage: DevContainerStage,
+		in place: Place,
+		progress: (@Sendable (String) -> Void)?
+	) async -> String? {
+		let members = command.members
+		guard members.count > 1 else {
+			guard let only = members.first else { return nil }
+			return await runOne(
+				only.command, at: stage, named: only.name, in: place, progress: progress
+			)
+		}
+		// The object form runs in parallel, which the spec is explicit about —
+		// it is how a file says "these two do not depend on each other". The
+		// actor is left at each subprocess, so they really do overlap.
+		return await withTaskGroup(of: String?.self) { group in
+			for member in members {
+				group.addTask { [self] in
+					await runOne(
+						member.command, at: stage, named: member.name, in: place, progress: progress
+					)
+				}
+			}
+			var firstFailure: String?
+			for await failure in group where firstFailure == nil {
+				firstFailure = failure
+			}
+			return firstFailure
+		}
+	}
+
+	/// One command, wherever it runs.
+	private func runOne(
+		_ command: DevContainerCommand,
+		at stage: DevContainerStage,
+		named member: String?,
+		in place: Place,
+		progress: (@Sendable (String) -> Void)?
+	) async -> String? {
+		let configuration = place.configuration
+		let project = configuration.project.lastPathComponent
+		let label = member.map { "\(stage.rawValue) (\($0))" } ?? stage.rawValue
+		// Once, with what it is doing, which is `ContainerImages.progressMessage`'s
+		// bargain: a `postCreateCommand` can take minutes and a minute with
+		// nothing on screen is indistinguishable from a hung editor. The one that
+		// runs out here says so, because where it runs is the thing about it
+		// somebody would want to have been told.
+		let running: String
+		let invocation: (executable: String, arguments: [String])
+		let directory: URL?
+		switch place {
+		case let .container(session):
+			running = "Running \(project)'s \(label)"
+			invocation = Self.execCommand(session, arguments: command.invocation)
+			directory = nil
+		case .host:
+			running = "Running \(project)'s \(label) on this machine"
+			// `/usr/bin/env` for the argv form, because `Process` wants a path and
+			// a file that says `["npm", "ci"]` means the npm on the PATH.
+			let parts = command.invocation
+			if case .shell = command {
+				invocation = ("/bin/sh", Array(parts.dropFirst()))
+			} else {
+				invocation = ("/usr/bin/env", parts)
+			}
+			directory = configuration.project
+		}
+		progress?("\(running): \(Self.shortened(command.line))…")
+		log("\(place.name) \(label): \(command.line)")
+
+		let result = await offMainThread {
+			RuntimeCommand.run(
+				invocation, deadline: Self.lifecycleDeadline, directory: directory
+			)
+		}
+		logOutput(result.output, of: label, in: place.name)
+		guard result.succeeded else {
+			log("\(place.name) \(label) failed: exit \(result.exitCode)"
+				+ (result.timedOut ? " (deadline)" : ""))
+			return Self.explainLifecycle(
+				label: label, line: command.line, result: result, project: project
+			)
+		}
+		return nil
+	}
+
+	/// `initializeCommand`, which runs here rather than in the container.
+	///
+	/// **This is a command out of somebody's repository executing on their
+	/// machine, and it is worth being deliberate about.** It is run, for two
+	/// reasons. The app already runs command lines a project supplies — a run
+	/// configuration out of `launch.json`, a `make` target, a build scheme — so
+	/// this is not a new kind of trust, it is the same one. And a file whose
+	/// `initializeCommand` creates the directory its `mounts` bind, which is the
+	/// common use, does not work at all without it: the container would come up
+	/// missing what the file said it needed, which is the failure this step
+	/// exists to remove.
+	///
+	/// What is different is that this one is not inside anything, so it is the
+	/// one that is *named on screen before it runs* rather than only logged.
+	/// Nothing here runs unseen. And it runs only when somebody has asked for
+	/// the devcontainer — opening a project does not start one.
+	///
+	/// A real answer is a trust prompt for a checkout nobody has vouched for,
+	/// the way VS Code has one. This app has no such concept and inventing one
+	/// here would be the wrong place for it; it is its own item.
+	private func runInitialize(
+		_ configuration: DevContainerConfiguration,
+		progress: (@Sendable (String) -> Void)?
+	) async -> String? {
+		guard let command = configuration.lifecycle[.initializeCommand] else { return nil }
+		return await run(
+			command, at: .initializeCommand, in: .host(configuration), progress: progress
+		)
+	}
+
+	// MARK: - What is in there
+
+	/// Which of these commands the container has on its PATH.
+	///
+	/// Asked once, for all of them, because the answer decides which language
+	/// servers this project gets and the alternative is finding out one failed
+	/// handshake at a time — ten seconds each, and the message at the end is the
+	/// runtime's `executable file not found` rather than anything about the
+	/// project. One `exec` is a fraction of a second and turns that into a
+	/// sentence naming the server and the file that would have to carry it.
+	public func provides(_ commands: [String], in session: Session) async -> Set<String> {
+		// Names, not a command line: a devcontainer.json cannot reach this, but a
+		// language server's definition is a table in this app and a table is a
+		// thing somebody edits.
+		let safe = commands.filter { name in
+			!name.isEmpty && name.allSatisfy { $0.isLetter || $0.isNumber || "-_.+".contains($0) }
+		}
+		guard !safe.isEmpty else { return [] }
+		// `exit 0` at the end, and it is not decoration: the loop's status is the
+		// last `command -v`, so a list whose final name is missing — which is the
+		// ordinary case — would come back a failure and be read as "none of
+		// them". The answer is the lines, not the status.
+		let script = "for c in \(safe.joined(separator: " ")); do "
+			+ "command -v \"$c\" >/dev/null 2>&1 && echo \"$c\"; done; exit 0"
+		let exec = Self.execCommand(session, arguments: ["/bin/sh", "-c", script])
+		let answer = await offMainThread { RuntimeCommand.run(exec, deadline: 60) }
+		guard answer.succeeded else { return [] }
+		let found = Set(
+			answer.output
+				.split(separator: "\n", omittingEmptySubsequences: true)
+				.map { $0.trimmingCharacters(in: .whitespaces) }
+		)
+		return found.intersection(safe)
+	}
+
+	/// A line in `~/Library/Logs/Abydos/devcontainer.log`.
+	private nonisolated func log(_ message: String) {
+		DiagnosticLog.write(message, to: Self.logName)
+	}
+
+	/// Everything a command printed, kept where somebody debugging can read it.
+	private nonisolated func logOutput(_ output: String, of label: String, in name: String) {
+		for line in output.split(separator: "\n", omittingEmptySubsequences: true)
+		where !line.trimmingCharacters(in: .whitespaces).isEmpty {
+			DiagnosticLog.write("\(name) \(label) | \(line)", to: Self.logName)
+		}
 	}
 
 	/// Whether the container behind a session is still running.

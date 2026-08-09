@@ -651,6 +651,56 @@ public enum LanguageServers {
 		)
 	}
 
+	/// The server for a language, run inside the devcontainer the project is
+	/// already open in.
+	///
+	/// The whole of step four of 0424, and it is mostly *not* doing things. The
+	/// server is `exec`'d into the container that is up rather than started
+	/// beside it in one of its own, because a devcontainer is the project's
+	/// toolchain and a second container would be a second answer to what `go`
+	/// means here.
+	///
+	/// Three things that hold on this machine do not hold in there, and each is
+	/// a bug waiting to be written:
+	///
+	/// - **The command is not resolved here.** No `xcrun`, no walk of this
+	///   machine's PATH, no `/opt/homebrew`: the server is not on this machine
+	///   and a path found here names nothing there. The bare command goes in and
+	///   the container's own PATH resolves it, which is the only side that can.
+	/// - **The arguments are the definition's own**, not `arguments(for:root:)`.
+	///   What that adds is jdtls's data directory and the Swift indexer's
+	///   scratch path, and both are directories on this machine — a server told
+	///   to write its index to a path the container has never heard of either
+	///   fails or writes it somewhere nobody will ever look.
+	/// - **The root is the container's.** Rooted where the manifest is, as the
+	///   container names it, which is under the workspace folder the *file*
+	///   asked for rather than `/workspace`.
+	public static func resolve(
+		languageId: String,
+		project: URL,
+		inDevContainer session: DevContainers.Session
+	) -> Resolution? {
+		guard let definition = definition(forLanguage: languageId),
+		      let root = markerDirectory(for: definition, in: project)
+		else { return nil }
+		let paths = session.configuration.paths
+		// A manifest outside the mount cannot be named in there at all, so the
+		// server is rooted at the workspace folder instead of at a path that
+		// resolves to nothing. `ContainerPaths` is what knows the difference.
+		let inside = paths.toContainer(path: FilePath.canonical(root))
+			?? session.configuration.workspaceFolder
+		return Resolution(
+			definition: definition,
+			root: root,
+			launch: .devcontainer(
+				session: session,
+				command: definition.command,
+				arguments: definition.arguments,
+				root: inside
+			)
+		)
+	}
+
 	/// The same, for a caller that only wants a server from this machine.
 	public static func resolve(
 		languageId: String,
