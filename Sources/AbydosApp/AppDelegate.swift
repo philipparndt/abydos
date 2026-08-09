@@ -1111,6 +1111,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if options.devContainerTerminal {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+				controller?.exerciseDevContainerTerminalForTesting()
+			}
+		}
+
 		if options.reportsTerminalDirectory {
 			for seconds in [3.0, 5.0, 7.0, 9.0] {
 				DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
@@ -1840,6 +1846,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		let newTerminalItem = NSMenuItem(title: "New Terminal", action: #selector(MainWindowController.newTerminal(_:)), keyEquivalent: "t")
 		newTerminalItem.keyEquivalentModifierMask = [.command, .shift]
 		viewMenu.addItem(newTerminalItem)
+
+		// Beside the ordinary one rather than anywhere else, because it is the
+		// same gesture: a shell for this project. Which machine it is on is what
+		// the title says. Greyed out for a project with no devcontainer.json,
+		// which is most of them.
+		let containerTerminalItem = NSMenuItem(
+			title: "New Terminal in Container",
+			action: #selector(MainWindowController.newTerminalInContainer(_:)),
+			keyEquivalent: ""
+		)
+		viewMenu.addItem(containerTerminalItem)
 
 		// The same thing on ⌘T, but only while the terminal has the keyboard —
 		// where that is the key everybody's fingers already reach for.

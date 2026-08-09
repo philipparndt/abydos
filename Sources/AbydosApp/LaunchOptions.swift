@@ -337,6 +337,8 @@ struct LaunchOptions {
 	var disabledBreakpointLine: Int?
 	/// Press stop this many seconds in, to see what the tab does afterwards.
 	var stopAfter: Double?
+	/// Open a terminal in the project's devcontainer and report what is in it.
+	var devContainerTerminal = false
 
 	static func parse(_ arguments: [String] = CommandLine.arguments) -> LaunchOptions {
 		var options = LaunchOptions()
@@ -400,6 +402,7 @@ struct LaunchOptions {
 			case "--branch-menu": options.branchMenuRow = next().flatMap(Int.init)
 			case "--push-branch": options.pushBranch = next()
 			case "--report-cwd": options.reportsTerminalDirectory = true
+			case "--devcontainer": options.devContainerTerminal = true
 			case "--report-geometry": options.reportsTerminalGeometry = true
 			case "--blame": options.showsBlame = true
 			case "--resize": options.resizeWidth = next().flatMap(Double.init)
