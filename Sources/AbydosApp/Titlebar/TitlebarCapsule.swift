@@ -33,6 +33,7 @@ final class TitlebarCapsule: NSView, TitlebarMenuAnchor {
 	private var branch: String?
 
 	private var trackingArea: NSTrackingArea?
+	private var heightConstraint: NSLayoutConstraint?
 
 	// MARK: - Metrics
 
@@ -41,14 +42,21 @@ final class TitlebarCapsule: NSView, TitlebarMenuAnchor {
 	private static var chevronWidth: CGFloat { Theme.current.scaled(9) }
 	private static var minimumWidth: CGFloat { Theme.current.scaled(300) }
 
-	/// How far the drawn shape sits inside the frame the toolbar hands over.
+	/// How far the drawn shape sits inside the frame it is given.
 	///
-	/// Small, because that frame is all there is: a toolbar clamps its items to
-	/// the row's height whatever they ask for, so asking to be taller does
-	/// nothing and the only way to a taller capsule is to stop giving the height
-	/// away. Not zero — a hairline of air keeps the shape from touching the
-	/// capsule macOS paints behind the item.
+	/// Not zero — a hairline of air keeps the shape from touching the capsule
+	/// macOS paints behind the item.
 	private static var inset: CGFloat { Theme.current.scaled(1) }
+
+	/// The height the capsule would like, before the titlebar has its say.
+	private static var wantedHeight: CGFloat { Theme.current.scaled(30) }
+
+	/// What is left of the toolbar row after air above and below.
+	///
+	/// The row is the system's titlebar — 52 points whatever our zoom is — and
+	/// it clips what is taller, so this is the ceiling. Four points at each end
+	/// keep the capsule off the window's top edge and off the seam under it.
+	private static let rowMargin: CGFloat = 4
 
 	private static var chipPadding: CGFloat { Theme.current.scaled(6) }
 	private static var chipFont: NSFont { Theme.current.uiFont(11, weight: .medium) }
@@ -64,6 +72,14 @@ final class TitlebarCapsule: NSView, TitlebarMenuAnchor {
 	override init(frame frameRect: NSRect) {
 		super.init(frame: frameRect)
 		wantsLayer = true
+		// A toolbar hands a view-based item 28 points of height and pays no
+		// attention to what its intrinsic size asks for — a constraint is the
+		// one thing it does honour, which is how the capsule grows with the
+		// zoom instead of keeping a 1× box around 2× type.
+		translatesAutoresizingMaskIntoConstraints = false
+		let constraint = heightAnchor.constraint(equalToConstant: Self.wantedHeight)
+		constraint.isActive = true
+		heightConstraint = constraint
 	}
 
 	required init?(coder: NSCoder) { fatalError("not used") }
@@ -140,8 +156,36 @@ final class TitlebarCapsule: NSView, TitlebarMenuAnchor {
 	override var intrinsicContentSize: NSSize {
 		NSSize(
 			width: Self.inset * 2 + max(Self.minimumWidth, projectWidth + branchWidth),
-			height: Theme.current.scaled(30)
+			height: heightConstraint?.constant ?? Self.wantedHeight
 		)
+	}
+
+	/// Takes the height the zoom asks for, or as much of it as the row has.
+	///
+	/// Asked again after a zoom, and when the capsule first lands in a toolbar:
+	/// the row is only measurable from inside it.
+	func updateHeight() {
+		let row = superview?.bounds.height ?? 0
+		let available = row > 0 ? max(0, row - Self.rowMargin * 2) : Self.wantedHeight
+		let height = min(Self.wantedHeight, available)
+		guard heightConstraint?.constant != height else { return }
+		heightConstraint?.constant = height
+		invalidateIntrinsicContentSize()
+		needsDisplay = true
+	}
+
+	override func viewDidMoveToSuperview() {
+		super.viewDidMoveToSuperview()
+		updateHeight()
+	}
+
+	/// The row is only measurable from inside it, and the capsule is built
+	/// before it is in one — so the measurement is taken again here, where it
+	/// is certain to be true. It settles in one further pass: `updateHeight`
+	/// does nothing when the answer has not changed.
+	override func layout() {
+		super.layout()
+		updateHeight()
 	}
 
 	/// The capsule's own shape, inside the space the toolbar gives it.

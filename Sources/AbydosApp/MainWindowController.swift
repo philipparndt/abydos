@@ -793,6 +793,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// Re-measures the pills after their content changes, so the toolbar item
 	/// grows to fit a longer project name or a branch that arrived late.
 	private func layoutTitlebarPills() {
+		// The height is a constraint rather than an intrinsic size, because that
+		// is the only part of a toolbar item's size the toolbar reads, so the
+		// zoom has to be pushed into it by hand.
+		capsule?.updateHeight()
 		capsule?.invalidateIntrinsicContentSize()
 		subprojectPill?.invalidateIntrinsicContentSize()
 		// The run strip measures itself from the theme's scale, so it has to be
@@ -3673,6 +3677,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			let menu = item.menuFormRepresentation
 			print("  put away: \(item.itemIdentifier.rawValue) menu=\(menu?.title ?? "none") "
 				+ "submenu=\(menu?.submenu?.items.map(\.title).prefix(4) ?? [])")
+		}
+
+		if let capsule {
+			print("  capsule height=\(capsule.frame.height) in row=\(capsule.superview?.frame.height ?? 0)")
 		}
 	}
 
