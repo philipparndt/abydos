@@ -821,6 +821,20 @@ final class TerminalView: NSView, NSTextInputClient {
 		emulator.screen.totalLineCount
 	}
 
+	/// How much of the pane's height is not a whole row.
+	///
+	/// Always less than one row, and usually a point or two — which is why it
+	/// went unnoticed at 1×. Scaling multiplies it: a four-point sliver becomes
+	/// eight at 2×, which is enough of a line to read as a broken one against
+	/// the top of the viewport. Reported so the panel can give it back rather
+	/// than show it.
+	var heightRemainder: CGFloat {
+		guard let clip = enclosingScrollView?.contentView else { return 0 }
+		let usable = clip.bounds.height - Self.verticalInset * 2
+		guard usable > 0, cellHeight > 0 else { return 0 }
+		return usable - floor(usable / cellHeight) * cellHeight
+	}
+
 	/// Keeps the grid the size of the pane, whatever else happened.
 	///
 	/// Everything that changes the pane's size or the size of a cell already

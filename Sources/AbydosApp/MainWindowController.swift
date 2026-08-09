@@ -149,6 +149,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// How wide the tree is, kept as a constraint so nothing else decides.
 	private var navigatorWidthConstraint: NSLayoutConstraint!
 	private var panelHeight: CGFloat = 260
+	/// True while the panel is being rounded to whole rows, so the resize that
+	/// causes cannot ask for another one.
+	fileprivate var isSnappingPanel = false
 	private var navigatorContainer: ColoredView!
 	private var changesPane: ChangesPane?
 	private var branchesPane: BranchesPane?
@@ -504,6 +507,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		verticalSplitView.addArrangedSubview(splitView)
 		verticalSplitView.addArrangedSubview(bottomPanel)
 		verticalSplitView.autosaveName = "IdeaiPanelSplit"
+		// For `splitViewDidResizeSubviews`, which rounds the panel down to
+		// whole terminal rows.
+		verticalSplitView.delegate = self
 
 		bottomPanel.onRequestHide = { [weak self] in self?.setPanelVisible(false) }
 		bottomPanel.onToggleMaximize = { [weak self] in self?.togglePanelMaximized() }
@@ -6719,6 +6725,53 @@ final class ThinDividerSplitView: NSSplitView {
 /// whenever what is in the editor changes shape — a page of controls, a wide
 /// file — and the tree jumps for reasons that have nothing to do with the tree.
 extension MainWindowController: NSSplitViewDelegate {
+	/// Gives back the part of the panel that is not a whole row.
+	///
+	/// The grid is `floor(height / rowHeight)` rows, so whatever is left over
+	/// is drawn as a strip of a row against the top of the viewport — a line
+	/// cut through the middle rather than a line that is simply not shown. At
+	/// 1× that strip is a point or two and nobody minds; scaling multiplies it
+	/// along with everything else, and at 2× it is half a line.
+	///
+	/// So the panel is rounded down to whole rows and the divider sits where
+	/// that leaves it, which is the trade this was decided on: the divider does
+	/// not land exactly where it was dragged, and the terminal always looks
+	/// like a terminal.
+	///
+	/// Runs after the split has resized rather than while it is being dragged,
+	/// because a drag is not the only thing that changes the height — the
+	/// window, the zoom and the font all do. It converges in one step: the
+	/// second pass finds nothing left over and stops.
+	func splitViewDidResizeSubviews(_ notification: Notification) {
+		guard notification.object as? NSSplitView === verticalSplitView else { return }
+		guard isPanelVisible, !isPanelMaximized, !bottomPanel.isHidden else { return }
+		// Moving the divider resizes the subviews, which is this notification
+		// again — and `setPosition` sends it synchronously, so without this the
+		// second pass runs inside the first. It converges on the arithmetic
+		// alone, but "converges" is not "terminates": the first version of this
+		// took the app out with a stack overflow before the remainder ever
+		// reached zero.
+		guard !isSnappingPanel else { return }
+		guard let remainder = bottomPanel.terminalHeightRemainder, remainder > 0.5 else { return }
+
+		let total = verticalSplitView.bounds.height
+		let wanted = bottomPanel.frame.height - remainder
+		// Not below what the panel is allowed to be: a terminal four rows tall
+		// is the floor everywhere else, and shaving a row off to make the
+		// arithmetic tidy would be tidying the wrong thing.
+		guard total > 200, wanted >= 160 else { return }
+
+		isSnappingPanel = true
+		// Next turn rather than inside the layout that is reporting to us:
+		// setting a divider position from within a layout pass is how the
+		// terminal came to be told two different sizes for one pane.
+		DispatchQueue.main.async { [weak self] in
+			guard let self else { return }
+			self.verticalSplitView.setPosition(total - wanted, ofDividerAt: 0)
+			self.isSnappingPanel = false
+		}
+	}
+
 	func splitView(
 		_ splitView: NSSplitView,
 		constrainSplitPosition proposedPosition: CGFloat,

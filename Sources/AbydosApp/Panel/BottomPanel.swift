@@ -205,6 +205,14 @@ final class BottomPanel: NSView {
 		activeByColumn[focusedColumn] ?? sessions(in: focusedColumn).last ?? sessions.last
 	}
 
+	/// How much of the shown terminal's height is not a whole row.
+	///
+	/// Nil when there is no terminal to be tidy about — a debugger or a
+	/// profiler in the panel has no grid and no opinion about its height.
+	var terminalHeightRemainder: CGFloat? {
+		activeSession?.terminal?.terminalView.heightRemainder
+	}
+
 	private var activeIndex: Int? {
 		guard let session = activeSession else { return nil }
 		return sessions.firstIndex { $0 === session }
