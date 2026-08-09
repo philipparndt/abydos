@@ -23,6 +23,11 @@ shape as 0406 — a container outliving the app that started it — one floor up
 `adopt` caps at twelve, so the machinery to find and stop them is there; what is
 missing is the moment that does it.
 
+*This one is no longer read as a fault: reaping was built, measured, and then
+reversed on purpose. What survives of it is the last line of the table below —
+nothing outliving the app — and the rest is settled under "a language server
+ends when the app does".*
+
 **They are the wrong Swift.** The working servers run from
 `~/Library/Developer/Toolchains/swift-6.1.2-RELEASE.xctoolchain` — swiftly's,
 the toolchain the Makefile documents at length as older than the SDK, the one
@@ -47,6 +52,8 @@ its own.
    window closed, app quitting. `ToolProcesses.terminateAll` covers the exit;
    what is missing is the per-project case, and 0406's `atexit` lesson applies
    here too, since the command-line modes call `exit()` and run no cleanup.
+   *Half of this was reversed the same day — only "app quitting" survives. See
+   below.*
 2. **Resolve every server through `xcrun`**, or through the same reasoning the
    Makefile's `SWIFT := xcrun swift` records, so the editor and the build agree
    about which Swift they mean. Check what else is found on the PATH the same
@@ -87,7 +94,10 @@ Two more facts the counting turned up:
   shares its project with the window it came from, so "this window is done with
   it" is not "nobody wants it". Measured: the torn-off window closed, and the
   project's server was still there afterwards. Nothing else in the app knew this
-  distinction, because nothing had ever stopped a server before.
+  distinction, because nothing had ever stopped a server before. *Sometimes has
+  become always, and no window asks what the others are showing any more. What
+  is left of it is in the key: two windows on one checkout, however the path is
+  spelled, hold one server between them.*
 - **The shutdown deadline did not work.** `shutdown` asked the server to stop
   and gave the ask two seconds — implemented as a task group racing a sleep, and
   a task group does not return until every task in it has, including the one
@@ -107,16 +117,73 @@ clangd for `c`, `cpp` and `objc`, typescript-language-server for four. Two
 `clangd` for one project, each indexing the same compilation database. Keyed by
 the server now.
 
+## A language server ends when the app does, and not before
+
+The first of the three is reversed. Stopping a project's servers when its
+window closed or the project was switched away from worked, and cost the wrong
+thing: coming back to a project paid for its index all over again. A server is
+now kept until Abydos itself goes — by every way it goes.
+
+Counted the same way as everything else here: `pgrep -P` down from the app's own
+pid, on two scratch Swift packages, driven by the harness rather than by hand.
+The `reaped` column is the morning's; `kept` is the decision.
+
+    scenario                                   before   reaped   kept
+    one project open, servers settled               2       1       1
+    switched to a second project                    4       1       2
+    a second window on another project closed       2       1       2
+    a .c and a .cpp open in one project             4       1       1   (clangd)
+    left running after the app exited               1       0       0
+
+The clangd row is item 3's and was not re-measured: nothing in it changed. The
+rest were, on this build.
+
+The last row is the one that cannot move, and it was measured down both exits.
+The last window closed, which is `applicationWillTerminate`: two servers running
+a moment before, none after. And a command-line mode that calls `exit()`, where
+no delegate method runs at all and the `atexit` handler is the only thing there
+is: a `sourcekit-lsp` was running right up to the moment the process went, and
+nothing was left. Zero both times. That was the fault that opened this entry and
+it has not come back.
+
+`--switch-to` takes `path@seconds` now, because a switch one second in happens
+while the first project's server is still starting, and a count taken after that
+is a race rather than a rule.
+
+**What it costs, plainly.** The 9 servers and 15 GB at the top of this entry are
+what a session that opens project after project can collect again. That is the
+trade, chosen rather than overlooked. Measured here, two projects kept two
+servers at 32 MB each — but a four-line package is not where fifteen gigabytes
+came from: `sourcekit-lsp` builds a real project in order to index it, and the
+`swift-frontend` underneath is the weight.
+
+Against that: switching back is instant, and the first project's server is the
+same process afterwards that it was before, so nothing re-indexes. An editor
+that goes quiet for a minute every time somebody changes project is worse than a
+leak — as long as the leak can be seen, which is the next section and is the
+condition on this decision rather than a nicety beside it.
+
+## What this decision needs next: show what is running
+
+Promoted out of "left out" below, because the decision above is what makes it
+necessary. A list of the live language servers and containers with their memory,
+and a way to stop one, is how somebody sees a session that has collected nine of
+them and does something about it — without running `ps`, which is the only
+reason this entry exists at all. It is the mitigation for the cost above, and it
+is not built here.
+
+`LanguageService.shutdown(project:)` is what it will call, and it is kept for
+that: nothing calls it today, on purpose, and the comment on it says so.
+
 ## Left out of this item deliberately
 
-- **An idle timeout.** The PlantUML server got five minutes (0422) because being
-  wrong there costs one slow render. A language server restart costs a re-index,
-  so this needs a different rule — probably only for projects not looked at in a
-  long time, and never the front one. Its own item when somebody wants it.
-- **Showing what is running.** A list of live servers and containers with their
-  memory, and a way to stop one, is how somebody would have seen this without
-  running `ps`. Also the fastest way to tell whether the three above worked. Its
-  own item, and worth having.
+- **An idle timeout.** Decided rather than deferred: there is not going to be
+  one. It is the same question as the one above, answered a slower way. The
+  PlantUML server got five minutes (0422) because being wrong there costs one
+  slow render; being wrong here costs a re-index, and what stops a session
+  collecting servers is somebody seeing them and stopping one, not a clock.
+- **Showing what is running.** Moved up — it is the mitigation this decision
+  rests on, and it has a section of its own above.
 
 ---
 
