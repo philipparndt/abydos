@@ -530,6 +530,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 		bottomPanel.onRequestHide = { [weak self] in self?.setPanelVisible(false) }
 		bottomPanel.onToggleMaximize = { [weak self] in self?.togglePanelMaximized() }
+		bottomPanel.onRequestNewTerminalMenu = { [weak self] view, point in
+			guard let self else { return }
+			self.newTerminalMenu().popUp(positioning: nil, at: point, in: view)
+		}
 		// Written when they change rather than only on the way out: a terminal
 		// that survives a restart has to survive the kind of exit nobody plans.
 		bottomPanel.onTerminalsChanged = { [weak self] in self?.rememberOpenEditors() }
@@ -3156,6 +3160,65 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	@objc func newTerminal(_ sender: Any?) {
 		setPanelVisible(true)
 		bottomPanel.newTerminal()
+	}
+
+	/// What the chevron beside the panel's + offers.
+	///
+	/// The kinds of terminal there are, which is two: an ordinary one, and one
+	/// inside the container this project says it is worked on in. The + itself
+	/// goes on making the ordinary one, exactly as the play button goes on
+	/// running while the chevron beside it offers profiling and coverage — the
+	/// same shape and the same bargain, because it is the same gesture.
+	///
+	/// Both items are the menu bar's own: the same selectors, put through the
+	/// same `validateMenuItem`, so what the View menu offers and what this
+	/// offers cannot drift apart, and the devcontainer entry is greyed out here
+	/// for the projects it is greyed out for there.
+	private func newTerminalMenu() -> NSMenu {
+		let menu = NSMenu()
+		// Validated by hand below, item by item: left to itself AppKit asks the
+		// responder chain, and a menu popped up from a view in the panel is not
+		// always where this window is.
+		menu.autoenablesItems = false
+
+		let plain = NSMenuItem(
+			title: "New Terminal", action: #selector(newTerminal(_:)), keyEquivalent: ""
+		)
+		plain.target = self
+		menu.addItem(plain)
+
+		let container = NSMenuItem(
+			title: Self.containerTerminalTitle,
+			action: #selector(newTerminalInContainer(_:)),
+			keyEquivalent: ""
+		)
+		container.target = self
+		// This is what names it after the container as well as what greys it
+		// out — the item says "New Terminal in <the devcontainer's own name> ⬢"
+		// for a project that has one, and stays grey and generic for the rest.
+		container.isEnabled = validateMenuItem(container)
+		menu.addItem(container)
+		return menu
+	}
+
+	/// What the + and its chevron answer to, for the harness.
+	var terminalAddControlsForTesting: String { bottomPanel.addControlsForTesting }
+
+	/// Shows the panel and nothing else, so the strip has a layout to be asked
+	/// about.
+	///
+	/// Deliberately not "open a terminal": the first terminal in a window
+	/// attaches to tmux, and a window that is following its terminal then goes
+	/// to wherever that session left its shell — a different project, with a
+	/// different answer about devcontainers, which is what this dump is for.
+	func showTerminalPanelForTesting() { setPanelVisible(true) }
+
+	/// What that menu holds, for the harness: a menu cannot be photographed
+	/// while it is open, which is why these dumps exist.
+	func newTerminalMenuForTesting() -> String {
+		newTerminalMenu().items
+			.map { "\($0.title) enabled=\($0.isEnabled)" }
+			.joined(separator: " | ")
 	}
 
 	/// A shell inside the container this project says it is worked on in.

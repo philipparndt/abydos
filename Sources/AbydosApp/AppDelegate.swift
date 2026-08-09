@@ -1125,6 +1125,21 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if options.terminalAddMenu {
+			// The panel first, since a strip that is not on screen has no layout
+			// and so no hit areas to ask about.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+				controller?.showTerminalPanelForTesting()
+				DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+					print("TABADD areas: \(controller?.terminalAddControlsForTesting ?? "no window")")
+					print("TABADD menu: \(controller?.newTerminalMenuForTesting() ?? "no window")")
+					fflush(stdout)
+					if options.isScreenshotRun { return }
+					exit(0)
+				}
+			}
+		}
+
 		if options.reportsTerminalDirectory {
 			for seconds in [3.0, 5.0, 7.0, 9.0] {
 				DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {

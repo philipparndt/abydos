@@ -231,6 +231,9 @@ final class BottomPanel: NSView {
 	var onDebugAgain: (() -> Void)?
 	/// A pane that belongs to a project was brought forward.
 	var onPaneNeedsProject: ((URL) -> Void)?
+	/// The chevron beside the + was pressed, with the view it is in and where in
+	/// that view to hang the menu.
+	var onRequestNewTerminalMenu: ((NSView, NSPoint) -> Void)?
 
 	/// This panel, so a tab dragged from one is recognised by the other.
 	let panelID = UUID()
@@ -372,6 +375,16 @@ final class BottomPanel: NSView {
 			self.focusedColumn = column
 			self.newTerminal()
 		}
+		// The chevron beside it, which offers the kinds of terminal that are not
+		// the ordinary one. What they are is the window's business rather than
+		// the panel's — only the window knows whether this project has a
+		// devcontainer — so the panel does no more than say where it was pressed.
+		strip.showsAddMenu = true
+		strip.onAddMenu = { [weak self, weak strip] point in
+			guard let self, let strip else { return }
+			self.focusedColumn = column
+			self.onRequestNewTerminalMenu?(strip, point)
+		}
 		strip.onHide = { [weak self] in self?.onRequestHide?() }
 		strip.onRename = { [weak self] index, name in
 			guard let self else { return }
@@ -487,6 +500,10 @@ final class BottomPanel: NSView {
 		for view in columnViews {
 			view.strip.showsPanelControls = false
 			view.strip.showsAddButton = true
+			// No chevron out here: what it offers is "a terminal in *this
+			// project's* devcontainer", and a torn-off terminal window has no
+			// project to answer for.
+			view.strip.showsAddMenu = false
 		}
 	}
 
@@ -2558,6 +2575,11 @@ final class BottomPanel: NSView {
 		activeSession?.terminal?.showsOutputOnly ?? false
 	}
 
+	/// What the + and the chevron beside it answer to, for the harness.
+	var addControlsForTesting: String {
+		tabStripForTesting?.addControlsForTesting ?? "no strip"
+	}
+
 	/// Clicks a tab, for the capture harness.
 	func selectTabForTesting(_ index: Int) {
 		activate(sessions[index], focus: false)
@@ -2911,6 +2933,16 @@ final class PanelTabStrip: NSView {
 	/// Whether the + belongs here. It does in any strip that owns terminals.
 	var showsAddButton = true { didSet { recomputeLayout(); needsDisplay = true } }
 	var onAdd: (() -> Void)?
+	/// Whether the + carries a chevron offering the other kinds of terminal.
+	///
+	/// The run control's play button already has this shape and this is the same
+	/// gesture: the button does the ordinary thing, and the chevron beside it
+	/// opens the ways of doing it that are wanted now and then. Off on tmux's own
+	/// strip, where the + makes a tmux window and the menu's items would be
+	/// answering a different question.
+	var showsAddMenu = false { didSet { recomputeLayout(); needsDisplay = true } }
+	/// The chevron was pressed, at a point in this view's own coordinates.
+	var onAddMenu: ((NSPoint) -> Void)?
 	var onHide: (() -> Void)?
 	/// Asked to give the panel the whole window, or to give it back.
 	var onToggleMaximize: (() -> Void)?
@@ -2975,6 +3007,8 @@ final class PanelTabStrip: NSView {
 	private var activeIndex: Int?
 	private var frames: [NSRect] = []
 	private var addButtonFrame: NSRect = .zero
+	/// The chevron on the +, narrow and part of the same shape.
+	private var addMenuFrame: NSRect = .zero
 	private var hideButtonFrame: NSRect = .zero
 	private var maximizeButtonFrame: NSRect = .zero
 	private var followButtonFrame: NSRect = .zero
@@ -3060,6 +3094,45 @@ final class PanelTabStrip: NSView {
 
 	/// Presses the + from a test, without a mouse.
 	func pressAddForTesting() { onAdd?() }
+
+	/// Whether the chevron is drawn and can be pressed.
+	///
+	/// tmux's strip keeps a bare +: its tabs are tmux's windows, and offering
+	/// "a terminal in the devcontainer" from a strip that makes tmux windows
+	/// would be one button answering two questions.
+	private var offersAddMenu: Bool { showsAddButton && showsAddMenu && !isMirroringTmux }
+
+	/// The two things a click beside the last tab can reach.
+	private enum AddControl { case plus, chevron }
+
+	/// Which of them a point is in, chevron first — it overlaps the + slightly
+	/// so the pair reads as one shape, and the narrow half must win where they
+	/// meet or it could never be pressed.
+	private func addControl(at point: NSPoint) -> AddControl? {
+		if offersAddMenu, addMenuFrame.contains(point) { return .chevron }
+		if showsAddButton, addButtonFrame.contains(point) { return .plus }
+		return nil
+	}
+
+	/// What a click at the middle of each of those reaches, for the harness.
+	///
+	/// A menu cannot be photographed while it is open, so what is checkable
+	/// about a chevron is that it is there and that it is not the button beside
+	/// it: pressing the + must still make a plain terminal.
+	var addControlsForTesting: String {
+		guard showsAddButton else { return "no +" }
+		func name(_ control: AddControl?) -> String {
+			switch control {
+			case .plus?: return "plus"
+			case .chevron?: return "chevron"
+			case nil: return "nothing"
+			}
+		}
+		let plus = name(addControl(at: NSPoint(x: addButtonFrame.midX, y: addButtonFrame.midY)))
+		guard offersAddMenu else { return "plus->\(plus) chevron->none" }
+		let chevron = name(addControl(at: NSPoint(x: addMenuFrame.midX, y: addMenuFrame.midY)))
+		return "plus->\(plus) chevron->\(chevron)"
+	}
 
 	/// Clicks a tab by its position on the strip, without a mouse — which is
 	/// the only way to catch a strip that answers for the tab next door.
@@ -3173,6 +3246,16 @@ final class PanelTabStrip: NSView {
 		}
 		addButtonFrame = showsAddButton
 			? NSRect(x: x + Theme.current.scaled(4), y: 0, width: Theme.current.scaled(24), height: bounds.height)
+			: .zero
+		// Hard against the +, the width of the debug button's chevron, so the two
+		// read as one control rather than as two buttons.
+		addMenuFrame = offersAddMenu
+			? NSRect(
+				x: addButtonFrame.maxX - Theme.current.scaled(4),
+				y: 0,
+				width: Theme.current.scaled(14),
+				height: bounds.height
+			)
 			: .zero
 
 		guard showsPanelControls else {
@@ -3301,7 +3384,11 @@ final class PanelTabStrip: NSView {
 		let point = convert(event.locationInWindow, from: nil)
 		pressedIndex = nil
 
-		if addButtonFrame.contains(point) { onAdd?(); return }
+		switch addControl(at: point) {
+		case .plus?: onAdd?(); return
+		case .chevron?: onAddMenu?(NSPoint(x: addButtonFrame.minX, y: bounds.maxY)); return
+		case nil: break
+		}
 		if hideButtonFrame.contains(point) { onHide?(); return }
 		if maximizeButtonFrame.contains(point) { onToggleMaximize?(); return }
 		if mirroredSession != nil, mirrorTagFrame.contains(point) {
@@ -3489,6 +3576,13 @@ final class PanelTabStrip: NSView {
 
 		if showsAddButton {
 			drawGlyph(in: addButtonFrame, symbol: "plus", tint: isMirroringTmux ? Self.onTmuxGreen : nil)
+		}
+		if offersAddMenu {
+			// Smaller and dimmer than the +, the way the chevron beside the
+			// ladybird is: it is part of that button, not another one.
+			drawGlyph(
+				in: addMenuFrame, symbol: "chevron.down", points: 9, tint: Theme.current.gitIgnored
+			)
 		}
 		guard showsPanelControls else { return }
 
@@ -3843,15 +3937,20 @@ final class PanelTabStrip: NSView {
 		}
 	}
 
-	private func drawGlyph(in rect: NSRect, symbol: String, tint: NSColor? = nil) {
+	/// - Parameter points: how big the glyph is, before the theme's scale. The
+	///   default is what every control on this strip is; the + 's chevron is
+	///   smaller, because it is part of that button rather than another one.
+	private func drawGlyph(
+		in rect: NSRect, symbol: String, points: CGFloat = 12, tint: NSColor? = nil
+	) {
 		guard let image = Theme.symbol(
 			symbol,
-			size: 11 * Theme.current.scale,
+			size: (points - 1) * Theme.current.scale,
 			color: tint ?? Theme.current.sidebarText
 		) else {
 			return
 		}
-		let size = Theme.current.scaled(12)
+		let size = Theme.current.scaled(points)
 		image.drawFitted(in: NSRect(x: rect.midX - size / 2, y: rect.midY - size / 2, width: size, height: size))
 	}
 }
