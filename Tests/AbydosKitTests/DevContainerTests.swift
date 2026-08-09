@@ -168,15 +168,54 @@ struct DevContainerTests {
 
 	// MARK: - What it will not do
 
-	/// Docker only, exactly as 0406 and 0422 decided: a container kept for a
-	/// whole editing session is the one that most needs removing again, and that
-	/// is the verb which could not be proven against Apple's runtime.
-	@Test func refusesApplesRuntimeRatherThanHalfWorking() {
+	/// Both runtimes start one now: what made this docker-only was that removing
+	/// a container by name was unproven against Apple's, and it is proven.
+	@Test func bothRuntimesStartOneNowThatBothCanBeTidiedUpAfter() {
 		#expect(DevContainers.canStart(.docker("/usr/bin/docker")))
-		#expect(!DevContainers.canStart(.apple("/usr/local/bin/container")))
-		let reason = DevContainers.onlyDocker(.apple("/usr/local/bin/container"))
-		#expect(reason.contains("needs Docker"))
-		#expect(reason.contains("container"))
+		#expect(DevContainers.canStart(.apple("/usr/local/bin/container")))
+	}
+
+	/// The one thing that does not work on Apple's runtime, refused by name
+	/// rather than started and left silently unreachable.
+	@Test func aForwardedPortIsRefusedOnApplesRuntimeAndOnlyThat() throws {
+		let apple = ContainerRuntime.apple("/usr/local/bin/container")
+		let ported = try read(#"{"image": "alpine:3", "forwardPorts": [8080, 5432]}"#)
+		let reason = try #require(DevContainers.unsupported(ported, on: apple))
+		#expect(reason.contains("8080, 5432"))
+		#expect(reason.contains("accepted and then reset"))
+		#expect(reason.contains("Docker"))
+		#expect(reason.contains("service"))
+
+		// Docker forwards ports perfectly well, so nothing is refused there.
+		#expect(DevContainers.unsupported(ported, on: docker) == nil)
+		// And a devcontainer that forwards nothing has nothing to be wrong.
+		let plain = try read(#"{"image": "alpine:3"}"#)
+		#expect(DevContainers.unsupported(plain, on: apple) == nil)
+	}
+
+	/// Docker answers the one field; Apple's has no `-f` and answers with the
+	/// whole record, which is read rather than searched for the word "true".
+	@Test func eachRuntimeIsAskedForItsStateInItsOwnWords() {
+		let apple = ContainerRuntime.apple("/usr/local/bin/container")
+		#expect(DevContainers.stateCommand(name: "abydos-x", using: docker).arguments
+			== ["inspect", "-f", "{{.State.Running}}", "abydos-x"])
+		#expect(DevContainers.stateCommand(name: "abydos-x", using: apple).arguments
+			== ["inspect", "abydos-x"])
+
+		#expect(DevContainers.isRunning("true\n", using: docker))
+		#expect(!DevContainers.isRunning("false\n", using: docker))
+
+		let running = #"[{"id":"abydos-x","status":{"state":"running","networks":[]}}]"#
+		let stopped = #"[{"id":"abydos-x","status":{"state":"stopped","networks":[]}}]"#
+		#expect(DevContainers.isRunning(running, using: apple))
+		#expect(!DevContainers.isRunning(stopped, using: apple))
+		// The word in an image reference is not a state, which a `contains` would
+		// have taken it for.
+		#expect(!DevContainers.isRunning(
+			#"[{"id":"x","configuration":{"image":"example/true-running:1"},"status":{"state":"stopped"}}]"#,
+			using: apple
+		))
+		#expect(!DevContainers.isRunning("Error: container not found", using: apple))
 	}
 
 	@Test func saysWhichOfTheUsualThingsStoppedIt() {
@@ -190,6 +229,13 @@ struct DevContainerTests {
 			"Cannot connect to the Docker daemon at unix:///var/run/docker.sock.",
 			project: "service"
 		) == "Docker is not running, so the devcontainer for service could not be started.")
+
+		// And the runtime that could not be reached is named, so nobody is sent to
+		// start the wrong one.
+		#expect(DevContainers.explainStart(
+			"Error: cannot connect to the API server",
+			project: "service", runtime: .apple("/usr/local/bin/container")
+		) == "container is not running, so the devcontainer for service could not be started.")
 
 		#expect(DevContainers.explainStart("", project: "service")
 			.contains("said nothing about why"))

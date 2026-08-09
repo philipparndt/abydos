@@ -60,21 +60,44 @@ public actor DevContainers {
 
 	// MARK: - Whether this can be done at all
 
-	/// Whether a devcontainer is offered for this runtime.
+	/// Whether a devcontainer is offered for this runtime at all.
 	///
-	/// Docker only, exactly as 0406 and 0422 decided. Apple's `container` is not
-	/// half-supported here: a container kept for a whole editing session is the
-	/// one that most needs removing again, and that is the verb which could not
-	/// be proven against it.
-	public static func canStart(_ runtime: ContainerRuntime) -> Bool {
-		if case .docker = runtime { return true }
-		return false
-	}
+	/// Both, now. This was docker only because a container kept for a whole
+	/// editing session is the one that most needs removing again, and that verb
+	/// was unproven against Apple's — 0406's decision, and it is proven now.
+	/// Everything else a devcontainer is made of was exercised there too: the
+	/// bind mount, `-d` with the keep-alive, `--entrypoint`, `-u`, `-e`, `-w`,
+	/// and `exec -it` onto a real pty.
+	public static func canStart(_ runtime: ContainerRuntime) -> Bool { true }
 
-	public static func onlyDocker(_ runtime: ContainerRuntime) -> String {
-		"Opening a project in its devcontainer needs Docker, and this machine is set to use "
-			+ "\(runtime.name), which this app cannot yet remove a container from by name — "
-			+ "choose Docker as the container runtime in settings."
+	/// Why *this* devcontainer cannot be opened on *this* runtime, or nil when it
+	/// can.
+	///
+	/// One thing, and it is not about cleanup: a port published to the host does
+	/// not work on Apple's runtime. The container comes up and the forwarder is
+	/// made — `container` even listens on the host port — and then every
+	/// connection is accepted and reset, because the forwarder cannot reach the
+	/// container behind it: `No route to host`, in the runtime's own log, which
+	/// is macOS's local-network privacy refusing its helper the way it refuses
+	/// this app.
+	///
+	/// A project that names `forwardPorts` is naming the thing it wants
+	/// reachable, so starting it anyway would hand somebody a container that
+	/// looks right and a port that silently is not. Refused by name instead,
+	/// which is what this file does with everything it cannot honestly do.
+	///
+	/// A devcontainer with no `forwardPorts` has nothing to be wrong here and is
+	/// not stopped — its mount, its shell and its environment are all proven on
+	/// Apple's runtime by `DevContainerLiveTests` running against it.
+	public static func unsupported(
+		_ configuration: DevContainerConfiguration, on runtime: ContainerRuntime
+	) -> String? {
+		guard case .apple = runtime, !configuration.forwardPorts.isEmpty else { return nil }
+		let ports = configuration.forwardPorts.map(String.init).joined(separator: ", ")
+		return "This project's devcontainer forwards \(ports), and a port published to the "
+			+ "host does not work on Apple's container runtime — the connection is accepted "
+			+ "and then reset. Choose Docker as the container runtime in settings to open "
+			+ "\(configuration.project.lastPathComponent) in it."
 	}
 
 	// MARK: - The commands
@@ -167,10 +190,29 @@ public actor DevContainers {
 	}
 
 	/// The command that asks whether a container is still up.
+	///
+	/// Docker's `inspect` is asked for the one field. Apple's has no `-f` and
+	/// prints the whole record as JSON, so it is asked plainly and `isRunning`
+	/// reads the answer.
 	public static func stateCommand(
 		name: String, using runtime: ContainerRuntime
 	) -> (executable: String, arguments: [String]) {
-		(runtime.path, ["inspect", "-f", "{{.State.Running}}", name])
+		switch runtime {
+		case .docker: return (runtime.path, ["inspect", "-f", "{{.State.Running}}", name])
+		case .apple:  return ToolContainers.inspection(of: name, using: runtime)
+		}
+	}
+
+	/// Whether that command's answer means the container is up.
+	///
+	/// Not a `contains("true")` on both: Apple's answer is the container's entire
+	/// configuration, and an image reference or an environment variable with the
+	/// word in it would read as running. Its state is read out of the JSON.
+	public static func isRunning(_ output: String, using runtime: ContainerRuntime) -> Bool {
+		switch runtime {
+		case .docker: return output.contains("true")
+		case .apple:  return AppleInspection.isRunning(output)
+		}
 	}
 
 	// MARK: - Why it would not start
@@ -180,7 +222,9 @@ public actor DevContainers {
 	/// The same job `ContainerImages.explain` does for a pull, and the same
 	/// reason for doing it: the runtime's own words are long, and the one thing
 	/// worth knowing is which of a few things happened.
-	public static func explainStart(_ output: String, project: String) -> String {
+	public static func explainStart(
+		_ output: String, project: String, runtime: ContainerRuntime? = nil
+	) -> String {
 		let text = output.lowercased()
 		if text.contains("port is already allocated") || text.contains("address already in use") {
 			return "A port this project forwards is already in use on this machine, so its "
@@ -188,7 +232,10 @@ public actor DevContainers {
 				+ "\(project) again."
 		}
 		if text.contains("cannot connect") || text.contains("is the docker daemon running") {
-			return "Docker is not running, so the devcontainer for \(project) could not be started."
+			// Named, because "Docker is not running" said of Apple's runtime sends
+			// somebody to start the wrong thing.
+			let name = runtime?.name ?? "Docker"
+			return "\(name) is not running, so the devcontainer for \(project) could not be started."
 		}
 		let first = output
 			.split(separator: "\n", omittingEmptySubsequences: true)
@@ -229,7 +276,6 @@ public actor DevContainers {
 		case let .refused(reason):
 			return .refused(reason)
 		case let .understood(configuration):
-			guard Self.canStart(runtime) else { return .refused(Self.onlyDocker(runtime)) }
 			return await session(for: configuration, using: runtime, progress: progress)
 		}
 	}
@@ -242,6 +288,9 @@ public actor DevContainers {
 		using runtime: ContainerRuntime,
 		progress: (@Sendable (String) -> Void)? = nil
 	) async -> Outcome {
+		if let unsupported = Self.unsupported(configuration, on: runtime) {
+			return .refused(unsupported)
+		}
 		let key = configuration.project.path
 		if let existing = sessions[key] {
 			if await isUp(existing) { return .running(existing) }
@@ -316,7 +365,7 @@ public actor DevContainers {
 		guard started.succeeded else {
 			ToolContainers.shared.releaseInBackground(name)
 			return .refused(Self.explainStart(
-				started.output, project: configuration.project.lastPathComponent
+				started.output, project: configuration.project.lastPathComponent, runtime: runtime
 			))
 		}
 		return .running(Session(name: name, configuration: configuration, runtime: runtime))
@@ -343,7 +392,7 @@ public actor DevContainers {
 	private func isUp(_ session: Session) async -> Bool {
 		let command = Self.stateCommand(name: session.name, using: session.runtime)
 		let answer = await offMainThread { RuntimeCommand.run(command, deadline: 20) }
-		return answer.succeeded && answer.output.contains("true")
+		return answer.succeeded && Self.isRunning(answer.output, using: session.runtime)
 	}
 
 	/// Waiting on a subprocess is not what a thread from the cooperative pool is

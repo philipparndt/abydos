@@ -10,22 +10,26 @@ import Testing
 /// where the file said it would, gives somebody a shell inside it, and is gone
 /// again afterwards.
 ///
-/// Skipped unless docker is here with the image already on it, the way the
-/// other live tests are skipped without their server. To run it:
+/// **Run for both runtimes**, which is what lifted 0406's docker-only decision
+/// here: everything a devcontainer is made of — the bind mount, `-d` with the
+/// keep-alive, `--entrypoint`, `-u`, `-e`, `-w`, `exec -it` onto a pty, and the
+/// removal at the end — was exercised on Apple's runtime by running this against
+/// it. The one thing that does not work there is a forwarded port, and that is
+/// refused by name rather than tested here.
+///
+/// Skipped, per runtime, unless that runtime has the image already. To run all
+/// of it:
 ///
 ///     docker pull alpine:3
-///
-/// Docker only, per 0406 and 0422: a container kept for a whole editing session
-/// is the one that most needs removing again, and that is the verb which could
-/// not be proven against Apple's runtime.
-struct DevContainerLiveTests {
+///     container image pull alpine:3
+@Suite(.serialized) struct DevContainerLiveTests {
 	/// Small, present on most machines that have docker at all, and pinned to a
 	/// major so this does not silently start testing a different distribution.
 	static let image = "alpine:3"
 
-	/// Docker, if it is here and already holds the image.
-	private var available: ContainerRuntime? {
-		guard let runtime = ContainerRuntime.discover(preference: .docker),
+	/// That runtime, if it is here and already holds the image.
+	private func available(_ preference: ContainerRuntime.Preference) -> ContainerRuntime? {
+		guard let runtime = ContainerRuntime.discover(preference: preference),
 		      holdsImage(runtime)
 		else { return nil }
 		return runtime
@@ -33,7 +37,7 @@ struct DevContainerLiveTests {
 
 	private func holdsImage(_ runtime: ContainerRuntime) -> Bool {
 		RuntimeCommand.run(
-			ContainerImages.inspect(Self.image, using: runtime), deadline: 10
+			ContainerImages.inspect(Self.image, using: runtime), deadline: 20
 		).succeeded
 	}
 
@@ -57,8 +61,11 @@ struct DevContainerLiveTests {
 		return URL(fileURLWithPath: FilePath.canonical(root), isDirectory: true)
 	}
 
-	@Test func opensAProjectInItsDevcontainerAndGivesSomebodyAShellInIt() async throws {
-		guard let runtime = available else { return }
+	@Test(arguments: [ContainerRuntime.Preference.docker, .apple])
+	func opensAProjectInItsDevcontainerAndGivesSomebodyAShellInIt(
+		_ preference: ContainerRuntime.Preference
+	) async throws {
+		guard let runtime = available(preference) else { return }
 		let root = try makeProject()
 		defer { try? FileManager.default.removeItem(at: root) }
 
@@ -77,7 +84,7 @@ struct DevContainerLiveTests {
 		let running = RuntimeCommand.run(
 			DevContainers.stateCommand(name: session.name, using: runtime), deadline: 20
 		)
-		#expect(running.output.contains("true"))
+		#expect(DevContainers.isRunning(running.output, using: runtime))
 
 		let contents = RuntimeCommand.run(
 			DevContainers.execCommand(session, arguments: ["cat", "marker.txt"]), deadline: 30
@@ -134,10 +141,20 @@ struct DevContainerLiveTests {
 		defer { terminal.terminate() }
 
 		// A shell has to have got as far as reading its input before anything
-		// typed at it means anything.
-		terminal.write("printf 'IN:%s:%s\\n' \"$(pwd)\" \"$(cat marker.txt)\"\n")
-		let deadline = Date().addingTimeInterval(30)
-		while Date() < deadline, !seen.text.contains("IN:") {
+		// typed at it means anything — and this used to type once, immediately,
+		// and wait. On a machine running the rest of this suite beside it, the
+		// exec had not reached a shell yet and the line went nowhere; the test
+		// then failed saying the container had no checkout in it, which was never
+		// true. So it is typed again every few seconds until the answer comes
+		// back, which costs nothing when the first one lands.
+		let ask = "printf 'IN:%s:%s\\n' \"$(pwd)\" \"$(cat marker.txt)\"\n"
+		let deadline = Date().addingTimeInterval(90)
+		var lastAsked = Date.distantPast
+		while Date() < deadline, !seen.text.contains("IN:/") {
+			if Date().timeIntervalSince(lastAsked) > 3 {
+				terminal.write(ask)
+				lastAsked = Date()
+			}
 			try? await Task.sleep(nanoseconds: 200_000_000)
 		}
 		// The prompt is in the workspace folder, and the checkout is under it.
@@ -151,8 +168,8 @@ struct DevContainerLiveTests {
 	/// Polled, because removal is asked for in the background: what is being
 	/// checked is that it happens, not that it has happened by the next line.
 	private func isGone(_ name: String, using runtime: ContainerRuntime) -> Bool {
+		guard let listing = ToolContainers.listing(using: runtime) else { return false }
 		let deadline = Date().addingTimeInterval(20)
-		let listing = (runtime.path, ["ps", "-a", "--format", "{{.Names}}", "--filter", "name=\(name)"])
 		while Date() < deadline {
 			let listed = RuntimeCommand.run(listing, deadline: 15)
 			if listed.succeeded, !listed.output.contains(name) { return true }
