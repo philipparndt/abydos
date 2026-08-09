@@ -2398,8 +2398,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// What this project can run, refreshed off the main thread.
 	private(set) var runConfigurations: [RunConfiguration] = []
 
-	/// Where each Xcode scheme was last sent, by scheme name. Kept with the
-	/// project's session, so a scheme that went to the phone yesterday goes
+	/// Where each Xcode project was last sent, keyed as
+	/// `XcodeDestinationMemory` says — by project, not by scheme. Kept with the
+	/// project's session, so a project that went to the phone yesterday goes
 	/// there again today rather than back to a simulator.
 	var xcodeDestinations: [String: String] = [:]
 
@@ -2665,7 +2666,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	func runScheme(_ configuration: RunConfiguration, target: XcodeTarget) {
 		setPanelVisible(true)
 		let directory = URL(fileURLWithPath: configuration.workingDirectory)
-		let remembered = xcodeDestinations[target.scheme.name]
+		let remembered = xcodeDestinations[XcodeDestinationMemory.key(for: target)]
 
 		// Asked once per project per session: the second run of a scheme starts
 		// building immediately rather than spending twelve seconds finding out
@@ -2701,7 +2702,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	/// Builds, installs and launches, in the terminal where the output is.
 	func start(_ configuration: RunConfiguration, target: XcodeTarget, on destination: XcodeDestination) {
-		xcodeDestinations[target.scheme.name] = destination.id
+		xcodeDestinations[XcodeDestinationMemory.key(for: target)] = destination.id
 
 
 		let directory = URL(fileURLWithPath: configuration.workingDirectory)
@@ -2890,7 +2891,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		for configuration: RunConfiguration,
 		target: XcodeTarget
 	) {
-		let remembered = xcodeDestinations[target.scheme.name]
+		let remembered = xcodeDestinations[XcodeDestinationMemory.key(for: target)]
 			?? XcodeDestinations.shared.preferred(among: destinations)?.id
 
 		// This Mac and the devices on the desk in full, then one simulator per

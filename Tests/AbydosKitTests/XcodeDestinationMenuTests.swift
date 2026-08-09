@@ -157,6 +157,94 @@ struct XcodeDestinationMenuTests {
 	}
 }
 
+/// Remembering where a project was last run.
+///
+/// Per project rather than per scheme: an app and its watch app share one
+/// answer. What matters is not which dictionary key is used but that the answer
+/// outlives the app — so these write it where it really goes and read it back,
+/// which is what quitting and reopening does.
+struct XcodeDestinationMemoryTests {
+	private func root() throws -> URL {
+		let root = URL(fileURLWithPath: NSTemporaryDirectory())
+			.appendingPathComponent("destinations-\(UUID().uuidString)")
+		try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+		return root
+	}
+
+	private func target(_ scheme: String, in project: String) -> XcodeTarget {
+		XcodeTarget(
+			project: XcodeProject(path: project, container: .project),
+			scheme: XcodeScheme(name: scheme, product: "\(scheme).app")
+		)
+	}
+
+	/// The watch app is run for the first time and goes where the app went.
+	@Test func aChoiceOutlivesTheAppAndCoversEverySchemeOfTheProject() throws {
+		let root = try root()
+		defer { try? FileManager.default.removeItem(at: root) }
+		let app = target("WallDisplay2", in: "/checkout/ios/WallDisplay2.xcodeproj")
+		let watch = target("WallDisplay2 Watch App", in: "/checkout/ios/WallDisplay2.xcodeproj")
+
+		var session = ProjectSession(files: [.init(path: "/checkout/a.swift")])
+		session.xcodeDestinations[XcodeDestinationMemory.key(for: app)] = "SIM-1"
+		try SessionStore.write(session, in: root)
+
+		// Quitting and opening the project again: nothing is in memory, only
+		// what was left beside the project.
+		let reopened = try #require(SessionStore.read(in: root))
+		#expect(reopened.xcodeDestinations[XcodeDestinationMemory.key(for: watch)] == "SIM-1")
+	}
+
+	/// One checkout, two Xcode projects, two answers — which is why the key is
+	/// the path and not the project's name.
+	@Test func twoProjectsInOneCheckoutAreRememberedApart() throws {
+		let root = try root()
+		defer { try? FileManager.default.removeItem(at: root) }
+		let phone = target("App", in: "/checkout/ios/App.xcodeproj")
+		let tv = target("App", in: "/checkout/tv/App.xcodeproj")
+
+		var session = ProjectSession(files: [.init(path: "/checkout/a.swift")])
+		session.xcodeDestinations[XcodeDestinationMemory.key(for: phone)] = "PHONE-1"
+		session.xcodeDestinations[XcodeDestinationMemory.key(for: tv)] = "TV-1"
+		try SessionStore.write(session, in: root)
+
+		let reopened = try #require(SessionStore.read(in: root))
+		#expect(reopened.xcodeDestinations[XcodeDestinationMemory.key(for: phone)] == "PHONE-1")
+		#expect(reopened.xcodeDestinations[XcodeDestinationMemory.key(for: tv)] == "TV-1")
+	}
+
+	/// What the old version wrote lapses, and does not linger.
+	///
+	/// A session file from when this was keyed by scheme name has answers that
+	/// cannot be assigned to a project without guessing which scheme spoke for
+	/// it. They are dropped: the cost is one pick from a menu that is already
+	/// open, and the file stops carrying them the next time it is written.
+	@Test func whatWasRememberedPerSchemeIsLetGo() throws {
+		let root = try root()
+		defer { try? FileManager.default.removeItem(at: root) }
+		try AbydosFolder.create(in: root)
+
+		let old: [String: Any] = [
+			"files": [["path": "/checkout/a.swift", "line": 1]],
+			"destinations": [
+				"WallDisplay2": "SIM-OLD",
+				"WallDisplay2 Watch App": "WATCH-OLD",
+			],
+		]
+		try JSONSerialization.data(withJSONObject: old)
+			.write(to: AbydosFolder.sessionFile(in: root), options: .atomic)
+
+		let read = try #require(SessionStore.read(in: root))
+		// The rest of the session is untouched — only the destinations lapse.
+		#expect(read.files.map(\.path) == ["/checkout/a.swift"])
+		#expect(read.xcodeDestinations.isEmpty)
+
+		try SessionStore.write(read, in: root)
+		let again = try #require(SessionStore.read(in: root))
+		#expect(again.xcodeDestinations.isEmpty)
+	}
+}
+
 /// The Mac that was missing from every project with Catalyst enabled.
 struct MacCatalystDestinationTests {
 	/// Taken from `xcodebuild -showdestinations` for a real iOS app: the only
