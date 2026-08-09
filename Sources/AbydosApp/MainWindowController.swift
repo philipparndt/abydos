@@ -1340,7 +1340,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			// Named here rather than once at build time because which container
 			// it means changes with the subproject being worked in, and this is
 			// the moment before it is read.
-			item.title = devContainerMenuTitle
+			//
+			// An item carrying a choice is named after *that* one: the chevron's
+			// menu has one entry per devcontainer and they all come through here,
+			// so naming them all after the preferred one would make every entry
+			// in a project with two read the same.
+			item.title = devContainerMenuTitle(for: choice(carriedBy: item))
 			return hasDevContainer
 		case #selector(navigateBack(_:)):
 			return canNavigateBack
@@ -3164,16 +3169,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	/// What the chevron beside the panel's + offers.
 	///
-	/// The kinds of terminal there are, which is two: an ordinary one, and one
-	/// inside the container this project says it is worked on in. The + itself
-	/// goes on making the ordinary one, exactly as the play button goes on
-	/// running while the chevron beside it offers profiling and coverage — the
-	/// same shape and the same bargain, because it is the same gesture.
+	/// The kinds of terminal there are: an ordinary one, and one inside each
+	/// container this project says it can be worked on in. The + itself goes on
+	/// making the ordinary one, exactly as the play button goes on running while
+	/// the chevron beside it offers profiling and coverage — the same shape and
+	/// the same bargain, because it is the same gesture.
 	///
-	/// Both items are the menu bar's own: the same selectors, put through the
-	/// same `validateMenuItem`, so what the View menu offers and what this
-	/// offers cannot drift apart, and the devcontainer entry is greyed out here
-	/// for the projects it is greyed out for there.
+	/// **This is the menu the several-devcontainer refusal was waiting for.** A
+	/// project with `.devcontainer/alpine` beside `.devcontainer/go` was refused
+	/// whole, because picking one quietly is picking somebody's toolchain for
+	/// them and there was nowhere to ask. There is now, so both are here, each
+	/// named after itself.
+	///
+	/// Every item is the menu bar's own: the same selectors, put through the same
+	/// `validateMenuItem`, so what the View menu offers and what this offers
+	/// cannot drift apart, and a devcontainer entry is greyed out here for the
+	/// projects it is greyed out for there.
 	private func newTerminalMenu() -> NSMenu {
 		let menu = NSMenu()
 		// Validated by hand below, item by item: left to itself AppKit asks the
@@ -3187,18 +3198,34 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		plain.target = self
 		menu.addItem(plain)
 
-		let container = NSMenuItem(
+		let choices = devContainerChoices
+		// One grey generic entry when there is nothing to name, so that the menu
+		// says by being grey which projects this is for rather than by being
+		// absent.
+		for item in choices.isEmpty ? [containerMenuItem(for: nil)] : choices.map(containerMenuItem) {
+			item.target = self
+			// This is what names it after the container as well as what greys it
+			// out — the item says "New Terminal in <the devcontainer's own name> ⬢"
+			// for a project that has one, and stays grey and generic for the rest.
+			item.isEnabled = validateMenuItem(item)
+			menu.addItem(item)
+		}
+		return menu
+	}
+
+	/// One entry offering a shell in one container, or the grey generic one.
+	///
+	/// The choice travels on the item, because with several of them the title is
+	/// not enough to act on — what is clicked has to name the file it meant, or
+	/// the second entry would open the first entry's container.
+	private func containerMenuItem(for choice: DevContainerFile.Choice?) -> NSMenuItem {
+		let item = NSMenuItem(
 			title: Self.containerTerminalTitle,
 			action: #selector(newTerminalInContainer(_:)),
 			keyEquivalent: ""
 		)
-		container.target = self
-		// This is what names it after the container as well as what greys it
-		// out — the item says "New Terminal in <the devcontainer's own name> ⬢"
-		// for a project that has one, and stays grey and generic for the rest.
-		container.isEnabled = validateMenuItem(container)
-		menu.addItem(container)
-		return menu
+		item.representedObject = choice?.file
+		return item
 	}
 
 	/// What the + and its chevron answer to, for the harness.
@@ -3241,14 +3268,26 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// devcontainer anywhere keeps the "no devcontainer.json" message below,
 		// which names the folder it looked in.
 		guard let root = devContainerRoot ?? scopeRoot else { return }
+		// Which of them was clicked. The item carries its own choice, because a
+		// project offering two containers has two entries and the title is not
+		// something an action can act on; nothing carrying one — the View menu's
+		// single item, the harness — means the preferred one.
+		let choice = choice(carriedBy: sender) ?? devContainerChoices.first
 		setPanelVisible(true)
 		// Named before anything is started, from the same file the menu item is
 		// named from, so the tab is called what was clicked from the moment it
 		// appears rather than being renamed under somebody at the end.
 		let preparing = bottomPanel.newPreparingTerminal(
-			title: Self.containerTabTitle(for: root), subject: root.lastPathComponent
+			title: Self.containerTabTitle(for: choice, in: root), subject: root.lastPathComponent
 		)
-		preparing.step("Opening \(root.lastPathComponent) in its devcontainer…")
+		guard let choice else {
+			preparing.refuse(
+				"\(root.lastPathComponent) has no devcontainer.json — a project says what it "
+					+ "needs to be worked on in .devcontainer/devcontainer.json."
+			)
+			return
+		}
+		preparing.step("Opening \(root.lastPathComponent) in \(choice.name)…")
 
 		Task { @MainActor in
 			guard let runtime = ContainerRuntime.discover(
@@ -3262,16 +3301,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				return
 			}
 			let outcome = await DevContainers.shared.session(
-				for: root,
+				for: choice.file,
+				in: root,
 				using: runtime,
 				progress: preparing.progress
 			)
 			switch outcome {
-			case .none:
-				preparing.refuse(
-					"\(root.lastPathComponent) has no devcontainer.json — a project says what it "
-						+ "needs to be worked on in .devcontainer/devcontainer.json."
-				)
 			case let .refused(reason):
 				preparing.refuse(reason)
 			case let .running(session):
@@ -3285,15 +3320,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 	}
 
+	/// The choice a menu item is carrying, if it is carrying one.
+	private func choice(carriedBy sender: Any?) -> DevContainerFile.Choice? {
+		guard let file = (sender as? NSMenuItem)?.representedObject as? URL else { return nil }
+		return devContainerChoices.first { $0.file == file }
+	}
+
 	/// What the tab in the container is called.
 	///
 	/// The devcontainer's own `name`, which is what the menu item that opens it
 	/// says too — a window scoped to one subproject of ten that each have a
-	/// devcontainer cannot say which one it means by saying "container". The
-	/// folder is the answer when the file has no name or cannot be read.
-	static func containerTabTitle(for root: URL) -> String {
-		let named = DevContainerFile.read(project: root)?.configuration?.name
-		return "\(named ?? root.lastPathComponent) ⬢"
+	/// devcontainer cannot say which one it means by saying "container", and
+	/// neither can a project offering two of them. The folder the file sits in is
+	/// the answer when it has no name of its own.
+	static func containerTabTitle(for choice: DevContainerFile.Choice?, in root: URL) -> String {
+		"\(choice?.name ?? root.lastPathComponent) ⬢"
 	}
 
 	/// Where the devcontainer this window would open is, or nil when there is
@@ -3318,36 +3359,65 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// item is enabled by.
 	var hasDevContainer: Bool { devContainerRoot != nil }
 
+	/// Every devcontainer this window can offer, named, in the order they are
+	/// preferred.
+	///
+	/// Usually one. A project with `.devcontainer/alpine` beside
+	/// `.devcontainer/go` has two, which used to refuse the project outright for
+	/// want of anywhere to ask which one somebody meant.
+	var devContainerChoices: [DevContainerFile.Choice] {
+		guard let root = devContainerRoot else { return [] }
+		return DevContainerFile.choices(in: root)
+	}
+
 	/// What the item is called when there is no container of ours to name.
 	static let containerTerminalTitle = "New Terminal in Container"
 
-	/// What the menu item says it will open.
+	/// What a menu item says it will open.
 	///
 	/// Named after the container, exactly as the tab it opens is: a window
 	/// scoped to one subproject of ten that each have a devcontainer cannot say
-	/// which one it means by saying "Container". The devcontainer's own `name`
-	/// is what the tab shows, so it is what this shows too.
-	///
-	/// The folder is the answer when the file has no name or cannot be read —
-	/// two `devcontainer.json` in one project is refused rather than read, and
-	/// the folder is then the whole of what can honestly be said about it.
-	var devContainerMenuTitle: String {
-		guard let root = devContainerRoot else { return Self.containerTerminalTitle }
+	/// which one it means by saying "Container", and neither can a project
+	/// offering two at once. The devcontainer's own `name` is what the tab shows,
+	/// so it is what this shows too, and the folder the file sits in is the
+	/// answer when it has none.
+	func devContainerMenuTitle(for choice: DevContainerFile.Choice?) -> String {
+		// Nothing carried means the preferred one — which is the View menu's
+		// single item, and every project that has only one.
+		guard let root = devContainerRoot, let named = choice ?? devContainerChoices.first
+		else { return Self.containerTerminalTitle }
 		// The tab's own name, so the item and the tab it opens cannot drift.
-		return "New Terminal in \(Self.containerTabTitle(for: root))"
+		return "New Terminal in \(Self.containerTabTitle(for: named, in: root))"
 	}
+
+	/// What the View menu's single item says it will open.
+	///
+	/// **It opens the project's preferred devcontainer, and says which one that
+	/// is.** A menu item is one command with one title; the alternative — turning
+	/// it into a submenu when a project has several — costs the two things that
+	/// make the ordinary case right, because AppKit does not send
+	/// `validateMenuItem:` to an item that has a submenu, so it could no longer
+	/// be renamed after the container it opens nor greyed out by the same rule as
+	/// everything else in that menu. So it stays one item, and it does not
+	/// disagree with the chevron's menu: it is that menu's first container entry,
+	/// with the same title, opening the same container, through the same
+	/// selector and the same validation. What it offers is a subset; what it says
+	/// is never wrong.
+	var devContainerMenuTitle: String { devContainerMenuTitle(for: nil) }
 
 	/// Opens a terminal in the project's devcontainer and says what came back.
 	///
 	/// Through the menu item's own validation and action, because that is what
 	/// the click does: a shell that works when a test calls the kit directly
 	/// proves nothing about whether the menu reaches it.
-	func exerciseDevContainerTerminalForTesting() {
-		let item = NSMenuItem(
-			title: Self.containerTerminalTitle,
-			action: #selector(newTerminalInContainer(_:)),
-			keyEquivalent: ""
-		)
+	/// - Parameter which: the devcontainer to open, counting from one in the
+	///   order the menu offers them, or nil for the one the View menu's item
+	///   opens. A project offering two has to be openable in each, or "both are
+	///   in the menu" is all that is ever proved.
+	func exerciseDevContainerTerminalForTesting(which: Int? = nil) {
+		let choices = devContainerChoices
+		let chosen = which.flatMap { $0 >= 1 && $0 <= choices.count ? choices[$0 - 1] : nil }
+		let item = containerMenuItem(for: chosen)
 		// The root as well as the answer: "there is no devcontainer here" is not
 		// actionable without "here", and the project that is open is not always
 		// the folder that was asked for. The container's root is printed beside
@@ -3357,11 +3427,32 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		let enabled = validateMenuItem(item)
 		print("DEVCONTAINER: root=\(project?.root.path ?? "-") "
 			+ "scope=\(scopeRoot?.path ?? "-") container=\(devContainerRoot?.path ?? "-") "
-			+ "file=\(hasDevContainer) enabled=\(enabled) title=\(item.title)")
+			+ "file=\(hasDevContainer) choices=\(choices.count) enabled=\(enabled) "
+			+ "title=\(item.title)")
 		fflush(stdout)
 		guard enabled else { return }
-		newTerminalInContainer(nil)
+		// Through the item rather than through nil, so that which one was asked
+		// for travels the way a click's does.
+		item.target = self
+		newTerminalInContainer(item)
 		waitForContainerShellForTesting(seconds: 0)
+	}
+
+	/// The same, once for every devcontainer the project offers, each after the
+	/// last has answered.
+	///
+	/// One at a time rather than all at once, and not on a clock: two shells
+	/// coming up together would be two panes racing to be the active one, and
+	/// what is being proved here is that a project really can have two containers
+	/// up at the same time with somebody typing in each.
+	func exerciseEveryDevContainerTerminalForTesting(from index: Int = 1) {
+		let count = devContainerChoices.count
+		guard index <= count else { return }
+		exerciseDevContainerTerminalForTesting(which: index)
+		guard index < count else { return }
+		afterContainerShellForTesting = { [weak self] in
+			self?.exerciseEveryDevContainerTerminalForTesting(from: index + 1)
+		}
 	}
 
 	/// Waits for the tab to stop being a report and start being a shell, then
@@ -3391,8 +3482,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				print("DEVCONTAINER: \(line.trimmingCharacters(in: .whitespaces))")
 			}
 			fflush(stdout)
+			let next = self.afterContainerShellForTesting
+			self.afterContainerShellForTesting = nil
+			next?()
 		}
 	}
+
+	/// What to do once the shell being waited for has answered, so that a second
+	/// container is opened after the first rather than beside it.
+	private var afterContainerShellForTesting: (() -> Void)?
 
 	/// Follows ⌘-click, through the same path the click takes.
 	func exerciseGoToDefinitionForTesting(line: Int, character: Int) {

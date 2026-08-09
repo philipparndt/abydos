@@ -1121,7 +1121,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if options.devContainerTerminal {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-				controller?.exerciseDevContainerTerminalForTesting()
+				switch options.devContainerWhich {
+				case "all": controller?.exerciseEveryDevContainerTerminalForTesting()
+				case let which?: controller?.exerciseDevContainerTerminalForTesting(
+					which: Int(which)
+				)
+				case nil: controller?.exerciseDevContainerTerminalForTesting()
+				}
 			}
 		}
 
@@ -1899,6 +1905,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		// This is the title it has before a window has been asked: validation
 		// renames it after the container it would open, since a repository of
 		// subprojects has one each.
+		//
+		// One item, and it opens the project's preferred devcontainer. A project
+		// offering several — `.devcontainer/alpine` beside `.devcontainer/go` —
+		// has all of them in the + chevron's menu in the terminal panel, which is
+		// where a list belongs; this stays a single command that says which
+		// container it means. `MainWindowController.devContainerMenuTitle` is
+		// where the reason for not making it a submenu is written down.
 		let containerTerminalItem = NSMenuItem(
 			title: MainWindowController.containerTerminalTitle,
 			action: #selector(MainWindowController.newTerminalInContainer(_:)),

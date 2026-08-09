@@ -342,6 +342,11 @@ struct LaunchOptions {
 	/// Open a terminal in the project's devcontainer and report what is in it.
 	var devContainerTerminal = false
 
+	/// Which of them, when the project offers several: a number counting from
+	/// one in the order the menu offers them, or "all" for one terminal in each,
+	/// each after the last has answered. Nil is the one the View menu opens.
+	var devContainerWhich: String?
+
 	/// Print what the chevron beside the panel's + offers, and which of the two
 	/// hit areas beside the last tab a click at each lands in.
 	var terminalAddMenu = false
@@ -416,7 +421,14 @@ struct LaunchOptions {
 			case "--branch-menu": options.branchMenuRow = next().flatMap(Int.init)
 			case "--push-branch": options.pushBranch = next()
 			case "--report-cwd": options.reportsTerminalDirectory = true
-			case "--devcontainer": options.devContainerTerminal = true
+			case "--devcontainer":
+				options.devContainerTerminal = true
+				// Which one is optional, so peek rather than consume: without it
+				// the next argument is the next flag.
+				if index + 1 < arguments.count, !arguments[index + 1].hasPrefix("--") {
+					options.devContainerWhich = arguments[index + 1]
+					index += 1
+				}
 			case "--tab-add-menu": options.terminalAddMenu = true
 			case "--close-window": options.closeLastWindowAt = next().flatMap(Double.init) ?? 5
 			case "--report-geometry": options.reportsTerminalGeometry = true
