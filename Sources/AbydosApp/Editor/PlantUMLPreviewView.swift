@@ -39,6 +39,11 @@ final class PlantUMLPreviewView: DiagramPaneView {
 	/// when the picture is exported.
 	private let projectRoot: URL?
 
+	/// Which way round the render under way is drawing, or nil when the file
+	/// stated its own look. Kept because the two routes below both need it and
+	/// the second is started from inside a `Task`.
+	private var theme: DiagramTheme?
+
 	/// - Parameter projectRoot: whose `.abydos/tools.json` may name an image to
 	///   draw with, so a machine with no PlantUML on it still shows diagrams.
 	init(projectRoot: URL?) {
@@ -70,12 +75,28 @@ final class PlantUMLPreviewView: DiagramPaneView {
 		lastSource.map { PlantUML.hasDiagram($0) } ?? false
 	}
 
+	override var statedLook: String? {
+		lastSource.flatMap { PlantUML.statedLook(in: $0) }
+	}
+
 	/// Writes the picture beside the file, in the format asked for.
-	override func export(_ format: DiagramFormat, then: (@Sendable ([URL]) -> Void)? = nil) {
+	override func export(
+		_ format: DiagramFormat, theme: DiagramTheme? = nil,
+		then: (@Sendable ([URL]) -> Void)? = nil
+	) {
 		guard let fileURL else { return }
 		DiagramExportCommand.run(
-			url: fileURL, source: lastSource, format: format, projectRoot: projectRoot, then: then
+			url: fileURL, source: lastSource, format: format, theme: theme ?? appTheme,
+			projectRoot: projectRoot, then: then
 		)
+	}
+
+	/// The palette changed under an open diagram. PlantUML draws dark or light
+	/// when it is *run*, so this is a whole render again rather than a repaint.
+	override func themeChanged() {
+		guard let source = lastSource else { return }
+		lastSource = nil
+		show(source)
 	}
 
 	/// Draws this diagram, after a pause in the typing.
@@ -113,6 +134,15 @@ final class PlantUMLPreviewView: DiagramPaneView {
 			Self.saidCaveat = true
 			Toast.post("Diagrams are being drawn by Apple's container", detail: caveat, kind: .warning)
 		}
+
+		// The file wins. A diagram that says `!theme` or sets its own background
+		// colour is drawn exactly as it asks, and the caption says so — a picture
+		// that stays light in a dark window has to be able to explain itself.
+		let stated = PlantUML.statedLook(in: source)
+		let theme: DiagramTheme? = stated == nil ? appTheme : nil
+		self.theme = theme
+		paper = Self.paper(for: theme)
+		caption = stated.map(DiagramLook.notice(stated:))
 
 		// Only one at a time: a diagram that takes a second to draw would
 		// otherwise leave a JVM running for every keystroke that started one.
@@ -160,7 +190,7 @@ final class PlantUMLPreviewView: DiagramPaneView {
 				// which works and is only slow.
 				if let drawn = await PlantUMLServers.shared.render(
 					source, image: container.image, using: runtime,
-					format: PlantUML.previewFormat
+					format: PlantUML.previewFormat, theme: theme
 				) {
 					await MainActor.run {
 						guard let self, self.lastSource == source else { return }
@@ -198,7 +228,9 @@ final class PlantUMLPreviewView: DiagramPaneView {
 		// same diagram that disagreed about it would make sharpness depend on
 		// which one answered, which is the kind of fault that reads as
 		// intermittent.
-		let run = PlantUML.invocation(for: tool, format: PlantUML.previewFormat, name: containerName)
+		let run = PlantUML.invocation(
+			for: tool, format: PlantUML.previewFormat, name: containerName, theme: theme
+		)
 		let process = Process()
 		process.executableURL = URL(fileURLWithPath: run.executable)
 		process.arguments = run.arguments

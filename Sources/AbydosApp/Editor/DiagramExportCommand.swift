@@ -31,10 +31,14 @@ enum DiagramExportCommand {
 	/// Exports `source` — the text as it is now, unsaved edits and all, since
 	/// the picture should be of the diagram in front of somebody rather than of
 	/// whatever was last written to disk.
+	/// - Parameter theme: which way round to draw it, as the menu item asked. The
+	///   file overrules it when it states a look of its own, which is the rule
+	///   0429 settled and the one thing this says out loud when it happens.
 	static func run(
 		url: URL,
 		source: String? = nil,
 		format: DiagramFormat,
+		theme: DiagramTheme? = nil,
 		projectRoot: URL?,
 		then: (@Sendable ([URL]) -> Void)? = nil
 	) {
@@ -48,13 +52,13 @@ enum DiagramExportCommand {
 				Toast.post("Could not read \(url.lastPathComponent)")
 				return
 			}
-			Toast.post(
-				"Drawing \(url.lastPathComponent) as \(format.rawValue.uppercased())…",
-				kind: .information
-			)
+			let stated = Drawio.read(data).flatMap(Drawio.statedLook)
+			announceDrawing(url, format: format, theme: theme, stated: stated)
 			Task {
-				let outcome = await DiagramExport.export(drawio: data, of: url, format: format)
-				await MainActor.run { report(outcome, for: url, then: then) }
+				let outcome = await DiagramExport.export(
+					drawio: data, of: url, format: format, theme: theme
+				)
+				await MainActor.run { report(outcome, for: url, stated: stated, then: then) }
 			}
 			return
 		}
@@ -69,15 +73,15 @@ enum DiagramExportCommand {
 			return
 		}
 
-		Toast.post(
-			"Drawing \(url.lastPathComponent) as \(format.rawValue.uppercased())…",
-			kind: .information
-		)
+		let stated = DiagramExport.statedLook(of: url, source: text)
+		announceDrawing(url, format: format, theme: theme, stated: stated)
 
 		if Mermaid.isDiagram(url) {
 			Task {
-				let outcome = await DiagramExport.export(mermaid: text, of: url, format: format)
-				await MainActor.run { report(outcome, for: url, then: then) }
+				let outcome = await DiagramExport.export(
+					mermaid: text, of: url, format: format, theme: theme
+				)
+				await MainActor.run { report(outcome, for: url, stated: stated, then: then) }
 			}
 			return
 		}
@@ -88,24 +92,49 @@ enum DiagramExportCommand {
 		}
 		Task {
 			let outcome = await DiagramExport.export(
-				source: text, of: url, format: format, tool: tool,
+				source: text, of: url, format: format, tool: tool, theme: theme,
 				progress: { message in
 					DispatchQueue.main.async { Toast.post(message, kind: .information) }
 				}
 			)
-			await MainActor.run { report(outcome, for: url, then: then) }
+			await MainActor.run { report(outcome, for: url, stated: stated, then: then) }
 		}
+	}
+
+	/// The line that says an export has started, naming what is being drawn.
+	///
+	/// The theme is in it, because the menu item said one and the file it writes
+	/// is named after it: "Drawing flow.mmd as PNG (Dark)…" and then "Exported
+	/// flow-dark.png" is a pair somebody can follow.
+	private static func announceDrawing(
+		_ url: URL, format: DiagramFormat, theme: DiagramTheme?, stated: String?
+	) {
+		let what = format.rawValue.uppercased()
+		let qualified = stated == nil ? theme.map { "\(what) (\($0.title))" } ?? what : what
+		Toast.post("Drawing \(url.lastPathComponent) as \(qualified)…", kind: .information)
 	}
 
 	@MainActor
 	private static func report(
 		_ outcome: Result<[URL], DiagramExport.Failure>,
 		for url: URL,
+		stated: String? = nil,
 		then: (@Sendable ([URL]) -> Void)?
 	) {
 		switch outcome {
 		case let .success(written):
 			announce(written)
+			// And why it is not the picture the menu item promised, when it is
+			// not. Without this, asking for Dark and finding a light
+			// `diagram.png` — under the name with no `-dark` in it — is a bug
+			// report waiting to happen rather than the rule working.
+			if let stated {
+				Toast.post(
+					"The file chose",
+					detail: DiagramLook.exportNotice(for: url.lastPathComponent, stated: stated),
+					kind: .information
+				)
+			}
 			then?(written)
 		case let .failure(failure):
 			// The register `ContainerImages.explain` set: one sentence, which

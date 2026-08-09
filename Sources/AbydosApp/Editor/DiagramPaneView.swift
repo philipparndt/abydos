@@ -19,10 +19,31 @@ class DiagramPaneView: NSView {
 	var naturalSize: CGSize = .zero
 	/// What to say instead of a picture: nothing drawn yet, or why not.
 	var notice: String?
+	/// What to say *beside* a picture, which is a different thing: the notice
+	/// replaces the drawing and this sits under it.
+	///
+	/// One line, at the foot of the pane, for the one thing somebody has to be
+	/// able to see while looking at the diagram — that their own file asked for
+	/// the colours it has. 0429 is explicit that a diagram staying light in a
+	/// dark window has to explain itself or the bug gets reported again, and a
+	/// toast cannot do that: it is gone by the time anybody wonders.
+	var caption: String?
+
+	/// The colour behind the drawing.
+	///
+	/// Neither PlantUML's light output nor Mermaid's states a background a
+	/// renderer that is not a browser can see, so the pane paints one. It follows
+	/// the theme now rather than being white: black lines on a dark editor were
+	/// the reason for the white, and light lines on white are the same fault the
+	/// other way up.
+	var paper: NSColor = .white
 
 	let spinner = NSProgressIndicator()
 	/// The zoom being watched, so the pane can stop watching when it goes.
 	private var watchingSettings: NSObjectProtocol?
+	/// Which palette the picture on screen was drawn for, so a settings change
+	/// that was not a theme change does not redraw a diagram.
+	private var drawnForTheme = Theme.current.name
 	private var exportMenu: NSMenu?
 
 	/// The file being drawn, which is where an export writes and what it is
@@ -53,9 +74,49 @@ class DiagramPaneView: NSView {
 		watchingSettings = NotificationCenter.default.addObserver(
 			forName: .abydosSettingsChanged, object: nil, queue: .main
 		) { [weak self] _ in
-			MainActor.assumeIsolated { self?.needsDisplay = true }
+			MainActor.assumeIsolated { self?.settingsChanged() }
 		}
 	}
+
+	/// A settings change: always a repaint, and a *redraw* when it was the
+	/// palette.
+	///
+	/// The zoom needs nothing but a repaint — a drawing is scaled at draw time.
+	/// A theme is not like that: the picture itself is a different picture, and
+	/// it has to be asked for again. This is 0423's `ScalingPage` lesson in its
+	/// own terms, and it is the same mistake the settings page made — a pane that
+	/// followed the change only when it was reopened.
+	private func settingsChanged() {
+		needsDisplay = true
+		guard Theme.current.name != drawnForTheme else { return }
+		drawnForTheme = Theme.current.name
+		themeChanged()
+	}
+
+	/// The palette changed while this diagram was open. A subclass draws it
+	/// again; the base pane has nothing to draw.
+	func themeChanged() {}
+
+	/// Which way round this pane draws, unless the file has stated its own look.
+	var appTheme: DiagramTheme { Theme.current.isLight ? .light : .dark }
+
+	/// The paper for a theme, as the colour AppKit fills with.
+	///
+	/// Read from `DiagramTheme.paper` rather than written out again here: the
+	/// pane, the rasterised PNG and the rectangle put into an exported SVG all
+	/// have to be the same colour, and three copies of a hex code is how they
+	/// stop being. Nil is a file that stated its own look, which gets the white
+	/// this pane has always painted.
+	static func paper(for theme: DiagramTheme?) -> NSColor {
+		guard let hex = theme?.paper.dropFirst(),
+		      let value = UInt32(hex, radix: 16)
+		else { return .white }
+		return .hex(value)
+	}
+
+	/// Redraws the pane as if the theme had changed, for a test: a notification
+	/// posted from a test would reach every window on the machine.
+	func themeChangedForTesting() { settingsChanged() }
 
 	required init?(coder: NSCoder) { fatalError("not used") }
 
@@ -71,8 +132,17 @@ class DiagramPaneView: NSView {
 	/// write nothing is worse than one that is greyed.
 	var isReadyToExport: Bool { false }
 
+	/// What in the open file states a look of its own, or nil when it says
+	/// nothing. A subclass answers about its own language.
+	var statedLook: String? { nil }
+
 	/// Writes the picture beside the file, in the format asked for.
-	func export(_ format: DiagramFormat, then: (@Sendable ([URL]) -> Void)? = nil) {}
+	///
+	/// - Parameter theme: which way round, or nil for whatever is on screen.
+	func export(
+		_ format: DiagramFormat, theme: DiagramTheme? = nil,
+		then: (@Sendable ([URL]) -> Void)? = nil
+	) {}
 
 	// MARK: - Exporting
 
@@ -88,15 +158,7 @@ class DiagramPaneView: NSView {
 		menu.autoenablesItems = false
 		let export = NSMenuItem(title: "Export", action: nil, keyEquivalent: "")
 		let formats = NSMenu()
-		for format in DiagramFormat.allCases {
-			let item = NSMenuItem(
-				title: format.rawValue.uppercased(), action: #selector(exportFromMenu(_:)),
-				keyEquivalent: ""
-			)
-			item.target = self
-			item.representedObject = format.rawValue
-			formats.addItem(item)
-		}
+		formats.autoenablesItems = false
 		export.submenu = formats
 		menu.addItem(export)
 		exportMenu = formats
@@ -110,13 +172,17 @@ class DiagramPaneView: NSView {
 	private func refreshExportMenu() {
 		let ready = fileURL != nil && isReadyToExport
 		for item in menu?.items ?? [] { item.isEnabled = ready }
-		for item in exportMenu?.items ?? [] { item.isEnabled = ready }
+		guard let exportMenu else { return }
+		DiagramExportMenu.fill(
+			exportMenu, theme: appTheme, stated: statedLook,
+			target: self, action: #selector(exportFromMenu(_:)), enabled: ready
+		)
 	}
 
 	@objc private func exportFromMenu(_ sender: NSMenuItem) {
-		guard let raw = sender.representedObject as? String,
-		      let format = DiagramFormat(rawValue: raw) else { return }
-		export(format)
+		guard let code = sender.representedObject as? String,
+		      let choice = DiagramExportMenu.choice(for: code) else { return }
+		export(choice.format, theme: choice.theme)
 	}
 
 	/// What a right-click on the diagram offers, for a test: a menu cannot be
@@ -160,6 +226,7 @@ class DiagramPaneView: NSView {
 	override func draw(_ dirtyRect: NSRect) {
 		Theme.current.editorBackground.setFill()
 		dirtyRect.fill()
+		drawCaption()
 
 		if let image {
 			let pane = CGSize(width: max(0, bounds.width - 32), height: max(0, bounds.height - 32))
@@ -176,7 +243,12 @@ class DiagramPaneView: NSView {
 			// element and Mermaid's is nothing at all — so black lines on a dark
 			// editor background would be all but invisible. A diagram that sets a
 			// background of its own emits a rectangle for it and covers this.
-			NSColor.white.setFill()
+			//
+			// It follows the theme now instead of always being white, which is the
+			// same fault upside down: PlantUML's `--dark-mode` does emit its own
+			// rectangle and covers this, but Mermaid's dark drawing is light lines
+			// on nothing and would have been invisible on white.
+			paper.setFill()
 			box.fill()
 			image.draw(in: box, from: .zero, operation: .sourceOver, fraction: 1)
 			return
@@ -204,4 +276,28 @@ class DiagramPaneView: NSView {
 		text.draw(with: NSRect(x: 32, y: top, width: width, height: height),
 		          options: [.usesLineFragmentOrigin])
 	}
+
+	/// The one line at the foot of the pane, under whatever is above it.
+	///
+	/// Drawn before the picture rather than over it, so a large diagram scaled to
+	/// fill the pane cannot land on top of it — the picture is inset 16 points
+	/// and this sits inside that margin.
+	private func drawCaption() {
+		guard let caption, !caption.isEmpty else { return }
+		let text = NSAttributedString(string: caption, attributes: [
+			.font: Theme.current.uiFont(10),
+			.foregroundColor: Theme.current.sidebarText.withAlphaComponent(0.6),
+		])
+		let width = max(40, bounds.width - 24)
+		let box = text.boundingRect(
+			with: NSSize(width: width, height: .greatestFiniteMagnitude),
+			options: [.usesLineFragmentOrigin]
+		)
+		text.draw(with: NSRect(x: 12, y: 2, width: width, height: box.height),
+		          options: [.usesLineFragmentOrigin])
+	}
+
+	/// What the pane says beside the picture, for a test — a caption too small to
+	/// read in a screenshot is still worth being certain of.
+	var captionForTesting: String? { caption }
 }

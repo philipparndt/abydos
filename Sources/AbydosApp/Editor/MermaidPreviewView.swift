@@ -41,14 +41,30 @@ final class MermaidPreviewView: DiagramPaneView {
 		lastSource.map { Mermaid.hasDiagram($0) } ?? false
 	}
 
-	override func export(_ format: DiagramFormat, then: (@Sendable ([URL]) -> Void)? = nil) {
+	override var statedLook: String? {
+		lastSource.flatMap { Mermaid.statedLook(in: $0) }
+	}
+
+	override func export(
+		_ format: DiagramFormat, theme: DiagramTheme? = nil,
+		then: (@Sendable ([URL]) -> Void)? = nil
+	) {
 		guard let fileURL else { return }
 		DiagramExportCommand.run(
-			url: fileURL, source: lastSource, format: format, projectRoot: nil, then: then
+			url: fileURL, source: lastSource, format: format, theme: theme ?? appTheme,
+			projectRoot: nil, then: then
 		)
 	}
 
 	// MARK: - Drawing
+
+	/// The palette changed under an open diagram, so it is drawn again — Mermaid
+	/// is themed at render time, so there is no repainting this into place.
+	override func themeChanged() {
+		guard let source = lastSource else { return }
+		lastSource = nil
+		show(source)
+	}
 
 	/// Draws this diagram, after a pause in the typing.
 	func show(_ source: String) {
@@ -75,12 +91,22 @@ final class MermaidPreviewView: DiagramPaneView {
 			return
 		}
 
+		// The file wins. A diagram naming a theme of its own — in front matter or
+		// in an `%%{init}%%` — is drawn in it, on white paper as it always was,
+		// and the caption says whose decision that was.
+		let stated = Mermaid.statedLook(in: source)
+		let theme: DiagramTheme? = stated == nil ? appTheme : nil
+		paper = Self.paper(for: theme)
+		caption = stated.map(DiagramLook.notice(stated:))
+
 		generation += 1
 		let mine = generation
 		spinner.startAnimation(nil)
 
 		Task { [weak self] in
-			let drawn = await MermaidRenderer.shared.draw(source, format: Mermaid.previewFormat)
+			let drawn = await MermaidRenderer.shared.draw(
+				source, format: Mermaid.previewFormat, theme: theme
+			)
 			guard let self, self.generation == mine else { return }
 			self.spinner.stopAnimation(nil)
 			switch drawn {

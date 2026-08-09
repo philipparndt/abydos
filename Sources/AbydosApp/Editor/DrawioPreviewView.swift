@@ -77,8 +77,33 @@ final class DrawioPreviewView: DiagramPaneView {
 	func show(_ xml: String) {
 		guard xml != lastGiven else { return }
 		lastGiven = xml
-		let compressed = Drawio.read(Data(xml.utf8))?.isCompressed ?? false
-		editor?.load(xml, compressed: compressed)
+		let document = Drawio.read(Data(xml.utf8))
+		stated = document.flatMap(Drawio.statedLook)
+		caption = stated.map(DiagramLook.notice(stated:))
+		applyTheme()
+		editor?.load(xml, compressed: document?.isCompressed ?? false)
+	}
+
+	/// What in the document states a look of its own — a page background — or
+	/// nil when it says nothing.
+	private var stated: String?
+
+	override var statedLook: String? { stated }
+
+	/// The palette changed under an open diagram.
+	///
+	/// The editor is *told* rather than rebuilt: reloading the page would take
+	/// draw.io's undo stack and anything unsaved with it, and the theme can
+	/// change with a diagram half drawn. This is 0423's lesson — a pane that has
+	/// to be told — with a document open in it that must survive the telling.
+	override func themeChanged() {
+		applyTheme()
+	}
+
+	private func applyTheme() {
+		// The chrome follows the app whatever the file says; the shape colours
+		// follow it only when the document has stated no background of its own.
+		editor?.setDark(chrome: appTheme.isDark, colours: appTheme.isDark && stated == nil)
 	}
 
 	private func editorIsReady() {
@@ -123,12 +148,16 @@ final class DrawioPreviewView: DiagramPaneView {
 
 	override var isReadyToExport: Bool { isLoaded }
 
-	override func export(_ format: DiagramFormat, then: (@Sendable ([URL]) -> Void)? = nil) {
+	override func export(
+		_ format: DiagramFormat, theme: DiagramTheme? = nil,
+		then: (@Sendable ([URL]) -> Void)? = nil
+	) {
 		guard let fileURL else { return }
+		let wanted = theme ?? appTheme
 		Task { @MainActor in
 			await flush()
 			DiagramExportCommand.run(
-				url: fileURL, source: document?.rope.string, format: format,
+				url: fileURL, source: document?.rope.string, format: format, theme: wanted,
 				projectRoot: nil, then: then
 			)
 		}
