@@ -25,15 +25,52 @@ symbols and a go-to-declaration all naming files on this machine.
 
 **What is left.**
 
-*A known-good image, published.* The catalogue still lists none for any
-language server, and that is still right — the list means somebody has run the
-thing — but now something has. `ToolImages/gopls/Dockerfile` is what ran; what
-is missing is pushing it somewhere anybody can pull from and listing that name.
-The dev pod already publishes multi-architecture images from its own Makefile,
-but not this way: its images are two static binaries and are assembled without
-a builder, while gopls needs the Go toolchain beside it and so has a base image
-under it. `make tool-image-gopls` builds it; publishing is the next step, and
-then the other five.
+*A known-good image, published — the goal exists, the push has not happened.*
+`make toolimage-publish TOOL=gopls REPOSITORY=… VERSION=…` builds
+`ToolImages/<tool>` for linux/amd64 and linux/arm64 and pushes one index, in a
+single `docker buildx` invocation. Not the pod's route and not two builds and a
+`docker manifest create`: the pod assembles its own images because they are two
+static binaries with nothing underneath, while gopls sits on
+`golang:1.26-bookworm` and needs the base image of the architecture it is being
+built for; and the manifest route has to push `:x-amd64` and `:x-arm64` first,
+since `docker manifest create` reads its members from the registry — three
+pushes, and two tags left in the repository that nobody should ever pull. TOOL
+is a third word rather than a loop over `ToolImages/*/Dockerfile`, because each
+tool is its own repository and one REPOSITORY cannot name six servers.
+
+Everything is checked before the first layer, each with the sentence that says
+what to do: no such tool, no buildx, a builder that builds one architecture at
+a time (the `docker` driver, unless the daemon uses the containerd image
+store), a builder that does not list one of the platforms, and nobody signed in
+to the registry the repository names. The last is asked of
+`~/.docker/config.json` rather than of the registry, so it needs no network and
+reads no password, and it is asked first because the build is the several
+minutes that come before the push.
+
+Proved as far as a machine with no credentials can: `DRY_RUN=1` builds both
+architectures with `type=cacheonly` and stops. 2m10s from a cold builder,
+`go install gopls` being 17 seconds for arm64 and 110 for amd64 — emulation, and
+the whole of the difference. `--load` was not the alternative: it takes one
+architecture, so it would have proved neither. Unproven is everything past that
+point — the upload, the index that appears in the registry, and the
+`imagetools inspect` that is meant to read back its two platforms.
+
+What is left, in order. Somebody with a Docker Hub or ghcr login runs
+`make toolimage-publish TOOL=gopls VERSION=0.23.0`. The result is pulled on
+both architectures and driven by `ContainerLSPLiveTests`. Only then does the
+line go into `ToolImageCatalogue.tools`, which lists nothing for any server on
+purpose:
+
+    Choice(
+        label: "abydos/gopls (gopls 0.23.0, Go 1.26)",
+        image: "pharndt/abydos-gopls:0.23.0",
+        publisher: "the Abydos project"
+    )
+
+It is written here rather than commented out in the catalogue: a commented-out
+entry in a list whose whole point is that somebody has run the thing is an
+invitation to uncomment it without running it. Then the other five, which need
+a Dockerfile each and nothing else — the goal already takes them by name.
 
 *One page per language — done.* `SettingsSections.Section` carries children,
 Tools has one per tool, and the sidebar indents them. The ⌘, window stopped
