@@ -45,9 +45,18 @@ final class PlantUMLPreviewView: NSView {
 	/// keystroke means walking the PATH per keystroke.
 	private let tool: PlantUML.Tool?
 
+	/// The project the diagram belongs to, for finding the same PlantUML again
+	/// when the picture is exported.
+	private let projectRoot: URL?
+
+	/// The file being drawn, which is where an export writes and what it is
+	/// named after. Nil until the pane is given one.
+	var fileURL: URL?
+
 	/// - Parameter projectRoot: whose `.abydos/tools.json` may name an image to
 	///   draw with, so a machine with no PlantUML on it still shows diagrams.
 	init(projectRoot: URL?) {
+		self.projectRoot = projectRoot
 		let images = ToolImages.resolve(
 			project: projectRoot.map { ToolImages.inProject($0) } ?? ToolImages(),
 			settings: ToolImages(images: Settings.shared.toolImages)
@@ -72,6 +81,7 @@ final class PlantUMLPreviewView: NSView {
 		])
 
 		if tool == nil { notice = PlantUML.installHint }
+		menu = makeExportMenu()
 
 		// The zoom, which this pane follows like every other. A diagram sits
 		// inside a split rather than being a tab's own view, so the walk that
@@ -92,6 +102,74 @@ final class PlantUMLPreviewView: NSView {
 		// A block observer is not removed by handing the centre `self`, and a
 		// pane is made and thrown away with every tab — so the token is kept.
 		if let watchingSettings { NotificationCenter.default.removeObserver(watchingSettings) }
+	}
+
+	// MARK: - Exporting
+
+	/// Right-clicking the picture offers to keep it.
+	///
+	/// A menu on the pane rather than a button in a corner: the pane is drawn
+	/// entirely by hand and a button would sit over the diagram, and this is the
+	/// gesture every picture on this machine already answers to. The format is
+	/// asked for by name — the pane draws in SVG for sharpness, and "Export ▸
+	/// PNG" has to mean a PNG rather than whatever happens to be on screen.
+	private func makeExportMenu() -> NSMenu {
+		let menu = NSMenu()
+		menu.autoenablesItems = false
+		let export = NSMenuItem(title: "Export", action: nil, keyEquivalent: "")
+		let formats = NSMenu()
+		for format in PlantUML.Format.allCases {
+			let item = NSMenuItem(
+				title: format.rawValue.uppercased(), action: #selector(exportFromMenu(_:)),
+				keyEquivalent: ""
+			)
+			item.target = self
+			item.representedObject = format.rawValue
+			formats.addItem(item)
+		}
+		export.submenu = formats
+		menu.addItem(export)
+		exportMenu = formats
+		return menu
+	}
+
+	private var exportMenu: NSMenu?
+
+	override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
+		refreshExportMenu()
+	}
+
+	/// Nothing to export before there is a file and a diagram in it, and a menu
+	/// item that would write nothing is worse than one that is greyed.
+	private func refreshExportMenu() {
+		let ready = fileURL != nil && (lastSource.map { PlantUML.hasDiagram($0) } ?? false)
+		for item in menu?.items ?? [] { item.isEnabled = ready }
+		for item in exportMenu?.items ?? [] { item.isEnabled = ready }
+	}
+
+	@objc private func exportFromMenu(_ sender: NSMenuItem) {
+		guard let raw = sender.representedObject as? String,
+		      let format = PlantUML.Format(rawValue: raw) else { return }
+		export(format)
+	}
+
+	/// Writes the picture beside the file, in the format asked for.
+	func export(_ format: PlantUML.Format, then: (@Sendable ([URL]) -> Void)? = nil) {
+		guard let fileURL else { return }
+		DiagramExportCommand.run(
+			url: fileURL, source: lastSource, format: format, projectRoot: projectRoot, then: then
+		)
+	}
+
+	/// What a right-click on the diagram offers, for a test: a menu cannot be
+	/// photographed while it is open.
+	var menuTitlesForTesting: [String] {
+		refreshExportMenu()
+		return (menu?.items ?? []).flatMap { item -> [String] in
+			let mark = item.isEnabled ? "" : " (disabled)"
+			let children = (item.submenu?.items ?? []).map { "\(item.title) ▸ \($0.title)" }
+			return ["\(item.title)\(mark)"] + children
+		}
 	}
 
 	/// Draws this diagram, after a pause in the typing.
