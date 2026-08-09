@@ -979,6 +979,10 @@ final class ProjectNavigatorViewController: NSViewController {
 		outlineView.addSubview(field, positioned: .above, relativeTo: nil)
 		renameField = field
 		renaming = (node, node.name)
+		// Told, not reloaded. `reloadItem` would build a fresh row view and lay
+		// it over the field, which is the fault the deferred rebuild above
+		// exists for — the box vanishes while still taking the typing.
+		showsName(at: index, false)
 
 		outlineView.window?.makeFirstResponder(field)
 		// The stem, the way the Finder does it: the extension is nearly never
@@ -1031,7 +1035,19 @@ final class ProjectNavigatorViewController: NSViewController {
 		return true
 	}
 
+	/// Whether a row draws its own name, for the row the field is standing on.
+	private func showsName(at row: Int, _ shows: Bool) {
+		guard row >= 0,
+		      let cell = outlineView.view(atColumn: 0, row: row, makeIfNecessary: false)
+		      	as? NavigatorCellView
+		else { return }
+		cell.isRenaming = !shows
+	}
+
 	private func endRename() {
+		if let node = renaming?.node {
+			showsName(at: outlineView.row(forItem: node), true)
+		}
 		renameField?.removeFromSuperview()
 		renameField = nil
 		renaming = nil
@@ -1408,7 +1424,8 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 			isRoot: isRoot,
 			subtitle: isRoot ? project?.displayPath : nil,
 			isExpanded: outlineView.isItemExpanded(node),
-			isSubproject: node.url.path == subprojectRoot?.path
+			isSubproject: node.url.path == subprojectRoot?.path,
+			isRenaming: renaming?.node === node
 		)
 		return cell
 	}
@@ -1753,14 +1770,27 @@ private final class NavigatorCellView: NSTableCellView {
 		isRoot: Bool,
 		subtitle: String?,
 		isExpanded: Bool,
-		isSubproject: Bool = false
+		isSubproject: Bool = false,
+		isRenaming: Bool = false
 	) {
 		self.node = node
 		self.isRoot = isRoot
 		self.subtitle = subtitle
 		self.isExpanded = isExpanded
 		self.isSubproject = isSubproject
+		self.isRenaming = isRenaming
 		needsDisplay = true
+	}
+
+	/// Whether the field is standing on this row.
+	///
+	/// The name is then not drawn at all. Drawing it under the field and
+	/// covering it up looks the same only while the field is as wide as the
+	/// name it replaced — and it is not, since it stops at the edge of the
+	/// pane, so the tail of the old name showed past the field's right border
+	/// with the new one already typed in front of it.
+	var isRenaming = false {
+		didSet { if isRenaming != oldValue { needsDisplay = true } }
 	}
 
 	/// The folder the run button, git and the language server are pointed at.
@@ -1804,6 +1834,11 @@ private final class NavigatorCellView: NSTableCellView {
 		let nameFont = isRoot || isSubproject
 			? Theme.current.uiFont(13, weight: .bold)
 			: Theme.current.uiFont(13)
+
+		// The icon stays while the name is being edited — it says what kind of
+		// thing this is, and the field does not cover it — but the name itself
+		// belongs to the field now.
+		if isRenaming { return }
 
 		// Truncated rather than run past the edge: a long name would otherwise
 		// draw straight over the row's rounded selection and out of the pane.
