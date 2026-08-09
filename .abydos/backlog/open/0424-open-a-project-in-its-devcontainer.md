@@ -108,18 +108,88 @@ broken editor.
 
 The first slice worth shipping, in this order, each useful on its own:
 
-1. **Read the file** — JSON with comments, `image` and `build.dockerfile`,
-   `workspaceFolder`, `containerUser`/`remoteUser`, `containerEnv`,
-   `forwardPorts`, `mounts`, `runArgs`, the `${localEnv:…}` substitutions. Pure,
-   testable, no container needed. Say plainly what is not understood.
-2. **Start and keep one**, named `abydos-devcontainer-…`, the project
-   bind-mounted at `workspaceFolder`, swept like everything else.
-3. **A terminal inside it**, which is the moment this becomes useful to somebody.
+1. ~~**Read the file**~~ — done. `DevContainerFile`.
+2. ~~**Start and keep one**~~ — done. `DevContainers`.
+3. ~~**A terminal inside it**~~ — done. View ▸ New Terminal in Container.
 4. **The language servers**, which is mostly pointing existing machinery at this
    container instead of a per-tool one.
 5. **Lifecycle commands**, with the progress and the failure messages.
 
 Docker only, per the decision recorded in 0406 and 0422.
+
+## What the first three steps came to, and what was decided doing them
+
+`Sources/AbydosKit/Run/DevContainerFile.swift` reads the file and
+`Sources/AbydosKit/Run/DevContainers.swift` starts one and runs things in it.
+A project with a `.devcontainer/devcontainer.json` gets an item beside New
+Terminal in the View menu, greyed out for the projects that have none, and the
+tab it opens is named after the container so that a shell somewhere else does
+not look like a shell here.
+
+**The CLI-versus-own-reader question above is still open and was left open.**
+What is here is the reader for the subset, written so that a CLI path could be
+put beside it: `DevContainers` takes a `DevContainerConfiguration` and knows
+nothing about where it came from.
+
+Read: `image`, `build.dockerfile`/`context`/`args`/`target` and the older
+`dockerFile`, `name`, `workspaceFolder`, `workspaceMount`, `containerUser`,
+`remoteUser`, `containerEnv`, `remoteEnv`, `forwardPorts`, `mounts` (string and
+object), `runArgs` — with comments, trailing commas, all three legal locations,
+and `${localEnv:VAR}`, `${localEnv:VAR:default}`, `${localWorkspaceFolder}`,
+`${localWorkspaceFolderBasename}`, `${containerWorkspaceFolder}` and
+`${containerWorkspaceFolderBasename}` resolved. An unknown `${…}` is left as
+written, which is what VS Code does and the only answer that cannot corrupt a
+value nobody understood.
+
+Refused by name, one sentence each: `features`; `dockerComposeFile`; **the
+lifecycle commands**; `${containerEnv:…}`; a file that is not JSON; a file
+naming neither an image nor a Dockerfile, or both; a `workspaceMount` that is
+not a bind of this project; a `workspaceFolder` outside the mount; a
+`forwardPorts` entry that is not a number; and more than one `devcontainer.json`
+in the project.
+
+Decisions taken while doing it, each of which could be reversed:
+
+- **The lifecycle commands refuse rather than being ignored.** Step 5 above is
+  what lifts this. `postCreateCommand` is where a project runs `go mod download`,
+  and a container that came up without it has tools missing for a reason nothing
+  on screen explains — which is exactly the "looks like a broken editor" this
+  entry is about. Reading `postCreateCommand` and quietly not running it would
+  have been the worst of the three options.
+- **No idle reaper**, and this is where it parts company with the PlantUML
+  server it is otherwise modelled on. That one can go cold because the worst that
+  follows is one slow render; a devcontainer has somebody's shell in it. It lives
+  until the project is closed or the app exits, with `ToolContainers.removeAll`
+  and 0406's sweep behind it. The battery question above is still a question.
+- **The workspace folder defaults to `/workspaces/<basename>`**, the reference
+  implementation's default rather than `ContainerPaths`' `/workspace`, because
+  the published images expect it. The mapping itself is `ContainerPaths`, which
+  is also what refuses a `workspaceFolder` outside the mount.
+- **The image's command is always replaced** with a keep-alive, as every
+  devcontainer tool does. `overrideCommand: false` is not honoured and is not
+  refused either, which is a small hole.
+- **`forwardPorts` publishes on `127.0.0.1` only.** Every interface is a
+  decision nobody made. A port already taken is reported by name from
+  `DevContainers.explainStart`, which is half of the "ports" question above —
+  the other half, choosing a different port, is not done.
+- **A built image stays on the machine** as `abydos-devcontainer:<project>`.
+  It is an image, not a container, so 0406's sweep does not apply to it and
+  nothing removes it. Rebuilding (above) is where this gets an answer.
+- **Nothing is torn down on switching projects**, so switching is as instant as
+  the entry asks. Nothing yet moves *into* the container on switching either —
+  the terminal is opened deliberately, not automatically.
+
+Proved end to end rather than by reasoning: `DevContainerLiveTests` brings a
+container up from a real file, reads a file through the bind mount, writes one
+on this side and reads it on that one, types at a shell on a real pty and reads
+the answer back, and checks the container is gone afterwards. It skips cleanly
+without docker or without the image. In the app, `--devcontainer` opens the tab
+the way the menu does; against a scratch project it answered
+`IN:/workspaces/devcontainer-probe:dcd19323739f`.
+
+**The next slice is step 4 or step 5.** Step 5 is worth more: it is the largest
+of the refusals, `LanguageServers` already has the machinery step 4 needs, and
+until the lifecycle commands run there are real projects this cannot open at all.
 
 ## Examples to work against, and to ship
 
@@ -158,6 +228,22 @@ opens the examples, so prefer the small official `devcontainers/*` images and pi
 them. And an example whose container cannot be built is worse than no example,
 so whatever lands there needs to be in something that runs them — the examples
 repository has its own `Makefile`.
+
+**Still none of them.** The first one was meant to land with steps 1 to 3 and did
+not: `abydos-examples` had uncommitted work in it at the time — `Makefile`,
+`README.md`, `.abydos/.gitignore` and an untracked `plantuml/` — and committing
+into somebody else's half-finished tree is not a thing to do on the way past. It
+is four lines in `go-service/.devcontainer/devcontainer.json`:
+
+    {
+        // What this project is worked on in.
+        "name": "Go service",
+        "image": "mcr.microsoft.com/devcontainers/go:1.24-bookworm"
+    }
+
+Nothing in the subset needs more than that, and the live test does the same
+thing against `alpine:3` in a temporary directory in the meantime — which is
+why this is a gap in the *examples* rather than a gap in what is proved.
 
 **Not the same thing as the dev pod.** `DevPod.swift` and the chart under
 `DevPod/` are a Kubernetes pod somebody works in remotely; this is a container on
