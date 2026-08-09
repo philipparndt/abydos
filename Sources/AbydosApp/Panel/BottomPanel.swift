@@ -551,6 +551,27 @@ final class BottomPanel: NSView {
 		return terminal.geometryForTesting
 	}
 
+	/// Where the panel's own strips have ended up inside it.
+	///
+	/// The number that matters is `gap`: how much of the panel is above its tab
+	/// strip. It is zero whenever the panel sits at the bottom of the window,
+	/// and the height the titlebar covers only while the panel has the whole
+	/// window. Anything else is the band nobody asked for, and it is reported
+	/// rather than photographed because a capture lays the view tree out before
+	/// it draws — which is exactly the thing that hides this.
+	func stripGeometryForTesting() -> String {
+		guard let column = columnViews.first else { return "no columns" }
+		let strip = column.convert(column.strip.frame, to: self)
+		let mirror = column.convert(column.mirrorStrip.frame, to: self)
+		return String(
+			format: "gap=%.1f inset=%.1f panel=%.1f strip=%.1f@%.1f mirror=%.1f@%.1f maximized=%@",
+			strip.minY, tabStripTop.constant, bounds.height,
+			strip.height, strip.minY,
+			column.mirrorStrip.isHidden ? 0 : mirror.height, mirror.minY,
+			isMaximized ? "yes" : "no"
+		)
+	}
+
 	func activeTerminalDirectoryForTesting() -> URL? {
 		let index = activeIndex ?? 0
 		guard index >= 0, index < sessions.count else { return nil }
