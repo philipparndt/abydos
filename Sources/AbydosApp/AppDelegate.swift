@@ -324,8 +324,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		}
 
 		if let path = options.switchTo {
-			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-				self.open(projectAt: URL(fileURLWithPath: (path as NSString).expandingTildeInPath))
+			DispatchQueue.main.asyncAfter(deadline: .now() + options.switchToAt) {
+				let to = self.open(
+					projectAt: URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+				)
+				print("SWITCHED to \(to.project?.root.lastPathComponent ?? "nothing"); "
+					+ "\(self.windowControllers.count) window(s)")
+				fflush(stdout)
 			}
 		}
 
