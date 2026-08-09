@@ -11,6 +11,10 @@
 #
 #   js/viewer-static.min.js   the off-screen renderer, for Export ▸ PNG / SVG
 #   js/app.min.js             the editor itself
+#   js/extensions.min.js      ELK, Mermaid, and the rest of what the editor's
+#                             own menus reach for. Not optional: `App.main`
+#                             loads it before it will call back at all, so
+#                             without it the editor never finishes starting
 #   js/shapes-14-6-5.min.js   every JavaScript-implemented shape, in one file
 #   js/stencils.min.js        every stencil, deflated, served from memory —
 #                             see the note below, it is the whole reason this
@@ -33,7 +37,7 @@
 #                 rather than the app carrying the megabytes. See 0426.
 #   stencils/     42.8 MB of XML, all of which is inside stencils.min.js
 #   shapes/       2.3 MB of the same, likewise inside shapes-14-6-5.min.js
-#   extensions.min.js, plugins/, math4/, images/sidebar-*.png
+#   plugins/, math4/, images/sidebar-*.png
 #
 # Re-run to update: change VERSION below, run from the repo root, then say the
 # new version in THIRD-PARTY-NOTICES.md, which is the only other place it is
@@ -53,7 +57,7 @@ curl -fsSL -o "$WORK/draw.war" \
 	"https://github.com/jgraph/drawio/releases/download/v${VERSION}/draw.war"
 unzip -q -o "$WORK/draw.war" -d "$WORK/war" \
 	'js/viewer-static.min.js' 'js/app.min.js' 'js/shapes-14-6-5.min.js' \
-	'js/stencils.min.js' 'styles/*' 'mxgraph/css/*' 'mxgraph/images/*' \
+	'js/stencils.min.js' 'js/extensions.min.js' 'styles/*' 'mxgraph/css/*' 'mxgraph/images/*' \
 	'resources/dia.txt' 'images/*' 'stencils/LICENSE' 'img/LICENSE'
 # The Apache-2.0 text itself is in the repository rather than in the webapp,
 # which ships only the two riders below.
@@ -64,7 +68,8 @@ rm -rf "$DEST"
 mkdir -p "$DEST/js" "$DEST/styles" "$DEST/mxgraph" "$DEST/resources"
 
 cp "$WORK/war/js/viewer-static.min.js" "$WORK/war/js/app.min.js" \
-	"$WORK/war/js/shapes-14-6-5.min.js" "$WORK/war/js/stencils.min.js" "$DEST/js/"
+	"$WORK/war/js/shapes-14-6-5.min.js" "$WORK/war/js/stencils.min.js" \
+	"$WORK/war/js/extensions.min.js" "$DEST/js/"
 # The fonts folder inside styles/ is web fonts fetched by URL; nothing here
 # fetches, so it is left behind.
 cp "$WORK"/war/styles/*.xml "$WORK"/war/styles/*.css "$WORK"/war/styles/*.png "$DEST/styles/"
