@@ -194,6 +194,29 @@ struct ExampleDevContainerTests {
 		#expect(lifecycle.stages == [.postCreateCommand, .postStartCommand])
 	}
 
+	/// Two devcontainers in one project, which was refused whole until there was
+	/// a menu to ask in.
+	///
+	/// What has to be right is the *names*: they share a project, a checkout and
+	/// a mount, so if they cannot name themselves apart the menu offering them
+	/// says less than the refusal it replaced.
+	@Test func twoContainersAreBothOfferedAndNameThemselvesApart() throws {
+		guard let examples = Self.examples else { return }
+		let project = examples.appendingPathComponent("devcontainers/two-containers")
+		let choices = DevContainerFile.choices(in: project)
+		#expect(choices.map(\.name) == ["Small", "With a Go toolchain"])
+		#expect(choices.map { $0.file.deletingLastPathComponent().lastPathComponent }
+			== ["alpine", "go"])
+		// And each is read as itself rather than as the other, which is the whole
+		// of what the menu entries have to be able to do.
+		let images = choices.map { DevContainerFile.read($0.file, project: project)
+			.configuration?.image
+		}
+		#expect(images == ["alpine:3.21", "golang:1.24-alpine"])
+		// The caller with nowhere to ask — a language server — gets the first.
+		#expect(read("devcontainers/two-containers")?.configuration?.image == "alpine:3.21")
+	}
+
 	// MARK: - The ones that are refused
 
 	/// Each of these is a file `devcontainer up` builds without complaint, kept
@@ -209,11 +232,6 @@ struct ExampleDevContainerTests {
 			"devcontainers/features",
 			"installs devcontainer features (ghcr.io/devcontainers/features/github-cli:1), "
 				+ "which this app does not build"
-		),
-		(
-			"devcontainers/two-containers",
-			"This project has more than one devcontainer.json "
-				+ "(.devcontainer/alpine/devcontainer.json, .devcontainer/go/devcontainer.json)"
 		),
 	])
 	func refusesTheExamplesThatAreThereToBeRefused(project: String, saying: String) throws {
@@ -236,10 +254,11 @@ struct ExampleDevContainerTests {
 			// Both of these were refused until the lifecycle commands ran. They
 			// are the same two files; what changed is this side.
 			"devcontainers/post-create", "devcontainers/post-create-fails",
+			// And this one was refused until there was a menu to ask which of its
+			// two containers somebody meant. Same two files; this side changed.
+			"devcontainers/two-containers",
 		]
-		let refused = [
-			"multi-tier", "devcontainers/features", "devcontainers/two-containers",
-		]
+		let refused = ["multi-tier", "devcontainers/features"]
 		for project in understood + refused {
 			let url = examples.appendingPathComponent(project)
 			#expect(DevContainerFile.exists(in: url), "\(project) has no devcontainer.json")

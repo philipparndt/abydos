@@ -106,23 +106,86 @@ struct DevContainerFileTests {
 		#expect(!DevContainerFile.exists(in: bare))
 	}
 
-	/// Several is a question VS Code answers by asking, and this app has nowhere
-	/// to ask it: picking one quietly would be picking somebody's toolchain.
-	@Test func refusesToChooseBetweenSeveralOfThem() throws {
+	/// Several is a question VS Code answers by asking, and this app refused the
+	/// whole project for want of anywhere to ask it. There is somewhere now — the
+	/// menu behind the terminal panel's + — so both are offered, each named after
+	/// itself.
+	@Test func offersEveryOneOfThemSeparatelyNamed() throws {
 		let project = try makeProject()
 		defer { try? FileManager.default.removeItem(at: project) }
 		try JavaTestDirectory.write(
-			#"{"image": "alpine:3.20"}"#,
+			#"{"image": "alpine:3.20", "name": "The back end"}"#,
 			to: project.appendingPathComponent(".devcontainer/backend/devcontainer.json")
 		)
+		// No name of its own, so the folder is what it is called — which is the
+		// whole of why several can be offered at all. Two entries both reading
+		// "Container" would say less than the refusal they replaced.
 		try JavaTestDirectory.write(
 			#"{"image": "alpine:3.21"}"#,
 			to: project.appendingPathComponent(".devcontainer/frontend/devcontainer.json")
 		)
-		let reason = try #require(DevContainerFile.read(project: project)?.refusal)
-		#expect(reason.contains("more than one devcontainer.json"))
-		#expect(reason.contains(".devcontainer/backend/devcontainer.json"))
-		#expect(reason.contains(".devcontainer/frontend/devcontainer.json"))
+
+		let choices = DevContainerFile.choices(in: project)
+		#expect(choices.map(\.name) == ["The back end", "frontend"])
+		#expect(choices.map { $0.file.lastPathComponent } == ["devcontainer.json", "devcontainer.json"])
+		#expect(choices[0].file.deletingLastPathComponent().lastPathComponent == "backend")
+		#expect(choices[1].file.deletingLastPathComponent().lastPathComponent == "frontend")
+
+		// Each reads as itself rather than as the first of them.
+		#expect(DevContainerFile.read(choices[0].file, project: project)
+			.configuration?.image == "alpine:3.20")
+		#expect(DevContainerFile.read(choices[1].file, project: project)
+			.configuration?.image == "alpine:3.21")
+
+		// And the caller with nowhere to ask gets the preferred one rather than a
+		// refusal — sorted, so it is the same answer every time.
+		#expect(DevContainerFile.read(project: project)?.configuration?.image == "alpine:3.20")
+	}
+
+	/// A file this app will not start still has to be named, or its refusal is
+	/// attributed to nothing on screen.
+	@Test func namesOneItCannotStart() throws {
+		let project = try makeProject()
+		defer { try? FileManager.default.removeItem(at: project) }
+		try JavaTestDirectory.write(
+			"""
+			{
+				"name": "With features",
+				"image": "alpine:3.20",
+				"features": { "ghcr.io/devcontainers/features/go:1": {} }
+			}
+			""",
+			to: project.appendingPathComponent(".devcontainer/tools/devcontainer.json")
+		)
+		let choices = DevContainerFile.choices(in: project)
+		#expect(choices.map(\.name) == ["With features"])
+		#expect(DevContainerFile.read(choices[0].file, project: project).refusal != nil)
+
+		// And with nothing to read at all, the folder is still an honest answer.
+		try JavaTestDirectory.write(
+			"not json", to: project.appendingPathComponent(".devcontainer/broken/devcontainer.json")
+		)
+		#expect(DevContainerFile.choices(in: project).map(\.name) == ["broken", "With features"])
+	}
+
+	/// The common case is the one that must not move: a project with one file in
+	/// one of the two fixed places is named after the project, exactly as before.
+	@Test func aSingleDevContainerIsNamedTheWayItAlwaysWas() throws {
+		let plain = try makeProject()
+		defer { try? FileManager.default.removeItem(at: plain) }
+		try JavaTestDirectory.write(
+			#"{"image": "alpine:3.20"}"#,
+			to: plain.appendingPathComponent(".devcontainer/devcontainer.json")
+		)
+		#expect(DevContainerFile.choices(in: plain).map(\.name) == [plain.lastPathComponent])
+
+		let beside = try makeProject()
+		defer { try? FileManager.default.removeItem(at: beside) }
+		try JavaTestDirectory.write(
+			#"{"image": "alpine:3.21", "name": "Named"}"#,
+			to: beside.appendingPathComponent(".devcontainer.json")
+		)
+		#expect(DevContainerFile.choices(in: beside).map(\.name) == ["Named"])
 	}
 
 	// MARK: - ${…}

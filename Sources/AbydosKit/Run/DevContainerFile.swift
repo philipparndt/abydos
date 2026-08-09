@@ -133,26 +133,115 @@ public enum DevContainerFile {
 		!locations(in: project, fileManager: fileManager).isEmpty
 	}
 
+	// MARK: - Which of them
+
+	/// One of the devcontainers a project offers, named the way somebody has to
+	/// be able to pick it out of a menu.
+	///
+	/// The file is what identifies it, because it is the only thing that
+	/// distinguishes one from another: they share a project, a checkout and a
+	/// mount, and differ in what is written in them.
+	public struct Choice: Equatable, Sendable {
+		/// The `devcontainer.json` this one is.
+		public let file: URL
+		/// What to call it on screen.
+		public let name: String
+	}
+
+	/// Every devcontainer this project offers, in the order they are preferred,
+	/// each named.
+	///
+	/// A project may have several — that is what the third legal location is
+	/// *for*, and `.devcontainer/alpine` beside `.devcontainer/go` is a project
+	/// offering a choice of toolchain rather than a project that is misconfigured.
+	/// This app used to refuse the whole project for it, because a menu is the
+	/// only honest way to ask which one somebody means and there was no menu to
+	/// ask in. There is one now, so the answer is to offer them.
+	public static func choices(
+		in project: URL,
+		environment: [String: String] = ProcessInfo.processInfo.environment,
+		fileManager: FileManager = .default
+	) -> [Choice] {
+		locations(in: project, fileManager: fileManager).map { file in
+			Choice(file: file, name: name(of: file, in: project, environment: environment))
+		}
+	}
+
+	/// What one devcontainer is called.
+	///
+	/// The file's own `name` first, because that is the project saying what it
+	/// calls this container and is what a menu entry should read. **The folder it
+	/// sits in is the answer when it has none** — `.devcontainer/go` is "go" —
+	/// which is the whole reason a project with several can be offered at all:
+	/// two entries both reading "Container" would say less than the refusal they
+	/// replaced.
+	///
+	/// A file this app *refuses* still has to be named, or the refusal cannot be
+	/// attributed to anything on screen, so its `name` is read straight out of the
+	/// JSON when the rest of it could not be honoured. The two fixed locations
+	/// have no folder of their own to be named after, and fall back to the
+	/// project — which is what a project with one devcontainer has always shown.
+	public static func name(
+		of file: URL,
+		in project: URL,
+		environment: [String: String] = ProcessInfo.processInfo.environment
+	) -> String {
+		switch read(file, project: project, environment: environment) {
+		case let .understood(configuration):
+			if let named = configuration.name, !named.trimmingCharacters(in: .whitespaces).isEmpty {
+				return named
+			}
+		case .refused:
+			if let declared = declaredName(of: file),
+			   !declared.trimmingCharacters(in: .whitespaces).isEmpty {
+				return declared
+			}
+		}
+		return folderName(of: file, in: project)
+	}
+
+	/// The `name` field, without asking whether the rest of the file can be
+	/// honoured.
+	private static func declaredName(of file: URL) -> String? {
+		guard let data = try? Data(contentsOf: file) else { return nil }
+		let text = RunConfigurationDiscovery.stripJSONComments(String(decoding: data, as: UTF8.self))
+		guard let object = try? JSONSerialization.jsonObject(with: Data(text.utf8)),
+		      let table = object as? [String: Any]
+		else { return nil }
+		return table["name"] as? String
+	}
+
+	/// The folder a file in `.devcontainer/<something>/` sits in, or the project
+	/// for the two fixed locations, which have no folder of their own.
+	private static func folderName(of file: URL, in project: URL) -> String {
+		let folder = file.deletingLastPathComponent()
+		if folder.deletingLastPathComponent().lastPathComponent == ".devcontainer" {
+			return folder.lastPathComponent
+		}
+		return project.lastPathComponent
+	}
+
 	// MARK: - Reading it
 
-	/// The project's devcontainer, or nil when it has none.
+	/// The project's preferred devcontainer, or nil when it has none.
+	///
+	/// **Preferred, not only.** A project may have several, and which one
+	/// somebody means is a question rather than a fact — this used to refuse the
+	/// whole project for asking it, because there was nowhere to ask. There is
+	/// now: `choices(in:)` is what the menus offer, and every one of them names
+	/// itself. This stays for the callers that have nowhere to ask and must still
+	/// answer, and it answers with the first in `locations`' own order, which is
+	/// the order VS Code prefers them in and is sorted rather than whatever the
+	/// file system said.
+	///
+	/// A project with one — which is nearly all of them — cannot tell the
+	/// difference, and that is deliberate.
 	public static func read(
 		project: URL,
 		environment: [String: String] = ProcessInfo.processInfo.environment,
 		fileManager: FileManager = .default
 	) -> Reading? {
-		let files = locations(in: project, fileManager: fileManager)
-		guard let first = files.first else { return nil }
-		// More than one is a question — "which of these containers do you want?" —
-		// which VS Code answers by asking and this app has nowhere to ask yet.
-		// Picking the first quietly would be picking somebody's toolchain for them.
-		guard files.count == 1 else {
-			let names = files.map { relative($0, to: project) }.joined(separator: ", ")
-			return .refused(
-				"This project has more than one devcontainer.json (\(names)) and this app cannot "
-					+ "yet ask which one you want — leave the one you work in and move the others "
-					+ "out of .devcontainer.")
-		}
+		guard let first = locations(in: project, fileManager: fileManager).first else { return nil }
 		return read(first, project: project, environment: environment)
 	}
 
