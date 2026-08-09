@@ -88,6 +88,52 @@ struct ImagePreviewTests {
 		#expect(ImageFit.fitScale(image: .zero, in: pane, zoom: 2) == 1)
 	}
 
+	/// A pane that scrolls fits the *width* and has no ceiling but the silly one.
+	///
+	/// The rule above caps at what the pane can hold, which is right where the
+	/// picture cannot be scrolled and exactly wrong where it can: ⌘+ would stop
+	/// doing anything the moment the drawing filled the pane. The diagram pane and
+	/// the PDF pane both scroll and both ask this.
+	@Test func fitsTheWidthWhereThereIsSomewhereToScroll() {
+		// Twice as wide as the pane: half size, and the height is not consulted.
+		#expect(ImageFit.widthScale(width: 1000, paneWidth: 500, zoom: 1) == 0.5)
+		// Narrower than the pane: left at its own size rather than blown up.
+		#expect(ImageFit.widthScale(width: 400, paneWidth: 1000, zoom: 1) == 1)
+
+		// The zoom multiplies it, and going past the pane is the point.
+		#expect(ImageFit.widthScale(width: 1000, paneWidth: 500, zoom: 2) == 1)
+		#expect(ImageFit.widthScale(width: 400, paneWidth: 1000, zoom: 2) == 2)
+
+		// Only the bounds that stop the arithmetic being silly.
+		#expect(ImageFit.widthScale(width: 400, paneWidth: 1000, zoom: 100) == 8)
+		#expect(ImageFit.widthScale(width: 400, paneWidth: 1000, zoom: 0) == 0.1)
+		#expect(ImageFit.widthScale(width: 400, paneWidth: 1000, zoom: -3) == 0.1)
+
+		// Nothing to fit yet — a pane with no picture in it, or none laid out.
+		#expect(ImageFit.widthScale(width: 0, paneWidth: 1000, zoom: 1) == 1)
+		#expect(ImageFit.widthScale(width: 400, paneWidth: 0, zoom: 1) == 1)
+	}
+
+	/// The drawing's own size follows the zoom too, so ⌘+ from 100% is 110%
+	/// rather than nothing.
+	@Test func clampsAScaleArrivedAtAnotherWay() {
+		#expect(ImageFit.clamp(1) == 1)
+		#expect(ImageFit.clamp(1.1) == 1.1)
+		#expect(ImageFit.clamp(0) == 0.1)
+		#expect(ImageFit.clamp(40) == 8)
+	}
+
+	/// One rule, two callers. A second copy of it is how ⌘+ comes to mean two
+	/// things in one window.
+	@Test func thePdfPaneAsksTheSameQuestion() {
+		for (width, pane, zoom) in [(612.0, 306.0, 1.0), (612, 1200, 1.5), (612, 612, 100), (0, 500, 1)] {
+			#expect(
+				PdfPreview.scale(pageWidth: width, paneWidth: pane, zoom: zoom)
+					== ImageFit.widthScale(width: width, paneWidth: pane, zoom: zoom)
+			)
+		}
+	}
+
 	/// The caption says what the file holds, and how much of it is showing when
 	/// that is not all of it.
 	@Test func saysWhatItIsShowing() {

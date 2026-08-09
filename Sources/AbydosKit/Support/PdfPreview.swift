@@ -64,13 +64,14 @@ public enum PdfPreview {
 	/// a picture that outgrows its pane is a picture with its edges cut off. A
 	/// PDF scrolls — that is the whole of what `PDFView` is — so capping it there
 	/// would make ⌘+ stop having any effect the moment the page filled the width,
-	/// which is precisely when somebody presses it. The bounds here are the ones
-	/// that stop the arithmetic being silly instead: below a tenth the page is a
-	/// dot, and above eight the renderer is asked for a bitmap it should not be.
+	/// which is precisely when somebody presses it.
+	///
+	/// The arithmetic itself now lives in `ImageFit.widthScale`, because the
+	/// diagram pane learned to scroll and wanted exactly this rule. A page and a
+	/// drawing are not the same thing, so the name stays here; the numbers are
+	/// shared, so ⌘+ cannot come to mean two different things in one window.
 	public static func scale(pageWidth: CGFloat, paneWidth: CGFloat, zoom: CGFloat) -> CGFloat {
-		guard pageWidth > 0, paneWidth > 0 else { return 1 }
-		let fit = min(1, paneWidth / pageWidth)
-		return min(max(fit * max(zoom, 0), 0.1), 8)
+		ImageFit.widthScale(width: pageWidth, paneWidth: paneWidth, zoom: zoom)
 	}
 
 	/// The width to fit to: the widest page there is.
