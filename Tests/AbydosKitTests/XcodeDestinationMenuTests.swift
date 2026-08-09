@@ -12,8 +12,12 @@ struct XcodeDestinationMenuTests {
 		XcodeDestination(id: "\(name)-\(os)", name: name, platform: platform, os: os)
 	}
 
-	/// One per family, and the newest runtime of it.
-	@Test func theNewestOfEachFamilyIsOfferedDirectly() {
+	/// One per *category*, not per platform.
+	///
+	/// An iPhone and an iPad are both `iOS Simulator`, so keying on the
+	/// platform offered one between them — and somebody whose app runs on both
+	/// expects to see both. That is what this pins.
+	@Test func thereIsOneOfEachKindOfMachine() {
 		let all = [
 			simulator("iPhone 17", "26.0"),
 			simulator("iPhone 17", "27.0"),
@@ -22,12 +26,31 @@ struct XcodeDestinationMenuTests {
 			XcodeDestination(id: "mac", name: "My Mac", platform: "macOS"),
 		]
 		let newest = XcodeDestinationMenu.newestOfEachFamily(among: all)
-		#expect(newest.count == 2 || newest.count == 3)
+		let names = newest.map(\.name)
+		#expect(names.contains("iPhone 17"))
+		#expect(names.contains("iPad Air 13-inch (M4)"))
+		#expect(names.contains("Apple TV 4K"))
+		#expect(newest.count == 3)
 		// The Mac is not a simulator and is not shortlisted as one.
 		#expect(!newest.contains { $0.kind == .mac })
-		// iOS picked the 27.0 one.
-		let ios = newest.first { $0.platform == "iOS Simulator" }
-		#expect(ios?.os == "27.0")
+		// The iPhone picked is the newest runtime of that model.
+		#expect(newest.first { $0.name == "iPhone 17" }?.os == "27.0")
+		// iPhone before iPad, and both before the rest.
+		#expect(names.first == "iPhone 17")
+	}
+
+	/// The name says which machine it is; the platform cannot.
+	@Test func theCategoryComesFromTheName() {
+		#expect(XcodeDestinationMenu.category(of: simulator("iPhone 17 Pro", "27.0")) == "iPhone")
+		#expect(XcodeDestinationMenu.category(of: simulator("iPad mini (A17 Pro)", "26.5")) == "iPad")
+		#expect(XcodeDestinationMenu.category(
+			of: simulator("Apple Watch Series 10", "26.0", platform: "watchOS Simulator")
+		) == "Apple Watch")
+		// Something nobody has seen still gets a category of its own rather
+		// than vanishing into another one.
+		#expect(XcodeDestinationMenu.category(
+			of: simulator("Apple Fridge", "1.0", platform: "fridgeOS Simulator")
+		) == "fridgeOS")
 	}
 
 	/// Compared as numbers, not as text.

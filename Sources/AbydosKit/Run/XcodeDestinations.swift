@@ -182,17 +182,32 @@ public final class XcodeDestinations {
 /// desk, and the newest simulator of each family — and everything else is
 /// reachable through a dialog that can be typed into.
 public enum XcodeDestinationMenu {
-	/// The families a simulator can belong to, in the order they are shown.
+	/// The kind of machine a simulator pretends to be.
 	///
-	/// From the platform rather than the model name: "iPad Pro 13-inch (M5)"
-	/// and "iPhone 17" are told apart by `xcodebuild` already, and matching on
-	/// the word "iPad" would put "iPad" in a menu and leave anything Apple
-	/// names differently next year out of it.
-	public static func family(of destination: XcodeDestination) -> String {
-		destination.platform.replacingOccurrences(of: " Simulator", with: "")
+	/// From the name, which is the only place it is said. The platform will not
+	/// do it: an iPhone and an iPad are both `iOS Simulator`, so keying on the
+	/// platform offered one iOS simulator between them — and somebody with an
+	/// app that runs on both expects one of each, which is what this is for.
+	///
+	/// The platform is the fallback rather than the rule, so a machine Apple
+	/// names differently next year still gets an entry of its own instead of
+	/// disappearing from the menu.
+	public static func category(of destination: XcodeDestination) -> String {
+		let known = ["iPhone", "iPad", "Apple TV", "Apple Watch", "Apple Vision"]
+		if let match = known.first(where: { destination.name.hasPrefix($0) }) { return match }
+		return destination.platform.replacingOccurrences(of: " Simulator", with: "")
 	}
 
-	/// The newest simulator of each family, one apiece.
+	/// The order the categories are shown in: the two everybody has first, then
+	/// the rest alphabetically so the list does not depend on what happens to
+	/// be installed.
+	public static func rank(_ category: String) -> Int {
+		["iPhone", "iPad", "Apple Watch", "Apple TV", "Apple Vision"]
+			.firstIndex(of: category) ?? 99
+	}
+
+	/// The newest simulator of each category, one apiece — an iPhone and an
+	/// iPad for an app that runs on both.
 	///
 	/// "Newest" is the runtime, compared as numbers rather than as text: "26.5"
 	/// against "27.0" sorts correctly either way, but "9.0" against "10.0" does
@@ -207,15 +222,19 @@ public enum XcodeDestinationMenu {
 		var best: [String: XcodeDestination] = [:]
 
 		for simulator in simulators {
-			let family = self.family(of: simulator)
-			guard let previous = best[family] else {
-				best[family] = simulator
+			let category = self.category(of: simulator)
+			guard let previous = best[category] else {
+				best[category] = simulator
 				continue
 			}
-			if isNewer(simulator, than: previous) { best[family] = simulator }
+			if isNewer(simulator, than: previous) { best[category] = simulator }
 		}
 		// A stable order, so the menu does not rearrange itself between runs.
-		return best.values.sorted { family(of: $0) < family(of: $1) }
+		return best.values.sorted {
+			let left = category(of: $0), right = category(of: $1)
+			let a = rank(left), b = rank(right)
+			return a != b ? a < b : left < right
+		}
 	}
 
 	/// Whether one simulator runs a newer OS than another, and failing that

@@ -2863,6 +2863,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			if destination.kind != lastKind {
 				if lastKind != nil { menu.addItem(.separator()) }
 				lastKind = destination.kind
+				// Said rather than implied. A simulator and the phone on the
+				// desk are one list of names otherwise, and "iPad (A16)" reads
+				// like a device somebody owns — the runtime in brackets after
+				// it is not what anybody notices first.
+				//
+				// This Mac belongs with the devices: it is a real machine, and
+				// the heading is about what the thing is rather than what
+				// `xcodebuild` calls its platform.
+				let heading = NSMenuItem(
+					title: destination.kind == .simulator ? "Simulators" : "Devices",
+					action: nil, keyEquivalent: ""
+				)
+				heading.isEnabled = false
+				menu.addItem(heading)
 			}
 
 			// How it is attached, beside its name: a phone on a cable and one

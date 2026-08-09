@@ -229,7 +229,9 @@ struct PerformanceTests {
 
 		let insertLine = 50_000
 		var at = rope.byteOffset(ofLine: insertLine)
-		let elapsed = Self.time("20 background reparses (100k lines)") {
+		// Processor time: 80ms per reparse alone, 183ms under suite load, against
+		// a 200ms bound — passing or failing on what else was running.
+		let elapsed = Self.cpuTime("20 background reparses (100k lines)") {
 			for _ in 0..<20 {
 				let point = Point(row: insertLine, column: at - rope.byteOffset(ofLine: insertLine))
 				rope.replace(byteRange: at..<at, with: "x")
@@ -258,13 +260,18 @@ struct PerformanceTests {
 		engine.parse(rope: rope)
 
 		var folds: [FoldRange] = []
-		let elapsed = Self.time("fold ranges (100k lines)") {
+		// Processor time, not wall clock. This failed in four full runs out of
+		// six while passing every time it was run alone: 7.1 seconds by itself,
+		// 10.2 in the suite, 12 to 32 with agents building beside it — the same
+		// code each time, so what it was measuring was the machine. The bound
+		// is unchanged, and now means what it says.
+		let elapsed = Self.cpuTime("fold ranges (100k lines)") {
 			folds = engine.foldRanges(rope: rope)
 		}
 		#expect(!folds.isEmpty)
 		print("PERF fold regions found: \(folds.count)")
 		// Runs on a background queue and is debounced, so the bar is looser.
-		#expect(elapsed < 10.0, "fold computation took \(elapsed)s")
+		#expect(elapsed < 10.0, "fold computation took \(elapsed)s of processor time")
 	}
 
 	@Test func foldingStateMapsLinesQuickly() {

@@ -20,6 +20,14 @@ final class DestinationPicker: NSObject, NSTableViewDataSource, NSTableViewDeleg
 	private let panel: NSPanel
 	private let field = NSSearchField()
 	private let table = NSTableView()
+	/// One button per kind of machine in the list, plus "All".
+	///
+	/// Typing narrows by anything; these narrow by the one thing somebody
+	/// almost always means. "iPad" typed into the field also matches "iPad" in
+	/// a runtime note or a model name that happens to contain it, and it is
+	/// three keystrokes and a guess where this is one click.
+	private let kinds = NSSegmentedControl()
+	private var categories: [String] = []
 
 	/// Held while the panel is up, since nothing else owns it.
 	private static var open: DestinationPicker?
@@ -60,6 +68,21 @@ final class DestinationPicker: NSObject, NSTableViewDataSource, NSTableViewDeleg
 		field.sendsSearchStringImmediately = true
 		field.sendsWholeSearchString = false
 
+		// Only the kinds actually present: a Watch button on a machine with no
+		// watch simulators is a filter that can only ever empty the list.
+		categories = orderedCategories(in: all)
+		kinds.segmentCount = categories.count + 1
+		kinds.setLabel("All", forSegment: 0)
+		for (index, category) in categories.enumerated() {
+			kinds.setLabel(category, forSegment: index + 1)
+		}
+		kinds.segmentStyle = .rounded
+		kinds.trackingMode = .selectOne
+		kinds.selectedSegment = 0
+		kinds.target = self
+		kinds.action = #selector(filterChanged)
+		kinds.isHidden = categories.count < 2
+
 		table.headerView = nil
 		table.rowSizeStyle = .default
 		table.addTableColumn(
@@ -84,7 +107,7 @@ final class DestinationPicker: NSObject, NSTableViewDataSource, NSTableViewDeleg
 		buttons.orientation = .horizontal
 		buttons.spacing = 10
 
-		let stack = NSStackView(views: [field, scroll, buttons])
+		let stack = NSStackView(views: [field, kinds, scroll, buttons])
 		stack.orientation = .vertical
 		stack.spacing = 10
 		stack.edgeInsets = NSEdgeInsets(top: 14, left: 14, bottom: 14, right: 14)
@@ -119,8 +142,33 @@ final class DestinationPicker: NSObject, NSTableViewDataSource, NSTableViewDeleg
 		if !shown.isEmpty { table.selectRowIndexes([0], byExtendingSelection: false) }
 	}
 
+	/// The kinds in the list, in the menu's own order so the two agree.
+	private func orderedCategories(in destinations: [XcodeDestination]) -> [String] {
+		var seen: [String] = []
+		for destination in destinations {
+			let category = XcodeDestinationMenu.category(of: destination)
+			if !seen.contains(category) { seen.append(category) }
+		}
+		return seen.sorted {
+			let a = XcodeDestinationMenu.rank($0), b = XcodeDestinationMenu.rank($1)
+			return a != b ? a < b : $0 < $1
+		}
+	}
+
+	/// What the buttons are set to, or nil for "All".
+	private var chosenCategory: String? {
+		let index = kinds.selectedSegment
+		guard index > 0, categories.indices.contains(index - 1) else { return nil }
+		return categories[index - 1]
+	}
+
 	@objc private func filterChanged() {
-		shown = all.filter { XcodeDestinationMenu.matches($0, field.stringValue) }
+		let category = chosenCategory
+		shown = all.filter { destination in
+			guard XcodeDestinationMenu.matches(destination, field.stringValue) else { return false }
+			guard let category else { return true }
+			return XcodeDestinationMenu.category(of: destination) == category
+		}
 		table.reloadData()
 		if !shown.isEmpty { table.selectRowIndexes([0], byExtendingSelection: false) }
 	}

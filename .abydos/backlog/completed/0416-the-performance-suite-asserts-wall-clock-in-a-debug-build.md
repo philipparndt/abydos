@@ -25,6 +25,25 @@ so it is measuring unoptimised tree-sitter and unoptimised Swift; `make perf`
 already exists and runs the same suite in release, which is where a number
 means something about the app somebody uses.
 
+## Decided, and done
+
+**Kept in the suite, measuring processor time rather than wall clock.** The two
+that were flapping now use `cpuTime`, which was already in the file and already
+had the answer to the objection below: it reads `CLOCK_THREAD_CPUTIME_ID`, so
+it measures the thread doing the work and not the machine around it. That is
+the difference from `getrusage`, which reports the whole process and failed the
+other way round.
+
+The bounds did not move. Fold now measures 6.3 seconds of processor time
+against its 10, where wall clock gave 7.1 alone and 10.2 under the suite;
+reparse measures 53ms against its 200, where wall clock gave 80 alone and 183
+under load. Both have real headroom for the first time, and the headroom means
+something about the code.
+
+The other two were not chosen: `make perf` in release keeps the numbers a user
+would recognise, but only when somebody runs it, and serialising the suite
+would not have helped against four agents building beside it.
+
 ## Worth deciding
 
 - **Move the assertions to `make perf`**, and have the debug run print the
