@@ -1481,7 +1481,7 @@ final class EditorViewController: NSViewController {
 	}
 
 	private func makePreviewView(for tab: Tab) -> NSView {
-		let textView = NSTextView()
+		let textView = MarkdownPreviewTextView()
 		textView.isEditable = false
 		textView.isSelectable = true
 		textView.drawsBackground = true
@@ -1512,6 +1512,18 @@ final class EditorViewController: NSViewController {
 
 		// Keep the preview current while the source is edited.
 		tab.document?.onSyntaxUpdated = { [weak self, weak tab, weak textView] in
+			guard let self, let tab, let textView, tab.isShowingMarkdownPreview else { return }
+			self.schedulePreviewRefresh(textView: textView, tab: tab)
+		}
+
+		// A ```mermaid fence is drawn in a web view and arrives after the page it
+		// belongs on has already been laid out. The document is rendered again
+		// when it does — which finds the drawing in the cache this time and puts
+		// it where the "drawing this diagram" line was. The refresh is the same
+		// debounced one the typing uses, so a document of twenty fences settles in
+		// a handful of renders rather than twenty, and the scroll position is kept
+		// across each of them.
+		textView.whenDiagramDrawn { [weak self, weak tab, weak textView] in
 			guard let self, let tab, let textView, tab.isShowingMarkdownPreview else { return }
 			self.schedulePreviewRefresh(textView: textView, tab: tab)
 		}

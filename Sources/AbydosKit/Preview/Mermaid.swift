@@ -29,8 +29,10 @@ public enum Mermaid {
 	///
 	/// `.mmd` is what `mmdc` writes and reads; `.mermaid` is what a few editors
 	/// use. Neither is a Markdown file — a ```` ```mermaid ```` fence inside one
-	/// is the commoner place for a diagram to live and is deliberately not
-	/// handled yet, for the reasons written down in 0425.
+	/// is the commoner place for a diagram to live, and it is drawn by the
+	/// Markdown preview rather than here: `MarkdownFence` finds the block and
+	/// `MarkdownDiagrams` draws it through this same renderer, so a fence and a
+	/// file get one picture from one path.
 	public static let extensions = ["mmd", "mermaid"]
 
 	/// Whether a file is a diagram this draws.
