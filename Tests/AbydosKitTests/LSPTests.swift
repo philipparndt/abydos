@@ -336,6 +336,36 @@ struct XcodeToolchainTests {
 	}
 }
 
+/// When a project's servers may be stopped, and when they may not.
+struct LanguageServerReapingTests {
+	private let project = URL(fileURLWithPath: "/tmp/project")
+
+	@Test func aProjectNothingElseIsShowingLetsItsServersGo() {
+		#expect(!LanguageServers.serversAreStillWanted(for: project, shownBy: []))
+		#expect(!LanguageServers.serversAreStillWanted(
+			for: project, shownBy: [URL(fileURLWithPath: "/tmp/other")]
+		))
+	}
+
+	/// A torn-off window closing must not take the servers of the project it was
+	/// torn from: the leak is visible in `ps`, and a missing answer is visible
+	/// nowhere.
+	@Test func aProjectAnotherWindowIsShowingKeepsThem() {
+		#expect(LanguageServers.serversAreStillWanted(
+			for: project,
+			shownBy: [URL(fileURLWithPath: "/tmp/other"), URL(fileURLWithPath: "/tmp/project/")]
+		))
+	}
+
+	/// Two spellings of one directory are one project.
+	@Test func theSameProjectSaidTwoWaysIsStillTheSameProject() {
+		#expect(LanguageServers.serversAreStillWanted(
+			for: URL(fileURLWithPath: "/tmp/project/"),
+			shownBy: [URL(fileURLWithPath: "/tmp/project")]
+		))
+	}
+}
+
 /// Stopping a server, which is what closing a project comes down to.
 struct LSPShutdownTests {
 	/// A server that answers nothing — no handshake, no `shutdown` reply — and

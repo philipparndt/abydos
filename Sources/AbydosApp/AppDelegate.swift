@@ -1185,6 +1185,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let at = options.closeLastWindowAt {
+			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+				guard let last = self.windowControllers.last else { return }
+				let project = last.project?.root.lastPathComponent ?? "nothing"
+				last.close()
+				print("CLOSED a window showing \(project); "
+					+ "\(self.windowControllers.count) left")
+			}
+		}
+
 		if options.followTerminal {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
 				controller?.toggleFollowTerminal(nil)
@@ -1477,6 +1487,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		controller.onClose = { [weak self, weak controller] in
 			guard let self, let controller else { return }
 			self.windowControllers.removeAll { $0 === controller }
+		}
+		// Every window but this one, so a window letting a project go can tell
+		// whether anybody else is still showing it before it stops its servers.
+		// Itself is left out rather than relied upon to have gone: this is asked
+		// mid-switch as well as on the way out, and mid-switch the window is
+		// still on the list, still holding the project it is leaving.
+		controller.projectRootsElsewhere = { [weak self, weak controller] in
+			guard let self else { return [] }
+			return self.windowControllers
+				.filter { $0 !== controller }
+				.compactMap { $0.project?.root }
 		}
 		controller.onTearOffTab = { [weak self] tab, screenPoint, source in
 			self?.tearOff(tab: tab, at: screenPoint, from: source)
