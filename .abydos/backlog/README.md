@@ -18,6 +18,17 @@ The order within the list is what they are worth doing in: what stops somebody
 working first, then what is missing, then what is only untidy. Putting an item
 where it belongs is a judgement, so it stays a hand movement.
 
+## waiting
+
+Written, understood as far as it can be, and stuck on something that is not
+work. A crash that needs to happen again before there is anything to read; an
+answer that has to come from somebody else. Kept apart from `open` so that list
+stays a list of things somebody could pick up — an item nobody can act on sitting
+among items anybody can is how a backlog stops being read.
+
+An entry here says what it is waiting *for*, so it is obvious when the wait is
+over. When it is, it moves back to `open` with what arrived, keeping its number.
+
 ## completed
 
 Where an item goes when it is done, keeping the number it had. Moved, not
