@@ -65,3 +65,18 @@ rather than to reach for `.expanded`. Same here.
 ---
 
 Its number is where it sits in the queue, not what it is worth doing next.
+
+## Closed, without doing it
+
+The owner's decision: **the zoom is good enough as it is.** *"Might find something
+later but now it is ok."*
+
+So the limit stands and is documented where somebody will meet it —
+`Theme.controlSize(_:)` says a bezel is drawn from `controlSize` and never from
+the font in it, with the measured numbers. What was rejected is the only fix
+left: drawing the controls ourselves the way `PillButton` does, which is real
+work for a zoom few people use, and which would be a second implementation of
+every control the settings page has.
+
+Reopen this if a large zoom becomes somebody's daily setting rather than an
+occasional one. The measurements above are what to start from.
