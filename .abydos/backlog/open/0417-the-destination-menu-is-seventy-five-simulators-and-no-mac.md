@@ -45,9 +45,16 @@ ones are already dropped. The list is not wrong, it is just not a menu — a
 scrolling column that runs off the screen is not somewhere anybody picks
 something.
 
-## Decided
+## Decided, and done
 
-**Devices are the menu; simulators are a dialog.**
+**Devices are the menu; simulators are a dialog.** Both halves are in, with
+`XcodeDestinationMenu` in AbydosKit holding the rules so they are testable
+without a menu, and `DestinationPicker` as the panel.
+
+The Mac is back: `parse` lets `variant:Mac Catalyst` through while still
+dropping "Designed for [iPad,iPhone]", `productDirectorySuffix` answers
+`-maccatalyst`, and `-destination` now carries the variant — an id alone let
+`xcodebuild` choose between two macOS destinations that share it.
 
 - **Real devices, directly in the menu**, as now — there are two, and they are
   the ones somebody picks by name. This Mac too, once the above is fixed.

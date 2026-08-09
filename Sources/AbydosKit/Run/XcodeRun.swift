@@ -119,7 +119,7 @@ public enum XcodeRun {
 			.map { $0.offset == 0 ? $0.element : quoted($0.element) }
 		arguments += ["-scheme", quoted(scheme.name)]
 		arguments += ["-configuration", quoted(scheme.configuration)]
-		arguments += ["-destination", quoted("id=\(destination.id)")]
+		arguments += ["-destination", quoted(destination.destinationArgument)]
 		arguments += ["-derivedDataPath", quoted(derivedData)]
 		// Signing a build for a device needs a provisioning profile, and the
 		// one thing worse than Xcode registering a device for you is being told

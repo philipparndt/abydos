@@ -1,5 +1,8 @@
 # 418. The titlebar capsule goes missing at a large zoom
 
+-> it is not missing, when there is not enough space it is moved to a hamburger menu.
+-> the text is scaled, but not the box arround. The pill is getting slimer instead of higher
+
 Reported as "the project selector is not scaled with the rest of the UI",
 alongside the toasts — but it is not the same fault, and the difference is
 worth having before somebody goes looking for unscaled numbers.

@@ -165,13 +165,27 @@ public struct XcodeDestination: Equatable, Sendable, Identifiable {
 	/// The OS a simulator runs, which is the only thing telling two simulators
 	/// of the same model apart.
 	public let os: String?
+	/// `xcodebuild`'s own word for a flavour of a platform — "Mac Catalyst",
+	/// "Designed for [iPad,iPhone]". Nil for everything that has only one.
+	public let variant: String?
 
-	public init(id: String, name: String, platform: String, os: String? = nil) {
+	public init(
+		id: String, name: String, platform: String, os: String? = nil, variant: String? = nil
+	) {
 		self.id = id
 		self.name = name
 		self.platform = platform
 		self.os = os
+		self.variant = variant
 	}
+
+	/// An iOS app built to run on this Mac as a Mac app.
+	///
+	/// Its own case throughout, because it is macOS everywhere it is asked and
+	/// not macOS anywhere it matters: a different product directory, and a
+	/// `-destination` that has to say which of the two macOS destinations it
+	/// means.
+	public var isMacCatalyst: Bool { variant == "Mac Catalyst" }
 
 	public var kind: Kind {
 		if platform == "macOS" { return .mac }
@@ -181,13 +195,27 @@ public struct XcodeDestination: Equatable, Sendable, Identifiable {
 	/// What the menu shows. The OS distinguishes the six iPhone 17 Pros that
 	/// come with six installed runtimes; a device has one and does not need it.
 	public var title: String {
+		if isMacCatalyst { return "\(name) (Mac Catalyst)" }
 		guard kind == .simulator, let os else { return name }
 		return "\(name) (\(os))"
+	}
+
+	/// What `-destination` has to say to mean this one.
+	///
+	/// An id alone is enough for anything with one flavour. It is not enough
+	/// for a Mac: this Mac has the same id as a macOS destination and as a Mac
+	/// Catalyst one, and `xcodebuild` given only the id picks for itself.
+	public var destinationArgument: String {
+		guard let variant else { return "id=\(id)" }
+		return "platform=\(platform),variant=\(variant),id=\(id)"
 	}
 
 	/// The directory `xcodebuild` puts the product in, under
 	/// `Build/Products/<configuration><suffix>`.
 	public var productDirectorySuffix: String {
+		// Before the platform, since Catalyst answers "macOS" and lands
+		// somewhere else entirely.
+		if isMacCatalyst { return "-maccatalyst" }
 		switch platform {
 		case "macOS": return ""
 		case "iOS": return "-iphoneos"
@@ -231,13 +259,23 @@ public struct XcodeDestination: Equatable, Sendable, Identifiable {
 			      let platform = fields["platform"]
 			else { continue }
 
-			// "Designed for [iPad,iPhone]" is an iOS build running on this Mac.
-			// It is a real destination and a different product directory from
-			// the macOS one, and telling them apart by name alone is not
-			// possible — so it is left out rather than run as the wrong thing.
-			guard fields["variant"] == nil else { continue }
+			// "Designed for [iPad,iPhone]" is an iOS build running on this Mac,
+			// and it is left out: it is a real destination, but it shares this
+			// Mac's name and id with the macOS one and the two are a different
+			// product directory, so offering both would be offering a coin
+			// toss.
+			//
+			// Mac Catalyst is not that. It says what it is, it is the only
+			// macOS destination an iOS app with Catalyst enabled has — which
+			// is why this guard, written for the line above, was answering
+			// "there is no Mac" for every such project — and it is carried
+			// through to both the product directory and `-destination` below.
+			let variant = fields["variant"]
+			if let variant, variant != "Mac Catalyst" { continue }
 
-			found.append(XcodeDestination(id: id, name: name, platform: platform, os: fields["OS"]))
+			found.append(XcodeDestination(
+				id: id, name: name, platform: platform, os: fields["OS"], variant: variant
+			))
 		}
 		return found
 	}

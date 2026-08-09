@@ -170,3 +170,85 @@ public final class XcodeDestinations {
 		}
 	}
 }
+
+/// Which destinations a menu shows, and which belong behind a dialog.
+///
+/// A real project answered with 79 of them: two devices, two Macs, and 75
+/// simulators — 23 models against every installed runtime. That is not a menu,
+/// it is a list that runs off the screen, and a menu cannot have a filter field
+/// to make it one.
+///
+/// So the menu is what somebody picks by name — this Mac, the phones on the
+/// desk, and the newest simulator of each family — and everything else is
+/// reachable through a dialog that can be typed into.
+public enum XcodeDestinationMenu {
+	/// The families a simulator can belong to, in the order they are shown.
+	///
+	/// From the platform rather than the model name: "iPad Pro 13-inch (M5)"
+	/// and "iPhone 17" are told apart by `xcodebuild` already, and matching on
+	/// the word "iPad" would put "iPad" in a menu and leave anything Apple
+	/// names differently next year out of it.
+	public static func family(of destination: XcodeDestination) -> String {
+		destination.platform.replacingOccurrences(of: " Simulator", with: "")
+	}
+
+	/// The newest simulator of each family, one apiece.
+	///
+	/// "Newest" is the runtime, compared as numbers rather than as text: "26.5"
+	/// against "27.0" sorts correctly either way, but "9.0" against "10.0" does
+	/// not, and an OS numbering that has been to double digits twice will go
+	/// there again. A model present in one runtime and absent from another is
+	/// not a comparison at all, which is why this picks the newest *runtime*
+	/// first and then a model within it.
+	public static func newestOfEachFamily(
+		among destinations: [XcodeDestination]
+	) -> [XcodeDestination] {
+		let simulators = destinations.filter { $0.kind == .simulator }
+		var best: [String: XcodeDestination] = [:]
+
+		for simulator in simulators {
+			let family = self.family(of: simulator)
+			guard let previous = best[family] else {
+				best[family] = simulator
+				continue
+			}
+			if isNewer(simulator, than: previous) { best[family] = simulator }
+		}
+		// A stable order, so the menu does not rearrange itself between runs.
+		return best.values.sorted { family(of: $0) < family(of: $1) }
+	}
+
+	/// Whether one simulator runs a newer OS than another, and failing that
+	/// whether it sorts after it — so two simulators on the same runtime still
+	/// have an answer rather than depending on dictionary order.
+	static func isNewer(_ left: XcodeDestination, than right: XcodeDestination) -> Bool {
+		let a = version(left.os), b = version(right.os)
+		if a != b { return a.lexicographicallyPrecedes(b) == false }
+		return left.name > right.name
+	}
+
+	/// "26.4.1" as [26, 4, 1], so it compares as somebody reads it.
+	static func version(_ text: String?) -> [Int] {
+		(text ?? "").split(separator: ".").map { Int($0) ?? 0 }
+	}
+
+	/// Everything the menu does not show directly.
+	public static func rest(
+		among destinations: [XcodeDestination], shown: [XcodeDestination]
+	) -> [XcodeDestination] {
+		let already = Set(shown.map(\.id))
+		return destinations.filter { $0.kind == .simulator && !already.contains($0.id) }
+	}
+
+	/// Whether a destination matches what somebody has typed into the filter.
+	///
+	/// Every word, anywhere, in any case — "pro 27" finds "iPad Pro 13-inch
+	/// (M5) (27.0)" — because the alternative is remembering whether the
+	/// runtime comes before the model.
+	public static func matches(_ destination: XcodeDestination, _ query: String) -> Bool {
+		let words = query.lowercased().split(separator: " ")
+		guard !words.isEmpty else { return true }
+		let haystack = "\(destination.title) \(destination.platform)".lowercased()
+		return words.allSatisfy { haystack.contains($0) }
+	}
+}

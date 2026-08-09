@@ -2836,12 +2836,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		let remembered = xcodeDestinations[target.scheme.name]
 			?? XcodeDestinations.shared.preferred(among: destinations)?.id
 
+		// This Mac and the devices on the desk in full, then one simulator per
+		// family — the newest of each — and the other seventy-odd behind a
+		// dialog that can be typed into. A real project answers with 79
+		// destinations, of which 75 are simulators, and a menu that long is a
+		// column running off the screen with no way to search it.
+		let shortlist = XcodeDestinationMenu.newestOfEachFamily(among: destinations)
+		let rest = XcodeDestinationMenu.rest(among: destinations, shown: shortlist)
+		let inMenu = destinations.filter { $0.kind != .simulator } + shortlist
+
 		// This Mac, then the phones and iPads, then the simulators — the order
-		// somebody scans in, and the one that keeps forty simulators from
-		// burying the two devices on the desk. `xcodebuild` happens to answer
-		// in this order; sorting says so rather than relying on it.
+		// somebody scans in. `xcodebuild` happens to answer in this order;
+		// sorting says so rather than relying on it.
 		let order: [XcodeDestination.Kind] = [.mac, .device, .simulator]
-		let sorted = destinations.enumerated().sorted { left, right in
+		let sorted = inMenu.enumerated().sorted { left, right in
 			let a = order.firstIndex(of: left.element.kind) ?? order.count
 			let b = order.firstIndex(of: right.element.kind) ?? order.count
 			// Within a kind, the order they came in: simulators arrive grouped
@@ -2871,6 +2879,35 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			item.representedObject = [configuration.id, destination.id]
 			item.state = destination.id == remembered ? .on : .off
 			menu.addItem(item)
+		}
+
+		// Nothing is hidden, only moved: everything the shortlist left out is
+		// here, and a chosen one is remembered like any other.
+		guard !rest.isEmpty else { return }
+		menu.addItem(.separator())
+		let more = NSMenuItem(
+			title: "Other Simulators… (\(rest.count))",
+			action: #selector(chooseOtherDestination(_:)),
+			keyEquivalent: ""
+		)
+		more.target = self
+		more.representedObject = [configuration.id]
+		menu.addItem(more)
+	}
+
+	@objc private func chooseOtherDestination(_ sender: NSMenuItem) {
+		guard let pair = sender.representedObject as? [String], let id = pair.first,
+		      let configuration = runConfigurations.first(where: { $0.id == id }),
+		      let target = configuration.xcode
+		else { return }
+
+		let all = XcodeDestinations.shared.known(for: target)
+		let shortlist = XcodeDestinationMenu.newestOfEachFamily(among: all)
+		let rest = XcodeDestinationMenu.rest(among: all, shown: shortlist)
+		DestinationPicker.show(among: rest, relativeTo: window) { [weak self] chosen in
+			guard let self else { return }
+			self.selectedConfigurationName = configuration.name
+			self.start(configuration, target: target, on: chosen)
 		}
 	}
 
