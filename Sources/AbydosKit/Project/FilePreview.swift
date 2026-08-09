@@ -67,6 +67,12 @@ public enum FilePreview {
 		/// to a picture but an editor's document, opened in draw.io's own editor
 		/// rather than shown beside a source nobody reads. See 0426.
 		case drawio
+		/// A PDF. A finished document rather than a source: specifications,
+		/// datasheets and the paper an algorithm came from all live in a
+		/// repository beside the code that implements them, and clicking one used
+		/// to offer a hex dump. Shown by PDFKit, which is the same choice the
+		/// owner's own scanner app made for the same job.
+		case pdf
 
 		/// Whether this kind is a diagram with an Export beside it.
 		public var isDiagram: Bool {
@@ -99,6 +105,8 @@ public enum FilePreview {
 			return .mermaid
 		case "drawio", "dio":
 			return .drawio
+		case "pdf":
+			return .pdf
 		default:
 			return nil
 		}
@@ -129,6 +137,10 @@ public enum FilePreview {
 			// serialisation nobody reads. It opens in the editor, like a mesh
 			// opens rendered.
 			return .preview
+		case .pdf:
+			// A PDF is the finished document and nothing else. Its bytes are a
+			// compressed object graph, so there is no source half to offer.
+			return .preview
 		case .model:
 			return hasReadableSource(url) ? .source : .preview
 		case .markdown, .none:
@@ -149,6 +161,9 @@ public enum FilePreview {
 		// editor and draw.io over the same file, each unaware of the other's
 		// edits, which is the one way this feature could lose somebody's work.
 		if kind(for: url) == .drawio { return false }
+		// A PDF is a mesh's case exactly: deflated streams and an object graph,
+		// with nothing in it a person would read as text.
+		if kind(for: url) == .pdf { return false }
 		return !["stl", "3mf"].contains(url.pathExtension.lowercased())
 	}
 
