@@ -80,6 +80,39 @@ other way there: those are long-lived by nature, one per project, and they are
 started once. PlantUML is the odd one out because a preview re-renders on every
 keystroke and the tool it uses was built as a command-line program.
 
+## Later: still docker only, for a different reason, 2026-08-09
+
+Apple's `container` answers again (1.2.2), and the reason written above no
+longer holds: **`container rm --force` is proven end to end** — see 0406's own
+later note. A kept container there can be killed again, so the objection that
+made this docker-only is gone.
+
+It is still docker only, and the new reason is that there is nowhere to ask the
+server. Three ways were tried against the real CLI, all with the real image:
+
+- `-p 127.0.0.1::8080`, the form this uses so the runtime picks a free port, is
+  rejected outright: `invalid publish host port: 127.0.0.1:`. There is no asking
+  Apple's runtime to choose one.
+- A port published at a number chosen here *is* listened on, and every
+  connection to it is accepted and then reset. The runtime's log says why: its
+  forwarder cannot connect to the container, `No route to host`.
+- The container's own address — Apple's gives each one an address on
+  `bridge100` — serves the diagram perfectly. `curl` fetched **the same 1595
+  bytes** from `http://192.168.64.30:8080/plantuml/png/~h…` that this entry
+  measured through docker. But not to this app: a plain `connect(2)` from a
+  freshly built Swift binary to that address returns `EHOSTUNREACH`, and
+  `URLSession` reports `-1009`, in the same second that `curl` from an approved
+  terminal gets its picture.
+
+The third explains the second: macOS's local-network privacy, which the
+runtime's own helper is subject to as much as this app is. So the server starts
+fine on Apple's runtime and draws fine — nothing about PlantUML or about
+containers is the problem — and there is simply no address this app may use.
+`canKeepWarm` therefore still returns false for `.apple`, and the reason written
+there is now this one rather than the removal verb. Allowing local network
+access to `container` in Privacy & Security is what would lift it; if it does,
+this is a one-line change plus reading the address out of `container inspect`.
+
 ---
 
 Its number is where it sits in the queue, not what it is worth doing next.

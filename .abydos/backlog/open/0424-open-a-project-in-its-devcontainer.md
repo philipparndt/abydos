@@ -115,7 +115,9 @@ The first slice worth shipping, in this order, each useful on its own:
    container instead of a per-tool one.
 5. **Lifecycle commands**, with the progress and the failure messages.
 
-Docker only, per the decision recorded in 0406 and 0422.
+~~Docker only, per the decision recorded in 0406 and 0422.~~ **Both runtimes,
+since 2026-08-09** — except a devcontainer that forwards a port, which is
+refused by name on Apple's. See below.
 
 ## What the first three steps came to, and what was decided doing them
 
@@ -178,6 +180,44 @@ Decisions taken while doing it, each of which could be reversed:
 - **Nothing is torn down on switching projects**, so switching is as instant as
   the entry asks. Nothing yet moves *into* the container on switching either —
   the terminal is opened deliberately, not automatically.
+
+### Later: Apple's runtime opens one too, 2026-08-09
+
+The refusal above was inherited from 0406, and its reason — that a container
+kept for a whole editing session most needs removing again, and that verb was
+unproven — is gone: `container rm --force` is proven end to end there now, and
+so is the sweep that catches what a crash leaves. Every other piece a
+devcontainer is made of was then exercised on Apple's runtime rather than
+reasoned about, by running `DevContainerLiveTests` against it: the bind mount
+with a file written on the host and read inside, `-d` with the keep-alive,
+`--entrypoint /bin/sh`, `-u`, `-e` on both sides of the `container`/`remote`
+split, `-w`, and `exec -it` onto a real pty with a prompt that answered. So
+`DevContainers.canStart` is true for both.
+
+**One thing is refused, by name: `forwardPorts`.** A port published to the host
+does not work on Apple's runtime — it is listened on, the connection is
+accepted, and then it is reset, because the runtime's own forwarder cannot reach
+the container behind it (`No route to host` in its log; macOS's local-network
+privacy, which refuses the helper the same way it refuses this app). A project
+naming `forwardPorts` is naming the thing it wants reachable, so starting it and
+saying nothing would be exactly the "half-built container looks like a broken
+editor" this entry is about. `DevContainers.unsupported` is the sentence, and it
+names the ports and says to choose Docker. A devcontainer with no `forwardPorts`
+is not stopped.
+
+Two smaller things had to change to make this true rather than nearly true:
+
+- **`stateCommand` was docker's `inspect -f {{.State.Running}}`.** Apple's
+  `inspect` has no `--format` at all; it prints the whole record as JSON.
+  `DevContainers.isRunning` reads it, rather than searching the text for "true",
+  which an image reference could have supplied.
+- **`explainStart` said "Docker is not running"** whatever the runtime was. It
+  is named now, so nobody is sent to start the wrong thing.
+
+`ContainerImages.inspect`/`.pull` were also sending Apple's runtime a
+subcommand that does not exist, so no image-backed feature had ever worked
+there; that is 0406's note, and it had to be fixed before any of this could be
+tried.
 
 Proved end to end rather than by reasoning: `DevContainerLiveTests` brings a
 container up from a real file, reads a file through the bind mount, writes one
