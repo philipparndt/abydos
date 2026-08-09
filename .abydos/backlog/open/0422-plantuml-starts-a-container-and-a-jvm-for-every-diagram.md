@@ -30,6 +30,19 @@ was how the 0.05 s above was measured —
 
     GET /plantuml/png/~h<hex of the .puml text>
 
+## Decided
+
+**Containers are named `abydos-…`.** So a kept one can be found again, and so
+anything left behind is obviously ours and obviously safe to remove.
+
+**Docker only, for now.** Apple's `container` is set aside for these two items
+rather than supported half-way — it has been wedged on this machine all day,
+which is exactly the state in which a removal verb cannot be proven, and a
+feature that keeps a container alive must be able to prove it can kill one.
+This is a decision to revisit, not a direction: the `ContainerRuntime.apple`
+case stays, and what changes is which runtime is preferred and what happens
+when Apple's is the one found.
+
 ## What has to be decided before this is built
 
 **Naming and reaping the container.** This makes 0406 — tool containers

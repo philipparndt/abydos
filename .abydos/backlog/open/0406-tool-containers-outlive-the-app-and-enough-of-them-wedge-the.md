@@ -54,3 +54,22 @@ rather than failing with "name already in use" after a crash.
 
 Its number is where it sits in the queue, not what it is worth doing next.
 Previously numbered 395.
+
+
+## Decided
+
+**A name, `abydos-…`, on every container we start.** The reason this was stuck
+is that a container cannot be removed if it cannot be found, and an unnamed one
+started by a CLI that has since been killed can only be found by guessing.
+
+**Docker only, for now.** Apple's `container` is set aside rather than supported
+half-way. Its service has been unresponsive here all day — `--version` answers,
+`--help` hangs — and that is precisely the state in which a removal verb cannot
+be proven to work. A feature whose whole purpose is cleaning up must be
+demonstrable. The `ContainerRuntime.apple` case stays in the code so this is a
+preference to revisit rather than a direction taken; what changes is which
+runtime is preferred, and what is said when Apple's is the one found.
+
+Written down because it is a reversal: `discover` preferred Apple's precisely
+because it needs no daemon, and that reasoning is still sound for the day its
+service is well.
