@@ -275,11 +275,24 @@ honest, and that control does not exist for any current file type.
   or `TextDocument` driven by `autosave` events. Not guessed at here.
 - **Whether the editor gets the shape sidebar's `img/` and the templates
   gallery**, which is 6.5 MB and 4.9 MB of "does this feel like draw.io".
-- **An example to work against.** The examples repository holds no `.drawio`,
-  and for the same reason 0424 and 0425 both ask for one: a preview either draws
-  or it does not, and the screenshot harness points at that repository. It wants
-  a plain one-page file, a compressed multi-page one, one using a stencil
-  library, and a `.drawio.svg` — those four are exactly the cases above.
+- ~~**An example to work against.**~~ **Written, and they are the four above.**
+  `abydos-examples/drawio/` holds `plain.drawio` (one page, uncompressed),
+  `pages.drawio` (three pages, compressed), `stencils.drawio` (four
+  `mxgraph.aws4` shapes, compressed) and `architecture.drawio.svg` (a real SVG
+  with the whole `<mxfile>` in its root `content` attribute).
+
+  They are **fixtures for a feature that does not exist**, and the folder's
+  README says so first: nothing in the app opens a `.drawio`, so a `.drawio`
+  opens as its XML and only the `.drawio.svg` draws — as a picture, because it
+  is one. Nothing invites a double-click that disappoints.
+
+  Since they cannot be checked by drawing them, `drawio/make-fixtures.py`
+  writes them from readable XML and reads them back the way draw.io's own
+  reader does — base64, `deflateRaw`, `decodeURIComponent` — parses the model,
+  looks for labels still carrying `%20`, and round-trips each page. It needs
+  only python3's standard library. What is deliberately not there is a
+  `.drawio.png`, which is a file this app would *write* rather than read, and
+  anything using `img/lib` clipart.
 
 **A note for whoever wires this up:** `WebRenderer`'s own doc comment points at
 "backlog 0425" for what draw.io would need. It means this entry, which is 0426.

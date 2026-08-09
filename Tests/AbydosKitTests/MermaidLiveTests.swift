@@ -99,6 +99,33 @@ struct MermaidLiveTests {
 		}
 	}
 
+	/// `autonumber`, whose badge is a marker on a line with no length.
+	///
+	/// The fifth thing that had to be baked, found by drawing the examples
+	/// repository's sequence diagram and looking at it. Mermaid numbers a
+	/// message by drawing a line from a point to *itself*, hanging the badge off
+	/// its `marker-start` and writing the number in white on top of it. A
+	/// zero-length line was skipped as nothing to place a marker on, so the
+	/// reference was left standing on a marker that is removed a moment later —
+	/// and white numerals on white paper are the same as no numbers at all.
+	@Test func anAutonumberedSequenceKeepsItsBadges() async throws {
+		guard await canDraw() else { return }
+		let numbered = "sequenceDiagram\n    autonumber\n" + Self.sequence
+			.split(separator: "\n").dropFirst().joined(separator: "\n")
+		let drawn = await MermaidRenderer.shared.draw(numbered, format: .svg)
+		guard case let .success(data) = drawn else {
+			Issue.record("an autonumbered sequence did not draw: \(drawn)")
+			return
+		}
+		let svg = String(decoding: data, as: UTF8.self)
+		#expect(!svg.contains("marker-start="), "a badge is still a marker reference")
+		#expect(svg.contains("sequenceNumber"), "the numbers themselves are missing")
+		// Four messages, so four badges — and the circle each is drawn on is the
+		// part that went missing while the numbers stayed.
+		let circles = svg.components(separatedBy: "<circle").count - 1
+		#expect(circles >= 4, "only \(circles) circles, so the badges are not drawn")
+	}
+
 	/// The one thing a preview and an export must not agree about: the pane
 	/// draws SVG for sharpness, and asking for a PNG has to give a PNG.
 	@Test func aPNGIsAPNGAndNotWhateverWasOnScreen() async throws {

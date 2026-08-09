@@ -273,11 +273,35 @@ taken from the preview's own menu, and the written files opened and looked at.
   screen.
 - **ELK layout** (`@mermaid-js/layout-elk`) is a second bundle and is not here.
   A diagram asking for `layout: elk` gets Mermaid's own message about it.
-- **An example to work against.** The examples repository beside this one holds
-  no Mermaid. It should hold a `.mmd` flowchart and a sequence diagram, for the
-  same reason 0424 wants devcontainers there: the screenshot harness points at
-  it, and a preview either draws or it does not. Not done here because that
-  repository was somebody else's to touch this afternoon.
+- ~~**An example to work against.**~~ **Done.** `abydos-examples/mermaid/` holds
+  six: `render.mmd` (flowchart), `export.mermaid` (sequence, and the other
+  extension), `document.mmd` (state), `preview.mmd` (class), `project.mmd`
+  (entity-relationship) and `branches.mmd` (git graph), with a README saying
+  what each exercises. Six rather than two because the four faults below were
+  every one of them found in a flowchart or a sequence diagram, and the other
+  four diagram types are laid out by different code. All six were previewed and
+  exported in both formats from the app's own menu and looked at.
+  `Tests/AbydosKitTests/ExampleMermaidTests.swift` draws them all and asks each
+  the same questions, the way `ExampleDevContainerTests` reads the
+  devcontainers.
+
+  It found **a fifth thing that had to be baked**, and it was in a diagram type
+  nothing had drawn before: `autonumber`. Mermaid numbers a message by drawing
+  a line from a point to *itself* with the badge hanging off its `marker-start`
+  and the numeral written in white on top. `abydosBakeMarkers` skipped a line
+  with no length as nothing to place a marker on, so the reference was left
+  standing on a marker that is removed a moment later — twelve white numerals
+  on white paper, in the pane and in every export, with the numbers present in
+  the file and absent from the picture. Fixed, and `MermaidLiveTests` has it.
+
+  One thing worth knowing that is Mermaid's own: a comment line that is
+  **exactly `%%`**, before the diagram declaration, stops a **flowchart** being
+  recognised — `Expecting 'NEWLINE', 'SPACE', 'GRAPH', got 'NODE_STRING'`,
+  reported at line 1. Mermaid's own comment stripping wants at least one
+  character after the `%%`. Harmless inside the body, and harmless anywhere in
+  the other five diagram types. This app's `hasDiagram` counts a bare `%%` as a
+  comment, so the two disagree about what a comment is; nothing here depends on
+  that, and it is written down because the message names the wrong place.
 - **A shot in `Scripts/screenshots.sh`.** There is no diagram in the
   documentation's pictures at all — neither PlantUML's nor this — and a preview
   pane is exactly the kind of thing a picture says better than a paragraph. It
