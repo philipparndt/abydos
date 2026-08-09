@@ -167,7 +167,6 @@ import Testing
 			}
 			try? await Task.sleep(nanoseconds: 200_000_000)
 		}
-		}
 		// The prompt is in the workspace folder, and the checkout is under it.
 		#expect(seen.text.contains("IN:\(session.configuration.workspaceFolder):"))
 		#expect(seen.text.contains("the checkout is here"))
