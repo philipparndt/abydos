@@ -10,11 +10,21 @@ extension Notification.Name {
 
 /// The language servers a project is using.
 ///
-/// One server per language, started the first time a file of that language is
-/// opened and kept until the project closes — starting them is slow and they
+/// One server per project per server, started the first time a file it answers
+/// for is opened and kept until the app quits — starting them is slow and they
 /// spend the first minute indexing, so a server per file would mean never
 /// getting an answer. Nothing here blocks the editor: a server that is missing,
 /// slow, or broken costs the features it provides and nothing else.
+///
+/// Until the app quits, and not until the project is switched away from or its
+/// window closes: that is decided in 0427, against a measured cost. A session
+/// that opens many projects keeps a server for each of them, and the servers
+/// counted there — nine, with fifteen gigabytes of `swift-frontend` under
+/// them — are what that looks like when it goes wrong. It is chosen anyway,
+/// because coming back to a project has to be instant and stopping a server
+/// costs a re-index. Every one of them is registered with `ToolProcesses`,
+/// which the three exits — `applicationWillTerminate`, the `atexit` handler
+/// and the uncaught-exception handler — all empty.
 @MainActor
 final class LanguageService {
 	static let shared = LanguageService()
@@ -959,8 +969,13 @@ final class LanguageService {
 		return collapsed.count > 300 ? String(collapsed.prefix(300)) + "…" : collapsed
 	}
 
-	/// Stops every server for a project, when its window closes or it is
-	/// swapped for another.
+	/// Stops every server for a project.
+	///
+	/// Nothing in the app calls this, and that is the decision rather than an
+	/// oversight: closing a window and switching a project both used to, and
+	/// 0427 reversed it — a server ends when the app ends. What it is kept for
+	/// is stopping one by hand, which is the list of what is running that 0427
+	/// now carries as the answer to a session that has collected too many.
 	func shutdown(project: URL) {
 		let prefix = project.standardizedFileURL.path + "#"
 		for (key, server) in servers where key.hasPrefix(prefix) {

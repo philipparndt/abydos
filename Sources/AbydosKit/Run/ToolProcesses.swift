@@ -65,6 +65,19 @@ public final class ToolProcesses: @unchecked Sendable {
 		lock.unlock()
 	}
 
+	/// Whether a process is one of the ones this will end.
+	///
+	/// Asked by the process id, because that is what a caller can still get hold
+	/// of once the `Process` belongs to whatever started it. Read-only, and there
+	/// to prove the handover: a language server is ended by nothing short of the
+	/// app ending, so being registered here is the whole of what keeps one from
+	/// being left behind.
+	public func isTracking(pid: Int32) -> Bool {
+		lock.lock()
+		defer { lock.unlock() }
+		return running.contains { $0.isRunning && $0.processIdentifier == pid }
+	}
+
 	public var count: Int {
 		lock.lock()
 		defer { lock.unlock() }

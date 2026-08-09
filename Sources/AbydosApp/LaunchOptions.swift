@@ -285,8 +285,15 @@ struct LaunchOptions {
 	/// Open the project switcher, optionally with a filter applied.
 	var switcherFilter: String?
 	/// Switch this window to another project before capture, the way the
-	/// switcher does.
+	/// switcher does. `path` or `path@seconds`, the way the other timed steps
+	/// are said.
+	///
+	/// The seconds matter to anything counting what a switch costs: a switch a
+	/// second in happens while the first project's servers are still starting,
+	/// and what is counted afterwards is then a race rather than a rule.
 	var switchTo: String?
+	/// When to switch, in seconds. Read off `--switch-to path@seconds`.
+	var switchToAt: Double = 1.0
 	/// Rename the terminal tab before capture, as a double-click does.
 	var renameTerminal: String?
 	/// Put two terminals side by side before capture.
@@ -355,10 +362,10 @@ struct LaunchOptions {
 
 	/// Close the window opened last, this many seconds in.
 	///
-	/// For counting what a closed window takes with it. A torn-off window shares
-	/// its project with the one it came from, so closing it must leave that
-	/// project's language servers running — which is a thing only `ps` can say,
-	/// and only if something closes a window without a hand on the mouse.
+	/// For counting what a closed window takes with it, which is now nothing:
+	/// a language server outlives the window that started it and ends with the
+	/// app. That is a thing only `ps` can say, and only if something closes a
+	/// window without a hand on the mouse.
 	var closeLastWindowAt: Double?
 
 	static func parse(_ arguments: [String] = CommandLine.arguments) -> LaunchOptions {
@@ -533,7 +540,16 @@ struct LaunchOptions {
 			case "--wrap":       options.wordWrap = true
 			case "--switcher":   options.switcherFilter = next()
 			case "--switcher-keys": options.switcherKeys = next()
-			case "--switch-to":  options.switchTo = next()
+			case "--switch-to":
+				let said = next() ?? ""
+				// `path@seconds`, and a path with no `@` in it keeps the default.
+				if let at = said.lastIndex(of: "@"),
+				   let seconds = Double(said[said.index(after: at)...]) {
+					options.switchTo = String(said[..<at])
+					options.switchToAt = seconds
+				} else {
+					options.switchTo = said
+				}
 			case "--rename-terminal": options.renameTerminal = next()
 			case "--split-terminals": options.splitTerminals = true
 			case "--split-panes": options.splitPanes = true
