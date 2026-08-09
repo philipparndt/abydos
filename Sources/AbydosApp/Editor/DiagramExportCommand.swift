@@ -38,6 +38,27 @@ enum DiagramExportCommand {
 		projectRoot: URL?,
 		then: (@Sendable ([URL]) -> Void)? = nil
 	) {
+		// A `.drawio` is not text somebody typed, and the two picture forms are
+		// not text at all — so it is read as bytes, and what is on screen wins
+		// over what is on disk exactly as it does for the other two.
+		if Drawio.isDiagram(url) {
+			guard let data = source.map({ Data($0.utf8) })
+				?? (try? Data(contentsOf: url, options: .mappedIfSafe))
+			else {
+				Toast.post("Could not read \(url.lastPathComponent)")
+				return
+			}
+			Toast.post(
+				"Drawing \(url.lastPathComponent) as \(format.rawValue.uppercased())…",
+				kind: .information
+			)
+			Task {
+				let outcome = await DiagramExport.export(drawio: data, of: url, format: format)
+				await MainActor.run { report(outcome, for: url, then: then) }
+			}
+			return
+		}
+
 		let text: String
 		if let source {
 			text = source

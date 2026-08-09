@@ -1,0 +1,155 @@
+import AbydosKit
+import AppKit
+import WebKit
+
+/// A `.drawio` open in draw.io's own editor, editing this app's own document.
+///
+/// The other two diagram panes draw a picture of text somebody typed. This one
+/// is not a picture at all — it is the editor, and what somebody does in it is
+/// an edit to the file the tab is showing. See 0426, level 2.
+///
+/// The wiring is deliberately small, and small is the whole claim:
+///
+///  * draw.io reports every change, and the change goes into the tab's
+///    `TextDocument`. That is what makes the edited dot appear, what makes ⌘S
+///    write, what makes the close prompt ask, and what makes auto-save work —
+///    all of it code that already existed and none of it changed.
+///  * Somebody else writing the file reaches here as `onTextChanged`, and the
+///    document is put back into the editor. The one thing that must not happen
+///    is a document arriving back that this pane itself sent, so what was last
+///    given to the editor is remembered and compared.
+///  * The pane's own `Export ▸ PNG` / `SVG` draws through the editor, so it is
+///    a picture of what is on screen including unsaved work.
+///
+/// It subclasses the diagram pane for the export menu and for the sentence in
+/// the middle: the pane says something while the editor loads, and says why if
+/// it will not.
+final class DrawioPreviewView: DiagramPaneView {
+	private var editor: DrawioEditor?
+	/// The document this pane edits, held weakly — the tab owns it.
+	weak var document: TextDocument?
+	/// What was last handed to draw.io, so a change coming back out of it is not
+	/// mistaken for somebody else writing the file.
+	private var lastGiven: String?
+	private var isLoaded = false
+
+	override init() {
+		super.init()
+		notice = "Opening draw.io…"
+
+		guard let made = DrawioEditor.make() else {
+			notice = Drawio.missingBundleHint
+			return
+		}
+		editor = made
+
+		let web = made.webView
+		web.translatesAutoresizingMaskIntoConstraints = false
+		// Hidden until the editor says it is ready: an empty white rectangle
+		// where a diagram should be says nothing, and the sentence behind it
+		// says what is happening.
+		web.isHidden = true
+		addSubview(web)
+		NSLayoutConstraint.activate([
+			web.leadingAnchor.constraint(equalTo: leadingAnchor),
+			web.trailingAnchor.constraint(equalTo: trailingAnchor),
+			web.topAnchor.constraint(equalTo: topAnchor),
+			web.bottomAnchor.constraint(equalTo: bottomAnchor),
+		])
+
+		made.onReady = { [weak self] in self?.editorIsReady() }
+		made.onChanged = { [weak self] xml in self?.editorChanged(xml) }
+		made.onSaveRequested = { [weak self] xml in self?.editorAskedToSave(xml) }
+		made.onTrouble = { [weak self] said in
+			guard let self, !self.isLoaded else { return }
+			self.notice = said
+			self.needsDisplay = true
+		}
+		made.start()
+	}
+
+	required init?(coder: NSCoder) { fatalError("not used") }
+
+	// MARK: - The document, both ways
+
+	/// Puts a document in the editor. Called when the tab opens and again
+	/// whenever something outside the app writes the file.
+	func show(_ xml: String) {
+		guard xml != lastGiven else { return }
+		lastGiven = xml
+		let compressed = Drawio.read(Data(xml.utf8))?.isCompressed ?? false
+		editor?.load(xml, compressed: compressed)
+	}
+
+	private func editorIsReady() {
+		isLoaded = true
+		editor?.webView.isHidden = false
+		notice = nil
+		needsDisplay = true
+		sayWhatIsMissing()
+	}
+
+	/// A change in draw.io is a change to the file, said once and immediately.
+	private func editorChanged(_ xml: String) {
+		guard let document, xml != lastGiven else { return }
+		lastGiven = xml
+		document.setContents(xml)
+		onEdited?()
+	}
+
+	/// draw.io's own Save button, which does exactly what ⌘S does.
+	private func editorAskedToSave(_ xml: String) {
+		editorChanged(xml)
+		onSaveRequested?()
+	}
+
+	/// The tab was edited, so the bar can put the dot on.
+	var onEdited: (() -> Void)?
+	/// Somebody pressed Save inside draw.io.
+	var onSaveRequested: (() -> Void)?
+
+	/// Reads the editor and puts what it says into the document, before a save.
+	///
+	/// The change listener means this is almost always a no-op — but "almost
+	/// always" is not what ⌘S may be, and the round trip costs milliseconds.
+	func flush() async {
+		guard let document, let current = await editor?.currentDocument() else { return }
+		guard current != lastGiven else { return }
+		lastGiven = current
+		document.setContents(current)
+	}
+
+	// MARK: - Exporting
+
+	override var isReadyToExport: Bool { isLoaded }
+
+	override func export(_ format: DiagramFormat, then: (@Sendable ([URL]) -> Void)? = nil) {
+		guard let fileURL else { return }
+		Task { @MainActor in
+			await flush()
+			DiagramExportCommand.run(
+				url: fileURL, source: document?.rope.string, format: format,
+				projectRoot: nil, then: then
+			)
+		}
+	}
+
+	// MARK: - What this build does not carry
+
+	/// draw.io's clipart is the one asset deliberately left out, and a picture
+	/// that silently does not draw is exactly the failure 0426 warned about for
+	/// the stencils. The editor asks for it by path, the scheme handler answers
+	/// 404 and writes the path down, and this says so once.
+	private func sayWhatIsMissing() {
+		DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+			guard let self, let editor = self.editor else { return }
+			let clipart = editor.missingAssets.filter { $0.hasPrefix("img/lib/") }
+			guard !clipart.isEmpty else { return }
+			Toast.post(
+				"Some shapes could not be drawn",
+				detail: "\(clipart.count) of them are draw.io clipart, which this build of "
+					+ "Abydos does not carry."
+			)
+		}
+	}
+}

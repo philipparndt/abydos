@@ -63,9 +63,15 @@ public enum FilePreview {
 		/// only difference somebody sees is that this one needs nothing
 		/// installed. See 0425.
 		case mermaid
+		/// A draw.io document, which is the odd one out: not text that renders
+		/// to a picture but an editor's document, opened in draw.io's own editor
+		/// rather than shown beside a source nobody reads. See 0426.
+		case drawio
 
 		/// Whether this kind is a diagram with an Export beside it.
-		public var isDiagram: Bool { self == .plantuml || self == .mermaid }
+		public var isDiagram: Bool {
+			self == .plantuml || self == .mermaid || self == .drawio
+		}
 	}
 
 	public static func kind(for url: URL) -> Kind? {
@@ -78,11 +84,21 @@ public enum FilePreview {
 			return .image
 		case "svg":
 			// A drawing that is also a file somebody edits, so it has both.
+			//
+			// `architecture.drawio.svg` lands here, and that is deliberate rather
+			// than an oversight — `pathExtension` says `svg`, and the file *is* a
+			// picture: it renders on GitHub, previews here as a picture and reads
+			// as text. Reading it as a draw.io document instead would take the
+			// picture away for the sake of an editor somebody can have by opening
+			// the `.drawio` beside it. What the app does take out of one is its
+			// `<mxfile>`, so an export recognises a picture it drew. See 0426.
 			return .image
 		case "puml", "plantuml", "pu", "iuml", "wsd":
 			return .plantuml
 		case "mmd", "mermaid":
 			return .mermaid
+		case "drawio", "dio":
+			return .drawio
 		default:
 			return nil
 		}
@@ -107,6 +123,12 @@ public enum FilePreview {
 			// is what it is for, and checking one against the other is the
 			// whole of the work.
 			return .splitRight
+		case .drawio:
+			// The opposite, and for the opposite reason. A `.drawio` is not text
+			// somebody types — it is an editor's document, and the XML is a
+			// serialisation nobody reads. It opens in the editor, like a mesh
+			// opens rendered.
+			return .preview
 		case .model:
 			return hasReadableSource(url) ? .source : .preview
 		case .markdown, .none:
@@ -121,6 +143,12 @@ public enum FilePreview {
 		// A picture is pixels; an SVG is a drawing written down, and reading it
 		// is a reasonable thing to want.
 		if kind(for: url) == .image { return url.pathExtension.lowercased() == "svg" }
+		// A `.drawio` has no source in the sense the control means. Its XML is
+		// deflated base64 nobody can read, and — the part that matters — the
+		// editor in the preview half owns the document. A split would put a text
+		// editor and draw.io over the same file, each unaware of the other's
+		// edits, which is the one way this feature could lose somebody's work.
+		if kind(for: url) == .drawio { return false }
 		return !["stl", "3mf"].contains(url.pathExtension.lowercased())
 	}
 

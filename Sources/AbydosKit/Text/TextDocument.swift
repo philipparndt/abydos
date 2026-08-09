@@ -474,6 +474,35 @@ public final class TextDocument {
 		recordDiskState()
 	}
 
+	/// Replaces the whole document with what another editor made of it.
+	///
+	/// For a `.drawio`, which is edited by draw.io in a web view rather than by
+	/// this app's own `CodeView`. The change arrives as a whole document rather
+	/// than as an edit, because that is what draw.io has to give — and it must
+	/// **not** go through `replace`, for two reasons that both matter:
+	///
+	///  * **The undo stack is not this app's.** ⌘Z in a draw.io pane belongs to
+	///    mxGraph's undo manager. Pushing an entry here as well would give the
+	///    file two histories that disagree, and the app's Edit menu no way to
+	///    know which one it is talking to.
+	///  * **`onTextChanged` would come straight back.** The view that sent this
+	///    listens to that notification for *external* changes, and a loop
+	///    between an editor and the document it is editing is the shape of bug
+	///    that loses somebody's drawing.
+	///
+	/// Everything else about the document is unchanged, which is the point:
+	/// `isDirty` marks the tab, `save()` writes and records the disk state so
+	/// the watcher does not mistake it for somebody else's write, and the
+	/// close-without-saving prompt asks what it always asks.
+	public func setContents(_ text: String, markingDirty: Bool = true) {
+		guard text != rope.string else { return }
+		rope = Rope(data: Data(text.utf8))
+		isDirty = markingDirty
+		generation &+= 1
+		folds = []
+		if markingDirty { scheduleAutoSave() }
+	}
+
 	// MARK: - External changes
 
 	/// What the file looked like when this document last agreed with it.
