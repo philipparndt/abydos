@@ -1559,6 +1559,9 @@ final class EditorViewController: NSViewController {
 	/// Shows a view of the app's own in a tab, or brings back the one that is
 	/// already open.
 	///
+	/// A page that wants to follow the zoom says so by being a `ScalingPage`;
+	/// one that does not is left exactly as it is.
+	///
 	/// The URL is a name rather than a file: two pages must not collide, and a
 	/// tab is found by it.
 	@discardableResult
@@ -1580,7 +1583,7 @@ final class EditorViewController: NSViewController {
 		return view
 	}
 
-	/// The open page with this identifier, if it is open.
+	/// The open page with this identifier, if it is open, whatever kind it is.
 	func page(identifier: String) -> NSView? {
 		let url = URL(fileURLWithPath: "/ideai/page/" + identifier)
 		return tabs.first { $0.pageTitle != nil && $0.url == url }?.contentView
@@ -2209,6 +2212,11 @@ final class EditorViewController: NSViewController {
 		for tab in tabs {
 			tab.codeView?.setWordWrap(Settings.shared.wordWrap)
 			tab.codeView?.applyThemeChange()
+			// A page of the app's own is a view in a tab and nothing else in the
+			// window walks into one, so without this it was the one thing that
+			// did not follow ⌘+: settings opened at 1× kept 1× rows and 1× type
+			// for as long as it stayed open.
+			(tab.contentView as? ScalingPage)?.applySettings()
 		}
 	}
 
@@ -2218,6 +2226,18 @@ final class EditorViewController: NSViewController {
 		tabs.removeAll()
 		NotificationCenter.default.removeObserver(self)
 	}
+}
+
+/// A page of the app's own that re-reads the zoom and the palette when they
+/// change, the way every pane of the window does.
+///
+/// A page lives in a tab rather than in the window's own furniture, so nothing
+/// in `MainWindowController.applySettings` reaches one on its way round. This
+/// is how a page asks to be included: the editor calls it for every tab holding
+/// one, and a page that does not conform is left alone.
+@MainActor
+protocol ScalingPage: NSView {
+	func applySettings()
 }
 
 /// Detects binary content so the editor does not try to render it.

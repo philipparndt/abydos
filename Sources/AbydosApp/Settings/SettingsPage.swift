@@ -13,7 +13,7 @@ import AbydosKit
 /// The sections and the settings in them come from the same list the window
 /// uses, so the two cannot drift apart.
 @MainActor
-final class SettingsPage: NSView {
+final class SettingsPage: NSView, ScalingPage {
 	/// Every page, parents and their children, in the order they are listed.
 	///
 	/// Flattened rather than an outline view: two levels is all this nests, and
@@ -40,6 +40,16 @@ final class SettingsPage: NSView {
 	private let list = SettingsSidebarTable()
 	private let form = NSStackView()
 	private var scroll: NSScrollView!
+	private var sidebarTitle: NSTextField!
+
+	/// Constraints whose constants are design-time sizes, kept beside the size
+	/// each was written as.
+	///
+	/// A page reads the zoom as it builds, so one built at 1× would keep 1×
+	/// spacing for as long as it stayed open however far the rest of the window
+	/// grew. Holding the design number is what lets the zoom be pushed back in
+	/// — the constant on the constraint is the answer, not the question.
+	private var scaledConstraints: [(constraint: NSLayoutConstraint, design: CGFloat)] = []
 
 	override init(frame: NSRect) {
 		super.init(frame: frame)
@@ -195,6 +205,48 @@ final class SettingsPage: NSView {
 
 	deinit { NotificationCenter.default.removeObserver(self) }
 
+	// MARK: - The zoom
+
+	/// Re-reads the zoom and the palette, the way every other pane in the window
+	/// does when ⌘+ is pressed.
+	///
+	/// Without this the page was the one thing in the window that did not
+	/// follow: `applySettings` reaches the editor, the navigator, the tool strip
+	/// and the bottom panel, and a settings *tab* is none of those — it is a
+	/// view in an editor group, and nothing walked into one. A page opened at 1×
+	/// therefore kept 1× rows, a 1× sidebar and 1× type for as long as it stayed
+	/// open, however far the window around it grew.
+	func applySettings() {
+		for (constraint, design) in scaledConstraints {
+			constraint.constant = Theme.current.scaled(design)
+		}
+		applyMetrics()
+		// Built again rather than adjusted: every control in a section reads the
+		// zoom as it is made, and there is one section on screen.
+		show(section: selected)
+		list.reloadData()
+	}
+
+	/// The sizes that are not constraints: fonts, row heights and the form's own
+	/// padding, all of which are read once when something is built.
+	private func applyMetrics() {
+		sidebarTitle?.font = Theme.current.uiFont(11, weight: .semibold)
+		list.rowHeight = Theme.current.scaled(28)
+		form.spacing = Theme.current.scaled(18)
+		form.edgeInsets = NSEdgeInsets(
+			top: Theme.current.scaled(24), left: Theme.current.scaled(28),
+			bottom: Theme.current.scaled(32), right: Theme.current.scaled(28)
+		)
+	}
+
+	/// Sets a constraint from a design-time size and remembers the pair, so the
+	/// zoom can be put back into it later.
+	private func scaled(_ constraint: NSLayoutConstraint, _ design: CGFloat) -> NSLayoutConstraint {
+		constraint.constant = Theme.current.scaled(design)
+		scaledConstraints.append((constraint, design))
+		return constraint
+	}
+
 	// MARK: - Layout
 
 	private func build() {
@@ -212,11 +264,6 @@ final class SettingsPage: NSView {
 
 		form.orientation = .vertical
 		form.alignment = .leading
-		form.spacing = Theme.current.scaled(18)
-		form.edgeInsets = NSEdgeInsets(
-			top: Theme.current.scaled(24), left: Theme.current.scaled(28),
-			bottom: Theme.current.scaled(32), right: Theme.current.scaled(28)
-		)
 		form.translatesAutoresizingMaskIntoConstraints = false
 
 		let clip = FlippedContainer()
@@ -238,7 +285,7 @@ final class SettingsPage: NSView {
 			// rust-analyzer" under "Tools" is the longest thing this list has to
 			// hold, and a sidebar that truncates the names is a list you have to
 			// click through to read.
-			sidebar.widthAnchor.constraint(equalToConstant: Theme.current.scaled(232)),
+			scaled(sidebar.widthAnchor.constraint(equalToConstant: 0), 232),
 
 			scroll.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor),
 			scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -279,7 +326,6 @@ final class SettingsPage: NSView {
 		list.backgroundColor = .clear
 		list.selectionHighlightStyle = .regular
 		list.rowSizeStyle = .custom
-		list.rowHeight = Theme.current.scaled(28)
 		list.intercellSpacing = .zero
 		list.gridStyleMask = []
 		list.addTableColumn(NSTableColumn(identifier: NSUserInterfaceItemIdentifier("section")))
@@ -295,22 +341,23 @@ final class SettingsPage: NSView {
 		scroll.borderType = .noBorder
 
 		let title = NSTextField(labelWithString: "Settings")
-		title.font = Theme.current.uiFont(11, weight: .semibold)
 		title.textColor = Theme.current.gitIgnored
+		sidebarTitle = title
 
 		for view in [title, scroll] as [NSView] {
 			view.translatesAutoresizingMaskIntoConstraints = false
 			background.addSubview(view)
 		}
 		NSLayoutConstraint.activate([
-			title.topAnchor.constraint(equalTo: background.topAnchor, constant: Theme.current.scaled(14)),
-			title.leadingAnchor.constraint(equalTo: background.leadingAnchor, constant: Theme.current.scaled(14)),
+			scaled(title.topAnchor.constraint(equalTo: background.topAnchor), 14),
+			scaled(title.leadingAnchor.constraint(equalTo: background.leadingAnchor), 14),
 
-			scroll.topAnchor.constraint(equalTo: title.bottomAnchor, constant: Theme.current.scaled(8)),
+			scaled(scroll.topAnchor.constraint(equalTo: title.bottomAnchor), 8),
 			scroll.leadingAnchor.constraint(equalTo: background.leadingAnchor),
 			scroll.trailingAnchor.constraint(equalTo: background.trailingAnchor),
-			scroll.bottomAnchor.constraint(equalTo: background.bottomAnchor, constant: -Theme.current.scaled(10)),
+			scaled(scroll.bottomAnchor.constraint(equalTo: background.bottomAnchor), -10),
 		])
+		applyMetrics()
 		return background
 	}
 
@@ -507,6 +554,10 @@ final class SettingsPage: NSView {
 		switch row {
 		case let .toggle(title, help, get, set, isEnabled):
 			let button = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+			// Every system control on this page is told what size to draw at, not
+			// only what font to put in it: see `Theme.controlSize(_:)` for why
+			// the font alone leaves the bezel where it was.
+			button.controlSize = Theme.current.controlSize()
 			button.state = get() ? .on : .off
 			button.isEnabled = isEnabled?() ?? true
 			button.onAction = {
@@ -534,7 +585,7 @@ final class SettingsPage: NSView {
 			)
 			slider.numberOfTickMarks = Int((range.upperBound - range.lowerBound) / step) + 1
 			slider.allowsTickMarkValuesOnly = true
-			slider.controlSize = .small
+			slider.controlSize = Theme.current.controlSize(.small)
 			slider.widthAnchor.constraint(equalToConstant: Theme.current.scaled(200)).isActive = true
 			slider.onAction = {
 				set(slider.doubleValue)
@@ -555,6 +606,7 @@ final class SettingsPage: NSView {
 			field.alignment = .right
 
 			let stepper = NSStepper()
+			stepper.controlSize = Theme.current.controlSize()
 			stepper.minValue = Double(range.lowerBound)
 			stepper.maxValue = Double(range.upperBound)
 			stepper.increment = 1
@@ -587,6 +639,7 @@ final class SettingsPage: NSView {
 
 		case let .choice(title, help, options, get, set):
 			let popUp = NSPopUpButton()
+			popUp.controlSize = Theme.current.controlSize()
 			popUp.font = Theme.current.uiFont(12)
 			popUp.addItems(withTitles: options.map(\.label))
 			popUp.widthAnchor.constraint(equalToConstant: Theme.current.scaled(190)).isActive = true
@@ -617,6 +670,7 @@ final class SettingsPage: NSView {
 					target: nil, action: nil
 				)
 				button.bezelStyle = .rounded
+				button.controlSize = Theme.current.controlSize()
 				button.toolTip = item.help
 				button.onAction = item.action
 				return button
@@ -631,6 +685,7 @@ final class SettingsPage: NSView {
 		case let .button(title, label, action):
 			let button = NSButton(title: label, target: nil, action: nil)
 			button.bezelStyle = .rounded
+			button.controlSize = Theme.current.controlSize()
 			button.font = Theme.current.uiFont(12)
 			button.onAction = action
 			return (title, button, nil)
@@ -639,6 +694,7 @@ final class SettingsPage: NSView {
 
 	private func field(text: String, width: CGFloat) -> NSTextField {
 		let field = NSTextField(string: text)
+		field.controlSize = Theme.current.controlSize()
 		field.font = Theme.terminalFont(size: Theme.current.fontSize - 1)
 		field.textColor = Theme.current.sidebarText
 		field.backgroundColor = Theme.current.editorBackground
