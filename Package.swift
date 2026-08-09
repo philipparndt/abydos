@@ -74,9 +74,15 @@ let package = Package(
 	],
 	dependencies: [
 		.package(url: "https://github.com/ChimeHQ/SwiftTreeSitter", from: "0.25.0"),
-		// The 3D viewer, hosted in an editor tab. A path dependency for now:
-		// see the note in README about what publishing it would take.
-		.package(path: "../3d/gostl/GoSTL-Swift"),
+		// The 3D viewer, hosted in an editor tab.
+		//
+		// By URL and at a tag, rather than the path dependency this was: a path
+		// dependency writes nothing into Package.resolved, so whichever copy
+		// happened to be on disk at build time was what shipped, and no build
+		// could be reproduced or even identified afterwards. Pinning needed
+		// GoSTL's manifest at the root of its repository, which is what v0.20.2
+		// is — the same viewer as v0.20.1, moved so it can be depended on.
+		.package(url: "https://github.com/philipparndt/gostl.git", exact: "0.20.2"),
 	] + grammarPackages,
 	targets: [
 		// The DOOM fire terminal stress test, ported so it can run unattended.
@@ -124,7 +130,10 @@ let package = Package(
 			name: "AbydosApp",
 			dependencies: [
 				"AbydosKit",
-				.product(name: "GoSTLKit", package: "GoSTL-Swift"),
+				// `package:` is the dependency's identity, which for a URL is
+				// the last path component — gostl, not the directory the
+				// manifest used to sit in.
+				.product(name: "GoSTLKit", package: "gostl"),
 			],
 			path: "Sources/AbydosApp",
 			// The development pod's chart travels with the app: installing it

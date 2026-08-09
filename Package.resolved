@@ -1,6 +1,15 @@
 {
-  "originHash" : "7db56ca8254b3d2492cefd1f16d972358ddfca4808f9fb780f79a329448498c9",
+  "originHash" : "e5e0bab1841177a678493799fcfc940b1cfe15d7a8c5722ef45dff4cb2e6c32b",
   "pins" : [
+    {
+      "identity" : "gostl",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/philipparndt/gostl.git",
+      "state" : {
+        "revision" : "fcd36bfdcd4164fbdeb264ccf98f1cda1d468f25",
+        "version" : "0.20.2"
+      }
+    },
     {
       "identity" : "swift-argument-parser",
       "kind" : "remoteSourceControl",
