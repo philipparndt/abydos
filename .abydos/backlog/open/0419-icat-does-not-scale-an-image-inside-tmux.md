@@ -31,6 +31,40 @@ whole bug and the answer is to ask tmux rather than the tty — or to pass the
 size in the way kitty's icat does, which is worth reading since it demonstrably
 works there.
 
+**The first measurement, taken — and it refutes the theory above.** Measured on
+tmux 3.7b, on a pty deliberately given a pixel size (100×40 cells, 800×800
+pixels, so a cell is 8×20), with a program in a tmux pane reading `TIOCGWINSZ`
+for itself:
+
+| where | rows × cols | ws_xpixel × ws_ypixel | `#{client_cell_width}` |
+| --- | --- | --- | --- |
+| no tmux, pty carries pixels | 40 × 100 | 800 × 800 | — |
+| tmux pane, client pty carries pixels | 39 × 100 | 800 × 780 | 8 × 20 |
+| tmux pane, client pty carries none (`script`) | 23 × 80 | 1280 × 736 | 0 × 0 |
+
+`ws_xpixel`/`ws_ypixel` are **not** zero inside tmux. tmux 3.7b scales the
+client's pixel size down to the pane exactly (800×780 for the 39 rows it kept
+after its own status line), and where the client's pty carries no pixels at all
+it invents a 16×32 cell rather than leaving zeros. So the field the theory rests
+on is populated on both routes, and the one thing that *is* zero — tmux's own
+`#{client_cell_width}` — the script already falls through when it sees.
+
+`abydos-icat` accordingly computes the same size inside a tmux pane as outside
+one. A 32×32 pixel image on an 8×20 cell came out `c=4 r=2` in both, which is
+right. So the number the script *sends* is not the bug; look at the side that
+draws it. Two things are worth measuring before anything else:
+
+- What the Abydos terminal's own pty carries when tmux is attached to it, since
+  the tables above used a synthetic pty rather than `TerminalView`. If
+  `updateCellPixelSize` has not run by the time tmux reads the size, tmux
+  invents 16×32 and every picture is drawn to the wrong grid — which would look
+  exactly like this and is not a zero anywhere.
+- Whether a `U=1` virtual placement survives tmux at all on our side. The
+  placeholder cells are ordinary characters that tmux is free to move, and the
+  image is only as big as the cells that carry it, so a terminal that loses the
+  row/column diacritics through tmux's own redraw draws something the wrong
+  size while the escape it was sent was correct.
+
 **Worth checking while there:** whether `abydos-icat` scales at all when it
 cannot learn the cell size, or whether it draws 1:1. Refusing with a sentence
 naming the reason would be better than a torn picture, and is a smaller change
