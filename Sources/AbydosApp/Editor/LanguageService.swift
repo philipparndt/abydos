@@ -606,6 +606,38 @@ final class LanguageService {
 		log("\(project.lastPathComponent) is worked on in a devcontainer; "
 			+ "its language servers go inside it")
 
+		// **A project offering several containers gets its servers in the first,
+		// and is told so.** The terminal can ask which one somebody means — that
+		// is what the + chevron's menu is for — and this cannot: a language
+		// server starts because a file was opened, before anybody has said
+		// anything, and there is no gesture behind it to attach a question to.
+		//
+		// The first in the menu's own order, which is sorted and so is the same
+		// answer every time, rather than whichever container happens to be up —
+		// that would make the toolchain the editor checks against depend on
+		// whether somebody had opened a terminal yet, which is a coin toss with
+		// extra steps. Said out loud because a silent choice here is exactly the
+		// "picking somebody's toolchain for them" the several-file refusal
+		// existed to prevent.
+		//
+		// **This is the owner's to revisit** and 0424 records it as such: a
+		// setting naming the container a project's tools belong in, or the
+		// question asked once when the project is opened, are both better answers
+		// than a rule, and neither belongs in this commit.
+		let choices = DevContainerFile.choices(in: project)
+		if choices.count > 1, let first = choices.first {
+			let others = choices.dropFirst().map(\.name).joined(separator: ", ")
+			log("\(project.lastPathComponent) offers \(choices.count) devcontainers; "
+				+ "its language servers go in \(first.name), not \(others)")
+			Toast.post(
+				"\(project.lastPathComponent)'s language servers run in \(first.name)",
+				detail: "This project offers \(choices.count) devcontainers and nothing says which "
+					+ "one its tools belong in, so the first is used. A terminal can be opened in "
+					+ "any of them from the + beside the terminal tabs.",
+				kind: .information
+			)
+		}
+
 		Task { @MainActor in
 			let outcome = await DevContainers.shared.session(
 				for: project,

@@ -423,6 +423,11 @@ public actor DevContainers {
 
 	/// The container for this project, started if it is not up yet.
 	///
+	/// The project's *preferred* devcontainer, which is its only one in nearly
+	/// every project. A project offering several is asked for one of them by
+	/// name — `session(for:in:using:)` — because which one somebody means is a
+	/// question, and this call has nowhere to ask it.
+	///
 	/// Nil means the project has no devcontainer at all, which is not a failure
 	/// and must not be reported as one — most projects do not have one.
 	public func session(
@@ -433,6 +438,37 @@ public actor DevContainers {
 	) async -> Outcome? {
 		guard let reading = DevContainerFile.read(project: project, environment: environment)
 		else { return nil }
+		return await session(reading, using: runtime, progress: progress)
+	}
+
+	/// The container one named `devcontainer.json` describes, started if it is
+	/// not up yet.
+	///
+	/// A project with several has one container per file, up at the same time and
+	/// independent of each other: somebody may be working in the Go one and the
+	/// Alpine one at once, and each holds its own shell. What keeps them apart is
+	/// that a session is remembered against **the file**, not against the project
+	/// — the two share a checkout, a mount and a name, and the file is the only
+	/// thing that differs.
+	public func session(
+		for file: URL,
+		in project: URL,
+		using runtime: ContainerRuntime,
+		environment: [String: String] = ProcessInfo.processInfo.environment,
+		progress: Progress = .silent
+	) async -> Outcome {
+		await session(
+			DevContainerFile.read(file, project: project, environment: environment),
+			using: runtime,
+			progress: progress
+		)
+	}
+
+	private func session(
+		_ reading: DevContainerFile.Reading,
+		using runtime: ContainerRuntime,
+		progress: Progress
+	) async -> Outcome {
 		switch reading {
 		case let .refused(reason):
 			return .refused(reason)
@@ -452,7 +488,7 @@ public actor DevContainers {
 		if let unsupported = Self.unsupported(configuration, on: runtime) {
 			return .refused(unsupported)
 		}
-		let key = configuration.project.path
+		let key = Self.key(for: configuration)
 		if let existing = sessions[key] {
 			if await isUp(existing) { return .running(existing) }
 			// Removed behind our back, or the runtime was restarted. Forget it and
@@ -478,15 +514,43 @@ public actor DevContainers {
 		return outcome
 	}
 
-	/// The container this project already has up, without starting one.
-	public func existingSession(for project: URL) -> Session? {
-		sessions[FilePath.canonical(project)] ?? sessions[project.path]
+	/// What a session is remembered against.
+	///
+	/// **The file, not the project.** A project offering several devcontainers
+	/// has one container per file, and somebody may have a shell in each; keyed
+	/// by project, the second one asked for would be handed the first one's
+	/// container — the same name, the wrong image — and the second `run` would
+	/// never happen. Canonical, because the same file reached through a symlink
+	/// and directly must not be two containers.
+	private static func key(for configuration: DevContainerConfiguration) -> String {
+		FilePath.canonical(configuration.file)
 	}
 
-	/// Removes the container for one project.
+	/// The containers this project already has up, without starting one.
+	///
+	/// Several, because a project may offer several and have more than one going
+	/// at once. In the order their files are preferred, so that the first is the
+	/// one `session(for project:)` would have started.
+	public func existingSessions(for project: URL) -> [Session] {
+		let root = FilePath.canonical(project)
+		return sessions.values
+			.filter { FilePath.canonical($0.configuration.project) == root }
+			.sorted { $0.configuration.file.path < $1.configuration.file.path }
+	}
+
+	/// The container this project already has up, without starting one.
+	public func existingSession(for project: URL) -> Session? {
+		existingSessions(for: project).first
+	}
+
+	/// Removes the containers for one project — every one of them, since a
+	/// project that is being closed is done with all of the ones it offered.
 	public func stop(project: URL) {
-		forget(FilePath.canonical(project))
-		forget(project.path)
+		let root = FilePath.canonical(project)
+		for (key, session) in sessions
+		where FilePath.canonical(session.configuration.project) == root {
+			forget(key)
+		}
 	}
 
 	/// Removes every devcontainer this has kept.
@@ -494,8 +558,8 @@ public actor DevContainers {
 		for key in sessions.keys { forget(key) }
 	}
 
-	/// Which projects have one up, for a test.
-	public var projects: [String] { sessions.keys.sorted() }
+	/// Which devcontainers have one up, by the file each came from, for a test.
+	public var containerFiles: [String] { sessions.keys.sorted() }
 
 	private func forget(_ key: String) {
 		guard let session = sessions.removeValue(forKey: key) else { return }
