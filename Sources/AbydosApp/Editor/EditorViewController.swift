@@ -753,6 +753,26 @@ final class EditorViewController: NSViewController {
 		try? tab.document?.save()
 	}
 
+	/// The scope moved, so every open file is announced again.
+	///
+	/// A file opened while the whole checkout was in view went to the server for
+	/// the checkout; working on the subproject it belongs to gives it a
+	/// different server, and one that has never heard of it answers nothing
+	/// about it. `LanguageService.opened` is what closes it at the old one and
+	/// opens it at the new, and does nothing at all when they are the same.
+	func rescope() {
+		guard let project else { return }
+		for tab in tabs {
+			guard !tab.isDiff, let document = tab.document, let languageId = document.languageId
+			else { continue }
+			LanguageService.shared.opened(
+				url: tab.url, languageId: languageId, text: text(of: document),
+				project: project.scopeRoot
+			)
+		}
+		refreshServerBanner()
+	}
+
 	/// A scratch was renamed, moved, or thrown away: follow it.
 	func scratchMoved(from: URL, to destination: URL?) {
 		guard let index = tabs.firstIndex(where: { $0.url == from }) else { return }
@@ -922,7 +942,7 @@ final class EditorViewController: NSViewController {
 			self?.refreshTabBar()
 			guard let self, let project = self.project, let languageId = document.languageId else { return }
 			LanguageService.shared.saved(
-				url: fileURL, languageId: languageId, text: self.text(of: document), project: project.root
+				url: fileURL, languageId: languageId, text: self.text(of: document), project: project.scopeRoot
 			)
 		}
 
@@ -981,7 +1001,7 @@ final class EditorViewController: NSViewController {
 		// it from then on.
 		if let project, let languageId = document.languageId {
 			LanguageService.shared.opened(
-				url: fileURL, languageId: languageId, text: text(of: document), project: project.root
+				url: fileURL, languageId: languageId, text: text(of: document), project: project.scopeRoot
 			)
 			codeView.setDiagnostics(LanguageService.shared.diagnostics(for: fileURL))
 		}
@@ -1018,7 +1038,7 @@ final class EditorViewController: NSViewController {
 			      let project = self.project, let languageId = document.languageId
 			else { return }
 			LanguageService.shared.changed(
-				url: tab.url, languageId: languageId, text: self.text(of: document), project: project.root
+				url: tab.url, languageId: languageId, text: self.text(of: document), project: project.scopeRoot
 			)
 		}
 		languageSyncWork = work
@@ -1136,7 +1156,7 @@ final class EditorViewController: NSViewController {
 				url: tab.url,
 				position: LSPPosition(line: line, character: character),
 				languageId: languageId,
-				project: project.root
+				project: project.scopeRoot
 			)
 			// A server answers about types and scope; the words in the file
 			// cannot, so anything it says is worth more than anything they do.
@@ -1212,7 +1232,7 @@ final class EditorViewController: NSViewController {
 				url: tab.url,
 				position: LSPPosition(line: line, character: character),
 				languageId: languageId,
-				project: project.root
+				project: project.scopeRoot
 			)
 			guard let first = locations.first, let url = first.url else { return }
 			open(fileURL: url, atLine: first.range.start.line + 1)
@@ -1934,7 +1954,7 @@ final class EditorViewController: NSViewController {
 		let closing = tabs[index]
 		if let project, let languageId = closing.document?.languageId,
 		   !tabs.contains(where: { $0 !== closing && $0.url == closing.url }) {
-			LanguageService.shared.closed(url: closing.url, languageId: languageId, project: project.root)
+			LanguageService.shared.closed(url: closing.url, languageId: languageId, project: project.scopeRoot)
 		}
 
 		teardown(tabs[index])
@@ -2350,10 +2370,10 @@ final class EditorViewController: NSViewController {
 			// one of them is the wrong answer written in red.
 			guard let project, let languageId = document.languageId else { continue }
 			LanguageService.shared.changed(
-				url: tab.url, languageId: languageId, text: text(of: document), project: project.root
+				url: tab.url, languageId: languageId, text: text(of: document), project: project.scopeRoot
 			)
 			LanguageService.shared.saved(
-				url: tab.url, languageId: languageId, text: text(of: document), project: project.root
+				url: tab.url, languageId: languageId, text: text(of: document), project: project.scopeRoot
 			)
 		}
 	}

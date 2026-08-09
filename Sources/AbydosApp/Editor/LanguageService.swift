@@ -48,6 +48,15 @@ final class LanguageService {
 
 	/// Documents this service has told a server about, and their version.
 	private var openDocuments: [String: Int] = [:]
+	/// Which server each open document was announced to, by URI.
+	///
+	/// The scope moves: a file open in the whole checkout is still open when
+	/// somebody works on the subproject it belongs to, and 0432 is what happens
+	/// when that is not noticed — the file was announced to the repository's
+	/// server and asked about under the subproject's. This is what lets it be
+	/// announced again: closed at the server that had it, opened at the one that
+	/// answers now, and nothing done at all when the two are the same server.
+	private var documentServers: [String: String] = [:]
 
 	/// Servers whose image is being fetched, so nothing starts a second fetch
 	/// and nothing reports the server missing while it is on its way.
@@ -89,8 +98,15 @@ final class LanguageService {
 
 	/// What to say in the status bar about servers: names of those running.
 	private(set) var runningNames: [String] = []
-	/// A language whose server is not installed, and how to get it.
-	private(set) var missingHints: [String: String] = [:]
+	/// A server that is not there, and how to get it — keyed by the server, the
+	/// way `servers` is, and not by the language.
+	///
+	/// The reason is 0432's, one table along: "pyright is not in this project's
+	/// devcontainer" is a sentence about *that* project, and a table keyed by
+	/// the language alone offers it above a file in the next one. It is set for
+	/// the same key the server would have been filed under, and cleared when
+	/// one starts under it.
+	private var missingHints: [String: String] = [:]
 	/// A server that is running and has said it cannot work, and what it said.
 	///
 	/// The state that had no name before: `gopls` starts, answers the
@@ -171,8 +187,8 @@ final class LanguageService {
 				guard let inside = devcontainerCommands[path] else { continue }
 				if !inside.contains(definition.command) {
 					missing.append((
-						definition.languageIds.first ?? "?",
-						missingHints[definition.languageIds.first ?? ""]
+						languageId,
+						missingHints[key(project: project, languageId: languageId)]
 							?? "\(definition.command) is not in this project's devcontainer."
 					))
 				}
@@ -202,17 +218,36 @@ final class LanguageService {
 	/// A file was opened. Starts a server for it if this is the first of its
 	/// language, and hands it the text.
 	func opened(url: URL, languageId: String, text: String, project: URL) {
+		let key = key(project: project, languageId: languageId)
+		let uri = uri(for: url)
+
+		if let previous = documentServers[uri], previous != key {
+			// The scope moved under an open file. Closed at the server that had
+			// it before it is opened at the one that answers now — a server left
+			// holding a document nobody will ask it about goes on publishing
+			// diagnostics for it, which land on screen from a toolchain that is
+			// no longer the project's.
+			servers[previous]?.client.didClose(uri: uri)
+			deferredOpens[previous]?.removeValue(forKey: uri)
+			documentServers.removeValue(forKey: uri)
+		} else if documentServers[uri] == key, servers[key] != nil {
+			// The same file to the same server: it already knows, and a second
+			// didOpen for a document a server holds is undefined in the protocol.
+			return
+		}
+
 		guard let server = server(for: languageId, project: project) else {
-			// A server whose image is still being fetched will want this as soon
-			// as it starts, which may be minutes from now.
-			let key = key(project: project, languageId: languageId)
+			// A server whose image is still being fetched — or whose container
+			// is still coming up — will want this as soon as it starts, which
+			// may be minutes from now.
 			if fetching.contains(key) {
-				deferredOpens[key, default: [:]][uri(for: url)] = (languageId, text)
+				deferredOpens[key, default: [:]][uri] = (languageId, text)
+				documentServers[uri] = key
 			}
 			return
 		}
-		let uri = uri(for: url)
 		openDocuments[uri] = 1
+		documentServers[uri] = key
 		server.client.didOpen(uri: uri, languageId: languageId, version: 1, text: text)
 	}
 
@@ -242,9 +277,13 @@ final class LanguageService {
 		// when it does.
 		deferredOpens[key(project: project, languageId: languageId)]?
 			.removeValue(forKey: uri(for: url))
-		guard let server = servers[key(project: project, languageId: languageId)] else { return }
+		guard let server = servers[key(project: project, languageId: languageId)] else {
+			documentServers.removeValue(forKey: uri(for: url))
+			return
+		}
 		let uri = uri(for: url)
 		openDocuments.removeValue(forKey: uri)
+		documentServers.removeValue(forKey: uri)
 		server.client.didClose(uri: uri)
 
 		// A closed file's problems are no longer on screen and no longer
@@ -477,7 +516,7 @@ final class LanguageService {
 			unavailable.insert(key)
 			if let definition = LanguageServers.definition(forLanguage: languageId),
 			   LanguageServers.suits(definition, root: project) {
-				missingHints[languageId] = definition.installHint
+				missingHints[key] = definition.installHint
 				// Logged, not said out loud. Half the projects on a machine
 				// touch a language whose server nobody installed, and a toast
 				// on every open for something that was never going to work is
@@ -592,7 +631,7 @@ final class LanguageService {
 				+ "\(session.configuration.file.lastPathComponent) names, or run its "
 				+ "postCreateCommand — the copy on this machine is not used for a project that "
 				+ "says which toolchain it is worked on with."
-			missingHints[languageId] = hint
+			missingHints[key] = hint
 			log("\(resolved.definition.command) is not in \(session.name) — \(languageId) in "
 				+ "\(project.lastPathComponent) has no server")
 			NotificationCenter.default.post(name: .ideaiLanguageServersChanged, object: nil)
@@ -850,7 +889,7 @@ final class LanguageService {
 				)
 			}
 			runningNames.append(resolved.definition.command)
-			missingHints.removeValue(forKey: languageId)
+			missingHints.removeValue(forKey: key)
 			NotificationCenter.default.post(name: .ideaiLanguageServersChanged, object: nil)
 		}
 		return server
@@ -904,6 +943,7 @@ final class LanguageService {
 		guard !waiting.isEmpty else { return }
 		for (uri, document) in waiting {
 			openDocuments[uri] = 1
+			documentServers[uri] = key
 			server.client.didOpen(
 				uri: uri, languageId: document.languageId, version: 1, text: document.text
 			)
@@ -991,6 +1031,8 @@ final class LanguageService {
 		// the project is read again next time it opens.
 		fetching = fetching.filter { !$0.hasPrefix(prefix) }
 		deferredOpens = deferredOpens.filter { !$0.key.hasPrefix(prefix) }
+		documentServers = documentServers.filter { !$0.value.hasPrefix(prefix) }
+		missingHints = missingHints.filter { !$0.key.hasPrefix(prefix) }
 		toolImages.removeValue(forKey: project.standardizedFileURL.path)
 		// The servers inside the project's devcontainer went with the rest of
 		// them, above — the protocol's own `exit` is what ends one in there, and
@@ -1017,6 +1059,8 @@ final class LanguageService {
 		runningNames.removeAll()
 		fetching.removeAll()
 		deferredOpens.removeAll()
+		documentServers.removeAll()
+		missingHints.removeAll()
 		toolImages.removeAll()
 		devcontainerProjects.removeAll()
 		devcontainerSessions.removeAll()

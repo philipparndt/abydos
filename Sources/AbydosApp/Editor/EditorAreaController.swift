@@ -535,6 +535,12 @@ final class EditorAreaController: NSViewController {
 		for group in groups { group.saveIfOpen(url) }
 	}
 
+	/// The scope moved: every group's files are announced to the servers for the
+	/// new root.
+	func rescope() {
+		for group in groups { group.rescope() }
+	}
+
 	func clickScratchPlaceholderForTesting() -> Bool {
 		(activeGroup ?? groups.first)?.clickScratchPlaceholderForTesting() ?? false
 	}

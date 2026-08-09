@@ -374,6 +374,58 @@ struct LanguageServerKeyTests {
 	}
 }
 
+/// Which root a server is filed under when the part being worked on is not the
+/// whole checkout.
+///
+/// 0432, and the reason it is a test rather than a comment: `abydos-examples`
+/// is a repository of ten projects, and a server started for one of them was
+/// looked for under the repository — which answered nothing and said so only in
+/// the log. The two roots are one property apart, so the only thing that keeps
+/// them from drifting again is asserting that everything asks the same one.
+struct LanguageServerScopeTests {
+	private let checkout = URL(fileURLWithPath: "/tmp/examples")
+	private let part = URL(fileURLWithPath: "/tmp/examples/devcontainers/python-language-server")
+
+	/// The property everything scoped reads.
+	@Test func theScopeIsTheSubprojectWhenThereIsOne() {
+		let project = Project(root: checkout)
+		#expect(project.scopeRoot == checkout)
+
+		project.scope = part
+		#expect(project.scopeRoot == part)
+
+		// And back out of it, which is the gesture that must put every table
+		// back where it was rather than leaving half of them scoped.
+		project.scope = nil
+		#expect(project.scopeRoot == checkout)
+	}
+
+	/// The fault itself: filed under one root, looked for under the other.
+	@Test func aSubprojectsServerIsNotTheCheckoutsServer() {
+		let project = Project(root: checkout)
+		project.scope = part
+
+		let scoped = LanguageServers.serverKey(project: project.scopeRoot, languageId: "python")
+		let whole = LanguageServers.serverKey(project: project.root, languageId: "python")
+		#expect(scoped != whole)
+		#expect(scoped == "\(part.path)#pyright")
+
+		// And it is not found by the scan that stops every server a project has,
+		// which walks the keys by prefix: a subproject sits *inside* the
+		// checkout's path, so "starts with the checkout" is true of the path and
+		// must not be true of the key.
+		#expect(!scoped.hasPrefix(project.root.path + "#"))
+	}
+
+	/// An unscoped project asks for exactly what it asked for before, which is
+	/// what makes this change nothing for the projects that are one thing.
+	@Test func aWholeProjectIsFiledWhereItAlwaysWas() {
+		let project = Project(root: checkout)
+		#expect(LanguageServers.serverKey(project: project.scopeRoot, languageId: "python")
+			== LanguageServers.serverKey(project: checkout, languageId: "python"))
+	}
+}
+
 /// How long a language server lives: until the app does, and no sooner.
 ///
 /// These were the reaping tests, and they asked the opposite question — which

@@ -967,6 +967,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		selectedConfigurationName = nil
 		refreshRunControl()
 		LanguageService.shared.warmUp(project: scope)
+		// The files already on screen belong to the new scope's servers now.
+		// Without this the container's server comes up knowing about nothing,
+		// and the file somebody is looking at is the one it has not been told
+		// about — which is 0432 from the other end.
+		editor.rescope()
 		startWatchingRepository(at: scope)
 		bottomPanel.setWorkingDirectory(scope)
 
@@ -985,6 +990,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	func load(project: Project, focusTree: Bool = true) {
 		self.project = project
 		subprojectRoot = nil
+		// And on the project itself, which is what everything scoped reads: a
+		// Project handed back by the switcher may be one that was open before,
+		// with the scope it had then still on it.
+		project.scope = nil
 		subprojectPill?.setSubproject(nil)
 		window?.title = project.name
 
@@ -3635,7 +3644,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				url: url,
 				position: LSPPosition(line: line, character: character),
 				languageId: languageId,
-				project: project.root
+				project: project.scopeRoot
 			)
 			guard !locations.isEmpty else {
 				notify("No usages found", kind: .information)
@@ -3653,7 +3662,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// Why the symbol list is empty, in a sentence somebody can act on.
 	private func reasonForNoSymbols(query: String, scope: SymbolPalette.Scope) -> String {
 		guard let project else { return "No project is open." }
-		let status = LanguageService.shared.serverStatus(project: project.root)
+		let status = LanguageService.shared.serverStatus(project: project.scopeRoot)
 
 		// About the file that is open, not about the project. A project with
 		// Go and TypeScript in it is missing the TypeScript server whether or
@@ -3703,7 +3712,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			// which for a large project is a great deal of nothing useful.
 			guard !query.isEmpty else { return [] }
 			return await LanguageService.shared
-				.workspaceSymbols(matching: query, project: project.root)
+				.workspaceSymbols(matching: query, project: project.scopeRoot)
 				.sorted { better($0, than: $1, for: query) }
 				.prefix(200)
 				.map { $0 }
@@ -3738,7 +3747,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			}
 
 			let all = await LanguageService.shared
-				.documentSymbols(url: url, languageId: languageId, project: project.root)
+				.documentSymbols(url: url, languageId: languageId, project: project.scopeRoot)
 			guard !query.isEmpty else { return all }
 			return all
 				.filter { $0.name.localizedCaseInsensitiveContains(query) }
@@ -5628,7 +5637,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		environment: [String: String]
 	) {
 		guard let project else { return }
-		let root = project.root
+		// The scope, because the adapter lives inside the language server and
+		// the server for a subproject is filed under the subproject: asking the
+		// repository above it gets `noServer` in a checkout of several.
+		let root = project.scopeRoot
 
 		setPanelVisible(true)
 		runControl?.setStatus("Debugging \(name)…", busy: true)
