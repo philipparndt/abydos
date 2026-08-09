@@ -113,7 +113,9 @@ struct DiagramExportTests {
 
 		let refused = DiagramExport.refusal(toWrite: [destination], reading: { _ in theirs })
 		#expect(refused?.contains("diagram.svg") == true)
-		#expect(refused?.contains("was not drawn by PlantUML") == true)
+		// Not "not drawn by PlantUML" any more: the same rule now guards the
+		// Mermaid export, which signs its own output rather than PlantUML's way.
+		#expect(refused?.contains("was not drawn from a diagram") == true)
 	}
 
 	/// Every destination before any of them is drawn: finding out about the

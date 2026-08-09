@@ -1428,6 +1428,8 @@ final class EditorViewController: NSViewController {
 			return ImageFileViewer(url: tab.url).scrollView
 		case .plantuml:
 			return makeDiagramView(for: tab)
+		case .mermaid:
+			return makeMermaidView(for: tab)
 		case .markdown, .none:
 			return makePreviewView(for: tab)
 		}
@@ -1491,16 +1493,36 @@ final class EditorViewController: NSViewController {
 		return view
 	}
 
+	/// The diagram a Mermaid file describes, kept current while it is edited.
+	///
+	/// The same shape as the PlantUML one beside it. What is different is
+	/// underneath: nothing is discovered, nothing is fetched, and the pane needs
+	/// no project to find a tool in — Mermaid is in the app.
+	private func makeMermaidView(for tab: Tab) -> NSView {
+		let view = MermaidPreviewView()
+		view.fileURL = tab.url
+		if let document = tab.document {
+			view.show(document.rope.string)
+			document.onTextChanged = { [weak view, weak document] in
+				guard let view, let document else { return }
+				view.show(document.rope.string)
+			}
+		}
+		return view
+	}
+
 	/// The diagram pane the file in front is showing, when it is showing one.
 	///
 	/// Found rather than kept: the pane may be the tab's whole content or one
 	/// half of a split, and which of those it is changes with the preview mode.
-	var diagramPreview: PlantUMLPreviewView? {
+	/// Either kind of diagram, because everything asking this — the Export
+	/// command, the menu it offers — wants the pane rather than the tool.
+	var diagramPreview: DiagramPaneView? {
 		activeTab.flatMap { Self.diagramPane(in: $0.contentView) }
 	}
 
-	private static func diagramPane(in view: NSView) -> PlantUMLPreviewView? {
-		if let pane = view as? PlantUMLPreviewView { return pane }
+	private static func diagramPane(in view: NSView) -> DiagramPaneView? {
+		if let pane = view as? DiagramPaneView { return pane }
 		for subview in view.subviews {
 			if let found = diagramPane(in: subview) { return found }
 		}

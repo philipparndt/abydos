@@ -11,12 +11,18 @@ extension Notification.Name {
 	static let abydosDiagramExported = Notification.Name("abydos.diagram.exported")
 }
 
-/// Exporting the diagram in a `.puml` file as a picture beside it.
+/// Exporting the diagram in a file as a picture beside it.
 ///
-/// Two gestures reach this — the preview's own menu and the file's in the
-/// project tree — and they are the same act: the same rules about overwriting,
-/// the same refusal to write a picture of a syntax error, the same sentence
-/// when it cannot be done. One place, so they cannot drift apart.
+/// Four gestures reach this — the preview's own menu and the file's in the
+/// project tree, over a PlantUML file and over a Mermaid one — and they are all
+/// the same act: the same rules about overwriting, the same refusal to write a
+/// picture of a syntax error, the same sentence when it cannot be done. One
+/// place, so they cannot drift apart.
+///
+/// The two tools part company at exactly one point and it is a fact about them
+/// rather than a difference in the feature: a PlantUML file needs a PlantUML to
+/// be found and may need an image fetched first, and a Mermaid file needs
+/// neither because Mermaid is in the app. See 0425.
 ///
 /// Nothing here is modal. An export is something somebody asked for by name, so
 /// what it owes them is a line in the corner saying it happened, or one saying
@@ -28,7 +34,7 @@ enum DiagramExportCommand {
 	static func run(
 		url: URL,
 		source: String? = nil,
-		format: PlantUML.Format,
+		format: DiagramFormat,
 		projectRoot: URL?,
 		then: (@Sendable ([URL]) -> Void)? = nil
 	) {
@@ -42,15 +48,23 @@ enum DiagramExportCommand {
 			return
 		}
 
-		guard let tool = discoverTool(projectRoot: projectRoot) else {
-			Toast.post("Cannot export \(url.lastPathComponent)", detail: PlantUML.installHint)
-			return
-		}
-
 		Toast.post(
 			"Drawing \(url.lastPathComponent) as \(format.rawValue.uppercased())…",
 			kind: .information
 		)
+
+		if Mermaid.isDiagram(url) {
+			Task {
+				let outcome = await DiagramExport.export(mermaid: text, of: url, format: format)
+				await MainActor.run { report(outcome, for: url, then: then) }
+			}
+			return
+		}
+
+		guard let tool = discoverTool(projectRoot: projectRoot) else {
+			Toast.post("Cannot export \(url.lastPathComponent)", detail: PlantUML.installHint)
+			return
+		}
 		Task {
 			let outcome = await DiagramExport.export(
 				source: text, of: url, format: format, tool: tool,
@@ -58,18 +72,25 @@ enum DiagramExportCommand {
 					DispatchQueue.main.async { Toast.post(message, kind: .information) }
 				}
 			)
-			await MainActor.run {
-				switch outcome {
-				case let .success(written):
-					announce(written)
-					then?(written)
-				case let .failure(failure):
-					// The register `ContainerImages.explain` set: one sentence, which
-					// thing went wrong, and what to do about it. Nothing was written,
-					// and saying so is half of what makes it honest.
-					Toast.post("Could not export \(url.lastPathComponent)", detail: failure.message)
-				}
-			}
+			await MainActor.run { report(outcome, for: url, then: then) }
+		}
+	}
+
+	@MainActor
+	private static func report(
+		_ outcome: Result<[URL], DiagramExport.Failure>,
+		for url: URL,
+		then: (@Sendable ([URL]) -> Void)?
+	) {
+		switch outcome {
+		case let .success(written):
+			announce(written)
+			then?(written)
+		case let .failure(failure):
+			// The register `ContainerImages.explain` set: one sentence, which
+			// thing went wrong, and what to do about it. Nothing was written, and
+			// saying so is half of what makes it honest.
+			Toast.post("Could not export \(url.lastPathComponent)", detail: failure.message)
 		}
 	}
 

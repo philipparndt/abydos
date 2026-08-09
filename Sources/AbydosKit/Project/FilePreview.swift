@@ -58,6 +58,14 @@ public enum FilePreview {
 		/// A PlantUML diagram: text that describes a picture, where both halves
 		/// are worth having on screen at once.
 		case plantuml
+		/// A Mermaid diagram, which is the same thing drawn by something else —
+		/// the pane, the split and the export menu are all the same, and the
+		/// only difference somebody sees is that this one needs nothing
+		/// installed. See 0425.
+		case mermaid
+
+		/// Whether this kind is a diagram with an Export beside it.
+		public var isDiagram: Bool { self == .plantuml || self == .mermaid }
 	}
 
 	public static func kind(for url: URL) -> Kind? {
@@ -73,6 +81,8 @@ public enum FilePreview {
 			return .image
 		case "puml", "plantuml", "pu", "iuml", "wsd":
 			return .plantuml
+		case "mmd", "mermaid":
+			return .mermaid
 		default:
 			return nil
 		}
@@ -92,7 +102,7 @@ public enum FilePreview {
 			// reading and the control offers it, but nobody clicks a diagram
 			// in a documentation folder hoping to see its path data.
 			return .preview
-		case .plantuml:
+		case .plantuml, .mermaid:
 			// Both halves at once: the text is what is edited and the diagram
 			// is what it is for, and checking one against the other is the
 			// whole of the work.

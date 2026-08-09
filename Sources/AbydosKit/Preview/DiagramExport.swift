@@ -1,5 +1,20 @@
 import Foundation
 
+/// What a diagram is written out as, whichever tool drew it.
+///
+/// Two formats and no more, because they are the two a menu can offer without
+/// becoming a dialogue: SVG for anything that will be looked at or scaled, PNG
+/// for anything that has to be pasted into something that cannot read a
+/// drawing.
+///
+/// One type across PlantUML and Mermaid rather than one each. The menus are the
+/// same menu — `Export ▸ PNG`, `Export ▸ SVG`, in the preview and in the tree —
+/// and two enumerations behind them would eventually be two menus.
+public enum DiagramFormat: String, Sendable, CaseIterable {
+	case png
+	case svg
+}
+
 /// What PlantUML says is wrong with a diagram.
 ///
 /// It never fails on one: a diagram it cannot parse comes back as a *picture of
@@ -198,6 +213,23 @@ public enum DiagramExport {
 		return false
 	}
 
+	/// Whether a file already there is a picture *this app* drew from Mermaid.
+	///
+	/// Mermaid signs nothing — `mermaid.render` hands back an SVG with no
+	/// provenance in it and a canvas hands back bare PNG pixels — so this side
+	/// signs it, and `DiagramStamp` is where both halves of that live. Without a
+	/// signature the refusal above would fire on this app's *own* previous
+	/// export, and exporting the same diagram twice is the ordinary way of
+	/// working rather than a mistake to catch.
+	public static func isDrawnHere(_ data: Data) -> Bool {
+		data.prefix(16 * 1024).range(of: Data(DiagramStamp.marker.utf8)) != nil
+	}
+
+	/// Whether a file already there is one of ours at all, by either signature.
+	public static func isOurs(_ data: Data) -> Bool {
+		isDrawnByPlantUML(data) || isDrawnHere(data)
+	}
+
 	/// Why one of these files must not be written over, or nil when they may be.
 	///
 	/// Every destination is checked before anything is drawn: finding out about
@@ -209,9 +241,9 @@ public enum DiagramExport {
 	) -> String? {
 		for destination in destinations {
 			guard let existing = reading(destination) else { continue }
-			guard !isDrawnByPlantUML(existing) else { continue }
-			return "“\(destination.lastPathComponent)” is already here and was not drawn by "
-				+ "PlantUML, so nothing was written. Move it, or rename the diagram."
+			guard !isOurs(existing) else { continue }
+			return "“\(destination.lastPathComponent)” is already here and was not drawn from a "
+				+ "diagram, so nothing was written. Move it, or rename the diagram."
 		}
 		return nil
 	}
@@ -289,6 +321,64 @@ public enum DiagramExport {
 			}
 		}
 		return .success(destinations)
+	}
+
+	/// Whether a file is a diagram this app draws at all, by either tool.
+	///
+	/// One question with one answer, because the tree's Export item, the
+	/// preview's, and the pane that opens beside the text all have to agree
+	/// about it — and two of them asking `PlantUML.isDiagram` was how a `.mmd`
+	/// file came to have a preview and no way to export it.
+	public static func isDiagram(_ url: URL) -> Bool {
+		PlantUML.isDiagram(url) || Mermaid.isDiagram(url)
+	}
+
+	/// Draws a Mermaid file and writes the picture beside it.
+	///
+	/// The same rules as the PlantUML export above, deliberately: the same
+	/// names, the same refusal to overwrite a picture nobody here drew, the same
+	/// refusal to write a picture of a syntax error, and the format asked for
+	/// rather than the format on screen.
+	///
+	/// Two things are simpler and both are facts about Mermaid rather than
+	/// choices. A `.mmd` holds **one** diagram — there is no `@start` to count,
+	/// and a file of several diagrams is a Markdown file full of fences, which
+	/// is 0425's deferred half. And there is **nothing to find and nothing to
+	/// fetch**: the renderer is in the app, so there is no tool to discover, no
+	/// image to pull, and no sentence to say about what to install.
+	public static func export(
+		mermaid source: String, of url: URL, format: DiagramFormat
+	) async -> Result<[URL], Failure> {
+		let name = url.lastPathComponent
+		guard Mermaid.hasDiagram(source) else {
+			return .failure(Failure("There is no diagram in \(name) yet."))
+		}
+
+		let destinations = destinations(for: url, format: format, diagrams: 1)
+		if let refused = refusal(toWrite: destinations) { return .failure(Failure(refused)) }
+
+		let drawn = await MermaidRenderer.shared.draw(source, format: format)
+		let picture: Data
+		switch drawn {
+		case let .success(data):
+			picture = data
+		case let .failure(.fault(fault)):
+			return .failure(Failure(fault.sentence(for: name)))
+		case let .failure(.trouble(said)):
+			return .failure(Failure(said))
+		}
+
+		guard let destination = destinations.first else {
+			return .failure(Failure("There is nowhere to write \(name)'s picture."))
+		}
+		do {
+			try picture.write(to: destination, options: .atomic)
+		} catch {
+			return .failure(Failure(
+				"Could not write \(destination.lastPathComponent): \(error.localizedDescription)"
+			))
+		}
+		return .success([destination])
 	}
 
 	/// What went wrong with one picture: the diagram, or everything else.

@@ -97,7 +97,10 @@ let package = Package(
 			// Scripts/bundle.sh carries into the .app beside the grammars — an
 			// app that cannot find them draws in the grey fallback and says so
 			// in ~/Library/Logs/Abydos/schemes.log.
-			resources: [.copy("Queries"), .copy("Settings/Schemes")],
+			// And mermaid's browser bundle, which is what draws Mermaid: it is
+			// JavaScript, every command-line form of it is a headless Chromium,
+			// and 3.6 MB in a WKWebView beats 2.16 GB in a container (0425).
+			resources: [.copy("Queries"), .copy("Settings/Schemes"), .copy("Preview/mermaid")],
 			// Language mode 5: AppKit's delegate-and-callback surface predates
 			// strict concurrency checking and fights it constantly. Isolation here
 			// is enforced by design (UI on the main thread, parsing behind an
