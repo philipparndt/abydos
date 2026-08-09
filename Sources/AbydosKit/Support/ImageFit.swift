@@ -45,6 +45,34 @@ public enum ImageFit {
 		return min(max(zoom, 0), room)
 	}
 
+	/// How large something is drawn in a pane that **scrolls**: fitted to the
+	/// width, times the app's own zoom.
+	///
+	/// The rule above caps the zoom at what the pane can hold, because a picture
+	/// that outgrows a pane which cannot scroll is a picture with its edges cut
+	/// off. Where the pane scrolls, that cap is exactly wrong: ⌘+ would stop
+	/// having any effect the moment the drawing filled the pane, which is
+	/// precisely when somebody presses it. It fits to the *width* alone for the
+	/// same reason — a tall diagram is read by scrolling down it, and fitting its
+	/// height as well is how a page ends up as a stamp in the middle of a window.
+	///
+	/// One rule with two callers rather than two rules that agree today. The PDF
+	/// pane worked this out first and `PdfPreview.scale` is now this function
+	/// under its own name; the diagram pane wants the identical arithmetic, and a
+	/// second copy of it is how ⌘+ comes to mean two things in one window.
+	///
+	/// The bounds are the ones that stop the arithmetic being silly: below a
+	/// tenth the drawing is a dot, and above eight the renderer is being asked
+	/// for a bitmap it should not be.
+	public static func widthScale(width: CGFloat, paneWidth: CGFloat, zoom: CGFloat) -> CGFloat {
+		guard width > 0, paneWidth > 0 else { return 1 }
+		return clamp(min(1, paneWidth / width) * max(zoom, 0))
+	}
+
+	/// The same bounds, for a scale that was arrived at some other way — the
+	/// drawing's own size, times the zoom.
+	public static func clamp(_ scale: CGFloat) -> CGFloat { min(max(scale, 0.1), 8) }
+
 	/// What to say a picture is: its size in pixels, and how much of it is
 	/// showing when that is not all of it.
 	public static func caption(image: CGSize, scale: CGFloat) -> String {

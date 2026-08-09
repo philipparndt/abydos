@@ -4241,6 +4241,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 	}
 
+	/// Swaps the diagram in front between fitting the pane's width and the
+	/// drawing's own size, as a double-click on it does, and says what the
+	/// corner now reads.
+	///
+	/// The percentage is the point: a screenshot shows a diagram got larger and
+	/// cannot show what it got larger *to*.
+	func setDiagramFitForTesting(_ raw: String) {
+		guard let pane = editor.activeGroup?.diagramPreview else {
+			print("FIT: nothing showing a diagram")
+			return
+		}
+		pane.setFit(raw.lowercased() == "actual" ? .actual : .width)
+		print("FIT: \(pane.scaleReadoutForTesting)")
+	}
+
 	func treeStepsForTesting(_ steps: String) {
 		for step in steps.split(separator: ",") {
 			switch step {

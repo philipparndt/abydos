@@ -172,6 +172,85 @@ picture may overwrite. Three renderers, one export, one preview pane
 (`DiagramPaneView`) — so this is one change in the pane and the export, and
 three small ones in the renderers, rather than three separate features.
 
+## Later: the pane draws a drawing, and somebody can get close to it, 2026-08-09
+
+Two things were asked for on top of this entry — render as SVG rather than PNG,
+and offer a zoom — and they turned out to be one finished and one missing.
+
+**SVG was already the answer, and this entry is why it survived the theme.**
+`PlantUML.previewFormat` is `.svg` and has been since the pane was measured
+against a Retina screen: PlantUML sizes a PNG in *points*, so an 834-pixel
+picture reports itself as 834 points wide and a display with a backing scale
+factor of 2 stretches every pixel of it over two. A drawing has no resolution
+to be wrong about. What matters here is that **nothing about the theme decision
+is carried in the format**: `--dark-mode` is a flag on the process for `-pipe`
+and on the container for the kept-warm server, and the route
+`/plantuml/<format>/~h<hex>` takes the format in the path and the source in the
+rest — so asking for `svg` instead of `png` changes one path segment and one
+`-t` flag and touches neither the flag nor the per-theme server in 0422. The
+same constant feeds both routes, which is the property that stops sharpness
+depending on which of them happened to answer.
+
+**The export path keeps PNG, and it was never the preview's business.**
+`DiagramExport` draws afresh in the format the menu was asked for — that is
+what `Export ▸ PNG (Dark)` promises and it would be a lie if it wrote whatever
+was on screen — so the four items above are unchanged and a PNG beside the file
+is still a PNG. The pane drawing in SVG and the export writing either is not a
+duplication to be tidied away: they are two different questions, one about a
+screen and one about a README.
+
+**The zoom is the app's zoom, and what was added is what 1× means.** ⌘+ / ⌘- /
+⌘0 already reached the pane — it listens for `.abydosSettingsChanged` because a
+diagram sits inside a split rather than being a tab's own view — and pressing
+them did *nothing at all* on any diagram larger than the pane. The fit was also
+the ceiling: `ImageFit.fitScale(image:in:zoom:)` caps the zoom at what the pane
+can hold, which is right for a picture with nowhere to go and exactly wrong
+here. So the pane gained somewhere to go. The picture lives in a scroll view
+whose document is the drawing plus a margin, and:
+
+- **Fit to width, not to the pane.** A tall diagram is read by scrolling down
+  it; fitting its height as well is how a sequence diagram becomes a stamp in
+  the middle of a window. Small drawings are still left at their own size
+  rather than blown up, which is the promise every picture pane in this app
+  makes.
+- **The rule is `PdfPreview.scale`, moved.** The PDF pane worked out
+  fit-to-width-times-the-window's-zoom, with bounds rather than a ceiling,
+  when it learned to follow ⌘+; wanting the identical arithmetic and writing it
+  again is how ⌘+ comes to mean two things in one window. It is
+  `ImageFit.widthScale` now and `PdfPreview.scale` is that function under the
+  name a page deserves.
+- **`Actual Size` sets both halves.** The drawing's own size *times* whatever
+  the window is zoomed to is not 100%, and a menu item with a number in its
+  name may not be off by the window's zoom. So it puts the zoom back to 1× as
+  well — the same thing `Actual Size` in the View menu does, because this app
+  has one zoom and that is the item it belongs to. Double-click swaps between
+  the two, which is the gesture `ImageFileView` already gives a picture for the
+  same question.
+- **The corner says the number.** "Fit · 80%" or "100%": two ways of arriving
+  at a size and a diagram at 62% looks much like one at 58%, so a zoom with no
+  readout is a zoom nobody can get back from. Both words are needed — "100%"
+  fitted and "100%" at the drawing's own size are the same number by two
+  routes, and only one of them stays 100% when the pane is made narrower.
+
+**Not remembered per file, and that is the decision rather than the shortcut.**
+The zoom itself already is remembered: `Settings.activeScale` is one number for
+the app and it survives a relaunch, and that is the half somebody sets once
+because of their eyesight or their screen. Fit-versus-own-size is the other
+half — a way of looking at *this* diagram for a moment, to read the small print
+and then go back — and keyed by path it would need a store, would have to be
+forgotten when a file is renamed or deleted, and would open a diagram at a size
+chosen last week in a differently shaped window. Fitting the width costs
+nothing to recompute and is right in every window it is asked in, which is the
+whole argument for it being what a diagram opens at.
+
+**What it cost elsewhere:** the foot of the pane is measured from its own font
+rather than being 18 points, because that font follows ⌘+ too and a constant
+left the readout half behind the picture at 2×. And the drawing is a view of
+its own inside the scroll view, so the pane is still the sentence in the
+middle, the caption and the menu — which is what lets draw.io keep putting its
+own editor over the top of all of it, since a `.drawio` is not a picture at
+all.
+
 ---
 
 Its number is where it sits in the queue, not what it is worth doing next.
