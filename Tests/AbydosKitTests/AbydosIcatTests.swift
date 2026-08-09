@@ -1,5 +1,8 @@
+import CoreGraphics
 import Foundation
+import ImageIO
 import Testing
+import UniformTypeIdentifiers
 @testable import AbydosKit
 
 /// What `abydos-icat` decides before it draws anything.
@@ -181,7 +184,13 @@ struct AbydosIcatTests {
 	/// Runs the script on a pty, optionally answering the graphics query the
 	/// way a terminal with the protocol would, and hands back everything it
 	/// wrote.
-	private func run(on file: URL, answering: Bool = true) async throws -> Data {
+	///
+	/// `tmux` puts a stand-in for tmux on the PATH and sets `TMUX`, so the
+	/// branch that asks tmux for the size can be put to a split window without
+	/// one being started.
+	private func run(
+		on file: URL, answering: Bool = true, tmux: FakeTmux? = nil
+	) async throws -> Data {
 		let pty = PseudoTerminal()
 		pty.callbackQueue = DispatchQueue(label: "abydos.tests.icat")
 		// So the ioctl carries a pixel size and the script never has to ask the
@@ -205,6 +214,10 @@ struct AbydosIcatTests {
 		// the passthrough form only wraps it.
 		environment.removeValue(forKey: "TMUX")
 		environment["TERM"] = "xterm-256color"
+		if let tmux {
+			environment["TMUX"] = "/tmp/fake,1,0"
+			environment["PATH"] = tmux.directory.path + ":" + (environment["PATH"] ?? "/usr/bin:/bin")
+		}
 
 		#expect(pty.start(
 			executable: "/bin/sh",
@@ -342,6 +355,44 @@ struct AbydosIcatTests {
 		#expect(text.contains("a=q"))
 	}
 
+	/// A picture in a tmux pane is sized to the pane, not to the window it is
+	/// one of.
+	///
+	/// This is what "icat does not scale an image inside tmux" turned out to be.
+	/// The script asked tmux for `#{window_width}`, which is the whole window
+	/// however many panes it is split into, so in a split every picture was
+	/// worked out for a screen twice the width it had: it ran off the right-hand
+	/// edge of the pane and tmux wrapped the cells carrying it, which tore the
+	/// picture across the rows. Unsplit it looked perfect, because a lone pane
+	/// *is* the window — which is why it read as tmux breaking the protocol
+	/// rather than as one word in a format string.
+	@Test func aPictureIsSizedToItsPaneAndNotToTheWholeWindow() async throws {
+		let tmux = try FakeTmux(
+			cell: (width: 8, height: 16), window: (columns: 100, rows: 40),
+			pane: (columns: 40, rows: 20)
+		)
+		defer { tmux.remove() }
+
+		// Twice as wide as it is tall, and far wider than either the window or
+		// the pane, so both of them clamp it and the two answers differ.
+		let file = try temporaryImage(bytes: try pngData(width: 1600, height: 800))
+		defer { try? FileManager.default.removeItem(at: file) }
+
+		let output = try await run(on: file, tmux: tmux)
+		let text = String(decoding: output, as: UTF8.self)
+		let keys = try #require(transmitKeys(in: text), "no control data")
+		let columns = try #require(value(of: "c", in: keys))
+		let rows = try #require(value(of: "r", in: keys))
+
+		#expect(columns == 40, "sized to the window's 100 columns rather than the pane's 40")
+		// The proportions kept: 40 cells of 8 pixels by 10 of 16 is 320×160,
+		// which is the picture's own 2:1.
+		#expect(rows == 10)
+		// And the cells written are the size it asked for, so nothing wraps.
+		let placeholders = text.unicodeScalars.filter { $0.value == 0x10EEEE }.count
+		#expect(placeholders == columns * rows)
+	}
+
 	/// The keys of the transmit command — the first `_G` that is not the query.
 	private func transmitKeys(in text: String) -> String? {
 		var rest = Substring(text)
@@ -364,6 +415,69 @@ struct AbydosIcatTests {
 		}
 		return nil
 	}
+}
+
+/// A tmux that is not tmux, answering the three things the script asks it.
+///
+/// A real one would need a server, a client on a pty and a split — and then the
+/// sizes would be whatever that machine's window happened to be. This is a
+/// script on the PATH that says a window is one size and the pane inside it
+/// another, which is the whole of what the case needs.
+private struct FakeTmux {
+	let directory: URL
+
+	init(cell: (width: Int, height: Int), window: (columns: Int, rows: Int), pane: (columns: Int, rows: Int)) throws {
+		directory = FileManager.default.temporaryDirectory
+			.appendingPathComponent("icat-tmux-\(UUID().uuidString)")
+		try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+		let script = """
+		#!/bin/sh
+		# `show -Apv allow-passthrough`, and `display -p <format>`.
+		case "$1" in
+			show) echo on ;;
+			display)
+				printf '%s\\n' "$3" \\
+					| sed -e 's/#{client_cell_width}/\(cell.width)/g' \\
+						-e 's/#{client_cell_height}/\(cell.height)/g' \\
+						-e 's/#{window_width}/\(window.columns)/g' \\
+						-e 's/#{window_height}/\(window.rows)/g' \\
+						-e 's/#{pane_width}/\(pane.columns)/g' \\
+						-e 's/#{pane_height}/\(pane.rows)/g' \\
+						-e 's/#{client_termname}/xterm-256color/g'
+				;;
+		esac
+		exit 0
+		"""
+		let path = directory.appendingPathComponent("tmux")
+		try script.write(to: path, atomically: true, encoding: .utf8)
+		try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path.path)
+	}
+
+	func remove() {
+		try? FileManager.default.removeItem(at: directory)
+	}
+}
+
+/// A real PNG of a given size, since the size is what the script reads back out
+/// of it with `sips`.
+private func pngData(width: Int, height: Int) throws -> Data {
+	let context = try #require(CGContext(
+		data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+		space: CGColorSpaceCreateDeviceRGB(),
+		bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+	))
+	context.setFillColor(CGColor(red: 0.2, green: 0.4, blue: 0.8, alpha: 1))
+	context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+	let image = try #require(context.makeImage())
+
+	let data = NSMutableData()
+	let destination = try #require(
+		CGImageDestinationCreateWithData(data, "public.png" as CFString, 1, nil)
+	)
+	CGImageDestinationAddImage(destination, image, nil)
+	#expect(CGImageDestinationFinalize(destination))
+	return data as Data
 }
 
 /// Where the script is, from wherever the tests were built.
