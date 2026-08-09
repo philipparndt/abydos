@@ -9,8 +9,29 @@ import AbydosKit
 ///
 /// Foundation gives structure (`PresentationIntent`) but no appearance, so the
 /// block styling below is what turns intents into something readable.
+@MainActor
 enum MarkdownRenderer {
 	static func render(_ markdown: String, baseURL: URL?) -> NSAttributedString {
+		let output = NSMutableAttributedString()
+
+		// A ```mermaid fence comes out first, before anything is parsed. It has to
+		// be first rather than merely somewhere: a diagram's own lines look like
+		// other things — `|` rows read as a pipe table, `%%` and `#` as headings —
+		// and every pass below would otherwise take a bite out of the picture.
+		for piece in MarkdownFence.split(markdown) {
+			switch piece {
+			case let .drawn(fence):
+				startParagraph(output)
+				output.append(renderDiagram(fence))
+			case let .prose(text):
+				output.append(renderProse(text, baseURL: baseURL))
+			}
+		}
+		return output
+	}
+
+	/// The prose between the pictures, which is everything this rendered before.
+	private static func renderProse(_ markdown: String, baseURL: URL?) -> NSAttributedString {
 		let output = NSMutableAttributedString()
 
 		// Foundation's parser does not understand GFM pipe tables — they arrive
@@ -24,15 +45,19 @@ enum MarkdownRenderer {
 				// appended to an unterminated heading joins that heading instead
 				// of opening the grid — which put "file" beside "The diagrams"
 				// and shifted every column one to the left.
-				if output.length > 0, !output.string.hasSuffix("\n") {
-					output.append(NSAttributedString(string: "\n"))
-				}
+				startParagraph(output)
 				output.append(renderTable(text, baseURL: baseURL))
 			case let .markdown(text):
 				output.append(renderBlocks(text, baseURL: baseURL))
 			}
 		}
 		return output
+	}
+
+	/// Whatever comes next has to begin a paragraph of its own.
+	private static func startParagraph(_ output: NSMutableAttributedString) {
+		guard output.length > 0, !output.string.hasSuffix("\n") else { return }
+		output.append(NSAttributedString(string: "\n"))
 	}
 
 	// MARK: - Fonts and colours
@@ -128,20 +153,24 @@ enum MarkdownRenderer {
 		return nil
 	}
 
-	/// A code block, coloured by its own grammar.
-	private static func highlightedCode(_ text: String, languageId: String) -> NSAttributedString {
+	/// A code block, in the indented monospace one is set in.
+	private static func codeBlock(_ text: String) -> NSMutableAttributedString {
 		let paragraph = NSMutableParagraphStyle()
 		paragraph.lineSpacing = 2
 		paragraph.paragraphSpacing = 8
 		paragraph.firstLineHeadIndent = 12
 		paragraph.headIndent = 12
 
-		let output = NSMutableAttributedString(string: text, attributes: [
+		return NSMutableAttributedString(string: text, attributes: [
 			.font: monoFont,
 			.foregroundColor: Theme.current.editorText,
 			.paragraphStyle: paragraph,
 		])
+	}
 
+	/// A code block, coloured by its own grammar.
+	private static func highlightedCode(_ text: String, languageId: String) -> NSAttributedString {
+		let output = codeBlock(text)
 		guard let engine = SyntaxEngine(languageId: languageId) else { return output }
 		let rope = Rope(text)
 		engine.parse(rope: rope)
@@ -260,6 +289,101 @@ enum MarkdownRenderer {
 		}
 
 		return NSAttributedString(string: prefix + text, attributes: attributes)
+	}
+
+	// MARK: - Diagrams
+
+	/// A ```` ```mermaid ```` fence, as the picture it describes.
+	///
+	/// Most Mermaid in the wild lives in a Markdown file rather than in a `.mmd`,
+	/// so this is where most people meet it. What is drawn is drawn by exactly the
+	/// machinery the `.mmd` pane uses — one `MermaidRenderer`, one web view, and
+	/// the same flattening of a browser's stylesheet into geometry that five
+	/// separate faults were found in during 0425. There is no second path, on
+	/// purpose: a second path is how a fence would end up with black wedges for
+	/// edges again.
+	///
+	/// Drawing is asynchronous and this is not, so a fence has three states rather
+	/// than two. The picture is asked for; if it is not ready the block says so in
+	/// one quiet line, and the pane renders again when it arrives.
+	private static func renderDiagram(_ fence: MarkdownFence.Drawn) -> NSAttributedString {
+		// A block somebody has opened and not written in yet is not an error, and
+		// asking Mermaid about it would produce one. It reads as what it is.
+		guard Mermaid.hasDiagram(fence.source) else {
+			return codeBlock(fence.source + "\n")
+		}
+
+		// 0429's rule, unchanged and not restated: the file wins, and the app's
+		// theme is the default. A fence has no front matter of its own unless it
+		// carries one, so almost every one of them follows the window.
+		let stated = Mermaid.statedLook(in: fence.source)
+		let theme: DiagramTheme? = stated == nil ? (Theme.current.isLight ? .light : .dark) : nil
+
+		switch MarkdownDiagrams.shared.picture(for: fence.source, theme: theme) {
+		case let .drawn(image, paper):
+			let output = NSMutableAttributedString(
+				attributedString: picture(image, paper: paper)
+			)
+			// The one thing somebody has to be able to see while looking at a
+			// diagram that did not follow the window — the same sentence the
+			// `.mmd` pane puts at its foot, for the same reason.
+			if let stated {
+				output.append(aside(DiagramLook.notice(stated: stated)))
+			}
+			return output
+
+		case let .fault(fault):
+			// The block as it was written, and the complaint under it. Never a
+			// gap: a diagram half way through being typed does not parse, and a
+			// preview that answered that with nothing at all would look broken
+			// rather than unfinished. The line is counted from the top of the
+			// *file*, since that is the number in the editor beside it.
+			let output = codeBlock(fence.source + "\n")
+			output.append(aside(
+				fault.sentence(for: "This diagram", offset: fence.openingLine)
+			))
+			return output
+
+		case let .trouble(said):
+			let output = codeBlock(fence.source + "\n")
+			output.append(aside(said))
+			return output
+
+		case .none:
+			return aside("Drawing this diagram…")
+		}
+	}
+
+	/// The drawing itself, as one attachment on a line of its own.
+	private static func picture(_ image: NSImage, paper: NSColor) -> NSAttributedString {
+		let attachment = NSTextAttachment()
+		attachment.attachmentCell = DiagramAttachmentCell(picture: image, paper: paper)
+
+		let paragraph = NSMutableParagraphStyle()
+		paragraph.paragraphSpacingBefore = 6
+		paragraph.paragraphSpacing = 8
+		paragraph.firstLineHeadIndent = 12
+		paragraph.headIndent = 12
+
+		let output = NSMutableAttributedString(attributedString: NSAttributedString(attachment: attachment))
+		output.append(NSAttributedString(string: "\n"))
+		output.addAttribute(
+			.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: output.length)
+		)
+		return output
+	}
+
+	/// One quiet line under a block: what is being waited for, or what went wrong.
+	private static func aside(_ said: String) -> NSAttributedString {
+		let paragraph = NSMutableParagraphStyle()
+		paragraph.paragraphSpacing = 8
+		paragraph.firstLineHeadIndent = 12
+		paragraph.headIndent = 12
+		return NSAttributedString(string: said + "\n", attributes: [
+			.font: NSFont.systemFont(ofSize: bodySize - 2),
+			.foregroundColor: Theme.current.sidebarText.withAlphaComponent(0.8),
+			.paragraphStyle: paragraph,
+		])
 	}
 
 	// MARK: - Tables

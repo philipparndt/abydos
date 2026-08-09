@@ -231,18 +231,66 @@ to animate anyway.
 Most Mermaid in the wild lives in ```` ```mermaid ```` inside a Markdown file
 rather than in a `.mmd`, and that is where this ought to end up.
 
-**Deliberately not in this slice, and it is not laziness.** The `.mmd` route
-needs one renderer and one pane. The Markdown route needs three things this does
-not have yet: the *Markdown preview* (`MarkdownRenderer`, an `NSTextView` of an
-attributed string) has no way to hold a picture that redraws itself, the export
-has to answer "which of the four blocks in this file?" — with a naming rule and
-a gesture that names one — and a file with four diagrams in it wants four
-pictures with predictable names, which is exactly the ground `DiagramExport`
-already covers for `@start` blocks and would need covering again for fences.
+~~**Deliberately not in this slice, and it is not laziness.**~~ **The picture is
+done; the export is not.** Three things were named as missing. The first was the
+*Markdown preview* having no way to hold a picture that redraws itself — that
+one is answered, below. The other two are both about **export** and are both
+still open: which of the four blocks in a file somebody means, and what four
+pictures out of one file are called.
 
 `mermaid-cli` already does the file-of-fences case (`-i README.md` extracts
 every block), which is a decent description of the behaviour to copy when
-somebody gets to it. What is here is deliberately a smaller thing that works.
+somebody gets to it.
+
+### A fence draws where the fence is
+
+`MarkdownFence` cuts the drawable blocks out of the document before anything
+else is parsed, and `MarkdownRenderer` puts the drawing where the block was. The
+cutting is first rather than merely somewhere: a sequence diagram's own lines
+look like other things — a `|` row reads as a pipe table, a `#` as a heading —
+so every later pass would otherwise take a bite out of the picture.
+
+The three things that were going to be hard, and what each came to.
+
+- **A picture arrives late, and the pane draws now.** `MarkdownDiagrams` is a
+  cache between the two: `render` asks it for a fence's drawing and gets one
+  synchronously or gets nothing and a request. When the drawing lands, the pane
+  renders the document again — the same debounced refresh the typing already
+  uses, which keeps the scroll position — and finds it in the cache that time.
+  Being a *cache* rather than a queue is what stops the flicker: a re-render for
+  any other reason, and there is one on every pause in the typing, hands back
+  the picture already drawn instead of drawing it again. Meanwhile the block is
+  one quiet line saying what is happening, so nothing jumps except once.
+- **Twenty fences are twenty renders through one web view, in turn.** There is
+  one `WebRenderer` in the app and the queue is drained oldest first, so a
+  document fills in from the top at six to nineteen thousandths of a second
+  each. The refresh being debounced is what keeps twenty renders from being
+  twenty re-renders of the document.
+- **A fence that does not parse shows its code and its complaint.** Never a gap
+  and never a blank document: the block stays exactly as it was written and the
+  sentence goes under it, with the line counted from the top of the *file*
+  rather than of the block — `DiagramFault.sentence(offset:)` already took the
+  offset, and the fence knows which line it opened on.
+
+Two things it deliberately does not do. **There is no second renderer**: a fence
+goes through `MermaidRenderer.shared`, which means the same page, the same
+`abydosInline`, and the same five fixes for what a browser hands back — a second
+path is how a fence would end up with black wedges for edges again. And **there
+is no second theme rule**: a fence has no front matter unless it carries one, so
+it follows the app; one with `%%{init: … theme … }%%` keeps its own and says so
+in the same sentence the `.mmd` pane uses.
+
+The drawing is an `NSTextAttachmentCell` rather than an attachment of a fixed
+size, which is what makes it reflow: a cell is asked how large it wants to be
+for the line fragment it is going into, so a diagram wider than the pane shrinks
+to fit and grows again when the divider is dragged, with nothing watching the
+frame. It is never drawn *larger* than it was laid out — a two-node flowchart
+stretched to the width of the window is a picture of nothing much.
+
+One thing found by looking at the first screenshot rather than by reasoning: a
+text view's coordinates run downwards and an `NSImage` is drawn in its own, so
+the short form of `NSImage.draw(in:)` put every diagram in the preview upside
+down and mirrored. `respectFlipped: true` is the whole fix.
 
 ## What landed
 
@@ -265,7 +313,34 @@ taken from the preview's own menu, and the written files opened and looked at.
 
 ## What is left
 
-- **Fenced blocks in Markdown**, above. The largest missing piece by far.
+- ~~**Fenced blocks in Markdown.**~~ **Drawn.** See above. `MarkdownFence` in the
+  kit, `MarkdownDiagrams` and the cell beside `MarkdownRenderer`, and
+  `Tests/AbydosKitTests/Fixtures/diagrams.md` and `broken-diagram.md` as the two
+  documents it was looked at in. Verified in the app on a scratch project rather
+  than only in tests: a flowchart, a sequence diagram with `autonumber` and a
+  state diagram previewed beside a pipe table and a Swift code block, a fence
+  that does not parse showing its code and its line, and a fence naming its own
+  theme drawn in it with the notice under it.
+- **Exporting a fence, which is the whole of what is left of the above.** Two
+  questions, and neither has an answer that fell out of drawing the picture, so
+  neither is guessed at here.
+  - **Which block does somebody mean?** The `.mmd` pane's gesture is a
+    right-click on the picture, and it works because the pane *is* the diagram.
+    A Markdown preview is a document with four pictures in it, and a right-click
+    on an `NSTextView` is the text view's own menu. The candidates are a menu on
+    the attachment (which needs the click routed to the block under it), a
+    submenu listing every block in the file, and `Export ▸ Diagrams` writing all
+    of them at once — which is what `mermaid-cli -i README.md` does and is the
+    only one that needs no gesture at all.
+  - **What are four pictures out of one file called?** `DiagramExport` already
+    covers this ground for PlantUML's `@start … @end` blocks and answers it
+    positionally — `diagram.png`, then `diagram_001.png` — because that is what
+    PlantUML's own file output writes, so a build script that names those files
+    by hand finds them. **Markdown has no such upstream convention to inherit**,
+    and positional names renumber themselves the moment somebody inserts a block
+    above. A heading is not always there and is not unique, and Mermaid has no
+    `title:` on most diagram types. Copying the `_001` rule is the obvious move
+    and it should be made knowing what it costs, rather than by default.
 - **The theme.** Both panes draw on white paper, because that is what PlantUML's
   default background is and matching it was the honest thing. Mermaid has a
   `dark` theme built in and following the editor's would be a nice thing and a
