@@ -66,17 +66,20 @@ dropping "Designed for [iPad,iPhone]", `productDirectorySuffix` answers
   whole list is reachable; nothing is hidden. A menu cannot have a filter field,
   which is the actual reason this cannot stay a menu.
 
-**Worth deciding, and not decided yet:**
+## The three that were left, now decided
 
-- What "latest" means when a model has runtimes that are not comparable — 26.5
-  and 27.0 are, but a model present in one runtime and absent from another needs
-  a rule rather than a sort.
-- Whether the dialog remembers what was last chosen per project, or per scheme.
-  Per scheme is more precise and is more state; per project is what somebody
-  probably means by "the simulator I use".
-- Whether the placeholders ("Any iOS Device") stay out. They are dropped today
-  and nothing has asked for them back, so this is a question to answer with a
-  sentence, not work.
+- **"Latest" needs a rule, not a sort.** Runtimes compare as numbers already
+  (9.0 against 10.0 is why), but a model present in one runtime and absent from
+  another is not a comparison at all. Pick the newest *runtime* the model itself
+  has, rather than the newest runtime installed — a model that stopped shipping
+  should offer its last version, not disappear because something newer exists
+  without it.
+- **The picker remembers per project.** Less state, and it is what somebody means
+  by "the simulator I use". A project with an app and a watch app shares one
+  choice, which is the cost, and it is small next to remembering a stale scheme's
+  preference for ever.
+- **The placeholders stay out.** "Any iOS Device" names a family rather than a
+  machine, and installing on one is not a thing. Nobody has missed them.
 
 ---
 
