@@ -213,7 +213,7 @@ public enum DiagramExport {
 		return false
 	}
 
-	/// Whether a file already there is a picture *this app* drew from Mermaid.
+	/// Whether a file already there is a picture *this app* drew.
 	///
 	/// Mermaid signs nothing — `mermaid.render` hands back an SVG with no
 	/// provenance in it and a canvas hands back bare PNG pixels — so this side
@@ -221,13 +221,31 @@ public enum DiagramExport {
 	/// signature the refusal above would fire on this app's *own* previous
 	/// export, and exporting the same diagram twice is the ordinary way of
 	/// working rather than a mistake to catch.
+	///
+	/// The whole marker is looked for rather than the shared prefix, so that a
+	/// file whose path happens to say "abydos-" is not mistaken for one of ours.
 	public static func isDrawnHere(_ data: Data) -> Bool {
-		data.prefix(16 * 1024).range(of: Data(DiagramStamp.marker.utf8)) != nil
+		let head = data.prefix(16 * 1024)
+		return DiagramStamp.markers.contains { head.range(of: Data($0.utf8)) != nil }
 	}
 
-	/// Whether a file already there is one of ours at all, by either signature.
+	/// Whether a file already there is a picture drawn from a *diagram* by
+	/// anything at all, rather than a screenshot with an unlucky name.
+	///
+	/// draw.io answers this itself and better than a signature could: a picture
+	/// it exported carries the whole `<mxfile>` in a `content` attribute or an
+	/// `mxfile` chunk, and that chunk *is* the proof the file is a drawing
+	/// somebody made rather than a photograph. So `architecture.png` beside
+	/// `architecture.drawio`, written by draw.io on somebody else's machine, is
+	/// replaced by an export here — which is right, because it is the same
+	/// picture of the same document.
+	public static func isDrawnFromADiagram(_ data: Data) -> Bool {
+		Drawio.mxfile(in: data) != nil
+	}
+
+	/// Whether a file already there is one of ours at all, by any signature.
 	public static func isOurs(_ data: Data) -> Bool {
-		isDrawnByPlantUML(data) || isDrawnHere(data)
+		isDrawnByPlantUML(data) || isDrawnHere(data) || isDrawnFromADiagram(data)
 	}
 
 	/// Why one of these files must not be written over, or nil when they may be.
@@ -330,7 +348,80 @@ public enum DiagramExport {
 	/// about it — and two of them asking `PlantUML.isDiagram` was how a `.mmd`
 	/// file came to have a preview and no way to export it.
 	public static func isDiagram(_ url: URL) -> Bool {
-		PlantUML.isDiagram(url) || Mermaid.isDiagram(url)
+		PlantUML.isDiagram(url) || Mermaid.isDiagram(url) || Drawio.isDiagram(url)
+	}
+
+	/// Draws every page of a `.drawio` and writes the pictures beside it.
+	///
+	/// **Every page, not the one on screen**, and that is the decision 0426 left
+	/// open. Three `@startuml` blocks in a `.puml` are three diagrams somebody
+	/// chose to keep together; three pages in a `.drawio` are one document, and
+	/// the two arguments were "all three is probably wrong" against "only the one
+	/// on screen, without saying so, is certainly wrong". All of them wins for
+	/// three reasons: the naming already exists and already means this
+	/// (`x.png`, then `x_001.png`), the export can be asked for from the tree
+	/// where there is no page on screen to mean, and a folder that is missing two
+	/// thirds of a document is the kind of quiet wrongness this app's export
+	/// rules exist to avoid. What makes it honest rather than surprising is that
+	/// the notice says how many were written, which `DiagramExportCommand`
+	/// already does for a `.puml` with several diagrams in it.
+	///
+	/// Every picture also carries the whole `<mxfile>`, the way draw.io's own
+	/// export does — so `architecture.png` is not only a picture of the diagram
+	/// but the diagram, and opens again in draw.io with all its pages.
+	public static func export(
+		drawio data: Data, of url: URL, format: DiagramFormat
+	) async -> Result<[URL], Failure> {
+		let name = url.lastPathComponent
+		guard let document = Drawio.read(data), !document.pages.isEmpty else {
+			return .failure(Failure("There is no diagram in \(name)."))
+		}
+
+		let destinations = destinations(for: url, format: format, diagrams: document.pages.count)
+		if let refused = refusal(toWrite: destinations) { return .failure(Failure(refused)) }
+
+		// Everything drawn before anything is written, so a three-page file
+		// gains three pictures or none.
+		var pictures: [Data] = []
+		for (index, page) in document.pages.enumerated() {
+			let drawn = await DrawioRenderer.shared.draw(
+				document.mxfile, page: index, format: format
+			)
+			switch drawn {
+			case let .success(picture):
+				pictures.append(embedding(document.mxfile, in: picture, format: format))
+			case let .failure(.fault(fault)):
+				let where_ = document.pages.count == 1 ? name
+					: "\(name) — \(page.title(number: index + 1))"
+				return .failure(Failure(fault.sentence(for: where_)))
+			case let .failure(.trouble(said)):
+				return .failure(Failure(said))
+			}
+		}
+
+		for (picture, destination) in zip(pictures, destinations) {
+			do {
+				try picture.write(to: destination, options: .atomic)
+			} catch {
+				return .failure(Failure(
+					"Could not write \(destination.lastPathComponent): \(error.localizedDescription)"
+				))
+			}
+		}
+		return .success(destinations)
+	}
+
+	private static func embedding(
+		_ mxfile: String, in picture: Data, format: DiagramFormat
+	) -> Data {
+		switch format {
+		case .png:
+			return DiagramStamp.embed(mxfile: mxfile, in: picture)
+		case .svg:
+			return Data(DiagramStamp.embed(
+				mxfile: mxfile, in: String(decoding: picture, as: UTF8.self)
+			).utf8)
+		}
 	}
 
 	/// Draws a Mermaid file and writes the picture beside it.

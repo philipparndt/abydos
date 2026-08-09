@@ -100,7 +100,14 @@ let package = Package(
 			// And mermaid's browser bundle, which is what draws Mermaid: it is
 			// JavaScript, every command-line form of it is a headless Chromium,
 			// and 3.6 MB in a WKWebView beats 2.16 GB in a container (0425).
-			resources: [.copy("Queries"), .copy("Settings/Schemes"), .copy("Preview/mermaid")],
+			// And draw.io, which unlike Mermaid is not one file: the viewer, the
+			// editor, every stencil deflated into one bundle, and the furniture
+			// they load. 23 MB, and the reason is that draw.io publishes a
+			// webapp and nothing smaller (0426).
+			resources: [
+				.copy("Queries"), .copy("Settings/Schemes"),
+				.copy("Preview/mermaid"), .copy("Preview/drawio"),
+			],
 			// Language mode 5: AppKit's delegate-and-callback surface predates
 			// strict concurrency checking and fights it constantly. Isolation here
 			// is enforced by design (UI on the main thread, parsing behind an

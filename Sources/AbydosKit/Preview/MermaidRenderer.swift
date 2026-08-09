@@ -94,7 +94,7 @@ public final class MermaidRenderer {
 		// Sized before anything else looks at it: a drawing with no size of its
 		// own rasterises into a 300×150 box, and is written to disk as a file
 		// every viewer guesses the size of differently.
-		let svg = DiagramStamp.sign(svg: Mermaid.sized(drawn))
+		let svg = DiagramStamp.sign(svg: Mermaid.sized(drawn), tool: .mermaid)
 		guard format == .png else { return .success(Data(svg.utf8)) }
 
 		let rastered: Any?
@@ -110,7 +110,7 @@ public final class MermaidRenderer {
 		guard let base64 = rastered as? String, let png = Data(base64Encoded: base64),
 		      !png.isEmpty
 		else { return .failure(.trouble("The drawing could not be turned into a picture.")) }
-		return .success(DiagramStamp.sign(png: png))
+		return .success(DiagramStamp.sign(png: png, tool: .mermaid))
 	}
 
 	/// Tears the web view down now, for a test and for anybody who wants the

@@ -814,14 +814,23 @@ final class EditorViewController: NSViewController {
 			// A picture opens as the picture; a mesh opens rendered. Both skip
 			// the size and binary tests below, which each of them fails on the
 			// way to being useful.
-			if FilePreview.kind(for: fileURL) == .image {
+			switch FilePreview.kind(for: fileURL) {
+			case .image:
 				// Unless it is a drawing with text behind it, which goes the
 				// ordinary way and comes back rendered at the end.
 				if !FilePreview.hasReadableSource(fileURL) {
 					return makeImageTab(for: fileURL, preview: preview)
 				}
-			} else {
+			case .model:
 				return makeModelTab(for: fileURL, preview: preview)
+			default:
+				// A `.drawio` opens rendered and has no source half, and it is
+				// still a document this app owns: it goes the ordinary way and
+				// gets a `TextDocument` like every other file, which is what
+				// makes ⌘S, the edited dot and the close prompt work. The
+				// branch above used to assume "rendered and not a picture"
+				// meant "mesh", and sent every `.drawio` to the 3D viewer.
+				break
 			}
 		}
 
@@ -1430,6 +1439,8 @@ final class EditorViewController: NSViewController {
 			return makeDiagramView(for: tab)
 		case .mermaid:
 			return makeMermaidView(for: tab)
+		case .drawio:
+			return makeDrawioView(for: tab)
 		case .markdown, .none:
 			return makePreviewView(for: tab)
 		}
@@ -1508,6 +1519,34 @@ final class EditorViewController: NSViewController {
 				view.show(document.rope.string)
 			}
 		}
+		return view
+	}
+
+	/// A `.drawio` open in draw.io's own editor.
+	///
+	/// The other two diagram panes are given the text and draw a picture of it.
+	/// This one is given the text and *is* the editor, so the wiring runs both
+	/// ways: the document goes in, and what somebody draws comes back out into
+	/// the same `TextDocument` every other tab uses. Nothing else in this
+	/// controller knows the difference — the dot, ⌘S, the close prompt and
+	/// auto-save all read `document.isDirty` as they always did.
+	private func makeDrawioView(for tab: Tab) -> NSView {
+		let view = DrawioPreviewView()
+		view.fileURL = tab.url
+		view.document = tab.document
+		if let document = tab.document {
+			view.show(document.rope.string)
+			// Somebody else wrote the file — a `git checkout` on a branch with a
+			// different diagram. The editor is given the new document, and
+			// whatever was in draw.io's undo stack goes with it, which is the
+			// same trade the text editor makes when it reloads.
+			document.onTextChanged = { [weak view, weak document] in
+				guard let view, let document else { return }
+				view.show(document.rope.string)
+			}
+		}
+		view.onEdited = { [weak self] in self?.refreshTabBar() }
+		view.onSaveRequested = { [weak self] in self?.save() }
 		return view
 	}
 
@@ -1896,6 +1935,23 @@ final class EditorViewController: NSViewController {
 
 	func save() {
 		guard let tab = activeTab else { return }
+		// A `.drawio` is edited by draw.io rather than by this app, and draw.io
+		// reports a change a fraction of a second after it happens. That is soon
+		// enough for the dot but not for ⌘S, which somebody may press while
+		// still holding the shape they dragged — so the editor is asked what it
+		// has before the file is written. Every other tab writes straight away,
+		// exactly as it always did.
+		if let pane = Self.diagramPane(in: tab.contentView) as? DrawioPreviewView {
+			Task { @MainActor in
+				await pane.flush()
+				self.write(tab)
+			}
+			return
+		}
+		write(tab)
+	}
+
+	private func write(_ tab: Tab) {
 		do {
 			try tab.document?.save()
 			refreshTabBar()

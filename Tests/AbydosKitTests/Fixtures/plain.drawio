@@ -1,0 +1,18 @@
+<mxfile host="Abydos" agent="fixture" version="31.1.8">
+  <diagram name="One" id="page-one">
+    <mxGraphModel dx="800" dy="600" grid="0" page="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">
+  <root>
+    <mxCell id="0" /><mxCell id="1" parent="0" />
+    <mxCell id="n1" value="Read the file" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+      <mxGeometry x="120" y="80" width="200" height="60" as="geometry" />
+    </mxCell>
+    <mxCell id="n2" value="Draw the picture" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+      <mxGeometry x="120" y="220" width="200" height="60" as="geometry" />
+    </mxCell>
+    <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="n1" target="n2">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+  </root>
+</mxGraphModel>
+  </diagram>
+</mxfile>
