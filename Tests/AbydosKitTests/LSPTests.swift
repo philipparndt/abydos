@@ -336,6 +336,67 @@ struct XcodeToolchainTests {
 	}
 }
 
+/// Stopping a server, which is what closing a project comes down to.
+struct LSPShutdownTests {
+	/// A server that answers nothing — no handshake, no `shutdown` reply — and
+	/// will not end on its own. Which is the case that matters: a well-behaved
+	/// server exits on `exit`, and the ones left running for a day did not.
+	@Test func aServerThatWillNotGoPolitelyIsEndedAnyway() async throws {
+		let client = LSPClient()
+		defer { client.stop() }
+
+		try client.start(
+			executable: "/bin/sh",
+			arguments: ["-c", "sleep 120"],
+			workingDirectory: nil
+		)
+		let pid = try #require(client.processIdentifier)
+		#expect(client.isRunning)
+
+		await client.shutdown()
+
+		// Asked of the operating system rather than of the client: what closing
+		// a project has to achieve is a process that is gone.
+		var alive = true
+		for _ in 0..<200 where alive {
+			if kill(pid, 0) != 0 { alive = false; break }
+			try? await Task.sleep(nanoseconds: 50_000_000)
+		}
+		#expect(!alive, "the server was still running after its project closed")
+		#expect(!client.isRunning)
+	}
+
+	/// The deadline underneath that, on its own.
+	///
+	/// It was a task group racing a sleep, and a group waits for every task in it
+	/// — including the one parked on a reply that never came. So the timeout
+	/// expired and the caller went on waiting anyway: the whole of `shutdown` took
+	/// two minutes against a server that answers nothing, because two minutes was
+	/// how long that server had been told to sleep for.
+	@Test func aRequestAgainstASilentServerGivesUpOnTime() async throws {
+		let client = LSPClient()
+		defer { client.stop() }
+
+		// Two minutes of silence, and one second of patience. The gap between
+		// them is what is being measured: anything under half a minute means the
+		// deadline ended the wait, and nothing else could have. A tighter bound
+		// than that measures the machine's load rather than this client — the
+		// first spelling of it wanted five seconds and failed at nine on a
+		// machine running four builds.
+		try client.start(
+			executable: "/bin/sh",
+			arguments: ["-c", "sleep 120"],
+			workingDirectory: nil
+		)
+
+		let began = Date()
+		await #expect(throws: LSPClient.ClientError.self) {
+			_ = try await client.request("textDocument/hover", nil, timeout: 1)
+		}
+		#expect(Date().timeIntervalSince(began) < 30, "the deadline, not the server, ended the wait")
+	}
+}
+
 /// Symbols, in both shapes servers send them.
 struct LSPSymbolTests {
 	private let range: [String: Any] = [

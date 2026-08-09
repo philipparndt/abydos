@@ -134,6 +134,18 @@ public final class LSPClient: @unchecked Sendable {
 		return process?.isRunning ?? false
 	}
 
+	/// The server's process id, for a test that has to ask the operating system
+	/// rather than this object whether the server really went.
+	///
+	/// Kept for the same reason `readerWakeups` is: what closing a project has to
+	/// achieve is a process that is gone, and this object's own opinion of that
+	/// is exactly the thing under test.
+	var processIdentifier: pid_t? {
+		lock.lock()
+		defer { lock.unlock() }
+		return process?.processIdentifier
+	}
+
 	// MARK: - Lifetime
 
 	public func start(
@@ -288,8 +300,9 @@ public final class LSPClient: @unchecked Sendable {
 	public func shutdown() async {
 		guard isRunning else { return }
 		// A server that will not shut down politely is still a process holding
-		// a few hundred megabytes, so the ask is given a deadline.
-		_ = try? await withTimeout(seconds: 2) { try await self.request("shutdown", nil) }
+		// a few hundred megabytes, so the ask is given a deadline — the request's
+		// own, which is the only one that ends the waiting.
+		_ = try? await request("shutdown", nil, timeout: 2)
 		notify("exit", nil)
 
 		try? await Task.sleep(nanoseconds: 200_000_000)
@@ -461,17 +474,45 @@ public final class LSPClient: @unchecked Sendable {
 			return id
 		}
 
-		return try await withTimeout(seconds: timeout, describing: method) {
-			try await withCheckedThrowingContinuation { continuation in
-				self.lock.lock()
-				self.pending[id] = { continuation.resume(with: $0) }
-				self.lock.unlock()
-
-				var message: [String: Any] = ["jsonrpc": "2.0", "id": id, "method": method]
-				if let parameters { message["params"] = parameters }
-				self.write(message)
+		// The deadline belongs to the reply rather than to whoever is waiting for
+		// it. It used to be a task group racing a sleep, and a group does not
+		// return until every task in it has — including the one parked on a
+		// continuation the server was never going to resume. So the timeout fired,
+		// the group went on waiting, and `shutdown` sat there until the server
+		// happened to exit on its own: measured at two minutes against a server
+		// that answers nothing, which is exactly the server this has to end.
+		//
+		// Failing the pending handler is what resumes it, and the handler is
+		// removed under the lock, so a reply that lands in the same instant as the
+		// deadline delivers one answer and not two.
+		return try await withCheckedThrowingContinuation { continuation in
+			let expiry = DispatchWorkItem { [weak self] in
+				self?.fail(id, with: ClientError.timedOut(method))
 			}
+			self.lock.lock()
+			self.pending[id] = { result in
+				expiry.cancel()
+				continuation.resume(with: result)
+			}
+			self.lock.unlock()
+			Self.deadlines.asyncAfter(deadline: .now() + timeout, execute: expiry)
+
+			var message: [String: Any] = ["jsonrpc": "2.0", "id": id, "method": method]
+			if let parameters { message["params"] = parameters }
+			self.write(message)
 		}
+	}
+
+	/// Where the deadlines are kept. Its own queue, so a server that has gone
+	/// quiet cannot hold up anything else waiting to run.
+	private static let deadlines = DispatchQueue(label: "de.rnd7.abydos.lsp.deadlines")
+
+	/// Gives up on one request, leaving every other one alone.
+	private func fail(_ id: Int, with error: Error) {
+		lock.lock()
+		let handler = pending.removeValue(forKey: id)
+		lock.unlock()
+		handler?(.failure(error))
 	}
 
 	private func write(_ message: [String: Any]) {
@@ -493,27 +534,6 @@ public final class LSPClient: @unchecked Sendable {
 			try pipe.fileHandleForWriting.write(contentsOf: framed)
 		} catch {
 			failAllPending(with: ClientError.notRunning)
-		}
-	}
-
-	/// Fails a request that is taking too long rather than waiting for ever.
-	///
-	/// A language server indexing a large project can go quiet for a while, and
-	/// a UI that awaits it with no deadline is a UI that hangs.
-	private func withTimeout<T: Sendable>(
-		seconds: TimeInterval,
-		describing method: String = "a request",
-		_ body: @escaping @Sendable () async throws -> T
-	) async throws -> T {
-		try await withThrowingTaskGroup(of: T.self) { group in
-			group.addTask { try await body() }
-			group.addTask {
-				try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-				throw ClientError.timedOut(method)
-			}
-			defer { group.cancelAll() }
-			guard let first = try await group.next() else { throw ClientError.timedOut(method) }
-			return first
 		}
 	}
 
