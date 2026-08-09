@@ -289,6 +289,182 @@ struct LanguageServerRegistryTests {
 	}
 }
 
+/// Which Swift the editor means, which has to be the one the build used.
+///
+/// Measured before this existed: the servers answering were
+/// `~/.swiftly/bin/sourcekit-lsp`, running out of a 6.1.2 toolchain, while
+/// `xcrun` had Xcode's all along — so the red squiggles on screen came from a
+/// compiler the build never ran.
+struct XcodeToolchainTests {
+	/// Only the three a toolchain manager also ships. Asking `xcrun` for `gopls`
+	/// would find nothing and be a slower way of finding nothing.
+	@Test func claimsOnlyWhatXcodeActuallyOwns() {
+		#expect(XcodeToolchain.owns("sourcekit-lsp"))
+		#expect(XcodeToolchain.owns("clangd"))
+		#expect(XcodeToolchain.owns("lldb-dap"))
+		#expect(!XcodeToolchain.owns("gopls"))
+		#expect(!XcodeToolchain.owns("rust-analyzer"))
+	}
+
+	@Test func hasNoAnswerForAToolXcodeDoesNotShip() {
+		#expect(XcodeToolchain.path(for: "definitely-not-a-tool-\(UUID().uuidString)") == nil)
+	}
+
+	/// The resolution itself: where Xcode has the tool, that is the one, whatever
+	/// the `PATH` says first.
+	///
+	/// Conditional on Xcode being installed rather than skipped outright: on a
+	/// machine with only the command-line tools there is nothing to prefer, and
+	/// the fallback to the `PATH` is then the right answer rather than a failure.
+	@Test func prefersXcodesCopyOverWhateverIsFirstOnThePath() throws {
+		let swift = try #require(LanguageServers.definition(forLanguage: "swift"))
+		guard let fromXcode = XcodeToolchain.path(for: "sourcekit-lsp") else { return }
+
+		#expect(LanguageServers.executable(for: swift) == fromXcode)
+		// And it is Xcode's, not a toolchain a version manager dropped in front
+		// of it — the exact shape of the fault this was written for.
+		#expect(!fromXcode.contains("/.swiftly/"))
+		#expect(!fromXcode.contains("/Library/Developer/Toolchains/swift-"))
+	}
+
+	/// The debugger has the same two copies and the same reason to prefer one:
+	/// a frame read by one toolchain's `lldb-dap` out of a binary the other
+	/// compiled is a frame nobody can trust.
+	@Test func theDebuggerComesFromTheSamePlaceAsTheCompiler() throws {
+		guard let fromXcode = XcodeToolchain.path(for: "lldb-dap") else { return }
+		#expect(DebugAdapters.executable(for: DebugAdapters.lldb) == fromXcode)
+	}
+}
+
+/// One server per language per project — where "language" means the server, not
+/// the file extension.
+struct LanguageServerKeyTests {
+	private let project = URL(fileURLWithPath: "/tmp/project")
+
+	/// The fault, measured: opening `main.c` and `thing.cpp` in one project
+	/// started two `clangd`, because the table was keyed by the language asked
+	/// about and one server answers for three of them.
+	@Test func oneServerAnswersForAllTheLanguagesItKnows() {
+		let c = LanguageServers.serverKey(project: project, languageId: "c")
+		#expect(LanguageServers.serverKey(project: project, languageId: "cpp") == c)
+		#expect(LanguageServers.serverKey(project: project, languageId: "objc") == c)
+
+		let typescript = LanguageServers.serverKey(project: project, languageId: "typescript")
+		#expect(LanguageServers.serverKey(project: project, languageId: "javascript") == typescript)
+		#expect(LanguageServers.serverKey(project: project, languageId: "tsx") == typescript)
+	}
+
+	@Test func differentServersAreStillDifferentKeys() {
+		#expect(LanguageServers.serverKey(project: project, languageId: "swift")
+			!= LanguageServers.serverKey(project: project, languageId: "go"))
+	}
+
+	@Test func twoProjectsDoNotShareAServer() {
+		#expect(LanguageServers.serverKey(project: project, languageId: "swift")
+			!= LanguageServers.serverKey(
+				project: URL(fileURLWithPath: "/tmp/other"), languageId: "swift"
+			))
+	}
+
+	/// A language nothing answers for still gets a key of its own, so the
+	/// bookkeeping around it — what was looked for and not found — keeps working.
+	@Test func aLanguageWithNoServerKeepsItsOwnName() {
+		#expect(LanguageServers.serverKey(project: project, languageId: "cobol")
+			== "/tmp/project#cobol")
+	}
+}
+
+/// When a project's servers may be stopped, and when they may not.
+struct LanguageServerReapingTests {
+	private let project = URL(fileURLWithPath: "/tmp/project")
+
+	@Test func aProjectNothingElseIsShowingLetsItsServersGo() {
+		#expect(!LanguageServers.serversAreStillWanted(for: project, shownBy: []))
+		#expect(!LanguageServers.serversAreStillWanted(
+			for: project, shownBy: [URL(fileURLWithPath: "/tmp/other")]
+		))
+	}
+
+	/// A torn-off window closing must not take the servers of the project it was
+	/// torn from: the leak is visible in `ps`, and a missing answer is visible
+	/// nowhere.
+	@Test func aProjectAnotherWindowIsShowingKeepsThem() {
+		#expect(LanguageServers.serversAreStillWanted(
+			for: project,
+			shownBy: [URL(fileURLWithPath: "/tmp/other"), URL(fileURLWithPath: "/tmp/project/")]
+		))
+	}
+
+	/// Two spellings of one directory are one project.
+	@Test func theSameProjectSaidTwoWaysIsStillTheSameProject() {
+		#expect(LanguageServers.serversAreStillWanted(
+			for: URL(fileURLWithPath: "/tmp/project/"),
+			shownBy: [URL(fileURLWithPath: "/tmp/project")]
+		))
+	}
+}
+
+/// Stopping a server, which is what closing a project comes down to.
+struct LSPShutdownTests {
+	/// A server that answers nothing — no handshake, no `shutdown` reply — and
+	/// will not end on its own. Which is the case that matters: a well-behaved
+	/// server exits on `exit`, and the ones left running for a day did not.
+	@Test func aServerThatWillNotGoPolitelyIsEndedAnyway() async throws {
+		let client = LSPClient()
+		defer { client.stop() }
+
+		try client.start(
+			executable: "/bin/sh",
+			arguments: ["-c", "sleep 120"],
+			workingDirectory: nil
+		)
+		let pid = try #require(client.processIdentifier)
+		#expect(client.isRunning)
+
+		await client.shutdown()
+
+		// Asked of the operating system rather than of the client: what closing
+		// a project has to achieve is a process that is gone.
+		var alive = true
+		for _ in 0..<200 where alive {
+			if kill(pid, 0) != 0 { alive = false; break }
+			try? await Task.sleep(nanoseconds: 50_000_000)
+		}
+		#expect(!alive, "the server was still running after its project closed")
+		#expect(!client.isRunning)
+	}
+
+	/// The deadline underneath that, on its own.
+	///
+	/// It was a task group racing a sleep, and a group waits for every task in it
+	/// — including the one parked on a reply that never came. So the timeout
+	/// expired and the caller went on waiting anyway: the whole of `shutdown` took
+	/// two minutes against a server that answers nothing, because two minutes was
+	/// how long that server had been told to sleep for.
+	@Test func aRequestAgainstASilentServerGivesUpOnTime() async throws {
+		let client = LSPClient()
+		defer { client.stop() }
+
+		// Two minutes of silence, and one second of patience. The gap between
+		// them is what is being measured: anything under half a minute means the
+		// deadline ended the wait, and nothing else could have. A tighter bound
+		// than that measures the machine's load rather than this client — the
+		// first spelling of it wanted five seconds and failed at nine on a
+		// machine running four builds.
+		try client.start(
+			executable: "/bin/sh",
+			arguments: ["-c", "sleep 120"],
+			workingDirectory: nil
+		)
+
+		let began = Date()
+		await #expect(throws: LSPClient.ClientError.self) {
+			_ = try await client.request("textDocument/hover", nil, timeout: 1)
+		}
+		#expect(Date().timeIntervalSince(began) < 30, "the deadline, not the server, ended the wait")
+	}
+}
+
 /// Symbols, in both shapes servers send them.
 struct LSPSymbolTests {
 	private let range: [String: Any] = [

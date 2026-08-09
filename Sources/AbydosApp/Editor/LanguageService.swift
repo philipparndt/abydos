@@ -89,8 +89,10 @@ final class LanguageService {
 
 	private init() {}
 
+	/// Keyed by the server rather than by the language asked about: see
+	/// `LanguageServers.serverKey`, which is where the reason is written down.
 	private func key(project: URL, languageId: String) -> String {
-		"\(project.standardizedFileURL.path)#\(languageId)"
+		LanguageServers.serverKey(project: project, languageId: languageId)
 	}
 
 	/// Starts the servers a project evidently needs, without waiting for a file
@@ -114,7 +116,6 @@ final class LanguageService {
 	/// Which languages have a server running for this project, and which are
 	/// missing one, so a search can say why it found nothing.
 	func serverStatus(project: URL) -> (running: [String], missing: [(language: String, hint: String)]) {
-		let prefix = project.standardizedFileURL.path + "#"
 		var running: [String] = []
 		var missing: [(String, String)] = []
 
@@ -123,7 +124,7 @@ final class LanguageService {
 			      let languageId = definition.languageIds.first
 			else { continue }
 
-			if servers[prefix + languageId] != nil {
+			if servers[key(project: project, languageId: languageId)] != nil {
 				running.append(definition.command)
 			} else if images(for: project).image(for: definition.toolKey) != nil {
 				// An image is named for it, so it is not missing: it is either

@@ -165,25 +165,68 @@ public enum LanguageServers {
 		known.first { $0.languageIds.contains(languageId) }
 	}
 
+	/// What a project's running server is held under: the project and the
+	/// *server*, not the project and the language.
+	///
+	/// One definition answers for several language ids — clangd for `c`, `cpp`
+	/// and `objc`; typescript-language-server for four — so a table keyed by the
+	/// id started a second copy of the same program the first time somebody
+	/// opened a `.cpp` beside a `.c`. Measured, with two files open in one
+	/// project: two `clangd`, each indexing the same compilation database.
+	///
+	/// The tool's key rather than its command, since that is the name the same
+	/// server is already called everywhere an image is chosen for it.
+	public static func serverKey(project: URL, languageId: String) -> String {
+		let server = definition(forLanguage: languageId)?.toolKey ?? languageId
+		return "\(project.standardizedFileURL.path)#\(server)"
+	}
+
+	/// Whether a project's servers are still somebody's, now that one window has
+	/// finished with it.
+	///
+	/// The question that has to be asked before stopping them, and the reason it
+	/// is not simply "this window has closed": a torn-off window shares its
+	/// project with the window it was dragged out of, and two windows can be
+	/// opened on the same checkout. Stopping a server that another window is
+	/// still asking questions of is worse than leaving it running, because a
+	/// leak shows up in `ps` and a missing answer shows up as nothing at all.
+	///
+	/// - Parameter others: what the other windows are showing. The window doing
+	///   the asking is not among them — mid-switch it is still holding the
+	///   project it is leaving.
+	public static func serversAreStillWanted(for project: URL, shownBy others: [URL]) -> Bool {
+		let path = project.standardizedFileURL.path
+		return others.contains { $0.standardizedFileURL.path == path }
+	}
+
 	/// Where the command lives, or nil if it is not installed.
 	///
-	/// A GUI app inherits almost nothing of a login shell's `PATH`, so the
-	/// usual places are searched explicitly. Without this, everything works
-	/// from a terminal and nothing works from the Dock.
+	/// Two searches, and which one goes first is the whole point.
+	///
+	/// A tool Xcode owns is asked of Xcode, before the `PATH` is looked at at
+	/// all: `sourcekit-lsp` and `clangd` are shipped by every toolchain manager
+	/// as well, and the first one on a login shell's `PATH` is swiftly's — a
+	/// release older than the SDK the build uses. Measured here: the servers
+	/// answering were `~/.swiftly/bin/sourcekit-lsp` while `xcrun` had Xcode's
+	/// all along. See `XcodeToolchain` for what that costs.
+	///
+	/// Everything else is looked for on the `PATH` and then in the usual homes,
+	/// because a GUI app inherits almost nothing of a login shell's `PATH`.
+	/// Without that half, everything works from a terminal and nothing works
+	/// from the Dock.
 	public static func executable(for definition: LanguageServerDefinition) -> String? {
 		if definition.command.contains("/") {
 			return FileManager.default.isExecutableFile(atPath: definition.command) ? definition.command : nil
 		}
 
+		if XcodeToolchain.owns(definition.command),
+		   let found = XcodeToolchain.path(for: definition.command) {
+			return found
+		}
+
 		for directory in searchPaths {
 			let candidate = (directory as NSString).appendingPathComponent(definition.command)
 			if FileManager.default.isExecutableFile(atPath: candidate) { return candidate }
-		}
-
-		// Swift's server is usually reached through xcrun rather than sitting
-		// on the path at all.
-		if definition.command == "sourcekit-lsp", let found = xcrunPath(for: "sourcekit-lsp") {
-			return found
 		}
 		return nil
 	}
@@ -369,23 +412,6 @@ public enum LanguageServers {
 			environment["JAVA_HOME"] = home
 		}
 		return environment
-	}
-
-	private static func xcrunPath(for tool: String) -> String? {
-		let process = Process()
-		process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-		process.arguments = ["--find", tool]
-		let output = Pipe()
-		process.standardOutput = output
-		process.standardError = Pipe()
-
-		guard (try? process.run()) != nil else { return nil }
-		let data = ProcessPipes.drain(process, out: output)
-		guard process.terminationStatus == 0 else { return nil }
-
-		let path = String(data: data, encoding: .utf8)?
-			.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-		return FileManager.default.isExecutableFile(atPath: path) ? path : nil
 	}
 
 	/// Whether a project looks like one this server should be started for.

@@ -138,6 +138,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	}
 	var onClose: (() -> Void)?
 
+	/// What the *other* windows are showing, asked when this one lets a project
+	/// go. Nil while nothing has been wired up, which reads as "no other window"
+	/// and is right for the one-window case that produces.
+	var projectRootsElsewhere: (() -> [URL])?
+
 	private let navigator = ProjectNavigatorViewController()
 	/// The editor area, which may hold several split groups.
 	private let editor = EditorAreaController()
@@ -1699,6 +1704,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			// files: what was open is a property of the project, not of the
 			// application that happened to be running.
 			try? SessionStore.write(session, in: current)
+			// And the servers it was using, which nothing had ever stopped.
+			releaseLanguageServers(of: current)
 		}
 
 		// Read before anything is loaded: opening a project touches the editor
@@ -1741,6 +1748,26 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			// behind a closed panel look like terminals that did not.
 			if previous.isPanelVisible { setPanelVisible(true) }
 		}
+	}
+
+	/// Stops the language servers of a project this window has finished with.
+	///
+	/// A language server is the longest-lived and by far the largest child this
+	/// app has — `sourcekit-lsp` builds the package to index it — and nothing
+	/// had ever stopped one short of the app quitting. Nine were counted for two
+	/// windows, and fifteen gigabytes of `swift-frontend` behind them, on a
+	/// machine whose owner assumed it was the builds.
+	///
+	/// Not when another window is still showing the project: a torn-off window
+	/// shares its project with the one it came from, and closing it would
+	/// otherwise take away the servers of a project somebody is still working
+	/// in — which is worse than the leak, because it is invisible until an
+	/// answer is missing.
+	private func releaseLanguageServers(of root: URL) {
+		guard !LanguageServers.serversAreStillWanted(
+			for: root, shownBy: projectRootsElsewhere?() ?? []
+		) else { return }
+		LanguageService.shared.shutdown(project: root)
 	}
 
 	/// Writes what is open beside the project, so the next window on it opens
@@ -6819,6 +6846,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		bottomPanel.shutdown()
 		editor.windowWillClose()
 		navigator.windowWillClose()
+		if let root = project?.root { releaseLanguageServers(of: root) }
 		onClose?()
 	}
 }

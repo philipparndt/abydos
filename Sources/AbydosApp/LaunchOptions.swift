@@ -342,6 +342,14 @@ struct LaunchOptions {
 	/// Open a terminal in the project's devcontainer and report what is in it.
 	var devContainerTerminal = false
 
+	/// Close the window opened last, this many seconds in.
+	///
+	/// For counting what a closed window takes with it. A torn-off window shares
+	/// its project with the one it came from, so closing it must leave that
+	/// project's language servers running — which is a thing only `ps` can say,
+	/// and only if something closes a window without a hand on the mouse.
+	var closeLastWindowAt: Double?
+
 	static func parse(_ arguments: [String] = CommandLine.arguments) -> LaunchOptions {
 		var options = LaunchOptions()
 		var index = 1
@@ -405,6 +413,7 @@ struct LaunchOptions {
 			case "--push-branch": options.pushBranch = next()
 			case "--report-cwd": options.reportsTerminalDirectory = true
 			case "--devcontainer": options.devContainerTerminal = true
+			case "--close-window": options.closeLastWindowAt = next().flatMap(Double.init) ?? 5
 			case "--report-geometry": options.reportsTerminalGeometry = true
 			case "--blame": options.showsBlame = true
 			case "--resize": options.resizeWidth = next().flatMap(Double.init)
