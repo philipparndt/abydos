@@ -13,11 +13,12 @@ extension Notification.Name {
 
 /// Exporting the diagram in a file as a picture beside it.
 ///
-/// Four gestures reach this — the preview's own menu and the file's in the
-/// project tree, over a PlantUML file and over a Mermaid one — and they are all
-/// the same act: the same rules about overwriting, the same refusal to write a
-/// picture of a syntax error, the same sentence when it cannot be done. One
-/// place, so they cannot drift apart.
+/// Every gesture reaches this — the preview's own menu and the file's in the
+/// project tree, over a PlantUML file, a Mermaid one, a `.drawio`, and a
+/// Markdown document full of fences — and they are all the same act: the same
+/// rules about overwriting, the same refusal to write a picture of a syntax
+/// error, the same sentence when it cannot be done. One place, so they cannot
+/// drift apart.
 ///
 /// The two tools part company at exactly one point and it is a fact about them
 /// rather than a difference in the feature: a PlantUML file needs a PlantUML to
@@ -75,6 +76,34 @@ enum DiagramExportCommand {
 
 		let stated = DiagramExport.statedLook(of: url, source: text)
 		announceDrawing(url, format: format, theme: theme, stated: stated)
+
+		// A Markdown document is several diagrams rather than one, and the whole
+		// of it is written or none of it is. See `DiagramExport.export(markdown:)`
+		// for why every block rather than the one under the pointer.
+		if FilePreview.kind(for: url) == .markdown {
+			let blocks = DiagramExport.fences(in: text)
+			let chose = blocks.filter { Mermaid.statedLook(in: $0.source) != nil }.count
+			Task {
+				let outcome = await DiagramExport.export(
+					markdown: text, of: url, format: format, theme: theme
+				)
+				await MainActor.run {
+					report(outcome, for: url, stated: stated, then: then)
+					// Said only when the document disagreed with itself. When every
+					// fence stated a look `stated` is not nil and `report` has
+					// already said it, in the sentence the other three tools use.
+					guard stated == nil, chose > 0, case .success = outcome else { return }
+					Toast.post(
+						"Some of these diagrams chose",
+						detail: DiagramLook.exportNotice(
+							for: url.lastPathComponent, chose: chose, of: blocks.count
+						),
+						kind: .information
+					)
+				}
+			}
+			return
+		}
 
 		if Mermaid.isDiagram(url) {
 			Task {
@@ -165,8 +194,9 @@ enum DiagramExportCommand {
 		let title = written.count == 1
 			? "Exported \(first.lastPathComponent)"
 			// A file with several diagrams in it becomes several pictures, named
-			// the way PlantUML's own file output names them. Saying how many is
-			// what keeps that from being a surprise.
+			// the way PlantUML's own file output names them for a `.puml`, and
+			// after each fence's own title or place for a Markdown document.
+			// Saying how many is what keeps that from being a surprise.
 			: "Exported \(written.count) pictures, \(first.lastPathComponent) first"
 		Toast.post(title, kind: .information)
 		NotificationCenter.default.post(

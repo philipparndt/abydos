@@ -149,13 +149,19 @@ final class MarkdownDiagrams {
 
 /// The text view a rendered Markdown document is shown in.
 ///
-/// It is an `NSTextView` and nothing more, except for one thing it has to hold:
-/// the subscription that brings a late picture to the page. A block observer is
-/// not removed by handing the notification centre `self`, and a preview is made
-/// and thrown away with every tab — so the token lives here and goes when the
-/// view does.
+/// It is an `NSTextView` and nothing more, except for two things it has to hold:
+/// the subscription that brings a late picture to the page, and the `Export ▸`
+/// its diagrams are written out from. A block observer is not removed by handing
+/// the notification centre `self`, and a preview is made and thrown away with
+/// every tab — so the token lives here and goes when the view does.
 final class MarkdownPreviewTextView: NSTextView {
 	private var watching: NSObjectProtocol?
+
+	/// Which document this is a preview of, so the pictures have somewhere to go.
+	var fileURL: URL?
+	/// The text in front of somebody, which is what is drawn — unsaved edits and
+	/// all, exactly as the `.mmd` pane's own export draws its buffer.
+	var markdownSource: (() -> String?)?
 
 	/// Runs something whenever a diagram anywhere has finished being drawn.
 	///
@@ -170,6 +176,64 @@ final class MarkdownPreviewTextView: NSTextView {
 		) { _ in
 			MainActor.assumeIsolated { redraw() }
 		}
+	}
+
+	// MARK: - Writing the pictures out
+
+	/// The text view's own menu with `Export ▸` on the front of it.
+	///
+	/// **On the document rather than on the picture under the pointer**, which is
+	/// the decision 0425 left open and `DiagramExport.export(markdown:)` records
+	/// in full. The short of it: this same submenu has to work from the project
+	/// tree, where there is no picture on screen to point at, so an export routed
+	/// to the attachment beneath the click would be one act with two behaviours.
+	///
+	/// It appears only when there is something to write. Every other Markdown
+	/// document in a repository gets the menu `NSTextView` has always given it.
+	override func menu(for event: NSEvent) -> NSMenu? {
+		let menu = super.menu(for: event)
+		guard let menu, let url = fileURL, let source = markdownSource?(),
+		      DiagramExport.holdsADiagram(url, source: source)
+		else { return menu }
+
+		let export = NSMenuItem(title: "Export", action: nil, keyEquivalent: "")
+		let formats = NSMenu()
+		formats.autoenablesItems = false
+		DiagramExportMenu.fill(
+			formats, theme: Theme.current.isLight ? .light : .dark,
+			stated: DiagramExport.statedLook(of: url, source: source),
+			target: self, action: #selector(exportDiagramsFromMenu(_:)), enabled: true
+		)
+		export.submenu = formats
+		menu.insertItem(export, at: 0)
+		menu.insertItem(.separator(), at: 1)
+		return menu
+	}
+
+	@objc private func exportDiagramsFromMenu(_ sender: NSMenuItem) {
+		guard let url = fileURL, let code = sender.representedObject as? String,
+		      let choice = DiagramExportMenu.choice(for: code)
+		else { return }
+		DiagramExportCommand.run(
+			url: url, source: markdownSource?(), format: choice.format, theme: choice.theme,
+			projectRoot: nil
+		)
+	}
+
+	/// What a right-click over the rendered document offers, for a test: a menu
+	/// cannot be photographed while it is open.
+	var exportMenuTitlesForTesting: [String] {
+		guard let url = fileURL, let source = markdownSource?(),
+		      DiagramExport.holdsADiagram(url, source: source)
+		else { return [] }
+		let formats = NSMenu()
+		formats.autoenablesItems = false
+		DiagramExportMenu.fill(
+			formats, theme: Theme.current.isLight ? .light : .dark,
+			stated: DiagramExport.statedLook(of: url, source: source),
+			target: self, action: #selector(exportDiagramsFromMenu(_:)), enabled: true
+		)
+		return formats.items.map { "Export ▸ \($0.title)" }
 	}
 
 	deinit {

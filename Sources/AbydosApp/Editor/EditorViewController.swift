@@ -1510,6 +1510,11 @@ final class EditorViewController: NSViewController {
 
 	private func makePreviewView(for tab: Tab) -> NSView {
 		let textView = MarkdownPreviewTextView()
+		// Which document this is, and where its text is — the pane's own `Export ▸`
+		// writes the diagrams in it beside it, and draws the buffer rather than
+		// what is on disk, exactly as the `.mmd` pane does.
+		textView.fileURL = tab.url
+		textView.markdownSource = { [weak tab] in tab?.document?.rope.string }
 		textView.isEditable = false
 		textView.isSelectable = true
 		textView.drawsBackground = true
@@ -1638,6 +1643,25 @@ final class EditorViewController: NSViewController {
 		if let pane = view as? DiagramPaneView { return pane }
 		for subview in view.subviews {
 			if let found = diagramPane(in: subview) { return found }
+		}
+		return nil
+	}
+
+	/// The rendered Markdown pane the file in front is showing, when it is
+	/// showing one.
+	///
+	/// Found the same way and for the same reason as `diagramPreview`: a Markdown
+	/// document full of ```` ```mermaid ```` fences has an `Export ▸` of its own,
+	/// and the pane it hangs on is the tab's whole content or half of a split
+	/// depending on the preview mode.
+	var markdownPreview: MarkdownPreviewTextView? {
+		activeTab.flatMap { Self.markdownPane(in: $0.contentView) }
+	}
+
+	private static func markdownPane(in view: NSView) -> MarkdownPreviewTextView? {
+		if let pane = view as? MarkdownPreviewTextView { return pane }
+		for subview in view.subviews {
+			if let found = markdownPane(in: subview) { return found }
 		}
 		return nil
 	}

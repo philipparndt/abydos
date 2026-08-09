@@ -4222,6 +4222,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			print("EXPORT: no such format \(raw)")
 			return
 		}
+		// A rendered Markdown document is a diagram pane too, in the only sense
+		// that matters here: it has an `Export ▸` on it and writing the pictures
+		// out is one act however many fences the document holds.
+		if editor.activeGroup?.diagramPreview == nil,
+		   let markdown = editor.activeGroup?.markdownPreview,
+		   let url = markdown.fileURL, let source = markdown.markdownSource?()
+		{
+			print("EXPORT menu: \(markdown.exportMenuTitlesForTesting.joined(separator: " | "))")
+			DiagramExportCommand.run(
+				url: url, source: source, format: format,
+				theme: Theme.current.isLight ? .light : .dark, projectRoot: nil
+			) { written in
+				print("EXPORT: \(written.map(\.lastPathComponent).joined(separator: ", "))")
+			}
+			return
+		}
 		guard let pane = editor.activeGroup?.diagramPreview else {
 			print("EXPORT: nothing showing a diagram")
 			return
