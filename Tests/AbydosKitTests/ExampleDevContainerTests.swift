@@ -168,6 +168,61 @@ struct ExampleDevContainerTests {
 		#expect(configuration.runArgs == ["--hostname", "abydos-substitutions"])
 	}
 
+	/// The one example whose container carries a language server, and the only
+	/// one where that working is evidence rather than a demonstration.
+	///
+	/// Python and pyright deliberately: every other server this app knows comes
+	/// with a toolchain somebody has already installed, so a hover that works
+	/// could have been the host's copy answering. There is no host copy of
+	/// pyright on an ordinary machine, and this app does not substitute one
+	/// machine's server for another's.
+	@Test func pythonLanguageServerBuildsAnImageWithTheServerInIt() throws {
+		guard let examples = Self.examples else { return }
+		let project = examples.appendingPathComponent("devcontainers/python-language-server")
+		guard let reading = read("devcontainers/python-language-server") else { return }
+		guard let configuration = understood(reading) else { return }
+		guard let build = configuration.build else {
+			Issue.record("python-language-server names no build")
+			return
+		}
+		let root = FilePath.canonical(project)
+
+		// Built rather than pulled, which is the decision the example is about:
+		// the server is a layer in the image and not a postCreateCommand, so a
+		// rebuilt container has it without reaching the network again.
+		#expect(configuration.image == nil)
+		#expect(build.dockerfile == root + "/.devcontainer/Dockerfile")
+		#expect(configuration.builtImageName == "abydos-devcontainer:python-language-server")
+		// And no lifecycle commands at all: `devcontainers/post-create` is what
+		// demonstrates those, and an example teaching two things teaches neither.
+		#expect(configuration.lifecycle.stages.isEmpty)
+
+		// The command the image has to carry is the one `LanguageServers` runs,
+		// not the `pyright` checker installed beside it. A Dockerfile that
+		// installed the wrong name would come up and then answer nothing.
+		let python = try #require(LanguageServers.definition(forLanguage: "python"))
+		#expect(python.command == "pyright-langserver")
+		let dockerfile = try String(
+			contentsOf: URL(fileURLWithPath: build.dockerfile), encoding: .utf8
+		)
+		#expect(dockerfile.contains(python.command), "the Dockerfile installs some other name")
+		// Pinned, because the version is a decision about which answers a
+		// project gets — the same rule ToolImages/gopls/Dockerfile states.
+		#expect(dockerfile.contains("pyright@${PYRIGHT_VERSION}"))
+		#expect(dockerfile.contains("ARG PYRIGHT_VERSION="))
+		#expect(!dockerfile.contains("pyright@latest"))
+
+		// The root marker that decides where the server is rooted. Without it
+		// the project would be rooted wherever it happened to be opened, and
+		// `from stations.reading import …` would not resolve.
+		#expect(FileManager.default.fileExists(atPath: root + "/pyproject.toml"))
+		#expect(python.rootMarkers.contains("pyproject.toml"))
+		// Two files and a package, so a go-to-definition crosses both.
+		#expect(FileManager.default.fileExists(atPath: root + "/main.py"))
+		#expect(FileManager.default.fileExists(atPath: root + "/stations/__init__.py"))
+		#expect(FileManager.default.fileExists(atPath: root + "/stations/reading.py"))
+	}
+
 	/// The example that exists to be slow on purpose, now that the lifecycle
 	/// commands run rather than refuse.
 	@Test func postCreateIsReadAsTheOneCommandItNames() throws {
@@ -236,6 +291,8 @@ struct ExampleDevContainerTests {
 			// Both of these were refused until the lifecycle commands ran. They
 			// are the same two files; what changed is this side.
 			"devcontainers/post-create", "devcontainers/post-create-fails",
+			// The one whose container carries a language server.
+			"devcontainers/python-language-server",
 		]
 		let refused = [
 			"multi-tier", "devcontainers/features", "devcontainers/two-containers",

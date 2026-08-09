@@ -3400,8 +3400,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		editor.goToDefinitionForTesting(line: line, character: character)
 		DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
 			guard let self else { return }
-			let after = self.editor.activeGroup?.activeTabURL?.lastPathComponent ?? "nothing"
+			let landed = self.editor.activeGroup?.activeTabURL
+			let after = landed?.lastPathComponent ?? "nothing"
 			print("DEFINITION: \(before) → \(after) \(self.editor.caretReportForTesting)")
+			// The whole path, and not decoration: a server running inside a
+			// devcontainer answers about /workspaces/…, and what has to arrive
+			// here is the same file named as this machine names it. A report
+			// giving only the last component cannot tell the two apart.
+			print("DEFINITION-PATH: \(landed?.path ?? "nothing")")
 		}
 	}
 
