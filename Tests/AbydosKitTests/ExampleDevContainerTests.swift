@@ -168,6 +168,32 @@ struct ExampleDevContainerTests {
 		#expect(configuration.runArgs == ["--hostname", "abydos-substitutions"])
 	}
 
+	/// The example that exists to be slow on purpose, now that the lifecycle
+	/// commands run rather than refuse.
+	@Test func postCreateIsReadAsTheOneCommandItNames() throws {
+		guard let reading = read("devcontainers/post-create") else { return }
+		guard let configuration = understood(reading) else { return }
+		let lifecycle = configuration.lifecycle
+		#expect(lifecycle[.postCreateCommand] == .shell("sh .devcontainer/post-create.sh"))
+		// And nothing else, because the fixture is about one moment: a file that
+		// grew a second command would be a different test.
+		#expect(lifecycle.stages == [.postCreateCommand])
+		#expect(lifecycle.hasCreationCommands)
+	}
+
+	/// Its harder half: a command that fails, and one after it that must not run
+	/// when it does.
+	@Test func postCreateFailsAlsoNamesTheCommandThatMustNotRun() throws {
+		guard let reading = read("devcontainers/post-create-fails") else { return }
+		guard let configuration = understood(reading) else { return }
+		let lifecycle = configuration.lifecycle
+		#expect(lifecycle[.postCreateCommand] == .shell("sh .devcontainer/post-create.sh"))
+		#expect(lifecycle[.postStartCommand] != nil)
+		// The order is the promise: postStartCommand is after the three that
+		// create the container, so a failure in one of those never reaches it.
+		#expect(lifecycle.stages == [.postCreateCommand, .postStartCommand])
+	}
+
 	// MARK: - The ones that are refused
 
 	/// Each of these is a file `devcontainer up` builds without complaint, kept
@@ -183,14 +209,6 @@ struct ExampleDevContainerTests {
 			"devcontainers/features",
 			"installs devcontainer features (ghcr.io/devcontainers/features/github-cli:1), "
 				+ "which this app does not build"
-		),
-		(
-			"devcontainers/post-create",
-			"has a postCreateCommand, and this app does not run the lifecycle commands yet"
-		),
-		(
-			"devcontainers/post-create-fails",
-			"has a postCreateCommand, and this app does not run the lifecycle commands yet"
 		),
 		(
 			"devcontainers/two-containers",
@@ -215,10 +233,12 @@ struct ExampleDevContainerTests {
 			"go-service", "smart-home-microservice",
 			"devcontainers/dockerfile-build", "devcontainers/non-root-user",
 			"devcontainers/substitutions",
+			// Both of these were refused until the lifecycle commands ran. They
+			// are the same two files; what changed is this side.
+			"devcontainers/post-create", "devcontainers/post-create-fails",
 		]
 		let refused = [
-			"multi-tier", "devcontainers/features", "devcontainers/post-create",
-			"devcontainers/post-create-fails", "devcontainers/two-containers",
+			"multi-tier", "devcontainers/features", "devcontainers/two-containers",
 		]
 		for project in understood + refused {
 			let url = examples.appendingPathComponent(project)

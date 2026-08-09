@@ -38,6 +38,9 @@ public struct DevContainerConfiguration: Equatable, Sendable {
 	public let extraMounts: [String]
 	/// Arguments handed to the runtime verbatim.
 	public let runArgs: [String]
+	/// What the file asks to be run, and when — `postCreateCommand` and the
+	/// five others. `DevContainers` is what runs them; this is what they are.
+	public let lifecycle: DevContainerLifecycle
 
 	/// An image built from the project rather than pulled.
 	public struct Build: Equatable, Sendable {
@@ -198,12 +201,6 @@ public enum DevContainerFile {
 				"\(shown) builds this project with Docker Compose (\(named)), which this app "
 					+ "does not run — a single image or build.dockerfile is what it can start.")
 		}
-		if let command = lifecycleCommand(in: file) {
-			return .refused(
-				"\(shown) has a \(command), and this app does not run the lifecycle commands yet — "
-					+ "the container would come up without whatever that command installs.")
-		}
-
 		let localFolder = FilePath.canonical(project)
 		let localBasename = (localFolder as NSString).lastPathComponent
 
@@ -330,6 +327,30 @@ public enum DevContainerFile {
 				+ "expects to see would be missing from the container.")
 		}
 
+		// The lifecycle commands, last of the parts because the substitutions in
+		// them want `${containerWorkspaceFolder}`, which only has a value once the
+		// mount above has been worked out.
+		var commands: [DevContainerStage: DevContainerCommand] = [:]
+		for stage in DevContainerStage.allCases {
+			guard let declared = file[stage.rawValue] else { continue }
+			guard let command = DevContainerCommand.read(declared) else {
+				return .refused("\(shown) has a \(stage.rawValue) this app could not read — the spec "
+					+ "allows a string, a list of arguments, or an object of named commands.")
+			}
+			commands[stage] = command.resolved { resolve($0) }
+		}
+		var waitFor: DevContainerStage?
+		if let declared = file["waitFor"] {
+			guard let text = declared as? String, let stage = DevContainerStage(rawValue: text),
+			      stage != .initializeCommand
+			else {
+				return .refused("\(shown) waits for \(declared), which is not one of the lifecycle "
+					+ "commands — waitFor names onCreateCommand, updateContentCommand, "
+					+ "postCreateCommand, postStartCommand or postAttachCommand.")
+			}
+			waitFor = stage
+		}
+
 		let configuration = DevContainerConfiguration(
 			file: here,
 			project: URL(fileURLWithPath: localFolder, isDirectory: true),
@@ -344,7 +365,8 @@ public enum DevContainerFile {
 			remoteEnv: stringTable(file["remoteEnv"], resolve: { resolve($0) }),
 			forwardPorts: forwarded,
 			extraMounts: extra,
-			runArgs: (file["runArgs"] as? [String] ?? []).map { resolve($0) }
+			runArgs: (file["runArgs"] as? [String] ?? []).map { resolve($0) },
+			lifecycle: DevContainerLifecycle(commands: commands, waitFor: waitFor)
 		)
 		if let unresolvable = resolve.unresolvable {
 			return .refused(refusalForContainerEnv(unresolvable, in: shown))
@@ -353,21 +375,6 @@ public enum DevContainerFile {
 	}
 
 	// MARK: - The parts
-
-	/// The lifecycle commands, which are step five of 0424 and not this one.
-	///
-	/// Named rather than ignored: `postCreateCommand` is where a project runs
-	/// `go mod download` or `npm ci`, and a container that came up without it
-	/// is one whose tools are missing for a reason nothing on screen explains.
-	private static func lifecycleCommand(in file: [String: Any]) -> String? {
-		for key in [
-			"initializeCommand", "onCreateCommand", "updateContentCommand",
-			"postCreateCommand", "postStartCommand", "postAttachCommand",
-		] where file[key] != nil {
-			return key
-		}
-		return nil
-	}
 
 	private static func refusalForContainerEnv(_ variable: String, in shown: String) -> String {
 		"\(shown) uses ${containerEnv:\(variable)}, whose value only exists once the container is "

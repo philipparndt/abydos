@@ -240,4 +240,51 @@ struct DevContainerTests {
 		#expect(DevContainers.explainStart("", project: "service")
 			.contains("said nothing about why"))
 	}
+
+	/// A lifecycle command that failed, in one sentence somebody can act on.
+	///
+	/// What this has to get right is not classifying the failure — there is only
+	/// one kind — but *naming* it: which of six commands that all look alike from
+	/// outside, what it exited with, and the line it wrote before it gave up.
+	@Test func namesTheLifecycleCommandThatFailedAndWhatItSaid() {
+		let failed = RuntimeCommand.Result(
+			// The order `RuntimeCommand` puts them in, which is why the two are
+			// kept apart: the last line of standard output is only how far the
+			// command got, and the line worth reading is on the other stream.
+			output: "error: no such package: a-package-that-does-not-exist\n"
+				+ "post-create: step 1 of 3 — this works\n"
+				+ "post-create: step 2 of 3 — this works too\n"
+				+ "post-create: step 3 of 3 — fetching a dependency that is not there\n",
+			errorOutput: "error: no such package: a-package-that-does-not-exist\n",
+			exitCode: 3,
+			timedOut: false
+		)
+		#expect(DevContainers.explainLifecycle(
+			label: "postCreateCommand",
+			line: "sh .devcontainer/post-create.sh",
+			result: failed,
+			project: "post-create-fails"
+		) == "post-create-fails's postCreateCommand exited 3: error: no such package: "
+			+ "a-package-that-does-not-exist. The container was removed and nothing after it was "
+			+ "run — fix `sh .devcontainer/post-create.sh` in the devcontainer.json and open the "
+			+ "project again.")
+
+		// The object form names the member too, because "postCreateCommand
+		// failed" of a file with three of them is not enough to go on.
+		#expect(DevContainers.explainLifecycle(
+			label: "postCreateCommand (install)",
+			line: "npm ci",
+			result: failed,
+			project: "web"
+		).hasPrefix("web's postCreateCommand (install) exited 3:"))
+
+		// A command that never finished says so, rather than reporting the
+		// terminate signal as an exit status somebody would go looking for.
+		let stuck = RuntimeCommand.Result(
+			output: "", errorOutput: "", exitCode: 15, timedOut: true
+		)
+		#expect(DevContainers.explainLifecycle(
+			label: "postCreateCommand", line: "npm ci", result: stuck, project: "web"
+		).contains("took longer than 30 minutes and was stopped"))
+	}
 }

@@ -14,6 +14,14 @@ enum RuntimeCommand {
 		/// Both streams together, since the runtimes disagree about which one a
 		/// failure goes to.
 		let output: String
+		/// Standard error on its own.
+		///
+		/// Kept apart as well as together because a command that fails often
+		/// writes the reason here and its progress to the other one — a
+		/// lifecycle command's last line of standard output is "step 3 of 3",
+		/// and the line worth putting in front of somebody is the one beside it
+		/// on standard error.
+		let errorOutput: String
 		let exitCode: Int32
 		/// Whether the deadline is what ended it.
 		let timedOut: Bool
@@ -25,13 +33,19 @@ enum RuntimeCommand {
 	///
 	/// Terminated first and killed after, because a program stuck in a system
 	/// call does not always get round to noticing the polite one.
+	///
+	/// - Parameter directory: where to run it, for the one command that is not a
+	///   question to a runtime — a `initializeCommand` runs on this machine, in
+	///   the checkout, the way the person who wrote it would have run it.
 	static func run(
 		_ command: (executable: String, arguments: [String]),
-		deadline: TimeInterval
+		deadline: TimeInterval,
+		directory: URL? = nil
 	) -> Result {
 		let process = Process()
 		process.executableURL = URL(fileURLWithPath: command.executable)
 		process.arguments = command.arguments
+		process.currentDirectoryURL = directory
 		let out = Pipe(), err = Pipe()
 		process.standardOutput = out
 		process.standardError = err
@@ -43,7 +57,12 @@ enum RuntimeCommand {
 		// held open never answers at all — and every caller waits with it.
 		process.standardInput = FileHandle.nullDevice
 		do { try process.run() } catch {
-			return Result(output: error.localizedDescription, exitCode: -1, timedOut: false)
+			return Result(
+				output: error.localizedDescription,
+				errorOutput: error.localizedDescription,
+				exitCode: -1,
+				timedOut: false
+			)
 		}
 
 		// Whether the deadline is what ended it, recorded where both threads can
@@ -64,6 +83,7 @@ enum RuntimeCommand {
 		watchdog.cancel()
 		return Result(
 			output: captured.stderr + captured.stdout,
+			errorOutput: captured.stderr,
 			exitCode: process.terminationStatus,
 			timedOut: expired.happened
 		)
