@@ -231,16 +231,12 @@ to animate anyway.
 Most Mermaid in the wild lives in ```` ```mermaid ```` inside a Markdown file
 rather than in a `.mmd`, and that is where this ought to end up.
 
-~~**Deliberately not in this slice, and it is not laziness.**~~ **The picture is
-done; the export is not.** Three things were named as missing. The first was the
-*Markdown preview* having no way to hold a picture that redraws itself — that
-one is answered, below. The other two are both about **export** and are both
-still open: which of the four blocks in a file somebody means, and what four
-pictures out of one file are called.
-
-`mermaid-cli` already does the file-of-fences case (`-i README.md` extracts
-every block), which is a decent description of the behaviour to copy when
-somebody gets to it.
+~~**Deliberately not in this slice, and it is not laziness.**~~ ~~**The picture
+is done; the export is not.**~~ **Both are done.** Three things were named as
+missing: the *Markdown preview* having no way to hold a picture that redraws
+itself, which is answered below; and the two about **export** — which of the
+four blocks in a file somebody means, and what four pictures out of one file are
+called — which are answered under "Exporting a fence" further down.
 
 ### A fence draws where the fence is
 
@@ -307,6 +303,12 @@ two that could drift.
 refusal to overwrite now reads "was not drawn from a diagram" rather than naming
 PlantUML, since it guards both.
 
+The fence export is `DiagramExport.fences`, `.fenced`, `.holdsADiagram` and
+`.export(markdown:)` in the kit, `Mermaid.statedTitle` beside `statedLook`, and
+the `Export ▸` on `MarkdownPreviewTextView` beside the one the tree already had.
+`Tests/AbydosKitTests/MarkdownDiagramExportTests.swift` holds the naming rules
+and `MermaidLiveTests` writes the pictures and reads them back.
+
 Verified end to end in the app on a scratch project, not only in tests: a
 flowchart and a sequence diagram previewed, `Export ▸ SVG` and `Export ▸ PNG`
 taken from the preview's own menu, and the written files opened and looked at.
@@ -321,31 +323,92 @@ taken from the preview's own menu, and the written files opened and looked at.
   state diagram previewed beside a pipe table and a Swift code block, a fence
   that does not parse showing its code and its line, and a fence naming its own
   theme drawn in it with the notice under it.
-- **Exporting a fence, which is the whole of what is left of the above.** Two
-  questions, and neither has an answer that fell out of drawing the picture, so
-  neither is guessed at here.
-  - **Which block does somebody mean?** The `.mmd` pane's gesture is a
-    right-click on the picture, and it works because the pane *is* the diagram.
-    A Markdown preview is a document with four pictures in it, and a right-click
-    on an `NSTextView` is the text view's own menu. The candidates are a menu on
-    the attachment (which needs the click routed to the block under it), a
-    submenu listing every block in the file, and `Export ▸ Diagrams` writing all
-    of them at once — which is what `mermaid-cli -i README.md` does and is the
-    only one that needs no gesture at all.
-  - **What are four pictures out of one file called?** `DiagramExport` already
-    covers this ground for PlantUML's `@start … @end` blocks and answers it
-    positionally — `diagram.png`, then `diagram_001.png` — because that is what
-    PlantUML's own file output writes, so a build script that names those files
-    by hand finds them. **Markdown has no such upstream convention to inherit**,
-    and positional names renumber themselves the moment somebody inserts a block
-    above. A heading is not always there and is not unique, and Mermaid has no
-    `title:` on most diagram types. Copying the `_001` rule is the obvious move
-    and it should be made knowing what it costs, rather than by default.
-- **The theme.** Both panes draw on white paper, because that is what PlantUML's
-  default background is and matching it was the honest thing. Mermaid has a
-  `dark` theme built in and following the editor's would be a nice thing and a
-  decision about what an *export* then contains, which must not follow the
-  screen.
+- ~~**Exporting a fence, which is the whole of what is left of the above.**~~
+  **Done.** Both questions were answered by deciding rather than by drawing, and
+  both answers are written out in full where the code is — `DiagramExport.fenced`
+  for the naming and `DiagramExport.export(markdown:)` for the gesture. In short:
+
+  - **Which block does somebody mean? All of them, so there is no gesture.**
+    `Export ▸ PNG (Dark)` over the document — the same four items, in the
+    preview's own menu and in the tree's — writes every fence. The two rejected
+    candidates were rejected on the same ground rather than on taste: a menu on
+    the attachment under the pointer exists only where there is a picture on
+    screen, so the *tree* would have needed a different answer, and 0429 says
+    every export has to be reachable from both places. One act with two
+    behaviours is exactly the drift this code keeps collapsing into one place —
+    and it would also make re-exporting a README four gestures with four
+    separate answers. A submenu listing the blocks needs each block to have a
+    name before it can list them, which was the *other* open question, and a
+    list whose entries read "the second one, the third one" is a choice between
+    things nobody can tell apart. Writing all of them is what `mermaid-cli -i
+    README.md` does, and it is the decision the `.drawio` export already made
+    about pages for the same reason: a folder holding one of a document's four
+    pictures is the quiet wrongness these rules exist to avoid.
+
+  - **What are four pictures out of one file called? After the diagram, and
+    after its place only when it has no name.** `README.md` with a fence whose
+    front matter says `title: Checkout` writes `README-checkout.png`; an
+    untitled fence writes `README-<n>.png`, counting **every** drawable block in
+    the file from 1 so that titling one does not renumber the others. The first
+    fence to claim a name keeps it, so a title typed today never renames a
+    picture written last week; a title that slugs to nothing, or to something a
+    position could have produced (`3`, `3-dark`), falls back to the position.
+
+    Mermaid's front matter `title:` is used and its `title` *line* directive is
+    not, deliberately: the line form exists in some diagram types and not
+    others, and in a flowchart `title Overview` is two nodes — so a picture named
+    after it would be named after part of itself. The **preceding heading** was
+    rejected because it is not part of the diagram: four fences under one
+    `## Architecture` all want the same name, and rewording a section for how it
+    reads would rename a picture the README points at. The **info string**
+    (```` ```mermaid checkout.png ````) was rejected as a convention invented
+    here that nothing else reading Markdown would honour.
+
+    **There is never a bare `README.png`**, not even for a document with one
+    fence in it. A Markdown document is not a diagram, so a picture named after
+    the whole file would claim to be a picture of the document — and `README.md`
+    and `README.puml` sit in one folder quite happily, where they would
+    otherwise both write `README.png`.
+
+    What it costs, said rather than hidden: an untitled block inserted above
+    another still renumbers everything below it, which is the cost the `_001`
+    rule has and this only halves. The way out of it is in the naming itself —
+    give the diagram a title and its picture stops moving.
+
+  `-dark` composes rather than fights: `README-checkout-dark.png`,
+  `README-2-dark.png`. A **fence** that states its own look is drawn that way and
+  keeps the plain name, which is 0429's rule applied a block at a time because a
+  look is stated a block at a time — so one export of a mixed document writes
+  `README-1-dark.png` beside `README-2.png`, and the notice says so rather than
+  leaving it to be found. A document counts as having stated a look only when
+  *every* fence has, since that is the only case where offering `PNG (Dark)`
+  would offer a difference that does not exist.
+
+  **No new stamp**, which was 0429's one worry about a second name: `refusal`
+  reads the bytes of whatever is already at those paths and never the name, so
+  every one of these files is protected and replaceable by exactly the rules
+  `diagram.png` is. And **no second renderer**: a fence exports through
+  `MermaidRenderer.shared` and the same five fixes the pane draws through, so
+  the export cannot drift back into black wedges for edges.
+
+  `Export ▸` appears over a `.md` only when there is a ```` ```mermaid ```` block
+  in it — `DiagramExport.holdsADiagram` is the contents question where
+  `isDiagram` is the name question — because an Export over every Markdown file
+  in a repository would be wrong far more often than right.
+
+  Verified in the app on a scratch project rather than only in tests: a document
+  of three fences of three kinds exported from the rendered preview's own menu in
+  both formats, every written file opened and looked at (three distinct
+  pictures, dark, signed, the titled one drawing its own title), the SVGs
+  rasterised through CoreSVG as the same pictures, and the same document with a
+  fourth fence that does not parse writing **nothing at all** — not even the
+  three that drew perfectly well — and saying
+  `README.md line 61: Expecting '()', 'SOLID_OPEN_ARROW', … or 24 others, got
+  'NEWLINE'`.
+- ~~**The theme.**~~ **Done, in 0429**, which decided it for all three tools
+  rather than for this one: the file wins, the app's theme is the default, and an
+  export asks for the one it wants by name (`Export ▸ PNG (Dark)` writes
+  `diagram-dark.png`).
 - **ELK layout** (`@mermaid-js/layout-elk`) is a second bundle and is not here.
   A diagram asking for `layout: elk` gets Mermaid's own message about it.
 - ~~**An example to work against.**~~ **Done.** `abydos-examples/mermaid/` holds
