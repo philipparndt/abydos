@@ -823,6 +823,11 @@ final class EditorViewController: NSViewController {
 				}
 			case .model:
 				return makeModelTab(for: fileURL, preview: preview)
+			case .pdf:
+				// A PDF is a picture's case exactly: nothing to edit, no source to
+				// read, and it fails the binary test below on its way to being
+				// useful.
+				return makePdfTab(for: fileURL, preview: preview)
 			default:
 				// A `.drawio` opens rendered and has no source half, and it is
 				// still a document this app owns: it goes the ordinary way and
@@ -1441,6 +1446,8 @@ final class EditorViewController: NSViewController {
 			return makeMermaidView(for: tab)
 		case .drawio:
 			return makeDrawioView(for: tab)
+		case .pdf:
+			return PdfFileView(url: tab.url)
 		case .markdown, .none:
 			return makePreviewView(for: tab)
 		}
@@ -1680,6 +1687,22 @@ final class EditorViewController: NSViewController {
 			document: nil,
 			codeView: nil,
 			contentView: ImageFileViewer(url: fileURL).scrollView,
+			isPreview: preview
+		)
+		tab.previewMode = .preview
+		return tab
+	}
+
+	/// A tab showing a PDF.
+	///
+	/// Like a picture's: the tab is the document and nothing else, since a PDF
+	/// has no source half to offer and nothing here writes one.
+	private func makePdfTab(for fileURL: URL, preview: Bool) -> Tab {
+		let tab = Tab(
+			url: fileURL,
+			document: nil,
+			codeView: nil,
+			contentView: PdfFileView(url: fileURL),
 			isPreview: preview
 		)
 		tab.previewMode = .preview
