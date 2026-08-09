@@ -67,6 +67,22 @@ public actor PlantUMLServers {
 	/// What the image's own flag calls the port it listens on.
 	private static let containerPort = 8080
 
+	/// A picture, and what PlantUML thinks of the diagram it drew.
+	///
+	/// The two are not alternatives: a diagram that does not parse comes back as
+	/// a picture of the complaint, with a 400 and headers saying what is wrong.
+	/// A preview wants the picture — it names the line — and an export wants the
+	/// complaint, so both are carried and the caller decides.
+	public struct Drawing: Sendable {
+		public let data: Data
+		public let fault: DiagramFault?
+	}
+
+	/// What the server calls the two things it says about a diagram it could not
+	/// parse. Measured against the image, not guessed.
+	static let errorHeader = "X-PlantUML-Diagram-Error"
+	static let errorLineHeader = "X-PlantUML-Diagram-Error-Line"
+
 	private struct Warm: Sendable {
 		let name: String
 		let port: Int
@@ -182,6 +198,24 @@ public actor PlantUMLServers {
 		using runtime: ContainerRuntime,
 		format: PlantUML.Format = .png
 	) async -> Data? {
+		guard let drawing = await draw(source, image: image, using: runtime, format: format) else {
+			return nil
+		}
+		// A picture of an error is a picture, and the preview shows it — but it
+		// is drawn the old way, as it always has been, rather than being a new
+		// thing this route started returning. `draw` is where the complaint is
+		// wanted.
+		return drawing.fault == nil ? drawing.data : nil
+	}
+
+	/// The picture and the complaint, from a server kept warm — or nil, meaning
+	/// draw it the old way.
+	public func draw(
+		_ source: String,
+		image: String,
+		using runtime: ContainerRuntime,
+		format: PlantUML.Format = .png
+	) async -> Drawing? {
 		guard Self.canKeepWarm(runtime), !image.isEmpty else { return nil }
 		guard Self.path(for: source, format: format) != nil else { return nil }
 
@@ -317,7 +351,7 @@ public actor PlantUMLServers {
 	/// not to spend a minute asking a port that has gone.
 	private func fetch(
 		_ source: String, format: PlantUML.Format, from server: Warm, starting: Bool
-	) async -> Data? {
+	) async -> Drawing? {
 		guard let url = Self.url(port: server.port, source: source, format: format) else {
 			return nil
 		}
@@ -325,10 +359,18 @@ public actor PlantUMLServers {
 		while true {
 			do {
 				let (data, response) = try await session.data(from: url)
-				guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-					return nil
-				}
-				return data.isEmpty ? nil : data
+				guard let http = response as? HTTPURLResponse, !data.isEmpty else { return nil }
+				if http.statusCode == 200 { return Drawing(data: data, fault: nil) }
+				// A diagram it could not parse: 400, a picture of the complaint,
+				// and the complaint itself in headers. Anything else with a 400 —
+				// a request this does not know how to make — is not a drawing at
+				// all, and the caller falls back rather than being told a wrong
+				// thing about the diagram.
+				guard let fault = DiagramFault(
+					errorHeader: http.value(forHTTPHeaderField: Self.errorHeader),
+					lineHeader: http.value(forHTTPHeaderField: Self.errorLineHeader)
+				) else { return nil }
+				return Drawing(data: data, fault: fault)
 			} catch {
 				let code = (error as NSError).code
 				guard starting, Self.stillStarting.contains(code), Date() < deadline else {
