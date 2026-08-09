@@ -230,6 +230,54 @@ enum DrawioEditorPage {
 			if (abydosUi != null) { abydosUi.editor.graph.adaptiveColors = 'none'; }
 		}
 
+		/// Which way round the editor is drawn.
+		///
+		/// **Not `EditorUi.setDarkMode`**, and that is the whole reason this
+		/// exists. Its entire body is inside
+		/// `mxUtils.lightDarkColorSupported && (…)`, and that flag is off here on
+		/// purpose (above) — so calling it does nothing at all, silently. What it
+		/// would have done is written out instead, as the two independent things
+		/// it actually is:
+		///
+		///  * **`chrome`** — the toolbars, the panels and the canvas's own paper.
+		///    That is a `geDarkMode` class and a `color-scheme`, and the browser
+		///    resolves draw.io's `light-dark()` stylesheet from it. It follows the
+		///    app, always: a light toolbar in a dark window is not the diagram
+		///    stating anything, it is a pane that did not get the message.
+		///  * **`colours`** — which half of every `light-dark()` pair is written
+		///    into the shapes. That is `mxUtils.preferDarkColor`, and it follows
+		///    the app only when the document has not stated a background of its
+		///    own. This is the file winning, and it is the only half of dark mode
+		///    that is the author's business.
+		function abydosSetDark(chrome, colours) {
+			const frame = abydosFrame();
+			if (frame == null || abydosUi == null) { return; }
+			frame.mxUtils.preferDarkColor = !!colours;
+			frame.Editor.darkMode = !!chrome;
+			// `color-scheme` on the container as well as on the document, and that
+			// is not belt and braces: draw.io's own start-up sets an inline
+			// `color-scheme: light` on the container, and an inline property on a
+			// nearer element beats one on the root — so the panels built from a
+			// plain `light-dark()` with no `.geDarkMode` rule behind them stayed
+			// light while everything with a class rule went dark. Seen: a dark
+			// editor with a white format panel down the right of it.
+			const containers = [frame.document.body, abydosUi.container,
+			                    abydosUi.editor.graph.container];
+			for (const element of containers) {
+				if (element == null) { continue; }
+				if (chrome) { element.classList.add('geDarkMode'); }
+				else { element.classList.remove('geDarkMode'); }
+				element.style.colorScheme = chrome ? 'dark' : 'light';
+			}
+			frame.document.documentElement.style.colorScheme = chrome ? 'dark' : 'light';
+			const graph = abydosUi.editor.graph;
+			graph.defaultPageBackgroundColor = frame.Editor.getDefaultPageBackgroundColor();
+			graph.refresh();
+			graph.view.validate();
+			try { abydosUi.fireEvent(new frame.mxEventObject('darkModeChanged')); }
+			catch (ignored) { /* nothing is listening in embed mode */ }
+		}
+
 		function abydosChanged() {
 			if (abydosPending != null) { window.clearTimeout(abydosPending); }
 			abydosPending = window.setTimeout(function() {

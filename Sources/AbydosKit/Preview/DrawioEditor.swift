@@ -75,6 +75,8 @@ public final class DrawioEditor: NSObject {
 	/// before it was ready — which is the normal order, since the page takes
 	/// about a second to load and the file is in hand immediately.
 	private var pending: (xml: String, compressed: Bool)?
+	/// The same for the theme, which the pane knows before the editor exists.
+	private var pendingDark: (chrome: Bool, colours: Bool)?
 
 	/// One editor, or nil when the vendored files are not in this build.
 	///
@@ -147,6 +149,23 @@ public final class DrawioEditor: NSObject {
 		run("abydosAfterLoad(\(compressed ? "true" : "false"))")
 	}
 
+	/// Which way round the editor draws.
+	///
+	/// Two separate answers, and the split is the point — see `abydosSetDark`.
+	/// The chrome follows the app whatever the file says; the shape colours
+	/// follow it only when the document has stated no background of its own.
+	///
+	/// Applied by script rather than by reloading the page with `dark=1` in the
+	/// URL, because a reload takes draw.io's undo stack and anything unsaved with
+	/// it — and the theme can change with a diagram half drawn.
+	public func setDark(chrome: Bool, colours: Bool) {
+		guard isReady else {
+			pendingDark = (chrome, colours)
+			return
+		}
+		run("abydosSetDark(\(chrome), \(colours))")
+	}
+
 	/// Asks the editor for the document as it stands, right now.
 	///
 	/// Used by ⌘S. The change listener means the app's copy is already current
@@ -199,6 +218,10 @@ public final class DrawioEditor: NSObject {
 		case "init":
 			isReady = true
 			onReady?()
+			if let pendingDark {
+				self.pendingDark = nil
+				setDark(chrome: pendingDark.chrome, colours: pendingDark.colours)
+			}
 			if let pending {
 				self.pending = nil
 				load(pending.xml, compressed: pending.compressed)
