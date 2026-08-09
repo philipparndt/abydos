@@ -576,8 +576,11 @@ final class SettingsPaneController: NSViewController {
 		[
 			.choice(
 				title: "Container runtime",
-				help: "Where a tool that comes from an image is run. Apple's needs no daemon; "
-					+ "docker needs its own running. Saying which means being told when it is "
+				help: "Where a tool that comes from an image is run. Docker is preferred when "
+					+ "nothing is said, because removing a container by name is proven against "
+					+ "it and a container this app cannot remove is one it leaves running. "
+					+ "Apple's needs no daemon, which is the better argument the day its "
+					+ "service is reliable again. Saying which means being told when it is "
 					+ "missing, rather than quietly getting the other one. Each tool below "
 					+ "chooses whether it comes from an image at all.",
 				options: ContainerRuntime.Preference.allCases.map { ($0.title, $0.rawValue) },

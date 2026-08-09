@@ -600,7 +600,12 @@ public enum LanguageServers {
 				image: image,
 				mounts: [paths.mount],
 				// Started where the manifest is, in the container's own names.
-				workingDirectory: paths.toContainer(path: FilePath.canonical(root))
+				workingDirectory: paths.toContainer(path: FilePath.canonical(root)),
+				// And named, so that stopping the server can also remove the
+				// container it was running in. Terminating the `run` process does
+				// not: the container keeps going, holding the mount and whatever
+				// the server was doing to the project.
+				name: ToolContainers.mint("lsp-\(definition.command)")
 			)
 			return Resolution(
 				definition: definition,

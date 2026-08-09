@@ -52,9 +52,14 @@ public enum PlantUML {
 	/// here: the alternative writes a file beside the source, which means
 	/// littering somebody's repository with pictures they did not ask for every
 	/// time the preview refreshes.
+	///
+	/// - Parameter name: what to call the container, for the image form. A
+	///   render that hangs is stopped by removing the container by name, and a
+	///   container with no name cannot be found again at all — see 0406.
 	public static func invocation(
 		for tool: Tool,
-		format: Format = .png
+		format: Format = .png,
+		name: String? = nil
 	) -> (executable: String, arguments: [String]) {
 		// `-charset UTF-8` because a diagram with a German label in it is not
 		// exotic, and the default depends on the platform's locale.
@@ -71,7 +76,7 @@ public enum PlantUML {
 			// it. Nothing is mounted: the diagram arrives on standard input and
 			// the picture leaves on standard output, so the container never
 			// needs to see the project at all.
-			return container.invocation(using: runtime, arguments: common)
+			return container.named(name).invocation(using: runtime, arguments: common)
 		}
 	}
 

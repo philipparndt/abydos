@@ -88,6 +88,20 @@ public final class LSPClient: @unchecked Sendable {
 
 	private var paths: ContainerPaths?
 
+	/// The container this server runs in, when it runs in one: its name and the
+	/// runtime that can remove it.
+	///
+	/// Set before `start`, alongside `containerPaths`. It is what makes stopping
+	/// this client actually stop the server: terminating the `run` process ends
+	/// the process and leaves the container going, so the container is removed
+	/// by name as well.
+	public var containerLaunch: (name: String, runtime: ContainerRuntime)? {
+		get { locked { launch } }
+		set { locked { launch = newValue } }
+	}
+
+	private var launch: (name: String, runtime: ContainerRuntime)?
+
 	/// Whether the handshake has finished.
 	private var isInitialized = false
 	/// Notifications sent before it did.
@@ -175,15 +189,25 @@ public final class LSPClient: @unchecked Sendable {
 
 		process.terminationHandler = { [weak self] exited in
 			ToolProcesses.shared.forget(exited)
+			// And the container behind it, which the process ending says nothing
+			// about: a `run` that has exited leaves a container that has not.
+			if let name = self?.containerLaunch?.name {
+				ToolContainers.shared.releaseInBackground(name)
+			}
 			guard let self else { return }
 			self.failAllPending(with: ClientError.notRunning)
 			self.callbackQueue.async { self.onExit?() }
 		}
 
 		// A language server is the longest-lived child this app has, and one
-		// started from an image is a container. Registered so that the app
-		// going takes it too, however the app goes.
+		// started from an image is a container. Both are registered so that the
+		// app going takes them too, however the app goes — the process because
+		// it has to be signalled, the container because signalling the process
+		// does not touch it.
 		ToolProcesses.shared.track(process)
+		if let container = containerLaunch {
+			ToolContainers.shared.register(container.name, runtime: container.runtime)
+		}
 		try process.run()
 
 		lock.lock()
@@ -293,6 +317,10 @@ public final class LSPClient: @unchecked Sendable {
 
 		process?.terminationHandler = nil
 		if process?.isRunning == true { process?.terminate() }
+		// The termination handler was just taken off, so this is the only thing
+		// that will remove the container. Not waited for: closing a project
+		// should not pause on a runtime.
+		if let name = containerLaunch?.name { ToolContainers.shared.releaseInBackground(name) }
 		failAllPending(with: ClientError.notRunning)
 	}
 

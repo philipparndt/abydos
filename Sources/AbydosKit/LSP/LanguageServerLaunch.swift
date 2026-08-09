@@ -45,6 +45,21 @@ public enum LanguageServerLaunch: Equatable, Sendable {
 		}
 	}
 
+	/// The container this will run in: what it is called, and what to ask to
+	/// remove it.
+	///
+	/// A server is the longest-lived thing this app starts, so it is also the
+	/// container most worth being able to end: stopping the `run` process leaves
+	/// it up, holding the project's mount, until something removes it by name.
+	public var container: (name: String, runtime: ContainerRuntime)? {
+		switch self {
+		case .installed: return nil
+		case let .image(container, runtime, _):
+			guard let name = container.name else { return nil }
+			return (name, runtime)
+		}
+	}
+
 	/// What to call it in a log line somebody is reading to find out why a
 	/// server did not answer.
 	public var description: String {
