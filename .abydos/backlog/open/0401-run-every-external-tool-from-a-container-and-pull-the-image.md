@@ -23,9 +23,7 @@ so a workspace edit's `changes` map crosses too — and `ToolImages/gopls`
 builds an image that `ContainerLSPLiveTests` drives end to end: diagnostics,
 symbols and a go-to-declaration all naming files on this machine.
 
-**What is left.**
-
-*A known-good image, published — the goal exists, the push has not happened.*
+**A known-good image is published, pulled back and driven.**
 `make toolimage-publish TOOL=gopls REPOSITORY=… VERSION=…` builds
 `ToolImages/<tool>` for linux/amd64 and linux/arm64 and pushes one index, in a
 single `docker buildx` invocation. Not the pod's route and not two builds and a
@@ -47,30 +45,90 @@ to the registry the repository names. The last is asked of
 reads no password, and it is asked first because the build is the several
 minutes that come before the push.
 
-Proved as far as a machine with no credentials can: `DRY_RUN=1` builds both
-architectures with `type=cacheonly` and stops. 2m10s from a cold builder,
+Proved first as far as a machine with no credentials can: `DRY_RUN=1` builds
+both architectures with `type=cacheonly` and stops. 2m10s from a cold builder,
 `go install gopls` being 17 seconds for arm64 and 110 for amd64 — emulation, and
 the whole of the difference. `--load` was not the alternative: it takes one
-architecture, so it would have proved neither. Unproven is everything past that
-point — the upload, the index that appears in the registry, and the
-`imagetools inspect` that is meant to read back its two platforms.
+architecture, so it would have proved neither.
 
-What is left, in order. Somebody with a Docker Hub or ghcr login runs
-`make toolimage-publish TOOL=gopls VERSION=0.23.0`. The result is pulled on
-both architectures and driven by `ContainerLSPLiveTests`. Only then does the
-line go into `ToolImageCatalogue.tools`, which lists nothing for any server on
-purpose:
+Then for real. `pharndt/abydos-gopls:dev` is in Docker Hub, and
+`docker buildx imagetools inspect` reads the index back out of the registry with
+`linux/amd64` and `linux/arm64` under it — the one thing that says an index was
+pushed rather than one architecture with a second name on it. Nine layers each,
+0.48 GB of them compressed for amd64 and 0.47 for arm64, 1.39 GB on disk once
+docker has unpacked it; gopls v0.23.0 on go1.26.5. Both provenance attestations
+are there too, as `unknown/unknown` members, which is why the script's format
+string skips them.
+
+*Pulled as a stranger pulls it, on both runtimes, and they needed different
+things.* docker fetched two layers and had the other seven already, because
+`golang:1.26-bookworm` was on the machine — a stranger pays for all nine. Apple's
+`container` had none of it and fetched and unpacked the whole 1.29 GB in 37
+seconds, sharing nothing with docker's store at all, which is the fact
+`visibleElsewhere` exists to explain: the same name, on the same machine, is two
+separate images or none. Both then ran the server from it: the live test picks
+Apple's, and turning the preference round for one run drove the same image
+through docker — 1.8 and 2.4 seconds, both answering with paths under
+`/private/var/folders/…` rather than under `/workspace`.
+
+*Driven from the registry copy.* `ContainerLSPLiveTests` names two images,
+published first — `pharndt/abydos-gopls:dev`, then `abydos/gopls:dev` from
+`make tool-image-gopls` — and takes whichever a runtime has, image outermost so
+that a machine holding both drives the published one. Either, because they
+answer different questions: the local build says the Dockerfile in this
+repository works, which is worth having while somebody is editing it and is no
+evidence at all about what a stranger pulls; the published one is the only thing
+whose passing makes the catalogue entry true. And the image comes out of the
+project's own `.abydos/tools.json` rather than being handed to `resolve` as a
+string, because that is the route somebody actually uses and everything before
+`resolve` differs from the settings one — a file, parsed, keyed by the tool's
+name and not the server's command.
+
+So the line is in `ToolImageCatalogue.tools`, which until now listed nothing for
+any server:
 
     Choice(
-        label: "abydos/gopls (gopls 0.23.0, Go 1.26)",
-        image: "pharndt/abydos-gopls:0.23.0",
+        label: "pharndt/abydos-gopls:dev (gopls 0.23.0, Go 1.26 — a tag that moves)",
+        image: "pharndt/abydos-gopls:dev",
         publisher: "the Abydos project"
     )
 
-It is written here rather than commented out in the catalogue: a commented-out
-entry in a list whose whole point is that somebody has run the thing is an
-invitation to uncomment it without running it. Then the other five, which need
-a Dockerfile each and nothing else — the goal already takes them by name.
+Not the `:0.23.0` drafted here before it existed. `dev` is the only tag in the
+repository — `VERSION` defaulted — and listing a tag nobody can pull is the
+exact failure this list is for, so what was written down was checked against
+what was pushed rather than copied. The version is in the label anyway, since
+that is what somebody is choosing between; and the label is the image's own
+name rather than the draft's "abydos/gopls", which is neither the repository nor
+anything anybody could type, so what is on screen is what would be pulled — the
+way the PlantUML labels already read.
+
+*And the tag moves, which is worth saying out loud rather than deciding
+quietly.* A list of images known to work is a claim with a date on it when the
+name is mutable: what was driven is `sha256:ed0f6a5d…`, and `:dev` is whatever
+was pushed last by the time somebody picks it. It is listed anyway, and said in
+the label where the person choosing will see it rather than in a comment only a
+maintainer reads — the catalogue already carries `plantuml/plantuml` (latest)
+beside a pinned one for the same reason, so the honest thing is to mark which is
+which, not to keep the list empty. When a version tag is pushed it becomes this
+entry and `:dev` stops being offered.
+
+`publisher` is "the Abydos project", which is this repository saying it works
+about its own image — so the requirement text beside it has to be a description
+rather than a wish, and it is: `ENTRYPOINT ["gopls"]` with no arguments and no
+wrapper to print a banner before the first header, `WORKDIR /workspace` where
+the project is mounted, and the Go toolchain in the image because gopls shells
+out to `go list` and one without it answers the handshake and then knows
+nothing.
+
+**What is left.** The other five servers — rust-analyzer, pyright,
+typescript-language-server, clangd, jdtls — need a Dockerfile each and nothing
+else, since `make toolimage-publish` already takes them by name. Each then goes
+the same way round: build, push, pull it back, drive it against a real project
+the way `ContainerLSPLiveTests` drives gopls, and only then a line in the
+catalogue. `ToolContainerTests` holds the order for gopls — the image the
+catalogue offers has to be one the live test would run — and the other five
+still assert an empty list, so each has to lose that assertion deliberately.
+And a version tag for gopls, at which point the moving one above can go.
 
 *One page per language — done.* `SettingsSections.Section` carries children,
 Tools has one per tool, and the sidebar indents them. The ⌘, window stopped
