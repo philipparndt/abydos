@@ -1,9 +1,9 @@
 # Abydos 0.2.0
 
-Two hundred and forty-three commits since 0.1.0. The theme of the release is
-that a project's tools come with the project: language servers, diagram
-renderers and now whole development containers run from images rather than from
-whatever happens to be installed on the machine.
+243 since 0.1.0. The theme of the release is that a project's tools come 
+with the project: language servers, diagram renderers and now whole development
+containers run from images rather than from whatever happens to be installed on 
+the machine.
 
 ## Diagrams
 

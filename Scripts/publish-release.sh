@@ -82,8 +82,29 @@ shasum -a 256 "$DMG" | sed "s#build/##" > "$DMG.sha256"
 git push origin "$BRANCH"
 git push origin "$TAG"
 
+# What changed, written by hand, with the install lines appended.
+#
+# `docs/release-notes-<version>.md` is the release's own notes: grouped by what
+# somebody would notice rather than by what changed, and carrying the
+# measurements that decided things. Written before the tag, reviewed like
+# anything else, and versioned — which is the point of it being a file rather
+# than something typed into a box at the end.
+#
+# A version with no such file stops here rather than publishing a release whose
+# only description is a list of commit subjects. Writing them is part of cutting
+# a release, and a download nobody can read the changes for is worse than one
+# that is a day later.
+HAND_NOTES="docs/release-notes-$VERSION.md"
+if [ ! -f "$HAND_NOTES" ]; then
+	echo "no release notes at $HAND_NOTES" >&2
+	echo "write them first — they are the release, not a formality" >&2
+	exit 1
+fi
+
 NOTES=$(mktemp)
 {
+	cat "$HAND_NOTES"
+	echo
 	echo "### Install"
 	echo
 	echo "Download \`$(basename "$DMG")\`, open it and drag Abydos to Applications."
@@ -95,11 +116,13 @@ NOTES=$(mktemp)
 	echo "Requires macOS 14 or newer."
 } > "$NOTES"
 
+# No `--generate-notes`: it appends GitHub's own list of commit subjects, which
+# next to notes somebody wrote reads as the same release described twice, once
+# badly. The tag's commits are a click away in the compare view either way.
 gh release create "$TAG" \
 	"$DMG" "$DMG.sha256" \
 	--title "Abydos $VERSION" \
-	--notes-file "$NOTES" \
-	--generate-notes
+	--notes-file "$NOTES"
 rm -f "$NOTES"
 
 echo "==> Published $TAG"
