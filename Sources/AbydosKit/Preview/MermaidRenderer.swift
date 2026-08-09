@@ -63,8 +63,13 @@ public final class MermaidRenderer {
 	/// promise, and a caller that did not wait for it would write a nought-byte
 	/// file and report success — which is the trap 0424's export rules exist to
 	/// close, and it is easier to fall into with a promise than with a pipe.
+	///
+	/// - Parameter theme: which way round to draw it, or nil to impose nothing —
+	///   which is what a file stating its own look gets, and what makes the
+	///   picture identical to the one this drew before it had themes.
 	public func draw(
-		_ source: String, format: DiagramFormat, scale: Double = MermaidRenderer.rasterScale
+		_ source: String, format: DiagramFormat, theme: DiagramTheme? = nil,
+		scale: Double = MermaidRenderer.rasterScale
 	) async -> Result<Data, Failure> {
 		guard Mermaid.hasDiagram(source) else {
 			return .failure(.trouble("There is no diagram here yet."))
@@ -73,7 +78,8 @@ public final class MermaidRenderer {
 		let answer: Any?
 		do {
 			answer = try await surface.call(
-				"return await abydosDraw(source)", arguments: ["source": source]
+				"return await abydosDraw(source, theme)",
+				arguments: ["source": source, "theme": theme.map(Mermaid.themeName) ?? ""]
 			)
 		} catch let trouble as WebRenderer.Trouble {
 			return .failure(.trouble(said(about: trouble)))
@@ -94,13 +100,20 @@ public final class MermaidRenderer {
 		// Sized before anything else looks at it: a drawing with no size of its
 		// own rasterises into a 300×150 box, and is written to disk as a file
 		// every viewer guesses the size of differently.
-		let svg = DiagramStamp.sign(svg: Mermaid.sized(drawn), tool: .mermaid)
+		// Paper goes into the drawing itself, and only when this app chose the
+		// look. Mermaid emits no background, so a dark drawing written out with
+		// none is light lines on whatever the reader's viewer happens to paint —
+		// which for every viewer there is is white.
+		var svg = Mermaid.sized(drawn)
+		if let theme { svg = Mermaid.onPaper(svg, colour: theme.paper) }
+		svg = DiagramStamp.sign(svg: svg, tool: .mermaid)
 		guard format == .png else { return .success(Data(svg.utf8)) }
 
 		let rastered: Any?
 		do {
 			rastered = try await surface.call(
-				"return await abydosRaster(svg, scale)", arguments: ["svg": svg, "scale": scale]
+				"return await abydosRaster(svg, scale, paper)",
+				arguments: ["svg": svg, "scale": scale, "paper": theme?.paper ?? "#ffffff"]
 			)
 		} catch let trouble as WebRenderer.Trouble {
 			return .failure(.trouble(said(about: trouble)))
