@@ -1665,6 +1665,15 @@ final class TerminalView: NSView, NSTextInputClient {
 		)
 	}
 
+	/// What is on the screen and in the scrollback, for a check that something
+	/// typed into a terminal answered.
+	var screenTextForTesting: String {
+		let screen = emulator.screen
+		return (0..<screen.totalLineCount)
+			.compactMap { screen.line(at: $0)?.text }
+			.joined(separator: "\n")
+	}
+
 	/// Feeds output straight to the emulator, bypassing the process.
 	func writeForTesting(_ text: String) {
 		emulator.write(text)

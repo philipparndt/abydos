@@ -1311,6 +1311,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			return debugSession?.isActive ?? false
 		case #selector(newTerminalTab(_:)):
 			return bottomPanel.hasKeyboardFocus
+		case #selector(newTerminalInContainer(_:)):
+			// Off for the projects that have no such file, which is most of
+			// them: an item that is always there and always fails is worse than
+			// one that says by being grey which projects it is for.
+			return hasDevContainer
 		case #selector(navigateBack(_:)):
 			return canNavigateBack
 		case #selector(navigateForward(_:)):
@@ -3106,6 +3111,96 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	@objc func newTerminal(_ sender: Any?) {
 		setPanelVisible(true)
 		bottomPanel.newTerminal()
+	}
+
+	/// A shell inside the container this project says it is worked on in.
+	///
+	/// The container is started if it is not up and reused if it is — which is
+	/// what makes the second terminal, and coming back to the project, instant.
+	/// Everything that can go wrong says what it was in one sentence rather than
+	/// opening a shell somewhere half-configured: 0424 is explicit that a
+	/// container missing what the file asked for looks like a broken editor.
+	@objc func newTerminalInContainer(_ sender: Any?) {
+		guard let root = project?.root else { return }
+		setPanelVisible(true)
+		Task { @MainActor in
+			guard let runtime = ContainerRuntime.discover(
+				preference: ContainerRuntime.Preference(rawValue: Settings.shared.containerRuntime)
+					?? .automatic
+			) else {
+				Toast.post(
+					"No container runtime",
+					detail: "Opening a project in its devcontainer needs Docker, and none was "
+						+ "found on this machine.",
+					kind: .error
+				)
+				return
+			}
+			let outcome = await DevContainers.shared.session(
+				for: root,
+				using: runtime,
+				progress: { message in
+					// Starting one is a pull the first time and seconds after
+					// that, and either with nothing on screen is a menu item
+					// that looks like it did nothing.
+					Task { @MainActor in Toast.post(message, kind: .information) }
+				}
+			)
+			switch outcome {
+			case .none:
+				Toast.post(
+					"\(root.lastPathComponent) has no devcontainer.json",
+					detail: "A project says what it needs to be worked on in "
+						+ ".devcontainer/devcontainer.json.",
+					kind: .information
+				)
+			case let .refused(reason):
+				Toast.post("This project's devcontainer was not started", detail: reason, kind: .error)
+			case let .running(session):
+				let name = session.configuration.name.map { "\($0) ⬢" } ?? "container ⬢"
+				bottomPanel.newTerminal(
+					title: name, running: DevContainers.terminalCommand(session)
+				)
+			}
+		}
+	}
+
+	/// Whether this project has a devcontainer at all, which is what the menu
+	/// item is enabled by.
+	var hasDevContainer: Bool {
+		guard let root = project?.root else { return false }
+		return DevContainerFile.exists(in: root)
+	}
+
+	/// Opens a terminal in the project's devcontainer and says what came back.
+	///
+	/// Through the menu item's own validation and action, because that is what
+	/// the click does: a shell that works when a test calls the kit directly
+	/// proves nothing about whether the menu reaches it.
+	func exerciseDevContainerTerminalForTesting() {
+		let item = NSMenuItem(
+			title: "New Terminal in Container",
+			action: #selector(newTerminalInContainer(_:)),
+			keyEquivalent: ""
+		)
+		print("DEVCONTAINER: file=\(hasDevContainer) enabled=\(validateMenuItem(item))")
+		fflush(stdout)
+		guard validateMenuItem(item) else { return }
+		newTerminalInContainer(nil)
+
+		// Generous: the first time this runs the image is being fetched.
+		DispatchQueue.main.asyncAfter(deadline: .now() + 12) { [weak self] in
+			guard let self else { return }
+			print("DEVCONTAINER: tab=\(self.bottomPanel.activeTerminalTitle ?? "-")")
+			self.sendToTerminal("printf 'IN:%s:%s\\n' \"$(pwd)\" \"$(cat /etc/hostname)\"\n")
+			DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+				for line in self.bottomPanel.terminalTextForTesting.split(separator: "\n")
+				where line.contains("IN:") {
+					print("DEVCONTAINER: \(line.trimmingCharacters(in: .whitespaces))")
+				}
+				fflush(stdout)
+			}
+		}
 	}
 
 	/// Follows ⌘-click, through the same path the click takes.

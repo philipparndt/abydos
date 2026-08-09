@@ -543,6 +543,16 @@ final class BottomPanel: NSView {
 		return terminal.gridSizeForTesting
 	}
 
+	/// What the active terminal has on its screen, for a check that a command
+	/// typed into it answered.
+	var terminalTextForTesting: String {
+		let index = activeIndex ?? 0
+		guard index >= 0, index < sessions.count, let terminal = sessions[index].terminal else {
+			return ""
+		}
+		return terminal.terminalViewForTesting.screenTextForTesting
+	}
+
 	func terminalGeometryForTesting() -> String {
 		let index = activeIndex ?? 0
 		guard index >= 0, index < sessions.count, let terminal = sessions[index].terminal else {
@@ -1439,10 +1449,27 @@ final class BottomPanel: NSView {
 		newTerminal(rootedAt: workingDirectory, title: "Local")
 	}
 
+	/// A shell that is not this machine's — one inside the project's
+	/// devcontainer.
+	///
+	/// A terminal tab rather than a run console: it is a shell somebody types
+	/// in, not the output of something that was run. The title says which it is,
+	/// because a tab that looks like every other tab and is somewhere else
+	/// entirely is how somebody ends up building in the wrong place.
+	@discardableResult
+	func newTerminal(
+		title: String, running command: (executable: String, arguments: [String])
+	) -> TerminalPane? {
+		newTerminal(
+			rootedAt: workingDirectory, title: title, command: command, joinsSession: false
+		)
+	}
+
 	@discardableResult
 	private func newTerminal(
 		rootedAt directory: URL?,
 		title: String,
+		command: (executable: String, arguments: [String])? = nil,
 		focus: Bool = true,
 		attachingTo session: String? = nil,
 		joinsSession: Bool = true
@@ -1458,11 +1485,14 @@ final class BottomPanel: NSView {
 		// another plain shell with no way back to an integrated one. A leftover
 		// pane of any kind — a search, a debugger, a shell for one command —
 		// was enough to make it permanent.
-		let attaches = session != nil
-			|| (joinsSession && !hasLiveTmuxTerminal && startupCommand() != nil)
+		let attaches = command == nil
+			&& (session != nil
+				|| (joinsSession && !hasLiveTmuxTerminal && startupCommand() != nil))
 		let pane = TerminalPane(
 			workingDirectory: directory,
-			command: session.map(attachCommand(to:)) ?? (attaches ? startupCommand() : nil)
+			command: command
+				?? session.map(attachCommand(to:))
+				?? (attaches ? startupCommand() : nil)
 		)
 		// The one attached to tmux is called `tmux`, in every project. It was
 		// called after the session — the project's name — which said nothing
