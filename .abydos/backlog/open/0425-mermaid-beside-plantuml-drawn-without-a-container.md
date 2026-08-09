@@ -83,7 +83,45 @@ tools ever reaches three.
 ## Chosen: the web view
 
 3.57 MB against 2.16 GB, 0.015 s against 1.0 s, and nothing to install. There
-was not really a competition once the pull finished.
+was not really a competition once the pull finished — and it is also the
+project owner's decision, made on a second ground the numbers say nothing
+about: **draw.io is wanted next, and draw.io is a web application too.** So
+this is the first user of a rendering surface rather than a one-off.
+
+### The seam, and what it deliberately is not
+
+`WebRenderer` owns a web view, a bundled page, a call into it with a deadline,
+and the tearing down of a process nobody is using. `MermaidRenderer` supplies
+the page and knows what the answers mean, and it is the only client.
+
+**There is no registry, no protocol with one conformer, and no second
+implementation**, because a second client does not exist yet and building for
+one would be building for a guess.
+
+What draw.io would want that this does not have, so the next person knows how
+far the seam goes:
+
+- **It is an editor, not a renderer.** It owns a document, takes mouse and
+  keyboard events, and hands *changes* back — where this hands back a picture
+  for a string. That is the large difference and it is not pretended at here.
+- **It is a visible view.** This web view is off-screen on purpose and is never
+  put in a window; an editor has to be the pane.
+- **It is bigger and it is not one file.** draw.io's app is a tree of scripts,
+  styles, images and stencils, which needs a `WKURLSchemeHandler` serving a
+  bundled directory rather than one inlined `<script>`.
+- **Its own file format**, `.drawio`, read and written rather than parsed once.
+
+What it *would* reuse, unchanged: the warm-and-reap, the deadline on every
+call, the refusal to navigate anywhere, and the rule that nothing is fetched.
+
+### Nothing is fetched, and that is enforced rather than intended
+
+The page is one document with the bundle inlined into it, loaded with **no base
+URL**, and `WebRenderer` refuses any navigation that is not that document. So
+the app draws with no network at all, and a diagram somebody was sent cannot
+reach anywhere. Inlining is also what makes it work: a `loadHTMLString` page has
+no origin, so a `<script src=…>` at a `file:` URL would be a cross-origin
+request and be refused.
 
 **What it costs, said plainly:**
 
@@ -131,19 +169,54 @@ Everything 0424's export decided, applying unchanged:
   SVG and a `tEXt` chunk in the PNG. Without that, exporting the same diagram
   twice would refuse the second time, which is the ordinary way of working.
 
-## Two things about the SVG that had to be fixed rather than passed through
+## What `mermaid.render` hands back is not a picture, and this was most of the work
 
-- `mermaid.render` returns `<svg width="100%" style="max-width: 282px">`, which
-  is right for a page and wrong for a file: an SVG with no intrinsic size is
-  drawn by a browser into a default 300×150 box, and the first PNG rasterised
-  from one came out 172×300 instead of 564×982. The root element gets explicit
-  `width`/`height` in pixels off its own `viewBox` before anything is written or
-  drawn — pure, and tested as such.
-- **`htmlLabels` is turned off.** Mermaid's default puts labels in a
-  `foreignObject` full of HTML, which a browser draws and Preview.app,
-  `librsvg`, Inkscape and a canvas do not. Turning it off makes the labels
-  `<text>` — so the exported file is a picture everywhere, and rasterising it
-  works at all.
+Mermaid draws for a browser. What comes out is a stylesheet with some shapes
+attached, and it becomes a *drawing* only after four things, each of which was
+found by looking at what landed on screen, in this order.
+
+1. **It has no size.** `<svg width="100%" style="max-width: 282px">` is right
+   for a page and wrong for a file: an SVG with no intrinsic size goes into a
+   browser's default 300×150 box, and the first PNG rasterised from one came out
+   **172×300** instead of 564×982. The root gets explicit `width`/`height` off
+   its own `viewBox`. Pure, and tested as such.
+2. **`htmlLabels` is turned off.** Mermaid's default puts labels in a
+   `foreignObject` full of HTML, which a browser draws and Preview.app,
+   `librsvg`, Inkscape and a `<canvas>` do not. Off, the labels are `<text>` —
+   so the file is a picture everywhere and rasterising it works at all.
+3. **Every style is inlined onto the element.** Everything an edge looks like,
+   `fill: none` above all, lives in a descendant selector inside a `<style>`
+   block. CoreSVG — the renderer behind `NSImage`, and therefore behind this
+   app's own preview pane and behind Preview.app — does not apply it, and
+   **every edge in the first working preview was a solid black wedge.** The
+   browser's own resolved values are copied onto each element as attributes and
+   the stylesheet is dropped.
+4. **Arrowheads and text are baked into geometry.** `marker-end` is a reference
+   to a shape a renderer is expected to place, rotate and scale; CoreSVG draws
+   nothing for one, so the flowchart had no arrows on it. And `x`/`y` on a
+   `tspan` are *ignored* by CoreSVG, so every label was drawn from its `<text>`
+   element's own origin — above its box rather than in it. Both become geometry:
+   the marker's content copied to the end of the line with the transform the
+   specification describes, and each row of text promoted to a `<text>` of its
+   own at the position the browser measured for it.
+
+Two things learned the hard way in that last one, both from looking at the
+result rather than from reading a specification:
+
+- The unit is the **row**, not the word. Mermaid puts every word in a `tspan` of
+  its own with the spaces between them as bare text nodes, so positioning each
+  word separately drew "Orderplaced" — words right, gaps gone.
+- Everything must be **measured before anything is written**, because each thing
+  written moves what has not been read yet.
+
+It is checked both ways round: the exported SVG rasterised by CoreSVG and the
+exported PNG rasterised by WebKit are the same picture, compared side by side.
+That agreement is the property worth having — it means the file is a picture
+rather than a program that happens to run in one place.
+
+What is lost, and it is small: an *animated* edge stops animating, since the
+`@keyframes` went with the stylesheet. A still picture in a file was never going
+to animate anyway.
 
 ## Markdown fenced blocks, and the decision about them
 
@@ -163,6 +236,25 @@ already covers for `@start` blocks and would need covering again for fences.
 every block), which is a decent description of the behaviour to copy when
 somebody gets to it. What is here is deliberately a smaller thing that works.
 
+## What landed
+
+`Sources/AbydosKit/Preview/` gained four files and a vendored bundle:
+`WebRenderer` (the surface), `Mermaid` (the page and the tidying, all pure),
+`MermaidRenderer` (the drawing), `DiagramStamp` (signing a picture), and
+`mermaid/mermaid.min.js` with its `LICENSE` and `VERSION`.
+`Sources/AbydosApp/Editor/DiagramPaneView.swift` is the pane both tools now
+share, with `PlantUMLPreviewView` and `MermaidPreviewView` above it — so the
+menu, the white paper, the ⌘+ and the notice are one implementation rather than
+two that could drift.
+
+`DiagramFormat` replaced `PlantUML.Format` as the type both menus speak, and the
+refusal to overwrite now reads "was not drawn from a diagram" rather than naming
+PlantUML, since it guards both.
+
+Verified end to end in the app on a scratch project, not only in tests: a
+flowchart and a sequence diagram previewed, `Export ▸ SVG` and `Export ▸ PNG`
+taken from the preview's own menu, and the written files opened and looked at.
+
 ## What is left
 
 - **Fenced blocks in Markdown**, above. The largest missing piece by far.
@@ -176,7 +268,18 @@ somebody gets to it. What is here is deliberately a smaller thing that works.
 - **An example to work against.** The examples repository beside this one holds
   no Mermaid. It should hold a `.mmd` flowchart and a sequence diagram, for the
   same reason 0424 wants devcontainers there: the screenshot harness points at
-  it, and a preview either draws or it does not.
+  it, and a preview either draws or it does not. Not done here because that
+  repository was somebody else's to touch this afternoon.
+- **A shot in `Scripts/screenshots.sh`.** There is no diagram in the
+  documentation's pictures at all — neither PlantUML's nor this — and a preview
+  pane is exactly the kind of thing a picture says better than a paragraph. It
+  wants the example above first.
+- **The pane draws through `NSImage`,** which is CoreSVG, which is why so much
+  of the flattening above exists. It is the right dependency to have — the file
+  written to disk is better for it — but if a diagram ever appears that CoreSVG
+  still cannot draw, the honest answer is to show the pane a bitmap rasterised
+  by the web view at the zoom being asked for, and keep the drawing for the
+  file.
 
 ---
 

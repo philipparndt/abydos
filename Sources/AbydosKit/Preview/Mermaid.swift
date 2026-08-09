@@ -102,6 +102,11 @@ public enum Mermaid {
 	///  * **`suppressErrorRendering: true`**, so a diagram that will not parse
 	///    throws and nothing else. Without it Mermaid also glues a picture of a
 	///    bomb into the page, which the next render would find already there.
+	///
+	/// And one thing the page does after every render, which is `abydosInline`
+	/// and is not optional — see the comment on it. Mermaid's drawing is a
+	/// stylesheet with some shapes attached, and outside a browser that is a
+	/// picture of black wedges.
 	public static func page(bundle: String) -> String {
 		"""
 		<!doctype html>
@@ -119,11 +124,213 @@ public enum Mermaid {
 			state: { htmlLabels: false }
 		});
 		window.__abydosDrew = 0;
+		// Every property that decides what a shape looks like, copied out of the
+		// browser's own stylesheet resolution and onto the element as an
+		// attribute.
+		//
+		// This is what makes the drawing a picture rather than a program.
+		// Mermaid emits a `<style>` block and a tree of bare `<path>`s and
+		// `<rect>`s, and everything an edge looks like — `fill:none` above all —
+		// lives in a descendant selector inside it. A browser applies that; the
+		// SVG renderer behind NSImage, Preview.app, librsvg and Inkscape do not,
+		// and what they draw instead is every edge filled solid black. Seen, in
+		// the preview pane, before this existed.
+		const ABYDOS_PAINTED = [
+			'fill', 'fill-opacity', 'fill-rule', 'stroke', 'stroke-width',
+			'stroke-opacity', 'stroke-dasharray', 'stroke-linecap', 'stroke-linejoin',
+			'opacity', 'color', 'font-family', 'font-size', 'font-weight', 'font-style',
+			'text-anchor', 'dominant-baseline'
+		];
+		// Not `marker-end` and its two neighbours, deliberately. Mermaid already
+		// puts those on the element as attributes, so there is nothing in a
+		// stylesheet to rescue — and the computed form is `url("#id")`, whose
+		// quotes come back out of the serialiser as `&quot;` and point at
+		// nothing. Copying them would take the arrowheads off every edge.
+		function abydosInline(text) {
+			const holder = document.createElement('div');
+			holder.style.position = 'absolute';
+			holder.style.left = '-100000px';
+			holder.innerHTML = text;
+			document.body.appendChild(holder);
+			try {
+				const root = holder.querySelector('svg');
+				if (!root) { return text; }
+				for (const element of [root, ...root.querySelectorAll('*')]) {
+					if (element.tagName === 'style') { continue; }
+					const resolved = getComputedStyle(element);
+					for (const property of ABYDOS_PAINTED) {
+						const value = resolved.getPropertyValue(property);
+						if (value && value !== 'none' || property === 'fill' || property === 'stroke') {
+							element.setAttribute(property, value);
+						}
+					}
+				}
+				abydosBakeText(root);
+				abydosBakeMarkers(root);
+				// The stylesheet has done its work and is now only a second,
+				// contradictory answer for anything that does read CSS.
+				for (const sheet of root.querySelectorAll('style')) { sheet.remove(); }
+				for (const marker of root.querySelectorAll('marker')) { marker.remove(); }
+				return new XMLSerializer().serializeToString(root);
+			} finally {
+				holder.remove();
+			}
+		}
+		// Every run of text put where the browser actually laid it out.
+		//
+		// Mermaid positions a label with a `dy` on each `tspan` and a
+		// `dominant-baseline`, and asks the renderer to work the rest out. A
+		// browser does; CoreSVG — which is what NSImage, the preview pane and
+		// Preview.app all draw an SVG with — puts every node's label above its
+		// box instead. Asking the browser where each run *went* and writing that
+		// down is the whole fix, and it is exact rather than a correction.
+		/// Every run becomes a `<text>` of its own, at the place the browser put
+		/// it.
+		///
+		/// It has to be a `<text>` and not a repositioned `tspan`, and that was
+		/// measured rather than assumed. Mermaid writes a label as a `tspan`
+		/// inside a `tspan` inside a `text`, with the position on the inner ones
+		/// — and CoreSVG **ignores `x` and `y` on a `tspan` altogether**, drawing
+		/// every label from the `text` element's own origin instead. Writing the
+		/// positions onto the tspans moved every label half its width to the
+		/// right; only promoting each run to a `text` puts it where it belongs in
+		/// a browser and outside one alike.
+		///
+		/// Everything is measured before anything is changed, because each thing
+		/// written moves what has not been read yet.
+		/// The unit is the **row**, not the word, and that is the second thing
+		/// this had to be told. Mermaid puts every word in a `tspan` of its own
+		/// with the spaces between them as bare text nodes, so promoting each
+		/// word to a `<text>` drew "Orderplaced" — the words correct, the gaps
+		/// gone. A row kept whole, with its word spans left inside it as flowing
+		/// content, keeps both the spacing and whatever emphasis those spans
+		/// carry.
+		const ABYDOS_SVG = 'http://www.w3.org/2000/svg';
+		const ABYDOS_PLACED = ['x', 'y', 'dx', 'dy'];
+		function abydosBakeText(root) {
+			const jobs = [];
+			for (const text of root.querySelectorAll('text')) {
+				const rows = [...text.children].filter(child => child.tagName === 'tspan');
+				const measured = [];
+				for (const row of (rows.length ? rows : [text])) {
+					try {
+						if (row.getNumberOfChars() > 0) {
+							const start = row.getStartPositionOfChar(0);
+							measured.push({ row: row, x: start.x, y: start.y });
+						}
+					} catch (ignored) { /* a row with nothing in it */ }
+				}
+				if (measured.length) { jobs.push({ text: text, measured: measured }); }
+			}
+			for (const job of jobs) {
+				// The `<text>`'s own transform moves to the group that replaces
+				// it: the positions above are in the space *inside* that
+				// transform, which is where they have to stay.
+				const holder = document.createElementNS(ABYDOS_SVG, 'g');
+				const transform = job.text.getAttribute('transform');
+				if (transform) { holder.setAttribute('transform', transform); }
+				for (const found of job.measured) {
+					const line = document.createElementNS(ABYDOS_SVG, 'text');
+					for (const source of [job.text, found.row]) {
+						for (const attribute of source.attributes) {
+							if (attribute.name === 'transform') { continue; }
+							line.setAttribute(attribute.name, attribute.value);
+						}
+					}
+					for (const name of ABYDOS_PLACED) { line.removeAttribute(name); }
+					line.removeAttribute('alignment-baseline');
+					line.setAttribute('x', found.x);
+					line.setAttribute('y', found.y);
+					// The position above is already where the anchoring and the
+					// baseline put it. Leaving either in would apply it twice.
+					line.setAttribute('text-anchor', 'start');
+					line.setAttribute('dominant-baseline', 'auto');
+					// The row's own content, spaces and all, flowing from that
+					// one position — with every inner position taken off, since
+					// a `tspan`'s is ignored by half the renderers there are and
+					// honoured by the other half.
+					const inside = found.row === job.text
+						? [...job.text.childNodes].map(node => node.cloneNode(true))
+						: [...found.row.childNodes].map(node => node.cloneNode(true));
+					for (const piece of inside) {
+						if (piece.nodeType === 1) {
+							for (const name of ABYDOS_PLACED) { piece.removeAttribute(name); }
+							for (const nested of piece.querySelectorAll('*')) {
+								for (const name of ABYDOS_PLACED) { nested.removeAttribute(name); }
+							}
+						}
+						line.appendChild(piece);
+					}
+					holder.appendChild(line);
+				}
+				job.text.parentNode.replaceChild(holder, job.text);
+			}
+		}
+
+		/// Every arrowhead drawn where its marker would have put it.
+		///
+		/// `marker-end` is a reference to a shape that a renderer is expected to
+		/// place, rotate and scale along the path. CoreSVG draws nothing at all
+		/// for one, so a flowchart previewed here had no arrows on it and an
+		/// exported file had none anywhere outside a browser. The marker's own
+		/// content is copied to the end of the line with the transform the
+		/// specification describes, which is geometry every renderer can draw.
+		function abydosBakeMarkers(root) {
+			const ends = ['marker-start', 'marker-end'];
+			for (const shape of root.querySelectorAll('[marker-start],[marker-end]')) {
+				if (typeof shape.getTotalLength !== 'function') { continue; }
+				let total = 0;
+				try { total = shape.getTotalLength(); } catch (ignored) { continue; }
+				if (!(total > 0)) { continue; }
+				const width = parseFloat(shape.getAttribute('stroke-width')) || 1;
+				for (const end of ends) {
+					const reference = shape.getAttribute(end);
+					shape.removeAttribute(end);
+					if (!reference) { continue; }
+					const named = reference.match(/#([^)"']+)/);
+					const marker = named && root.querySelector('marker[id="' + named[1] + '"]');
+					if (!marker) { continue; }
+
+					const atEnd = end === 'marker-end';
+					const step = Math.min(1, total);
+					const here = shape.getPointAtLength(atEnd ? total : 0);
+					const near = shape.getPointAtLength(atEnd ? total - step : step);
+					let angle = atEnd
+						? Math.atan2(here.y - near.y, here.x - near.x)
+						: Math.atan2(near.y - here.y, near.x - here.x);
+					const orient = marker.getAttribute('orient') || '0';
+					if (orient === 'auto-start-reverse' && !atEnd) { angle += Math.PI; }
+					else if (orient !== 'auto' && orient !== 'auto-start-reverse') {
+						angle = (parseFloat(orient) || 0) * Math.PI / 180;
+					}
+
+					const box = (marker.getAttribute('viewBox') || '').split(/[ ,]+/).map(Number);
+					const drawnWidth = parseFloat(marker.getAttribute('markerWidth') || '3');
+					const drawnHeight = parseFloat(marker.getAttribute('markerHeight') || '3');
+					const unit = marker.getAttribute('markerUnits') === 'userSpaceOnUse' ? 1 : width;
+					const sx = (box.length === 4 && box[2] ? drawnWidth / box[2] : 1) * unit;
+					const sy = (box.length === 4 && box[3] ? drawnHeight / box[3] : 1) * unit;
+					const refX = parseFloat(marker.getAttribute('refX') || '0');
+					const refY = parseFloat(marker.getAttribute('refY') || '0');
+
+					const drawn = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+					drawn.setAttribute('transform',
+						'translate(' + here.x + ',' + here.y + ') '
+						+ 'rotate(' + (angle * 180 / Math.PI) + ') '
+						+ 'scale(' + sx + ',' + sy + ') '
+						+ 'translate(' + (-refX) + ',' + (-refY) + ')');
+					for (const piece of marker.children) { drawn.appendChild(piece.cloneNode(true)); }
+					// After the line rather than before it, so an arrowhead sits on
+					// top of whatever it points at.
+					shape.parentNode.insertBefore(drawn, shape.nextSibling);
+				}
+			}
+		}
 		async function abydosDraw(source) {
 			const id = 'abydos-' + (window.__abydosDrew++);
 			try {
 				const drawn = await mermaid.render(id, source);
-				return JSON.stringify({ svg: drawn.svg });
+				return JSON.stringify({ svg: abydosInline(drawn.svg) });
 			} catch (thrown) {
 				const said = String((thrown && thrown.message) || thrown);
 				const where = thrown && thrown.hash;

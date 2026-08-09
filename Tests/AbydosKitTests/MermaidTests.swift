@@ -176,6 +176,10 @@ struct MermaidTests {
 		#expect(page.contains("suppressErrorRendering: true"))
 		#expect(page.contains("async function abydosDraw"))
 		#expect(page.contains("async function abydosRaster"))
+		// And the drawing is flattened, or every edge in it is a black wedge
+		// everywhere except a browser.
+		#expect(page.contains("function abydosInline"))
+		#expect(page.contains("abydosInline(drawn.svg)"))
 	}
 }
 

@@ -75,6 +75,13 @@ struct MermaidLiveTests {
 			// No `foreignObject`: the labels are `<text>`, so the file is a
 			// picture outside a browser as well as in one.
 			#expect(!svg.contains("foreignObject"))
+			// And nothing is left depending on a CSS engine. An edge whose
+			// `fill:none` lived in a stylesheet is drawn as a solid black wedge
+			// by everything that is not a browser — which is what the pane
+			// showed before this was inlined.
+			#expect(!svg.contains("<style"))
+			#expect(svg.contains("fill=\"none\""))
+			#expect(svg.contains("stroke-width="))
 			#expect(data.count > 2000, "\(name) came back suspiciously small")
 		}
 	}
