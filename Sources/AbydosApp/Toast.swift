@@ -101,9 +101,13 @@ final class ToastPresenter {
 			created.translatesAutoresizingMaskIntoConstraints = false
 			contentView.addSubview(created, positioned: .above, relativeTo: nil)
 			NSLayoutConstraint.activate([
-				created.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
-				created.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -16),
-				created.widthAnchor.constraint(equalToConstant: 340),
+				created.trailingAnchor.constraint(
+					equalTo: contentView.trailingAnchor, constant: -Theme.current.scaled(16)
+				),
+				created.bottomAnchor.constraint(
+					equalTo: contentView.bottomAnchor, constant: -Theme.current.scaled(16)
+				),
+				created.widthAnchor.constraint(equalToConstant: Theme.current.scaled(340)),
 			])
 			self.host = created
 			return created
@@ -204,17 +208,19 @@ private final class ToastView: NSView {
 		self.toast = toast
 		super.init(frame: .zero)
 		wantsLayer = true
-		layer?.cornerRadius = 8
+		layer?.cornerRadius = Theme.current.scaled(8)
 		layer?.backgroundColor = Theme.current.sidebarBackground.withAlphaComponent(0.98).cgColor
 		layer?.borderWidth = 1
 		layer?.borderColor = Theme.current.separator.cgColor
 		layer?.shadowOpacity = 0.35
-		layer?.shadowRadius = 10
-		layer?.shadowOffset = CGSize(width: 0, height: -2)
+		layer?.shadowRadius = Theme.current.scaled(10)
+		layer?.shadowOffset = CGSize(width: 0, height: -Theme.current.scaled(2))
 
 		toolTip = toast.detail ?? toast.title
 		translatesAutoresizingMaskIntoConstraints = false
-		heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
+		heightAnchor.constraint(
+			greaterThanOrEqualToConstant: Theme.current.scaled(44)
+		).isActive = true
 	}
 
 	required init?(coder: NSCoder) { fatalError("not used") }
@@ -254,24 +260,40 @@ private final class ToastView: NSView {
 		onDismiss?()
 	}
 
+	/// Scaled like everything else it sits beside.
+	///
+	/// The text already was — `uiFont` multiplies by the scale — so at 2x the
+	/// words grew inside a box that had not, which is what "the toasts are not
+	/// scaled" looks like: the same rectangle with type too large for it.
 	private var closeRect: NSRect {
-		NSRect(x: bounds.maxX - 26, y: 10, width: 16, height: 16)
+		let size = Theme.current.scaled(16)
+		return NSRect(
+			x: bounds.maxX - Theme.current.scaled(26), y: Theme.current.scaled(10),
+			width: size, height: size
+		)
 	}
 
 	override func draw(_ dirtyRect: NSRect) {
-		let inset: CGFloat = 12
+		let inset = Theme.current.scaled(12)
 
-		if let icon = Theme.symbol("\(toast.kind.symbol)", size: 12, color: toast.kind.tint) {
-			icon.drawFitted(in: NSRect(x: inset, y: 13, width: 14, height: 14))
+		if let icon = Theme.symbol(
+			"\(toast.kind.symbol)", size: Theme.current.scaled(12), color: toast.kind.tint
+		) {
+			let size = Theme.current.scaled(14)
+			icon.drawFitted(
+				in: NSRect(x: inset, y: Theme.current.scaled(13), width: size, height: size)
+			)
 		}
 
-		let textX = inset + 22
+		let textX = inset + Theme.current.scaled(22)
 		let title = NSAttributedString(string: toast.title, attributes: [
 			.font: Theme.current.uiFont(12),
 			.foregroundColor: Theme.current.sidebarText,
 		])
 		title.draw(in: NSRect(
-			x: textX, y: 11, width: max(0, bounds.width - textX - 34), height: title.size().height
+			x: textX, y: Theme.current.scaled(11),
+			width: max(0, bounds.width - textX - Theme.current.scaled(34)),
+			height: title.size().height
 		))
 
 		// A hint about what a click does, only when it does anything.
@@ -280,7 +302,9 @@ private final class ToastView: NSView {
 				.font: Theme.current.uiFont(10),
 				.foregroundColor: Theme.current.gitIgnored,
 			])
-			more.draw(at: NSPoint(x: textX, y: 11 + title.size().height + 2))
+			more.draw(at: NSPoint(
+				x: textX, y: Theme.current.scaled(11) + title.size().height + Theme.current.scaled(2)
+			))
 		}
 
 		let cross = NSBezierPath()
