@@ -75,4 +75,41 @@ side that draws it.
 
 ---
 
+**Both measurements taken, and both come back clean — the fault was in neither.**
+
+*What this terminal's own pty carries with tmux attached to it.* A pane 235
+columns wide on a 2× display, `updateCellPixelSize` having run:
+
+| where | rows × cols | ws_xpixel × ws_ypixel | cell |
+| --- | --- | --- | --- |
+| the app's pty, tmux attached to it | 46 × 235 | 3760 × 1748 | 16 × 38 |
+| a pane of that tmux | 46 × 235 | 3760 × 1748 | 16 × 38 |
+| a pane split in half | 46 × 117 | 1872 × 1748 | 16 × 38 |
+
+and `#{client_cell_width} #{client_cell_height}` is `16 38` to match. So
+`updateCellPixelSize` has run well before tmux reads the size — the ordering
+holds, nothing invents a 16×32 cell, and the ioctl inside a pane describes the
+*pane*, down to a split one.
+
+*Whether a `U=1` virtual placement survives tmux's redraw.* It does, exactly.
+Captured from a pty with tmux 3.7b attached, the picture's cells come back
+`[U+10EEEE +0305 +0305][U+10EEEE]…` — the first of each row carrying its two
+diacritics and the rest bare — which is byte for byte what the script wrote and
+what the same capture with no tmux in it contains. tmux paints them a cell at a
+time as they arrive, rewinding with CR and repainting the row, so the same row
+is written three times over; the grid it leaves is the right one. The transmit
+keys arrive intact too, chunking and all.
+
+**The cause is one word in a format string.** `measure_terminal` asked tmux for
+`#{window_width} #{window_height}`, which is the whole window however many panes
+it is split into. In a split, a picture was fitted to a screen twice the width
+it had, ran off the right-hand edge of its pane, and tmux wrapped the cells
+carrying it — which is the tearing. Unsplit, a pane *is* the window and every
+picture was already correct, which is why this read as tmux breaking the
+protocol. Measured in the app's own terminal, split in half: `term 235 cols ->
+c=142` for a 4000×3000 picture in a pane 117 wide. With `#{pane_width}
+#{pane_height}` it is `term 117 cols -> c=117 rows=36`, and it fits.
+
+---
+
 Its number is where it sits in the queue, not what it is worth doing next.

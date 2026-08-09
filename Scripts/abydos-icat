@@ -314,11 +314,18 @@ ask_cell_size() {
 }
 
 measure_terminal() {
-	# tmux knows, and knows better than the ioctl does: it keeps the size of the
-	# terminal it is attached to, while the pty it hands the shell is its own and
-	# carries no pixels at all.
+	# tmux knows how large a cell is, which an older tmux's pty does not say: it
+	# keeps the size of the terminal it is attached to, while the pty it hands a
+	# pane may carry no pixels at all.
+	#
+	# The pane, though, and not the window. A picture goes in the pane the
+	# command is running in, and `#{window_width}` is the whole window however
+	# many panes it is split into — so in a split every picture was sized to the
+	# window, ran off the right-hand edge of its pane, and was torn across the
+	# rows as tmux wrapped the cells carrying it. That is the shape the bug
+	# always had: unsplit, a pane *is* the window and everything looked right.
 	if in_tmux; then
-		size=$(tmux display -p '#{client_cell_width} #{client_cell_height} #{window_width} #{window_height}' 2>/dev/null || true)
+		size=$(tmux display -p '#{client_cell_width} #{client_cell_height} #{pane_width} #{pane_height}' 2>/dev/null || true)
 		case "${size:-}" in
 			[0-9]*\ [0-9]*\ [0-9]*\ [0-9]*)
 				cell_w=${size%% *}
