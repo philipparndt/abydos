@@ -64,6 +64,75 @@ struct XcodeDestinationMenuTests {
 		#expect(!XcodeDestinationMenu.isNewer(simulator("x", "26.5"), than: simulator("x", "27.0")))
 	}
 
+	/// "Latest" is the newest runtime the *model* has, not the newest installed.
+	///
+	/// A watch simulator's newest runtime is years behind an iPhone's, and they
+	/// are not the same number line. Picking by the newest runtime installed
+	/// would leave the menu with no watch on it at all — the rule is inside a
+	/// family, which is what this pins.
+	@Test func aFamilyWhoseRuntimesAreAllOlderIsStillOnTheMenu() {
+		let all = [
+			simulator("iPhone 17", "27.0"),
+			simulator("iPad Air 13-inch (M4)", "26.5"),
+			simulator("Apple Watch Series 10 (46mm)", "12.0", platform: "watchOS Simulator"),
+			simulator("Apple Watch Ultra 3", "11.5", platform: "watchOS Simulator"),
+		]
+		let newest = XcodeDestinationMenu.newestOfEachFamily(among: all)
+
+		let watch = newest.first { XcodeDestinationMenu.category(of: $0) == "Apple Watch" }
+		#expect(watch != nil, "the watch was dropped for being older than an iPhone")
+		#expect(watch?.os == "12.0")
+		#expect(newest.first { $0.name == "iPad Air 13-inch (M4)" }?.os == "26.5")
+	}
+
+	/// A model that stopped shipping offers its last runtime rather than
+	/// vanishing because something newer exists without it.
+	///
+	/// `iPhone 16e` is in 26.0 and gone by 27.0. The family shows the model that
+	/// gets furthest — that is what "latest" buys — and the one that stopped is
+	/// still there behind the dialog, at the last runtime it ever had, never at
+	/// one it does not have.
+	@Test func aModelThatStoppedShippingKeepsItsLastRuntime() {
+		let all = [
+			simulator("iPhone 16e", "26.0"),
+			simulator("iPhone 17", "26.0"),
+			simulator("iPhone 17", "27.0"),
+		]
+		let shown = XcodeDestinationMenu.newestOfEachFamily(among: all)
+		#expect(shown.map(\.name) == ["iPhone 17"])
+		#expect(shown.first?.os == "27.0")
+
+		let rest = XcodeDestinationMenu.rest(among: all, shown: shown)
+		let old = rest.filter { $0.name == "iPhone 16e" }
+		#expect(old.map(\.os) == ["26.0"])
+	}
+
+	/// The rule as an invariant, over a list shaped like a real machine's:
+	/// whatever is offered is that model at the newest runtime that model has.
+	///
+	/// Written as "no destination of the same name has a newer OS" rather than
+	/// as an expected list, because that is the rule itself — an expected list
+	/// would also pass if the answer were right for the wrong reason.
+	@Test func whatIsOfferedIsAlwaysItsModelsOwnNewestRuntime() {
+		let all = [
+			simulator("iPhone 16e", "26.0"),
+			simulator("iPhone 17", "26.0"),
+			simulator("iPhone 17", "27.0"),
+			simulator("iPhone Air", "27.0"),
+			simulator("iPad (A16)", "26.5"),
+			simulator("iPad Pro 13-inch (M5)", "26.5"),
+			simulator("iPad Pro 13-inch (M5)", "27.0"),
+			simulator("Apple TV 4K", "26.1", platform: "tvOS Simulator"),
+			simulator("Apple Watch Series 10 (46mm)", "12.0", platform: "watchOS Simulator"),
+		]
+
+		for offered in XcodeDestinationMenu.newestOfEachFamily(among: all) {
+			let sameModel = all.filter { $0.name == offered.name }
+			#expect(!sameModel.contains { XcodeDestinationMenu.isNewer($0, than: offered) },
+			        "\(offered.title) is not the newest runtime \(offered.name) has")
+		}
+	}
+
 	/// Everything not shown is still reachable — nothing is dropped.
 	@Test func theRestIsEverythingElseAndNothingMore() {
 		let all = [
@@ -85,6 +154,94 @@ struct XcodeDestinationMenuTests {
 		#expect(XcodeDestinationMenu.matches(pad, "IPAD"))
 		#expect(XcodeDestinationMenu.matches(pad, ""))
 		#expect(!XcodeDestinationMenu.matches(pad, "iphone"))
+	}
+}
+
+/// Remembering where a project was last run.
+///
+/// Per project rather than per scheme: an app and its watch app share one
+/// answer. What matters is not which dictionary key is used but that the answer
+/// outlives the app — so these write it where it really goes and read it back,
+/// which is what quitting and reopening does.
+struct XcodeDestinationMemoryTests {
+	private func root() throws -> URL {
+		let root = URL(fileURLWithPath: NSTemporaryDirectory())
+			.appendingPathComponent("destinations-\(UUID().uuidString)")
+		try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+		return root
+	}
+
+	private func target(_ scheme: String, in project: String) -> XcodeTarget {
+		XcodeTarget(
+			project: XcodeProject(path: project, container: .project),
+			scheme: XcodeScheme(name: scheme, product: "\(scheme).app")
+		)
+	}
+
+	/// The watch app is run for the first time and goes where the app went.
+	@Test func aChoiceOutlivesTheAppAndCoversEverySchemeOfTheProject() throws {
+		let root = try root()
+		defer { try? FileManager.default.removeItem(at: root) }
+		let app = target("WallDisplay2", in: "/checkout/ios/WallDisplay2.xcodeproj")
+		let watch = target("WallDisplay2 Watch App", in: "/checkout/ios/WallDisplay2.xcodeproj")
+
+		var session = ProjectSession(files: [.init(path: "/checkout/a.swift")])
+		session.xcodeDestinations[XcodeDestinationMemory.key(for: app)] = "SIM-1"
+		try SessionStore.write(session, in: root)
+
+		// Quitting and opening the project again: nothing is in memory, only
+		// what was left beside the project.
+		let reopened = try #require(SessionStore.read(in: root))
+		#expect(reopened.xcodeDestinations[XcodeDestinationMemory.key(for: watch)] == "SIM-1")
+	}
+
+	/// One checkout, two Xcode projects, two answers — which is why the key is
+	/// the path and not the project's name.
+	@Test func twoProjectsInOneCheckoutAreRememberedApart() throws {
+		let root = try root()
+		defer { try? FileManager.default.removeItem(at: root) }
+		let phone = target("App", in: "/checkout/ios/App.xcodeproj")
+		let tv = target("App", in: "/checkout/tv/App.xcodeproj")
+
+		var session = ProjectSession(files: [.init(path: "/checkout/a.swift")])
+		session.xcodeDestinations[XcodeDestinationMemory.key(for: phone)] = "PHONE-1"
+		session.xcodeDestinations[XcodeDestinationMemory.key(for: tv)] = "TV-1"
+		try SessionStore.write(session, in: root)
+
+		let reopened = try #require(SessionStore.read(in: root))
+		#expect(reopened.xcodeDestinations[XcodeDestinationMemory.key(for: phone)] == "PHONE-1")
+		#expect(reopened.xcodeDestinations[XcodeDestinationMemory.key(for: tv)] == "TV-1")
+	}
+
+	/// What the old version wrote lapses, and does not linger.
+	///
+	/// A session file from when this was keyed by scheme name has answers that
+	/// cannot be assigned to a project without guessing which scheme spoke for
+	/// it. They are dropped: the cost is one pick from a menu that is already
+	/// open, and the file stops carrying them the next time it is written.
+	@Test func whatWasRememberedPerSchemeIsLetGo() throws {
+		let root = try root()
+		defer { try? FileManager.default.removeItem(at: root) }
+		try AbydosFolder.create(in: root)
+
+		let old: [String: Any] = [
+			"files": [["path": "/checkout/a.swift", "line": 1]],
+			"destinations": [
+				"WallDisplay2": "SIM-OLD",
+				"WallDisplay2 Watch App": "WATCH-OLD",
+			],
+		]
+		try JSONSerialization.data(withJSONObject: old)
+			.write(to: AbydosFolder.sessionFile(in: root), options: .atomic)
+
+		let read = try #require(SessionStore.read(in: root))
+		// The rest of the session is untouched — only the destinations lapse.
+		#expect(read.files.map(\.path) == ["/checkout/a.swift"])
+		#expect(read.xcodeDestinations.isEmpty)
+
+		try SessionStore.write(read, in: root)
+		let again = try #require(SessionStore.read(in: root))
+		#expect(again.xcodeDestinations.isEmpty)
 	}
 }
 

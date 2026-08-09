@@ -235,9 +235,22 @@ public enum XcodeDestinationMenu {
 	/// "Newest" is the runtime, compared as numbers rather than as text: "26.5"
 	/// against "27.0" sorts correctly either way, but "9.0" against "10.0" does
 	/// not, and an OS numbering that has been to double digits twice will go
-	/// there again. A model present in one runtime and absent from another is
-	/// not a comparison at all, which is why this picks the newest *runtime*
-	/// first and then a model within it.
+	/// there again.
+	///
+	/// A model present in one runtime and absent from another is not that
+	/// comparison, and it is the case with a rule of its own: **the newest
+	/// runtime the model itself has**, never the newest runtime installed.
+	/// Which is why the comparing happens inside a family and nowhere else —
+	/// a watch simulator's newest is 12.0 while an iPhone's is 27.0, and
+	/// "newest installed" would mean the menu has no watch on it at all.
+	/// Within a family it means the same thing one step down: whichever model
+	/// gets furthest is offered, at the last runtime it shipped for, and a
+	/// model that stopped shipping keeps its own last runtime in the dialog
+	/// rather than disappearing because something newer exists without it.
+	///
+	/// The entry this returns is therefore always its model at that model's
+	/// newest runtime — no entry of the same name has a newer one, because the
+	/// winner already holds the newest runtime in the family.
 	public static func newestOfEachFamily(
 		among destinations: [XcodeDestination]
 	) -> [XcodeDestination] {
@@ -292,5 +305,44 @@ public enum XcodeDestinationMenu {
 		guard !words.isEmpty else { return true }
 		let haystack = "\(destination.title) \(destination.platform)".lowercased()
 		return words.allSatisfy { haystack.contains($0) }
+	}
+}
+
+/// Which destination somebody last chose, and what it is filed under.
+///
+/// Per project, not per scheme. "The simulator I use" is a fact about the app
+/// being worked on, not about each of the schemes that build parts of it: a
+/// project with an app and a watch app shares one choice, and the first run of
+/// the watch scheme goes where the last run went. That is the accepted cost —
+/// somebody who wants the watch on a watch simulator picks it once and the
+/// project follows — and it is bought for something: per scheme meant every
+/// scheme had to be pointed somewhere separately, so a project with five of
+/// them asked five times for an answer that was the same each time.
+///
+/// It is kept in `ProjectSession.xcodeDestinations` and written beside the
+/// project by `SessionStore`, which is where the open files and the breakpoints
+/// go — so it survives quitting the app for the same reason they do, and a
+/// checkout copied to another machine carries it.
+public enum XcodeDestinationMemory {
+	/// The project's path rather than its name: one checkout can hold more than
+	/// one `.xcodeproj`, and two of them called `App` would otherwise be told
+	/// apart by nothing at all. Also what makes a remembered key recognisable
+	/// as one — see `remembered(_:)`.
+	public static func key(for target: XcodeTarget) -> String {
+		target.project.path
+	}
+
+	/// What is worth loading from a session file.
+	///
+	/// Destinations used to be remembered per scheme, under the scheme's name.
+	/// Those lapse rather than being migrated: which of an app scheme and a
+	/// watch scheme holds "the project's" destination is exactly the question
+	/// that has just been decided, and guessing it would send the first run
+	/// after an update somewhere nobody chose — where forgetting costs one pick
+	/// from a menu that is already open. Dropping them here rather than leaving
+	/// them is so a file written last year does not carry a dead key for ever:
+	/// a key is a path, and a scheme name is not.
+	public static func remembered(_ stored: [String: String]) -> [String: String] {
+		stored.filter { $0.key.hasPrefix("/") }
 	}
 }

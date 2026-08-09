@@ -68,18 +68,40 @@ dropping "Designed for [iPad,iPhone]", `productDirectorySuffix` answers
 
 ## The three that were left, now decided
 
-- **"Latest" needs a rule, not a sort.** Runtimes compare as numbers already
-  (9.0 against 10.0 is why), but a model present in one runtime and absent from
-  another is not a comparison at all. Pick the newest *runtime* the model itself
-  has, rather than the newest runtime installed — a model that stopped shipping
-  should offer its last version, not disappear because something newer exists
-  without it.
-- **The picker remembers per project.** Less state, and it is what somebody means
-  by "the simulator I use". A project with an app and a watch app shares one
-  choice, which is the cost, and it is small next to remembering a stale scheme's
-  preference for ever.
-- **The placeholders stay out.** "Any iOS Device" names a family rather than a
-  machine, and installing on one is not a thing. Nobody has missed them.
+**"Latest" is the newest runtime the model itself has** — never the newest
+runtime installed. A model that stopped shipping offers its last version rather
+than disappearing because something newer exists without it, and the same rule
+one level up is why a watch simulator on 12.0 is still on a menu whose iPhone is
+on 27.0.
+
+`newestOfEachFamily` already did this, by comparing only inside a family: the
+entry it returns holds the newest runtime in its family, so no entry of the same
+model can have a newer one. So the rule was written down where it was being
+followed by accident, and pinned by tests rather than by a change — including as
+an invariant ("nothing of the same name has a newer OS") rather than an expected
+list, since an expected list also passes when the answer is right for the wrong
+reason.
+
+**The choice is remembered per project.** A project with an app and a watch app
+shares one answer; that is the accepted cost, and it buys not being asked once
+per scheme for what is the same answer every time. `XcodeDestinationMemory` holds
+the key — the project's *path*, since one checkout can hold two `.xcodeproj`
+called the same thing — and it is kept in `ProjectSession.xcodeDestinations`,
+written beside the project by `SessionStore`, which is how the open files and the
+breakpoints survive a quit.
+
+What was remembered per scheme lapses rather than being migrated: which of an app
+scheme and a watch scheme spoke for the project is exactly the question just
+decided, and guessing it would send the first run after an update somewhere
+nobody chose — where forgetting costs one pick from a menu that is already open.
+Those keys are dropped as the session is read, so a file written last year does
+not carry a dead one for ever.
+
+**The placeholders stay out.** "Any iOS Device" is not a machine and nothing
+installs on it; one line in a menu of real destinations meaning "let `xcodebuild`
+choose" is a wrong choice found out about minutes later. Nothing asked for them
+back. The reason now sits beside the guard that drops them, so it reads as
+decided rather than as omitted.
 
 ---
 

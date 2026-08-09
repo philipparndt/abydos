@@ -163,7 +163,9 @@ public enum SessionStore {
 			tmuxWindow: object["tmuxWindow"] as? String,
 			subprojectPath: object["subproject"] as? String,
 			selectedConfiguration: object["run"] as? String,
-			xcodeDestinations: object["destinations"] as? [String: String] ?? [:],
+			xcodeDestinations: XcodeDestinationMemory.remembered(
+				object["destinations"] as? [String: String] ?? [:]
+			),
 			breakpoints: readBreakpoints(object["breakpoints"])
 		)
 		return session.isEmpty ? nil : session

@@ -252,6 +252,14 @@ public struct XcodeDestination: Equatable, Sendable, Identifiable {
 				|| text.hasPrefix("Destinations incompatible") { break }
 			guard text.hasPrefix("{"), text.hasSuffix("}") else { continue }
 
+			// The placeholders go, and they were asked about again and the
+			// answer was the same: they stay out. "Any iOS Device" is not a
+			// machine — nothing installs on it — so offering it in a menu whose
+			// every other line is somewhere a build lands would be offering one
+			// line that means "let xcodebuild choose", minutes before finding
+			// out what it chose. They are recognisable two ways and both are
+			// needed: `id:dvtdevice-…`, which is the generic placeholder id, and
+			// "Any Mac", which comes with no id at all.
 			let fields = self.fields(in: text)
 			guard fields["error"] == nil,
 			      let id = fields["id"], !id.hasPrefix("dvtdevice-"),

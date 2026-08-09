@@ -62,7 +62,7 @@ public struct ProjectSession: Equatable, Sendable {
 	/// picked is this window's, and reopening a project to a play button
 	/// pointing at something else is a run of the wrong thing one click away.
 	public var selectedConfiguration: String?
-	/// Where each Xcode scheme was last run, by scheme name.
+	/// Where each Xcode project was last run, by the project's path.
 	///
 	/// The destination and not the scheme, because they are chosen separately:
 	/// picking `docscanner-ios` again should send it to the phone it went to
@@ -70,6 +70,10 @@ public struct ProjectSession: Equatable, Sendable {
 	/// since two simulators of the same model differ only by the runtime they
 	/// have — and an identifier that no longer exists simply falls back to the
 	/// default, which is what unplugging a phone should do.
+	///
+	/// Per project rather than per scheme, and `XcodeDestinationMemory` says
+	/// why — including what becomes of a file that was written when this was
+	/// keyed by scheme name.
 	public var xcodeDestinations: [String: String]
 	/// The breakpoints that were set, by file.
 	///
