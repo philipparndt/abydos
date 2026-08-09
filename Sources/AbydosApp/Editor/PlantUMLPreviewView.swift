@@ -136,15 +136,38 @@ final class PlantUMLPreviewView: NSView {
 						}
 					}
 				)
-				await MainActor.run {
-					guard let self else { return }
-					if case let .failed(reason) = outcome {
+				if case let .failed(reason) = outcome {
+					await MainActor.run {
+						guard let self else { return }
 						self.spinner.stopAnimation(nil)
 						self.running = nil
 						self.notice = reason
 						self.needsDisplay = true
-						return
 					}
+					return
+				}
+
+				// One PlantUML kept warm, asked over HTTP: a container and a JVM
+				// per diagram is two seconds, and the same picture from a server
+				// that is already up is a twentieth of that. Nil means it could
+				// not be — no server, a runtime whose containers cannot be
+				// removed again, a diagram too large for a request line — and the
+				// answer to all of those is the render this app has always done,
+				// which works and is only slow.
+				if let drawn = await PlantUMLServers.shared.render(
+					source, image: container.image, using: runtime
+				) {
+					await MainActor.run {
+						guard let self, self.lastSource == source else { return }
+						self.spinner.stopAnimation(nil)
+						self.running = nil
+						self.finish(drawn: drawn, complaint: "")
+					}
+					return
+				}
+
+				await MainActor.run {
+					guard let self, self.lastSource == source else { return }
 					self.draw(source, with: tool)
 				}
 			}

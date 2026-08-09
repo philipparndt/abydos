@@ -60,6 +60,20 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		}
 	}
 
+	/// Whatever ends this process on purpose takes the tools with it.
+	///
+	/// `applicationWillTerminate` is not every exit: the command-line modes —
+	/// the screenshot capture above all — call `exit` as soon as they have what
+	/// they came for, and one of those left a PlantUML server running with
+	/// nothing to stop it. `atexit` runs for all of them, and runs nothing twice:
+	/// by the time a normal quit gets here there is nothing left registered.
+	private static func endToolsOnExit() {
+		atexit {
+			ToolProcesses.shared.terminateAll()
+			ToolContainers.shared.removeAll()
+		}
+	}
+
 	/// Removes the containers a previous run of this app left behind.
 	///
 	/// Only ours — everything this app starts is named `abydos-…` — and only
@@ -85,6 +99,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		// nothing behind to say why.
 		BrokenPipes.ignore()
 		Self.recordUncaughtExceptions()
+		Self.endToolsOnExit()
 		// Settings from the other identifier this app has had, before anything
 		// reads one: a change of identifier would otherwise look like every
 		// preference being forgotten at once. The App Store rename to
