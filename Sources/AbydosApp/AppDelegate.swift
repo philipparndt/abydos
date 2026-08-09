@@ -1105,6 +1105,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			for seconds in [3.0, 5.0, 7.0, 9.0] {
 				DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
 					print("GEOM \(Int(seconds))s: \(controller?.terminalGeometryForTesting() ?? "-")")
+					print("PANEL \(Int(seconds))s: \(controller?.panelGeometryForTesting() ?? "-")")
+					fflush(stdout)
 				}
 			}
 		}

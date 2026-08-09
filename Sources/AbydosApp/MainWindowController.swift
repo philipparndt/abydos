@@ -3938,6 +3938,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		bottomPanel.terminalGeometryForTesting()
 	}
 
+	/// The panel's own layout, beside the terminal's grid.
+	///
+	/// Where the tab strip sits inside the panel is not visible in any of the
+	/// numbers above, and it is what a band above the tabs is made of.
+	func panelGeometryForTesting() -> String {
+		bottomPanel.stripGeometryForTesting()
+	}
+
 	/// Where the terminal in front says it is — the answer the window follows.
 	func terminalDirectoryForTesting() -> URL? {
 		bottomPanel.activeTerminalDirectoryForTesting()
@@ -6979,9 +6987,11 @@ extension MainWindowController: NSSplitViewDelegate {
 	/// because a drag is not the only thing that changes the height — the
 	/// window, the zoom and the font all do. It converges in one step: the
 	/// second pass finds nothing left over and stops.
+	///
+	/// Whether to move anything at all is asked twice, once here and once on
+	/// the turn that would act. See the second for why.
 	func splitViewDidResizeSubviews(_ notification: Notification) {
 		guard notification.object as? NSSplitView === verticalSplitView else { return }
-		guard isPanelVisible, !isPanelMaximized, !bottomPanel.isHidden else { return }
 		// Moving the divider resizes the subviews, which is this notification
 		// again — and `setPosition` sends it synchronously, so without this the
 		// second pass runs inside the first. It converges on the arithmetic
@@ -6989,14 +6999,7 @@ extension MainWindowController: NSSplitViewDelegate {
 		// took the app out with a stack overflow before the remainder ever
 		// reached zero.
 		guard !isSnappingPanel else { return }
-		guard let remainder = bottomPanel.terminalHeightRemainder, remainder > 0.5 else { return }
-
-		let total = verticalSplitView.bounds.height
-		let wanted = bottomPanel.frame.height - remainder
-		// Not below what the panel is allowed to be: a terminal four rows tall
-		// is the floor everywhere else, and shaving a row off to make the
-		// arithmetic tidy would be tidying the wrong thing.
-		guard total > 200, wanted >= 160 else { return }
+		guard PanelRowSnap.dividerPosition(for: panelSnapState) != nil else { return }
 
 		isSnappingPanel = true
 		// Next turn rather than inside the layout that is reporting to us:
@@ -7004,9 +7007,32 @@ extension MainWindowController: NSSplitViewDelegate {
 		// terminal came to be told two different sizes for one pane.
 		DispatchQueue.main.async { [weak self] in
 			guard let self else { return }
-			self.verticalSplitView.setPosition(total - wanted, ofDividerAt: 0)
-			self.isSnappingPanel = false
+			// Cleared after the move rather than before it, so the notification
+			// that `setPosition` sends synchronously still finds the guard up.
+			defer { self.isSnappingPanel = false }
+
+			// Asked again rather than acted on from a turn ago. A great deal
+			// can happen in a turn, and one thing did: at startup
+			// `terminalAtStartup = full` maximises the panel between the resize
+			// that asks this question and the turn that answers it. Answering
+			// with the old numbers hands the editor its half of the window back
+			// while the window still believes the panel has all of it — so the
+			// panel keeps the inset it wears under the titlebar, and that inset
+			// is an empty band above the tabs.
+			guard let position = PanelRowSnap.dividerPosition(for: self.panelSnapState) else { return }
+			self.verticalSplitView.setPosition(position, ofDividerAt: 0)
 		}
+	}
+
+	/// What the panel looks like this instant, for the question above.
+	private var panelSnapState: PanelRowSnap.State {
+		PanelRowSnap.State(
+			isVisible: isPanelVisible,
+			isMaximized: isPanelMaximized,
+			total: verticalSplitView.bounds.height,
+			panelHeight: bottomPanel.frame.height,
+			remainder: bottomPanel.terminalHeightRemainder
+		)
 	}
 
 	func splitView(
