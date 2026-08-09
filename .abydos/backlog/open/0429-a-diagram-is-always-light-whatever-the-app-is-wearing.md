@@ -30,14 +30,25 @@ Two separate wants, and they are not the same:
   written, so this entry is a note to whoever does it rather than a measurement.
   0426 is where that work lives.
 
+## Decided
+
+**The file wins; the app's theme is the default.** A diagram that says `!theme`,
+sets `skinparam backgroundColor`, or names a Mermaid theme in its own front
+matter has been given a look on purpose, and recolouring it would overrule its
+author — who may have chosen those colours precisely because of where the
+picture ends up. A file that says nothing gets the app's theme, which is the
+common case and the one this entry exists for.
+
+Two things follow, and both are part of the work rather than afterthoughts.
+Deciding *whether* a file states a theme is a question each renderer has to
+answer about its own language, so it belongs beside that renderer and wants a
+test — a diagram that sets only a background colour still counts as having
+chosen. And when the file wins, that should be **visible** rather than
+mysterious: somebody whose diagram stays light in a dark window must be able to
+see that their own file asked for it, or they will report this bug again.
+
 ## What has to be decided
 
-- **Does an explicit choice in the file win?** A diagram that says `!theme` or
-  sets `skinparam backgroundColor` has been given a look on purpose. Following
-  the app anyway would overrule the author; ignoring the app leaves a white
-  rectangle. The likely answer is that the file wins and the app's theme is the
-  default for a file that says nothing — but it should be said out loud, and it
-  should be visible which happened.
 - **How the export asks.** `Export ▸ PNG ▸ Light / Dark` is three levels of
   menu; `Export ▸ PNG (Dark)` doubles the items; a setting makes it invisible at
   the moment of choosing. Whichever is chosen has to work from both places the
