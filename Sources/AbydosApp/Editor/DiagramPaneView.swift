@@ -251,13 +251,12 @@ class DiagramPaneView: NSView {
 	private func refreshExportMenu() {
 		let ready = fileURL != nil && isReadyToExport
 		// Only the export half is greyed by there being nothing drawn yet. The
-		// zoom items are about the pane rather than about the diagram, and a
-		// window whose zoom could not be reached because a render had not
-		// finished would be its own small bug.
+		// zoom items stay live: they are about the pane rather than about the
+		// diagram, and a diagram redraws on every pause in the typing — items
+		// that greyed for the second the render took would flicker all day, and
+		// a fit chosen while one was under way is honoured by the picture that
+		// arrives.
 		exportItem?.isEnabled = ready
-		for item in menu?.items ?? [] where item !== exportItem {
-			item.isEnabled = image != nil
-		}
 		if let mark = menu?.items.first(where: { $0.title == "Fit to Width" }) {
 			mark.state = fit == .width ? .on : .off
 		}
@@ -324,7 +323,9 @@ class DiagramPaneView: NSView {
 	/// photographed while it is open.
 	var menuTitlesForTesting: [String] {
 		refreshExportMenu()
-		return (menu?.items ?? []).flatMap { item -> [String] in
+		// Separators are not offers, and one listed as a disabled empty title is
+		// a line of noise in the middle of what the menu says.
+		return (menu?.items ?? []).filter { !$0.isSeparatorItem }.flatMap { item -> [String] in
 			let mark = item.isEnabled ? "" : " (disabled)"
 			let children = (item.submenu?.items ?? []).map { "\(item.title) ▸ \($0.title)" }
 			return ["\(item.title)\(mark)"] + children
