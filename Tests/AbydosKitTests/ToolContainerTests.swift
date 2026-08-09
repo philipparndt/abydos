@@ -4,15 +4,8 @@ import Testing
 
 /// Getting a tool from an image instead of from the machine.
 struct ToolContainerTests {
-	/// Apple's first, because it needs no daemon running before it will answer
-	/// — the difference between a feature that works and one that says "cannot
-	/// connect to the daemon".
-	@Test func prefersTheOneThatNeedsNoDaemon() {
-		let found = ContainerRuntime.discover(locate: { name in
-			["container": "/usr/local/bin/container", "docker": "/usr/bin/docker"][name]
-		})
-		#expect(found == .apple("/usr/local/bin/container"))
-	}
+	/// Which one is preferred is in `ContainerRuntimePreferenceTests`, with the
+	/// reversal that put docker first written out there.
 
 	/// Anything that speaks docker's command line will do, since all of them
 	/// take the three flags this needs.
@@ -128,15 +121,6 @@ struct ToolContainerTests {
 
 /// Which runtime, and which image — both asked rather than guessed.
 struct ToolChoiceTests {
-	/// Nothing said: Apple's first, since it needs no daemon running before it
-	/// will answer.
-	@Test func automaticPrefersTheOneWithNoDaemon() {
-		let found = ContainerRuntime.discover(preference: .automatic) { name in
-			["container": "/usr/local/bin/container", "docker": "/usr/bin/docker"][name]
-		}
-		#expect(found == .apple("/usr/local/bin/container"))
-	}
-
 	/// Somebody who says Docker gets Docker, even where Apple's is installed.
 	@Test func aStatedPreferenceIsHonoured() {
 		let both: (String) -> String? = { name in

@@ -495,6 +495,10 @@ final class LanguageService {
 		// Before anything is sent, including the handshake: from here on every
 		// path going out is the container's and every one coming back is ours.
 		client.containerPaths = resolved.launch.paths
+		// And what the container it runs in is called, so that stopping this
+		// server stops the container too rather than only the process in front
+		// of it.
+		client.containerLaunch = resolved.launch.container
 		client.onDiagnostics = { [weak self] uri, diagnostics in
 			guard let self else { return }
 			self.diagnostics[uri] = diagnostics

@@ -50,7 +50,31 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			// And take the tools with it. This is the exit that runs no
 			// `deinit` and no `applicationWillTerminate`, so it is the one that
 			// leaves containers running until somebody finds them by hand.
+			//
+			// Both, because they are two different things: the process is
+			// signalled, and the container is removed by name. Killing the
+			// `docker run` leaves the container up — `--rm` never fires — which
+			// is why ending the processes alone was not enough.
 			ToolProcesses.shared.terminateAll()
+			ToolContainers.shared.removeAll()
+		}
+	}
+
+	/// Removes the containers a previous run of this app left behind.
+	///
+	/// Only ours — everything this app starts is named `abydos-…` — and only
+	/// those whose starter is no longer running, so two copies of this app open
+	/// at once leave each other's alone.
+	private static func sweepContainersLeftBehind() {
+		DispatchQueue.global(qos: .utility).async {
+			guard let runtime = ContainerRuntime.discover(
+				preference: ContainerRuntime.Preference(rawValue: Settings.shared.containerRuntime)
+					?? .automatic
+			) else { return }
+			let removed = ToolContainers.shared.sweep(using: runtime)
+			guard !removed.isEmpty else { return }
+			print("Removed \(removed.count) container(s) left by an earlier run: "
+				+ removed.joined(separator: ", "))
 		}
 	}
 
@@ -84,6 +108,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		watch.windows = { [weak self] in self?.windowControllers ?? [] }
 		watch.start()
 		claudeWatch = watch
+
+		// What a previous run left running. An app that was killed outright
+		// removes nothing on the way out, so the next one to start does it: every
+		// container of ours carries the process id that started it, and one whose
+		// starter is gone is one nothing will ever come back for. Off the main
+		// thread, since it asks a runtime a question and a wedged runtime is
+		// precisely the situation this is clearing up after.
+		Self.sweepContainersLeftBehind()
 
 		// Watching for the main thread going away, from the start: a hitch
 		// while typing is over before it can be looked into, so the trail has
@@ -1307,7 +1339,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		// launchd rather than killed when its parent goes, and a container that
 		// keeps running holds whatever it was doing — enough of them and the
 		// runtime's own service stops answering, which is what happened here.
+		//
+		// The container is removed separately and by name, because ending the
+		// process that started it does nothing to it at all.
 		ToolProcesses.shared.terminateAll()
+		ToolContainers.shared.removeAll()
 	}
 
 	public func application(_ application: NSApplication, open urls: [URL]) {

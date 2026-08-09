@@ -29,6 +29,10 @@ final class PlantUMLPreviewView: NSView {
 	/// run of a container image fetches it.
 	private static let deadline: TimeInterval = 30
 
+	/// Whether the runtime's caveat has been said in this run of the app. Once
+	/// is the right number: it is the same sentence for every pane.
+	private static var saidCaveat = false
+
 	/// Whichever PlantUML this project can reach, looked up once per view: the
 	/// answer does not change while a window is open, and looking it up per
 	/// keystroke means walking the PATH per keystroke.
@@ -96,6 +100,16 @@ final class PlantUMLPreviewView: NSView {
 			return
 		}
 
+		// Once, and out loud, when the runtime is the one whose cleanup is not
+		// proven: a container that may be left behind is worth knowing about
+		// before eleven of them wedge the runtime, and it is not something the
+		// pane itself can say — a notice here is replaced by the picture a second
+		// later.
+		if case let .image(_, runtime) = tool, let caveat = runtime.caveat, !Self.saidCaveat {
+			Self.saidCaveat = true
+			Toast.post("Diagrams are being drawn by Apple's container", detail: caveat, kind: .warning)
+		}
+
 		// Only one at a time: a diagram that takes a second to draw would
 		// otherwise leave a JVM running for every keystroke that started one.
 		running?.terminate()
@@ -141,7 +155,18 @@ final class PlantUMLPreviewView: NSView {
 
 	/// Runs the tool over the diagram. The image it needs is already here.
 	private func draw(_ source: String, with tool: PlantUML.Tool) {
-		let run = PlantUML.invocation(for: tool)
+		// A name for the container, when there is a container. Killing the `run`
+		// process does not stop what it started — `--rm` only fires for a
+		// container that ends of its own accord — so the render has to be able to
+		// name the thing it wants removed. Registered before it is started and
+		// removed on every way out of here, including the deadline's.
+		var containerName: String?
+		if case let .image(_, runtime) = tool {
+			let name = ToolContainers.mint("plantuml")
+			ToolContainers.shared.register(name, runtime: runtime)
+			containerName = name
+		}
+		let run = PlantUML.invocation(for: tool, name: containerName)
 		let process = Process()
 		process.executableURL = URL(fileURLWithPath: run.executable)
 		process.arguments = run.arguments
@@ -160,6 +185,7 @@ final class PlantUMLPreviewView: NSView {
 		// a runtime that has stopped answering, not a diagram that is hard.
 		guard ToolProcesses.shared.adopt(process) else {
 			running = nil
+			if let containerName { ToolContainers.shared.releaseInBackground(containerName) }
 			spinner.stopAnimation(nil)
 			notice = ToolProcesses.tooManyMessage
 			needsDisplay = true
@@ -187,6 +213,11 @@ final class PlantUMLPreviewView: NSView {
 			DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
 				if process.isRunning { kill(process.processIdentifier, SIGKILL) }
 			}
+			// Neither signal touches the container, which was the whole of why
+			// this deadline never actually stopped anything: the process goes and
+			// the container carries on holding the runtime. It is removed by name
+			// instead, and that is the part that works.
+			if let containerName { ToolContainers.shared.releaseInBackground(containerName) }
 			guard let self, self.running === process else { return }
 			self.spinner.stopAnimation(nil)
 			self.running = nil
@@ -217,6 +248,11 @@ final class PlantUMLPreviewView: NSView {
 			}
 
 			ToolProcesses.shared.forget(process)
+			// `--rm` has usually taken it already, this being a container that
+			// ended by itself; the removal then fails with "no such container",
+			// which is the right state arriving by another route. What it costs
+			// is one command, off this thread, after the picture is in hand.
+			if let containerName { ToolContainers.shared.releaseInBackground(containerName) }
 			DispatchQueue.main.async {
 				guard let self else { return }
 				watchdog.cancel()
