@@ -1474,6 +1474,9 @@ final class EditorViewController: NSViewController {
 	/// The diagram a PlantUML file describes, kept current while it is edited.
 	private func makeDiagramView(for tab: Tab) -> NSView {
 		let view = PlantUMLPreviewView(projectRoot: project?.root)
+		// Which file this is a picture of: the pane's own menu writes the picture
+		// beside it, and a pane that did not know would have nowhere to write.
+		view.fileURL = tab.url
 		if let document = tab.document {
 			view.show(document.rope.string)
 
@@ -1486,6 +1489,22 @@ final class EditorViewController: NSViewController {
 			}
 		}
 		return view
+	}
+
+	/// The diagram pane the file in front is showing, when it is showing one.
+	///
+	/// Found rather than kept: the pane may be the tab's whole content or one
+	/// half of a split, and which of those it is changes with the preview mode.
+	var diagramPreview: PlantUMLPreviewView? {
+		activeTab.flatMap { Self.diagramPane(in: $0.contentView) }
+	}
+
+	private static func diagramPane(in view: NSView) -> PlantUMLPreviewView? {
+		if let pane = view as? PlantUMLPreviewView { return pane }
+		for subview in view.subviews {
+			if let found = diagramPane(in: subview) { return found }
+		}
+		return nil
 	}
 
 	private func renderPreview(into textView: NSTextView, tab: Tab) {

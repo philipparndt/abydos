@@ -417,6 +417,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		// After the preview has had a moment to draw: the pane's Export uses the
+		// text it drew, which is the whole point of exporting from the preview.
+		if let raw = options.exportDiagram {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+				controller?.exportDiagramForTesting(raw)
+			}
+		}
+
 		if let name = options.newFolder {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
 				controller?.createFolderForTesting(named: name)

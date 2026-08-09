@@ -392,6 +392,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		) { [weak self] _ in
 			self?.applySettings()
 		}
+
+		// A diagram exported as a picture: the tree shows where it went. The
+		// watcher will find the file by itself a moment later, so this is about
+		// pointing at it rather than about knowing it exists.
+		NotificationCenter.default.addObserver(
+			forName: .abydosDiagramExported,
+			object: nil,
+			queue: .main
+		) { [weak self] note in
+			guard let url = note.userInfo?["url"] as? URL else { return }
+			MainActor.assumeIsolated { self?.navigator.revealExported(url) }
+		}
 	}
 
 	required init?(coder: NSCoder) { fatalError("not used") }
@@ -3834,10 +3846,31 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		return "sent=\(sent) clipboard=\(onOneLine)"
 	}
 
+	/// Exports the diagram in front from its own preview pane, the way the
+	/// pane's menu does, and says what the menu offered on the way past.
+	func exportDiagramForTesting(_ raw: String) {
+		guard let format = PlantUML.Format(rawValue: raw.lowercased()) else {
+			print("EXPORT: no such format \(raw)")
+			return
+		}
+		guard let pane = editor.activeGroup?.diagramPreview else {
+			print("EXPORT: nothing showing a diagram")
+			return
+		}
+		print("EXPORT menu: \(pane.menuTitlesForTesting.joined(separator: " | "))")
+		pane.export(format) { written in
+			print("EXPORT: \(written.map(\.lastPathComponent).joined(separator: ", "))")
+		}
+	}
+
 	func treeStepsForTesting(_ steps: String) {
 		for step in steps.split(separator: ",") {
 			switch step {
 			case "focus": navigator.focusTree()
+			// What a right-click over the selection offers, submenus included.
+			case "menu":
+				print("TREE menu: \(navigator.contextMenuTitlesForTesting().joined(separator: " | "))")
+				continue
 			case "down": navigator.pressKeyForTesting(125)
 			case "up": navigator.pressKeyForTesting(126)
 			case "right": navigator.pressKeyForTesting(124)
@@ -3861,6 +3894,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				navigator.beginRename()
 				print("TREE rename-begin: \(navigator.renameFieldReportForTesting)")
 			default:
+				// `export:png`, the file's own context-menu action on whatever the
+				// tree has selected.
+				if step.hasPrefix("export:") {
+					let raw = String(step.dropFirst("export:".count))
+					guard let format = PlantUML.Format(rawValue: raw.lowercased()) else { continue }
+					navigator.exportSelectionForTesting(format)
+					continue
+				}
 				// `rename:new-name.swift`, which is the whole gesture: the field
 				// appears on the row, takes the name, and commits it.
 				guard step.hasPrefix("rename:") else { continue }

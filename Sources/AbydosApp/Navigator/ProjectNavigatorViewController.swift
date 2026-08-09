@@ -248,6 +248,8 @@ final class ProjectNavigatorViewController: NSViewController {
 
 	/// The submenu under "New", filled in as it is about to be shown.
 	private var newMenu: NSMenu?
+	/// The submenu under "Export", which is only ever shown over a diagram.
+	private var exportMenu: NSMenu?
 	/// The kinds this project is made of, counted once and kept.
 	///
 	/// Counted lazily and not at open: walking a project to fill in a menu
@@ -345,7 +347,12 @@ final class ProjectNavigatorViewController: NSViewController {
 		let selected = selectedPaths()
 		outlineView.reloadData()
 		restore(expandedPaths: expanded)
-		restoreSelection(paths: selected)
+		// Or lands on the file somebody is waiting for. This is the path a
+		// written file actually arrives by — the watcher re-reads the one
+		// directory rather than the whole tree — and it used to put the old
+		// selection back regardless, so `pendingReveal` was only honoured when
+		// something else happened to reload everything.
+		restoreSelectionOrReveal(paths: selected)
 		// The status was already asked for above, for every change rather than
 		// only the ones that landed here; rows that have just appeared are
 		// covered by the same read.
@@ -399,13 +406,19 @@ final class ProjectNavigatorViewController: NSViewController {
 		outlineView.reloadData()
 		restore(expandedPaths: expanded)
 
-		if let pending = pendingReveal, rootNode.node(for: pending) != nil {
+		restoreSelectionOrReveal(paths: selected)
+		refreshGitStatus()
+	}
+
+	/// Puts the selection back where it was — or on a file that has just been
+	/// written, when the tree has caught up with it.
+	private func restoreSelectionOrReveal(paths: [String]) {
+		if let pending = pendingReveal, rootNode?.node(for: pending) != nil {
 			pendingReveal = nil
 			selectWithoutOpening(url: pending)
-		} else {
-			restoreSelection(paths: selected)
+			return
 		}
-		refreshGitStatus()
+		restoreSelection(paths: paths)
 	}
 
 	/// Every selected path, in tree order.
@@ -526,6 +539,18 @@ final class ProjectNavigatorViewController: NSViewController {
 		menu.addItem(.separator())
 		menu.addItem(item("Add to .gitignore\u{2026}", #selector(contextIgnore)))
 		menu.addItem(item("Copy Relative Path", #selector(contextCopyRelativePath)))
+		// Only ever shown over a diagram, so it costs nothing to be here for
+		// every other file: `menuNeedsUpdate` hides it.
+		let export = NSMenuItem(title: "Export", action: nil, keyEquivalent: "")
+		let formats = NSMenu()
+		for format in PlantUML.Format.allCases {
+			let entry = item(format.rawValue.uppercased(), #selector(contextExport(_:)))
+			entry.representedObject = format.rawValue
+			formats.addItem(entry)
+		}
+		export.submenu = formats
+		exportMenu = formats
+		menu.addItem(export)
 		menu.addItem(.separator())
 		menu.addItem(item("Rename…", #selector(contextRename)))
 		menu.addItem(item("Move to Trash", #selector(contextTrash)))
@@ -1107,6 +1132,66 @@ final class ProjectNavigatorViewController: NSViewController {
 		endRename()
 	}
 
+	/// Writes the diagram out as a picture beside itself.
+	///
+	/// One file, like Rename and unlike Move to Trash. Four diagrams exported at
+	/// once is four separate answers — this one overwrote a previous export,
+	/// that one refused because something else already had the name, the third
+	/// has a syntax error on line 12 — and there is nowhere to say four things
+	/// that anybody would read. The menu greys itself over a multiple selection
+	/// rather than doing three of the four and reporting the fourth.
+	///
+	/// From disk rather than from the editor's buffer, because the tree is about
+	/// files: the pane's own Export is the one that draws unsaved edits, and it
+	/// is the one that is looking at them.
+	@objc private func contextExport(_ sender: NSMenuItem) {
+		guard let node = contextNode, !node.isDirectory,
+		      let raw = sender.representedObject as? String,
+		      let format = PlantUML.Format(rawValue: raw)
+		else { return }
+		DiagramExportCommand.run(url: node.url, format: format, projectRoot: project?.root)
+	}
+
+	/// The same gesture without the menu, for verifying it end to end.
+	func exportSelectionForTesting(_ format: PlantUML.Format) {
+		guard let node = contextNode, !node.isDirectory, PlantUML.isDiagram(node.url) else {
+			print("EXPORT: nothing to export")
+			return
+		}
+		DiagramExportCommand.run(url: node.url, format: format, projectRoot: project?.root) { written in
+			print("EXPORT: \(written.map(\.lastPathComponent).joined(separator: ", "))")
+		}
+	}
+
+	/// What a right-click offers over whatever is selected, with the submenus
+	/// spelled out: a menu cannot be photographed while it is open.
+	func contextMenuTitlesForTesting() -> [String] {
+		guard let menu = outlineView.menu else { return [] }
+		menuNeedsUpdate(menu)
+		return menu.items.flatMap { item -> [String] in
+			guard !item.isHidden else { return [] }
+			func mark(_ entry: NSMenuItem) -> String { entry.isEnabled ? "" : " (disabled)" }
+			let children = (item.submenu?.items ?? []).map {
+				"\(item.title) ▸ \($0.title)\(mark($0))"
+			}
+			return ["\(item.title)\(mark(item))"] + children
+		}
+	}
+
+	/// Selects a picture that has just been written, once the tree has it.
+	///
+	/// Selected and not opened: an export happens while somebody is working on
+	/// the diagram, and a PNG tab taking the front of the editor would be the
+	/// export stealing their place. The file being shown to have arrived, in the
+	/// folder they expected, is the whole of what is wanted.
+	func revealExported(_ url: URL) {
+		if rootNode?.node(for: url) != nil {
+			selectWithoutOpening(url: url)
+		} else {
+			pendingReveal = url
+		}
+	}
+
 	@objc private func contextRename() {
 		// The same gesture from the menu, so there is one way it works.
 		let row = contextNode.map { outlineView.row(forItem: $0) } ?? -1
@@ -1372,7 +1457,8 @@ extension ProjectNavigatorViewController: NSTextFieldDelegate {
 	}
 }
 
-extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineViewDelegate, NSMenuDelegate {
+extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineViewDelegate,
+	NSMenuDelegate, NSMenuItemValidation {
 	func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
 		guard let item else { return rootNode == nil ? 0 : 1 }
 		guard let node = item as? FileNode, node.isDirectory else { return 0 }
@@ -1479,6 +1565,30 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 		let isRoot = node === rootNode
 
 		for item in menu.items {
+			// The two items that are only a submenu, before anything looks at an
+			// action — because an item with a submenu does not have the action it
+			// was made with. AppKit replaces it with its own `submenuAction:` the
+			// moment the submenu is attached, so `case nil where item.submenu ===`
+			// never matched and "New" has been quietly following the rule meant
+			// for everything else: greyed over four rows, though a new file has
+			// one place to go however many are selected.
+			if item.submenu === exportMenu {
+				// Hidden unless a diagram was clicked — it means nothing over a
+				// Swift file — and greyed when several rows were, for the same
+				// reason Rename is: one file, one answer.
+				item.isHidden = !nodes.contains { !$0.isDirectory && PlantUML.isDiagram($0.url) }
+				let single = node.map { !$0.isDirectory && PlantUML.isDiagram($0.url) } ?? false
+				item.isEnabled = single
+				for format in item.submenu?.items ?? [] { format.isEnabled = single }
+				continue
+			}
+			if item.submenu === newMenu {
+				// A new file has one place to go whatever is selected: beside the
+				// topmost row, or in the project root when nothing is.
+				item.isEnabled = rootNode != nil
+				continue
+			}
+
 			switch item.action {
 			case #selector(contextOpenExternally):
 				item.isHidden = node?.isDirectory ?? true
@@ -1506,15 +1616,19 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 				item.isEnabled = rootNode != nil
 			case #selector(contextSelectOpenFile):
 				item.isEnabled = currentEditorFile?() != nil
-			case nil where item.submenu === newMenu:
-				// A new file has one place to go whatever is selected: beside the
-				// topmost row, or in the project root when nothing is.
-				item.isEnabled = rootNode != nil
 			default:
 				item.isEnabled = node != nil
 			}
 		}
 	}
+
+	/// Keeps what `menuNeedsUpdate` decided.
+	///
+	/// Without this, AppKit's automatic enabling runs after the delegate and
+	/// switches every item back on merely because this object answers to its
+	/// action — which is exactly what "Rename… is off for four rows" is not
+	/// about. The rule lives in one place; this stops the frame overruling it.
+	func validateMenuItem(_ item: NSMenuItem) -> Bool { item.isEnabled }
 
 	/// Lets the outline view's built-in type-select find rows. Without this the
 	/// custom cells expose no string and typing does nothing.
