@@ -1880,8 +1880,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		// same gesture: a shell for this project. Which machine it is on is what
 		// the title says. Greyed out for a project with no devcontainer.json,
 		// which is most of them.
+		//
+		// This is the title it has before a window has been asked: validation
+		// renames it after the container it would open, since a repository of
+		// subprojects has one each.
 		let containerTerminalItem = NSMenuItem(
-			title: "New Terminal in Container",
+			title: MainWindowController.containerTerminalTitle,
 			action: #selector(MainWindowController.newTerminalInContainer(_:)),
 			keyEquivalent: ""
 		)
