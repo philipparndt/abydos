@@ -12,10 +12,15 @@ import AppKit
 /// Rendering runs off the main thread and is debounced, because it means
 /// starting a JVM: a diagram redrawn on every keystroke would start one every
 /// keystroke, and the editor would be typing through treacle.
+///
+/// What comes back is a drawing rather than a picture — `PlantUML.previewFormat`
+/// — and that is what makes it sharp: a PNG is sized in points, so on a Retina
+/// screen every pixel of it is stretched over two.
 final class PlantUMLPreviewView: NSView {
 	/// The picture, or nil while there is none to show.
 	private var image: NSImage?
-	private var pixelSize: CGSize = .zero
+	/// Its own size in points, which for a drawing is the only size it has.
+	private var naturalSize: CGSize = .zero
 	/// What to say instead of a picture: no PlantUML, or nothing drawn yet.
 	private var notice: String?
 
@@ -24,6 +29,8 @@ final class PlantUMLPreviewView: NSView {
 	private var pending: DispatchWorkItem?
 	/// What was last drawn, so an unchanged document is not drawn again.
 	private var lastSource: String?
+	/// The zoom being watched, so the pane can stop watching when it goes.
+	private var watchingSettings: NSObjectProtocol?
 
 	/// How long to wait for a picture before saying so. Long, because the first
 	/// run of a container image fetches it.
@@ -65,6 +72,16 @@ final class PlantUMLPreviewView: NSView {
 		])
 
 		if tool == nil { notice = PlantUML.installHint }
+
+		// The zoom, which this pane follows like every other. A diagram sits
+		// inside a split rather than being a tab's own view, so the walk that
+		// visits a tab's page on ⌘+ does not reach one — it listens for itself
+		// instead, and there is nothing to redo but the drawing.
+		watchingSettings = NotificationCenter.default.addObserver(
+			forName: .abydosSettingsChanged, object: nil, queue: .main
+		) { [weak self] _ in
+			MainActor.assumeIsolated { self?.needsDisplay = true }
+		}
 	}
 
 	required init?(coder: NSCoder) { fatalError("not used") }
@@ -72,6 +89,9 @@ final class PlantUMLPreviewView: NSView {
 	deinit {
 		pending?.cancel()
 		running?.terminate()
+		// A block observer is not removed by handing the centre `self`, and a
+		// pane is made and thrown away with every tab — so the token is kept.
+		if let watchingSettings { NotificationCenter.default.removeObserver(watchingSettings) }
 	}
 
 	/// Draws this diagram, after a pause in the typing.
@@ -155,7 +175,8 @@ final class PlantUMLPreviewView: NSView {
 				// answer to all of those is the render this app has always done,
 				// which works and is only slow.
 				if let drawn = await PlantUMLServers.shared.render(
-					source, image: container.image, using: runtime
+					source, image: container.image, using: runtime,
+					format: PlantUML.previewFormat
 				) {
 					await MainActor.run {
 						guard let self, self.lastSource == source else { return }
@@ -189,7 +210,11 @@ final class PlantUMLPreviewView: NSView {
 			ToolContainers.shared.register(name, runtime: runtime)
 			containerName = name
 		}
-		let run = PlantUML.invocation(for: tool, name: containerName)
+		// The same format the warm server is asked for. Two ways of drawing the
+		// same diagram that disagreed about it would make sharpness depend on
+		// which one answered, which is the kind of fault that reads as
+		// intermittent.
+		let run = PlantUML.invocation(for: tool, format: PlantUML.previewFormat, name: containerName)
 		let process = Process()
 		process.executableURL = URL(fileURLWithPath: run.executable)
 		process.arguments = run.arguments
@@ -292,7 +317,11 @@ final class PlantUMLPreviewView: NSView {
 		// wrong — which is more useful in the pane than any message here.
 		if PlantUML.isPicture(drawn), let picture = NSImage(data: drawn) {
 			image = picture
-			pixelSize = picture.representations.first.map {
+			// A bitmap knows how many pixels it has; a drawing has none, and its
+			// size in points is the only size it has. Asking the wrong one of
+			// the two for pixels gives zero, and a picture drawn in a box of
+			// nothing is a pane that stays empty.
+			naturalSize = picture.representations.first(where: { $0.pixelsWide > 0 }).map {
 				CGSize(width: $0.pixelsWide, height: $0.pixelsHigh)
 			} ?? picture.size
 			notice = nil
@@ -327,11 +356,23 @@ final class PlantUMLPreviewView: NSView {
 		dirtyRect.fill()
 
 		if let image {
+			let pane = CGSize(width: max(0, bounds.width - 32), height: max(0, bounds.height - 32))
+			// Following ⌘+ like the rest of the window, up to what the pane can
+			// hold. A drawing can be asked for any size and still be sharp, which
+			// is what makes this worth doing at all.
 			let box = ImageFit.rect(
-				image: pixelSize,
-				in: CGSize(width: max(0, bounds.width - 32), height: max(0, bounds.height - 32))
+				image: naturalSize, in: pane,
+				scale: ImageFit.fitScale(image: naturalSize, in: pane, zoom: Theme.current.scale)
 			).offsetBy(dx: 16, dy: 16)
 			guard box.width > 0, box.height > 0 else { return }
+			// The paper the diagram is drawn on. PlantUML's default background
+			// is white, and in a drawing it is a CSS property on the root
+			// element rather than anything painted — so nothing paints it, and
+			// black lines on a dark editor background are all but invisible. A
+			// diagram that sets a background of its own emits a rectangle for it
+			// and covers this.
+			NSColor.white.setFill()
+			box.fill()
 			image.draw(in: box, from: .zero, operation: .sourceOver, fraction: 1)
 			return
 		}

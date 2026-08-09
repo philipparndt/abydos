@@ -65,6 +65,29 @@ struct ImagePreviewTests {
 		#expect(box.size == CGSize(width: 2000, height: 1000))
 	}
 
+	/// A drawing follows the window's zoom, as far as the pane allows.
+	///
+	/// At 1× the answer is the old one exactly, so a window nobody has zoomed
+	/// looks the way it always did.
+	@Test func followsTheZoomWhileThereIsRoom() {
+		let small = CGSize(width: 200, height: 100)
+		let pane = CGSize(width: 800, height: 600)
+		#expect(ImageFit.fitScale(image: small, in: pane, zoom: 1) == 1)
+		#expect(ImageFit.fitScale(image: small, in: pane, zoom: 2) == 2)
+		// Four times over is exactly the width of the pane; past that it is as
+		// large as the pane can hold and no larger.
+		#expect(ImageFit.fitScale(image: small, in: pane, zoom: 4) == 4)
+		#expect(ImageFit.fitScale(image: small, in: pane, zoom: 8) == 4)
+
+		// Larger than the pane already: zooming cannot make it larger than the
+		// room there is, which is what the un-zoomed rule said too.
+		let large = CGSize(width: 2000, height: 1000)
+		#expect(ImageFit.fitScale(image: large, in: CGSize(width: 500, height: 500), zoom: 1) == 0.25)
+		#expect(ImageFit.fitScale(image: large, in: CGSize(width: 500, height: 500), zoom: 3) == 0.25)
+
+		#expect(ImageFit.fitScale(image: .zero, in: pane, zoom: 2) == 1)
+	}
+
 	/// The caption says what the file holds, and how much of it is showing when
 	/// that is not all of it.
 	@Test func saysWhatItIsShowing() {

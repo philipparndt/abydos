@@ -25,6 +25,25 @@ public enum PlantUML {
 		var flag: String { "-t\(rawValue)" }
 	}
 
+	/// What a preview asks for, whichever way the diagram is drawn.
+	///
+	/// SVG, for the resolution. PlantUML sizes a PNG in points — a diagram that
+	/// comes back 834 pixels wide reports itself as 834 points wide — and a
+	/// screen with a backing scale factor of 2 draws those 834 points across
+	/// 1668 pixels, so every pixel of the picture is stretched over two of the
+	/// screen's. That is the whole of why previews looked soft, and it is the
+	/// same fault the terminal fixed by reporting a cell in pixels rather than
+	/// in points. A drawing has no resolution to be wrong about: it is
+	/// rasterised at whatever the screen can draw, so it is sharp on a Retina
+	/// display and stays sharp through the app's own ⌘+ as well, which asking
+	/// for twice the pixels would not.
+	///
+	/// One constant rather than a default at each call, because there are two
+	/// ways a diagram is drawn — the kept-warm server and `docker run … -pipe`
+	/// behind it — and a picture whose sharpness depended on which of them
+	/// happened to answer would read as an intermittent fault.
+	public static let previewFormat: Format = .svg
+
 	/// A PlantUML that is actually present.
 	public enum Tool: Equatable, Sendable {
 		/// The `plantuml` command, at this path.
