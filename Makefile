@@ -6,6 +6,20 @@ APP     := build/Abydos.app
 BINARY  := $(APP)/Contents/MacOS/Abydos
 CONFIG  ?= release
 
+# The verbs somebody types while working build debug; the ones that produce
+# something to keep build release.
+#
+# Measured, after touching one file: 98 seconds optimised against 9.2 not, and
+# `run` and `open` were paying it every time somebody wanted to look at the
+# app. `build` and `install` keep release, because what they make is a thing to
+# use rather than a thing to try — an unoptimised Metal renderer and terminal
+# emulator are slower to *use*, not merely slower to start.
+#
+# `$(origin CONFIG)` rather than a plain default so that saying it out loud
+# still works: `make run CONFIG=release` builds release, and only an unsaid
+# CONFIG becomes debug here.
+DEV_CONFIG = $(if $(filter command line,$(origin CONFIG)),$(CONFIG),debug)
+
 # Xcode's Swift, not whichever one is first on the PATH.
 #
 # A toolchain manager such as swiftly puts its own `swift` in front, and that
@@ -28,19 +42,21 @@ build: devpod-chart ## Build the .app bundle (CONFIG=debug|release, BUNDLE_ID=..
 	@BUNDLE_ID="$(BUNDLE_ID)" Scripts/bundle.sh $(CONFIG)
 
 .PHONY: run
-run: build ## Build and launch the app
+run: ## Build and launch the app (debug; CONFIG=release to override)
+	@$(MAKE) build CONFIG=$(DEV_CONFIG)
 	@echo "==> Launching $(APP)"
 	@open $(APP)
 
 .PHONY: dev
 dev: ## Build debug and run in the foreground, with logs on the terminal
-	@$(MAKE) build CONFIG=debug
+	@$(MAKE) build CONFIG=$(DEV_CONFIG)
 	@echo "==> Running $(BINARY) (ctrl-c to stop)"
 	@$(BINARY)
 
 .PHONY: open
-open: build ## Build and open a specific project: make open PROJECT=~/dev/foo
+open: ## Build and open a project (debug; CONFIG=release to override): make open PROJECT=~/dev/foo
 	@test -n "$(PROJECT)" || { echo "usage: make open PROJECT=<dir>"; exit 1; }
+	@$(MAKE) build CONFIG=$(DEV_CONFIG)
 	@open -a $(abspath $(APP)) $(PROJECT)
 
 # No test run may go on for ever. The suite is a couple of minutes on a cold

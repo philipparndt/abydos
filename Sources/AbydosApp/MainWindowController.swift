@@ -3631,6 +3631,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				continue
 			case "collapse": navigator.collapseAll()
 			case "locate": navigator.selectFileInEditor()
+			// The field on the row, left standing: where its text sits and how
+			// far it reaches are the whole of what is wrong with it, and
+			// `rename:` commits too quickly to photograph.
+			case "rename-begin":
+				navigator.beginRename()
+				print("TREE rename-begin: \(navigator.renameFieldReportForTesting)")
 			default:
 				// `rename:new-name.swift`, which is the whole gesture: the field
 				// appears on the row, takes the name, and commits it.

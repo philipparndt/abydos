@@ -329,6 +329,7 @@ final class ProjectNavigatorViewController: NSViewController {
 		fileKinds = nil
 
 		guard let rootNode else { return }
+		guard !holdRebuildForRename() else { return }
 
 		// Only re-read directories the user has actually expanded.
 		var touched = false
@@ -391,6 +392,7 @@ final class ProjectNavigatorViewController: NSViewController {
 
 	private func reloadTreeMarked() {
 		guard let rootNode else { return }
+		guard !holdRebuildForRename() else { return }
 		let expanded = expandedPaths()
 		let selected = selectedPaths()
 		rootNode.reloadPreservingIdentity()
@@ -916,23 +918,42 @@ final class ProjectNavigatorViewController: NSViewController {
 		// Over the label, not the whole row: the icon stays, so the row still
 		// says what kind of thing is being renamed.
 		let cell = outlineView.frameOfCell(atColumn: 0, row: index)
-		let inset = Theme.current.scaled(22)
+		// Where `NavigatorCellView` puts the name: the icon's width and the two
+		// gaps around it. Taken from the same numbers rather than guessed at, so
+		// the name does not move sideways as the field appears over it.
+		let inset = Theme.current.scaled(2) + Theme.current.scaled(16) + Theme.current.scaled(6)
+		let trailing = Theme.current.scaled(8)
 
 		let field = NSTextField(frame: .zero)
-		field.font = Theme.current.uiFont(12)
-		// As tall as the text it holds, centred in the row rather than filling
-		// it. A field given the row's whole height draws its text against the
-		// top, which puts the name a few points above where it was a moment ago
-		// — and the taller the row, the further it jumps.
-		let height = min(cell.height - 2, ceil(field.fittingSize.height))
+		// A cell that centres its text, for editing as well as drawing. A plain
+		// one puts the text against the top of whatever height it is given, which
+		// is what made the name jump up as the field appeared — and jump further
+		// the taller the row, so it looked worst at a large zoom.
+		let centred = CentredFieldCell(textCell: "")
+		centred.isEditable = true
+		centred.isSelectable = true
+		centred.usesSingleLineMode = true
+		centred.wraps = false
+		// Scrolls inside itself rather than clipping, so a name longer than the
+		// pane can still be read and edited to its end without the pane being
+		// dragged wider first.
+		centred.isScrollable = true
+		field.cell = centred
+		// The row's own font. At 12 against the label's 13 the name visibly
+		// shrank the moment editing began.
+		field.font = Theme.current.uiFont(13)
+		// The row's height, less a hair so the border does not touch the rows
+		// above and below. The text inside is centred by the cell.
+		let height = max(1, cell.height - Theme.current.scaled(2))
+		// Stops where the pane does, not where the widest name does: the outline
+		// is as wide as its longest row, so measuring against that put the right
+		// edge of the field beyond the edge of the view, and the pane had to be
+		// dragged wider than the filename before the whole field could be seen.
+		let rightEdge = min(outlineView.rect(ofRow: index).maxX, outlineView.visibleRect.maxX)
 		field.frame = NSRect(
 			x: cell.minX + inset,
 			y: (cell.minY + (cell.height - height) / 2).rounded(),
-			// To the row's right edge, not the cell's: the column is only as
-			// wide as its widest name, and a field that stopped there could not
-			// be typed a longer name into.
-			width: max(60, outlineView.rect(ofRow: index).maxX - cell.minX - inset
-				- Theme.current.scaled(8)),
+			width: max(60, rightEdge - cell.minX - inset - trailing),
 			height: height
 		)
 		field.stringValue = node.name
@@ -978,11 +999,49 @@ final class ProjectNavigatorViewController: NSViewController {
 	}
 
 	/// Takes the field away, whether the name was changed or not.
+	/// Where the field is and what it is drawing with, for the harness.
+	///
+	/// The three things that were wrong with it were all geometry — the text's
+	/// size, where it sat in the row, and where it stopped — so they are worth
+	/// being able to read as numbers rather than only off a photograph.
+	var renameFieldReportForTesting: String {
+		guard let field = renameField else { return "no field" }
+		let row = outlineView.rect(ofRow: outlineView.selectedRow)
+		return "frame=\(field.frame) row=\(row) visible=\(outlineView.visibleRect) "
+			+ "font=\(field.font?.pointSize ?? 0)"
+	}
+
+	/// A rebuild that arrived while a name was being edited.
+	///
+	/// The tree rebuilds on every filesystem event, and `reloadData()` lays
+	/// fresh row views over the field standing on the row — which does not
+	/// remove it, so the box vanished while still taking the keystrokes being
+	/// typed into it. Worse than it sounds: the app writes `.abydos/session.json`
+	/// itself, so renaming anything beside it raced against the app's own event
+	/// and the field survived or disappeared depending on the timing.
+	///
+	/// Renaming is short and deliberate, so the rebuild waits for it. Rebuilding
+	/// under an open field would move the row out from under it anyway.
+	private var deferredRebuild = false
+
+	/// True when a rebuild must not happen yet, and remembers that one is owed.
+	private func holdRebuildForRename() -> Bool {
+		guard renameField != nil else { return false }
+		deferredRebuild = true
+		return true
+	}
+
 	private func endRename() {
 		renameField?.removeFromSuperview()
 		renameField = nil
 		renaming = nil
 		outlineView.window?.makeFirstResponder(outlineView)
+		// Whatever changed on disk while the field was up, caught up with now
+		// rather than at the next event — which may be a long time coming.
+		if deferredRebuild {
+			deferredRebuild = false
+			reloadTree()
+		}
 	}
 
 	/// Renames the file, or says why it cannot be renamed.
@@ -1637,6 +1696,49 @@ private final class NavigatorRowView: NSTableRowView {
 	var isTreeFocused: Bool {
 		guard let window, let responder = window.firstResponder as? NSView else { return false }
 		return responder === superview || responder.isDescendant(of: superview ?? self)
+	}
+}
+
+/// A text field cell whose text sits in the middle of its box.
+///
+/// `NSTextFieldCell` draws its text at the top of whatever height it is given
+/// and offers no way to say otherwise, which is why every list that edits a
+/// name in place ends up with one of these. The three overrides are the three
+/// rects it uses: one to draw through, and two for the field editor, which is a
+/// separate view laid into the cell and would otherwise stay at the top while
+/// the drawn text moved.
+private final class CentredFieldCell: NSTextFieldCell {
+	private func centred(_ rect: NSRect) -> NSRect {
+		let height = cellSize(forBounds: rect).height
+		guard rect.height > height else { return rect }
+		var centred = rect
+		centred.origin.y += ((rect.height - height) / 2).rounded()
+		centred.size.height = height
+		return centred
+	}
+
+	override func drawingRect(forBounds rect: NSRect) -> NSRect {
+		super.drawingRect(forBounds: centred(rect))
+	}
+
+	override func edit(
+		withFrame rect: NSRect, in controlView: NSView,
+		editor: NSText, delegate: Any?, event: NSEvent?
+	) {
+		super.edit(
+			withFrame: centred(rect), in: controlView,
+			editor: editor, delegate: delegate, event: event
+		)
+	}
+
+	override func select(
+		withFrame rect: NSRect, in controlView: NSView,
+		editor: NSText, delegate: Any?, start: Int, length: Int
+	) {
+		super.select(
+			withFrame: centred(rect), in: controlView,
+			editor: editor, delegate: delegate, start: start, length: length
+		)
 	}
 }
 
