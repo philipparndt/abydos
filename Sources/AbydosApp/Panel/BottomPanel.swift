@@ -85,6 +85,10 @@ final class BottomPanel: NSView {
 		/// goal, `go test`. Nil for a plain terminal, which is not the console
 		/// of anything and belongs to whoever opened it.
 		var runKey: String?
+		/// Told when this tab is closed, for a pane that something outside is
+		/// still writing into — a devcontainer being pulled and built has a
+		/// minutes-long head start on somebody changing their mind.
+		var onClosed: (() -> Void)?
 
 		init(title: String, kind: Kind) {
 			self.title = title
@@ -1450,19 +1454,34 @@ final class BottomPanel: NSView {
 	}
 
 	/// A shell that is not this machine's — one inside the project's
-	/// devcontainer.
+	/// devcontainer — opened before there is anything to run in it.
 	///
 	/// A terminal tab rather than a run console: it is a shell somebody types
 	/// in, not the output of something that was run. The title says which it is,
 	/// because a tab that looks like every other tab and is somewhere else
 	/// entirely is how somebody ends up building in the wrong place.
-	@discardableResult
-	func newTerminal(
-		title: String, running command: (executable: String, arguments: [String])
-	) -> TerminalPane? {
-		newTerminal(
-			rootedAt: workingDirectory, title: title, command: command, joinsSession: false
-		)
+	///
+	/// It is handed back before the shell exists because getting the container
+	/// ready is a pull, a build and everything the file asks to have run once —
+	/// minutes, the first time. The pane shows all of that and then becomes the
+	/// shell itself; see `PreparingTerminal`, where the reason for it being one
+	/// pane rather than two is written down.
+	func newPreparingTerminal(title: String, subject: String) -> PreparingTerminal {
+		// Output only, so nothing can be typed at a shell that does not exist
+		// yet, and no login shell starts behind what is being written.
+		let pane = TerminalPane(readOnly: ())
+		let session = Session(title: title, kind: .terminal(pane))
+		session.directory = workingDirectory
+		wire(session)
+
+		session.column = focusedColumn
+		sessions.append(session)
+		activate(session, focus: false)
+		onTerminalsChanged?()
+
+		let preparing = PreparingTerminal(pane: pane, subject: subject)
+		session.onClosed = { [weak preparing] in preparing?.paneWasClosed() }
+		return preparing
 	}
 
 	@discardableResult
@@ -2481,6 +2500,7 @@ final class BottomPanel: NSView {
 		case let .profiler(pane): pane.shutdown()
 		default: session.terminal?.terminalView.terminateProcess()
 		}
+		session.onClosed?()
 		session.view.removeFromSuperview()
 		sessions.remove(at: index)
 		for (column, showing) in activeByColumn where showing === session {
@@ -2530,6 +2550,12 @@ final class BottomPanel: NSView {
 	/// runs.
 	var tabStripForTesting: PanelTabStrip? {
 		columnViews.indices.contains(focusedColumn) ? columnViews[focusedColumn].strip : columnViews.first?.strip
+	}
+
+	/// Whether the pane in front is still showing what is being got ready rather
+	/// than being a shell somebody can type at.
+	var activeTerminalShowsOutputOnly: Bool {
+		activeSession?.terminal?.showsOutputOnly ?? false
 	}
 
 	/// Clicks a tab, for the capture harness.

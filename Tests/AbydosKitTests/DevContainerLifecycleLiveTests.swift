@@ -204,8 +204,14 @@ import Testing
 		else { return }
 
 		let said = Announced()
+		let printed = Announced()
 		let outcome = await DevContainers.shared.session(
-			for: project, using: runtime, progress: { said.record($0) }
+			for: project,
+			using: runtime,
+			progress: DevContainers.Progress(
+				step: { said.record($0) },
+				output: { printed.record($0) }
+			)
 		)
 		guard case let .running(session)? = outcome else {
 			Issue.record("the example did not come up: \(String(describing: outcome))")
@@ -218,6 +224,15 @@ import Testing
 		// pull does.
 		#expect(said.all.contains { $0.contains("postCreateCommand") })
 		#expect(said.all.contains { $0.contains("post-create.sh") })
+
+		// And what it printed while it printed it, which is the other half: the
+		// steps are the outline, and the command counting to ten is the evidence
+		// that it is getting on with it. A terminal opened on this container
+		// shows both, in the pane the shell then appears in.
+		let output = printed.all.joined()
+		#expect(output.contains("post-create: step 1 of 10"))
+		#expect(output.contains("post-create: step 10 of 10"))
+		#expect(printed.all.count > 1, "the command's output arrived in one lump at the end")
 
 		// And the thing itself: a tool the image does not carry, in the
 		// container, because the file said to put it there.

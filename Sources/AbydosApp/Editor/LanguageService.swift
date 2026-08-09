@@ -610,12 +610,18 @@ final class LanguageService {
 			let outcome = await DevContainers.shared.session(
 				for: project,
 				using: runtime,
-				progress: { message in
+				progress: DevContainers.Progress(step: { message in
 					// A pull and a postCreateCommand are both minutes, and a
 					// minute with nothing on screen is a feature that looks
 					// broken.
+					//
+					// The steps and not the output: a language server starting is
+					// not something somebody asked to watch, and there is no pane
+					// of its own to put ten minutes of `npm ci` in. A terminal
+					// opened in the same container while this is going on gets
+					// both, because it joins this very start.
 					Task { @MainActor in Toast.post(message, kind: .information) }
-				}
+				})
 			)
 			devcontainerStarting.remove(path)
 			switch outcome {

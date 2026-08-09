@@ -37,10 +37,17 @@ enum RuntimeCommand {
 	/// - Parameter directory: where to run it, for the one command that is not a
 	///   question to a runtime — a `initializeCommand` runs on this machine, in
 	///   the checkout, the way the person who wrote it would have run it.
+	/// - Parameter onOutput: what it printed, as it prints it, for the commands
+	///   somebody is watching. Most of what goes through here answers in
+	///   milliseconds and its output is only worth reading at the end; a pull, a
+	///   build and a `postCreateCommand` are minutes, and those are the three
+	///   this is for. Called on the reading threads, so a caller that puts it on
+	///   screen has to get itself back to the main one.
 	static func run(
 		_ command: (executable: String, arguments: [String]),
 		deadline: TimeInterval,
-		directory: URL? = nil
+		directory: URL? = nil,
+		onOutput: (@Sendable (String) -> Void)? = nil
 	) -> Result {
 		let process = Process()
 		process.executableURL = URL(fileURLWithPath: command.executable)
@@ -79,7 +86,7 @@ enum RuntimeCommand {
 		}
 		DispatchQueue.global().asyncAfter(deadline: .now() + deadline, execute: watchdog)
 
-		let captured = ProcessPipes.drainText(process, out: out, err: err)
+		let captured = ProcessPipes.drainText(process, out: out, err: err, onOutput: onOutput)
 		watchdog.cancel()
 		return Result(
 			output: captured.stderr + captured.stdout,
