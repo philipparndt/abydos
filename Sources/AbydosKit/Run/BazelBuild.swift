@@ -64,9 +64,16 @@ public enum BazelBuild {
 
 	/// The label of a build file's package: `//app/server` for
 	/// `<workspace>/app/server/BUILD`, and `//` for one at the root.
+	///
+	/// Canonical on both sides. `workspaceRoot` canonicalises what it answers
+	/// with and the build file was found by walking down from the project root,
+	/// which had not been — so under `/tmp` or `/var`, both symlinks on macOS,
+	/// the two shared no prefix and every package in the repository was labelled
+	/// `//`. That is not a label that fails: it is a label that names a
+	/// different target. Same asymmetry as 0430.
 	public static func packageLabel(of buildFile: URL, workspace: URL) -> String {
-		let directory = buildFile.deletingLastPathComponent().path
-		let root = workspace.path
+		let directory = FilePath.canonical(buildFile.deletingLastPathComponent())
+		let root = FilePath.canonical(workspace)
 		guard directory != root else { return "//" }
 		guard directory.hasPrefix(root + "/") else { return "//" }
 		return "//" + String(directory.dropFirst(root.count + 1))

@@ -86,7 +86,16 @@ public enum GitWorktrees {
 			switch parts.first {
 			case "worktree":
 				flush()
-				path = parts.count > 1 ? URL(fileURLWithPath: parts[1]) : nil
+				// Standardized, as `GitRepository.discover` already does with
+				// `rev-parse --show-toplevel` and for the same reason: git
+				// answers with the real path — `/private/var/...` — where the
+				// project holds `/var/...`, and the caller decides which
+				// worktree it is in by comparing the two. Unstandardised, a
+				// project under `/tmp` or `/var` matched none of its own
+				// worktrees and the chip that names the branch never appeared.
+				path = parts.count > 1
+					? URL(fileURLWithPath: parts[1], isDirectory: true).standardizedFileURL
+					: nil
 			case "HEAD":
 				head = parts.count > 1 ? parts[1] : ""
 			case "branch":
