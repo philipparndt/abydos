@@ -273,9 +273,7 @@ final class EditorAreaController: NSViewController {
 		let targetView = target.view
 		let parent = targetView.superview
 
-		let split = ThinDividerSplitView()
-		split.isVertical = vertical
-		split.dividerStyle = .thin
+		let split = EditorGroupSplitView(vertical: vertical)
 
 		// Where the target sat, the split now sits.
 		let isRoot = (parent === splitHost)
@@ -302,10 +300,8 @@ final class EditorAreaController: NSViewController {
 			parentSplit.insertArrangedSubview(split, at: index)
 		}
 
-		// Even halves, which is what a split gesture implies — placed at layout
-		// rather than now, because now the split has no width to halve.
-		split.wantsEvenSplit = true
-		split.needsLayout = true
+		// Even halves, which is what a split gesture implies.
+		split.divideEvenly()
 		DispatchQueue.main.async { [weak self] in self?.updateGroupInsets() }
 	}
 
@@ -323,6 +319,10 @@ final class EditorAreaController: NSViewController {
 
 	/// The active group's identifier, for building a drag payload in a test run.
 	var activeGroupID: UUID? { (activeGroup ?? groups.first)?.groupID }
+
+	/// The split holding the groups, so a capture run can move a divider
+	/// without a mouse: a drag is a `setPosition` and a layout pass.
+	var rootSplitForTesting: NSSplitView? { splitHost.subviews.first as? NSSplitView }
 
 	var activeTabCount: Int { (activeGroup ?? groups.first)?.tabCount ?? 0 }
 

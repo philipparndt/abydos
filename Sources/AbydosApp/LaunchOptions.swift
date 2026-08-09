@@ -261,6 +261,8 @@ struct LaunchOptions {
 	var subproject: String?
 	/// Which settings section to show.
 	var settingsSection: String?
+	/// Which settings section to fold away, as its triangle does.
+	var settingsFold: String?
 	/// Print where the development pod's chart was found.
 	var reportChart = false
 	/// Press the window's zoom button before capture.
@@ -294,6 +296,11 @@ struct LaunchOptions {
 	var previewTerminalDrop = false
 	/// Split the editor before capture: "right" or "down".
 	var split: String?
+	/// Put settings in a group beside the editor and drag the divider between
+	/// them to this position, reporting the widths at every stage.
+	var settingsDivider: Double?
+	/// The same with a file in both panes, as the control it needs.
+	var editorDivider: Double?
 	/// Draw a tab drop preview before capture, without a real drag.
 	var dropZone: String?
 	/// Block the main thread for this many milliseconds, to see the stall
@@ -351,6 +358,7 @@ struct LaunchOptions {
 			case "--markdown":   options.markdownPreview = true
 			case "--subproject": options.subproject = next()
 			case "--settings-section": options.settingsSection = next()
+			case "--settings-fold": options.settingsFold = next()
 			case "--settings":   options.openSettings = true
 			case "--zoom":       options.zoom = next().flatMap(Double.init)
 			case "--terminal":   options.openTerminal = true
@@ -495,6 +503,8 @@ struct LaunchOptions {
 			case "--tearoff-terminal": options.tearOffTerminal = true
 			case "--terminal-drop-preview": options.previewTerminalDrop = true
 			case "--split":      options.split = next()
+			case "--settings-divider": options.settingsDivider = next().flatMap(Double.init)
+			case "--editor-divider": options.editorDivider = next().flatMap(Double.init)
 			case "--dropzone":   options.dropZone = next()
 			default:
 				// A bare path is treated as the project to open.
