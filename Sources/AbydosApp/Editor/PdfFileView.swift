@@ -257,45 +257,85 @@ final class PdfFileView: NSView, ScalingPage {
 
 	// MARK: - Find in file
 
-	/// Text picked out with the pointer, for seeding the find bar.
-	var selectedText: String? { pdfView.currentSelection?.string }
-
-	/// Every place a string occurs, in reading order.
+	/// The matches of the last search, and which one is being looked at.
 	///
-	/// PDFKit's own search, which is the reason a PDF can be searched here at all
-	/// — the app's `TextSearch` works on a rope and there is no rope, only pages.
-	func find(_ query: String, caseSensitive: Bool) -> [PDFSelection] {
-		guard let document = pdfView.document, !query.isEmpty else { return [] }
+	/// Kept here rather than in the editor so that nothing outside this file has
+	/// to know what a `PDFSelection` is: the editor's find bar drives every kind
+	/// of tab through counts and indexes, and this is a kind that answers them
+	/// from PDFKit instead of from a rope.
+	private var matches: [PDFSelection] = []
+	private var currentMatch: Int?
+
+	/// Text picked out with the pointer, for seeding the find bar.
+	///
+	/// Selection comes free with `PDFView`: dragging across a page picks out its
+	/// text and ⌘C copies it, exactly as in Preview, and nothing here had to be
+	/// written for that to be true.
+	var selectedText: String? {
+		guard let text = pdfView.currentSelection?.string, !text.isEmpty else { return nil }
+		return text
+	}
+
+	/// Searches the document and shows the first hit. Answers how many there are.
+	///
+	/// PDFKit's own search, which is the whole reason ⌘F can reach a PDF at all —
+	/// the app's `TextSearch` works on a rope, and a document has no rope, only
+	/// pages.
+	@discardableResult
+	func find(_ query: String, caseSensitive: Bool) -> Int {
+		guard let document = pdfView.document, !query.isEmpty else {
+			clearFind()
+			return 0
+		}
 		var options: NSString.CompareOptions = []
 		if !caseSensitive { options.insert(.caseInsensitive) }
-		return document.findString(query, withOptions: options)
+		matches = document.findString(query, withOptions: options)
+		currentMatch = matches.isEmpty ? nil : 0
+		showMatches()
+		return matches.count
+	}
+
+	/// Moves to the next match or the previous one, wrapping at the ends the way
+	/// every find bar does. Answers which one is now being looked at.
+	@discardableResult
+	func stepMatch(by delta: Int) -> Int? {
+		guard !matches.isEmpty else { return nil }
+		let from = currentMatch ?? -1
+		currentMatch = ((from + delta) % matches.count + matches.count) % matches.count
+		showMatches()
+		return currentMatch
+	}
+
+	var matchCount: Int { matches.count }
+	var currentMatchIndex: Int? { currentMatch }
+
+	func clearFind() {
+		matches = []
+		currentMatch = nil
+		pdfView.highlightedSelections = nil
+		pdfView.setCurrentSelection(nil, animate: false)
 	}
 
 	/// Paints every match and scrolls to the one being looked at.
 	///
 	/// The same two colours the code view paints matches in, so a find in a PDF
-	/// and a find in a source file look like the same feature: the current match
+	/// and a find in a source file look like the same feature: the current one
 	/// stronger than the rest, so it is findable at a glance among them.
-	func showMatches(_ matches: [PDFSelection], current: Int?) {
+	private func showMatches() {
 		for match in matches { match.color = NSColor.hex(0x5A4A2A) }
 		pdfView.highlightedSelections = matches.isEmpty ? nil : matches
 
-		guard let current, matches.indices.contains(current) else {
+		guard let currentMatch, matches.indices.contains(currentMatch) else {
 			pdfView.setCurrentSelection(nil, animate: false)
 			return
 		}
-		// A copy, so the one on screen can be a different colour from its twin in
-		// the highlighted set underneath it.
-		let selected = matches[current].copy() as? PDFSelection ?? matches[current]
+		// A copy, so the one being looked at can be a different colour from its
+		// twin in the highlighted set underneath it.
+		let selected = matches[currentMatch].copy() as? PDFSelection ?? matches[currentMatch]
 		selected.color = NSColor.hex(0xC77B3B)
 		pdfView.setCurrentSelection(selected, animate: false)
 		pdfView.scrollSelectionToVisible(nil)
 		updateCaption()
-	}
-
-	func clearFindSelection() {
-		pdfView.highlightedSelections = nil
-		pdfView.setCurrentSelection(nil, animate: false)
 	}
 
 	// MARK: - For a test that has no window
@@ -359,8 +399,40 @@ final class CapturablePDFView: PDFView, SnapshotDrawable {
 			box.fill()
 			let pixels = NSSize(width: box.width * scale, height: box.height * scale)
 			page.thumbnail(of: pixels, for: displayBox).draw(in: box)
+			drawSelections(on: page, in: box)
 		}
 
 		return rep.cgImage
+	}
+
+	/// The find bar's matches, where they are.
+	///
+	/// Drawn over the page rather than under it, which is the one way this
+	/// differs from the screen — half-transparent, so the words underneath are
+	/// still readable. Without it a capture could not tell a search that
+	/// highlighted the right words from one that highlighted the wrong ones,
+	/// which is the whole reason for looking at a picture.
+	private func drawSelections(on page: PDFPage, in box: NSRect) {
+		let selections = (highlightedSelections ?? []) + [currentSelection].compactMap { $0 }
+		guard !selections.isEmpty else { return }
+
+		let pageBounds = page.bounds(for: displayBox)
+		guard pageBounds.width > 0 else { return }
+		let ratio = box.width / pageBounds.width
+
+		for selection in selections {
+			guard selection.pages.contains(page) else { continue }
+			for line in selection.selectionsByLine() {
+				let found = line.bounds(for: page)
+				guard found.width > 0, found.height > 0 else { continue }
+				(selection.color ?? NSColor.systemYellow).withAlphaComponent(0.45).setFill()
+				NSRect(
+					x: box.minX + (found.minX - pageBounds.minX) * ratio,
+					y: box.minY + (found.minY - pageBounds.minY) * ratio,
+					width: found.width * ratio,
+					height: found.height * ratio
+				).fill()
+			}
+		}
 	}
 }
