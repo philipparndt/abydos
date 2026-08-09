@@ -579,21 +579,29 @@ final class EditorViewController: NSViewController {
 		refreshServerBanner()
 	}
 
-	/// Whether this file's language has a server worth offering, and says so.
+	/// Whether this file's language has anything to say about its server, and
+	/// says it.
 	///
 	/// Asked on every activation rather than once per file: installing the
 	/// server is the whole point of the bar, and somebody who has just done it
 	/// should see it go away by clicking back onto their code rather than by
 	/// restarting the app.
+	///
+	/// Asked of `LanguageService` rather than of `LanguageServers`, which is
+	/// 0432's second fault: the second knows only whether the server is on this
+	/// machine, and for a project worked on in a devcontainer the answer to that
+	/// is "no" for ever — including while the container's own copy is answering.
+	/// The first knows whether anything is running, coming, or neither, so the
+	/// strip goes away when the server lands however late that is.
 	private func refreshServerBanner() {
 		guard let project,
 		      let tab = activeTab,
 		      !tab.isDiff,
 		      let languageId = tab.document?.languageId,
 		      !dismissedSuggestions.contains(languageId),
-		      let suggestion = LanguageServers.suggestion(
+		      let notice = LanguageService.shared.notice(
 		      	forLanguage: languageId,
-		      	root: project.root,
+		      	project: project.scopeRoot,
 		      	ignoring: Set(Settings.shared.ignoredLanguageServers)
 		      )
 		else {
@@ -601,7 +609,7 @@ final class EditorViewController: NSViewController {
 			return
 		}
 
-		serverBanner.show(suggestion)
+		serverBanner.show(notice)
 		serverBanner.isHidden = false
 		serverBannerHeight.constant = LanguageServerBanner.height
 	}
@@ -613,17 +621,17 @@ final class EditorViewController: NSViewController {
 	}
 
 	private func showServerManual() {
-		guard let suggestion = serverBanner.suggestion else { return }
+		guard let notice = serverBanner.notice, let manual = notice.manual else { return }
 		DetailDialog(
-			title: "Installing \(suggestion.command)",
-			detail: suggestion.manual,
+			title: "The \(notice.languageName) language server",
+			detail: manual,
 			isError: false
 		).show(over: view.window)
 	}
 
 	private func ignoreServerSuggestion() {
-		guard let suggestion = serverBanner.suggestion else { return }
-		Settings.shared.ignoreLanguageServer(for: suggestion.languageId)
+		guard let notice = serverBanner.notice, notice.isIgnorable else { return }
+		Settings.shared.ignoreLanguageServer(for: notice.languageId)
 		hideServerBanner()
 		// Every group in every window, not only this one: the answer was about
 		// the language, and being asked again in the split beside it would read
@@ -632,8 +640,8 @@ final class EditorViewController: NSViewController {
 	}
 
 	private func dismissServerSuggestion() {
-		guard let suggestion = serverBanner.suggestion else { return }
-		dismissedSuggestions.insert(suggestion.languageId)
+		guard let notice = serverBanner.notice else { return }
+		dismissedSuggestions.insert(notice.languageId)
 		hideServerBanner()
 	}
 
@@ -751,6 +759,26 @@ final class EditorViewController: NSViewController {
 	func saveIfOpen(_ url: URL) {
 		guard let tab = tabs.first(where: { $0.url == url }), tab.isDirty else { return }
 		try? tab.document?.save()
+	}
+
+	/// The scope moved, so every open file is announced again.
+	///
+	/// A file opened while the whole checkout was in view went to the server for
+	/// the checkout; working on the subproject it belongs to gives it a
+	/// different server, and one that has never heard of it answers nothing
+	/// about it. `LanguageService.opened` is what closes it at the old one and
+	/// opens it at the new, and does nothing at all when they are the same.
+	func rescope() {
+		guard let project else { return }
+		for tab in tabs {
+			guard !tab.isDiff, let document = tab.document, let languageId = document.languageId
+			else { continue }
+			LanguageService.shared.opened(
+				url: tab.url, languageId: languageId, text: text(of: document),
+				project: project.scopeRoot
+			)
+		}
+		refreshServerBanner()
 	}
 
 	/// A scratch was renamed, moved, or thrown away: follow it.
@@ -922,7 +950,7 @@ final class EditorViewController: NSViewController {
 			self?.refreshTabBar()
 			guard let self, let project = self.project, let languageId = document.languageId else { return }
 			LanguageService.shared.saved(
-				url: fileURL, languageId: languageId, text: self.text(of: document), project: project.root
+				url: fileURL, languageId: languageId, text: self.text(of: document), project: project.scopeRoot
 			)
 		}
 
@@ -981,7 +1009,7 @@ final class EditorViewController: NSViewController {
 		// it from then on.
 		if let project, let languageId = document.languageId {
 			LanguageService.shared.opened(
-				url: fileURL, languageId: languageId, text: text(of: document), project: project.root
+				url: fileURL, languageId: languageId, text: text(of: document), project: project.scopeRoot
 			)
 			codeView.setDiagnostics(LanguageService.shared.diagnostics(for: fileURL))
 		}
@@ -1018,7 +1046,7 @@ final class EditorViewController: NSViewController {
 			      let project = self.project, let languageId = document.languageId
 			else { return }
 			LanguageService.shared.changed(
-				url: tab.url, languageId: languageId, text: self.text(of: document), project: project.root
+				url: tab.url, languageId: languageId, text: self.text(of: document), project: project.scopeRoot
 			)
 		}
 		languageSyncWork = work
@@ -1136,7 +1164,7 @@ final class EditorViewController: NSViewController {
 				url: tab.url,
 				position: LSPPosition(line: line, character: character),
 				languageId: languageId,
-				project: project.root
+				project: project.scopeRoot
 			)
 			// A server answers about types and scope; the words in the file
 			// cannot, so anything it says is worth more than anything they do.
@@ -1212,7 +1240,7 @@ final class EditorViewController: NSViewController {
 				url: tab.url,
 				position: LSPPosition(line: line, character: character),
 				languageId: languageId,
-				project: project.root
+				project: project.scopeRoot
 			)
 			guard let first = locations.first, let url = first.url else { return }
 			open(fileURL: url, atLine: first.range.start.line + 1)
@@ -1934,7 +1962,7 @@ final class EditorViewController: NSViewController {
 		let closing = tabs[index]
 		if let project, let languageId = closing.document?.languageId,
 		   !tabs.contains(where: { $0 !== closing && $0.url == closing.url }) {
-			LanguageService.shared.closed(url: closing.url, languageId: languageId, project: project.root)
+			LanguageService.shared.closed(url: closing.url, languageId: languageId, project: project.scopeRoot)
 		}
 
 		teardown(tabs[index])
@@ -2350,10 +2378,10 @@ final class EditorViewController: NSViewController {
 			// one of them is the wrong answer written in red.
 			guard let project, let languageId = document.languageId else { continue }
 			LanguageService.shared.changed(
-				url: tab.url, languageId: languageId, text: text(of: document), project: project.root
+				url: tab.url, languageId: languageId, text: text(of: document), project: project.scopeRoot
 			)
 			LanguageService.shared.saved(
-				url: tab.url, languageId: languageId, text: text(of: document), project: project.root
+				url: tab.url, languageId: languageId, text: text(of: document), project: project.scopeRoot
 			)
 		}
 	}

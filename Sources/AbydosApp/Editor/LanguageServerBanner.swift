@@ -90,21 +90,36 @@ final class LanguageServerBanner: NSView {
 
 	// MARK: - Contents
 
-	private(set) var suggestion: LanguageServers.Suggestion?
+	private(set) var notice: LanguageService.ServerNotice?
 
-	/// What is being offered, and for which language.
-	func show(_ suggestion: LanguageServers.Suggestion) {
-		self.suggestion = suggestion
+	/// What is being said, and which of the three ways out apply to it.
+	///
+	/// Not every notice has all three. A server that is on its way has nothing
+	/// to install and nothing worth switching off for ever — the wait ends by
+	/// itself — so it gets the sentence and the ✕ and no more. Offering "How to
+	/// install" beside a server that is already being fetched would be an offer
+	/// to solve something that is solving itself.
+	func show(_ notice: LanguageService.ServerNotice) {
+		self.notice = notice
 		// The command is in the sentence: it is the searchable part, the thing
 		// somebody types, and the name they will recognise if they already know
 		// the language's tooling.
-		label.stringValue = "\(suggestion.languageName) has no language server. "
-			+ "Install \(suggestion.command) for completion, problems and go-to-declaration."
-		label.toolTip = suggestion.installHint
-		ignoreButton.setLabel("Ignore for \(suggestion.languageName)")
-		ignoreButton.toolTip = "Never offer a \(suggestion.languageName) server again"
-		needsDisplay = true
+		label.stringValue = notice.text
+		label.toolTip = notice.manual
+		detailsButton.isHidden = notice.manual == nil
+		ignoreButton.isHidden = !notice.isIgnorable
+		ignoreButton.setLabel("Ignore for \(notice.languageName)")
+		ignoreButton.toolTip = "Never offer a \(notice.languageName) server again"
+		// A lightbulb is an idea somebody could act on; a wait is not one. The
+		// two states of this strip look different from across the room, which is
+		// the distance most of them are read from.
+		symbolName = notice.manual == nil ? "hourglass" : "lightbulb"
+		applyTheme()
 	}
+
+	/// Which glyph the sentence is wearing, so `applyTheme` can put it back at a
+	/// new zoom without being told again what the strip is saying.
+	private var symbolName = "lightbulb"
 
 	func applyTheme() {
 		label?.font = Theme.current.uiFont(11.5)
@@ -115,7 +130,7 @@ final class LanguageServerBanner: NSView {
 		// asked for by name alone stayed the size it was made at while the strip
 		// around it doubled.
 		icon?.image = Theme.symbol(
-			"lightbulb", size: 11 * Theme.current.scale, color: Theme.current.gitModified
+			symbolName, size: 11 * Theme.current.scale, color: Theme.current.gitModified
 		)
 		iconWidth?.constant = Theme.current.scaled(14)
 

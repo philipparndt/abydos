@@ -31,6 +31,18 @@ public final class Project {
 	/// not be the one that decides which repository this is.
 	public var scope: URL?
 
+	/// The root everything scoped works against: the subproject when there is
+	/// one, the whole checkout otherwise.
+	///
+	/// One property rather than `scope ?? root` written out at each call site,
+	/// for the reason 0424 gave `devContainerRoot` one: a table keyed by "the
+	/// project" and a table keyed by "the part being worked on" look identical
+	/// until something is filed under one and looked for under the other. That
+	/// is 0432 — a language server started for a subproject and asked for under
+	/// the repository above it, which answered nothing and said so only in the
+	/// log.
+	public var scopeRoot: URL { scope ?? root }
+
 	/// Finds the repository this project is in.
 	///
 	/// From the subproject when there is one, because a checkout of several
