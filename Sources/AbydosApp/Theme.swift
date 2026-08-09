@@ -188,6 +188,30 @@ struct Theme {
 		.systemFont(ofSize: size * scale, weight: weight)
 	}
 
+	/// A system control's size at this zoom, given the size it was designed at.
+	///
+	/// A bezel is drawn from `controlSize`, never from the font inside it.
+	/// Measured on macOS 27: an `NSPopUpButton` is 24 points tall at `.regular`
+	/// and 28 at `.large` whether its text is 12 points or 24, and a button with
+	/// `.accessoryBarAction` is 20 at `.small` and 28 at `.large`. So a font that
+	/// doubles inside a control that was never told to grow gives the fault this
+	/// exists to fix: type too large for the box, hard against its edges, with
+	/// the artwork — a pop-up's chevron — still drawn for the size AppKit thinks
+	/// it is.
+	///
+	/// **The limit, and it is AppKit's rather than ours:** `.large` is the
+	/// biggest artwork there is. It buys about 1.4× and no more; past that a
+	/// system control cannot be drawn at the right size, only stretched around
+	/// type it was not made for. Anything that has to be right at 2× has to be
+	/// drawn rather than bezelled, the way `PillButton` and the language-server
+	/// strip are. See backlog 0423, which has the measurements.
+	func controlSize(_ design: NSControl.ControlSize = .regular) -> NSControl.ControlSize {
+		let steps: [NSControl.ControlSize] = [.mini, .small, .regular, .large]
+		let start = steps.firstIndex(of: design) ?? 2
+		let up = scale >= 1.5 ? 2 : (scale >= 1.25 ? 1 : 0)
+		return steps[min(steps.count - 1, start + up)]
+	}
+
 	/// The editor's own font size is a separate preference, multiplied by zoom.
 	var fontSize: CGFloat { CGFloat(Settings.shared.editorFontSize) * scale }
 	var lineHeightMultiple: CGFloat { CGFloat(Settings.shared.editorLineHeight) }

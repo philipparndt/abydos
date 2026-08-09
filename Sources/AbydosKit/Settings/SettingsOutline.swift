@@ -56,4 +56,64 @@ public enum SettingsOutline {
 		}
 		return found
 	}
+
+	// MARK: - The arrow keys
+
+	/// Which way a sideways arrow key goes.
+	public enum Fold: Sendable {
+		/// Right: open what is folded, and step into what is already open.
+		case open
+		/// Left: fold what is open, and step out of what is not.
+		case close
+	}
+
+	/// Where the list stands: what is folded away, and which row is selected.
+	public struct FoldState: Equatable, Sendable {
+		public var collapsed: Set<Int>
+		public var selected: Int
+
+		public init(collapsed: Set<Int>, selected: Int) {
+			self.collapsed = collapsed
+			self.selected = selected
+		}
+	}
+
+	/// What Left or Right does, which is what `NSOutlineView` and the Finder do.
+	///
+	/// Right on a folded parent opens it and stays put; on an open parent it
+	/// steps onto the first thing inside; on a leaf it does nothing. Left on an
+	/// open parent folds it and stays put; on anything else — a child, or a
+	/// parent that is already folded — it steps out to whatever the row sits
+	/// under. Up and down are not here: those walk the rows that are showing,
+	/// which is `visible(depths:collapsed:)` and the table's own business.
+	///
+	/// Returning the state rather than mutating one keeps this arithmetic, so
+	/// the semantics above are settled by a test rather than by a window. A key
+	/// that does nothing gives back exactly what it was given, which is how the
+	/// view knows to leave the event alone.
+	public static func fold(
+		depths: [Int], collapsed: Set<Int>, selected: Int, _ key: Fold
+	) -> FoldState {
+		let unchanged = FoldState(collapsed: collapsed, selected: selected)
+		guard depths.indices.contains(selected) else { return unchanged }
+		let isParent = hasChildren(depths: depths, at: selected)
+
+		switch key {
+		case .open:
+			guard isParent else { return unchanged }
+			guard collapsed.contains(selected) else {
+				// The first child is the next row along: `hasChildren` is true
+				// only because that row is one deeper.
+				return FoldState(collapsed: collapsed, selected: selected + 1)
+			}
+			return FoldState(collapsed: collapsed.subtracting([selected]), selected: selected)
+
+		case .close:
+			if isParent, !collapsed.contains(selected) {
+				return FoldState(collapsed: collapsed.union([selected]), selected: selected)
+			}
+			guard let above = parent(depths: depths, of: selected) else { return unchanged }
+			return FoldState(collapsed: collapsed, selected: above)
+		}
+	}
 }

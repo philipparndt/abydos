@@ -13,7 +13,7 @@ import AbydosKit
 /// The sections and the settings in them come from the same list the window
 /// uses, so the two cannot drift apart.
 @MainActor
-final class SettingsPage: NSView {
+final class SettingsPage: NSView, ScalingPage {
 	/// Every page, parents and their children, in the order they are listed.
 	///
 	/// Flattened rather than an outline view: two levels is all this nests, and
@@ -37,9 +37,19 @@ final class SettingsPage: NSView {
 	/// outside — Restore Defaults, or the other window.
 	private var refreshHandlers: [() -> Void] = []
 
-	private let list = NSTableView()
+	private let list = SettingsSidebarTable()
 	private let form = NSStackView()
 	private var scroll: NSScrollView!
+	private var sidebarTitle: NSTextField!
+
+	/// Constraints whose constants are design-time sizes, kept beside the size
+	/// each was written as.
+	///
+	/// A page reads the zoom as it builds, so one built at 1× would keep 1×
+	/// spacing for as long as it stayed open however far the rest of the window
+	/// grew. Holding the design number is what lets the zoom be pushed back in
+	/// — the constant on the constraint is the answer, not the question.
+	private var scaledConstraints: [(constraint: NSLayoutConstraint, design: CGFloat)] = []
 
 	override init(frame: NSRect) {
 		super.init(frame: frame)
@@ -94,6 +104,47 @@ final class SettingsPage: NSView {
 		toggleFold(at: index)
 	}
 
+	// MARK: - Testing
+
+	/// Presses arrow keys on the sidebar, as a capture run does instead of using
+	/// a keyboard.
+	///
+	/// The events go to the table rather than to `fold(_:)` directly, so what a
+	/// run exercises is the path a keyboard takes: up and down are the table's
+	/// own and have to keep working, and proving that is half the point.
+	func pressArrowsForTesting(_ keys: [String]) {
+		let arrows: [String: (character: Int, code: UInt16)] = [
+			"left": (NSLeftArrowFunctionKey, 123),
+			"right": (NSRightArrowFunctionKey, 124),
+			"down": (NSDownArrowFunctionKey, 125),
+			"up": (NSUpArrowFunctionKey, 126),
+		]
+		for key in keys {
+			guard let arrow = arrows[key.lowercased()],
+			      let scalar = UnicodeScalar(UInt32(arrow.character))
+			else { continue }
+			let text = String(Character(scalar))
+			guard let event = NSEvent.keyEvent(
+				with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+				windowNumber: window?.windowNumber ?? 0, context: nil,
+				characters: text, charactersIgnoringModifiers: text,
+				isARepeat: false, keyCode: arrow.code
+			) else { continue }
+			list.keyDown(with: event)
+		}
+	}
+
+	/// Which page is showing, what the sidebar has left in it, and the sizes the
+	/// zoom was supposed to reach.
+	var reportForTesting: String {
+		let showing = rows.map { sections[$0].section.title }
+		return "selected=\(sections[selected].section.title)"
+			+ " rows=\(showing.count)"
+			+ " row-height=\(Int(list.rowHeight))"
+			+ " sidebar=\(Int(list.enclosingScrollView?.superview?.frame.width ?? 0))"
+			+ " showing=[\(showing.joined(separator: " | "))]"
+	}
+
 	private func toggleFold(at index: Int) {
 		guard SettingsOutline.hasChildren(depths: sections.map(\.depth), at: index) else { return }
 		if collapsed.contains(index) {
@@ -120,7 +171,81 @@ final class SettingsPage: NSView {
 		list.reloadData()
 	}
 
+	/// Left and right in the sidebar, with an outline view's meaning.
+	///
+	/// The decision is arithmetic over the depths and lives in `SettingsOutline`
+	/// beside the rest of the folding, so what the keys do is settled by a test
+	/// rather than by a window; this only carries it out. Up and down are never
+	/// here — the table already walks the rows that are showing, which is
+	/// exactly the list folding leaves behind.
+	///
+	/// Answers whether the key was used, so one that does nothing — right on a
+	/// leaf, left at the top of the list — goes back to the table rather than
+	/// being swallowed.
+	@discardableResult
+	func fold(_ key: SettingsOutline.Fold) -> Bool {
+		let depths = sections.map(\.depth)
+		let before = SettingsOutline.FoldState(collapsed: collapsed, selected: selected)
+		let after = SettingsOutline.fold(
+			depths: depths, collapsed: collapsed, selected: selected, key
+		)
+		guard after != before else { return false }
+
+		collapsed = after.collapsed
+		refreshRows()
+		// The page first, so that selecting the row finds it already showing and
+		// does not build the same section a second time.
+		show(section: after.selected)
+		if let row = rows.firstIndex(of: after.selected) {
+			list.selectRowIndexes([row], byExtendingSelection: false)
+			list.scrollRowToVisible(row)
+		}
+		return true
+	}
+
 	deinit { NotificationCenter.default.removeObserver(self) }
+
+	// MARK: - The zoom
+
+	/// Re-reads the zoom and the palette, the way every other pane in the window
+	/// does when ⌘+ is pressed.
+	///
+	/// Without this the page was the one thing in the window that did not
+	/// follow: `applySettings` reaches the editor, the navigator, the tool strip
+	/// and the bottom panel, and a settings *tab* is none of those — it is a
+	/// view in an editor group, and nothing walked into one. A page opened at 1×
+	/// therefore kept 1× rows, a 1× sidebar and 1× type for as long as it stayed
+	/// open, however far the window around it grew.
+	func applySettings() {
+		for (constraint, design) in scaledConstraints {
+			constraint.constant = Theme.current.scaled(design)
+		}
+		applyMetrics()
+		// Built again rather than adjusted: every control in a section reads the
+		// zoom as it is made, and there is one section on screen.
+		show(section: selected)
+		list.reloadData()
+	}
+
+	/// The sizes that are not constraints: fonts, row heights and the form's own
+	/// padding, all of which are read once when something is built.
+	private func applyMetrics() {
+		sidebarTitle?.font = Theme.current.uiFont(11, weight: .semibold)
+		list.rowHeight = Theme.current.scaled(28)
+		form.spacing = Theme.current.scaled(18)
+		form.edgeInsets = NSEdgeInsets(
+			top: Theme.current.scaled(24), left: Theme.current.scaled(28),
+			bottom: Theme.current.scaled(32), right: Theme.current.scaled(28)
+		)
+	}
+
+	/// Sets a constraint from a design-time size and remembers the pair, so the
+	/// zoom can be put back into it later.
+	private func scaled(_ constraint: NSLayoutConstraint, _ design: CGFloat) -> NSLayoutConstraint {
+		constraint.constant = Theme.current.scaled(design)
+		scaledConstraints.append((constraint, design))
+		return constraint
+	}
 
 	// MARK: - Layout
 
@@ -139,11 +264,6 @@ final class SettingsPage: NSView {
 
 		form.orientation = .vertical
 		form.alignment = .leading
-		form.spacing = Theme.current.scaled(18)
-		form.edgeInsets = NSEdgeInsets(
-			top: Theme.current.scaled(24), left: Theme.current.scaled(28),
-			bottom: Theme.current.scaled(32), right: Theme.current.scaled(28)
-		)
 		form.translatesAutoresizingMaskIntoConstraints = false
 
 		let clip = FlippedContainer()
@@ -165,7 +285,7 @@ final class SettingsPage: NSView {
 			// rust-analyzer" under "Tools" is the longest thing this list has to
 			// hold, and a sidebar that truncates the names is a list you have to
 			// click through to read.
-			sidebar.widthAnchor.constraint(equalToConstant: Theme.current.scaled(232)),
+			scaled(sidebar.widthAnchor.constraint(equalToConstant: 0), 232),
 
 			scroll.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor),
 			scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -206,12 +326,12 @@ final class SettingsPage: NSView {
 		list.backgroundColor = .clear
 		list.selectionHighlightStyle = .regular
 		list.rowSizeStyle = .custom
-		list.rowHeight = Theme.current.scaled(28)
 		list.intercellSpacing = .zero
 		list.gridStyleMask = []
 		list.addTableColumn(NSTableColumn(identifier: NSUserInterfaceItemIdentifier("section")))
 		list.delegate = self
 		list.dataSource = self
+		list.onFold = { [weak self] key in self?.fold(key) ?? false }
 		list.selectRowIndexes([0], byExtendingSelection: false)
 
 		let scroll = NSScrollView()
@@ -221,22 +341,23 @@ final class SettingsPage: NSView {
 		scroll.borderType = .noBorder
 
 		let title = NSTextField(labelWithString: "Settings")
-		title.font = Theme.current.uiFont(11, weight: .semibold)
 		title.textColor = Theme.current.gitIgnored
+		sidebarTitle = title
 
 		for view in [title, scroll] as [NSView] {
 			view.translatesAutoresizingMaskIntoConstraints = false
 			background.addSubview(view)
 		}
 		NSLayoutConstraint.activate([
-			title.topAnchor.constraint(equalTo: background.topAnchor, constant: Theme.current.scaled(14)),
-			title.leadingAnchor.constraint(equalTo: background.leadingAnchor, constant: Theme.current.scaled(14)),
+			scaled(title.topAnchor.constraint(equalTo: background.topAnchor), 14),
+			scaled(title.leadingAnchor.constraint(equalTo: background.leadingAnchor), 14),
 
-			scroll.topAnchor.constraint(equalTo: title.bottomAnchor, constant: Theme.current.scaled(8)),
+			scaled(scroll.topAnchor.constraint(equalTo: title.bottomAnchor), 8),
 			scroll.leadingAnchor.constraint(equalTo: background.leadingAnchor),
 			scroll.trailingAnchor.constraint(equalTo: background.trailingAnchor),
-			scroll.bottomAnchor.constraint(equalTo: background.bottomAnchor, constant: -Theme.current.scaled(10)),
+			scaled(scroll.bottomAnchor.constraint(equalTo: background.bottomAnchor), -10),
 		])
+		applyMetrics()
 		return background
 	}
 
@@ -433,6 +554,10 @@ final class SettingsPage: NSView {
 		switch row {
 		case let .toggle(title, help, get, set, isEnabled):
 			let button = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+			// Every system control on this page is told what size to draw at, not
+			// only what font to put in it: see `Theme.controlSize(_:)` for why
+			// the font alone leaves the bezel where it was.
+			button.controlSize = Theme.current.controlSize()
 			button.state = get() ? .on : .off
 			button.isEnabled = isEnabled?() ?? true
 			button.onAction = {
@@ -460,7 +585,7 @@ final class SettingsPage: NSView {
 			)
 			slider.numberOfTickMarks = Int((range.upperBound - range.lowerBound) / step) + 1
 			slider.allowsTickMarkValuesOnly = true
-			slider.controlSize = .small
+			slider.controlSize = Theme.current.controlSize(.small)
 			slider.widthAnchor.constraint(equalToConstant: Theme.current.scaled(200)).isActive = true
 			slider.onAction = {
 				set(slider.doubleValue)
@@ -481,6 +606,7 @@ final class SettingsPage: NSView {
 			field.alignment = .right
 
 			let stepper = NSStepper()
+			stepper.controlSize = Theme.current.controlSize()
 			stepper.minValue = Double(range.lowerBound)
 			stepper.maxValue = Double(range.upperBound)
 			stepper.increment = 1
@@ -513,6 +639,7 @@ final class SettingsPage: NSView {
 
 		case let .choice(title, help, options, get, set):
 			let popUp = NSPopUpButton()
+			popUp.controlSize = Theme.current.controlSize()
 			popUp.font = Theme.current.uiFont(12)
 			popUp.addItems(withTitles: options.map(\.label))
 			popUp.widthAnchor.constraint(equalToConstant: Theme.current.scaled(190)).isActive = true
@@ -543,6 +670,7 @@ final class SettingsPage: NSView {
 					target: nil, action: nil
 				)
 				button.bezelStyle = .rounded
+				button.controlSize = Theme.current.controlSize()
 				button.toolTip = item.help
 				button.onAction = item.action
 				return button
@@ -557,6 +685,7 @@ final class SettingsPage: NSView {
 		case let .button(title, label, action):
 			let button = NSButton(title: label, target: nil, action: nil)
 			button.bezelStyle = .rounded
+			button.controlSize = Theme.current.controlSize()
 			button.font = Theme.current.uiFont(12)
 			button.onAction = action
 			return (title, button, nil)
@@ -565,6 +694,7 @@ final class SettingsPage: NSView {
 
 	private func field(text: String, width: CGFloat) -> NSTextField {
 		let field = NSTextField(string: text)
+		field.controlSize = Theme.current.controlSize()
 		field.font = Theme.terminalFont(size: Theme.current.fontSize - 1)
 		field.textColor = Theme.current.sidebarText
 		field.backgroundColor = Theme.current.editorBackground
@@ -652,6 +782,34 @@ extension SettingsPage: NSTableViewDataSource, NSTableViewDelegate {
 		let row = list.selectedRow
 		guard rows.indices.contains(row), rows[row] != selected else { return }
 		show(section: rows[row])
+	}
+}
+
+/// The settings sidebar's table, so the arrow keys fold as well as move.
+///
+/// An `NSOutlineView` has this behaviour for nothing, and this list is
+/// deliberately not one (0421): two levels over a flat array is a list somebody
+/// can see all of, and the depth is drawn by the row. What an outline view has
+/// that is worth keeping is what hands already expect from one — right opens,
+/// left closes, and the row you land on is the one you would have clicked. So
+/// that is the part written out, and only that part: up and down go to
+/// `super`, where the table walks the rows that are showing.
+private final class SettingsSidebarTable: NSTableView {
+	/// Asked what a sideways arrow should do; answers whether it did anything,
+	/// so a key that means nothing here is still the table's to refuse.
+	var onFold: ((SettingsOutline.Fold) -> Bool)?
+
+	override func keyDown(with event: NSEvent) {
+		let pressed = event.charactersIgnoringModifiers?.unicodeScalars.first.map { Int($0.value) }
+		let key: SettingsOutline.Fold? = switch pressed {
+		case NSRightArrowFunctionKey: .open
+		case NSLeftArrowFunctionKey: .close
+		default: nil
+		}
+		guard let key, onFold?(key) == true else {
+			super.keyDown(with: event)
+			return
+		}
 	}
 }
 

@@ -1271,6 +1271,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			controller?.settingsSectionForTesting = options.settingsSection
 			controller?.settingsFoldForTesting = options.settingsFold
 			controller?.showSettingsPage(nil)
+
+			// After anything else the run asked for — a zoom cycle above all —
+			// so the report says what the page settled at rather than what it
+			// opened as.
+			if let keys = options.settingsKeys {
+				DispatchQueue.main.asyncAfter(
+					deadline: .now() + max(0.4, options.screenshotDelay - 0.4)
+				) {
+					controller?.pressSettingsKeysForTesting(keys)
+				}
+			}
 		}
 
 		if let path = options.screenshotPath {

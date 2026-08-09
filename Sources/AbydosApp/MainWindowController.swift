@@ -5658,6 +5658,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// And which one it asked to be folded away, since a triangle needs a click.
 	var settingsFoldForTesting: String?
 
+	/// Presses the settings sidebar's arrow keys, and says where they left it.
+	///
+	/// Beside `--settings-fold`, which is the triangle: the same folding, by the
+	/// other way in. What comes back also carries the sidebar's sizes, so a run
+	/// can tell whether the zoom reached the page as well as what the keys did.
+	func pressSettingsKeysForTesting(_ keys: String) {
+		guard let page = editor.activeGroup?.page(identifier: "settings") as? SettingsPage else {
+			print("SETTINGS: no settings page")
+			return
+		}
+		page.pressArrowsForTesting(
+			keys.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+		)
+		print("SETTINGS: \(page.reportForTesting)")
+	}
+
 	/// Opens the launch configurations as a page in the editor.
 	///
 	/// A page rather than a dialog: a configuration is edited while looking at
