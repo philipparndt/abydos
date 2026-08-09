@@ -128,32 +128,25 @@ public enum DebugAdapters {
 
 	/// Where the adapter's executable is, or nil if it is not installed.
 	///
-	/// The same explicit search the language servers need, and for the same
-	/// reason: a GUI app inherits almost nothing of a login shell's `PATH`.
+	/// The same order as a language server's, for the same reason: `lldb-dap`
+	/// ships inside Xcode *and* inside every Swift toolchain a manager installs,
+	/// and a debugger from one toolchain reading a binary the other compiled
+	/// disagrees about what a frame holds. Xcode's is the one that matches the
+	/// build, so Xcode is asked first.
+	///
+	/// Everything else — Delve, jdtls — belongs to its own language's toolchain
+	/// and is found the explicit way, because a GUI app inherits almost nothing
+	/// of a login shell's `PATH`.
 	public static func executable(for adapter: DebugAdapter) -> String? {
+		if XcodeToolchain.owns(adapter.command),
+		   let found = XcodeToolchain.path(for: adapter.command) {
+			return found
+		}
 		for directory in LanguageServers.searchPaths {
 			let candidate = (directory as NSString).appendingPathComponent(adapter.command)
 			if FileManager.default.isExecutableFile(atPath: candidate) { return candidate }
 		}
-		// LLDB's adapter ships inside Xcode rather than on the path.
-		return xcrunPath(for: adapter.command)
-	}
-
-	private static func xcrunPath(for tool: String) -> String? {
-		let process = Process()
-		process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-		process.arguments = ["--find", tool]
-		let output = Pipe()
-		process.standardOutput = output
-		process.standardError = Pipe()
-
-		guard (try? process.run()) != nil else { return nil }
-		let data = ProcessPipes.drain(process, out: output)
-		guard process.terminationStatus == 0 else { return nil }
-
-		let path = String(data: data, encoding: .utf8)?
-			.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-		return FileManager.default.isExecutableFile(atPath: path) ? path : nil
+		return XcodeToolchain.path(for: adapter.command)
 	}
 
 	/// The launch request for a program, in the shape its adapter expects.

@@ -167,23 +167,32 @@ public enum LanguageServers {
 
 	/// Where the command lives, or nil if it is not installed.
 	///
-	/// A GUI app inherits almost nothing of a login shell's `PATH`, so the
-	/// usual places are searched explicitly. Without this, everything works
-	/// from a terminal and nothing works from the Dock.
+	/// Two searches, and which one goes first is the whole point.
+	///
+	/// A tool Xcode owns is asked of Xcode, before the `PATH` is looked at at
+	/// all: `sourcekit-lsp` and `clangd` are shipped by every toolchain manager
+	/// as well, and the first one on a login shell's `PATH` is swiftly's — a
+	/// release older than the SDK the build uses. Measured here: the servers
+	/// answering were `~/.swiftly/bin/sourcekit-lsp` while `xcrun` had Xcode's
+	/// all along. See `XcodeToolchain` for what that costs.
+	///
+	/// Everything else is looked for on the `PATH` and then in the usual homes,
+	/// because a GUI app inherits almost nothing of a login shell's `PATH`.
+	/// Without that half, everything works from a terminal and nothing works
+	/// from the Dock.
 	public static func executable(for definition: LanguageServerDefinition) -> String? {
 		if definition.command.contains("/") {
 			return FileManager.default.isExecutableFile(atPath: definition.command) ? definition.command : nil
 		}
 
+		if XcodeToolchain.owns(definition.command),
+		   let found = XcodeToolchain.path(for: definition.command) {
+			return found
+		}
+
 		for directory in searchPaths {
 			let candidate = (directory as NSString).appendingPathComponent(definition.command)
 			if FileManager.default.isExecutableFile(atPath: candidate) { return candidate }
-		}
-
-		// Swift's server is usually reached through xcrun rather than sitting
-		// on the path at all.
-		if definition.command == "sourcekit-lsp", let found = xcrunPath(for: "sourcekit-lsp") {
-			return found
 		}
 		return nil
 	}
@@ -369,23 +378,6 @@ public enum LanguageServers {
 			environment["JAVA_HOME"] = home
 		}
 		return environment
-	}
-
-	private static func xcrunPath(for tool: String) -> String? {
-		let process = Process()
-		process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-		process.arguments = ["--find", tool]
-		let output = Pipe()
-		process.standardOutput = output
-		process.standardError = Pipe()
-
-		guard (try? process.run()) != nil else { return nil }
-		let data = ProcessPipes.drain(process, out: output)
-		guard process.terminationStatus == 0 else { return nil }
-
-		let path = String(data: data, encoding: .utf8)?
-			.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-		return FileManager.default.isExecutableFile(atPath: path) ? path : nil
 	}
 
 	/// Whether a project looks like one this server should be started for.

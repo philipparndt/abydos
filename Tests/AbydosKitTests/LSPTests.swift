@@ -289,6 +289,53 @@ struct LanguageServerRegistryTests {
 	}
 }
 
+/// Which Swift the editor means, which has to be the one the build used.
+///
+/// Measured before this existed: the servers answering were
+/// `~/.swiftly/bin/sourcekit-lsp`, running out of a 6.1.2 toolchain, while
+/// `xcrun` had Xcode's all along — so the red squiggles on screen came from a
+/// compiler the build never ran.
+struct XcodeToolchainTests {
+	/// Only the three a toolchain manager also ships. Asking `xcrun` for `gopls`
+	/// would find nothing and be a slower way of finding nothing.
+	@Test func claimsOnlyWhatXcodeActuallyOwns() {
+		#expect(XcodeToolchain.owns("sourcekit-lsp"))
+		#expect(XcodeToolchain.owns("clangd"))
+		#expect(XcodeToolchain.owns("lldb-dap"))
+		#expect(!XcodeToolchain.owns("gopls"))
+		#expect(!XcodeToolchain.owns("rust-analyzer"))
+	}
+
+	@Test func hasNoAnswerForAToolXcodeDoesNotShip() {
+		#expect(XcodeToolchain.path(for: "definitely-not-a-tool-\(UUID().uuidString)") == nil)
+	}
+
+	/// The resolution itself: where Xcode has the tool, that is the one, whatever
+	/// the `PATH` says first.
+	///
+	/// Conditional on Xcode being installed rather than skipped outright: on a
+	/// machine with only the command-line tools there is nothing to prefer, and
+	/// the fallback to the `PATH` is then the right answer rather than a failure.
+	@Test func prefersXcodesCopyOverWhateverIsFirstOnThePath() throws {
+		let swift = try #require(LanguageServers.definition(forLanguage: "swift"))
+		guard let fromXcode = XcodeToolchain.path(for: "sourcekit-lsp") else { return }
+
+		#expect(LanguageServers.executable(for: swift) == fromXcode)
+		// And it is Xcode's, not a toolchain a version manager dropped in front
+		// of it — the exact shape of the fault this was written for.
+		#expect(!fromXcode.contains("/.swiftly/"))
+		#expect(!fromXcode.contains("/Library/Developer/Toolchains/swift-"))
+	}
+
+	/// The debugger has the same two copies and the same reason to prefer one:
+	/// a frame read by one toolchain's `lldb-dap` out of a binary the other
+	/// compiled is a frame nobody can trust.
+	@Test func theDebuggerComesFromTheSamePlaceAsTheCompiler() throws {
+		guard let fromXcode = XcodeToolchain.path(for: "lldb-dap") else { return }
+		#expect(DebugAdapters.executable(for: DebugAdapters.lldb) == fromXcode)
+	}
+}
+
 /// Symbols, in both shapes servers send them.
 struct LSPSymbolTests {
 	private let range: [String: Any] = [
