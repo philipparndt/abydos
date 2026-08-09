@@ -187,9 +187,9 @@ struct MermaidTests {
 /// name.
 struct DiagramStampTests {
 	@Test func aDrawingIsSignedOnceAndNoMoreThanOnce() {
-		let signed = DiagramStamp.sign(svg: "<svg viewBox=\"0 0 1 1\"/>")
+		let signed = DiagramStamp.sign(svg: "<svg viewBox=\"0 0 1 1\"/>", tool: .mermaid)
 		#expect(signed.hasPrefix("<?abydos-mermaid?>\n<svg"))
-		#expect(DiagramStamp.sign(svg: signed) == signed)
+		#expect(DiagramStamp.sign(svg: signed, tool: .mermaid) == signed)
 		#expect(DiagramExport.isDrawnHere(Data(signed.utf8)))
 		#expect(DiagramExport.isOurs(Data(signed.utf8)))
 	}
@@ -198,7 +198,7 @@ struct DiagramStampTests {
 	/// exporting the same diagram twice — which is the ordinary way of working —
 	/// would fail the second time.
 	@Test func aPreviousExportMayBeWrittenOverAndAStrangersFileMayNot() {
-		let ours = Data(DiagramStamp.sign(svg: "<svg/>").utf8)
+		let ours = Data(DiagramStamp.sign(svg: "<svg/>", tool: .mermaid).utf8)
 		let theirs = Data("<svg>somebody's own drawing</svg>".utf8)
 		let destination = URL(fileURLWithPath: "/p/flow.svg")
 		#expect(DiagramExport.refusal(toWrite: [destination], reading: { _ in ours }) == nil)
@@ -217,7 +217,7 @@ struct DiagramStampTests {
 	/// is where the format says an ancillary chunk may go.
 	@Test func aPictureIsSignedInsideItsOwnBytes() throws {
 		let png = try #require(madeUpPNG())
-		let signed = DiagramStamp.sign(png: png)
+		let signed = DiagramStamp.sign(png: png, tool: .mermaid)
 		#expect(signed.count > png.count)
 		#expect(DiagramExport.isDrawnHere(signed))
 
@@ -250,8 +250,8 @@ struct DiagramStampTests {
 	/// What happens next is that this is written to somebody's repository.
 	@Test func somethingThatIsNotAPictureIsNotCutAbout() {
 		let plain = Data("not a picture".utf8)
-		#expect(DiagramStamp.sign(png: plain) == plain)
-		#expect(DiagramStamp.sign(png: Data()) == Data())
+		#expect(DiagramStamp.sign(png: plain, tool: .mermaid) == plain)
+		#expect(DiagramStamp.sign(png: Data(), tool: .mermaid) == Data())
 	}
 
 	/// The smallest PNG-shaped thing with the chunks a real one has.

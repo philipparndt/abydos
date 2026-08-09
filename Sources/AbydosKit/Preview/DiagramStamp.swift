@@ -13,15 +13,42 @@ import Foundation
 /// the refusal — which is exactly right and worth keeping — would fire on this
 /// app's own output the second time somebody exported the same diagram.
 ///
+/// draw.io is the interesting case, because it has a signature of its own that
+/// is *better* than this one: a picture it exports carries the whole `<mxfile>`
+/// — in a `content` attribute on an SVG, in a `tEXt` chunk keyed `mxfile` on a
+/// PNG — and that is what makes `architecture.drawio.png` a picture GitHub
+/// renders and draw.io reopens. This app writes that chunk too (`embed`), so a
+/// picture it exports from a diagram is editable rather than only viewable, and
+/// so the chunk itself proves the file came from a diagram. The marker is still
+/// written beside it: the chunk says "this was a diagram", and only the marker
+/// says "this app wrote it".
+///
 /// The signature is deliberately the same string in both formats, so one search
 /// through the first sixteen kilobytes finds either.
 public enum DiagramStamp {
+	/// Which drawer signed a picture.
+	///
+	/// Per-tool rather than one string, and that is a decision the third drawer
+	/// forced. One marker answered "did this app draw this file", which is the
+	/// only question the export's refusal asks — but a picture that says *what*
+	/// drew it costs nothing more and is the difference between "Abydos wrote
+	/// this" and "Abydos wrote this from the diagram beside it".
+	public enum Tool: String, Sendable, CaseIterable {
+		case mermaid
+		case drawio
+	}
+
 	/// What is written into the picture, and looked for when reading one back.
 	///
-	/// Not a URL and not a version. It answers exactly one question — did this
-	/// app draw this file — and anything else in it would be something to keep
-	/// up to date for no reader.
-	public static let marker = "abydos-mermaid"
+	/// Not a URL and not a version. It answers one question — did this app draw
+	/// this file, and from what — and anything else in it would be something to
+	/// keep up to date for no reader. Every marker shares a prefix so that one
+	/// search through the first sixteen kilobytes finds any of them, in either
+	/// format.
+	public static func marker(_ tool: Tool) -> String { "abydos-\(tool.rawValue)" }
+
+	/// Every marker there is, for the reader that has to recognise all of them.
+	public static let markers = Tool.allCases.map(marker)
 
 	// MARK: - SVG
 
@@ -31,17 +58,56 @@ public enum DiagramStamp {
 	/// what PlantUML uses for the same purpose, every SVG reader ignores one it
 	/// does not know, and it cannot be mistaken for content the way a comment
 	/// inside the document can.
-	static let instruction = "<?\(marker)?>"
+	static func instruction(_ tool: Tool) -> String { "<?\(marker(tool))?>" }
 
 	/// Signs a drawing, if it is not signed already.
 	///
 	/// In front of the root element and after an XML declaration when there is
 	/// one, because a declaration that is not the first thing in the file is not
 	/// a declaration.
-	public static func sign(svg: String) -> String {
+	public static func sign(svg: String, tool: Tool) -> String {
+		let instruction = instruction(tool)
 		guard !svg.contains(instruction) else { return svg }
 		guard let root = svg.range(of: "<svg") else { return instruction + "\n" + svg }
 		return svg.replacingCharacters(in: root.lowerBound..<root.lowerBound, with: instruction + "\n")
+	}
+
+	// MARK: - draw.io's own, which is a document rather than a signature
+
+	/// Puts a `<mxfile>` into a drawing, the way draw.io's own export does.
+	///
+	/// One `content` attribute on the root element, holding the document. It is
+	/// what turns `architecture.svg` from a picture of a diagram into the
+	/// diagram — GitHub renders it, and draw.io reopens it and finds every page.
+	/// Escaped rather than base64 so a person reading the file can see what it
+	/// is, which is the form draw.io itself writes.
+	public static func embed(mxfile: String, in svg: String) -> String {
+		guard let open = svg.range(of: "<svg"), !svg.contains(" content=\"") else { return svg }
+		let escaped = mxfile
+			.replacingOccurrences(of: "&", with: "&amp;")
+			.replacingOccurrences(of: "<", with: "&lt;")
+			.replacingOccurrences(of: ">", with: "&gt;")
+			.replacingOccurrences(of: "\"", with: "&quot;")
+			.replacingOccurrences(of: "\n", with: "&#10;")
+		return svg.replacingCharacters(
+			in: open.upperBound..<open.upperBound, with: " content=\"\(escaped)\""
+		)
+	}
+
+	/// The same for a PNG: a `tEXt` chunk keyed `mxfile`.
+	///
+	/// URI-escaped with `+` for a space, which is `escape()`'s output and what
+	/// draw.io's reader expects — it puts the `+` back before un-escaping.
+	public static func embed(mxfile: String, in png: Data) -> Data {
+		guard let escaped = mxfile.addingPercentEncoding(
+			withAllowedCharacters: CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "@*_+-./"))
+		) else { return png }
+		return insert(
+			chunk: chunk(type: "tEXt", payload: Data(("mxfile\u{0}" + escaped
+				.replacingOccurrences(of: "+", with: "%2B")
+				.replacingOccurrences(of: "%20", with: "+")).utf8)),
+			into: png
+		)
 	}
 
 	// MARK: - PNG
@@ -55,7 +121,19 @@ public enum DiagramStamp {
 	/// may go and where PlantUML's own is. Anything that is not a PNG comes back
 	/// unchanged rather than half-written: the caller's next act is to write
 	/// this to somebody's repository.
-	public static func sign(png data: Data) -> Data {
+	public static func sign(png data: Data, tool: Tool) -> Data {
+		insert(
+			chunk: chunk(type: "tEXt", payload: Data("Software\u{0}Abydos (\(marker(tool)))".utf8)),
+			into: data
+		)
+	}
+
+	/// Puts a chunk straight after `IHDR`, which is where the format says
+	/// ancillary chunks may go and where PlantUML's own is.
+	///
+	/// Anything that is not a PNG comes back unchanged rather than half-written:
+	/// the caller's next act is to write this to somebody's repository.
+	static func insert(chunk made: Data, into data: Data) -> Data {
 		let bytes = [UInt8](data)
 		guard bytes.count > 8 + 12, Array(bytes.prefix(8)) == pngSignature else { return data }
 
@@ -69,7 +147,7 @@ public enum DiagramStamp {
 		else { return data }
 
 		var signed = Data(bytes[0..<afterIHDR])
-		signed.append(chunk(type: "tEXt", payload: Data("Software\u{0}Abydos (\(marker))".utf8)))
+		signed.append(made)
 		signed.append(Data(bytes[afterIHDR...]))
 		return signed
 	}
