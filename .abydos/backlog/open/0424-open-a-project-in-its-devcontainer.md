@@ -269,21 +269,49 @@ them. And an example whose container cannot be built is worse than no example,
 so whatever lands there needs to be in something that runs them — the examples
 repository has its own `Makefile`.
 
-**Still none of them.** The first one was meant to land with steps 1 to 3 and did
-not: `abydos-examples` had uncommitted work in it at the time — `Makefile`,
-`README.md`, `.abydos/.gitignore` and an untracked `plantuml/` — and committing
-into somebody else's half-finished tree is not a thing to do on the way past. It
-is four lines in `go-service/.devcontainer/devcontainer.json`:
+### Which of them exist now, and what each one is for
 
-    {
-        // What this project is worked on in.
-        "name": "Go service",
-        "image": "mcr.microsoft.com/devcontainers/go:1.24-bookworm"
-    }
+Ten, in `abydos-examples`. Five come up and five are refused, and both halves
+are the point: a refusal nobody can watch happen is a paragraph, not a promise.
+`ExampleDevContainerTests` reads every one of them through `DevContainerFile`
+and asserts what it is for — including the exact refusal sentence — so this list
+and those files cannot drift apart. It skips when the examples repository is not
+beside this one.
 
-Nothing in the subset needs more than that, and the live test does the same
-thing against `alpine:3` in a temporary directory in the meantime — which is
-why this is a gap in the *examples* rather than a gap in what is proved.
+| project | what it demonstrates |
+|---|---|
+| `go-service` | the plainest thing that works: `image` and nothing else |
+| `smart-home-microservice` | `forwardPorts` on a service that serves, and `containerEnv` against `remoteEnv` |
+| `devcontainers/dockerfile-build` | `build.dockerfile`, `context: ".."`, `args`, `target` — each checkable from inside |
+| `devcontainers/non-root-user` | `containerUser` on `run` against `remoteUser` on `exec` |
+| `devcontainers/substitutions` | every `${…}` this side can answer, plus `workspaceMount`, `mounts`, `runArgs` |
+| `multi-tier` | **refused**: `dockerComposeFile`, beside a compose file that really works |
+| `devcontainers/features` | **refused**: `features`, naming the first one found |
+| `devcontainers/post-create` | **refused**: `postCreateCommand`, one slow enough to need reporting |
+| `devcontainers/post-create-fails` | **refused**: the same, with a command that exits 3 partway |
+| `devcontainers/two-containers` | **refused**: two `devcontainer.json`, naming both |
+
+The five that come up were each brought up, given a shell on a real pty at the
+workspace folder the file asked for, and removed. `smart-home-microservice`
+answered `200` on `http://127.0.0.1:8080/` from this side while the service ran
+inside it, which is `forwardPorts` proved rather than asserted.
+`devcontainers/check.sh` in that repository does the same round in one command;
+the examples `Makefile` has no goal for it yet, and wants one.
+
+`golang:1.24-alpine` (259 MB) rather than `mcr.microsoft.com/devcontainers/go`
+(over a gigabyte) for the two Go projects, deliberately: it is the same
+toolchain, and anybody who opens an example pulls what it names. The rest are
+`alpine:3.21` (8 MB) and `mcr.microsoft.com/devcontainers/base:alpine-3.21`
+(735 MB), which is the smallest official image that actually has a `vscode` user
+to be non-root as.
+
+**Two things those examples turned up.** `hasDevContainer` asks
+`project?.root` and ignores `subprojectRoot`, so a devcontainer belonging to a
+*subproject* is invisible to the menu — and `abydos-examples` is the repository
+that exists to be opened as subprojects, so every one of these has to be opened
+as its own project for now. And the `--devcontainer` harness opens whatever
+project the app restores rather than the one `--open` names when the app has
+saved window state, which is why it now prints the root it actually looked in.
 
 **Not the same thing as the dev pod.** `DevPod.swift` and the chart under
 `DevPod/` are a Kubernetes pod somebody works in remotely; this is a container on

@@ -147,6 +147,16 @@ import Testing
 		// then failed saying the container had no checkout in it, which was never
 		// true. So it is typed again every few seconds until the answer comes
 		// back, which costs nothing when the first one lands.
+		//
+		// The answer is looked for as `IN:/`, not as `IN:`, because a pty echoes
+		// what was typed: the command itself contains `IN:` and would otherwise
+		// satisfy the test with its own input.
+		//
+		// Two agents fixed this race on the same day, one waiting ninety seconds
+		// and retyping every three, the other thirty and twice a second. This is
+		// the patient one: under the load that caused the race, half a second
+		// between attempts fills the shell's input with commands it has not read
+		// yet, and thirty seconds is not long enough to be sure.
 		let ask = "printf 'IN:%s:%s\\n' \"$(pwd)\" \"$(cat marker.txt)\"\n"
 		let deadline = Date().addingTimeInterval(90)
 		var lastAsked = Date.distantPast
@@ -156,6 +166,7 @@ import Testing
 				lastAsked = Date()
 			}
 			try? await Task.sleep(nanoseconds: 200_000_000)
+		}
 		}
 		// The prompt is in the workspace folder, and the checkout is under it.
 		#expect(seen.text.contains("IN:\(session.configuration.workspaceFolder):"))
