@@ -50,12 +50,19 @@ struct DiagramExportLiveTests {
 		let tool = PlantUML.Tool.image(ToolContainer(image: Self.image), runtime)
 		let folder = try JavaTestDirectory.make()
 		// The kept server outlives the render that started it — that is the whole
-		// point of it — so it is this test's to remove, and `removeAll` is the
-		// synchronous way to be sure of it even when an expectation throws out of
-		// here first.
+		// point of it — so it is this test's to remove, synchronously, even when
+		// an expectation throws out of here first.
+		//
+		// By name, and only the names this test's renders make: emptying the whole
+		// register took the devcontainer out from under `DevContainerLiveTests`
+		// running beside this one, whose shell then answered "No such container".
+		// Four separate people investigated that red run in one day. Sharing a
+		// process is not owning each other's containers.
 		defer {
 			try? FileManager.default.removeItem(at: folder)
-			ToolContainers.shared.removeAll()
+			ToolContainers.shared.release(
+				withPrefixes: ["abydos-plantuml-server-", "abydos-plantuml-export-"]
+			)
 		}
 
 		// A picture of the diagram, in the format asked for — which is not the

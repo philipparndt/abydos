@@ -196,10 +196,41 @@ public final class ToolContainers: @unchecked Sendable {
 		let all = running
 		running.removeAll()
 		lock.unlock()
-		guard !all.isEmpty else { return }
+		remove(all)
+	}
 
+	/// Removes the containers registered under one of these name prefixes, and
+	/// forgets them.
+	///
+	/// This is what something finishing with *its own* tools wants, and
+	/// `removeAll` is not: that one is the exit path and takes everything this
+	/// process registered, whoever registered it. In a test suite running in
+	/// parallel that means taking the devcontainer another test has a shell in,
+	/// which then fails saying "No such container" — a red run that four people
+	/// investigated in one day before each concluding it was not theirs.
+	///
+	/// The prefixes are the caller's own roles: `abydos-plantuml-server-` is the
+	/// kept server, `abydos-devcontainer-` is a devcontainer. Only containers
+	/// this process started are considered, for the same reason `stale(among:)`
+	/// asks — another copy of this app's are not ours to remove.
+	@discardableResult
+	public func release(withPrefixes prefixes: [String]) -> [String] {
+		let mine = ProcessInfo.processInfo.processIdentifier
+		lock.lock()
+		let chosen = running.filter { name, _ in
+			Self.owner(of: name) == mine && prefixes.contains { name.hasPrefix($0) }
+		}
+		for name in chosen.keys { running.removeValue(forKey: name) }
+		lock.unlock()
+		remove(chosen)
+		return chosen.keys.sorted()
+	}
+
+	/// Asks each runtime, once, to remove the containers registered against it.
+	private func remove(_ containers: [String: ContainerRuntime]) {
+		guard !containers.isEmpty else { return }
 		var byRuntime: [String: (ContainerRuntime, [String])] = [:]
-		for (name, runtime) in all {
+		for (name, runtime) in containers {
 			byRuntime[runtime.path, default: (runtime, [])].1.append(name)
 		}
 		for (runtime, names) in byRuntime.values {

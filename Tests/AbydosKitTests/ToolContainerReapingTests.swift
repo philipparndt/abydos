@@ -160,6 +160,63 @@ struct ToolContainerNameTests {
 	}
 }
 
+/// Removing what you started, rather than everything anybody started.
+///
+/// The register is process-wide, and a test suite is one process running several
+/// suites at once. A test that empties the whole of it removes the container the
+/// suite beside it is in the middle of using — which is not a fault in the other
+/// suite, however much it looks like one from there.
+struct ContainerCleanupTests {
+	/// The prefixes are the caller's own roles, and everything else registered
+	/// stays registered.
+	@Test func aToolRemovesItsOwnContainersRatherThanEveryones() {
+		let containers = ToolContainers()
+		// Something that exists and does nothing: what is being tested is which
+		// names are chosen, not what a runtime does with them.
+		let runtime = ContainerRuntime.docker("/usr/bin/true")
+		let server = ToolContainers.mint("plantuml-server")
+		let devcontainer = ToolContainers.mint("devcontainer")
+		// Another copy of this app's, by the pid in the name.
+		let somebodyElses = "abydos-plantuml-server-1-1"
+		for name in [server, devcontainer, somebodyElses] {
+			containers.register(name, runtime: runtime)
+		}
+
+		#expect(containers.release(withPrefixes: ["abydos-plantuml-server-"]) == [server])
+		// The devcontainer another suite has a shell in is untouched, and so is
+		// the container belonging to something else running now.
+		#expect(containers.names == [devcontainer, somebodyElses].sorted())
+	}
+
+	/// That no test empties the register.
+	///
+	/// `removeAll` is the app's exit path and belongs to the app: it takes every
+	/// container this process registered, whoever registered it and whatever
+	/// they are still doing with it. In a test it took the devcontainer out from
+	/// under the suite running beside it, whose shell then answered "No such
+	/// container" — a red run four separate people investigated in one day
+	/// before each concluding it was not theirs. That cost is why this is a test
+	/// rather than a comment.
+	///
+	/// The name it looks for is assembled rather than written out, so this file
+	/// is scanned like every other instead of having to exempt itself.
+	@Test func noTestEmptiesTheWholeRegister() throws {
+		let tests = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+		let forbidden = "Containers.shared." + "removeAll()"
+		var offenders: [String] = []
+		for name in try FileManager.default.contentsOfDirectory(atPath: tests.path)
+			where name.hasSuffix(".swift") {
+			let text = try String(contentsOf: tests.appendingPathComponent(name), encoding: .utf8)
+			if text.contains(forbidden) { offenders.append(name) }
+		}
+		let named = offenders.sorted().joined(separator: ", ")
+		#expect(offenders.isEmpty, """
+		a test removes the containers it made, by name — release(withPrefixes:) — \
+		rather than every container this process started: \(named)
+		""")
+	}
+}
+
 /// Which runtime, now that a container can be removed on either.
 struct ContainerRuntimePreferenceTests {
 	/// Docker first when nothing is asked for. The reason is no longer cleanup —
