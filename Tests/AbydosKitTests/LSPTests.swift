@@ -336,6 +336,44 @@ struct XcodeToolchainTests {
 	}
 }
 
+/// One server per language per project — where "language" means the server, not
+/// the file extension.
+struct LanguageServerKeyTests {
+	private let project = URL(fileURLWithPath: "/tmp/project")
+
+	/// The fault, measured: opening `main.c` and `thing.cpp` in one project
+	/// started two `clangd`, because the table was keyed by the language asked
+	/// about and one server answers for three of them.
+	@Test func oneServerAnswersForAllTheLanguagesItKnows() {
+		let c = LanguageServers.serverKey(project: project, languageId: "c")
+		#expect(LanguageServers.serverKey(project: project, languageId: "cpp") == c)
+		#expect(LanguageServers.serverKey(project: project, languageId: "objc") == c)
+
+		let typescript = LanguageServers.serverKey(project: project, languageId: "typescript")
+		#expect(LanguageServers.serverKey(project: project, languageId: "javascript") == typescript)
+		#expect(LanguageServers.serverKey(project: project, languageId: "tsx") == typescript)
+	}
+
+	@Test func differentServersAreStillDifferentKeys() {
+		#expect(LanguageServers.serverKey(project: project, languageId: "swift")
+			!= LanguageServers.serverKey(project: project, languageId: "go"))
+	}
+
+	@Test func twoProjectsDoNotShareAServer() {
+		#expect(LanguageServers.serverKey(project: project, languageId: "swift")
+			!= LanguageServers.serverKey(
+				project: URL(fileURLWithPath: "/tmp/other"), languageId: "swift"
+			))
+	}
+
+	/// A language nothing answers for still gets a key of its own, so the
+	/// bookkeeping around it — what was looked for and not found — keeps working.
+	@Test func aLanguageWithNoServerKeepsItsOwnName() {
+		#expect(LanguageServers.serverKey(project: project, languageId: "cobol")
+			== "/tmp/project#cobol")
+	}
+}
+
 /// When a project's servers may be stopped, and when they may not.
 struct LanguageServerReapingTests {
 	private let project = URL(fileURLWithPath: "/tmp/project")

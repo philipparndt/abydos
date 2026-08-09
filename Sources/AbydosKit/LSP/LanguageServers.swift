@@ -165,6 +165,22 @@ public enum LanguageServers {
 		known.first { $0.languageIds.contains(languageId) }
 	}
 
+	/// What a project's running server is held under: the project and the
+	/// *server*, not the project and the language.
+	///
+	/// One definition answers for several language ids — clangd for `c`, `cpp`
+	/// and `objc`; typescript-language-server for four — so a table keyed by the
+	/// id started a second copy of the same program the first time somebody
+	/// opened a `.cpp` beside a `.c`. Measured, with two files open in one
+	/// project: two `clangd`, each indexing the same compilation database.
+	///
+	/// The tool's key rather than its command, since that is the name the same
+	/// server is already called everywhere an image is chosen for it.
+	public static func serverKey(project: URL, languageId: String) -> String {
+		let server = definition(forLanguage: languageId)?.toolKey ?? languageId
+		return "\(project.standardizedFileURL.path)#\(server)"
+	}
+
 	/// Whether a project's servers are still somebody's, now that one window has
 	/// finished with it.
 	///
