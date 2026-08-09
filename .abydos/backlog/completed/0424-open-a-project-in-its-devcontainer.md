@@ -147,8 +147,8 @@ Refused by name, one sentence each: `features`; `dockerComposeFile`;
 that is not JSON; a file
 naming neither an image nor a Dockerfile, or both; a `workspaceMount` that is
 not a bind of this project; a `workspaceFolder` outside the mount; a
-`forwardPorts` entry that is not a number; and more than one `devcontainer.json`
-in the project.
+`forwardPorts` entry that is not a number; and ~~more than one
+`devcontainer.json` in the project~~ (lifted, see below — they are offered).
 
 Decisions taken while doing it, each of which could be reversed:
 
@@ -422,8 +422,9 @@ repository has its own `Makefile`.
 
 ### Which of them exist now, and what each one is for
 
-Ten, in `abydos-examples`. ~~Five come up and five are refused~~ — **seven come
-up and three are refused, since the lifecycle commands run**, and both halves
+Ten, in `abydos-examples`. ~~Five come up and five are refused~~ ~~seven come
+up and three are refused, since the lifecycle commands run~~ — **eight come up
+and two are refused, since several devcontainers are offered**, and both halves
 are the point: a refusal nobody can watch happen is a paragraph, not a promise.
 `ExampleDevContainerTests` reads every one of them through `DevContainerFile`
 and asserts what it is for — including the exact refusal sentence — so this list
@@ -441,7 +442,7 @@ beside this one.
 | `devcontainers/features` | **refused**: `features`, naming the first one found |
 | `devcontainers/post-create` | `postCreateCommand`, one slow enough to need reporting — and it installs `jq`, which the image does not carry |
 | `devcontainers/post-create-fails` | the same, with a command that exits 3 partway and a `postStartCommand` that must not run after it |
-| `devcontainers/two-containers` | **refused**: two `devcontainer.json`, naming both |
+| `devcontainers/two-containers` | ~~**refused**: two `devcontainer.json`, naming both~~ — two menu entries, and both containers up at once |
 
 The five that come up were each brought up, given a shell on a real pty at the
 workspace folder the file asked for, and removed. `smart-home-microservice`
@@ -484,6 +485,81 @@ the machine in front of them. They will want to share the path mapping and
 possibly the terminal plumbing, and they are otherwise different features. Do not
 let one grow into the other by accident.
 
+### Later: several devcontainers are offered rather than refused, 2026-08-09
+
+**"More than one `devcontainer.json`" is no longer a refusal.** It was one for a
+single reason, written down above — picking the first quietly would be picking
+somebody's toolchain for them, and there was nowhere to ask which one they
+meant. There is now: the terminal panel's `+` grew a chevron this afternoon, and
+a menu is exactly where a question like that belongs. So `.devcontainer/alpine`
+beside `.devcontainer/go` gets two entries and somebody picks one.
+
+**Each entry names its own container**, and that is the load-bearing part rather
+than a nicety: the two share a project, a checkout, a mount and a workspace
+folder, so if they cannot name themselves apart, a menu offering both says less
+than the refusal it replaced. `DevContainerFile.name(of:in:)` is the rule — the
+file's own `name`, and **the folder it sits in when it has none**, so
+`.devcontainer/go` is "go". A file that is *refused* still gets named, out of its
+raw `name` field, because a refusal attributed to nothing on screen is worse than
+no refusal. The two fixed locations have no folder of their own and fall back to
+the project, which is what a project with one devcontainer has always shown —
+that case does not move.
+
+`devcontainers/two-containers` answers:
+
+```
+New Terminal | New Terminal in Small ⬢ | New Terminal in With a Go toolchain ⬢
+```
+
+**A session is now kept against the file rather than against the project**, and
+that was the one real bug in the way. `DevContainers.sessions` was keyed on the
+project path, so the second container asked for would have been handed the
+first's — the same name, the wrong image, and the second `run` never happening.
+Keyed on the canonical file, two containers for one project are two containers.
+Nothing else about reaping needed changing and that is worth saying: a
+devcontainer already has no idle reaper (the decision above, because it holds
+somebody's shell), `ToolContainers.mint` already gives every container its own
+name, 0406's sweep is by prefix and owning pid, and `stop(project:)` — which is
+what closing a project calls — now removes every one of them rather than one.
+
+**The View menu's item opens the first, and says which one that is.** It is one
+command with one title and the alternative was a submenu; a submenu costs the
+two things that make the ordinary case right, because AppKit does not send
+`validateMenuItem:` to an item that has one, so it could no longer be renamed
+after the container it opens nor greyed out by the same rule as everything else
+in that menu. It does not *disagree* with the chevron's menu — it is that menu's
+first container entry, same title, same selector, same validation, same
+container — it offers less. Both are built from `devContainerChoices` and go
+through `newTerminalInContainer`, so they still cannot drift.
+
+**The language servers choose the first, and are the one thing here still
+choosing rather than asking.** A server starts because a file was opened, before
+anybody has said anything, so there is no gesture to hang a question on. The
+first in the menu's own sorted order rather than whichever container happens to
+be up — that would make the toolchain the editor checks against depend on
+whether somebody had opened a terminal yet, which is a coin toss with extra
+steps. It is said out loud, once, in a notification naming the container it
+picked. **This is a decision for whoever owns this, not one this closes**: a
+setting naming the container a project's tools belong in, or the question asked
+once when the project is opened, are both better answers than a rule. It is in
+the open list below.
+
+Proved by opening `devcontainers/two-containers` and taking the menu dump, then
+opening a terminal in each: `IN:/workspaces/two-containers:abydos-devcontainer-22709-1`
+and `IN:/workspaces/two-containers:abydos-devcontainer-22709-2`, two containers,
+one project, both shells alive at once. A project with one devcontainer answers
+exactly as it did.
+
+0430 had to be fixed on the way, and it is not incidental: `relative()`
+canonicalised the project and not the file, so under `/tmp` — where every
+scratch project the harness makes lives — *both* files collapsed to
+`devcontainer.json` and the two containers really were one. Both sides go
+through `realpath` now.
+
+`devcontainers/two-containers` in the examples repository is no longer described
+as refused, and neither are the two `post-create` projects, which stopped being
+refused earlier the same day; `check.sh` brings all three up.
+
 ## What is closed here, and what is not
 
 All five of the steps above are done, which is what closes this entry. What it
@@ -511,8 +587,16 @@ here — each is its own item when somebody wants it:
   `initializeCommand` really wants and what this settled deliberately without.
 - **`hasDevContainer` ignores `subprojectRoot`**, so a devcontainer belonging to
   a subproject is invisible to the menu.
-- **`abydos-examples/devcontainers/check.sh` and its READMEs** still say the two
-  `post-create` projects are refused.
+- ~~**`abydos-examples/devcontainers/check.sh` and its READMEs** still say the
+  two `post-create` projects are refused.~~ Corrected, along with
+  `two-containers`, and `check.sh` now brings all three up.
+- **Which container a project's *language servers* belong in**, when it offers
+  several. They take the first and say so; a setting, or the question asked once
+  when the project is opened, is the real answer. See the section above.
+- ~~**More than one `devcontainer.json` is refused.**~~ Lifted; the section above
+  is what came of it. What is still true is that a project cannot say which of
+  its containers is the *default* — there is no `.devcontainer` convention for
+  it and sorted order is what stands in.
 
 ---
 
