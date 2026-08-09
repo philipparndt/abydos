@@ -1327,6 +1327,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			// Off for the projects that have no such file, which is most of
 			// them: an item that is always there and always fails is worse than
 			// one that says by being grey which projects it is for.
+			//
+			// Named here rather than once at build time because which container
+			// it means changes with the subproject being worked in, and this is
+			// the moment before it is read.
+			item.title = devContainerMenuTitle
 			return hasDevContainer
 		case #selector(navigateBack(_:)):
 			return canNavigateBack
@@ -3133,7 +3138,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// opening a shell somewhere half-configured: 0424 is explicit that a
 	/// container missing what the file asked for looks like a broken editor.
 	@objc func newTerminalInContainer(_ sender: Any?) {
-		guard let root = project?.root else { return }
+		// The same root the menu item was enabled and named by, so that what is
+		// started is what was clicked. Falling back to the scope when there is no
+		// devcontainer anywhere keeps the "no devcontainer.json" message below,
+		// which names the folder it looked in.
+		guard let root = devContainerRoot ?? scopeRoot else { return }
 		setPanelVisible(true)
 		Task { @MainActor in
 			guard let runtime = ContainerRuntime.discover(
@@ -3177,11 +3186,45 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 	}
 
+	/// Where the devcontainer this window would open is, or nil when there is
+	/// none to open.
+	///
+	/// **The subproject wins.** A repository of subprojects with a devcontainer
+	/// each is not an unusual shape — `abydos-examples` is exactly that, and is
+	/// the repository the examples live in — and the part somebody is working in
+	/// is the part they mean. Asking `project?.root` alone made every one of
+	/// those invisible to the menu.
+	///
+	/// The project root is still the answer when the subproject has none, which
+	/// is every ordinary project and every subproject of one that carries the
+	/// container for the whole repository.
+	var devContainerRoot: URL? {
+		if let subprojectRoot, DevContainerFile.exists(in: subprojectRoot) { return subprojectRoot }
+		guard let root = project?.root, DevContainerFile.exists(in: root) else { return nil }
+		return root
+	}
+
 	/// Whether this project has a devcontainer at all, which is what the menu
 	/// item is enabled by.
-	var hasDevContainer: Bool {
-		guard let root = project?.root else { return false }
-		return DevContainerFile.exists(in: root)
+	var hasDevContainer: Bool { devContainerRoot != nil }
+
+	/// What the item is called when there is no container of ours to name.
+	static let containerTerminalTitle = "New Terminal in Container"
+
+	/// What the menu item says it will open.
+	///
+	/// Named after the container, exactly as the tab it opens is: a window
+	/// scoped to one subproject of ten that each have a devcontainer cannot say
+	/// which one it means by saying "Container". The devcontainer's own `name`
+	/// is what the tab shows, so it is what this shows too.
+	///
+	/// The folder is the answer when the file has no name or cannot be read —
+	/// two `devcontainer.json` in one project is refused rather than read, and
+	/// the folder is then the whole of what can honestly be said about it.
+	var devContainerMenuTitle: String {
+		guard let root = devContainerRoot else { return Self.containerTerminalTitle }
+		let named = DevContainerFile.read(project: root)?.configuration?.name
+		return "New Terminal in \(named ?? root.lastPathComponent) ⬢"
 	}
 
 	/// Opens a terminal in the project's devcontainer and says what came back.
@@ -3191,17 +3234,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// proves nothing about whether the menu reaches it.
 	func exerciseDevContainerTerminalForTesting() {
 		let item = NSMenuItem(
-			title: "New Terminal in Container",
+			title: Self.containerTerminalTitle,
 			action: #selector(newTerminalInContainer(_:)),
 			keyEquivalent: ""
 		)
 		// The root as well as the answer: "there is no devcontainer here" is not
 		// actionable without "here", and the project that is open is not always
-		// the folder that was asked for.
-		print("DEVCONTAINER: root=\(project?.root.path ?? "-") file=\(hasDevContainer) "
-			+ "enabled=\(validateMenuItem(item))")
+		// the folder that was asked for. The container's root is printed beside
+		// it because it is the subproject's rather than the project's whenever
+		// the subproject has one, and the title because that is what somebody
+		// reads before clicking.
+		let enabled = validateMenuItem(item)
+		print("DEVCONTAINER: root=\(project?.root.path ?? "-") "
+			+ "scope=\(scopeRoot?.path ?? "-") container=\(devContainerRoot?.path ?? "-") "
+			+ "file=\(hasDevContainer) enabled=\(enabled) title=\(item.title)")
 		fflush(stdout)
-		guard validateMenuItem(item) else { return }
+		guard enabled else { return }
 		newTerminalInContainer(nil)
 
 		// Generous: the first time this runs the image is being fetched.

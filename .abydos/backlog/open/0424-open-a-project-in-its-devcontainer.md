@@ -305,13 +305,23 @@ toolchain, and anybody who opens an example pulls what it names. The rest are
 (735 MB), which is the smallest official image that actually has a `vscode` user
 to be non-root as.
 
-**Two things those examples turned up.** `hasDevContainer` asks
-`project?.root` and ignores `subprojectRoot`, so a devcontainer belonging to a
-*subproject* is invisible to the menu — and `abydos-examples` is the repository
-that exists to be opened as subprojects, so every one of these has to be opened
-as its own project for now. And the `--devcontainer` harness opens whatever
+**Two things those examples turned up.** `hasDevContainer` asked
+`project?.root` and ignored `subprojectRoot`, so a devcontainer belonging to a
+*subproject* was invisible to the menu — and `abydos-examples` is the repository
+that exists to be opened as subprojects, so not one of these could be opened the
+way they are meant to be. **Fixed:** `devContainerRoot` is the subproject's when
+it has one and the project's otherwise, and the menu item, the action and the
+`--devcontainer` harness all read that one property, so what the menu offers and
+what starts cannot disagree. The item is also **named after the container** the
+way the tab it opens is — "New Terminal in Built from a Dockerfile ⬢" — because
+ten subprojects with a devcontainer each is exactly the case where "Container"
+says nothing; the folder is the name when the file has none or is refused.
+Proved by opening `abydos-examples` with `devcontainers/dockerfile-build` as the
+subproject: the shell came up in `abydos-devcontainer-…` at
+`/workspaces/dockerfile-build`. And the `--devcontainer` harness opens whatever
 project the app restores rather than the one `--open` names when the app has
-saved window state, which is why it now prints the root it actually looked in.
+saved window state, which is why it now prints the root it actually looked in —
+and the container's root beside it.
 
 **Not the same thing as the dev pod.** `DevPod.swift` and the chart under
 `DevPod/` are a Kubernetes pod somebody works in remotely; this is a container on
