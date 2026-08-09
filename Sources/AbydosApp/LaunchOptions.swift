@@ -342,6 +342,10 @@ struct LaunchOptions {
 	/// Open a terminal in the project's devcontainer and report what is in it.
 	var devContainerTerminal = false
 
+	/// Print what the chevron beside the panel's + offers, and which of the two
+	/// hit areas beside the last tab a click at each lands in.
+	var terminalAddMenu = false
+
 	/// Close the window opened last, this many seconds in.
 	///
 	/// For counting what a closed window takes with it. A torn-off window shares
@@ -413,6 +417,7 @@ struct LaunchOptions {
 			case "--push-branch": options.pushBranch = next()
 			case "--report-cwd": options.reportsTerminalDirectory = true
 			case "--devcontainer": options.devContainerTerminal = true
+			case "--tab-add-menu": options.terminalAddMenu = true
 			case "--close-window": options.closeLastWindowAt = next().flatMap(Double.init) ?? 5
 			case "--report-geometry": options.reportsTerminalGeometry = true
 			case "--blame": options.showsBlame = true

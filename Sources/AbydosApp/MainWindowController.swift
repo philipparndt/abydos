@@ -530,6 +530,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 		bottomPanel.onRequestHide = { [weak self] in self?.setPanelVisible(false) }
 		bottomPanel.onToggleMaximize = { [weak self] in self?.togglePanelMaximized() }
+		bottomPanel.onRequestNewTerminalMenu = { [weak self] view, point in
+			guard let self else { return }
+			self.newTerminalMenu().popUp(positioning: nil, at: point, in: view)
+		}
 		// Written when they change rather than only on the way out: a terminal
 		// that survives a restart has to survive the kind of exit nobody plans.
 		bottomPanel.onTerminalsChanged = { [weak self] in self?.rememberOpenEditors() }
@@ -3158,6 +3162,65 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		bottomPanel.newTerminal()
 	}
 
+	/// What the chevron beside the panel's + offers.
+	///
+	/// The kinds of terminal there are, which is two: an ordinary one, and one
+	/// inside the container this project says it is worked on in. The + itself
+	/// goes on making the ordinary one, exactly as the play button goes on
+	/// running while the chevron beside it offers profiling and coverage — the
+	/// same shape and the same bargain, because it is the same gesture.
+	///
+	/// Both items are the menu bar's own: the same selectors, put through the
+	/// same `validateMenuItem`, so what the View menu offers and what this
+	/// offers cannot drift apart, and the devcontainer entry is greyed out here
+	/// for the projects it is greyed out for there.
+	private func newTerminalMenu() -> NSMenu {
+		let menu = NSMenu()
+		// Validated by hand below, item by item: left to itself AppKit asks the
+		// responder chain, and a menu popped up from a view in the panel is not
+		// always where this window is.
+		menu.autoenablesItems = false
+
+		let plain = NSMenuItem(
+			title: "New Terminal", action: #selector(newTerminal(_:)), keyEquivalent: ""
+		)
+		plain.target = self
+		menu.addItem(plain)
+
+		let container = NSMenuItem(
+			title: Self.containerTerminalTitle,
+			action: #selector(newTerminalInContainer(_:)),
+			keyEquivalent: ""
+		)
+		container.target = self
+		// This is what names it after the container as well as what greys it
+		// out — the item says "New Terminal in <the devcontainer's own name> ⬢"
+		// for a project that has one, and stays grey and generic for the rest.
+		container.isEnabled = validateMenuItem(container)
+		menu.addItem(container)
+		return menu
+	}
+
+	/// What the + and its chevron answer to, for the harness.
+	var terminalAddControlsForTesting: String { bottomPanel.addControlsForTesting }
+
+	/// Shows the panel and nothing else, so the strip has a layout to be asked
+	/// about.
+	///
+	/// Deliberately not "open a terminal": the first terminal in a window
+	/// attaches to tmux, and a window that is following its terminal then goes
+	/// to wherever that session left its shell — a different project, with a
+	/// different answer about devcontainers, which is what this dump is for.
+	func showTerminalPanelForTesting() { setPanelVisible(true) }
+
+	/// What that menu holds, for the harness: a menu cannot be photographed
+	/// while it is open, which is why these dumps exist.
+	func newTerminalMenuForTesting() -> String {
+		newTerminalMenu().items
+			.map { "\($0.title) enabled=\($0.isEnabled)" }
+			.joined(separator: " | ")
+	}
+
 	/// A shell inside the container this project says it is worked on in.
 	///
 	/// The container is started if it is not up and reused if it is — which is
@@ -3165,6 +3228,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// Everything that can go wrong says what it was in one sentence rather than
 	/// opening a shell somewhere half-configured: 0424 is explicit that a
 	/// container missing what the file asked for looks like a broken editor.
+	///
+	/// **The tab opens now, not when it is ready.** The first time, this is a
+	/// pull or a Dockerfile build and then everything the file asks to have run
+	/// once the container exists, which together are minutes; a pane that stays
+	/// empty for that long and then produces a prompt is a feature that looks
+	/// like a hang. So the tab appears at once, the work is written into it, and
+	/// that same pane becomes the shell — see `PreparingTerminal`.
 	@objc func newTerminalInContainer(_ sender: Any?) {
 		// The same root the menu item was enabled and named by, so that what is
 		// started is what was clicked. Falling back to the scope when there is no
@@ -3172,51 +3242,58 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// which names the folder it looked in.
 		guard let root = devContainerRoot ?? scopeRoot else { return }
 		setPanelVisible(true)
+		// Named before anything is started, from the same file the menu item is
+		// named from, so the tab is called what was clicked from the moment it
+		// appears rather than being renamed under somebody at the end.
+		let preparing = bottomPanel.newPreparingTerminal(
+			title: Self.containerTabTitle(for: root), subject: root.lastPathComponent
+		)
+		preparing.step("Opening \(root.lastPathComponent) in its devcontainer…")
+
 		Task { @MainActor in
 			guard let runtime = ContainerRuntime.discover(
 				preference: ContainerRuntime.Preference(rawValue: Settings.shared.containerRuntime)
 					?? .automatic
 			) else {
-				Toast.post(
-					"No container runtime",
-					detail: "Opening a project in its devcontainer needs a container runtime, "
-						+ "and neither Docker nor Apple's `container` was found on this machine.",
-					kind: .error
+				preparing.refuse(
+					"Opening a project in its devcontainer needs a container runtime, and neither "
+						+ "Docker nor Apple's `container` was found on this machine."
 				)
 				return
 			}
 			let outcome = await DevContainers.shared.session(
 				for: root,
 				using: runtime,
-				progress: { message in
-					// Starting one is a pull the first time and seconds after
-					// that, and either with nothing on screen is a menu item
-					// that looks like it did nothing.
-					Task { @MainActor in Toast.post(message, kind: .information) }
-				}
+				progress: preparing.progress
 			)
 			switch outcome {
 			case .none:
-				Toast.post(
-					"\(root.lastPathComponent) has no devcontainer.json",
-					detail: "A project says what it needs to be worked on in "
-						+ ".devcontainer/devcontainer.json.",
-					kind: .information
+				preparing.refuse(
+					"\(root.lastPathComponent) has no devcontainer.json — a project says what it "
+						+ "needs to be worked on in .devcontainer/devcontainer.json."
 				)
 			case let .refused(reason):
-				Toast.post("This project's devcontainer was not started", detail: reason, kind: .error)
+				preparing.refuse(reason)
 			case let .running(session):
 				// A terminal is an attach, which is the moment `postAttachCommand`
 				// names. Not waited for: it is the one lifecycle command whose job
 				// is to greet somebody, and a shell that opens a second later
 				// because of it is worse than one that opens now.
 				Task { await DevContainers.shared.attach(to: session) }
-				let name = session.configuration.name.map { "\($0) ⬢" } ?? "container ⬢"
-				bottomPanel.newTerminal(
-					title: name, running: DevContainers.terminalCommand(session)
-				)
+				preparing.becomeShell(running: DevContainers.terminalCommand(session))
 			}
 		}
+	}
+
+	/// What the tab in the container is called.
+	///
+	/// The devcontainer's own `name`, which is what the menu item that opens it
+	/// says too — a window scoped to one subproject of ten that each have a
+	/// devcontainer cannot say which one it means by saying "container". The
+	/// folder is the answer when the file has no name or cannot be read.
+	static func containerTabTitle(for root: URL) -> String {
+		let named = DevContainerFile.read(project: root)?.configuration?.name
+		return "\(named ?? root.lastPathComponent) ⬢"
 	}
 
 	/// Where the devcontainer this window would open is, or nil when there is
@@ -3256,8 +3333,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// the folder is then the whole of what can honestly be said about it.
 	var devContainerMenuTitle: String {
 		guard let root = devContainerRoot else { return Self.containerTerminalTitle }
-		let named = DevContainerFile.read(project: root)?.configuration?.name
-		return "New Terminal in \(named ?? root.lastPathComponent) ⬢"
+		// The tab's own name, so the item and the tab it opens cannot drift.
+		return "New Terminal in \(Self.containerTabTitle(for: root))"
 	}
 
 	/// Opens a terminal in the project's devcontainer and says what came back.
@@ -3284,19 +3361,36 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		fflush(stdout)
 		guard enabled else { return }
 		newTerminalInContainer(nil)
+		waitForContainerShellForTesting(seconds: 0)
+	}
 
-		// Generous: the first time this runs the image is being fetched.
-		DispatchQueue.main.asyncAfter(deadline: .now() + 12) { [weak self] in
-			guard let self else { return }
-			print("DEVCONTAINER: tab=\(self.bottomPanel.activeTerminalTitle ?? "-")")
-			self.sendToTerminal("printf 'IN:%s:%s\\n' \"$(pwd)\" \"$(cat /etc/hostname)\"\n")
-			DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
-				for line in self.bottomPanel.terminalTextForTesting.split(separator: "\n")
-				where line.contains("IN:") {
-					print("DEVCONTAINER: \(line.trimmingCharacters(in: .whitespaces))")
-				}
-				fflush(stdout)
+	/// Waits for the tab to stop being a report and start being a shell, then
+	/// types into it.
+	///
+	/// Asked of the pane rather than counted on a clock, because how long this
+	/// takes is not something a number can be right about: a pull is minutes, a
+	/// Dockerfile build is minutes, and `postCreateCommand` is however long
+	/// somebody else's install takes. The tab is there from the first moment
+	/// either way — that is the point of it — so what is being waited for is the
+	/// shell, and nothing else.
+	private func waitForContainerShellForTesting(seconds: Int) {
+		let outOfPatience = 180
+		if bottomPanel.activeTerminalShowsOutputOnly, seconds < outOfPatience {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+				self?.waitForContainerShellForTesting(seconds: seconds + 1)
 			}
+			return
+		}
+		print("DEVCONTAINER: tab=\(bottomPanel.activeTerminalTitle ?? "-") ready after \(seconds)s")
+		fflush(stdout)
+		sendToTerminal("printf 'IN:%s:%s\\n' \"$(pwd)\" \"$(cat /etc/hostname)\"\n")
+		DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+			guard let self else { return }
+			for line in self.bottomPanel.terminalTextForTesting.split(separator: "\n")
+			where line.contains("IN:") {
+				print("DEVCONTAINER: \(line.trimmingCharacters(in: .whitespaces))")
+			}
+			fflush(stdout)
 		}
 	}
 

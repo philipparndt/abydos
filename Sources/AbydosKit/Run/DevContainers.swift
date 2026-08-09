@@ -32,6 +32,76 @@ public actor DevContainers {
 		case refused(String)
 	}
 
+	/// Where a devcontainer being made says what it is doing.
+	///
+	/// Two sinks rather than one, because they are two different things and are
+	/// wanted in different places. `step` is one sentence naming what is
+	/// starting now — `ContainerImages.progressMessage`'s bargain, short enough
+	/// for a toast. `output` is what the runtime or the command itself printed,
+	/// as it prints it: a pull's layers, a Dockerfile's steps, a
+	/// `postCreateCommand` counting to ten.
+	///
+	/// Anything with a terminal to put this in wants both, and that is the whole
+	/// of what makes the first minutes of a devcontainer visible rather than a
+	/// pane that sits empty until it is over. Anything with only a toast takes
+	/// the first and leaves the second, which still goes to
+	/// `~/Library/Logs/Abydos/devcontainer.log` for the lifecycle commands.
+	///
+	/// Both are called off the main thread, from wherever the subprocess is
+	/// being read.
+	public struct Progress: Sendable {
+		public var step: (@Sendable (String) -> Void)?
+		public var output: (@Sendable (String) -> Void)?
+
+		public init(
+			step: (@Sendable (String) -> Void)? = nil,
+			output: (@Sendable (String) -> Void)? = nil
+		) {
+			self.step = step
+			self.output = output
+		}
+
+		/// Nobody is watching, which is the ordinary case for a test.
+		public static let silent = Progress()
+	}
+
+	/// Everyone listening to one container coming up, which is more than one
+	/// often enough to matter.
+	///
+	/// A project's container is started once however many things ask for it, and
+	/// the second asker used to hear nothing at all: the start already running
+	/// carried the *first* caller's sink and no other. In this app the first
+	/// caller is usually the language servers — they start the container as soon
+	/// as a file is opened — and the second is somebody opening a terminal in
+	/// it, who would then watch an empty pane for as long as the pull takes.
+	/// So the sinks are collected rather than replaced.
+	private final class Audience: @unchecked Sendable {
+		private let lock = NSLock()
+		private var listeners: [Progress] = []
+
+		init(_ first: Progress) { listeners = [first] }
+
+		func add(_ another: Progress) {
+			lock.lock()
+			listeners.append(another)
+			lock.unlock()
+		}
+
+		private var current: [Progress] {
+			lock.lock()
+			defer { lock.unlock() }
+			return listeners
+		}
+
+		/// The sink to hand to the work, which says everything to everyone.
+		var progress: Progress {
+			Progress(
+				step: { [self] message in for one in current { one.step?(message) } },
+				output: { [self] text in for one in current { one.output?(text) } }
+			)
+		}
+	}
+
 	/// How long the runtime gets to start the container.
 	///
 	/// The image is already on the machine by the time this runs — the pull has
@@ -92,6 +162,8 @@ public actor DevContainers {
 
 	private var sessions: [String: Session] = [:]
 	private var beingStarted: [String: Task<Outcome, Never>] = [:]
+	/// Who is listening to each start that is under way.
+	private var audiences: [String: Audience] = [:]
 
 	public init() {}
 
@@ -357,7 +429,7 @@ public actor DevContainers {
 		for project: URL,
 		using runtime: ContainerRuntime,
 		environment: [String: String] = ProcessInfo.processInfo.environment,
-		progress: (@Sendable (String) -> Void)? = nil
+		progress: Progress = .silent
 	) async -> Outcome? {
 		guard let reading = DevContainerFile.read(project: project, environment: environment)
 		else { return nil }
@@ -375,7 +447,7 @@ public actor DevContainers {
 	public func session(
 		for configuration: DevContainerConfiguration,
 		using runtime: ContainerRuntime,
-		progress: (@Sendable (String) -> Void)? = nil
+		progress: Progress = .silent
 	) async -> Outcome {
 		if let unsupported = Self.unsupported(configuration, on: runtime) {
 			return .refused(unsupported)
@@ -387,12 +459,21 @@ public actor DevContainers {
 			// start another, rather than handing out a name nothing answers to.
 			forget(key)
 		}
-		if let already = beingStarted[key] { return await already.value }
+		if let already = beingStarted[key] {
+			// Joined rather than merely waited on: whoever asked second has
+			// somewhere to show this too, and the pull they are waiting behind is
+			// the same pull.
+			audiences[key]?.add(progress)
+			return await already.value
+		}
 
-		let task = Task { await start(configuration, using: runtime, progress: progress) }
+		let audience = Audience(progress)
+		audiences[key] = audience
+		let task = Task { await start(configuration, using: runtime, progress: audience.progress) }
 		beingStarted[key] = task
 		let outcome = await task.value
 		beingStarted[key] = nil
+		audiences[key] = nil
 		if case let .running(session) = outcome { sessions[key] = session }
 		return outcome
 	}
@@ -426,7 +507,7 @@ public actor DevContainers {
 	private func start(
 		_ configuration: DevContainerConfiguration,
 		using runtime: ContainerRuntime,
-		progress: (@Sendable (String) -> Void)?
+		progress: Progress
 	) async -> Outcome {
 		// On this machine, before anything else exists — which is what the spec
 		// says of it and why it is here rather than with the other five.
@@ -441,7 +522,9 @@ public actor DevContainers {
 				return .refused(failure)
 			}
 		} else if let image = configuration.image {
-			switch await ContainerImageStore.shared.ensure(image, using: runtime, progress: progress) {
+			switch await ContainerImageStore.shared.ensure(
+				image, using: runtime, progress: progress.step, output: progress.output
+			) {
 			case .present, .fetched: break
 			case let .failed(reason): return .refused(reason)
 			}
@@ -449,7 +532,7 @@ public actor DevContainers {
 
 		let name = ToolContainers.mint("devcontainer")
 		let command = Self.startCommand(configuration, name: name, using: runtime)
-		progress?("Starting the devcontainer for \(configuration.project.lastPathComponent)…")
+		progress.step?("Starting the devcontainer for \(configuration.project.lastPathComponent)…")
 
 		let started = await offMainThread {
 			// Claimed rather than registered: this one is meant to outlive whatever
@@ -479,14 +562,16 @@ public actor DevContainers {
 	private func build(
 		_ configuration: DevContainerConfiguration,
 		using runtime: ContainerRuntime,
-		progress: (@Sendable (String) -> Void)?
+		progress: Progress
 	) async -> String? {
 		guard let command = Self.buildCommand(configuration, using: runtime),
 		      let dockerfile = configuration.build?.dockerfile
 		else { return nil }
-		progress?("Building \(configuration.builtImageName) from "
+		progress.step?("Building \(configuration.builtImageName) from "
 			+ "\((dockerfile as NSString).lastPathComponent)…")
-		let built = await offMainThread { RuntimeCommand.run(command, deadline: Self.buildDeadline) }
+		let built = await offMainThread { [output = progress.output] in
+			RuntimeCommand.run(command, deadline: Self.buildDeadline, onOutput: output)
+		}
 		guard built.succeeded else {
 			return Self.explainBuild(built.output, dockerfile: dockerfile)
 		}
@@ -518,7 +603,7 @@ public actor DevContainers {
 	/// not.
 	@discardableResult
 	func runLifecycle(
-		_ session: Session, progress: (@Sendable (String) -> Void)? = nil
+		_ session: Session, progress: Progress = .silent
 	) async -> String? {
 		let lifecycle = session.configuration.lifecycle
 		if lifecycle.hasCreationCommands, await !hasBeenCreated(session) {
@@ -541,7 +626,7 @@ public actor DevContainers {
 	/// attach, and the container did not start again in between.
 	@discardableResult
 	public func attach(
-		to session: Session, progress: (@Sendable (String) -> Void)? = nil
+		to session: Session, progress: Progress = .silent
 	) async -> String? {
 		guard let command = session.configuration.lifecycle[.postAttachCommand] else { return nil }
 		return await run(command, at: .postAttachCommand, in: .container(session), progress: progress)
@@ -598,7 +683,7 @@ public actor DevContainers {
 		_ command: DevContainerCommand,
 		at stage: DevContainerStage,
 		in place: Place,
-		progress: (@Sendable (String) -> Void)?
+		progress: Progress
 	) async -> String? {
 		let members = command.members
 		guard members.count > 1 else {
@@ -632,7 +717,7 @@ public actor DevContainers {
 		at stage: DevContainerStage,
 		named member: String?,
 		in place: Place,
-		progress: (@Sendable (String) -> Void)?
+		progress: Progress
 	) async -> String? {
 		let configuration = place.configuration
 		let project = configuration.project.lastPathComponent
@@ -662,12 +747,19 @@ public actor DevContainers {
 			}
 			directory = configuration.project
 		}
-		progress?("\(running): \(Self.shortened(command.line))…")
+		progress.step?("\(running): \(Self.shortened(command.line))…")
 		log("\(place.name) \(label): \(command.line)")
 
-		let result = await offMainThread {
+		// What it prints, while it prints it, as well as all of it in the log
+		// afterwards: `postCreateCommand` is the one thing here that can take ten
+		// minutes, and the lines it writes as it goes are the only evidence
+		// anybody has that it is getting on with it.
+		let result = await offMainThread { [output = progress.output] in
 			RuntimeCommand.run(
-				invocation, deadline: Self.lifecycleDeadline, directory: directory
+				invocation,
+				deadline: Self.lifecycleDeadline,
+				directory: directory,
+				onOutput: output
 			)
 		}
 		logOutput(result.output, of: label, in: place.name)
@@ -703,7 +795,7 @@ public actor DevContainers {
 	/// here would be the wrong place for it; it is its own item.
 	private func runInitialize(
 		_ configuration: DevContainerConfiguration,
-		progress: (@Sendable (String) -> Void)?
+		progress: Progress
 	) async -> String? {
 		guard let command = configuration.lifecycle[.initializeCommand] else { return nil }
 		return await run(

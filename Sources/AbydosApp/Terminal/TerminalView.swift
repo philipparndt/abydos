@@ -239,6 +239,31 @@ final class TerminalView: NSView, NSTextInputClient {
 		launchWhenSized(launch)
 	}
 
+	/// Starts a process in a view that was opened without one.
+	///
+	/// The one caller is a terminal that showed something being got ready before
+	/// it could be a shell — a devcontainer being pulled, built and installed
+	/// into. It is the *same* view, deliberately: what was printed while the
+	/// container was coming up is above the prompt afterwards, in the scrollback,
+	/// which is what a terminal is for and what a log pane swapped for a shell
+	/// could never be.
+	///
+	/// Nothing is cleared. A failure leaves the view exactly as it was, with
+	/// nothing typed into it, because there is nothing to type at.
+	func startProcess(
+		_ command: (executable: String, arguments: [String]), workingDirectory: URL? = nil
+	) {
+		guard !runsProcess, !pty.isRunning else { return }
+		runsProcess = true
+		// Files dropped from the tree, which a view showing output has no use for
+		// and a shell does.
+		registerForDraggedTypes([.fileURL])
+		launchWhenSized((workingDirectory, command))
+	}
+
+	/// Whether anything is typed at this view yet.
+	var showsOutputOnly: Bool { !runsProcess }
+
 	/// Waits until the pane has a real size before starting the child.
 	///
 	/// Measuring too early yields a grid a few rows tall. A full-screen program
@@ -2663,6 +2688,31 @@ final class TerminalPane: NSView {
 
 	/// The view inside, for the panel to pass a resize down to.
 	var terminalViewForTesting: TerminalView { terminalView }
+
+	/// Shows text in the pane as though something in it had printed it.
+	///
+	/// A lone newline is turned into a return and a newline, because this is a
+	/// terminal and not a text view: `\n` moves down a line and leaves the cursor
+	/// in the column it was in, so output written the way a file is written comes
+	/// out as a staircase. What already has its return keeps it — a `docker pull`
+	/// redrawing one line with a bare `\r` is left exactly as it came.
+	func write(_ text: String) {
+		terminalView.append(
+			text
+				.replacingOccurrences(of: "\r\n", with: "\n")
+				.replacingOccurrences(of: "\n", with: "\r\n")
+		)
+	}
+
+	/// Starts a shell in a pane that has only been showing output.
+	func startProcess(
+		_ command: (executable: String, arguments: [String]), workingDirectory: URL? = nil
+	) {
+		terminalView.startProcess(command, workingDirectory: workingDirectory)
+	}
+
+	/// Whether this pane is still only showing output.
+	var showsOutputOnly: Bool { terminalView.showsOutputOnly }
 
 	/// Where the shell in this terminal currently is.
 	var currentDirectoryForTesting: URL? { terminalView.currentDirectory() }

@@ -243,10 +243,16 @@ public actor ContainerImageStore {
 		silent.removeAll()
 	}
 
+	/// - Parameter output: what the pull itself printed, as it prints it, for a
+	///   caller with somewhere to show it. `progress` says one sentence before a
+	///   download that can be a gigabyte; this is the download saying how it is
+	///   getting on, in the runtime's own words, which is the only place that
+	///   answer exists.
 	public func ensure(
 		_ image: String,
 		using runtime: ContainerRuntime,
-		progress: (@Sendable (String) -> Void)? = nil
+		progress: (@Sendable (String) -> Void)? = nil,
+		output: (@Sendable (String) -> Void)? = nil
 	) async -> Outcome {
 		guard !image.isEmpty else { return .failed("No image was named.") }
 		if known.contains(image) { return .present }
@@ -266,7 +272,9 @@ public actor ContainerImageStore {
 
 			progress?(ContainerImages.progressMessage(for: image))
 			let pull = Self.run(
-				ContainerImages.pull(image, using: runtime), deadline: pullDeadline
+				ContainerImages.pull(image, using: runtime),
+				deadline: pullDeadline,
+				onOutput: output
 			)
 			if pull.timedOut {
 				return .failed(ContainerImages.notAnswering(runtime, after: Int(pullDeadline)))
@@ -310,8 +318,9 @@ public actor ContainerImageStore {
 	/// a tidy-up that hangs is not a tidy-up.
 	private static func run(
 		_ command: (executable: String, arguments: [String]),
-		deadline: TimeInterval
+		deadline: TimeInterval,
+		onOutput: (@Sendable (String) -> Void)? = nil
 	) -> RuntimeCommand.Result {
-		RuntimeCommand.run(command, deadline: deadline)
+		RuntimeCommand.run(command, deadline: deadline, onOutput: onOutput)
 	}
 }

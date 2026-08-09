@@ -29,12 +29,18 @@ public enum ProcessPipes {
 	///   - stdin: the pipe attached to the process's input, when it has one.
 	///     Written on a thread of its own and then closed, since input larger
 	///     than a pipe blocks in the same way from the other end.
+	///   - onOutput: each piece of both streams, as it arrives, for a caller
+	///     showing the program's output rather than waiting for all of it. It is
+	///     called on the reading threads — one per stream, so two of them — which
+	///     is the point: a `docker build` that takes four minutes is four minutes
+	///     of nothing at all if its output only appears at the end.
 	public static func drain(
 		_ process: Process,
 		out: Pipe,
 		err: Pipe,
 		input: Data? = nil,
-		stdin: Pipe? = nil
+		stdin: Pipe? = nil,
+		onOutput: (@Sendable (Data) -> Void)? = nil
 	) -> (stdout: Data, stderr: Data) {
 		let group = DispatchGroup()
 		let output = Box(), errors = Box()
@@ -46,10 +52,10 @@ public enum ProcessPipes {
 		let errDescriptor = err.fileHandleForReading.fileDescriptor
 
 		DispatchQueue.global(qos: .userInitiated).async(group: group) {
-			output.data = readToEnd(outDescriptor, until: stop)
+			output.data = readToEnd(outDescriptor, until: stop, onData: onOutput)
 		}
 		DispatchQueue.global(qos: .userInitiated).async(group: group) {
-			errors.data = readToEnd(errDescriptor, until: stop)
+			errors.data = readToEnd(errDescriptor, until: stop, onData: onOutput)
 		}
 		if let stdin {
 			if let input {
@@ -131,9 +137,18 @@ public enum ProcessPipes {
 		out: Pipe,
 		err: Pipe,
 		input: Data? = nil,
-		stdin: Pipe? = nil
+		stdin: Pipe? = nil,
+		onOutput: (@Sendable (String) -> Void)? = nil
 	) -> (stdout: String, stderr: String) {
-		let data = drain(process, out: out, err: err, input: input, stdin: stdin)
+		// Decoded a piece at a time, which is what "as it arrives" costs: a
+		// multi-byte character split across two reads comes out as a replacement
+		// character in the piece rather than in the whole, which the strings
+		// returned below are not — nothing is lost, and what is being fed here is
+		// a runtime's progress lines.
+		let pieces: (@Sendable (Data) -> Void)? = onOutput.map { report in
+			{ chunk in report(String(decoding: chunk, as: UTF8.self)) }
+		}
+		let data = drain(process, out: out, err: err, input: input, stdin: stdin, onOutput: pieces)
 		return (
 			String(decoding: data.stdout, as: UTF8.self),
 			String(decoding: data.stderr, as: UTF8.self)
@@ -155,7 +170,9 @@ public enum ProcessPipes {
 	/// interrupted without doing something to the descriptor, which is the
 	/// thing that was wrong. Polling costs nothing while output is flowing,
 	/// since `poll` returns the moment there is anything to read.
-	private static func readToEnd(_ descriptor: Int32, until stop: Flag) -> Data {
+	private static func readToEnd(
+		_ descriptor: Int32, until stop: Flag, onData: (@Sendable (Data) -> Void)? = nil
+	) -> Data {
 		var data = Data()
 		var buffer = [UInt8](repeating: 0, count: 64 * 1024)
 
@@ -178,7 +195,9 @@ public enum ProcessPipes {
 			// POLLHUP arrives with the last of the data rather than instead of
 			// it, so end of file is a read of zero, not a flag.
 			if count > 0 {
-				data.append(contentsOf: buffer[0 ..< count])
+				let chunk = Data(buffer[0 ..< count])
+				data.append(chunk)
+				onData?(chunk)
 				continue
 			}
 			if count == 0 { break }
