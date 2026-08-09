@@ -641,7 +641,9 @@ final class EditorViewController: NSViewController {
 
 	/// What the bar is saying, or that it is not there.
 	var serverBannerReportForTesting: String {
-		serverBanner.isHidden ? "no banner" : serverBanner.textForTesting
+		serverBanner.isHidden
+			? "no banner"
+			: "\(serverBanner.sizesForTesting) — \(serverBanner.textForTesting)"
 	}
 
 	func pressServerBannerForTesting(_ button: String) {

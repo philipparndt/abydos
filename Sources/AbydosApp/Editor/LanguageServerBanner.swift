@@ -25,8 +25,12 @@ final class LanguageServerBanner: NSView {
 	var onDismiss: (() -> Void)?
 
 	private var label: NSTextField!
-	private var ignoreButton: NSButton!
-	private var detailsButton: NSButton!
+	private var ignoreButton: BannerButton!
+	private var detailsButton: BannerButton!
+	private var closeButton: BannerButton!
+	private var icon: NSImageView!
+	private var iconWidth: NSLayoutConstraint!
+	private var stack: NSStackView!
 
 	override init(frame frameRect: NSRect) {
 		super.init(frame: frameRect)
@@ -50,37 +54,25 @@ final class LanguageServerBanner: NSView {
 	}
 
 	private func build() {
-		let icon = NSImageView()
-		icon.image = NSImage(
-			systemSymbolName: "lightbulb", accessibilityDescription: "Suggestion"
-		)
-		icon.contentTintColor = Theme.current.gitModified
+		icon = NSImageView()
 		icon.translatesAutoresizingMaskIntoConstraints = false
-		icon.widthAnchor.constraint(equalToConstant: Theme.current.scaled(14)).isActive = true
+		iconWidth = icon.widthAnchor.constraint(equalToConstant: 0)
+		iconWidth.isActive = true
 
 		label = NSTextField(labelWithString: "")
-		label.font = Theme.current.uiFont(11.5)
 		label.textColor = Theme.current.sidebarHeaderText
 		label.lineBreakMode = .byTruncatingTail
 
-		detailsButton = makeButton(title: "How to install") { [weak self] in self?.onDetails?() }
-		ignoreButton = makeButton(title: "Ignore") { [weak self] in self?.onIgnore?() }
+		detailsButton = BannerButton(title: "How to install") { [weak self] in self?.onDetails?() }
+		ignoreButton = BannerButton(title: "Ignore") { [weak self] in self?.onIgnore?() }
+		closeButton = BannerButton(symbol: "xmark", description: "Dismiss") { [weak self] in
+			self?.onDismiss?()
+		}
+		closeButton.toolTip = "Not now"
 
-		let close = NSButton(
-			image: NSImage(systemSymbolName: "xmark", accessibilityDescription: "Dismiss") ?? NSImage(),
-			target: nil,
-			action: nil
-		)
-		close.bezelStyle = .accessoryBarAction
-		close.controlSize = .small
-		close.toolTip = "Not now"
-		close.onAction = { [weak self] in self?.onDismiss?() }
-
-		let stack = NSStackView(views: [icon, label, detailsButton, ignoreButton, close])
+		stack = NSStackView(views: [icon, label, detailsButton, ignoreButton, closeButton])
 		stack.orientation = .horizontal
-		stack.spacing = 6
 		stack.alignment = .centerY
-		stack.edgeInsets = NSEdgeInsets(top: 0, left: 10, bottom: 0, right: 10)
 		stack.translatesAutoresizingMaskIntoConstraints = false
 		addSubview(stack)
 
@@ -96,15 +88,6 @@ final class LanguageServerBanner: NSView {
 		])
 	}
 
-	private func makeButton(title: String, action: @escaping () -> Void) -> NSButton {
-		let button = NSButton(title: title, target: nil, action: nil)
-		button.bezelStyle = .accessoryBarAction
-		button.controlSize = .small
-		button.font = Theme.current.uiFont(11)
-		button.onAction = action
-		return button
-	}
-
 	// MARK: - Contents
 
 	private(set) var suggestion: LanguageServers.Suggestion?
@@ -118,7 +101,7 @@ final class LanguageServerBanner: NSView {
 		label.stringValue = "\(suggestion.languageName) has no language server. "
 			+ "Install \(suggestion.command) for completion, problems and go-to-declaration."
 		label.toolTip = suggestion.installHint
-		ignoreButton.title = "Ignore for \(suggestion.languageName)"
+		ignoreButton.setLabel("Ignore for \(suggestion.languageName)")
 		ignoreButton.toolTip = "Never offer a \(suggestion.languageName) server again"
 		needsDisplay = true
 	}
@@ -126,8 +109,21 @@ final class LanguageServerBanner: NSView {
 	func applyTheme() {
 		label?.font = Theme.current.uiFont(11.5)
 		label?.textColor = Theme.current.sidebarHeaderText
-		detailsButton?.font = Theme.current.uiFont(11)
-		ignoreButton?.font = Theme.current.uiFont(11)
+
+		// Drawn at the zoom rather than tinted at whatever size AppKit picked:
+		// an `NSImageView` scales an image down to fit and never up, so a symbol
+		// asked for by name alone stayed the size it was made at while the strip
+		// around it doubled.
+		icon?.image = Theme.symbol(
+			"lightbulb", size: 11 * Theme.current.scale, color: Theme.current.gitModified
+		)
+		iconWidth?.constant = Theme.current.scaled(14)
+
+		stack?.spacing = Theme.current.scaled(6)
+		stack?.edgeInsets = NSEdgeInsets(
+			top: 0, left: Theme.current.scaled(10), bottom: 0, right: Theme.current.scaled(10)
+		)
+		for button in [detailsButton, ignoreButton, closeButton] { button?.applyTheme() }
 		needsDisplay = true
 	}
 
@@ -140,4 +136,106 @@ final class LanguageServerBanner: NSView {
 	func pressIgnoreForTesting() { onIgnore?() }
 	func pressDetailsForTesting() { onDetails?() }
 	func pressDismissForTesting() { onDismiss?() }
+
+	/// The sizes the strip actually gave itself, so a zoom can be measured
+	/// rather than squinted at.
+	var sizesForTesting: String {
+		"scale=\(Theme.current.scale)"
+			+ " strip=\(Int(bounds.height))"
+			+ " button=\(Int(detailsButton.frame.height))"
+			+ " text=\(Int(Theme.current.uiFont(11).pointSize))"
+	}
+}
+
+/// A button in the strip, drawn rather than bezelled.
+///
+/// The reason it is not an `NSButton` with `.accessoryBarAction` any more, which
+/// is what it was: a system bezel takes its size from `controlSize`, never from
+/// the font put inside it. Measured on macOS 27, that button is **20 points tall
+/// at `.small` and 28 at `.large`** whether its text is 11 points or 22 — and
+/// `.large` is the largest artwork AppKit has. The strip is `scaled(26)`, so at
+/// 2× it is 52 points tall with 22-point words crammed into a 20-point pill,
+/// which is the fault reported: the bar grows, the buttons do not, and picking a
+/// bigger `controlSize` only moves the wall from 1× to about 1.4×.
+///
+/// Drawing it costs almost nothing here and there is nothing to lose by it:
+/// these are words and one glyph, with no system affordance — no chevron, no
+/// focus ring somebody reads as meaning — that a bezel was carrying. It is the
+/// same answer the titlebar's `PillButton` gives, for the same reason, and it
+/// makes the strip one drawn thing rather than the app's colours with the
+/// system's buttons standing in them.
+private final class BannerButton: NSButton {
+	/// An SF Symbol instead of words, when the button is a glyph.
+	private let symbol: String?
+
+	init(title: String, action: @escaping () -> Void) {
+		symbol = nil
+		super.init(frame: .zero)
+		self.title = title
+		setUp(action)
+	}
+
+	init(symbol: String, description: String, action: @escaping () -> Void) {
+		self.symbol = symbol
+		super.init(frame: .zero)
+		imagePosition = .imageOnly
+		setAccessibilityLabel(description)
+		setUp(action)
+	}
+
+	required init?(coder: NSCoder) { fatalError("not used") }
+
+	private func setUp(_ action: @escaping () -> Void) {
+		isBordered = false
+		wantsLayer = true
+		setButtonType(.momentaryChange)
+		onAction = action
+		applyTheme()
+	}
+
+	/// New words, in the app's own type.
+	///
+	/// Setting `title` on its own puts the cell's default font back — which is
+	/// the system's, at the system's size — so the one button whose words are
+	/// not known until a language is: "Ignore for JSON" came out in a different
+	/// face from "How to install" beside it.
+	func setLabel(_ text: String) {
+		title = text
+		applyTheme()
+	}
+
+	/// Re-reads the zoom and the palette. Without it a button built at 1× keeps
+	/// a 1× pill around type that has already grown, which is the bug one layer
+	/// down from the one this class fixes.
+	func applyTheme() {
+		if let symbol {
+			image = Theme.symbol(
+				symbol, size: 9 * Theme.current.scale, color: Theme.current.sidebarText
+			)
+		} else {
+			attributedTitle = NSAttributedString(string: title, attributes: [
+				.font: Theme.current.uiFont(11),
+				.foregroundColor: Theme.current.sidebarHeaderText,
+			])
+		}
+		layer?.cornerRadius = Theme.current.scaled(5)
+		layer?.backgroundColor = Theme.current.editorBackground.cgColor
+		layer?.borderWidth = 1
+		layer?.borderColor = Theme.current.separator.cgColor
+		invalidateIntrinsicContentSize()
+	}
+
+	/// A field around whatever is in it, at whatever size that is.
+	///
+	/// 19 points at 1×, which is where the system bezel was to within a point,
+	/// so nothing visibly moves at the zoom almost everybody is at; 38 inside a
+	/// 52-point strip at 2×, which is what the bezel could not do.
+	override var intrinsicContentSize: NSSize {
+		NSSize(
+			width: symbol == nil
+				? super.intrinsicContentSize.width + Theme.current.scaled(14)
+				: Theme.current.scaled(20),
+			height: Theme.current.scaled(19)
+		)
+	}
 }
