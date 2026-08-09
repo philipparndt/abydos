@@ -46,7 +46,7 @@ its sources.
 
 **SwiftTreeSitter** (ChimeHQ) — BSD.
 
-## Bundled diagram renderer
+## Bundled diagram renderers
 
 **mermaid** 11.16.1 — `Sources/AbydosKit/Preview/mermaid/mermaid.min.js`,
 licence in `Sources/AbydosKit/Preview/mermaid/LICENSE`, version in `VERSION`
@@ -58,14 +58,42 @@ beside them.
 | what mermaid's own bundle contains — d3, dagre-d3-es, khroma, js-yaml, cytoscape, marked, lodash-es and others | MIT | Include the notice, which travels inside the file |
 | DOMPurify 3.4.0 (Cure53), inside the same bundle | Apache-2.0 **or** MPL-2.0 | Include the notice; both permit redistribution unmodified |
 
-This is the one JavaScript this project redistributes, and it is here because
-Mermaid has no other form: every command-line Mermaid carries a headless
-Chromium, and the one measured for this weighed **2.16 GB** on disk against this
-file's 3.6 MB. See backlog 0425.
+It is here because Mermaid has no other form: every command-line Mermaid carries
+a headless Chromium, and the one measured for this weighed **2.16 GB** on disk
+against this file's 3.6 MB. See backlog 0425.
 
 The file is the upstream UMD build, **unmodified**, and it carries every
 component notice above in its own trailing comment — which is what keeps the
 obligation satisfied wherever the file goes, including inside the built `.app`.
+
+**draw.io** 31.1.8 — `Sources/AbydosKit/Preview/drawio/`, licences beside the
+files, version in `VERSION` there. Taken out of the published `draw.war`, which
+is the only artefact the project releases; there is no npm package (`drawio` on
+npm is an unrelated charting tool by somebody else).
+
+| Component | Licence | Obligation |
+|---|---|---|
+| draw.io / diagrams.net (JGraph Holdings Ltd, draw.io AG) — `js/app.min.js`, `js/viewer-static.min.js`, `js/shapes-14-6-5.min.js`, `styles/`, `mxgraph/`, `resources/dia.txt` | Apache-2.0 | Include the licence — `LICENSE` |
+| the stencil libraries in `js/stencils.min.js` | Apache-2.0 **plus a rider** | Reproduce it verbatim — `LICENSE-stencils` |
+| the icon sets in `images/` | the same rider | Reproduce it verbatim — `LICENSE-img` |
+| mxGraph, inside the same bundles | Apache-2.0 | Covered by the above |
+
+The rider on the stencils and icons is Apache-2.0 with one added clause: those
+icon sets may not be used in Atlassian products or anything distributed through
+the Atlassian marketplace. It does not touch this application, and it says
+explicitly that it does not touch diagrams people export with it. It is
+reproduced rather than paraphrased, in the two `LICENSE-` files beside the code.
+
+**Not taken, deliberately.** `templates/` — the New-diagram gallery — is
+**CC-BY-4.0** rather than Apache-2.0, and an editor opening an existing file
+never shows it. `img/lib/` is 5.9 MB of clipart; a diagram using one says so
+rather than drawing a gap (see `Drawio.clipartNotice`). `images/sidebar-*.png`
+is 6.1 MB of preview sprites for the More Shapes dialogue.
+
+Every file is upstream and **unmodified**. The page the editor runs in is this
+project's own — see `DrawioEditorPage` — because draw.io's `index.html` exists
+to choose which of a dozen builds to fetch for which host, and none of that has
+an answer inside an application bundle.
 
 ## What Abydos does *not* bundle
 
@@ -89,3 +117,9 @@ redistributed.
 `Scripts/vendor-mermaid.sh` does the same for mermaid, taking the version as its
 one argument and writing the `LICENSE` and the `VERSION` beside the bundle. The
 version above is the only other place it is written down, so change it here too.
+
+`Scripts/vendor-drawio.sh` does the same for draw.io, and takes the three
+licence files with it. It also checks two things a new release could quietly
+change into a blank pane: that `stencils.min.js` still overrides
+`mxStencilRegistry.loadStencil`, and that `viewer-static.min.js` still defaults
+its asset paths with `window.X = window.X || …` so the page can set its own.
