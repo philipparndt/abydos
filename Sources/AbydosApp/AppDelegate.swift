@@ -425,6 +425,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		// Just before the capture rather than at a moment of its own: a size is
+		// only interesting once there is a drawing to be that size, and how long
+		// that takes is the whole reason `--delay` is a number somebody passes —
+		// a diagram drawn in a container has a container to start first.
+		if let raw = options.diagramFit {
+			let at = options.isScreenshotRun ? max(3.0, options.screenshotDelay - 1.5) : 8.0
+			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+				controller?.setDiagramFitForTesting(raw)
+			}
+		}
+
 		if let name = options.newFolder {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
 				controller?.createFolderForTesting(named: name)

@@ -249,6 +249,8 @@ struct LaunchOptions {
 	var previewMode: String?
 	/// Export the diagram in front from its preview pane: `png` or `svg`.
 	var exportDiagram: String?
+	/// How large the diagram pane draws: `width` or `actual`.
+	var diagramFit: String?
 	/// Ask whether this app can reach the local network: `host:port`.
 	///
 	/// The permission belongs to the app and everything it launches inherits
@@ -500,6 +502,7 @@ struct LaunchOptions {
 			case "--send-bytes": options.terminalBytes = next()
 			case "--preview-mode": options.previewMode = next()
 			case "--export":     options.exportDiagram = next()
+			case "--diagram-fit": options.diagramFit = next()
 			case "--probe-lan":  options.probeLAN = next()
 			case "--sidebar-cycle": options.sidebarCycle = true
 			case "--zoom-cycle":  options.zoomCycle = true
