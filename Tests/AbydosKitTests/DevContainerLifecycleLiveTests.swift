@@ -11,15 +11,23 @@ import Testing
 /// installer on every launch, or never running it at all, and both look from
 /// outside like a container that came up.
 ///
-/// Skipped, per runtime, unless that runtime already has the image:
+/// **Docker, and not both runtimes**, unlike `DevContainerLiveTests` beside it,
+/// and the reason is that there is nothing here for the second one to prove. A
+/// lifecycle command is `exec` and `RuntimeCommand`, and both of those are
+/// already exercised on Apple's runtime by that test — the mount, `-d`, `-u`,
+/// `-e`, `-w` and `exec -it` onto a pty. What running this matrix twice adds is
+/// six more container creations and removals on the runtime whose service is
+/// this suite's known bottleneck (0406), which buys flakiness rather than
+/// coverage.
+///
+/// Skipped unless docker already has the image:
 ///
 ///     docker pull alpine:3
-///     container image pull alpine:3
 @Suite(.serialized) struct DevContainerLifecycleLiveTests {
 	static let image = "alpine:3"
 
-	private func available(_ preference: ContainerRuntime.Preference) -> ContainerRuntime? {
-		guard let runtime = ContainerRuntime.discover(preference: preference),
+	private var available: ContainerRuntime? {
+		guard let runtime = ContainerRuntime.discover(preference: .docker),
 		      RuntimeCommand.run(
 		      	ContainerImages.inspect(Self.image, using: runtime), deadline: 20
 		      ).succeeded
@@ -51,11 +59,8 @@ import Testing
 	/// fails for reasons that have nothing to do with it. The example in the
 	/// repository beside this one installs a real package, and the last test in
 	/// this file runs that one.
-	@Test(arguments: [ContainerRuntime.Preference.docker, .apple])
-	func runsEachLifecycleCommandAtItsOwnMomentAndOnlyThen(
-		_ preference: ContainerRuntime.Preference
-	) async throws {
-		guard let runtime = available(preference) else { return }
+	@Test func runsEachLifecycleCommandAtItsOwnMomentAndOnlyThen() async throws {
+		guard let runtime = available else { return }
 		// `initializeCommand` runs out here, in the checkout, and its evidence is
 		// a file on this machine rather than in the container.
 		//
@@ -63,9 +68,15 @@ import Testing
 		// PATH that was not in the image, which is what "the container came up
 		// with what the file asked for" means when you go and look.
 		//
-		// The two members of `postCreateCommand` each record when they started
-		// and when they finished, because "in parallel" is not a thing a count
-		// of lines can show — overlapping intervals is.
+		// The two members of `postCreateCommand` each say they are here and then
+		// wait for the other to say it. That is what "in parallel" means, said in
+		// a way a clock cannot get wrong: run one after the other, the first can
+		// never see the second, however slow or fast the machine is.
+		let waitForTheOther = { (mine: String, theirs: String) in
+			"touch /tmp/\(mine).here; i=0; while [ $i -lt 60 ]; do "
+				+ "if [ -f /tmp/\(theirs).here ]; then touch /tmp/\(mine).saw-\(theirs); break; fi; "
+				+ "sleep 0.2; i=$((i+1)); done; echo post-create-\(mine) >> /tmp/created.log"
+		}
 		let root = try makeProject("""
 		{
 			"image": "\(Self.image)",
@@ -73,8 +84,8 @@ import Testing
 			"onCreateCommand": "printf '#!/bin/sh\\\\necho probe-tool v1\\\\n' > /usr/local/bin/probe-tool; chmod +x /usr/local/bin/probe-tool; echo on-create >> /tmp/created.log",
 			"updateContentCommand": ["/bin/sh", "-c", "echo update-content >> /tmp/created.log"],
 			"postCreateCommand": {
-				"one": "date +%s > /tmp/one.start; sleep 3; date +%s > /tmp/one.end; echo post-create-one >> /tmp/created.log",
-				"two": "date +%s > /tmp/two.start; sleep 3; date +%s > /tmp/two.end; echo post-create-two >> /tmp/created.log"
+				"one": "\(waitForTheOther("one", "two"))",
+				"two": "\(waitForTheOther("two", "one"))"
 			},
 			"postStartCommand": "echo started >> /tmp/started.log",
 			"postAttachCommand": "echo attached >> /tmp/attached.log",
@@ -98,22 +109,20 @@ import Testing
 		// assumed from an exit status.
 		#expect(inside(session, "probe-tool").contains("probe-tool v1"))
 
-		// The three creation commands, in the order the spec puts them in.
-		#expect(inside(session, "cat /tmp/created.log")
-			== "on-create\nupdate-content\npost-create-one\npost-create-two"
-			|| inside(session, "cat /tmp/created.log")
-				== "on-create\nupdate-content\npost-create-two\npost-create-one")
+		// The three creation commands, in the order the spec puts them in — and
+		// the two members of the third in either order, because they overlapped.
+		let created = inside(session, "cat /tmp/created.log")
+		#expect(created == "on-create\nupdate-content\npost-create-one\npost-create-two"
+			|| created == "on-create\nupdate-content\npost-create-two\npost-create-one",
+			"the creation commands ran as: \(created)")
 		#expect(inside(session, "cat /tmp/started.log") == "started")
 
-		// Parallel, shown as overlapping rather than as a stopwatch: each member
-		// slept three seconds, so if they ran one after the other neither
-		// interval contains a moment of the other.
-		let one = (Int(inside(session, "cat /tmp/one.start")) ?? 0,
-		           Int(inside(session, "cat /tmp/one.end")) ?? 0)
-		let two = (Int(inside(session, "cat /tmp/two.start")) ?? 0,
-		           Int(inside(session, "cat /tmp/two.end")) ?? 0)
-		#expect(one.0 > 0 && two.0 > 0)
-		#expect(one.0 < two.1 && two.0 < one.1, "the two postCreateCommand members did not overlap")
+		// Parallel: `one` saw `two` running. Run one after the other, the first
+		// of them could not have — which is the whole of the assertion, with no
+		// clock in it.
+		#expect(inside(session, "ls /tmp/one.saw-two /tmp/two.saw-one 2>&1")
+			== "/tmp/one.saw-two\n/tmp/two.saw-one",
+			"the two postCreateCommand members did not run at the same time")
 
 		// The marker, which is how "has this container been created?" is
 		// answered — inside the container, so that it dies with it.
@@ -143,11 +152,8 @@ import Testing
 	/// after it that must not run — a container that went on to start what it
 	/// was told to start after its tools failed to install is the state this
 	/// whole thing exists to avoid.
-	@Test(arguments: [ContainerRuntime.Preference.docker, .apple])
-	func aFailedLifecycleCommandNamesItselfAndStopsWhatFollows(
-		_ preference: ContainerRuntime.Preference
-	) async throws {
-		guard let runtime = available(preference) else { return }
+	@Test func aFailedLifecycleCommandNamesItselfAndStopsWhatFollows() async throws {
+		guard let runtime = available else { return }
 		let root = try makeProject("""
 		{
 			"image": "\(Self.image)",

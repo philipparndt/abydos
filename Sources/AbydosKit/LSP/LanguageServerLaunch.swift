@@ -14,6 +14,27 @@ public enum LanguageServerLaunch: Equatable, Sendable {
 	case installed(executable: String, arguments: [String])
 	/// An image, run by whichever runtime is here, with the project mounted.
 	case image(container: ToolContainer, runtime: ContainerRuntime, paths: ContainerPaths)
+	/// The project's own devcontainer, which is already running: the server is
+	/// `exec`'d into it rather than started beside it.
+	///
+	/// The distinction from `.image` is not how it starts but *whose container
+	/// it is*. An image is started for this server and removed with it; a
+	/// devcontainer belongs to the project, holds somebody's terminal, and was
+	/// brought up before any of this. One container with the project's own
+	/// toolchain in it is the thing a devcontainer exists to provide, and a
+	/// second container beside it running a language server would be a second
+	/// answer to what `go` means here.
+	///
+	/// - Parameters:
+	///   - command: what to run *inside*, as the container's PATH will resolve
+	///     it. Not a path from this machine — nothing here is on that machine.
+	///   - root: where to run it, in the container's own names.
+	case devcontainer(
+		session: DevContainers.Session,
+		command: String,
+		arguments: [String],
+		root: String
+	)
 
 	/// The command line to start it with.
 	public var invocation: (executable: String, arguments: [String]) {
@@ -26,6 +47,10 @@ public enum LanguageServerLaunch: Equatable, Sendable {
 			// rest — so an argument from this side would arrive after those and
 			// be read by the server as a file to open.
 			return container.invocation(using: runtime)
+		case let .devcontainer(session, command, arguments, root):
+			return DevContainers.execCommand(
+				session, arguments: [command] + arguments, workingDirectory: root
+			)
 		}
 	}
 
@@ -34,6 +59,10 @@ public enum LanguageServerLaunch: Equatable, Sendable {
 		switch self {
 		case .installed: return nil
 		case let .image(_, _, paths): return paths
+		// The devcontainer's own mapping, which is the file's rather than
+		// `/workspace`: a devcontainer.json says where the checkout goes, and a
+		// server told anything else names files that do not exist on either side.
+		case let .devcontainer(session, _, _, _): return session.configuration.paths
 		}
 	}
 
@@ -42,6 +71,9 @@ public enum LanguageServerLaunch: Equatable, Sendable {
 		switch self {
 		case .installed: return nil
 		case let .image(container, runtime, _): return (container.image, runtime)
+		// Nothing to fetch here: whatever the devcontainer came from was pulled
+		// or built when it came up, which is `DevContainers`' business.
+		case .devcontainer: return nil
 		}
 	}
 
@@ -57,6 +89,12 @@ public enum LanguageServerLaunch: Equatable, Sendable {
 		case let .image(container, runtime, _):
 			guard let name = container.name else { return nil }
 			return (name, runtime)
+		// Nil, and this is the one place the two container cases must not agree.
+		// A devcontainer is the project's, not this server's: removing it when
+		// the server stops would take somebody's terminal, their build and their
+		// whole session with it. What stopping the server has to end is the
+		// server, and the protocol's own `exit` does that from inside.
+		case .devcontainer: return nil
 		}
 	}
 
@@ -68,6 +106,10 @@ public enum LanguageServerLaunch: Equatable, Sendable {
 			return executable
 		case let .image(container, runtime, paths):
 			return "\(runtime.name) run \(container.image) [\(paths.host) as \(paths.container)]"
+		case let .devcontainer(session, command, _, root):
+			let paths = session.configuration.paths
+			return "\(session.runtime.name) exec \(session.name) \(command) at \(root) "
+				+ "[\(paths.host) as \(paths.container)]"
 		}
 	}
 }

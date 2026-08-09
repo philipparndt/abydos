@@ -729,8 +729,12 @@ public actor DevContainers {
 			!name.isEmpty && name.allSatisfy { $0.isLetter || $0.isNumber || "-_.+".contains($0) }
 		}
 		guard !safe.isEmpty else { return [] }
+		// `exit 0` at the end, and it is not decoration: the loop's status is the
+		// last `command -v`, so a list whose final name is missing — which is the
+		// ordinary case — would come back a failure and be read as "none of
+		// them". The answer is the lines, not the status.
 		let script = "for c in \(safe.joined(separator: " ")); do "
-			+ "command -v \"$c\" >/dev/null 2>&1 && echo \"$c\"; done"
+			+ "command -v \"$c\" >/dev/null 2>&1 && echo \"$c\"; done; exit 0"
 		let exec = Self.execCommand(session, arguments: ["/bin/sh", "-c", script])
 		let answer = await offMainThread { RuntimeCommand.run(exec, deadline: 60) }
 		guard answer.succeeded else { return [] }
