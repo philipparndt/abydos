@@ -111,9 +111,8 @@ The first slice worth shipping, in this order, each useful on its own:
 1. ~~**Read the file**~~ — done. `DevContainerFile`.
 2. ~~**Start and keep one**~~ — done. `DevContainers`.
 3. ~~**A terminal inside it**~~ — done. View ▸ New Terminal in Container.
-4. **The language servers**, which is mostly pointing existing machinery at this
-   container instead of a per-tool one.
-5. **Lifecycle commands**, with the progress and the failure messages.
+4. ~~**The language servers**~~ — done. `LanguageServerLaunch.devcontainer`.
+5. ~~**Lifecycle commands**~~ — done. `DevContainerLifecycle`.
 
 ~~Docker only, per the decision recorded in 0406 and 0422.~~ **Both runtimes,
 since 2026-08-09** — except a devcontainer that forwards a port, which is
@@ -143,8 +142,9 @@ and `${localEnv:VAR}`, `${localEnv:VAR:default}`, `${localWorkspaceFolder}`,
 written, which is what VS Code does and the only answer that cannot corrupt a
 value nobody understood.
 
-Refused by name, one sentence each: `features`; `dockerComposeFile`; **the
-lifecycle commands**; `${containerEnv:…}`; a file that is not JSON; a file
+Refused by name, one sentence each: `features`; `dockerComposeFile`;
+~~**the lifecycle commands**~~ (lifted, see below); `${containerEnv:…}`; a file
+that is not JSON; a file
 naming neither an image nor a Dockerfile, or both; a `workspaceMount` that is
 not a bind of this project; a `workspaceFolder` outside the mount; a
 `forwardPorts` entry that is not a number; and more than one `devcontainer.json`
@@ -152,8 +152,8 @@ in the project.
 
 Decisions taken while doing it, each of which could be reversed:
 
-- **The lifecycle commands refuse rather than being ignored.** Step 5 above is
-  what lifts this. `postCreateCommand` is where a project runs `go mod download`,
+- ~~**The lifecycle commands refuse rather than being ignored.**~~ Lifted; step
+  5 below is what came of it. `postCreateCommand` is where a project runs `go mod download`,
   and a container that came up without it has tools missing for a reason nothing
   on screen explains — which is exactly the "looks like a broken editor" this
   entry is about. Reading `postCreateCommand` and quietly not running it would
@@ -227,9 +227,160 @@ without docker or without the image. In the app, `--devcontainer` opens the tab
 the way the menu does; against a scratch project it answered
 `IN:/workspaces/devcontainer-probe:dcd19323739f`.
 
-**The next slice is step 4 or step 5.** Step 5 is worth more: it is the largest
-of the refusals, `LanguageServers` already has the machinery step 4 needs, and
-until the lifecycle commands run there are real projects this cannot open at all.
+~~**The next slice is step 4 or step 5.**~~ Both are done; what each came to is
+below.
+
+## What steps 5 and 4 came to, 2026-08-09
+
+### Step 5: the lifecycle commands run
+
+All six, each at its own moment. `Sources/AbydosKit/Run/DevContainerLifecycle.swift`
+is what they are — `DevContainerStage` (the field name is the raw value, because
+every message about one names the field somebody would go and edit) and
+`DevContainerCommand`, which is the three shapes the spec gives them: a string
+run through `/bin/sh -c`, an array run as argv with no shell between, and an
+object of named commands **run in parallel**, which is what the spec says of it.
+`DevContainers.runLifecycle` is what runs them, and the refusal above is gone.
+
+**"Has this container been created already?" is a marker file inside the
+container**, at `/tmp/.abydos-devcontainer`. Not on the bind mount and not in
+`.abydos/`, and the reason is the whole of the decision: the question is about
+*this container*, not about the project, and the only thing whose lifetime is
+the container's is the container's own writable layer. A marker beside the
+checkout survives `docker rm`, so the next container — a rebuild, a machine
+restarted, a crash swept up by 0406 — would skip an installer it has never run,
+and a container missing its tools with nothing on screen saying so is exactly
+the "looks like a broken editor" this entry is about. `/tmp` because it is the
+one directory every image has and every user can write to, and because its
+lifetime is exactly right: it survives a stop and start, which is not creation,
+and dies with the container, which is. **It is written after the three creation
+commands have all succeeded**, so a `postCreateCommand` that failed is tried
+again next time rather than skipped for ever.
+
+**`initializeCommand` runs, on this machine, and that is a decision about
+trust.** It is a command out of somebody's repository executing on their laptop.
+It is run for two reasons: the app already runs command lines a project supplies
+— a run configuration out of `launch.json`, a `make` target, a build scheme — so
+this is the same trust rather than a new one; and a file whose
+`initializeCommand` creates the directory its `mounts` bind, which is the common
+use, does not work at all without it. What is different is that it is not inside
+anything, so it is the one command **named on screen before it runs** rather
+than only logged, and it runs only when somebody has asked for the devcontainer
+— opening a project does not start one. The real answer is a trust prompt for a
+checkout nobody has vouched for, the way VS Code has one; this app has no such
+concept, inventing one here would be the wrong place for it, and it is its own
+item.
+
+**A failure names the command and its exit status**, in one sentence, and takes
+the container with it. `devcontainers/post-create-fails` produces:
+
+> post-create-fails's postCreateCommand exited 3: error: no such package:
+> a-package-that-does-not-exist. The container was removed and nothing after it
+> was run — fix `sh .devcontainer/post-create.sh` in the devcontainer.json and
+> open the project again.
+
+Two things in that are deliberate. The line quoted is the last one on **standard
+error**, because a command that fails writes the reason there and its progress
+to the other stream — the last line of standard output is "step 3 of 3", which
+says how far it got and not what went wrong; `RuntimeCommand.Result` keeps the
+two apart for this. And the container is *removed*: a half-installed container
+that the next open would find running and reuse is the state this refuses into
+existence rather than out of. `postStartCommand` never runs.
+
+**On screen**: one line per command, naming the field and what it is running,
+which is `ContainerImages.progressMessage`'s bargain applied to something that
+can take minutes. Everything the command printed goes to
+`~/Library/Logs/Abydos/devcontainer.log`, because a `postCreateCommand` is the
+one thing in this app that can print for ten minutes and a toast per line would
+be worse than silence.
+
+**`waitFor` is honoured as a floor rather than as a starting gun**, and that is
+the one place this deliberately does less than the spec. The spec has it name
+the command after which the container may be handed to somebody, with anything
+later still running behind them; VS Code needs that because it has already
+opened a window. This app hands the container out at the moment somebody asks to
+work in it — a terminal, a language server — so it waits for all of them, which
+is never less than the file asked for, and never gives anybody a shell in a
+container still installing the toolchain they are about to use. A `waitFor` that
+names nothing is refused rather than ignored.
+
+`postAttachCommand` runs per attach: a terminal is one, and a language server
+starting is another.
+
+### Step 4: the language servers run inside it
+
+`LanguageServerLaunch.devcontainer` is the new case, and the difference from
+`.image` is not how it starts but *whose container it is*. An image is started
+for one server and removed with it; a devcontainer belongs to the project, holds
+somebody's terminal, and was up before any of this. So **`launch.container` is
+nil for it** — that is the one place the two container cases must not agree,
+because removing the container when a server stops would take the terminal, the
+build and the session with it. What stopping the server has to end is the
+server, and the protocol's own `exit` does that from inside; `ContainerLSPLive`'s
+successor asserts that no `gopls` is left in the container's `/proc` afterwards,
+which is 0427 one floor down.
+
+Three things that hold on this machine do not hold in there, and each was a bug
+waiting to be written:
+
+- **The command is not resolved here.** No `xcrun`, no walk of this machine's
+  PATH: the server is not on this machine and a path found here names nothing
+  there. The bare command goes in and the container's PATH resolves it.
+- **The arguments are the definition's own**, not `arguments(for:root:)`, whose
+  additions are jdtls's data directory and the Swift indexer's scratch path —
+  both directories on this machine.
+- **The root and the mapping are the devcontainer's**, which is where the *file*
+  said and not `/workspace`.
+
+**Which servers the container has is asked once, of the container**, in one
+`command -v` over every server this app knows. Without it, every language the
+project touches starts a server that fails its handshake ten seconds later with
+the runtime's own `executable file not found`, which says nothing about the
+project. A server the container does not have is reported as missing **with a
+hint about the file that would have to carry it**, and the copy on this machine
+is *not* used instead — that is the same rule an image already has, and the
+alternative is the same code getting different answers on two machines.
+
+**A project with a devcontainer this app can honour gets its servers inside it,
+and the container is started for them.** That is the largest of these decisions
+and the most reversible. It follows from what the entry already says a
+devcontainer is: the project stating which toolchain it is worked on with. The
+alternative — servers on this machine beside a container that is up — is exactly
+0427's "the errors on screen are not the errors from the compiler", one floor up.
+Projects with no `devcontainer.json`, which is nearly all of them, are untouched;
+a container that will not start falls back to this machine, once, with the reason
+said out loud and written down.
+
+**Nothing stops the container when the project closes**, still. The servers in
+it go, the way every other server for that project goes; the container lives
+until the app exits, which is what the "switching must be instant" decision
+above asks for and what `ToolContainers.removeAll` and 0406's sweep stand behind.
+
+### Proved rather than reasoned
+
+`DevContainerLifecycleLiveTests` brings a real container up from a real file and
+asks it: the tool `onCreateCommand` installed answers; the three creation
+commands ran once in the spec's order and the two members of the object form
+overlapped (each waits for the other to appear, so a clock cannot get it wrong);
+the marker is there; running the lifecycle again runs `postStartCommand` a second
+time and the creation commands *not* at all; two attaches are two
+`postAttachCommand`s; `initializeCommand`'s evidence is a file on this side. A
+second test drives a `postCreateCommand` that exits 3 and asserts the sentence
+and that nothing is left behind. A third runs `devcontainers/post-create` from
+the examples repository end to end and finds `jq` — a package the image
+deliberately does not carry — inside the container.
+
+`DevContainerLSPLiveTests` opens a Go project whose devcontainer mounts it at
+`/src`, `exec`s gopls into it, and gets diagnostics, symbols and a
+go-to-declaration back **named as this machine names them**. Then it shuts the
+server down and reads the container's `/proc` to prove gopls is gone and the
+container is not.
+
+Both of those are docker only, deliberately, while `DevContainerLiveTests` stays
+on both: a lifecycle command is `exec` and `RuntimeCommand`, and both are
+already exercised on Apple's runtime there. Running the matrix twice more buys
+six container creations on the runtime whose service is this suite's known
+bottleneck, and no coverage.
 
 ## Examples to work against, and to ship
 
@@ -271,7 +422,8 @@ repository has its own `Makefile`.
 
 ### Which of them exist now, and what each one is for
 
-Ten, in `abydos-examples`. Five come up and five are refused, and both halves
+Ten, in `abydos-examples`. ~~Five come up and five are refused~~ — **seven come
+up and three are refused, since the lifecycle commands run**, and both halves
 are the point: a refusal nobody can watch happen is a paragraph, not a promise.
 `ExampleDevContainerTests` reads every one of them through `DevContainerFile`
 and asserts what it is for — including the exact refusal sentence — so this list
@@ -287,8 +439,8 @@ beside this one.
 | `devcontainers/substitutions` | every `${…}` this side can answer, plus `workspaceMount`, `mounts`, `runArgs` |
 | `multi-tier` | **refused**: `dockerComposeFile`, beside a compose file that really works |
 | `devcontainers/features` | **refused**: `features`, naming the first one found |
-| `devcontainers/post-create` | **refused**: `postCreateCommand`, one slow enough to need reporting |
-| `devcontainers/post-create-fails` | **refused**: the same, with a command that exits 3 partway |
+| `devcontainers/post-create` | `postCreateCommand`, one slow enough to need reporting — and it installs `jq`, which the image does not carry |
+| `devcontainers/post-create-fails` | the same, with a command that exits 3 partway and a `postStartCommand` that must not run after it |
 | `devcontainers/two-containers` | **refused**: two `devcontainer.json`, naming both |
 
 The five that come up were each brought up, given a shell on a real pty at the
@@ -296,7 +448,10 @@ workspace folder the file asked for, and removed. `smart-home-microservice`
 answered `200` on `http://127.0.0.1:8080/` from this side while the service ran
 inside it, which is `forwardPorts` proved rather than asserted.
 `devcontainers/check.sh` in that repository does the same round in one command;
-the examples `Makefile` has no goal for it yet, and wants one.
+the examples `Makefile` has no goal for it yet, and wants one. **`check.sh` and
+its `README.md` still describe the two `post-create` projects as refused**, and
+now say something that is no longer true — that repository was read and not
+written to here, so somebody has to go and correct it.
 
 `golang:1.24-alpine` (259 MB) rather than `mcr.microsoft.com/devcontainers/go`
 (over a gigabyte) for the two Go projects, deliberately: it is the same
@@ -318,6 +473,36 @@ saved window state, which is why it now prints the root it actually looked in.
 the machine in front of them. They will want to share the path mapping and
 possibly the terminal plumbing, and they are otherwise different features. Do not
 let one grow into the other by accident.
+
+## What is closed here, and what is not
+
+All five of the steps above are done, which is what closes this entry. What it
+raised and did not settle is still open, and none of it is waiting on anything
+here — each is its own item when somebody wants it:
+
+- **The CLI versus our own reader**, which the recommendation above left open
+  and which nothing since has forced. The reader now covers the lifecycle
+  commands too, so the subset is larger than it was and the boundary is still
+  `features` and `dockerComposeFile`.
+- **`features` and `dockerComposeFile`**, which are that boundary, refused by
+  name, with an example each in the repository so the refusal can be watched.
+- **Rebuilding.** Editing `devcontainer.json` still needs the app restarted, and
+  `abydos-devcontainer:<project>` still accumulates. "Rebuild Container" is what
+  people will look for.
+- **The second half of ports** — choosing a different one when the host's is
+  taken — and `forwardPorts` on Apple's runtime, refused by name.
+- **`shutdownAction` and the battery question.** Nothing stops a container when
+  a project closes; it lives until the app exits.
+- **`overrideCommand: false`**, neither honoured nor refused.
+- **Run configurations, the debugger and `make` inside the container.** The
+  terminal and the language servers are in; those three are each their own piece
+  of work, as the entry says.
+- **A trust prompt** for a checkout nobody has vouched for, which is what
+  `initializeCommand` really wants and what this settled deliberately without.
+- **`hasDevContainer` ignores `subprojectRoot`**, so a devcontainer belonging to
+  a subproject is invisible to the menu.
+- **`abydos-examples/devcontainers/check.sh` and its READMEs** still say the two
+  `post-create` projects are refused.
 
 ---
 
