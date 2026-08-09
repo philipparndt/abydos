@@ -579,21 +579,29 @@ final class EditorViewController: NSViewController {
 		refreshServerBanner()
 	}
 
-	/// Whether this file's language has a server worth offering, and says so.
+	/// Whether this file's language has anything to say about its server, and
+	/// says it.
 	///
 	/// Asked on every activation rather than once per file: installing the
 	/// server is the whole point of the bar, and somebody who has just done it
 	/// should see it go away by clicking back onto their code rather than by
 	/// restarting the app.
+	///
+	/// Asked of `LanguageService` rather than of `LanguageServers`, which is
+	/// 0432's second fault: the second knows only whether the server is on this
+	/// machine, and for a project worked on in a devcontainer the answer to that
+	/// is "no" for ever — including while the container's own copy is answering.
+	/// The first knows whether anything is running, coming, or neither, so the
+	/// strip goes away when the server lands however late that is.
 	private func refreshServerBanner() {
 		guard let project,
 		      let tab = activeTab,
 		      !tab.isDiff,
 		      let languageId = tab.document?.languageId,
 		      !dismissedSuggestions.contains(languageId),
-		      let suggestion = LanguageServers.suggestion(
+		      let notice = LanguageService.shared.notice(
 		      	forLanguage: languageId,
-		      	root: project.root,
+		      	project: project.scopeRoot,
 		      	ignoring: Set(Settings.shared.ignoredLanguageServers)
 		      )
 		else {
@@ -601,7 +609,7 @@ final class EditorViewController: NSViewController {
 			return
 		}
 
-		serverBanner.show(suggestion)
+		serverBanner.show(notice)
 		serverBanner.isHidden = false
 		serverBannerHeight.constant = LanguageServerBanner.height
 	}
@@ -613,17 +621,17 @@ final class EditorViewController: NSViewController {
 	}
 
 	private func showServerManual() {
-		guard let suggestion = serverBanner.suggestion else { return }
+		guard let notice = serverBanner.notice, let manual = notice.manual else { return }
 		DetailDialog(
-			title: "Installing \(suggestion.command)",
-			detail: suggestion.manual,
+			title: "The \(notice.languageName) language server",
+			detail: manual,
 			isError: false
 		).show(over: view.window)
 	}
 
 	private func ignoreServerSuggestion() {
-		guard let suggestion = serverBanner.suggestion else { return }
-		Settings.shared.ignoreLanguageServer(for: suggestion.languageId)
+		guard let notice = serverBanner.notice, notice.isIgnorable else { return }
+		Settings.shared.ignoreLanguageServer(for: notice.languageId)
 		hideServerBanner()
 		// Every group in every window, not only this one: the answer was about
 		// the language, and being asked again in the split beside it would read
@@ -632,8 +640,8 @@ final class EditorViewController: NSViewController {
 	}
 
 	private func dismissServerSuggestion() {
-		guard let suggestion = serverBanner.suggestion else { return }
-		dismissedSuggestions.insert(suggestion.languageId)
+		guard let notice = serverBanner.notice else { return }
+		dismissedSuggestions.insert(notice.languageId)
 		hideServerBanner()
 	}
 

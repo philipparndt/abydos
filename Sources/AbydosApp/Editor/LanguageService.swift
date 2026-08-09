@@ -199,6 +199,107 @@ final class LanguageService {
 		return (running, missing)
 	}
 
+	// MARK: - What the strip above the editor should say
+
+	/// What is worth saying above a file, if anything.
+	///
+	/// This replaces `LanguageServers.suggestion` at the call site, and the
+	/// difference is the whole of 0432's second fault. That asks the file
+	/// system a question with two answers — the server is on this machine or it
+	/// is not — and a devcontainer has a third: it is coming, and it will be
+	/// here in anything from a second to a cold `docker build`. Asked of the
+	/// file system, that third state reads as the second for ever, which is a
+	/// strip saying "install pyright" over a file the container's pyright is
+	/// answering about. Asked here, it is a state that ends.
+	struct ServerNotice: Equatable {
+		let languageId: String
+		let languageName: String
+		/// The sentence in the strip.
+		let text: String
+		/// What "How to install" opens, or nil when there is nothing on this
+		/// machine to install — a server on its way, or one that belongs in a
+		/// container whose copy here would not be used instead.
+		let manual: String?
+		/// Whether "Ignore for X" is offered. Never while something is on its
+		/// way: the answer to "not yet" is to wait, and a language switched off
+		/// for ever because a container was slow is the wrong bargain.
+		let isIgnorable: Bool
+	}
+
+	/// What to say about a language in a project, or nil for nothing.
+	///
+	/// Nil is the common answer and the important one: a server that is
+	/// answering has nothing to say about itself, and that is what withdraws
+	/// the strip when a container's server lands two minutes after the file was
+	/// opened.
+	func notice(
+		forLanguage languageId: String,
+		project: URL,
+		ignoring: Set<String> = []
+	) -> ServerNotice? {
+		guard !ignoring.contains(languageId) else { return nil }
+		guard let definition = LanguageServers.definition(forLanguage: languageId) else { return nil }
+		let key = key(project: project, languageId: languageId)
+
+		// Answering, or at least running and about to. Nothing to say.
+		if let server = servers[key], server.client.isRunning { return nil }
+
+		// Not a project this server understands — a stray `.py` in a Go
+		// repository — so neither the offer nor the wait is about anything.
+		guard LanguageServers.suits(definition, root: project) else { return nil }
+
+		let name = LanguageRegistry.shared.displayName(for: languageId)
+
+		// On its way. Either the project's devcontainer is coming up with the
+		// server inside it, or an image named for the server is being fetched;
+		// both are minutes the first time and instant afterwards.
+		//
+		// **What it says and does not say.** One sentence, no progress, no
+		// percentage — the steps are already on screen as toasts from
+		// `DevContainers.Progress`, and a terminal opened in the same container
+		// joins this very start and shows the whole of it (`PreparingTerminal`).
+		// A second progress report would be two things counting the same pull.
+		// The strip's job here is only to say why nothing is answering yet, and
+		// then to stop saying it.
+		if fetching.contains(key) {
+			return ServerNotice(
+				languageId: languageId,
+				languageName: name,
+				text: devcontainerProjects[project.standardizedFileURL.path] == true
+					? "\(name)'s language server is starting in this project's devcontainer."
+					: "\(name)'s language server is being fetched.",
+				manual: nil,
+				isIgnorable: false
+			)
+		}
+
+		// A project worked on in a container whose container does not carry the
+		// server. Installing it here would change nothing — the copy on this
+		// machine is deliberately not used — so the sentence is the one about
+		// the file that would have to carry it.
+		if usesDevContainer(project), let hint = missingHints[key] {
+			return ServerNotice(
+				languageId: languageId,
+				languageName: name,
+				text: "\(name) has no language server in this project's devcontainer.",
+				manual: hint,
+				isIgnorable: true
+			)
+		}
+
+		guard let suggestion = LanguageServers.suggestion(
+			forLanguage: languageId, root: project, ignoring: ignoring
+		) else { return nil }
+		return ServerNotice(
+			languageId: suggestion.languageId,
+			languageName: suggestion.languageName,
+			text: "\(suggestion.languageName) has no language server. Install \(suggestion.command) "
+				+ "for completion, problems and go-to-declaration.",
+			manual: suggestion.manual,
+			isIgnorable: true
+		)
+	}
+
 	/// How a file is named when talking to a language server.
 	///
 	/// The real path, always: a server resolves a module or a package by
@@ -610,6 +711,10 @@ final class LanguageService {
 			fetching.insert(key)
 			devcontainerWaiting[path, default: []].insert(languageId)
 			startDevContainer(project)
+			// So the strip above the file says the server is on its way rather
+			// than nothing at all — and, when it lands, stops saying it. The
+			// same notification carries both halves.
+			NotificationCenter.default.post(name: .ideaiLanguageServersChanged, object: nil)
 			return nil
 		}
 		guard let resolved = LanguageServers.resolve(
