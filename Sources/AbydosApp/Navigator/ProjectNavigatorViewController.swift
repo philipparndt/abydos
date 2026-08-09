@@ -552,8 +552,21 @@ final class ProjectNavigatorViewController: NSViewController {
 		exportMenu = formats
 		menu.addItem(export)
 		menu.addItem(.separator())
-		menu.addItem(item("Rename…", #selector(contextRename)))
-		menu.addItem(item("Move to Trash", #selector(contextTrash)))
+		// The two keys written down where somebody will find them. A contextual
+		// menu is not in the menu bar, so nothing dispatches these — AppKit only
+		// searches the main menu for key equivalents, and `handleKeyDown` is
+		// what actually answers them. They are here to be read.
+		let rename = item("Rename…", #selector(contextRename))
+		// F2 rather than ⌥⏎, of the two keys that rename: an item carries one
+		// equivalent, and F2 is the one somebody arrives already knowing. ⌥⏎ is
+		// for the hands that spent a week with Return meaning rename.
+		rename.keyEquivalent = String(UnicodeScalar(NSF2FunctionKey)!)
+		rename.keyEquivalentModifierMask = []
+		menu.addItem(rename)
+		let trash = item("Move to Trash", #selector(contextTrash))
+		trash.keyEquivalent = String(UnicodeScalar(NSBackspaceCharacter)!)
+		trash.keyEquivalentModifierMask = [.command]
+		menu.addItem(trash)
 		menu.addItem(.separator())
 		// The same two the header offers, for anybody who looks for them here.
 		menu.addItem(item("Select Opened File", #selector(contextSelectOpenFile)))
@@ -1070,12 +1083,20 @@ final class ProjectNavigatorViewController: NSViewController {
 	}
 
 	private func endRename() {
-		if let node = renaming?.node {
-			showsName(at: outlineView.row(forItem: node), true)
-		}
-		renameField?.removeFromSuperview()
+		// Forgotten before the field is taken away, not after: removing a field
+		// that is being edited ends the editing then and there, and
+		// `controlTextDidEndEditing` arrives while this is still half-done. It
+		// would commit the very name Escape had just rejected — and did:
+		// beginning a rename, changing the name and pressing Escape renamed the
+		// file. Nothing left to find means nothing left to commit.
+		let field = renameField
+		let node = renaming?.node
 		renameField = nil
 		renaming = nil
+		if let node {
+			showsName(at: outlineView.row(forItem: node), true)
+		}
+		field?.removeFromSuperview()
 		outlineView.window?.makeFirstResponder(outlineView)
 		// Whatever changed on disk while the field was up, caught up with now
 		// rather than at the next event — which may be a long time coming.
@@ -1164,18 +1185,40 @@ final class ProjectNavigatorViewController: NSViewController {
 	}
 
 	/// What a right-click offers over whatever is selected, with the submenus
-	/// spelled out: a menu cannot be photographed while it is open.
+	/// spelled out and the shortcuts each item shows: a menu cannot be
+	/// photographed while it is open, and the keys it writes down are half of
+	/// what the menu is for.
 	func contextMenuTitlesForTesting() -> [String] {
 		guard let menu = outlineView.menu else { return [] }
 		menuNeedsUpdate(menu)
 		return menu.items.flatMap { item -> [String] in
 			guard !item.isHidden else { return [] }
-			func mark(_ entry: NSMenuItem) -> String { entry.isEnabled ? "" : " (disabled)" }
+			func mark(_ entry: NSMenuItem) -> String {
+				(entry.isEnabled ? "" : " (disabled)") + Self.shortcutText(entry)
+			}
 			let children = (item.submenu?.items ?? []).map {
 				"\(item.title) ▸ \($0.title)\(mark($0))"
 			}
 			return ["\(item.title)\(mark(item))"] + children
 		}
+	}
+
+	/// An item's key equivalent the way the menu draws it.
+	private static func shortcutText(_ item: NSMenuItem) -> String {
+		guard let key = item.keyEquivalent.unicodeScalars.first else { return "" }
+		let flags = item.keyEquivalentModifierMask
+		var text = " "
+		if flags.contains(.control) { text += "⌃" }
+		if flags.contains(.option) { text += "⌥" }
+		if flags.contains(.shift) { text += "⇧" }
+		if flags.contains(.command) { text += "⌘" }
+		switch Int(key.value) {
+		case NSF2FunctionKey: text += "F2"
+		case NSBackspaceCharacter, NSDeleteCharacter: text += "⌫"
+		case NSCarriageReturnCharacter: text += "⏎"
+		default: text += item.keyEquivalent.uppercased()
+		}
+		return text
 	}
 
 	/// Selects a picture that has just been written, once the tree has it.
@@ -1201,11 +1244,29 @@ final class ProjectNavigatorViewController: NSViewController {
 	}
 
 	@objc private func contextTrash() {
-		// All of them, and the project root is never one of them. This is the one
-		// place several rows makes the work smaller rather than larger: `recycle`
-		// already takes an array, and moving three files to the trash stops being
-		// three gestures.
-		let urls = contextNodes.filter { $0 !== rootNode }.map(\.url)
+		trash(contextNodes)
+	}
+
+	/// ⌘⌫: whatever the tree has highlighted, and nothing to do with the pointer.
+	///
+	/// The selection rather than `contextNodes`, which starts from `clickedRow`:
+	/// a row clicked earlier is still the clicked row long afterwards, and the
+	/// keyboard should never trash something the keyboard cannot see it is about
+	/// to trash.
+	private func trashSelection() {
+		trash(outlineView.selectedRowIndexes.sorted().compactMap {
+			outlineView.item(atRow: $0) as? FileNode
+		})
+	}
+
+	/// Moves rows to the trash.
+	///
+	/// All of them, and the project root is never one of them. This is the one
+	/// place several rows makes the work smaller rather than larger: `recycle`
+	/// already takes an array, and moving three files to the trash stops being
+	/// three gestures.
+	private func trash(_ nodes: [FileNode]) {
+		let urls = nodes.filter { $0 !== rootNode }.map(\.url)
 		guard !urls.isEmpty else { return }
 		// Trash rather than delete: recoverable, and no confirmation needed.
 		NSWorkspace.shared.recycle(urls) { _, error in
@@ -1224,19 +1285,44 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// selection and expands or collapses rows correctly — and moving the
 	/// selection is what shows the file, so there is nothing to add to them.
 	private func handleKeyDown(_ event: NSEvent) -> Bool {
+		// Nothing on this list while a name is being edited on a row. The field
+		// has the keyboard then, so these events do not normally reach here at
+		// all — but ⌘⌫ reaching here would move the file being renamed to the
+		// trash, and that is not a mistake worth leaving one responder-chain
+		// accident away. Return is the same story with a smaller cost: in the
+		// field it commits the name, which `control(_:textView:doCommandBy:)`
+		// does.
+		guard renameField == nil else { return false }
+
 		switch event.keyCode {
 		case 36, 76: // Return, Keypad Enter
-			// Rename, as everywhere else on this machine. Opening is not lost by
-			// it: arrowing onto a row already shows the file, Space commits to
-			// it, and ⌘↓ is the Finder's own "open this" for when the editor
-			// should take the keyboard as well.
-			if event.modifierFlags.contains(.command) {
-				openSelection(focusEditor: true)
-			} else {
+			// Return opens, which is what every editor does. It renamed for a
+			// week, after the Finder, and the cost was that the one key everyone
+			// presses to open a file no longer opened it.
+			//
+			// ⌥Return renames instead — one of the two rename keys, and the one
+			// for hands that had learned Return meant rename.
+			if event.modifierFlags.contains(.option) {
 				beginRename()
+			} else {
+				openSelection(focusEditor: true)
 			}
 			return true
+		case 120: // F2
+			// The other rename key, and the one the menu writes down: F2 renames
+			// in VS Code and in every file manager that is not the Finder.
+			// Deliberately two keys for one gesture — there is nothing to
+			// remember wrong, at the cost of a second binding to keep working.
+			beginRename()
+			return true
+		case 51 where event.modifierFlags.contains(.command): // ⌘⌫
+			// The Finder's key for it, reached for repeatedly before it did
+			// anything. The whole selection, since `recycle` takes a list.
+			trashSelection()
+			return true
 		case 125 where event.modifierFlags.contains(.command): // ⌘↓
+			// Kept, though Return now does it: it costs nothing, and somebody's
+			// hands may already know it from the week Return did not.
 			openSelection(focusEditor: true)
 			return true
 		case 49: // Space — the same provisional open, for a row already selected
@@ -1338,8 +1424,16 @@ final class ProjectNavigatorViewController: NSViewController {
 
 	/// Sends a key to the tree as the keyboard would, so what arrowing through
 	/// it actually does can be checked from outside.
-	func pressKeyForTesting(_ keyCode: UInt16, extendingSelection: Bool = false) {
-		view.window?.makeFirstResponder(outlineView)
+	///
+	/// The modifiers are part of the event, so ⇧↓ selects a run of rows and ⌥⏎,
+	/// ⌘⌫ and ⌘↓ are askable at all — each of them is a different gesture from
+	/// the key without them.
+	func pressKeyForTesting(_ keyCode: UInt16, modifiers: NSEvent.ModifierFlags = []) {
+		// While a name is being edited the field has the keyboard, and taking it
+		// back here would end the edit before the key ever arrived — which is
+		// exactly what "⌘⌫ must not trash the file being renamed" has to be able
+		// to ask about. So the key goes wherever the keyboard actually is.
+		if renameField == nil { view.window?.makeFirstResponder(outlineView) }
 		// The characters matter: `interpretKeyEvents` maps those, not the key
 		// code, and an event with none does nothing at all.
 		let characters: String
@@ -1348,14 +1442,13 @@ final class ProjectNavigatorViewController: NSViewController {
 		case 125: characters = String(UnicodeScalar(NSDownArrowFunctionKey)!)
 		case 123: characters = String(UnicodeScalar(NSLeftArrowFunctionKey)!)
 		case 124: characters = String(UnicodeScalar(NSRightArrowFunctionKey)!)
+		case 120: characters = String(UnicodeScalar(NSF2FunctionKey)!)
 		case 36: characters = "\r"
 		case 49: characters = " "
+		case 51: characters = String(UnicodeScalar(NSDeleteCharacter)!)
+		case 53: characters = "\u{1B}" // Escape
 		default: characters = ""
 		}
-		// ⇧ with an arrow is how a run of rows is selected, so the harness can
-		// make a multi-row selection the way somebody does rather than by
-		// reaching into the outline view.
-		let modifiers: NSEvent.ModifierFlags = extendingSelection ? .shift : []
 		guard let event = NSEvent.keyEvent(
 			with: .keyDown, location: .zero, modifierFlags: modifiers,
 			timestamp: ProcessInfo.processInfo.systemUptime,
@@ -1363,8 +1456,16 @@ final class ProjectNavigatorViewController: NSViewController {
 			characters: characters, charactersIgnoringModifiers: characters,
 			isARepeat: false, keyCode: keyCode
 		) else { return }
-		outlineView.keyDown(with: event)
+		// The field editor when a name is being edited, so a key pressed during
+		// a rename does to the field what it would really do to it.
+		let target: NSResponder = renameField?.currentEditor() ?? outlineView
+		target.keyDown(with: event)
 	}
+
+	/// The name in the field standing on a row, or nil when nothing is being
+	/// renamed — the difference between Return opening a file and Return doing
+	/// what it used to do.
+	var renamingNameForTesting: String? { renameField?.stringValue }
 
 	/// Rebuilds the tree the way a filesystem event does, so a selection can be
 	/// checked to have survived one.

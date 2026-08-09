@@ -3932,7 +3932,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			switch step {
 			case "down": navigator.pressKeyForTesting(125)
 			// So that copying several rows can be asked for at all.
-			case "shift-down": navigator.pressKeyForTesting(125, extendingSelection: true)
+			case "shift-down": navigator.pressKeyForTesting(125, modifiers: .shift)
 			default: continue
 			}
 		}
@@ -3975,9 +3975,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			case "right": navigator.pressKeyForTesting(124)
 			case "left": navigator.pressKeyForTesting(123)
 			case "return": navigator.pressKeyForTesting(36)
+			// The four keys the navigator answers, each one a different gesture
+			// from the same key without its modifier: F2 and ⌥⏎ both rename, ⌘⌫
+			// trashes the selection, ⌘↓ opens as it always did.
+			case "f2": navigator.pressKeyForTesting(120)
+			case "alt-return": navigator.pressKeyForTesting(36, modifiers: .option)
+			case "cmd-delete": navigator.pressKeyForTesting(51, modifiers: .command)
+			case "cmd-down": navigator.pressKeyForTesting(125, modifiers: .command)
+			case "escape": navigator.pressKeyForTesting(53)
 			// ⇧↓ and ⇧↑: a run of rows, selected the way somebody selects one.
-			case "shift-down": navigator.pressKeyForTesting(125, extendingSelection: true)
-			case "shift-up": navigator.pressKeyForTesting(126, extendingSelection: true)
+			case "shift-down": navigator.pressKeyForTesting(125, modifiers: .shift)
+			case "shift-up": navigator.pressKeyForTesting(126, modifiers: .shift)
 			// What a build writing files does to the tree, on demand: the point
 			// is what is still selected afterwards.
 			case "reload": navigator.reloadForTesting()
@@ -4008,7 +4016,29 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			}
 			let selection = navigator.selectionForTesting
 			let showing = editor.activeGroup?.activeTabURL?.lastPathComponent ?? "nothing"
-			print("TREE \(step): selected=\(selection.name) rows=\(selection.rows) editor=\(showing)")
+			// Arrowing shows a file without leaving the tree, so which pane has
+			// the keyboard is what separates Return opening a file from Return
+			// merely selecting one — and `renaming` is what separates it from
+			// Return doing what it did last week.
+			let renaming = navigator.renamingNameForTesting
+			let focus: String
+			if renaming != nil {
+				focus = "rename-field"
+			} else if let responder = window?.firstResponder as? NSView {
+				if responder.isDescendant(of: navigator.view) {
+					focus = "tree"
+				} else if responder.isDescendant(of: editor.view) {
+					focus = "editor"
+				} else {
+					focus = "elsewhere"
+				}
+			} else {
+				focus = "elsewhere"
+			}
+			print(
+				"TREE \(step): selected=\(selection.name) rows=\(selection.rows) "
+					+ "editor=\(showing) focus=\(focus) renaming=\(renaming ?? "no")"
+			)
 		}
 	}
 
