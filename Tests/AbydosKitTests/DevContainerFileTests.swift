@@ -142,6 +142,44 @@ struct DevContainerFileTests {
 		#expect(DevContainerFile.read(project: project)?.configuration?.image == "alpine:3.20")
 	}
 
+	/// A project reached through a symlink still knows where its own files are.
+	///
+	/// 0430: the root went through `realpath` and the file did not, so under
+	/// `/tmp` — a symlink to `/private/tmp`, and where every scratch project this
+	/// app's harness makes lives — every file collapsed to `devcontainer.json`
+	/// with no folder in front of it. That took `build.dockerfile` with it, since
+	/// it resolves against the file's own place, and it made a project's two
+	/// devcontainers indistinguishable from one another.
+	@Test func findsItsOwnFilesThroughASymlinkedRoot() throws {
+		let real = try makeProject()
+		defer { try? FileManager.default.removeItem(at: real) }
+		let link = real.deletingLastPathComponent()
+			.appendingPathComponent("link-to-\(real.lastPathComponent)")
+		try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
+		defer { try? FileManager.default.removeItem(at: link) }
+
+		try JavaTestDirectory.write(
+			#"{"build": {"dockerfile": "Dockerfile"}}"#,
+			to: real.appendingPathComponent(".devcontainer/one/devcontainer.json")
+		)
+		try JavaTestDirectory.write(
+			#"{"image": "alpine:3.21"}"#,
+			to: real.appendingPathComponent(".devcontainer/two/devcontainer.json")
+		)
+
+		let choices = DevContainerFile.choices(in: link)
+		#expect(choices.map(\.name) == ["one", "two"])
+		// The two are different files, which is what a project with two
+		// containers up at once depends on being true.
+		let files = choices.map { DevContainerFile.read($0.file, project: link).configuration?.file }
+		#expect(files[0] != files[1])
+		#expect(files[0]?.path.hasSuffix("/.devcontainer/one/devcontainer.json") == true)
+		// And the Dockerfile is beside the file that names it rather than at the
+		// top of the project, which is the half of this that failed to build.
+		let build = DevContainerFile.read(choices[0].file, project: link).configuration?.build
+		#expect(build?.dockerfile.hasSuffix("/.devcontainer/one/Dockerfile") == true)
+	}
+
 	/// A file this app will not start still has to be named, or its refusal is
 	/// attributed to nothing on screen.
 	@Test func namesOneItCannotStart() throws {

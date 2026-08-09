@@ -480,9 +480,20 @@ public enum DevContainerFile {
 		return result
 	}
 
+	/// Where a file sits inside the project, as the file itself would be written
+	/// in a message about it.
+	///
+	/// **Both sides through `realpath`, and the asymmetry was the bug.** The root
+	/// was canonicalised and the file was not, so under `/tmp` — a symlink to
+	/// `/private/tmp` on macOS, and where every scratch project this app's
+	/// harness makes lives — the two never shared a prefix. This collapsed to
+	/// `devcontainer.json` with no folder in front of it, which took a
+	/// `build.dockerfile` with it (it resolves against *this*, so it became
+	/// `<project>/Dockerfile`) and made two files in one project indistinguishable
+	/// from each other. 0430.
 	private static func relative(_ url: URL, to project: URL) -> String {
 		let root = FilePath.canonical(project)
-		let path = url.path
+		let path = FilePath.canonical(url)
 		guard path.hasPrefix(root + "/") else { return url.lastPathComponent }
 		return String(path.dropFirst(root.count + 1))
 	}
