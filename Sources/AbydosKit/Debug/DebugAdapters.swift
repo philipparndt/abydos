@@ -112,9 +112,22 @@ public enum DebugAdapters {
 		// which language this is: go.mod means Go, a POM or a Gradle build means
 		// Java. The nearest one wins, which is what makes a repository holding
 		// both work.
-		var cursor = directory.hasDirectoryPath ? directory : directory.deletingLastPathComponent()
-		let root = projectRoot.standardizedFileURL.path
-		while cursor.path.hasPrefix(root) || cursor.path == root {
+		//
+		// Canonical on both sides, and the trailing slash so that `/proj-old` is
+		// not inside `/proj`. The program's path has already been through
+		// `FilePath.canonical` — `LaunchConfiguration.expand` substitutes the
+		// canonical root into `${workspaceFolder}` — while the project root had
+		// not, so under `/tmp` or `/var` this loop never ran once: no `go.mod`
+		// and no POM were ever found, and a Go program was handed to lldb.
+		// Same asymmetry as 0430. Canonicalised once, since dropping a component
+		// from a real path leaves a real path — and `EvenIfMissing`, because a
+		// program is commonly named before it has been built.
+		let start = directory.hasDirectoryPath ? directory : directory.deletingLastPathComponent()
+		var cursor = URL(
+			fileURLWithPath: FilePath.canonicalEvenIfMissing(start), isDirectory: true
+		)
+		let root = FilePath.canonical(projectRoot)
+		while cursor.path == root || cursor.path.hasPrefix(root + "/") {
 			if FileManager.default.fileExists(atPath: cursor.appendingPathComponent("go.mod").path) {
 				return delve
 			}

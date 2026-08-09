@@ -25,4 +25,39 @@ public enum FilePath {
 		}
 		return String(cString: buffer)
 	}
+
+	/// The same, for a path that need not be there yet.
+	///
+	/// `realpath` answers only about files that exist, and much of what this app
+	/// names does not exist when it is named: a program about to be built, a
+	/// directory a launch configuration points into, a Dockerfile nobody has
+	/// written. `canonical` falls back to `standardizingPath` for those, and
+	/// that resolves no symlinks at all — so a path under `/tmp` compared
+	/// against a canonical root matched nothing, which is the very fault the
+	/// canonical form exists to prevent, arriving by the back door.
+	///
+	/// So the deepest part that does exist is canonicalised and the rest is put
+	/// back on: `/tmp/x/build/out` with no `build` yet becomes
+	/// `/private/tmp/x/build/out`, which is the name that directory will have
+	/// the moment it is made.
+	public static func canonicalEvenIfMissing(_ path: String) -> String {
+		var missing: [String] = []
+		var cursor = path
+		while cursor != "/", !cursor.isEmpty {
+			var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
+			if realpath(cursor, &buffer) != nil {
+				let found = String(cString: buffer)
+				guard !missing.isEmpty else { return found }
+				let rest = missing.reversed().joined(separator: "/")
+				return found == "/" ? "/" + rest : found + "/" + rest
+			}
+			missing.append((cursor as NSString).lastPathComponent)
+			cursor = (cursor as NSString).deletingLastPathComponent
+		}
+		return path
+	}
+
+	public static func canonicalEvenIfMissing(_ url: URL) -> String {
+		canonicalEvenIfMissing(url.path)
+	}
 }

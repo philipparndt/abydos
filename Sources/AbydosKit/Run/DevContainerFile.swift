@@ -201,6 +201,11 @@ public enum DevContainerFile {
 				"\(shown) builds this project with Docker Compose (\(named)), which this app "
 					+ "does not run — a single image or build.dockerfile is what it can start.")
 		}
+		// Canonical, and everything downstream of here is measured against it:
+		// the bind mount handed to the runtime, `${localWorkspaceFolder}`, and
+		// the `host` of the `ContainerPaths` that decides what is inside the
+		// project. All three are comparisons or arguments that only mean
+		// anything by the directory's real name.
 		let localFolder = FilePath.canonical(project)
 		let localBasename = (localFolder as NSString).lastPathComponent
 
@@ -391,13 +396,30 @@ public enum DevContainerFile {
 		return result
 	}
 
+	/// The file, named from the project down — `.devcontainer/devcontainer.json`.
+	///
+	/// **Canonical on both sides.** Subtracting one path from another is only
+	/// meaningful when the two were reached the same way, and this used to
+	/// canonicalise the root and not the file: on macOS `/tmp` and `/var` are
+	/// symlinks, so for every project under either — which is every scratch
+	/// project this app's own harness makes — the two shared no prefix at all.
+	/// `shown` then fell back to the bare `devcontainer.json`, which is a
+	/// sentence naming a file the project has two of, and, because the paths in
+	/// a `build` are relative to the *file*, put the Dockerfile at
+	/// `<project>/Dockerfile` and failed the build saying a file that was
+	/// plainly there did not exist. 0430.
+	///
+	/// Canonical rather than neither, because the answer is joined back onto the
+	/// canonical root by `fileURL` and handed to a container runtime, which
+	/// knows the directory by its real name. The two are exact inverses.
 	private static func relative(_ url: URL, to project: URL) -> String {
 		let root = FilePath.canonical(project)
-		let path = url.path
+		let path = FilePath.canonical(url)
 		guard path.hasPrefix(root + "/") else { return url.lastPathComponent }
 		return String(path.dropFirst(root.count + 1))
 	}
 
+	/// The inverse of `relative`, and canonical for the same reason.
 	private static func fileURL(_ shown: String, project: URL) -> String {
 		FilePath.canonical(project) + "/" + shown
 	}

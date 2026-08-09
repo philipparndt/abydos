@@ -3457,7 +3457,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// with, and undone like any other edit.
 	private func fixWithAI(url: URL, line: Int, diagnostic: LSPDiagnostic) {
 		guard let root = project?.root else { return }
-		let relative = url.path.replacingOccurrences(of: FilePath.canonical(root) + "/", with: "")
+		// Canonical on both sides. Subtracting the root from the file only
+		// works when the two were reached the same way, and this canonicalised
+		// one of them: under `/tmp` or `/var`, both symlinks on macOS, the
+		// subtraction did nothing and the agent was told to fix a problem in an
+		// absolute path on somebody's machine. Same asymmetry as 0430.
+		let relative = FilePath.canonical(url)
+			.replacingOccurrences(of: FilePath.canonical(root) + "/", with: "")
 
 		let prompt = """
 		Fix this problem, reported by the language server in \(relative) at line \(line + 1):
@@ -6568,9 +6574,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// view offers to narrow itself to.
 	private func relativePathOfActiveFile() -> String? {
 		guard let project, let url = editor.activeGroup?.activeTabURL else { return nil }
-		let root = project.root.standardizedFileURL.path
-		guard url.path.hasPrefix(root + "/") else { return nil }
-		return String(url.path.dropFirst(root.count + 1))
+		// Canonical on both sides. A tab carries whatever URL opened it, and a
+		// tab opened by a language server or a debugger carries the real path
+		// while one opened from the tree carries the path the project was opened
+		// by — so with the root normalised one way and the file the other, a
+		// file under `/tmp` or `/var` narrowed the history to nothing. Same
+		// asymmetry as 0430.
+		let root = FilePath.canonical(project.root)
+		let path = FilePath.canonical(url)
+		guard path.hasPrefix(root + "/") else { return nil }
+		return String(path.dropFirst(root.count + 1))
 	}
 
 	/// Sets a breakpoint as a gutter click would, for verifying alignment.

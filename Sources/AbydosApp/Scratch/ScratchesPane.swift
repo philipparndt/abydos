@@ -262,7 +262,14 @@ final class ScratchesPane: NSView {
 	}
 
 	@objc private func moveToProject() {
-		guard let match = selectedMatch, let projectRoot, match.entry.projectRoot?.path != projectRoot.path else {
+		// Normalised the way `ScratchFiles` normalises, on both sides: the
+		// entry's root came back through the marker `ScratchFiles` wrote after
+		// resolving it, and the project's had not been resolved at all — so for
+		// a project reached through a symlink this guard never fired and a
+		// scratch already in the project was "moved" into it again.
+		guard let match = selectedMatch, let projectRoot,
+		      match.entry.projectRoot?.path != ScratchFiles.canonical(projectRoot).path
+		else {
 			return
 		}
 		move(match, to: ScratchFiles(projectRoot: projectRoot))

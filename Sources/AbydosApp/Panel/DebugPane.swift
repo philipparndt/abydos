@@ -757,11 +757,20 @@ private final class StackFrameCell: NSView {
 		guard let file = stackFrame.file else { return }
 		// Paths are shown relative to the project; absolute ones are unreadable
 		// in a narrow pane and mostly identical prefix.
-		var display = file
-		if file.hasPrefix(projectRoot.path + "/") {
-			display = String(file.dropFirst(projectRoot.path.count + 1))
+		//
+		// Canonical on both sides: the frame's path comes from the debug
+		// adapter, which answers with the real one, and the project root is
+		// whatever the project was opened by. Under `/tmp` or `/var` — symlinks,
+		// both — the two shared no prefix, every frame fell to its last
+		// component, and two `main.go`s in different packages were drawn as the
+		// same line. Same asymmetry as 0430.
+		let path = FilePath.canonical(file)
+		let base = FilePath.canonical(projectRoot)
+		var display = path
+		if path.hasPrefix(base + "/") {
+			display = String(path.dropFirst(base.count + 1))
 		} else {
-			display = (file as NSString).lastPathComponent
+			display = (path as NSString).lastPathComponent
 		}
 
 		let location = NSAttributedString(string: "\(display):\(stackFrame.line)", attributes: [

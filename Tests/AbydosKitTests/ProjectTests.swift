@@ -221,3 +221,42 @@ struct FilePreviewTests {
 		#expect(!PreviewMode.preview.showsSource && PreviewMode.preview.showsPreview)
 	}
 }
+
+/// One way of naming a file, which is what makes two parts of the app agree
+/// they mean the same one.
+struct FilePathTests {
+	/// `/tmp` and `/var` are symlinks on macOS, so canonicalising is not a
+	/// formality here: it is the difference between two names for one directory.
+	@Test func resolvesADirectoryReachedThroughASymlink() throws {
+		let base = URL(
+			fileURLWithPath: FilePath.canonical(try JavaTestDirectory.make()), isDirectory: true
+		)
+		defer { try? FileManager.default.removeItem(at: base) }
+		let real = base.appendingPathComponent("checkout")
+		try FileManager.default.createDirectory(at: real, withIntermediateDirectories: true)
+		let link = base.appendingPathComponent("through-a-link")
+		try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
+
+		#expect(FilePath.canonical(link) == real.path)
+		#expect(FilePath.canonical(link.appendingPathComponent("x")) != real.path + "/x")
+		// Which is the whole reason for the one below: `realpath` answers about
+		// files that are there, and `x` is not.
+		#expect(FilePath.canonicalEvenIfMissing(link.appendingPathComponent("x"))
+			== real.path + "/x")
+		#expect(FilePath.canonicalEvenIfMissing(link.appendingPathComponent("a/b/c"))
+			== real.path + "/a/b/c")
+	}
+
+	/// A path that is entirely there is answered by `realpath` alone, and one
+	/// that is nowhere at all comes back as it went in rather than as "/".
+	@Test func leavesWhatItCannotResolveAlone() throws {
+		let base = URL(
+			fileURLWithPath: FilePath.canonical(try JavaTestDirectory.make()), isDirectory: true
+		)
+		defer { try? FileManager.default.removeItem(at: base) }
+
+		#expect(FilePath.canonicalEvenIfMissing(base) == base.path)
+		#expect(FilePath.canonicalEvenIfMissing("/no-such-root-here/and/below")
+			== "/no-such-root-here/and/below")
+	}
+}
