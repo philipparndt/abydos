@@ -46,6 +46,27 @@ its sources.
 
 **SwiftTreeSitter** (ChimeHQ) — BSD.
 
+## Bundled diagram renderer
+
+**mermaid** 11.16.1 — `Sources/AbydosKit/Preview/mermaid/mermaid.min.js`,
+licence in `Sources/AbydosKit/Preview/mermaid/LICENSE`, version in `VERSION`
+beside them.
+
+| Component | Licence | Obligation |
+|---|---|---|
+| mermaid (Knut Sveidqvist and contributors) | MIT | Include the licence |
+| what mermaid's own bundle contains — d3, dagre-d3-es, khroma, js-yaml, cytoscape, marked, lodash-es and others | MIT | Include the notice, which travels inside the file |
+| DOMPurify 3.4.0 (Cure53), inside the same bundle | Apache-2.0 **or** MPL-2.0 | Include the notice; both permit redistribution unmodified |
+
+This is the one JavaScript this project redistributes, and it is here because
+Mermaid has no other form: every command-line Mermaid carries a headless
+Chromium, and the one measured for this weighed **2.16 GB** on disk against this
+file's 3.6 MB. See backlog 0425.
+
+The file is the upstream UMD build, **unmodified**, and it carries every
+component notice above in its own trailing comment — which is what keeps the
+obligation satisfied wherever the file goes, including inside the built `.app`.
+
 ## What Abydos does *not* bundle
 
 These are invoked if installed, never redistributed, so their licences do not
@@ -64,3 +85,7 @@ apply to this project:
 upstream `LICENSE` alongside its sources. If you add a grammar, make sure its
 licence lands next to it — MIT requires the notice wherever the source is
 redistributed.
+
+`Scripts/vendor-mermaid.sh` does the same for mermaid, taking the version as its
+one argument and writing the `LICENSE` and the `VERSION` beside the bundle. The
+version above is the only other place it is written down, so change it here too.

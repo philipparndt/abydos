@@ -543,7 +543,7 @@ final class ProjectNavigatorViewController: NSViewController {
 		// every other file: `menuNeedsUpdate` hides it.
 		let export = NSMenuItem(title: "Export", action: nil, keyEquivalent: "")
 		let formats = NSMenu()
-		for format in PlantUML.Format.allCases {
+		for format in DiagramFormat.allCases {
 			let entry = item(format.rawValue.uppercased(), #selector(contextExport(_:)))
 			entry.representedObject = format.rawValue
 			formats.addItem(entry)
@@ -1147,14 +1147,14 @@ final class ProjectNavigatorViewController: NSViewController {
 	@objc private func contextExport(_ sender: NSMenuItem) {
 		guard let node = contextNode, !node.isDirectory,
 		      let raw = sender.representedObject as? String,
-		      let format = PlantUML.Format(rawValue: raw)
+		      let format = DiagramFormat(rawValue: raw)
 		else { return }
 		DiagramExportCommand.run(url: node.url, format: format, projectRoot: project?.root)
 	}
 
 	/// The same gesture without the menu, for verifying it end to end.
-	func exportSelectionForTesting(_ format: PlantUML.Format) {
-		guard let node = contextNode, !node.isDirectory, PlantUML.isDiagram(node.url) else {
+	func exportSelectionForTesting(_ format: DiagramFormat) {
+		guard let node = contextNode, !node.isDirectory, DiagramExport.isDiagram(node.url) else {
 			print("EXPORT: nothing to export")
 			return
 		}
@@ -1576,8 +1576,8 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 				// Hidden unless a diagram was clicked — it means nothing over a
 				// Swift file — and greyed when several rows were, for the same
 				// reason Rename is: one file, one answer.
-				item.isHidden = !nodes.contains { !$0.isDirectory && PlantUML.isDiagram($0.url) }
-				let single = node.map { !$0.isDirectory && PlantUML.isDiagram($0.url) } ?? false
+				item.isHidden = !nodes.contains { !$0.isDirectory && DiagramExport.isDiagram($0.url) }
+				let single = node.map { !$0.isDirectory && DiagramExport.isDiagram($0.url) } ?? false
 				item.isEnabled = single
 				for format in item.submenu?.items ?? [] { format.isEnabled = single }
 				continue

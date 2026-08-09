@@ -17,13 +17,11 @@ import Foundation
 ///  * `java -jar` on a jar found where the downloads usually land.
 public enum PlantUML {
 	/// What the picture comes back as.
-	public enum Format: String, Sendable, CaseIterable {
-		case png
-		case svg
-
-		/// The flag that asks for it.
-		var flag: String { "-t\(rawValue)" }
-	}
+	///
+	/// The same two formats every diagram in this app is exported to, whichever
+	/// tool draws it: the menu says PNG and SVG over a `.puml` and over a `.mmd`
+	/// alike, and one type for both is what keeps the two menus from drifting.
+	public typealias Format = DiagramFormat
 
 	/// What a preview asks for, whichever way the diagram is drawn.
 	///
@@ -82,7 +80,7 @@ public enum PlantUML {
 	) -> (executable: String, arguments: [String]) {
 		// `-charset UTF-8` because a diagram with a German label in it is not
 		// exotic, and the default depends on the platform's locale.
-		let common = ["-pipe", format.flag, "-charset", "UTF-8"]
+		let common = ["-pipe", "-t\(format.rawValue)", "-charset", "UTF-8"]
 		switch tool {
 		case let .command(path):
 			return (path, common)

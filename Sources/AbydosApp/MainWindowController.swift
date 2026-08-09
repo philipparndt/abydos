@@ -3948,7 +3948,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// Exports the diagram in front from its own preview pane, the way the
 	/// pane's menu does, and says what the menu offered on the way past.
 	func exportDiagramForTesting(_ raw: String) {
-		guard let format = PlantUML.Format(rawValue: raw.lowercased()) else {
+		guard let format = DiagramFormat(rawValue: raw.lowercased()) else {
 			print("EXPORT: no such format \(raw)")
 			return
 		}
@@ -3997,7 +3997,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				// tree has selected.
 				if step.hasPrefix("export:") {
 					let raw = String(step.dropFirst("export:".count))
-					guard let format = PlantUML.Format(rawValue: raw.lowercased()) else { continue }
+					guard let format = DiagramFormat(rawValue: raw.lowercased()) else { continue }
 					navigator.exportSelectionForTesting(format)
 					continue
 				}
