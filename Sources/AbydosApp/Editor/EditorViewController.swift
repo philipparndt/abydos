@@ -823,6 +823,11 @@ final class EditorViewController: NSViewController {
 				}
 			case .model:
 				return makeModelTab(for: fileURL, preview: preview)
+			case .pdf:
+				// A PDF is a picture's case exactly: nothing to edit, no source to
+				// read, and it fails the binary test below on its way to being
+				// useful.
+				return makePdfTab(for: fileURL, preview: preview)
 			default:
 				// A `.drawio` opens rendered and has no source half, and it is
 				// still a document this app owns: it goes the ordinary way and
@@ -1273,7 +1278,9 @@ final class EditorViewController: NSViewController {
 
 	/// A short selection, suitable for seeding a search field.
 	func selectedTextForSearch() -> String? {
-		guard let text = activeTab?.codeView?.selectedText(), !text.isEmpty, !text.contains("\n") else {
+		guard let text = activeTab?.codeView?.selectedText() ?? pdfPreview?.selectedText,
+		      !text.isEmpty, !text.contains("\n")
+		else {
 			return nil
 		}
 		return text
@@ -1281,13 +1288,19 @@ final class EditorViewController: NSViewController {
 
 	// MARK: - Find in file
 
+	/// The PDF the tab in front is showing, when it is showing one.
+	///
+	/// A PDF tab is the document and nothing else — there is no split to look
+	/// inside, unlike a diagram — so this is the whole search.
+	private var pdfPreview: PdfFileView? { activeTab?.contentView as? PdfFileView }
+
 	/// Opens the find bar, seeded with the selection when there is one.
 	func showFind() {
-		guard activeTab?.codeView != nil else { return }
+		guard activeTab?.codeView != nil || pdfPreview != nil else { return }
 		findBar.isHidden = false
 		findBarHeight.constant = Theme.current.scaled(34)
 
-		if let selected = activeTab?.codeView?.selectedText(), !selected.isEmpty, !selected.contains("\n") {
+		if let selected = selectedTextForSearch() {
 			findBar.setQuery(selected)
 		}
 		findBar.focusField()
@@ -1305,6 +1318,7 @@ final class EditorViewController: NSViewController {
 		searchMatches = []
 		currentMatchIndex = nil
 		activeTab?.codeView?.clearSearchMatches()
+		pdfPreview?.clearFind()
 		focusActiveEditor()
 	}
 
@@ -1321,6 +1335,18 @@ final class EditorViewController: NSViewController {
 	}
 
 	private func runFind(query: String, options: SearchOptions) {
+		// A PDF has no rope to search, so PDFKit searches it and the bar is told
+		// the same two numbers it is told for a source file. Whole-word and regex
+		// are not offered by `PDFDocument.findString`, so those switches do
+		// nothing here — the bar keeps showing them because they still apply to
+		// the next file, and a search that quietly ignored them would find more
+		// than it said rather than less.
+		if let pdf = pdfPreview {
+			let count = pdf.find(query, caseSensitive: options.caseSensitive)
+			findBar.setStatus(matchCount: count, currentIndex: pdf.currentMatchIndex)
+			return
+		}
+
 		guard let tab = activeTab, let document = tab.document, let codeView = tab.codeView else { return }
 
 		guard !query.isEmpty else {
@@ -1342,6 +1368,12 @@ final class EditorViewController: NSViewController {
 	}
 
 	private func stepMatch(by delta: Int) {
+		if let pdf = pdfPreview {
+			pdf.stepMatch(by: delta)
+			findBar.setStatus(matchCount: pdf.matchCount, currentIndex: pdf.currentMatchIndex)
+			return
+		}
+
 		guard !searchMatches.isEmpty else { return }
 		let current = currentMatchIndex ?? -1
 		// Wraps, which is what every find bar does at the ends.
@@ -1441,6 +1473,8 @@ final class EditorViewController: NSViewController {
 			return makeMermaidView(for: tab)
 		case .drawio:
 			return makeDrawioView(for: tab)
+		case .pdf:
+			return PdfFileView(url: tab.url)
 		case .markdown, .none:
 			return makePreviewView(for: tab)
 		}
@@ -1680,6 +1714,22 @@ final class EditorViewController: NSViewController {
 			document: nil,
 			codeView: nil,
 			contentView: ImageFileViewer(url: fileURL).scrollView,
+			isPreview: preview
+		)
+		tab.previewMode = .preview
+		return tab
+	}
+
+	/// A tab showing a PDF.
+	///
+	/// Like a picture's: the tab is the document and nothing else, since a PDF
+	/// has no source half to offer and nothing here writes one.
+	private func makePdfTab(for fileURL: URL, preview: Bool) -> Tab {
+		let tab = Tab(
+			url: fileURL,
+			document: nil,
+			codeView: nil,
+			contentView: PdfFileView(url: fileURL),
 			isPreview: preview
 		)
 		tab.previewMode = .preview
