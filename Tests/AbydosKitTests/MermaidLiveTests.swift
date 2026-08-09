@@ -82,6 +82,19 @@ struct MermaidLiveTests {
 			#expect(!svg.contains("<style"))
 			#expect(svg.contains("fill=\"none\""))
 			#expect(svg.contains("stroke-width="))
+			// Nothing points at a marker any more: they are geometry, so the
+			// arrowheads are on the page in renderers that draw no markers.
+			#expect(!svg.contains("marker-end="))
+			#expect(!svg.contains("<marker"))
+			// And no run inside a row re-anchors the row. A `text-anchor` on the
+			// element a text chunk starts at is honoured by a browser and
+			// ignored by CoreSVG, which is two different pictures from one file
+			// — seen, with "Tell the customer" hanging off the left edge of the
+			// exported PNG while the pane had it centred.
+			for piece in svg.components(separatedBy: "<tspan").dropFirst() {
+				let tag = piece.prefix(while: { $0 != ">" })
+				#expect(!tag.contains("text-anchor"))
+			}
 			#expect(data.count > 2000, "\(name) came back suspiciously small")
 		}
 	}

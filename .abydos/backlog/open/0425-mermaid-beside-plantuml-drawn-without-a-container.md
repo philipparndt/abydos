@@ -208,6 +208,14 @@ result rather than from reading a specification:
   word separately drew "Orderplaced" — words right, gaps gone.
 - Everything must be **measured before anything is written**, because each thing
   written moves what has not been read yet.
+- **`text-anchor` has to come off everything left inside a row.** It is applied
+  to a text chunk by the element the chunk *starts at* — which, once a row's
+  first word is its own `tspan`, is that word rather than the row. A browser
+  honours it and shifts the whole label half its own width left; CoreSVG ignores
+  it and does not. That produced two different pictures from one file, and it
+  was only found by rasterising the same export both ways and putting them side
+  by side: the pane had "Tell the customer" centred in its box and the exported
+  PNG had it hanging off the left edge of the page.
 
 It is checked both ways round: the exported SVG rasterised by CoreSVG and the
 exported PNG rasterised by WebKit are the same picture, compared side by side.

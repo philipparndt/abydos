@@ -207,8 +207,20 @@ public enum Mermaid {
 		/// carry.
 		const ABYDOS_SVG = 'http://www.w3.org/2000/svg';
 		const ABYDOS_PLACED = ['x', 'y', 'dx', 'dy'];
+		// And these come off everything left *inside* a row. `text-anchor` is
+		// applied to a text chunk by the element the chunk starts at — which,
+		// once a row's first word is its own `tspan`, is that word rather than
+		// the row. A browser honours it and shifts the whole label half its own
+		// width to the left; CoreSVG ignores it and does not. The two renderers
+		// then draw different pictures from the same file, which was seen: the
+		// pane right and the exported PNG with "Tell the customer" hanging off
+		// the left edge.
+		const ABYDOS_ANCHORED = ABYDOS_PLACED.concat(
+			['text-anchor', 'dominant-baseline', 'alignment-baseline']
+		);
 		function abydosBakeText(root) {
 			const jobs = [];
+			const empty = [];
 			for (const text of root.querySelectorAll('text')) {
 				const rows = [...text.children].filter(child => child.tagName === 'tspan');
 				const measured = [];
@@ -221,7 +233,13 @@ public enum Mermaid {
 					} catch (ignored) { /* a row with nothing in it */ }
 				}
 				if (measured.length) { jobs.push({ text: text, measured: measured }); }
+				// A label with nothing in it draws nothing, and Mermaid emits a
+				// few. Left alone it would be the one thing in the file still
+				// carrying a `text-anchor` on a `tspan` — invisible, and exactly
+				// the sort of leftover somebody later mistakes for the rule.
+				else { empty.push(text); }
 			}
+			for (const nothing of empty) { nothing.remove(); }
 			for (const job of jobs) {
 				// The `<text>`'s own transform moves to the group that replaces
 				// it: the positions above are in the space *inside* that
@@ -254,9 +272,9 @@ public enum Mermaid {
 						: [...found.row.childNodes].map(node => node.cloneNode(true));
 					for (const piece of inside) {
 						if (piece.nodeType === 1) {
-							for (const name of ABYDOS_PLACED) { piece.removeAttribute(name); }
+							for (const name of ABYDOS_ANCHORED) { piece.removeAttribute(name); }
 							for (const nested of piece.querySelectorAll('*')) {
-								for (const name of ABYDOS_PLACED) { nested.removeAttribute(name); }
+								for (const name of ABYDOS_ANCHORED) { nested.removeAttribute(name); }
 							}
 						}
 						line.appendChild(piece);
