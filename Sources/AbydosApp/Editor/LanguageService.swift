@@ -981,11 +981,24 @@ final class LanguageService {
 
 	/// Asks, and applies the answer.
 	///
-	/// A sheet on whichever window is key, which is where a file was just opened
-	/// in all but the contrived case; `runModal` when there is none, so that the
-	/// question is never simply skipped. What was opened meanwhile is already
-	/// being held by `serverInDevContainer`, so an answer given a minute later
-	/// still hands the server the file somebody is looking at.
+	/// **A toast, and one that stays.** 0433 reached for `NSAlert` — a sheet when
+	/// there was a window and `runModal` when there was not — and `Toast.swift`
+	/// opens with the rule that should have caught it: nothing interrupts unless
+	/// the user asked a question, and a confirmation is modal only when it is the
+	/// answer to something somebody just did. Opening a `.py` file is neither. So
+	/// the question goes to the corner and stays there until it is answered,
+	/// which is what `Toast.Lifetime.untilAnswered` was added for.
+	///
+	/// **And it needs no window to wait for**, which is the other half of what
+	/// the modal cost. `warmUp` runs while a project is still loading, with no
+	/// key window and nothing on screen to hang a sheet on, so the old path had
+	/// to wait a quarter of a second at a time for one to appear and fall back to
+	/// an app-modal dialog in front of nothing. A toast is posted; whichever
+	/// window is speaking for the app shows it whenever that turns out to be.
+	///
+	/// What was opened meanwhile is already being held by `serverInDevContainer`,
+	/// so an answer given a minute later still hands the server the file somebody
+	/// is looking at.
 	private func ask(about project: URL) {
 		let path = project.standardizedFileURL.path
 		guard let choice = DevContainerFile.choices(in: project).first else {
@@ -998,70 +1011,66 @@ final class LanguageService {
 		let firstStart = DevContainerFile.read(choice.file, project: project)
 			.configuration.map(DevContainerConsent.FirstStart.of)
 
-		let alert = NSAlert()
-		alert.alertStyle = .informational
-		alert.messageText = DevContainerConsent.question(
-			project: project.lastPathComponent, container: choice.name
-		)
-		alert.informativeText = DevContainerConsent.explanation(
-			container: choice.name, firstStart: firstStart
-		)
-		let answers = DevContainerConsent.answersInOrder
-		for answer in answers {
-			alert.addButton(
-				withTitle: DevContainerConsent.buttonTitle(answer, container: choice.name)
-			)
+		// In the order the answers are offered in, the project's own first. There
+		// is no Escape to wire "not now" to any more, and it does not need one:
+		// the answer that decides nothing is a button like the others, and a
+		// question that cannot be dismissed by accident is the point of it.
+		let answers = DevContainerConsent.answersInOrder.map { answer in
+			Toast.Answer(DevContainerConsent.buttonTitle(answer, container: choice.name)) {
+				[weak self] in
+				guard let self else { return }
+				self.log("\(project.lastPathComponent): \(choice.name) — \(answer.rawValue)")
+				self.remember(answer, for: project)
+				self.apply(answer, to: project)
+			}
 		}
-		// Escape is "not now", which is the answer that decides nothing — the two
-		// that are written down have to be typed or clicked for.
-		alert.buttons.last?.keyEquivalent = "\u{1b}"
 
-		let answered: @MainActor (NSApplication.ModalResponse) -> Void = { [weak self] response in
-			guard let self else { return }
-			let index = response.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
-			let answer = answers.indices.contains(index) ? answers[index] : .notNow
-			self.log("\(project.lastPathComponent): \(choice.name) — \(answer.rawValue)")
-			self.remember(answer, for: project)
-			self.apply(answer, to: project)
-		}
-		present(alert, answered: answered)
+		Toast.ask(Toast(
+			kind: .information,
+			title: DevContainerConsent.questionTitle,
+			detail: DevContainerConsent.questionBody(
+				project: project.lastPathComponent, container: choice.name, firstStart: firstStart
+			),
+			answers: answers,
+			lifetime: .untilAnswered,
+			identifier: Self.questionIdentifier(for: project),
+			onWithdrawn: { [weak self] in self?.questionWithdrawn(about: project) }
+		))
 	}
 
-	/// Puts the question on the window it is about, waiting for one to exist.
+	/// What a question about this project's devcontainer is filed under, so that
+	/// it can be taken back.
+	private static func questionIdentifier(for project: URL) -> String {
+		"devcontainer-question:" + FilePath.canonical(project)
+	}
+
+	/// The window stopped showing this project, so the question about its
+	/// devcontainer has nobody left to answer it.
 	///
-	/// **There may not be one yet, and this was measured rather than guessed.**
-	/// `warmUp` runs as a project loads, and a run of the app at that instant
-	/// reported `keyWindow` and `mainWindow` both nil with two windows that were
-	/// not on screen — so an implementation that reached straight for `runModal`
-	/// put an app-modal dialog in front of nothing at all, before the project it
-	/// is asking about had appeared. That is worse manners than the silence 0433
-	/// is about.
+	/// Called by whatever moved — switching project, or moving between the
+	/// subprojects of one. **Withdrawing is not answering**: nothing is decided
+	/// and nothing is written down, because leaving a question about a project
+	/// nobody is looking at one click from being answered is how somebody agrees
+	/// to a `docker build` for a checkout they left.
+	func withdrawDevContainerQuestion(for project: URL) {
+		Toast.withdraw(Self.questionIdentifier(for: project))
+	}
+
+	/// The question went off the screen unanswered.
 	///
-	/// A quarter of a second, twenty times: five seconds, after which no window
-	/// is evidently coming and a dialog of its own beats never asking. The
-	/// question is not lost while this waits — the languages that asked for it are
-	/// held by `serverInDevContainer`, and `devcontainerStarting` still has the
-	/// project, so nothing asks a second time.
-	private func present(
-		_ alert: NSAlert,
-		answered: @escaping @MainActor (NSApplication.ModalResponse) -> Void,
-		attempt: Int = 0
-	) {
-		let window = NSApp.keyWindow ?? NSApp.mainWindow
-			?? NSApp.windows.first { $0.isVisible && $0.contentViewController != nil }
-		if let window {
-			alert.beginSheetModal(for: window) { response in
-				MainActor.assumeIsolated { answered(response) }
-			}
-			return
-		}
-		guard attempt < 20 else {
-			answered(alert.runModal())
-			return
-		}
-		DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-			MainActor.assumeIsolated { self?.present(alert, answered: answered, attempt: attempt + 1) }
-		}
+	/// **The guard has to be given back**, and this is the only thing that does
+	/// it. `devcontainerStarting` is held across the asking as well as the
+	/// starting — which is what makes ten files opened at once one question — so
+	/// a question withdrawn without releasing it would leave the project unable
+	/// ever to ask again and unable to start anything either: a state nothing on
+	/// screen could get somebody out of. What was waiting stops waiting, for the
+	/// same reason "not now" makes it stop — the strip must not go on saying a
+	/// server is on its way to a container nobody is bringing up.
+	private func questionWithdrawn(about project: URL) {
+		let path = project.standardizedFileURL.path
+		guard devcontainerStarting.remove(path) != nil else { return }
+		log("\(project.lastPathComponent): the devcontainer question was withdrawn unanswered")
+		holdWhatWasWaiting(for: project)
 	}
 
 	/// Nothing is started, here or there, and what was held stops being held.

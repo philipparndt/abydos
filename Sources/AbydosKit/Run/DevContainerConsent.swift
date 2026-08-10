@@ -69,6 +69,36 @@ public extension DevContainerConsent {
 		"Work on \(project) inside \(container)?"
 	}
 
+	/// The line at the top of the question when it is asked in the corner.
+	///
+	/// **Fixed words, and short ones.** A toast's first line is read from the
+	/// corner of the eye, so it has to say what is being offered before it says
+	/// anything about which project or which container — those are in the
+	/// sentence underneath, where somebody who has turned to look will find them.
+	/// It is the gesture 0433's report went looking for and could not find:
+	/// "how do I activate a devcontainer".
+	static let questionTitle = "Activate dev container"
+
+	/// The sentence under it: which project, which container, and what saying
+	/// yes costs the first time.
+	///
+	/// Shorter than `explanation`, which is the paragraph a dialog had room for.
+	/// A corner 340 points wide does not, and a toast somebody has to read twice
+	/// is one they dismiss instead.
+	static func questionBody(project: String, container: String, firstStart: FirstStart?) -> String {
+		let why = "\(project)'s language servers would run inside \(container), so that what the "
+			+ "editor says about this code comes from the toolchain the project is built with."
+		guard let firstStart else { return why }
+		switch firstStart {
+		case let .image(name):
+			return why + " The first time, \(name) is downloaded — several minutes and a "
+				+ "gigabyte of disk."
+		case let .build(dockerfile):
+			return why + " The first time, \(dockerfile) is built — several minutes and a "
+				+ "gigabyte of disk."
+		}
+	}
+
 	/// The paragraph under it: what the container is for, and what saying yes
 	/// costs the first time.
 	///
@@ -130,4 +160,30 @@ public extension DevContainerConsent {
 
 	/// What the way back out of a decline says, above the file and in the menu.
 	static func offerTitle(container: String) -> String { "Use \(container)" }
+
+	/// What the titlebar's pill says about a container that is there and is not
+	/// in use — in its tool tip, and at the top of its menu.
+	///
+	/// **The pill itself says nothing but the name, dimmed.** This is the sentence
+	/// for whoever hovers or opens the menu, and the rule it is written to is that
+	/// somebody who chose to work on this machine chose it: it states a fact about
+	/// the container and never a recommendation, never a warning, and never a
+	/// second ask. The way back is the menu item underneath, which is a thing to
+	/// click rather than a thing being urged.
+	///
+	/// **Nobody-has-been-asked reads the same as "not now"**, and deliberately:
+	/// they are the same state of the world — there is a devcontainer and nothing
+	/// is running in it — and a pill that distinguished them would be telling
+	/// somebody about the app's bookkeeping rather than about their project.
+	static func pillState(_ consent: DevContainerConsent?, container: String) -> String {
+		switch consent {
+		case .container?:
+			// Said yes, and it has not come up yet: a build is minutes.
+			return "\(container) is starting."
+		case .thisMachine?:
+			return "Language servers are running on this machine, not in \(container)."
+		case .notNow?, nil:
+			return "\(container) has not been started."
+		}
+	}
 }
