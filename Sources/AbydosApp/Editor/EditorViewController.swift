@@ -988,12 +988,13 @@ final class EditorViewController: NSViewController {
 		document.onAutoSaved = { [weak self] in
 			self?.refreshTabBar()
 			guard let self, let project = self.project, let languageId = document.languageId else { return }
-			StallWatch.mark("language sync") {
+			let root = project.scopeRoot
+			// The other half of what repeats. An auto-save follows every typing
+			// pause, so this built the whole file as a `String` on the main
+			// thread as often as the sync above did.
+			self.withText(of: document) { text in
 				LanguageService.shared.saved(
-					url: fileURL,
-					languageId: languageId,
-					text: self.text(of: document),
-					project: project.scopeRoot
+					url: fileURL, languageId: languageId, text: text, project: root
 				)
 			}
 		}
@@ -1073,8 +1074,56 @@ final class EditorViewController: NSViewController {
 	// MARK: - Language servers
 
 	/// Whole text of a document, which is what full synchronisation sends.
+	///
+	/// Still on the caller's thread, and the caller is usually the main one.
+	/// That is fine for the two callers that open a file, which happen once
+	/// each; the two that repeat go through `withText(of:)` below.
 	private func text(of document: TextDocument) -> String {
 		document.rope.string(in: 0..<document.rope.byteCount)
+	}
+
+	/// Where a file's text is decoded for a language server.
+	///
+	/// Serial, so two of these cannot cross. A `didChange` carries a version
+	/// number and a whole file, and the older of two arriving last would leave
+	/// the server describing text that nobody has. A serial queue delivers the
+	/// builds in the order they were asked for, and each hands back to the main
+	/// queue as it finishes, so the order survives both hops.
+	private static let languageTextQueue = DispatchQueue(
+		label: "ideai.languagetext", qos: .userInitiated
+	)
+
+	/// Builds a document's whole text away from the main queue and sends it from
+	/// the main queue once it is built.
+	///
+	/// 0437 left this on the main thread and called it a trade wanting a
+	/// measurement, on the grounds that the rope is edited on the main thread
+	/// and reading it anywhere else is a race. That is true of the *document* —
+	/// the main thread reassigns `TextDocument.rope` on every keystroke — and it
+	/// is not true of a `Rope`, which is persistent and `Sendable`: taking the
+	/// value is a reference bump, and nothing can change it afterwards. It is
+	/// the same free snapshot `TextDocument.symbols` already hands to the
+	/// parser's queue, three hundred lines above where the doubt was written.
+	///
+	/// So there is no trade and nothing to measure. Decoding a megabyte of UTF-8
+	/// into a `String` is the whole cost, it happens every 0.4 s of typing and on
+	/// every auto-save, and it is now on a queue the keyboard does not share.
+	private func withText(
+		of document: TextDocument, send: @escaping (String) -> Void
+	) {
+		let snapshot = document.rope
+		EditorViewController.languageTextQueue.async {
+			let text = snapshot.string(in: 0..<snapshot.byteCount)
+			DispatchQueue.main.async { [weak self] in
+				// Closed while its text was being decoded. There is no gap to
+				// close today, because the send follows the build immediately;
+				// there is one now, and a `didChange` for a file the editor no
+				// longer holds is one the server cannot make sense of.
+				guard let self, self.tabs.contains(where: { $0.document === document })
+				else { return }
+				StallWatch.mark("language sync") { send(text) }
+			}
+		}
 	}
 
 	/// Tells the server what changed, once the typing pauses.
@@ -1089,15 +1138,11 @@ final class EditorViewController: NSViewController {
 			guard let self, let tab, let document = tab.document,
 			      let project = self.project, let languageId = document.languageId
 			else { return }
-			// Marked around the text as well as around the send: building the
-			// whole file as a `String` is the half of this that happens here, and
-			// it is the half that is still on this thread.
-			StallWatch.mark("language sync") {
+			let url = tab.url
+			let root = project.scopeRoot
+			withText(of: document) { text in
 				LanguageService.shared.changed(
-					url: tab.url,
-					languageId: languageId,
-					text: self.text(of: document),
-					project: project.scopeRoot
+					url: url, languageId: languageId, text: text, project: root
 				)
 			}
 		}
