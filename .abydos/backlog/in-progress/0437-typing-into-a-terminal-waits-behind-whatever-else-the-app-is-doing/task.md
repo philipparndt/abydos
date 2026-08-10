@@ -782,3 +782,19 @@ on their own straight afterwards, and the same run printed
 taking ten seconds. Nothing in this entry's changes is anywhere near any of
 them. **The suite has no way to say "I could not be run", so it says "you broke
 it" instead**, and that is the fault 0435 describes.
+
+The third round is the cleanest example yet, because both halves were run within
+four minutes of each other and only the machine changed. A full run at a load
+average that went from 25 to 176 during it came back red in exactly two places,
+both `…LiveTests` and both a deadline: `DevContainerLiveTests` waiting for a
+container to be gone, and `JavaLiveTests` timing out on `workspace/executeCommand`
+after 49 seconds. Re-run on their own, at a load average of 148, **the same
+jdtls test passed in 7.1 seconds** — a seventh of the time it had just spent
+failing to finish. The whole suite then passed, 2,166 tests in 326 suites in
+30.5 seconds, as the load fell from 97 to 55.
+
+There is a joke in the second failure that is worth writing down: the agent
+loading the machine was the one working 0446, whose whole job is to reproduce
+jdtls opening a Java project. `JavaLiveTests` did not fail because of anything on
+this branch; it failed because somebody else was already using the thing it
+tests.
