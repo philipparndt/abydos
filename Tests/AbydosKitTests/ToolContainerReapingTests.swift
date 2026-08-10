@@ -178,23 +178,25 @@ struct ContainerCleanupTests {
 	/// container" — a red run four separate people investigated in one day
 	/// before each concluding it was not theirs.
 	///
-	/// `release(withPrefixes:)` was written to fix exactly that, by narrowing
-	/// "everything" to "everything playing my role". **It is the reason this test
-	/// exists twice over**, because a role is not an owner: two suites in this one
-	/// bundle both keep a container called `abydos-plantuml-server-<pid>-<n>`, they
-	/// run at the same time, and the pid in both names is this process's. So the
-	/// narrowing changed which suite got hurt and not whether one did, and the
-	/// next four sessions were spent on the same red under a different name (0435).
-	/// The method is gone from `ToolContainers`; this keeps it from coming back
-	/// under a local spelling.
+	/// The second is the prefix form of `release`, which was written to fix
+	/// exactly that by narrowing "everything" to "everything playing my role".
+	/// **It is the reason this test exists twice over**, because a role is not an
+	/// owner: two suites in this one bundle both keep a container called
+	/// `abydos-plantuml-server-<pid>-<n>`, they run at the same time, and the pid
+	/// in both names is this process's. So the narrowing changed which suite got
+	/// hurt and not whether one did, and the next four sessions went on the same
+	/// red under a different name (0435). The method is gone from `ToolContainers`;
+	/// this keeps it from coming back under a local spelling.
 	///
 	/// A test removes the containers *it started*, by the names it noted as it
 	/// started them — `PlantUMLServerLiveTests.Started` is that written out, and
 	/// `PlantUMLServers.stopAll` is the same set asked for from the actor holding
 	/// it. There is no set-of-mine that can be computed from a name.
 	///
-	/// The names it looks for are assembled rather than written out, so this file
-	/// is scanned like every other instead of having to exempt itself.
+	/// The names it looks for are assembled rather than written out, and neither
+	/// is spelled in full anywhere in this file, so it is scanned like every other
+	/// instead of having to exempt itself. Writing one of them in a comment here
+	/// is how this test first went red, which is the property working.
 	@Test func noTestChoosesSomebodyElsesContainers() throws {
 		let tests = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
 		let forbidden = ["Containers.shared." + "removeAll()", "release(with" + "Prefixes:"]
