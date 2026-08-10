@@ -23,8 +23,23 @@ import Foundation
 /// collision never overwrites, except when dragged".
 ///
 /// Renaming the newcomer the way the Finder's "Keep Both" does was considered
-/// and left out: it produces a file nobody asked for under a name nobody chose,
-/// and after a twelve-file drop there is no telling which of the two is which.
+/// and left out *for a collision between two different files*: it produces a
+/// file nobody asked for under a name nobody chose, and after a twelve-file drop
+/// there is no telling which of the two is which.
+///
+/// ## Copying a file into the folder it is already in
+///
+/// That one is different, and it does get a new name. A collision between two
+/// different files may be an accident — the wrong folder, a stale pasteboard —
+/// and refusing is the safe answer. Copying a file onto its own folder cannot
+/// be an accident: there is no other thing it could have meant. So it duplicates,
+/// as `main.py` → `main-1.py`, and the next one is `main-2.py`.
+///
+/// The number goes before the extension, so the copy is still a Python file, and
+/// it is the first free one rather than a count — duplicate `main-1.py` itself
+/// and the answer is `main-1-1.py`, not `main-2.py`. Incrementing the number
+/// that is already there would quietly take the next name in somebody's series:
+/// a second copy of `chapter-1.md` is not `chapter-2.md`.
 public enum FileTransfer {
 	public enum Operation: Sendable {
 		case move, copy
@@ -90,6 +105,10 @@ public enum FileTransfer {
 		var collisions: [URL] = []
 		var refusals: [String] = []
 		var unchanged: [URL] = []
+		// Names this plan has already spoken for. Nothing is on disk yet, so
+		// `exists` cannot know about them, and two duplicates in one drop would
+		// otherwise both be offered the same free number.
+		var claimed: Set<String> = []
 
 		for raw in sources {
 			let source = raw.standardizedFileURL
@@ -114,17 +133,26 @@ public enum FileTransfer {
 			}
 
 			let target = folder.appendingPathComponent(name)
-			// Already where it is being put. A move has nothing to do; a copy
-			// falls through to the collision below, which is what ⌥-dragging a
-			// file onto its own folder means — and duplicating is not this item.
-			if operation == .move, target.path == source.path {
-				unchanged.append(source)
+			// Already where it is being put. A move has nothing to do; a copy is
+			// somebody asking for a second one, which is the only thing it could
+			// be, so it gets the next free name rather than an apology.
+			if target.path == source.path {
+				if operation == .move {
+					unchanged.append(source)
+					continue
+				}
+				let duplicate = Self.duplicateName(for: source, in: folder) {
+					exists($0) || claimed.contains($0.path)
+				}
+				claimed.insert(duplicate.path)
+				transfers.append(Transfer(source: source, destination: duplicate))
 				continue
 			}
-			guard !exists(target) else {
+			guard !exists(target), !claimed.contains(target.path) else {
 				collisions.append(source)
 				continue
 			}
+			claimed.insert(target.path)
 			transfers.append(Transfer(source: source, destination: target))
 		}
 
@@ -175,6 +203,31 @@ public extension FileTransfer.Plan {
 }
 
 extension FileTransfer {
+	/// `main.py` → `main-1.py`, then `main-2.py`, then the first one free.
+	///
+	/// The extension is kept because it is what the file *is*: `main-1.py` is
+	/// still Python and `main.py-1` is nothing. Foundation's `pathExtension` takes
+	/// the last one only, so `archive.tar.gz` duplicates as `archive.tar-1.gz` —
+	/// the same simplification every other extension-aware thing in this app
+	/// makes, and the file still opens. A name that is all extension and no stem,
+	/// `.gitignore`, has no extension by that reckoning and becomes
+	/// `.gitignore-1`, which is right.
+	static func duplicateName(
+		for source: URL, in folder: URL, isTaken: (URL) -> Bool
+	) -> URL {
+		let name = source.lastPathComponent
+		let ext = source.pathExtension
+		let stem = ext.isEmpty ? name : String(name.dropLast(ext.count + 1))
+		var number = 1
+		while true {
+			let candidate = folder.appendingPathComponent(
+				ext.isEmpty ? "\(stem)-\(number)" : "\(stem)-\(number).\(ext)"
+			)
+			if !isTaken(candidate) { return candidate }
+			number += 1
+		}
+	}
+
 	/// "a", "a and b", "a, b and c", and past four "a, b, c, d and 8 more" —
 	/// because a toast naming twelve files is a toast nobody finishes reading.
 	static func list(_ names: [String]) -> String {

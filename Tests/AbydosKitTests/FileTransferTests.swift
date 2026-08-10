@@ -115,15 +115,23 @@ struct FileTransferTests {
 	}
 
 	/// ⌥-dragging a file onto its own folder is the one gesture that reads as
-	/// "duplicate", and duplicating is not in this item — so it collides with
-	/// itself and says so, rather than quietly inventing "a copy.swift".
-	@Test func copyingAFileOntoItsOwnFolderCollidesWithItself() {
+	/// "duplicate" — and it is the one collision that cannot be an accident, so
+	/// it is answered with a name rather than a refusal.
+	///
+	/// This asserted the opposite until the behaviour was asked for: a
+	/// self-collision used to be refused, on the argument that renaming a
+	/// newcomer invents a file nobody asked for. That argument holds for two
+	/// *different* files, which is still refused a few tests below; it does not
+	/// hold here, because there is nothing else the gesture could have meant.
+	@Test func copyingAFileOntoItsOwnFolderDuplicatesIt() {
 		let plan = FileTransfer.plan(
 			[URL(fileURLWithPath: "/p/Sources/a.swift")], into: sources, operation: .copy,
 			projectRoot: root, exists: disk("/p/Sources/a.swift")
 		)
-		#expect(plan.transfers.isEmpty)
-		#expect(plan.collisions.map(\.lastPathComponent) == ["a.swift"])
+		#expect(plan.collisions.isEmpty)
+		#expect(plan.transfers.map(\.destination.lastPathComponent) == ["a-1.swift"])
+		// And nothing to apologise for, since nothing was skipped.
+		#expect(plan.summary(operation: .copy, done: 1) == nil)
 	}
 
 	/// ⌘C, then the file is trashed in the Finder, then ⌘V. The board still
@@ -175,5 +183,88 @@ struct FileTransferTests {
 		#expect(plan.transfers.count == 1)
 		#expect(plan.summary(operation: .move, done: 1)?.detail
 			== "“p” is the project root. “a.swift” already exists here. The other one was moved.")
+	}
+}
+
+/// Copying a file into the folder it is already in.
+///
+/// The one collision that cannot be an accident, and so the one that is
+/// answered with a name rather than a refusal.
+struct FileDuplicateTests {
+	private let folder = URL(fileURLWithPath: "/p/src")
+	private var file: URL { folder.appendingPathComponent("main.py") }
+
+	private func plan(
+		_ sources: [URL], onDisk: Set<String>
+	) -> FileTransfer.Plan {
+		FileTransfer.plan(
+			sources, into: folder, operation: .copy, projectRoot: URL(fileURLWithPath: "/p"),
+			exists: { onDisk.contains($0.standardizedFileURL.path) }
+		)
+	}
+
+	@Test func aCopyOntoItsOwnFolderTakesTheNextName() {
+		let made = plan([file], onDisk: [file.path])
+		#expect(made.collisions.isEmpty)
+		#expect(made.transfers.map(\.destination.path) == ["/p/src/main-1.py"])
+	}
+
+	/// The extension is what the file *is*, so it stays on the end.
+	@Test func theNumberGoesBeforeTheExtension() {
+		let made = plan([file], onDisk: [file.path])
+		#expect(made.transfers.first?.destination.pathExtension == "py")
+	}
+
+	@Test func theNextFreeNumberIsTakenRatherThanTheNextCount() {
+		let made = plan([file], onDisk: [file.path, "/p/src/main-1.py", "/p/src/main-2.py"])
+		#expect(made.transfers.map(\.destination.lastPathComponent) == ["main-3.py"])
+	}
+
+	/// Duplicating `main-1.py` must not quietly take `main-2.py`, which may be
+	/// the next thing in somebody's series.
+	@Test func duplicatingANumberedFileAppendsRatherThanCounting() {
+		let numbered = folder.appendingPathComponent("chapter-1.md")
+		let made = plan([numbered], onDisk: [numbered.path])
+		#expect(made.transfers.map(\.destination.lastPathComponent) == ["chapter-1-1.md"])
+	}
+
+	@Test func aNameThatIsAllExtensionKeepsItsDot() {
+		let dotfile = folder.appendingPathComponent(".gitignore")
+		let made = plan([dotfile], onDisk: [dotfile.path])
+		#expect(made.transfers.map(\.destination.lastPathComponent) == [".gitignore-1"])
+	}
+
+	/// Two duplicates in one gesture. Nothing is on disk yet, so the plan has to
+	/// remember what it has already promised.
+	@Test func twoAtOnceDoNotBothGetTheSameNumber() {
+		let other = folder.appendingPathComponent("other.py")
+		let made = plan([file, other], onDisk: [file.path, other.path])
+		#expect(made.transfers.map(\.destination.lastPathComponent) == ["main-1.py", "other-1.py"])
+	}
+
+	/// A folder duplicates the same way, having no extension to preserve.
+	@Test func aFolderDuplicatesToo() {
+		let sub = folder.appendingPathComponent("Resources")
+		let made = plan([sub], onDisk: [sub.path])
+		#expect(made.transfers.map(\.destination.lastPathComponent) == ["Resources-1"])
+	}
+
+	/// A *move* onto its own folder is still nothing at all — a slip of the hand
+	/// two pixels from where the drag started must not make a second copy.
+	@Test func aMoveOntoItsOwnFolderIsStillNothing() {
+		let made = FileTransfer.plan(
+			[file], into: folder, operation: .move, projectRoot: URL(fileURLWithPath: "/p"),
+			exists: { $0.standardizedFileURL.path == self.file.path }
+		)
+		#expect(made.transfers.isEmpty)
+		#expect(made.unchanged == [file])
+	}
+
+	/// Two *different* files colliding is unchanged: still refused, never renamed.
+	@Test func aCollisionBetweenTwoDifferentFilesStillRefuses() {
+		let elsewhere = URL(fileURLWithPath: "/p/other/main.py")
+		let made = plan([elsewhere], onDisk: [elsewhere.path, file.path])
+		#expect(made.transfers.isEmpty)
+		#expect(made.collisions == [elsewhere])
 	}
 }
