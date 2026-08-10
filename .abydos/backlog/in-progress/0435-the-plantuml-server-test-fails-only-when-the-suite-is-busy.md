@@ -104,13 +104,79 @@ Next step, and it is now a much narrower question than the entry opened with: ru
 the suite until it fails and read the refusal, which now says which of the four
 things went wrong. One failing run with that sentence in it should end this.
 
+## The refusal, and what it turned out to be
+
+The refusal was read, and it said the same sentence four runs running:
+
+> the first render gave up after 180.3s: the server never answered in 180.1 s of
+> a 180.0 s start deadline, over 789 attempts; last: Could not connect to the
+> server. — load 13.7 over 10 cores (1.4 per core)
+
+`neverAnswered`, then. The container started, the port was published, and eight
+hundred connections to it were refused over three minutes. Not a slow JVM: a
+*missing* one.
+
+**It is not the machine and it is not the whole suite.** Two suites are enough,
+and with those two it fails every time:
+
+    xcrun swift test --filter PlantUMLServerLiveTests --filter DiagramExportLiveTests
+
+Four runs, four failures, at 0.5 to 1.4 runnable per core — a quieter machine
+than any run in this entry above. Alone, the same test passes in 1.4 seconds at
+2.5 per core. So the reproduction is now one command that takes three minutes
+instead of a full suite that fails sometimes, which is most of what was missing.
+
+**The cause, from docker's own event log rather than from the test.** Running
+`docker events` beside the pair prints this, all inside one second:
+
+    create abydos-plantuml-server-47041-2     ← PlantUMLServerLiveTests' server
+    start  abydos-plantuml-server-47041-2
+    create abydos-plantuml-server-47041-3     ← DiagramExportLiveTests' server
+    start  abydos-plantuml-server-47041-3
+    kill   abydos-plantuml-server-47041-2     ← one `docker rm -f` with both
+    kill   abydos-plantuml-server-47041-3        names on it
+    die/destroy both
+
+`DiagramExportLiveTests` tidies up after itself with
+
+    ToolContainers.shared.release(withPrefixes: ["abydos-plantuml-server-", …])
+
+and `release(withPrefixes:)` chooses by *role prefix and process id*. In the app
+a role has one owner, so that is the same set as "mine". In a test bundle it is
+not: two suites run at once in one process, both start a container playing the
+role `plantuml-server`, and both names carry the same pid. So the export test's
+cleanup removed the other suite's server — the one it was in the middle of
+waiting for. Its own comment says "By name, and only the names this test's
+renders make", and that sentence was simply not true of the call underneath it.
+
+`PlantUMLServerLiveTests` has the same scan written out by hand in its
+`removeAll`, so it does this to the export test in the other direction too.
+
+**Why the failure costs three minutes.** `fetch` treats "cannot connect to host"
+as *still starting* and retries until `patience`. That is right for a JVM that
+has not finished coming up and wrong for a container that has been destroyed,
+and there is no telling the two apart from a refused connection. So a server
+removed a second after it started is asked eight hundred times and then reported
+as never having answered. **That is the whole of the 193 seconds this entry
+called the finding**: 180 of patience spent on a port that had already gone, plus
+the pipe render and the runtime's own overhead. The number was real and the
+reading of it — "the extra time is the new patience being spent and the render
+giving up anyway" — was exactly right. What it did not say, and could not, is
+that the thing being waited for had been deleted.
+
+**And it explains the second shape.** When the export test's cleanup lands after
+the first render has succeeded rather than during it, the warm render finds its
+server gone, forgets it, and starts another — seconds, not hundredths. That is
+`warmSeconds < 0.5` failing at `PlantUMLServerTests.swift:247`. One cause, two
+faces, depending on which second the neighbour finishes in.
+
 ## Steps
 
-- [ ] Run until it fails and read the refusal, which now names which of the
+- [x] Run until it fails and read the refusal, which now names which of the
       four things happened
-- [ ] Find what makes it happen, and reproduce it on demand rather than by
+- [x] Find what makes it happen, and reproduce it on demand rather than by
       waiting for a full suite
-- [ ] Prove the cause from the runtime's own event log, not from the test's
+- [x] Prove the cause from the runtime's own event log, not from the test's
       account of itself
 - [ ] Stop it: whatever it is, in the place it happens
 - [ ] A test that fails on the old code and passes on the new one
