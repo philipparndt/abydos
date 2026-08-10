@@ -585,6 +585,12 @@ final class SearchPane: NSView {
 				}
 			}
 		default:
+			// A different term is a different question, and the marks under the
+			// old one must not follow: `query:return` over a list ticked under
+			// `needle` is the check that they do not.
+			if step.hasPrefix("query:") {
+				setQuery(String(step.dropFirst("query:".count)))
+			}
 			if step.hasPrefix("select:") {
 				let wanted = step.dropFirst("select:".count).split(separator: "+").compactMap { Int($0) }
 				tableView.selectRowIndexes(IndexSet(wanted), byExtendingSelection: false)
