@@ -474,10 +474,27 @@ taken from the preview's own menu, and the written files opened and looked at.
   the other five diagram types. This app's `hasDiagram` counts a bare `%%` as a
   comment, so the two disagree about what a comment is; nothing here depends on
   that, and it is written down because the message names the wrong place.
-- **A shot in `Scripts/screenshots.sh`.** There is no diagram in the
-  documentation's pictures at all — neither PlantUML's nor this — and a preview
-  pane is exactly the kind of thing a picture says better than a paragraph. It
-  wants the example above first.
+- ~~**A shot in `Scripts/screenshots.sh`.**~~ **Taken.** `shoot diagram` opens
+  the examples repository's `mermaid/` and photographs `document.mmd` — the
+  source on the left, the state diagram on the right, at `Fit · 95%`. It is in
+  `docs/images/diagram.png` and the landing page shows it, with a card and a row
+  in the feature table beside it, because a picture nobody is shown is not
+  documentation.
+
+  Two decisions in it worth knowing. **Mermaid rather than PlantUML**, which is
+  the honest choice rather than the flattering one: a `.puml` needs a container
+  runtime and a pulled image, so a machine taking these pictures without either
+  would photograph an install hint. **`document.mmd` of the six**, because it is
+  the one whose whole picture fits the pane at a size somebody can read — the
+  flowchart in `render.mmd` is taller than the window and photographs with its
+  bottom cut off, and the sequence diagram fits only by shrinking to 54%.
+
+  One thing found while taking it, and it is nothing to do with diagrams: the
+  app's own toasts land in the capture. Three shots in a row had *zsh needs you*
+  and *a subagent finished* over the bottom right corner, because a Claude Code
+  hook on this machine reaches whichever Abydos is running — including a
+  headless one taking screenshots. Worth its own entry; the shots here were
+  retaken until the corner was clear.
 - **The pane draws through `NSImage`,** which is CoreSVG, which is why so much
   of the flattening above exists. It is the right dependency to have — the file
   written to disk is better for it — but if a diagram ever appears that CoreSVG
@@ -502,7 +519,7 @@ The first of them is a question before it is work, so it is asked first.
       decision down whichever way it goes
 - [x] Decide ELK on its measured cost, and write the numbers down whichever way
       it goes
-- [ ] A `diagram` shot in `Scripts/screenshots.sh`, and somewhere in the
+- [x] A `diagram` shot in `Scripts/screenshots.sh`, and somewhere in the
       documentation that shows it
 - [ ] Write down here what was ruled out on the way
 - [ ] The spec says what the project now does
