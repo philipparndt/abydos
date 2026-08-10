@@ -90,6 +90,12 @@ Why, against the three alternatives:
   stated below — so an overwrite cannot be taken back, and `commitRename`
   already answers a collision by refusing. Skipping keeps one rule everywhere
   instead of "a collision never overwrites, except when dragged".
+
+  *0442 has since given the tree an undo, so the first of those three reasons
+  has moved. It is recorded there rather than acted on here: undoing an
+  overwrite means having kept the overwritten file somewhere, which is a much
+  larger promise, and 0442's own restores refuse onto an occupied name for the
+  same reason. The skip rule stands on the two supports it has left.*
 - **The Finder's Keep Both**, renaming the newcomer, was considered and left
   out: it makes a file nobody asked for under a name nobody chose, and after a
   twelve-file drop there is no telling which of the two is which.
