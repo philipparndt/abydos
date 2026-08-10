@@ -155,7 +155,7 @@ public enum DebugAdapters {
 		   let found = XcodeToolchain.path(for: adapter.command) {
 			return found
 		}
-		for directory in LanguageServers.searchPaths {
+		for directory in Executables.searchPaths {
 			let candidate = (directory as NSString).appendingPathComponent(adapter.command)
 			if FileManager.default.isExecutableFile(atPath: candidate) { return candidate }
 		}

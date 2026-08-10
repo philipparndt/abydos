@@ -803,7 +803,7 @@ public enum DevPodBuild {
 	/// shell, so `mvnw` starts and then cannot find a `java` to run Maven with.
 	static func javaEnvironment() -> [String: String] {
 		guard let home = JavaTooling.javaHome() else { return [:] }
-		return ["JAVA_HOME": home, "PATH": "\(home)/bin:" + LanguageServers.searchPaths.joined(separator: ":")]
+		return ["JAVA_HOME": home, "PATH": "\(home)/bin:" + Executables.searchPaths.joined(separator: ":")]
 	}
 
 	/// Cross-compiles a Go package, keeping what a debugger needs.

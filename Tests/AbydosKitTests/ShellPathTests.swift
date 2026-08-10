@@ -27,14 +27,14 @@ struct ShellPathTests {
 	}
 
 	@Test func theSearchPathRepeatsNothing() {
-		let paths = LanguageServers.searchPaths
+		let paths = Executables.searchPaths
 		#expect(Set(paths).count == paths.count)
 	}
 
 	/// The well-known directories are the floor, whatever the shell says.
 	@Test func theSearchPathKeepsTheKnownDirectories() {
-		let paths = Set(LanguageServers.searchPaths)
-		for directory in LanguageServers.toolDirectories {
+		let paths = Set(Executables.searchPaths)
+		for directory in Executables.toolDirectories {
 			#expect(paths.contains(directory))
 		}
 	}
@@ -44,7 +44,18 @@ struct ShellPathTests {
 	@Test func whatTheProcessWasGivenComesFirst() throws {
 		let given = try #require(ProcessInfo.processInfo.environment["PATH"])
 		let first = try #require(given.split(separator: ":").first.map(String.init))
-		#expect(LanguageServers.searchPaths.first == first)
+		#expect(Executables.searchPaths.first == first)
+	}
+
+	/// One search, and not two. A language server was looked for down the login
+	/// shell's `PATH` while every other tool made do with four well-known
+	/// directories, and the day those two disagreed the app could not see the
+	/// container runtime its own terminal pane could.
+	@Test func everyToolIsLookedForInTheSameDirectories() {
+		let anything = LanguageServerDefinition(
+			languageIds: ["x"], command: "env", installHint: "comes with the system"
+		)
+		#expect(LanguageServers.executable(for: anything) == Executables.locate("env"))
 	}
 
 	/// TypeScript 7 is the native compiler and ships no `tsserver.js`, which is

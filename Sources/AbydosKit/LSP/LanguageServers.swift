@@ -196,10 +196,11 @@ public enum LanguageServers {
 	/// answering were `~/.swiftly/bin/sourcekit-lsp` while `xcrun` had Xcode's
 	/// all along. See `XcodeToolchain` for what that costs.
 	///
-	/// Everything else is looked for on the `PATH` and then in the usual homes,
-	/// because a GUI app inherits almost nothing of a login shell's `PATH`.
-	/// Without that half, everything works from a terminal and nothing works
-	/// from the Dock.
+	/// Everything else goes to `Executables`, which is the one search this app
+	/// has: the `PATH` this process was given, then the one the person's login
+	/// shell has, then the usual homes. A GUI app inherits almost nothing of a
+	/// login shell's `PATH`, and without that middle source everything works
+	/// from a terminal and nothing works from the Dock.
 	public static func executable(for definition: LanguageServerDefinition) -> String? {
 		if definition.command.contains("/") {
 			return FileManager.default.isExecutableFile(atPath: definition.command) ? definition.command : nil
@@ -210,47 +211,7 @@ public enum LanguageServers {
 			return found
 		}
 
-		for directory in searchPaths {
-			let candidate = (directory as NSString).appendingPathComponent(definition.command)
-			if FileManager.default.isExecutableFile(atPath: candidate) { return candidate }
-		}
-		return nil
-	}
-
-	/// Directories searched for a server, in order.
-	///
-	/// Three sources, and the order is the point. What this process was given
-	/// first, so a PATH somebody set deliberately still chooses the toolchain;
-	/// then the PATH their login shell has, which is where a version manager
-	/// puts things and the only source that keeps up with them; then the
-	/// well-known directories, as a floor for when the shell cannot be asked.
-	public static var searchPaths: [String] {
-		var paths: [String] = []
-		if let environment = ProcessInfo.processInfo.environment["PATH"] {
-			paths += environment.split(separator: ":").map(String.init)
-		}
-		paths += UserShell.loginPath
-		paths += toolDirectories
-
-		var seen = Set<String>()
-		return paths.filter { seen.insert($0).inserted }
-	}
-
-	/// Where a toolchain lives when `PATH` does not say.
-	public static var toolDirectories: [String] {
-		let home = FileManager.default.homeDirectoryForCurrentUser.path
-		return [
-			"/opt/homebrew/bin",
-			"/usr/local/bin",
-			"/usr/bin",
-			"/bin",
-			"/usr/local/go/bin",
-			"\(home)/go/bin",
-			"\(home)/.cargo/bin",
-			"\(home)/.local/bin",
-			"\(home)/.bun/bin",
-			"\(home)/.volta/bin",
-		]
+		return Executables.locate(definition.command)
 	}
 
 	// MARK: - Starting one
@@ -389,7 +350,7 @@ public enum LanguageServers {
 	/// prepended: a `PATH` somebody set deliberately still chooses the toolchain.
 	public static var serverEnvironment: [String: String] {
 		var environment = ProcessInfo.processInfo.environment
-		environment["PATH"] = searchPaths.joined(separator: ":")
+		environment["PATH"] = Executables.searchPaths.joined(separator: ":")
 		// jdtls is a Java program before it is a language server, and its
 		// launcher looks for a JVM in `JAVA_HOME` before it looks anywhere else.
 		// Unset — which is what a Dock-launched app has — it falls back to
@@ -590,7 +551,7 @@ public enum LanguageServers {
 		/// can find it" are not the same sentence, and that difference has cost
 		/// real hours.
 		public var manual: String {
-			let directories = LanguageServers.toolDirectories
+			let directories = Executables.toolDirectories
 				.map { "  \($0)" }
 				.joined(separator: "\n")
 
