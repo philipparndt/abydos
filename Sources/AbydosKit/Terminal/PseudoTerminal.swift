@@ -173,8 +173,19 @@ public final class PseudoTerminal {
 		// clears it — so the sentence is written, shown, and gone inside a
 		// second. That was watched happening rather than guessed at. The pane
 		// that stays plain keeps it above the first prompt.
+		//
+		// The log write goes to a queue of its own, and that is not tidiness:
+		// written here it put a file open, a size check and a close between the
+		// fork and the reader starting, and `/bin/echo` had said its piece and
+		// closed the slave before there was anything listening. A test that had
+		// passed for a year started timing out, which is the only reason this
+		// is known.
 		if let refusal = Self.refusals(environment) {
-			DiagnosticLog.write(refusal.trimmingCharacters(in: .whitespacesAndNewlines), to: "tmux")
+			DispatchQueue.global(qos: .utility).async {
+				DiagnosticLog.write(
+					refusal.trimmingCharacters(in: .whitespacesAndNewlines), to: "tmux"
+				)
+			}
 			callbackQueue.async { [weak self] in
 				self?.onOutput?(Data(refusal.utf8))
 			}
