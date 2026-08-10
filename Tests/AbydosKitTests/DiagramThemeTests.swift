@@ -159,6 +159,41 @@ struct DiagramThemeTests {
 		#expect(Mermaid.statedLook(in: "%%{init: {'flowchart': {'curve': 'linear'}}}%%\nflowchart TD\n  A --> B") == nil)
 	}
 
+	/// A layout this build has no engine for, which is every layout but Mermaid's
+	/// own.
+	///
+	/// Worth noticing because Mermaid does not: a flowchart with `layout: elk` in
+	/// its front matter draws, and the drawing is byte for byte the one the same
+	/// flowchart draws with no front matter at all. Measured, not assumed — and
+	/// it is why there is a sentence to say at all, since otherwise the only sign
+	/// is a picture laid out differently from the one somebody asked for.
+	@Test func mermaidNoticesALayoutThatIsNotHere() {
+		let elk = """
+		---
+		config:
+		  layout: elk
+		---
+		flowchart TD
+		  A --> B
+		"""
+		#expect(Mermaid.statedLayout(in: elk) == "elk")
+		#expect(DiagramLook.layoutNotice(wanted: "elk").contains("elk"))
+
+		// The older spelling, and the quotes it usually carries.
+		#expect(Mermaid.statedLayout(
+			in: "%%{init: {\"layout\": \"elk\"}}%%\nflowchart TD\n A --> B") == "elk")
+		#expect(Mermaid.statedLayout(
+			in: "%%{init: {'layout':'elk.stress'}}%%\nflowchart TD\n A --> B") == "elk.stress")
+
+		// The layout that *is* here is not something to say a sentence about,
+		// and neither is a file that says nothing.
+		#expect(Mermaid.statedLayout(
+			in: "---\nconfig:\n  layout: dagre\n---\nflowchart TD\n A --> B") == nil)
+		#expect(Mermaid.statedLayout(in: "flowchart TD\n  A --> B\n") == nil)
+		// A `layout:` outside the front matter is part of somebody's diagram.
+		#expect(Mermaid.statedLayout(in: "flowchart TD\n  A[layout: elk] --> B\n") == nil)
+	}
+
 	/// Only two of Mermaid's five, because the only question being asked is
 	/// whether the window is light or dark.
 	@Test func mermaidIsToldWhichOfItsThemes() {

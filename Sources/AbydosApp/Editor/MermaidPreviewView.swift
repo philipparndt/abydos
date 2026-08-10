@@ -97,7 +97,13 @@ final class MermaidPreviewView: DiagramPaneView {
 		let stated = Mermaid.statedLook(in: source)
 		let theme: DiagramTheme? = stated == nil ? appTheme : nil
 		paper = Self.paper(for: theme)
-		caption = stated.map(DiagramLook.notice(stated:))
+		// Two things can be true of one file, so the caption is both sentences
+		// rather than whichever was thought of first: a diagram may set its own
+		// colours *and* ask for a layout this build has not got.
+		caption = [
+			stated.map(DiagramLook.notice(stated:)),
+			Mermaid.statedLayout(in: source).map(DiagramLook.layoutNotice(wanted:)),
+		].compactMap { $0 }.joined(separator: " ")
 
 		generation += 1
 		let mine = generation

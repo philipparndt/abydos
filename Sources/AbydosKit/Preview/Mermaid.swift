@@ -119,6 +119,72 @@ public enum Mermaid {
 		return nil
 	}
 
+	// MARK: - A layout this build does not have
+
+	/// The layout engines that come with the bundle, which is one.
+	///
+	/// Mermaid's own layout — `dagre` — is inside `mermaid.min.js`. Everything
+	/// else is a separate package registered at runtime, and none is vendored
+	/// here: `@mermaid-js/layout-elk` is 1.6 MB of minified ESM that reaches for
+	/// a second file by relative path, and this page has no origin for a relative
+	/// path to be resolved against. 0425 has the numbers and the decision.
+	static let layoutsHere: Set<String> = ["dagre", "default"]
+
+	/// The layout a file asks for when this build cannot give it, or nil.
+	///
+	/// Worth a sentence in the pane because the failure is **silent**, which was
+	/// measured rather than assumed: a flowchart with `layout: elk` in its front
+	/// matter draws, and the drawing is byte for byte the one the same flowchart
+	/// draws with no front matter at all. Mermaid does not complain about a
+	/// layout it has no loader for; it quietly uses its own. So somebody who
+	/// asked for ELK — and people ask for it to get its edge routing on a large
+	/// flowchart — gets a different picture from the one they asked for and no
+	/// word about why. One line under the drawing is the whole answer, and it is
+	/// the same line 0429 decided a file's own theme gets.
+	///
+	/// Both spellings, the same two `statedLook` reads: `layout:` under `config:`
+	/// in the front matter, and `layout` in an `%%{init}%%` directive.
+	public static func statedLayout(in source: String) -> String? {
+		guard let named = layoutInFrontMatter(source) ?? layoutInInitDirective(source),
+		      !layoutsHere.contains(named.lowercased())
+		else { return nil }
+		return named
+	}
+
+	/// `---\nconfig:\n  layout: elk\n---`.
+	private static func layoutInFrontMatter(_ source: String) -> String? {
+		let lines = source.split(separator: "\n", omittingEmptySubsequences: false)
+		guard let opening = lines.firstIndex(where: {
+			!$0.trimmingCharacters(in: .whitespaces).isEmpty
+		}), lines[opening].trimmingCharacters(in: .whitespaces) == "---" else { return nil }
+
+		for line in lines[(opening + 1)...] {
+			let trimmed = line.trimmingCharacters(in: .whitespaces)
+			if trimmed == "---" { return nil }
+			guard trimmed.hasPrefix("layout:") else { continue }
+			let said = unquoted(trimmed.dropFirst("layout:".count)
+				.trimmingCharacters(in: .whitespaces))
+			return said.isEmpty ? nil : said
+		}
+		return nil
+	}
+
+	/// `%%{init: {"layout": "elk"}}%%`, anywhere in the file.
+	private static func layoutInInitDirective(_ source: String) -> String? {
+		for raw in source.split(separator: "\n") {
+			let line = raw.trimmingCharacters(in: .whitespaces)
+			guard line.hasPrefix("%%{"), line.contains("init"),
+			      let key = line.range(of: "layout")
+			else { continue }
+			// The value after the key, however it was quoted: `"layout": "elk"`,
+			// `'layout':'elk'` and `layout: elk` are all in the wild.
+			let rest = line[key.upperBound...].drop(while: { "\"': ".contains($0) })
+			let said = rest.prefix(while: { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "." })
+			return said.isEmpty ? nil : String(said)
+		}
+		return nil
+	}
+
 	// MARK: - What a diagram calls itself
 
 	/// The name a diagram gives itself, or nil when it does not give one.

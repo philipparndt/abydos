@@ -409,8 +409,42 @@ taken from the preview's own menu, and the written files opened and looked at.
   rather than for this one: the file wins, the app's theme is the default, and an
   export asks for the one it wants by name (`Export ▸ PNG (Dark)` writes
   `diagram-dark.png`).
-- **ELK layout** (`@mermaid-js/layout-elk`) is a second bundle and is not here.
-  A diagram asking for `layout: elk` gets Mermaid's own message about it.
+- ~~**ELK layout** (`@mermaid-js/layout-elk`) is a second bundle and is not here.
+  A diagram asking for `layout: elk` gets Mermaid's own message about it.~~
+  **Not vendored, and the sentence above was wrong about what happens instead.**
+
+  Measured rather than guessed, both halves. **The package**: 3.1 MB as a
+  tarball, and what a page would actually load is a 356-byte ESM entry that
+  `import()`s one chunk of **1.64 MB** minified — a 46% increase on the 3.57 MB
+  this app carries to draw Mermaid at all, for a second way of arranging the
+  same flowchart. And it is **ESM only**, with a relative import: the page
+  Mermaid is loaded into has *no origin at all* (`loadHTMLString` with no base
+  URL, navigation refused), which is the property this entry treats as enforced
+  rather than intended, and a relative `import()` needs an origin to resolve
+  against. So it would cost either a scheme handler of its own — `DrawioEditor`
+  has one, so the mechanism exists and this would be the second page to need it
+  — or a blob-URL trick to get a module in without one.
+
+  **And what a diagram asking for it gets today is not a message.** A flowchart
+  with `layout: elk` in its front matter draws, and the drawing is byte for byte
+  the one the same flowchart draws with no front matter at all: Mermaid has no
+  loader for a layout it was not given and quietly uses its own, saying nothing.
+  That is worse than the entry claimed, and it is worse than an error — the
+  picture is right and is arranged the way somebody did not ask for.
+
+  So the layout is not vendored and the silence is fixed instead:
+  `Mermaid.statedLayout` reads the same two spellings `statedLook` does, and the
+  pane and a Markdown fence say one line under the drawing — *This diagram asks
+  to be laid out by "elk", which is not in this build, so it is drawn with
+  Mermaid's own layout.* The same place, and the same register, as 0429's
+  sentence about a file that sets its own colours, for the same reason: a
+  picture that quietly ignores what the file asked for is a bug report waiting
+  to happen. `MermaidLiveTests` pins the silence itself, so a later Mermaid that
+  starts refusing instead fails the test rather than leaving a caption that
+  lies.
+
+  Worth revisiting if somebody actually wants ELK — the numbers above are the
+  cost, and none of them is prohibitive; what is missing is a reason.
 - ~~**An example to work against.**~~ **Done.** `abydos-examples/mermaid/` holds
   six: `render.mmd` (flowchart), `export.mermaid` (sequence, and the other
   extension), `document.mmd` (state), `preview.mmd` (class), `project.mmd`
@@ -466,7 +500,7 @@ The first of them is a question before it is work, so it is asked first.
       says so rather than waiting to be found in a pane
 - [ ] Decide the bitmap-in-the-pane question on that evidence, and write the
       decision down whichever way it goes
-- [ ] Decide ELK on its measured cost, and write the numbers down whichever way
+- [x] Decide ELK on its measured cost, and write the numbers down whichever way
       it goes
 - [ ] A `diagram` shot in `Scripts/screenshots.sh`, and somewhere in the
       documentation that shows it
