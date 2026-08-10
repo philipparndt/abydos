@@ -182,17 +182,17 @@ OpenSCAD are the chatty kind. Worth a look while the file is open anyway.
 
 ## Steps
 
-- [ ] `ToolImages/openscad-lsp/Dockerfile`: a pinned `cargo install`, the server
+- [x] `ToolImages/openscad-lsp/Dockerfile`: a pinned `cargo install`, the server
       on the entry point speaking the protocol on standard input and output
-- [ ] An image name derived from the recipe, so an edited Dockerfile rebuilds
+- [x] An image name derived from the recipe, so an edited Dockerfile rebuilds
       and an unedited one never does
 - [ ] The recipe is found both in the `.app` and in a checkout, and the
       Dockerfiles travel in the bundle
-- [ ] Build rather than pull when the name is one this app makes, with a
+- [x] Build rather than pull when the name is one this app makes, with a
       sentence per way a build fails rather than the runtime's output
-- [ ] A third option beside the published image and the custom one: "build it
+- [x] A third option beside the published image and the custom one: "build it
       here", offered only for a tool a Dockerfile ships for
-- [ ] `{"openscad-lsp": "build"}` in a project's `.abydos/tools.json` starts the
+- [x] `{"openscad-lsp": "build"}` in a project's `.abydos/tools.json` starts the
       built image
 - [ ] Driven end to end against a `.scad`, the way `ContainerLSPLiveTests`
       drives gopls

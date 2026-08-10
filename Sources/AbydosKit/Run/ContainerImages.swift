@@ -190,8 +190,24 @@ public actor ContainerImageStore {
 		case present
 		/// It was fetched, which took as long as it took.
 		case fetched
+		/// It was built here, from a Dockerfile this app ships.
+		///
+		/// Its own case rather than `fetched`, because they are different facts
+		/// about where a tool came from and only one of them involves a
+		/// registry. Anything that only wants "is it usable now" treats the
+		/// three alike; anything saying what happened must not report a build as
+		/// a download.
+		case built
 		/// It is not here and could not be got, with a sentence saying why.
 		case failed(String)
+
+		/// Whether the image can be run now, however it got here.
+		public var isReady: Bool {
+			switch self {
+			case .present, .fetched, .built: return true
+			case .failed: return false
+			}
+		}
 	}
 
 	private var known: Set<String> = []
@@ -270,6 +286,31 @@ public actor ContainerImageStore {
 			}
 			if inspect.exitCode == 0 { return .present }
 
+			// An image this app makes is made rather than fetched, and the name
+			// is what says which: `ToolImageRecipes` owns that namespace, and no
+			// registry has anything under it. The branch is here rather than at
+			// the call sites because every one of them deals in an image and a
+			// runtime and nothing else — a language server launch, a diagram
+			// pane — and threading a recipe through all of them would be a
+			// parameter on each for the sake of the two tools that have one.
+			if let recipe = ToolImageRecipes.recipe(forImage: image) {
+				progress?(ToolImageRecipes.progressMessage(for: recipe))
+				let build = Self.run(
+					ToolImageRecipes.build(recipe, using: runtime),
+					deadline: ToolImageRecipes.buildDeadline,
+					onOutput: output
+				)
+				if build.timedOut {
+					return .failed(ContainerImages.notAnswering(
+						runtime, after: Int(ToolImageRecipes.buildDeadline)
+					))
+				}
+				guard build.exitCode == 0 else {
+					return .failed(ToolImageRecipes.explain(build.output, recipe: recipe))
+				}
+				return .built
+			}
+
 			progress?(ContainerImages.progressMessage(for: image))
 			let pull = Self.run(
 				ContainerImages.pull(image, using: runtime),
@@ -300,7 +341,7 @@ public actor ContainerImageStore {
 		inFlight[image] = task
 		let outcome = await task.value
 		inFlight[image] = nil
-		if outcome == .present || outcome == .fetched {
+		if outcome.isReady {
 			known.insert(image)
 			// It answered, so whatever was wrong with it is over.
 			silent.removeValue(forKey: runtime.path)
