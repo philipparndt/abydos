@@ -356,6 +356,15 @@ struct LaunchOptions {
 	/// each after the last has answered. Nil is the one the View menu opens.
 	var devContainerWhich: String?
 
+	/// Print what the titlebar's devcontainer pill says, this many seconds in.
+	///
+	/// A pill in the titlebar cannot be read from a window rendering, which
+	/// leaves out sheets and menus and is what the rest of these dumps exist
+	/// for; and the thing worth checking is that it is *absent* for a project
+	/// whose container was declined, which a screenshot can never prove — an
+	/// empty toolbar looks the same as one that has not finished loading.
+	var devContainerPillAt: Double?
+
 	/// Print what the chevron beside the panel's + offers, and which of the two
 	/// hit areas beside the last tab a click at each lands in.
 	var terminalAddMenu = false
@@ -438,6 +447,8 @@ struct LaunchOptions {
 					options.devContainerWhich = arguments[index + 1]
 					index += 1
 				}
+			case "--devcontainer-pill":
+				options.devContainerPillAt = next().flatMap(Double.init) ?? 8
 			case "--tab-add-menu": options.terminalAddMenu = true
 			case "--close-window": options.closeLastWindowAt = next().flatMap(Double.init) ?? 5
 			case "--report-geometry": options.reportsTerminalGeometry = true

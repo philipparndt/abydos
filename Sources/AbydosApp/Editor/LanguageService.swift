@@ -1005,15 +1005,43 @@ final class LanguageService {
 			self.remember(answer, for: project)
 			self.apply(answer, to: project)
 		}
-		// The key window is where a file was just opened in all but the contrived
-		// case; the main one covers the moment a project is loading and its window
-		// has not been made key yet, which is when `warmUp` runs.
-		if let window = NSApp.keyWindow ?? NSApp.mainWindow {
+		present(alert, answered: answered)
+	}
+
+	/// Puts the question on the window it is about, waiting for one to exist.
+	///
+	/// **There may not be one yet, and this was measured rather than guessed.**
+	/// `warmUp` runs as a project loads, and a run of the app at that instant
+	/// reported `keyWindow` and `mainWindow` both nil with two windows that were
+	/// not on screen — so an implementation that reached straight for `runModal`
+	/// put an app-modal dialog in front of nothing at all, before the project it
+	/// is asking about had appeared. That is worse manners than the silence 0433
+	/// is about.
+	///
+	/// A quarter of a second, twenty times: five seconds, after which no window
+	/// is evidently coming and a dialog of its own beats never asking. The
+	/// question is not lost while this waits — the languages that asked for it are
+	/// held by `serverInDevContainer`, and `devcontainerStarting` still has the
+	/// project, so nothing asks a second time.
+	private func present(
+		_ alert: NSAlert,
+		answered: @escaping @MainActor (NSApplication.ModalResponse) -> Void,
+		attempt: Int = 0
+	) {
+		let window = NSApp.keyWindow ?? NSApp.mainWindow
+			?? NSApp.windows.first { $0.isVisible && $0.contentViewController != nil }
+		if let window {
 			alert.beginSheetModal(for: window) { response in
 				MainActor.assumeIsolated { answered(response) }
 			}
-		} else {
+			return
+		}
+		guard attempt < 20 else {
 			answered(alert.runModal())
+			return
+		}
+		DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+			MainActor.assumeIsolated { self?.present(alert, answered: answered, attempt: attempt + 1) }
 		}
 	}
 

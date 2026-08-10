@@ -1147,6 +1147,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let at = options.devContainerPillAt {
+			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+				print(controller?.devContainerPillForTesting() ?? "PILL: no window")
+				fflush(stdout)
+			}
+		}
+
 		if options.terminalAddMenu {
 			// The panel first, since a strip that is not on screen has no layout
 			// and so no hit areas to ask about.
