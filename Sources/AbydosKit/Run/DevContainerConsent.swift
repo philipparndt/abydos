@@ -190,6 +190,24 @@ public extension DevContainerConsent {
 		"Language servers are running in \(container)."
 	}
 
+	/// What the pill says about a container that was said yes to and did not come
+	/// up.
+	///
+	/// **Because "is starting" stops being true and nothing used to notice.** A
+	/// refused start leaves the answer on file — somebody did say yes, and they
+	/// have not changed their mind — so the pill went on saying a container was
+	/// starting for as long as the project stayed open. It was only ever a
+	/// sentence about the gap between the answer and the container, and a failed
+	/// start is not in that gap. Found by watching a build fail with 0443's pane
+	/// in front of it.
+	///
+	/// It says where the servers went, because that is the question somebody has
+	/// once the red text has been read, and it does not repeat the reason: the
+	/// reason is a hundred lines long and it is in the pane.
+	static func pillCouldNotStart(container: String) -> String {
+		"\(container) could not be started, so language servers are running on this machine."
+	}
+
 	static func pillState(_ consent: DevContainerConsent?, container: String) -> String {
 		switch consent {
 		case .container?:

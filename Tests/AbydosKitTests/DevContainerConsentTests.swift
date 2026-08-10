@@ -312,6 +312,24 @@ struct DevContainerConsentTests {
 		))
 	}
 
+	/// **"It is starting" stops being true, and the answer on file cannot say so.**
+	/// A refused start leaves `container` written down — somebody did say yes and
+	/// has not changed their mind — so the pill went on saying a container was
+	/// starting for the rest of the session. Found by watching a
+	/// `postCreateCommand` fail with 0443's pane in front of it.
+	@Test func aContainerThatWouldNotStartIsNotAContainerThatIsStarting() {
+		let failed = DevContainerConsent.pillCouldNotStart(container: "py")
+		#expect(failed != DevContainerConsent.pillState(.container, container: "py"))
+		#expect(!failed.contains("starting"))
+		// It says where the servers went, which is the question left once the red
+		// text has been read, and it does not repeat the reason: the reason is a
+		// hundred lines long and it is in the pane.
+		#expect(failed.contains("this machine"))
+		for nagging in ["should", "recommend", "warning", "?", "!"] {
+			#expect(!failed.contains(nagging))
+		}
+	}
+
 	/// **Which container is a second table, not a fourth answer.** The three
 	/// answers are what somebody can say; only one of them is about a particular
 	/// container, and an enum carrying a file path would give the other two a

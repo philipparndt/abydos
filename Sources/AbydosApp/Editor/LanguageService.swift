@@ -129,6 +129,14 @@ final class LanguageService {
 	/// a fresh answer over the stale one — so this is a cache with one use, and it
 	/// is cleared wherever the rest of a project's devcontainer bookkeeping is.
 	private var staleDevcontainerChoices: Set<String> = []
+	/// Projects whose devcontainer was said yes to and would not come up, so that
+	/// nothing goes on saying it is starting.
+	///
+	/// The answer stays on file — somebody did say yes and has not changed their
+	/// mind — which is why this cannot be read off the consent. It is about the
+	/// last attempt rather than about the project, so it is not written down, and
+	/// it goes the moment anything is asked for again.
+	private var devcontainerFailures: Set<String> = []
 
 	/// What to say in the status bar about servers: names of those running.
 	private(set) var runningNames: [String] = []
@@ -865,6 +873,7 @@ final class LanguageService {
 	) {
 		devcontainerConsent[project.standardizedFileURL.path] = consent
 		staleDevcontainerChoices.remove(project.standardizedFileURL.path)
+		devcontainerFailures.remove(project.standardizedFileURL.path)
 		Settings.shared.setDevContainerConsent(consent, forProject: project)
 		if consent == .container, let choice {
 			Settings.shared.setDevContainerChoice(
@@ -875,6 +884,12 @@ final class LanguageService {
 
 	/// What is in force for a project, for the titlebar's pill and its menu.
 	func devContainerConsent(for project: URL) -> DevContainerConsent? { consent(for: project) }
+
+	/// Whether the last attempt to bring this project's devcontainer up failed,
+	/// so that nothing goes on saying it is starting.
+	func devContainerFailedToStart(for project: URL) -> Bool {
+		devcontainerFailures.contains(project.standardizedFileURL.path)
+	}
 
 	/// **Which** of a project's devcontainers its language servers belong in.
 	///
@@ -1284,6 +1299,7 @@ final class LanguageService {
 			devcontainerStarting.remove(path)
 			switch outcome {
 			case let .running(session):
+				devcontainerFailures.remove(path)
 				// A language server is something attaching to the container, and
 				// `postAttachCommand` is the moment that names.
 				await DevContainers.shared.attach(to: session)
@@ -1305,6 +1321,10 @@ final class LanguageService {
 				watching?.becomeShell(running: DevContainers.terminalCommand(session))
 				startWhatWasWaiting(for: project)
 			case let .refused(reason):
+				// Said yes, and it did not come up. The answer stays on file, so
+				// this is the only thing that stops the titlebar saying a container
+				// is starting for the rest of the session.
+				devcontainerFailures.insert(path)
 				// **The pane is the error and the toast points at it.** A failed
 				// build is a hundred lines of `docker build` ending in one that
 				// matters, and a toast cannot hold either — 0443's part 4. Where
@@ -1762,6 +1782,7 @@ final class LanguageService {
 		// The disk is read again with it: a project let go of may come back to a
 		// checkout where the container it named exists again.
 		staleDevcontainerChoices.remove(path)
+		devcontainerFailures.remove(path)
 		failures.removeAll()
 		announced.removeAll()
 		emptied.removeAll()
@@ -1785,6 +1806,7 @@ final class LanguageService {
 		devcontainerFiles.removeAll()
 		devcontainerConsent.removeAll()
 		staleDevcontainerChoices.removeAll()
+		devcontainerFailures.removeAll()
 	}
 
 	/// The containers this app has up have changed, and one of this project's

@@ -74,6 +74,38 @@ final class PreparingTerminal {
 	/// pane is then the only place the reason exists. 0443.
 	var onRefused: (() -> Void)?
 
+	/// Brings this tab to the front, and takes it away — both set by the panel
+	/// that made it, because a pane cannot reach the strip it is in.
+	var bringToFront: (() -> Void)?
+	var closeTab: (() -> Void)?
+
+	/// Whether a start nobody could have watched takes its tab with it instead of
+	/// leaving a shell behind.
+	///
+	/// **False for a terminal somebody asked for**, which is every use of this
+	/// until 0443: they clicked, they waited, the shell is the thing they wanted
+	/// and it stays however quick it was.
+	///
+	/// **True for a container brought up for the language servers**, and the
+	/// reason is arithmetic. A warm start is `docker run` and an attach — a second
+	/// or two — and a tab left behind by every one of those is a shell nobody
+	/// asked for, in a panel whose tabs are written into `.abydos/session.json`
+	/// and restored: one more every session, for ever. What justifies the pane at
+	/// all is somebody being able to watch a slow start; where there was nothing
+	/// to watch there is nothing to keep.
+	var vanishesUnlessRevealed = false
+
+	/// Whether anybody was given the chance to see this — set by `reveal`.
+	private(set) var wasRevealed = false
+
+	/// Put this pane where it can be read: the panel opens and the tab comes
+	/// forward. Called when the wait has gone on long enough to be worth showing,
+	/// and when it has failed.
+	func reveal() {
+		wasRevealed = true
+		bringToFront?()
+	}
+
 	/// Told by the panel when the tab is closed.
 	func paneWasClosed() { wasClosed = true }
 
@@ -113,6 +145,13 @@ final class PreparingTerminal {
 					+ "is instant.",
 				kind: .information
 			)
+			return
+		}
+		// Nobody could have watched it, so there is nothing to keep — see
+		// `vanishesUnlessRevealed`. The container is up either way; what goes is a
+		// tab that would only ever be closed by hand.
+		if vanishesUnlessRevealed, !wasRevealed {
+			closeTab?()
 			return
 		}
 		pane.write("\u{1B}[1;32mThe devcontainer is up. This tab is now a shell inside it.\u{1B}[0m\r\n")

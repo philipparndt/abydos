@@ -1504,8 +1504,14 @@ final class BottomPanel: NSView {
 	/// minutes, the first time. The pane shows all of that and then becomes the
 	/// shell itself; see `PreparingTerminal`, where the reason for it being one
 	/// pane rather than two is written down.
+	/// - Parameter select: whether the tab comes to the front as it is made.
+	///   False for a pane nobody asked for — a devcontainer being brought up for
+	///   the language servers — where putting it in front of the shell somebody is
+	///   reading would be the disturbance the tab was meant to save them from. It
+	///   is brought forward by `PreparingTerminal.reveal` if the wait turns out to
+	///   be worth showing.
 	func newPreparingTerminal(
-		title: String, subject: String, takesFocus: Bool = true
+		title: String, subject: String, takesFocus: Bool = true, select: Bool = true
 	) -> PreparingTerminal {
 		// Output only, so nothing can be typed at a shell that does not exist
 		// yet, and no login shell starts behind what is being written.
@@ -1516,11 +1522,19 @@ final class BottomPanel: NSView {
 
 		session.column = focusedColumn
 		sessions.append(session)
-		activate(session, focus: false)
+		if select { activate(session, focus: false) }
 		onTerminalsChanged?()
 
 		let preparing = PreparingTerminal(pane: pane, subject: subject, takesFocus: takesFocus)
 		session.onClosed = { [weak preparing] in preparing?.paneWasClosed() }
+		preparing.bringToFront = { [weak self, weak session] in
+			guard let self, let session else { return }
+			self.activate(session, focus: false)
+		}
+		preparing.closeTab = { [weak self, weak session] in
+			guard let self, let session else { return }
+			self.close(session)
+		}
 		return preparing
 	}
 

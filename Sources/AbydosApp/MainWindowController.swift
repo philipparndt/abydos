@@ -449,6 +449,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		) { [weak self] _ in
 			MainActor.assumeIsolated { self?.refreshDevContainerPill() }
 		}
+
+		// And when where they run changes without anybody having said anything: a
+		// container that was asked for and would not come up puts the project's
+		// servers on this machine, and until 0443 nothing told the titlebar, which
+		// went on saying the container was starting for the rest of the session.
+		NotificationCenter.default.addObserver(
+			forName: .ideaiLanguageServersChanged,
+			object: nil,
+			queue: .main
+		) { [weak self] _ in
+			MainActor.assumeIsolated { self?.refreshDevContainerPill() }
+		}
 	}
 
 	required init?(coder: NSCoder) { fatalError("not used") }
@@ -3477,16 +3489,25 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		let preparing = bottomPanel.newPreparingTerminal(
 			title: Self.containerTabTitle(for: choice, in: root),
 			subject: root.lastPathComponent,
-			takesFocus: false
+			takesFocus: false,
+			select: false
 		)
+		// A start too quick to have been watched takes its tab away again rather
+		// than leaving a shell nobody asked for — see `vanishesUnlessRevealed`,
+		// where the arithmetic of one tab per session is written down.
+		preparing.vanishesUnlessRevealed = true
 		preparing.step("Starting \(root.lastPathComponent) in \(choice.name)…")
-		preparing.onRefused = { [weak self] in self?.setPanelVisible(true) }
+		preparing.onRefused = { [weak self, weak preparing] in
+			preparing?.reveal()
+			self?.setPanelVisible(true)
+		}
 		DispatchQueue.main.asyncAfter(deadline: .now() + Self.containerBuildRevealDelay) {
 			[weak self, weak preparing] in
 			// Still preparing: a container that came up while nobody was looking
 			// has nothing left to show, and a tab that was closed meanwhile is
 			// somebody saying they do not want to watch.
 			guard let preparing, preparing.isOpen, !preparing.isShell else { return }
+			preparing.reveal()
 			self?.setPanelVisible(true)
 		}
 		return preparing
@@ -3624,19 +3645,24 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			// Still the same project by the time the actor answered: a window that
 			// switched project meanwhile must not be labelled with the old one's.
 			guard self.devContainerRoot == root else { return }
+			// **The one this project's tools belong in, not the first one that is
+			// up.** A project may have two containers running at once — the one it
+			// was switched away from is deliberately left going, because somebody's
+			// shell may be in it — so "whichever sorts first" would leave the pill
+			// naming the container the project moved *off*, which is what it did
+			// until it was watched doing it. What the project's servers are in is
+			// what was written down, and this lights only once that one is really up.
+			//
 			// Named from the menu's own choices, so the pill, the tab in the same
 			// container and the menu item that opens one cannot come to disagree
 			// about what it is called.
-			let inUse = running.first.flatMap { session in
-				choices.first {
-					FilePath.canonical($0.file) == FilePath.canonical(session.configuration.file)
-				}
+			let wanted = LanguageService.shared.containerChoice(for: root)
+			let inUse = wanted.flatMap { choice in
+				running.contains {
+					FilePath.canonical($0.configuration.file) == FilePath.canonical(choice.file)
+				} ? choice : nil
 			}
-			// The one this project's tools would go in when none is up, so that the
-			// menu and the tool tip name the container the pill's own offer would
-			// start rather than whichever sorts first.
-			self.pilledContainer = inUse ?? LanguageService.shared.containerChoice(for: root)
-				?? choices.first
+			self.pilledContainer = inUse ?? wanted ?? choices.first
 			let name = Self.containerName(for: self.pilledContainer, in: root)
 			pill.setContainer(Self.containerMark, inUse: inUse != nil)
 			// **The tool tip carries the name in both states now**, because the pill
@@ -3646,9 +3672,26 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			// places the name is.
 			pill.toolTip = inUse != nil
 				? DevContainerConsent.pillInUse(container: name)
-				: DevContainerConsent.pillState(consent, container: name)
+				: self.devContainerStateSentence(for: root, container: name, consent: consent)
 			self.layoutTitlebarPills()
 		}
+	}
+
+	/// What state a container that is not in use is in, in one sentence.
+	///
+	/// **"It is starting" is only true while it is.** The answer stays on file
+	/// when a start fails — somebody did say yes and has not changed their mind —
+	/// so the consent alone cannot tell the gap between the answer and the
+	/// container from a container that will never arrive, and the pill said
+	/// "starting" for the rest of the session. Seen while watching a
+	/// `postCreateCommand` fail in the pane 0443's part 4 added.
+	private func devContainerStateSentence(
+		for root: URL, container: String, consent: DevContainerConsent?
+	) -> String {
+		if consent == .container, LanguageService.shared.devContainerFailedToStart(for: root) {
+			return DevContainerConsent.pillCouldNotStart(container: container)
+		}
+		return DevContainerConsent.pillState(consent, container: container)
 	}
 
 	@objc fileprivate func showDevContainerMenuItem(_ sender: Any?) { showDevContainerMenu() }
@@ -3688,8 +3731,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		let state = NSMenuItem(
 			title: inUse
 				? DevContainerConsent.pillInUse(container: container)
-				: DevContainerConsent.pillState(
-					LanguageService.shared.devContainerConsent(for: root), container: container
+				: devContainerStateSentence(
+					for: root,
+					container: container,
+					consent: LanguageService.shared.devContainerConsent(for: root)
 				),
 			action: nil,
 			keyEquivalent: ""
