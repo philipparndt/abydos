@@ -172,6 +172,7 @@ public final class PseudoTerminal {
 	static func mergedEnvironment(
 		_ given: [String: String]?,
 		bundled: String?,
+		app: String? = BundledCommands.appBundle,
 		inherited: [String: String] = ProcessInfo.processInfo.environment
 	) -> [String: String] {
 		var merged = given ?? inherited
@@ -181,6 +182,39 @@ public final class PseudoTerminal {
 		merged["LANG"] = merged["LANG"] ?? "en_US.UTF-8"
 		// Stop pagers from hanging a pane waiting for a keypress.
 		merged["PAGER"] = merged["PAGER"] ?? "cat"
+
+		// Which terminal this is, by the name every other terminal uses for
+		// itself. `abydos <file>` reads it to decide whether the escape that
+		// opens a file in this window is worth writing at all, and any inherited
+		// value is a lie here — the app launched from Ghostty inherits
+		// `TERM_PROGRAM=ghostty`, and a pane of ours claiming to be Ghostty is
+		// exactly the wrong answer. So it is set rather than defaulted.
+		merged["TERM_PROGRAM"] = BundledCommands.termProgram
+		// Which build to fall back to when the escape does not reach anybody.
+		// Without it the command opens `/Applications/Abydos.app`, which is not
+		// the app somebody running a checkout is looking at.
+		if let app { merged["IDEAI_APP"] = app }
+
+		// And a pane is not inside tmux until something in it starts tmux.
+		//
+		// The same lie as `TERM_PROGRAM`, and inherited the same way: an app
+		// launched from a shell that is inside tmux — which is how anybody
+		// running `make run` launches it — hands `TMUX` to every pane it opens,
+		// naming a session none of them is in. `abydos <file>` believed it,
+		// wrapped its question in a tmux passthrough nothing was there to
+		// unwrap, heard no answer, and quietly opened the file through
+		// LaunchServices instead of in the window it was typed in. It cost an
+		// afternoon to see, because every part of it behaved correctly given
+		// what it had been told.
+		//
+		// Removed rather than blanked: a shell that finds `TMUX` set to the
+		// empty string is in no tmux either, but tmux itself sets the variable
+		// when it starts, and something that has to be right for both wants the
+		// absence rather than a second spelling of it. A pane that goes on to
+		// run `tmux new -A` gets its own from tmux, which is the only thing
+		// entitled to say so.
+		merged["TMUX"] = nil
+		merged["TMUX_PANE"] = nil
 
 		// The commands this app ships — `abydos-icat`, `abydos-bench` — on the
 		// PATH of every shell it starts, without an install step. Appended

@@ -215,13 +215,19 @@ struct AbydosIcatTests {
 		environment.removeValue(forKey: "TMUX")
 		environment["TERM"] = "xterm-256color"
 		if let tmux {
-			environment["TMUX"] = "/tmp/fake,1,0"
 			environment["PATH"] = tmux.directory.path + ":" + (environment["PATH"] ?? "/usr/bin:/bin")
 		}
 
+		// Through `env`, because a pane of this app never inherits `TMUX`: it
+		// names a live server connection, and the one the app was launched from
+		// is not the one any pane of it is in. Set here, past the point that
+		// strips it, so a pane really can be put inside a tmux for the length of
+		// a test.
+		let inTmux = tmux == nil ? [] : ["TMUX=/tmp/fake,1,0"]
+
 		#expect(pty.start(
-			executable: "/bin/sh",
-			arguments: [icatScript.path, file.path],
+			executable: "/usr/bin/env",
+			arguments: inTmux + ["/bin/sh", icatScript.path, file.path],
 			environment: environment,
 			rows: 40,
 			columns: 100
