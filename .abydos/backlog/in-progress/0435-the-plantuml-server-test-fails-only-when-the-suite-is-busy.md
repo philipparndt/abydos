@@ -103,3 +103,19 @@ removing each other's servers mid-render").
 Next step, and it is now a much narrower question than the entry opened with: run
 the suite until it fails and read the refusal, which now says which of the four
 things went wrong. One failing run with that sentence in it should end this.
+
+## Steps
+
+- [ ] Run until it fails and read the refusal, which now names which of the
+      four things happened
+- [ ] Find what makes it happen, and reproduce it on demand rather than by
+      waiting for a full suite
+- [ ] Prove the cause from the runtime's own event log, not from the test's
+      account of itself
+- [ ] Stop it: whatever it is, in the place it happens
+- [ ] A test that fails on the old code and passes on the new one
+- [ ] The second shape of this failure — the timing assertions rather than the
+      refusal — says which thing happened, the way the refusal now does
+- [ ] Full runs, repeatedly, with the load average written beside each
+- [ ] Write down here what was ruled out on the way
+- [ ] The spec, if the behaviour changed
