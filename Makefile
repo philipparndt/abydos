@@ -88,6 +88,28 @@ test: ## Run the test suite (FILTER=name, TEST_TIMEOUT=seconds)
 perf: ## Run the performance suite in release and print timings
 	@$(SWIFT) test $(SWIFT_JOBS) -c release --filter PerformanceTests 2>&1 | grep -E '^PERF|Test run with'
 
+# What to build before pointing `sample`, `atos` or Instruments at the app.
+#
+# Two things have to be true at once and neither is the default. Release,
+# because a profile of a debug build is a profile of a different program — the
+# same trap 0416 found in the performance suite. And unpinned, because
+# `Scripts/pin-uuid.py` gives every local build one and the same UUID, which is
+# how the symbolicating tools decide whose symbols to use: 0428 read two
+# profiles naming functions that really are in this repository, in call chains
+# that never happened, and acted on them before noticing. Neither tool says a
+# word about it, so `symbol-check.sh` asks the one question with a known answer.
+#
+# `make perf` and `make scale` are unaffected. They run a test binary SwiftPM
+# links and nothing pins that; only the .app is pinned.
+.PHONY: profile
+profile: ## Build an .app a profiler can symbolicate, and prove that it can
+	@$(MAKE) --no-print-directory build CONFIG=$(CONFIG) PIN_UUID=0
+	@Scripts/symbol-check.sh
+
+.PHONY: symbol-check
+symbol-check: ## Ask whether the built .app would symbolicate as itself
+	@Scripts/symbol-check.sh
+
 # The other performance suite: what the engine costs on a real project of the
 # size this app is meant for, rather than on a synthetic file in one directory.
 #
