@@ -609,15 +609,37 @@ final class BottomPanel: NSView {
 		return sessions[index].terminal?.currentDirectoryForTesting
 	}
 
+	/// Asks where the terminal is, off the main thread, and reports it on it.
+	///
+	/// The asking is not cheap and it is not bounded. Under tmux it runs a tmux
+	/// client and waits for it — a fork, an exec and a `waitUntilExit` that
+	/// polls, which `ClaudeHookRunner` has measured at sixty-odd milliseconds a
+	/// call — and `ProcessPipes.drain` will wait as long as four seconds when a
+	/// language server has inherited the write end of the pipe, which is the
+	/// very case its own note describes.
+	///
+	/// This is driven by `onOutput`, which fires on the echo of every keystroke,
+	/// up to four times a second. Doing it on the main queue put a subprocess
+	/// between a key being pressed and the letter appearing, on the same queue
+	/// as the keystroke, the parse and the frame. Nothing about the answer needs
+	/// that queue: it is two immutable numbers going in and a path coming back.
 	func reportWorkingDirectory() {
 		guard isFollowingProject else { return }
 		let index = activeIndex ?? 0
 		guard index >= 0, index < sessions.count, let terminal = sessions[index].terminal else { return }
-		guard let directory = terminal.currentDirectoryForTesting else { return }
 
-		guard directory.standardizedFileURL.path != lastReportedDirectory?.path else { return }
-		lastReportedDirectory = directory.standardizedFileURL
-		onWorkingDirectoryChanged?(directory)
+		DispatchQueue.global(qos: .utility).async { [weak self] in
+			// The pty's descriptor and device name are fixed once it has
+			// started, which is what makes asking from here safe.
+			let directory = terminal.currentDirectoryForTesting
+			DispatchQueue.main.async {
+				guard let self, let directory else { return }
+				let standardized = directory.standardizedFileURL
+				guard standardized.path != self.lastReportedDirectory?.path else { return }
+				self.lastReportedDirectory = standardized
+				self.onWorkingDirectoryChanged?(directory)
+			}
+		}
 	}
 
 	/// Another terminal tab is another shell, quite possibly somewhere else.
