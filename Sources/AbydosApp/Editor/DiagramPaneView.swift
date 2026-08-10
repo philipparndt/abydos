@@ -44,7 +44,16 @@ class DiagramPaneView: NSView {
 	/// the colours it has. 0429 is explicit that a diagram staying light in a
 	/// dark window has to explain itself or the bug gets reported again, and a
 	/// toast cannot do that: it is gone by the time anybody wonders.
-	var caption: String?
+	/// Laid out again when it changes, not only repainted: the foot is as tall as
+	/// the caption needs, so a second sentence arriving takes room from the
+	/// picture rather than being drawn behind it.
+	var caption: String? {
+		didSet {
+			guard caption != oldValue else { return }
+			needsLayout = true
+			needsDisplay = true
+		}
+	}
 
 	/// The colour behind the drawing.
 	///
@@ -391,9 +400,39 @@ class DiagramPaneView: NSView {
 	/// Measured from the font rather than fixed, because that font follows ⌘+
 	/// like everything else in the window: a constant here was right at 1× and
 	/// left the readout half behind the picture at 2×.
+	///
+	/// And measured from the caption rather than from the font alone, because a
+	/// caption can be two sentences: a file may set its own colours *and* ask for
+	/// a layout this build has not got, and at that length the line wrapped
+	/// behind the picture. Three lines is the ceiling — past that the pane is
+	/// mostly explanation.
 	private var footHeight: CGFloat {
 		let font = Theme.current.uiFont(10)
-		return (font.ascender - font.descender).rounded(.up) + 6
+		let line = (font.ascender - font.descender).rounded(.up)
+		return line * CGFloat(min(3, captionLines)) + 6
+	}
+
+	/// How many lines the caption takes in the room it is given.
+	private var captionLines: Int {
+		guard let caption, !caption.isEmpty else { return 1 }
+		let font = Theme.current.uiFont(10)
+		let line = (font.ascender - font.descender).rounded(.up)
+		guard line > 0 else { return 1 }
+		let box = NSAttributedString(string: caption, attributes: [.font: font]).boundingRect(
+			with: NSSize(width: captionWidth, height: .greatestFiniteMagnitude),
+			options: [.usesLineFragmentOrigin]
+		)
+		return max(1, Int((box.height / line).rounded(.up)))
+	}
+
+	/// How wide the caption may be: the pane, less its margins, less the room the
+	/// readout has taken in the corner.
+	///
+	/// The two share the bottom line, and before this they shared the same
+	/// pixels: a long caption ran straight under "Fit · 100%" and the two were
+	/// drawn on top of each other.
+	private var captionWidth: CGFloat {
+		max(40, bounds.width - 24 - readoutSize.width - 12)
 	}
 
 	/// How large the drawing is, and how much room it needs to be scrolled in.
@@ -490,7 +529,7 @@ class DiagramPaneView: NSView {
 			.font: Theme.current.uiFont(10),
 			.foregroundColor: Theme.current.sidebarText.withAlphaComponent(0.6),
 		])
-		let width = max(40, bounds.width - 24)
+		let width = captionWidth
 		let box = text.boundingRect(
 			with: NSSize(width: width, height: .greatestFiniteMagnitude),
 			options: [.usesLineFragmentOrigin]
@@ -509,14 +548,27 @@ class DiagramPaneView: NSView {
 	/// narrower.
 	private func drawScaleReadout() {
 		guard image != nil, naturalSize.width > 0 else { return }
+		let text = readout
+		let size = text.size()
+		text.draw(at: NSPoint(x: max(12, bounds.width - size.width - 12), y: 2))
+	}
+
+	/// The readout as it is drawn, which the caption also has to know the width
+	/// of so the two do not land on each other.
+	private var readout: NSAttributedString {
 		let percent = Int((shownScale * 100).rounded())
 		let said = fit == .width ? "Fit · \(percent)%" : "\(percent)%"
-		let text = NSAttributedString(string: said, attributes: [
+		return NSAttributedString(string: said, attributes: [
 			.font: Theme.current.uiFont(10),
 			.foregroundColor: Theme.current.sidebarText.withAlphaComponent(0.6),
 		])
-		let size = text.size()
-		text.draw(at: NSPoint(x: max(12, bounds.width - size.width - 12), y: 2))
+	}
+
+	/// Nothing is drawn in the corner until there is a picture, so nothing is
+	/// reserved for it either.
+	private var readoutSize: CGSize {
+		guard image != nil, naturalSize.width > 0 else { return .zero }
+		return readout.size()
 	}
 
 	/// What the pane says beside the picture, for a test — a caption too small to
