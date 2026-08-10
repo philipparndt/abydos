@@ -171,6 +171,7 @@ make            # build and launch
 make dev        # debug build, run in foreground with logs
 make test       # the suite
 make perf       # performance suite with timings
+make profile    # an .app a profiler can actually symbolicate
 make install    # copy to /Applications
 make install-cli # put the `Abydos` command on the PATH
 make help       # all targets
@@ -188,6 +189,25 @@ Scripts/bundle.sh [debug|release]   # assembles build/Abydos.app
 a toolchain manager such as swiftly puts its own in front, pinned to a release
 older than the SDK, and every target then fails with "this SDK is not supported
 by the compiler" rather than anything about this program.
+
+### Profiling
+
+Build with `make profile` before pointing `sample`, `atos` or Instruments at
+the app. An ordinary build cannot be symbolicated: `Scripts/pin-uuid.py` gives
+every local build the same `LC_UUID` so that macOS keeps its Local Network
+grant across rebuilds, and that UUID is also how the profiling tools decide
+whose symbols to print. They do not report a mismatch — they print another
+build's function names, from this repository, with source files and line
+numbers, in call chains that never happened.
+
+`make profile` builds release without the pin and then runs
+`Scripts/symbol-check.sh`, which asks `atos` about the address the binary's own
+symbol table gives for `main` and refuses to be quiet when the answer is
+something else. `make symbol-check` asks the same question of a build you
+already have.
+
+`make perf` and `make scale` need none of this: they measure a test binary
+SwiftPM links, which is never pinned.
 
 ### Releasing
 
