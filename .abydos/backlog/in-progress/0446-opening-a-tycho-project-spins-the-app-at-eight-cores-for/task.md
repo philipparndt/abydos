@@ -50,9 +50,33 @@ application's SwiftUI views, plausibly enough to be believed. `make build
 PIN_UUID=0` is what actually found this. That is 0447 and it will bite whoever
 profiles this.
 
+## Reproducing it
+
+Two things had to be put right before a single number here meant anything, and
+both are worth the paragraph because both produced numbers that looked fine.
+
+**The corpus was no longer in the state the fault needs.** 0428's own runs left
+their Eclipse metadata in it — 389 modified and deleted files in Sirius, 38 in
+`eclipse.jdt.core` — and a jdtls workspace under
+`~/Library/Caches/ideai/jdtls`. Open it again and the import writes nothing,
+because everything it would write is already there: **3 watcher batches and 18.8
+seconds of processor by ninety**, against the 728 seconds 0428 recorded. Which
+is the finding restated rather than a contradiction of it — the cost is
+proportional to how much is being *written*, and on a second open nothing is.
+Every measurement below therefore starts by putting the corpus back:
+
+    git -C <corpus> checkout -- . && git -C <corpus> clean -xdfq
+    rm -rf ~/Library/Caches/ideai/jdtls/<project>-*
+
+**The harness could not launch the app without a `FILE`.** `Scripts/scale.sh`
+expands `"${FILE_ARGS[@]}"` and macOS's bash 3.2, under `set -u`, calls an empty
+array unbound. Every run 0428 took passed a file to type into; the first run
+without one launched nothing and then printed ninety seconds of "not running"
+beside a falling load average. Fixed here.
+
 ## Steps
 
-- [ ] Reproduce with `Scripts/scale.sh` against the corpus, and confirm the
+- [x] Reproduce with `Scripts/scale.sh` against the corpus, and confirm the
       per-process processor time rather than the load average
 - [ ] Coalesce: one walk outstanding at a time, with at most one queued, the way
       `git status` already is
