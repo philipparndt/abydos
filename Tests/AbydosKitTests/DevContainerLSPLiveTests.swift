@@ -15,7 +15,7 @@ import Testing
 /// Skipped unless the image is already here, the way the other live tests skip
 /// without their server. Build it with:
 ///
-///     make tool-image-gopls
+///     make tool-image TOOL=gopls
 @Suite(.serialized) struct DevContainerLSPLiveTests {
 	/// What `ToolImages/gopls/Dockerfile` builds: gopls, and the Go toolchain it
 	/// is a front end for. Used here as a devcontainer's image rather than as a
