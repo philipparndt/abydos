@@ -296,11 +296,18 @@ final class ToastPresenter {
 	/// What is in the corner, since a toast cannot be told from an empty corner
 	/// in a window rendering that has not finished loading — and a question that
 	/// is still there after eight seconds is the whole point of one.
+	///
+	/// The detail as well as the title. A refusal's whole promise is the
+	/// sentence explaining it — 0442's undo says "“alpha.py” cannot go back:
+	/// something else is there now", and a report that shows only "Nothing was
+	/// put back" cannot tell that apart from a refusal that explained nothing.
 	func reportForTesting() -> String {
 		guard !shown.isEmpty else { return "TOASTS: (none)" }
 		return "TOASTS: " + shown.map { view in
 			let answers = view.answerTitlesForTesting
+			let detail = view.detailForTesting ?? ""
 			return "[\(view.titleForTesting)"
+				+ (detail.isEmpty ? "" : ": \(detail)")
 				+ (view.expires ? "" : " (stays)")
 				+ (answers.isEmpty ? "" : " {\(answers.joined(separator: " | "))}")
 				+ "]"
@@ -380,6 +387,7 @@ private final class ToastView: NSView {
 	/// Not `identifier`: `NSView` already has one, of another type entirely.
 	var question: String? { toast.identifier }
 	var titleForTesting: String { toast.title }
+	var detailForTesting: String? { toast.detail }
 	var answerTitlesForTesting: [String] { toast.answers.map(\.title) }
 	func answerForTesting(_ title: String) -> Toast.Answer? {
 		toast.answers.first { $0.title == title }
