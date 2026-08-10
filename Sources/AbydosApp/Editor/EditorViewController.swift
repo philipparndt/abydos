@@ -1524,8 +1524,16 @@ final class EditorViewController: NSViewController {
 		)
 		// Deferred: a freshly opened document has not laid out yet, so scrolling
 		// now would compute against a zero-height view.
-		DispatchQueue.main.async { [weak self] in
-			self?.activeTab?.codeView?.reveal(line: line)
+		//
+		// The tab this call opened, rather than whichever is active by the time
+		// the block runs. `abydos deep.txt:150 main.go` opens both in one turn,
+		// and reading it late revealed line 150 on `main.go` — a two-line file
+		// scrolled to a line it does not have, while the file that asked for
+		// line 150 sat at the top. Weakly, since a tab closed in between is one
+		// with nothing left to reveal.
+		let opened = activeTab
+		DispatchQueue.main.async { [weak opened] in
+			opened?.codeView?.reveal(line: line)
 		}
 	}
 
