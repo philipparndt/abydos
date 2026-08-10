@@ -68,6 +68,8 @@ let package = Package(
 		// sources without a second copy of the dependency graph.
 		.library(name: "AbydosApp", targets: ["AbydosApp"]),
 		.executable(name: "abydos-hook", targets: ["AbydosHook"]),
+		// The backlog from a terminal, which is where an agent works.
+		.executable(name: "abydos-backlog", targets: ["AbydosBacklog"]),
 		// A terminal stress test, run against the app's own terminal.
 		.executable(name: "firebench", targets: ["FireBench"]),
 		.library(name: "AbydosKit", targets: ["AbydosKit"]),
@@ -156,6 +158,16 @@ let package = Package(
 			name: "AbydosHook",
 			dependencies: ["AbydosKit"],
 			path: "Sources/AbydosHook",
+			swiftSettings: [.swiftLanguageMode(.v5)]
+		),
+		// The backlog on the command line. Apart from the app for the same
+		// reason the hook is, and one more: an agent working an item runs in a
+		// worktree over a terminal, where there is no application to talk to —
+		// so the tool it reaches for cannot be one.
+		.executableTarget(
+			name: "AbydosBacklog",
+			dependencies: ["AbydosKit"],
+			path: "Sources/AbydosBacklog",
 			swiftSettings: [.swiftLanguageMode(.v5)]
 		),
 		.testTarget(

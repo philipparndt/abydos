@@ -3158,6 +3158,52 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 	}
 
+	/// Shows the backlog: the list and the board, over `.abydos/backlog`.
+	@objc func showBacklog(_ sender: Any?) {
+		setPanelVisible(true)
+		guard bottomPanel.showBacklog() != nil else {
+			notify("No project is open", detail: "A backlog lives beside a project, in .abydos/backlog.")
+			return
+		}
+	}
+
+	/// Chooses which of the dashboard's two presentations is showing.
+	///
+	/// Only for `--backlog list|board`, which is how the two are photographed
+	/// without a click. The segmented control is how anybody else gets there.
+	func showBacklogMode(list: Bool) {
+		bottomPanel.showBacklog()?.showList(list)
+	}
+
+	/// Picks up the lowest-numbered ready item without opening the board first.
+	///
+	/// Worth its own command: once a backlog is in the habit of being worked
+	/// this way, "start the next thing" is the whole of what somebody wants
+	/// from it, and making them look at a board to press one button is making
+	/// them look at a board.
+	@objc func startNextBacklogItem(_ sender: Any?) {
+		guard let root = project?.root else {
+			notify("No project is open", detail: "A backlog lives beside a project, in .abydos/backlog.")
+			return
+		}
+		let backlog = Backlog(projectRoot: root)
+		guard backlog.exists else {
+			notify(
+				"This project has no backlog",
+				detail: "Run `abydos-backlog init` in \(root.lastPathComponent) to make one."
+			)
+			return
+		}
+		guard let item = BacklogRunner.next(in: backlog) else {
+			notify("Nothing is ready", detail: "Move an item into ready/ before an agent can pick it up.")
+			return
+		}
+
+		setPanelVisible(true)
+		bottomPanel.onBacklogNotice = { [weak self] title, detail in self?.notify(title, detail: detail) }
+		bottomPanel.startBacklogItem(item)
+	}
+
 	/// Starts an agent review of this branch, reported over MCP.
 	@objc func reviewBranch(_ sender: Any?) {
 		setPanelVisible(true)

@@ -12,6 +12,12 @@ import Foundation
 /// ships with the app so it can be run against the build that is installed
 /// rather than against a checkout somebody still has to find.
 ///
+/// `abydos-backlog` is the backlog beside the project. It is here rather than
+/// only in `/usr/local/bin` because the agent that reaches for it is running
+/// in a terminal this app opened, and the instructions it was handed name the
+/// command in the first paragraph — a project set up on a machine where
+/// nobody ran `make install-cli` should still work.
+///
 /// Put on the PATH of every shell the app starts — including the ones tmux
 /// starts, since tmux inherits the environment of whatever launched the
 /// server — and appended rather than prepended, so a command somebody already
@@ -27,5 +33,5 @@ public enum BundledCommands {
 	}
 
 	/// The names it provides, for anything that wants to say so.
-	public static let names = ["abydos-icat", "abydos-bench"]
+	public static let names = ["abydos-icat", "abydos-bench", "abydos-backlog"]
 }

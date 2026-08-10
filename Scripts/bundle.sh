@@ -54,6 +54,12 @@ chmod +x "$CONTENTS/Resources/bin/abydos-icat"
 cp "$BIN_DIR/firebench" "$CONTENTS/Resources/bin/abydos-bench"
 chmod +x "$CONTENTS/Resources/bin/abydos-bench"
 
+# The backlog, on the PATH of every shell this app opens. It has to be here
+# rather than only installed: an agent working an item runs in a terminal this
+# app started, and the first thing the instructions tell it to type is this.
+cp "$BIN_DIR/abydos-backlog" "$CONTENTS/Resources/bin/abydos-backlog"
+chmod +x "$CONTENTS/Resources/bin/abydos-backlog"
+
 # Grammar query bundles. Without these every file opens uncoloured, so treat a
 # missing set as a hard failure rather than shipping a broken app.
 COUNT=0

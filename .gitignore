@@ -26,4 +26,11 @@ DevPod/out/
 # Worktrees this editor's agent sessions create, each a full checkout with a
 # build directory of its own. 6 GB of them here the day this was added, one
 # `git add -A` away from being committed.
-.claude/
+#
+# The directory rather than everything under it, which `.claude/` used to be:
+# the skills and commands beside them are four small files that describe how to
+# work this repository, and they are worth exactly as much to the next person
+# as they are to the machine that generated them. `abydos-backlog init` writes
+# them, and an ignored copy is one that only ever exists where it was written.
+.claude/worktrees/
+.claude/settings.local.json

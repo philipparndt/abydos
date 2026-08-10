@@ -169,6 +169,9 @@ install-cli: ## Put the `abydos` commands on the PATH (PREFIX=/usr/local)
 	@$(SWIFT) build $(SWIFT_JOBS) -c release --product firebench >/dev/null
 	@install -m 755 .build/release/firebench $(or $(PREFIX),/usr/local)/bin/abydos-bench
 	@echo "==> Installed $(or $(PREFIX),/usr/local)/bin/abydos-bench"
+	@$(SWIFT) build $(SWIFT_JOBS) -c release --product abydos-backlog >/dev/null
+	@install -m 755 .build/release/abydos-backlog $(or $(PREFIX),/usr/local)/bin/abydos-backlog
+	@echo "==> Installed $(or $(PREFIX),/usr/local)/bin/abydos-backlog"
 	@# Also as `icat`, but only when nothing else answers to it: kitty ships
 	@# one, and taking a name somebody's tools already use is not this app's
 	@# business.

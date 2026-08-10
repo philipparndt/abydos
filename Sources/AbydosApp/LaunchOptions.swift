@@ -32,6 +32,10 @@ struct LaunchOptions {
 	var terminalInput: String?
 	/// Start an agent review before capture.
 	var startReview = false
+	/// Show the backlog dashboard before capture. `list` for the list, anything
+	/// else for the board — the two presentations are the thing worth
+	/// photographing separately.
+	var backlogMode: String?
 	/// Start a review of the working tree instead of the branch.
 	var reviewUncommitted = false
 	/// Show the staging view in the sidebar before capture.
@@ -457,6 +461,14 @@ struct LaunchOptions {
 			case "--terminal":   options.openTerminal = true
 			case "--run":        options.terminalInput = next()
 			case "--review":     options.startReview = true
+			case "--backlog":
+				// The mode is optional, so peek rather than consume: without
+				// one the next argument is the next flag.
+				if index + 1 < arguments.count, !arguments[index + 1].hasPrefix("--") {
+					options.backlogMode = next()
+				} else {
+					options.backlogMode = "board"
+				}
 			case "--review-uncommitted": options.reviewUncommitted = true
 			case "--changes":    options.showChanges = true
 			case "--push":       options.pushChanges = true
