@@ -46,7 +46,7 @@ final class MermaidPreviewView: DiagramPaneView {
 	}
 
 	override func export(
-		_ format: DiagramFormat, theme: DiagramTheme? = nil,
+		_ format: DiagramFormat, theme: DiagramTheme? = nil, editable: Bool = false,
 		then: (@Sendable ([URL]) -> Void)? = nil
 	) {
 		guard let fileURL else { return }

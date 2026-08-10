@@ -86,6 +86,55 @@ struct DrawioTests {
 		#expect(pages.map(\.name) == ["Empty", "Full"])
 	}
 
+	// MARK: - The same drawing in another hand
+
+	/// The one that keeps a `.drawio` from being edited by being opened.
+	///
+	/// draw.io re-serialises a document as it loads it: its own indentation, and
+	/// `dx`/`dy` set to the size of the window it is being looked at in. Compared
+	/// as text that is a change, and every file would grow the tab's dot, ask on
+	/// close and be rewritten by auto-save without anybody touching it.
+	@Test func theSameDrawingWrittenOutAgainIsNotAnEdit() {
+		let one = """
+			<mxfile><diagram name="One" id="a"><mxGraphModel dx="1102" dy="768" grid="1">
+			  <root>
+			    <mxCell id="0" />
+			    <mxCell id="v1" value="a box" style="rounded=0;" vertex="1" parent="1">
+			      <mxGeometry x="120" y="80" width="200" height="60" as="geometry" />
+			    </mxCell>
+			  </root>
+			</mxGraphModel>
+			</diagram></mxfile>
+			"""
+		// The same drawing, in draw.io's hand: a window of another size, and its
+		// own indentation.
+		let other = "<mxfile><diagram name=\"One\" id=\"a\"><mxGraphModel dx=\"2786\" dy=\"460\" "
+			+ "grid=\"1\"><root><mxCell id=\"0\" /><mxCell id=\"v1\" value=\"a box\" "
+			+ "style=\"rounded=0;\" vertex=\"1\" parent=\"1\"><mxGeometry x=\"120\" y=\"80\" "
+			+ "width=\"200\" height=\"60\" as=\"geometry\" /></mxCell></root></mxGraphModel>"
+			+ "</diagram></mxfile>"
+		#expect(one != other)
+		#expect(Drawio.isSameDrawing(one, as: other))
+	}
+
+	/// And everything anybody actually does is still an edit.
+	@Test func movingALabelOrABoxIsAnEdit() {
+		func file(_ cell: String) -> String {
+			"<mxfile><diagram name=\"One\" id=\"a\"><mxGraphModel dx=\"10\" dy=\"10\"><root>"
+				+ cell + "</root></mxGraphModel></diagram></mxfile>"
+		}
+		let box = "<mxCell id=\"v1\" value=\"a box\"><mxGeometry x=\"120\" y=\"80\"/></mxCell>"
+		let moved = "<mxCell id=\"v1\" value=\"a box\"><mxGeometry x=\"200\" y=\"80\"/></mxCell>"
+		let renamed = "<mxCell id=\"v1\" value=\"a crate\"><mxGeometry x=\"120\" y=\"80\"/></mxCell>"
+		#expect(!Drawio.isSameDrawing(file(box), as: file(moved)))
+		#expect(!Drawio.isSameDrawing(file(box), as: file(renamed)))
+		#expect(!Drawio.isSameDrawing(file(box), as: file(box + box)))
+		// A page renamed, a page added, and a page whose id changed are all edits.
+		#expect(!Drawio.isSameDrawing(
+			file(box), as: file(box).replacingOccurrences(of: "name=\"One\"", with: "name=\"Two\"")
+		))
+	}
+
 	// MARK: - The two picture forms
 
 	/// A `.drawio.svg` is a real SVG with the document in a `content`
@@ -140,6 +189,84 @@ struct DrawioTests {
 	@Test func anOrdinaryDiagramSaysNothingAboutClipart() throws {
 		let document = try #require(Drawio.read(try Self.fixture("stencils")))
 		#expect(Drawio.clipartNotice(for: document) == nil)
+		#expect(Drawio.notCarriedNotice(for: document) == nil)
+	}
+
+	/// MathJax is the other thing deliberately left behind, and the reason it is
+	/// read out of the *document* rather than out of the scheme handler's record:
+	/// draw.io asks for `math4/` on every load whether the diagram uses it or
+	/// not, so a notice built on the 404 would fire over every file.
+	@Test func aDiagramThatTypesetsLaTeXSaysWhatItIsMissing() throws {
+		let xml = "<mxfile><diagram id=\"a\"><mxGraphModel math=\"1\"><root/></mxGraphModel>"
+			+ "</diagram></mxfile>"
+		let document = try #require(Drawio.read(Data(xml.utf8)))
+		#expect(Drawio.usesMath(in: document))
+		#expect(Drawio.notCarriedNotice(for: document) == Drawio.mathNotice)
+	}
+
+	@Test func anOrdinaryDiagramSaysNothingAboutMathJax() throws {
+		for name in ["plain", "pages", "stencils"] {
+			let document = try #require(Drawio.read(try Self.fixture(name)))
+			#expect(!Drawio.usesMath(in: document), "\(name) claims to typeset LaTeX")
+		}
+	}
+
+	/// Both at once are one sentence, because two toasts about one file is two
+	/// things to dismiss and one thing to read.
+	@Test func aDiagramMissingBothSaysBothInOneBreath() throws {
+		let xml = "<mxfile><diagram id=\"a\"><mxGraphModel math=\"1\"><root>"
+			+ "<mxCell style=\"shape=image;image=img/lib/clip_art/computers/Laptop_128x128.png;\"/>"
+			+ "</root></mxGraphModel></diagram></mxfile>"
+		let document = try #require(Drawio.read(Data(xml.utf8)))
+		let said = try #require(Drawio.notCarriedNotice(for: document))
+		#expect(said.contains("clipart"))
+		#expect(said.contains("MathJax"))
+	}
+
+	// MARK: - The picture that is also the document
+
+	/// The name is the whole of what the editable picture adds, so the name is
+	/// what is written down.
+	@Test func anEditablePictureIsNamedTheWayDrawioNamesOne() {
+		let source = URL(fileURLWithPath: "/a/architecture.drawio")
+		#expect(
+			DiagramExport.editableDestination(for: source, format: .png).lastPathComponent
+				== "architecture.drawio.png"
+		)
+		#expect(
+			DiagramExport.editableDestination(for: source, format: .svg).lastPathComponent
+				== "architecture.drawio.svg"
+		)
+		// And it is not the plain export's name, which is the point of having
+		// both: one is a picture of the document, the other is the document.
+		#expect(
+			DiagramExport.destinations(for: source, format: .png, diagrams: 1)
+				.map(\.lastPathComponent) == ["architecture.png"]
+		)
+	}
+
+	/// `.dio` normalises: there is no `.dio.png` convention for a reader to
+	/// recognise, and `.drawio.png` is the one there is.
+	@Test func aDioBecomesADrawioPicture() {
+		#expect(
+			DiagramExport.editableDestination(
+				for: URL(fileURLWithPath: "/a/plan.dio"), format: .png
+			).lastPathComponent == "plan.drawio.png"
+		)
+	}
+
+	/// The `-dark` rule composes, and has to: without it the light picture and
+	/// the dark one would be the same file.
+	@Test func aDarkEditablePictureHasItsOwnName() {
+		let source = URL(fileURLWithPath: "/a/architecture.drawio")
+		#expect(
+			DiagramExport.editableDestination(for: source, format: .png, theme: .dark)
+				.lastPathComponent == "architecture-dark.drawio.png"
+		)
+		#expect(
+			DiagramExport.editableDestination(for: source, format: .png, theme: .light)
+				.lastPathComponent == "architecture.drawio.png"
+		)
 	}
 
 	// MARK: - Which files these are

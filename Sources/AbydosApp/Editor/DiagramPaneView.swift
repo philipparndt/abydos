@@ -197,11 +197,18 @@ class DiagramPaneView: NSView {
 
 	/// Writes the picture beside the file, in the format asked for.
 	///
-	/// - Parameter theme: which way round, or nil for whatever is on screen.
+	/// - Parameters:
+	///   - theme: which way round, or nil for whatever is on screen.
+	///   - editable: write `x.drawio.png` — the picture that is also the document
+	///     — rather than `x.png`. Only draw.io has one to write.
 	func export(
-		_ format: DiagramFormat, theme: DiagramTheme? = nil,
+		_ format: DiagramFormat, theme: DiagramTheme? = nil, editable: Bool = false,
 		then: (@Sendable ([URL]) -> Void)? = nil
 	) {}
+
+	/// Whether this file has an editable-picture form, which is draw.io and
+	/// nothing else: a `.puml` has no document to put inside a PNG.
+	var offersEditablePicture: Bool { fileURL.map(Drawio.isDiagram) ?? false }
 
 	// MARK: - Exporting, and how large
 
@@ -266,7 +273,8 @@ class DiagramPaneView: NSView {
 		guard let exportMenu else { return }
 		DiagramExportMenu.fill(
 			exportMenu, theme: appTheme, stated: statedLook,
-			target: self, action: #selector(exportFromMenu(_:)), enabled: ready
+			target: self, action: #selector(exportFromMenu(_:)), enabled: ready,
+			editable: offersEditablePicture
 		)
 	}
 
@@ -316,7 +324,7 @@ class DiagramPaneView: NSView {
 	@objc private func exportFromMenu(_ sender: NSMenuItem) {
 		guard let code = sender.representedObject as? String,
 		      let choice = DiagramExportMenu.choice(for: code) else { return }
-		export(choice.format, theme: choice.theme)
+		export(choice.format, theme: choice.theme, editable: choice.editable)
 	}
 
 	/// What a right-click on the diagram offers, for a test: a menu cannot be
@@ -327,7 +335,9 @@ class DiagramPaneView: NSView {
 		// a line of noise in the middle of what the menu says.
 		return (menu?.items ?? []).filter { !$0.isSeparatorItem }.flatMap { item -> [String] in
 			let mark = item.isEnabled ? "" : " (disabled)"
-			let children = (item.submenu?.items ?? []).map { "\(item.title) ▸ \($0.title)" }
+			let children = (item.submenu?.items ?? [])
+				.filter { !$0.isSeparatorItem }
+				.map { "\(item.title) ▸ \($0.title)" }
 			return ["\(item.title)\(mark)"] + children
 		}
 	}
