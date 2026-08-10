@@ -23,6 +23,8 @@ final class ToolWindowBar: NSView {
 	var onToggleStructure: (() -> Void)?
 	var onToggleScratches: (() -> Void)?
 	var onToggleHistory: (() -> Void)?
+	/// Show the backlog: the board and the list over `.abydos/backlog`.
+	var onToggleBacklog: (() -> Void)?
 	/// Bring an existing session forward, when there is one.
 	var onToggleDebug: (() -> Void)?
 	/// Whether anything is being debugged, which decides whether the button
@@ -83,6 +85,7 @@ final class ToolWindowBar: NSView {
 	private var structureButton: StripButton!
 	private var scratchesButton: StripButton!
 	private var historyButton: StripButton!
+	private var backlogButton: StripButton!
 	private var debugButton: StripButton!
 
 	override init(frame frameRect: NSRect) {
@@ -247,7 +250,17 @@ final class ToolWindowBar: NSView {
 		debugButton = StripButton(symbol: "ladybug", tooltip: "Debug", enabled: true)
 		debugButton.onClick = { [weak self] in self?.debugButtonPressed() }
 
-		let bottomStack = NSStackView(views: [reviewButton, debugButton, terminalButton])
+		// First in the bottom group, which is where it was asked for.
+		//
+		// Until this button existed the backlog had ⇧⌘B and an entry in the
+		// Agent menu and nothing else, so the whole feature was invisible to
+		// anybody who had not been told the shortcut. A checklist rather than a
+		// board or a list, because what a card actually shows about an item is
+		// how much of its `## Steps` is ticked.
+		backlogButton = StripButton(symbol: "checklist", tooltip: "Backlog (⇧⌘B)", enabled: true)
+		backlogButton.onClick = { [weak self] in self?.onToggleBacklog?() }
+
+		let bottomStack = NSStackView(views: [backlogButton, reviewButton, debugButton, terminalButton])
 		bottomStack.orientation = .vertical
 		bottomStack.spacing = 4
 		bottomStack.alignment = .centerX

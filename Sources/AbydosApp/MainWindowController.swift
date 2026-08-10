@@ -480,6 +480,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		toolStrip.onToggleStructure = { [weak self] in self?.showSidebarTool(.structure) }
 		toolStrip.onToggleScratches = { [weak self] in self?.showSidebarTool(.scratches) }
 		toolStrip.onToggleHistory = { [weak self] in self?.showSidebarTool(.history) }
+		toolStrip.onToggleBacklog = { [weak self] in self?.showBacklog(nil) }
 		NotificationCenter.default.addObserver(
 			self, selector: #selector(toastPosted(_:)), name: .abydosToast, object: nil
 		)
@@ -631,6 +632,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 		bottomPanel.onOpenFileFromTerminal = { [weak self] request in
 			self?.openFromTerminal(request)
+		}
+		// Through the delegate rather than `switchProject`, so a worktree
+		// opened from a backlog card obeys the same rule as one opened from
+		// the project switcher: this window or a new one, whichever the
+		// setting says, and an already-open checkout is raised rather than
+		// opened twice.
+		bottomPanel.onOpenProject = { [weak self] root in
+			guard let self else { return }
+			(NSApp.delegate as? AppDelegate)?.open(projectAt: root, from: self)
 		}
 		// Set synchronously, not deferred: anything that opens the panel during
 		// launch would otherwise be undone when the deferred block ran.
@@ -3280,6 +3290,29 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// without a click. The segmented control is how anybody else gets there.
 	func showBacklogMode(list: Bool) {
 		bottomPanel.showBacklog()?.showList(list)
+	}
+
+	/// What a card's context menu offers, for `--backlog-menu`.
+	func backlogMenuForTesting(number: Int) -> String {
+		guard let pane = bottomPanel.showBacklog() else { return "no project" }
+		return pane.menuTitlesForTesting(number: number)
+	}
+
+	/// Files an item from the pane and says where it landed, for `--backlog-new`.
+	func newBacklogItemForTesting(titled title: String) -> String {
+		guard let pane = bottomPanel.showBacklog() else { return "no project" }
+		return pane.newItemForTesting(titled: title)
+	}
+
+	/// Whether the pane is offering to make a backlog, and then making one.
+	func backlogAbsentForTesting() -> String {
+		guard let pane = bottomPanel.showBacklog() else { return "no project" }
+		return pane.isOfferingToMakeOneForTesting ? "offering to make one" : "showing a backlog"
+	}
+
+	func makeBacklogForTesting() -> String {
+		guard let pane = bottomPanel.showBacklog() else { return "no project" }
+		return pane.makeBacklogForTesting()
 	}
 
 	/// Picks up the lowest-numbered ready item without opening the board first.

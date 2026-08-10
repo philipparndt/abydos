@@ -238,6 +238,9 @@ final class BottomPanel: NSView {
 	var onDebugAgain: (() -> Void)?
 	/// A pane that belongs to a project was brought forward.
 	var onPaneNeedsProject: ((URL) -> Void)?
+	/// A pane asking for another checkout to be opened as a project of its own
+	/// — a backlog card whose item is being worked on in a worktree.
+	var onOpenProject: ((URL) -> Void)?
 	/// `abydos <file>` was typed in one of these terminals.
 	var onOpenFileFromTerminal: ((TerminalOpenRequest) -> Void)?
 	/// The chevron beside the + was pressed, with the view it is in and where in
@@ -1828,6 +1831,11 @@ final class BottomPanel: NSView {
 		pane.onOpenItem = { [weak self] url in self?.onOpenFinding?(url, 1) }
 		pane.onNotify = { [weak self] title, detail in self?.onBacklogNotice?(title, detail) }
 		pane.onStartAgent = { [weak self] item in self?.startBacklogItem(item) }
+		pane.onOpenWorktree = { [weak self] worktree in self?.onOpenProject?(worktree) }
+		// A shell in the worktree rather than the agent's own pane: the agent's
+		// terminal is somebody else's session, and what is wanted here is a
+		// prompt in that checkout to run `git log` in.
+		pane.onOpenWorktreeTerminal = { [weak self] worktree in self?.newTerminal(in: worktree) }
 
 		let session = Session(title: "Backlog", kind: .backlog(pane))
 		sessions.append(session)

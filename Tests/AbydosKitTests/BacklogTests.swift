@@ -248,6 +248,25 @@ struct BacklogTests {
 		#expect(item.text().contains("## Steps"))
 	}
 
+	/// The default `create` is given, which is what both callers rely on.
+	///
+	/// `abydos-backlog new` passes no state unless `--state` is typed, and the
+	/// "New item" button in the pane passes none at all — so this default is
+	/// the whole of what keeps a button from making the promise `ready` is.
+	/// Worth a test of its own because changing the default would break nothing
+	/// that compiles.
+	@Test func anItemMadeWithoutSayingWhereLandsInOpen() throws {
+		let root = try makeProject()
+		defer { cleanUp(root) }
+		let backlog = Backlog(projectRoot: root)
+		try BacklogSetup.run(projectRoot: root, assistants: [])
+
+		let item = try backlog.create(title: "Filed from a button")
+		#expect(item.state == .open)
+		#expect(item.file.path.contains("/open/"))
+		#expect(backlog.items(in: .ready).isEmpty)
+	}
+
 	@Test func aSpecDeltaIsNotAnAttachment() throws {
 		let root = try makeProject()
 		defer { cleanUp(root) }
