@@ -243,11 +243,21 @@ final class EditorViewController: NSViewController {
 		serverBanner.onDetails = { [weak self] in self?.showServerManual() }
 		serverBanner.onIgnore = { [weak self] in self?.ignoreServerSuggestion() }
 		serverBanner.onDismiss = { [weak self] in self?.dismissServerSuggestion() }
+		serverBanner.onOffer = { [weak self] in self?.takeServerOffer() }
 
 		NotificationCenter.default.addObserver(
 			self,
 			selector: #selector(diagnosticsChanged(_:)),
 			name: .ideaiDiagnosticsChanged,
+			object: nil
+		)
+		// The project's servers changed which machine they are on, so every file
+		// open here has to be opened again at the one that answers for it now —
+		// the same thing a subproject scope change does, for the same reason.
+		NotificationCenter.default.addObserver(
+			self,
+			selector: #selector(languageServersMoved(_:)),
+			name: .ideaiLanguageServersMoved,
 			object: nil
 		)
 		// A server that starts, or is found to be missing, changes what the
@@ -579,6 +589,19 @@ final class EditorViewController: NSViewController {
 		refreshServerBanner()
 	}
 
+	/// A project's servers moved between this machine and its devcontainer.
+	///
+	/// Only for the project this group is showing: a window on another project
+	/// has nothing to re-send, and re-opening its files at servers that never
+	/// stopped would be a `didOpen` for a document they already hold.
+	@objc private func languageServersMoved(_ note: Notification) {
+		guard let moved = note.object as? URL, let project else { return }
+		guard moved.standardizedFileURL.path == project.scopeRoot.standardizedFileURL.path else {
+			return
+		}
+		rescope()
+	}
+
 	/// Whether this file's language has anything to say about its server, and
 	/// says it.
 	///
@@ -645,19 +668,35 @@ final class EditorViewController: NSViewController {
 		hideServerBanner()
 	}
 
+	/// Takes the strip up on what it offered.
+	///
+	/// The scope rather than the project root, because that is the folder the
+	/// notice was asked about and a subproject with a devcontainer of its own is
+	/// the case 0432 exists for — agreeing here must agree to the container the
+	/// sentence named.
+	private func takeServerOffer() {
+		guard let project, let offer = serverBanner.notice?.offer else { return }
+		switch offer {
+		case .useDevContainer:
+			LanguageService.shared.useDevContainer(for: project.scopeRoot)
+		}
+	}
+
 	// MARK: - Testing
 
 	/// What the bar is saying, or that it is not there.
 	var serverBannerReportForTesting: String {
-		serverBanner.isHidden
-			? "no banner"
-			: "\(serverBanner.sizesForTesting) — \(serverBanner.textForTesting)"
+		guard !serverBanner.isHidden else { return "no banner" }
+		let offer = serverBanner.offerForTesting
+		return "\(serverBanner.sizesForTesting) — \(serverBanner.textForTesting)"
+			+ (offer.isEmpty ? "" : " [\(offer)]")
 	}
 
 	func pressServerBannerForTesting(_ button: String) {
 		switch button {
 		case "details": serverBanner.pressDetailsForTesting()
 		case "ignore": serverBanner.pressIgnoreForTesting()
+		case "offer": serverBanner.pressOfferForTesting()
 		default: serverBanner.pressDismissForTesting()
 		}
 	}

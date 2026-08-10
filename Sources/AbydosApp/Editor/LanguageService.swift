@@ -6,6 +6,12 @@ extension Notification.Name {
 	static let ideaiDiagnosticsChanged = Notification.Name("ideai.diagnosticsChanged")
 	/// A language server started, stopped, or failed to be found.
 	static let ideaiLanguageServersChanged = Notification.Name("ideai.languageServersChanged")
+	/// A project's servers moved between this machine and its devcontainer, so
+	/// every file open in it has to be opened again at whichever answers for it
+	/// now. The object is the project root. Distinct from the one above, which
+	/// says a server's state changed and is answered by re-reading the strip:
+	/// this one is answered by re-sending the documents.
+	static let ideaiLanguageServersMoved = Notification.Name("ideai.languageServersMoved")
 }
 
 /// The language servers a project is using.
@@ -95,6 +101,21 @@ final class LanguageService {
 	/// Which languages were asked for while it was coming up, so they can be
 	/// started when it lands.
 	private var devcontainerWaiting: [String: Set<String>] = [:]
+	/// Whether a project has a `devcontainer.json` at all, by project path.
+	///
+	/// A fact about the disk, kept apart from `devcontainerProjects`, which is
+	/// what is being *done* about it and goes false when somebody declines or
+	/// when the container turns out not to be startable. The strip needs the
+	/// first to say which of the two declines is in force — a project with no
+	/// devcontainer has nothing to say about one.
+	private var devcontainerFiles: [String: Bool] = [:]
+	/// What was said about working each project inside its devcontainer, this
+	/// session. Nil means nobody has been asked yet.
+	///
+	/// In front of `Settings` rather than instead of it, because one of the three
+	/// answers is deliberately not written down: "not now" is about this
+	/// afternoon and has to hold until the project is closed and no longer.
+	private var devcontainerConsent: [String: DevContainerConsent] = [:]
 
 	/// What to say in the status bar about servers: names of those running.
 	private(set) var runningNames: [String] = []
@@ -224,6 +245,31 @@ final class LanguageService {
 		/// way: the answer to "not yet" is to wait, and a language switched off
 		/// for ever because a container was slow is the wrong bargain.
 		let isIgnorable: Bool
+		/// A button offering the one thing that would change this, if there is
+		/// one — see `Offer`. Most notices have none.
+		var offer: Offer? = nil
+
+		/// The way out of a state somebody chose, offered where they are looking
+		/// at the consequence of having chosen it.
+		///
+		/// A named case rather than a bare button title, so that what the click
+		/// agreed to is a value rather than a string match on the words in a
+		/// button. There is one of them today.
+		enum Offer: Equatable {
+			/// Start this project's devcontainer after all, and keep the answer.
+			/// Offered to a project whose servers were declined, in either of the
+			/// two ways of declining — otherwise "not now" would be a decision
+			/// nothing on screen could reverse until the project was reopened.
+			case useDevContainer(container: String)
+
+			/// What the button says.
+			var title: String {
+				switch self {
+				case let .useDevContainer(container):
+					return DevContainerConsent.offerTitle(container: container)
+				}
+			}
+		}
 	}
 
 	/// What to say about a language in a project, or nil for nothing.
@@ -241,14 +287,33 @@ final class LanguageService {
 		guard let definition = LanguageServers.definition(forLanguage: languageId) else { return nil }
 		let key = key(project: project, languageId: languageId)
 
-		// Answering, or at least running and about to. Nothing to say.
-		if let server = servers[key], server.client.isRunning { return nil }
-
 		// Not a project this server understands — a stray `.py` in a Go
 		// repository — so neither the offer nor the wait is about anything.
+		//
+		// Asked before the running-server return below rather than after it,
+		// which is where it used to be: the devcontainer sentence underneath is
+		// the one case where a *running* server has something to say about
+		// itself, and a return in front of it would hide that. The two orders
+		// agree everywhere else, because a server that is running is one that
+		// suited the project when it was started.
 		guard LanguageServers.suits(definition, root: project) else { return nil }
 
 		let name = LanguageRegistry.shared.displayName(for: languageId)
+
+		// A project that has a devcontainer and is deliberately not being worked
+		// on inside it. **The one sentence a running server has to say about
+		// itself**, and 0433 is why: a Python file with no squiggles at all and
+		// one being checked by a server that is not the project's are the same
+		// picture, and telling them apart is the whole of what "no" had to leave
+		// behind. It says which of the two declines is in force and offers the
+		// way back, since neither is written anywhere else on screen — the pill
+		// says *running*, and there is no container running to put one beside.
+		if let declined = declinedNotice(languageId: languageId, name: name, project: project, key: key) {
+			return declined
+		}
+
+		// Answering, or at least running and about to. Nothing to say.
+		if let server = servers[key], server.client.isRunning { return nil }
 
 		// On its way. Either the project's devcontainer is coming up with the
 		// server inside it, or an image named for the server is being fetched;
@@ -679,6 +744,105 @@ final class LanguageService {
 
 	// MARK: - Servers inside the project's devcontainer
 
+	/// What the strip says about a project whose devcontainer was declined, or
+	/// nil when it was not.
+	///
+	/// The two declines are shown at different moments, and deliberately so.
+	/// **"Not now"** is shown always, because nothing is running anywhere and an
+	/// editor that is silent about a file has to say why it is silent.
+	/// **"Work on this machine"** is shown only once a server here is actually
+	/// answering: before that the ordinary sentence — install `pyright` — is the
+	/// useful one, and replacing it with a note about a container somebody has
+	/// already turned down would be the app arguing with them.
+	private func declinedNotice(
+		languageId: String, name: String, project: URL, key: String
+	) -> ServerNotice? {
+		guard let consent = consent(for: project), consent != .container else { return nil }
+		guard hasDevContainerFile(project) else { return nil }
+		if consent == .thisMachine, servers[key]?.client.isRunning != true { return nil }
+		guard let container = DevContainerFile.choices(in: project).first?.name,
+		      let text = DevContainerConsent.notice(
+		      	language: name, container: container, consent: consent
+		      )
+		else { return nil }
+		return ServerNotice(
+			languageId: languageId,
+			languageName: name,
+			text: text,
+			// Nothing to install: what is missing here is a decision, not a
+			// binary, and the button beside it is the decision.
+			manual: nil,
+			// Never. "Ignore for Python" is about the language everywhere on the
+			// machine, and this is about one project's toolchain — switching the
+			// language off to be rid of a sentence about a container is a bargain
+			// nobody would knowingly make.
+			isIgnorable: false,
+			offer: .useDevContainer(container: container)
+		)
+	}
+
+	/// Whether this project has a `devcontainer.json` on disk, read once.
+	private func hasDevContainerFile(_ project: URL) -> Bool {
+		let path = project.standardizedFileURL.path
+		if let known = devcontainerFiles[path] { return known }
+		let exists = DevContainerFile.exists(in: project)
+		devcontainerFiles[path] = exists
+		return exists
+	}
+
+	/// What was said about this project, from this session or from the
+	/// preferences it was written to, or nil when nobody has been asked.
+	private func consent(for project: URL) -> DevContainerConsent? {
+		let path = project.standardizedFileURL.path
+		if let held = devcontainerConsent[path] { return held }
+		guard let stored = Settings.shared.devContainerConsent(forProject: project) else { return nil }
+		devcontainerConsent[path] = stored
+		return stored
+	}
+
+	/// Keeps an answer, in the two places it belongs: for this session always,
+	/// and in the preferences when it is one of the two that are about the
+	/// project rather than about this afternoon.
+	private func remember(_ consent: DevContainerConsent, for project: URL) {
+		devcontainerConsent[project.standardizedFileURL.path] = consent
+		Settings.shared.setDevContainerConsent(consent, forProject: project)
+	}
+
+	/// What is in force for a project, for the titlebar's pill and its menu.
+	func devContainerConsent(for project: URL) -> DevContainerConsent? { consent(for: project) }
+
+	/// Work this project inside its devcontainer after all — from the strip
+	/// above a file, or from the pill in the titlebar.
+	func useDevContainer(for project: URL) { move(to: .container, for: project) }
+
+	/// Work this project with the servers on this machine, knowing they are not
+	/// the toolchain it names.
+	func workOnThisMachine(for project: URL) { move(to: .thisMachine, for: project) }
+
+	/// Changes which machine a project's language servers run on, after they have
+	/// already started somewhere.
+	///
+	/// Everything for the project is ended first, because the two sets answer
+	/// differently about the same file and a server left holding a document goes
+	/// on publishing diagnostics for it — the fault `opened` guards against one
+	/// floor down. The container itself is left up whichever way this goes: it
+	/// may hold somebody's terminal, and 0424 is explicit that coming back has to
+	/// be instant.
+	private func move(to consent: DevContainerConsent, for project: URL) {
+		guard hasDevContainerFile(project) else { return }
+		guard self.consent(for: project) != consent else { return }
+		let path = project.standardizedFileURL.path
+		log("\(project.lastPathComponent)'s language servers move to "
+			+ (consent == .container ? "its devcontainer" : "this machine"))
+		shutdown(project: project)
+		remember(consent, for: project)
+		devcontainerProjects[path] = (consent == .container)
+		warmUp(project: project)
+		// The files already open belong to the other side's servers now, and
+		// nothing here can reach them: the editor groups are what hold the text.
+		NotificationCenter.default.post(name: .ideaiLanguageServersMoved, object: project)
+	}
+
 	/// Whether this project's language servers belong in a container.
 	///
 	/// **A project with a devcontainer this app can honour gets its servers
@@ -705,6 +869,11 @@ final class LanguageService {
 	) -> Server? {
 		let path = project.standardizedFileURL.path
 		guard let session = devcontainerSessions[path] else {
+			// Declined for now. Nothing is started in the container and nothing
+			// takes its place here, because "not now" is not "use this machine's"
+			// and the difference is the whole reason there are two ways to say no.
+			// The strip says so, and offers the container.
+			guard consent(for: project) != .notNow else { return nil }
 			// Not up yet, and bringing one up is a pull the first time. Held the
 			// way a fetched image already is: nothing waits, what is opened
 			// meanwhile is kept, and the server starts when the container lands.
@@ -745,10 +914,129 @@ final class LanguageService {
 		return start(resolved, languageId: languageId, key: key)
 	}
 
-	/// Brings the project's devcontainer up, once, however many languages ask.
+	/// Asks whether this project's devcontainer should come up, once, however
+	/// many languages ask, and then does what the answer says.
+	///
+	/// **The question is here because this is the choke point.** Every route in —
+	/// any language, any number of files opened at once — is funnelled through
+	/// this function and guarded by `devcontainerStarting`, so the question has
+	/// one place to live and cannot be asked twice for one container. The guard
+	/// is held across the asking as well as across the starting, which is what
+	/// makes ten files opened at once one question rather than ten.
+	///
+	/// **And it is here rather than when the project is opened.** Most sessions
+	/// in a project never open a file the servers care about, and a dialog in
+	/// front of a project that is only being read is the kind of prompt people
+	/// learn to dismiss without reading. The moment something needs the container
+	/// is the moment the question means anything.
 	private func startDevContainer(_ project: URL) {
 		let path = project.standardizedFileURL.path
 		guard devcontainerStarting.insert(path).inserted else { return }
+		guard let consent = consent(for: project) else {
+			// Still holding `devcontainerStarting`: the answer resolves it, and
+			// until then this project has one question outstanding and no more.
+			ask(about: project)
+			return
+		}
+		apply(consent, to: project)
+	}
+
+	/// What each of the three answers does. The path is in `devcontainerStarting`
+	/// when this is called, and every branch either keeps it there because a
+	/// container really is coming up or gives it back.
+	private func apply(_ consent: DevContainerConsent, to project: URL) {
+		let path = project.standardizedFileURL.path
+		switch consent {
+		case .container:
+			bringUpDevContainer(project)
+		case .thisMachine:
+			devcontainerStarting.remove(path)
+			runOnThisMachineInstead(
+				project, because: "its language servers were asked to run on this machine"
+			)
+		case .notNow:
+			devcontainerStarting.remove(path)
+			holdWhatWasWaiting(for: project)
+		}
+	}
+
+	/// Asks, and applies the answer.
+	///
+	/// A sheet on whichever window is key, which is where a file was just opened
+	/// in all but the contrived case; `runModal` when there is none, so that the
+	/// question is never simply skipped. What was opened meanwhile is already
+	/// being held by `serverInDevContainer`, so an answer given a minute later
+	/// still hands the server the file somebody is looking at.
+	private func ask(about project: URL) {
+		let path = project.standardizedFileURL.path
+		guard let choice = DevContainerFile.choices(in: project).first else {
+			// The file went away between the check and the question, which is not
+			// a failure and must not be reported as one.
+			devcontainerStarting.remove(path)
+			runOnThisMachineInstead(project, because: "it has no devcontainer.json")
+			return
+		}
+		let firstStart = DevContainerFile.read(choice.file, project: project)
+			.configuration.map(DevContainerConsent.FirstStart.of)
+
+		let alert = NSAlert()
+		alert.alertStyle = .informational
+		alert.messageText = DevContainerConsent.question(
+			project: project.lastPathComponent, container: choice.name
+		)
+		alert.informativeText = DevContainerConsent.explanation(
+			container: choice.name, firstStart: firstStart
+		)
+		let answers = DevContainerConsent.answersInOrder
+		for answer in answers {
+			alert.addButton(
+				withTitle: DevContainerConsent.buttonTitle(answer, container: choice.name)
+			)
+		}
+		// Escape is "not now", which is the answer that decides nothing — the two
+		// that are written down have to be typed or clicked for.
+		alert.buttons.last?.keyEquivalent = "\u{1b}"
+
+		let answered: @MainActor (NSApplication.ModalResponse) -> Void = { [weak self] response in
+			guard let self else { return }
+			let index = response.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
+			let answer = answers.indices.contains(index) ? answers[index] : .notNow
+			self.log("\(project.lastPathComponent): \(choice.name) — \(answer.rawValue)")
+			self.remember(answer, for: project)
+			self.apply(answer, to: project)
+		}
+		// The key window is where a file was just opened in all but the contrived
+		// case; the main one covers the moment a project is loading and its window
+		// has not been made key yet, which is when `warmUp` runs.
+		if let window = NSApp.keyWindow ?? NSApp.mainWindow {
+			alert.beginSheetModal(for: window) { response in
+				MainActor.assumeIsolated { answered(response) }
+			}
+		} else {
+			answered(alert.runModal())
+		}
+	}
+
+	/// Nothing is started, here or there, and what was held stops being held.
+	///
+	/// Without the second half the strip goes on saying a server is on its way to
+	/// a container nobody is bringing up. Nothing takes its place: a server on
+	/// this machine is the *other* answer, and quietly giving it to somebody who
+	/// said "not now" would be the app deciding whose toolchain the code is
+	/// checked against — which is what the whole devcontainer path exists to
+	/// avoid.
+	private func holdWhatWasWaiting(for project: URL) {
+		let path = project.standardizedFileURL.path
+		let waiting = devcontainerWaiting.removeValue(forKey: path) ?? []
+		for languageId in waiting {
+			fetching.remove(key(project: project, languageId: languageId))
+		}
+		NotificationCenter.default.post(name: .ideaiLanguageServersChanged, object: nil)
+	}
+
+	/// Brings the project's devcontainer up, the answer having been yes.
+	private func bringUpDevContainer(_ project: URL) {
+		let path = project.standardizedFileURL.path
 		guard let runtime = ContainerRuntime.discover(
 			preference: ContainerRuntime.Preference(rawValue: Settings.shared.containerRuntime)
 				?? .automatic
@@ -761,23 +1049,21 @@ final class LanguageService {
 			+ "its language servers go inside it")
 
 		// **A project offering several containers gets its servers in the first,
-		// and is told so.** The terminal can ask which one somebody means — that
-		// is what the + chevron's menu is for — and this cannot: a language
-		// server starts because a file was opened, before anybody has said
-		// anything, and there is no gesture behind it to attach a question to.
+		// and is told so.** The first in the menu's own order, which is sorted and
+		// so is the same answer every time, rather than whichever container
+		// happens to be up — that would make the toolchain the editor checks
+		// against depend on whether somebody had opened a terminal yet, which is
+		// a coin toss with extra steps.
 		//
-		// The first in the menu's own order, which is sorted and so is the same
-		// answer every time, rather than whichever container happens to be up —
-		// that would make the toolchain the editor checks against depend on
-		// whether somebody had opened a terminal yet, which is a coin toss with
-		// extra steps. Said out loud because a silent choice here is exactly the
-		// "picking somebody's toolchain for them" the several-file refusal
-		// existed to prevent.
-		//
-		// **This is the owner's to revisit** and 0424 records it as such: a
-		// setting naming the container a project's tools belong in, or the
-		// question asked once when the project is opened, are both better answers
-		// than a rule, and neither belongs in this commit.
+		// **0433 asked the first half of this question and not the second.** There
+		// is a gesture behind the start now — somebody said yes, by name, to the
+		// container the question named — so "nothing says which one its tools
+		// belong in" is no longer quite true: the question said which one, because
+		// it names the first. What is still not offered is a *choice* of which,
+		// and that is deliberate rather than forgotten: a three-button question
+		// grows a button per container, and the answer that is written down would
+		// have to name a file rather than a yes. Left for whoever wants it, with
+		// the toast still saying which one was used.
 		let choices = DevContainerFile.choices(in: project)
 		if choices.count > 1, let first = choices.first {
 			let others = choices.dropFirst().map(\.name).joined(separator: ", ")
@@ -1149,6 +1435,12 @@ final class LanguageService {
 		devcontainerProjects.removeValue(forKey: path)
 		devcontainerCommands.removeValue(forKey: path)
 		devcontainerWaiting.removeValue(forKey: path)
+		devcontainerFiles.removeValue(forKey: path)
+		// **And the answer, which is what makes "not now" mean this afternoon.**
+		// The other two are in the preferences and come straight back; that one is
+		// nowhere else on purpose, so a project let go of is a project that will
+		// be asked again.
+		devcontainerConsent.removeValue(forKey: path)
 		failures.removeAll()
 		announced.removeAll()
 		emptied.removeAll()
@@ -1171,6 +1463,8 @@ final class LanguageService {
 		devcontainerSessions.removeAll()
 		devcontainerCommands.removeAll()
 		devcontainerWaiting.removeAll()
+		devcontainerFiles.removeAll()
+		devcontainerConsent.removeAll()
 	}
 
 	// MARK: - Testing

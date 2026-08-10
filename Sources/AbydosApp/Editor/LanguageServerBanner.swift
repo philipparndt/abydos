@@ -23,8 +23,12 @@ final class LanguageServerBanner: NSView {
 	var onIgnore: (() -> Void)?
 	/// Not now. Comes back for the next file of this language.
 	var onDismiss: (() -> Void)?
+	/// Take the one thing offered — see `ServerNotice.Offer`. Nothing to install
+	/// and nothing to ignore: a decision somebody made, taken back.
+	var onOffer: (() -> Void)?
 
 	private var label: NSTextField!
+	private var offerButton: BannerButton!
 	private var ignoreButton: BannerButton!
 	private var detailsButton: BannerButton!
 	private var closeButton: BannerButton!
@@ -64,13 +68,16 @@ final class LanguageServerBanner: NSView {
 		label.lineBreakMode = .byTruncatingTail
 
 		detailsButton = BannerButton(title: "How to install") { [weak self] in self?.onDetails?() }
+		offerButton = BannerButton(title: "") { [weak self] in self?.onOffer?() }
 		ignoreButton = BannerButton(title: "Ignore") { [weak self] in self?.onIgnore?() }
 		closeButton = BannerButton(symbol: "xmark", description: "Dismiss") { [weak self] in
 			self?.onDismiss?()
 		}
 		closeButton.toolTip = "Not now"
 
-		stack = NSStackView(views: [icon, label, detailsButton, ignoreButton, closeButton])
+		// The offer nearest the sentence it answers, because it is the one button
+		// here that does the thing rather than explaining it.
+		stack = NSStackView(views: [icon, label, offerButton, detailsButton, ignoreButton, closeButton])
 		stack.orientation = .horizontal
 		stack.alignment = .centerY
 		stack.translatesAutoresizingMaskIntoConstraints = false
@@ -107,13 +114,16 @@ final class LanguageServerBanner: NSView {
 		label.stringValue = notice.text
 		label.toolTip = notice.manual
 		detailsButton.isHidden = notice.manual == nil
+		offerButton.isHidden = notice.offer == nil
+		if let offer = notice.offer { offerButton.setLabel(offer.title) }
 		ignoreButton.isHidden = !notice.isIgnorable
 		ignoreButton.setLabel("Ignore for \(notice.languageName)")
 		ignoreButton.toolTip = "Never offer a \(notice.languageName) server again"
 		// A lightbulb is an idea somebody could act on; a wait is not one. The
 		// two states of this strip look different from across the room, which is
-		// the distance most of them are read from.
-		symbolName = notice.manual == nil ? "hourglass" : "lightbulb"
+		// the distance most of them are read from. An offer is an idea too — the
+		// devcontainer somebody turned down, offered back — so it lights as well.
+		symbolName = notice.manual == nil && notice.offer == nil ? "hourglass" : "lightbulb"
 		applyTheme()
 	}
 
@@ -138,7 +148,7 @@ final class LanguageServerBanner: NSView {
 		stack?.edgeInsets = NSEdgeInsets(
 			top: 0, left: Theme.current.scaled(10), bottom: 0, right: Theme.current.scaled(10)
 		)
-		for button in [detailsButton, ignoreButton, closeButton] { button?.applyTheme() }
+		for button in [offerButton, detailsButton, ignoreButton, closeButton] { button?.applyTheme() }
 		needsDisplay = true
 	}
 
@@ -148,9 +158,13 @@ final class LanguageServerBanner: NSView {
 	// MARK: - Testing
 
 	var textForTesting: String { label.stringValue }
+	/// What the strip is offering to do about it, if anything — the words on the
+	/// button, which is what somebody reads before pressing it.
+	var offerForTesting: String { offerButton.isHidden ? "" : offerButton.title }
 	func pressIgnoreForTesting() { onIgnore?() }
 	func pressDetailsForTesting() { onDetails?() }
 	func pressDismissForTesting() { onDismiss?() }
+	func pressOfferForTesting() { onOffer?() }
 
 	/// The sizes the strip actually gave itself, so a zoom can be measured
 	/// rather than squinted at.
