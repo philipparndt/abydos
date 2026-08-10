@@ -148,7 +148,12 @@ done
 wait "$APP_PID" 2>/dev/null || true
 
 say "what it said"
-grep -E '^OPEN' "$LOG" || echo "   nothing — see $LOG"
+# `ANSWER` beside `OPEN`, for `--report-answer`. The two belong together and
+# neither is worth much alone: what the language server cost is in the OPEN
+# readings, when it first answered is in the ANSWER lines, and 0450's question
+# is the pair — a server that spends four minutes of processor before saying
+# anything is a different proposition from one that answered in the first ten.
+grep -E '^(OPEN|ANSWER)' "$LOG" || echo "   nothing — see $LOG"
 
 # The guard, last so it is the final word: a report whose project line is not
 # the project asked for is a report about whatever was open last, and those look

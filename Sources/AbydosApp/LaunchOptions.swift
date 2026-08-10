@@ -200,6 +200,18 @@ struct LaunchOptions {
 	var openReportsAt: [Double] = []
 	/// How many keystrokes to time in the editor, with `--report-open`.
 	var openReportTyping = 0
+	/// Keep asking the language server a real question at `line:character` until
+	/// it answers, and say how long it took.
+	///
+	/// 0428 wanted "time until Java answers" and could not take it: a single
+	/// question asked at a fixed delay says only whether the delay was long
+	/// enough, and the answer for jdtls on a Tycho reactor is minutes rather
+	/// than the twelve seconds `--lsp-wait` defaults to. What is wanted is the
+	/// moment the server *starts* answering, which nothing but polling can find.
+	var answerAt: String?
+	/// Give up on `--report-answer` after this long. Everything still silent is
+	/// reported as such, which is a finding rather than a missing line.
+	var answerDeadline: Double = 300
 	/// Which row of the branches view to open the menu on.
 	var branchMenuRow: Int?
 	/// Push this branch from the branches view.
@@ -537,6 +549,8 @@ struct LaunchOptions {
 				options.openReportsAt = (next() ?? "10")
 					.split(separator: ",").compactMap { Double($0) }
 			case "--report-typing": options.openReportTyping = next().flatMap(Int.init) ?? 100
+			case "--report-answer": options.answerAt = next()
+			case "--answer-until": options.answerDeadline = next().flatMap(Double.init) ?? 300
 			case "--stall":      options.stallMilliseconds = next().flatMap(Int.init)
 			case "--tab-add":
 				// The number is optional, so peek rather than consume: without

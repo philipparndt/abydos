@@ -5290,6 +5290,98 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		for stall in StallWatch.worst(limit: 8) { print("OPEN stall \(stall.line)") }
 	}
 
+	/// Asks the language server a real question, over and over, until it answers.
+	///
+	/// 0428's missing number — *time until Java answers* — and the reason it went
+	/// missing twice over. Once because the app was burning eight cores beside
+	/// the server, so any figure would have described the app rather than the
+	/// server; 0446 fixed that. And once because there was no way to ask: every
+	/// other driver flag puts one question at a fixed delay, which can only tell
+	/// you whether the delay happened to be long enough. On a Tycho reactor the
+	/// honest answer is minutes, and a twelve-second `--lsp-wait` reports silence
+	/// from a server that was working perfectly well.
+	///
+	/// Three questions rather than one, because they become answerable at
+	/// different moments and the distance between them is the finding. An outline
+	/// of the open file needs only that file parsed; completion and
+	/// go-to-definition need the classpath, which for jdtls means the reactor
+	/// imported. A server that answers the first at once and the last at four
+	/// minutes is a very different thing to wait for than one that answers
+	/// nothing until it is ready.
+	///
+	/// Asked together each round so a round costs one ten-second request timeout
+	/// rather than three, and the granularity of every figure below is therefore
+	/// the round — a second, plus however long the server took to refuse.
+	func measureFirstAnswerForTesting(line: Int, character: Int, deadline: TimeInterval) {
+		guard let project else {
+			print("ANSWER no project")
+			fflush(stdout)
+			return
+		}
+		let root = project.scopeRoot
+		let position = LSPPosition(line: line, character: character)
+
+		func say(_ what: String, _ detail: String) {
+			let at = Date().timeIntervalSince(LaunchClock.processStart)
+			print(String(format: "ANSWER %-16s %8.0f ms  %@  (%@)",
+				(what as NSString).utf8String!, at * 1000,
+				detail as NSString, LaunchClock.loadSaid as NSString))
+			fflush(stdout)
+		}
+
+		Task { @MainActor in
+			var outline = false, completion = false, definition = false
+			while !(outline && completion && definition),
+			      Date().timeIntervalSince(LaunchClock.processStart) < deadline {
+				// The file has to be on screen before anything can be asked about
+				// it, and on a large project the window arrives before the editor
+				// has finished opening what it was given.
+				guard let url = editor.activeGroup?.activeTabURL,
+				      let languageId = editor.activeGroup?.activeDocument?.languageId
+				else {
+					try? await Task.sleep(nanoseconds: 500_000_000)
+					continue
+				}
+
+				let service = LanguageService.shared
+				async let symbols = service.documentSymbols(url: url, languageId: languageId, project: root)
+				async let completions = service.completions(
+					url: url, position: position, languageId: languageId, project: root)
+				async let locations = service.definition(
+					url: url, position: position, languageId: languageId, project: root)
+				let (foundSymbols, foundCompletions, foundLocations) =
+					await (symbols, completions, locations)
+
+				if !outline, !foundSymbols.isEmpty {
+					outline = true
+					say("outline", "\(foundSymbols.count) symbols in \(url.lastPathComponent)")
+				}
+				if !completion, !foundCompletions.isEmpty {
+					completion = true
+					say("completion", "\(foundCompletions.count) suggestions")
+				}
+				if !definition, let first = foundLocations.first {
+					definition = true
+					say("definition", first.url?.lastPathComponent ?? "somewhere")
+				}
+				try? await Task.sleep(nanoseconds: 1_000_000_000)
+			}
+
+			// Silence is a result and has to be printed as one. A missing line
+			// reads as a harness that crashed; "still silent at 300 s" is the
+			// answer to the question that was asked.
+			let waited = Date().timeIntervalSince(LaunchClock.processStart)
+			for (what, answered) in [("outline", outline), ("completion", completion), ("definition", definition)]
+			where !answered {
+				print(String(format: "ANSWER %-16s      —     still silent at %.0f s",
+					(what as NSString).utf8String!, waited))
+			}
+			print(String(format: "ANSWER done               %8.0f ms  %@", waited * 1000,
+				LaunchClock.loadSaid as NSString))
+			fflush(stdout)
+		}
+	}
+
 	/// Pushes a branch from the branches view, for looking at what it does
 	/// while it is happening.
 	func pushBranchForTesting(_ name: String) {

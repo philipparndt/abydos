@@ -632,6 +632,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let spec = options.answerAt {
+			let parts = spec.split(separator: ":").compactMap { Int($0) }
+			// No delay of its own: the whole point is to be asking while the
+			// server is still starting, so that the first answer is timed rather
+			// than waited out.
+			if parts.count == 2 {
+				controller?.measureFirstAnswerForTesting(
+					line: parts[0] - 1, character: parts[1], deadline: options.answerDeadline)
+			}
+		}
+
 		if let spec = options.usagesAt {
 			let parts = spec.split(separator: ":").compactMap { Int($0) }
 			DispatchQueue.main.asyncAfter(deadline: .now() + (options.lspWait ?? 12)) {
