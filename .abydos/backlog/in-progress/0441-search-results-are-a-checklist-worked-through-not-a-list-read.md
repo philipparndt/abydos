@@ -67,22 +67,22 @@ having answered the other.
 
 ## Steps
 
-- [ ] Settle the word on screen and the key, and write down why neither is the
+- [x] Settle the word on screen and the key, and write down why neither is the
       tree's
 - [x] A `SearchChecklist` in AbydosKit: what a mark is keyed on, and marking,
       unmarking and counting
 - [x] Tests for the key: a mark survives lines being added above it, two
       identical lines do not tick each other, another question has its own marks
-- [ ] The table takes several rows at once, and a click that is building a
+- [x] The table takes several rows at once, and a click that is building a
       selection no longer opens a file
-- [ ] ␣ marks the selection done and marks it back; ↓ from the field reaches the
+- [x] ␣ marks the selection done and marks it back; ↓ from the field reaches the
       list; ⏎ opens what is selected
-- [ ] Done rows are struck through and dimmed, and a file heading follows the
+- [x] Done rows are struck through and dimmed, and a file heading follows the
       matches under it
-- [ ] A "hide done" toggle, so the list can also be the one that empties
-- [ ] ⌘Z in the pane takes the last marking back, through the same responder
+- [x] A "hide done" toggle, so the list can also be the one that empties
+- [x] ⌘Z in the pane takes the last marking back, through the same responder
       chain the tree's undo uses
-- [ ] Marks survive the search being re-run under the same question
+- [x] Marks survive the search being re-run under the same question
 - [ ] A `--search-steps` harness verb, so the pane can be driven from the
       command line
 - [ ] Seen in the running app, not only in tests
