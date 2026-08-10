@@ -74,3 +74,61 @@ So: `ToolImages/openscad-lsp/Dockerfile`, built on the machine, named from the
 Dockerfile's hash, driven end to end against a `.scad` file the way
 `ContainerLSPLiveTests` drives gopls — a definition that opens the right file,
 answered by a server that is not on this machine and cannot be.
+
+## And OpenSCAD itself, which is the harder and more valuable half
+
+The server is the easy case: it is one process speaking one protocol down a
+pipe, and `LanguageServerLaunch` already knows how to put a container in front
+of it. OpenSCAD *itself* — the renderer that turns a `.scad` into geometry — is
+the one somebody actually cannot work without, and it is a hard dependency on an
+installed copy today.
+
+It is a hard dependency in **GoSTL**, not here. Abydos never invokes the binary:
+`ModelPreview` deals in extensions and in finding `gostl`, and its only mention
+of OpenSCAD is a comment saying a `.scad` is source. The dependency is one layer
+down, in the viewer this project embeds:
+
+- `GoSTL/OpenSCAD/OpenSCADRenderer.swift` — `findOpenSCADExecutable()` tries
+  `/Applications/OpenSCAD.app/Contents/MacOS/OpenSCAD`, `/usr/local/bin/openscad`,
+  `/opt/homebrew/bin/openscad` and `/usr/bin/openscad`, then `which openscad`,
+  then throws `openSCADNotFound`.
+- `GoSTL/UI/ErrorOverlay.swift` — the overlay that says "OpenSCAD Not Installed"
+  and offers `brew install --cask openscad`.
+- `GoSTL/App/AppState.swift` — a second hardcoded `/Applications/OpenSCAD.app`.
+
+So this is a change in GoSTL first, then a tag, then a repin here — the route
+0401's pin already established, and the reason `Package.swift` was moved to
+GoSTL's root.
+
+**What the change is.** `findOpenSCADExecutable() -> String` is the wrong shape,
+because it answers with a *path* and the caller then builds a `Process` around
+it — in a dozen places in that one file. What is needed is a seam that answers
+with *how to run OpenSCAD*: a command and its arguments, which the host may
+supply as a local binary or as `docker run --rm -v … abydos/openscad`. Injected
+by the embedder rather than discovered, so a viewer used on its own keeps
+exactly today's behaviour and finds the installed copy itself.
+
+**The part that will bite is paths, and we already own the answer.** The
+renderer writes temporary files into `workDir` and passes absolute paths to
+OpenSCAD on the command line; inside a container none of those paths mean what
+they say. `ContainerPaths` exists for precisely this — it translates between the
+project on this machine and the mount inside, for paths and for `file:` URIs,
+and refuses anything outside the project rather than guessing. The `.scad` being
+rendered may also `include <…>` a file from anywhere in the project, so the
+mount has to be the project rather than the one file, and the include path has
+to survive the translation.
+
+**Why it is worth the upstream change.** OpenSCAD is a 200 MB cask that somebody
+has to install and keep current before a `.scad` file will preview at all, on a
+machine that has already installed Abydos. Building it into an image once, from
+a Dockerfile that says which version, is the whole argument for this item stated
+in the one place where a user actually feels it — and unlike the language
+servers, the difference is visible rather than inferred: the model appears, or
+an overlay tells you to go and install something.
+
+*One thing noticed on the way past, unrelated to this item.*
+`OpenSCADRenderer.findOpenSCADExecutable` reads its `which` output with
+`readDataToEndOfFile()`, which is the exact deadlock `ProcessPipes` was written
+to remove from this repository. It is safe there — `which` says one short line —
+but the same file makes fifteen or so `Process` calls, and the ones running
+OpenSCAD are the chatty kind. Worth a look while the file is open anyway.
