@@ -41,7 +41,7 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// part of a repository the run button belongs to.
 	private(set) var subprojectRoot: URL?
 	private var watcher: FileSystemWatcher?
-	private var outlineView: NSOutlineView!
+	private var outlineView: NavigatorOutlineView!
 	private var headerView: NavigatorHeaderView!
 	private var headerTopConstraint: NSLayoutConstraint!
 	private var headerHeightConstraint: NSLayoutConstraint!
@@ -138,6 +138,10 @@ final class ProjectNavigatorViewController: NSViewController {
 		}
 		outline.onPaste = { [weak self] operation in self?.pasteIntoSelection(operation) }
 		outline.canPaste = { !FilePasteboard.files().isEmpty }
+		// ⌘Z, which reaches the outline view and stops there. The Undo section
+		// below says why that one door is the whole of how the tree's stack and
+		// the editor's stay apart, and why the door closes during a rename.
+		outline.fileUndoManager = { [weak self] in self?.fileUndoManager }
 		outline.menu = makeContextMenu()
 		outlineView = outline
 
@@ -193,6 +197,10 @@ final class ProjectNavigatorViewController: NSViewController {
 		self.project = project
 		let root = FileNode(url: project.root, isDirectory: true)
 		rootNode = root
+		// The stack belongs to the project that was open, not to the window. A
+		// ⌘Z after switching projects that put a file back somewhere in the
+		// previous one would be an undo happening off screen.
+		fileUndo.removeAllActions()
 
 		outlineView.reloadData()
 		outlineView.expandItem(root)
@@ -203,6 +211,10 @@ final class ProjectNavigatorViewController: NSViewController {
 	func windowWillClose() {
 		watcher?.stop()
 		watcher = nil
+		// Nothing here is a cycle — the registrations hold `undoTarget`, which
+		// holds this controller weakly. Emptied anyway, because a stack of paths
+		// outliving the window that could act on them is only clutter.
+		fileUndo.removeAllActions()
 		NotificationCenter.default.removeObserver(self)
 	}
 
@@ -1318,6 +1330,7 @@ final class ProjectNavigatorViewController: NSViewController {
 				refuse(error.localizedDescription, kind: edit.kind)
 				return
 			}
+			remember(FileUndo.renamed(from: node.url, to: destination))
 			// The watcher rebuilds the tree, and the row is a different object
 			// afterwards — so the selection follows the path rather than the node.
 			pendingReveal = [destination]
@@ -1344,6 +1357,12 @@ final class ProjectNavigatorViewController: NSViewController {
 				refuse(error.localizedDescription, kind: kind)
 				return
 			}
+			// Undoing this moves it to the trash, and the date is read now so that
+			// a ⌘Z arriving after somebody has written in the file refuses instead
+			// — which is the case the change check exists for.
+			remember(FileUndo.created(destination, isDirectory: kind == .folder) {
+				Self.modificationDate(of: $0)
+			})
 			// The folder has just been written to, so its listing is stale by one
 			// entry. Re-read here rather than waiting for the watcher: the row
 			// the placeholder stood for has to be replaced by the real one in the
@@ -1548,10 +1567,24 @@ final class ProjectNavigatorViewController: NSViewController {
 		let urls = nodes.filter { $0 !== rootNode }.map(\.url)
 		guard !urls.isEmpty else { return }
 		// Trash rather than delete: recoverable, and no confirmation needed.
-		NSWorkspace.shared.recycle(urls) { _, error in
-			guard let error else { return }
+		//
+		// The dictionary `recycle` answers with is original URL to the place in
+		// the trash each file went, and it is kept because there is nowhere else
+		// to get it: the trash renames on collision, so two files called `main.py`
+		// from different folders do not both keep the name in there, and no
+		// amount of looking afterwards says which is which. It was discarded here
+		// until 0442, and that — rather than anything unwritten — is what made ⌘Z
+		// after a delete impossible.
+		//
+		// Whatever did arrive is recorded even when the call also reports an
+		// error, because `recycle` can refuse one file out of four and the other
+		// three are still undoable.
+		NSWorkspace.shared.recycle(urls) { [weak self] moved, error in
 			DispatchQueue.main.async {
-				Toast.post("Could not move that to the trash", detail: error.localizedDescription)
+				if let error {
+					Toast.post("Could not move that to the trash", detail: error.localizedDescription)
+				}
+				self?.remember(FileUndo.trashed(moved))
 			}
 		}
 	}
@@ -1614,7 +1647,9 @@ final class ProjectNavigatorViewController: NSViewController {
 			exists: { FileManager.default.fileExists(atPath: $0.path) }
 		)
 
-		var arrived: [URL] = []
+		// The ones that actually happened rather than the ones that were planned,
+		// so nothing on the undo stack claims work the file system refused.
+		var done: [FileTransfer.Transfer] = []
 		var failures: [String] = []
 		for transfer in plan.transfers {
 			do {
@@ -1622,11 +1657,15 @@ final class ProjectNavigatorViewController: NSViewController {
 				case .move: try FileManager.default.moveItem(at: transfer.source, to: transfer.destination)
 				case .copy: try FileManager.default.copyItem(at: transfer.source, to: transfer.destination)
 				}
-				arrived.append(transfer.destination)
+				done.append(transfer)
 			} catch {
 				failures.append("“\(transfer.source.lastPathComponent)”: \(error.localizedDescription)")
 			}
 		}
+		let arrived = done.map(\.destination)
+		// A move goes home again; a copy goes to the trash. Recorded before the
+		// message, so a drop that half worked is still half undoable.
+		remember(FileUndo.transferred(done, operation: operation) { Self.modificationDate(of: $0) })
 
 		// One message for the whole drop, however many files it was. Skipping
 		// rather than prompting is what keeps the gesture a gesture, and three
@@ -1682,6 +1721,157 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// ⌘V reads.
 	func pasteForTesting(move: Bool) {
 		pasteIntoSelection(move ? .move : .copy)
+	}
+
+	// MARK: - Undo
+
+	/// The tree's own undo stack, and nothing to do with the editor's.
+	///
+	/// **Two stacks, and focus decides which**, which is the whole risk in this
+	/// feature: a ⌘Z aimed at a stray character that put back a folder somebody
+	/// deliberately trashed ten minutes ago would be far worse than no undo at
+	/// all. The responder chain is what keeps them apart, and it does so by
+	/// construction rather than by anything checking.
+	///
+	/// `undo:` is sent from the Edit menu with no target, so AppKit walks the
+	/// chain from the key window's first responder and stops at the first object
+	/// that answers to it. When the keyboard is in the editor that is `CodeView`,
+	/// which has its own `UndoTree` and never sees this manager. When it is in
+	/// the tree that is `NavigatorOutlineView`, which is not in the editor's
+	/// chain at all — the two panes are siblings, not ancestors. So neither can
+	/// reach the other's undo however the keys are pressed.
+	///
+	/// This is deliberately *not* the window's undo manager, which is the one
+	/// stack both panes would share, and is where the rename field's text undo
+	/// goes.
+	private let fileUndo = UndoManager()
+
+	/// What the manager holds on to, which must not be this controller.
+	///
+	/// `registerUndo(withTarget:handler:)` keeps a strong reference to its
+	/// target, so registering `self` would leave the navigator — and the whole
+	/// tree behind it — alive after its window had gone. The handler is given
+	/// the target and reaches the navigator weakly through it.
+	private lazy var undoTarget: FileUndoTarget = {
+		let target = FileUndoTarget()
+		target.navigator = self
+		return target
+	}()
+
+	/// The manager, or nil while a name is being edited on a row.
+	///
+	/// Nil then because the rename field is a *subview of the outline view*, so
+	/// the field editor's responder chain runs straight through it: without this
+	/// the tree would answer the ⌘Z meant to take back a mistyped letter, and
+	/// undo a delete instead. Answering nil makes `NavigatorOutlineView`
+	/// transparent to `undo:` — see its `responds(to:)` — so the chain carries on
+	/// past the tree to the window's undo manager, which is where the field
+	/// editor's text undo lives.
+	fileprivate var fileUndoManager: UndoManager? { nameField == nil ? fileUndo : nil }
+
+	/// Puts one gesture on the stack, under the name the Edit menu will show.
+	///
+	/// A gesture that did nothing is not recorded: a ⌘Z that pops an entry and
+	/// has nothing to do would silently eat the one before it, which is the same
+	/// "cannot be trusted" this was written to avoid.
+	private func remember(_ action: FileUndo.Action) {
+		guard !action.isEmpty else { return }
+		fileUndo.registerUndo(withTarget: undoTarget) { target in
+			target.navigator?.takeBack(action)
+		}
+		fileUndo.setActionName(action.gesture.title)
+	}
+
+	/// When a file was last written, for the check that stops an undo throwing
+	/// away work somebody did after the gesture.
+	private static func modificationDate(of url: URL) -> Date? {
+		(try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
+	}
+
+	/// Takes one gesture back, or says in a sentence why it cannot.
+	///
+	/// Silent when it works, because the tree showing the file where it belongs
+	/// is the whole of what was asked for. Never silent when it does not: an
+	/// emptied trash, a name taken since, a folder that has itself gone are all
+	/// ordinary, and each gets said.
+	///
+	/// Nothing is registered back on the stack, so there is no redo — see
+	/// `NavigatorOutlineView`, which does not answer `redo:` for that reason.
+	fileprivate func takeBack(_ action: FileUndo.Action) {
+		let reversal = FileUndo.reverse(
+			action,
+			exists: { FileManager.default.fileExists(atPath: $0.path) },
+			modified: { Self.modificationDate(of: $0) }
+		)
+
+		var restored: [URL] = []
+		var failures: [String] = []
+		for restore in reversal.restores {
+			do {
+				try FileManager.default.moveItem(at: restore.from, to: restore.to)
+				restored.append(restore.to)
+			} catch {
+				failures.append("“\(restore.to.lastPathComponent)”: \(error.localizedDescription)")
+			}
+		}
+
+		guard !reversal.discards.isEmpty else {
+			finish(action, reversal, restored: restored, discarded: 0, failures: failures)
+			return
+		}
+		// The other half of the family, and the only undo in the app that takes
+		// something away: it goes to the trash rather than being unlinked, so
+		// undo is not the one operation here that deletes outright.
+		//
+		// The message waits for this rather than counting the files as gone the
+		// moment they are handed over — `recycle` is asynchronous and can refuse,
+		// and a summary written before the answer arrives would be a guess.
+		NSWorkspace.shared.recycle(reversal.discards) { [weak self] moved, error in
+			DispatchQueue.main.async {
+				var failures = failures
+				if let error { failures.append(error.localizedDescription) }
+				self?.finish(
+					action, reversal, restored: restored, discarded: moved.count,
+					failures: failures
+				)
+			}
+		}
+	}
+
+	/// The one message the whole undo gets, and the selection put where the
+	/// files went back to.
+	private func finish(
+		_ action: FileUndo.Action, _ reversal: FileUndo.Reversal,
+		restored: [URL], discarded: Int, failures: [String]
+	) {
+		// One message for the whole gesture, however many files it was — the same
+		// rule a drop keeps, and for the same reason: ⌘Z is one gesture.
+		if let said = reversal.summary(
+			gesture: action.gesture, done: restored.count + discarded, failures: failures
+		) {
+			Toast.post(said.title, detail: said.detail)
+		}
+
+		guard !restored.isEmpty else { return }
+		// Opened, so there is somewhere for the files to come back to — the
+		// folder they were in may well have been folded away since.
+		for url in restored {
+			let folder = url.deletingLastPathComponent()
+			if let node = rootNode?.node(for: folder), node !== rootNode {
+				outlineView.expandItem(node)
+			}
+		}
+		// The watcher rebuilds a moment from now and every row is a different
+		// object afterwards, so the selection follows the paths.
+		pendingReveal = restored
+	}
+
+	/// ⌘Z sent straight at the tree, for scripts that want the file half without
+	/// asking the responder chain anything. Naming what is on the stack is the
+	/// only way to tell "⌘Z did the right thing" from "⌘Z did nothing".
+	func undoForTesting() {
+		print("TREE undo: can=\(fileUndo.canUndo) action=\(fileUndo.undoActionName)")
+		outlineView.undo(nil)
 	}
 
 	// MARK: - Keyboard
@@ -1914,7 +2104,7 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// joins the per-item strings into: the harness's output is unchanged by ⌘C
 	/// having become a file copy as well.
 	func copyTextForTesting() -> String {
-		let files = (outlineView as? NavigatorOutlineView)?.copyFiles?() ?? []
+		let files = outlineView.copyFiles?() ?? []
 		guard !files.isEmpty else { return "nothing" }
 		return files.map(\.path).joined(separator: "\n")
 	}
@@ -2180,7 +2370,15 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 		guard let folder = destinationFolder(for: item as? FileNode) else { return false }
 		let sources = FilePasteboard.files(on: info.draggingPasteboard)
 		guard !sources.isEmpty else { return false }
-		return transfer(sources, into: folder, operation: operation(for: info))
+		let arrived = transfer(sources, into: folder, operation: operation(for: info))
+		// The one gesture in the family that does not already leave the keyboard
+		// in the tree. Every other route — the menu, ⌘⌫, ⌥⌘V — starts from a click
+		// or a keystroke in the tree and ends with it still focused, but a drag
+		// from the Finder can land here while the caret is in the editor, and then
+		// ⌘Z would mean the editor's undo rather than this drop's. Undo lives
+		// where the gesture happened, so the gesture takes the keyboard.
+		if arrived, nameField == nil { view.window?.makeFirstResponder(outlineView) }
+		return arrived
 	}
 
 	/// Tailors each item to how many rows the menu was opened over.
@@ -2398,9 +2596,22 @@ private final class NavigatorHeaderView: NSView {
 
 // MARK: - Rows
 
+/// What the tree's undo manager holds instead of the navigator.
+///
+/// A registered undo keeps its target alive, and the target has to outlive the
+/// registration for the handler to have anything to run on — so it cannot be
+/// weak. Making it this rather than the controller keeps the strong reference
+/// off the view controller, and the one weak hop is all the handler needs.
+private final class FileUndoTarget {
+	weak var navigator: ProjectNavigatorViewController?
+}
+
 /// Outline view that hands key events to the controller before acting on them.
 final class NavigatorOutlineView: NSOutlineView {
 	var onKeyDown: ((NSEvent) -> Bool)?
+	/// The tree's file undo stack, asked for rather than held: the controller
+	/// withholds it while a name is being edited on a row.
+	fileprivate var fileUndoManager: (() -> UndoManager?)?
 	/// What ⌘C should put on the pasteboard, in tree order.
 	var copyFiles: (() -> [URL])?
 	/// ⌘V, and ⌥⌘V, which is the same gesture the other way round.
@@ -2434,9 +2645,52 @@ final class NavigatorOutlineView: NSOutlineView {
 		onPaste?(.copy)
 	}
 
+	/// ⌘Z over the tree, which is files and never text.
+	///
+	/// Answered here rather than left to the window's undo manager, and that is
+	/// the whole of how the two stacks stay apart. `undo:` is sent from the Edit
+	/// menu with no target, so AppKit walks the responder chain from the first
+	/// responder and stops at the first object answering to it: this one when the
+	/// keyboard is in the tree, `CodeView` when it is in the editor. Neither pane
+	/// is in the other's chain, so a ⌘Z aimed at a stray character can never put
+	/// back a folder somebody meant to trash, and a ⌘Z after a delete never
+	/// rewrites a file.
+	///
+	/// There is deliberately no `undoManager` override to go with this. Returning
+	/// the file stack from that property would hand it to the *rename field*,
+	/// whose editor sits inside this view and asks the chain for the manager to
+	/// register its typing on — the two stacks would then be one, which is
+	/// exactly what this is for. One door, and it is this method.
+	///
+	/// No `redo:` either. Taking a gesture back registers nothing in its place,
+	/// so a redo here would be a menu item that is always empty; leaving the
+	/// selector unanswered lets ⇧⌘Z carry on down the chain rather than being
+	/// swallowed by something that could never do anything. Redoing a copy means
+	/// keeping the source it came from, which is a larger promise than 0442 made.
+	@objc func undo(_ sender: Any?) {
+		fileUndoManager?()?.undo()
+	}
+
+	/// Transparent to `undo:` while a name is being edited on a row.
+	///
+	/// The rename field is a subview of this view, so its field editor's
+	/// responder chain runs through here. Merely answering `undo:` with a no-op
+	/// then would swallow the key — `tryToPerform` asks this, not the method's
+	/// body — and typing in the field would have no undo at all. Saying no lets
+	/// the chain reach the window's undo manager, which is the one the field
+	/// editor registered its typing on.
+	override func responds(to selector: Selector!) -> Bool {
+		if selector == #selector(undo(_:)) { return fileUndoManager?() != nil }
+		return super.responds(to: selector)
+	}
+
 	override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
 		if item.action == #selector(copy(_:)) { return !(copyFiles?().isEmpty ?? true) }
 		if item.action == #selector(paste(_:)) { return canPaste?() ?? false }
+		// Greyed out over an empty stack rather than swallowing the key: an Undo
+		// that is enabled and does nothing is the same lie as one that undoes the
+		// wrong thing, only quieter.
+		if item.action == #selector(undo(_:)) { return fileUndoManager?()?.canUndo ?? false }
 		return super.validateUserInterfaceItem(item)
 	}
 
