@@ -16,6 +16,12 @@ import Foundation
 /// ships with the app so it can be run against the build that is installed
 /// rather than against a checkout somebody still has to find.
 ///
+/// `abydos-backlog` is the backlog beside the project. It is here rather than
+/// only in `/usr/local/bin` because the agent that reaches for it is running
+/// in a terminal this app opened, and the instructions it was handed name the
+/// command in the first paragraph — a project set up on a machine where
+/// nobody ran `make install-cli` should still work.
+///
 /// Put on the PATH of every shell the app starts — including the ones tmux
 /// starts, since tmux inherits the environment of whatever launched the
 /// server — and appended rather than prepended, so a command somebody already
@@ -54,11 +60,12 @@ public enum BundledCommands {
 	///
 	/// `abydos` is here as well as in `/usr/local/bin`, so that a pane has it
 	/// without anybody having run `make install-cli` — which is the whole point
-	/// of this directory, and it matters more for `abydos` than for the other
-	/// two, since a pane is exactly where it does something a shell elsewhere
-	/// cannot.
+	/// of this directory, and it matters more for `abydos` than for the others,
+	/// since a pane is exactly where it does something a shell elsewhere
+	/// cannot. `abydos-backlog` is here for the neighbouring reason: the agent
+	/// that reaches for it is working in a terminal this app opened.
 	///
-	/// Appended to the PATH rather than prepended, the same rule the other two
+	/// Appended to the PATH rather than prepended, the same rule they all
 	/// follow: shadowing a command somebody already has is not this app's
 	/// business. The cost is worth saying out loud — an `abydos` installed from
 	/// an older checkout wins over the bundled one, and an old enough copy has
@@ -66,5 +73,5 @@ public enum BundledCommands {
 	/// through LaunchServices instead. Reinstalling fixes it, and preferring our
 	/// own copy would mean deciding that this app knows better than somebody's
 	/// PATH, which is a bigger claim than the bug is worth.
-	public static let names = ["abydos", "abydos-icat", "abydos-bench"]
+	public static let names = ["abydos", "abydos-icat", "abydos-bench", "abydos-backlog"]
 }

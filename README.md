@@ -248,7 +248,7 @@ works without Screen Recording permission.
 ```sh
 Abydos --open <project-dir> [--file <path>] [--expand]
       [--screenshot <out.png>] [--delay <seconds>]
-      [--type <text>] [--collapse]
+      [--type <text>] [--collapse] [--backlog list|board]
 ```
 
 ### The .Abydos folder
@@ -257,8 +257,9 @@ A project Abydos has been opened in keeps one folder beside its code:
 
 ```
 .Abydos/
-  .gitignore     # commits run/, ignores the rest
+  .gitignore     # commits run/ and backlog/, ignores the rest
   run/           # one file per launch configuration — shared
+  backlog/       # what is left to do, and what the project does — shared
   session.json   # which files were open here — this machine only
 ```
 
@@ -366,6 +367,7 @@ Sources/IdeaiKit/     engine — no view code, so all of it is testable headless
   Syntax/             LanguageRegistry, SyntaxEngine, HighlightKind
   Terminal/           PseudoTerminal, TerminalEmulator, TerminalScreen
   Agent/              MCPServer, ReviewSession, AgentLauncher
+  Backlog/            Backlog, BacklogItem, BacklogSpec, BacklogRunner
   Search/             TextSearch, ProjectSearch
   Go/                 GoTooling
   Java/               JavaTooling, MavenProject, GradleBuild
@@ -398,6 +400,70 @@ this is a contract instead.
 
 Loopback is not access control, so every request must carry a per-session bearer
 token.
+
+### The backlog
+
+The other half of working with an agent is having something to hand it. A
+backlog of titles is not that, and neither is a chat message describing a task
+from memory — so what is left to do lives beside the code, as files, and the
+same folder is read by the app, by the command line and by whatever assistant is
+installed.
+
+```
+.Abydos/backlog/
+  AGENTS.md      the workflow, one page — every tool's own file points here
+  project.md     what this project is, for something that has never seen it
+  spec/          what the project does today, one file per capability
+  open/          written down, not yet agreed
+  ready/         agreed — anybody, or any agent, may start
+  in-progress/   being worked on now
+  waiting/       stuck on something that is not work
+  completed/     done, keeping its number
+```
+
+An item is one markdown file, or a folder with `task.md` in it when it carries
+a screenshot. Its state is the folder it is in and nothing else, so moving it
+along is `git mv` — a change anybody can read in a diff and revert with another
+one. Each carries a `## Steps` checklist saying what is done `[x]` and what is
+still missing `[ ]`, which is what the fraction and the bar on a card are.
+
+`ready` is the one an agent picks from, and it exists because `open` is a pile:
+half of it is a sentence somebody wrote down so as not to forget it, and an
+agent that picks one of those spends an afternoon inventing the parts nobody
+decided. Nothing moves an item into `ready` automatically.
+
+Picking one up makes a git worktree of its own on `backlog/<number>-<slug>`,
+moves the item to `in-progress` on both sides, and starts the assistant there —
+a checkout each, because two agents in one working tree is two agents editing
+each other's half-finished files.
+
+`spec/` is the part borrowed from [openspec](https://github.com/Fission-AI/OpenSpec):
+a backlog forgets, and once enough items are in `completed/` the only remaining
+description of what the program does is the program. An item that changes
+behaviour carries a delta — `ADDED`, `MODIFIED`, `REMOVED` — and folding it in
+is a step of the work rather than a tidy-up afterwards, so the spec and the code
+change in the same commit.
+
+⇧⌘B opens the dashboard: the same folder as a list to read and a board to move
+things on, with a card's state shown by the stripe down its left edge.
+
+`abydos-backlog` is the same model from a terminal, which is where an agent
+works. It ships in the app bundle and `make install-cli` puts it on the PATH.
+
+```
+abydos-backlog init            make one here, and ask which assistant works it
+abydos-backlog next            the lowest-numbered ready item
+abydos-backlog start           worktree, branch, agent
+abydos-backlog done <number>   fold the spec delta in, and complete it
+```
+
+`init` asks once which assistant this project uses and writes the file that one
+reads — a skill and a command for Claude Code, `copilot-instructions.md` and a
+prompt for Copilot, `AGENTS.md` for opencode and Codex, a rule for Cursor. All
+of them are four lines pointing at `AGENTS.md`, because five copies of a
+workflow is five workflows within a month. Running it again is safe: files the
+project owns are left alone, and a file it already had keeps everything outside
+the fenced section.
 
 ## Licence
 

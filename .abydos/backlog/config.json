@@ -1,0 +1,6 @@
+{
+  "assistants" : [
+    "claude"
+  ],
+  "worktrees" : true
+}
