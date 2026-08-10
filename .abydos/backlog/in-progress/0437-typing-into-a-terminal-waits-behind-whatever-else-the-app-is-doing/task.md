@@ -44,6 +44,40 @@ comparable to it. The threshold is 50 ms now, so the log holds far more lines
 and the medians in any new reading of it are lower for a reason that has
 nothing to do with the app. Compare counts per hour by activity, not to this.
 
+## Steps
+
+The first two rounds are below, done and ticked. The third round is the last
+five, and it is a measuring round rather than a fixing one: the one thing this
+entry has always owed is a reading taken on a machine that was not being used
+by four other agents, and the ranking below says plainly that the suspects left
+on it are not clearly worth changing.
+
+- [x] Give the seven suspects names, so a stall in one is not filed as `idle`
+- [x] Lower the threshold to where typing is actually felt
+- [x] Stop the navigator re-listing the whole project when the window comes forward
+- [x] Get the window's directory probe off the main queue
+- [x] Stop `LSPClient` writing to a server's stdin on the caller's thread
+- [x] Ask the git actor once for the whole tree, not once per row
+- [x] Stop the watcher opening the directories it is asking about
+- [x] Build a file's text for a language server off the main queue
+- [x] One walk of the project to decide what servers it wants, not one per server
+- [ ] Take the reading this entry asks for, on the quietest window this machine
+      offered, and write it in beside the old one
+- [ ] Say where the quiet window ends, since 0446's agent makes everything after
+      it loud, and rotate the log at that boundary
+- [ ] Make a stall say whether the main thread was *running* during it, since
+      `idle` currently means both "busy with something unnamed" and "not
+      scheduled at all", and the reading cannot tell them apart
+- [ ] Make a stall say which process wrote it, since two Abydos on one machine
+      share one log file
+- [ ] Write down what was ruled out this round, and why suspects 4–7 are still
+      not the work
+
+No spec delta. Nothing a user can see changed: the threshold, the marks and the
+shape of a line in `~/Library/Logs/Abydos/stalls.log` are this project's own
+instrumentation, `spec/` has no capability that covers them, and neither of the
+first two rounds wrote one either.
+
 ## Fixed here
 
 ### The navigator re-read the whole project every time the window came forward
