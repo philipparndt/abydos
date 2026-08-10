@@ -312,7 +312,7 @@ processes underneath it arrive after it does.
       counting rather than by reading
 - [x] Show what is running, with a Stop on every row, since that is the
       condition the decision above rests on
-- [ ] Check what else this app finds on the `PATH`, and say of each whether it
+- [x] Check what else this app finds on the `PATH`, and say of each whether it
       is resolved by luck — the second half of item 2, which nothing above
       reports on
 - [ ] Count the standing servers again on this build. Every number in this

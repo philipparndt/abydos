@@ -272,7 +272,7 @@ struct LanguageServerRegistryTests {
 	/// A GUI app inherits almost nothing of a shell's PATH, so the usual homes
 	/// of these tools are searched whether or not it is set.
 	@Test func looksWhereToolsActuallyLive() {
-		let paths = LanguageServers.searchPaths
+		let paths = Executables.searchPaths
 		#expect(paths.contains("/opt/homebrew/bin"))
 		#expect(paths.contains("/usr/local/bin"))
 		#expect(paths.contains { $0.hasSuffix("/go/bin") })

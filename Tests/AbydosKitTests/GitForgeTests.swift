@@ -98,18 +98,31 @@ struct GitForgeTests {
 
 /// Finding a tool when the app was not started from a terminal.
 ///
-/// An app launched from the Finder has almost no `PATH`, and everything people
-/// install lives in Homebrew's — which is how a feature comes to work for
-/// whoever built it and for nobody else.
+/// An app launched from the Finder has almost no `PATH` — measured on the
+/// running app, `/usr/bin:/bin:/usr/sbin:/sbin` — and nothing anybody installs
+/// is in those four. That is how a feature comes to work for whoever built it
+/// and for nobody else.
 struct ExecutablesTests {
+	/// A directory with one executable in it, for standing in as somewhere a
+	/// version manager put something.
+	private func directoryHolding(_ name: String) throws -> URL {
+		let directory = FileManager.default.temporaryDirectory
+			.appendingPathComponent("tools-\(UUID().uuidString)")
+		try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+		let tool = directory.appendingPathComponent(name)
+		try "#!/bin/sh\n".write(to: tool, atomically: true, encoding: .utf8)
+		try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tool.path)
+		return directory
+	}
+
 	@Test func aToolIsFoundOnThePath() {
-		#expect(Executables.locate("env", path: "/usr/bin:/bin") == "/usr/bin/env")
+		#expect(Executables.locate("env", path: "/usr/bin:/bin", loginPath: []) == "/usr/bin/env")
 	}
 
 	/// The case that mattered: no PATH worth the name, tool in Homebrew's.
 	@Test func aToolIsFoundWithoutAPathAtAll() {
-		let found = Executables.locate("env", path: nil)
-		#expect(found == "/usr/bin/env")
+		#expect(Executables.locate("env", path: nil, loginPath: []) == "/usr/bin/env")
 	}
 
 	@Test func whatIsNotInstalledIsNotFound() {
@@ -119,15 +132,39 @@ struct ExecutablesTests {
 	/// What the PATH says wins: a tool somebody put in front is the one they
 	/// meant to use.
 	@Test func thePathIsSearchedBeforeTheFallbacks() throws {
-		let directory = FileManager.default.temporaryDirectory
-			.appendingPathComponent("tools-\(UUID().uuidString)")
-		try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+		let directory = try directoryHolding("env")
 		defer { try? FileManager.default.removeItem(at: directory) }
 
-		let mine = directory.appendingPathComponent("env")
-		try "#!/bin/sh\n".write(to: mine, atomically: true, encoding: .utf8)
-		try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: mine.path)
+		#expect(Executables.locate("env", path: directory.path, loginPath: []) == directory.path + "/env")
+	}
 
-		#expect(Executables.locate("env", path: directory.path) == mine.path)
+	/// The case this became. An app started from the Dock has
+	/// `PATH=/usr/bin:/bin:/usr/sbin:/sbin` and nothing else, and a version
+	/// manager puts its tools where no fixed list would guess: measured on this
+	/// machine, `cargo` and `rustc` are in `~/.cargo/bin` and in none of the
+	/// well-known directories. So they were invisible to everything that came
+	/// through here — while `openscad-lsp`, in that very directory, was found,
+	/// because the language server search asked the shell and this one did not.
+	@Test func aToolOnlyTheLoginShellKnowsAboutIsStillFound() throws {
+		let directory = try directoryHolding("cargo")
+		defer { try? FileManager.default.removeItem(at: directory) }
+
+		#expect(Executables.locate("cargo", path: "/usr/bin:/bin", loginPath: [directory.path])
+			== directory.path + "/cargo")
+	}
+
+	/// And still only as a second opinion: a `PATH` this process was handed
+	/// deliberately — a test harness, a wrapper script, a run configuration —
+	/// is the one somebody meant.
+	@Test func whatThisProcessWasGivenBeatsWhatTheShellSays() throws {
+		let given = try directoryHolding("cargo")
+		let shell = try directoryHolding("cargo")
+		defer {
+			try? FileManager.default.removeItem(at: given)
+			try? FileManager.default.removeItem(at: shell)
+		}
+
+		#expect(Executables.locate("cargo", path: given.path, loginPath: [shell.path])
+			== given.path + "/cargo")
 	}
 }
