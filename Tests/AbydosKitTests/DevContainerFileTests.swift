@@ -177,7 +177,7 @@ struct DevContainerFileTests {
 	/// `devcontainer.json` is committed, so which containers a project offers is
 	/// somebody else's to change between one session and the next; an answer
 	/// naming one that has gone must not quietly become an answer naming whichever
-	/// one is left. 0443.
+	/// one is left. 0444.
 	@Test func anAnswerNamingAContainerThatHasGoneReadsAsNoAnswer() throws {
 		let project = try makeProject()
 		defer { try? FileManager.default.removeItem(at: project) }

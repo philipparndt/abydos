@@ -294,10 +294,10 @@ struct DevContainerConsentTests {
 		#expect(!DevContainerConsent.notNow.isRemembered)
 	}
 
-	// MARK: - Which of several containers (0443)
+	// MARK: - Which of several containers (0444)
 
 	/// **The pill stopped saying the name, so something else has to.** Part 3 of
-	/// 0443 leaves the pill showing the `⬢` alone, and this is the sentence that
+	/// 0444 leaves the pill showing the `⬢` alone, and this is the sentence that
 	/// takes the name over: it is the tool tip while a container is in use and the
 	/// line at the top of the pill's menu.
 	@Test func theNameOfAContainerInUseIsSaidWhereThereIsRoomForIt() {
@@ -316,7 +316,7 @@ struct DevContainerConsentTests {
 	/// A refused start leaves `container` written down — somebody did say yes and
 	/// has not changed their mind — so the pill went on saying a container was
 	/// starting for the rest of the session. Found by watching a
-	/// `postCreateCommand` fail with 0443's pane in front of it.
+	/// `postCreateCommand` fail with 0444's pane in front of it.
 	@Test func aContainerThatWouldNotStartIsNotAContainerThatIsStarting() {
 		let failed = DevContainerConsent.pillCouldNotStart(container: "py")
 		#expect(failed != DevContainerConsent.pillState(.container, container: "py"))

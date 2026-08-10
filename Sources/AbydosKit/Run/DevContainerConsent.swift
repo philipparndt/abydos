@@ -181,7 +181,7 @@ public extension DevContainerConsent {
 	/// **This sentence is new because the pill stopped saying the name.** It used
 	/// to read `<name> ⬢`, and a devcontainer's `name` is a whole sentence:
 	/// "Python, with its language server in the container" beside a project name,
-	/// a branch and a subproject is most of a titlebar. 0443's part 3 takes the
+	/// a branch and a subproject is most of a titlebar. 0444's part 3 takes the
 	/// name off the pill and leaves the `⬢`, which is the one thing the pill is
 	/// for — this window is working inside a container — and the name moves to
 	/// here, where there is room for it, and to the menu, where the containers are
@@ -198,7 +198,7 @@ public extension DevContainerConsent {
 	/// have not changed their mind — so the pill went on saying a container was
 	/// starting for as long as the project stayed open. It was only ever a
 	/// sentence about the gap between the answer and the container, and a failed
-	/// start is not in that gap. Found by watching a build fail with 0443's pane
+	/// start is not in that gap. Found by watching a build fail with 0444's pane
 	/// in front of it.
 	///
 	/// It says where the servers went, because that is the question somebody has

@@ -119,7 +119,7 @@ public struct DevContainerAttachments: Sendable {
 	/// This project's language servers are moving to a **different** container,
 	/// so what is known about the one they were in stops being about them.
 	///
-	/// **Not `letGo`, and the difference is the whole of 0443's part 2.** `letGo`
+	/// **Not `letGo`, and the difference is the whole of 0444's part 2.** `letGo`
 	/// keeps the attachment because the project is coming back to the same
 	/// container; here the project is being pointed at another one, and an
 	/// attachment left standing is what the next `warmUp` would find and start

@@ -423,7 +423,7 @@ public final class Settings {
 	/// that is expected rather than guarded against: a `devcontainer.json` is
 	/// committed, and it can be renamed or deleted by a colleague between one
 	/// session and the next. `DevContainerFile.choice(identified:in:)` answers nil
-	/// for one of those, and nil is a question rather than a failure — see 0443.
+	/// for one of those, and nil is a question rather than a failure — see 0444.
 	public var devContainerChoice: [String: String] {
 		get { defaults.dictionary(forKey: Key.devContainerChoice) as? [String: String] ?? [:] }
 		set { set(newValue, Key.devContainerChoice) }

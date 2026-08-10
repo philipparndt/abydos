@@ -45,7 +45,7 @@ final class PreparingTerminal {
 	/// written for: they clicked "New Terminal in <container>", they waited, and
 	/// the prompt they waited for should be ready to type at.
 	///
-	/// **False when the container came up because a file was opened** — 0443's
+	/// **False when the container came up because a file was opened** — 0444's
 	/// part 4. Nobody asked for a pane at all there; the pane exists so that
 	/// minutes of building are visible rather than silent, and taking the keyboard
 	/// out of the editor somebody is typing in to give it to a shell they did not
@@ -71,7 +71,7 @@ final class PreparingTerminal {
 	/// **Because a failure is the one outcome that has to be seen.** A pane
 	/// opened behind a closed panel is right while a build is merely slow —
 	/// nobody asked to watch it — and wrong the moment the build fails, since the
-	/// pane is then the only place the reason exists. 0443.
+	/// pane is then the only place the reason exists. 0444.
 	var onRefused: (() -> Void)?
 
 	/// Brings this tab to the front, and takes it away — both set by the panel
@@ -83,7 +83,7 @@ final class PreparingTerminal {
 	/// leaving a shell behind.
 	///
 	/// **False for a terminal somebody asked for**, which is every use of this
-	/// until 0443: they clicked, they waited, the shell is the thing they wanted
+	/// until 0444: they clicked, they waited, the shell is the thing they wanted
 	/// and it stays however quick it was.
 	///
 	/// **True for a container brought up for the language servers**, and the

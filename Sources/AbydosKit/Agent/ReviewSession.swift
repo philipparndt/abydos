@@ -247,7 +247,7 @@ public final class ReviewSession {
 
 /// Builds the command line that runs an agent against an ideai MCP server.
 public enum AgentLauncher {
-	public struct Command {
+	public struct Command: Sendable {
 		public let executable: String
 		public let arguments: [String]
 	}

@@ -452,7 +452,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 		// And when where they run changes without anybody having said anything: a
 		// container that was asked for and would not come up puts the project's
-		// servers on this machine, and until 0443 nothing told the titlebar, which
+		// servers on this machine, and until 0444 nothing told the titlebar, which
 		// went on saying the container was starting for the rest of the session.
 		NotificationCenter.default.addObserver(
 			forName: .ideaiLanguageServersChanged,
@@ -3216,6 +3216,52 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 	}
 
+	/// Shows the backlog: the list and the board, over `.abydos/backlog`.
+	@objc func showBacklog(_ sender: Any?) {
+		setPanelVisible(true)
+		guard bottomPanel.showBacklog() != nil else {
+			notify("No project is open", detail: "A backlog lives beside a project, in .abydos/backlog.")
+			return
+		}
+	}
+
+	/// Chooses which of the dashboard's two presentations is showing.
+	///
+	/// Only for `--backlog list|board`, which is how the two are photographed
+	/// without a click. The segmented control is how anybody else gets there.
+	func showBacklogMode(list: Bool) {
+		bottomPanel.showBacklog()?.showList(list)
+	}
+
+	/// Picks up the lowest-numbered ready item without opening the board first.
+	///
+	/// Worth its own command: once a backlog is in the habit of being worked
+	/// this way, "start the next thing" is the whole of what somebody wants
+	/// from it, and making them look at a board to press one button is making
+	/// them look at a board.
+	@objc func startNextBacklogItem(_ sender: Any?) {
+		guard let root = project?.root else {
+			notify("No project is open", detail: "A backlog lives beside a project, in .abydos/backlog.")
+			return
+		}
+		let backlog = Backlog(projectRoot: root)
+		guard backlog.exists else {
+			notify(
+				"This project has no backlog",
+				detail: "Run `abydos-backlog init` in \(root.lastPathComponent) to make one."
+			)
+			return
+		}
+		guard let item = BacklogRunner.next(in: backlog) else {
+			notify("Nothing is ready", detail: "Move an item into ready/ before an agent can pick it up.")
+			return
+		}
+
+		setPanelVisible(true)
+		bottomPanel.onBacklogNotice = { [weak self] title, detail in self?.notify(title, detail: detail) }
+		bottomPanel.startBacklogItem(item)
+	}
+
 	/// Starts an agent review of this branch, reported over MCP.
 	@objc func reviewBranch(_ sender: Any?) {
 		setPanelVisible(true)
@@ -3454,7 +3500,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// that had shown itself would be a panel that opened for nothing and has to
 	/// be put away by hand. Past this, the thing being waited for is a pull, a
 	/// build or a `postCreateCommand`, all of which are minutes, and minutes of
-	/// silence is the complaint 0443's part 4 comes from.
+	/// silence is the complaint 0444's part 4 comes from.
 	private static let containerBuildRevealDelay: TimeInterval = 3
 
 	/// A pane for a devcontainer that is being brought up for this project's
@@ -3534,7 +3580,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	///
 	/// Written once, because three things wear it and they have to be the same
 	/// character: the terminal tab whose shell is in there, the menu item that
-	/// opens one, and — since 0443 took the name off it — the whole of what the
+	/// opens one, and — since 0444 took the name off it — the whole of what the
 	/// titlebar's pill shows.
 	static let containerMark = "⬢"
 
@@ -3666,7 +3712,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			let name = Self.containerName(for: self.pilledContainer, in: root)
 			pill.setContainer(Self.containerMark, inUse: inUse != nil)
 			// **The tool tip carries the name in both states now**, because the pill
-			// no longer does — 0443's part 3. It said nothing at all while a
+			// no longer does — 0444's part 3. It said nothing at all while a
 			// container was in use, which was right when the name was written across
 			// the titlebar and is not right now that hovering is one of the two
 			// places the name is.
@@ -3684,7 +3730,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// so the consent alone cannot tell the gap between the answer and the
 	/// container from a container that will never arrive, and the pill said
 	/// "starting" for the rest of the session. Seen while watching a
-	/// `postCreateCommand` fail in the pane 0443's part 4 added.
+	/// `postCreateCommand` fail in the pane 0444's part 4 added.
 	private func devContainerStateSentence(
 		for root: URL, container: String, consent: DevContainerConsent?
 	) -> String {
@@ -3722,7 +3768,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		let inUse = devContainerPill?.isInUse == true
 		let container = Self.containerName(for: pilledContainer, in: root)
 
-		// **The state line is in both states now**, which 0443's part 3 makes
+		// **The state line is in both states now**, which 0444's part 3 makes
 		// necessary rather than merely tidy: the pill has stopped saying the
 		// container's name, so this menu and the tool tip are the two places it is
 		// said, and a menu that dropped out of a pill saying nothing but `⬢` and
@@ -3743,7 +3789,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		menu.addItem(state)
 		menu.addItem(.separator())
 
-		// **The choice of container, which is 0443's parts 1 and 2 arriving.** The
+		// **The choice of container, which is 0444's parts 1 and 2 arriving.** The
 		// question that starts a container stays three answers however many there
 		// are — a devcontainer's name is a sentence, and a button per container is
 		// a wall in the corner of the screen — so it names the one it would use and
@@ -3885,7 +3931,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		let where_ = " [scope=\(scopeRoot?.lastPathComponent ?? "-")"
 			+ " container=\(devContainerRoot?.lastPathComponent ?? "-")]"
 		guard let pill = devContainerPill, pill.hasContainer else { return "PILL: (none)\(where_)" }
-		// **What it shows and what it means, separately**, since 0443 made them
+		// **What it shows and what it means, separately**, since 0444 made them
 		// two different things: the pill is the mark alone, and the name it stands
 		// for is only in the tool tip and the menu. A dump that printed the name as
 		// though it were on the pill would be recording the thing that was
@@ -5105,7 +5151,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	}
 
 	/// Whether the terminal panel is showing, what is in it, and what the pane in
-	/// front last said — for 0443's part 4, whose whole claim is about a pane that
+	/// front last said — for 0444's part 4, whose whole claim is about a pane that
 	/// appears without being asked for and must not be asked for again to be seen.
 	func panelTabsForTesting(tail: Int = 0) -> String {
 		var said = "PANEL: visible=\(isPanelVisible) \(bottomPanel.tabsForTesting)"

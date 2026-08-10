@@ -840,6 +840,36 @@ final class EditorViewController: NSViewController {
 	///   one preview slot. A double-click (or editing) makes it permanent.
 	/// - Already-open files are activated rather than reopened, which is what
 	///   makes clicking a file in the tree select its existing tab.
+	/// The tab already showing a file, whatever spelling of its path is asked.
+	///
+	/// **Two names for one file is the ordinary case, not the exotic one.** A
+	/// project reached through a symlink has two: the one somebody typed and the
+	/// one the file system answers with. `/tmp` is itself a symlink to
+	/// `/private/tmp` on every Mac, so a project under it has two spellings
+	/// before anybody has done anything unusual.
+	///
+	/// That is not hypothetical here. `abydos <file>` in a pane resolves its
+	/// argument with `pwd -P`, because a shell's idea of where it is has to be
+	/// made absolute before it can be sent anywhere — and the app is holding the
+	/// unresolved name. Compared as URLs, those are different files, so the
+	/// command opened a second tab onto the file already on screen.
+	///
+	/// Compared here rather than by canonicalising the tab's URL, because the
+	/// URL a tab holds is what is *shown* — in the tab, the title and the
+	/// breadcrumbs — and rewriting somebody's `~/dev/thing` into
+	/// `/private/var/…` to win an argument about identity would be a poor trade.
+	/// The tab keeps the name it was opened under; only the question "is this
+	/// already open" is asked in the file system's terms.
+	///
+	/// `FilePath.canonical` is the same answer breakpoints needed, for the same
+	/// reason: one keyed `/tmp/x` never matched the `/private/tmp/x` the
+	/// debugger reported, and so was set and never hit.
+	private func indexOfTab(showing fileURL: URL) -> Int? {
+		if let exact = tabs.firstIndex(where: { $0.url == fileURL }) { return exact }
+		let wanted = FilePath.canonical(fileURL)
+		return tabs.firstIndex { FilePath.canonical($0.url) == wanted }
+	}
+
 	func open(fileURL: URL, focusEditor: Bool = false, preview: Bool = false) {
 		let departure = currentPlace
 		defer {
@@ -849,7 +879,7 @@ final class EditorViewController: NSViewController {
 			}
 		}
 
-		if let existing = tabs.firstIndex(where: { $0.url == fileURL }) {
+		if let existing = indexOfTab(showing: fileURL) {
 			// Committing to a file that is currently provisional pins it.
 			if !preview { tabs[existing].isPreview = false }
 			activate(index: existing, focusEditor: focusEditor)

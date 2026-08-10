@@ -843,7 +843,7 @@ final class LanguageService {
 	/// nobody can start. Degrading it to nil puts the question back rather than
 	/// failing, and rather than quietly starting whichever one sorts first —
 	/// which would be choosing a toolchain for somebody who had chosen a
-	/// different one. 0443.
+	/// different one. 0444.
 	private func consent(for project: URL) -> DevContainerConsent? {
 		let path = project.standardizedFileURL.path
 		if let held = devcontainerConsent[path] { return held }
@@ -943,7 +943,7 @@ final class LanguageService {
 	/// may hold somebody's terminal, and 0424 is explicit that coming back has to
 	/// be instant.
 	///
-	/// **Moving between two containers is the same move**, which is 0443's part 2
+	/// **Moving between two containers is the same move**, which is 0444's part 2
 	/// and the reason this takes a choice rather than only a consent. It costs one
 	/// thing more than the others: the attachment naming the container the servers
 	/// were in has to go, or `warmUp` finds it, decides the project already has a
@@ -1130,7 +1130,7 @@ final class LanguageService {
 	/// so an answer given a minute later still hands the server the file somebody
 	/// is looking at.
 	/// **The question stays three answers however many containers there are**,
-	/// which is 0443's part 1 and the shape that entry proposes. Answers stack
+	/// which is 0444's part 1 and the shape that entry proposes. Answers stack
 	/// rather than sit in a row — a devcontainer's `name` is a whole sentence, so
 	/// three side by side would be three truncations — and a fourth and fifth
 	/// stacked under them would be a wall in the corner of the screen for a
@@ -1233,7 +1233,7 @@ final class LanguageService {
 	/// Brings up **that** devcontainer of the project's, the answer having been
 	/// yes to it by name.
 	///
-	/// **The file rather than the project**, which is 0443's part 1 arriving at
+	/// **The file rather than the project**, which is 0444's part 1 arriving at
 	/// the bottom of it. `DevContainers.session(for project:)` starts whichever
 	/// container the project prefers and has nowhere to be told otherwise; a
 	/// session is remembered against the file, so asking by file is what lets a
@@ -1266,7 +1266,7 @@ final class LanguageService {
 		log("\(project.lastPathComponent) is worked on in \(choice.name); "
 			+ "its language servers go inside it")
 
-		// **Somewhere to watch it happen**, which is 0443's part 4. The first
+		// **Somewhere to watch it happen**, which is 0444's part 4. The first
 		// start is an image pulled or a Dockerfile built and then three lifecycle
 		// commands — minutes, during which the only thing that used to reach the
 		// screen was a passing toast per step, with the `docker build` output
@@ -1327,7 +1327,7 @@ final class LanguageService {
 				devcontainerFailures.insert(path)
 				// **The pane is the error and the toast points at it.** A failed
 				// build is a hundred lines of `docker build` ending in one that
-				// matters, and a toast cannot hold either — 0443's part 4. Where
+				// matters, and a toast cannot hold either — 0444's part 4. Where
 				// there is a pane, the reason goes in it under everything the build
 				// said, and what is posted is short and says where to look.
 				if let watching, watching.isOpen {

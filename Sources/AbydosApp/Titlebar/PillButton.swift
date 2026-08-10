@@ -226,7 +226,7 @@ final class SubprojectPillButton: PillButton {
 /// against. That is worth a menu somebody read rather than a small target
 /// beside a name.
 ///
-/// **It does not say the container's name, and 0443's part 3 is that decision
+/// **It does not say the container's name, and 0444's part 3 is that decision
 /// being reversed.** 0433 gave it `containerTabTitle` so that the pill, the tab
 /// in the same container and the menu item that opens one could not drift apart,
 /// and the naming argument was that "a window scoped to one subproject of ten

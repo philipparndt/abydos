@@ -63,6 +63,11 @@ final class BottomPanel: NSView {
 			/// the chat is a view change rather than a new process.
 			case review(ReviewPane, TerminalPane)
 			case search(SearchPane)
+			/// The backlog as a list and a board. A pane rather than a window
+			/// because it is read beside the work, the way the search results
+			/// are — the thing you glance at to see what is next and then go
+			/// back to the editor.
+			case backlog(BacklogPane)
 			case debug(DebugPane)
 			case profiler(ProfilerPane)
 		}
@@ -102,6 +107,7 @@ final class BottomPanel: NSView {
 			case let .terminal(pane): return pane
 			case let .review(pane, _): return pane
 			case let .search(pane): return pane
+			case let .backlog(pane): return pane
 			case let .debug(pane): return pane
 			case let .profiler(pane): return pane
 			}
@@ -148,6 +154,7 @@ final class BottomPanel: NSView {
 				return isStillRunning ? "play.fill" : "stop.fill"
 			case .review: return "sparkles"
 			case .search: return "magnifyingglass"
+			case .backlog: return "checklist"
 			case .debug: return "ladybug"
 			case .profiler: return "gauge.with.needle"
 			}
@@ -158,7 +165,7 @@ final class BottomPanel: NSView {
 			switch kind {
 			case let .terminal(pane): return pane
 			case let .review(_, pane): return pane
-			case .search, .debug, .profiler: return nil
+			case .search, .debug, .profiler, .backlog: return nil
 			}
 		}
 	}
@@ -1789,6 +1796,91 @@ final class BottomPanel: NSView {
 		return pane
 	}
 
+	// MARK: - The backlog
+
+	/// Shows the backlog dashboard, making it if this is the first time.
+	///
+	/// One per window and reused, like the search pane: two boards over the
+	/// same folder is two things to keep in step for no gain, and the second
+	/// one is always the one somebody is looking at when it goes stale.
+	@discardableResult
+	func showBacklog() -> BacklogPane? {
+		guard let root = workingDirectory else { return nil }
+
+		if let index = sessions.firstIndex(where: { if case .backlog = $0.kind { return true }; return false }),
+		   case let .backlog(pane) = sessions[index].kind {
+			activate(sessions[index], focus: false)
+			pane.reload()
+			return pane
+		}
+
+		let pane = BacklogPane(projectRoot: root)
+		pane.onOpenItem = { [weak self] url in self?.onOpenFinding?(url, 1) }
+		pane.onNotify = { [weak self] title, detail in self?.onBacklogNotice?(title, detail) }
+		pane.onStartAgent = { [weak self] item in self?.startBacklogItem(item) }
+
+		let session = Session(title: "Backlog", kind: .backlog(pane))
+		sessions.append(session)
+		activate(session, focus: false)
+		return pane
+	}
+
+	/// Told when the backlog has something to say that is not a pane's job to
+	/// show — a move that failed, a worktree that could not be made.
+	var onBacklogNotice: ((String, String?) -> Void)?
+
+	/// Picks an item up: a worktree of its own, and the assistant started in a
+	/// terminal beside the board.
+	///
+	/// The agent goes in a pane rather than in the background on purpose. It is
+	/// going to work for twenty minutes in a checkout nobody is looking at, and
+	/// the one thing that must stay possible is opening the tab, reading what it
+	/// decided, and taking over — which is only true if it was started in a
+	/// terminal in the first place.
+	func startBacklogItem(_ item: BacklogItem) {
+		guard let root = workingDirectory else { return }
+		let backlog = Backlog(projectRoot: root)
+		let configuration = BacklogConfiguration.read(backlog.configFile) ?? BacklogConfiguration()
+
+		Task { @MainActor in
+			do {
+				let start = try await BacklogRunner.start(
+					item,
+					in: backlog,
+					assistant: configuration.preferred,
+					useWorktree: configuration.worktrees
+				)
+				self.showBacklog()?.reload()
+
+				guard let command = start.command else {
+					self.onBacklogNotice?(
+						"The worktree is ready, but no assistant is",
+						configuration.known.isEmpty
+							? "No assistant is configured for this backlog. Run `abydos-backlog init` in the project."
+							: "None of \(configuration.known.map(\.name).joined(separator: ", ")) is installed. "
+								+ "The worktree is at \(start.directory.path)."
+					)
+					return
+				}
+
+				let title = String(format: "%04d", start.item.number)
+				let pane = TerminalPane(
+					workingDirectory: start.directory,
+					command: (executable: command.executable, arguments: command.arguments)
+				)
+				let session = Session(title: title, kind: .terminal(pane))
+				session.directory = start.directory
+				session.isRenamed = true
+				session.displayTitle = title
+				self.wire(session)
+				self.sessions.append(session)
+				self.activate(session, focus: true)
+			} catch {
+				self.onBacklogNotice?("Could not start \(String(format: "%04d", item.number))", "\(error)")
+			}
+		}
+	}
+
 	// MARK: - Debugging
 
 	/// Starts a native debug session for a Go package.
@@ -2624,7 +2716,7 @@ final class BottomPanel: NSView {
 
 	/// Every tab, the one in front marked, and whether it is still a report
 	/// rather than a shell — for the harness, which cannot photograph a hidden
-	/// panel and is the only witness to 0443's part 4 there is.
+	/// panel and is the only witness to 0444's part 4 there is.
 	var tabsForTesting: String {
 		guard !sessions.isEmpty else { return "(no tabs)" }
 		return sessions.enumerated().map { index, session in
@@ -2816,6 +2908,7 @@ final class BottomPanel: NSView {
 			switch session.kind {
 			case let .review(pane, _): pane.applySettings()
 			case let .search(pane): pane.applySettings()
+			case let .backlog(pane): pane.applySettings()
 			case let .debug(pane): pane.applySettings()
 			case let .terminal(pane): pane.terminalView.applyThemeChange()
 			case .profiler: break

@@ -1345,6 +1345,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			controller?.reviewBranch(nil)
 		}
 
+		if let mode = options.backlogMode {
+			controller?.showBacklog(nil)
+			controller?.showBacklogMode(list: mode == "list")
+		}
+
 		if options.detailDialog {
 			// The real thing a missing server offers, so what is captured is what
 			// somebody pressing "How to install" would actually be shown.
@@ -2030,6 +2035,20 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		)
 		uncommittedItem.keyEquivalentModifierMask = [.command, .shift]
 		agentMenu.addItem(uncommittedItem)
+
+		agentMenu.addItem(.separator())
+		let backlogItem = NSMenuItem(
+			title: "Backlog",
+			action: #selector(MainWindowController.showBacklog(_:)),
+			keyEquivalent: "b"
+		)
+		backlogItem.keyEquivalentModifierMask = [.command, .shift]
+		agentMenu.addItem(backlogItem)
+
+		agentMenu.addItem(withTitle: "Start the Next Ready Item\u{2026}",
+		                  action: #selector(MainWindowController.startNextBacklogItem(_:)),
+		                  keyEquivalent: "")
+
 		agentMenuItem.submenu = agentMenu
 		mainMenu.addItem(agentMenuItem)
 

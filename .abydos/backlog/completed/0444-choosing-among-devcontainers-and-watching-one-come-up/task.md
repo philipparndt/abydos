@@ -1,4 +1,4 @@
-# 443. Choosing among several devcontainers, and watching one come up
+# 444. Choosing among several devcontainers, and watching one come up
 
 Four changes, reported from use. Two are gaps the code already knows about, one
 reverses a decision that had a reason, and one is mostly wiring something that
@@ -101,6 +101,47 @@ Parts 1 and 2 are one piece of work — the choice needs somewhere to be made. P
 3 is small and independent. Part 4 is independent of all of them and is the one
 somebody feels first, since it is the difference between minutes of silence and
 minutes of visible progress.
+
+## Steps
+
+Written after the work rather than before it, which is the one rule this list
+breaks and it is worth saying so plainly: this item was picked up as 0443 before
+`## Steps` existed, and the checklist arrived with `AGENTS.md` on the merge that
+renumbered it. Every line was ticked by looking at what is in the branch, not
+from memory, and the three unticked lines are unticked because nobody did them.
+
+- [x] Write down *which* devcontainer a project is worked in, beside the answer
+      rather than inside it
+- [x] Read a stored answer back, and turn one naming a container that has gone
+      into a question rather than a failure
+- [x] The question names the container it would use, and writes that name down
+      with the yes
+- [x] The pill's menu lists every container, marking the one in use
+- [x] Choosing another moves the servers: stopped in the old, started in the new,
+      both containers left running
+- [x] Drop the attachment on a switch — otherwise the warm-up starts them back up
+      in the container being left
+- [x] The pill shows the `⬢` and not the name, and the name moves to the tool tip
+      and the menu
+- [x] Route the language-server start through `PreparingTerminal` so the build is
+      visible
+- [x] Decide whether that pane takes focus — it does not, ever
+- [x] Decide what a failed build looks like — the pane is the error, the toast
+      points at it
+- [x] Decide what a start nobody watched leaves behind — nothing
+- [x] Tests for everything the kit can reach: the identifier, the stale lookup,
+      the second table, `detach`, and every new sentence
+- [x] Drive the app at a project with four devcontainers and write down what was
+      seen
+- [x] Write down what was ruled out and what surprised us
+- [x] `spec/devcontainers.md` says what the project now does
+- [ ] Two projects with devcontainers open in two windows at once — reasoned
+      about, never tried, which is the same gap 0438 left
+- [ ] The tab a container leaves behind is restored as a shell on *this* machine
+      with the `⬢` still in its name. Not new — it is what `newTerminalInContainer`
+      has always written into `.abydos/session.json` — and not fixed here
+- [ ] Decide whether a container whose build failed should be retried on the next
+      open. It is, because the answer stays on file; nobody decided that
 
 ---
 
@@ -302,3 +343,12 @@ visible by giving failures a pane.
 seconds; it did not flake on the run that counts.
 
 All four were seen working, so this one is done and moves to `completed`.
+
+---
+
+Previously numbered 0443. The backlog-spec branch had taken that number for
+itself before this was written and was out of sight while it did, so both
+existed for about an hour. The branch's keeps it: it was pushed, it is
+in-progress, and its own commit message cites it. A number is given once, and
+the way out of two items holding one is the way the README already describes —
+the newer moves and says at the bottom what it was called.

@@ -119,7 +119,7 @@ struct DevContainerAttachmentTests {
 	}
 
 	/// **Moving a project's servers to another of its containers is the one thing
-	/// that is not letting go**, and 0443's part 2 is why the two have to be
+	/// that is not letting go**, and 0444's part 2 is why the two have to be
 	/// different calls.
 	///
 	/// `letGo` keeps the attachment because the project is coming back to the same
