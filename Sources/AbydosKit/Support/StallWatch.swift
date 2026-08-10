@@ -14,10 +14,18 @@ import Foundation
 public enum StallWatch {
 	/// How long a ping may take before it counts as a stall.
 	///
-	/// A frame is 8 ms at 120 Hz; a keystroke that lands three frames late is
-	/// not worth waking anybody for. A fifth of a second is where a person
-	/// stops believing the keyboard.
-	public static let threshold: TimeInterval = 0.2
+	/// It was a fifth of a second, on the argument that a fifth of a second is
+	/// where a person stops believing the keyboard. That is true and it was the
+	/// wrong number, because it answers a different question: 200 ms is where a
+	/// stall is worth *complaining* about, and this log is not a complaint, it
+	/// is the only evidence of what holds the main queue. Typing feels bad well
+	/// below it — a letter that arrives four frames after the key is a letter
+	/// somebody notices — and every one of those was invisible.
+	///
+	/// 50 ms: three frames at 60 Hz, and comfortably above the noise of a
+	/// utility-priority thread being descheduled on a busy machine. The cost is
+	/// more lines in a log that already truncates itself.
+	public static let threshold: TimeInterval = 0.05
 
 	/// One late ping.
 	public struct Stall: Sendable, Equatable {
@@ -51,7 +59,15 @@ public enum StallWatch {
 	///
 	/// Nested marks keep the innermost name: the interesting one is what was
 	/// running, not what asked for it.
+	///
+	/// **Off the main thread it does nothing but run the work.** There is one
+	/// name and the watcher reads it when a *main-queue* ping is late, so a mark
+	/// taken on a background queue would put its name on somebody else's stall —
+	/// and the names are the whole point. The guard is what lets a mark live
+	/// inside shared code like `LanguageServers.suits` or `UserShell`, which is
+	/// called from both sides and is only a suspect from one of them.
 	public static func mark<T>(_ activity: String, _ work: () throws -> T) rethrows -> T {
+		guard Thread.isMainThread else { return try work() }
 		lock.lock()
 		let previous = current
 		current = activity

@@ -115,4 +115,50 @@ struct GitStatusTests {
 		""")
 		#expect(await repo.status(forRelativePath: "file with spaces.txt", isDirectory: false) == .modified)
 	}
+
+	// MARK: - Asking for the whole tree at once
+
+	/// The navigator asks for one node at a time, which is one hop onto this
+	/// actor and one continuation back per row — thousands of them per refresh,
+	/// all landing on the main queue. Asking once has to give exactly the same
+	/// answers, in the order they were asked, or the tree colours the wrong rows.
+	@Test func manyPathsAtOnceAgreeWithAskingOneAtATime() async {
+		let repo = await repository("""
+		 M src/a.swift
+		?? src/new.swift
+		!! build/
+		A  docs/guide.md
+		""")
+
+		let queries: [(path: String, isDirectory: Bool)] = [
+			("", true),
+			("src", true),
+			("src/a.swift", false),
+			("src/new.swift", false),
+			("build", true),
+			("build/out.o", false),
+			("docs", true),
+			("docs/guide.md", false),
+			("elsewhere", true),
+		]
+
+		let together = await repo.statuses(for: queries)
+		var separately: [GitFileStatus] = []
+		for query in queries {
+			separately.append(
+				await repo.status(forRelativePath: query.path, isDirectory: query.isDirectory)
+			)
+		}
+
+		#expect(together == separately)
+		// And not vacuously: a run of `.unmodified` would satisfy the line above.
+		#expect(together.contains(.modified))
+		#expect(together.contains(.ignored))
+		#expect(together.count == queries.count)
+	}
+
+	@Test func askingForNothingAnswersNothing() async {
+		let repo = await repository(" M a.swift\n")
+		#expect(await repo.statuses(for: []).isEmpty)
+	}
 }

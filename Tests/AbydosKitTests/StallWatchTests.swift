@@ -36,7 +36,7 @@ struct StallWatchTests {
 
 	/// What the app was doing is the whole point, and the innermost answer is
 	/// the useful one: "parsing terminal output", not "handling a timer".
-	@Test func theInnermostMarkWins() {
+	@MainActor @Test func theInnermostMarkWins() {
 		StallWatch.clear()
 		var seen: [String] = []
 		StallWatch.mark("outer") {
@@ -48,13 +48,37 @@ struct StallWatchTests {
 		#expect(seen == ["outer", "inner", "outer", "idle"])
 	}
 
-	@Test func aMarkHandsBackWhatTheWorkReturned() {
-		#expect(StallWatch.mark("counting") { 6 * 7 } == 42)
+	/// A mark taken anywhere else must not name the main thread's stall.
+	///
+	/// There is one name, read when a *main-queue* ping is late, so a mark from
+	/// a background queue would hang its label on whatever the main thread
+	/// happened to be doing at the time — which is worse than "idle", because
+	/// "idle" at least reads as unknown.
+	@MainActor @Test func aMarkTakenOffTheMainThreadClaimsNothing() async {
+		StallWatch.clear()
+		let queue = DispatchQueue(label: "stallwatch.test")
+		await withCheckedContinuation { continuation in
+			queue.async {
+				StallWatch.mark("somebody else's work") {
+					continuation.resume()
+				}
+			}
+		}
+		#expect(StallWatch.activityForTesting == "idle")
 	}
 
-	/// A ping that came back in time is not news; only late ones are kept.
+	@MainActor @Test func aMarkHandsBackWhatTheWorkReturned() {
+		#expect(StallWatch.mark("counting") { 6 * 7 } == 42)
+		// And off the main thread too, where it names nothing but still runs.
+		let queue = DispatchQueue(label: "stallwatch.test.result")
+		#expect(queue.sync { StallWatch.mark("counting") { 6 * 7 } } == 42)
+	}
+
+	/// A ping that came back in time is not news; only late ones are kept —
+	/// and "in time" is a frame or two, not a fifth of a second. See the
+	/// threshold's own note for why it came down.
 	@Test func onlyLatePingsCount() {
-		#expect(StallWatch.threshold >= 0.1, "a frame late is not a stall")
-		#expect(StallWatch.threshold <= 0.3, "a fifth of a second is already felt")
+		#expect(StallWatch.threshold >= 0.03, "a single frame late is not a stall")
+		#expect(StallWatch.threshold <= 0.1, "typing already feels bad well under 200 ms")
 	}
 }

@@ -405,8 +405,13 @@ public enum LanguageServers {
 	/// A server with no markers is happy anywhere; one with markers wants to
 	/// see at least one of them, so opening a repository that happens to
 	/// contain a stray `.py` file does not start a Python server for it.
+	/// Marked, because this is a depth-2 directory walk and three of its callers
+	/// are on the main actor asking it once per server definition — so the cost
+	/// of "is there anything here for this server" is paid a dozen times over,
+	/// on the queue the keyboard shares. `StallWatch.mark` is a no-op off the
+	/// main thread, so the calls that are already somewhere else stay silent.
 	public static func suits(_ definition: LanguageServerDefinition, root: URL) -> Bool {
-		markerDirectory(for: definition, in: root) != nil
+		StallWatch.mark("language server scan") { markerDirectory(for: definition, in: root) != nil }
 	}
 
 	/// Where this server should be rooted, or nil if the project is not one it

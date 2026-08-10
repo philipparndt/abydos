@@ -239,24 +239,38 @@ final class ProjectNavigatorViewController: NSViewController {
 
 			// Collect the lookups on the actor, then apply them synchronously so
 			// the tree is never left half-updated between frames.
+			//
+			// **One visit to the actor, not one per node.** This asked for each
+			// node's status separately, which for a tree with a few thousand open
+			// rows is a few thousand hops onto the actor and a few thousand
+			// continuations resumed back here — every one of them a block
+			// scheduled on the main queue, interleaving with the terminal's own
+			// drain, on every watcher event in a project being built. The git
+			// subprocess was never the problem and is not touched: the answers
+			// come from a cache the actor already holds, and the only thing that
+			// changed is how many times the main queue is asked to come back for
+			// them.
+			var pending: [(path: String, isDirectory: Bool)] = []
+			StallWatch.mark("navigator git status") {
+				collectPaths(node: rootNode, gitRoot: repoRoot, into: &pending)
+			}
+
+			let statuses = await git.statuses(for: pending)
 			var results: [String: GitFileStatus] = [:]
-			var pending: [(String, Bool)] = []
-			collectPaths(node: rootNode, gitRoot: repoRoot, into: &pending)
-
-			for (path, isDirectory) in pending {
-				results["\(isDirectory ? "d" : "f"):\(path)"] = await git.status(
-					forRelativePath: path,
-					isDirectory: isDirectory
-				)
+			results.reserveCapacity(pending.count)
+			for (query, status) in zip(pending, statuses) {
+				results["\(query.isDirectory ? "d" : "f"):\(query.path)"] = status
 			}
 
-			rootNode.applyGitStatus(gitRoot: repoRoot) { path, isDirectory in
-				results["\(isDirectory ? "d" : "f"):\(path)"] ?? .unmodified
+			StallWatch.mark("navigator git status") {
+				rootNode.applyGitStatus(gitRoot: repoRoot) { path, isDirectory in
+					results["\(isDirectory ? "d" : "f"):\(path)"] ?? .unmodified
+				}
+				// Deliberately not reloadData(): the row structure has not changed,
+				// only the colours, and a reload would clear the selection — which
+				// is what made keyboard-expanding a folder lose your place.
+				redrawVisibleRows()
 			}
-			// Deliberately not reloadData(): the row structure has not changed,
-			// only the colours, and a reload would clear the selection — which is
-			// what made keyboard-expanding a folder lose your place.
-			redrawVisibleRows()
 			onChangeCount?(await git.changedFileCount())
 		}
 	}
@@ -288,7 +302,9 @@ final class ProjectNavigatorViewController: NSViewController {
 
 	/// Gathers relative paths for loaded nodes only; unloaded subtrees resolve
 	/// their status when the user expands them.
-	private func collectPaths(node: FileNode, gitRoot: URL, into result: inout [(String, Bool)]) {
+	private func collectPaths(
+		node: FileNode, gitRoot: URL, into result: inout [(path: String, isDirectory: Bool)]
+	) {
 		let base = gitRoot.path
 		let path = node.url.path
 		let relative: String

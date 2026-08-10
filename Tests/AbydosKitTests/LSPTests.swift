@@ -602,6 +602,39 @@ struct LSPSymbolTests {
 	}
 }
 
+/// A server that has stopped reading is the server's problem, not the app's.
+struct LSPSendingTests {
+	/// A pipe write blocks when nobody is draining the other end, and the other
+	/// end here is somebody else's process. `/bin/sleep` never reads its
+	/// standard input, so it stands in for the language server that is busy
+	/// re-indexing, or wedged, or stopped: the 64 KB the kernel holds fills, and
+	/// before this was queued the writing thread — the main one, on the
+	/// `didChange` 0.4 s after a keypress — parked there until the server felt
+	/// like reading.
+	///
+	/// **Not a benchmark, and the margin says so.** It is a hang detector: the
+	/// same call took the whole thirty seconds before, and there is no arrangement
+	/// of a busy machine that turns microseconds into five seconds.
+	@MainActor @Test func aServerThatIsNotReadingDoesNotHoldUpTheSender() throws {
+		let client = LSPClient()
+		defer { client.stop() }
+		try client.start(executable: "/bin/sleep", arguments: ["30"], workingDirectory: nil)
+
+		// A megabyte: a large source file, and more than a pipe holds.
+		let message: [String: Any] = [
+			"jsonrpc": "2.0",
+			"method": "textDocument/didChange",
+			"params": ["contentChanges": [["text": String(repeating: "x", count: 1_000_000)]]],
+		]
+		let started = Date()
+		client.sendForTesting(message)
+		#expect(
+			Date().timeIntervalSince(started) < 5,
+			"the sender waited on a server that is not draining its standard input"
+		)
+	}
+}
+
 /// Nothing may be sent before the handshake lands.
 struct LSPHandshakeOrderTests {
 	/// A server rejects everything that arrives before `initialize`, quietly:

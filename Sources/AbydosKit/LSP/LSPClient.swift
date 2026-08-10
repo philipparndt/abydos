@@ -517,7 +517,43 @@ public final class LSPClient: @unchecked Sendable {
 		handler?(.failure(error))
 	}
 
+	/// Everything on its way to the server, one message at a time.
+	///
+	/// **A pipe write blocks when the reader is not draining it**, and this is
+	/// the standard input of somebody else's process. A language server busy
+	/// re-indexing, or stopped, or wedged, simply stops reading; the kernel
+	/// buffer fills — 64 KB, which one `didChange` of a large file exceeds by
+	/// itself — and `write` parks the calling thread until it drains. The caller
+	/// was the main thread: `didChange` is sent 0.4 s after a keypress, and
+	/// `didSave` after every auto-save. So the app's whole event loop, including
+	/// the terminal, waited on how a language server felt about being talked to.
+	///
+	/// That is a correctness argument rather than a performance one, and it is
+	/// why this needs no benchmark: there is no bound on the wait. Off here, the
+	/// worst a stuck server can do is make its own queue grow.
+	///
+	/// Serial, and one per client. Serial because a language server's document
+	/// notifications are only meaningful in order — a `didChange` ahead of its
+	/// `didOpen` is as broken as no `didOpen` at all — and per client because
+	/// one wedged server must not hold up the rest.
+	private let outbox = DispatchQueue(label: "de.rnd7.abydos.lsp.outbox")
+
+	/// Queues a message. Framing and JSON both happen on the outbox, so a whole
+	/// file's worth of `JSONSerialization` is not on the caller's thread either.
 	private func write(_ message: [String: Any]) {
+		outbox.async { [weak self] in self?.writeNow(message) }
+	}
+
+	/// Sends a message the way a notification is sent, for the one test that
+	/// cannot be written any other way.
+	///
+	/// What is under test is that the *synchronous* path — the one the editor
+	/// takes from the main thread on every `didChange` — hands the message over
+	/// rather than parking on the pipe, and reaching it through `notify` would
+	/// mean a handshake with a real server first.
+	func sendForTesting(_ message: [String: Any]) { write(message) }
+
+	private func writeNow(_ message: [String: Any]) {
 		// Everything, on the way out: a request, a notification, and a reply to
 		// something the server asked. A container server knows the project by
 		// one name only, and it is not this one.
@@ -530,7 +566,9 @@ public final class LSPClient: @unchecked Sendable {
 		let pipe = inputPipe
 		lock.unlock()
 		// A server that has died mid-write takes the pipe with it; the write
-		// raises rather than returning an error, so it is caught here.
+		// raises rather than returning an error, so it is caught here. Also the
+		// case where `stop` ran while this message was waiting its turn, which
+		// is a client that is going and not a failure worth reporting.
 		guard let pipe else { return }
 		do {
 			try pipe.fileHandleForWriting.write(contentsOf: framed)

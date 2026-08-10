@@ -67,14 +67,19 @@ final class DiffView: NSView {
 	// MARK: - Content
 
 	func setDiff(_ text: String, staged: Bool, url: URL? = nil) {
-		isStaged = staged
-		patch = GitPatch.parse(text)
-		selection = []
-		anchorRow = nil
-		rebuildRows()
-		highlights = Self.highlights(for: patch, url: url)
-		invalidateIntrinsicContentSize()
-		needsDisplay = true
+		// A parse of the patch and two whole tree-sitter parses behind
+		// `highlights`, all inline and bounded only at 5,000 lines. Marked so a
+		// diff that took a second says it was a diff.
+		StallWatch.mark("diff render") {
+			isStaged = staged
+			patch = GitPatch.parse(text)
+			selection = []
+			anchorRow = nil
+			rebuildRows()
+			highlights = Self.highlights(for: patch, url: url)
+			invalidateIntrinsicContentSize()
+			needsDisplay = true
+		}
 	}
 
 	/// Above this many changed lines the colours are not worth the parse.
