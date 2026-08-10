@@ -25,11 +25,27 @@ one newline-joined string, under `.string` alone:
     NSPasteboard.general.setString(paths.joined(separator: "\n"), forType: .string)
 
 That is right for pasting a path into a terminal, and it is the reason ⌘C in the
-tree cannot be pasted in Finder, or anywhere else, as a *file*. So this item is
-not only new behaviour: it has to add `.fileURL` beside the string, and then a
-paste has something to reconstitute. Worth doing carefully rather than by
-replacement — the string is presumably what somebody wanted when it was written,
-and both can be on the pasteboard at once, which is the normal shape for this.
+tree cannot be pasted in Finder, or anywhere else, as a *file*.
+
+**⌘C can be both at once, and it costs nothing to keep what is there.** Measured
+rather than assumed, because the obvious change is the wrong one:
+
+| what is written | items | types on an item | `string(forType: .string)` | files read back |
+|---|---|---|---|---|
+| `writeObjects([NSURL])` — the obvious swap | 2 | `public.file-url` | **nil** | 2 |
+| one `NSPasteboardItem` per file, `.fileURL` + POSIX path as `.string` | 2 | `public.file-url`, `public.utf8-plain-text` | `/…/Makefile\n/…/Package.swift` | 2 |
+
+Two things fall out of that. **`NSURL` carries no string representation of its
+own** — swapping the current code for `writeObjects` would make files pasteable
+and silently destroy the terminal paste, which is the trap this row exists to
+mark. And **AppKit joins the per-item strings with newlines by itself**, so
+writing one item per file with both types reproduces today's ⌘C output exactly,
+character for character, while also being a real file copy. Nothing has to be
+chosen between and nothing has to be preserved by hand.
+
+So the shape is: one item per selected file; `.fileURL` for Finder and for the
+tree's own paste; `url.path` as `.string` for the terminal. `readObjects(forClasses:
+[NSURL.self], options: [.urlReadingFileURLsOnly: true])` reads them back.
 
 ## What the existing code already answers
 
