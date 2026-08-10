@@ -159,6 +159,36 @@ One child per tool: PlantUML and the six servers, each owning its image choice
 and the requirement text beside it. The parent keeps what is genuinely shared —
 the container runtime — and becomes short instead of a wall of cards.
 
+## Steps
+
+Everything above the rule is merged. What is below is the five servers that
+have no image, in the order the entry insists on: a Dockerfile, then a build,
+then a run against a real project, and a line in the catalogue only after all
+three.
+
+- [x] Pull an image that is not on the machine, before first use
+- [x] `ContainerPaths` maps the project in and every URI back out
+- [x] The six servers appear in the tool settings, each choosing an image
+- [x] A server named in `.abydos/tools.json` starts from its image
+- [x] `ToolImages/gopls`, published, pulled back and driven
+- [x] `ToolImageCatalogue` lists the gopls image, and `ToolContainerTests`
+      holds it to the one the live test drives
+- [ ] `ToolImages/rust-analyzer/Dockerfile`
+- [ ] `ToolImages/pyright/Dockerfile`
+- [ ] `ToolImages/typescript-language-server/Dockerfile`
+- [ ] `ToolImages/clangd/Dockerfile`
+- [ ] `ToolImages/jdtls/Dockerfile`
+- [ ] `make tool-image` builds any of them by name, not gopls alone
+- [ ] `ContainerLSPLiveTests` drives a server per language rather than Go alone
+- [ ] Each image built here and driven against a real project of its language
+- [ ] Each image pushed, pulled back as a stranger pulls it, and driven from
+      the registry copy
+- [ ] A catalogue line for each image that survived the step above, and the
+      empty-list assertion in `ToolContainerTests` lost for it deliberately
+- [ ] A version tag for gopls, so `:dev` stops being what the catalogue offers
+- [ ] Write down here what was ruled out on the way
+- [ ] The spec says what the project now does
+
 ---
 
 Previously numbered 53, 390.
