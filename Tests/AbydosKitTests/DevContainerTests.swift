@@ -265,7 +265,8 @@ struct DevContainerTests {
 		let session = session(configuration)
 
 		let resolved = try #require(LanguageServers.resolve(
-			languageId: "go", project: project, inDevContainer: session
+			languageId: "go", project: project, inDevContainer: session,
+			choosing: .none
 		))
 
 		// The devcontainer's own mapping, which is the file's rather than

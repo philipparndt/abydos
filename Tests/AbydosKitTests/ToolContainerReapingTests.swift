@@ -137,7 +137,8 @@ struct ToolContainerNameTests {
 
 		let resolved = try #require(LanguageServers.resolve(
 			languageId: "go", project: root,
-			image: "abydos/gopls:dev", runtime: .docker("/usr/bin/docker")
+			image: "abydos/gopls:dev", runtime: .docker("/usr/bin/docker"),
+			choosing: .none
 		))
 		let container = try #require(resolved.launch.container)
 		#expect(ToolContainers.isOurs(container.name))

@@ -85,7 +85,8 @@ struct BuiltToolImageLiveTests {
 		#expect(asked == ToolImageRecipes.buildHere)
 
 		let resolved = try #require(LanguageServers.resolve(
-			languageId: "openscad", project: root, image: asked, runtime: runtime
+			languageId: "openscad", project: root, image: asked, runtime: runtime,
+			choosing: .none
 		))
 		let image = try #require(resolved.launch.image)
 		#expect(image.name == recipe.image)

@@ -230,10 +230,10 @@ struct LSPFramingTests {
 /// Which server answers for which language.
 struct LanguageServerRegistryTests {
 	@Test func knowsAServerForTheUsualLanguages() {
-		#expect(LanguageServers.definition(forLanguage: "swift")?.command == "sourcekit-lsp")
-		#expect(LanguageServers.definition(forLanguage: "go")?.command == "gopls")
-		#expect(LanguageServers.definition(forLanguage: "typescript")?.arguments == ["--stdio"])
-		#expect(LanguageServers.definition(forLanguage: "cobol") == nil)
+		#expect(LanguageServers.definition(forLanguage: "swift", choosing: .none)?.command == "sourcekit-lsp")
+		#expect(LanguageServers.definition(forLanguage: "go", choosing: .none)?.command == "gopls")
+		#expect(LanguageServers.definition(forLanguage: "typescript", choosing: .none)?.arguments == ["--stdio"])
+		#expect(LanguageServers.definition(forLanguage: "cobol", choosing: .none) == nil)
 	}
 
 	/// A stray file of some language does not mean the project is in it.
@@ -243,7 +243,7 @@ struct LanguageServerRegistryTests {
 		try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 		defer { try? FileManager.default.removeItem(at: root) }
 
-		let go = try #require(LanguageServers.definition(forLanguage: "go"))
+		let go = try #require(LanguageServers.definition(forLanguage: "go", choosing: .none))
 		#expect(!LanguageServers.suits(go, root: root))
 
 		try "module x\n".write(to: root.appendingPathComponent("go.mod"), atomically: true, encoding: .utf8)
@@ -258,14 +258,14 @@ struct LanguageServerRegistryTests {
 			withIntermediateDirectories: true)
 		defer { try? FileManager.default.removeItem(at: root) }
 
-		let swift = try #require(LanguageServers.definition(forLanguage: "swift"))
+		let swift = try #require(LanguageServers.definition(forLanguage: "swift", choosing: .none))
 		#expect(LanguageServers.suits(swift, root: root))
 	}
 
 	/// A server with nothing to look for is happy anywhere.
 	@Test func startsAnywhereWhenItHasNoMarkers() throws {
 		let root = URL(fileURLWithPath: NSTemporaryDirectory())
-		let json = try #require(LanguageServers.definition(forLanguage: "json"))
+		let json = try #require(LanguageServers.definition(forLanguage: "json", choosing: .none))
 		#expect(LanguageServers.suits(json, root: root))
 	}
 
@@ -317,7 +317,7 @@ struct XcodeToolchainTests {
 	/// machine with only the command-line tools there is nothing to prefer, and
 	/// the fallback to the `PATH` is then the right answer rather than a failure.
 	@Test func prefersXcodesCopyOverWhateverIsFirstOnThePath() throws {
-		let swift = try #require(LanguageServers.definition(forLanguage: "swift"))
+		let swift = try #require(LanguageServers.definition(forLanguage: "swift", choosing: .none))
 		guard let fromXcode = XcodeToolchain.path(for: "sourcekit-lsp") else { return }
 
 		#expect(LanguageServers.executable(for: swift) == fromXcode)
@@ -345,31 +345,29 @@ struct LanguageServerKeyTests {
 	/// started two `clangd`, because the table was keyed by the language asked
 	/// about and one server answers for three of them.
 	@Test func oneServerAnswersForAllTheLanguagesItKnows() {
-		let c = LanguageServers.serverKey(project: project, languageId: "c")
-		#expect(LanguageServers.serverKey(project: project, languageId: "cpp") == c)
-		#expect(LanguageServers.serverKey(project: project, languageId: "objc") == c)
+		let c = LanguageServers.serverKey(project: project, languageId: "c", choosing: .none)
+		#expect(LanguageServers.serverKey(project: project, languageId: "cpp", choosing: .none) == c)
+		#expect(LanguageServers.serverKey(project: project, languageId: "objc", choosing: .none) == c)
 
-		let typescript = LanguageServers.serverKey(project: project, languageId: "typescript")
-		#expect(LanguageServers.serverKey(project: project, languageId: "javascript") == typescript)
-		#expect(LanguageServers.serverKey(project: project, languageId: "tsx") == typescript)
+		let typescript = LanguageServers.serverKey(project: project, languageId: "typescript", choosing: .none)
+		#expect(LanguageServers.serverKey(project: project, languageId: "javascript", choosing: .none) == typescript)
+		#expect(LanguageServers.serverKey(project: project, languageId: "tsx", choosing: .none) == typescript)
 	}
 
 	@Test func differentServersAreStillDifferentKeys() {
-		#expect(LanguageServers.serverKey(project: project, languageId: "swift")
-			!= LanguageServers.serverKey(project: project, languageId: "go"))
+		#expect(LanguageServers.serverKey(project: project, languageId: "swift", choosing: .none)
+			!= LanguageServers.serverKey(project: project, languageId: "go", choosing: .none))
 	}
 
 	@Test func twoProjectsDoNotShareAServer() {
-		#expect(LanguageServers.serverKey(project: project, languageId: "swift")
-			!= LanguageServers.serverKey(
-				project: URL(fileURLWithPath: "/tmp/other"), languageId: "swift"
-			))
+		#expect(LanguageServers.serverKey(project: project, languageId: "swift", choosing: .none)
+			!= LanguageServers.serverKey(project: URL(fileURLWithPath: "/tmp/other"), languageId: "swift", choosing: .none))
 	}
 
 	/// A language nothing answers for still gets a key of its own, so the
 	/// bookkeeping around it — what was looked for and not found — keeps working.
 	@Test func aLanguageWithNoServerKeepsItsOwnName() {
-		#expect(LanguageServers.serverKey(project: project, languageId: "cobol")
+		#expect(LanguageServers.serverKey(project: project, languageId: "cobol", choosing: .none)
 			== "/tmp/project#cobol")
 	}
 }
@@ -405,8 +403,8 @@ struct LanguageServerScopeTests {
 		let project = Project(root: checkout)
 		project.scope = part
 
-		let scoped = LanguageServers.serverKey(project: project.scopeRoot, languageId: "python")
-		let whole = LanguageServers.serverKey(project: project.root, languageId: "python")
+		let scoped = LanguageServers.serverKey(project: project.scopeRoot, languageId: "python", choosing: .none)
+		let whole = LanguageServers.serverKey(project: project.root, languageId: "python", choosing: .none)
 		#expect(scoped != whole)
 		#expect(scoped == "\(part.path)#pyright")
 
@@ -421,8 +419,8 @@ struct LanguageServerScopeTests {
 	/// what makes this change nothing for the projects that are one thing.
 	@Test func aWholeProjectIsFiledWhereItAlwaysWas() {
 		let project = Project(root: checkout)
-		#expect(LanguageServers.serverKey(project: project.scopeRoot, languageId: "python")
-			== LanguageServers.serverKey(project: checkout, languageId: "python"))
+		#expect(LanguageServers.serverKey(project: project.scopeRoot, languageId: "python", choosing: .none)
+			== LanguageServers.serverKey(project: checkout, languageId: "python", choosing: .none))
 	}
 }
 
@@ -444,10 +442,8 @@ struct LanguageServerLifetimeTests {
 	/// however the path is spelled. So closing either takes nothing away, and
 	/// nothing has to ask what the other windows are showing.
 	@Test func twoWindowsOnOneProjectHoldTheSameServer() {
-		#expect(LanguageServers.serverKey(project: project, languageId: "swift")
-			== LanguageServers.serverKey(
-				project: URL(fileURLWithPath: "/tmp/project/"), languageId: "swift"
-			))
+		#expect(LanguageServers.serverKey(project: project, languageId: "swift", choosing: .none)
+			== LanguageServers.serverKey(project: URL(fileURLWithPath: "/tmp/project/"), languageId: "swift", choosing: .none))
 	}
 
 	/// The count that must still be zero after the app has gone, asserted where
@@ -643,7 +639,7 @@ struct LSPHandshakeOrderTests {
 	@Test func holdsNotificationsUntilInitialized() async throws {
 		let root = URL(fileURLWithPath: #filePath)
 			.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-		guard let server = LanguageServers.resolve(languageId: "swift", root: root) else { return }
+		guard let server = LanguageServers.resolve(languageId: "swift", root: root, choosing: .none) else { return }
 
 		let client = LSPClient()
 		defer { client.stop() }
@@ -748,7 +744,7 @@ struct LanguageServerScanCostTests {
 		let separately = LanguageServers.known
 			.filter { !$0.rootMarkers.isEmpty && LanguageServers.suits($0, root: root) }
 			.map(\.command)
-		let together = LanguageServers.suitedDefinitions(in: root).map(\.command)
+		let together = LanguageServers.suitedDefinitions(in: root, choosing: .none).map(\.command)
 		#expect(together == separately)
 		#expect(together.contains("gopls"))
 		#expect(together.contains("typescript-language-server"))
@@ -762,7 +758,7 @@ struct LanguageServerScanCostTests {
 	@Test func aHiddenMarkerIsStillFound() throws {
 		let root = try makeTree([".classpath", "src/Main.java"])
 		defer { try? FileManager.default.removeItem(at: root) }
-		let java = try #require(LanguageServers.definition(forLanguage: "java"))
+		let java = try #require(LanguageServers.definition(forLanguage: "java", choosing: .none))
 		#expect(LanguageServers.suits(java, root: root))
 	}
 }
@@ -785,7 +781,7 @@ struct LanguageServerRootTests {
 	@Test func findsAManifestAtTheRoot() throws {
 		let root = try makeTree(["go.mod", "main.go"])
 		defer { try? FileManager.default.removeItem(at: root) }
-		let go = try #require(LanguageServers.definition(forLanguage: "go"))
+		let go = try #require(LanguageServers.definition(forLanguage: "go", choosing: .none))
 		#expect(LanguageServers.markerDirectory(for: go, in: root) == root)
 	}
 
@@ -794,7 +790,7 @@ struct LanguageServerRootTests {
 	@Test func findsAManifestBelowTheRoot() throws {
 		let root = try makeTree(["README.md", "app/go.mod", "app/main.go"])
 		defer { try? FileManager.default.removeItem(at: root) }
-		let go = try #require(LanguageServers.definition(forLanguage: "go"))
+		let go = try #require(LanguageServers.definition(forLanguage: "go", choosing: .none))
 
 		let found = LanguageServers.markerDirectory(for: go, in: root)
 		#expect(found?.lastPathComponent == "app")
@@ -804,7 +800,7 @@ struct LanguageServerRootTests {
 	@Test func findsOneTwoLevelsDown() throws {
 		let root = try makeTree(["services/api/go.mod"])
 		defer { try? FileManager.default.removeItem(at: root) }
-		let go = try #require(LanguageServers.definition(forLanguage: "go"))
+		let go = try #require(LanguageServers.definition(forLanguage: "go", choosing: .none))
 		#expect(LanguageServers.markerDirectory(for: go, in: root)?.lastPathComponent == "api")
 	}
 
@@ -813,17 +809,17 @@ struct LanguageServerRootTests {
 		let root = try makeTree(["vendor/other/go.mod", "node_modules/thing/package.json"])
 		defer { try? FileManager.default.removeItem(at: root) }
 
-		let go = try #require(LanguageServers.definition(forLanguage: "go"))
+		let go = try #require(LanguageServers.definition(forLanguage: "go", choosing: .none))
 		#expect(LanguageServers.markerDirectory(for: go, in: root) == nil)
 
-		let ts = try #require(LanguageServers.definition(forLanguage: "typescript"))
+		let ts = try #require(LanguageServers.definition(forLanguage: "typescript", choosing: .none))
 		#expect(LanguageServers.markerDirectory(for: ts, in: root) == nil)
 	}
 
 	@Test func saysNoWhenThereIsNoManifestAnywhere() throws {
 		let root = try makeTree(["notes.txt", "docs/readme.md"])
 		defer { try? FileManager.default.removeItem(at: root) }
-		let go = try #require(LanguageServers.definition(forLanguage: "go"))
+		let go = try #require(LanguageServers.definition(forLanguage: "go", choosing: .none))
 		#expect(LanguageServers.markerDirectory(for: go, in: root) == nil)
 		#expect(!LanguageServers.suits(go, root: root))
 	}
@@ -833,7 +829,7 @@ struct LanguageServerRootTests {
 	@Test func resolvesToTheManifestDirectory() throws {
 		let root = try makeTree(["app/go.mod"])
 		defer { try? FileManager.default.removeItem(at: root) }
-		guard let resolved = LanguageServers.resolve(languageId: "go", root: root) else { return }
+		guard let resolved = LanguageServers.resolve(languageId: "go", root: root, choosing: .none) else { return }
 		#expect(resolved.root.lastPathComponent == "app")
 	}
 }
@@ -911,7 +907,7 @@ struct LanguageServerSuggestionTests {
 	@Test func saysNothingAboutALanguageWithNoServer() throws {
 		let root = try makeTree(["notes.txt"])
 		defer { try? FileManager.default.removeItem(at: root) }
-		#expect(LanguageServers.suggestion(forLanguage: "markdown", root: root) == nil)
+		#expect(LanguageServers.suggestion(forLanguage: "markdown", root: root, choosing: .none) == nil)
 	}
 
 	/// What the details panel says has to be actionable on its own: the command
@@ -1086,7 +1082,7 @@ struct IndexScratchPathTests {
 	private let project = URL(fileURLWithPath: "/Users/me/dev/abydos")
 
 	@Test func theIndexerIsToldToBuildSomewhereElse() throws {
-		let definition = LanguageServers.definition(forLanguage: "swift")
+		let definition = LanguageServers.definition(forLanguage: "swift", choosing: .none)
 		#expect(definition?.setup == .swift)
 
 		let arguments = LanguageServers.arguments(for: try #require(definition), root: project)

@@ -3,6 +3,9 @@ import Foundation
 /// How to start a language server.
 public struct LanguageServerDefinition: Equatable, Sendable {
 	/// The languages it answers for, as the editor names them.
+	///
+	/// Not "the server for those languages": two servers may claim the same id,
+	/// and which of them a project uses is `LanguageServerChoices`.
 	public let languageIds: [String]
 	/// The command, looked up on the path.
 	public let command: String
@@ -14,13 +17,17 @@ public struct LanguageServerDefinition: Equatable, Sendable {
 	/// Go server is not started for a repository with one `.go` file in a
 	/// vendored directory.
 	public let rootMarkers: [String]
-	/// What this server is called where an image is chosen for it — in settings
-	/// and in `.abydos/tools.json`.
+	/// What this server is called — the name a person types to ask for it, and
+	/// the name it is filed under everywhere: the choice of server for a
+	/// language, the image chosen for it, the running server in the list.
 	///
-	/// Usually the command, and not always: Python's server ships a binary
-	/// called `pyright-langserver`, and the tool everybody means by that is
-	/// `pyright`. A key nobody would think to type is a setting nothing reads.
-	public let toolKey: String
+	/// Distinct from the command, and it has to be. Usually they are the same
+	/// word, and twice they are not: Python's server ships a binary called
+	/// `pyright-langserver` while the tool everybody means by it is `pyright`,
+	/// and — the reason this is a name rather than a key — two servers for one
+	/// language cannot both be "the Java one". A name nobody would think to
+	/// type is a setting nothing reads.
+	public let name: String
 	/// Anything this server needs worked out per project rather than stated
 	/// once here.
 	public let setup: Setup
@@ -53,7 +60,7 @@ public struct LanguageServerDefinition: Equatable, Sendable {
 		arguments: [String] = [],
 		installHint: String,
 		rootMarkers: [String] = [],
-		toolKey: String? = nil,
+		name: String? = nil,
 		setup: Setup = .plain
 	) {
 		self.languageIds = languageIds
@@ -61,7 +68,7 @@ public struct LanguageServerDefinition: Equatable, Sendable {
 		self.arguments = arguments
 		self.installHint = installHint
 		self.rootMarkers = rootMarkers
-		self.toolKey = toolKey ?? command
+		self.name = name ?? command
 		self.setup = setup
 	}
 }
@@ -111,7 +118,7 @@ public enum LanguageServers {
 			arguments: ["--stdio"],
 			installHint: "npm install -g pyright",
 			rootMarkers: ["pyproject.toml", "setup.py", "requirements.txt"],
-			toolKey: "pyright"
+			name: "pyright"
 		),
 		LanguageServerDefinition(
 			languageIds: ["c", "cpp", "objc"],
@@ -161,8 +168,170 @@ public enum LanguageServers {
 		),
 	]
 
-	public static func definition(forLanguage languageId: String) -> LanguageServerDefinition? {
-		known.first { $0.languageIds.contains(languageId) }
+	// MARK: - Which server a language uses
+
+	/// Which server a language uses here, and why it is that one.
+	///
+	/// Three answers rather than an optional, because the two ways of having no
+	/// server are not the same thing to say. A language nothing answers for is
+	/// silence — most files are in one. A server somebody *named* and that is
+	/// not there is a sentence, and it must never quietly become the other
+	/// server: choosing the fast one and getting the 1.9 GB one anyway is an
+	/// afternoon of wondering why.
+	public enum Selection: Equatable, Sendable {
+		/// The server to start, and where the choice came from.
+		case server(LanguageServerDefinition, source: LanguageServerChoices.Source)
+		/// A server was named, and no server of that name answers for this
+		/// language — either Abydos has never heard of it, or it has and it
+		/// answers for something else.
+		case noSuchServer(name: String, source: LanguageServerChoices.Source)
+		/// Nothing here answers for this language at all.
+		case nothing
+	}
+
+	/// Every server that claims a language, in the order they are listed above.
+	///
+	/// One today for each of them, several once there is a second opinion about
+	/// a language — Java is the one this was written for. The order is the
+	/// default: the first is what a project gets when it says nothing.
+	///
+	/// - Parameter servers: the table to look in, which is the app's own unless
+	///   a test says otherwise. The seam exists because the mechanism for
+	///   choosing between two servers was built before there were two: 0450 adds
+	///   the second Java server, and this had to be provable without it rather
+	///   than on the day it lands.
+	public static func candidates(
+		forLanguage languageId: String, among servers: [LanguageServerDefinition] = known
+	) -> [LanguageServerDefinition] {
+		servers.filter { $0.languageIds.contains(languageId) }
+	}
+
+	/// Every language that has more than one server to choose between, each
+	/// with the ids that share that set of candidates.
+	///
+	/// Grouped because one server answers for several ids and a settings page
+	/// with four rows saying the same thing about TypeScript, JavaScript, TSX
+	/// and JSX is four rows nobody reads. Ids that have exactly the same
+	/// candidates in the same order are the same question.
+	public static func languageGroups(
+		among servers: [LanguageServerDefinition] = known
+	) -> [(languageIds: [String], candidates: [LanguageServerDefinition])] {
+		var order: [[String]] = []
+		var groups: [[String]: [String]] = [:]
+		for definition in servers {
+			for languageId in definition.languageIds {
+				let names = candidates(forLanguage: languageId, among: servers).map(\.name)
+				if groups[names] == nil {
+					groups[names] = []
+					order.append(names)
+				}
+				if !groups[names]!.contains(languageId) { groups[names]!.append(languageId) }
+			}
+		}
+		return order.map { names in
+			(
+				languageIds: groups[names] ?? [],
+				candidates: names.compactMap { server(named: $0, among: servers) }
+			)
+		}
+	}
+
+	public static func server(
+		named name: String, among servers: [LanguageServerDefinition] = known
+	) -> LanguageServerDefinition? {
+		servers.first { $0.name == name }
+	}
+
+	/// The first language this server is the chosen one for, which is what a
+	/// caller starting one server per definition should ask about.
+	///
+	/// Not `languageIds.first`, which is what every such caller used to say and
+	/// which was right only while a language had one server. clangd answers for
+	/// `c`, `cpp` and `objc`; a project that points `c` at something else still
+	/// wants clangd, and starting it by asking about `c` would start the other
+	/// one instead.
+	public static func chosenLanguage(
+		for definition: LanguageServerDefinition,
+		choosing choices: LanguageServerChoices,
+		among servers: [LanguageServerDefinition] = known
+	) -> String? {
+		definition.languageIds.first {
+			self.definition(forLanguage: $0, choosing: choices, among: servers)?.name
+				== definition.name
+		}
+	}
+
+	/// Which server this project uses for a language.
+	///
+	/// - Parameter choices: what the project's `.abydos/tools.json` and the
+	///   settings behind it say, already resolved. Passed in rather than read
+	///   here: this is asked once per document opened and once per query, and a
+	///   file read on the main actor at that rate is a keystroke somebody feels.
+	public static func selection(
+		forLanguage languageId: String,
+		choosing choices: LanguageServerChoices,
+		among servers: [LanguageServerDefinition] = known
+	) -> Selection {
+		let candidates = candidates(forLanguage: languageId, among: servers)
+		guard let chosen = choices.chosen(forLanguage: languageId) else {
+			guard let first = candidates.first else { return .nothing }
+			return .server(first, source: .builtIn)
+		}
+		guard let named = candidates.first(where: { $0.name == chosen.name }) else {
+			return .noSuchServer(name: chosen.name, source: chosen.source)
+		}
+		return .server(named, source: chosen.source)
+	}
+
+	/// The server for a language, or nil when there is not one to start.
+	///
+	/// The thin answer, for the callers that only want to know what to run.
+	/// Anything that has to *say* why there is nothing wants `selection`.
+	public static func definition(
+		forLanguage languageId: String,
+		choosing choices: LanguageServerChoices,
+		among servers: [LanguageServerDefinition] = known
+	) -> LanguageServerDefinition? {
+		guard case let .server(definition, _) = selection(
+			forLanguage: languageId, choosing: choices, among: servers
+		) else { return nil }
+		return definition
+	}
+
+	/// What to say when a project asked for a server that will not be started.
+	///
+	/// The whole of it in one paragraph, because the person reading it is
+	/// looking at a file with no diagnostics and needs three things: what they
+	/// asked for, where they asked for it, and what they can ask for instead.
+	/// The last sentence is the one that matters — nothing has been started in
+	/// its place, so nobody goes looking for a fault in a server that is not
+	/// running.
+	public static func refusal(
+		named name: String,
+		forLanguage languageId: String,
+		source: LanguageServerChoices.Source,
+		among servers: [LanguageServerDefinition] = known
+	) -> String {
+		let language = LanguageRegistry.shared.displayName(for: languageId)
+		let reason: String
+		if let elsewhere = server(named: name, among: servers) {
+			let answersFor = elsewhere.languageIds
+				.map { LanguageRegistry.shared.displayName(for: $0) }
+				.joined(separator: ", ")
+			reason = "\(name) is a language server Abydos knows, but it answers for "
+				+ "\(answersFor) rather than for \(language)."
+		} else {
+			reason = "Abydos has no language server called \(name)."
+		}
+
+		let others = candidates(forLanguage: languageId, among: servers).map(\.name)
+		let instead = others.isEmpty
+			? "Abydos has no \(language) server at all."
+			: "For \(language) it has: \(others.joined(separator: ", "))."
+
+		return "\(source.origin) asks for \(name) to answer for \(language). \(reason) "
+			+ "\(instead) Nothing has been started in its place — a server you did not "
+			+ "choose would answer as though you had chosen it."
 	}
 
 	/// What a project's running server is held under: the project and the
@@ -174,14 +343,28 @@ public enum LanguageServers {
 	/// opened a `.cpp` beside a `.c`. Measured, with two files open in one
 	/// project: two `clangd`, each indexing the same compilation database.
 	///
-	/// The tool's key rather than its command, since that is the name the same
-	/// server is already called everywhere an image is chosen for it.
+	/// The server's name rather than its command, since that is what the same
+	/// server is called everywhere else: where an image is chosen for it, and
+	/// where a project chooses it.
+	///
+	/// A named server nobody can find keeps its own key, under the name that was
+	/// asked for. It has to: everything remembered about the failure hangs off
+	/// this key, and filing it under the server that was *not* chosen would mean
+	/// changing the file from one to the other and being told about the old one.
 	///
 	/// The project is standardized, so two windows on one checkout — a torn-off
 	/// window and the one it came from, the same path spelled with and without a
 	/// trailing slash — hold the same server rather than one each.
-	public static func serverKey(project: URL, languageId: String) -> String {
-		let server = definition(forLanguage: languageId)?.toolKey ?? languageId
+	public static func serverKey(
+		project: URL, languageId: String, choosing choices: LanguageServerChoices,
+		among servers: [LanguageServerDefinition] = known
+	) -> String {
+		let server: String
+		switch selection(forLanguage: languageId, choosing: choices, among: servers) {
+		case let .server(definition, _): server = definition.name
+		case let .noSuchServer(name, _): server = name
+		case .nothing: server = languageId
+		}
 		return "\(project.standardizedFileURL.path)#\(server)"
 	}
 
@@ -390,12 +573,25 @@ public enum LanguageServers {
 	/// project on earth would be started everywhere, wasting a process and —
 	/// when it turns out not to be installed — drowning out the language the
 	/// project is actually written in.
-	public static func suitedDefinitions(in root: URL) -> [LanguageServerDefinition] {
+	///
+	/// And definitions this project did not choose, which is what keeps two
+	/// servers for one language from both being started here. A definition
+	/// stays in as long as it is the chosen server for at least one of the ids
+	/// it answers for, so clangd is not dropped from a project that pointed
+	/// `objc` somewhere else.
+	public static func suitedDefinitions(
+		in root: URL, choosing choices: LanguageServerChoices,
+		among servers: [LanguageServerDefinition] = known
+	) -> [LanguageServerDefinition] {
 		StallWatch.mark("language server scan") {
 			let index = DirectoryIndex()
-			return known.filter {
-				!$0.rootMarkers.isEmpty
-					&& markerDirectory(for: $0, in: root, maxDepth: 2, index: index) != nil
+			return servers.filter { definition in
+				guard !definition.rootMarkers.isEmpty else { return false }
+				guard definition.languageIds.contains(where: {
+					self.definition(forLanguage: $0, choosing: choices, among: servers)?.name
+						== definition.name
+				}) else { return false }
+				return markerDirectory(for: definition, in: root, maxDepth: 2, index: index) != nil
 			}
 		}
 	}
@@ -601,9 +797,10 @@ public enum LanguageServers {
 	public static func suggestion(
 		forLanguage languageId: String,
 		root: URL,
+		choosing choices: LanguageServerChoices,
 		ignoring: Set<String> = []
 	) -> Suggestion? {
-		guard let definition = definition(forLanguage: languageId) else { return nil }
+		guard let definition = definition(forLanguage: languageId, choosing: choices) else { return nil }
 		return suggestion(definition, forLanguage: languageId, root: root, ignoring: ignoring)
 	}
 
@@ -672,13 +869,17 @@ public enum LanguageServers {
 	///   - runtime: what would run it. Nil — nothing installed to run a
 	///     container with — falls back to the copy on this machine, since an
 	///     image nothing can run is not an answer.
+	///   - choices: which server the project wants for this language. Which
+	///     server and where it comes from are two questions, and they stay two:
+	///     this decides the first and `image` the second.
 	public static func resolve(
 		languageId: String,
 		project: URL,
 		image: String? = nil,
-		runtime: ContainerRuntime? = nil
+		runtime: ContainerRuntime? = nil,
+		choosing choices: LanguageServerChoices
 	) -> Resolution? {
-		guard let definition = definition(forLanguage: languageId),
+		guard let definition = definition(forLanguage: languageId, choosing: choices),
 		      let root = markerDirectory(for: definition, in: project)
 		else { return nil }
 
@@ -689,7 +890,7 @@ public enum LanguageServers {
 		// app ships no Dockerfile for gets nil, which falls through to the copy
 		// installed here: that is the same answer as naming an image nothing
 		// can run, and better than starting a container from a name nobody has.
-		let image = image.flatMap { ToolImageRecipes.resolve(image: $0, forTool: definition.toolKey) }
+		let image = image.flatMap { ToolImageRecipes.resolve(image: $0, forTool: definition.name) }
 
 		// An image the project named wins over a copy installed here, the same
 		// way it does for a diagram: naming one is a statement about what this
@@ -756,9 +957,10 @@ public enum LanguageServers {
 	public static func resolve(
 		languageId: String,
 		project: URL,
-		inDevContainer session: DevContainers.Session
+		inDevContainer session: DevContainers.Session,
+		choosing choices: LanguageServerChoices
 	) -> Resolution? {
-		guard let definition = definition(forLanguage: languageId),
+		guard let definition = definition(forLanguage: languageId, choosing: choices),
 		      let root = markerDirectory(for: definition, in: project)
 		else { return nil }
 		let paths = session.configuration.paths
@@ -782,9 +984,10 @@ public enum LanguageServers {
 	/// The same, for a caller that only wants a server from this machine.
 	public static func resolve(
 		languageId: String,
-		root: URL
+		root: URL,
+		choosing choices: LanguageServerChoices
 	) -> (definition: LanguageServerDefinition, executable: String, root: URL)? {
-		guard let resolution = resolve(languageId: languageId, project: root),
+		guard let resolution = resolve(languageId: languageId, project: root, choosing: choices),
 		      case let .installed(executable, _) = resolution.launch
 		else { return nil }
 		return (resolution.definition, executable, resolution.root)

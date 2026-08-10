@@ -95,7 +95,8 @@ import Testing
 		#expect(provided == ["gopls"])
 
 		let resolved = try #require(LanguageServers.resolve(
-			languageId: "go", project: root, inDevContainer: session
+			languageId: "go", project: root, inDevContainer: session,
+			choosing: .none
 		))
 
 		// The devcontainer's mapping, not this app's default.

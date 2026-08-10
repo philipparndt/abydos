@@ -20,7 +20,7 @@ struct JavaLiveTests {
 		let root = try makeProject()
 		defer { try? FileManager.default.removeItem(at: root) }
 
-		guard let server = LanguageServers.resolve(languageId: "java", root: root) else { return }
+		guard let server = LanguageServers.resolve(languageId: "java", root: root, choosing: .none) else { return }
 		// A Maven project, so the server is rooted where the POM is.
 		#expect(FilePath.canonical(server.root) == FilePath.canonical(root))
 

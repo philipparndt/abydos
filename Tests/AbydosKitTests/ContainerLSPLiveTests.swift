@@ -367,15 +367,16 @@ import Testing
 		defer { try? FileManager.default.removeItem(at: root) }
 
 		// Read back out of the project, the way the editor reads it: the tool's
-		// key is the server definition's `toolKey`, and a file that named it
+		// key is the server definition's `name`, and a file that named it
 		// anything else would resolve to no image at all.
-		let definition = try #require(LanguageServers.definition(forLanguage: probe.languageId))
-		#expect(definition.toolKey == probe.tool)
-		let named = try #require(ToolImages.inProject(root).image(for: definition.toolKey))
+		let definition = try #require(LanguageServers.definition(forLanguage: probe.languageId, choosing: .none))
+		#expect(definition.name == probe.tool)
+		let named = try #require(ToolImages.inProject(root).image(for: definition.name))
 		#expect(named == image)
 
 		let resolved = try #require(LanguageServers.resolve(
-			languageId: probe.languageId, project: root, image: named, runtime: runtime
+			languageId: probe.languageId, project: root, image: named, runtime: runtime,
+			choosing: .none
 		))
 
 		// The image was chosen over anything installed, and the project is

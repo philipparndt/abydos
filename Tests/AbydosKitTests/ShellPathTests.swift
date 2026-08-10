@@ -63,7 +63,7 @@ struct ShellPathTests {
 	/// version, the pair starts and then refuses the handshake — so the sentence
 	/// this app prints has to carry it.
 	@Test func theTypeScriptHintPinsAVersionThatWorks() throws {
-		let definition = try #require(LanguageServers.definition(forLanguage: "tsx"))
+		let definition = try #require(LanguageServers.definition(forLanguage: "tsx", choosing: .none))
 		#expect(definition.installHint.contains("typescript@5"))
 	}
 }
