@@ -78,6 +78,33 @@ public final class TerminalEmulator {
 	/// this, writing exactly `columns` characters would wrap one column early.
 	private var pendingWrap = false
 
+	/// Set when a program asked for the row one below the last one.
+	///
+	/// The cursor is clamped to the last row, because there is nowhere else for
+	/// it to be, but the fact that it was pushed one past the bottom is kept:
+	/// a program that parks the cursor there measures its next vertical move
+	/// from where it parked it, not from where the clamp put it.
+	///
+	/// tmux does exactly that, and it is what 0404 turned out to be. With its
+	/// status bar off, tmux draws its command prompt on the pane's last row, and
+	/// while the prompt is up it parks the cursor at `CSI <rows+1> d` — one row
+	/// below the screen — then writes the prompt with a relative `CSI A` from
+	/// that park. Measured from the clamp, `CSI A` lands the prompt one row too
+	/// high, in the middle of the pane, on top of output the pane will repaint
+	/// over it: "a fragment, in the wrong place, gone by the next repaint" is
+	/// what the report says, and it is what a capture shows. Measured from the
+	/// park, it lands on the last row, which is the row tmux is holding for it
+	/// and stops painting the pane into for as long as the prompt is open. So
+	/// the last line is protected — by tmux, once it is asked the way tmux
+	/// meant to ask.
+	///
+	/// One row and no further. A program that asks for row 999 is guessing at
+	/// the size of the screen rather than parking on the edge of it, and
+	/// clamping is the only answer to that; this is the same kind of memory as
+	/// `pendingWrap`, one edge over, and it lasts exactly as long — until
+	/// something puts the cursor somewhere real.
+	private var isParkedBelowScreen = false
+
 	/// Alternate screen (used by full-screen apps), saved main screen.
 	private var alternateSaved: (screen: TerminalScreen, row: Int, column: Int)?
 	public private(set) var isAlternateScreen = false
@@ -297,6 +324,9 @@ public final class TerminalEmulator {
 
 	/// Writes a run of printable ASCII, wrapping as it fills each row.
 	private func putASCII(_ bytes: UnsafeBufferPointer<UInt8>, from start: Int, to end: Int) {
+		// As in `put`: drawing puts the cursor somewhere real, so a park below
+		// the screen is over.
+		isParkedBelowScreen = false
 		var index = start
 		while index < end {
 			if pendingWrap {
@@ -413,6 +443,9 @@ public final class TerminalEmulator {
 	/// The scalar is what the stream actually carries; assembling a Character
 	/// for it is only needed when marks are combined onto it, which is rare.
 	private func put(scalar: UnicodeScalar) {
+		// Anything written goes where the cursor really is, so a park below the
+		// screen is over the moment a program draws.
+		isParkedBelowScreen = false
 		if pendingWrap {
 			cursorColumn = 0
 			lineFeed()
@@ -590,6 +623,7 @@ public final class TerminalEmulator {
 
 	private func lineFeed() {
 		pendingWrap = false
+		isParkedBelowScreen = false
 		if cursorRow == scrollBottom {
 			screen.scrollUp(top: scrollTop, bottom: scrollBottom, attributes: attributes)
 		} else if cursorRow < screen.rows - 1 {
@@ -598,10 +632,15 @@ public final class TerminalEmulator {
 	}
 
 	private func moveCursor(row: Int, column: Int) {
+		isParkedBelowScreen = row == screen.rows
 		cursorRow = max(0, min(row, screen.rows - 1))
 		cursorColumn = max(0, min(column, screen.columns - 1))
 		pendingWrap = false
 	}
+
+	/// Where a vertical move counts from: the cursor's row, unless it was parked
+	/// one row below the screen — see `isParkedBelowScreen`.
+	private var verticalOrigin: Int { isParkedBelowScreen ? screen.rows : cursorRow }
 
 	// MARK: - Escape
 
@@ -632,6 +671,7 @@ public final class TerminalEmulator {
 			lineFeed()
 			state = .ground
 		case 0x4D: // M — reverse index
+			isParkedBelowScreen = false
 			if cursorRow == scrollTop {
 				screen.scrollDown(top: scrollTop, bottom: scrollBottom, attributes: attributes)
 			} else {
@@ -788,12 +828,15 @@ public final class TerminalEmulator {
 		}
 
 		switch final {
-		case 0x41: moveCursor(row: cursorRow - parameter(0, default: 1), column: cursorColumn) // A
-		case 0x42: moveCursor(row: cursorRow + parameter(0, default: 1), column: cursorColumn) // B
+		// The vertical four count from `verticalOrigin` rather than from
+		// `cursorRow`, which is the same thing except after a park below the
+		// screen — see `rowBelowScreen`.
+		case 0x41: moveCursor(row: verticalOrigin - parameter(0, default: 1), column: cursorColumn) // A
+		case 0x42: moveCursor(row: verticalOrigin + parameter(0, default: 1), column: cursorColumn) // B
 		case 0x43: moveCursor(row: cursorRow, column: cursorColumn + parameter(0, default: 1)) // C
 		case 0x44: moveCursor(row: cursorRow, column: cursorColumn - parameter(0, default: 1)) // D
-		case 0x45: moveCursor(row: cursorRow + parameter(0, default: 1), column: 0) // E
-		case 0x46: moveCursor(row: cursorRow - parameter(0, default: 1), column: 0) // F
+		case 0x45: moveCursor(row: verticalOrigin + parameter(0, default: 1), column: 0) // E
+		case 0x46: moveCursor(row: verticalOrigin - parameter(0, default: 1), column: 0) // F
 		case 0x47, 0x60: moveCursor(row: cursorRow, column: parameter(0, default: 1) - 1) // G `
 		case 0x64: moveCursor(row: parameter(0, default: 1) - 1, column: cursorColumn) // d
 		case 0x48, 0x66: // H f
@@ -936,6 +979,7 @@ public final class TerminalEmulator {
 		cursorColumn = min(saved.column, screen.columns - 1)
 		attributes = saved.attributes
 		pendingWrap = false
+		isParkedBelowScreen = false
 	}
 
 	// MARK: - Modes
@@ -993,6 +1037,7 @@ public final class TerminalEmulator {
 		}
 		scrollTop = 0
 		scrollBottom = screen.rows - 1
+		isParkedBelowScreen = false
 	}
 
 	// MARK: - Erase and edit
@@ -1412,6 +1457,7 @@ public final class TerminalEmulator {
 		scrollTop = 0
 		scrollBottom = screen.rows - 1
 		pendingWrap = false
+		isParkedBelowScreen = false
 		onUpdate?()
 	}
 
@@ -1427,6 +1473,7 @@ public final class TerminalEmulator {
 		isAlternateScreen = false
 		alternateSaved = nil
 		pendingWrap = false
+		isParkedBelowScreen = false
 		graphics.removeAll()
 		alternateGraphics = []
 		lastDiscardedLineCount = 0
