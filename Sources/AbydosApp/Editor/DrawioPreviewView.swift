@@ -24,7 +24,7 @@ import WebKit
 /// It subclasses the diagram pane for the export menu and for the sentence in
 /// the middle: the pane says something while the editor loads, and says why if
 /// it will not.
-final class DrawioPreviewView: DiagramPaneView {
+final class DrawioPreviewView: DiagramPaneView, SnapshotDrawable {
 	private var editor: DrawioEditor?
 	/// The document this pane edits, held weakly — the tab owns it.
 	weak var document: TextDocument?
@@ -191,6 +191,46 @@ final class DrawioPreviewView: DiagramPaneView {
 				editable: editable, projectRoot: nil, then: then
 			)
 		}
+	}
+
+	// MARK: - Being photographed
+
+	/// A `WKWebView` is invisible to `--screenshot`, and this makes it not be.
+	///
+	/// The capture works by asking the view tree to draw itself into a bitmap.
+	/// Web content is rendered by another process and is not in this one's view
+	/// tree at all, so a `cacheDisplay` of a pane holding draw.io is a correctly
+	/// sized, entirely empty rectangle — the same failure the terminal's Metal
+	/// layer had and the reason `SnapshotDrawable` exists. It matters more here
+	/// than anywhere: this pane is an *editor*, the only way to see whether it
+	/// drew what it should is to look at it, and today's draw.io work found a
+	/// stencil file that was right in WebKit and five solid black boxes through
+	/// CoreSVG — which only looking caught.
+	///
+	/// `takeSnapshot` is asynchronous and this is not, so the run loop is turned
+	/// over until the answer arrives. That is only ever done under `--screenshot`,
+	/// where the app has been told to stand still and be photographed, and it has
+	/// a deadline: a WebContent process that has died never answers, and a
+	/// capture that hangs is worse than one with a hole in it.
+	func snapshotImage(size: CGSize) -> CGImage? {
+		guard isLoaded, let web = editor?.webView, size.width > 1, size.height > 1 else {
+			return nil
+		}
+		let configuration = WKSnapshotConfiguration()
+		configuration.rect = web.bounds
+		configuration.snapshotWidth = NSNumber(value: Double(size.width))
+
+		var made: CGImage?
+		var answered = false
+		web.takeSnapshot(with: configuration) { image, _ in
+			made = image?.cgImage(forProposedRect: nil, context: nil, hints: nil)
+			answered = true
+		}
+		let deadline = Date().addingTimeInterval(10)
+		while !answered, Date() < deadline {
+			RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
+		}
+		return made
 	}
 
 	// MARK: - What this build does not carry
