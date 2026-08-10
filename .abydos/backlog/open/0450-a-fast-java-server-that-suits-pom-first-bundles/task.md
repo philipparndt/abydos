@@ -39,16 +39,32 @@ whether you can step *into* a dependency. So the honest first version may need
 only the `~/.m2` locator, with target-platform resolution as a stretch that never
 becomes necessary.
 
-## Upstream before forking
+## A fork to work in, contributed back when it is proved
+
+The intent, stated by the person who asked for it: fork it, implement the Maven
+support, and offer it upstream once convinced it actually works. That is the
+ordinary way to contribute and it is the right shape here — the change touches
+somebody else's project, and a pull request that arrives with the work already
+driven against a real 500-bundle reactor is worth far more than an issue asking
+whether they would accept one.
 
 kmp-lsp documents its own limitations plainly and has ~888 commits with real
 releases, which is what a maintained project looks like. A `~/.m2` source
-locator is a contained, obviously-correct change of the kind upstreams take.
+locator is contained and obviously correct, so it is a good candidate to be
+taken.
 
-**A fork costs every future commit; a pull request costs one.** Fork as the
-fallback if upstream declines or goes quiet, not as the opening move — and if it
-is forked, say in this entry who keeps it current, because an unmaintained fork
-of a fast-moving project is worse than the server nobody chose.
+**The thing to watch is not the fork, it is the fork outliving its purpose.** A
+working copy becomes a permanent one by accident: the pull request stalls, the
+upstream moves, and a year later somebody is maintaining a Rust language server
+they did not mean to own. So this entry should record, when the work starts,
+what happens if upstream does not take it — carry the patch and rebase it, or
+stop and go back to jdtls. Deciding that up front costs nothing; discovering it
+later costs the fork.
+
+Worth telling them early, before the code: an issue saying "I have ~500
+pom-first bundles and intend to add `~/.m2` source resolution, would you take
+it" is one message, and the answer changes how much is built before it is
+offered.
 
 ## Ruled out
 
@@ -67,7 +83,12 @@ already is, later.
 - [ ] Drive kmp-lsp unchanged against a pom-first project and say exactly what
       works and what does not — the caveat here is read from a README and has
       never been tested
-- [ ] Source-jar lookup under `~/.m2/repository`, offered upstream first
+- [ ] Ask upstream whether they would take `~/.m2` source resolution, before
+      building much of it
+- [ ] Source-jar lookup under `~/.m2/repository`, in a fork, driven against a
+      real pom-first reactor before it is offered
+- [ ] Record what happens if upstream does not take it: carry and rebase, or
+      stop and stay with jdtls
 - [ ] Decide, and record, whether the target platform is ever needed
 - [ ] Write down here what was ruled out on the way
 - [ ] `spec/language-servers.md` says what the project now does
