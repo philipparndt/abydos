@@ -313,6 +313,45 @@ Verified end to end in the app on a scratch project, not only in tests: a
 flowchart and a sequence diagram previewed, `Export ▸ SVG` and `Export ▸ PNG`
 taken from the preview's own menu, and the written files opened and looked at.
 
+### And what landed in the second pass, months later
+
+Picking the entry up again to answer the three bullets left below added:
+`Mermaid.statedLayout` and `DiagramLook.layoutNotice` for a layout this build
+has not got; four fixes and one generalisation in `Mermaid.page`'s flattening,
+each named where it is; `Tests/AbydosKitTests/MermaidEveryKindLiveTests.swift`,
+which draws one of every kind of diagram this Mermaid knows and compares the
+two renderers; and `docs/images/diagram.png` with the `shoot diagram` line that
+takes it.
+
+## What was ruled out on the way
+
+Beyond the two decisions written out below — the bitmap and ELK — four things
+were tried, measured and dropped, and each cost enough to be worth writing down.
+
+- **Comparing the two rasterisations pixel for pixel with no slack.** They round
+  a drawing's size differently: 564×983 from CoreSVG against 562×982 from
+  WebKit for the same flowchart. An exact comparison fails on nine of the
+  twenty-two kinds for a reason that is nothing to do with the picture, so the
+  comparison allows each pixel to have moved by two, in both directions.
+- **Measuring the difference as a fraction of the *ink* rather than of the
+  page.** It sounds better and is worse: a journey diagram is mostly white
+  paper, so a difference of a few glyph edges is 22% of its ink and a Sankey
+  losing every flow is 0.8% of a page. Both numbers were looked at; the page is
+  the one the test asserts on, and the properties of the file catch what a page
+  fraction is too blunt for.
+- **Blaming CoreSVG for the Sankey's washed-out flows.** The first model was
+  that it applies `stroke-opacity` more than once for a gradient stroke —
+  measured at 0.8 → 0.50, 0.5 → 0.12, 0.25 → 0.01, which is very nearly the
+  cube. It is not that. A file of four strokes drew a half-transparent gradient
+  stroke exactly right; what is wrong is `stroke-opacity` on a *group*, applied
+  to the group as well as inherited, and there were two such groups nested
+  because this app had written one of them itself.
+- **Blaming CoreSVG for not drawing bold.** A file of four lines draws
+  `font-weight="700"` bold, on the same font family Mermaid asks for. The
+  requirement diagram's names were regular for a different reason — the inline
+  `style` beside the attribute — and that was only found by cutting the one
+  element out of the file and rasterising it alone.
+
 ## What is left
 
 - ~~**Fenced blocks in Markdown.**~~ **Drawn.** See above. `MarkdownFence` in the
@@ -509,16 +548,33 @@ taken from the preview's own menu, and the written files opened and looked at.
   compared pixel for pixel, with a pixel or two of slack for the fact that the
   two round a drawing's size differently.
 
-  **Three of them came apart, and all three were this app's own doing.** They
-  are written out where the code is and summarised in the commit; in short, a
-  Sankey lost every flow (77% of the page different) to a `url("#id")` this app
-  wrote with the quotes a computed value carries; a journey lost every label to
-  the empty-label sweep taking away the `<text>` half of a `<switch>` the
-  browser had not laid out; and a treemap's labels were drawn half a line low
-  **in the export** because Mermaid's own inline `style` beat the attributes the
-  bake writes to neutralise it. Fixed, all three, in the flattening — where the
-  fix helps the pane, the exported SVG, Preview.app and anything else that is
-  not a browser, which a bitmap in the pane would have helped none of.
+  **Four of them came apart, and every one was this app's own doing.** They are
+  written out where the code is and summarised in the commits; in short:
+
+  - A **Sankey** lost every flow — 77% of the page different — to a
+    `url("#id")` this app wrote back with the quotes a computed value carries.
+    CoreSVG looks for a gradient of that name, finds none, and paints nothing.
+  - A **journey** lost every label. Mermaid draws them twice, as HTML in a
+    `foreignObject` and as a `<text>` beside it in a `<switch>`; the browser
+    takes the first and never lays the second out, so the empty-label sweep
+    removed it and the file went out holding only the branch CoreSVG cannot
+    draw.
+  - A **treemap**'s labels were drawn half a line low **in the export**,
+    because Mermaid's own `style="dominant-baseline: middle"` beat the
+    attributes the bake writes to neutralise a position it has already applied.
+  - A **requirement** diagram's names were bold in the export and regular in
+    the pane: `font-weight="700"` on the element and `style="; font-weight:
+    bold;"` beside it, and CoreSVG reads the declaration, does not understand
+    the keyword, and falls back.
+
+  And one that was half ours: inherited paint is now taken *off* containers
+  rather than merely not written onto them, because CoreSVG applies a
+  `stroke-opacity` on a `<g>` as a group opacity as well as inheriting it —
+  measured on a file of four strokes — and Mermaid writes one of those itself.
+
+  All fixed in the flattening, where the fix helps the pane, the exported SVG,
+  Preview.app and everything else that is not a browser — none of which a
+  bitmap in the pane would have helped.
 
   What is left between the two renderers is **0.01% to 0.76% of the page**: the
   edges of glyphs and a pixel of rounding. Nothing was found that CoreSVG cannot
@@ -536,10 +592,13 @@ taken from the preview's own menu, and the written files opened and looked at.
 
   What was built instead is the thing that makes the question answerable next
   time: `MermaidEveryKindLiveTests` draws all twenty-two, compares the two
-  renderers, and asserts the three faults as properties of the file. If a
-  diagram type does appear that CoreSVG genuinely cannot draw, that test names
-  it and says by how much — and *then* this decision is worth taking again, with
-  a case rather than a hypothetical.
+  renderers on six of them, and asserts each of the faults above as a property
+  of the file. Both kinds of claim are there on purpose — the pixel comparison
+  caught the Sankey at 77% and would have let the journey through at 0.8% of a
+  mostly empty page, and the properties catch the journey and say what is wrong
+  in a sentence. If a diagram type does appear that CoreSVG genuinely cannot
+  draw, that test names it and says by how much, and *then* this decision is
+  worth taking again with a case rather than a hypothetical.
 
   Two known differences that are not faults and are not fixed. `mix-blend-mode`
   is a CSS property CoreSVG has no answer for, so overlapping Sankey flows will
@@ -565,8 +624,10 @@ The first of them is a question before it is work, so it is asked first.
       it goes
 - [x] A `diagram` shot in `Scripts/screenshots.sh`, and somewhere in the
       documentation that shows it
-- [ ] Write down here what was ruled out on the way
-- [ ] The spec says what the project now does
+- [x] Write down here what was ruled out on the way
+- [x] The spec says what the project now does — `spec/diagrams.md`, a capability
+      that did not exist before, holding the two requirements this item can
+      vouch for and meant to be grown by whoever touches the rest
 
 ---
 
