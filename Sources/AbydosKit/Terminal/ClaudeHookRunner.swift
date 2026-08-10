@@ -159,6 +159,10 @@ public enum ClaudeHookRunner {
 		let process = Process()
 		process.executableURL = URL(fileURLWithPath: launchPath)
 		process.arguments = arguments
+		// Rather than inheriting it, for the reason in `TmuxSocketPath`. This
+		// one runs inside somebody's own tmux, so a short `TMUX_TMPDIR` here is
+		// likelier to be deliberate than anywhere else — and it is kept.
+		process.environment = TmuxSocketPath.environment
 
 		let pipe = Pipe()
 		process.standardOutput = pipe

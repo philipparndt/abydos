@@ -123,6 +123,7 @@ public enum TmuxMirror {
 				let process = Process()
 				process.executableURL = URL(fileURLWithPath: tmux)
 				process.arguments = ["load-buffer", "-b", buffer, "-"]
+				process.environment = TmuxSocketPath.environment
 				let input = Pipe(), output = Pipe()
 				process.standardInput = input
 				process.standardOutput = output
@@ -449,6 +450,10 @@ public enum TmuxMirror {
 				let process = Process()
 				process.executableURL = URL(fileURLWithPath: launchPath)
 				process.arguments = arguments
+				// Rather than inheriting it: a `TMUX_TMPDIR` that cannot make a
+				// socket turns every one of these into silence, since stderr
+				// goes to the null device and a failure comes back as `nil`.
+				process.environment = TmuxSocketPath.environment
 
 				let pipe = Pipe()
 				process.standardOutput = pipe

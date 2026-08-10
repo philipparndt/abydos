@@ -97,6 +97,10 @@ public enum TerminalDirectory {
 		let process = Process()
 		process.executableURL = URL(fileURLWithPath: launchPath)
 		process.arguments = arguments
+		// Rather than inheriting it: an inherited `TMUX_TMPDIR` too long to
+		// make a socket would leave this answering nothing, and a window that
+		// follows its terminal would simply stop following.
+		process.environment = TmuxSocketPath.environment
 
 		let pipe = Pipe()
 		process.standardOutput = pipe

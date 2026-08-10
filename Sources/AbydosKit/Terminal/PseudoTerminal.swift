@@ -159,6 +159,38 @@ public final class PseudoTerminal {
 		childPID = pid
 		state = .running(pid: pid)
 
+		// Anything the merge refused, said in the pane it was refused for.
+		//
+		// Delivered as though the program had printed it, because a pane has no
+		// other channel: what it shows is the bytes it is given. Queued before
+		// reading starts, and the callback queue is serial, so it is ahead of
+		// the shell's first byte rather than racing it into the middle of a
+		// prompt.
+		//
+		// And in the log as well as in the pane, because the pane is not
+		// certain to keep it: the tab that attaches tmux runs `tmux new -A` as
+		// its first command, and tmux switches to the alternate screen and
+		// clears it — so the sentence is written, shown, and gone inside a
+		// second. That was watched happening rather than guessed at. The pane
+		// that stays plain keeps it above the first prompt.
+		//
+		// The log write goes to a queue of its own, and that is not tidiness:
+		// written here it put a file open, a size check and a close between the
+		// fork and the reader starting, and `/bin/echo` had said its piece and
+		// closed the slave before there was anything listening. A test that had
+		// passed for a year started timing out, which is the only reason this
+		// is known.
+		if let refusal = Self.refusals(environment) {
+			DispatchQueue.global(qos: .utility).async {
+				DiagnosticLog.write(
+					refusal.trimmingCharacters(in: .whitespacesAndNewlines), to: "tmux"
+				)
+			}
+			callbackQueue.async { [weak self] in
+				self?.onOutput?(Data(refusal.utf8))
+			}
+		}
+
 		configureNonBlocking(master)
 		startReading()
 		watchForExit(pid: pid)
@@ -216,6 +248,19 @@ public final class PseudoTerminal {
 		merged["TMUX"] = nil
 		merged["TMUX_PANE"] = nil
 
+		// And one variable further along, for the same reason and with a louder
+		// ending. `TMUX_TMPDIR` says where tmux keeps its sockets, it is
+		// inherited exactly as `TMUX` was, and tmux appends `tmux-<uid>/default`
+		// to it — so a directory that is merely long produces a socket path over
+		// the length a unix socket can have. tmux says `File name too long` and
+		// the pane is dead before it draws a prompt, naming a path nobody typed.
+		//
+		// Refused on what it produces rather than on being set at all: somebody
+		// with a short, valid one means it, and taking it away would put their
+		// panes on a different server from their other tools. `TmuxSocketPath`
+		// has the arithmetic and the sentence the pane is given.
+		merged = TmuxSocketPath.honouringWhatFits(merged)
+
 		// The commands this app ships — `abydos-icat`, `abydos-bench` — on the
 		// PATH of every shell it starts, without an install step. Appended
 		// rather than prepended: a command somebody already has wins, since
@@ -227,6 +272,26 @@ public final class PseudoTerminal {
 			}
 		}
 		return merged
+	}
+
+	/// What the merge above threw away, ready to be written to a pane.
+	///
+	/// Separate from the merge because the two answers go to different places:
+	/// one to `execve`, one to whoever is looking. Both are worked out from the
+	/// same input, so a value refused is always a value explained.
+	///
+	/// It ends `\r\n` rather than `\n`: this goes to a terminal in raw mode,
+	/// where a bare newline drops a line without returning to column one, and
+	/// the shell's prompt would then start under the end of the sentence.
+	static func refusals(
+		_ given: [String: String]?,
+		inherited: [String: String] = ProcessInfo.processInfo.environment
+	) -> String? {
+		let environment = given ?? inherited
+		guard let refusal = TmuxSocketPath.refusal(for: environment["TMUX_TMPDIR"]) else {
+			return nil
+		}
+		return refusal + "\r\n"
 	}
 
 	/// A null-terminated C array of copies, for `execve`.

@@ -213,6 +213,12 @@ struct AbydosIcatTests {
 		// Without TMUX the plain form is used, which is the one worth checking:
 		// the passthrough form only wraps it.
 		environment.removeValue(forKey: "TMUX")
+		// And a `TMUX_TMPDIR` too long to make a socket, for the same reason
+		// one variable along: the pane says so before the script writes a byte,
+		// and what this counts is lines. Inherited from the machine, so on a
+		// desk where one is set this measured the sentence as well as the
+		// picture — which is how it was found.
+		environment = TmuxSocketPath.honouringWhatFits(environment)
 		environment["TERM"] = "xterm-256color"
 		if let tmux {
 			environment["PATH"] = tmux.directory.path + ":" + (environment["PATH"] ?? "/usr/bin:/bin")

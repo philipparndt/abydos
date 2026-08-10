@@ -165,6 +165,45 @@ struct PseudoTerminalEnvironmentTests {
 		#expect(!merged.keys.contains("TMUX"))
 	}
 
+	/// A directory whose socket cannot exist is not a preference to be honoured.
+	///
+	/// `TMUX_TMPDIR` was set in the shell the app was launched from, every pane
+	/// inherited it, and tmux appends `tmux-<uid>/default` to it — so the socket
+	/// came to about 133 bytes where 103 is the most a unix socket path can be.
+	/// The pane died before it drew a prompt, saying `File name too long` about
+	/// a path nobody had typed.
+	@Test func refusesATmuxDirectoryWhoseSocketCouldNotExist() {
+		let tooLong = "/private/tmp/" + String(repeating: "d", count: 120)
+		let merged = PseudoTerminal.mergedEnvironment(
+			["TMUX_TMPDIR": tooLong], bundled: nil, app: nil
+		)
+		#expect(!merged.keys.contains("TMUX_TMPDIR"))
+	}
+
+	/// And the other side, which is the whole of the design: a short one is
+	/// somebody's choice, and taking it away would put their panes on a
+	/// different tmux server from their other tools.
+	@Test func honoursATmuxDirectoryWhoseSocketFits() {
+		let merged = PseudoTerminal.mergedEnvironment(
+			["TMUX_TMPDIR": "/private/tmp/sockets"], bundled: nil, app: nil
+		)
+		#expect(merged["TMUX_TMPDIR"] == "/private/tmp/sockets")
+	}
+
+	/// What the pane is told, so the refusal is not silent. tmux's own sentence
+	/// explained nothing to whoever was looking at it; this one names the
+	/// variable, the number and what happens instead.
+	@Test func saysInThePaneWhatItRefusedAndWhy() throws {
+		let tooLong = "/private/tmp/" + String(repeating: "d", count: 120)
+		let said = try #require(PseudoTerminal.refusals(["TMUX_TMPDIR": tooLong]))
+		#expect(said.contains("TMUX_TMPDIR"))
+		#expect(said.contains("\(TmuxSocketPath.limit)"))
+		#expect(said.hasSuffix("\r\n"), "raw mode: a bare newline leaves the prompt indented")
+
+		#expect(PseudoTerminal.refusals(["TMUX_TMPDIR": "/private/tmp/sockets"]) == nil)
+		#expect(PseudoTerminal.refusals([:]) == nil)
+	}
+
 	/// The bundled commands go on the end of the PATH, so a command somebody
 	/// already has still wins.
 	@Test func appendsTheBundledCommands() {
