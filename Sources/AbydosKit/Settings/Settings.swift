@@ -105,6 +105,7 @@ public final class Settings {
 		static let terminalGPURendering = "terminalGPURendering"
 		static let terminalOptionAsMeta = "terminalOptionAsMeta"
 		static let toolImages = "toolImages"
+		static let languageServers = "languageServers"
 		static let containerRuntime = "containerRuntime"
 		static let devContainerConsent = "devContainerConsent"
 		static let devContainerChoice = "devContainerChoice"
@@ -365,6 +366,18 @@ public final class Settings {
 	public var toolImages: [String: String] {
 		get { defaults.dictionary(forKey: Key.toolImages) as? [String: String] ?? [:] }
 		set { set(newValue, Key.toolImages) }
+	}
+
+	/// Which language server a language uses: language id to the server's name.
+	///
+	/// Empty means every language gets the server Abydos has for it, which is
+	/// what all of them said until a language had two. A project that names its
+	/// own in `.abydos/tools.json` overrides this, the same way round as the
+	/// images above and for the same reason — the file is a statement about the
+	/// project and this is one person's default.
+	public var languageServers: [String: String] {
+		get { defaults.dictionary(forKey: Key.languageServers) as? [String: String] ?? [:] }
+		set { set(newValue, Key.languageServers) }
 	}
 
 	/// Which projects are worked on inside the devcontainer they name, and which

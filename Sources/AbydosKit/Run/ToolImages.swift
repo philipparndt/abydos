@@ -58,6 +58,13 @@ public struct ToolImages: Equatable, Sendable {
 
 		var found: [String: String] = [:]
 		for (tool, value) in root {
+			// The other question this file answers — which server a language uses
+			// — lives under a name of its own, and its keys are language ids
+			// rather than tool names. Skipped by that name rather than left to
+			// fall through the shapes below, because `plantuml` is both a tool
+			// that comes from an image and a language a server answers for, and a
+			// reader that told them apart by shape would one day get it wrong.
+			guard tool != LanguageServerChoices.section else { continue }
 			if let image = value as? String, !image.isEmpty {
 				found[tool] = image
 			} else if let table = value as? [String: Any],
