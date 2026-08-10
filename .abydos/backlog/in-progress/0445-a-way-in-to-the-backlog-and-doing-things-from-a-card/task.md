@@ -56,7 +56,45 @@ tool nor an agent may make it. A "New item" button that dropped things into
 
 ## Ruled out
 
-Nothing yet — this is written before the work.
+**A chooser for the assistants, in the "Make a Backlog" sheet.** `init` on the
+command line asks which assistant works this backlog, and the obvious thing was
+to ask the same question with checkboxes. Not done: `init` already has a good
+answer for when it is not talking to a terminal — the ones that are installed —
+and a second copy of that question is a second place for it to drift. The sheet
+names them instead, and says that running `init` again adds another. If somebody
+wants the question, the answer is the command, which is the point of the command
+existing.
+
+**A "New item" button per column.** The natural place for it looked like the
+head of each column, which is where every other board puts one. It is exactly
+the wrong place here: a button at the head of `ready` would file into `ready`,
+and that is the one promise a button may not make. One button, in the header,
+that does not ask where.
+
+**Watching for a backlog appearing in a project that has none.** FSEvents wants
+a path that exists, and the only path that certainly does is the project root —
+watching the whole source tree to notice one folder being made. So a backlog
+made in a terminal is not noticed live; Refresh, or showing the pane again,
+picks it up, and a backlog made from the button starts the watcher on the spot.
+Written down rather than fixed, because the cost is one click and the fix is a
+recursive watch of everything.
+
+**Lighting the rail button while the board is showing.** The terminal button
+does this — `setPanelVisible` lights it — but the panel's selection is per tab,
+so the backlog button would have to follow which tab is in front, and every
+other pane in that group (review, debug) would want the same. Left undone rather
+than half done: the button opens the backlog and says nothing about whether it
+is open.
+
+**What the screenshots showed that nothing else could.** The board and the
+absent view were photographed; the menus were not, because a menu is not on
+screen until somebody clicks, so they are printed instead — see
+`--backlog-menu`, `--backlog-init` and `--backlog-new`, added for this. Two
+things came out of looking rather than reasoning: the `checklist` symbol does
+render at the strip's size (a missing SF Symbol draws nothing at all and the
+button would have looked like a gap), and the card for the item whose worktree
+had been deleted drew no branch at all — which is the same `isPresent` rule the
+new menu entries use, visible on the card, and is why the two cannot disagree.
 
 Worth reading first rather than rediscovering: `BacklogCommands.swift` already
 implements `init` and `new` as commands, and `BacklogSetup.swift` is what `init`
@@ -74,5 +112,5 @@ implementations of `init` is two answers to what a backlog is.
       rather than a second implementation
 - [x] A button that makes a new item, landing in `open/`, and opens it to fill in
 - [x] Check by eye that a new item cannot reach `ready/` from the pane
-- [ ] Write down here what was ruled out on the way
-- [ ] `spec/backlog.md` says what the project now does
+- [x] Write down here what was ruled out on the way
+- [x] `spec/backlog.md` says what the project now does
