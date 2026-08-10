@@ -39,10 +39,15 @@ struct BacklogCard {
 /// `.abydos/backlog`, re-read when it changes, so somebody moving a file in a
 /// terminal sees the board move too.
 final class BacklogPane: NSView {
-	/// Open an item's markdown in the editor.
+	/// Open a file of the backlog's in the editor: an item, or the instructions
+	/// a backlog that has just been made was given.
 	var onOpenItem: ((URL) -> Void)?
 	/// Pick an item up: a worktree of its own, and an agent in it.
 	var onStartAgent: ((BacklogItem) -> Void)?
+	/// Open the worktree an item is being worked on in, as a project.
+	var onOpenWorktree: ((URL) -> Void)?
+	/// Open a shell in that worktree.
+	var onOpenWorktreeTerminal: ((URL) -> Void)?
 	/// Say something in the corner of the window.
 	var onNotify: ((String, String?) -> Void)?
 
@@ -51,18 +56,31 @@ final class BacklogPane: NSView {
 
 	private var cardsByState: [BacklogState: [BacklogCard]] = [:]
 
+	/// Whether this project has a backlog at all.
+	///
+	/// Remembered rather than asked each time: the answer decides which view is
+	/// installed and whether the header means anything, and both are consulted
+	/// on every reload. Re-read by `reload`, which is what runs when somebody
+	/// makes one in a terminal.
+	private var hasBacklog = false
+
 	private enum Mode: Int { case list, board }
 	private var mode: Mode = .board
 
+	private var header: NSStackView!
+	private var headerHeight: NSLayoutConstraint!
 	private var modeControl: NSSegmentedControl!
 	private var summaryLabel: NSTextField!
 	private var startButton: NSButton!
+	private var newButton: NSButton!
 	private var contentArea: NSView!
 	private var listView: BacklogListView!
 	private var boardView: BacklogBoardView!
+	private var absentView: BacklogAbsentView!
 
 	init(projectRoot: URL) {
 		self.backlog = Backlog(projectRoot: projectRoot)
+		self.hasBacklog = backlog.exists
 		super.init(frame: .zero)
 		wantsLayer = true
 		layer?.backgroundColor = Theme.current.editorBackground.cgColor
@@ -100,6 +118,16 @@ final class BacklogPane: NSView {
 		startButton.controlSize = .small
 		startButton.font = Theme.current.uiFont(11)
 
+		// Beside "start the next ready item" and deliberately not next to a
+		// column: a button that belonged to a column would have to be offered
+		// on `ready` too, and pressing it there would be the app making a
+		// promise that only a person can make. There is one place a new item
+		// goes, so there is one button and it does not ask.
+		newButton = NSButton(title: "New item\u{2026}", target: self, action: #selector(newItemClicked))
+		newButton.bezelStyle = .rounded
+		newButton.controlSize = .small
+		newButton.font = Theme.current.uiFont(11)
+
 		let refresh = NSButton(title: "Refresh", target: self, action: #selector(refreshClicked))
 		refresh.bezelStyle = .rounded
 		refresh.controlSize = .small
@@ -108,7 +136,7 @@ final class BacklogPane: NSView {
 		let spacer = NSView()
 		spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-		let header = NSStackView(views: [modeControl, summaryLabel, spacer, startButton, refresh])
+		header = NSStackView(views: [modeControl, summaryLabel, spacer, newButton, startButton, refresh])
 		header.orientation = .horizontal
 		header.spacing = Theme.current.scaled(8)
 		header.edgeInsets = NSEdgeInsets(
@@ -119,6 +147,8 @@ final class BacklogPane: NSView {
 		listView.pane = self
 		boardView = BacklogBoardView()
 		boardView.pane = self
+		absentView = BacklogAbsentView(projectName: backlog.projectRoot.lastPathComponent)
+		absentView.onMake = { [weak self] in self?.confirmMakeBacklog() }
 
 		contentArea = NSView()
 		addSubview(header)
@@ -126,11 +156,12 @@ final class BacklogPane: NSView {
 		header.translatesAutoresizingMaskIntoConstraints = false
 		contentArea.translatesAutoresizingMaskIntoConstraints = false
 
+		headerHeight = header.heightAnchor.constraint(equalToConstant: Theme.current.scaled(34))
 		NSLayoutConstraint.activate([
 			header.topAnchor.constraint(equalTo: topAnchor),
 			header.leadingAnchor.constraint(equalTo: leadingAnchor),
 			header.trailingAnchor.constraint(equalTo: trailingAnchor),
-			header.heightAnchor.constraint(equalToConstant: Theme.current.scaled(34)),
+			headerHeight,
 
 			contentArea.topAnchor.constraint(equalTo: header.bottomAnchor),
 			contentArea.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -142,7 +173,14 @@ final class BacklogPane: NSView {
 	}
 
 	private func showContent() {
-		let wanted: NSView = mode == .list ? listView : boardView
+		// The header is about a backlog: two presentations of it, how many are
+		// in each folder, and what to start next. With no backlog there is
+		// nothing for it to say, and a row of disabled controls above "there is
+		// no backlog here" reads as a broken pane rather than an empty one.
+		header.isHidden = !hasBacklog
+		headerHeight.constant = hasBacklog ? Theme.current.scaled(34) : 0
+
+		let wanted: NSView = hasBacklog ? (mode == .list ? listView : boardView) : absentView
 		guard wanted.superview !== contentArea else { return }
 		contentArea.subviews.forEach { $0.removeFromSuperview() }
 		contentArea.addSubview(wanted)
@@ -183,8 +221,11 @@ final class BacklogPane: NSView {
 		summaryLabel.font = Theme.current.uiFont(11)
 		summaryLabel.textColor = Theme.current.gitIgnored
 		startButton.font = Theme.current.uiFont(11)
+		newButton.font = Theme.current.uiFont(11)
+		headerHeight.constant = hasBacklog ? Theme.current.scaled(34) : 0
 		listView.applySettings()
 		boardView.applySettings()
+		absentView.applySettings()
 		refreshViews()
 	}
 
@@ -204,6 +245,11 @@ final class BacklogPane: NSView {
 	func reload() {
 		let backlog = self.backlog
 		DispatchQueue.global(qos: .userInitiated).async {
+			// Asked here rather than on the main thread, and asked every time:
+			// `abydos-backlog init` in a terminal is the other way a project
+			// gets a backlog, and the watcher cannot report a folder appearing
+			// that it was never able to watch.
+			let exists = backlog.exists
 			let runs = Dictionary(
 				uniqueKeysWithValues: BacklogRuns(projectRoot: backlog.projectRoot).all().map { ($0.number, $0) }
 			)
@@ -214,6 +260,11 @@ final class BacklogPane: NSView {
 
 			DispatchQueue.main.async {
 				self.cardsByState = found
+				if exists != self.hasBacklog {
+					self.hasBacklog = exists
+					self.showContent()
+					if exists { self.watch() }
+				}
 				self.refreshViews()
 			}
 		}
@@ -225,7 +276,15 @@ final class BacklogPane: NSView {
 	/// agent finishing an item in a worktree writes into this folder, and a
 	/// board that only updated when it was clicked would be the one place in
 	/// the app that disagreed with the disk.
+	///
+	/// Nothing is watched while there is no backlog: FSEvents wants a path that
+	/// exists, and the alternative — watching the project root — is watching
+	/// the whole source tree to notice one folder being made. A backlog made in
+	/// a terminal is picked up by Refresh, or by showing the pane again, both of
+	/// which reload; a backlog made from the button below starts the watcher on
+	/// the spot.
 	private func watch() {
+		guard watcher == nil else { return }
 		guard FileManager.default.fileExists(atPath: backlog.directory.path) else { return }
 		let watcher = FileSystemWatcher(root: backlog.directory) { [weak self] _ in
 			DispatchQueue.main.async { self?.reload() }
@@ -239,6 +298,7 @@ final class BacklogPane: NSView {
 		summaryLabel.stringValue = counts.joined(separator: "   ")
 		startButton.isEnabled = !cards(in: .ready).isEmpty
 
+		guard hasBacklog else { return }
 		if mode == .list {
 			listView.reload()
 		} else {
@@ -277,8 +337,169 @@ final class BacklogPane: NSView {
 		onStartAgent?(item)
 	}
 
+	// MARK: Making one, and putting something in it
+
+	/// Makes this project a backlog, through the same code `init` runs.
+	///
+	/// `BacklogSetup.run` and not a second implementation: the whole design of
+	/// this backlog is that the app, the command line and an agent read and move
+	/// the same files, and two implementations of `init` would be two answers to
+	/// what a backlog is — one of which would drift.
+	///
+	/// The assistants are the ones installed, which is the answer
+	/// `abydos-backlog init` gives itself when it is not talking to a terminal.
+	/// They are named in the sheet rather than chosen there: a chooser is a
+	/// second copy of a question the command line already asks well, and `init`
+	/// run again adds a tool without disturbing anything.
+	private func confirmMakeBacklog() {
+		let installed = BacklogAssistant.allCases.filter(\.isInstalled)
+
+		let alert = NSAlert()
+		alert.messageText = "Make a backlog in \(backlog.projectRoot.lastPathComponent)?"
+		alert.informativeText = """
+		This writes .abydos/backlog — the state folders, the workflow, project.md \
+		and the spec — and points \(installed.isEmpty
+			? "no assistant at it, because none is installed"
+			: installed.map(\.name).joined(separator: ", ")) at it.
+
+		Nothing that is already there is overwritten, and `abydos-backlog init` \
+		run later adds another assistant.
+		"""
+		alert.addButton(withTitle: "Make a Backlog")
+		alert.addButton(withTitle: "Cancel")
+
+		let act: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+			guard response == .alertFirstButtonReturn else { return }
+			self?.makeBacklog(for: installed)
+		}
+		if let window { alert.beginSheetModal(for: window, completionHandler: act) } else { act(alert.runModal()) }
+	}
+
+	/// The whole of what the button does, once it has been agreed to.
+	///
+	/// Separated from the sheet for the same reason `createItem` is: a pane in
+	/// the app target cannot be reached by the suite, so the way to show that
+	/// this writes a real backlog is to drive it and then look at the folder.
+	func makeBacklog(for assistants: [BacklogAssistant]) {
+		do {
+			try BacklogSetup.run(projectRoot: backlog.projectRoot, assistants: assistants)
+		} catch {
+			onNotify?("Could not make a backlog", "\(error)")
+			return
+		}
+		hasBacklog = true
+		showContent()
+		watch()
+		reload()
+		// The instructions, because that is what `init` says to read next on
+		// the command line, and the pane should not be the version of the same
+		// command that says nothing.
+		onOpenItem?(backlog.instructionsFile)
+	}
+
+	/// Files a new item, in `open/`.
+	///
+	/// **Never `ready/`**, and there is deliberately no control here that could
+	/// send it there. `ready` is the promise that the deciding is done, and it
+	/// is the one human gate in this workflow: a button that dropped items into
+	/// it would turn that gate into a formality, and the tool would be making a
+	/// promise on somebody's behalf. `Backlog.create` defaults to `.open` and
+	/// this call does not pass a state, which is the same thing
+	/// `abydos-backlog new` does. Moving it on afterwards is a drag, a menu
+	/// item or an `mv`, and all three are somebody deciding.
+	@objc private func newItemClicked() {
+		let alert = NSAlert()
+		alert.messageText = "New backlog item"
+		alert.informativeText = "It gets the next number and lands in open/, "
+			+ "which is where something written down but not yet agreed belongs."
+		alert.addButton(withTitle: "Create")
+		alert.addButton(withTitle: "Cancel")
+
+		let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+		field.placeholderString = "what is wrong, or what is missing"
+		field.font = Theme.current.uiFont(12)
+		alert.accessoryView = field
+
+		let act: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+			guard response == .alertFirstButtonReturn else { return }
+			self?.createItem(titled: field.stringValue)
+		}
+		// The field, not the button, so the title can just be typed.
+		alert.window.initialFirstResponder = field
+		if let window { alert.beginSheetModal(for: window, completionHandler: act) } else { act(alert.runModal()) }
+	}
+
+	/// The whole of what the button does, once it has a title.
+	///
+	/// Separated from the sheet so that it can be driven: this pane is in the
+	/// app target and the suite cannot reach it, so the only way to show where
+	/// a new item lands is to run the real thing and look. See
+	/// `newItemForTesting`, which calls this and nothing else.
+	@discardableResult
+	func createItem(titled typed: String) -> BacklogItem? {
+		let title = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !title.isEmpty else { return nil }
+		do {
+			// No `state:`. The default is `.open`, which is where
+			// `abydos-backlog new` puts one too.
+			let item = try backlog.create(title: title)
+			reload()
+			// Opened rather than merely made: what lands on disk is a template
+			// with four headings and nothing under them, and an item nobody
+			// fills in is a title in a folder.
+			open(item)
+			return item
+		} catch {
+			onNotify?("Could not make an item", "\(error)")
+			return nil
+		}
+	}
+
+	// MARK: - Driving it
+
+	/// What a card's menu offers, as one line.
+	///
+	/// A menu is the part of this pane a screenshot cannot photograph without a
+	/// click, and the pane is in the app target where the suite cannot reach it.
+	/// So it is checked by opening the real window on a real backlog and asking
+	/// the real menu what it says.
+	func menuTitlesForTesting(number: Int) -> String {
+		let found = BacklogState.board
+			.compactMap { cards(in: $0).first { $0.number == number } }
+			.first
+		guard let card = found else { return "no item \(number) on the board" }
+		return menu(for: card).items
+			.map { $0.isSeparatorItem ? "\u{2014}" : $0.title }
+			.joined(separator: " | ")
+	}
+
+	/// Files an item the way the button does, and says where it landed.
+	func newItemForTesting(titled title: String) -> String {
+		guard hasBacklog else { return "no backlog" }
+		guard let item = createItem(titled: title) else { return "nothing made" }
+		let where_ = (item.folder ?? item.file).path
+		let prefix = backlog.projectRoot.path + "/"
+		return "\(String(format: "%04d", item.number))  \(item.state.directoryName)/  "
+			+ (where_.hasPrefix(prefix) ? String(where_.dropFirst(prefix.count)) : where_)
+	}
+
+	/// Whether the pane is offering to make a backlog rather than showing one.
+	var isOfferingToMakeOneForTesting: Bool { !hasBacklog }
+
+	/// Makes a backlog the way the button does, and says what is there now.
+	func makeBacklogForTesting() -> String {
+		guard !hasBacklog else { return "there is one already" }
+		makeBacklog(for: BacklogAssistant.allCases.filter(\.isInstalled))
+		return hasBacklog ? "made, and the pane is showing it" : "not made"
+	}
+
 	/// The menu a card and a row both use.
-	func menu(for item: BacklogItem) -> NSMenu {
+	///
+	/// Given the card rather than the item, because where an item is being
+	/// worked on is not in the item: it is a run recorded beside the project,
+	/// which the card already carries in order to draw the branch on it.
+	func menu(for card: BacklogCard) -> NSMenu {
+		let item = card.item
 		let menu = NSMenu()
 
 		let open = NSMenuItem(title: "Open", action: #selector(openFromMenu(_:)), keyEquivalent: "")
@@ -295,6 +516,37 @@ final class BacklogPane: NSView {
 			start.target = self
 			start.representedObject = item
 			menu.addItem(start)
+		}
+
+		// Offered only where there is something to open.
+		//
+		// `isPresent` is the question, not whether a run was ever recorded: the
+		// run file is this machine's note that a checkout was made, and a
+		// checkout somebody removed with `rm -rf` leaves the note behind. An
+		// entry that opened a window on a directory that is not there would
+		// fail after the click rather than before it — and the card already
+		// uses the same test to decide whether to draw the branch name, so the
+		// menu and the card agree by construction.
+		if let run = card.run, run.isPresent {
+			let asProject = NSMenuItem(
+				title: "Open Worktree as a Project",
+				action: #selector(openWorktreeFromMenu(_:)),
+				keyEquivalent: ""
+			)
+			asProject.target = self
+			asProject.representedObject = run.worktree
+			asProject.toolTip = run.worktreePath
+			menu.addItem(asProject)
+
+			let terminal = NSMenuItem(
+				title: "Open Terminal in Worktree",
+				action: #selector(openWorktreeTerminalFromMenu(_:)),
+				keyEquivalent: ""
+			)
+			terminal.target = self
+			terminal.representedObject = run.worktree
+			terminal.toolTip = run.worktreePath
+			menu.addItem(terminal)
 		}
 
 		menu.addItem(.separator())
@@ -339,6 +591,16 @@ final class BacklogPane: NSView {
 	@objc private func startFromMenu(_ sender: NSMenuItem) {
 		guard let item = sender.representedObject as? BacklogItem else { return }
 		start(item)
+	}
+
+	@objc private func openWorktreeFromMenu(_ sender: NSMenuItem) {
+		guard let worktree = sender.representedObject as? URL else { return }
+		onOpenWorktree?(worktree)
+	}
+
+	@objc private func openWorktreeTerminalFromMenu(_ sender: NSMenuItem) {
+		guard let worktree = sender.representedObject as? URL else { return }
+		onOpenWorktreeTerminal?(worktree)
 	}
 
 	@objc private func moveFromMenu(_ sender: NSMenuItem) {
@@ -446,7 +708,7 @@ extension BacklogListView: NSTableViewDataSource, NSTableViewDelegate {
 		case let .item(card):
 			let view = BacklogRowCell()
 			view.configure(card)
-			view.menu = pane?.menu(for: card.item)
+			view.menu = pane?.menu(for: card)
 			return view
 		}
 	}
@@ -822,7 +1084,7 @@ extension BacklogColumnView: NSTableViewDataSource, NSTableViewDelegate {
 		let card = cards[row]
 		let view = BacklogCardView()
 		view.configure(card)
-		view.menu = pane?.menu(for: card.item)
+		view.menu = pane?.menu(for: card)
 		return view
 	}
 
@@ -1040,6 +1302,100 @@ private final class BacklogCardView: NSView {
 			in: NSRect(x: x, y: bottom - markHeight, width: width, height: markHeight),
 			withAttributes: markAttributes
 		)
+	}
+}
+
+// MARK: - No backlog yet
+
+/// What the pane shows for a project that has no `.abydos/backlog`.
+///
+/// It used to show the board regardless: five empty columns, each with its
+/// one-line description of what belongs in it, and nothing anywhere saying that
+/// the folder those columns are over does not exist. That is the worst of both
+/// — it looks like a backlog with nothing in it, which is a state somebody
+/// would sensibly try to fix by dragging something into it.
+///
+/// So this says the folder is missing, says what making one would write, and
+/// names the command that does the same thing, because the command line is not
+/// a fallback here: it is the other half of the same tool, and somebody who
+/// learns the name once can run it in a project this app has never opened.
+final class BacklogAbsentView: NSView {
+	var onMake: (() -> Void)?
+
+	private let projectName: String
+	private var titleLabel: NSTextField!
+	private var bodyLabel: NSTextField!
+	private var commandLabel: NSTextField!
+	private var makeButton: NSButton!
+
+	init(projectName: String) {
+		self.projectName = projectName
+		super.init(frame: .zero)
+		wantsLayer = true
+		layer?.backgroundColor = Theme.current.editorBackground.cgColor
+		build()
+	}
+
+	required init?(coder: NSCoder) { fatalError("not used") }
+
+	override var isFlipped: Bool { true }
+
+	private func build() {
+		titleLabel = NSTextField(labelWithString: "\(projectName) has no backlog")
+		titleLabel.font = Theme.current.uiFont(13, weight: .semibold)
+		titleLabel.textColor = Theme.current.editorText
+
+		bodyLabel = NSTextField(wrappingLabelWithString: """
+		A backlog is a folder of markdown beside the project: open, ready, \
+		in-progress, waiting and completed, the workflow that says how they are \
+		worked, and a spec of what the project does today. Making one writes \
+		.abydos/backlog and points the assistants installed on this machine at it.
+		""")
+		bodyLabel.font = Theme.current.uiFont(11)
+		bodyLabel.textColor = Theme.current.gitIgnored
+		bodyLabel.preferredMaxLayoutWidth = Theme.current.scaled(420)
+
+		makeButton = NSButton(title: "Make a Backlog\u{2026}", target: self, action: #selector(makeClicked))
+		makeButton.bezelStyle = .rounded
+		makeButton.controlSize = .regular
+
+		commandLabel = NSTextField(labelWithString: "or, in a terminal:  abydos-backlog init")
+		commandLabel.font = Theme.current.uiFont(11)
+		commandLabel.textColor = Theme.current.gitIgnored
+		commandLabel.isSelectable = true
+
+		let stack = NSStackView(views: [titleLabel, bodyLabel, makeButton, commandLabel])
+		stack.orientation = .vertical
+		stack.alignment = .leading
+		stack.spacing = Theme.current.scaled(10)
+		stack.setCustomSpacing(Theme.current.scaled(16), after: bodyLabel)
+		stack.translatesAutoresizingMaskIntoConstraints = false
+		addSubview(stack)
+
+		NSLayoutConstraint.activate([
+			stack.centerYAnchor.constraint(equalTo: centerYAnchor),
+			stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Theme.current.scaled(24)),
+			// Never the pane's whole width: a paragraph across a maximised
+			// window is one long line, which is the hardest thing to read that
+			// a panel can contain.
+			stack.widthAnchor.constraint(lessThanOrEqualToConstant: Theme.current.scaled(420)),
+			stack.trailingAnchor.constraint(
+				lessThanOrEqualTo: trailingAnchor, constant: -Theme.current.scaled(24)
+			),
+		])
+	}
+
+	@objc private func makeClicked() { onMake?() }
+
+	func applySettings() {
+		layer?.backgroundColor = Theme.current.editorBackground.cgColor
+		titleLabel.font = Theme.current.uiFont(13, weight: .semibold)
+		titleLabel.textColor = Theme.current.editorText
+		bodyLabel.font = Theme.current.uiFont(11)
+		bodyLabel.textColor = Theme.current.gitIgnored
+		bodyLabel.preferredMaxLayoutWidth = Theme.current.scaled(420)
+		commandLabel.font = Theme.current.uiFont(11)
+		commandLabel.textColor = Theme.current.gitIgnored
 	}
 }
 

@@ -633,6 +633,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		bottomPanel.onOpenFileFromTerminal = { [weak self] request in
 			self?.openFromTerminal(request)
 		}
+		// Through the delegate rather than `switchProject`, so a worktree
+		// opened from a backlog card obeys the same rule as one opened from
+		// the project switcher: this window or a new one, whichever the
+		// setting says, and an already-open checkout is raised rather than
+		// opened twice.
+		bottomPanel.onOpenProject = { [weak self] root in
+			guard let self else { return }
+			(NSApp.delegate as? AppDelegate)?.open(projectAt: root, from: self)
+		}
 		// Set synchronously, not deferred: anything that opens the panel during
 		// launch would otherwise be undone when the deferred block ran.
 		bottomPanel.isHidden = true
