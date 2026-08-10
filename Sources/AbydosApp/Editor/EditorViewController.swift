@@ -988,9 +988,14 @@ final class EditorViewController: NSViewController {
 		document.onAutoSaved = { [weak self] in
 			self?.refreshTabBar()
 			guard let self, let project = self.project, let languageId = document.languageId else { return }
-			LanguageService.shared.saved(
-				url: fileURL, languageId: languageId, text: self.text(of: document), project: project.scopeRoot
-			)
+			StallWatch.mark("language sync") {
+				LanguageService.shared.saved(
+					url: fileURL,
+					languageId: languageId,
+					text: self.text(of: document),
+					project: project.scopeRoot
+				)
+			}
 		}
 
 		codeView.onToggleBreakpoint = { [weak self] line in
@@ -1084,9 +1089,17 @@ final class EditorViewController: NSViewController {
 			guard let self, let tab, let document = tab.document,
 			      let project = self.project, let languageId = document.languageId
 			else { return }
-			LanguageService.shared.changed(
-				url: tab.url, languageId: languageId, text: self.text(of: document), project: project.scopeRoot
-			)
+			// Marked around the text as well as around the send: building the
+			// whole file as a `String` is the half of this that happens here, and
+			// it is the half that is still on this thread.
+			StallWatch.mark("language sync") {
+				LanguageService.shared.changed(
+					url: tab.url,
+					languageId: languageId,
+					text: self.text(of: document),
+					project: project.scopeRoot
+				)
+			}
 		}
 		languageSyncWork = work
 		DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)

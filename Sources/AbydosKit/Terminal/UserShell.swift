@@ -91,6 +91,17 @@ public enum UserShell {
 	private static let longestWait: TimeInterval = 5
 
 	private static func readLoginPath() -> [String] {
+		// Marked where the work is rather than at a call site, because there is
+		// no call site to mark: this is the initialiser of a `static let`, and it
+		// runs on whichever thread asks for the value first. `warmLoginPath`
+		// means that is usually a background queue and the mark is silent; when
+		// it is not — somebody opened a file before the warm-up finished, and
+		// then waited up to five seconds for a `.zshrc` — the log says so by name
+		// instead of adding to "idle".
+		StallWatch.mark("login shell path") { readLoginPathNow() }
+	}
+
+	private static func readLoginPathNow() -> [String] {
 		// Fenced, because a startup file is entitled to print things and several
 		// of them do. Without the markers a login banner ends up being treated
 		// as a list of directories.

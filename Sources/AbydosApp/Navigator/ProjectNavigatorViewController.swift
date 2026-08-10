@@ -241,7 +241,9 @@ final class ProjectNavigatorViewController: NSViewController {
 			// the tree is never left half-updated between frames.
 			var results: [String: GitFileStatus] = [:]
 			var pending: [(String, Bool)] = []
-			collectPaths(node: rootNode, gitRoot: repoRoot, into: &pending)
+			StallWatch.mark("navigator git status") {
+				collectPaths(node: rootNode, gitRoot: repoRoot, into: &pending)
+			}
 
 			for (path, isDirectory) in pending {
 				results["\(isDirectory ? "d" : "f"):\(path)"] = await git.status(
@@ -250,13 +252,15 @@ final class ProjectNavigatorViewController: NSViewController {
 				)
 			}
 
-			rootNode.applyGitStatus(gitRoot: repoRoot) { path, isDirectory in
-				results["\(isDirectory ? "d" : "f"):\(path)"] ?? .unmodified
+			StallWatch.mark("navigator git status") {
+				rootNode.applyGitStatus(gitRoot: repoRoot) { path, isDirectory in
+					results["\(isDirectory ? "d" : "f"):\(path)"] ?? .unmodified
+				}
+				// Deliberately not reloadData(): the row structure has not changed,
+				// only the colours, and a reload would clear the selection — which
+				// is what made keyboard-expanding a folder lose your place.
+				redrawVisibleRows()
 			}
-			// Deliberately not reloadData(): the row structure has not changed,
-			// only the colours, and a reload would clear the selection — which is
-			// what made keyboard-expanding a folder lose your place.
-			redrawVisibleRows()
 			onChangeCount?(await git.changedFileCount())
 		}
 	}

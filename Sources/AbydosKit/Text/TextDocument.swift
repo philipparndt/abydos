@@ -467,11 +467,19 @@ public final class TextDocument {
 
 	// MARK: - Saving
 
+	/// Marked rather than moved. Everything else in this file is on
+	/// `engineQueue`; this one piece serialises the whole rope and does an
+	/// atomic write — a temporary file, a write, a rename — on whichever thread
+	/// asked, which after a typing pause is the main one. Moving it is a change
+	/// to what `throws` means to every caller, so for now the log gets to say
+	/// how much of a session's stalling this actually is.
 	public func save() throws {
-		let bytes = rope.bytes(in: 0..<rope.byteCount)
-		try Data(bytes).write(to: url, options: .atomic)
-		isDirty = false
-		recordDiskState()
+		try StallWatch.mark("document save") {
+			let bytes = rope.bytes(in: 0..<rope.byteCount)
+			try Data(bytes).write(to: url, options: .atomic)
+			isDirty = false
+			recordDiskState()
+		}
 	}
 
 	/// Replaces the whole document with what another editor made of it.

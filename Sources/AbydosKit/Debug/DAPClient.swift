@@ -305,6 +305,16 @@ public final class DAPClient: @unchecked Sendable {
 	}
 
 	public func stop() {
+		// Marked, not moved: the half-second busy-wait below is reached from
+		// menu actions and from the stop button, which are the main thread. It
+		// is bounded and it is at the end of a session rather than in the middle
+		// of typing, so it is last on the list — but "half a second, on the main
+		// queue, sometimes" is exactly the shape of thing that was being recorded
+		// as idle.
+		StallWatch.mark("debug adapter stop") { stopNow() }
+	}
+
+	private func stopNow() {
 		// Both of them. Clearing stdout and leaving stderr behind is a whole
 		// core, quietly, for as long as the app runs — one per debug session
 		// that has ended.
