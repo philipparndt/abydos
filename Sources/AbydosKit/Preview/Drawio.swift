@@ -236,6 +236,86 @@ public enum Drawio {
 		return found
 	}
 
+	/// Whether two documents are the same drawing, whatever their text.
+	///
+	/// **draw.io re-serialises a file the moment it opens it, and the result is
+	/// never byte-identical.** Measured, by loading the three fixtures into the
+	/// real editor and reading them back, four things differ and not one of them
+	/// is something anybody did:
+	///
+	///  * the indentation, which belongs to whichever serialiser wrote the file;
+	///  * **every element's attributes come back in alphabetical order** —
+	///    `id parent style value vertex`, `height width x y as` — whatever order
+	///    they were written in;
+	///  * `<mxGraphModel>` arrives carrying every page setting draw.io has a
+	///    default for: `gridSize`, `guides`, `tooltips`, `connect`, `arrows`,
+	///    `fold`, `pageScale`, `math`, `shadow`;
+	///  * `dx` and `dy` on that element, which are *the size of the window the
+	///    diagram is being looked at in* and are written into the document.
+	///
+	/// Compared as text, therefore, every `.drawio` is edited the instant it is
+	/// opened: the tab grows its dot, closing asks whether to save, and auto-save
+	/// rewrites a file nobody touched. So the question asked here is about the
+	/// *drawing* — the pages, their names and ids, and their models compared as
+	/// XML rather than as characters.
+	///
+	/// **What is deliberately not forgiven.** Every cell must have exactly the
+	/// same attributes with exactly the same values, in any order. Only
+	/// `<mxGraphModel>` — the page's own settings, and the one element draw.io
+	/// fills in — may have a setting on one side and not the other. So moving a
+	/// shape, retyping a label, adding a cell or renaming a page is an edit, and
+	/// there is no normalisation here that any of them survives.
+	public static func isSameDrawing(_ one: String, as other: String) -> Bool {
+		guard one != other else { return true }
+		let left = pages(in: one), right = pages(in: other)
+		guard left.count == right.count else { return false }
+		return zip(left, right).allSatisfy {
+			$0.name == $1.name && $0.id == $1.id && isSameModel($0.model, $1.model)
+		}
+	}
+
+	/// The same question about one page's `<mxGraphModel>`.
+	static func isSameModel(_ one: String, _ other: String) -> Bool {
+		if one == other { return true }
+		guard let left = try? XMLDocument(xmlString: one).rootElement(),
+		      let right = try? XMLDocument(xmlString: other).rootElement()
+		else {
+			// A model half-written, or not XML at all: fall back to the text,
+			// which errs towards calling it an edit.
+			return one == other
+		}
+		return isSame(left, right)
+	}
+
+	private static func isSame(_ one: XMLElement, _ other: XMLElement) -> Bool {
+		guard one.name == other.name else { return false }
+		let left = named(one), right = named(other)
+		if one.name == "mxGraphModel" {
+			// The window, not the drawing.
+			for (key, value) in left where !["dx", "dy"].contains(key) {
+				if let theirs = right[key], theirs != value { return false }
+			}
+			for (key, value) in right where !["dx", "dy"].contains(key) {
+				if let ours = left[key], ours != value { return false }
+			}
+		} else if left != right {
+			return false
+		}
+		let ours = one.children?.compactMap { $0 as? XMLElement } ?? []
+		let theirs = other.children?.compactMap { $0 as? XMLElement } ?? []
+		guard ours.count == theirs.count else { return false }
+		return zip(ours, theirs).allSatisfy(isSame)
+	}
+
+	private static func named(_ element: XMLElement) -> [String: String] {
+		var found: [String: String] = [:]
+		for attribute in element.attributes ?? [] {
+			guard let name = attribute.name else { continue }
+			found[name] = attribute.stringValue ?? ""
+		}
+		return found
+	}
+
 	private static func unescape(_ text: String) -> String {
 		text.replacingOccurrences(of: "&lt;", with: "<")
 			.replacingOccurrences(of: "&gt;", with: ">")

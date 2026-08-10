@@ -83,6 +83,41 @@ struct DrawioEditorLiveTests {
 		}
 	}
 
+	/// Opening a file is not editing it, and this is the test that says so.
+	///
+	/// draw.io re-serialises the document as it loads it, and the text it hands
+	/// back is never the text that went in: its own indentation, and
+	/// `<mxGraphModel dx dy>` set to the size of the window it is being looked at
+	/// in. Compared as text that is a change — so the tab grew its edited dot,
+	/// closing asked whether to save, and auto-save would have rewritten a file
+	/// nobody touched. Seen, on three fixtures, none of them touched.
+	///
+	/// The text really does come back different, and that is asserted rather than
+	/// assumed: without it this test would pass just as well over a comparison
+	/// that did nothing, and the sentence above would be a story.
+	@Test func openingAFileIsNotEditingIt() async throws {
+		guard let editor = await opened() else { return }
+		defer { editor.webView.navigationDelegate = nil }
+
+		var rewritten = 0
+		for name in ["plain", "pages", "stencils"] {
+			let bytes = try DrawioTests.fixture(name)
+			let document = try #require(Drawio.read(bytes))
+			editor.load(document.mxfile, compressed: document.isCompressed)
+			await settle()
+			let back = try #require(await editor.currentDocument())
+			if back != document.mxfile { rewritten += 1 }
+			#expect(
+				Drawio.isSameDrawing(back, as: document.mxfile),
+				"opening \(name).drawio counted as an edit to it"
+			)
+		}
+		#expect(
+			rewritten == 3,
+			"\(3 - rewritten) file(s) came back byte-identical, so this test no longer measures what it claims to"
+		)
+	}
+
 	/// Drawing in the editor is an edit to the file, heard about at once.
 	///
 	/// Not on draw.io's own autosave timer, which is a second and a half. The

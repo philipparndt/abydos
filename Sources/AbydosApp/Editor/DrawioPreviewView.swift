@@ -114,9 +114,28 @@ final class DrawioPreviewView: DiagramPaneView {
 		sayWhatIsMissing()
 	}
 
-	/// A change in draw.io is a change to the file, said once and immediately.
+	/// A change in draw.io is a change to the file, said once and immediately —
+	/// unless it is draw.io writing the same drawing back in its own hand.
+	///
+	/// The editor re-serialises the document as it loads it and reports that as a
+	/// change, and the text it reports is never the text that went in: the
+	/// indentation is its own, and `<mxGraphModel dx dy>` is the size of the
+	/// window the diagram is being looked at in. Taken at face value that marks
+	/// **every** `.drawio` edited the instant it is opened — the dot on the tab,
+	/// the close prompt, and auto-save rewriting a file nobody touched. Seen, on
+	/// three fixtures, none of them touched.
+	///
+	/// So a change that is the same *drawing* is remembered and not reported.
+	/// `Drawio.isSameDrawing` can only be wrong in the safe direction: nothing
+	/// anybody did to a diagram survives its normalisation.
 	private func editorChanged(_ xml: String) {
 		guard let document, xml != lastGiven else { return }
+		if let given = lastGiven, Drawio.isSameDrawing(xml, as: given) {
+			// Remembered, so ⌘S does not write it either: the app's copy is the
+			// file as it stands, and the file as it stands is this drawing.
+			lastGiven = xml
+			return
+		}
 		lastGiven = xml
 		document.setContents(xml)
 		onEdited?()
@@ -137,9 +156,19 @@ final class DrawioPreviewView: DiagramPaneView {
 	///
 	/// The change listener means this is almost always a no-op — but "almost
 	/// always" is not what ⌘S may be, and the round trip costs milliseconds.
+	///
+	/// It asks the same question the change listener does, and for the same
+	/// reason: ⌘S a second after opening a file, before draw.io has reported its
+	/// own re-serialisation, would otherwise write the diagram back in draw.io's
+	/// hand — a diff over a file nobody touched, and pressing ⌘S is exactly what
+	/// somebody does out of habit on a tab they have only just opened.
 	func flush() async {
 		guard let document, let current = await editor?.currentDocument() else { return }
 		guard current != lastGiven else { return }
+		if let given = lastGiven, Drawio.isSameDrawing(current, as: given) {
+			lastGiven = current
+			return
+		}
 		lastGiven = current
 		document.setContents(current)
 	}

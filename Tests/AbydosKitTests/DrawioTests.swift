@@ -86,6 +86,55 @@ struct DrawioTests {
 		#expect(pages.map(\.name) == ["Empty", "Full"])
 	}
 
+	// MARK: - The same drawing in another hand
+
+	/// The one that keeps a `.drawio` from being edited by being opened.
+	///
+	/// draw.io re-serialises a document as it loads it: its own indentation, and
+	/// `dx`/`dy` set to the size of the window it is being looked at in. Compared
+	/// as text that is a change, and every file would grow the tab's dot, ask on
+	/// close and be rewritten by auto-save without anybody touching it.
+	@Test func theSameDrawingWrittenOutAgainIsNotAnEdit() {
+		let one = """
+			<mxfile><diagram name="One" id="a"><mxGraphModel dx="1102" dy="768" grid="1">
+			  <root>
+			    <mxCell id="0" />
+			    <mxCell id="v1" value="a box" style="rounded=0;" vertex="1" parent="1">
+			      <mxGeometry x="120" y="80" width="200" height="60" as="geometry" />
+			    </mxCell>
+			  </root>
+			</mxGraphModel>
+			</diagram></mxfile>
+			"""
+		// The same drawing, in draw.io's hand: a window of another size, and its
+		// own indentation.
+		let other = "<mxfile><diagram name=\"One\" id=\"a\"><mxGraphModel dx=\"2786\" dy=\"460\" "
+			+ "grid=\"1\"><root><mxCell id=\"0\" /><mxCell id=\"v1\" value=\"a box\" "
+			+ "style=\"rounded=0;\" vertex=\"1\" parent=\"1\"><mxGeometry x=\"120\" y=\"80\" "
+			+ "width=\"200\" height=\"60\" as=\"geometry\" /></mxCell></root></mxGraphModel>"
+			+ "</diagram></mxfile>"
+		#expect(one != other)
+		#expect(Drawio.isSameDrawing(one, as: other))
+	}
+
+	/// And everything anybody actually does is still an edit.
+	@Test func movingALabelOrABoxIsAnEdit() {
+		func file(_ cell: String) -> String {
+			"<mxfile><diagram name=\"One\" id=\"a\"><mxGraphModel dx=\"10\" dy=\"10\"><root>"
+				+ cell + "</root></mxGraphModel></diagram></mxfile>"
+		}
+		let box = "<mxCell id=\"v1\" value=\"a box\"><mxGeometry x=\"120\" y=\"80\"/></mxCell>"
+		let moved = "<mxCell id=\"v1\" value=\"a box\"><mxGeometry x=\"200\" y=\"80\"/></mxCell>"
+		let renamed = "<mxCell id=\"v1\" value=\"a crate\"><mxGeometry x=\"120\" y=\"80\"/></mxCell>"
+		#expect(!Drawio.isSameDrawing(file(box), as: file(moved)))
+		#expect(!Drawio.isSameDrawing(file(box), as: file(renamed)))
+		#expect(!Drawio.isSameDrawing(file(box), as: file(box + box)))
+		// A page renamed, a page added, and a page whose id changed are all edits.
+		#expect(!Drawio.isSameDrawing(
+			file(box), as: file(box).replacingOccurrences(of: "name=\"One\"", with: "name=\"Two\"")
+		))
+	}
+
 	// MARK: - The two picture forms
 
 	/// A `.drawio.svg` is a real SVG with the document in a `content`
