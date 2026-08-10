@@ -1233,16 +1233,13 @@ final class BottomPanel: NSView {
 	/// not there — which is what `new -A` means.
 	private func attachCommand(to session: String) -> (executable: String, arguments: [String])? {
 		guard let tmux = Executables.locate("tmux") else { return nil }
-		return (executable: tmux, arguments: ["new", "-A", "-s", session])
+		return (executable: tmux, arguments: TmuxMirror.attachArguments(to: session))
 	}
 
 	/// What the first terminal runs instead of a plain shell.
 	private func startupCommand() -> (executable: String, arguments: [String])? {
 		guard Settings.shared.startsTmux, let session = tmuxSession else { return nil }
-		guard let tmux = Executables.locate("tmux") else { return nil }
-		// `new -A` is "attach if it exists, make it if it does not", which is
-		// exactly what reopening a project should do.
-		return (executable: tmux, arguments: ["new", "-A", "-s", session])
+		return attachCommand(to: session)
 	}
 
 	/// The sessions the server has, to switch this terminal between them.

@@ -333,6 +333,39 @@ public enum TmuxMirror {
 		return Int(text) ?? 1
 	}
 
+	/// Attaching to a session, making it if it is not there, with escapes let
+	/// through to this app.
+	///
+	/// `new -A` is "attach if it exists, make it if it does not", which is
+	/// exactly what reopening a project should do. The second command is the
+	/// part worth explaining.
+	///
+	/// tmux drops an escape sequence it does not recognise unless the program
+	/// wraps it in tmux's own passthrough *and* the session is willing to carry
+	/// it — and `allow-passthrough` is off unless somebody has turned it on.
+	/// Both commands this app ships talk to it that way: `abydos <file>` asks
+	/// the window it was typed in to open a file, and `abydos-icat` draws a
+	/// picture on the grid. Without this they do nothing in the terminal this
+	/// app starts, which is the one terminal they are certain to be run in.
+	///
+	/// A session option, set as the session is attached, in the same breath as
+	/// the attach so there is no window in which the session exists without it.
+	/// It is the same shape as the status bar below, for the same reasons:
+	/// nothing is written to anybody's `.tmux.conf`, and no session this app did
+	/// not bring up is touched. A session somebody made themselves and switched
+	/// this terminal to keeps whatever they set, which is theirs to decide.
+	///
+	/// This is not a new permission so much as the one a pane without tmux in it
+	/// already has: a program in a plain pane can write any escape it likes to
+	/// this terminal today, and tmux is the only thing standing between the two.
+	///
+	/// `-q` because tmux learned `allow-passthrough` in 3.3, and on anything
+	/// older the right outcome is the old behaviour rather than an error printed
+	/// into somebody's shell.
+	public static func attachArguments(to session: String) -> [String] {
+		["new", "-A", "-s", session, ";", "set-option", "-q", "-t", session, "allow-passthrough", "on"]
+	}
+
 	/// Hides — or gives back — tmux's own status bar, for one session only.
 	///
 	/// A session option, set at runtime: nothing is written to anybody's

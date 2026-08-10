@@ -198,3 +198,37 @@ struct SessionTmuxWindowTests {
 		) == nil)
 	}
 }
+
+/// What this app runs to put a terminal into a project's session.
+struct TmuxAttachTests {
+	/// `new -A` — attach if it exists, make it if it does not — and then the
+	/// session is told to carry escapes through.
+	///
+	/// Both commands this app ships talk to the window through an escape tmux
+	/// would otherwise eat, and `allow-passthrough` is off unless somebody has
+	/// turned it on. Without this, `abydos <file>` and `abydos-icat` do nothing
+	/// in the terminal this app starts — the one they are certain to be run in.
+	@Test func attachingAsksTheSessionToCarryEscapes() {
+		#expect(TmuxMirror.attachArguments(to: "abydos") == [
+			"new", "-A", "-s", "abydos",
+			";", "set-option", "-q", "-t", "abydos", "allow-passthrough", "on",
+		])
+	}
+
+	/// One session, not the server: nothing is written to anybody's config and
+	/// no session this app did not bring up is touched. `-g` here would take the
+	/// decision for every session on the machine, including the ones somebody
+	/// was already working in.
+	@Test func onlyForTheSessionItBringsUp() {
+		let arguments = TmuxMirror.attachArguments(to: "notes")
+		#expect(!arguments.contains("-g"))
+		#expect(arguments.filter { $0 == "notes" }.count == 2)
+	}
+
+	/// Quietly, because tmux learned `allow-passthrough` in 3.3. On anything
+	/// older the right outcome is the behaviour there has always been, not an
+	/// error printed into somebody's shell.
+	@Test func anOlderTmuxIsNotToldOff() {
+		#expect(TmuxMirror.attachArguments(to: "x").contains("-q"))
+	}
+}
