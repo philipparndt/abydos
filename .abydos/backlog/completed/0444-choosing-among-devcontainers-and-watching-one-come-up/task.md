@@ -305,14 +305,28 @@ app, with the scope asserted in every reading before anything was believed.
   for: `PANEL: visible=false (no tabs)` at 4, 6, 8, 12 and 25 seconds through a
   container coming up, and `*tmux` alone in the example project.
 
-**Three faults were found by driving it and none of them by reading it**: the
+- **Choosing a container while the question is still on screen.** The question
+  is withdrawn, the container starts, and the pane shows it: question in the
+  corner at 5s, `Use Deliberately slow` from the pill's menu at 6s, corner empty
+  at 10s, `step 2 of 12` in the revealed panel at 12s, a shell in the container
+  at 25s.
+
+**Four faults were found by driving it and none of them by reading it**: the
 pill naming the container the project had just moved *off*, because it took the
 first of the sessions that happen to be up and a switched project has two; the
-shell nobody asked for accumulating one per session through the session file; and
+shell nobody asked for accumulating one per session through the session file;
 "&lt;container&gt; is starting" outliving a start that had failed, which is
-0438's sentence being asked a question it was not written for. All three are
-fixed, and the last of them is a wart that predates this item and was only made
-visible by giving failures a pane.
+0438's sentence being asked a question it was not written for; and — found last,
+after the merge that renumbered this item — **choosing a container from the pill
+while the question about it was still in the corner doing nothing at all**.
+`devcontainerStarting` is held across the *asking* as well as the starting, which
+is what makes ten files one question, and it stopped the very gesture this item
+adds: the menu lists every container, so somebody looking at the question
+naturally picks from the menu instead, and until this the answer was swallowed
+and the pill said the container they chose was starting. All four are fixed. Two
+of them predate this item — the "is starting" sentence, and this one, which was
+reachable through 0438's single **Use &lt;container&gt;** — and both were only
+made easy to hit by what 0444 added.
 
 ## Not proved, and left out
 
@@ -339,8 +353,10 @@ visible by giving failures a pane.
   stays on file. That is probably right — a build fails for reasons that get
   fixed — but nobody decided it here.
 
-2075 tests in 317 suites pass, `PlantUMLServerLiveTests` among them, in 73
-seconds; it did not flake on the run that counts.
+2120 tests in 321 suites pass, `PlantUMLServerLiveTests` among them, in 30
+seconds; it did not flake on any of the four runs taken. `PseudoTerminalTests`
+failed once and passed on the two runs after it and on a filtered run of its own,
+which is a flake in something this item does not touch.
 
 All four were seen working, so this one is done and moves to `completed`.
 

@@ -973,6 +973,25 @@ final class LanguageService {
 		case .thisMachine, .notNow: where_ = "this machine"
 		}
 		log("\(project.lastPathComponent)'s language servers move to \(where_)")
+		// **The question may still be in the corner, and it holds the guard.**
+		// `devcontainerStarting` is what makes ten files opened at once one
+		// question rather than ten, and it is held across the *asking* as well as
+		// the starting — so a project with a question outstanding cannot start
+		// anything, including this. Answering from the pill is answering; the
+		// guard is given back here rather than by the withdrawal, so that
+		// `questionWithdrawn` finds nothing to hand back and does not log this as
+		// an answer nobody gave.
+		//
+		// **Found by driving it**, and it is the one gesture 0444 makes easy that
+		// was hard before: the menu lists every container, so somebody with the
+		// question on screen picks from it rather than from the toast — and until
+		// this, nothing at all happened, with the pill left saying the container
+		// they chose was starting.
+		if devcontainerStarting.remove(path) != nil {
+			log("\(project.lastPathComponent): the devcontainer question was answered "
+				+ "from the titlebar instead")
+		}
+		withdrawDevContainerQuestion(for: project)
 		shutdown(project: project)
 		// After the shutdown, which stops them, and before the warm-up, which
 		// would otherwise start them straight back up in the container they are
