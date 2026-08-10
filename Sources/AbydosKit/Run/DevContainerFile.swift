@@ -167,6 +167,51 @@ public enum DevContainerFile {
 		}
 	}
 
+	/// How one of a project's devcontainers is written down, so that an answer
+	/// naming it can be read back in another session.
+	///
+	/// **The path inside the project, not the path on this machine.** The table
+	/// this goes in is already keyed by the project, so repeating the project's
+	/// own path in the value would say it twice and would make a checkout that
+	/// moved lose an answer it could have kept. What is left —
+	/// `.devcontainer/go/devcontainer.json` — is a fact about the repository, and
+	/// it is the same string for everybody who checks it out, which is what makes
+	/// it readable in `defaults` by somebody wondering what they said.
+	///
+	/// **The name is deliberately not it.** A container is renamed by editing the
+	/// file it is in, and an answer that a rename silently dropped would send
+	/// somebody back to a question they had already answered.
+	///
+	/// A file outside the project cannot be one of its choices and cannot arrive
+	/// here; if one somehow did, its own canonical path is a truthful answer that
+	/// simply will not match anything later.
+	public static func identifier(of file: URL, in project: URL) -> String {
+		let root = FilePath.canonicalEvenIfMissing(project) + "/"
+		let path = FilePath.canonicalEvenIfMissing(file)
+		guard path.hasPrefix(root) else { return path }
+		return String(path.dropFirst(root.count))
+	}
+
+	/// The devcontainer an answer named, or nil when the project no longer offers
+	/// it.
+	///
+	/// **Nil is a question, not a failure.** A `.devcontainer/go` that has been
+	/// renamed, or deleted, or was never in this checkout, leaves an answer about
+	/// a container that does not exist; the only honest thing to do with it is to
+	/// ask again. Nothing here guesses at the nearest one, because guessing is
+	/// choosing somebody's toolchain for them, which is the fault the whole
+	/// devcontainer path exists to prevent.
+	public static func choice(
+		identified identifier: String,
+		in project: URL,
+		environment: [String: String] = ProcessInfo.processInfo.environment,
+		fileManager: FileManager = .default
+	) -> Choice? {
+		choices(in: project, environment: environment, fileManager: fileManager).first {
+			self.identifier(of: $0.file, in: project) == identifier
+		}
+	}
+
 	/// What one devcontainer is called.
 	///
 	/// The file's own `name` first, because that is the project saying what it

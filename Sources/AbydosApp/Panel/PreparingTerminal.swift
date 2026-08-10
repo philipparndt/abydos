@@ -39,14 +39,72 @@ final class PreparingTerminal {
 	/// What to say in a toast instead, once there is no pane. The project's name
 	/// is the only context a toast has.
 	private let subject: String
+	/// Whether the shell this becomes may take the keyboard.
+	///
+	/// **True when somebody asked for a terminal**, which is the gesture this was
+	/// written for: they clicked "New Terminal in <container>", they waited, and
+	/// the prompt they waited for should be ready to type at.
+	///
+	/// **False when the container came up because a file was opened** — 0444's
+	/// part 4. Nobody asked for a pane at all there; the pane exists so that
+	/// minutes of building are visible rather than silent, and taking the keyboard
+	/// out of the editor somebody is typing in to give it to a shell they did not
+	/// ask for is a worse interruption than the silence it replaces.
+	private let takesFocus: Bool
 
-	init(pane: TerminalPane, subject: String) {
+	init(pane: TerminalPane, subject: String, takesFocus: Bool = true) {
 		self.pane = pane
 		self.subject = subject
+		self.takesFocus = takesFocus
 	}
 
 	/// Whether there is still a pane to write into.
 	var isOpen: Bool { !wasClosed && pane != nil }
+
+	/// Whether the pane has stopped being a report and started being a shell,
+	/// which is the moment there is nothing left to watch.
+	private(set) var isShell = false
+
+	/// Told when the thing being got ready could not be, so that whoever opened
+	/// this pane can put it where it can be read.
+	///
+	/// **Because a failure is the one outcome that has to be seen.** A pane
+	/// opened behind a closed panel is right while a build is merely slow —
+	/// nobody asked to watch it — and wrong the moment the build fails, since the
+	/// pane is then the only place the reason exists. 0444.
+	var onRefused: (() -> Void)?
+
+	/// Brings this tab to the front, and takes it away — both set by the panel
+	/// that made it, because a pane cannot reach the strip it is in.
+	var bringToFront: (() -> Void)?
+	var closeTab: (() -> Void)?
+
+	/// Whether a start nobody could have watched takes its tab with it instead of
+	/// leaving a shell behind.
+	///
+	/// **False for a terminal somebody asked for**, which is every use of this
+	/// until 0444: they clicked, they waited, the shell is the thing they wanted
+	/// and it stays however quick it was.
+	///
+	/// **True for a container brought up for the language servers**, and the
+	/// reason is arithmetic. A warm start is `docker run` and an attach — a second
+	/// or two — and a tab left behind by every one of those is a shell nobody
+	/// asked for, in a panel whose tabs are written into `.abydos/session.json`
+	/// and restored: one more every session, for ever. What justifies the pane at
+	/// all is somebody being able to watch a slow start; where there was nothing
+	/// to watch there is nothing to keep.
+	var vanishesUnlessRevealed = false
+
+	/// Whether anybody was given the chance to see this — set by `reveal`.
+	private(set) var wasRevealed = false
+
+	/// Put this pane where it can be read: the panel opens and the tab comes
+	/// forward. Called when the wait has gone on long enough to be worth showing,
+	/// and when it has failed.
+	func reveal() {
+		wasRevealed = true
+		bringToFront?()
+	}
 
 	/// Told by the panel when the tab is closed.
 	func paneWasClosed() { wasClosed = true }
@@ -89,13 +147,22 @@ final class PreparingTerminal {
 			)
 			return
 		}
+		// Nobody could have watched it, so there is nothing to keep — see
+		// `vanishesUnlessRevealed`. The container is up either way; what goes is a
+		// tab that would only ever be closed by hand.
+		if vanishesUnlessRevealed, !wasRevealed {
+			closeTab?()
+			return
+		}
 		pane.write("\u{1B}[1;32mThe devcontainer is up. This tab is now a shell inside it.\u{1B}[0m\r\n")
 		pane.startProcess(command)
-		// Only when this tab is the one on screen. A pull can take minutes,
-		// somebody who went to another tab meanwhile is typing in it, and taking
-		// the keyboard off them for a prompt they are not looking at is worse
-		// than making them click.
-		if pane.window != nil { pane.focus() }
+		isShell = true
+		// Only when this tab is the one on screen, and only when somebody asked
+		// for a terminal in the first place. A pull can take minutes, somebody who
+		// went to another tab meanwhile is typing in it, and taking the keyboard
+		// off them for a prompt they are not looking at is worse than making them
+		// click.
+		if takesFocus, pane.window != nil { pane.focus() }
 	}
 
 	/// It did not work, and the pane keeps every word of why.
@@ -108,6 +175,7 @@ final class PreparingTerminal {
 		// build or the command said is above this line, which is the only place
 		// the reason actually is.
 		pane.write("\r\n\u{1B}[1;31m\(sentence)\u{1B}[0m\r\n")
+		onRefused?()
 	}
 
 	/// The two sinks, wired to this pane, for whatever is being got ready.

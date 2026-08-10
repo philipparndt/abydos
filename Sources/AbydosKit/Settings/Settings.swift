@@ -107,6 +107,7 @@ public final class Settings {
 		static let toolImages = "toolImages"
 		static let containerRuntime = "containerRuntime"
 		static let devContainerConsent = "devContainerConsent"
+		static let devContainerChoice = "devContainerChoice"
 		static let appearance = "appearance"
 		static let followsTerminalProject = "followsTerminalProject"
 		static let terminalAtStartup = "terminalAtStartup"
@@ -404,6 +405,49 @@ public final class Settings {
 			table.removeValue(forKey: path)
 		}
 		devContainerConsent = table
+	}
+
+	/// **Which** devcontainer a project that offers several is worked in, by the
+	/// project's path on this machine and the file's path inside the project.
+	///
+	/// **A second table rather than a richer answer in the first.** `container`,
+	/// `thisMachine` and `notNow` are the three things somebody can say, and only
+	/// one of them is about a particular container; folding a file path into that
+	/// enum would give the other two a field they have no answer for, and would
+	/// make every answer ever written down unreadable by the version of the app
+	/// that wrote it. Kept apart, an answer from before this existed still reads
+	/// as `container` and means the project's preferred one, which is what it did
+	/// mean.
+	///
+	/// **An entry here may name a container the project no longer offers**, and
+	/// that is expected rather than guarded against: a `devcontainer.json` is
+	/// committed, and it can be renamed or deleted by a colleague between one
+	/// session and the next. `DevContainerFile.choice(identified:in:)` answers nil
+	/// for one of those, and nil is a question rather than a failure — see 0444.
+	public var devContainerChoice: [String: String] {
+		get { defaults.dictionary(forKey: Key.devContainerChoice) as? [String: String] ?? [:] }
+		set { set(newValue, Key.devContainerChoice) }
+	}
+
+	/// Which devcontainer this project was last told to use, as
+	/// `DevContainerFile.identifier(of:in:)` writes it, or nil when nobody has
+	/// said — which is every project that offers one and every answer given
+	/// before this was asked.
+	public func devContainerChoice(forProject project: URL) -> String? {
+		devContainerChoice[FilePath.canonical(project)]
+	}
+
+	/// Writes down which one, or forgets it when given nil.
+	///
+	/// Kept through a decline on purpose. "Work on this machine" is an answer
+	/// about where the servers run and not about which container this project's
+	/// is, so somebody who says it and later changes their mind comes back to the
+	/// container they had rather than to whichever one sorts first.
+	public func setDevContainerChoice(_ identifier: String?, forProject project: URL) {
+		let path = FilePath.canonical(project)
+		var table = devContainerChoice
+		if let identifier { table[path] = identifier } else { table.removeValue(forKey: path) }
+		devContainerChoice = table
 	}
 
 	/// How the terminal arrives when a window opens.

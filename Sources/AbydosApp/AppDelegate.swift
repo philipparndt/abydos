@@ -1154,6 +1154,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		for at in options.panelTabsAt {
+			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+				print("\(Int(at))s "
+					+ (controller?.panelTabsForTesting(tail: options.panelTabsTail)
+						?? "PANEL: no window"))
+				fflush(stdout)
+			}
+		}
+
 		if let at = options.devContainerMenuAt {
 			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
 				print(controller?.devContainerMenuForTesting() ?? "PILLMENU: no window")

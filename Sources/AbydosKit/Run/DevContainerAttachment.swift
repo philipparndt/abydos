@@ -116,6 +116,25 @@ public struct DevContainerAttachments: Sendable {
 		takeWaiting(for: project)
 	}
 
+	/// This project's language servers are moving to a **different** container,
+	/// so what is known about the one they were in stops being about them.
+	///
+	/// **Not `letGo`, and the difference is the whole of 0444's part 2.** `letGo`
+	/// keeps the attachment because the project is coming back to the same
+	/// container; here the project is being pointed at another one, and an
+	/// attachment left standing is what the next `warmUp` would find and start
+	/// servers in — the old container, quietly, after somebody asked in writing
+	/// for the new one. That is 0427's fault with a gesture behind it.
+	///
+	/// The container itself is untouched: it is left running, for 0424's reason,
+	/// and somebody's shell may be in it. What goes is only this project's claim
+	/// on it.
+	/// What was waiting is not touched here, because the caller stops the
+	/// project's servers first and `letGo` has already taken it.
+	public mutating func detach(_ project: URL) {
+		attached.removeValue(forKey: key(project))
+	}
+
 	/// The container itself has gone — stopped by hand from the list of running
 	/// tools, or swept up on the way out.
 	///

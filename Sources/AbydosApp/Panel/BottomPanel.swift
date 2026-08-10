@@ -1511,7 +1511,15 @@ final class BottomPanel: NSView {
 	/// minutes, the first time. The pane shows all of that and then becomes the
 	/// shell itself; see `PreparingTerminal`, where the reason for it being one
 	/// pane rather than two is written down.
-	func newPreparingTerminal(title: String, subject: String) -> PreparingTerminal {
+	/// - Parameter select: whether the tab comes to the front as it is made.
+	///   False for a pane nobody asked for — a devcontainer being brought up for
+	///   the language servers — where putting it in front of the shell somebody is
+	///   reading would be the disturbance the tab was meant to save them from. It
+	///   is brought forward by `PreparingTerminal.reveal` if the wait turns out to
+	///   be worth showing.
+	func newPreparingTerminal(
+		title: String, subject: String, takesFocus: Bool = true, select: Bool = true
+	) -> PreparingTerminal {
 		// Output only, so nothing can be typed at a shell that does not exist
 		// yet, and no login shell starts behind what is being written.
 		let pane = TerminalPane(readOnly: ())
@@ -1521,11 +1529,19 @@ final class BottomPanel: NSView {
 
 		session.column = focusedColumn
 		sessions.append(session)
-		activate(session, focus: false)
+		if select { activate(session, focus: false) }
 		onTerminalsChanged?()
 
-		let preparing = PreparingTerminal(pane: pane, subject: subject)
+		let preparing = PreparingTerminal(pane: pane, subject: subject, takesFocus: takesFocus)
 		session.onClosed = { [weak preparing] in preparing?.paneWasClosed() }
+		preparing.bringToFront = { [weak self, weak session] in
+			guard let self, let session else { return }
+			self.activate(session, focus: false)
+		}
+		preparing.closeTab = { [weak self, weak session] in
+			guard let self, let session else { return }
+			self.close(session)
+		}
 		return preparing
 	}
 
@@ -2696,6 +2712,29 @@ final class BottomPanel: NSView {
 	/// What the + and the chevron beside it answer to, for the harness.
 	var addControlsForTesting: String {
 		tabStripForTesting?.addControlsForTesting ?? "no strip"
+	}
+
+	/// Every tab, the one in front marked, and whether it is still a report
+	/// rather than a shell — for the harness, which cannot photograph a hidden
+	/// panel and is the only witness to 0444's part 4 there is.
+	var tabsForTesting: String {
+		guard !sessions.isEmpty else { return "(no tabs)" }
+		return sessions.enumerated().map { index, session in
+			let active = index == activeIndex
+			let preparing = active && activeTerminalShowsOutputOnly
+			return (active ? "*" : "") + session.displayTitle + (preparing ? " (preparing)" : "")
+		}.joined(separator: " | ")
+	}
+
+	/// The last lines the pane in front has, so that what a build wrote into it
+	/// can be read from outside.
+	func activeTerminalTailForTesting(lines: Int) -> String {
+		terminalTextForTesting
+			.split(separator: "\n", omittingEmptySubsequences: false)
+			.map { $0.trimmingCharacters(in: .whitespaces) }
+			.filter { !$0.isEmpty }
+			.suffix(lines)
+			.joined(separator: " ⏎ ")
 	}
 
 	/// Clicks a tab, for the capture harness.

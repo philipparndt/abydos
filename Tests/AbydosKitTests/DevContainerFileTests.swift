@@ -142,6 +142,85 @@ struct DevContainerFileTests {
 		#expect(DevContainerFile.read(project: project)?.configuration?.image == "alpine:3.20")
 	}
 
+	// MARK: - Writing down which of them
+
+	/// An answer about *which* container has to survive being closed and opened,
+	/// which means it has to be a string somebody could read in `defaults`.
+	@Test func oneOfSeveralIsIdentifiedByWhereItIsInTheProject() throws {
+		let project = try makeProject()
+		defer { try? FileManager.default.removeItem(at: project) }
+		try JavaTestDirectory.write(
+			#"{"image": "alpine:3.20", "name": "The back end"}"#,
+			to: project.appendingPathComponent(".devcontainer/backend/devcontainer.json")
+		)
+		try JavaTestDirectory.write(
+			#"{"image": "alpine:3.21"}"#,
+			to: project.appendingPathComponent(".devcontainer/frontend/devcontainer.json")
+		)
+
+		let choices = DevContainerFile.choices(in: project)
+		// The path inside the project, which is the same string for everybody who
+		// checks the repository out and says nothing about this machine.
+		#expect(DevContainerFile.identifier(of: choices[0].file, in: project)
+			== ".devcontainer/backend/devcontainer.json")
+		#expect(DevContainerFile.identifier(of: choices[1].file, in: project)
+			== ".devcontainer/frontend/devcontainer.json")
+
+		// And it reads back as the container it named, rather than as the one that
+		// sorts first.
+		#expect(DevContainerFile.choice(
+			identified: ".devcontainer/frontend/devcontainer.json", in: project
+		)?.name == "frontend")
+	}
+
+	/// **A renamed container is a question again, not a wrong answer.** The
+	/// `devcontainer.json` is committed, so which containers a project offers is
+	/// somebody else's to change between one session and the next; an answer
+	/// naming one that has gone must not quietly become an answer naming whichever
+	/// one is left. 0444.
+	@Test func anAnswerNamingAContainerThatHasGoneReadsAsNoAnswer() throws {
+		let project = try makeProject()
+		defer { try? FileManager.default.removeItem(at: project) }
+		try JavaTestDirectory.write(
+			#"{"image": "alpine:3.21"}"#,
+			to: project.appendingPathComponent(".devcontainer/tools/devcontainer.json")
+		)
+
+		#expect(DevContainerFile.choice(
+			identified: ".devcontainer/go/devcontainer.json", in: project
+		) == nil)
+		// The one that is there is still findable, so this is the name failing to
+		// match and not the lookup failing.
+		#expect(DevContainerFile.choice(
+			identified: ".devcontainer/tools/devcontainer.json", in: project
+		)?.name == "tools")
+	}
+
+	/// The same checkout reached two ways is one project, which is 0430's rule in
+	/// the table that writes down which container it is worked in.
+	@Test func theIdentifierIsTheSameThroughASymlinkedRoot() throws {
+		let real = try makeProject()
+		defer { try? FileManager.default.removeItem(at: real) }
+		let link = real.deletingLastPathComponent()
+			.appendingPathComponent("link-to-\(real.lastPathComponent)")
+		try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
+		defer { try? FileManager.default.removeItem(at: link) }
+
+		try JavaTestDirectory.write(
+			#"{"image": "alpine:3.21"}"#,
+			to: real.appendingPathComponent(".devcontainer/one/devcontainer.json")
+		)
+
+		let throughTheLink = DevContainerFile.choices(in: link)
+		#expect(DevContainerFile.identifier(of: throughTheLink[0].file, in: link)
+			== ".devcontainer/one/devcontainer.json")
+		// Written down through one spelling of the path and read back through the
+		// other.
+		#expect(DevContainerFile.choice(
+			identified: ".devcontainer/one/devcontainer.json", in: real
+		)?.name == "one")
+	}
+
 	/// A project reached through a symlink still knows where its own files are.
 	///
 	/// 0430: the root went through `realpath` and the file did not, so under

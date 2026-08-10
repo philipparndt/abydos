@@ -398,6 +398,18 @@ struct LaunchOptions {
 	/// while it is open.
 	var devContainerMenuAt: Double?
 
+	/// Print what the terminal panel holds, at each of these many seconds in.
+	///
+	/// The panel is the only witness to a devcontainer being brought up where
+	/// somebody can watch it (0444), and it is deliberately not shown at the
+	/// moment the tab is made — so a screenshot proves nothing and the tab has to
+	/// be asked about rather than looked at. Several readings, because the claim
+	/// is that a slow start reveals the panel and a fast one leaves it alone.
+	var panelTabsAt: [Double] = []
+
+	/// How many lines of the pane in front to print with them.
+	var panelTabsTail = 0
+
 	/// Press the pill menu's entry whose words are these: `<the words>@<seconds>`.
 	/// Repeatable, because leaving a container and going back into it is one
 	/// run and the second half is the interesting half (0438).
@@ -525,6 +537,11 @@ struct LaunchOptions {
 				options.toastReportsAt = (next() ?? "6")
 					.split(separator: ",").compactMap { Double($0) }
 			case "--answer-toast": options.answerToast = next()
+			case "--panel-tabs":
+				options.panelTabsAt = (next() ?? "8")
+					.split(separator: ",").compactMap { Double($0) }
+			case "--panel-tail":
+				options.panelTabsTail = next().flatMap(Int.init) ?? 12
 			case "--devcontainer-menu":
 				options.devContainerMenuAt = next().flatMap(Double.init) ?? 8
 			case "--press-devcontainer-menu":
