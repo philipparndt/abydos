@@ -1350,13 +1350,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		// The list of what is running, driven the way somebody would drive it:
 		// open it, read it, press Stop on a row, read it again.
 		//
-		// Eight seconds before it opens, and that is not politeness: a count
-		// taken while a language server is still starting is a race rather than
-		// a rule, which is the same lesson `--switch-to path@seconds` records one
-		// section along in 0427. Fixed rather than measured back from the
-		// screenshot, so that the sequence below always has room; a `--delay`
-		// too short for it photographs the window mid-way, which is visible in
-		// the picture rather than silent.
+		// It waits before it opens, and that is not politeness: a count taken
+		// while a language server is still starting is a race rather than a
+		// rule, which is the same lesson `--switch-to path@seconds` records one
+		// section along in 0427.
 		if options.runningTools {
 			let window = RunningToolsWindowController.shared
 			let wanted = options.stopRunning
