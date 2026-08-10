@@ -163,17 +163,121 @@ that goes quiet for a minute every time somebody changes project is worse than a
 leak — as long as the leak can be seen, which is the next section and is the
 condition on this decision rather than a nicety beside it.
 
-## What this decision needs next: show what is running
+## What this decision needs next: show what is running — built
 
 Promoted out of "left out" below, because the decision above is what makes it
 necessary. A list of the live language servers and containers with their memory,
 and a way to stop one, is how somebody sees a session that has collected nine of
 them and does something about it — without running `ps`, which is the only
-reason this entry exists at all. It is the mitigation for the cost above, and it
-is not built here.
+reason this entry exists at all. It is the mitigation for the cost above.
 
-`LanguageService.shutdown(project:)` is what it will call, and it is kept for
-that: nothing calls it today, on purpose, and the comment on it says so.
+It is View ▸ Running Servers and Containers, a window of its own, and it is
+built. The window controller's own comment weighs the three shapes it could have
+had; the short of it is that what it lists belongs to the *application* — one
+`LanguageService` and one `ToolContainers` however many project windows are open
+— so a panel tab in a project window would have shown the same servers twice.
+
+**The number in it is the subtree, and that is the whole point.** A row's memory
+is the process and everything it started, because the figure that would have
+been easy to show is the one that would have made this view worse than nothing:
+measured on a four-line Swift package, `sourcekit-lsp` alone is 32.7 MB; the
+same server on this repository reads 410.8 MB across itself and three processes
+it had started, and the count is printed beside the number so nobody has to
+wonder where it came from. The fifteen gigabytes at the top of this entry lived
+in those children, never in the server.
+
+The second line of a row is the executable `ps` resolved, which is this entry's
+second fault made permanently visible: on this machine it now reads
+`/Applications/Xcode-beta.app/…/XcodeDefault.xctoolchain/usr/bin/sourcekit-lsp`,
+and the day it says `~/.swiftly/…` again, somebody will see it.
+
+**Stopping one, measured.** `LanguageService.shutdown(server:)` is what a row's
+Stop calls — this is what `shutdown` was kept for, and it is now one server at a
+time rather than a whole project. Driven by the harness on a scratch package,
+`--stop-running sourcekit`:
+
+    the list before               sourcekit-lsp, lsprobe, 8s, 32.7 MB, pid 76094
+    after Stop                    empty
+    pid 76094 alive afterwards    no
+    after a file needed it again  sourcekit-lsp, lsprobe, 7s, 29.2 MB
+
+The last line is the half that was easy to leave unproven, and it did not work
+at first. **A server stopped by hand could not come back.** The list went empty
+and stayed empty, and the fault was not in the stopping: `LSPClient.onExit`
+removed the table entry *by key*, and the key is filled again by the new server
+before the old process has finished dying. The old server's exit then deleted
+the new one, leaving the app with a running language server it no longer knew
+about — the exact shape of leak this entry is about, introduced by the thing
+meant to show it. `onExit` now removes the entry only if it is still holding
+that very client. Nothing else called `shutdown` before, which is why this had
+never happened.
+
+**Containers, measured on Apple's runtime.** Opening the examples repository at
+its Python devcontainer subproject gave four rows, and three of them are
+different cases — a server on this machine, a server inside somebody else's
+container, and the container:
+
+    gopls                | abydos-examples          | 354,9 MB +1 | ~/go/bin/gopls
+    openscad-lsp         | abydos-examples          |   4,1 MB    | ~/.cargo/bin/openscad-lsp
+    pyright-langserver   | python-language-server   |     —       | in abydos-devcontainer-50919-1
+    Dev container        | abydos-devcontainer-…    | 142,6 MB    | abydos-devcontainer:python-…
+
+The dash on the third row is deliberate and was got wrong first. A server inside
+the project's devcontainer is a `container exec` out here — 29 MB of client —
+and the whole of itself in there. Showing the 29 would have been this entry's
+own mistake repeated one floor down, and showing the container's 142.6 would
+have counted the same memory twice, since the row below is that container and it
+is shared with the terminals and the build. So the row says where it lives and
+declines to put a number on it. It is also why that pair is two rows and not
+one: a server with a container of its own is one row, because stopping the
+server is stopping the container; a devcontainer belongs to the project and
+outlives any one server in it.
+
+Stopping the container row was measured too: `--stop-running devcontainer` took
+`abydos-devcontainer-24230-1` out of the list, and `container ls --all`
+afterwards had no trace of it, while `gopls` and `openscad-lsp` were still there
+and untouched.
+
+**What it costs to look.** One `/bin/ps` for the whole machine rather than one
+per row, and at most one pair of runtime commands per container runtime. It
+refreshes when somebody looks at it — opening it, bringing it to the front,
+pressing Refresh, and stopping something — and there is no timer, because
+`docker stats` is about a second of a runtime's attention and a window that
+spent that every few seconds to show what is wasting the machine would be a joke
+at the owner's expense. `--no-stream` is on both `stats` commands and there is a
+test that says so: without it the command never returns, which is the shape of
+process 0406 and this entry exist to stop this app leaving behind.
+
+**What is not proved.** Docker's half is driven live against a container the
+test starts and owns. Apple's is not: both its commands were read off `container`
+1.2.2 by hand, and the transcripts in the tests are those answers, but nothing
+in the suite runs them. A test that asked both runtimes whether they accept
+these commands was written and then removed — with no container of its own it
+asked about every container on the machine, and this suite starts and removes
+containers in parallel, so it failed on a busy run rather than on a wrong flag.
+A test people learn to ignore is worse than an admitted gap.
+
+Three smaller things the measuring turned up, each now written down where it
+happened:
+
+- `docker stats` answers about a *stopped* container rather than refusing —
+  `0B / 0B`, on docker 29.1.4. A row would have read as running and free, so the
+  runtime's own status word is read and shown when it is not "up".
+- Apple's runtime reports `status.startedDate` beside `configuration.creationDate`.
+  They are a second apart on the containers this app starts and much further
+  apart on a container that was stopped and started again, so the row uses the
+  first.
+- `ToolContainers.release` waits up to ten seconds for a runtime to answer, and
+  the Stop button was calling it on the main actor. A window whose subject is a
+  machine that has stopped responding must not itself stop responding.
+
+**Driving it.** `--running-tools` opens the list and prints what it says;
+`--stop-running <text>` presses Stop on the first row matching and prints the
+list before, after, and once more when a file has asked for a server again,
+along with whether the operating system still has the stopped pid. With no
+`--screenshot` the run ends when the reading is done and `--delay` becomes how
+long to let things settle first — which a server that indexes needs, since the
+processes underneath it arrive after it does.
 
 ## Left out of this item deliberately
 
@@ -183,7 +287,20 @@ that: nothing calls it today, on purpose, and the comment on it says so.
   slow render; being wrong here costs a re-index, and what stops a session
   collecting servers is somebody seeing them and stopping one, not a clock.
 - **Showing what is running.** Moved up — it is the mitigation this decision
-  rests on, and it has a section of its own above.
+  rests on, and it has a section of its own above, where it is now built.
+- **Everything else in `ToolProcesses`.** The list shows language servers and
+  containers, which is what this entry asked for, and not the rest of what that
+  register holds. The reason is that it holds bare `Process` objects with no
+  record of what any of them is for: a row saying only "a process" with a Stop
+  beside it is worse than no row. Everything long-lived in there is already
+  listed by its owner — a language server by `LanguageService`, a container by
+  `ToolContainers` — so what is missing is the short-lived renders, which are
+  the ones nobody needs to see. If the runaway that `adopt`'s cap of twelve
+  exists to stop ever needs looking at, this is where it would go, and it would
+  need each process to arrive with a sentence about itself.
+- **Anything automatic.** No sorting by size, no highlighting of the expensive
+  one, no warning when the total passes a number. The list is short and the
+  numbers are in it; what to do about them is a person's decision.
 
 ---
 

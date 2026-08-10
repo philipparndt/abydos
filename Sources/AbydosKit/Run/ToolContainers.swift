@@ -248,6 +248,33 @@ public final class ToolContainers: @unchecked Sendable {
 		return running.keys.sorted()
 	}
 
+	/// The same, with the runtime each belongs to.
+	///
+	/// Read-only, and for the list of what this app has started and not ended:
+	/// asking a runtime what a container costs means knowing which runtime to
+	/// ask, and `names` on its own does not say.
+	public var registrations: [(name: String, runtime: ContainerRuntime)] {
+		lock.lock()
+		defer { lock.unlock() }
+		return running.sorted { $0.key < $1.key }.map { ($0.key, $0.value) }
+	}
+
+	/// The part of a name that says what started it: `plantuml-server`,
+	/// `devcontainer`, `lsp-gopls`.
+	///
+	/// The inverse of `mint`, and the same reading as `owner(of:)` — everything
+	/// between the prefix and the two trailing numbers. Nil when the name is not
+	/// one of ours or was written by a version of this app that spelled them
+	/// differently.
+	public static func role(of name: String) -> String? {
+		guard isOurs(name) else { return nil }
+		let parts = name.dropFirst(prefix.count).split(separator: "-")
+		guard parts.count >= 3, Int(parts[parts.count - 1]) != nil,
+		      Int(parts[parts.count - 2]) != nil
+		else { return nil }
+		return parts.dropLast(2).joined(separator: "-")
+	}
+
 	// MARK: - What a previous run left
 
 	/// The containers of ours on this machine that nothing is running any more.

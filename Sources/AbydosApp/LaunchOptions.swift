@@ -205,6 +205,19 @@ struct LaunchOptions {
 	var profilerAddress: String?
 	/// Which profile to collect; defaults to the heap, which is instant.
 	var profilerKind: String?
+	/// Open the list of running language servers and containers, and report what
+	/// it says.
+	///
+	/// With no `--screenshot` the run ends when the reading is done, and
+	/// `--delay` then says how long to let things settle first rather than when
+	/// to take a picture — a server that indexes has nothing under it for the
+	/// first few seconds, and the number this list exists to show is what is
+	/// under it.
+	var runningTools = false
+	/// Press Stop on the first row whose name or subject contains this, and
+	/// report the list before, after, and once more when a file has asked for a
+	/// server again.
+	var stopRunning: String?
 	/// Open the pod picker, filtered by this text.
 	var podFilter: String?
 	/// Profile the first pod the filter finds.
@@ -453,6 +466,10 @@ struct LaunchOptions {
 			case "--pills":      options.highlightPills = true
 			case "--profile":    options.profilerAddress = next()
 			case "--profile-kind": options.profilerKind = next()
+			case "--running-tools": options.runningTools = true
+			case "--stop-running":
+				options.runningTools = true
+				options.stopRunning = next()
 			case "--pods":       options.podFilter = next()
 			case "--pod-profile": options.podChoose = true
 			case "--make-goal":  options.makeGoal = next()

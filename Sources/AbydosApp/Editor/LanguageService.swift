@@ -32,6 +32,14 @@ final class LanguageService {
 	private struct Server {
 		let client: LSPClient
 		let definition: LanguageServerDefinition
+		/// Which project asked for it, kept so the list of what is running can
+		/// say whose server this is — the key carries the path, but a path is
+		/// not a URL and the row wants both the name and the whole of it.
+		let project: URL
+		/// The container it is running inside, whoever owns that container —
+		/// which for a server in the project's devcontainer is not the same
+		/// question as what stopping the server removes.
+		let insideContainer: String?
 	}
 
 	/// Keyed by project path and language.
@@ -633,7 +641,7 @@ final class LanguageService {
 		}
 
 		guard let image = resolved.launch.image else {
-			return start(resolved, languageId: languageId, key: key)
+			return start(resolved, languageId: languageId, project: project, key: key)
 		}
 
 		// An image that is not on the machine is fetched first, and the first
@@ -671,7 +679,7 @@ final class LanguageService {
 				NotificationCenter.default.post(name: .ideaiLanguageServersChanged, object: nil)
 				return
 			}
-			guard let server = start(resolved, languageId: languageId, key: key) else { return }
+			guard let server = start(resolved, languageId: languageId, project: project, key: key) else { return }
 			replayDeferredOpens(to: server, key: key)
 		}
 		return nil
@@ -742,7 +750,7 @@ final class LanguageService {
 			NotificationCenter.default.post(name: .ideaiLanguageServersChanged, object: nil)
 			return nil
 		}
-		return start(resolved, languageId: languageId, key: key)
+		return start(resolved, languageId: languageId, project: project, key: key)
 	}
 
 	/// Brings the project's devcontainer up, once, however many languages ask.
@@ -869,6 +877,7 @@ final class LanguageService {
 	private func start(
 		_ resolved: LanguageServers.Resolution,
 		languageId: String,
+		project: URL,
 		key: String
 	) -> Server? {
 		let client = LSPClient()
@@ -887,8 +896,19 @@ final class LanguageService {
 				object: URL(string: uri)
 			)
 		}
-		client.onExit = { [weak self] in
+		client.onExit = { [weak self, weak client] in
 			guard let self else { return }
+			// Only if the table still holds this very client, rather than
+			// whatever is filed under this key now.
+			//
+			// A server stopped by hand from the list of what is running is taken
+			// out of the table at once, and the next file of that language
+			// starts another one for the same key — while the first one's
+			// process is still on its way out. Removing by key alone then takes
+			// the *new* server out of the table a second later, and the app has
+			// a running language server it no longer knows about: measured, and
+			// it showed as the list going empty and staying empty after a Stop.
+			guard let held = self.servers[key]?.client, held === client else { return }
 			self.servers.removeValue(forKey: key)
 			self.runningNames.removeAll { $0 == resolved.definition.command }
 			self.log("\(resolved.definition.command) exited")
@@ -947,7 +967,12 @@ final class LanguageService {
 			return nil
 		}
 
-		let server = Server(client: client, definition: resolved.definition)
+		let server = Server(
+			client: client,
+			definition: resolved.definition,
+			project: project,
+			insideContainer: resolved.launch.hostContainerName
+		)
 		servers[key] = server
 
 		Task { @MainActor in
@@ -1114,20 +1139,108 @@ final class LanguageService {
 		return collapsed.count > 300 ? String(collapsed.prefix(300)) + "…" : collapsed
 	}
 
+	// MARK: - What is running, and stopping one by hand
+
+	/// One running server, for the list of what this app has started.
+	///
+	/// The pid is what makes the row worth looking at: `sourcekit-lsp` is thirty
+	/// megabytes and the `swift-frontend` it starts underneath is the fifteen
+	/// gigabytes 0427 opened with, so the number beside a row is measured from
+	/// this pid downwards rather than read off the process itself.
+	struct RunningServer: Identifiable, Sendable {
+		/// What `shutdown(server:)` is given back.
+		let key: String
+		/// The command as it was resolved — `sourcekit-lsp`, `gopls`.
+		let command: String
+		/// The project that asked for it.
+		let project: URL
+		/// Its process id on this machine, which for a server in a container is
+		/// the runtime's `run` rather than the server.
+		let pid: pid_t?
+		/// The container this server owns, which goes when it goes.
+		let containerName: String?
+		/// The container it runs inside, which may be the same one or may be the
+		/// project's devcontainer — shared with terminals, builds and every other
+		/// server in it, and nobody's to remove on one server's account.
+		let insideContainer: String?
+
+		var id: String { key }
+	}
+
+	/// Every server running now, in the order a list should show them.
+	///
+	/// Sorted by project and then command so that the same session gives the
+	/// same order twice: a list that shuffles between refreshes is one nobody
+	/// can watch a number on.
+	var running: [RunningServer] {
+		servers.compactMap { key, server in
+			guard server.client.isRunning else { return nil }
+			return RunningServer(
+				key: key,
+				command: server.definition.command,
+				project: server.project,
+				pid: server.client.processIdentifier,
+				containerName: server.client.containerLaunch?.name,
+				insideContainer: server.insideContainer
+			)
+		}
+		.sorted {
+			($0.project.lastPathComponent, $0.command) < ($1.project.lastPathComponent, $1.command)
+		}
+	}
+
+	/// Stops one server, by the key its row carries.
+	///
+	/// This is what 0427 kept `shutdown` for. The protocol's own `shutdown` and
+	/// `exit` first, then the process, then — for a server in a container — the
+	/// container, all of which `LSPClient.shutdown` and its termination handler
+	/// do between them.
+	///
+	/// **It can come back.** The key is taken out of `unavailable` rather than
+	/// put into it, and what the server was told about is forgotten, so the next
+	/// file of that language to be opened starts another one and announces the
+	/// file to it. Stopping a server by hand is "not now", not "never again" —
+	/// the alternative would make this list a way to break the editor quietly.
+	@discardableResult
+	func shutdown(server key: String) -> Bool {
+		guard let server = servers.removeValue(forKey: key) else { return false }
+		runningNames.removeAll { $0 == server.definition.command }
+		let client = server.client
+		Task { await client.shutdown() }
+
+		unavailable.remove(key)
+		lastStandardError.removeValue(forKey: key)
+		fetching.remove(key)
+		deferredOpens.removeValue(forKey: key)
+		// The documents it held are nobody's now. Forgotten rather than closed:
+		// the server they were open at is going, and the next `didOpen` has to
+		// happen against whatever starts in its place.
+		for (uri, held) in documentServers where held == key {
+			documentServers.removeValue(forKey: uri)
+			openDocuments.removeValue(forKey: uri)
+		}
+		missingHints.removeValue(forKey: key)
+		log("\(server.definition.command) was stopped by hand for "
+			+ "\(server.project.lastPathComponent)")
+		NotificationCenter.default.post(name: .ideaiLanguageServersChanged, object: nil)
+		return true
+	}
+
 	/// Stops every server for a project.
 	///
-	/// Nothing in the app calls this, and that is the decision rather than an
-	/// oversight: closing a window and switching a project both used to, and
-	/// 0427 reversed it — a server ends when the app ends. What it is kept for
-	/// is stopping one by hand, which is the list of what is running that 0427
-	/// now carries as the answer to a session that has collected too many.
+	/// Nothing in the app calls this on a project's behalf, and that is the
+	/// decision rather than an oversight: closing a window and switching a
+	/// project both used to, and 0427 reversed it — a server ends when the app
+	/// ends. What it is kept for is stopping servers by hand, which is the list
+	/// of what is running that 0427 carries as the answer to a session that has
+	/// collected too many; that list stops them one at a time, through
+	/// `shutdown(server:)`, and this is the whole project at once.
 	func shutdown(project: URL) {
 		let prefix = project.standardizedFileURL.path + "#"
-		for (key, server) in servers where key.hasPrefix(prefix) {
-			servers.removeValue(forKey: key)
-			runningNames.removeAll { $0 == server.definition.command }
-			let client = server.client
-			Task { await client.shutdown() }
+		// Over a copy of the keys: `shutdown(server:)` takes each out of the very
+		// table this is walking.
+		for key in Array(servers.keys) where key.hasPrefix(prefix) {
+			shutdown(server: key)
 		}
 		unavailable = unavailable.filter { !$0.hasPrefix(prefix) }
 		lastStandardError = lastStandardError.filter { !$0.key.hasPrefix(prefix) }

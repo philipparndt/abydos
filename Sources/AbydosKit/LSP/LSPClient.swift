@@ -135,12 +135,14 @@ public final class LSPClient: @unchecked Sendable {
 	}
 
 	/// The server's process id, for a test that has to ask the operating system
-	/// rather than this object whether the server really went.
+	/// rather than this object whether the server really went — and for the list
+	/// of what is running, which asks `ps` what this process and everything under
+	/// it costs.
 	///
 	/// Kept for the same reason `readerWakeups` is: what closing a project has to
 	/// achieve is a process that is gone, and this object's own opinion of that
 	/// is exactly the thing under test.
-	var processIdentifier: pid_t? {
+	public var processIdentifier: pid_t? {
 		lock.lock()
 		defer { lock.unlock() }
 		return process?.processIdentifier
