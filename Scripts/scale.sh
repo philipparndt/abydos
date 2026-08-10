@@ -92,8 +92,14 @@ if [ -n "${FILE:-}" ]; then
 	echo "   typing into $FILE"
 fi
 
+# `${FILE_ARGS[@]+…}` rather than a bare expansion. bash 3.2 is what macOS
+# ships, and under `set -u` it calls an *empty* array unbound — so the first run
+# taken without a FILE launched no app at all and then printed ninety seconds of
+# "not running" beside a falling load average. A table of readings about nothing,
+# which is the failure the project guard at the bottom exists for.
 "$APP" --open "$PROJECT" --report-open "$AT" --report-typing "${PRESSES:-200}" \
-	"${FILE_ARGS[@]}" --close-window "$(python3 -c "print($LAST + 5)")" "$@" >"$LOG" 2>&1 &
+	${FILE_ARGS[@]+"${FILE_ARGS[@]}"} \
+	--close-window "$(python3 -c "print($LAST + 5)")" "$@" >"$LOG" 2>&1 &
 APP_PID=$!
 
 # Whatever happens below, this app does not outlive the harness and the file it

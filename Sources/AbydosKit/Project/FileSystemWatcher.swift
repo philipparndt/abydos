@@ -1,6 +1,37 @@
 import Foundation
 
-/// Watches a directory tree via FSEvents and reports changed directories.
+/// One batch of filesystem activity, as FSEvents described it.
+///
+/// Two lists rather than one, because the two questions are different. The tree
+/// wants to know *which listings went stale*, which is the parent of everything
+/// that moved. Anything deciding whether the change is worth reacting to wants
+/// to know *what was written*, and a parent directory cannot answer that: while
+/// a language server imports a Tycho reactor it writes `.classpath` into a
+/// bundle and a Java source file lives under the same bundle, so at directory
+/// granularity "somebody wrote metadata" and "somebody wrote code" are the same
+/// event. 0446 is what it costs to answer the second question with the first.
+public struct FileSystemChange {
+	/// Directories whose listing may no longer be right.
+	public var directories: [URL]
+
+	/// The paths FSEvents actually named, when it named them.
+	public var paths: [URL]
+
+	/// Whether `paths` is the whole batch.
+	///
+	/// False when the kernel gave up on describing a burst file by file and
+	/// said "scan this subtree instead" — a checkout, a build, an install.
+	/// Anything filtering on `paths` has to treat that as "could be anything".
+	public var namesEveryPath: Bool
+
+	public init(directories: [URL], paths: [URL], namesEveryPath: Bool) {
+		self.directories = directories
+		self.paths = paths
+		self.namesEveryPath = namesEveryPath
+	}
+}
+
+/// Watches a directory tree via FSEvents and reports what changed.
 ///
 /// FSEvents is the right tool here rather than polling: the kernel already
 /// knows what changed, so an idle project costs nothing and a `git checkout`
@@ -9,7 +40,7 @@ public final class FileSystemWatcher {
 	private var stream: FSEventStreamRef?
 	private let root: URL
 	private let queue = DispatchQueue(label: "ideai.fswatch")
-	private let onChange: ([URL]) -> Void
+	private let onChange: (FileSystemChange) -> Void
 
 	/// Events are coalesced over this window so a burst of writes produces one
 	/// refresh instead of hundreds.
@@ -25,7 +56,7 @@ public final class FileSystemWatcher {
 	public init(
 		root: URL,
 		includesGitDirectory: Bool = false,
-		onChange: @escaping ([URL]) -> Void
+		onChange: @escaping (FileSystemChange) -> Void
 	) {
 		self.root = root.standardizedFileURL
 		self.includesGitDirectory = includesGitDirectory
@@ -90,9 +121,36 @@ public final class FileSystemWatcher {
 	}
 
 	private func handle(paths: [String], flags: [FSEventStreamEventFlags]) {
+		guard let change = Self.change(
+			from: paths,
+			flags: flags,
+			root: root,
+			includesGitDirectory: includesGitDirectory
+		) else { return }
+		DispatchQueue.main.async { [onChange] in
+			onChange(change)
+		}
+	}
+
+	/// What one FSEvents callback means, as a value.
+	///
+	/// Separated from delivering it so there is something to test: the callback
+	/// is C, the delivery is on the main queue, and a test that waited for both
+	/// would be a test about scheduling. What is worth checking is the reading
+	/// of the flags.
+	static func change(
+		from paths: [String],
+		flags: [FSEventStreamEventFlags],
+		root: URL,
+		includesGitDirectory: Bool
+	) -> FileSystemChange? {
 		// Report parent directories: what the tree needs to know is which
 		// directory listings became stale, not which individual files moved.
+		// The paths themselves are kept beside them, for the things that care
+		// what was written rather than where.
 		var directories = Set<URL>()
+		var named = Set<URL>()
+		var namesEveryPath = true
 		for (index, path) in paths.enumerated() {
 			let url = URL(fileURLWithPath: path)
 			if !includesGitDirectory, path.contains("/.git/") { continue }
@@ -101,25 +159,31 @@ public final class FileSystemWatcher {
 
 			// A burst too large to describe file by file — a checkout, a build,
 			// an install — arrives as "this directory changed somehow, look
-			// again". Reporting the parent would miss everything underneath.
+			// again". Reporting the parent would miss everything underneath,
+			// and nothing downstream may assume the named paths are the whole
+			// of what happened.
 			if flag & UInt32(kFSEventStreamEventFlagMustScanSubDirs) != 0 {
 				directories.insert(url.standardizedFileURL)
+				namesEveryPath = false
 				continue
 			}
 
 			// The project directory itself moved; the whole tree is suspect.
 			if flag & UInt32(kFSEventStreamEventFlagRootChanged) != 0 {
 				directories.insert(root)
+				namesEveryPath = false
 				continue
 			}
 
 			directories.insert(url.deletingLastPathComponent().standardizedFileURL)
+			named.insert(url.standardizedFileURL)
 		}
-		guard !directories.isEmpty else { return }
+		guard !directories.isEmpty else { return nil }
 
-		let changed = Array(directories)
-		DispatchQueue.main.async { [onChange] in
-			onChange(changed)
-		}
+		return FileSystemChange(
+			directories: Array(directories),
+			paths: Array(named),
+			namesEveryPath: namesEveryPath
+		)
 	}
 }

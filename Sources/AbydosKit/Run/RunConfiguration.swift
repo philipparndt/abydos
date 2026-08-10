@@ -122,6 +122,73 @@ public enum RunConfigurationDiscovery {
 		"node_modules", "vendor", "dist", "build", "target", ".build", "Pods",
 	]
 
+	/// The files `discover(in:)` reads, by name.
+	///
+	/// Kept beside the finders that read them so the two cannot drift: a name
+	/// added to one of those and not to this list means a build file whose
+	/// arrival is not noticed until the project is reopened.
+	static let definingFileNames: Set<String> = [
+		"Makefile", "makefile", "GNUmakefile",
+		"go.mod",
+		"pom.xml",
+		"build.gradle", "build.gradle.kts",
+		"BUILD", "BUILD.bazel", "MODULE.bazel", "WORKSPACE", "WORKSPACE.bazel", "WORKSPACE.bzlmod",
+		"conanfile.py", "conanfile.txt",
+		"launch.json",
+		"workspace.xml",
+	]
+
+	/// The extensions of files that can hold an entry point.
+	static let definingExtensions: Set<String> = ["java", "kt", "xcodeproj", "xcworkspace"]
+
+	/// Whether writing this path could change what the project can run.
+	///
+	/// The point of asking. `discover(in:)` walks every Java and Kotlin source
+	/// in the project looking for `main` methods, and 0446 measured what that
+	/// costs when it is done once per filesystem event: opening the Eclipse
+	/// Platform corpus spent **668 seconds of processor time in ninety**, because
+	/// jdtls importing a Tycho reactor writes `.project`, `.classpath` and
+	/// `.settings` into a thousand bundles and every one of those writes asked
+	/// the same question again.
+	///
+	/// None of those files is one of these. A `main` method appears when a
+	/// *source file* changes or when a build file arrives — not when a language
+	/// server writes Eclipse metadata beside them. So the scan is not merely
+	/// coalesced but skipped, which is the difference between a fault that is
+	/// survivable and one that is absent.
+	///
+	/// Deliberately generous in the other direction: anything under `.idea` or
+	/// `.vscode` counts, because IDEA rewrites `workspace.xml` under several
+	/// names and a run configuration that fails to appear is a worse failure
+	/// than a scan that was not needed.
+	public static func couldDefineConfiguration(_ url: URL) -> Bool {
+		let name = url.lastPathComponent
+		if definingFileNames.contains(name) { return true }
+		if definingExtensions.contains(url.pathExtension) { return true }
+
+		// A component rather than a suffix: the file inside an `.xcodeproj` that
+		// changed is `project.pbxproj`, and the schemes live further down still.
+		for component in url.pathComponents {
+			if component == ".idea" || component == ".vscode" { return true }
+			if component.hasSuffix(".xcodeproj") || component.hasSuffix(".xcworkspace") { return true }
+		}
+		return false
+	}
+
+	/// Whether a batch from the watcher is worth rescanning the project for.
+	///
+	/// Here rather than in the window controller so that a test can hold it: the
+	/// engine is where the rule about what a run configuration is made of
+	/// belongs, and the window's job is only to obey the answer.
+	public static func deservesRescan(after change: FileSystemChange) -> Bool {
+		// A batch the kernel refused to describe file by file could be anything,
+		// including a checkout that brought a new module in. Those are rare, and
+		// a scan too many is only slow; a scan too few is a play button that
+		// never appears.
+		guard change.namesEveryPath else { return true }
+		return change.paths.contains(where: couldDefineConfiguration)
+	}
+
 	/// Whether a configuration is a test run.
 	///
 	/// Tests are run constantly and from anywhere in a file, so they must

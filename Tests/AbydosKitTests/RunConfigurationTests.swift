@@ -378,3 +378,85 @@ struct CanonicalPathTests {
 		#expect(RunConfigurationDiscovery.canonicalPath(missing) == "/no/such/place/at/all")
 	}
 }
+
+/// Which writes are worth rescanning a project for.
+///
+/// 0446: opening the Eclipse Platform corpus spent 668 seconds of processor
+/// time in the first ninety, because a language server importing a Tycho
+/// reactor writes Eclipse metadata into a thousand bundles and each of those
+/// writes started a fresh walk of 45,772 Java files looking for `main`.
+struct RunConfigurationRescanTests {
+	private let bundle = URL(fileURLWithPath: "/p/org.eclipse.ui.workbench")
+
+	/// The files jdtls writes while it imports. None of them can add a way to
+	/// run anything, and there are a thousand bundles' worth of them.
+	@Test func languageServerMetadataIsNotWorthAScan() {
+		#expect(!RunConfigurationDiscovery.couldDefineConfiguration(
+			bundle.appendingPathComponent(".project")))
+		#expect(!RunConfigurationDiscovery.couldDefineConfiguration(
+			bundle.appendingPathComponent(".classpath")))
+		#expect(!RunConfigurationDiscovery.couldDefineConfiguration(
+			bundle.appendingPathComponent(".settings/org.eclipse.jdt.core.prefs")))
+		#expect(!RunConfigurationDiscovery.couldDefineConfiguration(
+			bundle.appendingPathComponent("META-INF/MANIFEST.MF")))
+		#expect(!RunConfigurationDiscovery.couldDefineConfiguration(
+			bundle.appendingPathComponent("target/classes/Foo.class")))
+	}
+
+	/// And the files that really do decide what a project can run.
+	@Test func sourceAndBuildFilesAreWorthAScan() {
+		for path in [
+			"src/main/java/org/eclipse/App.java",
+			"src/Main.kt",
+			"pom.xml",
+			"Makefile",
+			"go.mod",
+			"build.gradle.kts",
+			"BUILD.bazel",
+			"conanfile.py",
+			".idea/workspace.xml",
+			".idea/runConfigurations/Serve.xml",
+			".vscode/launch.json",
+			"App.xcodeproj/project.pbxproj",
+		] {
+			#expect(
+				RunConfigurationDiscovery.couldDefineConfiguration(
+					bundle.appendingPathComponent(path)),
+				"\(path) should be worth a scan"
+			)
+		}
+	}
+
+	@Test func aBatchOfMetadataIsSkippedWholesale() {
+		let change = FileSystemChange(
+			directories: [bundle],
+			paths: [
+				bundle.appendingPathComponent(".project"),
+				bundle.appendingPathComponent(".classpath"),
+				bundle.appendingPathComponent(".settings/org.eclipse.m2e.core.prefs"),
+			],
+			namesEveryPath: true
+		)
+		#expect(!RunConfigurationDiscovery.deservesRescan(after: change))
+	}
+
+	/// One source file among a hundred metadata writes still earns the scan:
+	/// that is the case where a `main` method really did appear.
+	@Test func oneSourceFileAmongTheMetadataEarnsTheScan() {
+		var paths = (0..<100).map {
+			bundle.appendingPathComponent("bundle\($0)/.classpath")
+		}
+		paths.append(bundle.appendingPathComponent("src/App.java"))
+
+		let change = FileSystemChange(directories: [bundle], paths: paths, namesEveryPath: true)
+		#expect(RunConfigurationDiscovery.deservesRescan(after: change))
+	}
+
+	/// A burst too large for FSEvents to describe file by file could be a
+	/// checkout that brought a whole module in, so it is scanned. A scan too
+	/// many is slow; a scan too few is a play button that never appears.
+	@Test func aBatchWithoutNamesIsAlwaysScanned() {
+		let change = FileSystemChange(directories: [bundle], paths: [], namesEveryPath: false)
+		#expect(RunConfigurationDiscovery.deservesRescan(after: change))
+	}
+}
