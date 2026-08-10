@@ -199,32 +199,27 @@ public final class ToolContainers: @unchecked Sendable {
 		remove(all)
 	}
 
-	/// Removes the containers registered under one of these name prefixes, and
-	/// forgets them.
-	///
-	/// This is what something finishing with *its own* tools wants, and
-	/// `removeAll` is not: that one is the exit path and takes everything this
-	/// process registered, whoever registered it. In a test suite running in
-	/// parallel that means taking the devcontainer another test has a shell in,
-	/// which then fails saying "No such container" — a red run that four people
-	/// investigated in one day before each concluding it was not theirs.
-	///
-	/// The prefixes are the caller's own roles: `abydos-plantuml-server-` is the
-	/// kept server, `abydos-devcontainer-` is a devcontainer. Only containers
-	/// this process started are considered, for the same reason `stale(among:)`
-	/// asks — another copy of this app's are not ours to remove.
-	@discardableResult
-	public func release(withPrefixes prefixes: [String]) -> [String] {
-		let mine = ProcessInfo.processInfo.processIdentifier
-		lock.lock()
-		let chosen = running.filter { name, _ in
-			Self.owner(of: name) == mine && prefixes.contains { name.hasPrefix($0) }
-		}
-		for name in chosen.keys { running.removeValue(forKey: name) }
-		lock.unlock()
-		remove(chosen)
-		return chosen.keys.sorted()
-	}
+	// There was a `release(withPrefixes:)` here, and it is gone on purpose.
+	//
+	// It was written to narrow `removeAll` after that took a devcontainer out
+	// from under the suite running beside it: instead of every container this
+	// process registered, only the ones playing the caller's own *role* —
+	// `abydos-plantuml-server-`, `abydos-devcontainer-`. That is one step short
+	// of the answer, and the step it is short of is the whole of 0435.
+	//
+	// A role is not an owner. In the app it happens to be one, because one type
+	// keeps the servers and one type keeps the devcontainers. In the test bundle
+	// it is not: `PlantUMLServerLiveTests` and `DiagramExportLiveTests` both keep
+	// a container called `abydos-plantuml-server-<pid>-<n>`, they run at once in
+	// the one process, and both names carry that process's pid. So "mine" and
+	// "everyone playing my part" were the same set in the only place the method
+	// was ever called from, and each suite's tidying up removed the other's
+	// server mid-render. Docker's event log has both names on one `rm -f`.
+	//
+	// Nothing in `Sources/` ever called it. What the callers wanted is the names
+	// they started, and every one of them already knows those — a kept server is
+	// held by the actor that started it, and `PlantUMLServers.stopAll` removes
+	// exactly that set. So there is nothing to replace this with.
 
 	/// Asks each runtime, once, to remove the containers registered against it.
 	private func remove(_ containers: [String: ContainerRuntime]) {
