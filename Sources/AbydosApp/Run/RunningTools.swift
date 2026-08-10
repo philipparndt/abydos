@@ -107,7 +107,13 @@ enum RunningTools {
 			Descriptor(
 				handle: .languageServer(server.key),
 				title: server.command,
-				startedFor: server.project.lastPathComponent,
+				// And, where somebody chose this server rather than taking the
+				// one Abydos has, which language they chose it for and where
+				// they wrote it. This row is read by exactly the person
+				// wondering why the server running is the one they are paying
+				// for.
+				startedFor: server.chosen.map { "\(server.project.lastPathComponent) — \($0)" }
+					?? server.project.lastPathComponent,
 				pid: server.pid,
 				container: server.containerName,
 				runtime: nil,

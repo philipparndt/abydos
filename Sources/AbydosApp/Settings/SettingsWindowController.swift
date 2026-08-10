@@ -590,6 +590,63 @@ final class SettingsPaneController: NSViewController {
 		]
 	}
 
+	/// Which server each language uses, and where that was decided.
+	///
+	/// A page of its own beside the per-tool pages, because it answers the other
+	/// question: those say where a tool comes from — installed here, a published
+	/// image, one built here — and this says which tool answers for the language
+	/// at all. Keeping them apart is the point. A project can pin an image for a
+	/// server it does not use, and change its server without saying anything
+	/// about where the new one comes from.
+	///
+	/// Every language is listed, not only the ones with something to decide. A
+	/// row reading "Java: jdtls, the only one Abydos has" answers the question
+	/// somebody opened this page with, and it is where a second one will appear
+	/// the day there is a second one.
+	static func languageServerRows() -> [Row] {
+		LanguageServers.languageGroups().map { group in
+			let title = group.languageIds
+				.map { LanguageRegistry.shared.displayName(for: $0) }
+				.joined(separator: ", ")
+			let names = group.candidates.map(\.name)
+			let sole = names.count == 1
+			return .choice(
+				title: title,
+				help: sole
+					? "\(names.first ?? "") is the only server Abydos has for this. A project may "
+						+ "still name one in .abydos/tools.json, and is told plainly when what it "
+						+ "names is not here."
+					: "Which server answers for this language. A project naming its own in "
+						+ ".abydos/tools.json overrides this — the file wins and this is the "
+						+ "default — and a named server that cannot be started says so rather than "
+						+ "quietly becoming the other one.",
+				options: [(
+					label: sole
+						? "\(names.first ?? "") — the only one Abydos has"
+						: "Whichever Abydos has (\(names.first ?? ""))",
+					value: ""
+				)] + group.candidates.map { (label: $0.name, value: $0.name) },
+				get: {
+					let stored = Settings.shared.languageServers
+					// The first id speaks for the group: they are grouped
+					// *because* they have the same candidates, and every one of
+					// them is written together below.
+					guard let chosen = group.languageIds.first.flatMap({ stored[$0] }),
+					      names.contains(chosen)
+					else { return "" }
+					return chosen
+				},
+				set: { value in
+					var stored = Settings.shared.languageServers
+					for languageId in group.languageIds {
+						stored[languageId] = value.isEmpty ? nil : value
+					}
+					Settings.shared.languageServers = stored
+				}
+			)
+		}
+	}
+
 	/// One tool's page: where it comes from, and what an image has to do.
 	///
 	/// The requirement is spelled out beside the field, because an image that
@@ -784,7 +841,16 @@ enum SettingsSections {
 			// only grows — six language servers, a renderer, and whatever comes
 			// next — and a page somebody has to scroll past six things to reach
 			// the seventh is a page they stop reading.
-			children: ToolImageCatalogue.tools.map { tool in
+			children: [
+				// First among the children, because it is the question that comes
+				// before theirs: which server answers for a language at all, and
+				// only then where that server comes from.
+				Section(
+					title: "Language servers",
+					symbol: "text.book.closed",
+					rows: SettingsPaneController.languageServerRows
+				),
+			] + ToolImageCatalogue.tools.map { tool in
 				Section(
 					title: tool.title,
 					symbol: "shippingbox",

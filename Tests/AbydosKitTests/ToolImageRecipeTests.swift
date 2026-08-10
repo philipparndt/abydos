@@ -223,7 +223,8 @@ struct ToolImageRecipeTests {
 
 		let runtime = ContainerRuntime.docker("/usr/bin/docker")
 		let resolved = try #require(LanguageServers.resolve(
-			languageId: "openscad", project: root, image: asked, runtime: runtime
+			languageId: "openscad", project: root, image: asked, runtime: runtime,
+			choosing: .none
 		))
 		let recipe = try #require(ToolImageRecipes.recipe(forTool: "openscad-lsp"))
 		let image = try #require(resolved.launch.image)
@@ -249,7 +250,8 @@ struct ToolImageRecipeTests {
 		// test does not go stale the next time somebody adds an image.
 		let resolved = LanguageServers.resolve(
 			languageId: "json", project: root,
-			image: "build", runtime: .docker("/usr/bin/docker")
+			image: "build", runtime: .docker("/usr/bin/docker"),
+			choosing: .none
 		)
 		// Either nothing — the server may not be installed on this machine — or
 		// the installed copy. What it must never be is a container started from

@@ -31,7 +31,7 @@ struct OpenSCADLiveTests {
 		plate(width, thickness, 2);
 		""", to: file)
 
-		guard let server = LanguageServers.resolve(languageId: "openscad", root: root) else { return }
+		guard let server = LanguageServers.resolve(languageId: "openscad", root: root, choosing: .none) else { return }
 		// No manifest exists for OpenSCAD, so the server is rooted at the
 		// project itself rather than at a directory holding a marker.
 		#expect(FilePath.canonical(server.root) == FilePath.canonical(root))

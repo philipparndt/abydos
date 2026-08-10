@@ -10,7 +10,7 @@ import Testing
 /// protocol rather than merely parsing what it expects to be sent.
 struct LSPIntegrationTests {
 	private var swiftServer: (definition: LanguageServerDefinition, executable: String, root: URL)? {
-		LanguageServers.resolve(languageId: "swift", root: packageRoot)
+		LanguageServers.resolve(languageId: "swift", root: packageRoot, choosing: .none)
 	}
 
 	/// This package, which is a Swift project a server can make sense of.

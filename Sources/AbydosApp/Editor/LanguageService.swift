@@ -86,6 +86,15 @@ final class LanguageService {
 	/// Which images a project asks for, read once: it is a file on disk, and the
 	/// answer does not change while a project is open.
 	private var toolImages: [String: ToolImages] = [:]
+	/// Which server a project wants for each language, out of the same file and
+	/// held for the same reason — but asked far harder. Every key a running
+	/// server is filed under now depends on it, so this is read once per
+	/// document opened and once per query, and a file read at that rate on the
+	/// main actor is a keystroke somebody feels.
+	private var serverChoices: [String: LanguageServerChoices] = [:]
+	/// Choices already refused out loud, by server key, so a project naming a
+	/// server nobody has says so once rather than once per file opened.
+	private var refused: Set<String> = []
 
 	// MARK: - The projects worked on in a container
 
@@ -197,7 +206,14 @@ final class LanguageService {
 	/// Keyed by the server rather than by the language asked about: see
 	/// `LanguageServers.serverKey`, which is where the reason is written down.
 	private func key(project: URL, languageId: String) -> String {
-		LanguageServers.serverKey(project: project, languageId: languageId)
+		LanguageServers.serverKey(
+			project: project, languageId: languageId, choosing: choices(for: project)
+		)
+	}
+
+	/// Which server this project uses for a language, and where that was said.
+	private func selection(for languageId: String, project: URL) -> LanguageServers.Selection {
+		LanguageServers.selection(forLanguage: languageId, choosing: choices(for: project))
 	}
 
 	/// Starts the servers a project evidently needs, without waiting for a file
@@ -213,14 +229,30 @@ final class LanguageService {
 		// language the project is actually written in when it turns out not to
 		// be installed. Asked as one question so the project is walked once
 		// rather than once per definition.
-		let suited = LanguageServers.suitedDefinitions(in: project)
+		let choices = choices(for: project)
+		let suited = LanguageServers.suitedDefinitions(in: project, choosing: choices)
 		// 0437 cut this from one walk per definition to one walk; 0428 asks what
 		// the remaining walk costs at a thousand bundles, on the queue the
 		// keyboard shares. The mark sits after the walk and before the servers
 		// start, so what it times is the scan and not the first handshake.
 		LaunchClock.mark("language servers scanned")
 		for definition in suited {
-			guard let languageId = definition.languageIds.first else { continue }
+			guard let languageId = LanguageServers.chosenLanguage(for: definition, choosing: choices)
+			else { continue }
+			_ = server(for: languageId, project: project)
+		}
+		// A server the project asked for and this app has never heard of appears
+		// in no scan — there is no definition to have markers — so the only
+		// evidence of it would be a language quietly without diagnostics.
+		// Refused here, when the project opens, rather than whenever somebody
+		// happens to open a file of that language. Only the choices that cannot
+		// be honoured: asking about the rest would decide that a project has no
+		// Go manifest at a moment when it may not have been cloned yet, and
+		// `unavailable` is remembered for the session.
+		for languageId in choices.byLanguage.keys.sorted() {
+			guard case .noSuchServer = LanguageServers.selection(
+				forLanguage: languageId, choosing: choices
+			) else { continue }
 			_ = server(for: languageId, project: project)
 		}
 		LaunchClock.mark("language servers started")
@@ -232,13 +264,15 @@ final class LanguageService {
 		var running: [String] = []
 		var missing: [(String, String)] = []
 
+		let choices = choices(for: project)
 		// One walk of the project for all of them, as in `warmUp` above.
-		for definition in LanguageServers.suitedDefinitions(in: project) {
-			guard let languageId = definition.languageIds.first else { continue }
+		for definition in LanguageServers.suitedDefinitions(in: project, choosing: choices) {
+			guard let languageId = LanguageServers.chosenLanguage(for: definition, choosing: choices)
+			else { continue }
 
 			if servers[key(project: project, languageId: languageId)] != nil {
 				running.append(definition.command)
-			} else if images(for: project).image(for: definition.toolKey) != nil {
+			} else if images(for: project).image(for: definition.name) != nil {
 				// An image is named for it, so it is not missing: it is either
 				// being fetched or about to start. Nothing to install.
 				continue
@@ -256,8 +290,22 @@ final class LanguageService {
 					))
 				}
 			} else if LanguageServers.executable(for: definition) == nil {
-				missing.append((definition.languageIds.first ?? "?", definition.installHint))
+				missing.append((languageId, missingHints[key(project: project, languageId: languageId)]
+					?? definition.installHint))
 			}
+		}
+
+		// And the servers this project asked for that do not exist, which no
+		// walk of it can find: a search that comes back empty says why rather
+		// than looking like a project with nothing in it.
+		for languageId in choices.byLanguage.keys.sorted() {
+			guard case let .noSuchServer(name, source) = LanguageServers.selection(
+				forLanguage: languageId, choosing: choices
+			) else { continue }
+			missing.append((
+				languageId,
+				LanguageServers.refusal(named: name, forLanguage: languageId, source: source)
+			))
 		}
 		return (running, missing)
 	}
@@ -326,8 +374,34 @@ final class LanguageService {
 		ignoring: Set<String> = []
 	) -> ServerNotice? {
 		guard !ignoring.contains(languageId) else { return nil }
-		guard let definition = LanguageServers.definition(forLanguage: languageId) else { return nil }
 		let key = key(project: project, languageId: languageId)
+
+		let definition: LanguageServerDefinition
+		switch selection(for: languageId, project: project) {
+		case let .server(chosen, _):
+			definition = chosen
+		case let .noSuchServer(name, source):
+			// **The whole point of the item this came from.** Somebody asked for
+			// one server and would otherwise be looking at a file with no
+			// diagnostics, with nothing on screen saying that what they asked for
+			// is not here. Not ignorable: "ignore Java for this session" would
+			// bury a sentence about a file they wrote and can fix, and the strip
+			// goes as soon as they fix it.
+			//
+			// No marker check in front of it either. The markers belong to a
+			// definition and there is no definition — and a person looking at a
+			// Java file is looking at the language they named, whatever the
+			// project's build files happen to be.
+			return ServerNotice(
+				languageId: languageId,
+				languageName: LanguageRegistry.shared.displayName(for: languageId),
+				text: "\(name) was asked for and is not here, so this file has no language server.",
+				manual: LanguageServers.refusal(named: name, forLanguage: languageId, source: source),
+				isIgnorable: false
+			)
+		case .nothing:
+			return nil
+		}
 
 		// Not a project this server understands — a stray `.py` in a Go
 		// repository — so neither the offer nor the wait is about anything.
@@ -621,15 +695,26 @@ final class LanguageService {
 	/// separate: install a server, wait for it, or install the bundle it loads
 	/// the debugger from.
 	enum JavaDebugFailure: LocalizedError {
-		case noServer
+		case noServer(hint: String)
+		/// The project's Java server is not the one that hosts the debugger.
+		///
+		/// The debug adapter for Java lives *inside* jdtls — it is an Eclipse
+		/// bundle jdtls is told to load — so a project that chose another Java
+		/// server has no adapter at all, however well that server reads the code.
+		/// Told as a consequence of a choice, since it is one: the alternative is
+		/// a Debug button that does nothing and no explanation anywhere.
+		case notTheDebugServer(name: String)
 		case noBundle
 		case refused(String)
 
 		var errorDescription: String? {
 			switch self {
-			case .noServer:
+			case let .noServer(hint):
 				return "The Java language server is not running for this project, "
-					+ "and it is what hosts the debugger. \(LanguageServers.definition(forLanguage: "java")?.installHint ?? "")"
+					+ "and it is what hosts the debugger. \(hint)"
+			case let .notTheDebugServer(name):
+				return "This project's Java server is \(name), and the Java debugger lives "
+					+ "inside jdtls rather than beside it. Choose jdtls for Java to debug here."
 			case .noBundle:
 				return "The Java language server is running but has no debugger in it: "
 					+ "the java-debug bundle was not found when it started."
@@ -647,7 +732,19 @@ final class LanguageService {
 	/// refuses, which is worth saying out loud — it is a wait, not a fault.
 	func startJavaDebugAdapter(project: URL) async throws -> Int {
 		guard let server = server(for: "java", project: project), server.client.isRunning else {
-			throw JavaDebugFailure.noServer
+			throw JavaDebugFailure.noServer(
+				hint: missingHints[key(project: project, languageId: "java")]
+					?? LanguageServers.definition(
+						forLanguage: "java", choosing: choices(for: project)
+					)?.installHint ?? ""
+			)
+		}
+		// `.java` is the setup that puts the java-debug bundle in the initialize
+		// request, so it is exactly the servers that can host an adapter — not a
+		// name to compare against, which would go stale the day jdtls is packaged
+		// under another one.
+		guard server.definition.setup == .java else {
+			throw JavaDebugFailure.notTheDebugServer(name: server.definition.name)
 		}
 		guard JavaTooling.debugPlugin() != nil else { throw JavaDebugFailure.noBundle }
 
@@ -719,6 +816,31 @@ final class LanguageService {
 		// image does, and asking again would start a second fetch.
 		guard !fetching.contains(key) else { return nil }
 
+		// A server this project named and this app has not got. **It stops
+		// here** — and stopping here is the whole of it. Falling through to the
+		// server that was not chosen would give somebody who asked for the fast
+		// one a JVM and 1.9 GB, with nothing anywhere saying why.
+		if case let .noSuchServer(name, source) = selection(for: languageId, project: project) {
+			unavailable.insert(key)
+			let said = LanguageServers.refusal(named: name, forLanguage: languageId, source: source)
+			missingHints[key] = said
+			log(said)
+			// Said out loud, which the ordinary missing server deliberately is
+			// not: that one is a language somebody never asked about, and this
+			// one is a sentence they wrote themselves and can fix. Once per
+			// server per project, because a project full of Java files would
+			// otherwise say it on every open.
+			if refused.insert(key).inserted {
+				Toast.post(
+					"No language server called \(name)",
+					detail: said,
+					kind: .error
+				)
+			}
+			NotificationCenter.default.post(name: .ideaiLanguageServersChanged, object: nil)
+			return nil
+		}
+
 		// A project that says what it is worked on in has its servers in there.
 		if usesDevContainer(project) {
 			return serverInDevContainer(for: languageId, project: project, key: key)
@@ -726,9 +848,10 @@ final class LanguageService {
 
 		guard let resolved = resolution(for: languageId, project: project) else {
 			unavailable.insert(key)
-			if let definition = LanguageServers.definition(forLanguage: languageId),
-			   LanguageServers.suits(definition, root: project) {
-				missingHints[key] = definition.installHint
+			if let definition = LanguageServers.definition(
+				forLanguage: languageId, choosing: choices(for: project)
+			), LanguageServers.suits(definition, root: project) {
+				missingHints[key] = chosenButAbsent(definition, languageId: languageId, project: project)
 				// Logged, not said out loud. Half the projects on a machine
 				// touch a language whose server nobody installed, and a toast
 				// on every open for something that was never going to work is
@@ -1062,7 +1185,8 @@ final class LanguageService {
 		}
 		let session = attachment.session
 		guard let resolved = LanguageServers.resolve(
-			languageId: languageId, project: project, inDevContainer: session
+			languageId: languageId, project: project, inDevContainer: session,
+			choosing: choices(for: project)
 		) else {
 			unavailable.insert(key)
 			log("nothing to start for \(languageId) in \(project.path)")
@@ -1557,8 +1681,13 @@ final class LanguageService {
 	/// settings, under the tool's own name rather than its command — `pyright`,
 	/// not `pyright-langserver`.
 	private func resolution(for languageId: String, project: URL) -> LanguageServers.Resolution? {
-		let image = LanguageServers.definition(forLanguage: languageId)
-			.flatMap { images(for: project).image(for: $0.toolKey) }
+		let choices = choices(for: project)
+		// Two questions and they stay two: which server this project wants, and
+		// where that server comes from. The image is looked up under the chosen
+		// server's name, so a project that changes its mind about the server gets
+		// the image named for the one it now uses rather than the one it dropped.
+		let image = LanguageServers.definition(forLanguage: languageId, choosing: choices)
+			.flatMap { images(for: project).image(for: $0.name) }
 
 		// Looked for only when one is named: finding a runtime means walking the
 		// PATH, and most projects name no image at all.
@@ -1576,7 +1705,8 @@ final class LanguageService {
 			}
 		}
 		return LanguageServers.resolve(
-			languageId: languageId, project: project, image: image, runtime: runtime
+			languageId: languageId, project: project, image: image, runtime: runtime,
+			choosing: choices
 		)
 	}
 
@@ -1590,6 +1720,49 @@ final class LanguageService {
 		)
 		toolImages[path] = resolved
 		return resolved
+	}
+
+	/// Which server a project wants for each language, project first and
+	/// settings behind it.
+	///
+	/// The same order as the images above, and 0424 is where it was settled:
+	/// **the file wins and the setting is the default.** A project's choice of
+	/// server is a statement about the project — this is the trade we want here
+	/// — and a personal preference quietly overriding it would mean two people
+	/// on one repository being answered by two different programs.
+	func choices(for project: URL) -> LanguageServerChoices {
+		let path = project.standardizedFileURL.path
+		if let known = serverChoices[path] { return known }
+		let resolved = LanguageServerChoices.resolve(
+			project: LanguageServerChoices.inProject(project),
+			settings: LanguageServerChoices.settings(Settings.shared.languageServers)
+		)
+		serverChoices[path] = resolved
+		return resolved
+	}
+
+	/// What to say about a server that was chosen, exists, and is not here.
+	///
+	/// The ordinary install hint, and in front of it the fact that somebody
+	/// chose this one — without which the sentence reads as though Abydos picked
+	/// the server, and the next thought is that surely the other one is running
+	/// instead. It is not, and saying so is the difference between five minutes
+	/// and an afternoon.
+	private func chosenButAbsent(
+		_ definition: LanguageServerDefinition, languageId: String, project: URL
+	) -> String {
+		guard let chosen = choices(for: project).chosen(forLanguage: languageId) else {
+			return definition.installHint
+		}
+		let others = LanguageServers.candidates(forLanguage: languageId)
+			.map(\.name)
+			.filter { $0 != definition.name }
+		let instead = others.isEmpty
+			? ""
+			: " Nothing has been started in its place — not \(others.joined(separator: " and ")) "
+				+ "— because \(definition.name) is what was asked for."
+		return "\(chosen.source.origin) chose \(definition.name) for this project, and it is not "
+			+ "installed here and no image is named for it.\(instead)\n\n\(definition.installHint)"
 	}
 
 	/// Tells a server that has just started about the files opened while its
@@ -1689,6 +1862,14 @@ final class LanguageService {
 		/// project's devcontainer — shared with terminals, builds and every other
 		/// server in it, and nobody's to remove on one server's account.
 		let insideContainer: String?
+		/// Which language this was chosen for and where the choice was written,
+		/// or nil when nobody chose and this is simply the server Abydos has.
+		///
+		/// The one place a project's choice can be *seen* rather than inferred:
+		/// the settings page knows no project, and a row here is looked at by
+		/// exactly the person wondering why the server they expected is the one
+		/// they are paying for.
+		let chosen: String?
 
 		var id: String { key }
 	}
@@ -1707,12 +1888,26 @@ final class LanguageService {
 				project: server.project,
 				pid: server.client.processIdentifier,
 				containerName: server.client.containerLaunch?.name,
-				insideContainer: server.insideContainer
+				insideContainer: server.insideContainer,
+				chosen: chosenNote(for: server.definition, project: server.project)
 			)
 		}
 		.sorted {
 			($0.project.lastPathComponent, $0.command) < ($1.project.lastPathComponent, $1.command)
 		}
+	}
+
+	/// "Java, chosen in .abydos/tools.json", or nil when nobody chose.
+	private func chosenNote(for definition: LanguageServerDefinition, project: URL) -> String? {
+		let choices = choices(for: project)
+		for languageId in definition.languageIds {
+			guard let chosen = choices.chosen(forLanguage: languageId),
+			      chosen.name == definition.name
+			else { continue }
+			return "\(LanguageRegistry.shared.displayName(for: languageId)), chosen in "
+				+ chosen.source.origin
+		}
+		return nil
 	}
 
 	/// Stops one server, by the key its row carries.
@@ -1778,6 +1973,8 @@ final class LanguageService {
 		documentServers = documentServers.filter { !$0.value.hasPrefix(prefix) }
 		missingHints = missingHints.filter { !$0.key.hasPrefix(prefix) }
 		toolImages.removeValue(forKey: project.standardizedFileURL.path)
+		serverChoices.removeValue(forKey: project.standardizedFileURL.path)
+		refused = refused.filter { !$0.hasPrefix(prefix) }
 		// The servers inside the project's devcontainer went with the rest of
 		// them, above — the protocol's own `exit` is what ends one in there, and
 		// it travels down the same pipe. **The container itself is left up**, for
@@ -1827,6 +2024,8 @@ final class LanguageService {
 		documentServers.removeAll()
 		missingHints.removeAll()
 		toolImages.removeAll()
+		serverChoices.removeAll()
+		refused.removeAll()
 		devcontainerProjects.removeAll()
 		devcontainers.removeAll()
 		devcontainerFiles.removeAll()

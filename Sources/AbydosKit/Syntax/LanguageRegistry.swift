@@ -287,7 +287,18 @@ public final class LanguageRegistry {
 	/// Languages the editor knows by name but has no grammar for. They open,
 	/// they are sent to a language server, and the status bar can still say
 	/// what they are rather than showing an internal id.
-	static let grammarlessNames = ["plantuml": "PlantUML"]
+	///
+	/// `objc` and `jsx` joined it for 0449: a language server answers for both
+	/// without this editor having a grammar of its own — clangd for the first,
+	/// typescript-language-server for the second — so the only places their
+	/// names are said are the ones this map exists for, and now also the page
+	/// that says which server answers for what. "C, C++, objc" is a heading
+	/// nobody would write on purpose.
+	static let grammarlessNames = [
+		"plantuml": "PlantUML",
+		"objc": "Objective-C",
+		"jsx": "JSX",
+	]
 
 	/// Loads and caches a language's parser and queries.
 	///

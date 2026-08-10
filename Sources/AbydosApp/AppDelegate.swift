@@ -1470,7 +1470,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		}
 
 		if let section = options.dumpSettings {
-			let rows = SettingsSections.all.first { $0.title == section }?.rows() ?? []
+			// Flattened, so a child page can be dumped as well as a top-level
+			// one. The pages under Tools are where the tools actually are, and a
+			// dump that could only reach their parent could say nothing about
+			// any of them.
+			let rows = SettingsSections.flattened.first { $0.section.title == section }?
+				.section.rows() ?? []
 			for line in SettingsPaneController.describe(rows) { print("SETTING \(line)") }
 			exit(0)
 		}

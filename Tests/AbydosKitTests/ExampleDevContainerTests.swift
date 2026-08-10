@@ -200,7 +200,7 @@ struct ExampleDevContainerTests {
 		// The command the image has to carry is the one `LanguageServers` runs,
 		// not the `pyright` checker installed beside it. A Dockerfile that
 		// installed the wrong name would come up and then answer nothing.
-		let python = try #require(LanguageServers.definition(forLanguage: "python"))
+		let python = try #require(LanguageServers.definition(forLanguage: "python", choosing: .none))
 		#expect(python.command == "pyright-langserver")
 		let dockerfile = try String(
 			contentsOf: URL(fileURLWithPath: build.dockerfile), encoding: .utf8
