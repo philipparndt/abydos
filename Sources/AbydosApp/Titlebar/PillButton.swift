@@ -225,8 +225,31 @@ final class SubprojectPillButton: PillButton {
 /// everything this pill offers changes which toolchain the code is checked
 /// against. That is worth a menu somebody read rather than a small target
 /// beside a name.
+///
+/// **It does not say the container's name, and 0443's part 3 is that decision
+/// being reversed.** 0433 gave it `containerTabTitle` so that the pill, the tab
+/// in the same container and the menu item that opens one could not drift apart,
+/// and the naming argument was that "a window scoped to one subproject of ten
+/// that each have a devcontainer cannot say which one it means by saying
+/// 'container'". That argument is sound and it is about **the menu item that
+/// opens one of several**, where the name is the only thing telling two entries
+/// apart. It is much weaker here: this pill has exactly one answer at a time, the
+/// window already says which project and which subproject it is showing, and a
+/// devcontainer's `name` is a whole sentence — "Python, with its language server
+/// in the container" beside a project, a branch and a subproject was most of the
+/// titlebar, measured on the example project the whole feature was reported
+/// against.
+///
+/// So what is left is the `⬢`: this window is working inside a container. The
+/// name is in the tool tip, and in the menu, which lists every container the
+/// project offers with the one in use marked — it has a home now, which is the
+/// other half of why this is no longer a loss. The single source is untouched:
+/// the name still comes from `MainWindowController.containerName`, and so does
+/// the mark. What changed is what the pill shows, not where it learns it from.
 final class DevContainerPillButton: PillButton {
-	private var title: String?
+	/// The very short thing it shows while the container is in use — the `⬢` the
+	/// terminal tab wears — or nil when there is no container to show at all.
+	private var mark: String?
 	private var inUse = true
 
 	private static var iconSize: CGFloat { Theme.current.scaled(13) }
@@ -234,37 +257,47 @@ final class DevContainerPillButton: PillButton {
 	private static var gap: CGFloat { Theme.current.scaled(6) }
 	private static var chevronWidth: CGFloat { Theme.current.scaled(7) }
 
-	var hasContainer: Bool { title != nil }
-	/// Whether the container it names is the one this project's tools are in.
+	var hasContainer: Bool { mark != nil }
+	/// Whether the container it stands for is the one this project's tools are in.
 	var isInUse: Bool { inUse }
 
-	/// The whole label, which is `MainWindowController.containerTabTitle` in use
-	/// and `containerName` when not — the devcontainer's own `name`, with the
-	/// `⬢` the tab already wears only in the first case. One source for it, so
-	/// the pill and the tab in the same container cannot come to disagree about
-	/// what it is called.
-	func setContainer(_ title: String?, inUse: Bool = true) {
-		self.title = title
+	/// Shows the pill for a container, or takes it away when given nil.
+	///
+	/// - Parameters:
+	///   - mark: the two characters at most that it shows — the `⬢` the terminal
+	///     tab wears, from `MainWindowController.containerMark`, so the pill and
+	///     the tab in the same container cannot come to disagree about it.
+	///   - inUse: whether this project's tools are in there. The mark is drawn
+	///     only then: the hexagon means being *inside*, and a pill for a container
+	///     that is merely available must not wear it (0438).
+	func setContainer(_ mark: String?, inUse: Bool = true) {
+		self.mark = mark
 		self.inUse = inUse
-		isHidden = (title == nil)
+		isHidden = (mark == nil)
 		invalidateIntrinsicContentSize()
 		needsDisplay = true
 	}
 
+	/// What is drawn beside the icon, which is the mark or nothing.
+	private var label: String? { inUse ? mark : nil }
+
 	override var intrinsicContentSize: NSSize {
 		// A toolbar measures a hidden view too, and warns about a zero dimension:
 		// a sliver rather than nothing.
-		guard let title else { return NSSize(width: 1, height: Theme.current.scaled(28)) }
-		let textWidth = (title as NSString).size(withAttributes: [.font: PillButton.labelFont]).width
+		guard mark != nil else { return NSSize(width: 1, height: Theme.current.scaled(28)) }
+		let textWidth = label.map {
+			ceil(($0 as NSString).size(withAttributes: [.font: PillButton.labelFont]).width)
+				+ Self.gap
+		} ?? 0
 		return NSSize(
 			width: PillButton.inset * 2 + Self.horizontalPadding * 2 + Self.iconSize
-				+ Self.gap + ceil(textWidth) + Self.gap + Self.chevronWidth,
+				+ Self.gap + textWidth + Self.chevronWidth,
 			height: Theme.current.scaled(30)
 		)
 	}
 
 	override func drawContent(in rect: NSRect) {
-		guard let title else { return }
+		guard mark != nil else { return }
 		var x = Self.horizontalPadding + PillButton.inset
 
 		// Dimmed rather than coloured. A warning colour would be the app arguing
@@ -280,13 +313,15 @@ final class DevContainerPillButton: PillButton {
 			x += Self.iconSize + Self.gap
 		}
 
-		let attributed = NSAttributedString(string: title, attributes: [
-			.font: PillButton.labelFont,
-			.foregroundColor: inUse ? Theme.current.sidebarHeaderText : Theme.current.gitIgnored,
-		])
-		let size = attributed.size()
-		attributed.draw(at: NSPoint(x: x, y: rect.midY - size.height / 2))
-		x += ceil(size.width) + Self.gap
+		if let label {
+			let attributed = NSAttributedString(string: label, attributes: [
+				.font: PillButton.labelFont,
+				.foregroundColor: Theme.current.sidebarHeaderText,
+			])
+			let size = attributed.size()
+			attributed.draw(at: NSPoint(x: x, y: rect.midY - size.height / 2))
+			x += ceil(size.width) + Self.gap
+		}
 
 		drawChevron(at: NSPoint(x: x, y: rect.midY), color: tint)
 	}
