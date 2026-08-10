@@ -196,9 +196,17 @@ echo "    build $BUILD ($COMMIT$DIRTY)"
 # already associated keeps a build compiled a minute ago able to reach the
 # network. `PIN_UUID=0` turns it off, which is what a release does: identical
 # UUIDs make crash reports ambiguous about which build produced them.
+#
+# The second line is here rather than in a document because this is the only
+# moment somebody sees the pinning happen. The UUID is also what every
+# symbolicating tool uses to decide whose symbols to print, so a pinned build is
+# one `sample` and `atos` will describe using another build's names — silently,
+# and convincingly, since the names are all from this repository. 0447 has the
+# measurement; `make profile` builds one that can be read.
 PIN_UUID="${PIN_UUID:-C94373A9-FCB2-3966-B045-208B26A4CA30}"
 if [ "$PIN_UUID" != "0" ]; then
 	python3 Scripts/pin-uuid.py "$CONTENTS/MacOS/Abydos" "$PIN_UUID"
+	echo "    a pinned build cannot be profiled — 'make profile' builds one that can"
 fi
 
 IDENTITY="${SIGN_IDENTITY:-}"

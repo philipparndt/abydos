@@ -13,6 +13,34 @@ was compiled a minute ago able to reach the network. It is a workaround for a
 machine and never for a release: identical UUIDs make crash reports ambiguous
 about which build they came from, which is the whole reason the linker derives
 it from content.
+
+What it costs: a pinned build cannot be profiled
+------------------------------------------------
+The UUID is not only how a privacy grant is filed, it is how every symbolicating
+tool decides *which build a set of addresses belongs to*. `sample`, `atos`,
+Instruments and the crash reporter all take the UUID out of the Mach-O, ask the
+system which symbols belong to it, and use whatever comes back — in preference
+to the file they were handed. Give nine builds the same UUID, as this script
+does on a machine with a few worktrees, and the question has nine answers.
+
+They do not fail. They answer, confidently, with another build's names — real
+function names from this repository, with source files and line numbers, in call
+chains that never happened. Measured on one build, one address, changing nothing
+but these sixteen bytes:
+
+    nm:    0x100001f60 is _main
+    atos:  ts_lex (in Abydos) (parser.c:1617)          # pinned
+    atos:  main (in Abydos) (main.swift:0)             # PIN_UUID=0
+
+0428 read two such profiles and acted on them before noticing. The pin stays
+anyway — a silent profiler is recoverable and a silently unreachable LAN is what
+this script exists to prevent — so the way out is to ask for a build without it:
+
+    make profile              # release, PIN_UUID=0, and proves it symbolicates
+    make build PIN_UUID=0     # the same thing by hand
+
+`Scripts/symbol-check.sh` is what tells the two apart, and 0447 has the whole
+measurement.
 """
 import struct, sys, uuid
 
