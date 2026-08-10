@@ -72,6 +72,30 @@ there; what is missing is a harness that opens a real project and reports these.
   large checkout, so probably by hand with the numbers written down here — the
   point is a baseline that can be compared against, not a gate.
 
+## Steps
+
+- [ ] A script in the repository that clones the corpus beside the checkout,
+      shallow, and says what it got
+- [ ] Say what the corpus actually is — bundles, Java lines, bytes on disk —
+      rather than what the item guessed it would be
+- [ ] The app can say when its window came up and when the tree was usable,
+      because no stopwatch outside the process can tell those apart
+- [ ] A harness that opens a project, takes the numbers, and prints the load
+      average beside every one of them
+- [ ] Baseline: time to a window and time to something usable, on all three
+- [ ] Baseline: `git status`, cold and warm, on all three
+- [ ] Baseline: what one project open costs the language-server scan, after 0437
+      made it one listing per directory rather than one per definition
+- [ ] Baseline: time until Java answers, and what jdtls costs in processor time
+      and memory beside what we cost
+- [ ] Baseline: keystroke latency in a file in a large bundle
+- [ ] Baseline: search, first result and all results
+- [ ] Baseline: filesystem events during a build, and what the tree does with
+      them now that `loadedNode(for:)` stops at the first closed door
+- [ ] Write down what was ruled out on the way, and what the numbers say is
+      worth attacking first
+- [ ] The spec says what the project now does
+
 ---
 
 Its number is where it sits in the queue, not what it is worth doing next.
