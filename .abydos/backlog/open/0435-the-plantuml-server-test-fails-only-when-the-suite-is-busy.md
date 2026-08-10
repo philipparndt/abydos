@@ -66,3 +66,40 @@ finishing 0426 and had to prove it was not theirs, and once here. A suite that
 fails for reasons unrelated to the change under it teaches everybody to read
 "failed" as "probably fine", and that is the property worth protecting — it is
 the only thing standing between a merge and `main`.
+
+## Merged, and not settled — three runs on a quiet machine
+
+The work landed unfinished: the agent doing it was stopped by an account spend
+limit partway through the sentence "now the verification runs, full suite,
+repeatedly, under load". What it built is good and is in — the refusal that says
+*which* failure happened, one place saying how patient a live test is, and a real
+process leak it found among the noise. What it did not get to do is prove the red
+is gone, and on the evidence it is not.
+
+Three full runs on **a quiet machine**, load average 6 to 13 rather than the 27 to
+386 every earlier observation was taken at:
+
+| run | result | wall clock |
+|---|---|---|
+| 1 | **failed**, `aServerRemovedBehindItsBackStillDrawsTheDiagram` | **193 s** |
+| 2 | passed, 2011 tests | 72 s |
+| 3 | passed, 2011 tests | 72 s |
+
+**The 193 seconds is the finding, not the failure.** A normal run is 72. The extra
+two minutes is the new patience being spent and the render giving up anyway — so
+the deadline was not what was wrong, and raising it bought a longer wait before
+the same red. That is precisely the outcome this entry warned against when it said
+not to move a threshold until the red goes away.
+
+It also moves the question. Every earlier observation was under heavy load, which
+made "the machine was busy" a sufficient explanation. This one was not: at a load
+average of 7, on ten cores, with the same test passing alone in 1.4 seconds. So
+whatever this is, it is something the *rest of the suite* does to this test rather
+than something the machine does to it — contention for the container runtime, or
+another suite removing a container this one is using, which the file's own note
+already records as having happened before ("two of these running at once were
+removing each other's servers mid-render").
+
+Next step, and it is now a much narrower question than the entry opened with: run
+the suite until it fails and read the refusal, which now says which of the four
+things went wrong. One failing run with that sentence in it should end this.
