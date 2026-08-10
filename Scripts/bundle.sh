@@ -44,6 +44,12 @@ cp "$BIN_DIR/abydos-hook" "$CONTENTS/MacOS/abydos-hook"
 # they are there for anybody who runs the app without running `make
 # install-cli` — and so the copy that ships is the copy that was built.
 mkdir -p "$CONTENTS/Resources/bin"
+# `abydos` as well as the rest: typed in one of this app's panes it opens a file
+# in the window it was typed in, and it can only do that through the escape it
+# writes — which the copy in the bundle is guaranteed to have and an older one
+# installed in /usr/local/bin is not.
+cp Scripts/abydos "$CONTENTS/Resources/bin/abydos"
+chmod +x "$CONTENTS/Resources/bin/abydos"
 cp Scripts/abydos-icat "$CONTENTS/Resources/bin/abydos-icat"
 chmod +x "$CONTENTS/Resources/bin/abydos-icat"
 

@@ -1367,6 +1367,23 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		// What has the keyboard, which is the half of `abydos <file>` that no
+		// picture can show: a caret between blinks looks exactly like a caret in
+		// a view nobody is typing into.
+		//
+		// The key window when there is one, and this window's own first
+		// responder when there is not — a run started without the app coming to
+		// the front has no key window at all, and the first responder is still
+		// what the next keystroke would reach, which is the thing being claimed.
+		for at in options.focusReportsAt {
+			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+				let window = NSApp.keyWindow ?? controller?.window
+				let responder = window?.firstResponder
+				let name = responder.map { String(describing: type(of: $0)) } ?? "nothing"
+				print("FOCUS \(String(format: "%.1f", at))s \(name)")
+			}
+		}
+
 		if options.openTerminal {
 			controller?.toggleTerminal(nil)
 			if let input = options.terminalInput {
@@ -1588,6 +1605,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			let controller = open(projectAt: Project.root(containing: url))
 			controller.openForTesting(url)
 		}
+	}
+
+	/// `abydos <file>` from a terminal in a window that has no editor of its own.
+	///
+	/// A torn-off terminal window is a panel and nothing else. The window that
+	/// asked cannot answer, so the nearest project window does — and if there is
+	/// none, one is opened on whatever encloses the file.
+	func openFromTerminal(_ request: TerminalOpenRequest) {
+		let url = URL(fileURLWithPath: request.path)
+		let controller = frontmostController ?? open(projectAt: Project.root(containing: url))
+		controller.openFromTerminal(request)
 	}
 
 	// MARK: - Opening projects

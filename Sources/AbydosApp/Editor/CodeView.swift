@@ -1516,7 +1516,12 @@ final class CodeView: NSView, NSTextInputClient {
 		reportCaretPosition()
 	}
 
-	private func reportCaretPosition() {
+	/// Says where the caret is, for whatever is showing it.
+	///
+	/// Called on every move, and once more when a tab is brought to the front:
+	/// the indicator is one control shared by every tab in the group, so a tab
+	/// that never speaks up leaves the last one's line on display.
+	func reportCaretPosition() {
 		guard let document else { return }
 		let byteOffset = document.rope.byteOffset(fromUTF16: caret)
 		let line = document.rope.line(atByteOffset: byteOffset)

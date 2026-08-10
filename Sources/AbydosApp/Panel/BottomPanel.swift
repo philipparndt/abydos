@@ -231,6 +231,8 @@ final class BottomPanel: NSView {
 	var onDebugAgain: (() -> Void)?
 	/// A pane that belongs to a project was brought forward.
 	var onPaneNeedsProject: ((URL) -> Void)?
+	/// `abydos <file>` was typed in one of these terminals.
+	var onOpenFileFromTerminal: ((TerminalOpenRequest) -> Void)?
 	/// The chevron beside the + was pressed, with the view it is in and where in
 	/// that view to hang the menu.
 	var onRequestNewTerminalMenu: ((NSView, NSPoint) -> Void)?
@@ -1231,16 +1233,13 @@ final class BottomPanel: NSView {
 	/// not there — which is what `new -A` means.
 	private func attachCommand(to session: String) -> (executable: String, arguments: [String])? {
 		guard let tmux = Executables.locate("tmux") else { return nil }
-		return (executable: tmux, arguments: ["new", "-A", "-s", session])
+		return (executable: tmux, arguments: TmuxMirror.attachArguments(to: session))
 	}
 
 	/// What the first terminal runs instead of a plain shell.
 	private func startupCommand() -> (executable: String, arguments: [String])? {
 		guard Settings.shared.startsTmux, let session = tmuxSession else { return nil }
-		guard let tmux = Executables.locate("tmux") else { return nil }
-		// `new -A` is "attach if it exists, make it if it does not", which is
-		// exactly what reopening a project should do.
-		return (executable: tmux, arguments: ["new", "-A", "-s", session])
+		return attachCommand(to: session)
 	}
 
 	/// The sessions the server has, to switch this terminal between them.
@@ -2042,6 +2041,11 @@ final class BottomPanel: NSView {
 
 	private func wire(_ session: Session) {
 		guard let terminal = session.terminal else { return }
+		// `abydos <file>` in any pane, run or debug console included: the
+		// request names a window, and this panel belongs to exactly one.
+		terminal.terminalView.onOpenFile = { [weak self] request in
+			self?.onOpenFileFromTerminal?(request)
+		}
 		// A shell that changes directory prints a prompt, so output is the cue
 		// to look. An idle terminal produces none and costs nothing.
 		terminal.terminalView.onOutput = { [weak self] in

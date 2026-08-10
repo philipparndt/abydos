@@ -109,6 +109,62 @@ struct PseudoTerminalEnvironmentTests {
 		#expect(merged["PAGER"] == "less")
 	}
 
+	/// What this terminal calls itself, whatever it was launched from.
+	///
+	/// `abydos <file>` reads `TERM_PROGRAM` to decide whether writing the escape
+	/// that opens a file in this window is worth doing at all. An inherited
+	/// value is a lie here: the app launched from Ghostty inherits
+	/// `TERM_PROGRAM=ghostty`, and a pane claiming to be Ghostty would send
+	/// every file back out through LaunchServices.
+	@Test func namesThisTerminalRatherThanTheOneItWasLaunchedFrom() {
+		let merged = PseudoTerminal.mergedEnvironment(
+			["TERM_PROGRAM": "ghostty"], bundled: nil, app: nil
+		)
+		#expect(merged["TERM_PROGRAM"] == "Abydos")
+	}
+
+	/// Which build to fall back to. Somebody running a checkout is looking at
+	/// `build/Abydos.app`, and opening `/Applications/Abydos.app` instead puts
+	/// the file in a different program.
+	@Test func namesTheBuildItIsRunningOutOf() {
+		let merged = PseudoTerminal.mergedEnvironment(
+			nil, bundled: nil, app: "/checkout/build/Abydos.app", inherited: [:]
+		)
+		#expect(merged["IDEAI_APP"] == "/checkout/build/Abydos.app")
+
+		let outsideABundle = PseudoTerminal.mergedEnvironment(
+			nil, bundled: nil, app: nil, inherited: [:]
+		)
+		#expect(outsideABundle["IDEAI_APP"] == nil)
+	}
+
+	/// A pane is not inside tmux because the app was launched from a shell that
+	/// was.
+	///
+	/// The same lie as `TERM_PROGRAM`, inherited the same way: `make run` from a
+	/// shell in tmux handed `TMUX` to every pane, naming a session none of them
+	/// was in. `abydos <file>` believed it, wrapped its question in a passthrough
+	/// nothing was there to unwrap, heard no answer, and opened the file through
+	/// LaunchServices instead of in the window it was typed in.
+	@Test func aPaneIsNotInTheTmuxTheAppWasLaunchedFrom() {
+		let merged = PseudoTerminal.mergedEnvironment(
+			["TMUX": "/private/tmp/tmux-501/default,42,0", "TMUX_PANE": "%7"],
+			bundled: nil, app: nil
+		)
+		#expect(merged["TMUX"] == nil)
+		#expect(merged["TMUX_PANE"] == nil)
+	}
+
+	/// Absent rather than empty. tmux sets the variable itself when a pane goes
+	/// on to start it, and a shell asking "am I in tmux" wants one answer to
+	/// read rather than two spellings of no.
+	@Test func theAbsenceIsTheAnswerRatherThanAnEmptyString() {
+		let merged = PseudoTerminal.mergedEnvironment(
+			["TMUX": "/tmp/x,1,0"], bundled: nil, app: nil
+		)
+		#expect(!merged.keys.contains("TMUX"))
+	}
+
 	/// The bundled commands go on the end of the PATH, so a command somebody
 	/// already has still wins.
 	@Test func appendsTheBundledCommands() {

@@ -361,6 +361,15 @@ struct LaunchOptions {
 	var disabledBreakpointLine: Int?
 	/// Press stop this many seconds in, to see what the tab does afterwards.
 	var stopAfter: Double?
+	/// Print what has the keyboard, at each of these many seconds in.
+	///
+	/// Half of what `abydos <file>` promises is that the keyboard moves into the
+	/// file it opened, and that is the half a screenshot cannot show: a caret
+	/// that happens to be between blinks looks exactly like a caret in a view
+	/// nobody is typing into. Several readings, because the claim is about a
+	/// change — the terminal before, the editor after.
+	var focusReportsAt: [Double] = []
+
 	/// Open a terminal in the project's devcontainer and report what is in it.
 	var devContainerTerminal = false
 
@@ -518,6 +527,9 @@ struct LaunchOptions {
 						(String(path), spec.count > 1 ? Double(spec[1]) ?? 5 : 5)
 					)
 				}
+			case "--report-focus":
+				options.focusReportsAt = (next() ?? "3")
+					.split(separator: ",").compactMap { Double($0) }
 			case "--tab-add-menu": options.terminalAddMenu = true
 			case "--close-window": options.closeLastWindowAt = next().flatMap(Double.init) ?? 5
 			case "--report-geometry": options.reportsTerminalGeometry = true

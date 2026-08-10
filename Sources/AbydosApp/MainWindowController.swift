@@ -617,6 +617,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		bottomPanel.onOpenFinding = { [weak self] url, line in
 			self?.editor.open(fileURL: url, atLine: line)
 		}
+		bottomPanel.onOpenFileFromTerminal = { [weak self] request in
+			self?.openFromTerminal(request)
+		}
 		// Set synchronously, not deferred: anything that opens the panel during
 		// launch would otherwise be undone when the deferred block ran.
 		bottomPanel.isHidden = true
@@ -1188,6 +1191,48 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		navigator.selectWithoutOpening(url: url)
 	}
 
+	/// `abydos <file>`, typed in one of this window's terminals.
+	///
+	/// Three things, and the third is what makes it a gesture rather than a
+	/// background event: the file opens in *this* window's editor, the keyboard
+	/// goes with it, and the terminal comes back to a split if it had the window
+	/// to itself. A file opened into a pane nobody can see is the same as not
+	/// opening it, and the next thing typed would still go to the shell.
+	///
+	/// The panel stays down afterwards. Sending it back up when the editor loses
+	/// focus would be a mode nobody asked for, and it would fight with the next
+	/// click; this is the same restore the debugger and the tree already do.
+	///
+	/// It comes back to the height it had before it was maximised, and then to
+	/// half the window if that height was more — the same rule the debugger
+	/// uses, for the same reason. A terminal maximised from a panel that was
+	/// already most of the window restores to most of the window, and a file
+	/// opened behind a strip of editor is a file nobody can read.
+	///
+	/// A file outside the project opens here as a loose tab rather than being
+	/// refused or taking the window to another project. Somebody typing
+	/// `abydos ~/notes.md` in a pane is asking to read it beside what they are
+	/// working on, not to stop working on it.
+	func openFromTerminal(_ request: TerminalOpenRequest) {
+		let url = URL(fileURLWithPath: request.path).standardizedFileURL
+		// A directory is a project, whoever asked; that is what `abydos` with no
+		// arguments means and it is not this window's to reinterpret.
+		var isDirectory: ObjCBool = false
+		guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+		      !isDirectory.boolValue else { return }
+
+		makeRoomForTheEditor()
+		// The pane may be in a torn-off terminal window, in which case this one
+		// is not in front and the file would open behind it.
+		window?.makeKeyAndOrderFront(nil)
+		if let line = request.line {
+			editor.open(fileURL: url, atLine: line)
+		} else {
+			editor.open(fileURL: url, focusEditor: true, preview: false)
+		}
+		navigator.selectWithoutOpening(url: url)
+	}
+
 	/// Opens a file provisionally, as a single click in the tree would.
 	func previewFile(at url: URL) {
 		editor.open(fileURL: url, focusEditor: false, preview: true)
@@ -1665,19 +1710,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 	}
 
-	/// Gives the editor enough of the window to show where execution stopped.
+	/// Gives the editor enough of the window to be looked at.
 	///
-	/// Two things can hide the line a breakpoint is on, and both are ordinary:
-	/// the terminal can have the whole window, in which case the editor is
-	/// hidden rather than small; and the panel can simply be tall, because it
-	/// was dragged that way while reading a log. Neither is a state somebody
-	/// chose *for debugging* — they chose it for the thing they were doing a
-	/// minute ago, and a debugger that stops behind them has nothing to show.
+	/// Two things can hide the line a breakpoint is on — or the file `abydos
+	/// notes.md` just opened — and both are ordinary: the terminal can have the
+	/// whole window, in which case the editor is hidden rather than small; and
+	/// the panel can simply be tall, because it was dragged that way while
+	/// reading a log. Neither is a state somebody chose *for this* — they chose
+	/// it for the thing they were doing a minute ago, and something that arrives
+	/// behind them has nothing to show.
 	///
 	/// Half the window is the most the panel keeps. Not a fixed height: the
 	/// stack, the variables and the console all need room too, and taking the
 	/// panel down to a strip to reveal one line is the opposite mistake.
-	private func makeRoomForTheStoppedLine() {
+	private func makeRoomForTheEditor() {
 		leaveTerminalFullScreen()
 		guard isPanelVisible else { return }
 
@@ -2415,7 +2461,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			// Room to see it, before opening it. Stopping somewhere is the one
 			// moment the editor has to be visible, and the panel is often not
 			// merely tall but the whole window.
-			self.makeRoomForTheStoppedLine()
+			self.makeRoomForTheEditor()
 			self.executionMarker = (file, line)
 			self.editor.open(fileURL: URL(fileURLWithPath: file), atLine: line)
 			self.editor.setExecutionLocation(file: file, line: line)
