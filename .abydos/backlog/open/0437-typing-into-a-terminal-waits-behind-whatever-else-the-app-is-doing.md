@@ -419,3 +419,16 @@ working belongs above everything currently open.
 up here too: three full runs on this branch failed in PlantUMLServerLiveTests,
 MermaidLiveTests and SilentRuntimeTests, all of them timing-sensitive, all of
 them green on their own and green again on a warm build.
+
+The second round says the same thing louder, and it is worth writing down as
+evidence for 0435 rather than as an excuse. One full run before merging main was
+green: 1,997 tests, at a load average of about 30. Two runs after it were not —
+one red in DevContainerLiveTests, then four red in StreamedOutputTests,
+LSPHandshakeOrderTests, PseudoTerminalTests and SilentRuntimeTests — taken while
+the machine was at a **load average of 386**. Every one of them is an assertion
+about a deadline: 1.7 s against a 1 s bound, 30.8 s against 10. All five passed
+on their own straight afterwards, and the same run printed
+`PERF 10k lookups (2k lines) 9873.75 ms` for a benchmark that has no business
+taking ten seconds. Nothing in this entry's changes is anywhere near any of
+them. **The suite has no way to say "I could not be run", so it says "you broke
+it" instead**, and that is the fault 0435 describes.
