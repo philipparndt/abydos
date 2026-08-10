@@ -37,4 +37,29 @@ public enum TreeSelection {
 		}
 		return found.sorted()
 	}
+
+	/// Where the selection should go once these rows are deleted: the nearest
+	/// row above them that is staying.
+	///
+	/// Deleting used to drop the selection at the top of the tree, which is a
+	/// long way from where somebody was working and means the next keystroke
+	/// acts on something they cannot see.
+	///
+	/// **Walking up the visible rows is the whole answer**, and it is why this
+	/// is a loop rather than a walk through the tree. "The sibling above, or the
+	/// parent when there is no sibling above" are the same movement in an
+	/// outline view: the row above a folder's first child *is* that folder. One
+	/// loop gives both, and gives the right answer for a selection with gaps in
+	/// it, since it steps over anything else that is also going.
+	///
+	/// Nil when the first row itself was deleted and there is nothing above it.
+	/// The selection lands at the top then — which is the behaviour being fixed,
+	/// except that in that one case the top is genuinely where it belongs.
+	public static func surviving(above doomed: Set<Int>, path: (Int) -> String?) -> String? {
+		guard let first = doomed.min(), first > 0 else { return nil }
+		for row in stride(from: first - 1, through: 0, by: -1) where !doomed.contains(row) {
+			if let found = path(row) { return found }
+		}
+		return nil
+	}
 }

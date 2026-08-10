@@ -77,3 +77,58 @@ struct TreeSelectionTests {
 		#expect(restored == [1])
 	}
 }
+
+/// Where the selection goes when rows are deleted.
+///
+/// It used to go to the top of the tree, which is a long way from where somebody
+/// was working — and the next keystroke then acts on something they cannot see.
+struct TreeSelectionAfterDeleteTests {
+	/// A folder at row 1 with three children under it, the way the rows read.
+	private let rows = [
+		"/p",              // 0  the project root
+		"/p/Sources",      // 1
+		"/p/Sources/a.swift", // 2
+		"/p/Sources/b.swift", // 3
+		"/p/Sources/c.swift", // 4
+		"/p/README.md",    // 5
+	]
+
+	private func path(_ row: Int) -> String? {
+		rows.indices.contains(row) ? rows[row] : nil
+	}
+
+	@Test func theSiblingAboveTakesTheSelection() {
+		#expect(TreeSelection.surviving(above: [3], path: path) == "/p/Sources/a.swift")
+	}
+
+	/// No sibling above, so the folder holding it — which is the row above, so
+	/// the same movement finds it.
+	@Test func theFirstChildHandsBackToItsParent() {
+		#expect(TreeSelection.surviving(above: [2], path: path) == "/p/Sources")
+	}
+
+	/// Three deleted at once lands above all of them, not between them.
+	@Test func aRunOfRowsStepsOverItself() {
+		#expect(TreeSelection.surviving(above: [2, 3, 4], path: path) == "/p/Sources")
+	}
+
+	/// A selection with a gap anchors above the *topmost* row going, not on the
+	/// survivor between them.
+	///
+	/// Rows 3 and 5 go and row 4 stays, so "nearest survivor" and "above them
+	/// all" disagree — and above is the one that is predictable. Where the
+	/// selection lands should depend on where the deletion started, not on which
+	/// rows happened to be skipped in the middle of it.
+	@Test func aSelectionWithAGapAnchorsAboveTheTopmost() {
+		#expect(TreeSelection.surviving(above: [3, 5], path: path) == "/p/Sources/a.swift")
+	}
+
+	/// Nothing above the first row, and the top is then the right answer.
+	@Test func deletingTheFirstRowHasNowhereToGo() {
+		#expect(TreeSelection.surviving(above: [0], path: path) == nil)
+	}
+
+	@Test func deletingNothingMovesNothing() {
+		#expect(TreeSelection.surviving(above: [], path: path) == nil)
+	}
+}

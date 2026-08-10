@@ -1358,9 +1358,21 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// keyboard should never trash something the keyboard cannot see it is about
 	/// to trash.
 	private func trashSelection() {
-		trash(outlineView.selectedRowIndexes.sorted().compactMap {
-			outlineView.item(atRow: $0) as? FileNode
-		})
+		let doomed = outlineView.selectedRowIndexes
+		// Worked out before anything goes, because afterwards there is no row to
+		// count back from.
+		let successor = rowSurviving(above: doomed)
+		trash(doomed.sorted().compactMap { outlineView.item(atRow: $0) as? FileNode })
+		if let successor { pendingReveal = [successor] }
+	}
+
+	/// Where the selection goes once these rows have gone. `TreeSelection` has
+	/// the rule and the tests; this hands it the rows.
+	private func rowSurviving(above doomed: IndexSet) -> URL? {
+		TreeSelection.surviving(above: Set(doomed)) { row in
+			(outlineView.item(atRow: row) as? FileNode)?.url.path
+		}
+		.map { URL(fileURLWithPath: $0) }
 	}
 
 	/// Moves rows to the trash.
