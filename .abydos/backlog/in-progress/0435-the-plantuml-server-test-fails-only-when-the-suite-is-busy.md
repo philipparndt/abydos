@@ -182,6 +182,166 @@ faces, depending on which second the neighbour finishes in.
 - [x] A test that fails on the old code and passes on the new one
 - [x] The second shape of this failure — the timing assertions rather than the
       refusal — says which thing happened, the way the refusal now does
-- [ ] Full runs, repeatedly, with the load average written beside each
-- [ ] Write down here what was ruled out on the way
+- [x] Full runs, repeatedly, with the load average written beside each
+- [x] Write down here what was ruled out on the way
 - [ ] The spec, if the behaviour changed
+
+      Nothing shipped changed, so there is no delta. The only production edit is
+      the deletion of a method nothing in `Sources/` called; the app's previews,
+      its deadlines and its fallback are untouched. `spec/` holds no capability
+      file this would land in either.
+
+## What was run, and what a green run is worth here
+
+**The reproduction, which is the part that means something.** Two suites is
+enough, so the evidence is a three-minute command rather than a full suite run
+until it happens to go wrong:
+
+    xcrun swift test --filter PlantUMLServerLiveTests --filter DiagramExportLiveTests
+
+| | runs | result | wall clock | load, per core |
+|---|---|---|---|---|
+| before | 4 | **failed, 4 of 4** | 181–183 s | 0.5 – 1.4 |
+| after | 5 | passed, 5 of 5 | 2.7–3.0 s | 1.7 – 2.7 |
+
+Note which way round the load is. Every failure was on a quieter machine than
+every pass.
+
+**Eight full `make test` runs on the finished code, all green**, 2109 tests each:
+
+| run | load at the start | load per core when PlantUML drew | warm render |
+|---|---|---|---|
+| 1 | 9.4 | 1.9 | 0.026 s |
+| 2 | 13.7 | 6.3 — too busy to time, and it said so | 0.044 s |
+| 3 | 44.1 | 5.7 — the same | 0.049 s |
+| 4 | 29.5 | 3.4 | 0.048 s |
+| 5 | 18.5 | 3.1 | 0.040 s |
+| 6 | 14.9 | 2.7 | 0.035 s |
+| 7 | 13.6 | 2.3 | 0.049 s |
+| 8 | 15.2 | 3.2 | 0.092 s |
+
+The machine was not quiet for any of them — another agent was building in a
+worktree beside this one the whole time, which is why the figures run from 9 to
+44. That is the right condition to have tested under and it is worth saying that
+it was luck rather than design.
+
+Three further full runs were made on an intermediate state and are not in the
+table. All three failed, and only on the new lint going red against its own
+comment; one of them also caught the pty test below.
+
+**What a green run is worth here, said plainly.** Less than usual, and this
+entry has already been wrong once about exactly that. Eight passes is not proof:
+the failure needs the export test to finish inside the other test's start, and
+anything that moves the two apart hides it without fixing it. What carries the
+weight is not the eight — it is that the mechanism was read off docker's own
+event log, that both names appear on one `rm -f`, that the code which produced
+that command is gone rather than tuned, and that the two-suite reproduction went
+from four failures out of four to five passes out of five across the change. The
+eight full runs are a check that nothing else broke, and that is all they are.
+
+**Still not proved:** that this was the *only* cause. Every sighting in this
+entry is consistent with it, and the two shapes it produces are the two shapes
+that were seen — but every sighting before today was under load heavy enough to
+be its own explanation, and those runs cannot be gone back to and read.
+
+## What it came to
+
+A role is not an owner, and that sentence is the whole fix.
+
+`ToolContainers.release(withPrefixes:)` is **gone**. It was written when
+`removeAll` took a devcontainer out from under the suite beside it, and it
+narrowed the set from "every container this process registered" to "every
+container playing my role". That is one step short, and the step it is short of
+is this item: in the app a role does have one owner, but in the test bundle two
+suites both keep an `abydos-plantuml-server-…` and both names carry the one
+process's pid, so "mine" and "everyone playing my part" were the same set in the
+only place the method was ever called from. Nothing in `Sources/` called it at
+all. There is no set-of-mine that can be computed from a name, so nothing
+replaces it.
+
+What replaces it at each call site is the names that site already knew:
+
+- **`DiagramExportLiveTests`** lets `PlantUMLServers.stopAll` name its own — the
+  actor removes the servers it is holding, which is exactly the set it started.
+  That needed the cleanup moved out of a `defer`, since a defer body may not
+  await; the failure is carried past the cleanup in a `Result` and rethrown
+  after. The per-render export containers need nothing: they are `docker run
+  --rm` and `DiagramExport` releases each as it finishes with it.
+- **`PlantUMLServerLiveTests`** drops the register scan it had written out by
+  hand. It never found one of this suite's own — they are all noted as they are
+  started — and the only thing it ever did find was the export test's server,
+  which it then removed mid-render. The safety net caught nothing but the
+  neighbour.
+- **`ContainerCleanupTests`** now forbids both calls in `Tests/` rather than
+  forbidding one and recommending the other, and says what to do instead. It is
+  a lint and not a proof, and it went red the first time it ran because the
+  comment explaining it spelled out the name it forbids — which is the property
+  working.
+
+**The timing assertions stay, and this item is the argument for keeping them.**
+The honest answer to "should a live test assert on timing at all" turned out to
+be yes, here, because the one time `warmSeconds < 0.5` went red it was telling
+the truth: the server really had been taken away and the warm render really did
+take seconds. Deleting it would have removed the only thing in the suite that
+noticed, and left a test named "arrives at once" asserting only that two renders
+agree — which they would with no kept server at all. What was wrong was not that
+it measured, but that a removed container and a slow machine arrived at the same
+line looking identical. So the test now checks, before the stopwatch and at any
+load, that the warm render came from the *same container*, and says so when it
+did not:
+
+> the warm render came from a different server: […] before, […] after. Something
+> removed the container between the two renders, so the 2.104s this took is a
+> container starting rather than a diagram being drawn — load …
+
+That is what 0435's `Refusal` did for the render that gives up, done for the
+failure that is not a refusal. Both shapes now name the cause instead of leaving
+somebody to infer it from a number, and no threshold moved.
+
+**Nothing shipped changed.** `startDeadline` is still sixty, `patience` is still
+`Patience.forAContainer` for a live test, and the app draws previews exactly as
+it did. The only production change is the removal of a method with no production
+caller.
+
+## Ruled out
+
+- **The deadline.** Not it, and the entry above had already worked that out from
+  the 193 seconds. Confirmed from the other end: the failing render's refusal
+  says `neverAnswered` over 789 attempts, and the fix moved no deadline at all.
+- **Load.** Not it. The reproduction fails four times out of four at 0.5 to 1.4
+  runnable per core, quieter than any observation in this entry, and passes five
+  times out of five afterwards at 1.7 to 2.7 — *higher* load, green. Load made
+  the failure likelier by widening the window between the two suites, which is
+  why every early sighting was under load and why that was so convincing.
+- **Contention for the docker daemon**, which this entry offered as the other
+  candidate. Not it: the daemon answered every command in the failing runs, the
+  container started in under a second, and the port was published. Nothing was
+  slow. Something was deleted.
+- **The draw.io work beside it (0426)**, already ruled out twice above and not
+  revisited.
+- **Anything in `PlantUMLServer.swift`.** The actor behaved correctly throughout:
+  it started a server, was told nothing when the server was destroyed, retried a
+  refused connection as though the JVM were still coming up — which is the right
+  reading of a refused connection when you have just started a container — and
+  reported honestly that it never answered. There is no change to make here that
+  would not be worse. Telling "the JVM is not up yet" from "the container is
+  gone" would mean asking the runtime on every retry, which is a subprocess every
+  200 ms for a minute, to improve a case that does not happen once the suite
+  stops removing its own containers.
+- **`MachineLoad.canBeTimed` being too generous or too mean.** Untouched. It was
+  never what let this through: on the failing runs the load *was* low enough to
+  time, correctly, and the number being timed was wrong for a reason that had
+  nothing to do with the machine.
+
+## What was seen and is not this
+
+**`PseudoTerminalWriteTests.everythingWrittenArrivesEvenWhenItIsFarTooMuch`
+failed once**, in one full run out of eight, on
+`#expect(text.contains("line 2000 "))` — the middle of a 4000-line paste, with
+the *end* having arrived. It passes eight times out of eight on its own. That is
+the same shape of complaint this item opens with and a completely different
+subject: a pty write under load, no container anywhere near it. Not diagnosed,
+not touched, and worth an item of its own if it is seen again — writing it here
+rather than filing it is only because a number minted in this worktree would
+collide with the one being worked next door.
+
