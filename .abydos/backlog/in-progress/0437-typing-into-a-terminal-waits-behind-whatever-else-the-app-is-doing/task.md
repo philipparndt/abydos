@@ -70,7 +70,7 @@ on it are not clearly worth changing.
       scheduled at all", and the reading cannot tell them apart
 - [x] Make a stall say which process wrote it, since two Abydos on one machine
       share one log file
-- [ ] Write down what was ruled out this round, and why suspects 4–7 are still
+- [x] Write down what was ruled out this round, and why suspects 4–7 are still
       not the work
 
 No spec delta. Nothing a user can see changed: the threshold, the marks and the
@@ -405,6 +405,67 @@ end of a debug session is the wrong trade to make blind. **They are ranked
 below the point where a change is clearly right, and the log is what should
 promote them.**
 
+### The third round left four to seven alone as well, and now has a reason
+
+Not the same reason. The second round left them because each would want
+designing; the third round has a reading, and the reading says something
+stronger: **in 119 minutes of quiet session not one of the seven names fired
+once.** Not `document save`, not `login shell path`, not `diff render`, not
+`debug adapter stop`. They have been marked since the first round and the log
+has never once caught them. Changing code that has never appeared in the
+evidence is changing code blind, and this entry has already recorded what that
+is worth.
+
+And there is a larger reason, which is that **the biggest cause of this app
+being busy while somebody types is now known and is not on this list**. 0428,
+measuring the app against five hundred bundles, found that opening a Tycho
+project burns eight to nine cores indefinitely: `refreshRunConfigurations`
+walks the whole project for Java `main` methods on a concurrent queue, with no
+coalescing, once per filesystem event. That is **0446**, its own item and its
+own agent. Nothing on this ranking is within an order of magnitude of it. The
+lesson is the second round's lesson again, arriving from a different direction:
+what actually holds the main queue was not on the ranked list either time, and
+was found by measuring rather than by reading.
+
+## Ruled out on the third round
+
+- **A driven session of this branch's own build.** Tried, properly: a second
+  instance launched on this worktree and asserted before anything it said was
+  believed. Abandoned for a reason that had not occurred to anybody — the two
+  instances write into one log with nothing to separate them, and the user's
+  instance was producing about 0.6 lines a minute the whole time, so every
+  count would have been an upper bound of unknown tightness. The pid on the
+  line is what that cost bought. The reading is the user's own session instead,
+  which is a better session anyway: three and a quarter hours of ordinary use
+  against half an hour of a script pretending to type.
+- **Building a release app on this branch to measure.** The installed release
+  build already carried every change in this entry, and a build at `JOBS=4`
+  would have spent the only quiet window this machine had on itself. Measuring
+  a debug build was refused for the reason the `Makefile` already gives: an
+  unoptimised renderer and terminal emulator are slower to *use*, so its
+  numbers would not be about anything in this entry. The debug bundle was built
+  and run, but only to check that the new fields appear in a real app.
+- **Waiting for the half-hour idle machine the entry asks for.** It does not
+  exist and it is not coming: within six minutes of the log being rotated the
+  load average went from 9.86 to 163, and the machine has had four agents on it
+  all day. Two hours of load-average-ten session, honestly bounded, is the
+  reading that was available, and it is a great deal better than the forty and
+  three hundred and eighty-six the earlier rounds were taken beside.
+- **Sampling the main thread's backtrace when a ping is late.** This is the
+  change that would end the search rather than halve it — a stall would arrive
+  with the stack that caused it and no mark would ever be needed again. Not
+  attempted, and deliberately: it means suspending a thread from a watchdog and
+  symbolicating what comes back, which is a real piece of work with a real way
+  to go wrong, and the cheap half of the answer — the processor-time fraction —
+  has not been *read* yet. If the next reading says the quiet-machine stalls are
+  the main thread running, this is the next thing to build. If it says they are
+  waits, the answer is somewhere else and this would have been wasted.
+- **Coalescing filesystem events.** Not reopened. The second round refused it
+  with numbers and the reason has not changed.
+- **Moving terminal parsing off the main queue.** Not attempted, again. It is
+  the deeper answer below and it is still a piece of work rather than a
+  tidy-up.
+
 ## What was not measured, and how to measure it
 
 Nothing on either branch was timed, and for the same reason both times: other
@@ -466,6 +527,32 @@ thing to give a name to. A stall where it barely ran is a *wait*, and the two
 kinds of wait — descheduled by a busy machine, or blocked on something this
 program chose to wait for — still look the same. See the caveat under the
 change itself; it halves the search rather than ending it.
+
+**This measurement has now been taken** — see "Second reading" below — as far as
+this machine allowed, which was not as far as the paragraph above wanted.
+
+### What the third round still could not measure
+
+- **The half hour of idle machine.** It did not happen and it is not going to
+  happen here; the section on what was ruled out says why, and the reading says
+  what was taken instead.
+- **What the load average was for most of the measured window.** It was recorded
+  at the end (9.86 at the moment the log was rotated, 9.48–13.69 across the
+  three averages half an hour before that) and not at the start, because nobody
+  knew at the time that the window would turn out to be the measurement. The
+  session is known to be bimodal from its own timestamps; whether the loud
+  stretch was the app or the machine is not known, which is exactly the hole the
+  processor-time field was added to close.
+- **Whether the thirteen quiet-stretch stalls were work or waiting.** The
+  instrument to answer that now exists and did not exist when they were caught.
+  No reading has been taken with it — the machine went to a load average of 163
+  six minutes after the window closed — and every number in this entry predates
+  it. This is the first thing the next round should do, and it costs nothing but
+  an hour of ordinary use.
+- **Any before/after of the four changes in the first two rounds.** Still not
+  possible without keeping a build of the old code around to run beside the new
+  one, and the argument in this section for why that was never worth doing has
+  not changed.
 
 ## The deeper answer, still not attempted
 
