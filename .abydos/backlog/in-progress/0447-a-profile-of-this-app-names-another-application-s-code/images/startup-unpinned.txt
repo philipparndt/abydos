@@ -1,0 +1,155 @@
+# The first 150 lines of `sample` over the same build, opening the same project.
+# Trimmed: the whole report is 447 KB and 2.0 MB respectively.
+
+Analysis of sampling Abydos (pid 62751) every 1 millisecond
+Process:         Abydos [62751]
+Path:            /Users/USER/*/Abydos.app/Contents/MacOS/Abydos
+Load Address:    0x100a58000
+Identifier:      Abydos
+Version:         ???
+Code Type:       ARM64
+Parent Process:  bash [62750]
+Target Type:     live task
+
+Date/Time:       2026-08-10 19:18:19.753 +0200
+Launch Time:     2026-08-10 19:18:19.201 +0200
+OS Version:      macOS 27.0 (26A5388g)
+Report Version:  7
+Analysis Tool:   /usr/bin/sample
+
+Physical footprint:         191.4M
+Physical footprint (peak):  269.8M
+Idle exit:                  untracked
+----
+
+Call graph:
+Call graph:
+    3934 Thread_8922050: Main Thread   DispatchQueue_<multiple>
+    + 3600 start  (in dyld) + 6688  [0x19a9cfbec]
+    + ! 3554 main  (in Abydos) + 164  [0x100a5a004]  main.swift:12
+    + ! : 3331 -[NSApplication run]  (in AppKit) + 396  [0x19f3f88a4]
+    + ! : | 3331 -[NSApplication(NSEventRouting) nextEventMatchingMask:untilDate:inMode:dequeue:]  (in AppKit) + 244  [0x19fb8b3f0]
+    + ! : |   3321 -[NSApplication(NSEventRouting) _nextEventMatchingEventMask:untilDate:inMode:dequeue:]  (in AppKit) + 780  [0x19fb8b8cc]
+    + ! : |   + 2928 _DPSNextEvent  (in AppKit) + 580  [0x19f405494]
+    + ! : |   + ! 2928 _DPSBlockUntilNextEventMatchingListInMode  (in AppKit) + 292  [0x19f748f10]
+    + ! : |   + !   2928 _BlockUntilNextEventMatchingListInMode  (in HIToolbox) + 48  [0x1a8486368]
+    + ! : |   + !     2641 ReceiveNextEventCommon  (in HIToolbox) + 492  [0x1a8303904]
+    + ! : |   + !     : 2641 RunCurrentEventLoopInMode  (in HIToolbox) + 320  [0x1a8300578]
+    + ! : |   + !     :   2639 _CFRunLoopRunSpecificWithOptions  (in CoreFoundation) + 536  [0x19af3f0dc]
+    + ! : |   + !     :   | 2433 __CFRunLoopRun  (in CoreFoundation) + 1172  [0x19ae65154]
+    + ! : |   + !     :   | + 2433 __CFRunLoopServiceMachPort  (in CoreFoundation) + 160  [0x19ae6690c]
+    + ! : |   + !     :   | +   2433 mach_msg  (in libsystem_kernel.dylib) + 24  [0x19ad60fac]
+    + ! : |   + !     :   | +     2433 mach_msg_overwrite  (in libsystem_kernel.dylib) + 480  [0x19ad69a28]
+    + ! : |   + !     :   | +       2433 mach_msg2_internal  (in libsystem_kernel.dylib) + 76  [0x19ad738e0]
+    + ! : |   + !     :   | +         2433 mach_msg2_trap  (in libsystem_kernel.dylib) + 8  [0x19ad60c20]
+    + ! : |   + !     :   | 83 __CFRunLoopRun  (in CoreFoundation) + 776  [0x19ae64fc8]
+    + ! : |   + !     :   | + 83 __CFRunLoopDoObservers  (in CoreFoundation) + 648  [0x19ae659dc]
+    + ! : |   + !     :   | +   83 __CFRUNLOOP_IS_CALLING_OUT_TO_AN_OBSERVER_CALLBACK_FUNCTION__  (in CoreFoundation) + 36  [0x19ae65ae4]
+    + ! : |   + !     :   | +     83 __62+[CATransaction(NSCATransaction) NS_setFlushesWithDisplayLink]_block_invoke  (in AppKit) + 272  [0x19f527e64]
+    + ! : |   + !     :   | +       83 CA::Transaction::flush()  (in QuartzCore) + 84  [0x1a5450370]
+    + ! : |   + !     :   | +         77 CA::Transaction::commit()  (in QuartzCore) + 652  [0x1a54507d4]
+    + ! : |   + !     :   | +         ! 69 CA::Context::commit_transaction(CA::Transaction*, double, double*)  (in QuartzCore) + 684  [0x1a564aed4]
+    + ! : |   + !     :   | +         ! : 68 CA::Layer::display_if_needed(CA::Transaction*)  (in QuartzCore) + 788  [0x1a54703b4]
+    + ! : |   + !     :   | +         ! : | 64 -[NSViewBackingLayer display]  (in AppKit) + 1268  [0x19f9c9350]
+    + ! : |   + !     :   | +         ! : | + 64 ???  (in AppKit)  load address 0x19f3cc000 + 0x10d89f0  [0x1a04a49f0]
+    + ! : |   + !     :   | +         ! : | +   63 ???  (in AppKit)  load address 0x19f3cc000 + 0x10d824c  [0x1a04a424c]
+    + ! : |   + !     :   | +         ! : | +   ! 63 ???  (in AppKit)  load address 0x19f3cc000 + 0x103f2a4  [0x1a040b2a4]
+    + ! : |   + !     :   | +         ! : | +   !   63 -[NSViewBackingLayer drawInContext:]  (in AppKit) + 52  [0x19f9c9724]
+    + ! : |   + !     :   | +         ! : | +   !     63 -[NSView(NSLayerKitGlue) _drawViewBackingLayer:inContext:drawingHandler:]  (in AppKit) + 536  [0x19f51844c]
+    + ! : |   + !     :   | +         ! : | +   !       60 -[NSView _recursive:displayRectIgnoringOpacity:inContext:stopAtLayerBackedViews:]  (in AppKit) + 1088  [0x19fd42df8]
+    + ! : |   + !     :   | +         ! : | +   !       : 60 _NSViewDrawRect  (in AppKit) + 136  [0x19f518a48]
+    + ! : |   + !     :   | +         ! : | +   !       :   60 ???  (in AppKit)  load address 0x19f3cc000 + 0xfb45cc  [0x1a03805cc]
+    + ! : |   + !     :   | +         ! : | +   !       :     60 ???  (in AppKit)  load address 0x19f3cc000 + 0xfb3ff4  [0x1a037fff4]
+    + ! : |   + !     :   | +         ! : | +   !       :       60 ???  (in AppKit)  load address 0x19f3cc000 + 0x11f4d64  [0x1a05c0d64]
+    + ! : |   + !     :   | +         ! : | +   !       :         60 ???  (in AppKit)  load address 0x19f3cc000 + 0x10658f0  [0x1a04318f0]
+    + ! : |   + !     :   | +         ! : | +   !       :           43 @objc PanelTabStrip.draw(_:)  (in Abydos) + 108  [0x1018fef10]  /<compiler-generated>:0
+    + ! : |   + !     :   | +         ! : | +   !       :           | 15 PanelTabStrip.draw(_:)  (in Abydos) + 3984  [0x1018fdd90]  BottomPanel.swift:3754
+    + ! : |   + !     :   | +         ! : | +   !       :           | + 11 PanelTabStrip.drawGlyph(in:symbol:points:tint:)  (in Abydos) + 416  [0x1018fe4c4]  BottomPanel.swift:4122
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! 9 static Theme.symbol(_:size:color:weight:)  (in Abydos) + 388  [0x101a49f50]  Theme.swift:234
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! : 9 -[NSImage imageWithSymbolConfiguration:]  (in AppKit) + 88  [0x19f99cf34]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :   9 -[NSImage __imageByReplacingConfiguration:]  (in AppKit) + 92  [0x19f99ed54]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :     9 -[NSImage bestRepresentationForHints:]  (in AppKit) + 168  [0x19f99b5ac]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :       9 __38-[NSImage bestRepresentationForHints:]_block_invoke  (in AppKit) + 84  [0x19f99b67c]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :         9 -[NSImageSymbolRepProvider bestRepresentationForImage:hints:]  (in AppKit) + 148  [0x1a018cd48]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :           9 -[_NSSimpleLRUCache objectForKey:creationBlock:]  (in AppKit) + 304  [0x19fe61774]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             8 -[NSImageSymbolRepProvider _bestRepresentationForImage:hints:]  (in AppKit) + 1620  [0x1a018d3bc]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             | 8 -[CUINamedVectorGlyph numberOfHierarchyLayers]  (in CoreUI) + 168  [0x1a59578f4]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |   8 -[CUINamedVectorGlyph _performWithLockedRenditions:]  (in CoreUI) + 192  [0x1a5a2943c]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |     8 __46-[CUINamedVectorGlyph numberOfHierarchyLayers]_block_invoke  (in CoreUI) + 88  [0x1a595798c]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       7 -[CUINamedVectorGlyph hierarchicalLayerGroup]  (in CoreUI) + 224  [0x1a5a29ed4]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + 6 +[CUIVectorGlyphLayer createLayerGroupWithLayerNames:delegate:]  (in CoreUI) + 172  [0x1a59e23d0]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + ! 3 -[CUINamedVectorGlyph pathForLayerNamed:]  (in CoreUI) + 776  [0x1a595accc]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + ! : 1 -[CUINamedVectorGlyph _assumeConcatenatedPathForLayerNamed:inRendition:]  (in CoreUI) + 188  [0x1a595a938]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + ! : | 1 -[NSString componentsSeparatedByString:]  (in Foundation) + 200  [0x19c54b010]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + ! : |   1 -[NSString rangeOfString:options:range:locale:]  (in Foundation) + 268  [0x19c5097b0]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + ! : |     1 CFStringFindWithOptionsAndLocale  (in CoreFoundation) + 1044  [0x19adefca0]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + ! : 1 -[CUINamedVectorGlyph _assumeConcatenatedPathForLayerNamed:inRendition:]  (in CoreUI) + 228  [0x1a595a960]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + ! : | 1 CUICreatePathFromSVGNode  (in CoreUI) + 432  [0x1a59c4b20]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + ! : |   1 CGSVGNodeEnumerate  (in CoreSVG) + 112  [0x1a8549c10]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + ! : |     1 SVGNode::enumerate(void (SVGNode const&, SVGNode::EnumerateAction, bool*) block_pointer) const  (in CoreSVG) + 28  [0x1a8549c3c]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + ! : |       1 EnumerateNode(SVGNode const*, void (SVGNode const&, SVGNode::EnumerateAction, bool*) block_pointer, bool*)  (in CoreSVG) + 108  [0x1a8549cb4]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + ! : |         1 EnumerateNode(SVGNode const*, void (SVGNode const&, SVGNode::EnumerateAction, bool*) block_pointer, bool*)  (in CoreSVG) + 108  [0x1a8549cb4]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + ! : |           1 EnumerateNode(SVGNode const*, void (SVGNode const&, SVGNode::EnumerateAction, bool*) block_pointer, bool*)  (in CoreSVG) + 72  [0x1a8549c90]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + ! : |             1 __CUICreatePathFromSVGNode_block_invoke  (in CoreUI) + 428  [0x1a59c4da4]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + ! : |               1 CUICreatePathFromSVGShapeNode  (in CoreUI) + 128  [0x1a59c4e5c]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + ! : |                 1 CUICreateClipStrokeKeyframeDataFromNode  (in CoreUI) + 96  [0x1a59c4848]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + ! : |                   1 +[NSData(ClipStrokeKeyframes) encodedClipStrokeKeyframesFromString:subpathOffset:]  (in CoreUI) + 84  [0x1a59dec98]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + ! : |                     1 -[NSString componentsSeparatedByString:]  (in Foundation) + 200  [0x19c54b010]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + ! : |                       1 -[NSString rangeOfString:options:range:locale:]  (in Foundation) + 268  [0x19c5097b0]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + ! : |                         1 CFStringFindWithOptionsAndLocale  (in CoreFoundation) + 1044  [0x19adefca0]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + ! : 1 -[CUINamedVectorGlyph _assumeConcatenatedPathForLayerNamed:inRendition:]  (in CoreUI) + 288  [0x1a595a99c]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + ! :   1 +[CUIVectorGlyphPath _createConcatenatingPaths:indices:]  (in CoreUI) + 348  [0x1a59ca3c8]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + ! :     1 -[NSMutableData(ClipStrokeKeyframes) appendRawKeyframes:subpathOffset:]  (in CoreUI) + 192  [0x1a59dfbec]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + ! :       1 -[NSConcreteMutableData appendBytes:length:]  (in Foundation) + 356  [0x19c52e1ec]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + ! :         1 _NSMutableDataGrowBytes  (in Foundation) + 328  [0x19c54b658]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + ! 2 -[CUINamedVectorGlyph pathForLayerNamed:]  (in CoreUI) + 688  [0x1a595ac74]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + ! : 1 -[CUINamedVectorGlyph _assumeConcatenatedPathForLayerNamed:inRendition:]  (in CoreUI) + 188  [0x1a595a938]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + ! : | 1 -[NSString componentsSeparatedByString:]  (in Foundation) + 68  [0x19c54af8c]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + ! : |   1 -[NSString rangeOfString:options:range:locale:]  (in Foundation) + 268  [0x19c5097b0]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + ! : |     1 CFStringFindWithOptionsAndLocale  (in CoreFoundation) + 2916  [0x19adf03f0]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + ! : 1 -[CUINamedVectorGlyph _assumeConcatenatedPathForLayerNamed:inRendition:]  (in CoreUI) + 228  [0x1a595a960]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + ! :   1 CUICreatePathFromSVGNode  (in CoreUI) + 452  [0x1a59c4b34]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + ! :     1 +[CUIVectorGlyphPath _createConcatenatingPaths:indices:]  (in CoreUI) + 192  [0x1a59ca32c]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + ! :       1 CGPathAddPath  (in CoreGraphics) + 0  [0x1a1c27170]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + ! 1 -[CUINamedVectorGlyph pathForLayerNamed:]  (in CoreUI) + 732  [0x1a595aca0]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + !   1 -[CUINamedVectorGlyph _assumeConcatenatedPathForLayerNamed:inRendition:]  (in CoreUI) + 228  [0x1a595a960]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + !     1 CUICreatePathFromSVGNode  (in CoreUI) + 432  [0x1a59c4b20]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + !       1 CGSVGNodeEnumerate  (in CoreSVG) + 112  [0x1a8549c10]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + !         1 SVGNode::enumerate(void (SVGNode const&, SVGNode::EnumerateAction, bool*) block_pointer) const  (in CoreSVG) + 28  [0x1a8549c3c]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + !           1 EnumerateNode(SVGNode const*, void (SVGNode const&, SVGNode::EnumerateAction, bool*) block_pointer, bool*)  (in CoreSVG) + 108  [0x1a8549cb4]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + !             1 EnumerateNode(SVGNode const*, void (SVGNode const&, SVGNode::EnumerateAction, bool*) block_pointer, bool*)  (in CoreSVG) + 108  [0x1a8549cb4]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + !               1 EnumerateNode(SVGNode const*, void (SVGNode const&, SVGNode::EnumerateAction, bool*) block_pointer, bool*)  (in CoreSVG) + 72  [0x1a8549c90]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + !                 1 __CUICreatePathFromSVGNode_block_invoke  (in CoreUI) + 428  [0x1a59c4da4]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + !                   1 CUICreatePathFromSVGShapeNode  (in CoreUI) + 128  [0x1a59c4e5c]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + !                     1 CUICreateClipStrokeKeyframeDataFromNode  (in CoreUI) + 96  [0x1a59c4848]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + !                       1 +[NSData(ClipStrokeKeyframes) encodedClipStrokeKeyframesFromString:subpathOffset:]  (in CoreUI) + 84  [0x1a59dec98]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + !                         1 -[NSString componentsSeparatedByString:]  (in Foundation) + 200  [0x19c54b010]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + !                           1 -[NSString rangeOfString:options:range:locale:]  (in Foundation) + 268  [0x19c5097b0]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + !                             1 _CFStringGetCStringPtrInternal  (in CoreFoundation) + 624  [0x19adf2eec]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       + 1 +[CUIVectorGlyphLayer createLayerGroupWithLayerNames:delegate:]  (in CoreUI) + 232  [0x1a59e240c]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       +   1 -[CUIVectorGlyphLayer _initWithName:index:shape:strokeWidth:attributes:style:delegate:]  (in CoreUI) + 164  [0x1a59e2b90]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       +     1 -[CUIVectorGlyphHierarchicalLayer _readCSSAttributes:styleAttributes:]  (in CoreUI) + 52  [0x1a59e5550]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       +       1 -[CUIVectorGlyphLayer _readCSSAttributes:styleAttributes:]  (in CoreUI) + 844  [0x1a59e27dc]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       +         1 -[NSString componentsSeparatedByString:]  (in Foundation) + 280  [0x19c54b060]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       +           1 +[NSArray arrayWithObject:]  (in CoreFoundation) + 0  [0x19ae493e8]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |       1 -[CUINamedVectorGlyph hierarchicalLayerGroup]  (in CoreUI) + 112  [0x1a5a29e64]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |         1 CGSVGNodeFindChildWithStringIdentifier  (in CoreSVG) + 68  [0x1a855ae90]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |           1 CGSVGNodeFindChildWithCStringIdentifier  (in CoreSVG) + 36  [0x1a855ae38]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |             1 SVGNode::findChildWithIdentifier(char const*) const  (in CoreSVG) + 92  [0x1a8571634]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |               1 std::__tree<std::__value_type<std::basic_string<char>, SVGNode*>, std::__map_value_compare<std::basic_string<char>, std::pair<std::basic_string<char> const, SVGNode*>, CaseInsensitiveStringLess>>::__count_unique<std::basic_string<char>>(std::basic_string<char> const&) const  (in CoreSVG) + 60  [0x1a85733c8]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |                 1 std::__lazy_compare_result<CaseInsensitiveStringLess, std::basic_string<char>, std::basic_string<char>>::__less[abi:nqe220106]() const  (in CoreSVG) + 148  [0x1a854d748]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             |                   1 strcasecmp_l  (in libsystem_c.dylib) + 76  [0x19ac33cdc]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :             1 -[NSImageSymbolRepProvider _bestRepresentationForImage:hints:]  (in AppKit) + 1768  [0x1a018d450]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :               1 getMetricsFromVectorGlyph  (in AppKit) + 296  [0x1a018b400]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :                 1 -[CUINamedVectorGlyph baselineOffset]  (in CoreUI) + 28  [0x1a5944cc0]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :                   1 -[CUINamedVectorGlyph baselineOffsetUnrounded]  (in CoreUI) + 164  [0x1a59537d4]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :                     1 -[CUINamedVectorGlyph(Interpolation) _interpolatedBaselineOffsetWithWeight:glyphSize:fromUltralight:regular:black:]  (in CoreUI) + 64  [0x1a5978cd0]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :                       1 +[CUIVectorGlyphMutator _scalarsForGlyphContinuousWeight:inDictionary:shouldClamp:]  (in CoreUI) + 68  [0x1a598185c]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :                         1 -[__NSDictionaryI objectForKeyedSubscript:]  (in CoreFoundation) + 148  [0x19ae4aee4]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :                           1 -[__NSCFNumber isEqualToNumber:]  (in CoreFoundation) + 24  [0x19ae3a1fc]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :                             1 -[__NSCFNumber compare:]  (in CoreFoundation) + 160  [0x19ae3a2b8]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :                               1 -[__NSCFNumber doubleValue]  (in CoreFoundation) + 48  [0x19ae4f420]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :                                 1 CFNumberGetValue  (in CoreFoundation) + 148  [0x19ae01778]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! :                                   1 __CF_IS_OBJC  (in CoreFoundation) + 252  [0x19af40828]
+    + ! : |   + !     :   | +         ! : | +   !       :           | + ! 2 static Theme.symbol(_:size:color:weight:)  (in Abydos) + 128  [0x101a49e4c]  Theme.swift:231
+    + ! : |   + !     :   | +         ! : | +   !       :           | + !   2 @nonobjc NSImage.__allocating_init(systemSymbolName:accessibilityDescription:)  (in Abydos) + 156  [0x101614eac]  /<compiler-generated>:0
