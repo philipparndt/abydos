@@ -179,3 +179,26 @@ of difference that shows up as "it works for me".
 to remove from this repository. It is safe there — `which` says one short line —
 but the same file makes fifteen or so `Process` calls, and the ones running
 OpenSCAD are the chatty kind. Worth a look while the file is open anyway.
+
+## Steps
+
+- [ ] `ToolImages/openscad-lsp/Dockerfile`: a pinned `cargo install`, the server
+      on the entry point speaking the protocol on standard input and output
+- [ ] An image name derived from the recipe, so an edited Dockerfile rebuilds
+      and an unedited one never does
+- [ ] The recipe is found both in the `.app` and in a checkout, and the
+      Dockerfiles travel in the bundle
+- [ ] Build rather than pull when the name is one this app makes, with a
+      sentence per way a build fails rather than the runtime's output
+- [ ] A third option beside the published image and the custom one: "build it
+      here", offered only for a tool a Dockerfile ships for
+- [ ] `{"openscad-lsp": "build"}` in a project's `.abydos/tools.json` starts the
+      built image
+- [ ] Driven end to end against a `.scad`, the way `ContainerLSPLiveTests`
+      drives gopls
+- [ ] Establish what a durable pin for the OpenSCAD snapshot looks like, before
+      writing a Dockerfile that claims one
+- [ ] The seam in GoSTL: how to run OpenSCAD, injected by the embedder rather
+      than discovered, with today's behaviour as the default
+- [ ] Write down here what was ruled out on the way
+- [ ] `spec/devcontainers.md` says what the project now does
