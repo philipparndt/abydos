@@ -65,10 +65,10 @@ on it are not clearly worth changing.
       offered, and write it in beside the old one
 - [x] Say where the quiet window ends, since 0446's agent makes everything after
       it loud, and rotate the log at that boundary
-- [ ] Make a stall say whether the main thread was *running* during it, since
+- [x] Make a stall say whether the main thread was *running* during it, since
       `idle` currently means both "busy with something unnamed" and "not
       scheduled at all", and the reading cannot tell them apart
-- [ ] Make a stall say which process wrote it, since two Abydos on one machine
+- [x] Make a stall say which process wrote it, since two Abydos on one machine
       share one log file
 - [ ] Write down what was ruled out this round, and why suspects 4–7 are still
       not the work
@@ -295,6 +295,63 @@ Written the obvious way, jdtls's `.classpath` would have stopped being a marker,
 which is what one of the three tests is for — the same shape of mistake as the
 `NSURL` caching above, and caught the same way.
 
+## Fixed in the third round, which is the reading and what it asked for
+
+The reading is below. It found `idle` to be not merely most of the stalls but
+*all* of them, on a quiet machine, and this entry's own instruction for that
+case is "more marks rather than more fixes". These are the two marks, and they
+are on the instrument rather than on the app: neither makes anything faster, and
+both make the next reading able to say something this one could not.
+
+### A stall now says whether the main thread was running
+
+Every number in this entry has the same hole in it, and the first reading names
+it without resolving it: "some of these are starvation rather than the watcher
+holding the queue". `StallWatch` pings the main queue and times how long the
+answer takes, which is **wall clock**, and a late answer has three causes that
+want three different fixes — the main thread running inside unmarked work, the
+main thread blocked on something, and the main thread simply not being given a
+processor. On a machine at a load average of ten, forty or three hundred and
+eighty-six, that last one is not a footnote.
+
+So the watcher now also reads the main thread's own **processor time**, through
+`thread_info(THREAD_BASIC_INFO)`, once when the ping goes out and once when it
+comes back, and the line carries what fraction of the stall the main thread
+spent executing. Reading a thread's counters from outside it needs its Mach
+port, and `mach_thread_self()` answers for whoever asks — so the port is taken
+on the main thread inside `start()`, which `applicationDidFinishLaunching`
+already calls from there, and kept for the life of the process. It is
+deliberately never deallocated: the send right is the only handle there is.
+
+**It halves the search rather than ending it, and the proof of that is in the
+first line it wrote.** Run with `--stall 800`, which is a `Thread.sleep` on the
+main thread, the log says `deliberate stall  cpu 0%` — correctly, because a
+sleeping thread executes nothing, and yet that stall is entirely the app's own
+doing. So a low fraction means *a wait*, not *somebody else's fault*; blocked
+and descheduled still look alike. What it does settle is the other half: a high
+fraction is unmarked work, and there is code to go and name.
+
+Verified in the app rather than only in a test, on the debug bundle from this
+worktree opened on this worktree — asserted by its window title and by `lsof`
+before anything it printed was believed. Two lines, and both are the point:
+`272 ms  idle  cpu  24%` during launch, and the deliberate 800 ms at `cpu 0%`.
+
+### A stall now says which process wrote it
+
+There is one log file per machine and there can be more than one Abydos: a
+second instance opened beside the first to measure something writes into the
+same file, in the same format, with nothing to tell them apart. That is not
+hypothetical, it is what happened while taking the reading below, and it cost
+the reading it was launched for. The line ends with a pid.
+
+Both fields go on the **end** of the line, after the activity, so that the
+summarising command reads a line written before them and a line written after
+them the same way — a log outlives the build that wrote it, and a format that
+invalidates everything older than the newest change is never readable. That is
+what one of the tests is for. The command in this entry has been updated to
+take the activity as the first field after the duration, which is a one-word
+change and works on both.
+
 ## Not fixed, and where to look next
 
 The ranking is kept in its original numbering so that what has gone can be seen
@@ -379,8 +436,8 @@ it holds five days at two different thresholds:
 Then use the app normally for half an hour, with a terminal open and typing in
 it, and read what it caught:
 
-    awk -F'ms  ' 'NF>1 {split($1,a," "); n[$2]++; s[$2]+=a[2];
-      if (a[2]+0>w[$2]+0) w[$2]=a[2]}
+    awk -F'ms  ' 'NF>1 {split($1,a," "); split($2,b,"  "); k=b[1];
+      n[k]++; s[k]+=a[2]; if (a[2]+0>w[k]+0) w[k]=a[2]}
       END {for (k in n) printf "%5d  %8.1f s  %6d ms worst  %s\n",
       n[k], s[k]/1000, w[k], k}' ~/Library/Logs/Abydos/stalls.log | sort -rn
 
@@ -390,6 +447,25 @@ rather than more fixes. If `navigator watcher` is small while files are being
 written into the project, the change above is what did it — and if it is not,
 the next place to look is the diff between an event that lands on an open
 directory and one that does not.
+
+The third round added two fields to the end of a line, so this command takes
+the activity as the first thing after the duration rather than the whole rest
+of the line. Written that way it reads a line from before those fields and a
+line from after them the same way, and the whole log stays summarisable across
+a rebuild. And since the third round found `idle` to be *all* of it, the
+second command is now the one that matters — it splits `idle` into the two
+things it has always meant:
+
+    awk -F'cpu ' 'NF>1 {c=$2+0; b=(c<25?"main thread not executing":
+      (c<75?"partly":"main thread running")); n[b]++}
+      END {for (k in n) printf "%5d  %s\n", n[k], k}'
+      ~/Library/Logs/Abydos/stalls.log | sort -rn
+
+A stall where the main thread ran the whole time is unmarked work, and the next
+thing to give a name to. A stall where it barely ran is a *wait*, and the two
+kinds of wait — descheduled by a busy machine, or blocked on something this
+program chose to wait for — still look the same. See the caveat under the
+change itself; it halves the search rather than ending it.
 
 ## The deeper answer, still not attempted
 
@@ -509,14 +585,17 @@ more fixes" — is what the third round then did, and the mark it added is below
 
 ### What this reading cannot say, and what was done about it
 
-Thirteen stalls of 79–502 ms with no name on them are one of two completely
+Thirteen stalls of 79–502 ms with no name on them are one of three completely
 different things, and the log as it stood could not tell them apart:
 
-- the main thread was **running**, inside work nobody has marked; or
+- the main thread was **running**, inside work nobody has marked;
+- the main thread was **blocked** — a pipe write nobody was draining, a lock, a
+  subprocess being waited on, which is exactly the shape of the worst bug this
+  entry found; or
 - the main thread was **not scheduled**, because ten cores were busy with
   something that is not this app at all.
 
-At a load average of ten on ten cores the second is not a remote possibility,
+At a load average of ten on ten cores the third is not a remote possibility,
 it is the base case, and the same doubt is written into the first reading above
 ("some of these are starvation rather than the watcher holding the queue") where
 it was left unresolved. It sits under every number in this entry, including the
@@ -555,6 +634,42 @@ it had been writing about 0.6 lines a minute all afternoon. There is no reading
 to be had from a shared log, so the instance was quit, the *user's* session was
 used as the measurement, and the log line grew a pid. That is the second change
 below.
+
+### The terminal in the measured session was real, and it was worth checking
+
+A `TMUX_TMPDIR` left behind by an agent killed the day before was still in the
+tmux server's global environment and therefore in every shell descended from it:
+
+    TMUX_TMPDIR=…/scratchpad/t0404/tmuxdir
+
+Abydos takes it from whatever launched it and hands it to the tmux it starts, and
+the socket path that comes out is about 140 characters against macOS's ~104, so
+the terminal dies immediately with `error connecting to … (File name too long)`.
+An app launched from a poisoned shell has a terminal panel that is not a terminal
+— no pty, no tmux, none of the work the panel normally does — and a stall reading
+taken there would be measuring an app with its noisiest component switched off.
+
+**It did not touch the reading, and this is the evidence rather than the
+assumption.** The measured session is the user's own instance, which was not
+launched from any of this round's shells and has no `TMUX_TMPDIR` in its
+environment at all. Its tmux client started at 14:02:15 local — the same second
+the app did, the first second of the window — and was still alive with a
+connected socket three and a half hours later, and a login shell of its own
+appeared under it at 16:45, inside the window. The window's own stall lines agree:
+six `terminal parse` and one `tmux tabs` are not things a dead panel produces.
+
+Of this round's two launches, neither contributed a number. The first was quit
+before it measured anything and its four log lines are listed above as excluded;
+the second was the `--stall 800` check of the new fields, which never opens a
+terminal at all.
+
+**Worth an entry line even though it did not bite:** the app passes
+`TMUX_TMPDIR` through unexamined, and a value that cannot produce a usable
+socket path is one it could reasonably refuse — it knows the length limit and it
+knows what it is about to build. That is the same shape as the leaked `$TMUX`
+0440 already strips from panes. It is an observation, not work for this branch:
+0437 is about *how long* the terminal takes to answer, and this is about the
+terminal not existing.
 
 ---
 
