@@ -470,6 +470,93 @@ public enum DiagramExport {
 		return .success(destinations)
 	}
 
+	// MARK: - The picture that is also the document
+
+	/// Where an editable picture goes: `architecture.drawio.png`.
+	///
+	/// **One file, and the name is the whole of what is new.** The bytes are the
+	/// bytes the ordinary export already writes — draw.io's own `<mxfile>` in a
+	/// `content` attribute or an `mxfile` chunk, which is what makes any picture
+	/// this app exports reopen in draw.io. What `architecture.png` does not do is
+	/// *say* that: it is a name every screenshot in the world could have, and
+	/// nobody looking at a repository can tell that this one is also a document.
+	/// `architecture.drawio.png` is the name draw.io's own desktop app writes and
+	/// the name people commit, and it is the difference between a picture beside
+	/// a document and a picture that **is** the document.
+	///
+	/// `.dio` normalises to `.drawio.png` rather than `.dio.png`: the suffix is a
+	/// convention that readers recognise, and there is no `.dio.png` convention to
+	/// join.
+	///
+	/// The `-dark` rule composes exactly as it does above, and has to: without it
+	/// a light and a dark editable picture would be the same file.
+	public static func editableDestination(
+		for source: URL, format: DiagramFormat, theme: DiagramTheme? = nil
+	) -> URL {
+		let folder = source.deletingLastPathComponent()
+		let base = source.deletingPathExtension().lastPathComponent
+		let suffix = theme?.isDark == true ? "-dark" : ""
+		return folder.appendingPathComponent("\(base)\(suffix).drawio.\(format.rawValue)")
+	}
+
+	/// Writes one editable picture of a `.drawio`, beside it.
+	///
+	/// **One file however many pages there are, and that is the difference from
+	/// the export above.** Three pages exported as pictures are three pictures,
+	/// because a picture shows one page and a folder missing two thirds of a
+	/// document is the quiet wrongness the export rules exist to avoid. An
+	/// editable picture is not in that position: the whole `<mxfile>` is inside
+	/// it, so `architecture.drawio.png` is the *entire* three-page document and
+	/// reopens as all three. What it shows is the first page, which is the same
+	/// choice draw.io's own "Save as PNG" makes, and the caller says so.
+	///
+	/// Everything else is the ordinary export's rules, deliberately: the same
+	/// refusal to overwrite a file nobody here drew, the same theme imposed only
+	/// when the file has not chosen one, the same atomic write.
+	public static func export(
+		editable data: Data, of url: URL, format: DiagramFormat, theme: DiagramTheme? = nil
+	) async -> Result<URL, Failure> {
+		let name = url.lastPathComponent
+		guard let document = Drawio.read(data), !document.pages.isEmpty else {
+			return .failure(Failure("There is no diagram in \(name)."))
+		}
+		let imposed = imposed(theme, when: Drawio.statedLook(in: document))
+		let destination = editableDestination(for: url, format: format, theme: imposed)
+		if let refused = refusal(toWrite: [destination]) { return .failure(Failure(refused)) }
+
+		let drawn = await DrawioRenderer.shared.draw(
+			document.mxfile, page: 0, format: format, theme: imposed
+		)
+		let picture: Data
+		switch drawn {
+		case let .success(made):
+			picture = embedding(document.mxfile, in: made, format: format)
+		case let .failure(.fault(fault)):
+			return .failure(Failure(fault.sentence(for: name)))
+		case let .failure(.trouble(said)):
+			return .failure(Failure(said))
+		}
+
+		// Written only after it has been read back the way draw.io's own reader
+		// would. An editable picture whose document cannot be got out again is a
+		// picture, and it would be one under a name promising otherwise — which is
+		// worse than not offering the gesture at all.
+		guard let back = Drawio.read(picture), back.pages.count == document.pages.count else {
+			return .failure(Failure(
+				"\(destination.lastPathComponent) would not have opened again as a diagram, "
+					+ "so nothing was written."
+			))
+		}
+		do {
+			try picture.write(to: destination, options: .atomic)
+		} catch {
+			return .failure(Failure(
+				"Could not write \(destination.lastPathComponent): \(error.localizedDescription)"
+			))
+		}
+		return .success(destination)
+	}
+
 	private static func embedding(
 		_ mxfile: String, in picture: Data, format: DiagramFormat
 	) -> Data {

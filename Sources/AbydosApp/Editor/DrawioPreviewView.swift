@@ -24,7 +24,7 @@ import WebKit
 /// It subclasses the diagram pane for the export menu and for the sentence in
 /// the middle: the pane says something while the editor loads, and says why if
 /// it will not.
-final class DrawioPreviewView: DiagramPaneView {
+final class DrawioPreviewView: DiagramPaneView, SnapshotDrawable {
 	private var editor: DrawioEditor?
 	/// The document this pane edits, held weakly — the tab owns it.
 	weak var document: TextDocument?
@@ -81,6 +81,7 @@ final class DrawioPreviewView: DiagramPaneView {
 		stated = document.flatMap(Drawio.statedLook)
 		caption = stated.map(DiagramLook.notice(stated:))
 		applyTheme()
+		sayWhatThisBuildCannotDraw(document)
 		editor?.load(xml, compressed: document?.isCompressed ?? false)
 	}
 
@@ -114,9 +115,28 @@ final class DrawioPreviewView: DiagramPaneView {
 		sayWhatIsMissing()
 	}
 
-	/// A change in draw.io is a change to the file, said once and immediately.
+	/// A change in draw.io is a change to the file, said once and immediately —
+	/// unless it is draw.io writing the same drawing back in its own hand.
+	///
+	/// The editor re-serialises the document as it loads it and reports that as a
+	/// change, and the text it reports is never the text that went in: the
+	/// indentation is its own, and `<mxGraphModel dx dy>` is the size of the
+	/// window the diagram is being looked at in. Taken at face value that marks
+	/// **every** `.drawio` edited the instant it is opened — the dot on the tab,
+	/// the close prompt, and auto-save rewriting a file nobody touched. Seen, on
+	/// three fixtures, none of them touched.
+	///
+	/// So a change that is the same *drawing* is remembered and not reported.
+	/// `Drawio.isSameDrawing` can only be wrong in the safe direction: nothing
+	/// anybody did to a diagram survives its normalisation.
 	private func editorChanged(_ xml: String) {
 		guard let document, xml != lastGiven else { return }
+		if let given = lastGiven, Drawio.isSameDrawing(xml, as: given) {
+			// Remembered, so ⌘S does not write it either: the app's copy is the
+			// file as it stands, and the file as it stands is this drawing.
+			lastGiven = xml
+			return
+		}
 		lastGiven = xml
 		document.setContents(xml)
 		onEdited?()
@@ -137,9 +157,19 @@ final class DrawioPreviewView: DiagramPaneView {
 	///
 	/// The change listener means this is almost always a no-op — but "almost
 	/// always" is not what ⌘S may be, and the round trip costs milliseconds.
+	///
+	/// It asks the same question the change listener does, and for the same
+	/// reason: ⌘S a second after opening a file, before draw.io has reported its
+	/// own re-serialisation, would otherwise write the diagram back in draw.io's
+	/// hand — a diff over a file nobody touched, and pressing ⌘S is exactly what
+	/// somebody does out of habit on a tab they have only just opened.
 	func flush() async {
 		guard let document, let current = await editor?.currentDocument() else { return }
 		guard current != lastGiven else { return }
+		if let given = lastGiven, Drawio.isSameDrawing(current, as: given) {
+			lastGiven = current
+			return
+		}
 		lastGiven = current
 		document.setContents(current)
 	}
@@ -149,7 +179,7 @@ final class DrawioPreviewView: DiagramPaneView {
 	override var isReadyToExport: Bool { isLoaded }
 
 	override func export(
-		_ format: DiagramFormat, theme: DiagramTheme? = nil,
+		_ format: DiagramFormat, theme: DiagramTheme? = nil, editable: Bool = false,
 		then: (@Sendable ([URL]) -> Void)? = nil
 	) {
 		guard let fileURL else { return }
@@ -158,20 +188,83 @@ final class DrawioPreviewView: DiagramPaneView {
 			await flush()
 			DiagramExportCommand.run(
 				url: fileURL, source: document?.rope.string, format: format, theme: wanted,
-				projectRoot: nil, then: then
+				editable: editable, projectRoot: nil, then: then
 			)
 		}
 	}
 
+	// MARK: - Being photographed
+
+	/// A `WKWebView` is invisible to `--screenshot`, and this makes it not be.
+	///
+	/// The capture works by asking the view tree to draw itself into a bitmap.
+	/// Web content is rendered by another process and is not in this one's view
+	/// tree at all, so a `cacheDisplay` of a pane holding draw.io is a correctly
+	/// sized, entirely empty rectangle — the same failure the terminal's Metal
+	/// layer had and the reason `SnapshotDrawable` exists. It matters more here
+	/// than anywhere: this pane is an *editor*, the only way to see whether it
+	/// drew what it should is to look at it, and today's draw.io work found a
+	/// stencil file that was right in WebKit and five solid black boxes through
+	/// CoreSVG — which only looking caught.
+	///
+	/// `takeSnapshot` is asynchronous and this is not, so the run loop is turned
+	/// over until the answer arrives. That is only ever done under `--screenshot`,
+	/// where the app has been told to stand still and be photographed, and it has
+	/// a deadline: a WebContent process that has died never answers, and a
+	/// capture that hangs is worse than one with a hole in it.
+	func snapshotImage(size: CGSize) -> CGImage? {
+		guard isLoaded, let web = editor?.webView, size.width > 1, size.height > 1 else {
+			return nil
+		}
+		let configuration = WKSnapshotConfiguration()
+		configuration.rect = web.bounds
+		configuration.snapshotWidth = NSNumber(value: Double(size.width))
+
+		var made: CGImage?
+		var answered = false
+		web.takeSnapshot(with: configuration) { image, _ in
+			made = image?.cgImage(forProposedRect: nil, context: nil, hints: nil)
+			answered = true
+		}
+		let deadline = Date().addingTimeInterval(10)
+		while !answered, Date() < deadline {
+			RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
+		}
+		return made
+	}
+
 	// MARK: - What this build does not carry
 
-	/// draw.io's clipart is the one asset deliberately left out, and a picture
-	/// that silently does not draw is exactly the failure 0426 warned about for
-	/// the stencils. The editor asks for it by path, the scheme handler answers
-	/// 404 and writes the path down, and this says so once.
+	/// Whether the document has already been reported on, so opening a file and
+	/// then the theme changing under it does not say the same thing twice.
+	private var saidWhatIsMissing = false
+
+	/// Read out of the document, and said as soon as it arrives.
+	///
+	/// This is the half that does not depend on the editor asking for anything.
+	/// `img/lib/` clipart draws an empty box and MathJax leaves a formula as the
+	/// text it was typed as, and both are silent — which is exactly the failure
+	/// 0426 warned about for the stencils. Saying it from the document rather
+	/// than from a 404 two seconds later also means the *export* can say the same
+	/// sentence, and it does: the off-screen renderer has no scheme handler at
+	/// all, so a picture written from a diagram using clipart would otherwise
+	/// have a hole in it and say nothing.
+	private func sayWhatThisBuildCannotDraw(_ document: Drawio.Document?) {
+		guard let document, let said = Drawio.notCarriedNotice(for: document) else { return }
+		saidWhatIsMissing = true
+		Toast.post("Some of this diagram cannot be drawn", detail: said)
+	}
+
+	/// The other half, and the one that catches a gap nobody predicted.
+	///
+	/// The editor asks for its assets by path; the scheme handler answers 404 and
+	/// writes the path down. Everything the document said for itself above has
+	/// already been reported, so this only speaks when the document did not —
+	/// which is a clipart reference this app's reader did not recognise, and
+	/// would otherwise be a picture with a hole in it and nothing said.
 	private func sayWhatIsMissing() {
 		DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
-			guard let self, let editor = self.editor else { return }
+			guard let self, !self.saidWhatIsMissing, let editor = self.editor else { return }
 			let clipart = editor.missingAssets.filter { $0.hasPrefix("img/lib/") }
 			guard !clipart.isEmpty else { return }
 			Toast.post(
