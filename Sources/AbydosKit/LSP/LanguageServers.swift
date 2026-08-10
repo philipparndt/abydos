@@ -139,6 +139,37 @@ public enum LanguageServers {
 			],
 			setup: .java
 		),
+		// The second opinion about Java, and the reason 0449's mechanism exists.
+		// Rust and tree-sitter: no JVM, no reactor import, and no type checking
+		// at all. Measured on Eclipse's `eclipse.platform.ui` — 143 bundles,
+		// 7,566 Java files — it had the whole project indexed at 2.6 seconds and
+		// answered go-to-definition across bundles, while jdtls on the same file
+		// and the same position was still silent at ten minutes holding 3.97 GB.
+		// On the smaller Sirius, 106 bundles, jdtls answered at 26 seconds and
+		// this at 3.2. Neither is wrong: this one cannot tell you a type is
+		// wrong, and it is the debugger's host that jdtls is (see
+		// `JavaDebugFailure.wrongServer`).
+		//
+		// Listed after jdtls, so the default is unchanged and this is something a
+		// project asks for. Java only, though it also answers for Kotlin and
+		// Swift: Swift here means sourcekit-lsp and displacing it is not
+		// something any measurement in 0450 supports, and nothing has driven its
+		// Kotlin.
+		//
+		// The same root markers as jdtls, so the two are offered for exactly the
+		// same projects. It needs no build file of its own — it indexes source —
+		// but a server that started at the first directory holding a `.java`
+		// would start in a vendored tree, which is the failure the markers are
+		// for.
+		LanguageServerDefinition(
+			languageIds: ["java"],
+			command: "kmp-lsp",
+			installHint: "cargo install kmp-lsp",
+			rootMarkers: [
+				"pom.xml", "build.gradle", "build.gradle.kts",
+				"settings.gradle", "settings.gradle.kts", ".classpath",
+			]
+		),
 		LanguageServerDefinition(
 			languageIds: ["json"],
 			command: "vscode-json-language-server",

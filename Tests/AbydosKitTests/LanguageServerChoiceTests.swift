@@ -105,23 +105,30 @@ struct LanguageServerChoiceTests {
 	/// server, it is not here, and the answer is a sentence — not the 1.9 GB one
 	/// started quietly in its place.
 	@Test func aServerNobodyHasIsSaidRatherThanSwappedForTheOther() {
+		// `java-language-server` is a real Java server and one this app has
+		// never heard of, which is the case. It used to be `kmp-lsp`, on the
+		// strength of the app's table having one Java server; 0450 put a second
+		// in it and this test started asserting that the server it had just
+		// added did not exist.
 		let choices = LanguageServerChoices(
-			byLanguage: ["java": .init(name: "kmp-lsp", source: .project)]
+			byLanguage: ["java": .init(name: "java-language-server", source: .project)]
 		)
-		// Against the app's own table, where kmp-lsp does not exist yet.
 		#expect(
 			LanguageServers.selection(forLanguage: "java", choosing: choices)
-				== .noSuchServer(name: "kmp-lsp", source: .project)
+				== .noSuchServer(name: "java-language-server", source: .project)
 		)
 		#expect(LanguageServers.definition(forLanguage: "java", choosing: choices) == nil)
 
-		let said = LanguageServers.refusal(named: "kmp-lsp", forLanguage: "java", source: .project)
+		let said = LanguageServers.refusal(
+			named: "java-language-server", forLanguage: "java", source: .project
+		)
 		#expect(said.contains(".abydos/tools.json"))
-		#expect(said.contains("no language server called kmp-lsp"))
+		#expect(said.contains("no language server called java-language-server"))
 		// It names what there is instead, and says plainly that it has not
 		// started it. Both halves matter: the first is what to type, the second
 		// is why nobody should go looking for a running server.
 		#expect(said.contains("jdtls"))
+		#expect(said.contains("kmp-lsp"))
 		#expect(said.contains("Nothing has been started in its place"))
 	}
 
@@ -294,5 +301,33 @@ struct LanguageServerChoiceTests {
 		#expect(
 			LanguageServers.definition(forLanguage: "java", choosing: .none)?.name == "jdtls"
 		)
+	}
+
+	/// Asked of the app's own table rather than the made-up one above, because
+	/// this is the claim that table cannot make: Java really does have two
+	/// servers now. Until 0450 every test in this file was about a mechanism
+	/// with nothing to choose between.
+	@Test func javaReallyHasTwoServersAndTheSlowOneIsStillTheDefault() {
+		#expect(LanguageServers.candidates(forLanguage: "java").map(\.name) == ["jdtls", "kmp-lsp"])
+		// The order is the default, so a project that says nothing keeps the
+		// server that reads the pom. Adding a second must change nothing for
+		// anybody who has not asked.
+		#expect(LanguageServers.definition(forLanguage: "java", choosing: .none)?.name == "jdtls")
+
+		let asked = LanguageServerChoices(
+			byLanguage: ["java": .init(name: "kmp-lsp", source: .project)]
+		)
+		#expect(
+			LanguageServers.definition(forLanguage: "java", choosing: asked)?.name == "kmp-lsp"
+		)
+	}
+
+	/// The debugger stays with jdtls, and that is the price of the fast one: the
+	/// adapter is an Eclipse bundle loaded *inside* that server rather than a
+	/// program beside it, so `setup == .java` is exactly the servers it can be
+	/// offered to.
+	@Test func onlyTheServerThatHostsTheDebugBundleIsSetUpAsJava() {
+		#expect(LanguageServers.server(named: "jdtls")?.setup == .java)
+		#expect(LanguageServers.server(named: "kmp-lsp")?.setup == .plain)
 	}
 }
