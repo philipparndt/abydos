@@ -553,6 +553,24 @@ public actor DevContainers {
 		}
 	}
 
+	/// Removes one container, by the name the runtime knows it as.
+	///
+	/// What the list of running tools calls: a row there is one container, and
+	/// stopping it must not take the other containers of a project that offers
+	/// several — somebody may have a shell in one of those. Told to this actor
+	/// rather than sent straight to `ToolContainers`, so that the next terminal
+	/// or language server asks for a new one instead of being handed a name
+	/// nothing answers to.
+	///
+	/// Whether it knew the name is returned, because "there was nothing to stop"
+	/// and "it is stopped" are different sentences to a caller reporting back.
+	@discardableResult
+	public func stop(named name: String) -> Bool {
+		guard let key = sessions.first(where: { $0.value.name == name })?.key else { return false }
+		forget(key)
+		return true
+	}
+
 	/// Removes every devcontainer this has kept.
 	public func stopAll() {
 		for key in sessions.keys { forget(key) }

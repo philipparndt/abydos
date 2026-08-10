@@ -98,6 +98,24 @@ public enum LanguageServerLaunch: Equatable, Sendable {
 		}
 	}
 
+	/// The container the server runs *inside*, whoever owns it.
+	///
+	/// Deliberately a different question from `container` above, and the
+	/// devcontainer case is where the two answers part company: that one asks
+	/// what to remove when this server stops, and the answer there has to be
+	/// nothing. This one asks where the server actually is, which the list of
+	/// what is running needs for a reason of its own — a server in a container
+	/// has a few megabytes of runtime client out here and the whole of itself in
+	/// there, so a row that measured the process on this machine would be
+	/// reporting a hundredth of the truth and calling it the cost.
+	public var hostContainerName: String? {
+		switch self {
+		case .installed: return nil
+		case let .image(container, _, _): return container.name
+		case let .devcontainer(session, _, _, _): return session.name
+		}
+	}
+
 	/// What to call it in a log line somebody is reading to find out why a
 	/// server did not answer.
 	public var description: String {
