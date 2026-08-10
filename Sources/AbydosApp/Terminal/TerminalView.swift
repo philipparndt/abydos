@@ -829,8 +829,19 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// and reporting points on a Retina screen asks it for an image at half the
 	/// resolution the screen can draw — which is the difference between a sharp
 	/// picture and a soft one.
+	///
+	/// The screen when there is no window yet, rather than a flat two. Cells are
+	/// measured before the view is in a window — the font is known long before
+	/// anything is on screen — and assuming Retina there is a lie on a display
+	/// that is not one: the pane told its program a cell was 16×38 where it is
+	/// 8×19, and kitty's `icat`, which sizes a picture from exactly this, asked
+	/// for half the cells it needed. The picture then changed size the moment
+	/// anything resized the pane and the true number went out.
 	private func updateCellPixelSize() {
-		let scale = window?.backingScaleFactor ?? 2
+		let scale = window?.backingScaleFactor
+			?? window?.screen?.backingScaleFactor
+			?? NSScreen.main?.backingScaleFactor
+			?? 2
 		let size = (width: Int((cellWidth * scale).rounded()), height: Int((cellHeight * scale).rounded()))
 		emulator.cellPixelSize = size
 		pty.cellPixelSize = size

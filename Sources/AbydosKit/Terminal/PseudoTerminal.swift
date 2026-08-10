@@ -67,7 +67,26 @@ public final class PseudoTerminal {
 	///
 	/// Set by whoever owns the view, since the cell size is a fact about the
 	/// font and nothing here knows it.
-	public var cellPixelSize: (width: Int, height: Int) = (0, 0)
+	///
+	/// Writing it tells the program straight away rather than waiting for the
+	/// next resize. The winsize is one structure — cells *and* pixels — and the
+	/// only thing that used to write it was a change in the number of cells, so
+	/// a pane whose cell size changed while its grid stayed the same left the
+	/// program believing the old one indefinitely. That is not a corner: the
+	/// view works out the cell in pixels from the display's scale, and the first
+	/// answer is given before the view is in a window and therefore before there
+	/// is a display to ask. kitty's `icat` sizes a picture entirely from this,
+	/// so the same file came out at one size on the first run and twice that
+	/// later, once something happened to resize the pane.
+	public var cellPixelSize: (width: Int, height: Int) = (0, 0) {
+		didSet {
+			guard cellPixelSize != oldValue else { return }
+			resize(rows: grid.rows, columns: grid.columns)
+		}
+	}
+
+	/// The grid last reported, so a change of cell size can be reported with it.
+	private var grid: (rows: Int, columns: Int) = (24, 80)
 
 	public init() {}
 
@@ -75,6 +94,7 @@ public final class PseudoTerminal {
 	private func windowSize(rows: Int, columns: Int) -> winsize {
 		let rows = max(1, rows)
 		let columns = max(1, columns)
+		grid = (rows, columns)
 		return winsize(
 			ws_row: UInt16(rows),
 			ws_col: UInt16(columns),
@@ -501,13 +521,30 @@ public final class PseudoTerminal {
 
 	/// Tells the process the pane changed size, so it can reflow.
 	public func resize(rows: Int, columns: Int) {
-		guard masterDescriptor >= 0 else { return }
+		guard masterDescriptor >= 0 else {
+			// Nothing to tell yet, but the numbers are still the ones the child
+			// will be started with.
+			grid = (max(1, rows), max(1, columns))
+			return
+		}
 		var size = windowSize(rows: rows, columns: columns)
 		_ = ioctl(masterDescriptor, TIOCSWINSZ, &size)
 		// SIGWINCH is what full-screen applications actually listen for.
 		if case let .running(pid) = state {
 			kill(pid, SIGWINCH)
 		}
+	}
+
+	/// What the kernel currently believes about this terminal.
+	///
+	/// Read back from the device rather than from what was last handed to it,
+	/// because the claim worth checking is that the program on the other end can
+	/// see the change — not that this file remembered it.
+	var reportedWindowSize: (rows: Int, columns: Int, pixelWidth: Int, pixelHeight: Int)? {
+		guard masterDescriptor >= 0 else { return nil }
+		var size = winsize()
+		guard ioctl(masterDescriptor, TIOCGWINSZ, &size) == 0 else { return nil }
+		return (Int(size.ws_row), Int(size.ws_col), Int(size.ws_xpixel), Int(size.ws_ypixel))
 	}
 
 	// MARK: - Lifecycle
