@@ -182,6 +182,39 @@ public final class FileNode {
 		return a.name.localizedStandardCompare(b.name) == .orderedAscending
 	}
 
+	/// Walks down to `target` through directories that are already open, and
+	/// gives up rather than opening one that is not.
+	///
+	/// `node(for:)` below lists a directory in order to look inside it, which is
+	/// exactly right for revealing a file somebody asked for and exactly wrong
+	/// for the filesystem watcher. The watcher re-reads the directories the user
+	/// has expanded, and it asked `node(for:)` about every directory an event
+	/// named — so a build writing into `.build/…/Modules` listed `.build`, then
+	/// the configuration directory below it, then the one below that, on the
+	/// main queue, only to establish that the directory at the end of the path
+	/// was not open after all. The guard said "only re-read directories the user
+	/// has actually expanded" and the lookup in front of it had already read
+	/// four that nobody had.
+	///
+	/// Worse than the one event, because a listing stays: a directory read once
+	/// is loaded for ever, so every later reload walked it, `git status`
+	/// collected a path for each of its files, and `applyGitStatus` visited them
+	/// all. The tree grew the whole of a build's output while nobody was looking
+	/// at any of it, and each event cost more than the last.
+	public func loadedNode(for target: URL) -> FileNode? {
+		let targetPath = target.standardizedFileURL.path
+		if targetPath == url.path { return self }
+		guard targetPath.hasPrefix(url.path + "/"), let loadedChildren else { return nil }
+
+		for child in loadedChildren {
+			if targetPath == child.url.path { return child }
+			if child.isDirectory, targetPath.hasPrefix(child.url.path + "/") {
+				return child.loadedNode(for: target)
+			}
+		}
+		return nil
+	}
+
 	/// Walks down to `target`, loading directories along the way.
 	/// Used to reveal a file in the tree.
 	public func node(for target: URL) -> FileNode? {

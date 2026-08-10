@@ -162,6 +162,64 @@ struct FileNodeReloadTests {
 		#expect(readsWhileNothingChanged == 0)
 	}
 
+	/// What a filesystem event about a closed part of the tree costs.
+	///
+	/// This is the shape of every event a build produces: something is written
+	/// several directories down inside `build`, nobody has expanded any of it,
+	/// and the navigator has to decide whether it has anything to re-read. The
+	/// deciding must not itself be a read, and must not leave the tree holding
+	/// what it read.
+	@Test func anEventDeepInsideAClosedDirectoryListsNothing() throws {
+		let root = URL(fileURLWithPath: NSTemporaryDirectory())
+			.appendingPathComponent("abydos-filenode-\(UUID().uuidString)")
+		let deep = root.appendingPathComponent("build/debug/Modules")
+		try FileManager.default.createDirectory(at: deep, withIntermediateDirectories: true)
+		try "x".write(to: deep.appendingPathComponent("Foo.swiftmodule"), atomically: true, encoding: .utf8)
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		let tree = FileNode(url: root, isDirectory: true)
+		// Only the root is open, which is what a project just opened looks like.
+		_ = tree.children
+		let build = tree.children.first { $0.name == "build" }
+		#expect(build != nil)
+
+		FileNode.directoryReadsForTesting = 0
+		#expect(tree.loadedNode(for: deep) == nil)
+		#expect(
+			FileNode.directoryReadsForTesting == 0,
+			"deciding that a closed directory is closed listed \(FileNode.directoryReadsForTesting) of them"
+		)
+		#expect(build?.hasLoadedChildren == false, "the closed directory was opened anyway")
+
+		// And what the same question used to cost: two listings for one file the
+		// tree does not show — and both of them stay, which is why the price
+		// went up with every event rather than staying where it was.
+		FileNode.directoryReadsForTesting = 0
+		#expect(tree.node(for: deep) != nil)
+		#expect(FileNode.directoryReadsForTesting == 2)
+		#expect(build?.hasLoadedChildren == true)
+	}
+
+	/// The stop is at the closed door, not at the branch: a directory somebody
+	/// has opened is still found and still re-read.
+	@Test func anEventInsideAnOpenDirectoryIsStillFound() throws {
+		let root = try makeTree(directories: 3, filesEach: 2)
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		let tree = FileNode(url: root, isDirectory: true)
+		loadEverything(tree)
+
+		let folder = root.appendingPathComponent("folder-1")
+		let found = tree.loadedNode(for: folder)
+		#expect(found?.url.path == folder.standardizedFileURL.path)
+
+		try "new".write(
+			to: folder.appendingPathComponent("arrived.txt"), atomically: true, encoding: .utf8
+		)
+		found?.reloadPreservingIdentity()
+		#expect(found?.children.map(\.name).contains("arrived.txt") == true)
+	}
+
 	/// Makes every open directory look changed, so the comparison above is
 	/// against the work this used to do rather than against nothing.
 	private func forceReread(_ node: FileNode) {

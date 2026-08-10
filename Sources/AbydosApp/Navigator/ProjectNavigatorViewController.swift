@@ -371,10 +371,16 @@ final class ProjectNavigatorViewController: NSViewController {
 		guard let rootNode else { return }
 		guard !holdRebuildForRename() else { return }
 
-		// Only re-read directories the user has actually expanded.
+		// Only re-read directories the user has actually expanded — and only ask
+		// the question through directories that are already open. `node(for:)`
+		// lists a directory to look inside it, so asking it about a path under
+		// `.build` read `.build` and everything down to the event's parent, on
+		// this queue, to find out that none of it was open. `loadedNode(for:)`
+		// stops at the first closed door, which is where the answer already is.
 		var touched = false
 		for directory in directories {
-			guard let node = rootNode.node(for: directory), node.isDirectory, node.hasLoadedChildren else { continue }
+			guard let node = rootNode.loadedNode(for: directory), node.isDirectory, node.hasLoadedChildren
+			else { continue }
 			node.reloadPreservingIdentity()
 			touched = true
 		}
@@ -502,8 +508,13 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// Reselects by path, since reloadData replaces the row indices.
 	private func restoreSelection(paths: [String]) {
 		guard !paths.isEmpty, let rootNode else { return }
+		// Through open directories only. A path that was selected was on screen,
+		// so everything above it is expanded and therefore loaded; a path that
+		// cannot be reached that way has no row to select either, and reading a
+		// directory to prove it has no row is work for nothing on the queue the
+		// watcher runs this from.
 		let rows = TreeSelection.rows(for: paths) { path in
-			guard let node = rootNode.node(for: URL(fileURLWithPath: path)) else { return -1 }
+			guard let node = rootNode.loadedNode(for: URL(fileURLWithPath: path)) else { return -1 }
 			return outlineView.row(forItem: node)
 		}
 		guard !rows.isEmpty else { return }
