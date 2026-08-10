@@ -539,8 +539,16 @@ private final class BacklogRowCell: NSView {
 				.foregroundColor: Theme.current.gitIgnored,
 				.paragraphStyle: truncating,
 			]
-			markWidth = ceil((marks as NSString).size(withAttributes: markAttributes).width)
+			// Measured, then capped at half the room. The paragraph style
+			// truncates, but only within whatever width it is given, and the
+			// natural width of a branch name is the item's whole title with a
+			// prefix on it — so the marks took the row, `available` went
+			// negative, and the guard below dropped the title altogether. The
+			// title is what somebody is scanning for; it keeps half.
+			let room = max(0, bounds.width - x - Theme.current.scaled(8))
+			let natural = ceil((marks as NSString).size(withAttributes: markAttributes).width)
 				+ Theme.current.scaled(12)
+			markWidth = min(natural, room / 2)
 			(marks as NSString).draw(
 				with: NSRect(x: bounds.width - markWidth, y: y, width: markWidth, height: line),
 				options: options,
@@ -933,13 +941,26 @@ private final class BacklogCardView: NSView {
 		}
 
 		guard !marks.isEmpty else { return }
+		// Into a rect, and truncating, because this is the one line on a card
+		// whose length is not ours: a branch name is
+		// `backlog/0435-the-plantuml-server-test-fails-only-when-the-suite-is-busy`,
+		// which is the item's whole title with a prefix on it. Drawn `at:` a
+		// point it had no width to obey and ran out past the card's rounded
+		// edge and over its neighbour.
+		//
+		// Tail rather than middle: what a mark says first is what identifies it
+		// — `3/7`, `2 images`, `spec`, and a branch that begins with the number
+		// — so the end is the part that can go.
+		let paragraph = NSMutableParagraphStyle()
+		paragraph.lineBreakMode = .byTruncatingTail
 		let markAttributes: [NSAttributedString.Key: Any] = [
 			.font: Theme.current.uiFont(11),
 			.foregroundColor: Theme.current.gitIgnored,
+			.paragraphStyle: paragraph,
 		]
 		let markHeight = (marks as NSString).size(withAttributes: markAttributes).height
 		(marks as NSString).draw(
-			at: NSPoint(x: x, y: bottom - markHeight),
+			in: NSRect(x: x, y: bottom - markHeight, width: width, height: markHeight),
 			withAttributes: markAttributes
 		)
 	}
