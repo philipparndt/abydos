@@ -183,6 +183,27 @@ struct ToolChoiceTests {
 		}
 	}
 
+	/// And the rule stated once for all of them, rather than only for the server
+	/// that happens to have an entry today.
+	///
+	/// The test above says the five are empty, which stops being true the moment
+	/// one of them is published and driven — and the temptation then is to
+	/// delete a line from that list and add a `Choice`, with nothing left
+	/// checking that anybody ran it. This is what is left checking: whatever the
+	/// catalogue offers for a language server has to be an image
+	/// `ContainerLSPLiveTests` would pull and run. It passes vacuously for the
+	/// five with no choices, which is the point — it is waiting for them.
+	@Test func noLanguageServerOffersAnImageTheLiveTestWouldNotDrive() throws {
+		for tool in ToolImageCatalogue.tools where tool.key != "plantuml" {
+			for choice in tool.choices {
+				#expect(
+					ContainerLSPLiveTests.images(for: tool.key).contains(choice.image),
+					"\(tool.key) offers \(choice.image), which the live test would never run"
+				)
+			}
+		}
+	}
+
 	/// gopls is the one that has, and this is what says so.
 	///
 	/// Tied to `ContainerLSPLiveTests` rather than written out twice: that test
@@ -196,7 +217,7 @@ struct ToolChoiceTests {
 		let choice = try #require(tool.choices.first)
 		#expect(tool.choices.count == 1)
 		#expect(choice.image == "pharndt/abydos-gopls:dev")
-		#expect(ContainerLSPLiveTests.images.contains(choice.image))
+		#expect(ContainerLSPLiveTests.images(for: tool.key).contains(choice.image))
 		// Ours, so it is our own word that it works — and the label says the tag
 		// moves, since a `:dev` known-good today is whatever was pushed last by
 		// the time somebody picks it.

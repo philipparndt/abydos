@@ -159,12 +159,52 @@ One child per tool: PlantUML and the six servers, each owning its image choice
 and the requirement text beside it. The parent keeps what is genuinely shared —
 the container runtime — and becomes short instead of a wall of cards.
 
+## The other five, built and driven here
+
+Five Dockerfiles, and `ContainerLSPLiveTests` grew from one test into six cases
+of one — a server, a project of its language, and the one answer that could
+only come from that server having read that project. All six pass against
+images on this machine, in 12.6 seconds for the six of them serialized:
+
+    gopls:                      pharndt/abydos-gopls:dev        container
+    rust-analyzer:              abydos/rust-analyzer:dev        docker
+    pyright:                    abydos/pyright:dev              docker
+    typescript-language-server: abydos/typescript-language-server:dev  docker
+    clangd:                     abydos/clangd:dev               docker
+    jdtls:                      abydos/jdtls:dev                docker
+
+Those two lines of output are new and are not decoration. A live test that
+skips is silent, and one silent skip reads as a pass already — six of them read
+as six. So the case that runs says which image it drove and which runtime ran
+it, and a green suite can be told apart from an absent one by reading it.
+
+**The builds were the cheap part, which was the surprise.** gopls costs minutes
+because it compiles: `go install` under emulation was 110 seconds for amd64
+alone. None of these five compiles anything. rust-analyzer comes from `rustup
+component add`, clangd from `apt`, pyright and typescript-language-server from
+`npm`, jdtls from a tarball — every one of them a download onto a base image.
+The five built in 8 to 21 seconds each on this machine, and the largest cost is
+the base: 1.61 GB for rust-analyzer, which is the Rust toolchain, against 274 MB
+for typescript-language-server.
+
+**Two things had to be found out by running them.** rust-analyzer answers every
+request with `ContentModified` (`-32801`) until the crate graph is built, and it
+publishes diagnostics from its own analysis well before that — so waiting for
+the first diagnostic, which is enough for the other five, is not enough for it.
+That is not a fact about containers: it is the protocol saying "ask again", and
+**nothing above `LSPClient` asks again**, so a go-to-declaration in the first
+seconds of a Rust project fails in the editor rather than arriving a moment
+late. The test retries; the editor does not, and that belongs to whichever item
+owns the client. And jdtls needed an Eclipse project rather than a Maven one:
+`.classpath` is already one of its root markers, and a `pom.xml` would have sent
+it to Maven Central from inside the container for every plugin in the default
+lifecycle — a test that downloads instead of a test that runs.
+
 ## Steps
 
-Everything above the rule is merged. What is below is the five servers that
-have no image, in the order the entry insists on: a Dockerfile, then a build,
-then a run against a real project, and a line in the catalogue only after all
-three.
+The six merged things first, then the five servers that had no image, in the
+order this entry insists on: a Dockerfile, a build, a run against a real
+project, and a line in the catalogue only after all three.
 
 - [x] Pull an image that is not on the machine, before first use
 - [x] `ContainerPaths` maps the project in and every URI back out
@@ -173,14 +213,14 @@ three.
 - [x] `ToolImages/gopls`, published, pulled back and driven
 - [x] `ToolImageCatalogue` lists the gopls image, and `ToolContainerTests`
       holds it to the one the live test drives
-- [ ] `ToolImages/rust-analyzer/Dockerfile`
-- [ ] `ToolImages/pyright/Dockerfile`
-- [ ] `ToolImages/typescript-language-server/Dockerfile`
-- [ ] `ToolImages/clangd/Dockerfile`
-- [ ] `ToolImages/jdtls/Dockerfile`
-- [ ] `make tool-image` builds any of them by name, not gopls alone
-- [ ] `ContainerLSPLiveTests` drives a server per language rather than Go alone
-- [ ] Each image built here and driven against a real project of its language
+- [x] `ToolImages/rust-analyzer/Dockerfile`
+- [x] `ToolImages/pyright/Dockerfile`
+- [x] `ToolImages/typescript-language-server/Dockerfile`
+- [x] `ToolImages/clangd/Dockerfile`
+- [x] `ToolImages/jdtls/Dockerfile`
+- [x] `make tool-image` builds any of them by name, not gopls alone
+- [x] `ContainerLSPLiveTests` drives a server per language rather than Go alone
+- [x] Each image built here and driven against a real project of its language
 - [ ] Each image pushed, pulled back as a stranger pulls it, and driven from
       the registry copy
 - [ ] A catalogue line for each image that survived the step above, and the
