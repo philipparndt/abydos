@@ -145,9 +145,14 @@ servers"`, which now finds child pages), not photographed: this machine's saved
 layout opens with the terminal filling the window and the capture came back with
 the terminal in it. The rows and their titles are what was verified.
 
-`PseudoTerminalTests` failed once in a full run and passed alone and on two
-further full runs. Its own comment names the hazard — `forkpty` in a
-multithreaded process — and nothing in this change goes near it.
+**Two flaky tests, and neither is this change's.** Seven full runs: four green,
+three with one failure each, in two places — `runsACommandAndCapturesOutput`
+waiting on output from a pseudo-terminal, and `ContainerLSPLiveTests` comparing
+the URI a containerised jdtls diagnosed first. Both were reproduced on the
+commit this branch starts from, so they were there before. The first has the
+hazard written in its own suite's comment: `forkpty` forks a multithreaded
+process, and the whole suite running around it is exactly the load that makes it
+matter.
 
 ## Steps
 
