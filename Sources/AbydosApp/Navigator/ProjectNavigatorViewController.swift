@@ -1170,7 +1170,8 @@ final class ProjectNavigatorViewController: NSViewController {
 		      let choice = DiagramExportMenu.choice(for: code)
 		else { return }
 		DiagramExportCommand.run(
-			url: node.url, format: choice.format, theme: choice.theme, projectRoot: project?.root
+			url: node.url, format: choice.format, theme: choice.theme,
+			editable: choice.editable, projectRoot: project?.root
 		)
 	}
 
@@ -1187,14 +1188,16 @@ final class ProjectNavigatorViewController: NSViewController {
 	}
 
 	/// The same gesture without the menu, for verifying it end to end.
-	func exportSelectionForTesting(_ format: DiagramFormat, theme: DiagramTheme? = nil) {
+	func exportSelectionForTesting(
+		_ format: DiagramFormat, theme: DiagramTheme? = nil, editable: Bool = false
+	) {
 		guard let node = contextNode, !node.isDirectory, DiagramExport.holdsADiagram(node.url) else {
 			print("EXPORT: nothing to export")
 			return
 		}
 		DiagramExportCommand.run(
 			url: node.url, format: format, theme: theme ?? (Theme.current.isLight ? .light : .dark),
-			projectRoot: project?.root
+			editable: editable, projectRoot: project?.root
 		) { written in
 			print("EXPORT: \(written.map(\.lastPathComponent).joined(separator: ", "))")
 		}
@@ -1212,7 +1215,7 @@ final class ProjectNavigatorViewController: NSViewController {
 			func mark(_ entry: NSMenuItem) -> String {
 				(entry.isEnabled ? "" : " (disabled)") + Self.shortcutText(entry)
 			}
-			let children = (item.submenu?.items ?? []).map {
+			let children = (item.submenu?.items ?? []).filter { !$0.isSeparatorItem }.map {
 				"\(item.title) ▸ \($0.title)\(mark($0))"
 			}
 			return ["\(item.title)\(mark(item))"] + children
@@ -1704,7 +1707,11 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 					DiagramExportMenu.fill(
 						submenu, theme: Theme.current.isLight ? .light : .dark,
 						stated: single ? statedLook(of: node) : nil,
-						target: self, action: #selector(contextExport(_:)), enabled: single
+						target: self, action: #selector(contextExport(_:)), enabled: single,
+						// The picture that is also the document, which only
+						// draw.io has: `architecture.drawio.png` rather than
+						// `architecture.png`.
+						editable: single && (node.map { Drawio.isDiagram($0.url) } ?? false)
 					)
 				}
 				continue

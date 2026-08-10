@@ -253,6 +253,140 @@ struct DrawioLiveTests {
 		#expect(try String(contentsOf: theirs, encoding: .utf8).contains("by hand"))
 	}
 
+	// MARK: - The picture that is also the document
+
+	/// The round trip that is the whole claim: a `.drawio.png` this app writes
+	/// opens again *as the document*, with every page and every label.
+	///
+	/// Not "a file appeared". The picture is read back the way draw.io's own
+	/// reader would — the `mxfile` chunk, `+` for space, un-escaped — the model is
+	/// parsed, and every page is compared to the page it came from. A picture
+	/// under a name promising a document, that is only a picture, is worse than
+	/// no gesture at all.
+	@Test func anEditablePNGReopensAsTheWholeDocument() async throws {
+		guard await canDraw() else { return }
+		let folder = try madeFolder()
+		defer { try? FileManager.default.removeItem(at: folder) }
+		let source = folder.appendingPathComponent("architecture.drawio")
+		let bytes = try DrawioTests.fixture("pages")
+		try bytes.write(to: source)
+		let before = try #require(Drawio.read(bytes))
+
+		let written = await DiagramExport.export(editable: bytes, of: source, format: .png)
+		guard case let .success(file) = written else {
+			Issue.record("nothing saved: \(written)")
+			return
+		}
+		// One file for a three-page document, which is the difference from the
+		// export: the whole `<mxfile>` is inside it.
+		#expect(file.lastPathComponent == "architecture.drawio.png")
+
+		let onDisk = try Data(contentsOf: file)
+		#expect(Array(onDisk.prefix(8)) == DiagramStamp.pngSignature)
+		// A real picture as well as a real document: this is the half GitHub
+		// renders, and CoreSVG is what draws it here and in Preview.app.
+		#expect(NSImage(data: onDisk)?.size.width ?? 0 > 0)
+		#expect(onDisk.count > 3000, "\(onDisk.count) bytes is a blank page")
+
+		// And the half draw.io reopens.
+		let after = try #require(Drawio.read(onDisk))
+		#expect(after.pages.count == before.pages.count)
+		#expect(after.pages.map(\.name) == ["Overview", "Detail", "Deployment"])
+		#expect(after.pages.map(\.id) == before.pages.map(\.id))
+		// The models themselves, not merely the page names — a chunk that lost a
+		// `%20` or a `+` would still count three pages and be wrong everywhere a
+		// label had a space in it.
+		#expect(after.pages.map(\.model) == before.pages.map(\.model))
+		#expect(after.mxfile == before.mxfile)
+		#expect(!after.pages[0].model.contains("%20"))
+		#expect(after.pages[0].model.contains("Overview box"))
+
+		// Saving it again replaces its own file rather than refusing it: the
+		// `mxfile` chunk is what proves the picture came from a diagram.
+		let again = await DiagramExport.export(editable: bytes, of: source, format: .png)
+		guard case .success = again else {
+			Issue.record("a second save refused its own picture: \(again)")
+			return
+		}
+	}
+
+	/// The same for the SVG, where the document rides in a `content` attribute
+	/// rather than a chunk — and where the picture has to stay a picture
+	/// anything, not only a browser, can draw.
+	@Test func anEditableSVGReopensAsTheWholeDocument() async throws {
+		guard await canDraw() else { return }
+		let folder = try madeFolder()
+		defer { try? FileManager.default.removeItem(at: folder) }
+		let source = folder.appendingPathComponent("architecture.drawio")
+		let bytes = try DrawioTests.fixture("pages")
+		try bytes.write(to: source)
+		let before = try #require(Drawio.read(bytes))
+
+		let written = await DiagramExport.export(editable: bytes, of: source, format: .svg)
+		guard case let .success(file) = written else {
+			Issue.record("nothing saved: \(written)")
+			return
+		}
+		#expect(file.lastPathComponent == "architecture.drawio.svg")
+
+		let onDisk = try Data(contentsOf: file)
+		let svg = String(decoding: onDisk, as: UTF8.self)
+		#expect(svg.contains("content=\""))
+		#expect(!svg.contains("foreignObject"))
+		#expect(!svg.contains("light-dark("))
+		#expect(NSImage(data: onDisk)?.size.width ?? 0 > 0)
+
+		let after = try #require(Drawio.read(onDisk))
+		#expect(after.pages.map(\.name) == before.pages.map(\.name))
+		#expect(after.pages.map(\.model) == before.pages.map(\.model))
+	}
+
+	/// A one-page file gets one picture under the same rule, and the plain
+	/// export's name is left alone — the two gestures write two different files
+	/// and neither stands on the other.
+	@Test func theEditablePictureDoesNotTakeThePlainExportsName() async throws {
+		guard await canDraw() else { return }
+		let folder = try madeFolder()
+		defer { try? FileManager.default.removeItem(at: folder) }
+		let source = folder.appendingPathComponent("one.drawio")
+		let bytes = try DrawioTests.fixture("plain")
+		try bytes.write(to: source)
+
+		_ = await DiagramExport.export(drawio: bytes, of: source, format: .png)
+		let saved = await DiagramExport.export(editable: bytes, of: source, format: .png)
+		guard case let .success(file) = saved else {
+			Issue.record("nothing saved: \(saved)")
+			return
+		}
+		#expect(file.lastPathComponent == "one.drawio.png")
+		#expect(FileManager.default.fileExists(atPath: folder.appendingPathComponent("one.png").path))
+		#expect(Drawio.read(try Data(contentsOf: file))?.pages.first?.name == "One")
+	}
+
+	/// Somebody's own picture called `architecture.drawio.png` is not destroyed
+	/// by this gesture any more than by the other one.
+	@Test func anEditableSaveWillNotOverwriteSomebodyElsesPicture() async throws {
+		guard await canDraw() else { return }
+		let folder = try madeFolder()
+		defer { try? FileManager.default.removeItem(at: folder) }
+		let source = folder.appendingPathComponent("one.drawio")
+		try (try DrawioTests.fixture("plain")).write(to: source)
+		let theirs = folder.appendingPathComponent("one.drawio.svg")
+		try "<svg>a drawing somebody made by hand</svg>".write(
+			to: theirs, atomically: true, encoding: .utf8
+		)
+
+		let saved = await DiagramExport.export(
+			editable: try DrawioTests.fixture("plain"), of: source, format: .svg
+		)
+		guard case let .failure(failure) = saved else {
+			Issue.record("somebody's own drawing was overwritten")
+			return
+		}
+		#expect(failure.message.contains("one.drawio.svg"))
+		#expect(try String(contentsOf: theirs, encoding: .utf8).contains("by hand"))
+	}
+
 	/// The measurement the pane rests on: the first draw pays for an 11.7 MB
 	/// page load and every one after it is cheap.
 	@Test func drawingIsFastOnceThePageIsLoaded() async throws {

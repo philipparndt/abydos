@@ -35,11 +35,15 @@ enum DiagramExportCommand {
 	/// - Parameter theme: which way round to draw it, as the menu item asked. The
 	///   file overrules it when it states a look of its own, which is the rule
 	///   0429 settled and the one thing this says out loud when it happens.
+	/// - Parameter editable: write the picture that is also the document —
+	///   `architecture.drawio.png` rather than `architecture.png`. draw.io only:
+	///   nothing else here has a document to put inside a picture.
 	static func run(
 		url: URL,
 		source: String? = nil,
 		format: DiagramFormat,
 		theme: DiagramTheme? = nil,
+		editable: Bool = false,
 		projectRoot: URL?,
 		then: (@Sendable ([URL]) -> Void)? = nil
 	) {
@@ -55,7 +59,7 @@ enum DiagramExportCommand {
 			}
 			let document = Drawio.read(data)
 			let stated = document.flatMap(Drawio.statedLook)
-			announceDrawing(url, format: format, theme: theme, stated: stated)
+			announceDrawing(url, format: format, theme: theme, stated: stated, editable: editable)
 			// What this build cannot draw, said before the picture is written
 			// rather than after somebody has committed it. The editor's own
 			// scheme handler says the same thing for a diagram on screen; the
@@ -63,6 +67,20 @@ enum DiagramExportCommand {
 			// the one route where a gap would otherwise be silent.
 			if let missing = document.flatMap(Drawio.notCarriedNotice) {
 				Toast.post("Some of this diagram cannot be drawn", detail: missing)
+			}
+			if editable {
+				Task {
+					let outcome = await DiagramExport.export(
+						editable: data, of: url, format: format, theme: theme
+					)
+					await MainActor.run {
+						reportEditable(
+							outcome, for: url, pages: document?.pages.count ?? 1,
+							stated: stated, then: then
+						)
+					}
+				}
+				return
 			}
 			Task {
 				let outcome = await DiagramExport.export(
@@ -145,11 +163,53 @@ enum DiagramExportCommand {
 	/// is named after it: "Drawing flow.mmd as PNG (Dark)…" and then "Exported
 	/// flow-dark.png" is a pair somebody can follow.
 	private static func announceDrawing(
-		_ url: URL, format: DiagramFormat, theme: DiagramTheme?, stated: String?
+		_ url: URL, format: DiagramFormat, theme: DiagramTheme?, stated: String?,
+		editable: Bool = false
 	) {
-		let what = format.rawValue.uppercased()
+		let what = (editable ? "an editable " : "") + format.rawValue.uppercased()
 		let qualified = stated == nil ? theme.map { "\(what) (\($0.title))" } ?? what : what
 		Toast.post("Drawing \(url.lastPathComponent) as \(qualified)…", kind: .information)
+	}
+
+	/// What one editable picture is, said in the one sentence that keeps it from
+	/// being a surprise.
+	///
+	/// Two things somebody has to know and neither is visible in the file: the
+	/// picture is of the **first page** while the file holds them all, and the
+	/// `.drawio` beside it is still the one this app edits. A copy is a copy, and
+	/// saying so is what stops two documents drifting apart in silence.
+	@MainActor
+	private static func reportEditable(
+		_ outcome: Result<URL, DiagramExport.Failure>,
+		for url: URL, pages: Int, stated: String?,
+		then: (@Sendable ([URL]) -> Void)?
+	) {
+		switch outcome {
+		case let .success(written):
+			let inside = pages == 1
+				? "It is the picture and the document at once: it reopens in draw.io."
+				: "It shows page 1 and holds all \(pages): it reopens in draw.io with every page."
+			Toast.post(
+				"Saved \(written.lastPathComponent)",
+				detail: inside + " Abydos still edits \(url.lastPathComponent).",
+				kind: .information
+			)
+			if let stated {
+				Toast.post(
+					"The file chose",
+					detail: DiagramLook.exportNotice(
+						for: written.lastPathComponent, stated: stated
+					),
+					kind: .information
+				)
+			}
+			NotificationCenter.default.post(
+				name: .abydosDiagramExported, object: nil, userInfo: ["url": written]
+			)
+			then?([written])
+		case let .failure(failure):
+			Toast.post("Could not export \(url.lastPathComponent)", detail: failure.message)
+		}
 	}
 
 	@MainActor

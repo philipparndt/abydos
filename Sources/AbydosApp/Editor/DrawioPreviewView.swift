@@ -179,7 +179,7 @@ final class DrawioPreviewView: DiagramPaneView {
 	override var isReadyToExport: Bool { isLoaded }
 
 	override func export(
-		_ format: DiagramFormat, theme: DiagramTheme? = nil,
+		_ format: DiagramFormat, theme: DiagramTheme? = nil, editable: Bool = false,
 		then: (@Sendable ([URL]) -> Void)? = nil
 	) {
 		guard let fileURL else { return }
@@ -188,7 +188,7 @@ final class DrawioPreviewView: DiagramPaneView {
 			await flush()
 			DiagramExportCommand.run(
 				url: fileURL, source: document?.rope.string, format: format, theme: wanted,
-				projectRoot: nil, then: then
+				editable: editable, projectRoot: nil, then: then
 			)
 		}
 	}

@@ -4218,7 +4218,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// Exports the diagram in front from its own preview pane, the way the
 	/// pane's menu does, and says what the menu offered on the way past.
 	func exportDiagramForTesting(_ raw: String) {
-		guard let format = DiagramFormat(rawValue: raw.lowercased()) else {
+		// `--export editable-png` is the second gesture in the same menu: the
+		// picture that is also the document, `x.drawio.png`.
+		let asked = raw.lowercased()
+		let editable = asked.hasPrefix("editable-")
+		guard let format = DiagramFormat(
+			rawValue: editable ? String(asked.dropFirst("editable-".count)) : asked
+		) else {
 			print("EXPORT: no such format \(raw)")
 			return
 		}
@@ -4243,7 +4249,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			return
 		}
 		print("EXPORT menu: \(pane.menuTitlesForTesting.joined(separator: " | "))")
-		pane.export(format) { written in
+		pane.export(format, editable: editable) { written in
 			print("EXPORT: \(written.map(\.lastPathComponent).joined(separator: ", "))")
 		}
 	}
@@ -4305,9 +4311,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				// `export:png`, the file's own context-menu action on whatever the
 				// tree has selected.
 				if step.hasPrefix("export:") {
-					let raw = String(step.dropFirst("export:".count))
-					guard let format = DiagramFormat(rawValue: raw.lowercased()) else { continue }
-					navigator.exportSelectionForTesting(format)
+					let raw = String(step.dropFirst("export:".count)).lowercased()
+					let editable = raw.hasPrefix("editable-")
+					guard let format = DiagramFormat(
+						rawValue: editable ? String(raw.dropFirst("editable-".count)) : raw
+					) else { continue }
+					navigator.exportSelectionForTesting(format, editable: editable)
 					continue
 				}
 				// `rename:new-name.swift`, which is the whole gesture: the field

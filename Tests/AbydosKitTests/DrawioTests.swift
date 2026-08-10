@@ -223,6 +223,52 @@ struct DrawioTests {
 		#expect(said.contains("MathJax"))
 	}
 
+	// MARK: - The picture that is also the document
+
+	/// The name is the whole of what the editable picture adds, so the name is
+	/// what is written down.
+	@Test func anEditablePictureIsNamedTheWayDrawioNamesOne() {
+		let source = URL(fileURLWithPath: "/a/architecture.drawio")
+		#expect(
+			DiagramExport.editableDestination(for: source, format: .png).lastPathComponent
+				== "architecture.drawio.png"
+		)
+		#expect(
+			DiagramExport.editableDestination(for: source, format: .svg).lastPathComponent
+				== "architecture.drawio.svg"
+		)
+		// And it is not the plain export's name, which is the point of having
+		// both: one is a picture of the document, the other is the document.
+		#expect(
+			DiagramExport.destinations(for: source, format: .png, diagrams: 1)
+				.map(\.lastPathComponent) == ["architecture.png"]
+		)
+	}
+
+	/// `.dio` normalises: there is no `.dio.png` convention for a reader to
+	/// recognise, and `.drawio.png` is the one there is.
+	@Test func aDioBecomesADrawioPicture() {
+		#expect(
+			DiagramExport.editableDestination(
+				for: URL(fileURLWithPath: "/a/plan.dio"), format: .png
+			).lastPathComponent == "plan.drawio.png"
+		)
+	}
+
+	/// The `-dark` rule composes, and has to: without it the light picture and
+	/// the dark one would be the same file.
+	@Test func aDarkEditablePictureHasItsOwnName() {
+		let source = URL(fileURLWithPath: "/a/architecture.drawio")
+		#expect(
+			DiagramExport.editableDestination(for: source, format: .png, theme: .dark)
+				.lastPathComponent == "architecture-dark.drawio.png"
+		)
+		#expect(
+			DiagramExport.editableDestination(for: source, format: .png, theme: .light)
+				.lastPathComponent == "architecture.drawio.png"
+		)
+	}
+
 	// MARK: - Which files these are
 
 	@Test func onlyThePlainDocumentIsOpenedInTheEditor() {

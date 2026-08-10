@@ -118,6 +118,49 @@ struct DrawioEditorLiveTests {
 		)
 	}
 
+	/// The claim the editable picture is named for, checked against draw.io
+	/// itself rather than against this app's reader.
+	///
+	/// `architecture.drawio.png` is offered as *the document*, so a test that
+	/// only reads it back with `Drawio.read` is checking this app against itself:
+	/// the same code wrote the chunk and the same code took it out again, and
+	/// both could be wrong together. So the picture is written by the export,
+	/// opened, and the document inside it handed to the real editor — which
+	/// draws it, counts its pages and hands it back. The picture, having been
+	/// through draw.io, is still the three-page diagram it was made from.
+	@Test func aPictureThisAppWroteOpensAgainInTheRealEditor() async throws {
+		guard let editor = await opened() else { return }
+		defer { editor.webView.navigationDelegate = nil }
+		let folder = URL(fileURLWithPath: NSTemporaryDirectory())
+			.appendingPathComponent("abydos-drawio-\(UUID().uuidString)")
+		try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+		defer { try? FileManager.default.removeItem(at: folder) }
+
+		let bytes = try DrawioTests.fixture("pages")
+		let before = try #require(Drawio.read(bytes))
+		let source = folder.appendingPathComponent("architecture.drawio")
+		try bytes.write(to: source)
+		let written = await DiagramExport.export(editable: bytes, of: source, format: .png)
+		guard case let .success(file) = written else {
+			Issue.record("nothing saved: \(written)")
+			return
+		}
+
+		// Opened the way somebody opening the picture would have it opened, and
+		// then it is draw.io's turn.
+		let inside = try #require(Drawio.read(try Data(contentsOf: file)))
+		editor.load(inside.mxfile, compressed: inside.isCompressed)
+		await settle()
+		let back = try #require(await editor.currentDocument())
+		let read = try #require(Drawio.read(Data(back.utf8)))
+		#expect(read.pages.map(\.name) == before.pages.map(\.name))
+		#expect(read.pages[0].model.contains("Overview box"))
+		#expect(!read.pages[0].model.contains("%20"))
+		// And it is the same drawing, not merely a document with the right
+		// number of pages in it.
+		#expect(Drawio.isSameDrawing(back, as: before.mxfile))
+	}
+
 	/// Drawing in the editor is an edit to the file, heard about at once.
 	///
 	/// Not on draw.io's own autosave timer, which is a second and a half. The
