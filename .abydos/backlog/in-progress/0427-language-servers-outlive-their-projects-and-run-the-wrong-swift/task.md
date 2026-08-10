@@ -302,6 +302,26 @@ processes underneath it arrive after it does.
   one, no warning when the total passes a number. The list is short and the
   numbers are in it; what to do about them is a person's decision.
 
+## Steps
+
+- [x] Stop a project's servers when the project goes — built, measured, and
+      then reversed on purpose; what survives of it is the app's own exit
+- [x] Resolve `sourcekit-lsp`, `clangd` and `lldb-dap` through `xcrun` rather
+      than through whatever the `PATH` offers first
+- [x] One server per project per *server*, not per language id, established by
+      counting rather than by reading
+- [x] Show what is running, with a Stop on every row, since that is the
+      condition the decision above rests on
+- [ ] Check what else this app finds on the `PATH`, and say of each whether it
+      is resolved by luck — the second half of item 2, which nothing above
+      reports on
+- [ ] Count the standing servers again on this build. Every number in this
+      entry was measured before the register's own leak was found (0435), and a
+      count taken through a register that was dropping entries is not evidence
+      about what the register now holds
+- [ ] Write down here what was ruled out on the way
+- [ ] `spec/language-servers.md` says what the project now does
+
 ---
 
 Its number is where it sits in the queue, not what it is worth doing next.
