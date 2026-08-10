@@ -203,16 +203,22 @@ final class SubprojectPillButton: PillButton {
 	}
 }
 
-/// The devcontainer this project is being worked on inside.
+/// The devcontainer this project is worked on inside, or the one it has and is
+/// not using.
 ///
-/// **It says running, not configured.** A project with a `devcontainer.json`
-/// that nobody has said yes to has no pill — that is the difference between the
-/// menu item's `hasDevContainer`, which is about a file on disk, and this, which
-/// is about a container that exists. Before 0433 the only lasting sign that a
-/// project was being worked on in one was a terminal tab, which is in the panel
-/// rather than on the window and only exists if somebody opened a terminal; the
-/// strip above the file said it and then withdrew itself the moment the server
-/// landed, which is exactly when somebody would want to know.
+/// **Two states, and 0438's third fault is why there are two.** 0433 built this
+/// to say *running*: a project whose container was declined had no pill at all,
+/// which meant that the gesture most in need of undoing was the one that removed
+/// its own undo — the way back lives in this menu. From the window it read as
+/// gone for good, which is exactly how it was reported.
+///
+/// So a project that has a `devcontainer.json` and is not being worked on inside
+/// it keeps its pill, dimmed, without the `⬢` the terminal tab wears. The
+/// hexagon is the mark of being *in* the container and the pill must never wear
+/// it while nothing of the project's is; the dimming is the whole of how loud
+/// this is allowed to be, because somebody who chose to work on this machine
+/// chose it and does not need reminding. What state is in force is in the tool
+/// tip and at the top of the menu, for whoever goes looking.
 ///
 /// A chevron rather than the subproject pill's cross, and the difference is on
 /// purpose: the cross gives the whole project back and costs nothing, whereas
@@ -221,6 +227,7 @@ final class SubprojectPillButton: PillButton {
 /// beside a name.
 final class DevContainerPillButton: PillButton {
 	private var title: String?
+	private var inUse = true
 
 	private static var iconSize: CGFloat { Theme.current.scaled(13) }
 	private static var horizontalPadding: CGFloat { Theme.current.scaled(7) }
@@ -228,13 +235,17 @@ final class DevContainerPillButton: PillButton {
 	private static var chevronWidth: CGFloat { Theme.current.scaled(7) }
 
 	var hasContainer: Bool { title != nil }
+	/// Whether the container it names is the one this project's tools are in.
+	var isInUse: Bool { inUse }
 
-	/// The whole label, which is `MainWindowController.containerTabTitle` — the
-	/// devcontainer's own `name` with the `⬢` the tab already wears. One source
-	/// for it, so the pill and the tab in the same container cannot come to
-	/// disagree about what it is called.
-	func setContainer(_ title: String?) {
+	/// The whole label, which is `MainWindowController.containerTabTitle` in use
+	/// and `containerName` when not — the devcontainer's own `name`, with the
+	/// `⬢` the tab already wears only in the first case. One source for it, so
+	/// the pill and the tab in the same container cannot come to disagree about
+	/// what it is called.
+	func setContainer(_ title: String?, inUse: Bool = true) {
 		self.title = title
+		self.inUse = inUse
 		isHidden = (title == nil)
 		invalidateIntrinsicContentSize()
 		needsDisplay = true
@@ -256,7 +267,11 @@ final class DevContainerPillButton: PillButton {
 		guard let title else { return }
 		var x = Self.horizontalPadding + PillButton.inset
 
-		let tint = Theme.current.sidebarText
+		// Dimmed rather than coloured. A warning colour would be the app arguing
+		// with a decision somebody made on purpose; the same grey the tree gives
+		// an ignored file says "there, and not in play" without saying anything
+		// about whether that was wise.
+		let tint = inUse ? Theme.current.sidebarText : Theme.current.gitIgnored
 		if let icon = Theme.symbol("shippingbox", size: 11 * Theme.current.scale, color: tint) {
 			icon.drawFitted(in: NSRect(
 				x: x, y: rect.midY - Self.iconSize / 2,
@@ -267,7 +282,7 @@ final class DevContainerPillButton: PillButton {
 
 		let attributed = NSAttributedString(string: title, attributes: [
 			.font: PillButton.labelFont,
-			.foregroundColor: Theme.current.sidebarHeaderText,
+			.foregroundColor: inUse ? Theme.current.sidebarHeaderText : Theme.current.gitIgnored,
 		])
 		let size = attributed.size()
 		attributed.draw(at: NSPoint(x: x, y: rect.midY - size.height / 2))

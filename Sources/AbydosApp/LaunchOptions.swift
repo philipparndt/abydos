@@ -376,7 +376,44 @@ struct LaunchOptions {
 	/// for; and the thing worth checking is that it is *absent* for a project
 	/// whose container was declined, which a screenshot can never prove — an
 	/// empty toolbar looks the same as one that has not finished loading.
-	var devContainerPillAt: Double?
+	/// Several times rather than one, because the pill has to be read before and
+	/// after a project is switched away from and back to (0438).
+	var devContainerPillAt: [Double] = []
+
+	/// Print what the pill's menu offers, this many seconds in — which is where
+	/// the way back out of a decline lives, and a menu cannot be photographed
+	/// while it is open.
+	var devContainerMenuAt: Double?
+
+	/// Press the pill menu's entry whose words are these: `<the words>@<seconds>`.
+	/// Repeatable, because leaving a container and going back into it is one
+	/// run and the second half is the interesting half (0438).
+	var pressDevContainerMenu: [String] = []
+
+	/// Print what is in the corner, at each of these many seconds in.
+	///
+	/// A toast cannot be told from an empty corner in a window rendering that has
+	/// not finished loading, and the thing worth proving about a question is that
+	/// it is *still there* after the eight seconds that would have taken a piece
+	/// of news away. Several readings, because that is the whole claim.
+	var toastReportsAt: [Double] = []
+
+	/// Press the answer whose words are these, this many seconds in:
+	/// `<the words>@<seconds>`.
+	var answerToast: String?
+
+	/// Switch the window to another project, the way following the terminal
+	/// does: `<path>@<seconds>`, repeatable, so that away and back is one run.
+	var switchProjects: [(path: String, at: Double)] = []
+
+	/// Print what the strip above the file says, at each of these many seconds.
+	///
+	/// `--lsp-banner report` fires once, at a fixed three seconds, and 0433 was
+	/// right not to trust it: a container that is coming up, a server that is
+	/// indexing and a project that has just been switched back to are all states
+	/// that are still settling then, and one reading cannot tell "nothing to say"
+	/// from "not yet". Several readings can.
+	var serverBannersAt: [Double] = []
 
 	/// Print what the chevron beside the panel's + offers, and which of the two
 	/// hit areas beside the last tab a click at each lands in.
@@ -461,7 +498,26 @@ struct LaunchOptions {
 					index += 1
 				}
 			case "--devcontainer-pill":
-				options.devContainerPillAt = next().flatMap(Double.init) ?? 8
+				options.devContainerPillAt = (next() ?? "8")
+					.split(separator: ",").compactMap { Double($0) }
+			case "--toasts":
+				options.toastReportsAt = (next() ?? "6")
+					.split(separator: ",").compactMap { Double($0) }
+			case "--answer-toast": options.answerToast = next()
+			case "--devcontainer-menu":
+				options.devContainerMenuAt = next().flatMap(Double.init) ?? 8
+			case "--press-devcontainer-menu":
+				if let spec = next() { options.pressDevContainerMenu.append(spec) }
+			case "--banner-at":
+				options.serverBannersAt = (next() ?? "3")
+					.split(separator: ",").compactMap { Double($0) }
+			case "--switch-project":
+				let spec = (next() ?? "").split(separator: "@")
+				if let path = spec.first {
+					options.switchProjects.append(
+						(String(path), spec.count > 1 ? Double(spec[1]) ?? 5 : 5)
+					)
+				}
 			case "--tab-add-menu": options.terminalAddMenu = true
 			case "--close-window": options.closeLastWindowAt = next().flatMap(Double.init) ?? 5
 			case "--report-geometry": options.reportsTerminalGeometry = true

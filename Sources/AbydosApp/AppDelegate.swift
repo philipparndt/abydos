@@ -1147,9 +1147,63 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
-		if let at = options.devContainerPillAt {
+		for at in options.devContainerPillAt {
 			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
-				print(controller?.devContainerPillForTesting() ?? "PILL: no window")
+				print("\(Int(at))s \(controller?.devContainerPillForTesting() ?? "PILL: no window")")
+				fflush(stdout)
+			}
+		}
+
+		if let at = options.devContainerMenuAt {
+			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+				print(controller?.devContainerMenuForTesting() ?? "PILLMENU: no window")
+				fflush(stdout)
+			}
+		}
+
+		for spec in options.pressDevContainerMenu {
+			let parts = spec.split(separator: "@")
+			let title = String(parts.first ?? "")
+			let at = parts.count > 1 ? Double(parts[1]) ?? 8 : 8
+			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+				let pressed = controller?.pressDevContainerMenuForTesting(title) ?? false
+				print("\(Int(at))s PILLMENU pressed \(title): "
+					+ (pressed ? "yes" : "there was no such entry"))
+				fflush(stdout)
+			}
+		}
+
+		for at in options.toastReportsAt {
+			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+				print("\(Int(at))s \(controller?.toastReportForTesting() ?? "TOASTS: no window")")
+				fflush(stdout)
+			}
+		}
+
+		if let spec = options.answerToast {
+			let parts = spec.split(separator: "@")
+			let title = String(parts.first ?? "")
+			let at = parts.count > 1 ? Double(parts[1]) ?? 6 : 6
+			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+				let pressed = controller?.answerToastForTesting(title) ?? false
+				print("ANSWERED \(title): \(pressed ? "yes" : "there was no such answer on screen")")
+				fflush(stdout)
+			}
+		}
+
+		for at in options.serverBannersAt {
+			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+				print("\(Int(at))s ", terminator: "")
+				controller?.reportServerBannerForTesting()
+				fflush(stdout)
+			}
+		}
+
+		for switching in options.switchProjects {
+			DispatchQueue.main.asyncAfter(deadline: .now() + switching.at) {
+				let url = URL(fileURLWithPath: (switching.path as NSString).expandingTildeInPath)
+				controller?.switchProject(to: url, followingTerminal: true)
+				print("SWITCHED to \(url.lastPathComponent) at \(Int(switching.at))s")
 				fflush(stdout)
 			}
 		}
