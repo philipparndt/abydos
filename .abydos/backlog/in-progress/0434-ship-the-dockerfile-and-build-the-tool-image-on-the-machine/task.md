@@ -261,6 +261,55 @@ if it has not.
   own code path. A make target would be a second way of naming the image that
   could disagree with the first.
 
+## The seam in GoSTL, and what is left after it
+
+The upstream change is made, on branch `abydos/openscad-command` in
+`~/dev/3d/gostl`, committed and deliberately neither tagged nor pushed — that
+is the user's to do, and this repository's pin cannot move until it is.
+
+`findOpenSCADExecutable() -> String` is gone. `OpenSCADCommand` answers with a
+`Process` instead, given the arguments OpenSCAD is to be passed and the
+directory to run in — both per call, which is the part that would otherwise
+bite, because the renderer uses the source directory for the CSG passes and the
+scratch directory for the rest and a command that fixed one would work here and
+fail on somebody's project. `InstalledOpenSCAD` is the default and is exactly
+the four paths and the `which` that were there before, so a viewer used on its
+own is unchanged and every existing caller compiles untouched. The embedder's
+end is `ContentView.EmbeddingOptions.openSCAD`, which is where Abydos would put
+one; `AppState` holds it and hands it to the renderer.
+
+Three tests in GoSTL: the embedder's command is used, it is told a different
+working directory for the export passes than for the render, and the type still
+constructs without one. The suite there is 97 tests with one failure, and that
+one — `STLParserTests.testInvalidASCIIFormat` — fails identically on `main` and
+has nothing to do with this.
+
+The go3mf export keeps the installed copy on purpose. It hands what it makes to
+the `go3mf` binary on this machine, so it is a host path from end to end, and
+there is no `AppState` in that code path to ask for anything else.
+
+**What is not done, and why it is more than one item's work.** The seam is open
+and nothing goes through it yet. What remains is a piece of work of its own:
+
+- A `ToolImages/openscad/Dockerfile`. What it should say is now established —
+  `FROM openscad/openscad:dev.<date>`, multi-architecture, published by the
+  OpenSCAD project — but see the caveat above about the newest tag being seven
+  months old, which somebody should check before pinning rather than inherit.
+- The implementation of `OpenSCADCommand` that runs a container, on this side.
+  It is not one mount but two: the project, because a `.scad` may
+  `include <…>` a file from anywhere in it, and the scratch directory the
+  renderer writes into, which is outside the project — and `ContainerPaths`
+  refuses anything outside the project by design rather than guessing, so it
+  answers for one of the two and the second needs its own. Every absolute path
+  in the arguments has to be translated, and so does the working directory,
+  which changes per call.
+- Deciding what happens when a path is outside both, which is a case that
+  cannot be translated and must be refused rather than guessed.
+- Repinning `Package.swift` here once GoSTL is tagged, and a live test that
+  renders a model with an `include` in it and compares the geometry with what
+  the installed copy produces — which is the only thing that would prove the
+  working directories survived.
+
 ## Steps
 
 - [x] `ToolImages/openscad-lsp/Dockerfile`: a pinned `cargo install`, the server
@@ -277,9 +326,20 @@ if it has not.
       built image
 - [x] Driven end to end against a `.scad`, the way `ContainerLSPLiveTests`
       drives gopls
-- [ ] Establish what a durable pin for the OpenSCAD snapshot looks like, before
+- [x] Establish what a durable pin for the OpenSCAD snapshot looks like, before
       writing a Dockerfile that claims one
-- [ ] The seam in GoSTL: how to run OpenSCAD, injected by the embedder rather
+- [x] The seam in GoSTL: how to run OpenSCAD, injected by the embedder rather
       than discovered, with today's behaviour as the default
-- [ ] Write down here what was ruled out on the way
-- [ ] `spec/devcontainers.md` says what the project now does
+- [x] Write down here what was ruled out on the way
+- [x] `spec/tool-images.md` says what the project now does — a new
+      capability file: this is not devcontainers, it is where a tool comes from
+- [ ] `ToolImages/openscad/Dockerfile`, on `openscad/openscad:dev.<date>`
+- [ ] An `OpenSCADCommand` that runs a container, with the project *and* the
+      scratch directory mounted and the working directory translated per call
+- [ ] Repin GoSTL here once it is tagged, and prove a model with an `include`
+      renders the same in the container as it does with the installed copy
+
+The last three are not being done under this number. They are the second half
+of the item and they are a piece of work of their own; the section above says
+what is established for whoever picks them up, and the seam they need is open
+and tested upstream.
