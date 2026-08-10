@@ -219,6 +219,75 @@ struct DevContainerConsentTests {
 		)
 	}
 
+	// MARK: - The question in the corner (0438)
+
+	/// The first line is fixed and short, because it is read from the corner of
+	/// the eye — and it is the gesture 0433's report went looking for.
+	@Test func theQuestionInTheCornerLeadsWithTheGesture() {
+		#expect(DevContainerConsent.questionTitle == "Activate dev container")
+	}
+
+	/// What the dialog's title and paragraph said between them, in a sentence a
+	/// corner 340 points wide can hold: which project, which container, and what
+	/// the first start costs.
+	@Test func theSentenceUnderItStillNamesBothAndTheCost() {
+		let said = DevContainerConsent.questionBody(
+			project: "python-language-server",
+			container: "Python, with its language server in the container",
+			firstStart: .build(".devcontainer/Dockerfile")
+		)
+		#expect(said.contains("python-language-server"))
+		#expect(said.contains("Python, with its language server in the container"))
+		#expect(said.contains(".devcontainer/Dockerfile"))
+		#expect(said.contains("minutes"))
+		#expect(said.contains("gigabyte"))
+		// Shorter than the dialog's paragraph, which is the whole reason it exists.
+		#expect(said.count < DevContainerConsent.explanation(
+			container: "Python, with its language server in the container",
+			firstStart: .build(".devcontainer/Dockerfile")
+		).count)
+
+		// A file that could not be read invents no cost.
+		let unknown = DevContainerConsent.questionBody(
+			project: "p", container: "c", firstStart: nil
+		)
+		#expect(!unknown.contains("minutes"))
+	}
+
+	// MARK: - The pill that says a container is there and is not in use (0438)
+
+	/// **It must not nag.** Somebody who chose to work on this machine chose it,
+	/// so the sentence states what is true of the container and never argues.
+	@Test func theDeclinedPillStatesTheStateAndDoesNotArgue() {
+		let states: [DevContainerConsent?] = [.thisMachine, .notNow, nil, .container]
+		for state in states {
+			let said = DevContainerConsent.pillState(state, container: "py")
+			#expect(said.contains("py") || said.contains("this machine"))
+			for nagging in ["should", "recommend", "warning", "?", "!"] {
+				#expect(!said.contains(nagging), "\(String(describing: state)): \(said)")
+			}
+		}
+	}
+
+	/// **"Not now" and "nobody has been asked" are the same state of the world**:
+	/// there is a devcontainer and nothing is running in it. Telling them apart on
+	/// screen would be reporting the app's bookkeeping rather than the project.
+	@Test func notNowAndNotYetAskedReadTheSame() {
+		#expect(
+			DevContainerConsent.pillState(.notNow, container: "py")
+				== DevContainerConsent.pillState(nil, container: "py")
+		)
+		// And both differ from the machine this is being worked on instead, which
+		// is the distinction 0433 spent an item establishing.
+		#expect(
+			DevContainerConsent.pillState(.notNow, container: "py")
+				!= DevContainerConsent.pillState(.thisMachine, container: "py")
+		)
+		// A container that was said yes to and has not come up yet is a third
+		// thing again, and the pill is dimmed for it too: it is not in use *yet*.
+		#expect(DevContainerConsent.pillState(.container, container: "py").contains("starting"))
+	}
+
 	@Test func onlyTheAnswersAboutTheProjectAreRemembered() {
 		#expect(DevContainerConsent.container.isRemembered)
 		#expect(DevContainerConsent.thisMachine.isRemembered)

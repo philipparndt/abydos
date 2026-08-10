@@ -94,21 +94,18 @@ final class LanguageService {
 	/// container turns out not to be startable, which is what makes the fallback
 	/// to this machine happen once rather than per language.
 	private var devcontainerProjects: [String: Bool] = [:]
-	/// The container each such project's servers run in, once it is up.
-	private var devcontainerSessions: [String: DevContainers.Session] = [:]
-	/// Which language servers that container actually has, asked once.
+	/// The container each such project's servers run in, once it is up, together
+	/// with what that container turned out to carry and which languages are
+	/// waiting for it.
 	///
-	/// The question nobody can answer by reading: an image carries what it
-	/// carries. Without it, every language the project touches starts a server
-	/// that fails its handshake ten seconds later with the runtime's own
-	/// `executable file not found` — which says nothing about the project.
-	private var devcontainerCommands: [String: Set<String>] = [:]
+	/// **One table rather than three**, and `DevContainerAttachments` is where
+	/// the reason is written down: these used to be a session table and a
+	/// capability table filled at the same moment and dropped at different ones,
+	/// which is 0438's second fault.
+	private var devcontainers = DevContainerAttachments()
 	/// Projects whose container is on its way up, so that ten files opened at
 	/// once ask for one container rather than ten.
 	private var devcontainerStarting: Set<String> = []
-	/// Which languages were asked for while it was coming up, so they can be
-	/// started when it lands.
-	private var devcontainerWaiting: [String: Set<String>] = [:]
 	/// Whether a project has a `devcontainer.json` at all, by project path.
 	///
 	/// A fact about the disk, kept apart from `devcontainerProjects`, which is
@@ -165,7 +162,21 @@ final class LanguageService {
 		DiagnosticLog.write(message, to: "lsp")
 	}
 
-	private init() {}
+	private init() {
+		// A devcontainer can be stopped from the list of running tools, which goes
+		// through `DevContainers` and never through here. Without this, the
+		// attachment would outlive the container it names and the next file opened
+		// would be handed a session nothing answers to.
+		NotificationCenter.default.addObserver(
+			forName: .abydosDevContainersChanged, object: nil, queue: .main
+		) { _ in
+			Task { @MainActor in
+				LanguageService.shared.devContainersChanged(
+					alive: await DevContainers.shared.containerNames
+				)
+			}
+		}
+	}
 
 	/// Keyed by the server rather than by the language asked about: see
 	/// `LanguageServers.serverKey`, which is where the reason is written down.
@@ -212,9 +223,9 @@ final class LanguageService {
 				// In a project worked on in a container, "installed" is a
 				// question about the container. Installing it here would change
 				// nothing, so the hint has to be about the file that builds it.
-				let path = project.standardizedFileURL.path
-				guard let inside = devcontainerCommands[path] else { continue }
-				if !inside.contains(definition.command) {
+				guard let carries = devcontainers.carries(definition.command, for: project)
+				else { continue }
+				if !carries {
 					missing.append((
 						languageId,
 						missingHints[key(project: project, languageId: languageId)]
@@ -879,8 +890,7 @@ final class LanguageService {
 	private func serverInDevContainer(
 		for languageId: String, project: URL, key: String
 	) -> Server? {
-		let path = project.standardizedFileURL.path
-		guard let session = devcontainerSessions[path] else {
+		guard let attachment = devcontainers[project] else {
 			// Declined for now. Nothing is started in the container and nothing
 			// takes its place here, because "not now" is not "use this machine's"
 			// and the difference is the whole reason there are two ways to say no.
@@ -890,7 +900,7 @@ final class LanguageService {
 			// way a fetched image already is: nothing waits, what is opened
 			// meanwhile is kept, and the server starts when the container lands.
 			fetching.insert(key)
-			devcontainerWaiting[path, default: []].insert(languageId)
+			devcontainers.wait(for: languageId, in: project)
 			startDevContainer(project)
 			// So the strip above the file says the server is on its way rather
 			// than nothing at all — and, when it lands, stops saying it. The
@@ -898,6 +908,7 @@ final class LanguageService {
 			NotificationCenter.default.post(name: .ideaiLanguageServersChanged, object: nil)
 			return nil
 		}
+		let session = attachment.session
 		guard let resolved = LanguageServers.resolve(
 			languageId: languageId, project: project, inDevContainer: session
 		) else {
@@ -910,7 +921,7 @@ final class LanguageService {
 		// Falling back to a copy on this machine would be the thing this whole
 		// path exists to avoid: the same code getting different answers
 		// depending on whose laptop it is on.
-		guard devcontainerCommands[path]?.contains(resolved.definition.command) == true else {
+		guard attachment.carries(resolved.definition.command) else {
 			unavailable.insert(key)
 			let hint = "\(resolved.definition.command) is not in this project's devcontainer. "
 				+ "Add it to the image or the Dockerfile that "
@@ -974,11 +985,24 @@ final class LanguageService {
 
 	/// Asks, and applies the answer.
 	///
-	/// A sheet on whichever window is key, which is where a file was just opened
-	/// in all but the contrived case; `runModal` when there is none, so that the
-	/// question is never simply skipped. What was opened meanwhile is already
-	/// being held by `serverInDevContainer`, so an answer given a minute later
-	/// still hands the server the file somebody is looking at.
+	/// **A toast, and one that stays.** 0433 reached for `NSAlert` — a sheet when
+	/// there was a window and `runModal` when there was not — and `Toast.swift`
+	/// opens with the rule that should have caught it: nothing interrupts unless
+	/// the user asked a question, and a confirmation is modal only when it is the
+	/// answer to something somebody just did. Opening a `.py` file is neither. So
+	/// the question goes to the corner and stays there until it is answered,
+	/// which is what `Toast.Lifetime.untilAnswered` was added for.
+	///
+	/// **And it needs no window to wait for**, which is the other half of what
+	/// the modal cost. `warmUp` runs while a project is still loading, with no
+	/// key window and nothing on screen to hang a sheet on, so the old path had
+	/// to wait a quarter of a second at a time for one to appear and fall back to
+	/// an app-modal dialog in front of nothing. A toast is posted; whichever
+	/// window is speaking for the app shows it whenever that turns out to be.
+	///
+	/// What was opened meanwhile is already being held by `serverInDevContainer`,
+	/// so an answer given a minute later still hands the server the file somebody
+	/// is looking at.
 	private func ask(about project: URL) {
 		let path = project.standardizedFileURL.path
 		guard let choice = DevContainerFile.choices(in: project).first else {
@@ -991,70 +1015,66 @@ final class LanguageService {
 		let firstStart = DevContainerFile.read(choice.file, project: project)
 			.configuration.map(DevContainerConsent.FirstStart.of)
 
-		let alert = NSAlert()
-		alert.alertStyle = .informational
-		alert.messageText = DevContainerConsent.question(
-			project: project.lastPathComponent, container: choice.name
-		)
-		alert.informativeText = DevContainerConsent.explanation(
-			container: choice.name, firstStart: firstStart
-		)
-		let answers = DevContainerConsent.answersInOrder
-		for answer in answers {
-			alert.addButton(
-				withTitle: DevContainerConsent.buttonTitle(answer, container: choice.name)
-			)
+		// In the order the answers are offered in, the project's own first. There
+		// is no Escape to wire "not now" to any more, and it does not need one:
+		// the answer that decides nothing is a button like the others, and a
+		// question that cannot be dismissed by accident is the point of it.
+		let answers = DevContainerConsent.answersInOrder.map { answer in
+			Toast.Answer(DevContainerConsent.buttonTitle(answer, container: choice.name)) {
+				[weak self] in
+				guard let self else { return }
+				self.log("\(project.lastPathComponent): \(choice.name) — \(answer.rawValue)")
+				self.remember(answer, for: project)
+				self.apply(answer, to: project)
+			}
 		}
-		// Escape is "not now", which is the answer that decides nothing — the two
-		// that are written down have to be typed or clicked for.
-		alert.buttons.last?.keyEquivalent = "\u{1b}"
 
-		let answered: @MainActor (NSApplication.ModalResponse) -> Void = { [weak self] response in
-			guard let self else { return }
-			let index = response.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
-			let answer = answers.indices.contains(index) ? answers[index] : .notNow
-			self.log("\(project.lastPathComponent): \(choice.name) — \(answer.rawValue)")
-			self.remember(answer, for: project)
-			self.apply(answer, to: project)
-		}
-		present(alert, answered: answered)
+		Toast.ask(Toast(
+			kind: .information,
+			title: DevContainerConsent.questionTitle,
+			detail: DevContainerConsent.questionBody(
+				project: project.lastPathComponent, container: choice.name, firstStart: firstStart
+			),
+			answers: answers,
+			lifetime: .untilAnswered,
+			identifier: Self.questionIdentifier(for: project),
+			onWithdrawn: { [weak self] in self?.questionWithdrawn(about: project) }
+		))
 	}
 
-	/// Puts the question on the window it is about, waiting for one to exist.
+	/// What a question about this project's devcontainer is filed under, so that
+	/// it can be taken back.
+	private static func questionIdentifier(for project: URL) -> String {
+		"devcontainer-question:" + FilePath.canonical(project)
+	}
+
+	/// The window stopped showing this project, so the question about its
+	/// devcontainer has nobody left to answer it.
 	///
-	/// **There may not be one yet, and this was measured rather than guessed.**
-	/// `warmUp` runs as a project loads, and a run of the app at that instant
-	/// reported `keyWindow` and `mainWindow` both nil with two windows that were
-	/// not on screen — so an implementation that reached straight for `runModal`
-	/// put an app-modal dialog in front of nothing at all, before the project it
-	/// is asking about had appeared. That is worse manners than the silence 0433
-	/// is about.
+	/// Called by whatever moved — switching project, or moving between the
+	/// subprojects of one. **Withdrawing is not answering**: nothing is decided
+	/// and nothing is written down, because leaving a question about a project
+	/// nobody is looking at one click from being answered is how somebody agrees
+	/// to a `docker build` for a checkout they left.
+	func withdrawDevContainerQuestion(for project: URL) {
+		Toast.withdraw(Self.questionIdentifier(for: project))
+	}
+
+	/// The question went off the screen unanswered.
 	///
-	/// A quarter of a second, twenty times: five seconds, after which no window
-	/// is evidently coming and a dialog of its own beats never asking. The
-	/// question is not lost while this waits — the languages that asked for it are
-	/// held by `serverInDevContainer`, and `devcontainerStarting` still has the
-	/// project, so nothing asks a second time.
-	private func present(
-		_ alert: NSAlert,
-		answered: @escaping @MainActor (NSApplication.ModalResponse) -> Void,
-		attempt: Int = 0
-	) {
-		let window = NSApp.keyWindow ?? NSApp.mainWindow
-			?? NSApp.windows.first { $0.isVisible && $0.contentViewController != nil }
-		if let window {
-			alert.beginSheetModal(for: window) { response in
-				MainActor.assumeIsolated { answered(response) }
-			}
-			return
-		}
-		guard attempt < 20 else {
-			answered(alert.runModal())
-			return
-		}
-		DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-			MainActor.assumeIsolated { self?.present(alert, answered: answered, attempt: attempt + 1) }
-		}
+	/// **The guard has to be given back**, and this is the only thing that does
+	/// it. `devcontainerStarting` is held across the asking as well as the
+	/// starting — which is what makes ten files opened at once one question — so
+	/// a question withdrawn without releasing it would leave the project unable
+	/// ever to ask again and unable to start anything either: a state nothing on
+	/// screen could get somebody out of. What was waiting stops waiting, for the
+	/// same reason "not now" makes it stop — the strip must not go on saying a
+	/// server is on its way to a container nobody is bringing up.
+	private func questionWithdrawn(about project: URL) {
+		let path = project.standardizedFileURL.path
+		guard devcontainerStarting.remove(path) != nil else { return }
+		log("\(project.lastPathComponent): the devcontainer question was withdrawn unanswered")
+		holdWhatWasWaiting(for: project)
 	}
 
 	/// Nothing is started, here or there, and what was held stops being held.
@@ -1066,9 +1086,7 @@ final class LanguageService {
 	/// checked against — which is what the whole devcontainer path exists to
 	/// avoid.
 	private func holdWhatWasWaiting(for project: URL) {
-		let path = project.standardizedFileURL.path
-		let waiting = devcontainerWaiting.removeValue(forKey: path) ?? []
-		for languageId in waiting {
+		for languageId in devcontainers.takeWaiting(for: project) {
 			fetching.remove(key(project: project, languageId: languageId))
 		}
 		NotificationCenter.default.post(name: .ideaiLanguageServersChanged, object: nil)
@@ -1138,17 +1156,19 @@ final class LanguageService {
 			devcontainerStarting.remove(path)
 			switch outcome {
 			case let .running(session)?:
-				devcontainerSessions[path] = session
 				// A language server is something attaching to the container, and
 				// `postAttachCommand` is the moment that names.
 				await DevContainers.shared.attach(to: session)
 				// One question for every server there is, rather than one failed
-				// handshake per language.
-				devcontainerCommands[path] = await DevContainers.shared.provides(
+				// handshake per language — and asked *before* the session is
+				// recorded, so that the pair goes in together. Anything that finds
+				// a session finds what it carries beside it or finds neither.
+				let provides = await DevContainers.shared.provides(
 					LanguageServers.known.map(\.command), in: session
 				)
+				devcontainers.attach(session, providing: provides, to: project)
 				log("\(session.name) is up; it has "
-					+ "\(devcontainerCommands[path]?.sorted().joined(separator: ", ") ?? "no")"
+					+ "\(provides.isEmpty ? "no" : provides.sorted().joined(separator: ", "))"
 					+ " language server(s)")
 				startWhatWasWaiting(for: project)
 			case let .refused(reason)?:
@@ -1178,11 +1198,9 @@ final class LanguageService {
 	/// Starts the servers asked for while the container was coming up, and
 	/// hands each the files opened meanwhile.
 	private func startWhatWasWaiting(for project: URL) {
-		let path = project.standardizedFileURL.path
 		// Gone while the container was on its way — the project was closed — so
 		// there is nobody to start a server for.
-		let waiting = devcontainerWaiting.removeValue(forKey: path) ?? []
-		for languageId in waiting.sorted() {
+		for languageId in devcontainers.takeWaiting(for: project).sorted() {
 			let key = key(project: project, languageId: languageId)
 			guard fetching.remove(key) != nil else { continue }
 			guard let server = server(for: languageId, project: project) else { continue }
@@ -1576,10 +1594,21 @@ final class LanguageService {
 		// the reason 0424 records: switching away and back has to be instant, and
 		// there is somebody's terminal in it. `ToolContainers.removeAll` on the
 		// way out and 0406's sweep are what end it.
+		//
+		// **And so is everything known about that container**, which is 0438's
+		// second fault: this line used to drop the list of language servers the
+		// image carries while keeping the session, so coming back found a session,
+		// skipped the start that fills the list, and told somebody their server
+		// was not in a container it was sitting in. `letGo` hands back only what
+		// was *about to* happen — the languages waiting on a container — because
+		// nothing is going to start them now.
 		let path = project.standardizedFileURL.path
+		devcontainers.letGo(project)
 		devcontainerProjects.removeValue(forKey: path)
-		devcontainerCommands.removeValue(forKey: path)
-		devcontainerWaiting.removeValue(forKey: path)
+		// Read again next time, which cannot contradict a kept container: a
+		// session exists only because there was a `devcontainer.json`, and if the
+		// file has since gone then reading the disk again is the more correct
+		// answer rather than the stale one.
 		devcontainerFiles.removeValue(forKey: path)
 		// **And the answer, which is what makes "not now" mean this afternoon.**
 		// The other two are in the preferences and come straight back; that one is
@@ -1605,11 +1634,23 @@ final class LanguageService {
 		missingHints.removeAll()
 		toolImages.removeAll()
 		devcontainerProjects.removeAll()
-		devcontainerSessions.removeAll()
-		devcontainerCommands.removeAll()
-		devcontainerWaiting.removeAll()
+		devcontainers.removeAll()
 		devcontainerFiles.removeAll()
 		devcontainerConsent.removeAll()
+	}
+
+	/// The containers this app has up have changed, and one of this project's
+	/// may have been among the ones that went.
+	///
+	/// **Why this exists at all.** A devcontainer can be stopped by hand from the
+	/// list of running tools, which goes through `DevContainers` and not through
+	/// here — so without this the attachment would outlive the container it names,
+	/// and the next file opened would be handed a session nothing answers to. It
+	/// is the other half of keeping the session and its capabilities together:
+	/// they arrive together, they survive a project being let go of together, and
+	/// they go when the container goes.
+	func devContainersChanged(alive: Set<String>) {
+		devcontainers.containersStopped(keeping: alive)
 	}
 
 	// MARK: - Testing

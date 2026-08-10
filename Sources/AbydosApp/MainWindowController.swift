@@ -314,7 +314,28 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	@objc private func toastPosted(_ notification: Notification) {
 		guard speaksForTheApp, let toast = notification.userInfo?["toast"] as? Toast else { return }
 		toasts.show(toast)
+		// Answered while `Toast.post` is still on the stack, which is what lets a
+		// question that landed in a gap between windows be asked again rather than
+		// vanishing. See `Toast.ask`.
+		(notification.userInfo?["taken"] as? Toast.Taken)?.value = true
 	}
+
+	/// A question in the corner is no longer worth asking.
+	///
+	/// Every window rather than the one that speaks for the app: the question was
+	/// shown by whichever window was frontmost when it was asked, which is not
+	/// necessarily this one now, and a question withdrawn from the wrong window is
+	/// a question left on screen.
+	@objc private func toastWithdrawn(_ notification: Notification) {
+		guard let identifier = notification.userInfo?["identifier"] as? String else { return }
+		toasts.withdraw(identifier)
+	}
+
+	/// What the corner is saying, for the harness.
+	func toastReportForTesting() -> String { toasts.reportForTesting() }
+
+	/// Presses one of a question's answers by its words.
+	func answerToastForTesting(_ title: String) -> Bool { toasts.answerForTesting(title) }
 
 	/// Whether this window is the one to say something the whole app has to
 	/// say.
@@ -449,6 +470,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		toolStrip.onToggleHistory = { [weak self] in self?.showSidebarTool(.history) }
 		NotificationCenter.default.addObserver(
 			self, selector: #selector(toastPosted(_:)), name: .abydosToast, object: nil
+		)
+		NotificationCenter.default.addObserver(
+			self, selector: #selector(toastWithdrawn(_:)), name: .abydosToastWithdrawn, object: nil
 		)
 
 		toolStrip.onToggleDebug = { [weak self] in self?.showDebugPanel(nil) }
@@ -900,6 +924,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		else { return }
 		guard url.path != subprojectRoot?.path else { return }
 
+		leftScope()
 		subprojectRoot = url.standardizedFileURL
 		applyScope()
 	}
@@ -907,8 +932,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// Back to the whole project.
 	func leaveSubproject() {
 		guard subprojectRoot != nil else { return }
+		leftScope()
 		subprojectRoot = nil
 		applyScope()
+	}
+
+	/// The window is about to stop showing this scope.
+	///
+	/// A question in the corner about the scope's devcontainer goes with it: it
+	/// names a project, and asking it over a window now showing a different one
+	/// would put an answer about somewhere else one click away. Nothing is
+	/// decided by this — the project asks again the next time something needs the
+	/// container — and the pill in the titlebar is the standing way in either
+	/// way.
+	private func leftScope() {
+		guard let scope = scopeRoot else { return }
+		LanguageService.shared.withdrawDevContainerQuestion(for: scope)
 	}
 
 	/// Reads the repository for the current scope, and tells the window.
@@ -1016,6 +1055,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	}
 
 	func load(project: Project, focusTree: Bool = true) {
+		// **Read before a single thing is touched.** `switchProject` says this
+		// above its own read and it is right — "anything that writes the session
+		// on the way past would overwrite the very thing being restored" — but
+		// this function then read the file a *second* time, at the bottom, and
+		// that is the read the subproject comes from. In between,
+		// `selectedConfigurationName = nil` fires its own `didSet`, which calls
+		// `rememberOpenEditors` for a window whose project is already the new one
+		// and whose `subprojectRoot` has just been cleared. So the session on disk
+		// was rewritten without its `subproject` before the line that needed it
+		// looked.
+		let remembered = SessionStore.read(in: project.root)
+
 		self.project = project
 		subprojectRoot = nil
 		// And on the project itself, which is what everything scoped reads: a
@@ -1056,7 +1107,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// What was open here last time, from the folder beside the project —
 		// which is what makes opening it again feel like coming back rather
 		// than starting.
-		if let remembered = SessionStore.read(in: project.root) {
+		if let remembered {
 			if !editor.hasOpenFiles { editor.restore(remembered) }
 			// Where the work was left off, which for a repository of several
 			// projects is as much a part of it as the open files.
@@ -1728,6 +1779,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	func switchProject(to root: URL, followingTerminal: Bool = false) {
 		let root = root.standardizedFileURL
 		guard root.path != project?.root.standardizedFileURL.path else { return }
+
+		leftScope()
 
 		if let current = project?.root {
 			var session = editor.captureSession()
@@ -3348,7 +3401,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// neither can a project offering two of them. The folder the file sits in is
 	/// the answer when it has no name of its own.
 	static func containerTabTitle(for choice: DevContainerFile.Choice?, in root: URL) -> String {
-		"\(choice?.name ?? root.lastPathComponent) ⬢"
+		"\(containerName(for: choice, in: root)) ⬢"
+	}
+
+	/// The same name without the `⬢`.
+	///
+	/// The hexagon is the mark of being *inside* — it is on the tab whose shell
+	/// is in the container — so the titlebar pill wears it only while this
+	/// project's tools are in there, and the dimmed pill for a container that is
+	/// not in use does not (0438).
+	static func containerName(for choice: DevContainerFile.Choice?, in root: URL) -> String {
+		choice?.name ?? root.lastPathComponent
 	}
 
 	/// Where the devcontainer this window would open is, or nil when there is
@@ -3411,48 +3474,65 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	private var pilledContainer: DevContainerFile.Choice?
 
 	/// Says in the titlebar which devcontainer this project is being worked on
-	/// inside, or takes the pill away when it is not.
+	/// inside — or, dimmed, which one it has and is not using.
 	///
-	/// **Running and not declined.** A container that is up is the fact worth
-	/// showing — before this, the only lasting sign was a terminal tab, which is
-	/// in the panel rather than on the window and only exists if somebody opened
-	/// a terminal. A project whose servers were deliberately put on this machine
-	/// has no pill even while a shell of somebody's is still inside the container,
-	/// because the pill is read as "this project's tools are in there" and that
-	/// would then be untrue.
+	/// **Two states rather than one, which is 0438's third fault.** 0433 made this
+	/// pill say *running*, and took it away for both declines; the way back out of
+	/// a decline lives in this pill's menu, so the gesture that most needed
+	/// undoing was the one that removed its own undo. The strip above a file
+	/// carries a button too, but only over a file whose server is missing, so
+	/// somebody who declined and then worked on something else had nothing on
+	/// screen at all — which is how it was reported: gone for good.
+	///
+	/// So the pill is now about the `devcontainer.json`, which is what
+	/// `hasDevContainer` has always been about, and its two states are the
+	/// difference 0433 was right to insist on. Lit with the `⬢`: this project's
+	/// tools are in that container. Dimmed without it: there is one and they are
+	/// not. It never claims a container is in use when it is not, which was the
+	/// whole of the old rule.
 	private func refreshDevContainerPill() {
 		guard let pill = devContainerPill else { return }
-		let declined: Bool
-		switch devContainerRoot.flatMap(LanguageService.shared.devContainerConsent(for:)) {
-		case .thisMachine, .notNow: declined = true
-		case .container, nil: declined = false
-		}
-		guard let root = devContainerRoot, !declined else {
+		guard let root = devContainerRoot else {
 			pilledContainer = nil
 			pill.setContainer(nil)
+			pill.toolTip = nil
 			layoutTitlebarPills()
 			return
 		}
 		let choices = devContainerChoices
+		let consent = LanguageService.shared.devContainerConsent(for: root)
 		Task { @MainActor in
-			let running = await DevContainers.shared.existingSessions(for: root)
+			// Only a project that said yes has its tools in there. A container left
+			// running with somebody's shell in it, under a project whose servers
+			// were put on this machine, is a container this project is not using.
+			let running = consent == .container
+				? await DevContainers.shared.existingSessions(for: root)
+				: []
 			// Still the same project by the time the actor answered: a window that
 			// switched project meanwhile must not be labelled with the old one's.
 			guard self.devContainerRoot == root else { return }
-			guard let session = running.first else {
-				self.pilledContainer = nil
-				pill.setContainer(nil)
-				self.layoutTitlebarPills()
-				return
-			}
 			// Named from the menu's own choices, so the pill, the tab in the same
 			// container and the menu item that opens one cannot come to disagree
 			// about what it is called.
-			let choice = choices.first {
-				FilePath.canonical($0.file) == FilePath.canonical(session.configuration.file)
+			let inUse = running.first.flatMap { session in
+				choices.first {
+					FilePath.canonical($0.file) == FilePath.canonical(session.configuration.file)
+				}
 			}
-			self.pilledContainer = choice
-			pill.setContainer(Self.containerTabTitle(for: choice, in: root))
+			self.pilledContainer = inUse ?? choices.first
+			if inUse != nil {
+				pill.setContainer(Self.containerTabTitle(for: self.pilledContainer, in: root))
+				pill.toolTip = nil
+			} else {
+				pill.setContainer(
+					Self.containerName(for: self.pilledContainer, in: root), inUse: false
+				)
+				// The quiet half of saying it: hovering answers "what is this doing
+				// here" without anything being written across the window.
+				pill.toolTip = DevContainerConsent.pillState(
+					consent, container: Self.containerName(for: self.pilledContainer, in: root)
+				)
+			}
 			self.layoutTitlebarPills()
 		}
 	}
@@ -3466,9 +3546,51 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// a "Rebuild" that only restarted the container would be a button that looks
 	/// like it did the expensive thing and did not.
 	@objc func showDevContainerMenu() {
-		guard let root = devContainerRoot, devContainerPill?.hasContainer == true else { return }
+		guard devContainerPill?.hasContainer == true else { return }
+		let anchor: NSView? = devContainerPill ?? capsule
+		devContainerPillMenu().popUp(
+			positioning: nil,
+			at: NSPoint(x: 0, y: (anchor?.bounds.maxY ?? 0) + Theme.current.scaled(4)),
+			in: anchor
+		)
+	}
+
+	/// The menu itself, built rather than shown, so that what it offers can be
+	/// read by something other than an eye.
+	private func devContainerPillMenu() -> NSMenu {
 		let menu = NSMenu()
 		menu.autoenablesItems = false
+		guard let root = devContainerRoot else { return menu }
+
+		// The pill that is not in use opens with what state it is in and the way
+		// out of it. **The sentence first and the offer under it**, because the
+		// offer is only readable once somebody knows which of the three states
+		// they are in — "Use it" over a project already starting one would be a
+		// button that appeared to do nothing.
+		if devContainerPill?.isInUse == false {
+			let container = Self.containerName(for: pilledContainer, in: root)
+			let state = NSMenuItem(
+				title: DevContainerConsent.pillState(
+					LanguageService.shared.devContainerConsent(for: root), container: container
+				),
+				action: nil,
+				keyEquivalent: ""
+			)
+			state.isEnabled = false
+			menu.addItem(state)
+
+			let use = NSMenuItem(
+				title: DevContainerConsent.offerTitle(container: container),
+				action: #selector(useDevContainerFromMenu(_:)),
+				keyEquivalent: ""
+			)
+			use.target = self
+			use.isEnabled = true
+			use.toolTip = "Run \(root.lastPathComponent)'s language servers inside \(container). "
+				+ "The first start builds or downloads its image."
+			menu.addItem(use)
+			menu.addItem(.separator())
+		}
 
 		// **"New Terminal", not "New Terminal in <the container> ⬢".** The View
 		// menu's item and the chevron's beside the panel both have to name the
@@ -3497,28 +3619,28 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			menu.addItem(open)
 		}
 
-		menu.addItem(.separator())
+		// Only while it is in use. Offering to move onto this machine a project
+		// that is already on this machine is a switch with nothing on the other
+		// side of it, and the state line above has already said so.
+		if devContainerPill?.isInUse == true {
+			menu.addItem(.separator())
 
-		// Named as the sentence it is rather than as a switch being thrown: this
-		// changes which toolchain the code on screen is checked against, and
-		// "Disable" would say nothing about what happens instead.
-		let here = NSMenuItem(
-			title: "Work on This Machine Instead",
-			action: #selector(workOnThisMachineFromMenu(_:)),
-			keyEquivalent: ""
-		)
-		here.target = self
-		here.isEnabled = true
-		here.toolTip = "Run \(root.lastPathComponent)'s language servers on this machine. "
-			+ "The container is left running — a terminal may be in it."
-		menu.addItem(here)
+			// Named as the sentence it is rather than as a switch being thrown:
+			// this changes which toolchain the code on screen is checked against,
+			// and "Disable" would say nothing about what happens instead.
+			let here = NSMenuItem(
+				title: "Work on This Machine Instead",
+				action: #selector(workOnThisMachineFromMenu(_:)),
+				keyEquivalent: ""
+			)
+			here.target = self
+			here.isEnabled = true
+			here.toolTip = "Run \(root.lastPathComponent)'s language servers on this machine. "
+				+ "The container is left running — a terminal may be in it."
+			menu.addItem(here)
+		}
 
-		let anchor: NSView? = devContainerPill ?? capsule
-		menu.popUp(
-			positioning: nil,
-			at: NSPoint(x: 0, y: (anchor?.bounds.maxY ?? 0) + Theme.current.scaled(4)),
-			in: anchor
-		)
+		return menu
 	}
 
 	@objc private func openDevContainerFile(_ sender: Any?) {
@@ -3531,16 +3653,55 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		LanguageService.shared.workOnThisMachine(for: root)
 	}
 
+	/// The way back in, from the pill that says the container is not being used.
+	@objc private func useDevContainerFromMenu(_ sender: Any?) {
+		guard let root = devContainerRoot else { return }
+		LanguageService.shared.useDevContainer(for: root)
+	}
+
 	/// What the pill says, for the harness — a menu cannot be photographed while
 	/// it is open, and neither can the absence of a pill be told from a window
 	/// that has not finished loading.
 	func devContainerPillForTesting() -> String {
-		"PILL: \(devContainerPill?.hasContainer == true ? devContainerPillTitleForTesting : "(none)")"
+		// The scope beside it, because "no pill" has two causes that look
+		// identical from outside — this project has no devcontainer, or the window
+		// is not pointed at the part of it that has one — and telling them apart
+		// is most of what a switched-back window has to be checked for.
+		let where_ = " [scope=\(scopeRoot?.lastPathComponent ?? "-")"
+			+ " container=\(devContainerRoot?.lastPathComponent ?? "-")]"
+		guard let pill = devContainerPill, pill.hasContainer else { return "PILL: (none)\(where_)" }
+		return "PILL: \(devContainerPillTitleForTesting)"
+			+ (pill.isInUse ? "" : " (not in use: \(pill.toolTip ?? "-"))")
+			+ where_
 	}
 
 	private var devContainerPillTitleForTesting: String {
-		pilledContainer.map { Self.containerTabTitle(for: $0, in: devContainerRoot ?? URL(fileURLWithPath: "/")) }
-			?? "(unnamed)"
+		let root = devContainerRoot ?? URL(fileURLWithPath: "/")
+		guard devContainerPill?.isInUse == true else {
+			return Self.containerName(for: pilledContainer, in: root)
+		}
+		return Self.containerTabTitle(for: pilledContainer, in: root)
+	}
+
+	/// What the pill's menu offers, for the harness: a menu cannot be
+	/// photographed while it is open, and the way back out of a decline is the
+	/// whole of 0438's third fault.
+	func devContainerMenuForTesting() -> String {
+		guard devContainerPill?.hasContainer == true else { return "PILLMENU: (no pill)" }
+		let menu = devContainerPillMenu()
+		return "PILLMENU: " + menu.items.map { item in
+			item.isSeparatorItem ? "—" : "\(item.title)\(item.isEnabled ? "" : " (disabled)")"
+		}.joined(separator: " | ")
+	}
+
+	/// Presses the pill menu's entry whose words are these.
+	@discardableResult
+	func pressDevContainerMenuForTesting(_ title: String) -> Bool {
+		guard let item = devContainerPillMenu().items.first(where: { $0.title == title }),
+		      let action = item.action, item.isEnabled
+		else { return false }
+		NSApp.sendAction(action, to: item.target, from: item)
+		return true
 	}
 
 	/// What the View menu's single item says it will open.

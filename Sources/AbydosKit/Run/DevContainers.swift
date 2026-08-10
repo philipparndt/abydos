@@ -595,6 +595,10 @@ public actor DevContainers {
 	/// Which devcontainers have one up, by the file each came from, for a test.
 	public var containerFiles: [String] { sessions.keys.sorted() }
 
+	/// What the runtime calls every container this actor still has, so anything
+	/// holding a session of its own can tell whether it is still a real one.
+	public var containerNames: Set<String> { Set(sessions.values.map(\.name)) }
+
 	private func forget(_ key: String) {
 		guard let session = sessions.removeValue(forKey: key) else { return }
 		ToolContainers.shared.releaseInBackground(session.name)
