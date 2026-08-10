@@ -106,6 +106,7 @@ public final class Settings {
 		static let terminalOptionAsMeta = "terminalOptionAsMeta"
 		static let toolImages = "toolImages"
 		static let containerRuntime = "containerRuntime"
+		static let devContainerConsent = "devContainerConsent"
 		static let appearance = "appearance"
 		static let followsTerminalProject = "followsTerminalProject"
 		static let terminalAtStartup = "terminalAtStartup"
@@ -363,6 +364,46 @@ public final class Settings {
 	public var toolImages: [String: String] {
 		get { defaults.dictionary(forKey: Key.toolImages) as? [String: String] ?? [:] }
 		set { set(newValue, Key.toolImages) }
+	}
+
+	/// Which projects are worked on inside the devcontainer they name, and which
+	/// are deliberately not, by the project's path on this machine.
+	///
+	/// **Here rather than in the project.** The `devcontainer.json` is committed
+	/// and shared with everybody who checks the repository out; whether *this*
+	/// person, on *this* machine, wants a container started for it is theirs
+	/// alone, and an answer written into `.abydos/` would be one developer's
+	/// preference pushed onto the team. So it goes where the rest of the
+	/// per-machine preferences go.
+	///
+	/// **Keyed by the canonical path**, and readable as one: a project that is
+	/// moved is a project that will be asked again, which is the right answer —
+	/// nothing here knows that the directory that has appeared at a new path is
+	/// the same checkout, and guessing would be answering for somebody.
+	public var devContainerConsent: [String: String] {
+		get { defaults.dictionary(forKey: Key.devContainerConsent) as? [String: String] ?? [:] }
+		set { set(newValue, Key.devContainerConsent) }
+	}
+
+	/// What was said about this project, or nil when it has never been asked.
+	public func devContainerConsent(forProject project: URL) -> DevContainerConsent? {
+		devContainerConsent[FilePath.canonical(project)].flatMap(DevContainerConsent.init(rawValue:))
+	}
+
+	/// Writes down an answer about one project, or forgets it when given nil.
+	///
+	/// "Not now" is not an answer about the project — see
+	/// `DevContainerConsent.isRemembered` — so it forgets rather than storing,
+	/// and the next session asks again.
+	public func setDevContainerConsent(_ consent: DevContainerConsent?, forProject project: URL) {
+		let path = FilePath.canonical(project)
+		var table = devContainerConsent
+		if let consent, consent.isRemembered {
+			table[path] = consent.rawValue
+		} else {
+			table.removeValue(forKey: path)
+		}
+		devContainerConsent = table
 	}
 
 	/// How the terminal arrives when a window opens.
