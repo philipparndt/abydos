@@ -88,6 +88,86 @@ public actor PlantUMLServers {
 	static let errorHeader = "X-PlantUML-Diagram-Error"
 	static let errorLineHeader = "X-PlantUML-Diagram-Error-Line"
 
+	/// Why there is no picture from a kept server.
+	///
+	/// Every case here still means the same thing to the app — draw the diagram
+	/// the old way — so this changes nothing about what happens. What it changes
+	/// is what can be *said* afterwards. `draw` used to answer nil and throw the
+	/// reason away, and a nil with no reason reads as "the feature is broken"
+	/// when it may mean "this machine could not start a JVM in a minute". That
+	/// cost five agents a day of proving a red was not theirs (0435), because the
+	/// live test required a value out of the nil and had nothing else to report.
+	///
+	/// Each case carries how long it waited, because that is the number that
+	/// separates the two: a deadline missed by a machine under load looks
+	/// entirely different from a runtime that refused in a tenth of a second.
+	public enum Refusal: Error, Sendable, CustomStringConvertible {
+		/// Nothing was started and nothing waited on: not docker, no image, or a
+		/// diagram too large for a request line.
+		case notOffered(String)
+		/// The runtime would not start the container, or would not say which port
+		/// it published.
+		case runtimeRefused(
+			command: String, waited: TimeInterval, deadline: TimeInterval,
+			timedOut: Bool, said: String
+		)
+		/// The container is up and the port is published, and nothing behind it
+		/// ever answered — all the way to `startDeadline`.
+		case neverAnswered(waited: TimeInterval, deadline: TimeInterval, attempts: Int, last: String)
+		/// A request that failed for a reason that is not "still starting" —
+		/// including its own 20-second `requestTimeout`, which is what a server
+		/// that has accepted the connection and is still thinking looks like.
+		case requestFailed(waited: TimeInterval, code: Int, said: String)
+		/// It answered, and what came back is not a drawing.
+		case notADrawing(status: Int, bytes: Int)
+
+		public var description: String {
+			switch self {
+			case let .notOffered(why):
+				return "no kept server offered: \(why)"
+			case let .runtimeRefused(command, waited, deadline, timedOut, said):
+				let how = timedOut ? "hit its \(Self.seconds(deadline)) deadline" : "failed"
+				return "`\(command)` \(how) after \(Self.seconds(waited)): \(Self.trimmed(said))"
+			case let .neverAnswered(waited, deadline, attempts, last):
+				return "the server never answered in \(Self.seconds(waited)) "
+					+ "of a \(Self.seconds(deadline)) start deadline, over \(attempts) attempts; "
+					+ "last: \(Self.trimmed(last))"
+			case let .requestFailed(waited, code, said):
+				return "the request gave up after \(Self.seconds(waited)) "
+					+ "(URL error \(code)): \(Self.trimmed(said))"
+			case let .notADrawing(status, bytes):
+				return "answered \(status) with \(bytes) bytes, which is not a drawing"
+			}
+		}
+
+		/// Whether this is a machine that could not keep up rather than anything
+		/// wrong with the feature.
+		///
+		/// Deliberately narrow: only the two cases that are a deadline expiring
+		/// with nothing else said. A runtime that answered "no such image" in a
+		/// tenth of a second is not busy, and a 400 is not busy either.
+		public var isMissedDeadline: Bool {
+			switch self {
+			case .runtimeRefused(_, _, _, let timedOut, _): return timedOut
+			case .neverAnswered: return true
+			case .requestFailed(_, let code, _): return code == NSURLErrorTimedOut
+			case .notOffered, .notADrawing: return false
+			}
+		}
+
+		private static func seconds(_ interval: TimeInterval) -> String {
+			String(format: "%.1f s", interval)
+		}
+
+		/// Enough of what a runtime said to know what happened, on one line.
+		private static func trimmed(_ said: String) -> String {
+			let one = said.split(whereSeparator: \.isNewline).joined(separator: " ")
+				.trimmingCharacters(in: .whitespaces)
+			if one.isEmpty { return "(said nothing)" }
+			return one.count <= 200 ? one : String(one.prefix(200)) + "…"
+		}
+	}
+
 	private struct Warm: Sendable {
 		let name: String
 		let image: String
@@ -118,7 +198,7 @@ public actor PlantUMLServers {
 	private var warm: [String: Warm] = [:]
 	/// The start already under way for a key, so that two renders asking at once
 	/// wait on one container rather than starting two.
-	private var beingStarted: [String: Task<Warm?, Never>] = [:]
+	private var beingStarted: [String: Task<Result<Warm, Refusal>, Never>] = [:]
 	private var reaper: Task<Void, Never>?
 
 	/// Its own session, so a diagram is never answered out of the shared URL
@@ -257,7 +337,7 @@ public actor PlantUMLServers {
 		format: PlantUML.Format = .png,
 		theme: DiagramTheme? = nil
 	) async -> Data? {
-		guard let drawing = await draw(
+		guard case let .success(drawing) = await draw(
 			source, image: image, using: runtime, format: format, theme: theme
 		) else {
 			return nil
@@ -269,48 +349,66 @@ public actor PlantUMLServers {
 		return drawing.fault == nil ? drawing.data : nil
 	}
 
-	/// The picture and the complaint, from a server kept warm — or nil, meaning
-	/// draw it the old way.
+	/// The picture and the complaint, from a server kept warm — or the reason
+	/// there is none, which is always a reason to draw it the old way.
+	///
+	/// A failure here is never worth putting in front of somebody: the fallback
+	/// works and is only slow. It is worth *keeping*, which is why this answers a
+	/// `Result` rather than nil. See `Refusal`.
 	public func draw(
 		_ source: String,
 		image: String,
 		using runtime: ContainerRuntime,
 		format: PlantUML.Format = .png,
 		theme: DiagramTheme? = nil
-	) async -> Drawing? {
-		guard Self.canKeepWarm(runtime), !image.isEmpty else { return nil }
-		guard Self.path(for: source, format: format) != nil else { return nil }
+	) async -> Result<Drawing, Refusal> {
+		guard Self.canKeepWarm(runtime) else {
+			return .failure(.notOffered("\(runtime.name) has no address this app can reach"))
+		}
+		guard !image.isEmpty else { return .failure(.notOffered("no image named")) }
+		guard Self.path(for: source, format: format) != nil else {
+			return .failure(.notOffered(
+				"\(Array(source.utf8).count) bytes is more than a request line holds"
+			))
+		}
 		let key = Self.key(image: image, theme: theme)
 
 		if let existing = warm[key] {
-			if let drawn = await fetch(source, format: format, from: existing, starting: false) {
+			if case let .success(drawn) = await fetch(
+				source, format: format, from: existing, starting: false
+			) {
 				touch(key)
-				return drawn
+				return .success(drawn)
 			}
 			// It was there and it is not answering: killed behind our back, or
 			// wedged. Forget it, remove whatever is left of it, and try once with
 			// a new one — a preview that goes slow for ever because a container
-			// was removed once would be its own bug.
+			// was removed once would be its own bug. The reason kept is the new
+			// one's: this one has already been acted on.
 			forget(key)
 		}
 
-		guard let started = await starting(key: key, image: image, using: runtime, theme: theme)
-		else { return nil }
+		let started: Warm
+		switch await starting(key: key, image: image, using: runtime, theme: theme) {
+		case let .success(server): started = server
+		case let .failure(refusal): return .failure(refusal)
+		}
 		// It may have become the kept one while this was waiting — two panes
 		// opening together ask at the same moment — in which case that one is
 		// asked and this one is not started twice.
-		guard let drawn = await fetch(source, format: format, from: started, starting: true) else {
+		let drawn = await fetch(source, format: format, from: started, starting: true)
+		guard case let .success(drawing) = drawn else {
 			// It started and would not draw. Nothing is kept, so the next render
 			// tries again from nothing rather than asking a broken server twice.
 			if warm[key]?.name != started.name {
 				ToolContainers.shared.releaseInBackground(started.name)
 			}
-			return nil
+			return drawn
 		}
 		warm[key] = started
 		touch(key)
 		startReaping()
-		return drawn
+		return .success(drawing)
 	}
 
 	/// Removes every server this has kept, now.
@@ -344,7 +442,7 @@ public actor PlantUMLServers {
 	/// from one launch.
 	private func starting(
 		key: String, image: String, using runtime: ContainerRuntime, theme: DiagramTheme?
-	) async -> Warm? {
+	) async -> Result<Warm, Refusal> {
 		if let already = beingStarted[key] { return await already.value }
 		let task = Task { await start(image: image, using: runtime, theme: theme) }
 		beingStarted[key] = task
@@ -360,7 +458,7 @@ public actor PlantUMLServers {
 	/// held there is a few seconds every other task in the app spends behind it.
 	private func start(
 		image: String, using runtime: ContainerRuntime, theme: DiagramTheme?
-	) async -> Warm? {
+	) async -> Result<Warm, Refusal> {
 		let name = ToolContainers.mint("plantuml-server")
 		let startCommand = Self.startCommand(
 			image: image, name: name, using: runtime, theme: theme
@@ -374,26 +472,43 @@ public actor PlantUMLServers {
 				// also the one whose name is worth being certain is free.
 				ToolContainers.shared.claim(name, runtime: runtime)
 
+				let began = Date()
 				let started = RuntimeCommand.run(startCommand, deadline: Self.startDeadline)
 				guard started.succeeded else {
 					// A port already taken, a daemon not running, an image that is
 					// not there: all of them end here, and all of them mean the
 					// same thing to the caller. Whatever was made of it is removed.
+					// They do *not* all mean the same thing to somebody reading a
+					// failure afterwards, which is why the runtime's own words and
+					// whether the deadline is what ended it are carried out.
 					ToolContainers.shared.releaseInBackground(name)
-					continuation.resume(returning: nil)
+					continuation.resume(returning: .failure(.runtimeRefused(
+						command: "\(runtime.name) run",
+						waited: Date().timeIntervalSince(began),
+						deadline: Self.startDeadline,
+						timedOut: started.timedOut,
+						said: started.output
+					)))
 					return
 				}
 
+				let askedPort = Date()
 				let published = RuntimeCommand.run(portCommand, deadline: 20)
 				guard published.succeeded, let port = Self.port(from: published.output) else {
 					ToolContainers.shared.releaseInBackground(name)
-					continuation.resume(returning: nil)
+					continuation.resume(returning: .failure(.runtimeRefused(
+						command: "\(runtime.name) port",
+						waited: Date().timeIntervalSince(askedPort),
+						deadline: 20,
+						timedOut: published.timedOut,
+						said: published.output
+					)))
 					return
 				}
 				continuation.resume(
-					returning: Warm(
+					returning: .success(Warm(
 						name: name, image: image, port: port, runtime: runtime, lastUsed: Date()
-					)
+					))
 				)
 			}
 		}
@@ -424,16 +539,24 @@ public actor PlantUMLServers {
 	/// not to spend a minute asking a port that has gone.
 	private func fetch(
 		_ source: String, format: PlantUML.Format, from server: Warm, starting: Bool
-	) async -> Drawing? {
+	) async -> Result<Drawing, Refusal> {
 		guard let url = Self.url(port: server.port, source: source, format: format) else {
-			return nil
+			return .failure(.notOffered("no address for this diagram"))
 		}
-		let deadline = Date().addingTimeInterval(Self.startDeadline)
+		let began = Date()
+		let deadline = began.addingTimeInterval(Self.startDeadline)
+		var attempts = 0
 		while true {
+			attempts += 1
 			do {
 				let (data, response) = try await session.data(from: url)
-				guard let http = response as? HTTPURLResponse, !data.isEmpty else { return nil }
-				if http.statusCode == 200 { return Drawing(data: data, fault: nil) }
+				guard let http = response as? HTTPURLResponse else {
+					return .failure(.notADrawing(status: 0, bytes: data.count))
+				}
+				guard !data.isEmpty else {
+					return .failure(.notADrawing(status: http.statusCode, bytes: 0))
+				}
+				if http.statusCode == 200 { return .success(Drawing(data: data, fault: nil)) }
 				// A diagram it could not parse: 400, a picture of the complaint,
 				// and the complaint itself in headers. Anything else with a 400 —
 				// a request this does not know how to make — is not a drawing at
@@ -442,12 +565,23 @@ public actor PlantUMLServers {
 				guard let fault = DiagramFault(
 					errorHeader: http.value(forHTTPHeaderField: Self.errorHeader),
 					lineHeader: http.value(forHTTPHeaderField: Self.errorLineHeader)
-				) else { return nil }
-				return Drawing(data: data, fault: fault)
+				) else {
+					return .failure(.notADrawing(status: http.statusCode, bytes: data.count))
+				}
+				return .success(Drawing(data: data, fault: fault))
 			} catch {
-				let code = (error as NSError).code
-				guard starting, Self.stillStarting.contains(code), Date() < deadline else {
-					return nil
+				let waited = Date().timeIntervalSince(began)
+				let failure = error as NSError
+				guard starting, Self.stillStarting.contains(failure.code) else {
+					return .failure(.requestFailed(
+						waited: waited, code: failure.code, said: failure.localizedDescription
+					))
+				}
+				guard Date() < deadline else {
+					return .failure(.neverAnswered(
+						waited: waited, deadline: Self.startDeadline,
+						attempts: attempts, last: failure.localizedDescription
+					))
 				}
 				try? await Task.sleep(nanoseconds: 200_000_000)
 			}

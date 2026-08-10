@@ -185,23 +185,41 @@ struct PlantUMLServerAddressTests {
 		#expect(!pipe.isEmpty)
 
 		// The first one pays for the container, the JVM and the JIT.
-		let first = await servers.render(Self.diagram, image: Self.image, using: runtime)
-		let warm = try #require(first)
+		//
+		// Asked through `draw` rather than `render` so that a failure says what
+		// happened. This line used to be `try #require(first)` over an optional,
+		// and the three quite different things it can mean — the runtime would
+		// not start a container, the JVM never answered inside a minute, the
+		// request itself timed out — all arrived as "expected a value". 0435 is
+		// what that cost.
+		let firstBegan = Date()
+		let first = await servers.draw(Self.diagram, image: Self.image, using: runtime)
+		let startSeconds = Date().timeIntervalSince(firstBegan)
 		started.note(await servers.containerNames)
+		guard let firstDrawing = drawn(first, "the first render", after: startSeconds) else {
+			return
+		}
+		let warm = firstDrawing.data
+		#expect(firstDrawing.fault == nil)
 		#expect(await servers.images == [Self.image])
 
 		// The second is the one the whole item is about.
 		let asked = Date()
-		let again = try #require(
-			await servers.render(Self.diagram, image: Self.image, using: runtime)
-		)
+		let second = await servers.draw(Self.diagram, image: Self.image, using: runtime)
 		let warmSeconds = Date().timeIntervalSince(asked)
+		guard let againDrawing = drawn(second, "the warm render", after: warmSeconds) else {
+			return
+		}
+		let again = againDrawing.data
 
-		// The same picture, byte for byte, from a server as from the pipe.
+		// The same picture, byte for byte, from a server as from the pipe. True at
+		// any load, so it is asserted at any load.
 		#expect(again == warm)
 		#expect(again == pipe)
-		print("PERF plantuml: pipe \(String(format: "%.2f", oldSeconds))s, "
-			+ "warm \(String(format: "%.3f", warmSeconds))s, \(again.count) bytes")
+		print("PERF plantuml: start \(String(format: "%.2f", startSeconds))s, "
+			+ "pipe \(String(format: "%.2f", oldSeconds))s, "
+			+ "warm \(String(format: "%.3f", warmSeconds))s, \(again.count) bytes, "
+			+ MachineLoad.said)
 		// Generous by an order of magnitude against what was measured — hundredths
 		// of a second warm against seconds for the pipe — so this fails when the
 		// server has stopped being used, not when the machine is busy.
@@ -209,6 +227,30 @@ struct PlantUMLServerAddressTests {
 		#expect(warmSeconds < oldSeconds / 4)
 
 		await servers.stopAll()
+	}
+
+	/// The drawing, or a failure that says what happened instead.
+	///
+	/// The whole of 0435 is that this used to be `try #require` over an optional:
+	/// a render that gave up because the machine could not start a JVM in a
+	/// minute, and a render that gave up because the image is broken, both
+	/// arrived as "expected a value" and cost five people a day telling them
+	/// apart. `Refusal` knows which, so the failure says which.
+	private func drawn(
+		_ outcome: Result<PlantUMLServers.Drawing, PlantUMLServers.Refusal>,
+		_ what: String,
+		after seconds: TimeInterval
+	) -> PlantUMLServers.Drawing? {
+		switch outcome {
+		case let .success(drawing):
+			return drawing
+		case let .failure(why):
+			Issue.record("""
+				\(what) gave up after \(String(format: "%.1f", seconds))s: \
+				\(why) — \(MachineLoad.said)
+				""")
+			return nil
+		}
 	}
 
 	/// The server removed behind this app's back, which is what happens when
@@ -220,8 +262,11 @@ struct PlantUMLServerAddressTests {
 		let started = Started()
 		defer { removeAll(started, using: runtime) }
 
-		_ = try #require(await servers.render(Self.diagram, image: Self.image, using: runtime))
+		let began = Date()
+		let first = await servers.draw(Self.diagram, image: Self.image, using: runtime)
 		started.note(await servers.containerNames)
+		guard drawn(first, "the first render", after: Date().timeIntervalSince(began)) != nil
+		else { return }
 		let name = try #require(await servers.containerNames.first)
 
 		// Taken away without telling anybody.
@@ -232,10 +277,14 @@ struct PlantUMLServerAddressTests {
 
 		// And a render still answers with a picture — from a new server, which
 		// is what the old one's failure is worth doing about.
-		let drawn = try #require(
-			await servers.render(Self.diagram, image: Self.image, using: runtime)
-		)
+		let again = Date()
+		let second = await servers.draw(Self.diagram, image: Self.image, using: runtime)
 		started.note(await servers.containerNames)
+		guard let replacement = drawn(
+			second, "the render after the server was removed",
+			after: Date().timeIntervalSince(again)
+		) else { return }
+		let drawn = replacement.data
 		#expect(!drawn.isEmpty)
 		#expect(await servers.containerNames.first != name)
 
