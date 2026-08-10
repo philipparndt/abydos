@@ -1347,12 +1347,74 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		// The list of what is running, driven the way somebody would drive it:
+		// open it, read it, press Stop on a row, read it again.
+		//
+		// Eight seconds before it opens, and that is not politeness: a count
+		// taken while a language server is still starting is a race rather than
+		// a rule, which is the same lesson `--switch-to path@seconds` records one
+		// section along in 0427. Fixed rather than measured back from the
+		// screenshot, so that the sequence below always has room; a `--delay`
+		// too short for it photographs the window mid-way, which is visible in
+		// the picture rather than silent.
+		if options.runningTools {
+			let window = RunningToolsWindowController.shared
+			let wanted = options.stopRunning
+			// Nothing to photograph means nothing to wait for afterwards, so the
+			// run ends when the reading is done — this is a measurement anybody
+			// can take from a script, and a window left open is a run that has
+			// to be killed.
+			let ends = options.screenshotPath == nil
+			// Eight seconds, or longer when a run says so. With a picture to
+			// take, `--delay` is when to take it and this stays at eight so the
+			// sequence fits in front of it; with no picture there is nothing to
+			// fit in front of, and `--delay` becomes how long to let the servers
+			// settle — which is what a measurement of a server that indexes
+			// wants, since the processes underneath it arrive after it does.
+			let opensAt = ends ? max(8.0, options.screenshotDelay) : 8.0
+			DispatchQueue.main.asyncAfter(deadline: .now() + opensAt) {
+				window.show()
+				window.refresh {
+					print("RUNNING: before\n\(window.reportForTesting)")
+					guard let wanted else {
+						if ends { exit(0) }
+						return
+					}
+					window.stopForTesting(matching: wanted) {
+						print("RUNNING: after\n\(window.reportForTesting)")
+						// And then something needs it again, which is the half of
+						// "stopping is not for ever" that is easy to leave
+						// unproven: every open file is announced afresh, exactly
+						// as it is when the scope moves under one.
+						print("RUNNING: rescoping \(controller?.tabCountForTesting ?? -1) tab(s)")
+						controller?.editorForTesting.rescope()
+						DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+							window.refresh {
+								// Whether the stopped process really went, asked
+								// of the operating system rather than of the
+								// register the list is drawn from.
+								if let pid = window.stoppedPidForTesting {
+									print("RUNNING: pid \(pid) still alive: "
+										+ "\(ToolContainers.isAlive(pid))")
+								}
+								print("RUNNING: after a file needed it again\n"
+									+ window.reportForTesting)
+								if ends { exit(0) }
+							}
+						}
+					}
+				}
+			}
+		}
+
 		if let path = options.screenshotPath {
 			scheduleScreenshot(
 				path: path,
 				delay: options.screenshotDelay,
 				controller: controller,
-				window: nil
+				// The list is a window of its own, so it is nowhere in the main
+				// window's frame. Photographed directly when it is the subject.
+				window: options.runningTools ? RunningToolsWindowController.shared.window : nil
 			)
 		}
 	}
@@ -1419,6 +1481,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		}
 		// No window to put a page in — the settings still have to be reachable.
 		SettingsWindowController.shared.show()
+	}
+
+	/// What this app has started and has not ended, with what each is costing.
+	///
+	/// On the app delegate rather than on a window controller, because what it
+	/// lists is the app's: one set of language servers and one set of containers
+	/// however many project windows are open. It opens with no window at all,
+	/// for the same reason the settings do.
+	@MainActor
+	@objc func showRunningTools(_ sender: Any?) {
+		RunningToolsWindowController.shared.show()
 	}
 
 	/// Flushes pending edits when the app goes to the background, so switching to
@@ -1953,6 +2026,23 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		)
 		maximizeTerminal.keyEquivalentModifierMask = [.command, .shift]
 		viewMenu.addItem(maximizeTerminal)
+
+		// What is running, beside the terminal items because it is the same
+		// family of thing — a process this app started that is still going —
+		// and with an explicit target because it is the app's list rather than
+		// this window's, and has to open when no project window is up at all.
+		//
+		// No key equivalent. It is wanted the day the fan comes on, which is not
+		// often enough to spend a chord on; the command palette is generated
+		// from this menu bar, so ⇧⌘P and "running" already reaches it.
+		let runningTools = NSMenuItem(
+			title: "Running Servers and Containers…",
+			action: #selector(showRunningTools(_:)),
+			keyEquivalent: ""
+		)
+		runningTools.target = self
+		viewMenu.addItem(runningTools)
+
 		let foldAll = NSMenuItem(title: "Collapse All", action: #selector(MainWindowController.collapseAllFolds(_:)), keyEquivalent: "-")
 		foldAll.keyEquivalentModifierMask = [.command, .shift]
 		viewMenu.addItem(foldAll)
