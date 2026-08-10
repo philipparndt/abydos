@@ -657,6 +657,13 @@ final class BacklogColumnView: NSView {
 	private var tableView: NSTableView!
 	private var headerLabel: NSTextField!
 	private var emptyLabel: NSTextField!
+	/// The width the cached row heights were measured at. See `widthChanged`.
+	private var measuredWidth: CGFloat = 0
+
+	override func layout() {
+		super.layout()
+		widthChanged(to: cardWidth)
+	}
 
 	init(state: BacklogState) {
 		self.state = state
@@ -776,7 +783,39 @@ extension BacklogColumnView: NSTableViewDataSource, NSTableViewDelegate {
 	func numberOfRows(in tableView: NSTableView) -> Int { cards.count }
 
 	func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-		BacklogCardView.height(for: cards[row], width: tableView.bounds.width)
+		BacklogCardView.height(for: cards[row], width: cardWidth)
+	}
+
+	/// The width a card will actually be drawn at.
+	///
+	/// **Not `tableView.bounds.width`**, which is what this asked before and is
+	/// the width of the table *before* it has been laid out inside its scroll
+	/// view. Measured: 375 against the 343 the cell then got, a difference of a
+	/// scroller — enough that a title fitting one line while being measured
+	/// needed two while being drawn, and the card came out a line short. The
+	/// column's width is what the row is given.
+	var cardWidth: CGFloat {
+		let column = tableView.tableColumns.first?.width ?? 0
+		return column > 0 ? column : tableView.bounds.width
+	}
+
+	/// Measured heights are only true for the width they were measured at.
+	///
+	/// A card's height is how many lines its title wraps to, and AppKit asks
+	/// once and then caches: the first answer comes back at whatever width the
+	/// table had while the board was still being laid out, and nothing asks
+	/// again when the column settles. A title that wraps to two lines at the
+	/// real width and one at the width it was measured at gets a card a line
+	/// short — which is how a branch name came to be drawn across the second
+	/// line of a title.
+	///
+	/// So the heights are thrown away when the width actually changes, and only
+	/// then: `layout()` runs for every scroll and every reload, and telling a
+	/// table its rows have all changed height is not free.
+	func widthChanged(to width: CGFloat) {
+		guard abs(width - measuredWidth) > 0.5, !cards.isEmpty else { return }
+		measuredWidth = width
+		tableView.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0..<cards.count))
 	}
 
 	func tableView(_ tableView: NSTableView, viewFor column: NSTableColumn?, row: Int) -> NSView? {
@@ -864,10 +903,35 @@ private final class BacklogCardView: NSView {
 			options: [.usesLineFragmentOrigin, .usesFontLeading],
 			attributes: [.font: font]
 		)
-		let lines = Theme.current.uiFont(11).boundingRectForFont.height
-		var height = ceil(bounds.height) + lines * 2 + inset * 2 + Theme.current.scaled(6)
-		if card.progress != nil { height += Theme.current.scaled(Self.barHeight) + Theme.current.scaled(4) }
-		return height
+		return ceil(bounds.height) + numberLine + Theme.current.scaled(2)
+			+ footer(marks: !BacklogPalette.marks(for: card).isEmpty, progress: card.progress != nil)
+			+ inset * 2 + Theme.current.scaled(6)
+	}
+
+	/// The two measures the height and the drawing must agree on.
+	///
+	/// They did not. The height reserved two of `boundingRectForFont.height`
+	/// while the drawing advanced by `size(withAttributes:).height`, which is
+	/// the larger of the two — so a card came out about a line short, and a
+	/// two-line title had nowhere for its second line. That is the whole of the
+	/// fault: not the width, not the wrap, a font metric asked two ways.
+	///
+	/// Both sides read these now, so the only way they can disagree again is if
+	/// somebody changes one of these and not the drawing that uses it.
+	static var numberLine: CGFloat {
+		("0000" as NSString)
+			.size(withAttributes: [.font: Theme.current.uiFont(11, weight: .medium)]).height
+	}
+
+	static var markLine: CGFloat {
+		("0/0" as NSString).size(withAttributes: [.font: Theme.current.uiFont(11)]).height
+	}
+
+	/// What sits below the title: the marks line, and the bar when there is one.
+	static func footer(marks: Bool, progress: Bool) -> CGFloat {
+		var footer: CGFloat = marks ? markLine : 0
+		if progress { footer += Theme.current.scaled(Self.barHeight) + Theme.current.scaled(4) }
+		return footer
 	}
 
 	override var isFlipped: Bool { true }
@@ -906,7 +970,20 @@ private final class BacklogCardView: NSView {
 			.font: Theme.current.uiFont(12),
 			.foregroundColor: Theme.current.editorText,
 		]
-		let titleRect = NSRect(x: x, y: y, width: width, height: card.maxY - y - inset)
+		// The title stops above the footer rather than running to the bottom of
+		// the card.
+		//
+		// It used to be given every point left, and the marks were then drawn on
+		// top of whatever the title had put in that space — a branch name across
+		// the second line of a two-line title, both unreadable. That only shows
+		// when the height is a line short, which `height(for:width:)` can be
+		// when it measured at a different width from the one the card is drawn
+		// at, so this is the half that makes the overlap impossible rather than
+		// unlikely. `lines` is the same measure the height reserves two of.
+		let footer = Self.footer(marks: !marks.isEmpty, progress: progress != nil)
+		let titleRect = NSRect(
+			x: x, y: y, width: width, height: max(0, card.maxY - y - inset - footer)
+		)
 		(title as NSString).draw(
 			with: titleRect,
 			options: [.usesLineFragmentOrigin, .usesFontLeading],
