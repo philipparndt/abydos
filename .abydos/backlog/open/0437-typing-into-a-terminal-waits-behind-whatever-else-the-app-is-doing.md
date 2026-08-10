@@ -162,31 +162,124 @@ Not measured. What is checked instead is the thing a benchmark would not have
 caught: that asking together and asking separately give the same answers,
 including directory rollups and inherited ignores, and in order.
 
+## Fixed in the round after the first reading
+
+The reading below is what set the order for these. It found the watcher, not
+suspect 1, and the watcher is where the second round started.
+
+### The watcher opened the directories it was asking about
+
+`handleFilesystemChange` says it only re-reads directories the user has
+expanded, and the guard is right. The lookup in front of it was not.
+`FileNode.node(for:)` **lists a directory in order to look inside it** — which
+is exactly what revealing a file needs and exactly wrong here — so asking it
+about `.build/arm64-apple-macosx/debug/Modules` listed `.build`, then the
+configuration directory below it, then the one below that, on the main queue, to
+establish that the directory at the end of the path was not open after all.
+
+And the listings stayed. A directory read once is loaded for ever, so every
+later reload walked it, `collectPaths` gathered a path for each of its files on
+every event, and `applyGitStatus` visited them all. In a checkout with a dozen
+worktrees inside it, all being built at once, the tree quietly took on the whole
+of that output while nobody was looking at any of it — and each event cost more
+than the one before, which is the shape of a stall that gets worse through a
+session rather than staying where it is.
+
+`FileNode.loadedNode(for:)` walks only through children that are already loaded
+and gives up at the first closed door, which is where the answer already was.
+`restoreSelection` uses it too: a path that was selected was on screen, so
+everything above it is open, and a path that cannot be reached that way has no
+row to select either.
+
+**This is the case the directory-stamp fix could not help with**, and the reason
+is worth writing down: the stamp is checked *inside* `reloadPreservingIdentity`,
+and none of the work above ever got that far. A build moves the stamps, so the
+fix would not have skipped these directories in any case — but it was never
+asked to, because the cost was in deciding whether the tree cared at all.
+
+Counted rather than timed, since the machine was not quiet: one event about a
+file three directories inside a closed one cost two listings and left both
+loaded; it now costs none and leaves nothing.
+
+**Coalescing was considered and refused.** It looks like the obvious answer to a
+burst of events and it is not: `FileSystemWatcher` already asks FSEvents for a
+0.25 s latency, so the kernel coalesces and a burst arrives at four batches a
+second at most. The reading's eight stalls were spread over 26 seconds — about
+one every three — so a second coalescer on the main queue would have merged
+almost nothing and delayed every file appearing in the tree to do it. The events
+were not too many. Each one was too expensive.
+
+### Building a file's text for a language server left the main queue
+
+Suspect 1's remaining half, and it turned out not to be the trade recorded
+below. The doubt written down was that the rope is edited on the main thread and
+reading it anywhere else is a race. That is true of the **document** — the main
+thread reassigns `TextDocument.rope` on every keystroke — and it is not true of
+a `Rope`, which is a persistent, `Sendable` value: taking it is a reference bump
+and nothing can change it afterwards. `TextDocument.symbols` already hands
+exactly that snapshot to the parser's queue, three hundred lines above where the
+doubt was written, and `Rope`'s own documentation calls it "a free snapshot".
+
+So there is no trade, no measurement owed, and neither of the two answers the
+list proposed is needed. `EditorViewController.withText(of:)` takes the snapshot
+on the main queue, decodes the UTF-8 into a `String` on a serial queue of its
+own, and sends from the main queue when it is built. Both callers that repeat go
+through it — the 0.4 s typing sync and the auto-save that follows every typing
+pause. The two that open a file still build it inline, because they happen once.
+
+Serial rather than concurrent, because a `didChange` carries a version number
+and a whole file: the older of two arriving last would leave the server
+describing text nobody has. And the send is now a moment behind the build, which
+it was not before, so it checks the document is still open in a tab first.
+
+### One walk of the project to decide what servers it wants
+
+Suspect 2. `LanguageServers.suits` is a depth-2 directory walk, and `warmUp` and
+`serverStatus` both loop over every definition asking it — the same directories
+listed, the same names read, once for each of the seven definitions that name
+markers. `holdsMarker` made it worse in a smaller way: handed a listing by the
+walk above it, it listed the directory again for every `*.ext` marker.
+
+A `DirectoryIndex` lists each directory once and answers both questions from it,
+and `suitedDefinitions(in:)` shares one across the loop. Thrown away when the
+call returns, deliberately: a project that gains a `go.mod` a minute from now
+must be answered from the directory as it is then, and within one call there is
+nothing to be stale against.
+
+Counted, since no timing taken on this machine would mean anything: a six
+directory project with no manifest in it — the worst case, where every
+definition walks all of it before giving up — costs **42 listings one at a time
+and 6 together**. The count no longer depends on how many servers this app knows
+about, which is the property worth having.
+
+`notice()`'s plain duplicate is gone with it: it asked `suits` for its own
+reasons and then called through `suggestion`, which asked again.
+
+The index is asked for hidden entries and filters hidden *directories* out of
+the walk by their flag, rather than passing `skipsHiddenFiles` to the listing.
+Written the obvious way, jdtls's `.classpath` would have stopped being a marker,
+which is what one of the three tests is for — the same shape of mistake as the
+`NSURL` caching above, and caught the same way.
+
 ## Not fixed, and where to look next
 
-Ranked as before, with the two that were done struck through and what remains
-of them kept where it belongs:
+The ranking is kept in its original numbering so that what has gone can be seen
+to have gone. What the second round actually did first is not on it at all —
+the watcher, which the reading found and the ranking had not.
 
-1. ~~**`LanguageService` `didChange`**~~ — half of it. The blocking write and
-   the JSON are off the main thread. **Building the entire file as a `String`
-   from the rope still happens on the main thread**, at
-   `EditorViewController.scheduleLanguageSync`, every 0.4 s of typing and on
-   every auto-save. It cannot simply be moved: the rope is edited on the main
-   thread and reading it from anywhere else is a race. The honest answers are a
-   snapshot the rope can hand out cheaply, or incremental `didChange` — and the
-   note on `LSPClient.didChange` says why incremental was refused, which is
-   still a good reason. Marked `language sync`, so the log can say whether it
-   is worth either.
-2. **`LanguageServers.suits()`** — a depth-2 directory walk per server
-   definition, in a loop over every definition, from three `@MainActor`
-   callers. Still true, and **deliberately left**: the walk is identical for
-   all ten definitions, so a bulk `suitedDefinitions(in:)` that lists each
-   directory once would cut the I/O roughly tenfold — but the callers that
-   loop are `warmUp` and `serverStatus`, which run at project open rather than
-   between keystrokes, and nothing here knows yet whether that costs anybody
-   anything. `notice()` walks twice for one file, once itself and once inside
-   `suggestion`, which is a plain duplicate and the cheapest thing to remove
-   first. Marked `language server scan`; the log decides.
+1. ~~**`LanguageService` `didChange`**~~ — done, both halves. The remaining one
+   went off the main queue on the second round, and the reason it was thought
+   to be a trade was wrong: the doubt was about the document, not about a
+   `Rope` value, which is persistent and safe to hand out. Nothing was traded
+   and nothing needed measuring. Neither of the answers proposed here — a
+   cheaper snapshot, or incremental `didChange` — was needed, and the note on
+   `LSPClient.didChange` refusing incremental still stands.
+2. ~~**`LanguageServers.suits()`**~~ — done. One walk for all seven definitions
+   that name markers instead of one each, and `notice()`'s duplicate removed.
+   Counted at 42 listings against 6, above. The doubt recorded here — that
+   `warmUp` and `serverStatus` run at project open and might cost nobody
+   anything — was never resolved and did not need to be: the change is smaller
+   than the argument about whether to make it.
 3. ~~**`refreshGitStatus`**~~ — done, above.
 4. **`TextDocument.save`** — `TextDocument.save` serialises the whole rope and
    does an atomic write on the main queue after every typing pause. Everything
@@ -207,26 +300,62 @@ of them kept where it belongs:
 7. **`DAPClient.stop`** — busy-waits with `usleep` for up to half a second,
    reached from main-thread actions. Marked `debug adapter stop`.
 
+Four to seven were looked at again on the second round and left where they are,
+which is a decision rather than a stopping place. Four wants designing and the
+note above says what the design has to answer. Five is already warmed on a
+background queue, so the only open question is whether the warm-up ever loses
+the race, and that is a question for the log rather than for a change. Six and
+seven are both reachable only from something the user just asked for — opening a
+diff, stopping a debug session — rather than from between two keystrokes, and
+both would want restructuring to move: six needs a generation guard and a
+repaint, seven's `terminate`-then-`SIGKILL` wait is load-bearing for the pipe
+leak its own comment describes, and unpicking that to save half a second at the
+end of a debug session is the wrong trade to make blind. **They are ranked
+below the point where a change is clearly right, and the log is what should
+promote them.**
+
 ## What was not measured, and how to measure it
 
-Nothing on this branch was timed. Another agent was taking performance
-baselines on the same machine while it was written, and a number taken beside
-that work is worse than no number: it is a number somebody will quote.
+Nothing on either branch was timed, and for the same reason both times: other
+agents were working on this machine while it was written — load average 10 to 40
+throughout the second round — and a number taken beside that work is worse than
+no number, because it is a number somebody will quote.
 
-Both changes here are right by construction rather than by stopwatch — an
-unbounded wait removed, and a few thousand main-queue hops replaced by one —
-so neither claim rests on a measurement. What is genuinely unmeasured is *how
-much of the 8,776 seconds they were*, and that is now answerable without a
-stopwatch at all: run the app for an ordinary session on a quiet machine and
-count `~/Library/Logs/Abydos/stalls.log` by activity. `idle` falling and the
-seven names appearing is the whole result; if `idle` is still most of it, the
-sweep missed something and the next step is more marks rather than more fixes.
+Every change is right by construction rather than by stopwatch: an unbounded
+wait removed, a few thousand main-queue hops replaced by one, directories no
+longer listed to find out whether anybody wanted them, a decode moved off the
+queue the keyboard shares, and one walk of a project where there were seven.
+Where a number was genuinely useful it is a **count** rather than a duration —
+2 listings against 0 for a watcher event, 42 against 6 for a project scan —
+because a count does not care what else the machine is doing.
 
-The one thing that does want a real before/after is suspect 1's remaining half,
-because it is a trade rather than a removal: the cost of building a large
-file's text against the cost of whatever replaces it. Measure it as
-`FileNodeReloadTests` measures its reload — a test with a file of a stated
-size, not a session with a stopwatch.
+The one thing recorded here as needing a before/after no longer does. It was
+suspect 1, on the argument that it was a trade; it was not a trade, and the
+section above says why.
+
+### The one measurement still worth taking, and the command for it
+
+What is still unmeasured is *how much of the 8,776 seconds all of this was*.
+That wants an ordinary session on a quiet machine — no agents, nothing building
+— and then a count of the log by activity. Move the old log aside first, since
+it holds five days at two different thresholds:
+
+    mv ~/Library/Logs/Abydos/stalls.log ~/Library/Logs/Abydos/stalls-before.log
+
+Then use the app normally for half an hour, with a terminal open and typing in
+it, and read what it caught:
+
+    awk -F'ms  ' 'NF>1 {split($1,a," "); n[$2]++; s[$2]+=a[2];
+      if (a[2]+0>w[$2]+0) w[$2]=a[2]}
+      END {for (k in n) printf "%5d  %8.1f s  %6d ms worst  %s\n",
+      n[k], s[k]/1000, w[k], k}' ~/Library/Logs/Abydos/stalls.log | sort -rn
+
+`idle` falling and the seven names appearing is the whole result. If `idle` is
+still most of it, the sweep missed something and the next step is more marks
+rather than more fixes. If `navigator watcher` is small while files are being
+written into the project, the change above is what did it — and if it is not,
+the next place to look is the diff between an event that lands on an open
+directory and one that does not.
 
 ## The deeper answer, still not attempted
 
@@ -262,7 +391,22 @@ around 40 during that window, from the same agents. Under that, everything is
 late and some of these are starvation rather than the watcher holding the queue.
 What the reading establishes is *where to look next* and that the instrumentation
 works — not how much the watcher costs on a quiet machine. That number still
-wants an idle session, and it is now one command to get.
+wants an idle session, and the command for it is above.
+
+### What the reading led to
+
+It was better evidence than the ranking, and it was right to follow it. The
+ranking had `LanguageServers.suits` second and the watcher nowhere, because the
+watcher had only just stopped being anonymous; one reading with a name on it
+moved it to the front. Following it found something no amount of ranking would
+have: the expensive part of a watcher event was not re-reading the directories
+somebody had open, it was deciding whether any of them were — and that decision
+opened them.
+
+The lesson worth keeping is the one about the mark rather than the one about the
+bug. `handleFilesystemChange` had been doing this for as long as it has existed,
+its cost was recorded as `idle` for five days, and nothing in the first round's
+analysis found it. It took a name and one honest reading.
 
 ---
 
