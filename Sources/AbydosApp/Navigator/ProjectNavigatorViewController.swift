@@ -311,6 +311,13 @@ final class ProjectNavigatorViewController: NSViewController {
 	}
 
 	private func handleFilesystemChange(_ directories: [URL]) {
+		StallWatch.mark("navigator watcher") { handleFilesystemChangeMarked(directories) }
+	}
+
+	/// Named for the stall log, because this runs on every filesystem event and
+	/// an agent writing files makes that dozens a minute. A stall recorded as
+	/// "idle" is one nobody can act on, and most of the log was idle.
+	private func handleFilesystemChangeMarked(_ directories: [URL]) {
 		// Reported before the early return below: the staging view cares about
 		// any edit, not only ones in a directory the tree happens to have
 		// expanded.
