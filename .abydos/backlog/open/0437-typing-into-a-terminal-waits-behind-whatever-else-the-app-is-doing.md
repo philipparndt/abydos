@@ -235,6 +235,35 @@ main because the emulator and the renderer both live there, and moving it is a
 real piece of work rather than a tidy-up. Everything above makes the queue
 shorter; this is the one that stops the terminal caring how long it is.
 
+## First reading from the lowered threshold, on a real session
+
+Taken the way this entry asks for it — an ordinary session, counted by activity —
+on a build carrying both halves of the work, over the first six minutes after a
+restart:
+
+| activity | stalls | range |
+|---|---|---|
+| navigator watcher | 8 | 57–423 ms |
+| idle | 6 | 99–576 ms |
+
+**Four of those eight would not have been recorded at all at the old 200 ms**,
+which is the threshold change paying for itself immediately: 57, 61, 72 and 99 ms
+are invisible in every number at the top of this entry.
+
+The eight are one 26-second cluster, and what was happening during it is known —
+two agents were writing files into the repository. So a build, or anything else
+writing to the project, still puts the navigator watcher on the main queue often
+enough to be felt, *after* the directory-stamp fix that made a reload 199× cheaper
+when nothing moved. That fix skips directories whose stamp has not moved; a build
+moves them, so it is the case the fix cannot help with.
+
+**Honest caveat, and it is a large one.** The machine was at a load average of
+around 40 during that window, from the same agents. Under that, everything is
+late and some of these are starvation rather than the watcher holding the queue.
+What the reading establishes is *where to look next* and that the instrumentation
+works — not how much the watcher costs on a quiet machine. That number still
+wants an idle session, and it is now one command to get.
+
 ---
 
 Numbered after 0436, which is where the list had got to on the main working
