@@ -53,6 +53,51 @@ struct PseudoTerminalWriteTests {
 		#expect(terminal.pendingInputCount >= 0)
 	}
 
+	/// A cell that changes size is told to the program straight away.
+	///
+	/// The pixels in a winsize are the only way anything can work out how large
+	/// a cell is, and `icat` sizes a whole picture from them. Only a change in
+	/// the number of *cells* used to write the structure, so a pane that learnt
+	/// its real cell size after the window appeared — which is when the display's
+	/// scale is first knowable — left the program on the old number until
+	/// something else happened to resize it.
+	@Test func aChangedCellSizeReachesTheProgramWithoutAResize() throws {
+		let terminal = PseudoTerminal()
+		terminal.cellPixelSize = (width: 8, height: 19)
+		try #require(terminal.start(executable: "/bin/cat", arguments: [], rows: 24, columns: 80))
+		defer { terminal.terminate() }
+
+		let before = try #require(terminal.reportedWindowSize)
+		#expect(before.pixelWidth == 80 * 8)
+		#expect(before.pixelHeight == 24 * 19)
+
+		terminal.cellPixelSize = (width: 16, height: 38)
+
+		let after = try #require(terminal.reportedWindowSize)
+		#expect(after.rows == 24, "the grid is unchanged")
+		#expect(after.columns == 80)
+		#expect(after.pixelWidth == 80 * 16)
+		#expect(after.pixelHeight == 24 * 38)
+	}
+
+	/// And the grid it is reported against is the one in force, not the one the
+	/// pane was started with.
+	@Test func theNewCellSizeIsReportedAgainstTheCurrentGrid() throws {
+		let terminal = PseudoTerminal()
+		terminal.cellPixelSize = (width: 8, height: 19)
+		try #require(terminal.start(executable: "/bin/cat", arguments: [], rows: 24, columns: 80))
+		defer { terminal.terminate() }
+
+		terminal.resize(rows: 40, columns: 120)
+		terminal.cellPixelSize = (width: 16, height: 38)
+
+		let after = try #require(terminal.reportedWindowSize)
+		#expect(after.rows == 40)
+		#expect(after.columns == 120)
+		#expect(after.pixelWidth == 120 * 16)
+		#expect(after.pixelHeight == 40 * 38)
+	}
+
 	/// Collects what the program sends back.
 	private final class Received: @unchecked Sendable {
 		private let lock = NSLock()
