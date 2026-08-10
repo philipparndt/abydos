@@ -85,37 +85,43 @@ public enum ToolImageCatalogue {
 		),
 		// The language servers, which are the tools somebody would otherwise
 		// have to install by hand — a Go toolchain to get gopls, a Rust one for
-		// rust-analyzer, a JDK for jdtls. Only gopls lists an image: the point
-		// of that list is that somebody has run the thing, and gopls is the one
-		// that has been built, pushed, pulled back and driven. What is written
-		// down for the other five instead is exactly what an image has to do,
-		// which is the same for all of them and short.
+		// rust-analyzer, a JDK for jdtls.
+		//
+		// Each lists one image, and every one of them went the same way round
+		// before it appeared here: built from `ToolImages/<tool>/Dockerfile`,
+		// pushed for both architectures by `make toolimage-publish TOOL=<tool>`,
+		// fetched back out of Docker Hub by a runtime that had none of it, and
+		// driven end to end by `ContainerLSPLiveTests` against a project of its
+		// own language — diagnostics, symbols and a go-to-declaration, every one
+		// of them naming a file on this machine. An entry here is that claim and
+		// nothing weaker, which is why `ToolContainerTests` refuses one for an
+		// image that test would not run.
+		//
+		// The requirement beside each is a description rather than a wish: the
+		// server is the entry point with no wrapper to print a banner before the
+		// first header, the project is read at /workspace, and whatever the
+		// server shells out to is in the image — which is the whole reason these
+		// are built on a toolchain rather than being a slim image with a binary
+		// copied into it.
+		//
+		// Every tag is `dev`, because that is the only tag in each repository —
+		// `VERSION` defaulted. Listing a version that reads better and cannot be
+		// pulled is the exact failure this list exists to prevent. That the tag
+		// moves is said in each label rather than here, because the person it
+		// matters to is choosing in a menu and will never read this; when a
+		// version tag is pushed it becomes the entry and `:dev` stops being
+		// offered.
+		//
+		// The labels carry the image's own name, the way the PlantUML ones do,
+		// so what is on screen is what would be pulled — 0401 drafted these as
+		// "abydos/<tool>", which is neither the repository nor anything somebody
+		// could type — and then the versions inside it, since that is what
+		// somebody is choosing between.
 		Tool(
 			key: "gopls",
 			title: "Go — gopls",
-			// Built by `ToolImages/gopls/Dockerfile`, pushed by
-			// `make toolimage-publish TOOL=gopls`, and — the part that earns it a
-			// line here — pulled back from Docker Hub on this machine and driven
-			// end to end by `ContainerLSPLiveTests`: diagnostics, symbols and a
-			// go-to-declaration, every one of them naming a file on the host.
-			// The requirement below is a description of it rather than a wish:
-			// `gopls` is the entry point with no arguments and no wrapper, the
-			// project is read at /workspace, and the Go toolchain it shells out
-			// to is in the image, which is the whole reason the image exists.
-			//
-			// The tag is `dev` because that is the only tag in the repository —
-			// `VERSION` defaulted, and listing `:0.23.0` because it reads better
-			// would be listing something nobody can pull, which is the exact
-			// failure this list exists to prevent. That it moves is said in the
-			// label rather than here, because the person it matters to is
-			// choosing it in a menu and will never read this. When a version tag
-			// is pushed, that becomes this entry and `:dev` stops being offered.
 			choices: [
 				Choice(
-					// The image's own name, the way the PlantUML labels are, so what
-					// is on screen is what would be pulled — 0401 drafted this as
-					// "abydos/gopls", which is neither the repository nor anything
-					// somebody could type.
 					label: "pharndt/abydos-gopls:dev (gopls 0.23.0, Go 1.26 — a tag that moves)",
 					image: "pharndt/abydos-gopls:dev",
 					publisher: "the Abydos project"
@@ -126,31 +132,74 @@ public enum ToolImageCatalogue {
 		Tool(
 			key: "rust-analyzer",
 			title: "Rust — rust-analyzer",
-			choices: [],
+			choices: [
+				Choice(
+					// The server's version is the toolchain's, and deliberately: it
+					// comes from `rustup component add`, so a project is never read
+					// by a rust-analyzer newer than the compiler it is asked about.
+					label: "pharndt/abydos-rust-analyzer:dev (rust-analyzer 1.97.1, Rust 1.97 — a tag that moves)",
+					image: "pharndt/abydos-rust-analyzer:dev",
+					publisher: "the Abydos project"
+				),
+			],
 			requirement: languageServerRequirement("rust-analyzer")
 		),
 		Tool(
 			key: "pyright",
 			title: "Python — pyright",
-			choices: [],
+			choices: [
+				Choice(
+					// The Python in the label is the interpreter pyright asks where
+					// site-packages are, not one a project runs on. What a project's
+					// own environment holds is visible in there only if it lives
+					// inside the project directory.
+					label: "pharndt/abydos-pyright:dev (pyright 1.1.411, Python 3.11 — a tag that moves)",
+					image: "pharndt/abydos-pyright:dev",
+					publisher: "the Abydos project"
+				),
+			],
 			requirement: languageServerRequirement("pyright-langserver --stdio")
 		),
 		Tool(
 			key: "typescript-language-server",
 			title: "TypeScript — typescript-language-server",
-			choices: [],
+			choices: [
+				Choice(
+					// TypeScript 5 and not 7, which is the native compiler and ships
+					// no `tsserver.js` for this server to drive at all. A project's
+					// own copy still wins over the one in the image.
+					label: "pharndt/abydos-typescript-language-server:dev (server 5.3.0, TypeScript 5.9 — a tag that moves)",
+					image: "pharndt/abydos-typescript-language-server:dev",
+					publisher: "the Abydos project"
+				),
+			],
 			requirement: languageServerRequirement("typescript-language-server --stdio")
 		),
 		Tool(
 			key: "clangd",
 			title: "C and C++ — clangd",
-			choices: [],
+			choices: [
+				Choice(
+					label: "pharndt/abydos-clangd:dev (clangd 19.1.7 — a tag that moves)",
+					image: "pharndt/abydos-clangd:dev",
+					publisher: "the Abydos project"
+				),
+			],
 			requirement: languageServerRequirement("clangd")
 		),
 		Tool(
 			key: "jdtls",
 			title: "Java — jdtls",
-			choices: [],
+			choices: [
+				Choice(
+					// One JDK in the image, so a project targeting an older release
+					// is compiled against this one; and no java-debug bundle, so
+					// there is no debugging through it.
+					label: "pharndt/abydos-jdtls:dev (jdtls 1.55.0, Java 21 — a tag that moves)",
+					image: "pharndt/abydos-jdtls:dev",
+					publisher: "the Abydos project"
+				),
+			],
 			requirement: languageServerRequirement("jdtls")
 		),
 		// No published image, and none is wanted: this is the tool the

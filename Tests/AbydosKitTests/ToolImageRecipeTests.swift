@@ -26,8 +26,13 @@ struct ToolImageRecipeTests {
 		#expect(recipe.image.hasPrefix("abydos-built/gopls:"))
 	}
 
+	/// PlantUML and not jdtls, which is what this said until 0401 gave jdtls a
+	/// Dockerfile of its own. The renderer is the tool with no recipe now, and
+	/// it is a better example anyway: the reason it has none is that it has a
+	/// published image from the project that makes it, which is the case this
+	/// route was never meant to displace.
 	@Test func aToolWithNoDockerfileHasNoRecipe() {
-		#expect(ToolImageRecipes.recipe(forTool: "jdtls") == nil)
+		#expect(ToolImageRecipes.recipe(forTool: "plantuml") == nil)
 		#expect(ToolImageRecipes.recipe(forTool: "") == nil)
 		#expect(ToolImageRecipes.recipe(forTool: "../gopls") == nil)
 	}
@@ -132,7 +137,9 @@ struct ToolImageRecipeTests {
 		// Nil rather than a name, so the caller falls back to the copy installed
 		// on this machine. A name invented here would start a container from an
 		// image nobody has and report it as the tool being broken.
-		#expect(ToolImageRecipes.resolve(image: "build", forTool: "jdtls") == nil)
+		//
+		// PlantUML rather than jdtls since 0401: jdtls has a recipe now.
+		#expect(ToolImageRecipes.resolve(image: "build", forTool: "plantuml") == nil)
 	}
 
 	// MARK: - The build
@@ -186,7 +193,9 @@ struct ToolImageRecipeTests {
 	}
 
 	@Test func aToolWithNoRecipeIsNotOfferedABuild() throws {
-		let tool = try #require(ToolImageCatalogue.tool(forKey: "jdtls"))
+		// PlantUML, which is the only tool in the catalogue with no Dockerfile
+		// now that 0401 has given every language server one.
+		let tool = try #require(ToolImageCatalogue.tool(forKey: "plantuml"))
 		#expect(!ToolImageCatalogue.options(for: tool).map(\.value)
 			.contains(ToolImageRecipes.buildHere))
 	}
@@ -232,16 +241,19 @@ struct ToolImageRecipeTests {
 	@Test func askingToBuildAServerWithNoRecipeFallsBackToTheCopyInstalledHere() throws {
 		let root = try JavaTestDirectory.make()
 		defer { try? FileManager.default.removeItem(at: root) }
-		try JavaTestDirectory.write("class A {}\n", to: root.appendingPathComponent("A.java"))
-		try JavaTestDirectory.write("<project/>\n", to: root.appendingPathComponent("pom.xml"))
+		try JavaTestDirectory.write("{}\n", to: root.appendingPathComponent("data.json"))
 
+		// The JSON server, which was Java until 0401 shipped a recipe for jdtls.
+		// It is the same case and a longer-lived example: this is a server the
+		// project has no Dockerfile for and no plans to write one for, so the
+		// test does not go stale the next time somebody adds an image.
 		let resolved = LanguageServers.resolve(
-			languageId: "java", project: root,
+			languageId: "json", project: root,
 			image: "build", runtime: .docker("/usr/bin/docker")
 		)
-		// Either nothing — jdtls is not installed on this machine — or the
-		// installed copy. What it must never be is a container started from an
-		// image whose name this app invented.
+		// Either nothing — the server may not be installed on this machine — or
+		// the installed copy. What it must never be is a container started from
+		// an image whose name this app invented.
 		#expect(resolved?.launch.image == nil)
 	}
 }

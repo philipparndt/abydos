@@ -200,13 +200,19 @@ devpod-publish: ## Push a multi-arch dev pod image (REPOSITORY, VERSION)
 
 # The images a tool can come from, for a machine that would rather not install
 # the toolchain behind a language server. Built with a real builder rather than
-# assembled the way the pod image is: gopls needs the Go toolchain beside it, so
-# there is a base image under it and no way around a build.
-.PHONY: tool-image-gopls
-tool-image-gopls: ## Build the gopls image (TAG=abydos/gopls:dev)
-	@docker build -t $(or $(TAG),abydos/gopls:dev) ToolImages/gopls
-	@echo "==> $(or $(TAG),abydos/gopls:dev)"
-	@echo "    name it for a project in .abydos/tools.json: {\"gopls\": \"$(or $(TAG),abydos/gopls:dev)\"}"
+# assembled the way the pod image is: every one of these sits on a base image —
+# a Go toolchain, a JDK, Node — so there is no way around a build.
+#
+# One architecture, this machine's, and no push: this is the goal for somebody
+# editing a Dockerfile, who wants the image on the machine to run it. What a
+# stranger would pull is `toolimage-publish`, below, and the two are different
+# questions — see `ContainerLSPLiveTests`, which drives whichever of them is
+# here and prefers the published one.
+.PHONY: tool-image
+tool-image: ## Build a tool image locally (TOOL=gopls, TAG=abydos/<tool>:dev)
+	@docker build -t $(or $(TAG),abydos/$(or $(TOOL),gopls):dev) ToolImages/$(or $(TOOL),gopls)
+	@echo "==> $(or $(TAG),abydos/$(or $(TOOL),gopls):dev)"
+	@echo "    name it for a project in .abydos/tools.json: {\"$(or $(TOOL),gopls)\": \"$(or $(TAG),abydos/$(or $(TOOL),gopls):dev)\"}"
 
 # Publishing one of them takes the pod's two words — REPOSITORY and VERSION —
 # and one more. TOOL, because each tool is its own repository: a goal that
