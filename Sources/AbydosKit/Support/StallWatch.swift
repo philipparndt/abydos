@@ -34,16 +34,64 @@ public enum StallWatch {
 		/// What the app said it was doing, or "idle" when nothing claimed it.
 		public let activity: String
 
-		public init(at: Date, duration: TimeInterval, activity: String) {
+		/// How much of the stall the main thread spent on a processor, 0 to 1,
+		/// or `nil` when it could not be asked.
+		///
+		/// This is the difference between the two things `idle` used to mean,
+		/// and they want opposite fixes. Near 1, the main thread was *running*
+		/// the whole stall, inside work nobody has marked: there is code to find
+		/// and give a name to. Near 0, it executed almost nothing, and the fix
+		/// is somewhere else entirely.
+		///
+		/// **Near 0 is not the same as "not our fault".** It says the thread was
+		/// not on a processor, which covers being descheduled by a busy machine
+		/// *and* being blocked — a pipe write nobody is draining, a lock, a
+		/// subprocess being waited on — and this entry's worst bug was exactly
+		/// the second kind. Measured: a `--stall 800`, which is a `Thread.sleep`
+		/// on the main thread, logs `cpu 0%`. So the field halves the search
+		/// rather than ending it, and that is worth having: every reading in
+		/// 0437 was taken without it, and two hours of a quiet session produced
+		/// thirteen stalls of which every single one was `idle`.
+		public let mainThreadRunning: Double?
+
+		/// Which process wrote the line.
+		///
+		/// One log file, and more than one Abydos can be running against it: a
+		/// second instance opened beside the first to measure something writes
+		/// into the same file, in the same format, and there was nothing to tell
+		/// the two apart. That cost a measurement.
+		public let pid: Int32
+
+		public init(
+			at: Date,
+			duration: TimeInterval,
+			activity: String,
+			mainThreadRunning: Double? = nil,
+			pid: Int32 = ProcessInfo.processInfo.processIdentifier
+		) {
 			self.at = at
 			self.duration = duration
 			self.activity = activity
+			self.mainThreadRunning = mainThreadRunning
+			self.pid = pid
 		}
 
 		/// A line for the log, and for anybody reading it later.
+		///
+		/// The two new fields go *after* the activity rather than in front of
+		/// it, so that the summarising command in 0437 — which splits on
+		/// `"ms  "` and then takes the first word-pair of what follows — reads
+		/// a line written before them and a line written after them the same
+		/// way. A log spans a rebuild; a format that invalidates everything
+		/// older than the newest change is a format that is never readable.
 		public var line: String {
 			let stamp = ISO8601DateFormatter().string(from: at)
-			return String(format: "%@ %6.0f ms  %@", stamp, duration * 1000, activity)
+			var text = String(format: "%@ %6.0f ms  %@", stamp, duration * 1000, activity)
+			if let running = mainThreadRunning {
+				text += String(format: "  cpu %3.0f%%", running * 100)
+			}
+			text += "  pid \(pid)"
+			return text
 		}
 	}
 
@@ -111,10 +159,19 @@ public enum StallWatch {
 		lock.unlock()
 		guard !alreadyRunning else { return }
 
+		// `mach_thread_self()` answers for whichever thread asks, so the main
+		// thread's port has to be taken on the main thread. `start()` is called
+		// from `applicationDidFinishLaunching`, so the ordinary case takes it
+		// inline and the very first ping already has it; anybody calling from
+		// elsewhere waits one hop and loses the `cpu` field until then.
+		if Thread.isMainThread { rememberMainThread() }
+		else { DispatchQueue.main.async { rememberMainThread() } }
+
 		let thread = Thread {
 			while true {
 				Thread.sleep(forTimeInterval: interval)
 				let sent = Date()
+				let cpuBefore = mainThreadProcessorTime()
 				let waited = DispatchSemaphore(value: 0)
 				DispatchQueue.main.async { waited.signal() }
 
@@ -126,7 +183,13 @@ public enum StallWatch {
 				guard waited.wait(timeout: .now() + threshold) == .timedOut else { continue }
 				let activity = activityNow()
 				waited.wait()
-				record(Stall(at: sent, duration: Date().timeIntervalSince(sent), activity: activity))
+				let elapsed = Date().timeIntervalSince(sent)
+				record(Stall(
+					at: sent,
+					duration: elapsed,
+					activity: activity,
+					mainThreadRunning: fractionRunning(from: cpuBefore, over: elapsed)
+				))
 			}
 		}
 		thread.name = "ideai.stallwatch"
@@ -140,6 +203,60 @@ public enum StallWatch {
 		lock.lock()
 		defer { lock.unlock() }
 		return current
+	}
+
+	// MARK: - Was the main thread even running?
+
+	/// The main thread's port, so its processor time can be read from outside it.
+	///
+	/// Kept for the life of the process and never deallocated on purpose:
+	/// `mach_thread_self()` hands back a send right the caller owns, and giving
+	/// it up would leave nothing to ask. One right, taken once.
+	nonisolated(unsafe) private static var mainThreadPort: mach_port_t = mach_port_t(MACH_PORT_NULL)
+
+	private static func rememberMainThread() {
+		let port = mach_thread_self()
+		lock.lock()
+		mainThreadPort = port
+		lock.unlock()
+	}
+
+	/// User plus system time the main thread has used since it started, or `nil`
+	/// before its port has been taken or if the kernel declines to say.
+	private static func mainThreadProcessorTime() -> TimeInterval? {
+		lock.lock()
+		let port = mainThreadPort
+		lock.unlock()
+		guard port != mach_port_t(MACH_PORT_NULL) else { return nil }
+
+		var info = thread_basic_info()
+		// `THREAD_BASIC_INFO_COUNT` is a macro over `sizeof`, which does not
+		// come through the importer, so the same arithmetic is done here.
+		var count = mach_msg_type_number_t(
+			MemoryLayout<thread_basic_info_data_t>.size / MemoryLayout<natural_t>.size
+		)
+		let result = withUnsafeMutablePointer(to: &info) { pointer in
+			pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+				thread_info(port, thread_flavor_t(THREAD_BASIC_INFO), $0, &count)
+			}
+		}
+		guard result == KERN_SUCCESS else { return nil }
+		return seconds(info.user_time) + seconds(info.system_time)
+	}
+
+	private static func seconds(_ time: time_value_t) -> TimeInterval {
+		TimeInterval(time.seconds) + TimeInterval(time.microseconds) / 1_000_000
+	}
+
+	/// How much of a stall of `elapsed` the main thread spent on a processor.
+	///
+	/// Clamped to 0…1 rather than reported raw. The two readings are taken from
+	/// a different thread and are not simultaneous with the stall's own
+	/// endpoints, so a busy main thread can come out a hair over 1; a fraction
+	/// of 103% in a log invites an explanation that does not exist.
+	static func fractionRunning(from before: TimeInterval?, over elapsed: TimeInterval) -> Double? {
+		guard let before, elapsed > 0, let after = mainThreadProcessorTime() else { return nil }
+		return min(1, max(0, (after - before) / elapsed))
 	}
 
 	/// Keeps a stall and appends it to the log.
@@ -179,4 +296,9 @@ public enum StallWatch {
 extension StallWatch {
 	/// What the app says it is doing right now, for the tests.
 	static var activityForTesting: String { activityNow() }
+
+	/// The main thread's processor time, for the tests, which have to take its
+	/// port themselves because they do not run `start()`.
+	static func rememberMainThreadForTesting() { rememberMainThread() }
+	static var mainThreadProcessorTimeForTesting: TimeInterval? { mainThreadProcessorTime() }
 }

@@ -44,6 +44,40 @@ comparable to it. The threshold is 50 ms now, so the log holds far more lines
 and the medians in any new reading of it are lower for a reason that has
 nothing to do with the app. Compare counts per hour by activity, not to this.
 
+## Steps
+
+The first two rounds are below, done and ticked. The third round is the last
+five, and it is a measuring round rather than a fixing one: the one thing this
+entry has always owed is a reading taken on a machine that was not being used
+by four other agents, and the ranking below says plainly that the suspects left
+on it are not clearly worth changing.
+
+- [x] Give the seven suspects names, so a stall in one is not filed as `idle`
+- [x] Lower the threshold to where typing is actually felt
+- [x] Stop the navigator re-listing the whole project when the window comes forward
+- [x] Get the window's directory probe off the main queue
+- [x] Stop `LSPClient` writing to a server's stdin on the caller's thread
+- [x] Ask the git actor once for the whole tree, not once per row
+- [x] Stop the watcher opening the directories it is asking about
+- [x] Build a file's text for a language server off the main queue
+- [x] One walk of the project to decide what servers it wants, not one per server
+- [x] Take the reading this entry asks for, on the quietest window this machine
+      offered, and write it in beside the old one
+- [x] Say where the quiet window ends, since 0446's agent makes everything after
+      it loud, and rotate the log at that boundary
+- [x] Make a stall say whether the main thread was *running* during it, since
+      `idle` currently means both "busy with something unnamed" and "not
+      scheduled at all", and the reading cannot tell them apart
+- [x] Make a stall say which process wrote it, since two Abydos on one machine
+      share one log file
+- [x] Write down what was ruled out this round, and why suspects 4–7 are still
+      not the work
+
+No spec delta. Nothing a user can see changed: the threshold, the marks and the
+shape of a line in `~/Library/Logs/Abydos/stalls.log` are this project's own
+instrumentation, `spec/` has no capability that covers them, and neither of the
+first two rounds wrote one either.
+
 ## Fixed here
 
 ### The navigator re-read the whole project every time the window came forward
@@ -261,6 +295,63 @@ Written the obvious way, jdtls's `.classpath` would have stopped being a marker,
 which is what one of the three tests is for — the same shape of mistake as the
 `NSURL` caching above, and caught the same way.
 
+## Fixed in the third round, which is the reading and what it asked for
+
+The reading is below. It found `idle` to be not merely most of the stalls but
+*all* of them, on a quiet machine, and this entry's own instruction for that
+case is "more marks rather than more fixes". These are the two marks, and they
+are on the instrument rather than on the app: neither makes anything faster, and
+both make the next reading able to say something this one could not.
+
+### A stall now says whether the main thread was running
+
+Every number in this entry has the same hole in it, and the first reading names
+it without resolving it: "some of these are starvation rather than the watcher
+holding the queue". `StallWatch` pings the main queue and times how long the
+answer takes, which is **wall clock**, and a late answer has three causes that
+want three different fixes — the main thread running inside unmarked work, the
+main thread blocked on something, and the main thread simply not being given a
+processor. On a machine at a load average of ten, forty or three hundred and
+eighty-six, that last one is not a footnote.
+
+So the watcher now also reads the main thread's own **processor time**, through
+`thread_info(THREAD_BASIC_INFO)`, once when the ping goes out and once when it
+comes back, and the line carries what fraction of the stall the main thread
+spent executing. Reading a thread's counters from outside it needs its Mach
+port, and `mach_thread_self()` answers for whoever asks — so the port is taken
+on the main thread inside `start()`, which `applicationDidFinishLaunching`
+already calls from there, and kept for the life of the process. It is
+deliberately never deallocated: the send right is the only handle there is.
+
+**It halves the search rather than ending it, and the proof of that is in the
+first line it wrote.** Run with `--stall 800`, which is a `Thread.sleep` on the
+main thread, the log says `deliberate stall  cpu 0%` — correctly, because a
+sleeping thread executes nothing, and yet that stall is entirely the app's own
+doing. So a low fraction means *a wait*, not *somebody else's fault*; blocked
+and descheduled still look alike. What it does settle is the other half: a high
+fraction is unmarked work, and there is code to go and name.
+
+Verified in the app rather than only in a test, on the debug bundle from this
+worktree opened on this worktree — asserted by its window title and by `lsof`
+before anything it printed was believed. Two lines, and both are the point:
+`272 ms  idle  cpu  24%` during launch, and the deliberate 800 ms at `cpu 0%`.
+
+### A stall now says which process wrote it
+
+There is one log file per machine and there can be more than one Abydos: a
+second instance opened beside the first to measure something writes into the
+same file, in the same format, with nothing to tell them apart. That is not
+hypothetical, it is what happened while taking the reading below, and it cost
+the reading it was launched for. The line ends with a pid.
+
+Both fields go on the **end** of the line, after the activity, so that the
+summarising command reads a line written before them and a line written after
+them the same way — a log outlives the build that wrote it, and a format that
+invalidates everything older than the newest change is never readable. That is
+what one of the tests is for. The command in this entry has been updated to
+take the activity as the first field after the duration, which is a one-word
+change and works on both.
+
 ## Not fixed, and where to look next
 
 The ranking is kept in its original numbering so that what has gone can be seen
@@ -314,6 +405,67 @@ end of a debug session is the wrong trade to make blind. **They are ranked
 below the point where a change is clearly right, and the log is what should
 promote them.**
 
+### The third round left four to seven alone as well, and now has a reason
+
+Not the same reason. The second round left them because each would want
+designing; the third round has a reading, and the reading says something
+stronger: **in 119 minutes of quiet session not one of the seven names fired
+once.** Not `document save`, not `login shell path`, not `diff render`, not
+`debug adapter stop`. They have been marked since the first round and the log
+has never once caught them. Changing code that has never appeared in the
+evidence is changing code blind, and this entry has already recorded what that
+is worth.
+
+And there is a larger reason, which is that **the biggest cause of this app
+being busy while somebody types is now known and is not on this list**. 0428,
+measuring the app against five hundred bundles, found that opening a Tycho
+project burns eight to nine cores indefinitely: `refreshRunConfigurations`
+walks the whole project for Java `main` methods on a concurrent queue, with no
+coalescing, once per filesystem event. That is **0446**, its own item and its
+own agent. Nothing on this ranking is within an order of magnitude of it. The
+lesson is the second round's lesson again, arriving from a different direction:
+what actually holds the main queue was not on the ranked list either time, and
+was found by measuring rather than by reading.
+
+## Ruled out on the third round
+
+- **A driven session of this branch's own build.** Tried, properly: a second
+  instance launched on this worktree and asserted before anything it said was
+  believed. Abandoned for a reason that had not occurred to anybody — the two
+  instances write into one log with nothing to separate them, and the user's
+  instance was producing about 0.6 lines a minute the whole time, so every
+  count would have been an upper bound of unknown tightness. The pid on the
+  line is what that cost bought. The reading is the user's own session instead,
+  which is a better session anyway: three and a quarter hours of ordinary use
+  against half an hour of a script pretending to type.
+- **Building a release app on this branch to measure.** The installed release
+  build already carried every change in this entry, and a build at `JOBS=4`
+  would have spent the only quiet window this machine had on itself. Measuring
+  a debug build was refused for the reason the `Makefile` already gives: an
+  unoptimised renderer and terminal emulator are slower to *use*, so its
+  numbers would not be about anything in this entry. The debug bundle was built
+  and run, but only to check that the new fields appear in a real app.
+- **Waiting for the half-hour idle machine the entry asks for.** It does not
+  exist and it is not coming: within six minutes of the log being rotated the
+  load average went from 9.86 to 163, and the machine has had four agents on it
+  all day. Two hours of load-average-ten session, honestly bounded, is the
+  reading that was available, and it is a great deal better than the forty and
+  three hundred and eighty-six the earlier rounds were taken beside.
+- **Sampling the main thread's backtrace when a ping is late.** This is the
+  change that would end the search rather than halve it — a stall would arrive
+  with the stack that caused it and no mark would ever be needed again. Not
+  attempted, and deliberately: it means suspending a thread from a watchdog and
+  symbolicating what comes back, which is a real piece of work with a real way
+  to go wrong, and the cheap half of the answer — the processor-time fraction —
+  has not been *read* yet. If the next reading says the quiet-machine stalls are
+  the main thread running, this is the next thing to build. If it says they are
+  waits, the answer is somewhere else and this would have been wasted.
+- **Coalescing filesystem events.** Not reopened. The second round refused it
+  with numbers and the reason has not changed.
+- **Moving terminal parsing off the main queue.** Not attempted, again. It is
+  the deeper answer below and it is still a piece of work rather than a
+  tidy-up.
+
 ## What was not measured, and how to measure it
 
 Nothing on either branch was timed, and for the same reason both times: other
@@ -345,8 +497,8 @@ it holds five days at two different thresholds:
 Then use the app normally for half an hour, with a terminal open and typing in
 it, and read what it caught:
 
-    awk -F'ms  ' 'NF>1 {split($1,a," "); n[$2]++; s[$2]+=a[2];
-      if (a[2]+0>w[$2]+0) w[$2]=a[2]}
+    awk -F'ms  ' 'NF>1 {split($1,a," "); split($2,b,"  "); k=b[1];
+      n[k]++; s[k]+=a[2]; if (a[2]+0>w[k]+0) w[k]=a[2]}
       END {for (k in n) printf "%5d  %8.1f s  %6d ms worst  %s\n",
       n[k], s[k]/1000, w[k], k}' ~/Library/Logs/Abydos/stalls.log | sort -rn
 
@@ -356,6 +508,51 @@ rather than more fixes. If `navigator watcher` is small while files are being
 written into the project, the change above is what did it — and if it is not,
 the next place to look is the diff between an event that lands on an open
 directory and one that does not.
+
+The third round added two fields to the end of a line, so this command takes
+the activity as the first thing after the duration rather than the whole rest
+of the line. Written that way it reads a line from before those fields and a
+line from after them the same way, and the whole log stays summarisable across
+a rebuild. And since the third round found `idle` to be *all* of it, the
+second command is now the one that matters — it splits `idle` into the two
+things it has always meant:
+
+    awk -F'cpu ' 'NF>1 {c=$2+0; b=(c<25?"main thread not executing":
+      (c<75?"partly":"main thread running")); n[b]++}
+      END {for (k in n) printf "%5d  %s\n", n[k], k}'
+      ~/Library/Logs/Abydos/stalls.log | sort -rn
+
+A stall where the main thread ran the whole time is unmarked work, and the next
+thing to give a name to. A stall where it barely ran is a *wait*, and the two
+kinds of wait — descheduled by a busy machine, or blocked on something this
+program chose to wait for — still look the same. See the caveat under the
+change itself; it halves the search rather than ending it.
+
+**This measurement has now been taken** — see "Second reading" below — as far as
+this machine allowed, which was not as far as the paragraph above wanted.
+
+### What the third round still could not measure
+
+- **The half hour of idle machine.** It did not happen and it is not going to
+  happen here; the section on what was ruled out says why, and the reading says
+  what was taken instead.
+- **What the load average was for most of the measured window.** It was recorded
+  at the end (9.86 at the moment the log was rotated, 9.48–13.69 across the
+  three averages half an hour before that) and not at the start, because nobody
+  knew at the time that the window would turn out to be the measurement. The
+  session is known to be bimodal from its own timestamps; whether the loud
+  stretch was the app or the machine is not known, which is exactly the hole the
+  processor-time field was added to close.
+- **Whether the thirteen quiet-stretch stalls were work or waiting.** The
+  instrument to answer that now exists and did not exist when they were caught.
+  No reading has been taken with it — the machine went to a load average of 163
+  six minutes after the window closed — and every number in this entry predates
+  it. This is the first thing the next round should do, and it costs nothing but
+  an hour of ordinary use.
+- **Any before/after of the four changes in the first two rounds.** Still not
+  possible without keeping a build of the old code around to run beside the new
+  one, and the argument in this section for why that was never worth doing has
+  not changed.
 
 ## The deeper answer, still not attempted
 
@@ -408,6 +605,159 @@ bug. `handleFilesystemChange` had been doing this for as long as it has existed,
 its cost was recorded as `idle` for five days, and nothing in the first round's
 analysis found it. It took a name and one honest reading.
 
+## Second reading, on the quietest machine this has had
+
+The reading this entry has owed since it was written. It is **not** the half
+hour of idle machine asked for above — that window did not exist and it is not
+going to; see the boundary below. It is the next best thing, and better than it
+sounds: three and a quarter hours of an ordinary session, on a release build
+carrying every change in this entry, on a machine at a load average of about ten
+rather than the forty and the three hundred and eighty-six the earlier rounds
+were taken beside.
+
+**What was measured.** The app the user was already running — installed release,
+built 11:55Z from a tree carrying all of the above — from its launch at
+**12:02:14Z** to **15:15:52Z**, the last line before the log was rotated. Ten
+cores, a Mac13,1. Every duration below is **wall clock**: `StallWatch` measures
+how long a ping took to come back, not processor time. The load averages are
+runnable-thread counts, and the one CPU figure quoted is processor time and says
+so.
+
+| activity | stalls | total | worst |
+|---|---|---|---|
+| idle | 94 | 91.4 s | 22811 ms |
+| terminal parse | 6 | 3.9 s | 2286 ms |
+| navigator watcher | 3 | 11.3 s | 5050 ms |
+| tmux tabs | 1 | 0.4 s | 372 ms |
+
+**Per hour, which is the only comparison worth making.** 3.227 hours, so 29.1
+`idle`, 1.9 `terminal parse`, 0.9 `navigator watcher`, 0.3 `tmux tabs` — 32.2
+stalls an hour at 50 ms. Ninety-two of the hundred and four were over 200 ms, so
+the directly comparable figure is **28.5 an hour against the old table's 37.1**,
+and that old figure is a floor: 4,455 over "five days" assumes the app was up
+for all of them and it was not.
+
+**`navigator reload` is gone. Zero, in three and a quarter hours, against 5.4 an
+hour before.** That is the directory stamp, and it is the one line in this table
+that is unambiguously a change in this entry doing what it was written to do —
+`windowDidBecomeKey` fires whenever the window comes forward, which happened
+many times in that window, and it no longer costs anything.
+
+**The rest of the table is honest but weak evidence.** `terminal parse` went
+*up* per hour (1.9 against 0.62) and `navigator watcher` did not exist as a name
+before, so neither can be compared to anything. Nothing in this entry touched
+terminal parsing, and the deeper answer above is still not attempted.
+
+### The two-hour quiet stretch inside it, which is the real result
+
+The session is not uniform. Split by ten-minute bucket it is plainly bimodal:
+thirty-nine stalls in the first half hour after launch, forty in a 13:50–14:30
+burst carrying 75 of the 91 seconds, and almost nothing in the two stretches
+either side. Take the two calm stretches on their own — **12:30–13:45Z and
+14:32–15:16Z, 119 minutes** — and the whole of what the log caught is:
+
+    13 stalls, 3.0 s in total, worst 502 ms — every one of them `idle`
+
+**6.6 stalls an hour, 1.5 seconds of stall per hour, and not one of the seven
+names fired.** Not `navigator watcher`, not `language sync`, not `document
+save`, not `login shell path`, not `diff render`, not `language server scan`,
+not `debug adapter stop`. On a machine that is merely busy rather than
+overloaded, an Abydos with a project open and a terminal in it is close to
+silent, and every remaining stall is unattributed.
+
+That is the answer to the question this entry asked, and it is the answer that
+was least expected: **`idle` is not most of it, `idle` is all of it.** The
+entry's own instruction for this case — "the next step is more marks rather than
+more fixes" — is what the third round then did, and the mark it added is below.
+
+### What this reading cannot say, and what was done about it
+
+Thirteen stalls of 79–502 ms with no name on them are one of three completely
+different things, and the log as it stood could not tell them apart:
+
+- the main thread was **running**, inside work nobody has marked;
+- the main thread was **blocked** — a pipe write nobody was draining, a lock, a
+  subprocess being waited on, which is exactly the shape of the worst bug this
+  entry found; or
+- the main thread was **not scheduled**, because ten cores were busy with
+  something that is not this app at all.
+
+At a load average of ten on ten cores the third is not a remote possibility,
+it is the base case, and the same doubt is written into the first reading above
+("some of these are starvation rather than the watcher holding the queue") where
+it was left unresolved. It sits under every number in this entry, including the
+22.8-second `idle` in the table, which is not credibly a main thread *doing*
+anything for 22.8 seconds.
+
+So the third round made a stall say which it was. See "A stall now says whether
+the main thread was running" below. Every reading in this entry predates it and
+none of them can be re-derived; the next one will not have the doubt.
+
+### Where the quiet ends
+
+**15:16Z.** The log was moved to `~/Library/Logs/Abydos/stalls-before-0437.log`
+at that moment, at a load average of 9.86, and everything above is from that
+file. Immediately afterwards another agent started on **0446** — the Tycho spin
+0428 found — whose first move is to reproduce a fault that burns eight to nine
+cores, with an Abydos build of its own writing into the same `stalls.log`. Six
+minutes later the machine was at a load average of **163**, and at the time of
+writing 26. Nothing logged after 15:16Z belongs in this entry, and a reading
+taken across that boundary would be worthless.
+
+The four lines that landed in the new `stalls.log` between 15:17Z and 15:22Z are
+from this round's own guarded launch and from the user's instance, and are noted
+here so they are not mistaken for a session: 252 ms `terminal draw`, then three
+`idle` of 107, 174 and 99 ms.
+
+### Two Abydos, one log
+
+Taking this cost most of an hour to something worth writing down. A second
+instance was launched on this worktree to drive a session with typing in it —
+asserted, before believing anything, by its window title and by `lsof` showing
+the worktree open under its pid — and the moment it was up it became obvious
+that its stalls and the user's instance's stalls go into the same file, in the
+same format, with nothing to tell them apart. The user's instance was not idle:
+it had been writing about 0.6 lines a minute all afternoon. There is no reading
+to be had from a shared log, so the instance was quit, the *user's* session was
+used as the measurement, and the log line grew a pid. That is the second change
+below.
+
+### The terminal in the measured session was real, and it was worth checking
+
+A `TMUX_TMPDIR` left behind by an agent killed the day before was still in the
+tmux server's global environment and therefore in every shell descended from it:
+
+    TMUX_TMPDIR=…/scratchpad/t0404/tmuxdir
+
+Abydos takes it from whatever launched it and hands it to the tmux it starts, and
+the socket path that comes out is about 140 characters against macOS's ~104, so
+the terminal dies immediately with `error connecting to … (File name too long)`.
+An app launched from a poisoned shell has a terminal panel that is not a terminal
+— no pty, no tmux, none of the work the panel normally does — and a stall reading
+taken there would be measuring an app with its noisiest component switched off.
+
+**It did not touch the reading, and this is the evidence rather than the
+assumption.** The measured session is the user's own instance, which was not
+launched from any of this round's shells and has no `TMUX_TMPDIR` in its
+environment at all. Its tmux client started at 14:02:15 local — the same second
+the app did, the first second of the window — and was still alive with a
+connected socket three and a half hours later, and a login shell of its own
+appeared under it at 16:45, inside the window. The window's own stall lines agree:
+six `terminal parse` and one `tmux tabs` are not things a dead panel produces.
+
+Of this round's two launches, neither contributed a number. The first was quit
+before it measured anything and its four log lines are listed above as excluded;
+the second was the `--stall 800` check of the new fields, which never opens a
+terminal at all.
+
+**Worth an entry line even though it did not bite:** the app passes
+`TMUX_TMPDIR` through unexamined, and a value that cannot produce a usable
+socket path is one it could reasonably refuse — it knows the length limit and it
+knows what it is about to build. That is the same shape as the leaked `$TMUX`
+0440 already strips from panes. It is an observation, not work for this branch:
+0437 is about *how long* the terminal takes to answer, and this is about the
+terminal not existing.
+
 ---
 
 Numbered after 0436, which is where the list had got to on the main working
@@ -432,3 +782,19 @@ on their own straight afterwards, and the same run printed
 taking ten seconds. Nothing in this entry's changes is anywhere near any of
 them. **The suite has no way to say "I could not be run", so it says "you broke
 it" instead**, and that is the fault 0435 describes.
+
+The third round is the cleanest example yet, because both halves were run within
+four minutes of each other and only the machine changed. A full run at a load
+average that went from 25 to 176 during it came back red in exactly two places,
+both `…LiveTests` and both a deadline: `DevContainerLiveTests` waiting for a
+container to be gone, and `JavaLiveTests` timing out on `workspace/executeCommand`
+after 49 seconds. Re-run on their own, at a load average of 148, **the same
+jdtls test passed in 7.1 seconds** — a seventh of the time it had just spent
+failing to finish. The whole suite then passed, 2,166 tests in 326 suites in
+30.5 seconds, as the load fell from 97 to 55.
+
+There is a joke in the second failure that is worth writing down: the agent
+loading the machine was the one working 0446, whose whole job is to reproduce
+jdtls opening a Java project. `JavaLiveTests` did not fail because of anything on
+this branch; it failed because somebody else was already using the thing it
+tests.
