@@ -67,7 +67,7 @@ implementations of `init` is two answers to what a backlog is.
 
 ## Steps
 
-- [ ] A button on the left rail, first, that shows the backlog
+- [x] A button on the left rail, first, that shows the backlog
 - [ ] A card offers its worktree — as a project, and as a terminal — and only
       when the worktree is still there
 - [ ] An empty project's board offers to make a backlog, through `BacklogSetup`

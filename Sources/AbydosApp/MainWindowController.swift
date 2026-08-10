@@ -480,6 +480,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		toolStrip.onToggleStructure = { [weak self] in self?.showSidebarTool(.structure) }
 		toolStrip.onToggleScratches = { [weak self] in self?.showSidebarTool(.scratches) }
 		toolStrip.onToggleHistory = { [weak self] in self?.showSidebarTool(.history) }
+		toolStrip.onToggleBacklog = { [weak self] in self?.showBacklog(nil) }
 		NotificationCenter.default.addObserver(
 			self, selector: #selector(toastPosted(_:)), name: .abydosToast, object: nil
 		)
