@@ -11,9 +11,11 @@ import Foundation
 /// tree, `git status`, the language-server scan, search — never see a large file
 /// at all.
 ///
-/// A `…LiveTests` in the house sense: it needs something this machine may not
-/// have, and skips itself when the corpus is not there rather than failing.
-/// `Scripts/corpus.sh` is what puts it there.
+/// A `…LiveTests` in the house sense — it needs something this machine may not
+/// have, and skips rather than fails without it — with one difference from the
+/// others, which is that it also has to be *asked for*. `make scale` does both:
+/// `Scripts/corpus.sh` puts the corpus beside the checkout, and `SCALE=1` says
+/// this is the run that wants it. See `asked` for why the second is needed.
 ///
 /// **Nothing here asserts a duration.** These are baselines to be compared
 /// against, not gates: the numbers are minutes on a large corpus, the corpus is
@@ -70,11 +72,33 @@ struct ScaleLiveTests {
 		return wall
 	}
 
-	static func skipUnlessCorpus() throws {
-		try #require(
-			FileManager.default.fileExists(atPath: corpus.path),
-			"no corpus at \(corpus.path) — run Scripts/corpus.sh"
-		)
+	/// Asked for, rather than merely possible.
+	///
+	/// The other `…LiveTests` skip themselves when the thing they need is
+	/// missing and run whenever it is there, and this one started that way. It
+	/// cannot: walking 22,680 directories of Eclipse is visible to the rest of
+	/// the suite, because `FileNode.directoryReadsForTesting` is process-wide
+	/// and `FileNodeReloadTests` zeroes it and then asserts it is still zero.
+	/// Beside this suite that test fails, on a true claim about its own tree
+	/// that this one had quietly added to. `LanguageServers.DirectoryIndex`
+	/// argues the same point in a comment and keeps its count on the index; the
+	/// tree's counter is older and does not.
+	///
+	/// So: opt in. `make scale` sets it. That also suits what this is — a dozen
+	/// seconds of measurement over 763 MB of somebody else's source, asserting
+	/// nothing, wanted when somebody is taking a baseline and not on every run.
+	///
+	/// Read through a `guard … else { return }` at each test rather than a
+	/// `#require`, which is how every other live test here skips: `#require` on
+	/// a Bool *fails*, and a red suite on a machine that simply has no Eclipse
+	/// on it is the thing the convention exists to avoid.
+	static var asked: Bool {
+		guard ProcessInfo.processInfo.environment["SCALE"] != nil else { return false }
+		guard FileManager.default.fileExists(atPath: corpus.path) else {
+			print("SCALE no corpus at \(corpus.path) — run Scripts/corpus.sh")
+			return false
+		}
+		return true
 	}
 
 	// MARK: - The tree
@@ -87,21 +111,29 @@ struct ScaleLiveTests {
 	/// something walked the lot — which is what `handleFilesystemChange` used to
 	/// do a directory at a time, and what `loadedNode(for:)` exists to stop.
 	@Test func theTreeListsWhatOpeningAProjectNeedsAndNoMore() throws {
-		try Self.skipUnlessCorpus()
+		guard Self.asked else { return }
 		for (name, url) in Self.subjects {
 			let root = FileNode(url: url, isDirectory: true)
-			FileNode.directoryReadsForTesting = 0
 			Self.timed(name, "tree: list the root") {
-				"\(root.children.count) rows, \(FileNode.directoryReadsForTesting) listings"
+				"\(root.children.count) rows, 1 listing"
 			}
 
-			FileNode.directoryReadsForTesting = 0
+			// Counted here rather than read from `FileNode.directoryReadsForTesting`.
+			// That counter is process-wide, and `FileNodeReloadTests` zeroes it
+			// and then asserts it is still zero — so running beside this suite
+			// it failed, on a claim about its own tree that this one had
+			// quietly added to. `DirectoryIndex` says the same thing in a
+			// comment; this is the suite that proved it. A directory visited on
+			// a tree nothing has listed yet is a directory listed once, so the
+			// walk can count itself and owes nobody any shared state.
 			Self.timed(name, "tree: walk everything") {
+				var listings = 0
 				func walk(_ node: FileNode) {
+					listings += 1
 					for child in node.children where child.isDirectory { walk(child) }
 				}
 				walk(root)
-				return "\(root.loadedNodeCount) nodes, \(FileNode.directoryReadsForTesting) listings"
+				return "\(root.loadedNodeCount) nodes, \(listings) listings"
 			}
 		}
 	}
@@ -116,7 +148,7 @@ struct ScaleLiveTests {
 	/// costs on a project with a thousand bundles in it, since it runs at open,
 	/// on the queue the keyboard shares.
 	@Test func decidingWhichServersAProjectWantsIsOneWalkOfIt() throws {
-		try Self.skipUnlessCorpus()
+		guard Self.asked else { return }
 		for (name, url) in Self.subjects {
 			let index = LanguageServers.DirectoryIndex()
 			Self.timed(name, "language server scan") {
@@ -139,7 +171,7 @@ struct ScaleLiveTests {
 	/// suspicion is that coalescing is not enough when each one takes as long as
 	/// these do.
 	@Test func gitStatusOnARepositoryThisSize() async throws {
-		try Self.skipUnlessCorpus()
+		guard Self.asked else { return }
 		// The aggregate has no repository at its root, so the largest single
 		// Tycho repository stands in for it. Both are named, because the number
 		// that matters for the aggregate is that there is no number: nothing
@@ -178,7 +210,7 @@ struct ScaleLiveTests {
 	/// count stops moving; on this repository they are close enough to be one
 	/// number, and the item's guess is that at a thousand bundles they are not.
 	@Test func searchingAProjectThisSize() async throws {
-		try Self.skipUnlessCorpus()
+		guard Self.asked else { return }
 		for (name, url) in Self.subjects {
 			let search = ProjectSearch(root: url)
 			// A word that is everywhere in Java and nowhere in this repository's

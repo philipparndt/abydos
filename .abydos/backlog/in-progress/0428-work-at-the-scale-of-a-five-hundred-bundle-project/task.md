@@ -159,6 +159,25 @@ The engine numbers are a release build under `swift test --no-parallel`
 | `git status`, platform.ui | 666 / 314 ms | | |
 | search "public", first / all | **1434 / 1603 ms** | 441 / 537 | 177 / 607 |
 
+Taken with `make scale`, which is `SCALE=1 swift test -c release --no-parallel
+--filter ScaleLiveTests`. It has to be asked for rather than merely possible,
+which the other live tests are: walking 22,680 directories of Eclipse is visible
+to `FileNodeReloadTests`, which zeroes the process-wide
+`FileNode.directoryReadsForTesting` and then asserts it is still zero. Beside
+this suite that test fails on a claim about its own tree that this one had
+quietly added to — `LanguageServers.DirectoryIndex` argues exactly this in a
+comment and keeps its count on the index; the tree's counter is older and does
+not. Discovered by breaking it, which is the only way anybody was going to.
+
+A second run of the same suite, at load 5.7, agrees on everything except
+`git status`: 105 / 89 ms on `platform.ui` and 176 / 144 ms on Sirius against
+the 666 / 314 and 380 / 231 above. The difference is the operating system's page
+cache, not the repository — the first run was the first time those objects had
+been read on this machine. Both numbers are worth keeping and they answer
+different questions: **666 ms is what opening a project you have not touched
+today costs**, and 105 ms is what the tree pays on every filesystem event
+thereafter.
+
 ### Opening a window
 
 Wall clock from the kernel's `p_starttime`, so dyld's mapping of the app is
@@ -375,6 +394,14 @@ changes pane. Worth an item of its own.
   enough to be believed. `make build PIN_UUID=0` produces something a profiler
   can read, and that is how finding 1 was actually identified. Anybody profiling
   this app needs to know it; it belongs in an item of its own.
+- **Letting this suite run as part of `make test`.** It is a `…LiveTests` and
+  the convention is that those run whenever what they need is present. This one
+  cannot, because its listings are visible to another suite's claim (above), so
+  it is behind `SCALE=1` and `make scale`. Suits it anyway: a dozen seconds over
+  763 MB of somebody else's source, asserting nothing.
+- **`#require(someBool)` as a way to skip.** It fails rather than skipping, so
+  four scale tests went red on every machine without the corpus. Every other
+  live test here uses `guard … else { return }`, and now so does this one.
 - **Counting bundles with `find -name pom.xml`.** Says 104 where there are 1022,
   because Tycho builds most of them pom-less.
 - **`xargs -0 wc -l | tail -1` for a corpus-wide line count.** Forty thousand
