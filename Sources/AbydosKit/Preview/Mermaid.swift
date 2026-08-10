@@ -421,6 +421,19 @@ public enum Mermaid {
 				for (const found of painted) {
 					const draws = ABYDOS_CONTAINERS.indexOf(found.element.tagName) === -1;
 					for (const property of ABYDOS_PAINTED) {
+						// The attribute is going to be the answer, so the element's
+						// own `style` must not hold a second one. Nothing is lost —
+						// the value being written is that style's own contribution
+						// resolved among everything else — and what is gained is that
+						// no renderer has to agree with WebKit about how to read a
+						// declaration. CoreSVG reads `style` and does *not* understand
+						// `font-weight: bold` in one: with Mermaid's own
+						// `style="; font-weight: bold;"` left in place, a requirement
+						// diagram's names came out bold from the browser and regular
+						// from the pane, both of them looking at `font-weight="700"`
+						// on the same element. It is the same rule that stopped a
+						// treemap's labels being centred twice.
+						found.element.style.removeProperty(property);
 						if (!draws && property !== 'opacity') {
 							// Taken *off*, not merely not added. Mermaid writes some of
 							// these itself — a Sankey's links group carries its own
@@ -609,17 +622,16 @@ public enum Mermaid {
 					// baseline put it. Leaving either in would apply it twice.
 					line.setAttribute('text-anchor', 'start');
 					line.setAttribute('dominant-baseline', 'auto');
-					// And said again in the `style`, because the attributes above
-					// lose to one. A treemap's label carries
-					// `style="text-anchor: middle; dominant-baseline: middle"` of
-					// Mermaid's own, which came across with the other attributes and
-					// then beat both lines above — so the browser centred a label
-					// that was already centred and drew it half a line low, while
-					// CoreSVG ignored the style and drew it right. Two pictures from
-					// one file again, this time with the *export* the wrong one.
+					// The `style` that came across with the other attributes has to
+					// let those two lines stand, and a declaration beats an
+					// attribute. It has none of these left by now — the pass above
+					// takes every painted property out of every inline style, for
+					// exactly this reason — and this is the belt to that pair of
+					// braces, since a treemap's label carrying Mermaid's own
+					// `style="text-anchor: middle; dominant-baseline: middle"` is how
+					// the browser came to centre a label that was already centred and
+					// draw it half a line low, with the *export* the wrong one.
 					for (const name of ABYDOS_ANCHORED) { line.style.removeProperty(name); }
-					line.style.setProperty('text-anchor', 'start');
-					line.style.setProperty('dominant-baseline', 'auto');
 					// The row's own content, spaces and all, flowing from that
 					// one position — with every inner position taken off, since
 					// a `tspan`'s is ignored by half the renderers there are and

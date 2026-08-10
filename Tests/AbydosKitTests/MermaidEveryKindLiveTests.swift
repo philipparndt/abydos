@@ -253,13 +253,19 @@ struct MermaidEveryKindLiveTests {
 			#expect(!tag.contains("stroke-opacity"), "\(name) paints a group")
 			#expect(!tag.contains("font-size"), "\(name) paints a group")
 		}
-		// And no run of text left saying where it goes or how it is anchored —
-		// in an attribute *or* in a style, since a style beats the attribute and
-		// that is how a treemap's labels came out half a line low.
-		for piece in svg.components(separatedBy: "<text").dropFirst() {
-			let tag = piece.prefix(while: { $0 != ">" })
-			#expect(!tag.contains("dominant-baseline: middle"), "\(name) centres a label twice")
-			#expect(!tag.contains("text-anchor: middle"), "\(name) anchors a label twice")
+		// Nothing painted said twice, in an attribute and in a `style`. A
+		// declaration beats an attribute, so the second copy is the one that
+		// counts — and the two renderers do not read one the same way. It is how
+		// a treemap's labels came out half a line low (WebKit honouring
+		// `dominant-baseline: middle` on top of a position that already included
+		// it) and how a requirement diagram's names came out bold in the export
+		// and regular in the pane (CoreSVG not understanding `font-weight: bold`
+		// in a style, and taking it over the `font-weight="700"` beside it).
+		for said in ["fill:", "stroke:", "font-weight:", "font-size:", "text-anchor:",
+		             "dominant-baseline:", "stroke-opacity:", "fill-opacity:"] {
+			#expect(!svg.contains(said), "\(name) says \(said) in a style as well as in an attribute")
+			#expect(!svg.contains(said.replacingOccurrences(of: ":", with: ": ")),
+			        "\(name) says \(said) in a style as well as in an attribute")
 		}
 		#expect(DiagramExport.isDrawnHere(data), "\(name) is not stamped")
 	}

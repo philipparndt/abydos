@@ -495,12 +495,56 @@ taken from the preview's own menu, and the written files opened and looked at.
   hook on this machine reaches whichever Abydos is running — including a
   headless one taking screenshots. Worth its own entry; the shots here were
   retaken until the corner was clear.
-- **The pane draws through `NSImage`,** which is CoreSVG, which is why so much
+- ~~**The pane draws through `NSImage`,** which is CoreSVG, which is why so much
   of the flattening above exists. It is the right dependency to have — the file
   written to disk is better for it — but if a diagram ever appears that CoreSVG
   still cannot draw, the honest answer is to show the pane a bitmap rasterised
   by the web view at the zoom being asked for, and keep the drawing for the
-  file.
+  file.~~ **Asked, and the answer was no — but not for the reason expected.**
+
+  The condition was "if a diagram ever appears that CoreSVG still cannot draw",
+  and the only way to answer that was to go and look. Every one of the
+  twenty-two kinds of diagram this Mermaid draws was drawn twice — once through
+  `NSImage`, once through the web view's canvas — and the two rasterisations
+  compared pixel for pixel, with a pixel or two of slack for the fact that the
+  two round a drawing's size differently.
+
+  **Three of them came apart, and all three were this app's own doing.** They
+  are written out where the code is and summarised in the commit; in short, a
+  Sankey lost every flow (77% of the page different) to a `url("#id")` this app
+  wrote with the quotes a computed value carries; a journey lost every label to
+  the empty-label sweep taking away the `<text>` half of a `<switch>` the
+  browser had not laid out; and a treemap's labels were drawn half a line low
+  **in the export** because Mermaid's own inline `style` beat the attributes the
+  bake writes to neutralise it. Fixed, all three, in the flattening — where the
+  fix helps the pane, the exported SVG, Preview.app and anything else that is
+  not a browser, which a bitmap in the pane would have helped none of.
+
+  What is left between the two renderers is **0.01% to 0.76% of the page**: the
+  edges of glyphs and a pixel of rounding. Nothing was found that CoreSVG cannot
+  draw once the file stops asking for a browser.
+
+  So a bitmap is not built, and there are two reasons beyond "nothing needs it".
+  **The pane being wrong is the alarm that the file is wrong.** They are the same
+  drawing, and every fault above was found because somebody could see one of
+  them — a bitmap pane would have shown a perfect journey diagram while the SVG
+  written beside it had no labels at all, and nobody would have known until they
+  opened the file somewhere else. And **it would cost the sharpness**: a drawing
+  is a drawing at any zoom, and a bitmap rasterised at the zoom being asked for
+  has to be rasterised again on every ⌘+ — a second path, a second cache, and a
+  pane that is soft for the moment between.
+
+  What was built instead is the thing that makes the question answerable next
+  time: `MermaidEveryKindLiveTests` draws all twenty-two, compares the two
+  renderers, and asserts the three faults as properties of the file. If a
+  diagram type does appear that CoreSVG genuinely cannot draw, that test names
+  it and says by how much — and *then* this decision is worth taking again, with
+  a case rather than a hypothetical.
+
+  Two known differences that are not faults and are not fixed. `mix-blend-mode`
+  is a CSS property CoreSVG has no answer for, so overlapping Sankey flows will
+  blend in the exported PNG and not in the pane; and an *animated* edge stops
+  animating in a file, which was already recorded above.
 
 ## Steps
 
@@ -515,7 +559,7 @@ The first of them is a question before it is work, so it is asked first.
 - [x] Fix whatever of that difference turns out to be this app's own doing
 - [x] Keep the comparison as a test, so the next diagram type that comes apart
       says so rather than waiting to be found in a pane
-- [ ] Decide the bitmap-in-the-pane question on that evidence, and write the
+- [x] Decide the bitmap-in-the-pane question on that evidence, and write the
       decision down whichever way it goes
 - [x] Decide ELK on its measured cost, and write the numbers down whichever way
       it goes
