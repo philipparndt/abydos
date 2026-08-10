@@ -189,6 +189,38 @@ struct DrawioTests {
 	@Test func anOrdinaryDiagramSaysNothingAboutClipart() throws {
 		let document = try #require(Drawio.read(try Self.fixture("stencils")))
 		#expect(Drawio.clipartNotice(for: document) == nil)
+		#expect(Drawio.notCarriedNotice(for: document) == nil)
+	}
+
+	/// MathJax is the other thing deliberately left behind, and the reason it is
+	/// read out of the *document* rather than out of the scheme handler's record:
+	/// draw.io asks for `math4/` on every load whether the diagram uses it or
+	/// not, so a notice built on the 404 would fire over every file.
+	@Test func aDiagramThatTypesetsLaTeXSaysWhatItIsMissing() throws {
+		let xml = "<mxfile><diagram id=\"a\"><mxGraphModel math=\"1\"><root/></mxGraphModel>"
+			+ "</diagram></mxfile>"
+		let document = try #require(Drawio.read(Data(xml.utf8)))
+		#expect(Drawio.usesMath(in: document))
+		#expect(Drawio.notCarriedNotice(for: document) == Drawio.mathNotice)
+	}
+
+	@Test func anOrdinaryDiagramSaysNothingAboutMathJax() throws {
+		for name in ["plain", "pages", "stencils"] {
+			let document = try #require(Drawio.read(try Self.fixture(name)))
+			#expect(!Drawio.usesMath(in: document), "\(name) claims to typeset LaTeX")
+		}
+	}
+
+	/// Both at once are one sentence, because two toasts about one file is two
+	/// things to dismiss and one thing to read.
+	@Test func aDiagramMissingBothSaysBothInOneBreath() throws {
+		let xml = "<mxfile><diagram id=\"a\"><mxGraphModel math=\"1\"><root>"
+			+ "<mxCell style=\"shape=image;image=img/lib/clip_art/computers/Laptop_128x128.png;\"/>"
+			+ "</root></mxGraphModel></diagram></mxfile>"
+		let document = try #require(Drawio.read(Data(xml.utf8)))
+		let said = try #require(Drawio.notCarriedNotice(for: document))
+		#expect(said.contains("clipart"))
+		#expect(said.contains("MathJax"))
 	}
 
 	// MARK: - Which files these are

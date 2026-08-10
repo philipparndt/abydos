@@ -514,4 +514,45 @@ public enum Drawio {
 			: "\(count) shapes in this diagram are draw.io clipart, which this build does not "
 				+ "carry, so they draw as empty boxes."
 	}
+
+	/// Whether a document asks for its labels to be typeset as LaTeX.
+	///
+	/// `math="1"` on `<mxGraphModel>` — Format ▸ Diagram ▸ Mathematical
+	/// Typesetting — and it is the whole of what MathJax is for. Read from the
+	/// document rather than waited for, because the *editor* asks for `math4/` on
+	/// every load whether the diagram uses it or not: the scheme handler's record
+	/// of what it could not serve therefore names MathJax always, and a notice
+	/// built on that would cry wolf over every diagram somebody opened.
+	public static func usesMath(in document: Document) -> Bool {
+		document.pages.contains { page in
+			guard let open = page.model.range(of: "<mxGraphModel"),
+			      let close = page.model[open.upperBound...].firstIndex(of: ">")
+			else { return false }
+			let attributes = String(page.model[open.upperBound..<close])
+			guard let value = Mermaid.attribute("math", in: attributes) else { return false }
+			return value == "1" || value.lowercased() == "true"
+		}
+	}
+
+	/// The sentence for a document that typesets LaTeX, or nil.
+	public static let mathNotice = "This diagram asks for mathematical typesetting, which needs "
+		+ "MathJax — 3.3 MB this build does not carry. Its formulas draw as the text they are "
+		+ "written as."
+
+	/// Everything in a document that this build cannot draw, in one sentence.
+	///
+	/// The one place that asks both questions, so the pane and the export say the
+	/// same thing about the same file. Nil is the ordinary answer and means the
+	/// picture is complete.
+	///
+	/// This is read out of the *document*, which is why it works for the export as
+	/// well as for the editor. `DrawioAssetScheme` records what the editor asked
+	/// for and could not have, which is the other half and catches a gap nobody
+	/// predicted — but the off-screen renderer has no scheme handler at all, so
+	/// without this an exported picture would have holes in it and say nothing.
+	public static func notCarriedNotice(for document: Document) -> String? {
+		let said = [clipartNotice(for: document), usesMath(in: document) ? mathNotice : nil]
+			.compactMap { $0 }
+		return said.isEmpty ? nil : said.joined(separator: " ")
+	}
 }

@@ -53,8 +53,17 @@ enum DiagramExportCommand {
 				Toast.post("Could not read \(url.lastPathComponent)")
 				return
 			}
-			let stated = Drawio.read(data).flatMap(Drawio.statedLook)
+			let document = Drawio.read(data)
+			let stated = document.flatMap(Drawio.statedLook)
 			announceDrawing(url, format: format, theme: theme, stated: stated)
+			// What this build cannot draw, said before the picture is written
+			// rather than after somebody has committed it. The editor's own
+			// scheme handler says the same thing for a diagram on screen; the
+			// off-screen renderer has no scheme handler at all, so an export is
+			// the one route where a gap would otherwise be silent.
+			if let missing = document.flatMap(Drawio.notCarriedNotice) {
+				Toast.post("Some of this diagram cannot be drawn", detail: missing)
+			}
 			Task {
 				let outcome = await DiagramExport.export(
 					drawio: data, of: url, format: format, theme: theme

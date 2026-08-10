@@ -81,6 +81,7 @@ final class DrawioPreviewView: DiagramPaneView {
 		stated = document.flatMap(Drawio.statedLook)
 		caption = stated.map(DiagramLook.notice(stated:))
 		applyTheme()
+		sayWhatThisBuildCannotDraw(document)
 		editor?.load(xml, compressed: document?.isCompressed ?? false)
 	}
 
@@ -194,13 +195,36 @@ final class DrawioPreviewView: DiagramPaneView {
 
 	// MARK: - What this build does not carry
 
-	/// draw.io's clipart is the one asset deliberately left out, and a picture
-	/// that silently does not draw is exactly the failure 0426 warned about for
-	/// the stencils. The editor asks for it by path, the scheme handler answers
-	/// 404 and writes the path down, and this says so once.
+	/// Whether the document has already been reported on, so opening a file and
+	/// then the theme changing under it does not say the same thing twice.
+	private var saidWhatIsMissing = false
+
+	/// Read out of the document, and said as soon as it arrives.
+	///
+	/// This is the half that does not depend on the editor asking for anything.
+	/// `img/lib/` clipart draws an empty box and MathJax leaves a formula as the
+	/// text it was typed as, and both are silent — which is exactly the failure
+	/// 0426 warned about for the stencils. Saying it from the document rather
+	/// than from a 404 two seconds later also means the *export* can say the same
+	/// sentence, and it does: the off-screen renderer has no scheme handler at
+	/// all, so a picture written from a diagram using clipart would otherwise
+	/// have a hole in it and say nothing.
+	private func sayWhatThisBuildCannotDraw(_ document: Drawio.Document?) {
+		guard let document, let said = Drawio.notCarriedNotice(for: document) else { return }
+		saidWhatIsMissing = true
+		Toast.post("Some of this diagram cannot be drawn", detail: said)
+	}
+
+	/// The other half, and the one that catches a gap nobody predicted.
+	///
+	/// The editor asks for its assets by path; the scheme handler answers 404 and
+	/// writes the path down. Everything the document said for itself above has
+	/// already been reported, so this only speaks when the document did not —
+	/// which is a clipart reference this app's reader did not recognise, and
+	/// would otherwise be a picture with a hole in it and nothing said.
 	private func sayWhatIsMissing() {
 		DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
-			guard let self, let editor = self.editor else { return }
+			guard let self, !self.saidWhatIsMissing, let editor = self.editor else { return }
 			let clipart = editor.missingAssets.filter { $0.hasPrefix("img/lib/") }
 			guard !clipart.isEmpty else { return }
 			Toast.post(
