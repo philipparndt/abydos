@@ -721,6 +721,15 @@ public enum LanguageServers {
 		      let root = markerDirectory(for: definition, in: project)
 		else { return nil }
 
+		// `build` is not an image name but a request for one, and this is where
+		// it becomes a name — the tag carries the recipe's fingerprint, so it
+		// can only be worked out at the moment it is used and never written
+		// down in `.abydos/tools.json`. A project asking to build a tool this
+		// app ships no Dockerfile for gets nil, which falls through to the copy
+		// installed here: that is the same answer as naming an image nothing
+		// can run, and better than starting a container from a name nobody has.
+		let image = image.flatMap { ToolImageRecipes.resolve(image: $0, forTool: definition.toolKey) }
+
 		// An image the project named wins over a copy installed here, the same
 		// way it does for a diagram: naming one is a statement about what this
 		// project needs, and a local copy quietly overriding it would mean the
