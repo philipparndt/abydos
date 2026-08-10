@@ -61,9 +61,9 @@ on it are not clearly worth changing.
 - [x] Stop the watcher opening the directories it is asking about
 - [x] Build a file's text for a language server off the main queue
 - [x] One walk of the project to decide what servers it wants, not one per server
-- [ ] Take the reading this entry asks for, on the quietest window this machine
+- [x] Take the reading this entry asks for, on the quietest window this machine
       offered, and write it in beside the old one
-- [ ] Say where the quiet window ends, since 0446's agent makes everything after
+- [x] Say where the quiet window ends, since 0446's agent makes everything after
       it loud, and rotate the log at that boundary
 - [ ] Make a stall say whether the main thread was *running* during it, since
       `idle` currently means both "busy with something unnamed" and "not
@@ -441,6 +441,120 @@ The lesson worth keeping is the one about the mark rather than the one about the
 bug. `handleFilesystemChange` had been doing this for as long as it has existed,
 its cost was recorded as `idle` for five days, and nothing in the first round's
 analysis found it. It took a name and one honest reading.
+
+## Second reading, on the quietest machine this has had
+
+The reading this entry has owed since it was written. It is **not** the half
+hour of idle machine asked for above — that window did not exist and it is not
+going to; see the boundary below. It is the next best thing, and better than it
+sounds: three and a quarter hours of an ordinary session, on a release build
+carrying every change in this entry, on a machine at a load average of about ten
+rather than the forty and the three hundred and eighty-six the earlier rounds
+were taken beside.
+
+**What was measured.** The app the user was already running — installed release,
+built 11:55Z from a tree carrying all of the above — from its launch at
+**12:02:14Z** to **15:15:52Z**, the last line before the log was rotated. Ten
+cores, a Mac13,1. Every duration below is **wall clock**: `StallWatch` measures
+how long a ping took to come back, not processor time. The load averages are
+runnable-thread counts, and the one CPU figure quoted is processor time and says
+so.
+
+| activity | stalls | total | worst |
+|---|---|---|---|
+| idle | 94 | 91.4 s | 22811 ms |
+| terminal parse | 6 | 3.9 s | 2286 ms |
+| navigator watcher | 3 | 11.3 s | 5050 ms |
+| tmux tabs | 1 | 0.4 s | 372 ms |
+
+**Per hour, which is the only comparison worth making.** 3.227 hours, so 29.1
+`idle`, 1.9 `terminal parse`, 0.9 `navigator watcher`, 0.3 `tmux tabs` — 32.2
+stalls an hour at 50 ms. Ninety-two of the hundred and four were over 200 ms, so
+the directly comparable figure is **28.5 an hour against the old table's 37.1**,
+and that old figure is a floor: 4,455 over "five days" assumes the app was up
+for all of them and it was not.
+
+**`navigator reload` is gone. Zero, in three and a quarter hours, against 5.4 an
+hour before.** That is the directory stamp, and it is the one line in this table
+that is unambiguously a change in this entry doing what it was written to do —
+`windowDidBecomeKey` fires whenever the window comes forward, which happened
+many times in that window, and it no longer costs anything.
+
+**The rest of the table is honest but weak evidence.** `terminal parse` went
+*up* per hour (1.9 against 0.62) and `navigator watcher` did not exist as a name
+before, so neither can be compared to anything. Nothing in this entry touched
+terminal parsing, and the deeper answer above is still not attempted.
+
+### The two-hour quiet stretch inside it, which is the real result
+
+The session is not uniform. Split by ten-minute bucket it is plainly bimodal:
+thirty-nine stalls in the first half hour after launch, forty in a 13:50–14:30
+burst carrying 75 of the 91 seconds, and almost nothing in the two stretches
+either side. Take the two calm stretches on their own — **12:30–13:45Z and
+14:32–15:16Z, 119 minutes** — and the whole of what the log caught is:
+
+    13 stalls, 3.0 s in total, worst 502 ms — every one of them `idle`
+
+**6.6 stalls an hour, 1.5 seconds of stall per hour, and not one of the seven
+names fired.** Not `navigator watcher`, not `language sync`, not `document
+save`, not `login shell path`, not `diff render`, not `language server scan`,
+not `debug adapter stop`. On a machine that is merely busy rather than
+overloaded, an Abydos with a project open and a terminal in it is close to
+silent, and every remaining stall is unattributed.
+
+That is the answer to the question this entry asked, and it is the answer that
+was least expected: **`idle` is not most of it, `idle` is all of it.** The
+entry's own instruction for this case — "the next step is more marks rather than
+more fixes" — is what the third round then did, and the mark it added is below.
+
+### What this reading cannot say, and what was done about it
+
+Thirteen stalls of 79–502 ms with no name on them are one of two completely
+different things, and the log as it stood could not tell them apart:
+
+- the main thread was **running**, inside work nobody has marked; or
+- the main thread was **not scheduled**, because ten cores were busy with
+  something that is not this app at all.
+
+At a load average of ten on ten cores the second is not a remote possibility,
+it is the base case, and the same doubt is written into the first reading above
+("some of these are starvation rather than the watcher holding the queue") where
+it was left unresolved. It sits under every number in this entry, including the
+22.8-second `idle` in the table, which is not credibly a main thread *doing*
+anything for 22.8 seconds.
+
+So the third round made a stall say which it was. See "A stall now says whether
+the main thread was running" below. Every reading in this entry predates it and
+none of them can be re-derived; the next one will not have the doubt.
+
+### Where the quiet ends
+
+**15:16Z.** The log was moved to `~/Library/Logs/Abydos/stalls-before-0437.log`
+at that moment, at a load average of 9.86, and everything above is from that
+file. Immediately afterwards another agent started on **0446** — the Tycho spin
+0428 found — whose first move is to reproduce a fault that burns eight to nine
+cores, with an Abydos build of its own writing into the same `stalls.log`. Six
+minutes later the machine was at a load average of **163**, and at the time of
+writing 26. Nothing logged after 15:16Z belongs in this entry, and a reading
+taken across that boundary would be worthless.
+
+The four lines that landed in the new `stalls.log` between 15:17Z and 15:22Z are
+from this round's own guarded launch and from the user's instance, and are noted
+here so they are not mistaken for a session: 252 ms `terminal draw`, then three
+`idle` of 107, 174 and 99 ms.
+
+### Two Abydos, one log
+
+Taking this cost most of an hour to something worth writing down. A second
+instance was launched on this worktree to drive a session with typing in it —
+asserted, before believing anything, by its window title and by `lsof` showing
+the worktree open under its pid — and the moment it was up it became obvious
+that its stalls and the user's instance's stalls go into the same file, in the
+same format, with nothing to tell them apart. The user's instance was not idle:
+it had been writing about 0.6 lines a minute all afternoon. There is no reading
+to be had from a shared log, so the instance was quit, the *user's* session was
+used as the measurement, and the log line grew a pid. That is the second change
+below.
 
 ---
 
