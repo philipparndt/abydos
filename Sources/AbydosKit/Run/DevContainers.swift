@@ -628,7 +628,10 @@ public actor DevContainers {
 			switch await ContainerImageStore.shared.ensure(
 				image, using: runtime, progress: progress.step, output: progress.output
 			) {
-			case .present, .fetched: break
+			// `built` is here for completeness rather than because it happens:
+			// a devcontainer names an image, and a devcontainer that wants one
+			// built took the branch above out of its own `build` block.
+			case .present, .fetched, .built: break
 			case let .failed(reason): return .refused(reason)
 			}
 		}

@@ -211,9 +211,17 @@ struct ToolChoiceTests {
 			// pulled.
 			#expect(choice.label.hasPrefix(choice.image))
 
+			// Both routes for all six, and that is the point rather than an
+			// accident: each has a published image *and* a
+			// `ToolImages/<tool>/Dockerfile`, and offering the two together is
+			// what says 0434's build-here option sits beside the published one
+			// rather than displacing it. Between them, because it is the same
+			// kind of answer as the entry above it — here is an image that works
+			// — and differs only in where the image comes from.
 			let options = ToolImageCatalogue.options(for: tool)
 			#expect(options.map(\.value) == [
-				ToolImageCatalogue.useInstalled, choice.image, ToolImageCatalogue.custom,
+				ToolImageCatalogue.useInstalled, choice.image,
+				ToolImageRecipes.buildHere, ToolImageCatalogue.custom,
 			])
 			// And a project that names it in `.abydos/tools.json` shows as that
 			// choice rather than as a custom image somebody typed.

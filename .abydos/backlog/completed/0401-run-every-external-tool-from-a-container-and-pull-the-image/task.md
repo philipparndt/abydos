@@ -357,10 +357,41 @@ symmetry rather than being six goals.
 - **The `:dev` tags move**, and six labels now say so where one did. That is the
   honest form of the claim, not a good one; see the unticked step above.
 
-2128 tests in 322 suites pass in 33.5 seconds, with all six of
+## Meeting 0434, which was written for the other answer
+
+0434 landed on main while this was being written, and the two do coexist —
+which is what its entry said and is now a thing that has been seen rather than
+agreed. It ships the Dockerfiles as *recipes*, built on the machine that wants
+one, and it finds them by scanning `ToolImages/`. So the five added here became
+five new build-here options the moment the branches met, with nothing to
+register and nothing to declare: every language server now offers the installed
+copy, the published image, the recipe, and a custom name.
+
+Three things had to be settled in the merge rather than by either side alone.
+
+- **`options(for:)` returns four entries now, not three**, and this item's test
+  asserted the whole list. It asserts the four, and says why the build-here
+  entry sits between the published image and the custom field — it is the same
+  kind of answer as the one above it and differs only in where the image comes
+  from.
+- **0434 used jdtls as its example of "a tool with no Dockerfile"**, in four
+  tests, and this item gave jdtls one. They now use PlantUML, which is the only
+  tool in the catalogue with no recipe and a better example anyway: the reason
+  it has none is that its own project publishes an image, which is the case the
+  build-here route was never meant to displace. The one that needed a *language
+  server* with no recipe uses the JSON server, which nobody is likely to write a
+  Dockerfile for.
+- **Both items wrote `spec/tool-images.md` from nothing**, so the fold collided.
+  The file keeps both halves, and one requirement of this item's was made true
+  again in the process: "a tool with no known-good image offers the installed
+  copy and a custom name, and nothing else" stopped being true the moment a
+  recipe could be offered too, so it now says that such a tool offers no
+  *published* image, and that the recipe beside it is a different claim.
+
+2149 tests in 324 suites pass in 29.3 seconds after the merge, with all six of
 `ContainerLSPLiveTests` driving published images rather than skipping — which
 the run says out loud, line by line, so that a green suite can be told from an
-absent one.
+absent one. Before the merge it was 2128 in 322, in 33.5 seconds.
 
 ---
 

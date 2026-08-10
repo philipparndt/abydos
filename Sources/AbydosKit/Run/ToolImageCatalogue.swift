@@ -202,6 +202,20 @@ public enum ToolImageCatalogue {
 			],
 			requirement: languageServerRequirement("jdtls")
 		),
+		// No published image, and none is wanted: this is the tool the
+		// build-here route was written for. Its install hint is `cargo install
+		// openscad-lsp`, which is a Rust toolchain on the machine to get one
+		// binary — so almost nobody has it installed, and the option offered
+		// beside "Installed on this machine" is `ToolImages/openscad-lsp`,
+		// built here the first time a `.scad` is opened in a project that asks
+		// for it. `options(for:)` adds that entry itself, for any tool a
+		// Dockerfile ships for, so there is nothing to list here.
+		Tool(
+			key: "openscad-lsp",
+			title: "OpenSCAD — openscad-lsp",
+			choices: [],
+			requirement: languageServerRequirement("openscad-lsp --stdio")
+		),
 	]
 
 	/// What every language server image has to do, which is the same for all of
@@ -225,10 +239,21 @@ public enum ToolImageCatalogue {
 	}
 
 	/// What the choice control offers for a tool: the installed copy, the known
-	/// images, and naming one yourself.
+	/// images, building the recipe this app ships, and naming one yourself.
+	///
+	/// The third one is offered only for a tool a Dockerfile exists for, and it
+	/// sits between the published images and the custom field on purpose — it
+	/// is the same kind of answer as the ones above it, "here is an image that
+	/// works", and differs only in where the image comes from. It displaces
+	/// neither: a tool whose build is genuinely expensive keeps the published
+	/// route, and both entries can be on the list at once.
 	public static func options(for tool: Tool) -> [(label: String, value: String)] {
 		[(label: "Installed on this machine", value: useInstalled)]
 			+ tool.choices.map { (label: $0.label, value: $0.image) }
+			+ (ToolImageRecipes.recipe(forTool: tool.key) == nil
+				? []
+				: [(label: "Built on this machine from the recipe Abydos ships",
+				    value: ToolImageRecipes.buildHere)])
 			+ [(label: "Custom image…", value: custom)]
 	}
 
@@ -239,6 +264,10 @@ public enum ToolImageCatalogue {
 	/// in the field beside it rather than as nothing at all.
 	public static func selection(for stored: String, tool: Tool) -> String {
 		guard !stored.isEmpty else { return useInstalled }
+		// Before the list, because it is not an image name and would otherwise
+		// fall through to "custom" — which would put the word `build` in the
+		// field beside it as though somebody had typed it as an image.
+		if stored == ToolImageRecipes.buildHere { return stored }
 		return tool.choices.contains { $0.image == stored } ? stored : custom
 	}
 }
