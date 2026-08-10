@@ -213,10 +213,17 @@ final class LanguageService {
 		// language the project is actually written in when it turns out not to
 		// be installed. Asked as one question so the project is walked once
 		// rather than once per definition.
-		for definition in LanguageServers.suitedDefinitions(in: project) {
+		let suited = LanguageServers.suitedDefinitions(in: project)
+		// 0437 cut this from one walk per definition to one walk; 0428 asks what
+		// the remaining walk costs at a thousand bundles, on the queue the
+		// keyboard shares. The mark sits after the walk and before the servers
+		// start, so what it times is the scan and not the first handshake.
+		LaunchClock.mark("language servers scanned")
+		for definition in suited {
 			guard let languageId = definition.languageIds.first else { continue }
 			_ = server(for: languageId, project: project)
 		}
+		LaunchClock.mark("language servers started")
 	}
 
 	/// Which languages have a server running for this project, and which are

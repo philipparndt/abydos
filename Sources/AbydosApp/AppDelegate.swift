@@ -1072,6 +1072,18 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		for (index, at) in options.openReportsAt.enumerated() {
+			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+				print("OPEN --- at \(at)s ---")
+				// Only the last reading types. Typing changes the document and
+				// the tree, so a run that measured keystrokes at five seconds
+				// and again at sixty would have the second reading describe a
+				// file the first one edited.
+				let typing = index == options.openReportsAt.count - 1 ? options.openReportTyping : 0
+				controller?.scaleReportForTesting(typing: typing)
+			}
+		}
+
 		if let branch = options.pushBranch {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
 				controller?.pushBranchForTesting(branch)
@@ -1729,6 +1741,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		let controller = makeWindow()
 		controller.switchProject(to: url)
 		controller.showWindow(nil)
+		LaunchClock.mark("window ordered front")
+		// And again on the next turn of the main queue, which is the first
+		// moment anything can have been drawn: `applicationDidFinishLaunching`
+		// carries on for a while after this — menus, drivers, the language
+		// server warm-up — and none of it has yielded, so the window somebody
+		// can see is not on screen at the line above. 0428 wants the number a
+		// person waits through, and that is this one.
+		DispatchQueue.main.async { LaunchClock.mark("window drawn") }
 		RecentProjects.shared.record(url: url)
 		return controller
 	}

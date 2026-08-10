@@ -2518,6 +2518,42 @@ final class EditorViewController: NSViewController {
 		}
 	}
 
+	/// What each keystroke costs the main thread, in the file that is open.
+	///
+	/// The performance suite has measured this since 0416, but only against a
+	/// document built in memory: `Rope`, the highlighter and the fold finder,
+	/// with no window, no project, no language server and no filesystem watcher.
+	/// 0428 asks the same question in a file inside a large bundle in a large
+	/// project, where all four of those exist and every one of them wants the
+	/// same queue — and the difference between the two answers is the whole
+	/// reason the item names keystroke latency separately.
+	///
+	/// Synchronous, one character after another with nothing in between, so what
+	/// comes back is the cost of the keystroke rather than the interval it was
+	/// typed at. Both clocks: the wall is what a person waits and the processor
+	/// time is what changes when the code does, which is 0416's distinction and
+	/// is why a run under load is still worth taking.
+	func measureTypingForTesting(presses: Int) -> [(wall: TimeInterval, cpu: TimeInterval)] {
+		guard let tab = activeTab, let codeView = tab.codeView else { return [] }
+		view.window?.makeFirstResponder(codeView)
+		let letters = Array("abcdefghijklmnopqrstuvwxyz")
+		var costs: [(TimeInterval, TimeInterval)] = []
+		for press in 0..<presses {
+			var cpuStart = timespec(), cpuEnd = timespec()
+			clock_gettime(CLOCK_THREAD_CPUTIME_ID, &cpuStart)
+			let wallStart = DispatchTime.now().uptimeNanoseconds
+			codeView.insertText(
+				String(letters[press % letters.count]),
+				replacementRange: NSRange(location: NSNotFound, length: 0)
+			)
+			let wall = Double(DispatchTime.now().uptimeNanoseconds - wallStart) / 1_000_000_000
+			clock_gettime(CLOCK_THREAD_CPUTIME_ID, &cpuEnd)
+			costs.append((wall, Double(cpuEnd.tv_sec - cpuStart.tv_sec)
+				+ Double(cpuEnd.tv_nsec - cpuStart.tv_nsec) / 1_000_000_000))
+		}
+		return costs
+	}
+
 	/// Flushes every dirty document, used on focus loss and quit.
 	func autoSaveAll() {
 		for tab in tabs {

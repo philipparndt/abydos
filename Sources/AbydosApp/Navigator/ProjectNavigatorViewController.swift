@@ -204,6 +204,11 @@ final class ProjectNavigatorViewController: NSViewController {
 
 		outlineView.reloadData()
 		outlineView.expandItem(root)
+		// The first of 0428's two launch numbers that is not about the window:
+		// the root has been listed and its rows exist, so there is something to
+		// click. Colour has not arrived — that is `git status` below, and on a
+		// repository this size the gap between the two is the whole question.
+		LaunchClock.mark("tree listed")
 
 		startWatching(root: project.root)
 	}
@@ -283,6 +288,12 @@ final class ProjectNavigatorViewController: NSViewController {
 				// is what made keyboard-expanding a folder lose your place.
 				redrawVisibleRows()
 			}
+			// The other half of "usable": the tree is coloured, so what the
+			// working copy has changed is visible rather than about to appear.
+			// First only — this runs again on every watcher event for the rest
+			// of the session, and a mark that moved each time would report how
+			// long ago the last build was rather than what opening cost.
+			LaunchClock.mark("tree coloured")
 			onChangeCount?(await git.changedFileCount())
 		}
 	}
@@ -353,7 +364,38 @@ final class ProjectNavigatorViewController: NSViewController {
 		watcher?.start()
 	}
 
+	/// What the watcher has delivered and what the tree did about it, since the
+	/// window opened.
+	///
+	/// 0428 asks for "filesystem events per build, and what the tree does with
+	/// them", and those are three different numbers: how many batches FSEvents
+	/// coalesced the build into, how many directories those batches named, and
+	/// how many of them the tree was actually open on. The third is the one
+	/// `loadedNode(for:)` was written to keep small, and it can only be counted
+	/// from here — `FileNode.directoryReadsForTesting` counts listings anywhere,
+	/// including the ones somebody's clicking causes.
+	struct WatcherTally {
+		var batches = 0
+		var directories = 0
+		var reloaded = 0
+	}
+	nonisolated(unsafe) static var watcherTallyForTesting = WatcherTally()
+
+	/// What the tree costs right now, for `--report-open`.
+	func scaleReportForTesting() -> [String] {
+		let tally = Self.watcherTallyForTesting
+		return [
+			String(format: "OPEN %-24s %8d", ("tree rows" as NSString).utf8String!, outlineView.numberOfRows),
+			String(format: "OPEN %-24s %8d", ("tree nodes held" as NSString).utf8String!, rootNode?.loadedNodeCount ?? 0),
+			String(format: "OPEN %-24s %8d", ("directories listed" as NSString).utf8String!, FileNode.directoryReadsForTesting),
+			String(format: "OPEN %-24s %8d batches, %d paths, %d reloaded",
+				("watcher" as NSString).utf8String!, tally.batches, tally.directories, tally.reloaded),
+		]
+	}
+
 	private func handleFilesystemChange(_ directories: [URL]) {
+		Self.watcherTallyForTesting.batches += 1
+		Self.watcherTallyForTesting.directories += directories.count
 		StallWatch.mark("navigator watcher") { handleFilesystemChangeMarked(directories) }
 	}
 
@@ -394,6 +436,7 @@ final class ProjectNavigatorViewController: NSViewController {
 			guard let node = rootNode.loadedNode(for: directory), node.isDirectory, node.hasLoadedChildren
 			else { continue }
 			node.reloadPreservingIdentity()
+			Self.watcherTallyForTesting.reloaded += 1
 			touched = true
 		}
 		guard touched else { return }

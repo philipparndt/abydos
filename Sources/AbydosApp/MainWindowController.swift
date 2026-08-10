@@ -5175,6 +5175,41 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 	}
 
+	/// Everything 0428 asks a running window for, printed in one place.
+	///
+	/// One report rather than a flag per number, because these have to be read
+	/// together: a "time to something usable" of four seconds means one thing
+	/// beside a tree of 400 rows and another beside a tree of 40,000, and the
+	/// load average has to sit next to both or neither can be argued with later.
+	func scaleReportForTesting(typing presses: Int) {
+		for line in LaunchClock.report() { print(line) }
+		for line in navigator.scaleReportForTesting() { print(line) }
+
+		if presses > 0 {
+			let costs = editor.measureTypingForTesting(presses: presses)
+			if costs.isEmpty {
+				print("OPEN keystroke                no file open")
+			} else {
+				let walls = costs.map { $0.wall }.sorted()
+				let cpus = costs.map { $0.cpu }.sorted()
+				// Median and worst, not the mean. The mean of a hundred
+				// keystrokes hides the one that took 300 ms, and the one that
+				// took 300 ms is the entire complaint.
+				func at(_ values: [TimeInterval], _ fraction: Double) -> Double {
+					values[min(values.count - 1, Int(Double(values.count) * fraction))] * 1000
+				}
+				print(String(format: "OPEN keystroke wall       %8.2f ms median, %.2f ms p90, %.2f ms worst",
+					at(walls, 0.5), at(walls, 0.9), walls.last! * 1000))
+				print(String(format: "OPEN keystroke cpu        %8.2f ms median, %.2f ms p90, %.2f ms worst",
+					at(cpus, 0.5), at(cpus, 0.9), cpus.last! * 1000))
+			}
+		}
+
+		// The main thread going away is what "usable" fails to be, so the worst
+		// of them are printed with the numbers rather than left in the log.
+		for stall in StallWatch.worst(limit: 8) { print("OPEN stall \(stall.line)") }
+	}
+
 	/// Pushes a branch from the branches view, for looking at what it does
 	/// while it is happening.
 	func pushBranchForTesting(_ name: String) {

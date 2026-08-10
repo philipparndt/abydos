@@ -715,6 +715,9 @@ final class EditorAreaController: NSViewController {
 	var currentPreviewMode: PreviewMode { activeGroup.currentPreviewMode }
 	func focusActiveEditor() { activeGroup.focusActiveEditor() }
 	func simulateTyping(_ text: String) { activeGroup.simulateTyping(text) }
+	func measureTypingForTesting(presses: Int) -> [(wall: TimeInterval, cpu: TimeInterval)] {
+		activeGroup.measureTypingForTesting(presses: presses)
+	}
 	var textForTesting: String? { activeGroup.textForTesting }
 	func clickBelowLastLineForTesting() -> String { activeGroup.clickBelowLastLineForTesting() }
 	func globalScratchDirectoryForTesting() -> String {
