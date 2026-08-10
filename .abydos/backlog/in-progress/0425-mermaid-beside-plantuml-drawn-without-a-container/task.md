@@ -458,11 +458,11 @@ bullets above that are not struck through are the whole of what was left, and
 this is what each of them comes to once it is looked at rather than guessed at.
 The first of them is a question before it is work, so it is asked first.
 
-- [ ] Ask, with a measurement rather than a memory, whether CoreSVG is still
+- [x] Ask, with a measurement rather than a memory, whether CoreSVG is still
       short of the web view: every diagram type this Mermaid draws, rasterised
       both ways and compared pixel for pixel
-- [ ] Fix whatever of that difference turns out to be this app's own doing
-- [ ] Keep the comparison as a test, so the next diagram type that comes apart
+- [x] Fix whatever of that difference turns out to be this app's own doing
+- [x] Keep the comparison as a test, so the next diagram type that comes apart
       says so rather than waiting to be found in a pane
 - [ ] Decide the bitmap-in-the-pane question on that evidence, and write the
       decision down whichever way it goes
