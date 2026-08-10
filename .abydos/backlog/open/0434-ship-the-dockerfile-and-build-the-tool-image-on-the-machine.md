@@ -126,6 +126,53 @@ in the one place where a user actually feels it — and unlike the language
 servers, the difference is visible rather than inferred: the model appears, or
 an overlay tells you to go and install something.
 
+### The version is the argument, and today's advice is wrong
+
+What is depended on is a **developer snapshot**, not a release. Measured on this
+machine, all three at once:
+
+| what | version |
+|---|---|
+| `brew install --cask openscad` — what the overlay tells people to run | **2021.01** |
+| `brew install --cask openscad@snapshot` | 2026.06.12 |
+| what is actually installed and working here | 2026.01.29 (git 6fcd5676) |
+
+The stable release is five years old and not what this depends on. So the
+sentence in `ErrorOverlay.swift` sends somebody to install the wrong OpenSCAD,
+and it will fail in a way that looks like a bug in the model rather than a
+too-old renderer. **That is worth fixing on its own, before and regardless of
+any container work** — the overlay should name the snapshot cask, and ideally
+say the minimum version it needs.
+
+And it turns the earlier worry inside out. Above, pinning was written down as a
+*cost*: pinning a Dockerfile's contents puts the maintenance back here after
+all. For a nightly it is the opposite — there is no stable tag to sit still on,
+so an unpinned instruction is not reproducible even in principle, and a
+Dockerfile naming one snapshot is the only form this dependency can take
+honestly. Nobody can reasonably be asked to track a dev snapshot by hand.
+
+Two things to establish before writing the Dockerfile, because they decide what
+it can say:
+
+- **What a durable pin looks like.** `2026.01.29 (git 6fcd5676)` names both a
+  date and a commit. Whether dated Linux snapshot artefacts stay downloadable
+  once they are old is the question — if they are pruned, the commit is the only
+  pin that keeps working and the image has to be built from source.
+- **What building from source costs.** OpenSCAD pulls in CGAL, Qt and Manifold;
+  this could be a long build rather than the couple of minutes gopls was. If it
+  is, a dated artefact with a checked hash is the better trade, and the pin
+  becomes "this snapshot, while it exists".
+
+### One more thing containerising has to preserve
+
+`OpenSCADRenderer` sets `process.currentDirectoryURL` to a *different* directory
+per call — `runDir` when exporting, `workDir` for the colour passes, `sourceDir`
+for the CSG ones — and the comments say why: relative `include <…>` and
+`use <…>` resolve against it. Any container form has to reproduce the working
+directory per call, not once for the image, or a model that includes a file
+beside it renders on this machine and fails in the container. That is the sort
+of difference that shows up as "it works for me".
+
 *One thing noticed on the way past, unrelated to this item.*
 `OpenSCADRenderer.findOpenSCADExecutable` reads its `which` output with
 `readDataToEndOfFile()`, which is the exact deadlock `ProcessPipes` was written
