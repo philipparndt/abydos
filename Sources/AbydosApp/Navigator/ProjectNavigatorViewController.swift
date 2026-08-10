@@ -104,10 +104,20 @@ final class ProjectNavigatorViewController: NSViewController {
 		outline.dataSource = self
 		outline.delegate = self
 		// Files drag out as URLs: onto the terminal, or into another app. Copy
-		// rather than move — dragging a file out of the tree should never be a
-		// way to lose it from the project.
-		outline.setDraggingSourceOperationMask(.copy, forLocal: true)
+		// rather than move for another *application* — dragging a file out of
+		// the tree should never be a way to lose it from the project.
+		//
+		// Inside this app the tree is also its own destination, and there a bare
+		// drag moves, so `.move` has to be offered: `validateDrop` returning an
+		// operation the source never permitted is a drop that quietly does
+		// nothing. Which of the two a given drag becomes is decided in
+		// `validateDrop`, not here.
+		outline.setDraggingSourceOperationMask([.copy, .move], forLocal: true)
 		outline.setDraggingSourceOperationMask(.copy, forLocal: false)
+		// And the other side of it, which is what 0436 was for: rows can be
+		// dropped back into the tree, and so can files from the Finder or from
+		// any other application that puts a file URL on the drag board.
+		outline.registerForDraggedTypes([.fileURL])
 		outline.target = self
 		outline.doubleAction = #selector(rowDoubleClicked)
 		outline.onKeyDown = { [weak self] event in self?.handleKeyDown(event) ?? false }
@@ -119,10 +129,15 @@ final class ProjectNavigatorViewController: NSViewController {
 		// Several rows join with newlines, in the order they appear in the tree
 		// rather than the order they were clicked: what is being copied is a
 		// list of files, and the tree's order is the one that reads.
-		outline.copyText = { [weak self] in
-			guard let paths = self?.selectedPaths(), !paths.isEmpty else { return nil }
-			return paths.joined(separator: "\n")
+		//
+		// Files rather than a string, since 0436: the text on the board is the
+		// same one path a line it always was, and the same ⌘C now pastes as a
+		// file in the Finder and back into this tree.
+		outline.copyFiles = { [weak self] in
+			self?.selectedNodes().map(\.url) ?? []
 		}
+		outline.onPaste = { [weak self] operation in self?.pasteIntoSelection(operation) }
+		outline.canPaste = { !FilePasteboard.files().isEmpty }
 		outline.menu = makeContextMenu()
 		outlineView = outline
 
@@ -385,11 +400,16 @@ final class ProjectNavigatorViewController: NSViewController {
 		refreshGitStatus()
 	}
 
-	/// A path to select once the tree has caught up with the file system.
+	/// Paths to select once the tree has caught up with the file system.
 	///
 	/// Creating a folder does not refresh the tree directly — the watcher does,
 	/// a moment later — so the selection has to wait for the node to exist.
-	private var pendingReveal: URL?
+	///
+	/// A list rather than one path, since 0436: a drop or a paste puts several
+	/// files somewhere at once, and following one of them would be the same
+	/// shrinking-selection fault `TreeSelection` exists for. Everything that
+	/// makes one thing hands in a list of one and is unchanged.
+	private var pendingReveal: [URL] = []
 
 	/// Re-reads every directory the tree has loaded.
 	///
@@ -419,11 +439,23 @@ final class ProjectNavigatorViewController: NSViewController {
 
 	/// Puts the selection back where it was — or on a file that has just been
 	/// written, when the tree has caught up with it.
+	/// Whichever of the pending paths the tree can find, or the old selection.
+	///
+	/// Any rather than all: a drop is one `FileManager` loop that finishes before
+	/// the watcher fires, so in practice they arrive together — but a file that
+	/// never arrives at all, a dotfile with hidden files switched off, would
+	/// otherwise hold the reveal open for ever and the selection would sit on
+	/// whatever was highlighted before the drop. What has arrived is selected;
+	/// what has not is given up on. Not proved against a partial arrival, since
+	/// nothing here can make one happen on purpose.
 	private func restoreSelectionOrReveal(paths: [String]) {
-		if let pending = pendingReveal, rootNode?.node(for: pending) != nil {
-			pendingReveal = nil
-			selectWithoutOpening(url: pending)
-			return
+		if !pendingReveal.isEmpty {
+			let arrived = pendingReveal.filter { rootNode?.node(for: $0) != nil }
+			if !arrived.isEmpty {
+				pendingReveal = []
+				selectWithoutOpening(urls: arrived)
+				return
+			}
 		}
 		restoreSelection(paths: paths)
 	}
@@ -437,6 +469,17 @@ final class ProjectNavigatorViewController: NSViewController {
 	private func selectedPaths() -> [String] {
 		TreeSelection.paths(rows: Array(outlineView.selectedRowIndexes)) { row in
 			(outlineView.item(atRow: row) as? FileNode)?.url.path
+		}
+	}
+
+	/// Every selected row as a node, in tree order.
+	///
+	/// The selection rather than `contextNodes`, which starts from `clickedRow`:
+	/// this is what the keyboard's gestures act on, and a row clicked ten minutes
+	/// ago is still the clicked row.
+	private func selectedNodes() -> [FileNode] {
+		outlineView.selectedRowIndexes.sorted().compactMap {
+			outlineView.item(atRow: $0) as? FileNode
 		}
 	}
 
@@ -542,7 +585,23 @@ final class ProjectNavigatorViewController: NSViewController {
 		menu.addItem(item("Open Terminal Here", #selector(contextOpenTerminal)))
 		menu.addItem(item("Reveal in Finder", #selector(contextRevealInFinder)))
 		menu.addItem(.separator())
-		menu.addItem(item("Copy Path", #selector(contextCopyPath)))
+		// ⌘C, written down at last: it has always copied the absolute paths, and
+		// since 0436 it copies the files themselves alongside them.
+		let copyPath = item("Copy Path", #selector(contextCopyPath))
+		copyPath.keyEquivalent = "c"
+		copyPath.keyEquivalentModifierMask = [.command]
+		menu.addItem(copyPath)
+		// The Finder's two words for the two pastes. Like Rename… and Move to
+		// Trash below, nothing dispatches these — a contextual menu is not the
+		// main menu — but this is the only place ⌥⌘V is written down at all.
+		let pasteItem = item("Paste Item", #selector(contextPaste))
+		pasteItem.keyEquivalent = "v"
+		pasteItem.keyEquivalentModifierMask = [.command]
+		menu.addItem(pasteItem)
+		let moveItem = item("Move Item Here", #selector(contextPasteAsMove))
+		moveItem.keyEquivalent = "v"
+		moveItem.keyEquivalentModifierMask = [.command, .option]
+		menu.addItem(moveItem)
 		menu.addItem(.separator())
 		menu.addItem(item("Add to .gitignore\u{2026}", #selector(contextIgnore)))
 		menu.addItem(item("Copy Relative Path", #selector(contextCopyRelativePath)))
@@ -654,11 +713,12 @@ final class ProjectNavigatorViewController: NSViewController {
 		NSWorkspace.shared.activateFileViewerSelecting([node.url])
 	}
 
-	/// One path a line, in tree order — the shape a list of files is wanted in.
+	/// One path a line, in tree order — the shape a list of files is wanted in —
+	/// and the files themselves alongside, which is what ⌘C is.
 	@objc private func contextCopyPath() {
-		let paths = contextNodes.map(\.url.path)
-		guard !paths.isEmpty else { return }
-		copyToPasteboard(paths)
+		let urls = contextNodes.map(\.url)
+		guard !urls.isEmpty else { return }
+		FilePasteboard.write(urls)
 	}
 
 	@objc private func contextCopyRelativePath() {
@@ -673,6 +733,8 @@ final class ProjectNavigatorViewController: NSViewController {
 		copyToPasteboard(paths)
 	}
 
+	/// Text and nothing else, which is right for the one caller left: a relative
+	/// path names no file the rest of the machine could find.
 	private func copyToPasteboard(_ paths: [String]) {
 		NSPasteboard.general.clearContents()
 		NSPasteboard.general.setString(paths.joined(separator: "\n"), forType: .string)
@@ -688,7 +750,7 @@ final class ProjectNavigatorViewController: NSViewController {
 		guard let root = project?.root else { return }
 		let destination = root.appendingPathComponent(name)
 		try? FileManager.default.createDirectory(at: destination, withIntermediateDirectories: false)
-		pendingReveal = destination
+		pendingReveal = [destination]
 	}
 
 	func createFileForTesting(named name: String) {
@@ -699,7 +761,7 @@ final class ProjectNavigatorViewController: NSViewController {
 			withIntermediateDirectories: true
 		)
 		try? Data().write(to: destination, options: .withoutOverwriting)
-		pendingReveal = destination
+		pendingReveal = [destination]
 		onSelectFile?(destination, true)
 	}
 
@@ -880,7 +942,7 @@ final class ProjectNavigatorViewController: NSViewController {
 		}
 
 		if let node = contextNodes.first, node.isDirectory { outlineView.expandItem(node) }
-		pendingReveal = destination
+		pendingReveal = [destination]
 		// Opened straight away: a new file is made in order to write in it.
 		onSelectFile?(destination, true)
 	}
@@ -932,7 +994,7 @@ final class ProjectNavigatorViewController: NSViewController {
 		if let node = contextNodes.first, node.isDirectory {
 			outlineView.expandItem(node)
 		}
-		pendingReveal = destination
+		pendingReveal = [destination]
 	}
 
 	// MARK: - Renaming on the row
@@ -1155,7 +1217,7 @@ final class ProjectNavigatorViewController: NSViewController {
 		}
 		// The watcher rebuilds the tree, and the row is a different object
 		// afterwards — so the selection follows the path rather than the node.
-		pendingReveal = destination
+		pendingReveal = [destination]
 		endRename()
 	}
 
@@ -1257,7 +1319,7 @@ final class ProjectNavigatorViewController: NSViewController {
 		if rootNode?.node(for: url) != nil {
 			selectWithoutOpening(url: url)
 		} else {
-			pendingReveal = url
+			pendingReveal = [url]
 		}
 	}
 
@@ -1303,6 +1365,134 @@ final class ProjectNavigatorViewController: NSViewController {
 		}
 	}
 
+	// MARK: - Moving and copying
+
+	/// Where a drop or a paste aimed at a row actually lands.
+	///
+	/// A folder is itself. A *file* is the folder holding it, which is what
+	/// pointing at a file in a list of files means — and a drop between two rows
+	/// is the same answer, because the tree is the file system's order rather
+	/// than a list: there is nothing to insert between two names. Nothing at all
+	/// under the pointer is the project root.
+	private func destinationFolder(for node: FileNode?) -> URL? {
+		guard let node else { return project?.root }
+		return node.isDirectory ? node.url : node.url.deletingLastPathComponent()
+	}
+
+	/// Which way round a drag goes.
+	///
+	/// **A drag that starts in the tree moves, wherever it lands; ⌥ copies. A
+	/// drag that arrives from another application always copies.**
+	///
+	/// The Finder moves within a volume and copies across one, and following
+	/// that was the obvious answer — but the Finder's window names the volume
+	/// every file is on and this one does not. A folder inside a project can be
+	/// a mount point or a symlink onto another disk with nothing in the tree
+	/// saying so, and a gesture that silently changes meaning on information the
+	/// window never shows is a gesture nobody can predict. Inside one project
+	/// the tree is one thing, so the drag means one thing.
+	///
+	/// Nothing in the implementation wanted the distinction either:
+	/// `FileManager.moveItem` already does copy-then-remove when the two ends
+	/// are on different volumes. Not proved here against a real pair of volumes.
+	///
+	/// Arriving from outside is the other way round, and there the Finder's rule
+	/// is plainly right: an import that emptied the USB stick it came from would
+	/// be a way to lose files, and the tree cannot even show what it took them
+	/// from. So an external drop copies, full stop — ⌘ does not turn it into a
+	/// move.
+	private func operation(for info: NSDraggingInfo) -> FileTransfer.Operation {
+		let isOurOwn = (info.draggingSource as? NSOutlineView) === outlineView
+		guard isOurOwn else { return .copy }
+		// The live modifier state rather than `draggingSourceOperationMask`.
+		// AppKit is documented to narrow that mask by the modifier keys, but the
+		// question here — is ⌥ down *now* — is one `NSEvent` answers without
+		// depending on that narrowing being what it is thought to be.
+		return NSEvent.modifierFlags.contains(.option) ? .copy : .move
+	}
+
+	/// Moves or copies files into a folder, and says once what did not happen.
+	///
+	/// Returns whether anything arrived, which is what `acceptDrop` answers with.
+	@discardableResult
+	private func transfer(
+		_ sources: [URL], into folder: URL, operation: FileTransfer.Operation
+	) -> Bool {
+		let plan = FileTransfer.plan(
+			sources, into: folder, operation: operation, projectRoot: project?.root,
+			exists: { FileManager.default.fileExists(atPath: $0.path) }
+		)
+
+		var arrived: [URL] = []
+		var failures: [String] = []
+		for transfer in plan.transfers {
+			do {
+				switch operation {
+				case .move: try FileManager.default.moveItem(at: transfer.source, to: transfer.destination)
+				case .copy: try FileManager.default.copyItem(at: transfer.source, to: transfer.destination)
+				}
+				arrived.append(transfer.destination)
+			} catch {
+				failures.append("“\(transfer.source.lastPathComponent)”: \(error.localizedDescription)")
+			}
+		}
+
+		// One message for the whole drop, however many files it was. Skipping
+		// rather than prompting is what keeps the gesture a gesture, and three
+		// dialogs arriving afterwards instead of during would undo that.
+		if let said = plan.summary(operation: operation, done: arrived.count, failures: failures) {
+			Toast.post(said.title, detail: said.detail)
+		}
+
+		guard !arrived.isEmpty else { return false }
+		// Opened, so there is somewhere for the files to appear.
+		if let node = rootNode?.node(for: folder), node !== rootNode {
+			outlineView.expandItem(node)
+		}
+		// The watcher rebuilds the tree a moment from now and every row is a
+		// different object afterwards, so the selection follows the paths rather
+		// than the nodes — the same problem rename has, and the same answer.
+		pendingReveal = arrived
+		return true
+	}
+
+	/// ⌘V, and ⌥⌘V which moves instead — the Finder's two keys.
+	///
+	/// Whatever is on the pasteboard as files, so it works with a copy made in
+	/// the Finder as readily as with one made here.
+	private func paste(_ operation: FileTransfer.Operation, into folder: URL?) {
+		let files = FilePasteboard.files()
+		guard !files.isEmpty, let folder else { return }
+		transfer(files, into: folder, operation: operation)
+	}
+
+	/// The keyboard's paste: into the selected folder, or the folder holding the
+	/// selected file, or the project root when nothing is selected.
+	///
+	/// From the selection rather than from `contextNodes`, which starts at
+	/// `clickedRow`: a row clicked ten minutes ago is still the clicked row, and
+	/// the keyboard must never put files somewhere the keyboard cannot see.
+	private func pasteIntoSelection(_ operation: FileTransfer.Operation) {
+		paste(operation, into: destinationFolder(for: selectedNodes().first))
+	}
+
+	@objc private func contextPaste() { paste(.copy, into: contextParentDirectory) }
+	@objc private func contextPasteAsMove() { paste(.move, into: contextParentDirectory) }
+
+	/// The same two gestures without a pasteboard or a mouse, for verifying them
+	/// end to end: the files named, dropped into the folder named.
+	func dropForTesting(_ sources: [URL], into folder: URL, move: Bool) {
+		let arrived = transfer(sources, into: folder, operation: move ? .move : .copy)
+		print("TREE drop: \(move ? "move" : "copy") \(sources.count) → \(folder.lastPathComponent) "
+			+ "arrived=\(arrived)")
+	}
+
+	/// ⌘C then ⌘V, driven through the real pasteboard so what ⌘C writes is what
+	/// ⌘V reads.
+	func pasteForTesting(move: Bool) {
+		pasteIntoSelection(move ? .move : .copy)
+	}
+
 	// MARK: - Keyboard
 
 	/// Returns true when the event was consumed.
@@ -1319,6 +1509,24 @@ final class ProjectNavigatorViewController: NSViewController {
 		// field it commits the name, which `control(_:textView:doCommandBy:)`
 		// does.
 		guard renameField == nil else { return false }
+
+		// ⌥⌘V, the Finder's "Move Item Here". It arrives here rather than through
+		// the responder chain because AppKit only dispatches key equivalents it
+		// finds in the *main* menu, and the Edit menu's Paste is ⌘V alone —
+		// which is the one that does reach `NavigatorOutlineView.paste`.
+		//
+		// Matched by its character and not by a key code, unlike everything in
+		// the switch below: a key code is a position on an ANSI keyboard, and
+		// this is the only binding here that is a letter rather than a position.
+		// `charactersIgnoringModifiers` drops everything but Shift, so ⌥ does not
+		// turn the "v" into a "√".
+		if event.modifierFlags.intersection([.command, .option, .control, .shift])
+			== [.command, .option],
+			event.charactersIgnoringModifiers?.lowercased() == "v"
+		{
+			pasteIntoSelection(.move)
+			return true
+		}
 
 		switch event.keyCode {
 		case 36, 76: // Return, Keypad Enter
@@ -1440,9 +1648,14 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// Used when the editor switches tabs: the tree should follow along, but
 	/// must not call back and reopen the file it was just told about.
 	func selectWithoutOpening(url: URL) {
+		selectWithoutOpening(urls: [url])
+	}
+
+	/// The same for several files, which is what a drop or a paste lands.
+	func selectWithoutOpening(urls: [URL]) {
 		let wasSilent = isSelectingSilently
 		isSelectingSilently = true
-		reveal(url: url)
+		reveal(urls: urls)
 		isSelectingSilently = wasSilent
 	}
 
@@ -1473,6 +1686,9 @@ final class ProjectNavigatorViewController: NSViewController {
 		case 49: characters = " "
 		case 51: characters = String(UnicodeScalar(NSDeleteCharacter)!)
 		case 53: characters = "\u{1B}" // Escape
+		// The one letter the tree binds, and the reason `handleKeyDown` matches
+		// ⌥⌘V on its character: the code is where "v" sits on an ANSI keyboard.
+		case 9: characters = "v"
 		default: characters = ""
 		}
 		guard let event = NSEvent.keyEvent(
@@ -1502,8 +1718,20 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// What ⌘C would put on the pasteboard — the same closure the Edit menu
 	/// reaches, asked directly, so what several selected rows copy can be read
 	/// without a key window to send an action through.
+	///
+	/// The text form of it, which `FilePasteboardTests` proves is what AppKit
+	/// joins the per-item strings into: the harness's output is unchanged by ⌘C
+	/// having become a file copy as well.
 	func copyTextForTesting() -> String {
-		(outlineView as? NavigatorOutlineView)?.copyText?() ?? "nothing"
+		let files = (outlineView as? NavigatorOutlineView)?.copyFiles?() ?? []
+		guard !files.isEmpty else { return "nothing" }
+		return files.map(\.path).joined(separator: "\n")
+	}
+
+	/// ⌘C for real, onto the general pasteboard, so a ⌘V after it has something
+	/// to read.
+	func copyToPasteboardForTesting() {
+		FilePasteboard.write(selectedNodes().map(\.url))
 	}
 
 	/// What the tree has highlighted, and how many rows it is showing.
@@ -1524,22 +1752,37 @@ final class ProjectNavigatorViewController: NSViewController {
 
 	/// Selects and scrolls to a file, expanding ancestors as needed.
 	func reveal(url: URL) {
-		guard let rootNode, let node = rootNode.node(for: url) else { return }
+		reveal(urls: [url])
+	}
 
-		var ancestors: [FileNode] = []
-		var current: FileNode? = node
-		while let parent = current?.parentNode(in: rootNode) {
-			ancestors.append(parent)
-			current = parent
-		}
-		for ancestor in ancestors.reversed() {
-			outlineView.expandItem(ancestor)
+	/// The same for several files at once.
+	///
+	/// Every ancestor is expanded first and the selection set once at the end,
+	/// rather than a row at a time: expanding renumbers the rows under it, so
+	/// indices collected as they went would name the wrong files by the time the
+	/// last folder opened. The topmost is what gets scrolled to.
+	func reveal(urls: [URL]) {
+		guard let rootNode, !urls.isEmpty else { return }
+
+		let nodes = urls.compactMap { rootNode.node(for: $0) }
+		guard !nodes.isEmpty else { return }
+
+		for node in nodes {
+			var ancestors: [FileNode] = []
+			var current: FileNode? = node
+			while let parent = current?.parentNode(in: rootNode) {
+				ancestors.append(parent)
+				current = parent
+			}
+			for ancestor in ancestors.reversed() {
+				outlineView.expandItem(ancestor)
+			}
 		}
 
-		let row = outlineView.row(forItem: node)
-		guard row >= 0 else { return }
-		outlineView.selectRowIndexes([row], byExtendingSelection: false)
-		outlineView.scrollRowToVisible(row)
+		let rows = nodes.map { outlineView.row(forItem: $0) }.filter { $0 >= 0 }.sorted()
+		guard let first = rows.first else { return }
+		outlineView.selectRowIndexes(IndexSet(rows), byExtendingSelection: false)
+		outlineView.scrollRowToVisible(first)
 	}
 }
 
@@ -1679,6 +1922,56 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 		(item as? FileNode)?.url as NSURL?
 	}
 
+	/// Whether the drop under the pointer would do anything, and which of the
+	/// two things it would do.
+	///
+	/// The row it highlights is retargeted to the folder the files will really
+	/// land in — a file's parent, or the folder a line between two rows sits
+	/// inside — so what is about to happen is visible before the mouse comes up
+	/// rather than explained after.
+	///
+	/// The whole plan is worked out here and thrown away, which is what makes a
+	/// drag onto a folder that could only refuse show the "no" cursor instead of
+	/// accepting and then posting a toast. It is a few string comparisons and a
+	/// `fileExists` per dragged file, per mouse move over a row.
+	func outlineView(
+		_ outlineView: NSOutlineView, validateDrop info: NSDraggingInfo,
+		proposedItem item: Any?, proposedChildIndex index: Int
+	) -> NSDragOperation {
+		guard let folder = destinationFolder(for: item as? FileNode) else { return [] }
+		let target = rootNode?.node(for: folder)
+		outlineView.setDropItem(target, dropChildIndex: NSOutlineViewDropOnItemIndex)
+
+		let sources = FilePasteboard.files(on: info.draggingPasteboard)
+		guard !sources.isEmpty else { return [] }
+
+		let operation = operation(for: info)
+		let wanted: NSDragOperation = operation == .move ? .move : .copy
+		// Some applications offer only `.generic`; a file URL is a file URL
+		// either way, so that counts as permission to copy.
+		guard info.draggingSourceOperationMask.contains(wanted)
+			|| info.draggingSourceOperationMask.contains(.generic)
+		else { return [] }
+
+		let plan = FileTransfer.plan(
+			sources, into: folder, operation: operation, projectRoot: project?.root,
+			exists: { FileManager.default.fileExists(atPath: $0.path) }
+		)
+		return plan.hasWork ? wanted : []
+	}
+
+	/// The mouse came up. Everything that decides anything is in `transfer`, so
+	/// a drop and a ⌘V are the same act arriving by two routes.
+	func outlineView(
+		_ outlineView: NSOutlineView, acceptDrop info: NSDraggingInfo,
+		item: Any?, childIndex index: Int
+	) -> Bool {
+		guard let folder = destinationFolder(for: item as? FileNode) else { return false }
+		let sources = FilePasteboard.files(on: info.draggingPasteboard)
+		guard !sources.isEmpty else { return false }
+		return transfer(sources, into: folder, operation: operation(for: info))
+	}
+
 	/// Tailors each item to how many rows the menu was opened over.
 	///
 	/// `node` is the single row, and nil when there are several — so everything
@@ -1751,6 +2044,11 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 				item.isEnabled = nodes.contains { $0 !== rootNode }
 			case #selector(contextCopyPath), #selector(contextCopyRelativePath):
 				item.isEnabled = !nodes.isEmpty
+			case #selector(contextPaste), #selector(contextPasteAsMove):
+				// About the board and the folder, not about how many rows are
+				// highlighted: pasting four files into a folder is one act, and
+				// right-clicking empty space still has somewhere to put them.
+				item.isEnabled = rootNode != nil && !FilePasteboard.files().isEmpty
 			case #selector(contextCollapseAll):
 				// About the tree, not about a row: right-clicking empty space
 				// still offers it.
@@ -1892,25 +2190,42 @@ private final class NavigatorHeaderView: NSView {
 /// Outline view that hands key events to the controller before acting on them.
 final class NavigatorOutlineView: NSOutlineView {
 	var onKeyDown: ((NSEvent) -> Bool)?
-	/// What ⌘C should put on the pasteboard, or nil when nothing is selected.
-	var copyText: (() -> String?)?
+	/// What ⌘C should put on the pasteboard, in tree order.
+	var copyFiles: (() -> [URL])?
+	/// ⌘V, and ⌥⌘V, which is the same gesture the other way round.
+	var onPaste: ((FileTransfer.Operation) -> Void)?
+	/// Whether there is anything on the board to paste, so the Edit menu's
+	/// Paste greys itself out over an empty one.
+	var canPaste: (() -> Bool)?
 
 	override var acceptsFirstResponder: Bool { true }
 
-	/// ⌘C copies the selected file's path.
+	/// ⌘C copies the selected files — as files, and as their paths.
 	///
 	/// Answered here rather than bound to a key, so it arrives the way copying
 	/// arrives everywhere else: the Edit menu sends `copy:` down the responder
 	/// chain, this is the responder when the tree has the keyboard, and the
 	/// menu item greys itself out when there is nothing selected to copy.
+	///
+	/// `FilePasteboard` is what makes it both things at once. The text form is
+	/// unchanged — one absolute path a line, in tree order — and the same ⌘C now
+	/// pastes as a file in the Finder and in this tree.
 	@objc func copy(_ sender: Any?) {
-		guard let text = copyText?() else { return }
-		NSPasteboard.general.clearContents()
-		NSPasteboard.general.setString(text, forType: .string)
+		let files = copyFiles?() ?? []
+		guard !files.isEmpty else { return }
+		FilePasteboard.write(files)
+	}
+
+	/// ⌘V. ⌥⌘V is the same thing as a move, and arrives through `keyDown`
+	/// instead: AppKit only dispatches key equivalents it finds in the main
+	/// menu, and the Edit menu's Paste is ⌘V alone.
+	@objc func paste(_ sender: Any?) {
+		onPaste?(.copy)
 	}
 
 	override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
-		if item.action == #selector(copy(_:)) { return copyText?() != nil }
+		if item.action == #selector(copy(_:)) { return !(copyFiles?().isEmpty ?? true) }
+		if item.action == #selector(paste(_:)) { return canPaste?() ?? false }
 		return super.validateUserInterfaceItem(item)
 	}
 
