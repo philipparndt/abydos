@@ -186,7 +186,7 @@ OpenSCAD are the chatty kind. Worth a look while the file is open anyway.
       on the entry point speaking the protocol on standard input and output
 - [x] An image name derived from the recipe, so an edited Dockerfile rebuilds
       and an unedited one never does
-- [ ] The recipe is found both in the `.app` and in a checkout, and the
+- [x] The recipe is found both in the `.app` and in a checkout, and the
       Dockerfiles travel in the bundle
 - [x] Build rather than pull when the name is one this app makes, with a
       sentence per way a build fails rather than the runtime's output
@@ -194,7 +194,7 @@ OpenSCAD are the chatty kind. Worth a look while the file is open anyway.
       here", offered only for a tool a Dockerfile ships for
 - [x] `{"openscad-lsp": "build"}` in a project's `.abydos/tools.json` starts the
       built image
-- [ ] Driven end to end against a `.scad`, the way `ContainerLSPLiveTests`
+- [x] Driven end to end against a `.scad`, the way `ContainerLSPLiveTests`
       drives gopls
 - [ ] Establish what a durable pin for the OpenSCAD snapshot looks like, before
       writing a Dockerfile that claims one
