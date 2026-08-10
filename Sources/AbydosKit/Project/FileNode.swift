@@ -93,6 +93,19 @@ public final class FileNode {
 		lastReading = nil
 	}
 
+	/// How many nodes are held in memory below this one, counting itself.
+	///
+	/// The tree is lazy, so this is not the size of the project: it is how much
+	/// of the project has been listed and kept. That distinction is the whole
+	/// subject of `loadedNode(for:)` — before it, a build pulled its output
+	/// directory into the tree while nobody was looking at it, and this number
+	/// grew all afternoon. It is the number to watch after a build at 0428's
+	/// scale, and nothing could report it.
+	public var loadedNodeCount: Int {
+		guard let loadedChildren else { return 1 }
+		return 1 + loadedChildren.reduce(0) { $0 + $1.loadedNodeCount }
+	}
+
 	/// Children, read from disk on first access.
 	public var children: [FileNode] {
 		if let loadedChildren { return loadedChildren }

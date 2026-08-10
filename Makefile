@@ -88,6 +88,22 @@ test: ## Run the test suite (FILTER=name, TEST_TIMEOUT=seconds)
 perf: ## Run the performance suite in release and print timings
 	@$(SWIFT) test $(SWIFT_JOBS) -c release --filter PerformanceTests 2>&1 | grep -E '^PERF|Test run with'
 
+# The other performance suite: what the engine costs on a real project of the
+# size this app is meant for, rather than on a synthetic file in one directory.
+#
+# Asked for rather than part of `make test`, for two reasons. It needs several
+# gigabytes of Eclipse beside the checkout — `Scripts/corpus.sh` clones it — and
+# walking 22,680 directories of that is visible to `FileNodeReloadTests`, which
+# zeroes the process-wide listing counter and then asserts it is still zero.
+#
+# Serialised, because a measurement taken beside three other tests measures the
+# other three. The window half of the same question is `Scripts/scale.sh`, which
+# has to be a script because it drives the app.
+.PHONY: scale
+scale: ## Measure the engine on the corpus (Scripts/corpus.sh puts one there)
+	@SCALE=1 $(SWIFT) test $(SWIFT_JOBS) -c release --no-parallel \
+		--filter ScaleLiveTests 2>&1 | grep -E '^SCALE|Test run with'
+
 .PHONY: fire
 fire: ## Burn the DOOM fire in this terminal (SECONDS=20, FPS=60 to just watch)
 	@$(SWIFT) build $(SWIFT_JOBS) -c release --product firebench

@@ -190,6 +190,16 @@ struct LaunchOptions {
 	var treeSteps: String?
 	/// How many keystrokes to time in the terminal.
 	var typingPresses: Int?
+	/// Print what opening this project cost, at each of these many seconds in.
+	///
+	/// Several readings rather than one, for the reason `--banner-at` learned in
+	/// 0433: at any single moment a large project is still settling, and one
+	/// reading cannot tell "finished" from "not yet". At 0428's scale that is
+	/// not a subtlety — a reading at five seconds and one at sixty are different
+	/// answers to what a project open costs, and both are true.
+	var openReportsAt: [Double] = []
+	/// How many keystrokes to time in the editor, with `--report-open`.
+	var openReportTyping = 0
 	/// Which row of the branches view to open the menu on.
 	var branchMenuRow: Int?
 	/// Push this branch from the branches view.
@@ -523,6 +533,10 @@ struct LaunchOptions {
 			case "--navigate":   options.navigateSteps = next()
 			case "--tree":       options.treeSteps = next()
 			case "--type-latency": options.typingPresses = next().flatMap(Int.init)
+			case "--report-open":
+				options.openReportsAt = (next() ?? "10")
+					.split(separator: ",").compactMap { Double($0) }
+			case "--report-typing": options.openReportTyping = next().flatMap(Int.init) ?? 100
 			case "--stall":      options.stallMilliseconds = next().flatMap(Int.init)
 			case "--tab-add":
 				// The number is optional, so peek rather than consume: without
