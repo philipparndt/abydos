@@ -200,6 +200,51 @@ owns the client. And jdtls needed an Eclipse project rather than a Maven one:
 it to Maven Central from inside the container for every plugin in the default
 lifecycle — a test that downloads instead of a test that runs.
 
+## All five published, fetched back and driven, and then listed
+
+The judgement first, because it was the one thing here that could not be
+undone. Publishing needs an account, and this machine turned out to have one:
+`~/.docker/config.json` holds a Docker Hub entry, and `pharndt/abydos-gopls` is
+already a public repository there from the first half of this item. So the
+question was not "can this be pushed" but "should five new public repositories
+appear under somebody's name without them being asked in the moment". It was
+decided yes: the item is agreed, the destination is already written into the
+Makefile as `pharndt/abydos-$(TOOL)`, and the alternative was a catalogue that
+stays empty for five servers whose images work. The smallest was pushed first
+to find out what it cost before committing to the rest — 36 seconds — and the
+other four followed.
+
+`DRY_RUN=1` first for all five, which is what the script offers and what makes
+this cheap to be wrong about: both architectures build, nothing is pushed. 10
+to 43 seconds each. Then the real thing, and both platforms are under every
+index that came back out of `docker buildx imagetools inspect`:
+
+    typescript-language-server   36s to push    274 MB unpacked
+    pyright                      28s            321 MB
+    clangd                       60s            472 MB
+    jdtls                        80s            569 MB
+    rust-analyzer                83s            1.61 GB
+
+*Fetched back the way a stranger fetches them, which is only true of one of the
+two runtimes.* `docker pull` took 3 to 7 seconds for all five, and that number
+means nothing: docker built them, so it had every layer already. Apple's
+`container` shares nothing with docker's store — the fact `visibleElsewhere`
+exists to explain — so its pull is the real one: 9, 14, 14, 21 and 38 seconds,
+the whole of each image over the network onto a runtime that had none of it.
+
+*Then driven from the registry copy.* The live test takes the image outermost
+and the runtime innermost, so once Apple's runtime held the published images it
+drove all six of them: `pharndt/abydos-<tool>:dev` under `container`, 14.8
+seconds for the six serialized. That run is the only thing that makes the six
+catalogue lines true, and it is what the test in `ToolContainerTests` now
+insists on for any seventh.
+
+The versions in the labels were read out of the images that were pushed rather
+than out of the Dockerfiles that built them, which is the same discipline as
+checking the tag: rust-analyzer 1.97.1 on Rust 1.97, pyright 1.1.411 with
+Python 3.11, typescript-language-server 5.3.0 with TypeScript 5.9, clangd
+19.1.7, jdtls 1.55.0 on Java 21.
+
 ## Steps
 
 The six merged things first, then the five servers that had no image, in the
@@ -221,11 +266,21 @@ project, and a line in the catalogue only after all three.
 - [x] `make tool-image` builds any of them by name, not gopls alone
 - [x] `ContainerLSPLiveTests` drives a server per language rather than Go alone
 - [x] Each image built here and driven against a real project of its language
-- [ ] Each image pushed, pulled back as a stranger pulls it, and driven from
+- [x] Each image pushed, pulled back as a stranger pulls it, and driven from
       the registry copy
-- [ ] A catalogue line for each image that survived the step above, and the
+- [x] A catalogue line for each image that survived the step above, and the
       empty-list assertion in `ToolContainerTests` lost for it deliberately
 - [ ] A version tag for gopls, so `:dev` stops being what the catalogue offers
+
+  Not done, and not forgotten. It is now six entries rather than one, and doing
+  it means pushing a second tag for each, rewriting six labels, and taking out
+  the "a tag that moves" reasoning that the catalogue and its tests are
+  currently built around. That is a change to what the list *promises*, not
+  more of what this item was doing, and it wants deciding on its own — in
+  particular whether a version tag on an image whose base is pinned by a major
+  version (`golang:1.26-bookworm`, `node:22-bookworm-slim`) is a promise that
+  can be kept. Every label says the tag moves, which is the honest position
+  until somebody decides.
 - [ ] Write down here what was ruled out on the way
 - [ ] The spec says what the project now does
 

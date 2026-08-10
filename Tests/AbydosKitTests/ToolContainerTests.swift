@@ -163,36 +163,18 @@ struct ToolChoiceTests {
 		)
 	}
 
-	/// The language servers are offered, and only the one that has been run
-	/// claims an image.
+	/// The rule, stated once for every language server rather than for whichever
+	/// one happens to have an entry today.
 	///
-	/// The point of that list is that somebody has run the thing. Listing one
-	/// nobody has tried would be the failure the list exists to prevent, so the
-	/// five with no image behind them offer the installed copy and a custom
-	/// image and nothing else.
-	@Test func languageServersAreOfferedWithoutPretendingAboutImages() throws {
-		for key in ["rust-analyzer", "pyright", "typescript-language-server",
-		            "clangd", "jdtls"] {
-			let tool = try #require(ToolImageCatalogue.tool(forKey: key), "\(key) is not offered")
-			#expect(tool.choices.isEmpty, "\(key) claims an image nobody has run")
-
-			let options = ToolImageCatalogue.options(for: tool)
-			#expect(options.first?.value == ToolImageCatalogue.useInstalled)
-			#expect(options.last?.value == ToolImageCatalogue.custom)
-			#expect(options.count == 2)
-		}
-	}
-
-	/// And the rule stated once for all of them, rather than only for the server
-	/// that happens to have an entry today.
+	/// This is what stops the list drifting back into a wish. Whatever it offers
+	/// for a language server has to be an image `ContainerLSPLiveTests` would
+	/// pull and run, because that test is the only evidence any of these images
+	/// work — an entry it does not drive is a claim nobody has checked. Adding a
+	/// seventh server means teaching that test about it first, which is the
+	/// order this whole list exists to enforce.
 	///
-	/// The test above says the five are empty, which stops being true the moment
-	/// one of them is published and driven — and the temptation then is to
-	/// delete a line from that list and add a `Choice`, with nothing left
-	/// checking that anybody ran it. This is what is left checking: whatever the
-	/// catalogue offers for a language server has to be an image
-	/// `ContainerLSPLiveTests` would pull and run. It passes vacuously for the
-	/// five with no choices, which is the point — it is waiting for them.
+	/// Written as a loop over the catalogue rather than over a list of names, so
+	/// a server added to one and not the other is still covered.
 	@Test func noLanguageServerOffersAnImageTheLiveTestWouldNotDrive() throws {
 		for tool in ToolImageCatalogue.tools where tool.key != "plantuml" {
 			for choice in tool.choices {
@@ -204,33 +186,39 @@ struct ToolChoiceTests {
 		}
 	}
 
-	/// gopls is the one that has, and this is what says so.
+	/// All six offer the image that was published and driven, and nothing else.
 	///
-	/// Tied to `ContainerLSPLiveTests` rather than written out twice: that test
-	/// is the only evidence any of these images work, and an entry the live test
-	/// does not drive is back to being a claim nobody has checked. So the image
-	/// offered here has to be one of the images that test would pull and run.
-	/// Adding a second server to the catalogue means teaching that test about it
-	/// first, which is the order this whole list exists to enforce.
-	@Test func goplsOffersTheImageThatWasPublishedAndDriven() throws {
-		let tool = try #require(ToolImageCatalogue.tool(forKey: "gopls"))
-		let choice = try #require(tool.choices.first)
-		#expect(tool.choices.count == 1)
-		#expect(choice.image == "pharndt/abydos-gopls:dev")
-		#expect(ContainerLSPLiveTests.images(for: tool.key).contains(choice.image))
-		// Ours, so it is our own word that it works — and the label says the tag
-		// moves, since a `:dev` known-good today is whatever was pushed last by
-		// the time somebody picks it.
-		#expect(choice.publisher == "the Abydos project")
-		#expect(choice.label.contains("moves"))
+	/// This test used to say the opposite about five of them — that they claim
+	/// no image — and that was the honest thing while nothing had been built for
+	/// them. 0401 built, pushed, fetched back and drove all five, so the
+	/// assertion that would be dishonest now is the old one. What has not
+	/// changed is the rule underneath, and the test above is what holds the next
+	/// entry to it.
+	@Test func everyLanguageServerOffersTheImageThatWasPublishedAndDriven() throws {
+		for key in ["gopls", "rust-analyzer", "pyright",
+		            "typescript-language-server", "clangd", "jdtls"] {
+			let tool = try #require(ToolImageCatalogue.tool(forKey: key), "\(key) is not offered")
+			let choice = try #require(tool.choices.first, "\(key) offers no image")
+			#expect(tool.choices.count == 1)
+			#expect(choice.image == "pharndt/abydos-\(key):dev")
+			#expect(ContainerLSPLiveTests.images(for: key).contains(choice.image))
+			// Ours, so it is our own word that it works — and every label says the
+			// tag moves, since a `:dev` known-good today is whatever was pushed
+			// last by the time somebody picks it.
+			#expect(choice.publisher == "the Abydos project")
+			#expect(choice.label.contains("moves"), "\(key)'s label does not say the tag moves")
+			// The image's own name on screen, so what is offered is what would be
+			// pulled.
+			#expect(choice.label.hasPrefix(choice.image))
 
-		let options = ToolImageCatalogue.options(for: tool)
-		#expect(options.map(\.value) == [
-			ToolImageCatalogue.useInstalled, choice.image, ToolImageCatalogue.custom,
-		])
-		// And a project that names it in `.abydos/tools.json` shows as that
-		// choice rather than as a custom image somebody typed.
-		#expect(ToolImageCatalogue.selection(for: choice.image, tool: tool) == choice.image)
+			let options = ToolImageCatalogue.options(for: tool)
+			#expect(options.map(\.value) == [
+				ToolImageCatalogue.useInstalled, choice.image, ToolImageCatalogue.custom,
+			])
+			// And a project that names it in `.abydos/tools.json` shows as that
+			// choice rather than as a custom image somebody typed.
+			#expect(ToolImageCatalogue.selection(for: choice.image, tool: tool) == choice.image)
+		}
 	}
 
 	/// And each says the same three things an image has to do, since getting
