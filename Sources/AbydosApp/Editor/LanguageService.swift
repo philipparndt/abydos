@@ -121,6 +121,14 @@ final class LanguageService {
 	/// answers is deliberately not written down: "not now" is about this
 	/// afternoon and has to hold until the project is closed and no longer.
 	private var devcontainerConsent: [String: DevContainerConsent] = [:]
+	/// Projects whose written-down answer named a devcontainer they no longer
+	/// offer, so that the file system is asked about it once rather than on every
+	/// lookup.
+	///
+	/// A project is in here only until it is asked again, and being asked writes
+	/// a fresh answer over the stale one — so this is a cache with one use, and it
+	/// is cleared wherever the rest of a project's devcontainer bookkeeping is.
+	private var staleDevcontainerChoices: Set<String> = []
 
 	/// What to say in the status bar about servers: names of those running.
 	private(set) var runningNames: [String] = []
@@ -783,7 +791,10 @@ final class LanguageService {
 		guard let consent = consent(for: project), consent != .container else { return nil }
 		guard hasDevContainerFile(project) else { return nil }
 		if consent == .thisMachine, servers[key]?.client.isRunning != true { return nil }
-		guard let container = DevContainerFile.choices(in: project).first?.name,
+		// The one this project would use, not the one that sorts first: with
+		// several, "its language server is in X, which has not been started" has
+		// to name the container the button beside it would start.
+		guard let container = containerChoice(for: project)?.name,
 		      let text = DevContainerConsent.notice(
 		      	language: name, container: container, consent: consent
 		      )
@@ -815,10 +826,29 @@ final class LanguageService {
 
 	/// What was said about this project, from this session or from the
 	/// preferences it was written to, or nil when nobody has been asked.
+	///
+	/// **A yes that names a container the project no longer offers is not an
+	/// answer**, and this is where it stops being one. `devcontainer.json` is
+	/// committed, so the set of containers a project offers is somebody else's to
+	/// change between one session and the next; a stored "use `.devcontainer/go`"
+	/// against a checkout that now has `.devcontainer/tools` is about a container
+	/// nobody can start. Degrading it to nil puts the question back rather than
+	/// failing, and rather than quietly starting whichever one sorts first —
+	/// which would be choosing a toolchain for somebody who had chosen a
+	/// different one. 0443.
 	private func consent(for project: URL) -> DevContainerConsent? {
 		let path = project.standardizedFileURL.path
 		if let held = devcontainerConsent[path] { return held }
+		guard !staleDevcontainerChoices.contains(path) else { return nil }
 		guard let stored = Settings.shared.devContainerConsent(forProject: project) else { return nil }
+		if stored == .container,
+		   let named = Settings.shared.devContainerChoice(forProject: project),
+		   DevContainerFile.choice(identified: named, in: project) == nil {
+			staleDevcontainerChoices.insert(path)
+			log("\(project.lastPathComponent) was to be worked on in \(named), which it no longer "
+				+ "offers; it will be asked again")
+			return nil
+		}
 		devcontainerConsent[path] = stored
 		return stored
 	}
@@ -826,24 +856,70 @@ final class LanguageService {
 	/// Keeps an answer, in the two places it belongs: for this session always,
 	/// and in the preferences when it is one of the two that are about the
 	/// project rather than about this afternoon.
-	private func remember(_ consent: DevContainerConsent, for project: URL) {
+	///
+	/// The container is written down beside it when the answer names one. It is
+	/// left alone otherwise — see `Settings.setDevContainerChoice` for why a
+	/// decline does not forget which container this project's is.
+	private func remember(
+		_ consent: DevContainerConsent, choice: DevContainerFile.Choice?, for project: URL
+	) {
 		devcontainerConsent[project.standardizedFileURL.path] = consent
+		staleDevcontainerChoices.remove(project.standardizedFileURL.path)
 		Settings.shared.setDevContainerConsent(consent, forProject: project)
+		if consent == .container, let choice {
+			Settings.shared.setDevContainerChoice(
+				DevContainerFile.identifier(of: choice.file, in: project), forProject: project
+			)
+		}
 	}
 
 	/// What is in force for a project, for the titlebar's pill and its menu.
 	func devContainerConsent(for project: URL) -> DevContainerConsent? { consent(for: project) }
 
+	/// **Which** of a project's devcontainers its language servers belong in.
+	///
+	/// The one written down when it is still one of the project's, and the
+	/// preferred one otherwise — which covers both a project with a single
+	/// container, where there is nothing to choose, and every answer given before
+	/// there was anything to choose *with*. Nil only when the project offers none
+	/// at all.
+	///
+	/// This is the single place that turns "yes" into "that one", so the
+	/// question, the pill, the menu and the container that actually comes up
+	/// cannot come to disagree about which one was meant.
+	func containerChoice(for project: URL) -> DevContainerFile.Choice? {
+		let choices = DevContainerFile.choices(in: project)
+		guard let named = Settings.shared.devContainerChoice(forProject: project) else {
+			return choices.first
+		}
+		return choices.first { DevContainerFile.identifier(of: $0.file, in: project) == named }
+			?? choices.first
+	}
+
 	/// Work this project inside its devcontainer after all — from the strip
 	/// above a file, or from the pill in the titlebar.
-	func useDevContainer(for project: URL) { move(to: .container, for: project) }
+	func useDevContainer(for project: URL) {
+		move(to: .container, choice: containerChoice(for: project), for: project)
+	}
+
+	/// Work this project inside **that** one of its devcontainers — from the
+	/// pill's menu, which is the one place with room to list them.
+	///
+	/// The same call whether the project is already in another container, in none,
+	/// or being worked on this machine: `move` is what knows which of those it is,
+	/// and all three end with the servers in the container that was clicked.
+	func useDevContainer(_ choice: DevContainerFile.Choice, for project: URL) {
+		move(to: .container, choice: choice, for: project)
+	}
 
 	/// Work this project with the servers on this machine, knowing they are not
 	/// the toolchain it names.
-	func workOnThisMachine(for project: URL) { move(to: .thisMachine, for: project) }
+	func workOnThisMachine(for project: URL) {
+		move(to: .thisMachine, choice: nil, for: project)
+	}
 
-	/// Changes which machine a project's language servers run on, after they have
-	/// already started somewhere.
+	/// Changes which machine — or which container — a project's language servers
+	/// run on, after they have already started somewhere.
 	///
 	/// Everything for the project is ended first, because the two sets answer
 	/// differently about the same file and a server left holding a document goes
@@ -851,14 +927,49 @@ final class LanguageService {
 	/// floor down. The container itself is left up whichever way this goes: it
 	/// may hold somebody's terminal, and 0424 is explicit that coming back has to
 	/// be instant.
-	private func move(to consent: DevContainerConsent, for project: URL) {
+	///
+	/// **Moving between two containers is the same move**, which is 0443's part 2
+	/// and the reason this takes a choice rather than only a consent. It costs one
+	/// thing more than the others: the attachment naming the container the servers
+	/// were in has to go, or `warmUp` finds it, decides the project already has a
+	/// container, and starts the servers back up in the one somebody has just
+	/// asked to leave. A switch that leaves the old container's servers running is
+	/// exactly 0427's fault with a gesture behind it.
+	private func move(
+		to consent: DevContainerConsent, choice: DevContainerFile.Choice?, for project: URL
+	) {
 		guard hasDevContainerFile(project) else { return }
-		guard self.consent(for: project) != consent else { return }
 		let path = project.standardizedFileURL.path
-		log("\(project.lastPathComponent)'s language servers move to "
-			+ (consent == .container ? "its devcontainer" : "this machine"))
+		// Which container this project's servers are in, or would be put in. The
+		// one that is actually up when there is one, because that is the fact; the
+		// resolved answer otherwise.
+		let current = devcontainers[project]?.session.configuration.file
+			?? containerChoice(for: project)?.file
+		// Nothing to do only when both halves of the answer are already in force.
+		// "Use the one we are already using" is a no-op; "use the other one" is
+		// not, and the two read identically from the menu.
+		let staying = self.consent(for: project) == consent
+			&& (consent != .container
+				|| choice.map { FilePath.canonical($0.file) } == current.map(FilePath.canonical))
+		guard !staying else { return }
+		let where_: String
+		switch consent {
+		case .container: where_ = choice.map { "its devcontainer \($0.name)" } ?? "its devcontainer"
+		case .thisMachine, .notNow: where_ = "this machine"
+		}
+		log("\(project.lastPathComponent)'s language servers move to \(where_)")
 		shutdown(project: project)
-		remember(consent, for: project)
+		// After the shutdown, which stops them, and before the warm-up, which
+		// would otherwise start them straight back up in the container they are
+		// leaving. **Only when it is a different container.** Moving onto this
+		// machine keeps the attachment, and 0438 proved why: coming back then
+		// reuses the very same one, with no second round of asking the image what
+		// it carries and no second `is up; it has` in the log.
+		if consent == .container, let choice, let current,
+		   FilePath.canonical(choice.file) != FilePath.canonical(current) {
+			devcontainers.detach(project)
+		}
+		remember(consent, choice: choice, for: project)
 		devcontainerProjects[path] = (consent == .container)
 		warmUp(project: project)
 		// The files already open belong to the other side's servers now, and
@@ -971,7 +1082,7 @@ final class LanguageService {
 		let path = project.standardizedFileURL.path
 		switch consent {
 		case .container:
-			bringUpDevContainer(project)
+			bringUpDevContainer(project, choice: containerChoice(for: project))
 		case .thisMachine:
 			devcontainerStarting.remove(path)
 			runOnThisMachineInstead(
@@ -1003,9 +1114,17 @@ final class LanguageService {
 	/// What was opened meanwhile is already being held by `serverInDevContainer`,
 	/// so an answer given a minute later still hands the server the file somebody
 	/// is looking at.
+	/// **The question stays three answers however many containers there are**,
+	/// which is 0443's part 1 and the shape that entry proposes. Answers stack
+	/// rather than sit in a row — a devcontainer's `name` is a whole sentence, so
+	/// three side by side would be three truncations — and a fourth and fifth
+	/// stacked under them would be a wall in the corner of the screen for a
+	/// decision most projects do not have to make. So the question names the one
+	/// it would use, and *which* is asked where there is room: the pill's menu
+	/// lists them and can change it afterwards, without reopening the project.
 	private func ask(about project: URL) {
 		let path = project.standardizedFileURL.path
-		guard let choice = DevContainerFile.choices(in: project).first else {
+		guard let choice = containerChoice(for: project) else {
 			// The file went away between the check and the question, which is not
 			// a failure and must not be reported as one.
 			devcontainerStarting.remove(path)
@@ -1024,7 +1143,11 @@ final class LanguageService {
 				[weak self] in
 				guard let self else { return }
 				self.log("\(project.lastPathComponent): \(choice.name) — \(answer.rawValue)")
-				self.remember(answer, for: project)
+				// The container the question named, written down with the yes: it
+				// is the one thing the answer meant that a bare `container` cannot
+				// carry, and a project offering several must not be able to start a
+				// different one from the one whose name was on the button.
+				self.remember(answer, choice: choice, for: project)
 				self.apply(answer, to: project)
 			}
 		}
@@ -1092,9 +1215,31 @@ final class LanguageService {
 		NotificationCenter.default.post(name: .ideaiLanguageServersChanged, object: nil)
 	}
 
-	/// Brings the project's devcontainer up, the answer having been yes.
-	private func bringUpDevContainer(_ project: URL) {
+	/// Brings up **that** devcontainer of the project's, the answer having been
+	/// yes to it by name.
+	///
+	/// **The file rather than the project**, which is 0443's part 1 arriving at
+	/// the bottom of it. `DevContainers.session(for project:)` starts whichever
+	/// container the project prefers and has nowhere to be told otherwise; a
+	/// session is remembered against the file, so asking by file is what lets a
+	/// project have its servers in the second of two containers, and lets the pill
+	/// move them to the other one.
+	///
+	/// The toast that used to say "this project offers N devcontainers … so the
+	/// first is used" is gone with the thing it was apologising for. What replaced
+	/// it is not a quieter apology: the question names the container it would use,
+	/// the answer is written down as a *which*, and the pill's menu lists all of
+	/// them with the one in use marked. A toast repeating that would be news about
+	/// a decision somebody made.
+	private func bringUpDevContainer(_ project: URL, choice: DevContainerFile.Choice?) {
 		let path = project.standardizedFileURL.path
+		guard let choice else {
+			// The file went away between the answer and the start, which is not a
+			// failure and must not be reported as one.
+			devcontainerStarting.remove(path)
+			runOnThisMachineInstead(project, because: "it has no devcontainer.json")
+			return
+		}
 		guard let runtime = ContainerRuntime.discover(
 			preference: ContainerRuntime.Preference(rawValue: Settings.shared.containerRuntime)
 				?? .automatic
@@ -1103,59 +1248,42 @@ final class LanguageService {
 			runOnThisMachineInstead(project, because: "nothing here can run a container")
 			return
 		}
-		log("\(project.lastPathComponent) is worked on in a devcontainer; "
+		log("\(project.lastPathComponent) is worked on in \(choice.name); "
 			+ "its language servers go inside it")
 
-		// **A project offering several containers gets its servers in the first,
-		// and is told so.** The first in the menu's own order, which is sorted and
-		// so is the same answer every time, rather than whichever container
-		// happens to be up — that would make the toolchain the editor checks
-		// against depend on whether somebody had opened a terminal yet, which is
-		// a coin toss with extra steps.
+		// **Somewhere to watch it happen**, which is 0443's part 4. The first
+		// start is an image pulled or a Dockerfile built and then three lifecycle
+		// commands — minutes, during which the only thing that used to reach the
+		// screen was a passing toast per step, with the `docker build` output
+		// going nowhere a person could read it.
 		//
-		// **0433 asked the first half of this question and not the second.** There
-		// is a gesture behind the start now — somebody said yes, by name, to the
-		// container the question named — so "nothing says which one its tools
-		// belong in" is no longer quite true: the question said which one, because
-		// it names the first. What is still not offered is a *choice* of which,
-		// and that is deliberate rather than forgotten: a three-button question
-		// grows a button per container, and the answer that is written down would
-		// have to name a file rather than a yes. Left for whoever wants it, with
-		// the toast still saying which one was used.
-		let choices = DevContainerFile.choices(in: project)
-		if choices.count > 1, let first = choices.first {
-			let others = choices.dropFirst().map(\.name).joined(separator: ", ")
-			log("\(project.lastPathComponent) offers \(choices.count) devcontainers; "
-				+ "its language servers go in \(first.name), not \(others)")
-			Toast.post(
-				"\(project.lastPathComponent)'s language servers run in \(first.name)",
-				detail: "This project offers \(choices.count) devcontainers and nothing says which "
-					+ "one its tools belong in, so the first is used. A terminal can be opened in "
-					+ "any of them from the + beside the terminal tabs.",
-				kind: .information
-			)
-		}
+		// `PreparingTerminal` already is the view being asked for and its own note
+		// describes it: the tab opens at once, the work is written into it, and the
+		// same pane becomes the shell. It was only ever reached from somebody
+		// opening a terminal in the container. Now the language-server path opens
+		// one too — never taking the keyboard, since the whole point is that they
+		// were doing something else when the file they opened started this.
+		//
+		// Nil when no window is showing this project, which happens: `warmUp` runs
+		// while a project is still loading. Then it is toasts, exactly as before.
+		let watching = MainWindowController.watchDevContainerStarting(
+			project: project, choice: choice
+		)
+		let progress = watching?.progress ?? DevContainers.Progress(step: { message in
+			// A pull and a postCreateCommand are both minutes, and a minute with
+			// nothing on screen is a feature that looks broken. The steps and not
+			// the output: there is no pane to put ten minutes of `npm ci` in, and
+			// it goes to devcontainer.log either way.
+			Task { @MainActor in Toast.post(message, kind: .information) }
+		})
 
 		Task { @MainActor in
 			let outcome = await DevContainers.shared.session(
-				for: project,
-				using: runtime,
-				progress: DevContainers.Progress(step: { message in
-					// A pull and a postCreateCommand are both minutes, and a
-					// minute with nothing on screen is a feature that looks
-					// broken.
-					//
-					// The steps and not the output: a language server starting is
-					// not something somebody asked to watch, and there is no pane
-					// of its own to put ten minutes of `npm ci` in. A terminal
-					// opened in the same container while this is going on gets
-					// both, because it joins this very start.
-					Task { @MainActor in Toast.post(message, kind: .information) }
-				})
+				for: choice.file, in: project, using: runtime, progress: progress
 			)
 			devcontainerStarting.remove(path)
 			switch outcome {
-			case let .running(session)?:
+			case let .running(session):
 				// A language server is something attaching to the container, and
 				// `postAttachCommand` is the moment that names.
 				await DevContainers.shared.attach(to: session)
@@ -1170,18 +1298,34 @@ final class LanguageService {
 				log("\(session.name) is up; it has "
 					+ "\(provides.isEmpty ? "no" : provides.sorted().joined(separator: ", "))"
 					+ " language server(s)")
+				// The pane that watched it come up becomes a shell inside it, which
+				// is what `PreparingTerminal` is for and is the one thing 0433's
+				// report went looking for and could not find: a way to be *in* the
+				// container. Without the keyboard — see `becomeShell`.
+				watching?.becomeShell(running: DevContainers.terminalCommand(session))
 				startWhatWasWaiting(for: project)
-			case let .refused(reason)?:
-				Toast.post(
-					"\(project.lastPathComponent)'s devcontainer was not started",
-					detail: "\(reason)\nIts language servers run on this machine instead.",
-					kind: .error
-				)
+			case let .refused(reason):
+				// **The pane is the error and the toast points at it.** A failed
+				// build is a hundred lines of `docker build` ending in one that
+				// matters, and a toast cannot hold either — 0443's part 4. Where
+				// there is a pane, the reason goes in it under everything the build
+				// said, and what is posted is short and says where to look.
+				if let watching, watching.isOpen {
+					watching.refuse(reason)
+					Toast.post(
+						"\(project.lastPathComponent)'s devcontainer was not started",
+						detail: "Its language servers run on this machine instead. What the build "
+							+ "said is in the \(choice.name) tab in the terminal panel.",
+						kind: .error
+					)
+				} else {
+					Toast.post(
+						"\(project.lastPathComponent)'s devcontainer was not started",
+						detail: "\(reason)\nIts language servers run on this machine instead.",
+						kind: .error
+					)
+				}
 				runOnThisMachineInstead(project, because: reason)
-			case .none:
-				// The file went away between the check and the ask, which is not
-				// a failure and must not be reported as one.
-				runOnThisMachineInstead(project, because: "it has no devcontainer.json")
 			}
 		}
 	}
@@ -1615,6 +1759,9 @@ final class LanguageService {
 		// nowhere else on purpose, so a project let go of is a project that will
 		// be asked again.
 		devcontainerConsent.removeValue(forKey: path)
+		// The disk is read again with it: a project let go of may come back to a
+		// checkout where the container it named exists again.
+		staleDevcontainerChoices.remove(path)
 		failures.removeAll()
 		announced.removeAll()
 		emptied.removeAll()
@@ -1637,6 +1784,7 @@ final class LanguageService {
 		devcontainers.removeAll()
 		devcontainerFiles.removeAll()
 		devcontainerConsent.removeAll()
+		staleDevcontainerChoices.removeAll()
 	}
 
 	/// The containers this app has up have changed, and one of this project's
