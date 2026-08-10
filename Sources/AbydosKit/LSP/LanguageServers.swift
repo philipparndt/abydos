@@ -414,6 +414,100 @@ public enum LanguageServers {
 		StallWatch.mark("language server scan") { markerDirectory(for: definition, in: root) != nil }
 	}
 
+	/// Every server definition whose markers this project shows, decided from
+	/// one walk of it rather than one walk per definition.
+	///
+	/// `warmUp` and `serverStatus` each loop over `known` asking `suits` about
+	/// every definition in turn, and the walk is identical every time: the same
+	/// directories listed, the same names read, once for each of the seven
+	/// definitions that name markers. Sharing one index across the loop makes it
+	/// one listing per directory, which is the roughly tenfold cut 0437 said was
+	/// there.
+	///
+	/// Definitions that name no markers are left out, because both callers
+	/// already skip them and for the same reason: a server that fits every
+	/// project on earth would be started everywhere, wasting a process and —
+	/// when it turns out not to be installed — drowning out the language the
+	/// project is actually written in.
+	public static func suitedDefinitions(in root: URL) -> [LanguageServerDefinition] {
+		StallWatch.mark("language server scan") {
+			let index = DirectoryIndex()
+			return known.filter {
+				!$0.rootMarkers.isEmpty
+					&& markerDirectory(for: $0, in: root, maxDepth: 2, index: index) != nil
+			}
+		}
+	}
+
+	/// One listing of a directory, held for as long as a single question about a
+	/// project is being answered and then thrown away.
+	///
+	/// Thrown away deliberately. A project that gains a `go.mod` a minute from
+	/// now must be answered from the directory as it is then, and a cache that
+	/// outlived the call would answer from the directory as it was. Within one
+	/// call there is nothing to be stale against.
+	///
+	/// It also removes a second duplicate, smaller but sillier: `holdsMarker`
+	/// listed the directory again for every `*.ext` marker it was asked about,
+	/// having in most cases just been handed that listing by the walk above it.
+	/// Not private, so a test can count what one walk of a project costs from
+	/// the index itself. A process-wide counter would be read by whatever other
+	/// suite happened to be asking about a project at the same moment; a count
+	/// held by the index is exact.
+	final class DirectoryIndex {
+		/// Directories actually listed, as opposed to answered from the map.
+		private(set) var listingCount = 0
+
+		struct Listing {
+			/// Every entry, hidden ones included. `.classpath` is one of jdtls's
+			/// markers, and a listing that skipped hidden files would not see it.
+			let names: Set<String>
+			/// The subdirectories worth descending into, in name order:
+			/// visible ones, minus the output directories nobody keeps a
+			/// manifest in.
+			let subdirectories: [URL]
+		}
+
+		private var listings: [String: Listing] = [:]
+		private static let skipped: Set<String> = [
+			"node_modules", "vendor", ".build", ".git", "target", "dist",
+		]
+
+		func listing(of directory: URL) -> Listing {
+			let key = directory.path
+			if let cached = listings[key] { return cached }
+			listingCount += 1
+
+			// `isHiddenKey` rather than the `skipsHiddenFiles` option, which
+			// would give a listing with the markers missing from it. Asking for
+			// the flag reproduces exactly what that option decides, on a listing
+			// that still holds everything.
+			let keys: [URLResourceKey] = [.isDirectoryKey, .isHiddenKey]
+			let entries = (try? FileManager.default.contentsOfDirectory(
+				at: directory, includingPropertiesForKeys: keys, options: []
+			)) ?? []
+
+			var names = Set<String>()
+			var subdirectories: [URL] = []
+			for entry in entries {
+				let name = entry.lastPathComponent
+				names.insert(name)
+				let values = try? entry.resourceValues(forKeys: Set(keys))
+				guard values?.isDirectory == true, values?.isHidden != true,
+				      !DirectoryIndex.skipped.contains(name)
+				else { continue }
+				subdirectories.append(entry)
+			}
+
+			let listing = Listing(
+				names: names,
+				subdirectories: subdirectories.sorted { $0.lastPathComponent < $1.lastPathComponent }
+			)
+			listings[key] = listing
+			return listing
+		}
+	}
+
 	/// Where this server should be rooted, or nil if the project is not one it
 	/// understands.
 	///
@@ -426,42 +520,46 @@ public enum LanguageServers {
 		in root: URL,
 		maxDepth: Int = 2
 	) -> URL? {
-		guard !definition.rootMarkers.isEmpty else { return root }
-		if holdsMarker(definition, at: root) { return root }
-		guard maxDepth > 0 else { return nil }
+		markerDirectory(for: definition, in: root, maxDepth: maxDepth, index: DirectoryIndex())
+	}
 
-		let manager = FileManager.default
-		let skipped: Set<String> = ["node_modules", "vendor", ".build", ".git", "target", "dist"]
-		let contents = (try? manager.contentsOfDirectory(
-			at: root, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]
-		)) ?? []
+	/// The walk itself, over an index shared with whoever else is asking about
+	/// the same project in the same breath.
+	static func markerDirectory(
+		for definition: LanguageServerDefinition,
+		in root: URL,
+		maxDepth: Int,
+		index: DirectoryIndex
+	) -> URL? {
+		guard !definition.rootMarkers.isEmpty else { return root }
+		if holdsMarker(definition, at: root, index: index) { return root }
+		guard maxDepth > 0 else { return nil }
 
 		// Breadth first, so a manifest one level down wins over one three
 		// levels down inside an example.
-		let directories = contents.filter {
-			(try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
-				&& !skipped.contains($0.lastPathComponent)
-		}
-		for directory in directories.sorted(by: { $0.lastPathComponent < $1.lastPathComponent })
-		where holdsMarker(definition, at: directory) {
+		let directories = index.listing(of: root).subdirectories
+		for directory in directories where holdsMarker(definition, at: directory, index: index) {
 			return directory
 		}
-		for directory in directories.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
-			if let found = markerDirectory(for: definition, in: directory, maxDepth: maxDepth - 1) {
+		for directory in directories {
+			if let found = markerDirectory(
+				for: definition, in: directory, maxDepth: maxDepth - 1, index: index
+			) {
 				return found
 			}
 		}
 		return nil
 	}
 
-	private static func holdsMarker(_ definition: LanguageServerDefinition, at directory: URL) -> Bool {
-		let manager = FileManager.default
+	private static func holdsMarker(
+		_ definition: LanguageServerDefinition, at directory: URL, index: DirectoryIndex
+	) -> Bool {
+		let names = index.listing(of: directory).names
 		for marker in definition.rootMarkers {
 			if marker.hasPrefix("*.") {
 				let suffix = String(marker.dropFirst(1))
-				let contents = (try? manager.contentsOfDirectory(atPath: directory.path)) ?? []
-				if contents.contains(where: { $0.hasSuffix(suffix) }) { return true }
-			} else if manager.fileExists(atPath: directory.appendingPathComponent(marker).path) {
+				if names.contains(where: { $0.hasSuffix(suffix) }) { return true }
+			} else if names.contains(marker) {
 				return true
 			}
 		}
@@ -556,8 +654,27 @@ public enum LanguageServers {
 		root: URL,
 		ignoring: Set<String>
 	) -> Suggestion? {
+		// Asked before the walk, not after: somebody who has said they do not
+		// want to hear about this language should not pay to be told again.
 		guard !ignoring.contains(languageId) else { return nil }
 		guard suits(definition, root: root) else { return nil }
+		return suggestion(suited: definition, forLanguage: languageId, ignoring: ignoring)
+	}
+
+	/// The same offer, for a caller that has already established that the
+	/// project suits this server.
+	///
+	/// `LanguageService.notice` asks `suits` for its own reasons — a running
+	/// server has one sentence to say about itself and a return in front of it
+	/// would hide it — and then called through the version above, which asked
+	/// again. Two depth-2 walks of the project, on the main actor, for one file
+	/// being opened, for an answer that cannot have changed between them.
+	public static func suggestion(
+		suited definition: LanguageServerDefinition,
+		forLanguage languageId: String,
+		ignoring: Set<String>
+	) -> Suggestion? {
+		guard !ignoring.contains(languageId) else { return nil }
 		guard executable(for: definition) == nil else { return nil }
 		return Suggestion(
 			languageId: languageId,
