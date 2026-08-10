@@ -201,6 +201,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	}
 	private var capsule: TitlebarCapsule!
 	private var subprojectPill: SubprojectPillButton!
+	private var devContainerPill: DevContainerPillButton!
 	/// Reading the repository, as a job rather than an answer.
 	///
 	/// The toolbar builds its items when it chooses, and in a repository small
@@ -403,6 +404,29 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		) { [weak self] note in
 			guard let url = note.userInfo?["url"] as? URL else { return }
 			MainActor.assumeIsolated { self?.navigator.revealExported(url) }
+		}
+
+		// A container came up or went away — because a file was opened and its
+		// server went inside one, or because somebody opened a terminal in it, or
+		// because it was turned off. The titlebar says which project is being
+		// worked on in one, and none of those moments is a moment it could ask.
+		NotificationCenter.default.addObserver(
+			forName: .abydosDevContainersChanged,
+			object: nil,
+			queue: .main
+		) { [weak self] _ in
+			MainActor.assumeIsolated { self?.refreshDevContainerPill() }
+		}
+
+		// And when the answer changes rather than the container: a project whose
+		// servers were moved onto this machine keeps its container up, and the
+		// pill has to stop claiming the project is being worked on inside it.
+		NotificationCenter.default.addObserver(
+			forName: .ideaiLanguageServersMoved,
+			object: nil,
+			queue: .main
+		) { [weak self] _ in
+			MainActor.assumeIsolated { self?.refreshDevContainerPill() }
 		}
 	}
 
@@ -815,6 +839,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		capsule?.updateHeight()
 		capsule?.invalidateIntrinsicContentSize()
 		subprojectPill?.invalidateIntrinsicContentSize()
+		devContainerPill?.invalidateIntrinsicContentSize()
 		// The run strip measures itself from the theme's scale, so it has to be
 		// asked again — otherwise zooming the window leaves the one control
 		// that is always on screen at the old size.
@@ -978,6 +1003,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		subprojectPill?.setSubproject(
 			subprojectRoot.map { Subprojects.relativePath($0, to: project.root) }
 		)
+		// The devcontainer is the subproject's whenever it has one, so moving
+		// between them moves which container the titlebar is talking about.
+		refreshDevContainerPill()
 		layoutTitlebarPills()
 		navigator.setSubproject(subprojectRoot)
 		rememberOpenEditors()
@@ -1003,6 +1031,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		capsule?.setProject(name: project.name)
 		capsule?.setWorktree(nil)
 		capsule?.setBranch(nil)
+		refreshDevContainerPill()
 		layoutTitlebarPills()
 		readWorktree()
 
@@ -3373,6 +3402,136 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		else { return Self.containerTerminalTitle }
 		// The tab's own name, so the item and the tab it opens cannot drift.
 		return "New Terminal in \(Self.containerTabTitle(for: named, in: root))"
+	}
+
+	// MARK: - The devcontainer in the titlebar
+
+	/// The container the pill is naming, so its menu acts on exactly what the
+	/// words on it say rather than on whichever container is preferred.
+	private var pilledContainer: DevContainerFile.Choice?
+
+	/// Says in the titlebar which devcontainer this project is being worked on
+	/// inside, or takes the pill away when it is not.
+	///
+	/// **Running and not declined.** A container that is up is the fact worth
+	/// showing — before this, the only lasting sign was a terminal tab, which is
+	/// in the panel rather than on the window and only exists if somebody opened
+	/// a terminal. A project whose servers were deliberately put on this machine
+	/// has no pill even while a shell of somebody's is still inside the container,
+	/// because the pill is read as "this project's tools are in there" and that
+	/// would then be untrue.
+	private func refreshDevContainerPill() {
+		guard let pill = devContainerPill else { return }
+		let declined: Bool
+		switch devContainerRoot.flatMap(LanguageService.shared.devContainerConsent(for:)) {
+		case .thisMachine, .notNow: declined = true
+		case .container, nil: declined = false
+		}
+		guard let root = devContainerRoot, !declined else {
+			pilledContainer = nil
+			pill.setContainer(nil)
+			layoutTitlebarPills()
+			return
+		}
+		let choices = devContainerChoices
+		Task { @MainActor in
+			let running = await DevContainers.shared.existingSessions(for: root)
+			// Still the same project by the time the actor answered: a window that
+			// switched project meanwhile must not be labelled with the old one's.
+			guard self.devContainerRoot == root else { return }
+			guard let session = running.first else {
+				self.pilledContainer = nil
+				pill.setContainer(nil)
+				self.layoutTitlebarPills()
+				return
+			}
+			// Named from the menu's own choices, so the pill, the tab in the same
+			// container and the menu item that opens one cannot come to disagree
+			// about what it is called.
+			let choice = choices.first {
+				FilePath.canonical($0.file) == FilePath.canonical(session.configuration.file)
+			}
+			self.pilledContainer = choice
+			pill.setContainer(Self.containerTabTitle(for: choice, in: root))
+			self.layoutTitlebarPills()
+		}
+	}
+
+	@objc fileprivate func showDevContainerMenuItem(_ sender: Any?) { showDevContainerMenu() }
+
+	/// What the pill offers: the file it came from, and the way out of it.
+	///
+	/// **Not a rebuild.** Throwing the image away and building it again is a real
+	/// gesture and it is not here: nothing in this app removes an image yet, and
+	/// a "Rebuild" that only restarted the container would be a button that looks
+	/// like it did the expensive thing and did not.
+	@objc func showDevContainerMenu() {
+		guard let root = devContainerRoot, devContainerPill?.hasContainer == true else { return }
+		let menu = NSMenu()
+		menu.autoenablesItems = false
+
+		if let file = pilledContainer?.file {
+			let open = NSMenuItem(
+				title: "Open \(file.deletingLastPathComponent().lastPathComponent)"
+					+ "/\(file.lastPathComponent)",
+				action: #selector(openDevContainerFile(_:)),
+				keyEquivalent: ""
+			)
+			open.target = self
+			open.isEnabled = true
+			menu.addItem(open)
+		}
+
+		let terminal = containerMenuItem(for: pilledContainer ?? devContainerChoices.first)
+		terminal.title = devContainerMenuTitle(for: pilledContainer)
+		terminal.target = self
+		terminal.isEnabled = true
+		menu.addItem(terminal)
+
+		menu.addItem(.separator())
+
+		// Named as the sentence it is rather than as a switch being thrown: this
+		// changes which toolchain the code on screen is checked against, and
+		// "Disable" would say nothing about what happens instead.
+		let here = NSMenuItem(
+			title: "Work on This Machine Instead",
+			action: #selector(workOnThisMachineFromMenu(_:)),
+			keyEquivalent: ""
+		)
+		here.target = self
+		here.isEnabled = true
+		here.toolTip = "Run \(root.lastPathComponent)'s language servers on this machine. "
+			+ "The container is left running — a terminal may be in it."
+		menu.addItem(here)
+
+		let anchor: NSView? = devContainerPill ?? capsule
+		menu.popUp(
+			positioning: nil,
+			at: NSPoint(x: 0, y: (anchor?.bounds.maxY ?? 0) + Theme.current.scaled(4)),
+			in: anchor
+		)
+	}
+
+	@objc private func openDevContainerFile(_ sender: Any?) {
+		guard let file = pilledContainer?.file else { return }
+		openFile(at: file)
+	}
+
+	@objc private func workOnThisMachineFromMenu(_ sender: Any?) {
+		guard let root = devContainerRoot else { return }
+		LanguageService.shared.workOnThisMachine(for: root)
+	}
+
+	/// What the pill says, for the harness — a menu cannot be photographed while
+	/// it is open, and neither can the absence of a pill be told from a window
+	/// that has not finished loading.
+	func devContainerPillForTesting() -> String {
+		"PILL: \(devContainerPill?.hasContainer == true ? devContainerPillTitleForTesting : "(none)")"
+	}
+
+	private var devContainerPillTitleForTesting: String {
+		pilledContainer.map { Self.containerTabTitle(for: $0, in: devContainerRoot ?? URL(fileURLWithPath: "/")) }
+			?? "(unnamed)"
 	}
 
 	/// What the View menu's single item says it will open.
@@ -7177,6 +7336,7 @@ extension MainWindowController: NSToolbarDelegate {
 	// renaming would rebuild everybody's toolbar from the default.
 	private static let capsuleItem = NSToolbarItem.Identifier("ideai.capsule")
 	private static let subprojectItem = NSToolbarItem.Identifier("ideai.subproject")
+	private static let devContainerItem = NSToolbarItem.Identifier("ideai.devcontainer")
 	private static let runItem = NSToolbarItem.Identifier("ideai.run")
 
 	/// Next to the traffic lights, where a window says what it is.
@@ -7184,8 +7344,11 @@ extension MainWindowController: NSToolbarDelegate {
 	/// Centred was tried and reads as decoration: the eye starts at the top left
 	/// of a window, and putting the one thing that answers "where am I" anywhere
 	/// else makes it something to go looking for.
+	/// The devcontainer beside the subproject, in that order, because that is the
+	/// order the sentence goes in: this project, this corner of it, and the
+	/// machine that corner's tools are on.
 	func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-		[Self.capsuleItem, Self.subprojectItem, .flexibleSpace, Self.runItem]
+		[Self.capsuleItem, Self.subprojectItem, Self.devContainerItem, .flexibleSpace, Self.runItem]
 	}
 
 	func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -7270,6 +7433,22 @@ extension MainWindowController: NSToolbarDelegate {
 			item.view = pill
 			item.menuFormRepresentation = menuItem("Subproject", #selector(showSubprojectMenuItem(_:)))
 			item.visibilityPriority = .low
+			return item
+
+		case Self.devContainerItem:
+			let item = NSToolbarItem(itemIdentifier: identifier)
+			let pill = DevContainerPillButton()
+			pill.onClick = { [weak self] in self?.showDevContainerMenu() }
+			pill.setContainer(nil)
+			devContainerPill = pill
+			item.view = pill
+			item.menuFormRepresentation = menuItem(
+				"Devcontainer", #selector(showDevContainerMenuItem(_:))
+			)
+			item.visibilityPriority = .low
+			// The item is built when the toolbar chooses, which may be after the
+			// project was loaded and its container asked about.
+			refreshDevContainerPill()
 			return item
 
 		default:
