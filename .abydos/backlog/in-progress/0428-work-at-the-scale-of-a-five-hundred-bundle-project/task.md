@@ -311,7 +311,38 @@ the lot: "expand all" is a four-second main-thread stall on this corpus, and the
 pre-`loadedNode(for:)` watcher, which pulled directories into the tree an event
 at a time and never let them go, was heading for that figure and past it.
 
-### 4. Nothing colours a multi-repository project
+### 4. Every launch left a language-server container running
+
+Found while clearing up, and it changes two things above.
+
+jdtls did not run on this machine at all. It ran in an Apple `container` VM from
+`pharndt/abydos-jdtls:dev` — 0401's work, and the catalogue picked it over the
+`/opt/homebrew/bin/jdtls` that is also installed. Six app launches started six
+containers, each a guest with four CPUs and a gigabyte, and **every one of them
+was still running afterwards**, its starting process long dead:
+
+    abydos-lsp-jdtls-42461-32   abydos-lsp-jdtls-58460-32   abydos-lsp-jdtls-84181-32
+    abydos-lsp-jdtls-48322-32   abydos-lsp-jdtls-73032-32   abydos-lsp-gopls-48322-4
+
+`AppDelegate.sweepContainersLeftBehind` clears these — but only when the *next*
+app starts, so between two runs they simply accumulate. This is 0427's subject
+seen from a new angle: not a server that outlives its project, but one that
+outlives the whole application, holding a virtual machine.
+
+Two consequences for the numbers above, both in the direction of honesty:
+
+- **The jdtls figures are a VM's.** "1.8–2.0 GB resident, 46 seconds of
+  processor" is the container-runtime process on this side, not a JVM's heap.
+  It is the right number for "what does asking for Java cost this machine", and
+  the wrong one for "how big is jdtls's index".
+- **The later runs were taken on a machine carrying the earlier runs' orphans.**
+  The Platform run had three or four of these VMs already up. That does not
+  touch the processor time of our own process, which is per-process and is where
+  finding 1 lives, but it inflates the *wall clock* and the load averages in the
+  window table. The Sirius run, taken first, is the cleaner of the two — and it
+  shows the same 8.4 cores.
+
+### 5. Nothing colours a multi-repository project
 
 Not slow — absent. The Platform aggregate is nine sibling clones under one
 directory, which is exactly the shape a Tycho product with several repositories
@@ -348,8 +379,12 @@ changes pane. Worth an item of its own.
   cost beside ours, which was the other half of the question: on Sirius it held
   **1.8–2.0 GB** resident and spent **46 seconds** of processor time in the first
   seventy — real, and an order of magnitude less than the 729 seconds we spent
-  over the same span. The honest headline is the opposite of the one expected:
-  at this scale, so far, **the indexer is not the expensive thing in the room.**
+  over the same span, and see finding 4 for what that figure actually measures.
+  The honest headline is the opposite of the one expected: at this scale, so
+  far, **the indexer is not the expensive thing in the room.** That is a claim
+  about ninety seconds, not about an afternoon, and the thing it does *not* say
+  is that jdtls has finished — only that while it was working, we were working
+  eight times harder.
 - **Memory after an hour.** Readings are at 5, 30 and 90 seconds. Ours was still
   climbing at ninety on both corpora, so an hour's figure would be worth having
   and is a longer run than this item had time for.
@@ -379,6 +414,10 @@ changes pane. Worth an item of its own.
 - **`test -d .git` as a way to ask whether something is a repository.** In a
   worktree `.git` is a file pointing at the real one, and the first harness run
   announced "no repository at this root" about a checkout that plainly is one.
+- **Assuming jdtls would be the local one.** `/opt/homebrew/bin/jdtls` is
+  installed on this machine and was never used: the catalogue preferred the
+  container image, so every Java number here is about a VM. Worth knowing before
+  reading any of them, and it took clearing up after the runs to notice.
 - **Asking `ps` for any process named jdtls.** It found the one belonging to the
   Abydos already running out of `/Applications` and reported somebody else's
   indexer as the cost of opening this corpus. The harness now looks only at its
