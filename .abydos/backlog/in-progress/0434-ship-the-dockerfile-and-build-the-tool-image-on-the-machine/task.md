@@ -180,6 +180,87 @@ to remove from this repository. It is safe there — `which` says one short line
 but the same file makes fifteen or so `Process` calls, and the ones running
 OpenSCAD are the chatty kind. Worth a look while the file is open anyway.
 
+## What a durable pin turned out to be, measured on 2026-08-10
+
+Two things had to be established before a Dockerfile could claim a version:
+whether dated Linux snapshots stay downloadable once they are old, and what
+building from source costs. The first was answered by counting, and the answer
+sent the second question away.
+
+**The dated Linux artefacts are the wrong pin, twice over.** `files.openscad.org/snapshots`
+holds 1296 x86_64 AppImages and two aarch64 ones — dated 2021.11.28 and
+2023.09.11. There is no arm64 Linux snapshot and there has not been one for
+three years, so an image built from an AppImage runs under emulation on every
+Apple Silicon machine. That is not a detail: this item's central argument is
+that a local build spends nothing on the architecture it will never run, and for
+this dependency it could not have kept that promise. And they *are* pruned: the
+x86_64 AppImages run from 2025.08.06 to 2026.08.09, a rolling window of about
+twelve months. The two aarch64 stragglers survive because nothing prunes an
+architecture that stopped building, which is not a retention promise. A
+Dockerfile pinning `2026.01.29` — the copy installed and working on this machine
+— would therefore stop building some time around January.
+
+Each artefact does carry `.sha256`, `.sha512` and `.asc` beside it, so a checked
+pin is available for as long as the file is, which is the best that route can do.
+
+**The OpenSCAD project publishes its own image, and that is the pin.**
+`openscad/openscad` on Docker Hub: 88 tags, weekly dated ones — `dev.2026-01-19`,
+`trixie.2026-01-19` — and they are **multi-architecture**, amd64 and arm64, with
+riscv64 added from 2025-11-17. The `bookworm.*` line is amd64 only. Nothing is
+being pruned: the dated tags reach back to `dev.2025-01-06`, and the release tags
+`2015.03`, `2019.05` and `2021.01` pushed in January 2022 are all still pullable.
+Nineteen months of dated snapshots and four and a half years of releases is a
+different kind of promise from a twelve-month file window.
+
+**So building from source was not measured, and deliberately not.** The question
+was what CGAL, Qt and Manifold cost to compile, and it only mattered if there was
+nothing to build *from*. There is, published by the same people, for the
+architecture this machine is. Spending an hour finding out what a source build
+costs would have been finding out the price of something nobody has to buy. If
+the finding below reverses that, the question comes back.
+
+**The catch, and it is a real one.** The newest tag is `dev.2026-01-19`. The
+weekly cadence stopped seven months ago. Meanwhile `openscad@snapshot` is
+2026.06.12 and the copy installed here is 2026.01.29 — so the newest published
+image is ten days older than the OpenSCAD this machine actually renders with,
+which is close enough to be the same program, and seven months behind what a
+person following the overlay's advice would install today. A container that
+renders a model the desktop copy cannot, or the other way round, is exactly the
+"works for me" this whole exercise is trying to remove. Anyone writing the
+Dockerfile should check whether the cadence has restarted before pinning
+January, and say in the file that it is pinned to a snapshot that stopped moving
+if it has not.
+
+## Ruled out
+
+- **Pinning the OpenSCAD snapshot to a dated AppImage from files.openscad.org.**
+  x86_64 only — 1296 against two aarch64 from 2021 and 2023 — so every Apple
+  Silicon machine would emulate, and pruned on a rolling twelve-month window, so
+  the pin rots. Counted above.
+- **Building OpenSCAD from source in the Dockerfile.** Not attempted and not
+  costed, because `openscad/openscad` publishes arm64 images and dated tags that
+  have not been pruned in four and a half years. This is a decision not to spend
+  the time rather than a measurement.
+- **Storing the built image's name in `.abydos/tools.json`.** The name carries
+  the recipe's fingerprint, so writing it down pins a project to whatever the
+  Dockerfile said on the day somebody chose it and stops it rebuilding on the day
+  it is edited — which is the one behaviour this route exists to have. The word
+  `build` is stored instead and becomes a name at the moment it is used.
+- **Fingerprinting the Dockerfile alone.** It is what the item asked for and both
+  recipes are a single file, so today the two agree. A context that later gains
+  an entrypoint script would keep its tag while the script changed, and run an
+  edited script out of an image that never rebuilt. The whole directory is
+  digested, with paths relative to it so a checkout and an `.app` agree.
+- **A new parameter carrying the recipe through to `ContainerImageStore`.** Every
+  call between a project's settings and a running container deals in an image and
+  a runtime and nothing else. The image name says which recipe it came from —
+  `abydos-built/<tool>:<fingerprint>` — so the branch that builds instead of
+  pulling is one `if` where images are ensured, and nothing else changed shape.
+- **Adding a `make tool-image-openscad-lsp` beside the gopls one.** The app builds
+  it, which is the point of the item, and the live test builds it through the app's
+  own code path. A make target would be a second way of naming the image that
+  could disagree with the first.
+
 ## Steps
 
 - [x] `ToolImages/openscad-lsp/Dockerfile`: a pinned `cargo install`, the server
