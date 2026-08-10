@@ -1055,6 +1055,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	}
 
 	func load(project: Project, focusTree: Bool = true) {
+		// **Read before a single thing is touched.** `switchProject` says this
+		// above its own read and it is right — "anything that writes the session
+		// on the way past would overwrite the very thing being restored" — but
+		// this function then read the file a *second* time, at the bottom, and
+		// that is the read the subproject comes from. In between,
+		// `selectedConfigurationName = nil` fires its own `didSet`, which calls
+		// `rememberOpenEditors` for a window whose project is already the new one
+		// and whose `subprojectRoot` has just been cleared. So the session on disk
+		// was rewritten without its `subproject` before the line that needed it
+		// looked.
+		let remembered = SessionStore.read(in: project.root)
+
 		self.project = project
 		subprojectRoot = nil
 		// And on the project itself, which is what everything scoped reads: a
@@ -1095,7 +1107,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// What was open here last time, from the folder beside the project —
 		// which is what makes opening it again feel like coming back rather
 		// than starting.
-		if let remembered = SessionStore.read(in: project.root) {
+		if let remembered {
 			if !editor.hasOpenFiles { editor.restore(remembered) }
 			// Where the work was left off, which for a repository of several
 			// projects is as much a part of it as the open files.
