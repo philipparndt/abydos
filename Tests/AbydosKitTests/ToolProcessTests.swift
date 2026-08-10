@@ -127,14 +127,22 @@ struct SilentRuntimeTests {
 		}
 		#expect(reason.contains("did not answer"))
 		#expect(waited >= 1)
-		#expect(waited < 10, "the deadline, not the program, is what ended it")
+		// The claim is that the deadline ended it rather than the program, and
+		// the only thing it has to be told apart from is the program's own
+		// `sleep 120`. Stated against that, rather than against a number of its
+		// own: a bound of ten seconds was failing at 12.3 on a loaded machine
+		// while the deadline was working perfectly, which is 0435 exactly.
+		#expect(waited < 60, "the deadline, not the program's `sleep 120`, is what ended it")
 
 		// And the second asker is told the same thing without waiting again.
 		// This is the whole point: every pane and every server asks, and each
 		// wait is another process left holding whatever the runtime is stuck on.
 		let secondBegan = Date()
         let second = await store.ensure("c/d", using: runtime)
-		#expect(Date().timeIntervalSince(secondBegan) < 1)
+		// Against the first wait rather than against a second of its own, for the
+		// same reason: what is being claimed is that this one did not wait, and
+		// "did not wait" only means anything beside the one that did.
+		#expect(Date().timeIntervalSince(secondBegan) < waited / 2)
 		#expect(second == first)
 	}
 }

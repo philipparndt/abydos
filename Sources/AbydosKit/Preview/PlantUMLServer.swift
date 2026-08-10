@@ -50,6 +50,16 @@ public actor PlantUMLServers {
 	/// JVM, and the JIT's half-second on the first diagram. Generous, because
 	/// what happens when it is missed is a fall back to the slow render rather
 	/// than a failure.
+	///
+	/// **This number is not a promise to anybody**, and 0435 turned on noticing
+	/// that. Missing it is not a preview that fails: it is a preview drawn the
+	/// way this app drew every preview before there was a kept server at all.
+	/// Nobody is shown an error, and nothing is lost except the optimisation.
+	/// So a machine so busy that `docker run` takes longer than a minute is a
+	/// machine whose `-pipe` render is just as slow, and raising this would not
+	/// help that person — which is why it is still sixty. What was wrong was a
+	/// *test* treating a missed optimisation as a broken feature; see
+	/// `patience`.
 	public static let startDeadline: TimeInterval = 60
 
 	/// How long a render may take once the server is up.
@@ -211,7 +221,29 @@ public actor PlantUMLServers {
 		return URLSession(configuration: configuration)
 	}()
 
-	public init() {}
+	/// How long *this* one waits for a server to start.
+	///
+	/// The app's is `startDeadline`, and that is the default. It is separable
+	/// because a live test and the app want different things from the same
+	/// number, which is the judgement 0435 asked for:
+	///
+	/// The app's sixty seconds is the point at which it stops waiting for an
+	/// optimisation and draws the diagram the way it always did. A live test
+	/// whose subject is "the second diagram is the same picture" wants the
+	/// optimisation to have happened at all, so that it has two pictures to
+	/// compare; giving up is not an answer to its question. Inheriting the app's
+	/// number meant that on a machine which could not start a container in a
+	/// minute, the test reported the feature broken — when what it had actually
+	/// measured was the machine.
+	///
+	/// So the test is allowed to be more patient than the app, and the app is
+	/// left exactly as it was. Nothing about the shipped behaviour changes here;
+	/// what changes is that the test no longer reports on load.
+	public let patience: TimeInterval
+
+	public init(patience: TimeInterval = PlantUMLServers.startDeadline) {
+		self.patience = patience
+	}
 
 	// MARK: - What the URL and the commands look like
 
@@ -464,6 +496,7 @@ public actor PlantUMLServers {
 			image: image, name: name, using: runtime, theme: theme
 		)
 		let portCommand = Self.portCommand(name: name, using: runtime)
+		let patience = self.patience
 
 		return await withCheckedContinuation { continuation in
 			DispatchQueue.global(qos: .userInitiated).async {
@@ -473,7 +506,7 @@ public actor PlantUMLServers {
 				ToolContainers.shared.claim(name, runtime: runtime)
 
 				let began = Date()
-				let started = RuntimeCommand.run(startCommand, deadline: Self.startDeadline)
+				let started = RuntimeCommand.run(startCommand, deadline: patience)
 				guard started.succeeded else {
 					// A port already taken, a daemon not running, an image that is
 					// not there: all of them end here, and all of them mean the
@@ -485,7 +518,7 @@ public actor PlantUMLServers {
 					continuation.resume(returning: .failure(.runtimeRefused(
 						command: "\(runtime.name) run",
 						waited: Date().timeIntervalSince(began),
-						deadline: Self.startDeadline,
+						deadline: patience,
 						timedOut: started.timedOut,
 						said: started.output
 					)))
@@ -544,7 +577,7 @@ public actor PlantUMLServers {
 			return .failure(.notOffered("no address for this diagram"))
 		}
 		let began = Date()
-		let deadline = began.addingTimeInterval(Self.startDeadline)
+		let deadline = began.addingTimeInterval(patience)
 		var attempts = 0
 		while true {
 			attempts += 1
@@ -579,7 +612,7 @@ public actor PlantUMLServers {
 				}
 				guard Date() < deadline else {
 					return .failure(.neverAnswered(
-						waited: waited, deadline: Self.startDeadline,
+						waited: waited, deadline: patience,
 						attempts: attempts, last: failure.localizedDescription
 					))
 				}

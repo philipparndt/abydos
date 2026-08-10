@@ -172,9 +172,22 @@ struct PlantUMLServerAddressTests {
 		).stdout
 	}
 
+	/// Patient enough that starting a container is never what this suite
+	/// reports on.
+	///
+	/// The app's sixty seconds is the point at which it gives up on the
+	/// optimisation and draws the diagram the way it always did — which costs a
+	/// user nothing but time. These tests are asking whether the optimisation is
+	/// *correct*, and a start that gave up leaves them nothing to compare, so
+	/// they wait longer than the app would. 0435 is what inheriting the app's
+	/// number cost.
+	private func madeServers() -> PlantUMLServers {
+		PlantUMLServers(patience: Patience.forAContainer)
+	}
+
 	@Test func theSecondDiagramIsTheSamePictureAndArrivesAtOnce() async throws {
 		guard let runtime else { return }
-		let servers = PlantUMLServers()
+		let servers = madeServers()
 		// Whatever the test did, no container of its own is left running.
 		let started = Started()
 		defer { removeAll(started, using: runtime) }
@@ -221,8 +234,16 @@ struct PlantUMLServerAddressTests {
 			+ "warm \(String(format: "%.3f", warmSeconds))s, \(again.count) bytes, "
 			+ MachineLoad.said)
 		// Generous by an order of magnitude against what was measured — hundredths
-		// of a second warm against seconds for the pipe — so this fails when the
-		// server has stopped being used, not when the machine is busy.
+		// of a second warm against seconds for the pipe — and only made where a
+		// stopwatch means anything. Half a second of wall clock on a machine with
+		// nothing left to give is not a statement about whether the server is
+		// being reused; the byte-for-byte comparison above is, and it is made
+		// either way. See `MachineLoad.canBeTimed`.
+		guard MachineLoad.canBeTimed else {
+			print("PERF plantuml: not timing the warm render — \(MachineLoad.said)")
+			await servers.stopAll()
+			return
+		}
 		#expect(warmSeconds < 0.5)
 		#expect(warmSeconds < oldSeconds / 4)
 
@@ -258,7 +279,7 @@ struct PlantUMLServerAddressTests {
 	/// restarted. The diagram still arrives.
 	@Test func aServerRemovedBehindItsBackStillDrawsTheDiagram() async throws {
 		guard let runtime else { return }
-		let servers = PlantUMLServers()
+		let servers = madeServers()
 		let started = Started()
 		defer { removeAll(started, using: runtime) }
 

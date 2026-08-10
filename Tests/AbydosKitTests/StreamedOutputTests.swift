@@ -36,6 +36,12 @@ struct StreamedOutputTests {
 			return stamps.first
 		}
 
+		var last: Date? {
+			lock.lock()
+			defer { lock.unlock() }
+			return stamps.last
+		}
+
 		var pieces: Int {
 			lock.lock()
 			defer { lock.unlock() }
@@ -64,9 +70,17 @@ struct StreamedOutputTests {
 
 	/// The first line arrives long before the command ends, which is the point.
 	///
-	/// A second of margin either side: the command prints at once and then sits
-	/// for two, so a callback that only fired at the end could not land in the
-	/// first half however slow the machine is.
+	/// Asserted as the *gap between the pieces* rather than as a stopwatch from
+	/// the start of the run. The command prints, sleeps two seconds, and prints
+	/// again: if the callback only fired at the end, both pieces would arrive in
+	/// the same instant, so two arrivals at least a second and a half apart is
+	/// the whole claim and it is true at any load. A busy machine can only push
+	/// them further apart.
+	///
+	/// It used to be `the first piece arrived within one second of starting`,
+	/// which is the same claim measured against the machine instead of against
+	/// the command. That failed at 1.7 s on a loaded build box with nothing
+	/// wrong — one of the reds 0435 is about.
 	@Test func theFirstLineArrivesBeforeTheCommandEnds() throws {
 		let collected = Collected()
 		let started = Date()
@@ -80,9 +94,20 @@ struct StreamedOutputTests {
 		#expect(result.succeeded)
 		#expect(took >= 2)
 		let firstAt = try #require(collected.first)
-		#expect(firstAt.timeIntervalSince(started) < 1)
-		// And it did not all come at once at the end.
+		let lastAt = try #require(collected.last)
+		// It did not all come at once at the end: the two pieces are separated
+		// by the command's own `sleep 2`, which nothing buffering to the end
+		// could reproduce.
 		#expect(collected.pieces >= 2)
+		#expect(
+			lastAt.timeIntervalSince(firstAt) >= 1.5,
+			"""
+			the pieces arrived \(lastAt.timeIntervalSince(firstAt))s apart, \
+			which is one lump at the end — \(MachineLoad.said)
+			"""
+		)
+		// And the first one was not what ended the command.
+		#expect(firstAt.timeIntervalSince(started) < took)
 		#expect(collected.all.contains("first"))
 		#expect(collected.all.contains("last"))
 	}
