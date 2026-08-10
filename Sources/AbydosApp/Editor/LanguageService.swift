@@ -180,12 +180,13 @@ final class LanguageService {
 	/// symbol" answers with an empty list in a project full of them — which
 	/// reads as broken rather than as not-started-yet.
 	func warmUp(project: URL) {
-		for definition in LanguageServers.known where !definition.rootMarkers.isEmpty {
-			// Markers only. A server that names none of them — the JSON one —
-			// fits every project on earth, and starting it everywhere both
-			// wastes a process and drowns out the language the project is
-			// actually written in when it turns out not to be installed.
-			guard LanguageServers.suits(definition, root: project) else { continue }
+		// Markers only — which is what `suitedDefinitions` returns. A server that
+		// names none of them — the JSON one — fits every project on earth, and
+		// starting it everywhere both wastes a process and drowns out the
+		// language the project is actually written in when it turns out not to
+		// be installed. Asked as one question so the project is walked once
+		// rather than once per definition.
+		for definition in LanguageServers.suitedDefinitions(in: project) {
 			guard let languageId = definition.languageIds.first else { continue }
 			_ = server(for: languageId, project: project)
 		}
@@ -197,10 +198,9 @@ final class LanguageService {
 		var running: [String] = []
 		var missing: [(String, String)] = []
 
-		for definition in LanguageServers.known where !definition.rootMarkers.isEmpty {
-			guard LanguageServers.suits(definition, root: project),
-			      let languageId = definition.languageIds.first
-			else { continue }
+		// One walk of the project for all of them, as in `warmUp` above.
+		for definition in LanguageServers.suitedDefinitions(in: project) {
+			guard let languageId = definition.languageIds.first else { continue }
 
 			if servers[key(project: project, languageId: languageId)] != nil {
 				running.append(definition.command)
@@ -360,8 +360,12 @@ final class LanguageService {
 			)
 		}
 
+		// `suited:`, because the guard near the top of this function already
+		// asked whether the project suits this server and the answer cannot have
+		// changed since. The version that takes a root asked again, which was a
+		// second depth-2 walk of the project for one file being opened.
 		guard let suggestion = LanguageServers.suggestion(
-			forLanguage: languageId, root: project, ignoring: ignoring
+			suited: definition, forLanguage: languageId, ignoring: ignoring
 		) else { return nil }
 		return ServerNotice(
 			languageId: suggestion.languageId,

@@ -671,6 +671,89 @@ struct LSPHandshakeOrderTests {
 	}
 }
 
+/// What deciding which servers a project wants actually costs in directory
+/// listings.
+///
+/// Counted rather than timed, because the machine this was written on is never
+/// quiet enough for a stopwatch to mean anything — and because the claim being
+/// made is about the *shape* of the work, which a count states exactly and a
+/// duration only suggests.
+struct LanguageServerScanCostTests {
+	private func makeTree(_ paths: [String]) throws -> URL {
+		let root = URL(fileURLWithPath: NSTemporaryDirectory())
+			.appendingPathComponent("scan-\(UUID().uuidString)")
+		for path in paths {
+			let url = root.appendingPathComponent(path)
+			try FileManager.default.createDirectory(
+				at: url.deletingLastPathComponent(), withIntermediateDirectories: true
+			)
+			try "x".write(to: url, atomically: true, encoding: .utf8)
+		}
+		return root
+	}
+
+	/// A project with no manifest anywhere is the worst case: every definition
+	/// walks the whole of it to depth 2 before giving up, and `warmUp` and
+	/// `serverStatus` each do that once per definition.
+	///
+	/// Counted from the index rather than from a process-wide total, which
+	/// another suite asking about a project at the same moment would add to.
+	@Test func onePassOverTheProjectRatherThanOnePerDefinition() throws {
+		let root = try makeTree([
+			"README.md", "docs/one.md", "docs/two.md",
+			"src/a/one.txt", "src/b/two.txt", "tools/three.txt",
+		])
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		let marked = LanguageServers.known.filter { !$0.rootMarkers.isEmpty }
+
+		// An index each, which is what asking `suits` about them one at a time
+		// comes to.
+		var separately = 0
+		for definition in marked {
+			let index = LanguageServers.DirectoryIndex()
+			_ = LanguageServers.markerDirectory(for: definition, in: root, maxDepth: 2, index: index)
+			separately += index.listingCount
+		}
+
+		// One index between them, which is what `suitedDefinitions` does.
+		let shared = LanguageServers.DirectoryIndex()
+		for definition in marked {
+			_ = LanguageServers.markerDirectory(for: definition, in: root, maxDepth: 2, index: shared)
+		}
+
+		#expect(shared.listingCount * marked.count == separately)
+		print("LSPSCAN \(marked.count) definitions: \(separately) listings one at a time, "
+			+ "\(shared.listingCount) together")
+	}
+
+	/// And the same answers, which is the part a count says nothing about.
+	@Test func togetherAndSeparatelyAgree() throws {
+		let root = try makeTree(["app/go.mod", "web/package.json", "notes.txt"])
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		let separately = LanguageServers.known
+			.filter { !$0.rootMarkers.isEmpty && LanguageServers.suits($0, root: root) }
+			.map(\.command)
+		let together = LanguageServers.suitedDefinitions(in: root).map(\.command)
+		#expect(together == separately)
+		#expect(together.contains("gopls"))
+		#expect(together.contains("typescript-language-server"))
+		#expect(!together.contains("rust-analyzer"))
+	}
+
+	/// A marker that is a hidden file is still a marker. The walk skips hidden
+	/// *directories*, and the listing the markers are read from has to keep
+	/// hidden entries even so — `.classpath` is one of jdtls's, and the obvious
+	/// way to write this index would have lost it.
+	@Test func aHiddenMarkerIsStillFound() throws {
+		let root = try makeTree([".classpath", "src/Main.java"])
+		defer { try? FileManager.default.removeItem(at: root) }
+		let java = try #require(LanguageServers.definition(forLanguage: "java"))
+		#expect(LanguageServers.suits(java, root: root))
+	}
+}
+
 /// Finding the directory a server should be rooted at.
 struct LanguageServerRootTests {
 	private func makeTree(_ paths: [String]) throws -> URL {
