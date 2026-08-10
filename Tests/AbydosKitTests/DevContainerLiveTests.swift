@@ -226,8 +226,15 @@ import Testing
 		// the patient one: under the load that caused the race, half a second
 		// between attempts fills the shell's input with commands it has not read
 		// yet, and thirty seconds is not long enough to be sure.
+		//
+		// The ninety is now `Patience.seconds`, which is where every wait in this
+		// suite says how long it waits. Two people picking two numbers for one
+		// race, on one day, is the whole argument for there being one place; the
+		// three seconds between retypings stays here, because that one is about
+		// how fast a shell can be typed at rather than about how busy the machine
+		// is.
 		let ask = "printf 'IN:%s:%s\\n' \"$(pwd)\" \"$(cat marker.txt)\"\n"
-		let deadline = Date().addingTimeInterval(90)
+		let deadline = Date().addingTimeInterval(Patience.seconds)
 		var lastAsked = Date.distantPast
 		while Date() < deadline, !seen.text.contains("IN:/") {
 			if Date().timeIntervalSince(lastAsked) > 3 {

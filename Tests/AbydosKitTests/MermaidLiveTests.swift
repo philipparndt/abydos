@@ -443,7 +443,15 @@ struct MermaidLiveTests {
 			_ = await MermaidRenderer.shared.draw(Self.sequence, format: .svg)
 		}
 		let each = Date().timeIntervalSince(began) / 5
-		print("MERMAID: \(String(format: "%.4f", each))s a warm render")
+		print("MERMAID: \(String(format: "%.4f", each))s a warm render, \(MachineLoad.said)")
+		// Only where a stopwatch means anything. This bound is about the renderer
+		// keeping its page loaded; on a machine with nothing left to give it is
+		// about the scheduler instead, and a red from it says nothing anybody can
+		// act on. See `MachineLoad.canBeTimed`, and 0435 for what it cost.
+		guard MachineLoad.canBeTimed else {
+			print("MERMAID: not timing the warm render — \(MachineLoad.said)")
+			return
+		}
 		#expect(each < 0.5, "a warm render took \(each)s, which is not a preview that follows typing")
 	}
 }

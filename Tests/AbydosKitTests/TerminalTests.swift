@@ -474,10 +474,17 @@ struct TerminalEmulatorTests {
 @Suite(.serialized)
 struct PseudoTerminalTests {
 	/// Waits for a condition on the main queue, with a timeout.
-	/// Generous, because this waits on a real process: the whole suite runs in
-	/// parallel, and a machine with every core busy can take seconds to get
-	/// round to a `/bin/echo` that normally answers instantly.
-	private func wait(timeout: TimeInterval = 20, until condition: @escaping () -> Bool) async -> Bool {
+	///
+	/// The timeout is a hang detector rather than an assertion, and it comes
+	/// from `Patience` so that it is one number rather than this suite's own.
+	/// Twenty seconds was already meant to be generous — "a machine with every
+	/// core busy can take seconds to get round to a `/bin/echo`" — and it was
+	/// still missed: `runsACommandAndCapturesOutput` went red at 5.1 runnable
+	/// threads per core while this item was being measured, waiting on
+	/// `/bin/echo`. Nothing about that red was about the terminal.
+	private func wait(
+		timeout: TimeInterval = Patience.seconds, until condition: @escaping () -> Bool
+	) async -> Bool {
 		let deadline = Date().addingTimeInterval(timeout)
 		while Date() < deadline {
 			if condition() { return true }

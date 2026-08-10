@@ -222,7 +222,22 @@ public final class LSPClient: @unchecked Sendable {
 		if let container = containerLaunch {
 			ToolContainers.shared.register(container.name, runtime: container.runtime)
 		}
-		try process.run()
+		do {
+			try process.run()
+		} catch {
+			// Handed back, because a process that never started is one nothing
+			// will ever hand back on its behalf: `terminationHandler` does not
+			// run for a process that did not run. `ToolProcesses` no longer
+			// sweeps an entry out merely for not being running — it cannot, or
+			// it would sweep this one out in the instant between the line above
+			// and this one — so the entry would otherwise stay for the life of
+			// the app, counting against nothing but never leaving.
+			ToolProcesses.shared.forget(process)
+			if let container = containerLaunch {
+				ToolContainers.shared.releaseInBackground(container.name)
+			}
+			throw error
+		}
 
 		lock.lock()
 		self.process = process

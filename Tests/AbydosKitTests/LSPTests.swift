@@ -660,11 +660,24 @@ struct LSPHandshakeOrderTests {
 		client.didOpen(uri: file.absoluteString, languageId: "swift", version: 1, text: text)
 
 		_ = try await client.initialize(rootURL: root)
-		try? await Task.sleep(nanoseconds: 3_000_000_000)
+
+		// Waited for rather than slept through. Three seconds was enough for
+		// sourcekit-lsp to take the document in on a quiet machine and not on a
+		// busy one, and the difference arrived as "the server does not know this
+		// file" — which is the sentence this test would print if the code under
+		// it were genuinely broken. Asking until it answers says the same thing
+		// where it is true, is faster where it was already true, and takes the
+		// machine out of it. `Patience.seconds` is the hang detector; see 0435.
+		var symbols: [LSPSymbol] = []
+		let deadline = Date().addingTimeInterval(Patience.seconds)
+		while Date() < deadline {
+			symbols = (try? await client.documentSymbols(uri: file.absoluteString)) ?? []
+			if !symbols.isEmpty { break }
+			try? await Task.sleep(nanoseconds: 200_000_000)
+		}
 
 		// The server knows the document, so it can answer about it.
-		let symbols = try await client.documentSymbols(uri: file.absoluteString)
-		#expect(!symbols.isEmpty)
+		#expect(!symbols.isEmpty, "no symbols within \(Patience.seconds)s — \(MachineLoad.said)")
 		#expect(symbols.contains { $0.name == "WordMotion" })
 
 		await client.shutdown()

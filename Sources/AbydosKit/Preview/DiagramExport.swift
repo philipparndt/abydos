@@ -904,7 +904,7 @@ public enum DiagramExport {
 		_ text: String, format: PlantUML.Format, tool: PlantUML.Tool, theme: DiagramTheme? = nil
 	) async -> Result<Data, DrawFailure> {
 		if case let .image(container, runtime) = tool,
-		   let drawing = await PlantUMLServers.shared.draw(
+		   case let .success(drawing) = await PlantUMLServers.shared.draw(
 		   	text, image: container.image, using: runtime, format: format, theme: theme
 		   ) {
 			if let fault = drawing.fault { return .failure(.fault(fault)) }

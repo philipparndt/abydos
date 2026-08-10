@@ -31,6 +31,29 @@ public final class ToolProcesses: @unchecked Sendable {
 
 	public init() {}
 
+	/// Whether a process this is holding has been and gone.
+	///
+	/// Not `!isRunning`, and the difference is a real bug rather than a nicety.
+	/// A caller registers a process *before* starting it — `LSPClient` does,
+	/// deliberately, so that there is no instant in which a running child is
+	/// unknown to the thing that ends it — and in that instant `isRunning` is
+	/// false because it has not started yet. Every method here that tidies the
+	/// list used `!isRunning`, so a second caller registering its own process in
+	/// that window swept the first one out. It then ran untracked for the life of
+	/// the app: not ended when the app quit, which is the whole thing this type
+	/// exists to prevent.
+	///
+	/// Seen as a red in `aServerIsHandedToTheThingThatEndsItWithTheApp` at 5.1
+	/// runnable threads per core, where the window is wide enough to lose
+	/// against. It is a race, not a deadline, and it was hiding among 0435's
+	/// deadline failures — which is exactly what that item warns happens when a
+	/// suite's reds stop being read.
+	///
+	/// A `Process` that has never run has a process id of nought.
+	private static func hasFinished(_ process: Process) -> Bool {
+		process.processIdentifier != 0 && !process.isRunning
+	}
+
 	/// Takes charge of a process, or refuses when too many are already running.
 	///
 	/// The caller is told which, because "no" is worth reporting: a tool that
@@ -40,7 +63,7 @@ public final class ToolProcesses: @unchecked Sendable {
 	public func adopt(_ process: Process) -> Bool {
 		lock.lock()
 		defer { lock.unlock() }
-		running.removeAll { !$0.isRunning }
+		running.removeAll(where: Self.hasFinished)
 		guard running.count < Self.limit else { return false }
 		running.append(process)
 		return true
@@ -54,14 +77,14 @@ public final class ToolProcesses: @unchecked Sendable {
 	/// untracked process is the thing this type exists to prevent.
 	public func track(_ process: Process) {
 		lock.lock()
-		running.removeAll { !$0.isRunning }
+		running.removeAll(where: Self.hasFinished)
 		running.append(process)
 		lock.unlock()
 	}
 
 	public func forget(_ process: Process) {
 		lock.lock()
-		running.removeAll { $0 === process || !$0.isRunning }
+		running.removeAll { $0 === process || Self.hasFinished($0) }
 		lock.unlock()
 	}
 
@@ -81,7 +104,7 @@ public final class ToolProcesses: @unchecked Sendable {
 	public var count: Int {
 		lock.lock()
 		defer { lock.unlock() }
-		running.removeAll { !$0.isRunning }
+		running.removeAll(where: Self.hasFinished)
 		return running.count
 	}
 
