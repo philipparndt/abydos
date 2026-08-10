@@ -27,6 +27,8 @@ final class FileNoticeView: NSView {
 	required init?(coder: NSCoder) { fatalError("not used") }
 
 	private func build() {
+		let content = FileNotice.content(for: url, reason: reason)
+
 		let icon = NSImageView()
 		icon.image = FileIcon.image(for: FileNode(url: url, isDirectory: false), isExpanded: false)
 		icon.imageScaling = .scaleProportionallyUpOrDown
@@ -39,33 +41,14 @@ final class FileNoticeView: NSView {
 		title.textColor = Theme.current.sidebarHeaderText
 		title.alignment = .center
 
-		let detail = NSTextField(labelWithString: reason)
+		let detail = NSTextField(labelWithString: content.detail)
 		detail.font = .systemFont(ofSize: 12)
 		detail.textColor = Theme.current.gitIgnored
 		detail.alignment = .center
 
-		let hexButton = makeButton(title: "Open in Hex Editor", symbol: "number") { [weak self] in
-			self?.onOpenHexEditor?()
-		}
-		let externalButton = makeButton(title: "Open Externally", symbol: "arrow.up.forward.app") { [weak self] in
-			self?.onOpenExternally?()
-		}
+		let last = makeLastRow(for: content)
 
-		// A model file is far more often something to look at than to inspect
-		// byte by byte, so the preview leads when one is available.
-		var actions: [NSView] = []
-		if ModelPreview.canPreview(url), ModelPreview.isAvailable {
-			actions.append(makeButton(title: "Preview in GoSTL", symbol: "cube") { [weak self] in
-				self?.onPreviewModel?()
-			})
-		}
-		actions.append(contentsOf: [hexButton, externalButton])
-
-		let buttons = NSStackView(views: actions)
-		buttons.orientation = .horizontal
-		buttons.spacing = 10
-
-		let stack = NSStackView(views: [icon, title, detail, buttons])
+		let stack = NSStackView(views: [icon, title, detail, last])
 		stack.orientation = .vertical
 		stack.alignment = .centerX
 		stack.spacing = 10
@@ -78,6 +61,45 @@ final class FileNoticeView: NSView {
 			stack.centerYAnchor.constraint(equalTo: centerYAnchor),
 			stack.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, constant: -40),
 		])
+	}
+
+	/// The buttons, or the path when there is nothing the buttons could do.
+	private func makeLastRow(for content: FileNotice.Content) -> NSView {
+		guard content.offersActions else {
+			// Selectable, because the one thing somebody does with a path they
+			// were shown is copy it — into a terminal, or into a search.
+			let path = NSTextField(labelWithString: content.path ?? url.path)
+			path.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+			path.textColor = Theme.current.gitIgnored
+			path.alignment = .center
+			path.isSelectable = true
+			// Middle, not tail: the end of a path is the part that identifies
+			// it, and a truncated tail would leave four projects' `main.py`
+			// looking identical — which is the question this row is answering.
+			path.lineBreakMode = .byTruncatingMiddle
+			path.toolTip = url.path
+			return path
+		}
+
+		var actions: [NSView] = []
+		// A model file is far more often something to look at than to inspect
+		// byte by byte, so the preview leads when one is available.
+		if ModelPreview.canPreview(url), ModelPreview.isAvailable {
+			actions.append(makeButton(title: "Preview in GoSTL", symbol: "cube") { [weak self] in
+				self?.onPreviewModel?()
+			})
+		}
+		actions.append(makeButton(title: "Open in Hex Editor", symbol: "number") { [weak self] in
+			self?.onOpenHexEditor?()
+		})
+		actions.append(makeButton(title: "Open Externally", symbol: "arrow.up.forward.app") { [weak self] in
+			self?.onOpenExternally?()
+		})
+
+		let buttons = NSStackView(views: actions)
+		buttons.orientation = .horizontal
+		buttons.spacing = 10
+		return buttons
 	}
 
 	private func makeButton(title: String, symbol: String, action: @escaping () -> Void) -> NSButton {
