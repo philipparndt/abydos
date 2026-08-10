@@ -482,6 +482,14 @@ were tried, measured and dropped, and each cost enough to be worth writing down.
   starts refusing instead fails the test rather than leaving a caption that
   lies.
 
+  Verified in the app on a scratch project rather than only in tests, and it
+  was worth doing: the sentence is longer than the one line the foot of the pane
+  had, so the first attempt drew it straight under `Fit · 100%` with the two on
+  top of each other. The foot is now as tall as its caption needs, up to three
+  lines, and the caption is given the pane less the room the readout has taken —
+  seen with one sentence over two lines and with a file that states both a
+  theme and a layout over three.
+
   Worth revisiting if somebody actually wants ELK — the numbers above are the
   cost, and none of them is prohibitive; what is missing is a reason.
 - ~~**An example to work against.**~~ **Done.** `abydos-examples/mermaid/` holds
