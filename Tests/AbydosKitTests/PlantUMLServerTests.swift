@@ -144,6 +144,10 @@ struct PlantUMLServerAddressTests {
 	/// was drawing through. It is the same mistake this suite was on the
 	/// receiving end of, written out by hand; see 0435 and the note on
 	/// `DiagramExportLiveTests`. A role is not an owner.
+	///
+	/// The scan also looked for `abydos-probe-pipe-`, and there was never one to
+	/// find: `drawTheOldWay` runs its container with `--rm` and registers nothing,
+	/// so it takes itself away when the render ends.
 	private func removeAll(_ started: Started, using runtime: ContainerRuntime) {
 		let names = started.all
 		if names.isEmpty { return }
