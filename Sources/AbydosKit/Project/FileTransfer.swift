@@ -16,11 +16,18 @@ import Foundation
 /// The alternatives were a prompt per file — a wall of dialogs, and the same
 /// "there is nowhere to say four things" `exportDiagram` already states — or
 /// refusing the whole drop, which throws away the nine that were fine because
-/// three were not. Replacing was never on the table: there is no undo here
-/// (deliberately, and stated in 0436), so an overwrite is unrecoverable, and
-/// `commitRename` already answers a collision by refusing rather than
-/// overwriting. Skipping keeps that rule the same everywhere instead of "a
-/// collision never overwrites, except when dragged".
+/// three were not. Replacing was never on the table: `commitRename` already
+/// answers a collision by refusing rather than overwriting, and skipping keeps
+/// that rule the same everywhere instead of "a collision never overwrites,
+/// except when dragged".
+///
+/// One of the supports has since moved. 0436 also argued that there was no undo,
+/// so an overwrite would be unrecoverable; 0442 gave the tree one. It does not
+/// carry an overwrite, though — undoing one means having kept the overwritten
+/// file somewhere, which is a much larger promise than moving a file back to
+/// where it came from, and `FileUndo` refuses onto an occupied name for exactly
+/// that reason. **The skip rule stands on the supports it has left**, until
+/// somebody argues it down on its own merits.
 ///
 /// Renaming the newcomer the way the Finder's "Keep Both" does was considered
 /// and left out *for a collision between two different files*: it produces a

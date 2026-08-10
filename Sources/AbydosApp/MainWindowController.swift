@@ -4645,7 +4645,25 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	}
 
 	func treeStepsForTesting(_ steps: String) {
-		for step in steps.split(separator: ",") {
+		let script = steps.split(separator: ",").map(String.init)
+		for (index, step) in script.enumerated() {
+			// `settle`, and `settle:3` for longer. Everything after it goes back
+			// to the run loop rather than being waited for here, because the trash
+			// answers on the main queue and a nested `RunLoop.run(until:)` does not
+			// drain it — measured, not assumed, when a script that trashed and then
+			// pressed ⌘Z found an empty stack however long it "waited".
+			if step == "settle" || step.hasPrefix("settle:") {
+				let seconds = step.hasPrefix("settle:")
+					? Double(step.dropFirst("settle:".count)) ?? 1.5
+					: 1.5
+				let rest = script[(index + 1)...].joined(separator: ",")
+				guard !rest.isEmpty else { return }
+				DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+					self?.treeStepsForTesting(rest)
+				}
+				return
+			}
+
 			switch step {
 			case "focus": navigator.focusTree()
 			// What a right-click over the selection offers, submenus included.
@@ -4682,6 +4700,46 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				continue
 			case "paste": navigator.pasteForTesting(move: false)
 			case "paste-move": navigator.pasteForTesting(move: true)
+			// ⌘Z the way the Edit menu sends it: at nobody in particular, down the
+			// responder chain from whatever has the keyboard. That is the half
+			// `undo` cannot answer — which of the two stacks a ⌘Z reaches is
+			// decided by the chain, so the harness has to ask the chain rather
+			// than the tree.
+			case "undo-key":
+				// Key first: `target(forAction:)` starts at the *key* window's
+				// first responder, and an app launched from a terminal need not
+				// have one — which showed up as "answered by nobody" while the
+				// tree plainly had the keyboard.
+				NSApp.activate(ignoringOtherApps: true)
+				window?.makeKeyAndOrderFront(nil)
+				let selector = Selector(("undo:"))
+				// The chain walked by hand as well, because it is the mechanism
+				// under test and it can be named. AppKit's own answer is printed
+				// beside it so the two can be seen to agree.
+				var responder = window?.firstResponder
+				while let step = responder, !step.responds(to: selector) {
+					responder = step.nextResponder
+				}
+				func named(_ object: Any?) -> String {
+					object.map { String(describing: type(of: $0)) } ?? "nobody"
+				}
+				print("TREE undo-key: chain=\(named(responder)) "
+					+ "appkit=\(named(NSApp.target(forAction: selector))) "
+					+ "first=\(named(window?.firstResponder))")
+				// Sent the way the menu sends it, and by hand only when there is no
+				// key window to send it through — either way the chain decides who
+				// answers, which is the whole question.
+				if !NSApp.sendAction(selector, to: nil, from: nil) {
+					_ = responder?.tryToPerform(selector, with: nil)
+				}
+			// And the tree's own, straight at the outline view, for scripts that
+			// only want the file half.
+			case "undo": navigator.undoForTesting()
+			// What is standing in the corner, which is where an undo that refused
+			// says so.
+			case "toasts":
+				print("TREE \(toastReportForTesting())")
+				continue
 			// And the key itself, which is the half `paste-move` cannot ask
 			// about: ⌥⌘V is in no menu, so `handleKeyDown` is the only thing
 			// standing between the keystroke and the move.
@@ -4707,6 +4765,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 						.sorted()
 					print("TREE ls \(folder): \(names.joined(separator: " "))")
 					continue
+				}
+				// `type:abc`, into whatever the editor is showing. Here rather than
+				// only in `--type` so that one script can put an edit and a file
+				// gesture in a chosen order and then press ⌘Z once: which of the two
+				// undo stacks answers is the question, and it cannot be asked from
+				// two flags that fire at different times.
+				if step.hasPrefix("type:") {
+					simulateTyping(String(step.dropFirst("type:".count)))
+					break
 				}
 				// `export:png`, the file's own context-menu action on whatever the
 				// tree has selected.
