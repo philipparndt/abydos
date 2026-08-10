@@ -627,8 +627,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 		bottomPanel.onRunAgain = { [weak self] in self?.runSelectedConfiguration(debug: false) }
 		bottomPanel.onDebugAgain = { [weak self] in self?.runSelectedConfiguration(debug: true) }
+		// Room first, for the reason `makeRoomForTheEditor` already gives about a
+		// breakpoint's line: everything that comes through here is a *pane*
+		// asking for a file, and a pane can have the whole window. A backlog
+		// item opened from a maximised board, a review finding, a search result
+		// — each of them opened the file behind the thing that opened it, which
+		// from the outside is indistinguishable from nothing happening.
 		bottomPanel.onOpenFinding = { [weak self] url, line in
-			self?.editor.open(fileURL: url, atLine: line)
+			guard let self else { return }
+			self.makeRoomForTheEditor()
+			self.editor.open(fileURL: url, atLine: line)
 		}
 		bottomPanel.onOpenFileFromTerminal = { [weak self] request in
 			self?.openFromTerminal(request)
