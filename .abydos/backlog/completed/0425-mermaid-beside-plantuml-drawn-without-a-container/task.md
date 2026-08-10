@@ -313,6 +313,45 @@ Verified end to end in the app on a scratch project, not only in tests: a
 flowchart and a sequence diagram previewed, `Export ▸ SVG` and `Export ▸ PNG`
 taken from the preview's own menu, and the written files opened and looked at.
 
+### And what landed in the second pass, months later
+
+Picking the entry up again to answer the three bullets left below added:
+`Mermaid.statedLayout` and `DiagramLook.layoutNotice` for a layout this build
+has not got; four fixes and one generalisation in `Mermaid.page`'s flattening,
+each named where it is; `Tests/AbydosKitTests/MermaidEveryKindLiveTests.swift`,
+which draws one of every kind of diagram this Mermaid knows and compares the
+two renderers; and `docs/images/diagram.png` with the `shoot diagram` line that
+takes it.
+
+## What was ruled out on the way
+
+Beyond the two decisions written out below — the bitmap and ELK — four things
+were tried, measured and dropped, and each cost enough to be worth writing down.
+
+- **Comparing the two rasterisations pixel for pixel with no slack.** They round
+  a drawing's size differently: 564×983 from CoreSVG against 562×982 from
+  WebKit for the same flowchart. An exact comparison fails on nine of the
+  twenty-two kinds for a reason that is nothing to do with the picture, so the
+  comparison allows each pixel to have moved by two, in both directions.
+- **Measuring the difference as a fraction of the *ink* rather than of the
+  page.** It sounds better and is worse: a journey diagram is mostly white
+  paper, so a difference of a few glyph edges is 22% of its ink and a Sankey
+  losing every flow is 0.8% of a page. Both numbers were looked at; the page is
+  the one the test asserts on, and the properties of the file catch what a page
+  fraction is too blunt for.
+- **Blaming CoreSVG for the Sankey's washed-out flows.** The first model was
+  that it applies `stroke-opacity` more than once for a gradient stroke —
+  measured at 0.8 → 0.50, 0.5 → 0.12, 0.25 → 0.01, which is very nearly the
+  cube. It is not that. A file of four strokes drew a half-transparent gradient
+  stroke exactly right; what is wrong is `stroke-opacity` on a *group*, applied
+  to the group as well as inherited, and there were two such groups nested
+  because this app had written one of them itself.
+- **Blaming CoreSVG for not drawing bold.** A file of four lines draws
+  `font-weight="700"` bold, on the same font family Mermaid asks for. The
+  requirement diagram's names were regular for a different reason — the inline
+  `style` beside the attribute — and that was only found by cutting the one
+  element out of the file and rasterising it alone.
+
 ## What is left
 
 - ~~**Fenced blocks in Markdown.**~~ **Drawn.** See above. `MarkdownFence` in the
@@ -409,8 +448,50 @@ taken from the preview's own menu, and the written files opened and looked at.
   rather than for this one: the file wins, the app's theme is the default, and an
   export asks for the one it wants by name (`Export ▸ PNG (Dark)` writes
   `diagram-dark.png`).
-- **ELK layout** (`@mermaid-js/layout-elk`) is a second bundle and is not here.
-  A diagram asking for `layout: elk` gets Mermaid's own message about it.
+- ~~**ELK layout** (`@mermaid-js/layout-elk`) is a second bundle and is not here.
+  A diagram asking for `layout: elk` gets Mermaid's own message about it.~~
+  **Not vendored, and the sentence above was wrong about what happens instead.**
+
+  Measured rather than guessed, both halves. **The package**: 3.1 MB as a
+  tarball, and what a page would actually load is a 356-byte ESM entry that
+  `import()`s one chunk of **1.64 MB** minified — a 46% increase on the 3.57 MB
+  this app carries to draw Mermaid at all, for a second way of arranging the
+  same flowchart. And it is **ESM only**, with a relative import: the page
+  Mermaid is loaded into has *no origin at all* (`loadHTMLString` with no base
+  URL, navigation refused), which is the property this entry treats as enforced
+  rather than intended, and a relative `import()` needs an origin to resolve
+  against. So it would cost either a scheme handler of its own — `DrawioEditor`
+  has one, so the mechanism exists and this would be the second page to need it
+  — or a blob-URL trick to get a module in without one.
+
+  **And what a diagram asking for it gets today is not a message.** A flowchart
+  with `layout: elk` in its front matter draws, and the drawing is byte for byte
+  the one the same flowchart draws with no front matter at all: Mermaid has no
+  loader for a layout it was not given and quietly uses its own, saying nothing.
+  That is worse than the entry claimed, and it is worse than an error — the
+  picture is right and is arranged the way somebody did not ask for.
+
+  So the layout is not vendored and the silence is fixed instead:
+  `Mermaid.statedLayout` reads the same two spellings `statedLook` does, and the
+  pane and a Markdown fence say one line under the drawing — *This diagram asks
+  to be laid out by "elk", which is not in this build, so it is drawn with
+  Mermaid's own layout.* The same place, and the same register, as 0429's
+  sentence about a file that sets its own colours, for the same reason: a
+  picture that quietly ignores what the file asked for is a bug report waiting
+  to happen. `MermaidLiveTests` pins the silence itself, so a later Mermaid that
+  starts refusing instead fails the test rather than leaving a caption that
+  lies.
+
+  Verified in the app on a scratch project rather than only in tests, and it
+  was worth doing: the sentence is longer than the one line the foot of the pane
+  had, so the first attempt drew it straight under `Fit · 100%` with the two on
+  top of each other. The foot is now as tall as its caption needs, up to three
+  lines, and the caption is given the pane less the room the readout has taken —
+  seen with one sentence over two lines and with a file that states both a
+  theme and a layout over three.
+
+  Worth revisiting if somebody actually wants ELK — the numbers above are the
+  cost, and none of them is prohibitive; what is missing is a reason.
 - ~~**An example to work against.**~~ **Done.** `abydos-examples/mermaid/` holds
   six: `render.mmd` (flowchart), `export.mermaid` (sequence, and the other
   extension), `document.mmd` (state), `preview.mmd` (class), `project.mmd`
@@ -440,16 +521,121 @@ taken from the preview's own menu, and the written files opened and looked at.
   the other five diagram types. This app's `hasDiagram` counts a bare `%%` as a
   comment, so the two disagree about what a comment is; nothing here depends on
   that, and it is written down because the message names the wrong place.
-- **A shot in `Scripts/screenshots.sh`.** There is no diagram in the
-  documentation's pictures at all — neither PlantUML's nor this — and a preview
-  pane is exactly the kind of thing a picture says better than a paragraph. It
-  wants the example above first.
-- **The pane draws through `NSImage`,** which is CoreSVG, which is why so much
+- ~~**A shot in `Scripts/screenshots.sh`.**~~ **Taken.** `shoot diagram` opens
+  the examples repository's `mermaid/` and photographs `document.mmd` — the
+  source on the left, the state diagram on the right, at `Fit · 95%`. It is in
+  `docs/images/diagram.png` and the landing page shows it, with a card and a row
+  in the feature table beside it, because a picture nobody is shown is not
+  documentation.
+
+  Two decisions in it worth knowing. **Mermaid rather than PlantUML**, which is
+  the honest choice rather than the flattering one: a `.puml` needs a container
+  runtime and a pulled image, so a machine taking these pictures without either
+  would photograph an install hint. **`document.mmd` of the six**, because it is
+  the one whose whole picture fits the pane at a size somebody can read — the
+  flowchart in `render.mmd` is taller than the window and photographs with its
+  bottom cut off, and the sequence diagram fits only by shrinking to 54%.
+
+  One thing found while taking it, and it is nothing to do with diagrams: the
+  app's own toasts land in the capture. Three shots in a row had *zsh needs you*
+  and *a subagent finished* over the bottom right corner, because a Claude Code
+  hook on this machine reaches whichever Abydos is running — including a
+  headless one taking screenshots. Worth its own entry; the shots here were
+  retaken until the corner was clear.
+- ~~**The pane draws through `NSImage`,** which is CoreSVG, which is why so much
   of the flattening above exists. It is the right dependency to have — the file
   written to disk is better for it — but if a diagram ever appears that CoreSVG
   still cannot draw, the honest answer is to show the pane a bitmap rasterised
   by the web view at the zoom being asked for, and keep the drawing for the
-  file.
+  file.~~ **Asked, and the answer was no — but not for the reason expected.**
+
+  The condition was "if a diagram ever appears that CoreSVG still cannot draw",
+  and the only way to answer that was to go and look. Every one of the
+  twenty-two kinds of diagram this Mermaid draws was drawn twice — once through
+  `NSImage`, once through the web view's canvas — and the two rasterisations
+  compared pixel for pixel, with a pixel or two of slack for the fact that the
+  two round a drawing's size differently.
+
+  **Four of them came apart, and every one was this app's own doing.** They are
+  written out where the code is and summarised in the commits; in short:
+
+  - A **Sankey** lost every flow — 77% of the page different — to a
+    `url("#id")` this app wrote back with the quotes a computed value carries.
+    CoreSVG looks for a gradient of that name, finds none, and paints nothing.
+  - A **journey** lost every label. Mermaid draws them twice, as HTML in a
+    `foreignObject` and as a `<text>` beside it in a `<switch>`; the browser
+    takes the first and never lays the second out, so the empty-label sweep
+    removed it and the file went out holding only the branch CoreSVG cannot
+    draw.
+  - A **treemap**'s labels were drawn half a line low **in the export**,
+    because Mermaid's own `style="dominant-baseline: middle"` beat the
+    attributes the bake writes to neutralise a position it has already applied.
+  - A **requirement** diagram's names were bold in the export and regular in
+    the pane: `font-weight="700"` on the element and `style="; font-weight:
+    bold;"` beside it, and CoreSVG reads the declaration, does not understand
+    the keyword, and falls back.
+
+  And one that was half ours: inherited paint is now taken *off* containers
+  rather than merely not written onto them, because CoreSVG applies a
+  `stroke-opacity` on a `<g>` as a group opacity as well as inheriting it —
+  measured on a file of four strokes — and Mermaid writes one of those itself.
+
+  All fixed in the flattening, where the fix helps the pane, the exported SVG,
+  Preview.app and everything else that is not a browser — none of which a
+  bitmap in the pane would have helped.
+
+  What is left between the two renderers is **0.01% to 0.76% of the page**: the
+  edges of glyphs and a pixel of rounding. Nothing was found that CoreSVG cannot
+  draw once the file stops asking for a browser.
+
+  So a bitmap is not built, and there are two reasons beyond "nothing needs it".
+  **The pane being wrong is the alarm that the file is wrong.** They are the same
+  drawing, and every fault above was found because somebody could see one of
+  them — a bitmap pane would have shown a perfect journey diagram while the SVG
+  written beside it had no labels at all, and nobody would have known until they
+  opened the file somewhere else. And **it would cost the sharpness**: a drawing
+  is a drawing at any zoom, and a bitmap rasterised at the zoom being asked for
+  has to be rasterised again on every ⌘+ — a second path, a second cache, and a
+  pane that is soft for the moment between.
+
+  What was built instead is the thing that makes the question answerable next
+  time: `MermaidEveryKindLiveTests` draws all twenty-two, compares the two
+  renderers on six of them, and asserts each of the faults above as a property
+  of the file. Both kinds of claim are there on purpose — the pixel comparison
+  caught the Sankey at 77% and would have let the journey through at 0.8% of a
+  mostly empty page, and the properties catch the journey and say what is wrong
+  in a sentence. If a diagram type does appear that CoreSVG genuinely cannot
+  draw, that test names it and says by how much, and *then* this decision is
+  worth taking again with a case rather than a hypothetical.
+
+  Two known differences that are not faults and are not fixed. `mix-blend-mode`
+  is a CSS property CoreSVG has no answer for, so overlapping Sankey flows will
+  blend in the exported PNG and not in the pane; and an *animated* edge stops
+  animating in a file, which was already recorded above.
+
+## Steps
+
+Written when the item was picked up again, long after the rest of it: the three
+bullets above that are not struck through are the whole of what was left, and
+this is what each of them comes to once it is looked at rather than guessed at.
+The first of them is a question before it is work, so it is asked first.
+
+- [x] Ask, with a measurement rather than a memory, whether CoreSVG is still
+      short of the web view: every diagram type this Mermaid draws, rasterised
+      both ways and compared pixel for pixel
+- [x] Fix whatever of that difference turns out to be this app's own doing
+- [x] Keep the comparison as a test, so the next diagram type that comes apart
+      says so rather than waiting to be found in a pane
+- [x] Decide the bitmap-in-the-pane question on that evidence, and write the
+      decision down whichever way it goes
+- [x] Decide ELK on its measured cost, and write the numbers down whichever way
+      it goes
+- [x] A `diagram` shot in `Scripts/screenshots.sh`, and somewhere in the
+      documentation that shows it
+- [x] Write down here what was ruled out on the way
+- [x] The spec says what the project now does — `spec/diagrams.md`, a capability
+      that did not exist before, holding the two requirements this item can
+      vouch for and meant to be grown by whoever touches the rest
 
 ---
 

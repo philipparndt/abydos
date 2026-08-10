@@ -106,6 +106,29 @@ JAVA="$(prepare java/maven-service maven-service)"
 shoot java --open "$JAVA" --file "$JAVA/src/main/java/com/example/api/Server.java" \
 	--expand --panel-height 0 --delay 5
 
+# A diagram, which is the one part of this app a paragraph is worse at than a
+# picture: the source on the left, the drawing on the right, and the drawing
+# redrawn on every pause in the typing.
+#
+# Mermaid rather than PlantUML on purpose, and it is the honest choice rather
+# than the flattering one — a `.puml` needs a container runtime and an image
+# pulled, so a machine taking these pictures with neither would photograph an
+# install hint. Mermaid needs nothing at all (0425), so this shot is the same
+# on every machine.
+#
+# `--file` is enough to open the split: a `.mmd` is a file whose rendered form
+# is the point of it, so it opens as source and drawing rather than as text.
+# The delay is longer than the editor's because the first render also loads the
+# bundle into the web view.
+#
+# `document.mmd` of the six, because it is the one whose whole picture fits the
+# pane at a size somebody can read — the flowchart in `render.mmd` is taller
+# than the window and photographs as a diagram with its bottom cut off, and the
+# sequence diagram fits only by shrinking to 54%. Fitting is the pane doing its
+# job either way, but a picture of it should be of the case that reads.
+MMD="$(prepare mermaid mermaid)"
+shoot diagram --open "$MMD" --file "$MMD/document.mmd" --panel-height 0 --delay 8
+
 # What a breakpoint can be told to do. Drawn by hand, so it is photographed
 # rather than described — and the values come from the session file, which is
 # also how anybody's would.

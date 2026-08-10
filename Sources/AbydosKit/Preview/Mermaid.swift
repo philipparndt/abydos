@@ -119,6 +119,72 @@ public enum Mermaid {
 		return nil
 	}
 
+	// MARK: - A layout this build does not have
+
+	/// The layout engines that come with the bundle, which is one.
+	///
+	/// Mermaid's own layout — `dagre` — is inside `mermaid.min.js`. Everything
+	/// else is a separate package registered at runtime, and none is vendored
+	/// here: `@mermaid-js/layout-elk` is 1.6 MB of minified ESM that reaches for
+	/// a second file by relative path, and this page has no origin for a relative
+	/// path to be resolved against. 0425 has the numbers and the decision.
+	static let layoutsHere: Set<String> = ["dagre", "default"]
+
+	/// The layout a file asks for when this build cannot give it, or nil.
+	///
+	/// Worth a sentence in the pane because the failure is **silent**, which was
+	/// measured rather than assumed: a flowchart with `layout: elk` in its front
+	/// matter draws, and the drawing is byte for byte the one the same flowchart
+	/// draws with no front matter at all. Mermaid does not complain about a
+	/// layout it has no loader for; it quietly uses its own. So somebody who
+	/// asked for ELK — and people ask for it to get its edge routing on a large
+	/// flowchart — gets a different picture from the one they asked for and no
+	/// word about why. One line under the drawing is the whole answer, and it is
+	/// the same line 0429 decided a file's own theme gets.
+	///
+	/// Both spellings, the same two `statedLook` reads: `layout:` under `config:`
+	/// in the front matter, and `layout` in an `%%{init}%%` directive.
+	public static func statedLayout(in source: String) -> String? {
+		guard let named = layoutInFrontMatter(source) ?? layoutInInitDirective(source),
+		      !layoutsHere.contains(named.lowercased())
+		else { return nil }
+		return named
+	}
+
+	/// `---\nconfig:\n  layout: elk\n---`.
+	private static func layoutInFrontMatter(_ source: String) -> String? {
+		let lines = source.split(separator: "\n", omittingEmptySubsequences: false)
+		guard let opening = lines.firstIndex(where: {
+			!$0.trimmingCharacters(in: .whitespaces).isEmpty
+		}), lines[opening].trimmingCharacters(in: .whitespaces) == "---" else { return nil }
+
+		for line in lines[(opening + 1)...] {
+			let trimmed = line.trimmingCharacters(in: .whitespaces)
+			if trimmed == "---" { return nil }
+			guard trimmed.hasPrefix("layout:") else { continue }
+			let said = unquoted(trimmed.dropFirst("layout:".count)
+				.trimmingCharacters(in: .whitespaces))
+			return said.isEmpty ? nil : said
+		}
+		return nil
+	}
+
+	/// `%%{init: {"layout": "elk"}}%%`, anywhere in the file.
+	private static func layoutInInitDirective(_ source: String) -> String? {
+		for raw in source.split(separator: "\n") {
+			let line = raw.trimmingCharacters(in: .whitespaces)
+			guard line.hasPrefix("%%{"), line.contains("init"),
+			      let key = line.range(of: "layout")
+			else { continue }
+			// The value after the key, however it was quoted: `"layout": "elk"`,
+			// `'layout':'elk'` and `layout: elk` are all in the wild.
+			let rest = line[key.upperBound...].drop(while: { "\"': ".contains($0) })
+			let said = rest.prefix(while: { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "." })
+			return said.isEmpty ? nil : String(said)
+		}
+		return nil
+	}
+
 	// MARK: - What a diagram calls itself
 
 	/// The name a diagram gives itself, or nil when it does not give one.
@@ -308,6 +374,24 @@ public enum Mermaid {
 		// stylesheet to rescue — and the computed form is `url("#id")`, whose
 		// quotes come back out of the serialiser as `&quot;` and point at
 		// nothing. Copying them would take the arrowheads off every edge.
+		//
+		// Everything in that list but `opacity` is an *inherited* property, and
+		// that distinction turns out to matter. Written onto something that draws
+		// nothing itself, an inherited value is redundant — every shape below it
+		// already carries its own resolved copy — and CoreSVG then applies
+		// `stroke-opacity` on a `<g>` a second time, as if it were a group
+		// opacity. Measured on a file of four strokes: a half-transparent stroke
+		// inside a `<g stroke-opacity="0.5">` comes out at a quarter, and the same
+		// stroke with no group around it comes out right. A Sankey diagram nests
+		// two such groups, so its flows were drawn at an eighth of the weight the
+		// browser gives them — a picture of blank paper with the node bars on it.
+		// `opacity` is the one that is not inherited: on a group it means the
+		// group, so it is the one thing worth writing there.
+		const ABYDOS_CONTAINERS = [
+			'g', 'svg', 'defs', 'switch', 'symbol', 'a', 'marker', 'clipPath',
+			'mask', 'pattern', 'linearGradient', 'radialGradient', 'stop',
+			'foreignObject', 'title', 'desc', 'metadata'
+		];
 		function abydosInline(text) {
 			const holder = document.createElement('div');
 			holder.style.position = 'absolute';
@@ -317,13 +401,52 @@ public enum Mermaid {
 			try {
 				const root = holder.querySelector('svg');
 				if (!root) { return text; }
+				// First, so everything below measures and paints the labels that are
+				// actually going to be in the file rather than the ones a browser
+				// happened to pick.
+				abydosTakeThePlainBranch(root);
+				// Read from every element before any of it is written, since taking
+				// an inherited value off a container changes what its children
+				// resolve to.
+				const painted = [];
 				for (const element of [root, ...root.querySelectorAll('*')]) {
 					if (element.tagName === 'style') { continue; }
 					const resolved = getComputedStyle(element);
+					const values = {};
 					for (const property of ABYDOS_PAINTED) {
-						const value = resolved.getPropertyValue(property);
+						values[property] = resolved.getPropertyValue(property);
+					}
+					painted.push({ element: element, values: values });
+				}
+				for (const found of painted) {
+					const draws = ABYDOS_CONTAINERS.indexOf(found.element.tagName) === -1;
+					for (const property of ABYDOS_PAINTED) {
+						// The attribute is going to be the answer, so the element's
+						// own `style` must not hold a second one. Nothing is lost —
+						// the value being written is that style's own contribution
+						// resolved among everything else — and what is gained is that
+						// no renderer has to agree with WebKit about how to read a
+						// declaration. CoreSVG reads `style` and does *not* understand
+						// `font-weight: bold` in one: with Mermaid's own
+						// `style="; font-weight: bold;"` left in place, a requirement
+						// diagram's names came out bold from the browser and regular
+						// from the pane, both of them looking at `font-weight="700"`
+						// on the same element. It is the same rule that stopped a
+						// treemap's labels being centred twice.
+						found.element.style.removeProperty(property);
+						if (!draws && property !== 'opacity') {
+							// Taken *off*, not merely not added. Mermaid writes some of
+							// these itself — a Sankey's links group carries its own
+							// `stroke-opacity="0.5"` — and CoreSVG applies that to the
+							// group as well as to the strokes inside it, which halves
+							// the flows a second time. Nothing needs it: every shape
+							// below has its own resolved copy by now.
+							found.element.removeAttribute(property);
+							continue;
+						}
+						const value = found.values[property];
 						if (value && value !== 'none' || property === 'fill' || property === 'stroke') {
-							element.setAttribute(property, value);
+							found.element.setAttribute(property, abydosPlainReference(value));
 						}
 					}
 				}
@@ -336,6 +459,80 @@ public enum Mermaid {
 				return new XMLSerializer().serializeToString(root);
 			} finally {
 				holder.remove();
+			}
+		}
+		// A reference to something in the same file, written the way every
+		// renderer reads it.
+		//
+		// `getComputedStyle` hands a paint server back as `url("#linearGradient-5")`
+		// — with quotes, which the serialiser writes out as `&quot;`. WebKit
+		// forgives that and CoreSVG does not: it finds no such gradient and paints
+		// nothing at all, which is how a Sankey diagram lost every one of its flows
+		// in the pane and in the exported SVG while the PNG rasterised from the
+		// same drawing was perfect. Seen, measured at 77% of the page different
+		// between the two renderers, and fixed by taking the quotes back out.
+		//
+		// This is the same trap the note above `marker-end` names. That one is
+		// avoided by not copying the property at all, which works because Mermaid
+		// writes the markers as attributes itself; a gradient stroke has no such
+		// second copy, so it has to be written correctly instead.
+		function abydosPlainReference(value) {
+			return value.indexOf('url(') === -1 ? value
+				: value.replace(/url\\(\\s*["']?([^"')]*)["']?\\s*\\)/g, 'url($1)');
+		}
+		/// The plain-text branch of a `<switch>`, kept, and the HTML one dropped.
+		///
+		/// Mermaid draws a user journey's labels with `byFo`, which puts *both*
+		/// answers in the file: a `foreignObject` full of HTML and a `<text>` beside
+		/// it inside a `<switch>`, for the renderer to choose between. A browser
+		/// takes the first and never lays the second out — so `getNumberOfChars`
+		/// on it is nought, `abydosBakeText` counted it as an empty label and
+		/// removed it, and the file went out with only the branch CoreSVG cannot
+		/// draw. Every label of a journey diagram was missing from the pane and
+		/// from the exported SVG, with the PNG correct, which is exactly the
+		/// disagreement between the two renderers this whole pass exists to end.
+		///
+		/// So the choice is made here instead, and made the other way: the HTML
+		/// goes, the text stays, and the `switch` is unwrapped so nothing later has
+		/// to understand what one means. Only when there is a `<text>` to keep — a
+		/// `foreignObject` standing on its own is the only drawing of that label
+		/// there is, and removing it would lose the words in the browser as well.
+		///
+		/// The colour comes across with it, and that is not tidiness. HTML text is
+		/// painted with `color` and SVG text with `fill`, and Mermaid's own
+		/// stylesheet sets both on a journey's section — `color` to a dark grey for
+		/// the branch it expects to be used, and `fill` to the pale lavender the
+		/// section's *rectangle* is filled with. Take the plain branch without this
+		/// and the section title is written in near-white on near-white: present in
+		/// the file, invisible in every renderer. So the kept text is painted the
+		/// colour the browser was going to draw those words.
+		function abydosTakeThePlainBranch(root) {
+			for (const choice of [...root.querySelectorAll('switch')]) {
+				const foreign = [...choice.children].filter(c => c.tagName === 'foreignObject');
+				const plain = [...choice.children].filter(c => c.tagName !== 'foreignObject');
+				if (!foreign.length || !plain.length) { continue; }
+				let written = null;
+				for (const html of foreign) {
+					for (const piece of html.querySelectorAll('*')) {
+						if (piece.textContent && piece.textContent.trim()) { written = piece; }
+					}
+				}
+				// Read before anything is removed: a detached element has no
+				// computed style to ask about.
+				const ink = written ? getComputedStyle(written).color : null;
+				for (const html of foreign) { html.remove(); }
+				for (const kept of plain) {
+					// As an inline style rather than an attribute, because the
+					// stylesheet that painted it the wrong colour is still there for
+					// another few lines and a presentation attribute loses to it.
+					if (ink) {
+						for (const words of [kept, ...kept.querySelectorAll('text')]) {
+							if (words.tagName === 'text') { words.style.fill = ink; }
+						}
+					}
+					choice.parentNode.insertBefore(kept, choice);
+				}
+				choice.remove();
 			}
 		}
 		// Every run of text put where the browser actually laid it out.
@@ -425,6 +622,16 @@ public enum Mermaid {
 					// baseline put it. Leaving either in would apply it twice.
 					line.setAttribute('text-anchor', 'start');
 					line.setAttribute('dominant-baseline', 'auto');
+					// The `style` that came across with the other attributes has to
+					// let those two lines stand, and a declaration beats an
+					// attribute. It has none of these left by now — the pass above
+					// takes every painted property out of every inline style, for
+					// exactly this reason — and this is the belt to that pair of
+					// braces, since a treemap's label carrying Mermaid's own
+					// `style="text-anchor: middle; dominant-baseline: middle"` is how
+					// the browser came to centre a label that was already centred and
+					// draw it half a line low, with the *export* the wrong one.
+					for (const name of ABYDOS_ANCHORED) { line.style.removeProperty(name); }
 					// The row's own content, spaces and all, flowing from that
 					// one position — with every inner position taken off, since
 					// a `tspan`'s is ignored by half the renderers there are and
@@ -434,9 +641,15 @@ public enum Mermaid {
 						: [...found.row.childNodes].map(node => node.cloneNode(true));
 					for (const piece of inside) {
 						if (piece.nodeType === 1) {
-							for (const name of ABYDOS_ANCHORED) { piece.removeAttribute(name); }
+							for (const name of ABYDOS_ANCHORED) {
+								piece.removeAttribute(name);
+								piece.style.removeProperty(name);
+							}
 							for (const nested of piece.querySelectorAll('*')) {
-								for (const name of ABYDOS_ANCHORED) { nested.removeAttribute(name); }
+								for (const name of ABYDOS_ANCHORED) {
+									nested.removeAttribute(name);
+									nested.style.removeProperty(name);
+								}
 							}
 						}
 						line.appendChild(piece);

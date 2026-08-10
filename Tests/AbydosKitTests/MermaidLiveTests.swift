@@ -148,6 +148,35 @@ struct MermaidLiveTests {
 		#expect(height > 800, "a 2× flowchart should be taller than 800px, was \(height)")
 	}
 
+	/// A layout this build has no engine for is not refused. It is ignored.
+	///
+	/// This is the fact the pane's second caption line exists for, and it is
+	/// checked here rather than believed: `layout: elk` in the front matter draws
+	/// the same picture, to the byte, as the same flowchart with no front matter
+	/// at all. Mermaid has no loader registered for ELK — the package is 1.6 MB
+	/// of ESM that this page has no origin to import (0425) — and rather than
+	/// saying so it quietly uses its own layout. If a later Mermaid starts
+	/// complaining instead, this fails, and the caption becomes the wrong answer.
+	@Test func aLayoutThatIsNotHereIsIgnoredRatherThanRefused() async throws {
+		guard await canDraw() else { return }
+		let asked = "---\nconfig:\n  layout: elk\n---\n" + Self.flowchart
+		var drawings: [String] = []
+		for source in [Self.flowchart, asked] {
+			let drawn = await MermaidRenderer.shared.draw(source, format: .svg)
+			guard case let .success(data) = drawn else {
+				Issue.record("did not draw: \(drawn)")
+				return
+			}
+			// The id counts up with every render, and is the one thing that is
+			// meant to differ between two drawings of the same diagram.
+			drawings.append(String(decoding: data, as: UTF8.self).replacingOccurrences(
+				of: "abydos-[0-9]+", with: "id", options: .regularExpression
+			))
+		}
+		#expect(drawings[0] == drawings[1], "ELK now changes the drawing, or is refused")
+		#expect(Mermaid.statedLayout(in: asked) == "elk")
+	}
+
 	// MARK: - Exporting
 
 	@Test func aDiagramIsWrittenBesideItselfInBothFormats() async throws {

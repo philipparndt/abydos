@@ -70,6 +70,19 @@ public enum DiagramLook {
 			+ "the app's theme."
 	}
 
+	/// The sentence a pane shows when the file asked for a layout this build has
+	/// no engine for.
+	///
+	/// The same register and the same reason as the one above, for a failure that
+	/// is quieter still: Mermaid does not complain about a layout it cannot load,
+	/// it draws with its own and says nothing. Somebody who wrote `layout: elk`
+	/// and got Mermaid's own layout would otherwise have to guess whether the
+	/// app read their file at all.
+	public static func layoutNotice(wanted: String) -> String {
+		"This diagram asks to be laid out by “\(wanted)”, which is not in this build, so it is "
+			+ "drawn with Mermaid's own layout."
+	}
+
 	/// The same, for the line a completed export leaves behind.
 	public static func exportNotice(for name: String, stated: String) -> String {
 		"\(name) sets its own look (\(stated)), so the picture was drawn that way rather than "

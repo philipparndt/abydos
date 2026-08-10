@@ -255,7 +255,25 @@
 		<p>CPU, heap, goroutine, block and mutex profiles with a flame graph — pointed
 		   at a program here, or at a pod in the cluster through a forwarded port.</p>
 	</div>
+	<div class="card">
+		<h3>Diagrams</h3>
+		<p>Mermaid, PlantUML and draw.io draw beside their source and redraw as you
+		   type, with <strong>Export ▸ PNG</strong> and <strong>Export ▸ SVG</strong>
+		   on the drawing and on the file in the tree. A <code>mermaid</code> block in
+		   a Markdown file draws where the block is.</p>
+		<p>Mermaid needs nothing installed and reaches nowhere — the renderer is a
+		   bundle inside the app. What it writes is a picture rather than a page:
+		   every style resolved onto the shapes, arrowheads and text turned into
+		   geometry, so the file is the same drawing outside a browser as in one.</p>
+	</div>
 </div>
+
+<figure>
+	<img src="images/diagram.png" alt="Abydos with a Mermaid state diagram open: the source on the left, the drawing on the right."
+	     width="3200" height="2000" loading="lazy">
+	<figcaption>A diagram beside the text that describes it, redrawn on every pause
+	   in the typing. Nothing had to be installed to draw this one.</figcaption>
+</figure>
 
 <h2>Features</h2>
 <div class="scroll">
@@ -275,6 +293,7 @@
 		<tr><td><strong>Debug in a cluster</strong></td><td>the same pod, held at the first instruction until the debugger arrives</td><td>the above, and that language's pod image</td></tr>
 		<tr><td><strong>Profiler</strong></td><td>CPU, heap, goroutine, block and mutex profiles; flame graph; pods too</td><td>a Go program serving pprof</td></tr>
 		<tr><td><strong>Git</strong></td><td>status, changes, history, blame, branches, worktrees, stash, push</td><td>git</td></tr>
+		<tr><td><strong>Diagrams</strong></td><td>Mermaid, PlantUML and draw.io previewed beside the source, exported as PNG or SVG</td><td>a container runtime, for PlantUML</td></tr>
 		<tr><td><strong>Terminal</strong></td><td>real PTY, VT100/xterm, tmux windows as tabs</td><td class="no">—</td></tr>
 		<tr><td><strong>Agent review</strong></td><td><kbd>⇧⌘R</kbd> — findings arrive over MCP as typed data</td><td>Claude Code</td></tr>
 	</tbody>

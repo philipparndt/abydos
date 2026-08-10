@@ -330,6 +330,12 @@ enum MarkdownRenderer {
 			if let stated {
 				output.append(aside(DiagramLook.notice(stated: stated)))
 			}
+			// And the other thing a drawing cannot say for itself: that it asked
+			// to be laid out by an engine this build has not got, and was drawn
+			// with Mermaid's own instead without a word from Mermaid.
+			if let wanted = Mermaid.statedLayout(in: fence.source) {
+				output.append(aside(DiagramLook.layoutNotice(wanted: wanted)))
+			}
 			return output
 
 		case let .fault(fault):
