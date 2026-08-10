@@ -212,8 +212,10 @@ meant to show it. `onExit` now removes the entry only if it is still holding
 that very client. Nothing else called `shutdown` before, which is why this had
 never happened.
 
-**Containers, measured on Apple's runtime.** Opening the examples' Python
-devcontainer project gave four rows, and they are four different cases:
+**Containers, measured on Apple's runtime.** Opening the examples repository at
+its Python devcontainer subproject gave four rows, and three of them are
+different cases — a server on this machine, a server inside somebody else's
+container, and the container:
 
     gopls                | abydos-examples          | 354,9 MB +1 | ~/go/bin/gopls
     openscad-lsp         | abydos-examples          |   4,1 MB    | ~/.cargo/bin/openscad-lsp
@@ -245,6 +247,15 @@ spent that every few seconds to show what is wasting the machine would be a joke
 at the owner's expense. `--no-stream` is on both `stats` commands and there is a
 test that says so: without it the command never returns, which is the shape of
 process 0406 and this entry exist to stop this app leaving behind.
+
+**What is not proved.** Docker's half is driven live against a container the
+test starts and owns. Apple's is not: both its commands were read off `container`
+1.2.2 by hand, and the transcripts in the tests are those answers, but nothing
+in the suite runs them. A test that asked both runtimes whether they accept
+these commands was written and then removed — with no container of its own it
+asked about every container on the machine, and this suite starts and removes
+containers in parallel, so it failed on a busy run rather than on a wrong flag.
+A test people learn to ignore is worse than an admitted gap.
 
 Three smaller things the measuring turned up, each now written down where it
 happened:

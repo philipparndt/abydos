@@ -14,6 +14,18 @@ import Testing
 /// test in this suite is:
 ///
 ///     docker pull alpine:3
+///
+/// **Docker only, and Apple's runtime is not covered here.** There was a test
+/// that asked both runtimes whether they accept these commands at all, and it
+/// had to go: with no container of its own to ask about it asked about every
+/// container on the machine, and this suite starts and removes containers in
+/// parallel, so `docker stats` came back with half its rows as `--` and a
+/// non-zero status. A test that fails because the suite is busy teaches people
+/// to ignore it. What is left is the docker probe below, which does own its
+/// container; Apple's `container ls --all --format json` and `container stats
+/// --no-stream --format json` were read off version 1.2.2 by hand and the
+/// transcripts are in `ToolInventoryTests`, which is weaker than a test and is
+/// said here rather than left to be assumed.
 @Suite(.serialized) struct ToolInventoryLiveTests {
 	@Test func readsWhatARunningContainerCostsAndWhenItStarted() async throws {
 		guard let runtime = ContainerRuntime.discover(preference: .docker),
@@ -51,39 +63,6 @@ import Testing
 
 		let startedAt = try #require(fact.startedAt, "the runtime said nothing about when it started")
 		#expect(abs(startedAt.timeIntervalSinceNow) < 120)
-	}
-
-	/// Both runtimes, asked whether these are commands they accept at all.
-	///
-	/// The transcripts in `ToolInventoryTests` settle the reading and cannot
-	/// settle the asking: a flag this runtime has never heard of parses to
-	/// nothing in exactly the way an empty machine does, and the view would show
-	/// a dash for every container without anything failing. Apple's runtime is
-	/// the one that needs this — no live test in this suite drives it, and
-	/// nothing else in the app calls `stats` at all.
-	///
-	/// Nothing is started here. Each runtime is asked only if its own listing
-	/// answers, because a runtime whose service is down is not this app's fault
-	/// and not this test's subject.
-	@Test func asksBothRuntimesOnlyWhatTheyUnderstand() {
-		for runtime in [
-			ContainerRuntime.discover(preference: .docker),
-			ContainerRuntime.discover(preference: .apple),
-		].compactMap({ $0 }) {
-			let listed = RuntimeCommand.run(
-				ContainerInventory.listing(using: runtime),
-				deadline: ContainerInventory.deadline
-			)
-			guard listed.succeeded else { continue }
-			// No names: every runtime answers about whatever is running, which
-			// is all this needs — that the subcommand and the flags are ones it
-			// knows.
-			let measured = RuntimeCommand.run(
-				ContainerInventory.stats(of: [], using: runtime),
-				deadline: ContainerInventory.deadline
-			)
-			#expect(measured.succeeded, "\(runtime.path) refused stats: \(measured.output)")
-		}
 	}
 
 	/// Every process on this machine includes this one, and this one has a
