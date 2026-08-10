@@ -279,6 +279,119 @@ along with whether the operating system still has the stopped pid. With no
 long to let things settle first — which a server that indexes needs, since the
 processes underneath it arrive after it does.
 
+## What else this app finds on the PATH — the second half of item 2
+
+The sentence that was left unanswered: "check what else is found on the PATH the
+same way — this is unlikely to be the only tool resolved by luck." It was, and
+the answer is not a list of tools. It is that there were **two searches**, and
+which one a tool came through decided which copy of it ran.
+
+    the language server search      the process PATH, then the login shell's
+    (LanguageServers.searchPaths)   PATH, then ten well-known directories
+                                    — sourcekit-lsp, clangd, gopls, jdtls,
+                                      lldb-dap and the rest
+
+    everything else                 the process PATH, then four directories,
+    (Executables.locate)            and never the shell
+                                    — tmux, the container runtime, the
+                                      assistants, DevPod's cargo and zig
+
+Everything else is either an absolute path — `/usr/bin/git`, `/usr/bin/xcrun`,
+`/usr/bin/xcodebuild`, `/bin/sh` — or the person's own login shell running a
+command line they typed, which is theirs and not ours to resolve.
+
+**The first source contributes nothing on the machine this runs on.** Measured
+with `ps eww` on the owner's running Abydos, started the ordinary way rather
+than from a terminal:
+
+    PATH=/usr/bin:/bin:/usr/sbin:/sbin
+
+So the whole answer was the difference between the two searches. Two things came
+of it here:
+
+- **A tool only the version manager knows about was invisible.** `cargo` is
+  `~/.cargo/bin/cargo` on this machine, and so is `rustc`; neither is in any of
+  the four. So the app could start `openscad-lsp` out of `~/.cargo/bin` — the
+  row for it is in the containers table above — and could not find the `cargo`
+  beside it, which is what `DevPod` asks for by name.
+- **A tool in both places was a different program here and in the terminal.**
+  `docker` resolved to `/usr/local/bin/docker`, which is OrbStack's client at
+  29.4.0, while a terminal pane in the same app runs `~/.rd/bin/docker`,
+  Rancher Desktop's 29.1.4-rd, because `~/.rd/bin` is first on the login
+  shell's `PATH` and in none of the four. That is this entry's second fault
+  exactly, one floor along.
+
+**What that second one is worth, honestly: nothing on this machine, and it was
+first read as much worse.** The reading was that Docker could not be found at
+all, so `ContainerRuntime.discover` would fall through to Apple's runtime and
+0406's startup sweep would leave every docker container behind. Then it was
+driven, and the *old* build swept the planted container perfectly well — because
+`/usr/local/bin/docker` exists here and both clients turn out to be pointed at
+one daemon, the `orbstack` context, 29.4.0 both times. The first reading was
+wrong and is written down because "the app runs a different docker from your
+terminal" is a fault whose cost is a property of somebody's machine, not of this
+code, and the next person to look should know it was checked rather than
+assumed.
+
+So there is one search now — `Executables` — and everything uses it, with the
+well-known directories in one place instead of two. `LanguageServers` keeps only
+the part that is its own: asking `xcrun` first for the three tools Xcode and a
+toolchain manager both ship.
+
+**Counted, since the tmux mirror asks this several times a second** and the list
+went from eight directories to forty-three. With the `PATH` a Dock-launched app
+actually has:
+
+    finding tmux                      0.016 ms → 0.042 ms
+    a tool that is nowhere at all     0.023 ms → 0.097 ms
+
+The expensive part is not in the search: it is the login shell behind
+`UserShell.loginPath`, run once per process and warmed at launch.
+
+**Seen in the running app, both ways round.** Given a stand-in login shell that
+says `docker` lives in a directory of the harness's own, and a planted container
+for the sweep to find:
+
+    installed build   ran /usr/local/bin/docker — the container went, and the
+                      stand-in was never called
+    this build        ran the stand-in, which logged
+                      `docker ps -a --format {{.Names}} --filter name=abydos-`
+
+That second line is the 0406 sweep going to the runtime the person actually
+uses.
+
+## The counts again, on this build
+
+Every number above was measured before 0435 found `ToolProcesses` dropping
+entries from its own register — each method that tidied the list threw away
+anything not running, and a client registers its process *before* starting it,
+so the next server to register swept the previous one out. A count taken through
+a register that was losing rows is not evidence about what the register holds,
+so the standing rows were taken again. Same method: `pgrep -P` down from the
+app's own pid, two scratch Swift packages, driven by the harness.
+
+    scenario                                   kept    now
+    one project open, servers settled             1      1
+    switched to a second project                  2      2
+    left running after the app exited             0      0
+
+    the running server's own path
+      /Applications/Xcode-beta.app/Contents/Developer/Toolchains/
+        XcodeDefault.xctoolchain/usr/bin/sourcekit-lsp
+
+Unchanged, then, and now measured on a register that is not losing rows. The
+window's own list and `pgrep` agreed row for row in every run.
+
+**One thing the recount turned up that nothing here predicted.** One run of the
+two-project scenario came back with *four* servers rather than two, and the two
+extra were a `sourcekit-lsp` and a `gopls` rooted at `~/dev/abydos` — a window
+the system restored, which the harness had not asked for and which the next run
+did not repeat. The rule survived it: three projects, four servers, no project
+holding two of the same. But it is worth writing down, because a total taken off
+this app is a total over whatever windows it has, and a run that reads the
+number rather than the rows will one day report a leak that is a restored
+window.
+
 ## Left out of this item deliberately
 
 - **An idle timeout.** Decided rather than deferred: there is not going to be
@@ -315,7 +428,7 @@ processes underneath it arrive after it does.
 - [x] Check what else this app finds on the `PATH`, and say of each whether it
       is resolved by luck — the second half of item 2, which nothing above
       reports on
-- [ ] Count the standing servers again on this build. Every number in this
+- [x] Count the standing servers again on this build. Every number in this
       entry was measured before the register's own leak was found (0435), and a
       count taken through a register that was dropping entries is not evidence
       about what the register now holds
