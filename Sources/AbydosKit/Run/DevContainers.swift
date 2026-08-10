@@ -510,8 +510,24 @@ public actor DevContainers {
 		let outcome = await task.value
 		beingStarted[key] = nil
 		audiences[key] = nil
-		if case let .running(session) = outcome { sessions[key] = session }
+		if case let .running(session) = outcome {
+			sessions[key] = session
+			announceChange()
+		}
 		return outcome
+	}
+
+	/// That the set of containers this app has up is not what it was.
+	///
+	/// Posted rather than polled, because the titlebar has to say which project
+	/// is being worked on inside a container and there is no moment it could ask:
+	/// a container comes up because a `.py` file was opened in a window that was
+	/// not asked about it, or because somebody opened a terminal in it, and both
+	/// happen long after the window was built. 0433.
+	private nonisolated func announceChange() {
+		Task { @MainActor in
+			NotificationCenter.default.post(name: .abydosDevContainersChanged, object: nil)
+		}
 	}
 
 	/// What a session is remembered against.
@@ -582,6 +598,7 @@ public actor DevContainers {
 	private func forget(_ key: String) {
 		guard let session = sessions.removeValue(forKey: key) else { return }
 		ToolContainers.shared.releaseInBackground(session.name)
+		announceChange()
 	}
 
 	// MARK: - Starting one
@@ -952,4 +969,9 @@ public actor DevContainers {
 			}
 		}
 	}
+}
+
+public extension Notification.Name {
+	/// A devcontainer came up or went away.
+	static let abydosDevContainersChanged = Notification.Name("abydos.devContainersChanged")
 }

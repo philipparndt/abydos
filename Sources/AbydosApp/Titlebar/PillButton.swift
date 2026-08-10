@@ -202,3 +202,77 @@ final class SubprojectPillButton: PillButton {
 			.drawFitted(in: crossRect.insetBy(dx: Theme.current.scaled(2), dy: Theme.current.scaled(2)))
 	}
 }
+
+/// The devcontainer this project is being worked on inside.
+///
+/// **It says running, not configured.** A project with a `devcontainer.json`
+/// that nobody has said yes to has no pill — that is the difference between the
+/// menu item's `hasDevContainer`, which is about a file on disk, and this, which
+/// is about a container that exists. Before 0433 the only lasting sign that a
+/// project was being worked on in one was a terminal tab, which is in the panel
+/// rather than on the window and only exists if somebody opened a terminal; the
+/// strip above the file said it and then withdrew itself the moment the server
+/// landed, which is exactly when somebody would want to know.
+///
+/// A chevron rather than the subproject pill's cross, and the difference is on
+/// purpose: the cross gives the whole project back and costs nothing, whereas
+/// everything this pill offers changes which toolchain the code is checked
+/// against. That is worth a menu somebody read rather than a small target
+/// beside a name.
+final class DevContainerPillButton: PillButton {
+	private var title: String?
+
+	private static var iconSize: CGFloat { Theme.current.scaled(13) }
+	private static var horizontalPadding: CGFloat { Theme.current.scaled(7) }
+	private static var gap: CGFloat { Theme.current.scaled(6) }
+	private static var chevronWidth: CGFloat { Theme.current.scaled(7) }
+
+	var hasContainer: Bool { title != nil }
+
+	/// The whole label, which is `MainWindowController.containerTabTitle` — the
+	/// devcontainer's own `name` with the `⬢` the tab already wears. One source
+	/// for it, so the pill and the tab in the same container cannot come to
+	/// disagree about what it is called.
+	func setContainer(_ title: String?) {
+		self.title = title
+		isHidden = (title == nil)
+		invalidateIntrinsicContentSize()
+		needsDisplay = true
+	}
+
+	override var intrinsicContentSize: NSSize {
+		// A toolbar measures a hidden view too, and warns about a zero dimension:
+		// a sliver rather than nothing.
+		guard let title else { return NSSize(width: 1, height: Theme.current.scaled(28)) }
+		let textWidth = (title as NSString).size(withAttributes: [.font: PillButton.labelFont]).width
+		return NSSize(
+			width: PillButton.inset * 2 + Self.horizontalPadding * 2 + Self.iconSize
+				+ Self.gap + ceil(textWidth) + Self.gap + Self.chevronWidth,
+			height: Theme.current.scaled(30)
+		)
+	}
+
+	override func drawContent(in rect: NSRect) {
+		guard let title else { return }
+		var x = Self.horizontalPadding + PillButton.inset
+
+		let tint = Theme.current.sidebarText
+		if let icon = Theme.symbol("shippingbox", size: 11 * Theme.current.scale, color: tint) {
+			icon.drawFitted(in: NSRect(
+				x: x, y: rect.midY - Self.iconSize / 2,
+				width: Self.iconSize, height: Self.iconSize
+			))
+			x += Self.iconSize + Self.gap
+		}
+
+		let attributed = NSAttributedString(string: title, attributes: [
+			.font: PillButton.labelFont,
+			.foregroundColor: Theme.current.sidebarHeaderText,
+		])
+		let size = attributed.size()
+		attributed.draw(at: NSPoint(x: x, y: rect.midY - size.height / 2))
+		x += ceil(size.width) + Self.gap
+
+		drawChevron(at: NSPoint(x: x, y: rect.midY), color: tint)
+	}
+}
