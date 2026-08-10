@@ -1,4 +1,4 @@
-# 443. Choosing among several devcontainers, and watching one come up
+# 444. Choosing among several devcontainers, and watching one come up
 
 Four changes, reported from use. Two are gaps the code already knows about, one
 reverses a decision that had a reason, and one is mostly wiring something that
@@ -101,3 +101,12 @@ Parts 1 and 2 are one piece of work — the choice needs somewhere to be made. P
 3 is small and independent. Part 4 is independent of all of them and is the one
 somebody feels first, since it is the difference between minutes of silence and
 minutes of visible progress.
+
+---
+
+Previously numbered 0443. The backlog-spec branch had taken that number for
+itself before this was written and was out of sight while it did, so both
+existed for about an hour. The branch's keeps it: it was pushed, it is
+in-progress, and its own commit message cites it. A number is given once, and
+the way out of two items holding one is the way the README already describes —
+the newer moves and says at the bottom what it was called.
