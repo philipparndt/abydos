@@ -281,8 +281,86 @@ project, and a line in the catalogue only after all three.
   version (`golang:1.26-bookworm`, `node:22-bookworm-slim`) is a promise that
   can be kept. Every label says the tag moves, which is the honest position
   until somebody decides.
-- [ ] Write down here what was ruled out on the way
-- [ ] The spec says what the project now does
+- [x] Write down here what was ruled out on the way
+- [x] The spec says what the project now does
+
+## Ruled out
+
+**A slim image with a downloaded binary in it, for any of the five.** It is the
+obvious way to make these small — rust-analyzer and clangd both publish release
+binaries, and 1.61 GB for a language server invites it — and it is the failure
+gopls's Dockerfile was already written against. A language server is a front end
+for a compiler: rust-analyzer runs `cargo metadata` to learn what the crates
+are, clangd is a compiler and needs the standard library headers to say anything
+about `#include <string>`, pyright asks an interpreter where site-packages are.
+Every one of those, missing, gives a server that starts, answers the handshake
+and then knows nothing — which reads as the editor being broken.
+
+**`rust-analyzer` from its GitHub releases rather than from rustup.** Same
+shape, one extra reason: the server and the compiler are released together, and
+taking them from two places makes the version two decisions. A rust-analyzer
+newer than the `rustc` it is asked about reports diagnostics for syntax the
+project's own compiler accepts.
+
+**`typescript@latest` in the TypeScript image.** 7 is the native compiler and
+ships no `tsserver.js`, which is the file this server drives. The install hint
+in `LanguageServers` was already written against this; the image would have
+reproduced it with a newer version number on it.
+
+**A `pom.xml` in the Java fixture.** The natural Java project, and it makes the
+test download the whole default Maven lifecycle from inside a container. An
+Eclipse `.classpath` is already one of jdtls's root markers and imports with no
+build tool at all.
+
+**A `compile_commands.json` in the C fixture.** It would have flattered the
+test. A compile database on this machine names paths on this machine, and none
+of them exist inside the container — so clangd would look up `/workspace/main.c`
+in a database keyed by `/private/var/folders/…`, find nothing, and fall back to
+its guessed command line anyway. The fixture drives the fallback, which is what
+a project without a generated database gets in the editor too. **This is worth
+its own item**: a project that does have a database gets no benefit from it
+through an image, and the fix is to rewrite the paths on the way in the way
+`ContainerPaths` already rewrites URIs.
+
+**`--load` instead of `--output type=cacheonly` for a dry run**, still, for the
+reason the script already gives: `--load` takes one architecture, so it proves
+neither.
+
+**Doing the five in one `make` goal that loops over `ToolImages/*/Dockerfile`.**
+Each tool is its own repository and one REPOSITORY cannot name six servers —
+already decided for `toolimage-publish`, and `tool-image` now takes TOOL for
+symmetry rather than being six goals.
+
+## Not proved, and left out
+
+- **Nothing here was seen in the editor.** Every one of the six was driven
+  through `LSPClient` by a test, which is the same client the editor uses and
+  is not the same as opening a Rust file in a window and watching a
+  declaration open. What the settings page does with six populated menus
+  instead of one has not been looked at.
+- **One project per language, and a trivial one.** Two functions in one file.
+  Nothing here says what happens to a workspace with fifty crates, a `tsconfig`
+  with project references, or a Java project big enough for jdtls to want its
+  index to survive — which it cannot, because the container takes it away.
+- **The images were driven on one machine, on arm64 only.** Both architectures
+  build and both are in every index, and nothing has run the amd64 half of any
+  of them.
+- **Nothing was measured about a cold start in the editor.** The live test
+  numbers are a container starting with the image already unpacked; the first
+  run on a strange machine is that plus the pull, which was 9 to 38 seconds
+  here on a fast connection.
+- **rust-analyzer's `ContentModified` is worked around in the test and not in
+  the app.** Said again here because it is the one thing found on the way that
+  is a real defect rather than a fact about images: `LSPClient` hands the error
+  up and nothing retries, so an early go-to-declaration in a Rust project is
+  lost rather than late. It wants an item.
+- **The `:dev` tags move**, and six labels now say so where one did. That is the
+  honest form of the claim, not a good one; see the unticked step above.
+
+2128 tests in 322 suites pass in 33.5 seconds, with all six of
+`ContainerLSPLiveTests` driving published images rather than skipping — which
+the run says out loud, line by line, so that a green suite can be told from an
+absent one.
 
 ---
 
