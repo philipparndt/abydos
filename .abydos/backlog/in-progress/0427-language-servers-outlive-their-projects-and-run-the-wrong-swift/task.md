@@ -392,6 +392,44 @@ this app is a total over whatever windows it has, and a run that reads the
 number rather than the rows will one day report a leak that is a restored
 window.
 
+## Ruled out on the way
+
+Each of these was tried or seriously considered and is not being done, so that
+the next person does not spend the afternoon again.
+
+- **Making `Executables.locate` remember its answers.** The search went from
+  eight directories to forty-three and is on a path the tmux mirror walks
+  several times a second, so a cache was the obvious next move. It was measured
+  instead: 0.042 ms to find `tmux`, 0.097 ms for a tool that is nowhere. A cache
+  buys a twentieth of a millisecond and costs the thing nobody would think to
+  test — a tool installed while the app is open stays "not installed" until it
+  is restarted. Not worth it.
+- **Asking the login shell only when the cheap search fails.** That keeps the
+  hook cheap and gets the order wrong: the whole point is that `~/.rd/bin/docker`
+  beats `/usr/local/bin/docker` because that is what the person's own terminal
+  runs. Consulted last, the login shell would only ever answer for tools that
+  are nowhere else, which is the smaller half of the fault. The hook does not
+  pay for the order chosen: its only lookup is `tmux`, it returns before that
+  unless `TMUX_PANE` is set, and a pane's own `PATH` has tmux on it, so the
+  process `PATH` answers first and `UserShell.loginPath` is never reached.
+- **Adding anything else to `XcodeToolchain.commands`.** The rule is not "Xcode
+  ships it" — Xcode ships `git`, `make` and `python3`, and taking those out of
+  the person's hands would be a different and worse bug. It is "Xcode *and* a
+  toolchain manager both ship it, and the two disagree about the build":
+  `sourcekit-lsp`, `clangd`, `lldb-dap`. Nothing else on this machine met that.
+- **Resolving the app's own build commands through `xcrun`.** There was nothing
+  to do: the app has no `swift build` of its own. Builds go through the
+  project's Makefile, `xcodebuild`, or Bazel, and this repository's Makefile
+  already says `SWIFT := xcrun swift`, which is where this entry started.
+- **Chasing the container runtime as the headline of the PATH fault.** The first
+  reading was that Docker could not be found at all from the Dock, so 0406's
+  sweep would leave containers behind. Driven, the old build swept the planted
+  container perfectly well: `/usr/local/bin/docker` exists here and both clients
+  are pointed at one daemon. The finding is real and smaller than it looked, and
+  it is written up above at the size it actually is.
+- **An idle timeout, and everything else in `ToolProcesses`.** Both decided
+  earlier in this entry and unchanged; see the section below.
+
 ## Left out of this item deliberately
 
 - **An idle timeout.** Decided rather than deferred: there is not going to be
@@ -432,8 +470,8 @@ window.
       entry was measured before the register's own leak was found (0435), and a
       count taken through a register that was dropping entries is not evidence
       about what the register now holds
-- [ ] Write down here what was ruled out on the way
-- [ ] `spec/language-servers.md` says what the project now does
+- [x] Write down here what was ruled out on the way
+- [x] `spec/language-servers.md` says what the project now does
 
 ---
 
