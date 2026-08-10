@@ -4299,6 +4299,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			case "copy":
 				print("TREE copy: clipboard=\(navigator.copyTextForTesting().replacingOccurrences(of: "\n", with: " | "))")
 				continue
+			// ⌘C for real and then ⌘V or ⌥⌘V, through the general pasteboard, so
+			// what the copy writes is what the paste reads rather than two
+			// closures agreeing with each other.
+			case "copy-files":
+				navigator.copyToPasteboardForTesting()
+				continue
+			case "paste": navigator.pasteForTesting(move: false)
+			case "paste-move": navigator.pasteForTesting(move: true)
+			// And the key itself, which is the half `paste-move` cannot ask
+			// about: ⌥⌘V is in no menu, so `handleKeyDown` is the only thing
+			// standing between the keystroke and the move.
+			case "alt-cmd-v": navigator.pressKeyForTesting(9, modifiers: [.command, .option])
 			case "collapse": navigator.collapseAll()
 			case "locate": navigator.selectFileInEditor()
 			// The field on the row, left standing: where its text sits and how
@@ -4317,6 +4329,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 						rawValue: editable ? String(raw.dropFirst("editable-".count)) : raw
 					) else { continue }
 					navigator.exportSelectionForTesting(format, editable: editable)
+					continue
+				}
+				// `drop:a.swift+b.swift>Sources`, and `drop-copy:` for the ⌥
+				// version — the whole of what a drag does once the mouse is up,
+				// without a mouse. Everything is relative to the project root.
+				if step.hasPrefix("drop:") || step.hasPrefix("drop-copy:") {
+					let move = step.hasPrefix("drop:")
+					let body = String(step.dropFirst(move ? "drop:".count : "drop-copy:".count))
+					guard let root = project?.root, let arrow = body.firstIndex(of: ">") else { continue }
+					let sources = body[..<arrow].split(separator: "+").map {
+						root.appendingPathComponent(String($0))
+					}
+					navigator.dropForTesting(
+						sources, into: root.appendingPathComponent(String(body[body.index(after: arrow)...])),
+						move: move
+					)
 					continue
 				}
 				// `rename:new-name.swift`, which is the whole gesture: the field
