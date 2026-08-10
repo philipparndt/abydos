@@ -293,4 +293,99 @@ struct DevContainerConsentTests {
 		#expect(DevContainerConsent.thisMachine.isRemembered)
 		#expect(!DevContainerConsent.notNow.isRemembered)
 	}
+
+	// MARK: - Which of several containers (0443)
+
+	/// **The pill stopped saying the name, so something else has to.** Part 3 of
+	/// 0443 leaves the pill showing the `⬢` alone, and this is the sentence that
+	/// takes the name over: it is the tool tip while a container is in use and the
+	/// line at the top of the pill's menu.
+	@Test func theNameOfAContainerInUseIsSaidWhereThereIsRoomForIt() {
+		let said = DevContainerConsent.pillInUse(
+			container: "Python, with its language server in the container"
+		)
+		#expect(said.contains("Python, with its language server in the container"))
+		// It says where they are running, which is the one thing the `⬢` on its own
+		// cannot: the three not-in-use sentences all say where they are not.
+		#expect(said != DevContainerConsent.pillState(
+			.container, container: "Python, with its language server in the container"
+		))
+	}
+
+	/// **Which container is a second table, not a fourth answer.** The three
+	/// answers are what somebody can say; only one of them is about a particular
+	/// container, and an enum carrying a file path would give the other two a
+	/// field with nothing to put in it.
+	@Test func whichContainerIsKeptBesideTheAnswer() throws {
+		let settings = makeSettings()
+		let project = try makeProject()
+		defer { try? FileManager.default.removeItem(at: project) }
+
+		settings.setDevContainerConsent(.container, forProject: project)
+		settings.setDevContainerChoice(".devcontainer/go/devcontainer.json", forProject: project)
+		#expect(settings.devContainerConsent(forProject: project) == .container)
+		#expect(settings.devContainerChoice(forProject: project)
+			== ".devcontainer/go/devcontainer.json")
+
+		// Changed rather than added to, exactly as the answer beside it is.
+		settings.setDevContainerChoice(".devcontainer/alpine/devcontainer.json", forProject: project)
+		#expect(settings.devContainerChoice(forProject: project)
+			== ".devcontainer/alpine/devcontainer.json")
+		#expect(settings.devContainerChoice.count == 1)
+	}
+
+	/// **An answer written before there was anything to choose still reads.** Every
+	/// project that said yes under 0433 or 0438 has a `container` and no container
+	/// named beside it, and it means what it meant: the one the project prefers.
+	@Test func anAnswerWithNoContainerNamedIsStillAnAnswer() throws {
+		let settings = makeSettings()
+		let project = try makeProject()
+		defer { try? FileManager.default.removeItem(at: project) }
+
+		settings.setDevContainerConsent(.container, forProject: project)
+		#expect(settings.devContainerConsent(forProject: project) == .container)
+		#expect(settings.devContainerChoice(forProject: project) == nil)
+	}
+
+	/// **A decline does not forget which container this project's is.** "Work on
+	/// this machine" is an answer about where the servers run; somebody who says it
+	/// and changes their mind comes back to the container they had rather than to
+	/// whichever one sorts first.
+	@Test func decliningKeepsWhichContainerWasChosen() throws {
+		let settings = makeSettings()
+		let project = try makeProject()
+		defer { try? FileManager.default.removeItem(at: project) }
+
+		settings.setDevContainerConsent(.container, forProject: project)
+		settings.setDevContainerChoice(".devcontainer/go/devcontainer.json", forProject: project)
+		settings.setDevContainerConsent(.thisMachine, forProject: project)
+
+		#expect(settings.devContainerConsent(forProject: project) == .thisMachine)
+		#expect(settings.devContainerChoice(forProject: project)
+			== ".devcontainer/go/devcontainer.json")
+	}
+
+	@Test func whichContainerIsPerProjectAndSurvivesASymlink() throws {
+		let settings = makeSettings()
+		let one = try makeProject()
+		let other = try makeProject()
+		defer {
+			try? FileManager.default.removeItem(at: one)
+			try? FileManager.default.removeItem(at: other)
+		}
+
+		settings.setDevContainerChoice(".devcontainer/go/devcontainer.json", forProject: one)
+		settings.setDevContainerChoice(".devcontainer/alpine/devcontainer.json", forProject: other)
+		#expect(settings.devContainerChoice(forProject: one) == ".devcontainer/go/devcontainer.json")
+		#expect(settings.devContainerChoice(forProject: other)
+			== ".devcontainer/alpine/devcontainer.json")
+
+		// The same project reached the other way round is the same project — 0430,
+		// in the table one along from the one it was found in.
+		let spelling = URL(fileURLWithPath: "/tmp" + one.path.dropFirst("/private/tmp".count))
+		if one.path.hasPrefix("/private/tmp") {
+			#expect(settings.devContainerChoice(forProject: spelling)
+				== ".devcontainer/go/devcontainer.json")
+		}
+	}
 }

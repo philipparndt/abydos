@@ -175,6 +175,21 @@ public extension DevContainerConsent {
 	/// they are the same state of the world — there is a devcontainer and nothing
 	/// is running in it — and a pill that distinguished them would be telling
 	/// somebody about the app's bookkeeping rather than about their project.
+	/// What the titlebar's pill says about the container this project's tools
+	/// really are in — in its tool tip, and at the top of its menu.
+	///
+	/// **This sentence is new because the pill stopped saying the name.** It used
+	/// to read `<name> ⬢`, and a devcontainer's `name` is a whole sentence:
+	/// "Python, with its language server in the container" beside a project name,
+	/// a branch and a subproject is most of a titlebar. 0443's part 3 takes the
+	/// name off the pill and leaves the `⬢`, which is the one thing the pill is
+	/// for — this window is working inside a container — and the name moves to
+	/// here, where there is room for it, and to the menu, where the containers are
+	/// listed anyway.
+	static func pillInUse(container: String) -> String {
+		"Language servers are running in \(container)."
+	}
+
 	static func pillState(_ consent: DevContainerConsent?, container: String) -> String {
 		switch consent {
 		case .container?:

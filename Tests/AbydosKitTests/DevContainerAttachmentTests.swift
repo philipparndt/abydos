@@ -118,6 +118,37 @@ struct DevContainerAttachmentTests {
 		#expect(attachments.carries("gopls", for: other) == true)
 	}
 
+	/// **Moving a project's servers to another of its containers is the one thing
+	/// that is not letting go**, and 0443's part 2 is why the two have to be
+	/// different calls.
+	///
+	/// `letGo` keeps the attachment because the project is coming back to the same
+	/// container. Here it is being pointed at a different one, and an attachment
+	/// left standing is what the warm-up that follows would find: it would decide
+	/// the project already has a container and start the servers straight back up
+	/// in the one somebody has just asked to leave. A switch that leaves the old
+	/// container's servers running is 0427's fault with a gesture behind it.
+	@Test func movingToAnotherContainerDropsTheClaimOnTheOldOne() throws {
+		let project = try makeProject()
+		defer { try? FileManager.default.removeItem(at: project) }
+		var attachments = DevContainerAttachments()
+
+		attachments.attach(
+			try makeSession(named: "abydos-devcontainer-1", for: project),
+			providing: ["pyright-langserver"], to: project
+		)
+
+		// Letting go is not this: coming back to the same container has to find it.
+		attachments.letGo(project)
+		#expect(attachments[project] != nil)
+
+		attachments.detach(project)
+		// Nothing is claimed, so the next thing that asks starts a container rather
+		// than reusing the one that was left.
+		#expect(attachments[project] == nil)
+		#expect(attachments.carries("pyright-langserver", for: project) == nil)
+	}
+
 	/// The same checkout reached two ways is one project — `/var` is a symlink to
 	/// `/private/var`, and every scratch project this suite makes lives under it.
 	@Test func aProjectReachedThroughASymlinkHasTheSameContainer() throws {
