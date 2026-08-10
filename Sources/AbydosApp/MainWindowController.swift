@@ -5182,6 +5182,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// beside a tree of 400 rows and another beside a tree of 40,000, and the
 	/// load average has to sit next to both or neither can be argued with later.
 	func scaleReportForTesting(typing presses: Int) {
+		// First, and the whole path. Driving this app with `--open` has come up
+		// on something from the recent list before now, and a set of timings
+		// labelled "platform" that were taken on whatever was open last is
+		// worse than no timings: they look like an answer. A harness can refuse
+		// to believe the rest of this report unless this line names what it
+		// asked for.
+		print("OPEN project \(project?.root.path ?? "nothing")")
 		for line in LaunchClock.report() { print(line) }
 		for line in navigator.scaleReportForTesting() { print(line) }
 
