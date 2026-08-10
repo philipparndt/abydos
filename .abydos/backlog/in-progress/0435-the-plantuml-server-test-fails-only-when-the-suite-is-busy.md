@@ -178,9 +178,9 @@ faces, depending on which second the neighbour finishes in.
       waiting for a full suite
 - [x] Prove the cause from the runtime's own event log, not from the test's
       account of itself
-- [ ] Stop it: whatever it is, in the place it happens
-- [ ] A test that fails on the old code and passes on the new one
-- [ ] The second shape of this failure — the timing assertions rather than the
+- [x] Stop it: whatever it is, in the place it happens
+- [x] A test that fails on the old code and passes on the new one
+- [x] The second shape of this failure — the timing assertions rather than the
       refusal — says which thing happened, the way the refusal now does
 - [ ] Full runs, repeatedly, with the load average written beside each
 - [ ] Write down here what was ruled out on the way

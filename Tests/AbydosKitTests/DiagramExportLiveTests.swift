@@ -45,25 +45,43 @@ struct DiagramExportLiveTests {
 		return process.terminationStatus == 0
 	}
 
+	/// The exports, and then the server they started, removed however they went.
+	///
+	/// The kept server outlives the render that started it — that is the whole
+	/// point of it — so it is this test's to remove even when an expectation
+	/// throws out of the middle. It used to be removed by *role prefix*:
+	/// everything registered in this process called `abydos-plantuml-server-…`.
+	/// That is not this test's set. `PlantUMLServerLiveTests` runs beside this one
+	/// and keeps a server of its own with the same role and the same pid in its
+	/// name, so this cleanup took that suite's container away mid-render, and the
+	/// render sat for its whole patience asking a port that had gone. Four runs
+	/// out of four, on a quiet machine. 0435 is what that cost.
+	///
+	/// `stopAll` is the set that is actually this test's: the servers the actor
+	/// this test drew through is holding, by name. The per-render export
+	/// containers need nothing here — they are `docker run --rm` and `DiagramExport`
+	/// releases each one as it finishes with it.
+	///
+	/// Not a `defer`, because the removal has to be awaited and a defer body may
+	/// not await. The failure is carried past it rather than thrown through it.
 	@Test func aDiagramIsWrittenBesideItselfAndAnErrorIsNot() async throws {
 		guard let runtime = available else { return }
-		let tool = PlantUML.Tool.image(ToolContainer(image: Self.image), runtime)
 		let folder = try JavaTestDirectory.make()
-		// The kept server outlives the render that started it — that is the whole
-		// point of it — so it is this test's to remove, synchronously, even when
-		// an expectation throws out of here first.
-		//
-		// By name, and only the names this test's renders make: emptying the whole
-		// register took the devcontainer out from under `DevContainerLiveTests`
-		// running beside this one, whose shell then answered "No such container".
-		// Four separate people investigated that red run in one day. Sharing a
-		// process is not owning each other's containers.
-		defer {
-			try? FileManager.default.removeItem(at: folder)
-			ToolContainers.shared.release(
-				withPrefixes: ["abydos-plantuml-server-", "abydos-plantuml-export-"]
-			)
+		defer { try? FileManager.default.removeItem(at: folder) }
+
+		let outcome: Result<Void, any Error>
+		do {
+			try await exportEverything(in: folder, using: runtime)
+			outcome = .success(())
+		} catch {
+			outcome = .failure(error)
 		}
+		await PlantUMLServers.shared.stopAll()
+		try outcome.get()
+	}
+
+	private func exportEverything(in folder: URL, using runtime: ContainerRuntime) async throws {
+		let tool = PlantUML.Tool.image(ToolContainer(image: Self.image), runtime)
 
 		// A picture of the diagram, in the format asked for — which is not the
 		// one the preview shows.
@@ -145,7 +163,6 @@ struct DiagramExportLiveTests {
 		// to a container per render — which is the route the app takes, and the
 		// only reason six pictures take seconds rather than a minute.
 		#expect(await PlantUMLServers.shared.images == [Self.image])
-		await PlantUMLServers.shared.stopAll()
 	}
 
 	private func source(of url: URL) -> String {

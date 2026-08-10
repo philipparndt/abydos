@@ -130,22 +130,22 @@ struct PlantUMLServerAddressTests {
 	}
 
 	/// Nothing of this test's left behind, however it ended.
+	///
+	/// **Only the names this test noted**, which is every server its own
+	/// `PlantUMLServers` reported holding after each render. It used to add to
+	/// those every container in the process register whose name began
+	/// `abydos-plantuml-server-` and carried this pid, on the reasoning that a
+	/// test which fails part way through must not leave one behind.
+	///
+	/// That scan never found one of this suite's — they are all noted already —
+	/// and it did find `DiagramExportLiveTests`', which runs beside this one and
+	/// keeps a server with the same role and the same pid in its name. So the
+	/// safety net caught only the neighbour, and removed the server the neighbour
+	/// was drawing through. It is the same mistake this suite was on the
+	/// receiving end of, written out by hand; see 0435 and the note on
+	/// `DiagramExportLiveTests`. A role is not an owner.
 	private func removeAll(_ started: Started, using runtime: ContainerRuntime) {
-		// What the test saw, and any *server or pipe of this suite's* still
-		// registered by this process that nothing has got round to removing — a
-		// test that fails part way through must not leave a container behind
-		// either.
-		//
-		// Named, rather than everything this process registered: that took the
-		// devcontainer out from under `DevContainerLiveTests` running beside it,
-		// and the shell in it then answered "No such container". Sharing a pid is
-		// not owning each other's containers.
-		let ours = ["abydos-plantuml-server-", "abydos-probe-pipe-"]
-		let mine = ToolContainers.shared.names.filter { name in
-			ToolContainers.owner(of: name) == ProcessInfo.processInfo.processIdentifier
-				&& ours.contains { name.hasPrefix($0) }
-		}
-		let names = Set(started.all).union(mine).sorted()
+		let names = started.all
 		if names.isEmpty { return }
 		_ = RuntimeCommand.run(
 			ToolContainers.removal(of: names, using: runtime), deadline: 30
@@ -217,9 +217,11 @@ struct PlantUMLServerAddressTests {
 		#expect(await servers.images == [Self.image])
 
 		// The second is the one the whole item is about.
+		let servedBy = await servers.containerNames
 		let asked = Date()
 		let second = await servers.draw(Self.diagram, image: Self.image, using: runtime)
 		let warmSeconds = Date().timeIntervalSince(asked)
+		started.note(await servers.containerNames)
 		guard let againDrawing = drawn(second, "the warm render", after: warmSeconds) else {
 			return
 		}
@@ -233,12 +235,44 @@ struct PlantUMLServerAddressTests {
 			+ "pipe \(String(format: "%.2f", oldSeconds))s, "
 			+ "warm \(String(format: "%.3f", warmSeconds))s, \(again.count) bytes, "
 			+ MachineLoad.said)
+		// A warm render served by a *different* container is not a slow warm
+		// render: it is a cold one, because something removed the server between
+		// the two draws and `draw` quietly started another. The seconds that costs
+		// then arrive here as `warmSeconds < 0.5` failing, which reads as the
+		// optimisation not working and is nothing of the kind.
+		//
+		// This is the same move `Refusal` made for the render that gives up, for
+		// the failure that is not a refusal: the two shapes 0435 was made of are a
+		// removed container either way, and each now says so in its own words
+		// rather than leaving somebody to infer it from a number. It is checked
+		// before the stopwatch and at any load, because whether the server was
+		// replaced is a fact rather than a measurement.
+		let servingNow = await servers.containerNames
+		guard servingNow == servedBy else {
+			Issue.record("""
+				the warm render came from a different server: \(servedBy) before, \
+				\(servingNow) after. Something removed the container between the two \
+				renders, so the \(String(format: "%.3f", warmSeconds))s this took is a \
+				container starting rather than a diagram being drawn — \(MachineLoad.said)
+				""")
+			await servers.stopAll()
+			return
+		}
+
 		// Generous by an order of magnitude against what was measured — hundredths
 		// of a second warm against seconds for the pipe — and only made where a
 		// stopwatch means anything. Half a second of wall clock on a machine with
 		// nothing left to give is not a statement about whether the server is
 		// being reused; the byte-for-byte comparison above is, and it is made
 		// either way. See `MachineLoad.canBeTimed`.
+		//
+		// **Kept, deliberately, and 0435 is the argument for keeping it.** The one
+		// time this bound went red it was telling the truth — the server really had
+		// been taken away and the render really did take seconds — and deleting it
+		// would have removed the only thing in the suite that noticed. A live test
+		// whose title is "arrives at once" has to assert that something arrives at
+		// once, or it is asserting that two renders agree, which they would with no
+		// server at all.
 		guard MachineLoad.canBeTimed else {
 			print("PERF plantuml: not timing the warm render — \(MachineLoad.said)")
 			await servers.stopAll()

@@ -167,52 +167,48 @@ struct ToolContainerNameTests {
 /// suite beside it is in the middle of using — which is not a fault in the other
 /// suite, however much it looks like one from there.
 struct ContainerCleanupTests {
-	/// The prefixes are the caller's own roles, and everything else registered
-	/// stays registered.
-	@Test func aToolRemovesItsOwnContainersRatherThanEveryones() {
-		let containers = ToolContainers()
-		// Something that exists and does nothing: what is being tested is which
-		// names are chosen, not what a runtime does with them.
-		let runtime = ContainerRuntime.docker("/usr/bin/true")
-		let server = ToolContainers.mint("plantuml-server")
-		let devcontainer = ToolContainers.mint("devcontainer")
-		// Another copy of this app's, by the pid in the name.
-		let somebodyElses = "abydos-plantuml-server-1-1"
-		for name in [server, devcontainer, somebodyElses] {
-			containers.register(name, runtime: runtime)
-		}
-
-		#expect(containers.release(withPrefixes: ["abydos-plantuml-server-"]) == [server])
-		// The devcontainer another suite has a shell in is untouched, and so is
-		// the container belonging to something else running now.
-		#expect(containers.names == [devcontainer, somebodyElses].sorted())
-	}
-
-	/// That no test empties the register.
+	/// That no test chooses containers to remove by anything but their names.
+	///
+	/// Two calls are forbidden and they are the same mistake at two sizes.
 	///
 	/// `removeAll` is the app's exit path and belongs to the app: it takes every
 	/// container this process registered, whoever registered it and whatever
 	/// they are still doing with it. In a test it took the devcontainer out from
 	/// under the suite running beside it, whose shell then answered "No such
 	/// container" — a red run four separate people investigated in one day
-	/// before each concluding it was not theirs. That cost is why this is a test
-	/// rather than a comment.
+	/// before each concluding it was not theirs.
 	///
-	/// The name it looks for is assembled rather than written out, so this file
+	/// `release(withPrefixes:)` was written to fix exactly that, by narrowing
+	/// "everything" to "everything playing my role". **It is the reason this test
+	/// exists twice over**, because a role is not an owner: two suites in this one
+	/// bundle both keep a container called `abydos-plantuml-server-<pid>-<n>`, they
+	/// run at the same time, and the pid in both names is this process's. So the
+	/// narrowing changed which suite got hurt and not whether one did, and the
+	/// next four sessions were spent on the same red under a different name (0435).
+	/// The method is gone from `ToolContainers`; this keeps it from coming back
+	/// under a local spelling.
+	///
+	/// A test removes the containers *it started*, by the names it noted as it
+	/// started them — `PlantUMLServerLiveTests.Started` is that written out, and
+	/// `PlantUMLServers.stopAll` is the same set asked for from the actor holding
+	/// it. There is no set-of-mine that can be computed from a name.
+	///
+	/// The names it looks for are assembled rather than written out, so this file
 	/// is scanned like every other instead of having to exempt itself.
-	@Test func noTestEmptiesTheWholeRegister() throws {
+	@Test func noTestChoosesSomebodyElsesContainers() throws {
 		let tests = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-		let forbidden = "Containers.shared." + "removeAll()"
+		let forbidden = ["Containers.shared." + "removeAll()", "release(with" + "Prefixes:"]
 		var offenders: [String] = []
 		for name in try FileManager.default.contentsOfDirectory(atPath: tests.path)
 			where name.hasSuffix(".swift") {
 			let text = try String(contentsOf: tests.appendingPathComponent(name), encoding: .utf8)
-			if text.contains(forbidden) { offenders.append(name) }
+			if forbidden.contains(where: text.contains) { offenders.append(name) }
 		}
 		let named = offenders.sorted().joined(separator: ", ")
 		#expect(offenders.isEmpty, """
-		a test removes the containers it made, by name — release(withPrefixes:) — \
-		rather than every container this process started: \(named)
+		a test removes the containers it started, by the names it noted — not every \
+		container this process registered, and not every container playing its role: \
+		\(named)
 		""")
 	}
 }
