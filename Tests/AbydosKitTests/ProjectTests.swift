@@ -296,6 +296,34 @@ struct FilePathTests {
 			== real.path + "/a/b/c")
 	}
 
+	/// The two spellings a file has before anybody does anything unusual.
+	///
+	/// This is the one that opened a file twice. `abydos <file>` in a pane makes
+	/// its argument absolute with `pwd -P`, because a shell's idea of where it is
+	/// has to be resolved before it can be sent anywhere — and the app was
+	/// holding the name somebody typed. Compared as URLs those are two files, so
+	/// the command opened a second tab onto the file already on screen.
+	///
+	/// No symlink of one's own is needed to reach this: `/tmp` is a link to
+	/// `/private/tmp` on every Mac, so any project under it has both names.
+	@Test func oneFileUnderTmpHasTwoNamesAndTheyCanonicaliseTogether() throws {
+		let directory = URL(fileURLWithPath: "/tmp")
+			.appendingPathComponent("abydos-two-names-\(UUID().uuidString)")
+		try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+		defer { try? FileManager.default.removeItem(at: directory) }
+		let file = directory.appendingPathComponent("main.py")
+		try Data("x".utf8).write(to: file)
+
+		let typed = file.path
+		let resolved = "/private" + typed
+		// The premise, asserted rather than assumed: two strings, one file.
+		#expect(typed != resolved)
+		#expect(FileManager.default.contentsEqual(atPath: typed, andPath: resolved))
+
+		#expect(FilePath.canonical(typed) == FilePath.canonical(resolved))
+		#expect(FilePath.canonical(typed) == resolved)
+	}
+
 	/// A path that is entirely there is answered by `realpath` alone, and one
 	/// that is nowhere at all comes back as it went in rather than as "/".
 	@Test func leavesWhatItCannotResolveAlone() throws {
