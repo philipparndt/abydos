@@ -50,11 +50,11 @@ whether the variable is present.
 
 ## Steps
 
-- [ ] Work out the real limit rather than assuming 104: `sizeof(sun_path)` on
+- [x] Work out the real limit rather than assuming 104: `sizeof(sun_path)` on
       this platform, less what tmux appends (`tmux-<uid>/` and the socket name)
-- [ ] Refuse a `TMUX_TMPDIR` whose socket path would not fit, and say so in the
+- [x] Refuse a `TMUX_TMPDIR` whose socket path would not fit, and say so in the
       pane instead of letting tmux say "File name too long"
-- [ ] A short, valid `TMUX_TMPDIR` is still honoured — a test for both sides
+- [x] A short, valid `TMUX_TMPDIR` is still honoured — a test for both sides
 - [ ] Check whether anything else the app hands to a subprocess has the same
       shape: a value inherited, passed on, and only failing much later
 - [ ] Write down here what was ruled out on the way
