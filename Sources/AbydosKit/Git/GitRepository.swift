@@ -193,6 +193,23 @@ public actor GitRepository {
 		return worst
 	}
 
+	/// Status for many paths, answered in one visit.
+	///
+	/// The same answers as calling `status(forRelativePath:isDirectory:)` in a
+	/// loop, and it exists because of what that loop costs the *caller*. The
+	/// navigator asks for one node of the tree at a time, and every one of those
+	/// is a hop onto this actor and a continuation back — thousands of them per
+	/// refresh, every one of which is a block scheduled on the main queue, all of
+	/// them interleaving with the terminal's own drain. The subprocess was
+	/// already off the main thread; it was the *shape of the loop* that put the
+	/// work back on it.
+	///
+	/// In the same order as it was asked, one answer each, which is what lets the
+	/// caller match them up without this having to know how it keys them.
+	public func statuses(for paths: [(path: String, isDirectory: Bool)]) -> [GitFileStatus] {
+		paths.map { status(forRelativePath: $0.path, isDirectory: $0.isDirectory) }
+	}
+
 	/// Walks up ancestors looking for an ignored directory.
 	private func inheritedIgnore(for path: String) -> GitFileStatus? {
 		var components = path.split(separator: "/").map(String.init)
