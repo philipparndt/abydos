@@ -392,6 +392,16 @@ this app is a total over whatever windows it has, and a run that reads the
 number rather than the rows will one day report a leak that is a restored
 window.
 
+**What the suite covers of this, and what it does not.** `make test` is green —
+2131 tests, at a load average of 42, which is the busy case this repository
+learned to distrust. What it pins is the search itself: that a tool only the
+login shell knows about is found, that a `PATH` this process was handed still
+wins, and that a language server and everything else now come out of the same
+list. What it cannot reach is `LanguageService` and `MainWindowController`,
+which is why every count in this entry is taken off a running app instead, and
+why the before-and-after of which `docker` gets run was driven rather than
+asserted.
+
 ## Ruled out on the way
 
 Each of these was tried or seriously considered and is not being done, so that
