@@ -39,6 +39,11 @@ to twenty seconds, 600–1400 ms each, for as long as the log covers.
 The 200 ms threshold means everything between one frame and a fifth of a second
 is invisible, so this is a floor rather than a measurement.
 
+That table is at the old threshold and nothing later in this entry is
+comparable to it. The threshold is 50 ms now, so the log holds far more lines
+and the medians in any new reading of it are lower for a reason that has
+nothing to do with the app. Compare counts per hour by activity, not to this.
+
 ## Fixed here
 
 ### The navigator re-read the whole project every time the window came forward
@@ -89,46 +94,146 @@ this is not necessarily the lag that was reported.
 an agent writes files — and did the same kind of work unmarked, so its stalls
 were part of the 3,712 recorded as "idle". It is marked "navigator watcher" now.
 
+### The log can see the band that matters, and has names for what is in it
+
+The threshold was 200 ms on the argument that a fifth of a second is where a
+person stops believing the keyboard. That is true, and it answers a different
+question: 200 ms is where a stall is worth *complaining* about, and this log is
+not a complaint, it is the only evidence there is. It is 50 ms now — three
+frames at 60 Hz, and comfortably above the noise of a utility-priority thread
+being descheduled.
+
+All seven suspects below say their name, so a stall in one of them is no longer
+part of "idle": `language sync`, `language server scan`, `navigator git
+status`, `document save`, `login shell path`, `diff render`, `debug adapter
+stop`.
+
+Two of them had nowhere obvious to put a mark, and the answer is worth
+recording. `UserShell.loginPath` is the initialiser of a `static let` and runs
+on whichever thread asks first, so there is no call site that is reliably the
+guilty one; it is marked inside the work instead. `refreshGitStatus` is
+`async`, and a mark cannot span an `await` — the global would then be wrong for
+everything that ran in between — so only its two synchronous halves are marked.
+
+And `mark` does nothing off the main thread. There is one name, read when a
+*main-queue* ping is late, so a mark taken on a background queue would hang its
+label on somebody else's stall. That guard is what lets a mark live inside
+shared code — `LanguageServers.suits`, `TextDocument.save`, `UserShell`,
+`DAPClient.stop` — which is called from both sides and is only a suspect from
+one of them.
+
+### A language server no longer decides when the app may continue
+
+`LSPClient.write` did a blocking `write` to the server's standard input on
+whichever thread called it, and the caller was the main one: `didChange` 0.4 s
+after a keypress, `didSave` after every auto-save. A pipe write blocks when the
+far end is not draining, the far end is somebody else's process, and the 64 KB
+the kernel holds is exceeded by one `didChange` of a large file by itself. So a
+language server busy re-indexing — or wedged, or stopped — parked the app's
+whole event loop, terminal included, until it felt like reading.
+
+**There is no bound on that wait, which is why it needed no measurement.** It
+goes to a serial queue per client now: serial because a server's document
+notifications are only meaningful in order, per client so that one wedged
+server does not hold up the rest, and the worst a stuck server can now do is
+make its own queue grow. The `JSONSerialization` of a whole file went with it,
+since framing happens on the outbox too.
+
+The test is a hang detector rather than a benchmark, and the margin says so:
+`/bin/sleep` never reads its standard input, so it is the server that has
+stopped draining; the same call took the whole thirty seconds before and takes
+microseconds now, and no amount of load turns one into the other.
+
+**What did not move is the other half of suspect 1** — see below.
+
+### The tree asks git about itself once, not once per row
+
+`refreshGitStatus` awaited the git actor for each node in turn: a few thousand
+hops onto the actor and a few thousand continuations resumed back, every one a
+block scheduled on the main queue between whatever else is there, on every
+watcher event. `statuses(for:)` answers the whole list in one visit, in the
+order it was asked.
+
+The git subprocess was never the problem and is untouched — the answers come
+from a cache the actor already holds. It was the shape of the loop that put the
+work back on the main queue.
+
+Not measured. What is checked instead is the thing a benchmark would not have
+caught: that asking together and asking separately give the same answers,
+including directory rollups and inherited ignores, and in order.
+
 ## Not fixed, and where to look next
 
-`idle` is still 83% of the stalls and 8,776 seconds of them. Ranked by how
-likely each is to hold the main queue while somebody types, from a sweep of the
-whole app:
+Ranked as before, with the two that were done struck through and what remains
+of them kept where it belongs:
 
-1. **`LanguageService` `didChange`** — `EditorViewController.swift:1032` builds
-   the *entire file* as a `String` on the main thread every 0.4 s of typing,
-   `LSPClient.swift:519` serialises it with `JSONSerialization` and then does a
-   **blocking `write` to the server's stdin, on the main thread**. A server that
-   is not draining its stdin blocks the app.
+1. ~~**`LanguageService` `didChange`**~~ — half of it. The blocking write and
+   the JSON are off the main thread. **Building the entire file as a `String`
+   from the rope still happens on the main thread**, at
+   `EditorViewController.scheduleLanguageSync`, every 0.4 s of typing and on
+   every auto-save. It cannot simply be moved: the rope is edited on the main
+   thread and reading it from anywhere else is a race. The honest answers are a
+   snapshot the rope can hand out cheaply, or incremental `didChange` — and the
+   note on `LSPClient.didChange` says why incremental was refused, which is
+   still a good reason. Marked `language sync`, so the log can say whether it
+   is worth either.
 2. **`LanguageServers.suits()`** — a depth-2 directory walk per server
-   definition, in a loop over every definition, from three `@MainActor` callers
-   (`LanguageService.swift:154`, `:171`, `:249`).
-3. **`refreshGitStatus`** — `ProjectNavigatorViewController.swift:231` awaits
-   the git actor **once per tree node**, so each refresh floods the main queue
-   with thousands of continuations that interleave with the terminal's own
-   2 ms drain. The git subprocess is correctly off-main; the shape of the loop
-   is the problem.
-4. **`TextDocument.save`** — `TextDocument.swift:470` serialises the whole rope
-   and does an atomic write on the main queue after every typing pause.
-   Everything else in that file is on `engineQueue`; this one piece is not.
+   definition, in a loop over every definition, from three `@MainActor`
+   callers. Still true, and **deliberately left**: the walk is identical for
+   all ten definitions, so a bulk `suitedDefinitions(in:)` that lists each
+   directory once would cut the I/O roughly tenfold — but the callers that
+   loop are `warmUp` and `serverStatus`, which run at project open rather than
+   between keystrokes, and nothing here knows yet whether that costs anybody
+   anything. `notice()` walks twice for one file, once itself and once inside
+   `suggestion`, which is a plain duplicate and the cheapest thing to remove
+   first. Marked `language server scan`; the log decides.
+3. ~~**`refreshGitStatus`**~~ — done, above.
+4. **`TextDocument.save`** — `TextDocument.save` serialises the whole rope and
+   does an atomic write on the main queue after every typing pause. Everything
+   else in that file is on `engineQueue`; this one piece is not. Left rather
+   than moved: `save()` `throws`, and every caller reports the error where the
+   user asked for the save, so moving it changes what that promise means — and
+   an auto-save writing on a background queue beside a manual save on the main
+   one is two writers to one file and one `isDirty`. It wants designing, not
+   relocating. Marked `document save`.
 5. **`UserShell.loginPath`** — a `static let` that runs the user's login shell
    and waits up to five seconds. Warmed on a background queue at launch, but
    whoever asks first while that is still running pays for it on their thread.
+   Marked `login shell path`, which is now the only way to know whether the
+   warm-up ever actually loses that race.
 6. **`DiffView.setDiff`** — `GitPatch.parse` plus two full tree-sitter parses
-   inline on the main thread, bounded only at 5,000 lines.
+   inline on the main thread, bounded only at 5,000 lines. Marked
+   `diff render`.
 7. **`DAPClient.stop`** — busy-waits with `usleep` for up to half a second,
-   reached from main-thread actions.
+   reached from main-thread actions. Marked `debug adapter stop`.
 
-**The cheapest next step is to make the log answer this rather than guess.**
-`StallWatch.threshold` is 200 ms, which hides the whole 16–200 ms band that
-makes typing feel bad, and only five call sites are marked. Dropping the
-threshold and marking the seven above would turn "idle" into names, and none of
-that changes behaviour.
+## What was not measured, and how to measure it
 
-The deeper answer, which nothing here attempts: the terminal does not need to
-share a queue with the project. Parsing runs on main because the emulator and
-the renderer both live there, and moving it is a real piece of work rather than
-a tidy-up.
+Nothing on this branch was timed. Another agent was taking performance
+baselines on the same machine while it was written, and a number taken beside
+that work is worse than no number: it is a number somebody will quote.
+
+Both changes here are right by construction rather than by stopwatch — an
+unbounded wait removed, and a few thousand main-queue hops replaced by one —
+so neither claim rests on a measurement. What is genuinely unmeasured is *how
+much of the 8,776 seconds they were*, and that is now answerable without a
+stopwatch at all: run the app for an ordinary session on a quiet machine and
+count `~/Library/Logs/Abydos/stalls.log` by activity. `idle` falling and the
+seven names appearing is the whole result; if `idle` is still most of it, the
+sweep missed something and the next step is more marks rather than more fixes.
+
+The one thing that does want a real before/after is suspect 1's remaining half,
+because it is a trade rather than a removal: the cost of building a large
+file's text against the cost of whatever replaces it. Measure it as
+`FileNodeReloadTests` measures its reload — a test with a file of a stated
+size, not a session with a stopwatch.
+
+## The deeper answer, still not attempted
+
+The terminal does not need to share a queue with the project. Parsing runs on
+main because the emulator and the renderer both live there, and moving it is a
+real piece of work rather than a tidy-up. Everything above makes the queue
+shorter; this is the one that stops the terminal caring how long it is.
 
 ---
 
