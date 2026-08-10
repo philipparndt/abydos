@@ -3470,7 +3470,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		let menu = NSMenu()
 		menu.autoenablesItems = false
 
+		// **"New Terminal", not "New Terminal in <the container> ⬢".** The View
+		// menu's item and the chevron's beside the panel both have to name the
+		// container, because they are read a long way from anything that says
+		// which one is meant. This menu drops out of a pill with the name written
+		// on it, so repeating it says nothing and leaves three entries that all
+		// read as the same length of noise.
+		let terminal = containerMenuItem(for: pilledContainer ?? devContainerChoices.first)
+		terminal.title = "New Terminal"
+		terminal.target = self
+		terminal.isEnabled = true
+		menu.addItem(terminal)
+
 		if let file = pilledContainer?.file {
+			// The path and not the container's name, because this one is about a
+			// file and the tab it opens will be called `devcontainer.json` — a
+			// project with two of them has two identical tabs otherwise.
 			let open = NSMenuItem(
 				title: "Open \(file.deletingLastPathComponent().lastPathComponent)"
 					+ "/\(file.lastPathComponent)",
@@ -3481,12 +3496,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			open.isEnabled = true
 			menu.addItem(open)
 		}
-
-		let terminal = containerMenuItem(for: pilledContainer ?? devContainerChoices.first)
-		terminal.title = devContainerMenuTitle(for: pilledContainer)
-		terminal.target = self
-		terminal.isEnabled = true
-		menu.addItem(terminal)
 
 		menu.addItem(.separator())
 
