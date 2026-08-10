@@ -4488,6 +4488,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				navigator.beginRename()
 				print("TREE rename-begin: \(navigator.renameFieldReportForTesting)")
 			default:
+				// What is on disk under the project root, so "Escape left nothing
+				// behind" is answered by the file system rather than by the tree
+				// agreeing with itself. `ls:.` for the root, `ls:Sources` for a
+				// folder inside it.
+				if step.hasPrefix("ls:") {
+					let folder = String(step.dropFirst("ls:".count))
+					guard let root = project?.root else { continue }
+					let url = folder == "." ? root : root.appendingPathComponent(folder)
+					let names = ((try? FileManager.default.contentsOfDirectory(atPath: url.path)) ?? [])
+						.sorted()
+					print("TREE ls \(folder): \(names.joined(separator: " "))")
+					continue
+				}
 				// `export:png`, the file's own context-menu action on whatever the
 				// tree has selected.
 				if step.hasPrefix("export:") {
@@ -4515,10 +4528,29 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 					)
 					continue
 				}
-				// `rename:new-name.swift`, which is the whole gesture: the field
-				// appears on the row, takes the name, and commits it.
-				guard step.hasPrefix("rename:") else { continue }
-				navigator.renameSelectionForTesting(String(step.dropFirst("rename:".count)))
+				// `new-begin:file`, `new-begin:folder`, `new-begin:py` — the row
+				// put in the tree with the field on it and left standing, which
+				// is the half a committed name cannot show: where the row went,
+				// what the field starts with, and which part of it is selected.
+				if step.hasPrefix("new-begin:") {
+					navigator.beginNewForTesting(kind: String(step.dropFirst("new-begin:".count)))
+					print("TREE new-begin: \(navigator.renameFieldReportForTesting)")
+				} else if step.hasPrefix("new:") {
+					// `new:file:notes.txt`, `new:folder:docs`, `new:py:script` — the
+					// whole gesture, the way `rename:` is: the row appears, takes
+					// the name, and Return writes it. A kind fills the extension
+					// in, so `new:py:script` makes `script.py`.
+					let parts = step.dropFirst("new:".count).split(separator: ":", maxSplits: 1)
+					guard let kind = parts.first else { continue }
+					navigator.createSelectionForTesting(
+						kind: String(kind), name: parts.count > 1 ? String(parts[1]) : nil
+					)
+				} else {
+					// `rename:new-name.swift`, which is the whole gesture: the field
+					// appears on the row, takes the name, and commits it.
+					guard step.hasPrefix("rename:") else { continue }
+					navigator.renameSelectionForTesting(String(step.dropFirst("rename:".count)))
+				}
 			}
 			let selection = navigator.selectionForTesting
 			let showing = editor.activeGroup?.activeTabURL?.lastPathComponent ?? "nothing"

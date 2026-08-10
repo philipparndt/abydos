@@ -592,10 +592,15 @@ final class ProjectNavigatorViewController: NSViewController {
 		// original items are the first things in the submenu and behave exactly
 		// as they did: the kinds below them are a shortcut past typing an
 		// extension, not another way of creating things.
+		//
+		// No ellipsis on either since 0439. It said a dialog was about to ask
+		// for the name, and nothing asks any more — the row appears in the tree
+		// with the name selected on it, which is what the Finder's "New Folder"
+		// does and why the Finder does not write an ellipsis on it either.
 		let new = NSMenuItem(title: "New", action: nil, keyEquivalent: "")
 		let kinds = NSMenu()
-		kinds.addItem(item("File…", #selector(contextNewFile)))
-		kinds.addItem(item("Folder…", #selector(contextNewFolder)))
+		kinds.addItem(item("File", #selector(contextNewFile)))
+		kinds.addItem(item("Folder", #selector(contextNewFolder)))
 		new.submenu = kinds
 		newMenu = kinds
 		menu.addItem(new)
@@ -648,7 +653,10 @@ final class ProjectNavigatorViewController: NSViewController {
 		// menu is not in the menu bar, so nothing dispatches these — AppKit only
 		// searches the main menu for key equivalents, and `handleKeyDown` is
 		// what actually answers them. They are here to be read.
-		let rename = item("Rename…", #selector(contextRename))
+		//
+		// Ellipsis-free for the same reason New is: renaming has edited the row
+		// in place since 0411, so the promise of a dialog was already stale.
+		let rename = item("Rename", #selector(contextRename))
 		// F2 rather than ⌥⏎, of the two keys that rename: an item carries one
 		// equivalent, and F2 is the one somebody arrives already knowing. ⌥⏎ is
 		// for the hands that spent a week with Return meaning rename.
@@ -767,12 +775,9 @@ final class ProjectNavigatorViewController: NSViewController {
 		NSPasteboard.general.setString(paths.joined(separator: "\n"), forType: .string)
 	}
 
-	/// Creates a folder inside the clicked directory.
-	///
-	/// A file's parent rather than the file: right-clicking a file to make a
-	/// folder beside it is the same gesture, and the alternative — refusing
-	/// unless a directory was clicked — is a rule nobody would guess.
-	/// Creates a folder without the prompt, for verifying the action end to end.
+	/// Writes a folder straight to disk, without the row or the field, for the
+	/// harness's older scripts: this is the file system doing it, not the
+	/// gesture. `beginNewForTesting` is the gesture.
 	func createFolderForTesting(named name: String) {
 		guard let root = project?.root else { return }
 		let destination = root.appendingPathComponent(name)
@@ -794,44 +799,12 @@ final class ProjectNavigatorViewController: NSViewController {
 
 	/// Where a new entry from the context menu goes.
 	///
-	/// Beside the file that was clicked, or inside the folder — which is what
-	/// "new file here" means when the thing under the pointer is a file. The
-	/// first of several, since a new file has one place to go and the topmost
-	/// row is the one somebody would point at.
+	/// The same answer a drop gets, from the same function: inside the folder
+	/// that was clicked, or beside the file that was clicked. The first of
+	/// several, since a new file has one place to go and the topmost row is the
+	/// one somebody would point at.
 	private var contextParentDirectory: URL? {
-		if let node = contextNodes.first {
-			return node.isDirectory ? node.url : node.url.deletingLastPathComponent()
-		}
-		return project?.root
-	}
-
-	/// Asks for a name, saying why one is refused rather than failing silently.
-	private func askForName(kind: EntryName.Kind, in parent: URL) -> String? {
-		let alert = NSAlert()
-		alert.messageText = kind == .file ? "New File" : "New Folder"
-		alert.informativeText = "Inside \(parent.lastPathComponent)."
-		alert.addButton(withTitle: "Create")
-		alert.addButton(withTitle: "Cancel")
-
-		let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
-		field.placeholderString = kind == .file ? "File name" : "Folder name"
-		alert.accessoryView = field
-		alert.window.initialFirstResponder = field
-
-		guard alert.runModal() == .alertFirstButtonReturn else { return nil }
-		let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-
-		if let problem = EntryName.problem(
-			name, kind: kind, showingHiddenFiles: Settings.shared.showHiddenFiles
-		) {
-			report(problem: problem, kind: kind)
-			return nil
-		}
-		guard !FileManager.default.fileExists(atPath: parent.appendingPathComponent(name).path) else {
-			report(problem: "“\(name)” already exists here.", kind: kind)
-			return nil
-		}
-		return name
+		destinationFolder(for: contextNodes.first)
 	}
 
 	/// Offers a pattern for whatever was right-clicked, and writes it once it
@@ -900,11 +873,7 @@ final class ProjectNavigatorViewController: NSViewController {
 		ignoreField?.stringValue = ignoreSuggestions[sender.indexOfSelectedItem].pattern
 	}
 
-	private func report(problem: String, kind: EntryName.Kind) {
-		Toast.post("Cannot create that \(kind == .file ? "file" : "folder")", detail: problem)
-	}
-
-	/// Puts this project's own kinds under "New", below File… and Folder….
+	/// Puts this project's own kinds under "New", below File and Folder.
 	///
 	/// Rebuilt as the menu opens rather than kept in step with the tree: the
 	/// count is cached, so this is a few string comparisons unless something
@@ -931,105 +900,79 @@ final class ProjectNavigatorViewController: NSViewController {
 
 	/// A new file whose extension is already decided.
 	///
-	/// Everything else is what File… does — the same prompt, the same
-	/// validation, the same intermediate folders — because the shortcut is
-	/// about the extension and nothing else.
+	/// Everything else is what New ▸ File does — the same row, the same field,
+	/// the same validation — because the shortcut is about the extension and
+	/// nothing else. What it changes is the two things the field starts with:
+	/// the name has the extension on it already, and only the stem is selected.
 	@objc private func contextNewFileOfKind(_ sender: NSMenuItem) {
 		guard let suffix = sender.representedObject as? String else { return }
 		let kind = NewFileKind(name: suffix, count: 0, title: sender.title)
-		createFile(named: { NewFileKinds.name($0, endingIn: kind) })
+		beginNew(kind: .file, named: NewFileKinds.name(EntryName.draftName(kind: .file), endingIn: kind))
 	}
 
 	@objc private func contextNewFile() {
-		createFile(named: { $0 })
-	}
-
-	/// Asks for a name, makes the file, and opens it.
-	///
-	/// - Parameter named: what to call it, given what was typed. The plain item
-	///   takes it as it comes; a kind adds its extension.
-	private func createFile(named: (String) -> String) {
-		guard let parent = contextParentDirectory,
-		      let typed = askForName(kind: .file, in: parent)
-		else { return }
-		let name = named(typed)
-
-		let destination = parent.appendingPathComponent(name)
-		// Intermediate folders as well, so "src/new/thing.swift" works the way
-		// anyone typing that would expect.
-		let enclosing = destination.deletingLastPathComponent()
-		do {
-			if !FileManager.default.fileExists(atPath: enclosing.path) {
-				try FileManager.default.createDirectory(at: enclosing, withIntermediateDirectories: true)
-			}
-			try Data().write(to: destination, options: .withoutOverwriting)
-		} catch {
-			Toast.post("Could not create the folder", detail: error.localizedDescription)
-			return
-		}
-
-		if let node = contextNodes.first, node.isDirectory { outlineView.expandItem(node) }
-		pendingReveal = [destination]
-		// Opened straight away: a new file is made in order to write in it.
-		onSelectFile?(destination, true)
+		beginNew(kind: .file)
 	}
 
 	@objc private func contextNewFolder() {
-		let parent: URL
-		if let node = contextNodes.first {
-			parent = node.isDirectory ? node.url : node.url.deletingLastPathComponent()
-		} else if let root = project?.root {
-			parent = root
-		} else {
-			return
-		}
-
-		let alert = NSAlert()
-		alert.messageText = "New Folder"
-		alert.informativeText = "Inside \(parent.lastPathComponent)."
-		alert.addButton(withTitle: "Create")
-		alert.addButton(withTitle: "Cancel")
-
-		let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
-		field.placeholderString = "Folder name"
-		alert.accessoryView = field
-		alert.window.initialFirstResponder = field
-
-		guard alert.runModal() == .alertFirstButtonReturn else { return }
-		let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-
-		// Checked here so the failure is a sentence rather than a POSIX error.
-		if let problem = FolderName.problem(name, showingHiddenFiles: Settings.shared.showHiddenFiles) {
-			Toast.post("Cannot create that folder", detail: problem)
-			return
-		}
-
-		let destination = parent.appendingPathComponent(name)
-		guard !FileManager.default.fileExists(atPath: destination.path) else {
-			Toast.post("Cannot create that folder", detail: "“\(name)” already exists here.")
-			return
-		}
-
-		do {
-			try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: false)
-		} catch {
-			Toast.post("Could not create the folder", detail: error.localizedDescription)
-			return
-		}
-
-		// The watcher reloads the tree; the new folder is revealed once it has.
-		if let node = contextNodes.first, node.isDirectory {
-			outlineView.expandItem(node)
-		}
-		pendingReveal = [destination]
+		beginNew(kind: .folder)
 	}
 
-	// MARK: - Renaming on the row
+	// MARK: - Naming on the row
+
+	/// What the field standing on a row is for.
+	///
+	/// The two are one gesture from different starting points, so they share the
+	/// field, its geometry, the rules that refuse a name, the hold on the
+	/// watcher's rebuild and the reveal that follows the path afterwards. All
+	/// that differs is whether there was a row before it began and what happens
+	/// on Return.
+	private enum NameEdit {
+		/// An existing row, being called something else.
+		case rename(node: FileNode, original: String)
+		/// A row that is not a file yet. **Nothing is on disk until Return** —
+		/// which is the whole reason the order is this way round rather than
+		/// create-then-rename: Escape has to leave nothing behind, and an empty
+		/// file already written is something.
+		case create(placeholder: FileNode, parent: FileNode, kind: EntryName.Kind, anchor: [String])
+
+		var node: FileNode {
+			switch self {
+			case .rename(let node, _): return node
+			case .create(let placeholder, _, _, _): return placeholder
+			}
+		}
+
+		var kind: EntryName.Kind {
+			switch self {
+			case .rename(let node, _): return node.isDirectory ? .folder : .file
+			case .create(_, _, let kind, _): return kind
+			}
+		}
+
+		/// What a refusal is a refusal to do. Renaming with a name the rules do
+		/// not allow has said "Cannot create that file" since the two paths were
+		/// separate machines; sharing one is what makes it worth fixing.
+		var verb: String {
+			switch self {
+			case .rename: return "rename"
+			case .create: return "create"
+			}
+		}
+	}
 
 	/// The field standing in for a row's label while its name is being edited.
-	private var renameField: NSTextField?
-	/// What is being renamed, and what it was called.
-	private var renaming: (node: FileNode, original: String)?
+	private var nameField: NSTextField?
+	/// What that field is doing, and what it needs to undo if it is abandoned.
+	private var editing: NameEdit?
+
+	/// The row that stands for a file which does not exist yet.
+	///
+	/// A `FileNode` like any other, handed to the outline view by the data
+	/// source and belonging to nothing on disk. **It sits at the end of its
+	/// folder's children and stays there while the name is typed**, rather than
+	/// sorting into place letter by letter — see `beginNew` for why.
+	private var placeholder: (node: FileNode, parent: FileNode)?
 
 	/// Edits a name where the name is.
 	///
@@ -1045,11 +988,95 @@ final class ProjectNavigatorViewController: NSViewController {
 		if row == nil, outlineView.numberOfSelectedRows > 1 { return }
 		let index = row ?? outlineView.selectedRow
 		guard index >= 0, let node = outlineView.item(atRow: index) as? FileNode,
-		      node !== rootNode, renameField == nil
+		      node !== rootNode, nameField == nil
 		else { return }
 
+		beginEditing(.rename(node: node, original: node.name), row: index, name: node.name)
+	}
+
+	/// Puts a row where the new entry is going to be and asks for its name
+	/// there, which is the whole of 0439.
+	///
+	/// **At the end of its folder, and it stays there while the name is typed.**
+	/// The alternative — re-sorting on every keystroke, so the row is always
+	/// where the finished name would put it — moves the row out from under the
+	/// cursor of the person reading it, which is reason enough. The mechanical
+	/// reason is worse: the field is a subview of the outline view at absolute
+	/// coordinates over one row, so a row that moved would leave the field
+	/// behind on whatever is now at those coordinates, and re-placing it every
+	/// keystroke means recomputing the geometry 0411 took four attempts to get
+	/// right, mid-edit, under a caret. The row does jump once on Return —
+	/// `pendingReveal` is what makes the jump end with it selected and scrolled
+	/// to, rather than lost.
+	///
+	/// Nothing is written until Return. See `NameEdit.create`.
+	private func beginNew(kind: EntryName.Kind, named draft: String? = nil) {
+		guard nameField == nil, let rootNode else { return }
+		// Where a drop aimed at this row would land: inside the selected folder,
+		// or beside the selected file, or the project root when nothing is
+		// selected. One answer for both gestures, from one function.
+		guard let folder = contextParentDirectory, let parent = rootNode.node(for: folder) else { return }
+
+		let name = draft ?? EntryName.draftName(kind: kind)
+		let node = FileNode(url: parent.url.appendingPathComponent(name), isDirectory: kind == .folder)
+		// Whatever was highlighted before, so Escape can put it back: the
+		// placeholder takes the selection while it is up, and the row it came
+		// from is where somebody was.
+		let anchor = selectedPaths()
+
+		placeholder = (node, parent)
+		// The whole tree, because the row structure has changed and the outline
+		// view has to ask for the children again. Expansion is restored by path
+		// the way every other rebuild here does it, and then the folder the row
+		// is going into is opened whether it was before or not — a new child of
+		// a collapsed folder is otherwise made and never seen.
+		let expanded = expandedPaths()
+		outlineView.reloadData()
+		restore(expandedPaths: expanded)
+		outlineView.expandItem(parent)
+
+		let index = outlineView.row(forItem: node)
+		guard index >= 0 else {
+			placeholder = nil
+			outlineView.reloadData()
+			restore(expandedPaths: expanded)
+			return
+		}
+		// Scrolled to before the field is measured: the frame is worked out from
+		// the row's rectangle against the visible one, so a row still below the
+		// fold would be given a field somewhere off screen.
+		outlineView.scrollRowToVisible(index)
+		let wasSilent = isSelectingSilently
+		isSelectingSilently = true
+		outlineView.selectRowIndexes([index], byExtendingSelection: false)
+		isSelectingSilently = wasSilent
+
+		beginEditing(
+			.create(placeholder: node, parent: parent, kind: kind, anchor: anchor),
+			row: index, name: name
+		)
+	}
+
+	/// Puts the field on a row and hands it the keyboard.
+	///
+	/// One field for both gestures, which is the point: everything 0411 argued
+	/// out about where the box sits, how big its text is and where it stops is
+	/// paid for once and had by both.
+	private func beginEditing(_ edit: NameEdit, row index: Int, name: String) {
+		// The rows have to exist before a field can be put on top of one.
+		//
+		// An outline view builds its row views at the next layout pass, not when
+		// it is told to reload — so on a brand-new row the field went in first
+		// and the row view was built over it a moment later, and the box was
+		// simply not there. Seen on screen and nowhere else: the geometry the
+		// harness prints was right the whole time, and the row correctly stopped
+		// drawing its own name, so everything readable as a number agreed while
+		// the pane showed an empty row. Renaming never met this, because its row
+		// was already on screen before anybody asked.
+		outlineView.layoutSubtreeIfNeeded()
+
 		// Over the label, not the whole row: the icon stays, so the row still
-		// says what kind of thing is being renamed.
+		// says what kind of thing is being named.
 		let cell = outlineView.frameOfCell(atColumn: 0, row: index)
 		// Where `NavigatorCellView` puts the name: the icon's width and the two
 		// gaps around it. Taken from the same numbers rather than guessed at, so
@@ -1089,7 +1116,7 @@ final class ProjectNavigatorViewController: NSViewController {
 			width: max(60, rightEdge - cell.minX - inset - trailing),
 			height: height
 		)
-		field.stringValue = node.name
+		field.stringValue = name
 		// Not bezeled: a bezel in a dark appearance is translucent and draws its
 		// own background, so `drawsBackground` is ignored and the row's label
 		// shows through — the old name and the new one on top of each other.
@@ -1110,8 +1137,8 @@ final class ProjectNavigatorViewController: NSViewController {
 		// Above the rows: they are subviews too, and a field merely added is
 		// behind the label it is standing in for.
 		outlineView.addSubview(field, positioned: .above, relativeTo: nil)
-		renameField = field
-		renaming = (node, node.name)
+		nameField = field
+		editing = edit
 		// Told, not reloaded. `reloadItem` would build a fresh row view and lay
 		// it over the field, which is the fault the deferred rebuild above
 		// exists for — the box vanishes while still taking the typing.
@@ -1120,10 +1147,13 @@ final class ProjectNavigatorViewController: NSViewController {
 		outlineView.window?.makeFirstResponder(field)
 		// The stem, the way the Finder does it: the extension is nearly never
 		// what somebody meant to change, and having it selected is how a `.swift`
-		// gets typed over by accident.
-		if let editor = field.currentEditor(), !node.isDirectory {
-			let stem = (node.name as NSString).deletingPathExtension
-			editor.selectedRange = NSRange(location: 0, length: (stem as NSString).length)
+		// gets typed over by accident. The same rule for both gestures — it is
+		// what makes `untitled.py` arrive with `untitled` selected, so typing
+		// replaces the name and keeps the extension.
+		if let editor = field.currentEditor() {
+			editor.selectedRange = NSRange(
+				location: 0, length: EntryName.stemLength(of: name, kind: edit.kind)
+			)
 		}
 	}
 
@@ -1131,21 +1161,59 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// somebody takes, without a keyboard.
 	func renameSelectionForTesting(_ name: String) {
 		beginRename()
-		renameField?.stringValue = name
-		commitRename()
+		nameField?.stringValue = name
+		commitName()
 	}
 
-	/// Takes the field away, whether the name was changed or not.
+	/// The other gesture, whole: New, the name, Return. `kind` is `file`,
+	/// `folder`, or an extension such as `swift`, which is the submenu's
+	/// shortcut.
+	///
+	/// Typed into the selection rather than assigned to the field, which is the
+	/// difference between asking what this does and asking what a harness does:
+	/// the draft arrives with only its stem selected, so `new:py:script` has to
+	/// come out `script.py`. Setting `stringValue` would replace the extension
+	/// as well and prove nothing about the selection at all — and did: the first
+	/// run of this made a file called `script`.
+	func createSelectionForTesting(kind: String, name: String?) {
+		beginNewForTesting(kind: kind)
+		if let name { nameField?.currentEditor()?.insertText(name) }
+		commitName()
+	}
+
+	/// New without the Return, so the row and the field it puts up can be
+	/// photographed and measured — which is the half a committed name cannot
+	/// show.
+	func beginNewForTesting(kind: String) {
+		switch kind {
+		case "file": beginNew(kind: .file)
+		case "folder": beginNew(kind: .folder)
+		default:
+			let suffix = NewFileKind(name: kind, count: 0, title: NewFileKinds.title(for: kind))
+			beginNew(
+				kind: .file,
+				named: NewFileKinds.name(EntryName.draftName(kind: .file), endingIn: suffix)
+			)
+		}
+	}
+
 	/// Where the field is and what it is drawing with, for the harness.
 	///
 	/// The three things that were wrong with it were all geometry — the text's
 	/// size, where it sat in the row, and where it stopped — so they are worth
 	/// being able to read as numbers rather than only off a photograph.
+	///
+	/// `selected` since 0439: which part of the name the field opens with
+	/// highlighted is a decision — the stem and not the extension — and a
+	/// screenshot of a one-pixel-high highlight is not evidence of it.
 	var renameFieldReportForTesting: String {
-		guard let field = renameField else { return "no field" }
+		guard let field = nameField else { return "no field" }
 		let row = outlineView.rect(ofRow: outlineView.selectedRow)
+		let range = field.currentEditor()?.selectedRange ?? NSRange(location: 0, length: 0)
+		let text = field.stringValue as NSString
+		let selected = NSMaxRange(range) <= text.length ? text.substring(with: range) : "?"
 		return "frame=\(field.frame) row=\(row) visible=\(outlineView.visibleRect) "
-			+ "font=\(field.font?.pointSize ?? 0)"
+			+ "font=\(field.font?.pointSize ?? 0) name=\(field.stringValue) selected=“\(selected)”"
 	}
 
 	/// A rebuild that arrived while a name was being edited.
@@ -1159,11 +1227,15 @@ final class ProjectNavigatorViewController: NSViewController {
 	///
 	/// Renaming is short and deliberate, so the rebuild waits for it. Rebuilding
 	/// under an open field would move the row out from under it anyway.
+	///
+	/// The same for a new row and more so: the placeholder is not on disk, so a
+	/// rebuild that asked the file system what is in the folder would take the
+	/// row away entirely, field and all, with a half-typed name in it.
 	private var deferredRebuild = false
 
 	/// True when a rebuild must not happen yet, and remembers that one is owed.
 	private func holdRebuildForRename() -> Bool {
-		guard renameField != nil else { return false }
+		guard nameField != nil else { return false }
 		deferredRebuild = true
 		return true
 	}
@@ -1177,21 +1249,40 @@ final class ProjectNavigatorViewController: NSViewController {
 		cell.isRenaming = !shows
 	}
 
-	private func endRename() {
+	/// Takes the field away, and with it the row when there was no row before.
+	///
+	/// **Escape leaves nothing**: no file, no folder, and no row where one was
+	/// about to be. That is the whole of what `create` has to undo, and it is
+	/// only that little because nothing was written on the way in.
+	private func endEditing() {
 		// Forgotten before the field is taken away, not after: removing a field
 		// that is being edited ends the editing then and there, and
 		// `controlTextDidEndEditing` arrives while this is still half-done. It
 		// would commit the very name Escape had just rejected — and did:
 		// beginning a rename, changing the name and pressing Escape renamed the
 		// file. Nothing left to find means nothing left to commit.
-		let field = renameField
-		let node = renaming?.node
-		renameField = nil
-		renaming = nil
-		if let node {
+		let field = nameField
+		let edit = editing
+		nameField = nil
+		editing = nil
+		if case .rename(let node, _) = edit {
 			showsName(at: outlineView.row(forItem: node), true)
 		}
 		field?.removeFromSuperview()
+
+		if case .create(_, _, _, let anchor) = edit {
+			// The placeholder goes before the tree is asked anything else, so
+			// nothing can be handed a row that stands for no file.
+			placeholder = nil
+			let expanded = expandedPaths()
+			outlineView.reloadData()
+			restore(expandedPaths: expanded)
+			// Whatever a successful Return left waiting, or the row the gesture
+			// started from — which is where somebody was before they asked for a
+			// new file, and where Escape should put them back.
+			restoreSelectionOrReveal(paths: anchor)
+		}
+
 		outlineView.window?.makeFirstResponder(outlineView)
 		// Whatever changed on disk while the field was up, caught up with now
 		// rather than at the next event — which may be a long time coming.
@@ -1201,51 +1292,112 @@ final class ProjectNavigatorViewController: NSViewController {
 		}
 	}
 
-	/// Renames the file, or says why it cannot be renamed.
+	/// Return: renames the file, or writes the new one, or says why it cannot.
 	///
 	/// Validated before the field goes: a name that is refused leaves the field
 	/// up with the name still in it, since taking it away would look like a
-	/// rename that happened.
-	private func commitRename() {
-		guard let field = renameField, let (node, original) = renaming else { return }
+	/// rename that happened — and for a new file it would be worse, because
+	/// there would be nothing left of what was typed at all.
+	private func commitName() {
+		guard let field = nameField, let edit = editing else { return }
 		let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
 
-		// An empty field, or the name it already had, is a cancel rather than an
-		// error: neither is somebody asking for anything.
-		guard !name.isEmpty, name != original else {
-			endRename()
-			return
-		}
+		switch edit {
+		case .rename(let node, let original):
+			// An empty field, or the name it already had, is a cancel rather than
+			// an error: neither is somebody asking for anything.
+			guard !name.isEmpty, name != original else {
+				endEditing()
+				return
+			}
+			let folder = node.url.deletingLastPathComponent()
+			guard let destination = accepted(name, kind: edit.kind, in: folder) else { return }
+			do {
+				try FileManager.default.moveItem(at: node.url, to: destination)
+			} catch {
+				refuse(error.localizedDescription, kind: edit.kind)
+				return
+			}
+			// The watcher rebuilds the tree, and the row is a different object
+			// afterwards — so the selection follows the path rather than the node.
+			pendingReveal = [destination]
+			endEditing()
 
-		let kind: EntryName.Kind = node.isDirectory ? .folder : .file
+		case .create(_, let parent, let kind, _):
+			// An empty field is a cancel, exactly as it is for a rename: nothing
+			// was written on the way in, so there is nothing to undo.
+			guard !name.isEmpty else {
+				endEditing()
+				return
+			}
+			guard let destination = accepted(name, kind: kind, in: parent.url) else { return }
+			do {
+				switch kind {
+				case .folder:
+					try FileManager.default.createDirectory(
+						at: destination, withIntermediateDirectories: false
+					)
+				case .file:
+					try Data().write(to: destination, options: .withoutOverwriting)
+				}
+			} catch {
+				refuse(error.localizedDescription, kind: kind)
+				return
+			}
+			// The folder has just been written to, so its listing is stale by one
+			// entry. Re-read here rather than waiting for the watcher: the row
+			// the placeholder stood for has to be replaced by the real one in the
+			// same breath, or the tree shows the file gone for as long as it
+			// takes an event to arrive.
+			parent.reloadPreservingIdentity()
+			pendingReveal = [destination]
+			endEditing()
+			// Opened straight away, and only a file: a new file is made in order
+			// to write in it. A folder is made to put things in, and there is
+			// nothing to open.
+			if kind == .file { onSelectFile?(destination, true) }
+		}
+	}
+
+	/// The name checked before it reaches the disk, or nil with the field left
+	/// standing.
+	///
+	/// Both halves refuse rather than overwrite, which is the rule everywhere
+	/// else now, and both leave the field up with the keyboard in it so the name
+	/// can be corrected rather than thrown away and retyped.
+	private func accepted(_ name: String, kind: EntryName.Kind, in folder: URL) -> URL? {
 		if let problem = EntryName.problem(
 			name, kind: kind, showingHiddenFiles: Settings.shared.showHiddenFiles
 		) {
-			report(problem: problem, kind: kind)
-			// The field stays, and takes the keyboard back: a refused name is
-			// still there to be corrected rather than quietly thrown away.
-			outlineView.window?.makeFirstResponder(field)
-			return
+			refuse(problem, kind: kind)
+			return nil
 		}
-
-		let destination = node.url.deletingLastPathComponent().appendingPathComponent(name)
+		let destination = folder.appendingPathComponent(name)
 		guard !FileManager.default.fileExists(atPath: destination.path) else {
-			report(problem: "“\(name)” already exists here.", kind: kind)
-			outlineView.window?.makeFirstResponder(field)
-			return
+			refuse("“\(name)” already exists here.", kind: kind)
+			return nil
 		}
+		return destination
+	}
 
-		do {
-			try FileManager.default.moveItem(at: node.url, to: destination)
-		} catch {
-			report(problem: error.localizedDescription, kind: kind)
-			outlineView.window?.makeFirstResponder(field)
-			return
-		}
-		// The watcher rebuilds the tree, and the row is a different object
-		// afterwards — so the selection follows the path rather than the node.
-		pendingReveal = [destination]
-		endRename()
+	/// Says why, and gives the keyboard back to the field that is still there.
+	///
+	/// **Only when the field has not got it already.** `makeFirstResponder` on
+	/// the field that is already being edited is not a no-op: it tears the field
+	/// editor down and builds another, `controlTextDidEndEditing` arrives, and
+	/// the name is committed a second time — refused a second time, and reported
+	/// a second time. Two identical toasts stacked up in the corner, which is
+	/// how this was noticed; the same double report was there for a refused
+	/// rename before the two paths shared this.
+	private func refuse(_ problem: String, kind: EntryName.Kind) {
+		Toast.post(
+			"Cannot \(editing?.verb ?? "create") that \(kind == .file ? "file" : "folder")",
+			detail: problem
+		)
+		guard let field = nameField, let window = outlineView.window else { return }
+		let responder = window.firstResponder
+		guard responder !== field, responder !== field.currentEditor() else { return }
+		window.makeFirstResponder(field)
 	}
 
 	/// Writes the diagram out as a picture beside itself.
@@ -1547,7 +1699,7 @@ final class ProjectNavigatorViewController: NSViewController {
 		// accident away. Return is the same story with a smaller cost: in the
 		// field it commits the name, which `control(_:textView:doCommandBy:)`
 		// does.
-		guard renameField == nil else { return false }
+		guard nameField == nil else { return false }
 
 		// ⌥⌘V, the Finder's "Move Item Here". It arrives here rather than through
 		// the responder chain because AppKit only dispatches key equivalents it
@@ -1711,7 +1863,7 @@ final class ProjectNavigatorViewController: NSViewController {
 		// back here would end the edit before the key ever arrived — which is
 		// exactly what "⌘⌫ must not trash the file being renamed" has to be able
 		// to ask about. So the key goes wherever the keyboard actually is.
-		if renameField == nil { view.window?.makeFirstResponder(outlineView) }
+		if nameField == nil { view.window?.makeFirstResponder(outlineView) }
 		// The characters matter: `interpretKeyEvents` maps those, not the key
 		// code, and an event with none does nothing at all.
 		let characters: String
@@ -1739,14 +1891,14 @@ final class ProjectNavigatorViewController: NSViewController {
 		) else { return }
 		// The field editor when a name is being edited, so a key pressed during
 		// a rename does to the field what it would really do to it.
-		let target: NSResponder = renameField?.currentEditor() ?? outlineView
+		let target: NSResponder = nameField?.currentEditor() ?? outlineView
 		target.keyDown(with: event)
 	}
 
 	/// The name in the field standing on a row, or nil when nothing is being
 	/// renamed — the difference between Return opening a file and Return doing
 	/// what it used to do.
-	var renamingNameForTesting: String? { renameField?.stringValue }
+	var renamingNameForTesting: String? { nameField?.stringValue }
 
 	/// Rebuilds the tree the way a filesystem event does, so a selection can be
 	/// checked to have survived one.
@@ -1839,19 +1991,21 @@ private extension FileNode {
 
 /// The row's name field while it is being edited.
 ///
-/// Return commits, Escape puts the name back, and clicking elsewhere commits —
-/// which is what every other in-place rename on this machine does, and what
-/// somebody who has typed a name and looked away expects to have happened.
+/// Return commits, Escape abandons, and clicking elsewhere commits — which is
+/// what every other in-place rename on this machine does, and what somebody who
+/// has typed a name and looked away expects to have happened. Abandoning is the
+/// one thing the two gestures differ on: a rename keeps the old name, and a new
+/// row goes away entirely, having never been written.
 extension ProjectNavigatorViewController: NSTextFieldDelegate {
 	func control(
 		_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector
 	) -> Bool {
 		switch selector {
 		case #selector(NSResponder.insertNewline(_:)):
-			commitRename()
+			commitName()
 			return true
 		case #selector(NSResponder.cancelOperation(_:)):
-			endRename()
+			endEditing()
 			return true
 		default:
 			return false
@@ -1861,8 +2015,12 @@ extension ProjectNavigatorViewController: NSTextFieldDelegate {
 	func controlTextDidEndEditing(_ notification: Notification) {
 		// Only when the field is going of its own accord — committing already
 		// takes it away, and this would otherwise commit a name it just refused.
-		guard renameField != nil, notification.object as? NSTextField === renameField else { return }
-		commitRename()
+		//
+		// A new row commits here too, the way the Finder's does: clicking away
+		// from a folder called `untitled folder` leaves you with a folder called
+		// `untitled folder`, not with nothing. Escape is the way to mean nothing.
+		guard nameField != nil, notification.object as? NSTextField === nameField else { return }
+		commitName()
 	}
 }
 
@@ -1879,7 +2037,10 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 		let wasLoaded = node.hasLoadedChildren
 		let count = node.children.count
 		if !wasLoaded { scheduleGitStatusRefresh() }
-		return count
+		// And the one row that is not a file. It is last, so it changes nothing
+		// about the rows above it and cannot move while a name is being typed
+		// into it — see `beginNew`.
+		return count + (placeholder?.parent === node ? 1 : 0)
 	}
 
 	/// Asks for a status refresh once the current run of layout is over.
@@ -1900,11 +2061,19 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 	func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
 		guard let item else { return rootNode! }
 		let node = item as! FileNode
-		return node.children[index]
+		let children = node.children
+		if index == children.count, let placeholder, placeholder.parent === node {
+			return placeholder.node
+		}
+		return children[index]
 	}
 
 	func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
 		guard let node = item as? FileNode else { return false }
+		// A new folder has nothing in it and does not exist yet, so it gets no
+		// disclosure triangle: opening it would list a directory that is not
+		// there.
+		guard node !== placeholder?.node else { return false }
 		// Reporting expandable without reading the directory keeps opening a
 		// project O(1) in the number of subdirectories.
 		return node.isDirectory
@@ -1920,7 +2089,7 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 			subtitle: isRoot ? project?.displayPath : nil,
 			isExpanded: outlineView.isItemExpanded(node),
 			isSubproject: node.url.path == subprojectRoot?.path,
-			isRenaming: renaming?.node === node
+			isRenaming: editing?.node === node
 		)
 		return cell
 	}
@@ -1944,6 +2113,9 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 
 		let row = outlineView.selectedRow
 		guard row >= 0, let node = outlineView.item(atRow: row) as? FileNode, !node.isDirectory else { return }
+		// The row for a file that does not exist yet opens nothing: it is a name
+		// being typed, not a file to show.
+		guard node !== placeholder?.node else { return }
 		// Provisionally, and without taking focus: a click or an arrow key shows
 		// the file while the tree keeps the keyboard, so the next arrow works.
 		// Return, or a double-click, is what pins the tab and moves focus.

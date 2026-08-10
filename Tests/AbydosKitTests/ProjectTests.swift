@@ -156,6 +156,55 @@ struct FolderNameTests {
 	}
 }
 
+/// What the field on the row opens with, for both gestures: the draft name a
+/// brand-new row starts from, and how much of any name is selected.
+///
+/// Here rather than in the view because it is a rule and not a drawing — and
+/// because renaming and creating have to agree about it, which is easier to
+/// state once than to check twice.
+struct EntryNameDraftTests {
+	/// The Finder's two words, and the reason they are words at all: Return
+	/// pressed straight after New has to make something rather than report an error.
+	@Test func aNewRowStartsWithAName() {
+		#expect(EntryName.draftName(kind: .file) == "untitled")
+		#expect(EntryName.draftName(kind: .folder) == "untitled folder")
+		for kind in [EntryName.Kind.file, .folder] {
+			#expect(EntryName.problem(
+				EntryName.draftName(kind: kind), kind: kind, showingHiddenFiles: false
+			) == nil)
+		}
+	}
+
+	/// The whole point of the kinds submenu: `main.py` arrives with `main`
+	/// selected, so typing replaces the name and keeps the extension.
+	@Test func onlyTheStemOfAFileIsSelected() {
+		#expect(EntryName.stemLength(of: "main.py", kind: .file) == 4)
+		#expect(EntryName.stemLength(of: "README.md", kind: .file) == 6)
+		#expect(EntryName.stemLength(of: "Makefile", kind: .file) == 8)
+	}
+
+	/// A folder has no extension to protect, so all of it is selected.
+	@Test func theWholeNameOfAFolderIsSelected() {
+		#expect(EntryName.stemLength(of: "Sources", kind: .folder) == 7)
+		// Even one that looks like it has an extension. `v1.2-beta` is a folder
+		// called `v1.2-beta`, not `v1` of kind `2-beta`.
+		#expect(EntryName.stemLength(of: "v1.2-beta", kind: .folder) == 9)
+	}
+
+	/// A dotfile is a whole name rather than a stem and an extension:
+	/// `.gitignore` is not an entry of kind `gitignore`.
+	@Test func aDotfileIsAllStem() {
+		#expect(EntryName.stemLength(of: ".gitignore", kind: .file) == 10)
+		#expect(EntryName.stemLength(of: ".env.local", kind: .file) == 10)
+	}
+
+	/// In UTF-16 units, because that is what a field editor's selected range is
+	/// measured in — and an emoji is two of them.
+	@Test func theLengthIsWhatAFieldEditorCounts() {
+		#expect(EntryName.stemLength(of: "🙂.txt", kind: .file) == 2)
+	}
+}
+
 /// Which files have a rendered form, and how they open.
 struct FilePreviewTests {
 	private func url(_ name: String) -> URL { URL(fileURLWithPath: "/p/\(name)") }
