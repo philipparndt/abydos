@@ -35,7 +35,9 @@ enum RunningTools {
 		let handle: Handle
 		/// What it is: `sourcekit-lsp`, `PlantUML server`, `Dev container`.
 		let title: String
-		/// What started it, in a few words — the project, or the image.
+		/// What it is for, in a few words: the project that asked for a server,
+		/// and for a container its own name — which is the handle somebody needs
+		/// if they do go and look with `docker` after all.
 		let startedFor: String
 		/// Its process on this machine, when it has one here.
 		let pid: pid_t?
