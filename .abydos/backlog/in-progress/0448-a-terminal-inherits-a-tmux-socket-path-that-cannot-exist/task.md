@@ -55,7 +55,7 @@ whether the variable is present.
 - [x] Refuse a `TMUX_TMPDIR` whose socket path would not fit, and say so in the
       pane instead of letting tmux say "File name too long"
 - [x] A short, valid `TMUX_TMPDIR` is still honoured — a test for both sides
-- [ ] Check whether anything else the app hands to a subprocess has the same
+- [x] Check whether anything else the app hands to a subprocess has the same
       shape: a value inherited, passed on, and only failing much later
 - [ ] Write down here what was ruled out on the way
 - [ ] `spec/<capability>.md` says what the project now does

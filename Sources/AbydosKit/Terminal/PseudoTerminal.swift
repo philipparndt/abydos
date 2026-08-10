@@ -166,7 +166,15 @@ public final class PseudoTerminal {
 		// reading starts, and the callback queue is serial, so it is ahead of
 		// the shell's first byte rather than racing it into the middle of a
 		// prompt.
+		//
+		// And in the log as well as in the pane, because the pane is not
+		// certain to keep it: the tab that attaches tmux runs `tmux new -A` as
+		// its first command, and tmux switches to the alternate screen and
+		// clears it — so the sentence is written, shown, and gone inside a
+		// second. That was watched happening rather than guessed at. The pane
+		// that stays plain keeps it above the first prompt.
 		if let refusal = Self.refusals(environment) {
+			DiagnosticLog.write(refusal.trimmingCharacters(in: .whitespacesAndNewlines), to: "tmux")
 			callbackQueue.async { [weak self] in
 				self?.onOutput?(Data(refusal.utf8))
 			}

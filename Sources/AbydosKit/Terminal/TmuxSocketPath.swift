@@ -131,6 +131,25 @@ public enum TmuxSocketPath {
 	/// `TMUX_TMPDIR` means it: their panes belong on the same server as their
 	/// other tools, and taking it away would be the same class of mistake as
 	/// ignoring their `PATH`.
+	/// What to give a `Process` that is about to run tmux.
+	///
+	/// A pane is not the only thing in this app that talks to tmux: the tab
+	/// strip asks the server for its windows, following a terminal asks which
+	/// directory its pane is in, hiding the status line sets an option, and the
+	/// Claude hook writes a badge. None of those sets an environment, so all of
+	/// them inherited the same doomed `TMUX_TMPDIR` — and all of them send
+	/// tmux's stderr to the null device and turn a failure into `nil`, `false`
+	/// or an empty list. So while a pane at least died loudly, the strip simply
+	/// showed nothing and no message was written anywhere.
+	///
+	/// `$TMUX` does not rescue them, which was worth checking rather than
+	/// assuming: tmux works its socket path out from `TMUX_TMPDIR` whether or
+	/// not it is already inside a session, so a client with both set still goes
+	/// looking for the path that cannot exist.
+	public static var environment: [String: String] {
+		honouringWhatFits(ProcessInfo.processInfo.environment)
+	}
+
 	public static func honouringWhatFits(
 		_ environment: [String: String],
 		uid: uid_t = getuid(),

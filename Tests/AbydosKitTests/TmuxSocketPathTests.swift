@@ -88,6 +88,15 @@ struct TmuxSocketPathTests {
 		#expect(said.contains("\(TmuxSocketPath.limit)"))
 	}
 
+	/// The invariant the app's own tmux commands rely on, checked against
+	/// whatever environment the suite happens to be running in. On the machine
+	/// this was written on that environment carried the 116-byte value from the
+	/// report, so this was not a hypothetical while it was being written.
+	@Test func whatIsHandedToTmuxNeverCarriesADirectoryThatCannotWork() {
+		guard let directory = TmuxSocketPath.environment["TMUX_TMPDIR"] else { return }
+		#expect(TmuxSocketPath.fits(directory))
+	}
+
 	// MARK: - Asking the kernel
 
 	private func temporaryDirectory() throws -> String {

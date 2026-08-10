@@ -152,6 +152,8 @@ public enum TmuxConfig {
 		process.arguments = hidden
 			? ["set-option", "-g", "status", "off"]
 			: ["set-option", "-gu", "status"]
+		// Rather than inheriting it, for the reason in `TmuxSocketPath`.
+		process.environment = TmuxSocketPath.environment
 		process.standardError = FileHandle.nullDevice
 		process.standardOutput = FileHandle.nullDevice
 		try? process.run()
