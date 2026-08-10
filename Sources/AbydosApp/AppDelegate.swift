@@ -944,6 +944,18 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let steps = options.searchSteps {
+			// A fixed moment rather than one measured back from the screenshot,
+			// unlike the tree's: a script that ticks rows, presses ⌘Z and looks
+			// again has `settle`s in it and runs for several seconds, so the
+			// picture is timed to the script with `--delay` rather than the other
+			// way round. 2.5 seconds is after `--search` starts the search at 0.8
+			// and after the walk has put something in the list to tick.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+				controller?.searchStepsForTesting(steps)
+			}
+		}
+
 		if options.toggleStrictTmuxOff {
 			// The checkbox's own path, so what is measured is what a click
 			// does rather than what a test thinks it does.

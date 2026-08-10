@@ -1772,6 +1772,16 @@ final class BottomPanel: NSView {
 	/// Asked to find a function by name, for a frame somebody clicked.
 	var onOpenSymbol: ((String) -> Void)?
 
+	/// The search pane if there already is one, without making one or moving the
+	/// keyboard. `showSearch` does both, which is wrong for a script that has
+	/// just put the keyboard in the result list on purpose.
+	var existingSearchPane: SearchPane? {
+		for session in sessions {
+			if case let .search(pane) = session.kind { return pane }
+		}
+		return nil
+	}
+
 	@discardableResult
 	func showSearch(query: String? = nil) -> SearchPane? {
 		guard let root = workingDirectory else { return nil }

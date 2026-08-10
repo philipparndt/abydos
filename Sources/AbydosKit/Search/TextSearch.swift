@@ -1,6 +1,9 @@
 import Foundation
 
-public struct SearchOptions: Equatable, Sendable {
+/// Hashable rather than only equatable because `SearchChecklist` keys the marks
+/// somebody has ticked off by the whole question, and the options are half of
+/// what a question is.
+public struct SearchOptions: Hashable, Sendable {
 	public var caseSensitive: Bool
 	public var wholeWord: Bool
 	public var isRegex: Bool

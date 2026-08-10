@@ -2000,6 +2000,55 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		bottomPanel.showSearch(query: query)
 	}
 
+	/// Works the search results the way somebody working through them does, and
+	/// says what the list holds afterwards.
+	///
+	/// Recursive around `settle` for the same reason `treeStepsForTesting` is:
+	/// the search itself streams in on the main queue, and a nested
+	/// `RunLoop.run(until:)` here would wait without ever letting a batch land.
+	func searchStepsForTesting(_ steps: String) {
+		let script = steps.split(separator: ",").map(String.init)
+		guard let pane = bottomPanel.existingSearchPane else {
+			print("SEARCH: no results pane")
+			return
+		}
+		for (index, step) in script.enumerated() {
+			if step == "settle" || step.hasPrefix("settle:") {
+				let seconds = step.hasPrefix("settle:")
+					? Double(step.dropFirst("settle:".count)) ?? 1.0
+					: 1.0
+				let rest = script[(index + 1)...].joined(separator: ",")
+				guard !rest.isEmpty else { return }
+				DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+					self?.searchStepsForTesting(rest)
+				}
+				return
+			}
+			// ⌘Z the way the Edit menu sends it — at nobody in particular, down
+			// the chain from whatever has the keyboard. Which of the window's undo
+			// stacks answers is decided there and nowhere else, so asking the pane
+			// directly would be answering the easier question.
+			if step == "undo-key" || step == "redo-key" {
+				NSApp.activate(ignoringOtherApps: true)
+				window?.makeKeyAndOrderFront(nil)
+				let selector = Selector((step == "undo-key" ? "undo:" : "redo:"))
+				var responder = window?.firstResponder
+				while let hop = responder, !hop.responds(to: selector) { responder = hop.nextResponder }
+				func named(_ object: Any?) -> String {
+					object.map { String(describing: type(of: $0)) } ?? "nobody"
+				}
+				print("SEARCH \(step): chain=\(named(responder)) "
+					+ "appkit=\(named(NSApp.target(forAction: selector))) "
+					+ "first=\(named(window?.firstResponder))")
+				if !NSApp.sendAction(selector, to: nil, from: nil) {
+					_ = responder?.tryToPerform(selector, with: nil)
+				}
+				continue
+			}
+			pane.stepForTesting(step)
+		}
+	}
+
 	@objc func findNext(_ sender: Any?) { editor.findNext() }
 	@objc func findPrevious(_ sender: Any?) { editor.findPrevious() }
 
