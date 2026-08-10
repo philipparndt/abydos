@@ -35,8 +35,10 @@ public final class RepositoryWatcher {
 	public func start() {
 		guard watcher == nil else { return }
 		let created = FileSystemWatcher(root: gitDirectory, includesGitDirectory: true) {
-			[weak self] directories in
-			self?.handle(directories)
+			[weak self] change in
+			// Which files git rewrote inside `.git` does not matter here; the
+			// directories are what say whether a ref or the index moved.
+			self?.handle(change.directories)
 		}
 		created.start()
 		watcher = created

@@ -15,7 +15,12 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// Asked to show a 3D model in the external viewer.
 	var onPreviewModel: ((URL) -> Void)?
 	/// Something under the project root changed on disk.
-	var onFilesChanged: (() -> Void)?
+	///
+	/// Carries the batch rather than announcing that *something* happened: what
+	/// was written decides whether a listener has any work to do, and a listener
+	/// that cannot tell a Java source from a language server's `.classpath` has
+	/// to assume the worst on every event. 0446 is the bill for that assumption.
+	var onFilesChanged: ((FileSystemChange) -> Void)?
 	/// How many files the working copy has changed, whenever that is read.
 	///
 	/// The tree reads `git status` already, on every watcher event; anything
@@ -358,8 +363,8 @@ final class ProjectNavigatorViewController: NSViewController {
 
 	private func startWatching(root: URL) {
 		watcher?.stop()
-		watcher = FileSystemWatcher(root: root) { [weak self] changedDirectories in
-			self?.handleFilesystemChange(changedDirectories)
+		watcher = FileSystemWatcher(root: root) { [weak self] change in
+			self?.handleFilesystemChange(change)
 		}
 		watcher?.start()
 	}
@@ -393,20 +398,21 @@ final class ProjectNavigatorViewController: NSViewController {
 		]
 	}
 
-	private func handleFilesystemChange(_ directories: [URL]) {
+	private func handleFilesystemChange(_ change: FileSystemChange) {
 		Self.watcherTallyForTesting.batches += 1
-		Self.watcherTallyForTesting.directories += directories.count
-		StallWatch.mark("navigator watcher") { handleFilesystemChangeMarked(directories) }
+		Self.watcherTallyForTesting.directories += change.directories.count
+		StallWatch.mark("navigator watcher") { handleFilesystemChangeMarked(change) }
 	}
 
 	/// Named for the stall log, because this runs on every filesystem event and
 	/// an agent writing files makes that dozens a minute. A stall recorded as
 	/// "idle" is one nobody can act on, and most of the log was idle.
-	private func handleFilesystemChangeMarked(_ directories: [URL]) {
+	private func handleFilesystemChangeMarked(_ change: FileSystemChange) {
+		let directories = change.directories
 		// Reported before the early return below: the staging view cares about
 		// any edit, not only ones in a directory the tree happens to have
 		// expanded.
-		onFilesChanged?()
+		onFilesChanged?(change)
 
 		// And so does the colouring, for a reason that is easy to miss: an edit
 		// to an ignore file changes the status of files that did not themselves

@@ -74,14 +74,55 @@ array unbound. Every run 0428 took passed a file to type into; the first run
 without one launched nothing and then printed ninety seconds of "not running"
 beside a falling load average. Fixed here.
 
+## Is the walk needed at all
+
+**No, and that is the fix rather than the coalescing.**
+
+Coalescing makes the fault survivable: one walk of 45,772 files runs
+continuously instead of two hundred at once, so the app burns about one core
+for the whole import rather than eight or nine. That is a great deal better and
+it is still a core spent answering a question whose answer did not change.
+
+The walk exists to find Java `main` methods and build files. A `main` method
+appears when a *source file* is written. jdtls importing a Tycho reactor writes
+`.project`, `.classpath` and `.settings/*.prefs` — none of which can add one.
+The information needed to tell the two apart was already in hand and was being
+thrown away: FSEvents names the paths, and `FileSystemWatcher` reduced every
+batch to the set of parent directories, at which granularity "a language server
+wrote metadata into this bundle" and "somebody added a `main` method to a class
+in this bundle" are the same event.
+
+So the watcher now carries the names beside the directories, and
+`RunConfigurationDiscovery.deservesRescan(after:)` decides. A batch that names
+only files no finder in `discover(in:)` reads costs a set membership test per
+path and nothing else.
+
+Three things it is careful about, each of which would otherwise be a play button
+that never appears:
+
+- A batch FSEvents refused to describe file by file — `MustScanSubDirs`, which
+  is how a checkout or a build arrives — says so, and is always scanned.
+- Anything under `.idea` or `.vscode` counts, because IDEA rewrites its
+  workspace under several names.
+- The list of names lives next to the finders that read them, so adding a build
+  system without adding its manifest to the list is at least in the same file.
+
+Both were done. The filter removes the fault; the coalescing bounds what is left
+when the filter honestly says yes — a `git checkout` across a large repository
+names thousands of Java files across a handful of batches, and each of those
+really is a reason to scan.
+
 ## Steps
 
 - [x] Reproduce with `Scripts/scale.sh` against the corpus, and confirm the
       per-process processor time rather than the load average
-- [ ] Coalesce: one walk outstanding at a time, with at most one queued, the way
+- [x] Coalesce: one walk outstanding at a time, with at most one queued, the way
       `git status` already is
-- [ ] Ask whether the walk is needed at all on an event — a `main` method appears
+- [x] Ask whether the walk is needed at all on an event — a `main` method appears
       when a *file* changes, not when metadata is written beside it
+      — **answered: no, and both were done.** See "Is the walk needed at all"
+      below. The filter is what removes the fault; the coalescing is what keeps
+      it removed when the filter legitimately says yes a thousand times at once.
 - [ ] Measure again on both corpora and put the before and after in this entry
 - [ ] Write down here what was ruled out on the way
 - [ ] `spec/<capability>.md` says what the project now does

@@ -707,13 +707,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				self.toolStrip.unpushedCount = state?.ahead ?? 0
 			}
 		}
-		navigator.onFilesChanged = { [weak self] in
+		navigator.onFilesChanged = { [weak self] change in
 			// Something wrote inside the project — possibly a file that is open.
 			self?.editor.reloadExternallyChangedFiles()
 			self?.changesPane?.refresh()
 			// A new main.go or Makefile target should get its play button
-			// without reopening the project.
-			self?.refreshRunConfigurations()
+			// without reopening the project — but only when what was written
+			// could be one. See `refreshRunConfigurations(because:)`.
+			self?.refreshRunConfigurations(because: change)
 		}
 		// Switching tabs moves the tree's selection to match.
 		editor.onTearOffTab = { [weak self] tab, screenPoint in
@@ -2637,13 +2638,65 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// there again today rather than back to a simulator.
 	var xcodeDestinations: [String: String] = [:]
 
+	/// One scan at a time, with at most one more queued behind it — the shape
+	/// `refreshGitStatus` has had all along.
+	private var isDiscoveringRunConfigurations = false
+	private var wantsAnotherRunConfigurationScan = false
+
+	/// What the scan has been asked for and what it actually did, for
+	/// `--report-open`.
+	///
+	/// Three numbers rather than one, because the fix has two halves and only
+	/// separate counts say which half is working: `asked` is how often something
+	/// wanted a scan, `skipped` is how many of those wrote nothing that could
+	/// define a configuration, and `walked` is how many whole-project walks
+	/// actually happened. Before 0446 the three were equal by construction.
+	struct RunConfigurationTally {
+		var asked = 0
+		var skipped = 0
+		var coalesced = 0
+		var walked = 0
+	}
+	nonisolated(unsafe) static var runConfigurationTallyForTesting = RunConfigurationTally()
+
+	/// Rescans, but only if this batch of writes could have changed the answer.
+	///
+	/// A language server importing a Tycho reactor writes `.project`,
+	/// `.classpath` and `.settings` into every bundle it touches, and each of
+	/// those arrives here as a filesystem event. None of them can add a `main`
+	/// method or a Makefile target, so none of them is worth a walk of 45,772
+	/// Java files — which is what each one used to cost.
+	func refreshRunConfigurations(because change: FileSystemChange) {
+		Self.runConfigurationTallyForTesting.asked += 1
+		guard RunConfigurationDiscovery.deservesRescan(after: change) else {
+			Self.runConfigurationTallyForTesting.skipped += 1
+			return
+		}
+		refreshRunConfigurations()
+	}
+
 	func refreshRunConfigurations() {
 		guard let project else { return }
 		let root = project.root
+
+		// Coalesced, because the filter above is not a guarantee: a `git
+		// checkout` across a large repository names thousands of Java files in
+		// a few batches, and every one of those batches is a legitimate reason
+		// to scan. Uncoalesced, the concurrent queue answers a burst by making
+		// more threads, and every walk but the last is stale before it finishes.
+		guard !isDiscoveringRunConfigurations else {
+			wantsAnotherRunConfigurationScan = true
+			Self.runConfigurationTallyForTesting.coalesced += 1
+			return
+		}
+		isDiscoveringRunConfigurations = true
+		Self.runConfigurationTallyForTesting.walked += 1
+
 		DispatchQueue.global(qos: .userInitiated).async { [weak self] in
 			let found = RunConfigurationDiscovery.discover(in: root)
 			DispatchQueue.main.async {
 				guard let self else { return }
+				self.isDiscoveringRunConfigurations = false
 				self.runConfigurations = found
 
 				// Group by file so the gutter can put a play button beside each
@@ -2654,6 +2707,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 					byFile[file, default: []].insert(line)
 				}
 				self.editor.setRunnableLines(byFile)
+
+				if self.wantsAnotherRunConfigurationScan {
+					self.wantsAnotherRunConfigurationScan = false
+					self.refreshRunConfigurations()
+				}
 			}
 		}
 	}
@@ -5199,6 +5257,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		print("OPEN project \(project?.root.path ?? "nothing")")
 		for line in LaunchClock.report() { print(line) }
 		for line in navigator.scaleReportForTesting() { print(line) }
+		// Beside the watcher's batches, because the pair is the finding: before
+		// 0446 these were the same number, and the whole of the fix is the
+		// distance between them.
+		let runs = Self.runConfigurationTallyForTesting
+		print(String(format: "OPEN %-24s %8d asked, %d skipped, %d coalesced, %d walked",
+			("run configurations" as NSString).utf8String!,
+			runs.asked, runs.skipped, runs.coalesced, runs.walked))
 
 		if presses > 0 {
 			let costs = editor.measureTypingForTesting(presses: presses)
