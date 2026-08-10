@@ -462,15 +462,170 @@ below are the whole of it.
 
 ### Still open
 
-- **An example to work against.** The fixtures used here are
-  `Tests/AbydosKitTests/Fixtures/{plain,pages,stencils}.drawio` — a plain page, a
-  compressed three-page file and one using both a stencil and a JavaScript
-  shape. The examples repository still has none, and the screenshot harness
-  points there.
+- ~~**An example to work against.**~~ Written the same day, in
+  `abydos-examples/drawio/`: `plain.drawio`, `pages.drawio`, `stencils.drawio`
+  and `architecture.drawio.svg`, with a README and `make-fixtures.py` beside
+  them. The sentence above was written before they landed and is wrong.
+  `Tests/AbydosKitTests/Fixtures/{plain,pages,stencils}.drawio` are the copies
+  the tests use.
 - **A `.drawio.svg` the app writes as a file somebody edits.** It reads one; it
   does not offer to save one under that name.
 - **The More Shapes dialogue's thumbnails**, which are the 6.12 MB left behind.
 - **MathJax**, likewise, at 3.3 MB.
+
+---
+
+## The four leftovers, and what became of them — 2026-08-10
+
+Two of the four above are now closed, one was already closed before it was
+written down, and one is unchanged. Along the way the editor turned out to have
+a fault nobody had noticed, which is the first thing here because it is the one
+that could have cost somebody a diagram.
+
+### Opening a `.drawio` counted as editing it
+
+**draw.io re-serialises a document the moment it loads it, and reports that
+back as a change.** Measured against the real editor, on all three fixtures,
+four things come back different and not one of them is something anybody did:
+
+- the indentation, which belongs to whichever serialiser wrote the file;
+- **every element's attributes in alphabetical order**, whatever order they
+  were written in;
+- `<mxGraphModel>` carrying every page setting draw.io has a default for —
+  `gridSize`, `guides`, `tooltips`, `connect`, `arrows`, `fold`, `pageScale`,
+  `math`, `shadow`;
+- `dx` and `dy` on that element, which are **the size of the window the diagram
+  is being looked at in**, written into the file.
+
+Compared as text — which is what the pane did — every `.drawio` was edited the
+instant it was opened: the dot on the tab, the close prompt on ⌘W, and auto-save
+rewriting a file nobody had touched. The section on level 2 above is proud that
+`TextDocument` needed no second kind of document; it was right, and this is the
+bill for it, because a `TextDocument` believes what it is told.
+
+`Drawio.isSameDrawing` asks about the *drawing* instead: the pages, their names
+and ids, and their models compared as XML rather than as characters. Only
+`<mxGraphModel>` may differ, and only in settings one side has and the other
+does not; every cell must have the same attributes with the same values, in any
+order. So moving a shape, retyping a label, adding a cell, renaming a page and
+changing a page's id are all still edits, and there is no normalisation here
+that any of them survives.
+
+`flush()` asks the same question for the same reason: ⌘S out of habit a second
+after opening a tab is exactly the moment before the change listener has spoken.
+
+The live test loads all three fixtures into the real editor and asserts both
+halves — that all three come back with **different text**, and that none of them
+counts as touched. The first half is what stops the test passing over a
+comparison that does nothing.
+
+### `img/lib` and MathJax now say so from the document, not from a 404
+
+`Drawio.notCarriedNotice` reads the document rather than waiting for the
+editor's scheme handler. Two things follow, and the second is why it was worth
+moving:
+
+- the pane says it as the file arrives rather than two seconds later;
+- **the export can say the same sentence**, and does. The off-screen renderer
+  has no scheme handler at all, so until now a picture written from a diagram
+  using clipart had a hole in it and said nothing — which is precisely the
+  failure this entry warned about for the stencils, one layer out.
+
+MathJax had to be read this way or not at all: draw.io asks for `math4/` on
+*every* load whether the diagram uses it or not, so a notice built on the
+handler's record would have fired over every file somebody opened. `math="1"`
+on `<mxGraphModel>` is the actual question, and it is in the document.
+
+The scheme handler's record is kept as the other half and now speaks only when
+the document did not — a clipart reference this reader did not recognise, which
+is the gap nobody predicted.
+
+Neither is carried. The 6.12 MB of More Shapes thumbnails and the 3.3 MB of
+MathJax are still the argument they were; what has changed is that a diagram
+wanting them no longer draws short in silence.
+
+### `architecture.drawio.png`, which is the leftover this entry cared about
+
+`Export ▸` grew a second group over a `.drawio`, and only over a `.drawio`:
+
+    Export ▸ PNG (Dark)              → architecture-dark.png
+            ▸ SVG (Dark)
+            ▸ PNG (Light)
+            ▸ SVG (Light)
+            ──────────
+            ▸ Editable PNG (Dark)    → architecture-dark.drawio.png
+            ▸ Editable SVG (Dark)
+            ▸ Editable PNG (Light)
+            ▸ Editable SVG (Light)
+
+**The bytes are the bytes the first group already writes.** This entry was
+right that every picture exported from a diagram already carries the `<mxfile>`
+— so the only thing the second group changes is the *name*, and the name is the
+whole point. `architecture.png` is a name any screenshot could have, and nobody
+reading a repository can tell that this one is also a document.
+`architecture.drawio.png` is what draw.io's own desktop app writes and what
+people commit. `.dio` normalises to `.drawio.png`: there is no `.dio.png`
+convention for a reader to join.
+
+**One file however many pages there are**, and that is the one place it parts
+company with the export beside it. Three pages exported as pictures are three
+pictures, for the reason recorded above. An editable picture is not in that
+position — the whole document is inside it, so one file reopens as all three.
+It *shows* page 1, which is the same choice draw.io's own Save as PNG makes,
+and the notice says so and says which file Abydos still edits.
+
+Nothing is written until the picture has been read back the way draw.io's own
+reader would and found to hold the same pages. A picture under a name promising
+a document, that is only a picture, is worse than not offering the gesture at
+all. The refusal to overwrite a file nobody here drew is the same one, so
+somebody's own `architecture.drawio.svg` is safe.
+
+The round trip is checked against **draw.io itself** as well as against this
+app's reader, because a test that writes a chunk and reads it back with the same
+code is checking the app against itself and both could be wrong together. The
+picture is exported, opened, and the document inside it handed to the real
+editor, which draws it and hands back the same three pages.
+
+Both gestures, verified end to end in the running app on a three-page fixture:
+the pane's menu wrote `architecture-dark.drawio.png`, the tree's wrote
+`architecture-dark.drawio.svg`.
+
+This closes "**Save a copy as an editable PNG** may be the one that earns its
+place", which the section on where a picture stops being obvious left hanging.
+It is a menu item now, and it turned out to be about menus rather than about
+machinery, exactly as predicted.
+
+### The pane was not in its own screenshot
+
+Incidental, and found by trying to look at the thing. `--screenshot` captures by
+asking the view tree to draw itself into a bitmap; web content is rendered by
+another process and is not in this process's view tree, so a tab holding draw.io
+photographed as a correctly sized empty rectangle. `DrawioPreviewView` is a
+`SnapshotDrawable` now, like the terminal's Metal layer and the PDF view before
+it. It matters more here than anywhere, because this pane is an *editor* and the
+only way to see whether it drew what it should is to look — the black-boxes
+fault above was found by looking and by nothing else.
+
+### What is left, and none of it is work this entry started
+
+Nothing here is unfinished. Two are decisions standing as decisions, and one is
+a different feature that this work made easier to describe than it was before.
+
+- **The More Shapes dialogue's thumbnails** (6.12 MB) and **MathJax** (3.3 MB)
+  are still not carried, on the size argument this entry has made twice. What
+  changed is that a diagram wanting either now says so instead of drawing short
+  in silence, which was the "whether that is worth detecting and saying"
+  question left open at the top — answered by saying.
+- **A `.drawio.png` the app *opens* as a document** is not this entry. Writing
+  one sharpens the question rather than answering it: leaving both picture forms
+  as `Kind.image` still holds while the `.drawio` beside them is the one being
+  edited, but a repository holding *only* an `architecture.drawio.png` — the
+  single-file form draw.io itself pushes — now holds a document this app can
+  read, can write, and will not open. Editing one means re-rasterising the
+  picture on every save, which is a feature of its own and should be its own
+  entry if anybody wants it.
+
+So this one is done, and moves to `completed`.
 
 ---
 
