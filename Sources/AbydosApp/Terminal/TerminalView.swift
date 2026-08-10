@@ -17,6 +17,8 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// not showing.
 	var onOutput: (() -> Void)?
 	var onTitleChange: ((String) -> Void)?
+	/// `abydos <file>` was typed in this pane.
+	var onOpenFile: ((TerminalOpenRequest) -> Void)?
 
 	private var font: NSFont = .monospacedSystemFont(ofSize: 12, weight: .regular)
 	/// Glyphs already looked up, thrown away when the font changes.
@@ -153,6 +155,13 @@ final class TerminalView: NSView, NSTextInputClient {
 		emulator.onClipboardWrite = { text in
 			NSPasteboard.general.clearContents()
 			NSPasteboard.general.setString(text, forType: .string)
+		}
+
+		// `abydos <file>`, typed in this pane. It goes to whoever owns the pane
+		// rather than being acted on here: what the request asks for is an
+		// editor, a keyboard and a panel, and a terminal view has none of them.
+		emulator.onOpenFile = { [weak self] request in
+			self?.onOpenFile?(request)
 		}
 
 		// What a program asks for when it wants to know whether it is being

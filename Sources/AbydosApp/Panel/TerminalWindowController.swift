@@ -61,6 +61,13 @@ final class TerminalWindowController: NSWindowController, NSWindowDelegate, NSMe
 			guard let self else { return }
 			self.window?.title = self.panel.activeTerminalTitle ?? "Terminal"
 		}
+		// `abydos <file>` in a terminal that was dragged out here. There is no
+		// editor in this window to put it in, so it goes to a project window —
+		// which is still better than the escape reaching nobody and the file
+		// never opening, which is the one outcome worth avoiding.
+		panel.onOpenFileFromTerminal = { request in
+			(NSApp.delegate as? AppDelegate)?.openFromTerminal(request)
+		}
 
 		let content = ColoredView(color: Theme.current.editorBackground)
 		panel.translatesAutoresizingMaskIntoConstraints = false

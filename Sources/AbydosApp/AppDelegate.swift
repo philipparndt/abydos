@@ -1590,6 +1590,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		}
 	}
 
+	/// `abydos <file>` from a terminal in a window that has no editor of its own.
+	///
+	/// A torn-off terminal window is a panel and nothing else. The window that
+	/// asked cannot answer, so the nearest project window does — and if there is
+	/// none, one is opened on whatever encloses the file.
+	func openFromTerminal(_ request: TerminalOpenRequest) {
+		let url = URL(fileURLWithPath: request.path)
+		let controller = frontmostController ?? open(projectAt: Project.root(containing: url))
+		controller.openFromTerminal(request)
+	}
+
 	// MARK: - Opening projects
 
 	/// Opens a project, in this window or another.
