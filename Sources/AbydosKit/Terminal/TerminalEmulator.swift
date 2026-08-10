@@ -51,6 +51,15 @@ public final class TerminalEmulator {
 	/// at. Without it those copies go nowhere at all.
 	public var onClipboardWrite: ((String) -> Void)?
 
+	/// A program in this pane asked for a file to be opened (OSC 440).
+	///
+	/// The one thing `open -a` cannot say is *which window asked*. A command
+	/// typed in a pane is already connected to the window it was typed in, by
+	/// the pty it is running on, so the request arrives here with that fact
+	/// already established — and the window can then put the file in its own
+	/// editor, move the keyboard into it, and get the terminal out of the way.
+	public var onOpenFile: ((TerminalOpenRequest) -> Void)?
+
 	/// A program asked what a colour is, and the answer has to come from
 	/// whoever owns the palette.
 	///
@@ -1354,9 +1363,27 @@ public final class TerminalEmulator {
 			applyColourRequest(code: code, body: body)
 		case 52:
 			applyClipboard(body)
+		case TerminalOpenRequest.osc:
+			applyOpenRequest(body)
 		default:
 			break
 		}
+	}
+
+	/// OSC 440 — a program asking this window to open a file.
+	///
+	/// Two messages share the code. `?` is the question a command asks before
+	/// it commits to anything: it is answered only by this app, so a command
+	/// that gets no answer knows it is somewhere else and can fall back to
+	/// `open -a` rather than writing an escape into the void. `open;…` is the
+	/// request itself.
+	private func applyOpenRequest(_ body: String) {
+		if body == "?" {
+			onResponse?(TerminalOpenRequest.reply)
+			return
+		}
+		guard let request = TerminalOpenRequest(body: body) else { return }
+		onOpenFile?(request)
 	}
 
 	/// OSC 52 — a program handing something to the clipboard.

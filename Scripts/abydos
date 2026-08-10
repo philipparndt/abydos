@@ -1,28 +1,412 @@
 #!/bin/sh
 # Opens a project or a file in Abydos, from wherever you are.
 #
-# `Abydos` with nothing after it means here, which is what somebody standing in
+# `abydos` with nothing after it means here, which is what somebody standing in
 # a project directory wants. Anything else is a path: a directory opens as a
-# project, a file opens in the project that contains it.
+# project, a file opens in the editor.
+#
+#   abydos                     this directory, as a project
+#   abydos ~/dev/thing         that directory, as a project
+#   abydos notes.md            that file, in the editor
+#   abydos main.go:214         …with the cursor on line 214
+#   abydos a.go b.go           several tabs, the keyboard in the last
+#
+# ## Typed in one of Abydos's own terminals
+#
+# Then the file opens in the editor of *that window*, the keyboard goes with
+# it, and the terminal panel comes back to a split if it had the window to
+# itself — a file opened into a pane nobody can see is the same as not opening
+# it, and the next thing typed would still go to the shell.
+#
+# `open -a` cannot do any of that. It goes through LaunchServices and what
+# arrives at the app is "a file was opened": no window asked for it, nothing
+# says it came from a terminal, and there is therefore no reason to move the
+# keyboard anywhere. It cannot even tell this app's terminal from Ghostty.
+#
+# The pty can, because the pane this is typed into is already connected to the
+# window that should answer. So the request goes out as an escape sequence on
+# the terminal — `ESC ] 440 ; open ; <base64 path> ST`, the same channel OSC 52
+# uses to put something on the clipboard, with a different verb.
+#
+# Everywhere else — Ghostty, Terminal.app, over ssh — the escape means nothing
+# and `open -a` is still the right answer. Which of the two happens is not
+# guessed at: the terminal is asked first, and either it says it is Abydos or
+# it does not answer and the file opens the old way. Nothing here ever writes an
+# escape and hopes; a file that does not open and says nothing is the worst
+# outcome available.
+#
+# Inside tmux the escape has to be wrapped so tmux hands it through rather than
+# eating it, and tmux needs `allow-passthrough on` — which this says, once, when
+# it is not set, because otherwise the file would quietly open in the wrong
+# place with no clue as to why.
 set -eu
 
-app="${IDEAI_APP:-/Applications/Abydos.app}"
-if [ ! -d "$app" ]; then
-	echo "Abydos: $app is not installed (run 'make install', or set IDEAI_APP)" >&2
-	exit 1
+esc=$(printf '\033')
+
+# The three things `abydos` and Abydos have to agree on. `Sources/AbydosKit/
+# Terminal/TerminalOpenRequest.swift` is the other end of all three.
+osc=440
+reply_marker="440;abydos"
+
+usage() {
+	cat >&2 <<'USAGE'
+usage: abydos [path ...]
+
+  no path        this directory, as a project
+  a directory    that directory, as a project
+  a file         that file, in the editor
+  a file:line    …with the cursor on that line
+USAGE
+	exit 2
+}
+
+# Where the request should go, from everything that is known about the terminal
+# it was typed in.
+#
+# One word out, and nothing but its arguments in: no terminal is asked, no
+# environment is read, nothing is written. That is deliberate, and it is
+# `abydos-icat`'s lesson rather than a new one — this is the part with all the
+# cases in it, and the cases are the part that sends somebody to fix the wrong
+# thing. As a function of five answers the tests can put it through every
+# combination of them without a terminal to do it on.
+#
+#   $1  whether there is a terminal to talk to      yes | no
+#   $2  what TERM_PROGRAM says
+#   $3  whether tmux is in the way                  yes | no
+#   $4  whether tmux is passing escapes through     yes | no
+#   $5  whether the terminal answered the query     yes | no
+#
+# The order is cheapest first, and each one rules out the next. Inside tmux
+# `TERM_PROGRAM` is the word "tmux" and says nothing about the terminal behind
+# it, so it is not consulted there; outside tmux it is the whole answer for
+# every terminal that is not this one, which is what keeps `abydos notes.md` in
+# Ghostty from waiting three tenths of a second for a reply that is never
+# coming.
+open_decision() {
+	[ "$1" = "yes" ] || { echo not-a-terminal; return 0; }
+	if [ "$3" = "yes" ]; then
+		[ "$4" = "yes" ] || { echo tmux-in-the-way; return 0; }
+		[ "$5" = "yes" ] && echo in-abydos || echo no-answer
+		return 0
+	fi
+	case "$2" in
+		Abydos)
+			# It says it is us and it did not answer, which should not happen:
+			# something between here and the window ate the escape. Worth a
+			# sentence, because the file is about to open somewhere else.
+			[ "$5" = "yes" ] && echo in-abydos || echo abydos-silent
+			return 0 ;;
+		"")
+			[ "$5" = "yes" ] && echo in-abydos || echo no-answer
+			return 0 ;;
+		*) echo another-terminal; return 0 ;;
+	esac
+}
+
+# The one sentence that goes with a decision. `$2` is what the terminal is
+# called, as far as anything here can tell.
+#
+# Every decision has one, so that adding a case without a sentence is a test
+# failure rather than a silence. Only two of them are ever printed: the rest
+# describe the ordinary business of running this command somewhere that is not
+# Abydos, where `open -a` is the right answer and there is nothing to report.
+open_message() {
+	case "$1" in
+		not-a-terminal)
+			echo "abydos: there is no terminal here to open the file in, so it opens in a window of its own." ;;
+		another-terminal)
+			echo "abydos: this is $2 rather than Abydos, so the file opens in a window of its own." ;;
+		tmux-in-the-way)
+			echo "abydos: tmux is not passing escapes through, so the file opened in a new window" \
+				"instead of the one you are in; run 'tmux set -g allow-passthrough on', or put it" \
+				"in ~/.tmux.conf." ;;
+		abydos-silent)
+			echo "abydos: this says it is Abydos but nothing answered, so the file opened in a" \
+				"window of its own; something between this shell and the window is eating escapes." ;;
+		no-answer)
+			echo "abydos: $2 did not answer, so the file opens in a window of its own." ;;
+		in-abydos)
+			echo "abydos: $2 answered, so the file opens in the editor beside this terminal." ;;
+	esac
+}
+
+# Not in the usage above: this is how the tests ask the decision what it would
+# do, since a test can bring every one of its five answers and none of them can
+# bring a terminal.
+if [ "${1:-}" = "--explain-open" ]; then
+	shift
+	decision=$(open_decision "${1:-}" "${2:-}" "${3:-}" "${4:-}" "${5:-}")
+	echo "$decision"
+	open_message "$decision" "${6:-this terminal}"
+	exit 0
 fi
 
+case "${1:-}" in
+	-h|--help) usage ;;
+esac
+
+in_tmux() { [ -n "${TMUX:-}" ]; }
+
+# What this terminal is called, for the sentences above.
+#
+# Inside tmux the useful name is the one tmux is talking to and not the one tmux
+# hands its panes: `TERM_PROGRAM` in a pane is the word "tmux". Naming tmux back
+# at somebody who is being told tmux is not the problem sends them to the wrong
+# place.
+terminal_name() {
+	if in_tmux; then
+		outer=$(tmux display -p '#{client_termname}' 2>/dev/null || true)
+		if [ -n "${outer:-}" ]; then echo "$outer"; return 0; fi
+	fi
+	if [ -n "${TERM_PROGRAM:-}" ] && [ "${TERM_PROGRAM}" != "tmux" ]; then
+		echo "$TERM_PROGRAM"
+		return 0
+	fi
+	echo "${TERM:-this terminal}"
+}
+
+# Whatever the terminal's settings were before anything here touched them.
+#
+# Asking a terminal a question means turning off echo and line editing first,
+# and a command that leaves a terminal like that is a worse bug than any it
+# could be fixing: the shell that comes back does not echo what is typed at it
+# and does not act on return, which looks like the machine has died. So the
+# settings are put back on every way out of here — the answer, the deadline, an
+# error, and the signals that would otherwise skip all three.
+saved_termios=""
+restore_termios() {
+	[ -z "$saved_termios" ] || stty "$saved_termios" < /dev/tty 2>/dev/null || true
+	saved_termios=""
+}
+trap 'restore_termios' EXIT
+# Re-raised after restoring, so the exit status is still the signal's and
+# whatever started this can tell it was interrupted.
+trap 'restore_termios; trap - INT; kill -INT $$' INT
+trap 'restore_termios; trap - TERM; kill -TERM $$' TERM
+trap 'restore_termios; trap - HUP; kill -HUP $$' HUP
+trap 'restore_termios; trap - QUIT; kill -QUIT $$' QUIT
+
+# Asks the terminal whether it is Abydos. True if it said so.
+#
+# `min 0 time 3` is the whole of the deadline: no byte within three tenths of a
+# second and the read comes back empty, which is the answer. An age for a
+# program on the other end of the same machine, and long enough that a window
+# under load still gets its word in.
+#
+# One read rather than a byte at a time. The reply is fifteen bytes written in
+# one go, so it arrives in one go, and `dd bs=64 count=1` returns the moment the
+# first of it lands — which is what keeps the common case instant instead of
+# always costing the deadline. A reply torn across two reads would be missed and
+# the file would open in a new window, which is a worse answer rather than no
+# answer.
+#
+# The terminal, not standard input: standard input here is whatever the command
+# was given, and for `abydos x.md < /dev/null` that is not a terminal at all —
+# `stty` on it either fails or, worse, quietly configures the wrong thing.
+ask_terminal() {
+	saved_termios=$(stty -g < /dev/tty 2>/dev/null) || return 1
+	stty -echo -icanon min 0 time 3 < /dev/tty 2>/dev/null || { restore_termios; return 1; }
+	if in_tmux; then
+		printf '%sPtmux;%s%s]%s;?%s%s\\%s\\' "$esc" "$esc" "$esc" "$osc" "$esc" "$esc" "$esc" > /dev/tty
+	else
+		printf '%s]%s;?%s\\' "$esc" "$osc" "$esc" > /dev/tty
+	fi
+	reply=$(dd bs=64 count=1 2>/dev/null < /dev/tty | tr -d '\000')
+	restore_termios
+	case "$reply" in
+		*"$reply_marker"*) return 0 ;;
+	esac
+	return 1
+}
+
+# The request itself, wrapped for tmux when tmux is in the way.
+#
+# tmux eats an escape it does not recognise unless it is asked to pass it
+# through: `ESC P tmux ;` around the whole thing, every ESC inside it doubled,
+# and `ESC \` to close. This is `abydos-icat`'s wrapper with a different payload
+# in it, and it is the part nobody should have to learn twice.
+send_open() {
+	body="open;$1"
+	[ -z "${2:-}" ] || body="$body;$2"
+	if in_tmux; then
+		printf '%sPtmux;%s%s]%s;%s%s%s\\%s\\' \
+			"$esc" "$esc" "$esc" "$osc" "$body" "$esc" "$esc" "$esc" > /dev/tty
+	else
+		printf '%s]%s;%s%s\\' "$esc" "$osc" "$body" "$esc" > /dev/tty
+	fi
+}
+
+# The path as the app will have to read it.
+#
+# It is relative to the *shell's* working directory, and the app's is somewhere
+# else entirely — so a bare `notes.md` sent as it stands names a file in
+# whatever directory the app happens to have been launched from. The directory
+# is resolved with `cd`, which settles `..` and any symlink above the file; the
+# name itself is left alone, so a symlinked file still opens as the name it was
+# asked for rather than as the thing it points at.
+absolute() {
+	directory=$(dirname -- "$1")
+	name=$(basename -- "$1")
+	directory=$(cd -- "$directory" 2>/dev/null && pwd -P) || return 1
+	case "$directory" in
+		/) printf '%s%s' "$directory" "$name" ;;
+		*) printf '%s/%s' "$directory" "$name" ;;
+	esac
+}
+
+is_number() {
+	case "${1:-}" in
+		"" | *[!0-9]*) return 1 ;;
+	esac
+	return 0
+}
+
+# Splits `main.go:214` into a file and a line — but only when it is one.
+#
+# A colon is legal in a file name on this machine, so `:214` is a line number
+# only when the path without it exists and the path with it does not. That is
+# the whole rule, and it means a file genuinely called `notes:12` still opens as
+# itself. `path:line:column` is understood too, because that is the shape grep
+# and every compiler print; the column is dropped, since a column is not
+# something this can act on.
+#
+# Sets `resolved` and `resolved_line`. Returns 1 when there is no such file.
+resolve() {
+	resolved="$1"
+	resolved_line=""
+	if [ -e "$resolved" ]; then return 0; fi
+
+	base=${resolved%:*}
+	last=${resolved##*:}
+	is_number "$last" || return 1
+	if [ -e "$base" ]; then
+		resolved="$base"
+		resolved_line="$last"
+		return 0
+	fi
+
+	# `path:line:column`.
+	inner=${base%:*}
+	middle=${base##*:}
+	if is_number "$middle" && [ -e "$inner" ]; then
+		resolved="$inner"
+		resolved_line="$middle"
+		return 0
+	fi
+	return 1
+}
+
+# Everything that is not a file: a directory is a project, and a project is
+# LaunchServices' business however this was typed. `abydos` with no arguments
+# means here, which is the same thing.
 if [ "$#" -eq 0 ]; then
 	set -- .
 fi
 
+# Everything is checked before anything is opened. Half of `abydos a.md typo.md`
+# done and then an error is worse than either outcome on its own: two tabs were
+# asked for, one is there, and the message is about the one that is not.
+file_count=0
 for target; do
-	if [ ! -e "$target" ]; then
-		echo "Abydos: $target does not exist" >&2
+	if [ -d "$target" ]; then continue; fi
+	if ! resolve "$target"; then
+		echo "abydos: $target does not exist" >&2
 		exit 1
+	fi
+	if ! absolute "$resolved" > /dev/null; then
+		echo "abydos: $target cannot be reached" >&2
+		exit 1
+	fi
+	file_count=$((file_count + 1))
+done
+
+# What the terminal is, asked once and in the order that costs least.
+terminal_present=no
+if [ -c /dev/tty ] && (exec 3>/dev/tty) 2>/dev/null; then terminal_present=yes; fi
+
+tmux_present=no
+in_tmux && tmux_present=yes
+
+tmux_passthrough=no
+if [ "$tmux_present" = yes ]; then
+	case "$(tmux show -Apv allow-passthrough 2>/dev/null || echo off)" in
+		on|all) tmux_passthrough=yes ;;
+	esac
+fi
+
+# Asked with the answer set to "no", which is what the terminal will have said
+# if it is never asked. Only the decisions that turn on the answer are worth a
+# query: there is nothing to learn by interrogating a terminal that has already
+# named itself as somebody else's, and a query tmux is about to eat would
+# answer "no" for a reason that is not the terminal's.
+if [ "$file_count" -gt 0 ]; then
+	decision=$(open_decision \
+		"$terminal_present" "${TERM_PROGRAM:-}" "$tmux_present" "$tmux_passthrough" no)
+	case "$decision" in
+		no-answer|abydos-silent)
+			answered=no
+			ask_terminal && answered=yes
+			decision=$(open_decision \
+				"$terminal_present" "${TERM_PROGRAM:-}" "$tmux_present" "$tmux_passthrough" "$answered")
+			;;
+	esac
+else
+	# Nothing but directories, which are LaunchServices' business whatever
+	# terminal this is. Nothing turns on the answer, so nothing is asked.
+	decision=not-a-terminal
+fi
+
+[ -z "${ABYDOS_DEBUG:-}" ] || echo "abydos: ${decision}" \
+	"(tty=${terminal_present} TERM_PROGRAM=${TERM_PROGRAM:-unset}" \
+	"tmux=${tmux_present} passthrough=${tmux_passthrough})" >&2
+
+# The two that a person can do something about. The rest are the ordinary
+# business of running this somewhere that is not Abydos.
+case "$decision" in
+	tmux-in-the-way|abydos-silent) open_message "$decision" "$(terminal_name)" >&2 ;;
+esac
+
+# Each argument, in the order it was given: a file goes down the pty when there
+# is a window on the other end, and everything else is left in `$@` for `open`.
+#
+# Rotating the arguments rather than collecting them in a string is what keeps
+# a path with a newline or a space in it intact — the one thing a shell script
+# handling file names has to get right, and the one it usually does not.
+count=$#
+handled=0
+while [ "$handled" -lt "$count" ]; do
+	target=$1
+	shift
+	handled=$((handled + 1))
+
+	if [ -d "$target" ]; then
+		set -- "$@" "$target"
+		continue
+	fi
+
+	# The line number comes off here whichever way the file is about to open:
+	# `open -a main.go:214` names a file that does not exist, and LaunchServices
+	# is right to say so.
+	resolve "$target" || true
+	if [ "$decision" = "in-abydos" ]; then
+		# One sequence per file, in the order they were named, so several open
+		# as several tabs and the keyboard ends up in the last — which is the
+		# one somebody was thinking of when they typed the command.
+		send_open "$(absolute "$resolved" | base64 | tr -d '\n')" "$resolved_line"
+	else
+		set -- "$@" "$resolved"
 	fi
 done
 
-# -a rather than a bare exec: an instance that is already running takes the
-# path and raises the window, instead of a second copy of the app starting up.
-exec open -a "$app" "$@"
+# Anything left goes the way it always did. `open -a` rather than a bare exec:
+# an instance that is already running takes the path and raises the window,
+# instead of a second copy of the app starting up. One `open` for the lot, so a
+# second path cannot arrive while the first is still launching the app.
+if [ "$#" -gt 0 ]; then
+	app="${IDEAI_APP:-/Applications/Abydos.app}"
+	if [ ! -d "$app" ]; then
+		echo "abydos: $app is not installed (run 'make install-cli', or set IDEAI_APP)" >&2
+		exit 1
+	fi
+	exec open -a "$app" "$@"
+fi
