@@ -83,8 +83,8 @@ having answered the other.
 - [x] ⌘Z in the pane takes the last marking back, through the same responder
       chain the tree's undo uses
 - [x] Marks survive the search being re-run under the same question
-- [ ] A `--search-steps` harness verb, so the pane can be driven from the
+- [x] A `--search-steps` harness verb, so the pane can be driven from the
       command line
-- [ ] Seen in the running app, not only in tests
+- [x] Seen in the running app, not only in tests
 - [ ] Write down here what was ruled out on the way
 - [ ] `spec/search.md` says what the project now does

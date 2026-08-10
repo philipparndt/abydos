@@ -278,6 +278,16 @@ struct LaunchOptions {
 	var findQuery: String?
 	/// Query for project-wide search.
 	var searchQuery: String?
+	/// Steps to work the search results with, comma separated: `focus`, `down`,
+	/// `shift-down`, `space`, `hide`, `rerun`, `undo`, `redo`, `select:3+4`,
+	/// `rows`, `status`, and `settle` between them.
+	///
+	/// The results are a checklist now, and every claim about one is about what
+	/// a row *is* rather than what it looks like: struck through, counted on its
+	/// heading, still ticked after the search was run a second time. A rendering
+	/// shows a grey line; `rows` says which rows the pane believes are done,
+	/// which is the half that can be wrong without looking wrong.
+	var searchSteps: String?
 	/// Open a folder inside the project as a subproject before capture.
 	var subproject: String?
 	/// Which settings section to show.
@@ -645,6 +655,7 @@ struct LaunchOptions {
 			case "--stop-after": options.stopAfter = next().flatMap(Double.init)
 			case "--find":       options.findQuery = next()
 			case "--search":     options.searchQuery = next()
+			case "--search-steps": options.searchSteps = next()
 			case "--wrap":       options.wordWrap = true
 			case "--switcher":   options.switcherFilter = next()
 			case "--switcher-keys": options.switcherKeys = next()
