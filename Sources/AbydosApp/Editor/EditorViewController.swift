@@ -1982,6 +1982,12 @@ final class EditorViewController: NSViewController {
 
 		// A binary tab has no language to report.
 		statusLanguage = tab.document?.displayLanguageName
+		// Nor a caret. The indicator is one control shared by the whole group,
+		// so a tab arriving without saying where its caret is leaves the line
+		// the *previous* tab was on next to the new tab's language. Easiest to
+		// see with `abydos deep.txt:150 main.go`, which put "150:1 Go" beside a
+		// two-line file — but any click between two tabs did the same.
+		tab.codeView?.reportCaretPosition()
 		onStatusChanged?(self)
 		refreshServerBanner()
 		updateChrome()
