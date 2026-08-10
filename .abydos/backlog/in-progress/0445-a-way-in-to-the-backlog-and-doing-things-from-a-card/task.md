@@ -73,6 +73,6 @@ implementations of `init` is two answers to what a backlog is.
 - [x] An empty project's board offers to make a backlog, through `BacklogSetup`
       rather than a second implementation
 - [x] A button that makes a new item, landing in `open/`, and opens it to fill in
-- [ ] Check by eye that a new item cannot reach `ready/` from the pane
+- [x] Check by eye that a new item cannot reach `ready/` from the pane
 - [ ] Write down here what was ruled out on the way
 - [ ] `spec/backlog.md` says what the project now does

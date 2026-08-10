@@ -1362,6 +1362,35 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			controller?.showBacklogMode(list: mode == "list")
 		}
 
+		// After a wait, because the board reads the folder off the main thread
+		// and a menu asked for before the cards arrive is a menu for no card.
+		//
+		// The project is printed first, and it is not decoration: an agent
+		// driving this app with `--open` once had a window come up on a project
+		// from the recent list instead, and everything it then did it did to
+		// somebody else's files. Whatever is printed below is only about the
+		// tree named on this line.
+		if options.backlogMenu != nil || options.backlogNew != nil || options.backlogInit {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+				print("BACKLOG project: \(controller?.project?.root.path ?? "none")")
+				if let number = options.backlogMenu {
+					print("BACKLOG menu \(String(format: "%04d", number)): "
+						+ (controller?.backlogMenuForTesting(number: number) ?? "no window"))
+				}
+				if options.backlogInit {
+					print("BACKLOG before: \(controller?.backlogAbsentForTesting() ?? "no window")")
+					print("BACKLOG init: \(controller?.makeBacklogForTesting() ?? "no window")")
+				}
+				if let title = options.backlogNew {
+					print("BACKLOG new: "
+						+ (controller?.newBacklogItemForTesting(titled: title) ?? "no window"))
+				}
+				fflush(stdout)
+				if options.isScreenshotRun { return }
+				exit(0)
+			}
+		}
+
 		if options.detailDialog {
 			// The real thing a missing server offers, so what is captured is what
 			// somebody pressing "How to install" would actually be shown.

@@ -3292,6 +3292,29 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		bottomPanel.showBacklog()?.showList(list)
 	}
 
+	/// What a card's context menu offers, for `--backlog-menu`.
+	func backlogMenuForTesting(number: Int) -> String {
+		guard let pane = bottomPanel.showBacklog() else { return "no project" }
+		return pane.menuTitlesForTesting(number: number)
+	}
+
+	/// Files an item from the pane and says where it landed, for `--backlog-new`.
+	func newBacklogItemForTesting(titled title: String) -> String {
+		guard let pane = bottomPanel.showBacklog() else { return "no project" }
+		return pane.newItemForTesting(titled: title)
+	}
+
+	/// Whether the pane is offering to make a backlog, and then making one.
+	func backlogAbsentForTesting() -> String {
+		guard let pane = bottomPanel.showBacklog() else { return "no project" }
+		return pane.isOfferingToMakeOneForTesting ? "offering to make one" : "showing a backlog"
+	}
+
+	func makeBacklogForTesting() -> String {
+		guard let pane = bottomPanel.showBacklog() else { return "no project" }
+		return pane.makeBacklogForTesting()
+	}
+
 	/// Picks up the lowest-numbered ready item without opening the board first.
 	///
 	/// Worth its own command: once a backlog is in the habit of being worked

@@ -36,6 +36,20 @@ struct LaunchOptions {
 	/// else for the board — the two presentations are the thing worth
 	/// photographing separately.
 	var backlogMode: String?
+	/// Print what one card's context menu offers, and stop.
+	///
+	/// A menu cannot be photographed without a click, and the pane it belongs
+	/// to is in the app target where the suite cannot reach it — so the way to
+	/// check what a card offers is to open the real board and ask the real menu.
+	var backlogMenu: Int?
+	/// File a new item from the pane and print where it landed.
+	///
+	/// The one thing worth proving mechanically about that button: `ready/` is
+	/// a promise only a person may make, and a button that quietly landed
+	/// something there would turn the one human gate into a formality.
+	var backlogNew: String?
+	/// Make a backlog from the pane, for a project that has none.
+	var backlogInit = false
 	/// Start a review of the working tree instead of the branch.
 	var reviewUncommitted = false
 	/// Show the staging view in the sidebar before capture.
@@ -500,6 +514,9 @@ struct LaunchOptions {
 				} else {
 					options.backlogMode = "board"
 				}
+			case "--backlog-menu": options.backlogMenu = next().flatMap(Int.init)
+			case "--backlog-new":  options.backlogNew = next()
+			case "--backlog-init": options.backlogInit = true
 			case "--review-uncommitted": options.reviewUncommitted = true
 			case "--changes":    options.showChanges = true
 			case "--push":       options.pushChanges = true
