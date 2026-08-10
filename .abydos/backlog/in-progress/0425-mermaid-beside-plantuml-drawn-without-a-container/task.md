@@ -451,6 +451,28 @@ taken from the preview's own menu, and the written files opened and looked at.
   by the web view at the zoom being asked for, and keep the drawing for the
   file.
 
+## Steps
+
+Written when the item was picked up again, long after the rest of it: the three
+bullets above that are not struck through are the whole of what was left, and
+this is what each of them comes to once it is looked at rather than guessed at.
+The first of them is a question before it is work, so it is asked first.
+
+- [ ] Ask, with a measurement rather than a memory, whether CoreSVG is still
+      short of the web view: every diagram type this Mermaid draws, rasterised
+      both ways and compared pixel for pixel
+- [ ] Fix whatever of that difference turns out to be this app's own doing
+- [ ] Keep the comparison as a test, so the next diagram type that comes apart
+      says so rather than waiting to be found in a pane
+- [ ] Decide the bitmap-in-the-pane question on that evidence, and write the
+      decision down whichever way it goes
+- [ ] Decide ELK on its measured cost, and write the numbers down whichever way
+      it goes
+- [ ] A `diagram` shot in `Scripts/screenshots.sh`, and somewhere in the
+      documentation that shows it
+- [ ] Write down here what was ruled out on the way
+- [ ] The spec says what the project now does
+
 ---
 
 Its number is where it sits in the queue, not what it is worth doing next.
