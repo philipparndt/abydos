@@ -69,9 +69,9 @@ having answered the other.
 
 - [ ] Settle the word on screen and the key, and write down why neither is the
       tree's
-- [ ] A `SearchChecklist` in AbydosKit: what a mark is keyed on, and marking,
+- [x] A `SearchChecklist` in AbydosKit: what a mark is keyed on, and marking,
       unmarking and counting
-- [ ] Tests for the key: a mark survives lines being added above it, two
+- [x] Tests for the key: a mark survives lines being added above it, two
       identical lines do not tick each other, another question has its own marks
 - [ ] The table takes several rows at once, and a click that is building a
       selection no longer opens a file
