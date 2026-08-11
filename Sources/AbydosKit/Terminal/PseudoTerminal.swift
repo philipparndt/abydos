@@ -540,7 +540,7 @@ public final class PseudoTerminal {
 	/// Read back from the device rather than from what was last handed to it,
 	/// because the claim worth checking is that the program on the other end can
 	/// see the change — not that this file remembered it.
-	var reportedWindowSize: (rows: Int, columns: Int, pixelWidth: Int, pixelHeight: Int)? {
+	public var reportedWindowSize: (rows: Int, columns: Int, pixelWidth: Int, pixelHeight: Int)? {
 		guard masterDescriptor >= 0 else { return nil }
 		var size = winsize()
 		guard ioctl(masterDescriptor, TIOCGWINSZ, &size) == 0 else { return nil }
