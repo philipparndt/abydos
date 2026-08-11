@@ -96,6 +96,29 @@ what would make it done, and by the end the two always disagreed.
 The last two steps are on every item: what you ruled out on the way, and
 the spec. Both are below.
 
+### The estimate
+
+`## Steps` says how much is done. `## Estimate` says how much longer it
+has, and that is a judgement rather than a count, so somebody has to make
+it:
+
+    ## Estimate
+
+    2026-08-11 14:20 — about an hour left
+
+One line, the time first, written by whoever is doing the work.
+`abydos-backlog eta <number> "about an hour left"` writes it and stamps
+it; `--clear` takes it out. Absent is fine — a section with a line of
+prose in it and no timestamp reads as no estimate, which is what a
+freshly filed item has.
+
+The time is not decoration. An estimate is a claim with a moment
+attached, and "about an hour" that does not say whether it was judged
+four minutes ago or four hours ago is a number believed because it is
+displayed. That is also why the card prints the time it was said rather
+than how long ago: a card is drawn for as long as nothing changes, and
+"said 5m ago" would still say that three hours later.
+
 ## The spec
 
 `spec/` says what the project does *today*, one file per capability, as
@@ -181,8 +204,33 @@ This is the loop. Do it in this order.
 5.  Do the work. Commit as you go, small commits, in that worktree, and
     **tick each step in the commit that finishes it**. `abydos-backlog
     show <number>` prints the list back with the fraction, and the board
-    in the app shows the same number on the card — so somebody watching
-    can tell what is done and what is still missing without asking.
+    in the app reads that same checklist out of *your worktree* — the
+    card says `3/6 in the worktree` beside the branch — so somebody
+    watching can tell what is done and what is still missing without
+    asking. The board finds your copy by number, so it goes on showing
+    your progress after `done` has moved it to `completed/` on the
+    branch.
+
+    **Keep an estimate**, in `## Estimate`, of how much longer the item
+    has:
+
+        abydos-backlog eta <number> "about an hour left"
+
+    which stamps it with the time — the item's own markdown, so it
+    travels with the work and the card shows it beside the fraction. A
+    few words, not a paragraph: a card has room for `about an hour left,
+    as of 14:20` and not much more. What makes one worth having is that
+    it is *revised*, not set once and left: say it again when the work
+    turns out to be bigger as readily as when it turns out to be
+    smaller. An item claiming two hours for the sixth hour running is
+    worse than one claiming nothing, and `--clear` is there for when you
+    genuinely no longer know.
+
+    Nothing computes this and nothing should. Elapsed time over steps
+    ticked would need nobody to write anything and would be confident
+    and wrong: steps are not the same size, and three small ones in ten
+    minutes followed by two hours on the fourth would show twenty
+    minutes remaining for the whole of those two hours.
 6.  Write the spec delta — `spec/<capability>.md` in the item's folder —
     if the behaviour changed. `abydos-backlog attach` if there is
     something to show.
@@ -202,6 +250,12 @@ The move to `completed/` is on your branch, so until it lands the project's
 own copy of the item stays in `in-progress/`. That is not a mistake to go
 and fix by hand: the item is finished when the work is, and the work is in
 a branch nobody has taken yet.
+
+Where the item *is* and how far along it is are two different questions,
+and the board answers them from two different copies for that reason: the
+folder from the project, because that is the answer to "what is nobody
+working on"; the checklist, the estimate, the pictures and the delta from
+your worktree, because that is where they are being written.
 
 If you get stuck on something that is not work — a crash that will not
 happen again, an answer somebody else has to give — move the item to

@@ -132,7 +132,7 @@ Two more things to settle while building it:
 - [x] An estimate, written by whoever is working the item, carrying when it was
       last said, and absent rather than guessed when nobody has said one
 - [x] The card shows it beside the fraction, and shows a stale one as stale
-- [ ] `AGENTS.md` asks for the estimate in step 5, beside ticking the steps
-- [ ] `AGENTS.md`'s promise in step 5 becomes true, or goes
+- [x] `AGENTS.md` asks for the estimate in step 5, beside ticking the steps
+- [x] `AGENTS.md`'s promise in step 5 becomes true, or goes
 - [ ] Write down here what was ruled out on the way
 - [ ] `spec/backlog.md` says what the project now does
