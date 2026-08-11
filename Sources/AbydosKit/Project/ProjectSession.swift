@@ -11,12 +11,46 @@ public struct ProjectSession: Equatable, Sendable {
 		public var line: Int
 		/// Provisional tabs — opened by a single click and replaced by the next
 		/// one — come back the same way rather than becoming permanent.
+		///
+		/// Nothing to do with `previewMode` below, which is the pane: this is the
+		/// italic tab a single click opens. The two names have collided since
+		/// before either meant anything to the other, and 0454 was written partly
+		/// to say so out loud.
 		public var isPreview: Bool
+		/// How the tab was being shown: the source, the rendered form, or one of
+		/// the two splits.
+		///
+		/// Per tab and not per file kind, which is a decision rather than an
+		/// oversight: somebody who always wants a `.scad` split is asking for a
+		/// preference, and this answers that question correctly only for files
+		/// they have opened before. See 0454, which leaves the preference for
+		/// whoever wants it.
+		///
+		/// Nil for a session written before this was recorded, and that must not
+		/// be read as `.source`: an old session has no opinion, and the file kind's
+		/// own default is the right answer for it. Every tab open today would
+		/// otherwise come back as text once, and blame the change that added this.
+		public var previewMode: PreviewMode?
+		/// Where the divider was in a split, as a fraction of the pane.
+		///
+		/// A fraction rather than a position, because the pane it divides is not
+		/// the size it was: another window, another screen, a different sidebar
+		/// width. Nil when the tab was not split, or when the split was never laid
+		/// out and so never had a divider anywhere in particular.
+		public var dividerFraction: Double?
 
-		public init(path: String, line: Int = 1, isPreview: Bool = false) {
+		public init(
+			path: String,
+			line: Int = 1,
+			isPreview: Bool = false,
+			previewMode: PreviewMode? = nil,
+			dividerFraction: Double? = nil
+		) {
 			self.path = path
 			self.line = line
 			self.isPreview = isPreview
+			self.previewMode = previewMode
+			self.dividerFraction = dividerFraction
 		}
 	}
 

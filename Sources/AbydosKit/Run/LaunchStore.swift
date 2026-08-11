@@ -141,7 +141,16 @@ public enum SessionStore {
 			return ProjectSession.OpenFile(
 				path: path,
 				line: entry["line"] as? Int ?? 1,
-				isPreview: entry["preview"] as? Bool ?? false
+				isPreview: entry["preview"] as? Bool ?? false,
+				// `mode` is the pane and `preview` is the provisional tab. Two
+				// keys a word apart meaning entirely different things, which is
+				// the file paying for a name collision older than it is.
+				//
+				// An unknown name reads as nothing rather than as a default: a
+				// file written by a later version knows a mode this one does not,
+				// and guessing at it is worse than falling back to the kind.
+				previewMode: (entry["mode"] as? String).flatMap(PreviewMode.init(rawValue:)),
+				dividerFraction: dividerFraction(entry["divider"])
 			)
 		}
 
@@ -169,6 +178,19 @@ public enum SessionStore {
 			breakpoints: readBreakpoints(object["breakpoints"])
 		)
 		return session.isEmpty ? nil : session
+	}
+
+	/// A divider a session file claims, if it is one a pane could have.
+	///
+	/// This file is JSON on disk that anything may have written, and a fraction
+	/// outside the pane is not a divider at all: zero, one, a negative, or the
+	/// `NaN` that any arithmetic on a missing number produces. A refused one
+	/// leaves the halves equal, which is what an unsplit tab starts as anyway.
+	static func dividerFraction(_ value: Any?) -> Double? {
+		guard let fraction = (value as? NSNumber)?.doubleValue,
+		      fraction.isFinite, fraction > 0, fraction < 1
+		else { return nil }
+		return fraction
 	}
 
 	/// The breakpoints a session file lists, back into what the debugger holds.
@@ -205,6 +227,17 @@ public enum SessionStore {
 			"files": session.files.map { open -> [String: Any] in
 				var entry: [String: Any] = ["path": open.path, "line": open.line]
 				if open.isPreview { entry["preview"] = true }
+				// Only where there is something to remember. Most tabs are source
+				// files with no rendered form, and a `"mode": "source"` beside
+				// every one of them is a line of noise per tab in a file somebody
+				// reads when a session comes back wrong.
+				if let mode = open.previewMode { entry["mode"] = mode.rawValue }
+				if let divider = open.dividerFraction {
+					// Two places, which is a pixel or so on any pane anybody has:
+					// the rest is a fraction printing itself in full, and it makes
+					// the file noisy in git for a divider that did not move.
+					entry["divider"] = (divider * 100).rounded() / 100
+				}
 				return entry
 			},
 		]
