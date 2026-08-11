@@ -84,9 +84,16 @@ collected again from a clean build into a scratch path, both halves:
     xcrun swift build --scratch-path <scratch>
     xcrun swift build --build-tests --scratch-path <scratch>
 
-**Twelve Swift warnings, not eight.** Nothing on the original list had gone —
-none of the eight was in code somebody had since rewritten — and four are new.
-All four arrived with work that merged today.
+**Fifteen Swift warnings, not eight.** Nothing on the original list had gone —
+none of the eight was in code somebody had since rewritten — and seven are
+extra: four arrived with work that merged today, and three were there all along
+in a form the item's `grep warning:` could not show.
+
+Those three come out of a macro expansion, so the compiler prints them as
+`macro expansion @Test:13:183:` with no file path on the line at all. A grep for
+`/Users…swift:` misses them and so did the first pass here. **How the list is
+collected is part of the last decision below**, and this is the reason: a
+`grep warning:` over a build log is not the same thing as a count.
 
 | | where | what | on the list? |
 |---|---|---|---|
@@ -102,9 +109,18 @@ All four arrived with work that merged today.
 | 10 | `RenameOfferTests.swift:37` | `#require` redundant, never nil | **new** |
 | 11 | `RenameOfferTests.swift:61` | `#require` redundant, never nil | **new** |
 | 12 | `RenameOfferTests.swift:73` | `#require` redundant, never nil | **new** |
+| 13 | `MermaidEveryKindLiveTests.swift:229` | `kinds` from a nonisolated context | **missed** |
+| 14 | `MermaidEveryKindLiveTests.swift:285` | `compared` from a nonisolated context | **missed** |
+| 15 | `ExampleMermaidTests.swift:86` | `examples` from a nonisolated context | **missed** |
 
 The two files the item names by line number had moved by a few dozen lines and
 no more; the code it describes is the code that is there.
+
+Numbers 13–15 are `rasterScale` again, and they answer to the same decision:
+a `@MainActor` suite with a `static let` table, read by `@Test(arguments:)`,
+which the macro puts in a closure that runs outside the actor. `nonisolated`,
+for the same reason — a `let` of strings has nothing to race over. Three more
+that are errors in waiting, so that half of the item is five and not two.
 
 Number 9 is the same species as number 1, and it is a third one that is a bug
 rather than a tidy-up: `renameSymbol(in:line:character:)` opens a
@@ -125,20 +141,23 @@ what these become.
 Four new warnings in one day, from two merges, is the argument for the last
 decision below being a real one.
 
+
 ## Estimate
 
 2026-08-11 17:20 — about three hours left
 
 ## Steps
 
-- [ ] The weak capture in `EditorViewController`, as a behaviour change with a
+- [x] The weak capture in `EditorViewController`, as a behaviour change with a
       test for the case the comment describes
-- [ ] The same shape in `MainWindowController.renameSymbol` — found by
+- [x] The same shape in `MainWindowController.renameSymbol` — found by
       collecting the list again, and the second one that is a bug
 - [x] `ProcessPipes.drain(onOutput:)` takes a `@Sendable` closure, and the
       callers follow — it already did, and there was nothing for the callers
       to follow. See below.
 - [x] `rasterScale` in both renderers, one decision for both — `nonisolated`
+- [x] The same decision three more times, in the two Mermaid suites'
+      `@Test(arguments:)` tables — found only because the first count was wrong
 - [x] The four tidying ones
 - [x] The three `try? #require` in `RenameOfferTests`, which assert nothing
 - [ ] Decide whether the vendored grammars get a flag, and say why either way

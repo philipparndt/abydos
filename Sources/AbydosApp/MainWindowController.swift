@@ -4584,11 +4584,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			)
 		}
 
-		Task { @MainActor in
+		// `[weak self]` on the task and not only on the callback inside it. The
+		// callback's weak capture is load-bearing for a different reason — the
+		// code view keeps that closure, so a strong one is a cycle — but a task
+		// capturing the window controller strongly held it alive for the whole of
+		// the `renameOffer` round trip, which is a language server being asked a
+		// question over a pipe and can be seconds. A window closed in that gap
+		// stayed alive until the server answered, and the answer was then laid
+		// over a code view nobody is looking at.
+		Task { @MainActor [weak self] in
 			let offer = await LanguageService.shared.renameOffer(
 				url: url, position: position, languageId: languageId,
 				project: project.scopeRoot, fallback: fallback
 			)
+			// Closed while the server was being asked. Nothing to say and nowhere
+			// to put a field.
+			guard let self else { return }
 
 			guard case let .offered(subject) = offer else {
 				// Two of the three refusals say nothing at all — no server, and

@@ -44,7 +44,13 @@ struct MermaidEveryKindLiveTests {
 	/// One diagram of every kind this Mermaid knows, kept as small as each kind
 	/// can be while still drawing the parts that go wrong — a label, an edge, a
 	/// fill. The names are the `PROBE` lines the faults above were found in.
-	static let kinds: [(name: String, source: String)] = [
+	///
+	/// `nonisolated` because `@Test(arguments:)` reads it: the macro puts the
+	/// expression in a closure that runs outside the actor this suite is pinned
+	/// to, so a main actor-isolated table is a warning here and an error in the
+	/// Swift 6 language mode. The same thing `rasterScale` needed in 0465, and a
+	/// `let` of strings has nothing to race over either.
+	nonisolated static let kinds: [(name: String, source: String)] = [
 		("flowchart", """
 		flowchart TD
 		    A[Start] --> B{Is it a diagram?}
@@ -211,7 +217,9 @@ struct MermaidEveryKindLiveTests {
 	/// is wrong. Not all twenty-two, because comparing two two-megapixel
 	/// rasterisations is the expensive part and the properties below are what
 	/// actually name a fault.
-	static let compared = ["sankey", "journey", "treemap", "flowchart", "sequence", "pie"]
+	/// `nonisolated` for the reason `kinds` is.
+	nonisolated static let compared =
+		["sankey", "journey", "treemap", "flowchart", "sequence", "pie"]
 
 	private func canDraw() async -> Bool {
 		let drawn = await MermaidRenderer.shared.draw("flowchart TD\n A --> B", format: .svg)
