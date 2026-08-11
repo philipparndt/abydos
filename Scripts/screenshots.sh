@@ -12,6 +12,12 @@
 # remembered per machine, and a screenshot that depends on them is a screenshot
 # that looks different for everybody who takes it.
 #
+# What the machine happens to be doing at the time is kept out too: a capture
+# run does not take the Claude hook's announcements, so somebody's agent
+# finishing in the eight seconds before the shutter no longer stacks a toast
+# over the bottom right corner (0451). A shot that wants a toast in it still
+# asks for one, with `--toast`.
+#
 #   make screenshots                      # all of them
 #   make screenshots SHOT=debugger        # one
 #   make screenshots EXAMPLES=~/dev/x     # from somewhere else

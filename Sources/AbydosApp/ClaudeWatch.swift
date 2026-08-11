@@ -16,7 +16,45 @@ final class ClaudeWatch {
 
 	private var observer: (any NSObjectProtocol)?
 
+	/// Whether news from elsewhere on the machine belongs in this run.
+	///
+	/// **Not while a picture is being taken** (0451). `Scripts/screenshots.sh`
+	/// pins the window size, the panel height and a fresh copy of the project,
+	/// because anything remembered per machine is a picture that looks
+	/// different for everybody who takes it — and a Claude session in somebody
+	/// else's terminal is exactly that. Three shots for 0425 came out with
+	/// `● zsh · a subagent finished` stacked over the diagram, and were taken
+	/// again until the corner happened to be empty.
+	///
+	/// **What is dropped is news from outside the run, not toasts.** That is
+	/// the whole of the difference, and it is why neither of the two answers
+	/// the item started with was taken. "No toasts on a capture run" and "leave
+	/// the toast layer out of the capture" both break the same thing:
+	/// `--toast --screenshot` is the only way to look at a toast, and it is how
+	/// the toasts being unscaled at 2x was found (see `ToastView.closeRect`).
+	/// Both would have broken it *silently* — a corner photographed empty looks
+	/// exactly like a corner with nothing to say. Leaving the layer out is the
+	/// more expensive of the two as well, since it puts knowledge of one
+	/// particular view into the capture every part of the app shares. Here,
+	/// everything the run itself causes still speaks: `--toast` still fills the
+	/// corner to be photographed, `--toasts` still reports it, and a shot that
+	/// provokes a real error still shows what the app really says about it.
+	///
+	/// **Declining costs nothing.** The hook posts a *distributed* notification
+	/// and every listening process gets its own copy, so the app the person is
+	/// working in still says it; and this run could not have acted on it in any
+	/// case — it takes the accessory activation policy, never has the keyboard,
+	/// and exits when the shutter closes, so "Click to open that tab" is an
+	/// offer nobody could take.
+	///
+	/// **The capture rather than every headless run**, which was the open
+	/// question. A run that is *not* taking a picture is precisely where this
+	/// path would be checked — fire the hook, then read `--toasts` — and a rule
+	/// about headless runs in general would leave no way to check it at all.
+	private static var listensOnThisRun: Bool { !LaunchOptions.parse().isScreenshotRun }
+
 	func start() {
+		guard Self.listensOnThisRun else { return }
 		guard observer == nil else { return }
 		observer = DistributedNotificationCenter.default().addObserver(
 			forName: Notification.Name(ClaudeHook.notificationName),
