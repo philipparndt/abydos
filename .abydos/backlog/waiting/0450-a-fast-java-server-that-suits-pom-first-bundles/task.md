@@ -1,5 +1,12 @@
 # 450. A fast Java server that suits pom-first bundles
 
+**Waiting for: weeks of real use before the pull request.** The Maven source
+locator is built, measured and pushed to `philipparndt/kmp-lsp` on
+`feat/maven-local-repository-jars`. Nothing is left to *build*; what is left is
+to run it on a real Tycho product long enough to know whether it holds up, and
+only then offer it upstream. The wait is over when there is enough use to say
+either "this works, here is the pull request" or "here is what it got wrong".
+
 0449 gives a project the choice of *which* Java server. This is the third
 candidate that choice does not have yet: something with kmp-lsp's cost and a
 Maven project's idea of where source lives.
@@ -91,8 +98,14 @@ already is, later.
       — **not done, and the order came out backwards.** The measurements said
       build it, and it is one contained commit that is easier to ask about with
       the diff and the numbers in hand than as a question. Asking is the user's
-      to do: this is their fork and their pull request, and nothing here has
-      been pushed.
+      to do: this is their fork and their pull request.
+      **Now deliberately deferred rather than pending.** The branch is pushed to
+      `philipparndt/kmp-lsp` and the decision is to run this version for some
+      weeks before offering it. That is the right way round for a change nobody
+      else can easily test: a pull request that says "I have been using this on a
+      five-hundred-bundle Tycho product since August" is a different proposition
+      from one that says "this builds and the tests pass". This item waits for
+      that, and it is a wait rather than work — see the top of the entry.
 - [x] Source-jar lookup under `~/.m2/repository`, in a fork, driven against a
       real pom-first reactor before it is offered
 - [x] Both halves of the pipeline, not only the sources one — a real `~/.m2` is
