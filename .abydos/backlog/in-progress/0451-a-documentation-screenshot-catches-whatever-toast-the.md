@@ -60,7 +60,9 @@ it is the only way either flag is used.
 
 - [x] Find out what `--toast` and `--toasts` really do, since whichever answer
       is chosen has to leave a picture of a toast possible
-- [ ] Decide which of the two above, and say why in the code
+- [x] Decide which of the two above, and say why in the code — neither, in the
+      end: what a capture declines is news from *outside* the run, which is
+      the part that is not reproducible. The reason is in `ClaudeWatch`
 - [ ] Take the same shot twice with an agent finishing in between, and get the
       same picture — the toast raised through the hook, the way the machine
       raises it, rather than by calling the toast API
