@@ -127,7 +127,7 @@ Replacing anything, or changing what the terminal does with the setting off.
 
 ## Estimate
 
-2026-08-11 17:52 — about 90 min; step 1 passed, building the seam
+2026-08-11 18:17 — about 20 min; suite running, then done
 
 ## Steps
 
@@ -140,8 +140,16 @@ Replacing anything, or changing what the terminal does with the setting off.
       `TmuxMirror` does not read it at all, and there is no prompt detection
 - [x] Design the seam from what the callers need, and say whether the old path
       changes at all. It does not: two new files and two one-line extensions
-- [x] Feed `tmux-prompt.bin`, `return-burst.bin` and 0468's two icat captures to
-      both engines and compare, cell for cell
+- [x] Feed `tmux-prompt.bin`, `tmux-prompt-repaint.bin` and `return-burst.bin` to
+      both engines and compare, cell for cell — and it found something
+- [ ] 0468's two icat captures through both engines. **Not done, and it cannot
+      be from this repository: those captures were never committed.**
+      `IcatCaptureReplayTests` reads a path out of `ICAT_LOG`, so the captures
+      lived in `/tmp` on the machine 0468 was measured on and are gone. Nothing
+      under `Tests/AbydosKitTests/Fixtures/` is an icat capture. It would also
+      compare nothing today, because kitty graphics is not implemented behind the
+      new engine — but the missing fixture is the real reason, and it is worth
+      knowing that this item's own premise about the fixtures was half wrong
 - [x] Throughput against `TerminalThroughputTests`, with the load stated
 - [x] Measure what it costs to *read* the grid, which the write benchmark hides.
       Added on the way, because a 17× parser that loses it back per frame is not
@@ -645,3 +653,39 @@ is the whole point rather than a nicety.
   deferred deliberately, at the boundary, because it is ~40 protocol members and
   ninety call sites in a 3,019-line view, and hurrying it is how the old path
   stops being untouched.
+
+## Two things this item said that turned out not to be true
+
+Left here rather than edited away above, because the next person will read the
+same sentences and should know they were checked.
+
+- **"`TmuxMirror` (473 lines) reads the screen. So does prompt detection, so does
+  the `@ai_status` the Claude hook writes."** None of those three reads the grid.
+  `TmuxMirror` is a `tmux(1)` subprocess wrapper with no reference to any engine
+  type; `@ai_status` is a tmux window option; and there is no prompt detection in
+  this project at all. The seam is therefore much narrower than the item feared —
+  selection and the render path, and that is all.
+- **"there are fixtures beside it — … and 0468's plain-pane and in-tmux icat
+  captures."** There are three fixtures and none of them is an icat capture.
+  `IcatCaptureReplayTests` takes a path from `ICAT_LOG`, so those captures were
+  never in the repository. If the icat comparison matters later, capturing them
+  again is a prerequisite, and `Scripts/icat-notmux.py` in 0468's folder is the
+  harness for the plain-pane half.
+
+And one the item was right about, emphatically: **the differential test was
+nearly free.** Three fixtures already in the suite, and the first run of them
+against a second engine found a real behavioural divergence in twenty minutes.
+That is the cheapest thing in this whole item and the argument for keeping the
+second engine around even if it is never adopted — two independent emulators
+disagreeing on a real capture is a bug report either way round.
+
+## How to run what this item built
+
+    # the differential test — both engines, the committed fixtures
+    xcrun swift test --filter GhosttyEngineTests
+
+    # throughput, both engines; ABYDOS_BENCH_ENGINE=abydos|libghostty-vt for one
+    ABYDOS_BENCH=1 xcrun swift test -c release --filter TerminalThroughput
+
+    # rebuild the vendored library from a named ghostty commit (needs zig)
+    Scripts/build-libghostty-vt.sh [<commit-ish>]
