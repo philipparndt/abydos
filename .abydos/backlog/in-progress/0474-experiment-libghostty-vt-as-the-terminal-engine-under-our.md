@@ -101,12 +101,31 @@ harness is written. `TerminalThroughputTests` is the same trick for speed.
    answerable by looking: read its git history for the last few months and say how
    often and how deeply the surface has moved.
 
+## The seam is the work, and the questions above are now prerequisites
+
+An option means one protocol both engines satisfy, wide enough for what
+`TerminalView`, `TmuxMirror`, `TerminalSelection` and prompt detection actually
+ask. So question 3 stops being informational and becomes load-bearing, and the
+seam has to be **defined from what the callers need rather than from what either
+engine offers** — otherwise it comes out shaped like libghostty-vt with our own
+emulator faking the difference.
+
+Two costs to state rather than discover:
+
+- **The existing engine must not change behaviour with the setting off.** Every
+  terminal test passes through it, and those tests are why 0397 and 0468 were
+  findable. If extracting a protocol forces changes to the old path, that is a
+  cost of the option and belongs here.
+- **Every future terminal bug now has two possible homes**, and the first question
+  about any report becomes "which engine". Both of those items cost a day partly
+  because nobody knew which layer to look at. `--report-geometry` exists and
+  printing the engine there is nearly free.
+
 ## Deliberately not in this item
 
-Replacing anything. This ends in a branch, a table of answers and a
-recommendation. If the answer is yes, the migration is its own item — or several,
-since a change of engine touches every terminal test we have and those tests are
-the reason today's bugs were findable.
+Replacing anything, or turning it on by default. If the seam turns out to be large
+enough to be its own item, the boundary is the place to stop — with the answers
+written down and the seam designed but not built.
 
 ## Steps
 
@@ -119,6 +138,10 @@ the reason today's bugs were findable.
       its grid API, with the specific call for each
 - [ ] Throughput against `TerminalThroughputTests`, with the load stated
 - [ ] Read its recent history and say how much the API has moved
-- [ ] Write the recommendation, with the cost of being wrong in each direction
+- [ ] Design the seam from what the callers ask, and say what it costs the
+      existing engine — nothing, if the setting is off
+- [ ] The setting, in the shape `terminalGPURendering` already has: default off,
+      one reader, the old path untouched
+- [ ] Somebody reporting a terminal bug can tell which engine drew it
 - [ ] Write down here what was ruled out on the way
 - [ ] No spec change — this item changes nothing about what the project does
