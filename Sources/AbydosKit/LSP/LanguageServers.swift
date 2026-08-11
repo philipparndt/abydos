@@ -51,6 +51,21 @@ public struct LanguageServerDefinition: Equatable, Sendable {
 	/// from one case that happened to be measured.
 	public let outside: [OutsideDirectory]
 
+	/// Whether what this server knows about the code is its text rather than its
+	/// types.
+	///
+	/// It changes nothing about a question and everything about an *answer that
+	/// changes files*. A go-to-definition from a syntactic server that lands in
+	/// the wrong place costs a keystroke to undo; a rename from one is a
+	/// substitution over what it indexed, so a method called `size()` on two
+	/// unrelated classes is one name to it, and renaming one renames both — in
+	/// forty files, some of which nobody had open.
+	///
+	/// So this is not a rating of servers. It is the one fact somebody needs
+	/// before they accept a refactoring, and 0449 made it possible for a project
+	/// to be pointed at such a server without the person at the editor knowing.
+	public let isSyntactic: Bool
+
 	/// A directory outside the project that a server has to be able to read.
 	///
 	/// Named on both sides. The host side is relative to the home directory,
@@ -112,7 +127,8 @@ public struct LanguageServerDefinition: Equatable, Sendable {
 		rootMarkers: [String] = [],
 		name: String? = nil,
 		setup: Setup = .plain,
-		outside: [OutsideDirectory] = []
+		outside: [OutsideDirectory] = [],
+		isSyntactic: Bool = false
 	) {
 		self.languageIds = languageIds
 		self.command = command
@@ -122,6 +138,7 @@ public struct LanguageServerDefinition: Equatable, Sendable {
 		self.name = name ?? command
 		self.setup = setup
 		self.outside = outside
+		self.isSyntactic = isSyntactic
 	}
 }
 
@@ -265,7 +282,15 @@ public enum LanguageServers {
 				LanguageServerDefinition.OutsideDirectory(
 					home: ".cache/kmp-lsp", container: "/root/.cache/kmp-lsp", isReadOnly: false
 				),
-			]
+			],
+			// The one place this matters is 0453's rename. Everything above is
+			// about what this server can *answer*, where being syntactic is a
+			// trade somebody made on purpose; a rename is the first thing it can
+			// be asked that changes files, and a substitution over an index is a
+			// different promise from jdtls's. It renames — well, and fast — over
+			// exactly the symbols it indexed, and two unrelated `size()` methods
+			// are one symbol to it.
+			isSyntactic: true
 		),
 		LanguageServerDefinition(
 			languageIds: ["json"],

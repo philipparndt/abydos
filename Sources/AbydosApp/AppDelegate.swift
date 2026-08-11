@@ -652,6 +652,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let spec = options.renameAt {
+			let halves = spec.split(separator: "=", maxSplits: 1)
+			let parts = halves.first.map { $0.split(separator: ":").compactMap { Int($0) } } ?? []
+			DispatchQueue.main.asyncAfter(deadline: .now() + (options.lspWait ?? 12)) {
+				guard parts.count == 2, halves.count == 2 else { return }
+				controller?.exerciseRenameForTesting(
+					line: parts[0] - 1, character: parts[1], to: String(halves[1])
+				)
+			}
+		}
+
 		if let query = options.symbolQuery {
 			// After the language server has had time to index.
 			DispatchQueue.main.asyncAfter(deadline: .now() + (options.lspWait ?? 12)) {
@@ -1965,6 +1976,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		)
 		symbolInProject.keyEquivalentModifierMask = [.command, .option]
 		editMenu.addItem(symbolInProject)
+
+		// ⇧F6, which is IDEA's, for the same reason the two below are.
+		let rename = NSMenuItem(
+			title: "Rename…",
+			action: #selector(MainWindowController.renameSymbol(_:)),
+			keyEquivalent: String(UnicodeScalar(UInt32(NSF6FunctionKey))!)
+		)
+		rename.keyEquivalentModifierMask = [.shift]
+		editMenu.addItem(rename)
 
 		// IDEA's shortcuts on macOS, since that is where the muscle memory
 		// comes from.

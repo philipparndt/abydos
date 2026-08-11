@@ -161,6 +161,7 @@ final class EditorAreaController: NSViewController {
 			self?.onFileReloaded?(url)
 		}
 		group.onFindUsages = onFindUsages
+		group.onRename = onRename
 		group.onWatch = onWatch
 		group.onFixWithAI = onFixWithAI
 		group.setConditionalBreakpoints(conditionalBreakpoints)
@@ -617,6 +618,26 @@ final class EditorAreaController: NSViewController {
 		groups.lazy.compactMap { $0.document(for: url) }.first
 	}
 
+	/// Puts new text into an open file, wherever it is open.
+	///
+	/// Every pane, because one file can be open in two of them and a rename that
+	/// changed the buffer in one would leave the other showing the old name over
+	/// a file that no longer says it.
+	@discardableResult
+	func applyRenamedText(_ text: String, to url: URL) -> Bool {
+		var changed = false
+		for group in groups where group.applyRenamedText(text, to: url) { changed = true }
+		return changed
+	}
+
+	/// Closes every tab on a file a workspace edit has moved or removed.
+	@discardableResult
+	func closeTab(showing url: URL) -> Bool {
+		var closed = false
+		for group in groups where group.closeTab(showing: url) { closed = true }
+		return closed
+	}
+
 	func applySettings() {
 		statusBarHeightConstraint.constant = Theme.current.scaled(24)
 		statusBar.needsDisplay = true
@@ -658,6 +679,10 @@ final class EditorAreaController: NSViewController {
 
 	var onFindUsages: ((URL, Int, Int) -> Void)? {
 		didSet { for group in groups { group.onFindUsages = onFindUsages } }
+	}
+
+	var onRename: ((URL, Int, Int) -> Void)? {
+		didSet { for group in groups { group.onRename = onRename } }
 	}
 
 	var onWatch: ((String) -> Void)? {
