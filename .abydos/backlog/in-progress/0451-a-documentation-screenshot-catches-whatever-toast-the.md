@@ -40,10 +40,29 @@ thinking about before picking one:
 Whichever it is, a shot that *wants* a toast in it — if any ever does — has to
 stay possible, since `--toasts` exists for exactly that.
 
+**What `--toast` and `--toasts` are, since the item above has them the wrong
+way round.** They are two flags, not one. `--toast` raises two of them —
+"Cannot run this Go command" and "Saved 3 files" — a second after the window
+opens, and that is the one a picture of a toast is taken with: `--toast
+--screenshot out.png` is how the corner is looked at, and how the toasts being
+unscaled at 2x was found (`ToastView.closeRect` still carries the note).
+`--toasts 3,9` is a *reading*, not a picture: it prints `TOASTS: [title:
+detail]` at each of those seconds, and exists because a toast cannot be told
+from an empty corner in a window rendering that has not finished loading. Both
+have to go on working, so "a shot that wants a toast" is not hypothetical —
+it is the only way either flag is used.
+
+## Estimate
+
+2026-08-11 12:41 — about ninety minutes left
+
 ## Steps
 
+- [x] Find out what `--toast` and `--toasts` really do, since whichever answer
+      is chosen has to leave a picture of a toast possible
 - [ ] Decide which of the two above, and say why in the code
 - [ ] Take the same shot twice with an agent finishing in between, and get the
-      same picture
+      same picture — the toast raised through the hook, the way the machine
+      raises it, rather than by calling the toast API
 - [ ] Write down here what was ruled out on the way
 - [ ] `spec/<capability>.md` says what the project now does
