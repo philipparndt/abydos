@@ -127,7 +127,7 @@ Replacing anything, or changing what the terminal does with the setting off.
 
 ## Estimate
 
-2026-08-11 17:41 — about two hours left; step 1 is a from-source zig build
+2026-08-11 17:52 — about 90 min; step 1 passed, building the seam
 
 ## Steps
 
