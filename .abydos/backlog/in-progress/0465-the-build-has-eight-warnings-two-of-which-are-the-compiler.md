@@ -137,7 +137,7 @@ decision below being a real one.
       collecting the list again, and the second one that is a bug
 - [ ] `ProcessPipes.drain(onOutput:)` takes a `@Sendable` closure, and the
       callers follow
-- [ ] `rasterScale` in both renderers, one decision for both
+- [x] `rasterScale` in both renderers, one decision for both — `nonisolated`
 - [ ] The four tidying ones
 - [ ] The three `try? #require` in `RenameOfferTests`, which assert nothing
 - [ ] Decide whether the vendored grammars get a flag, and say why either way

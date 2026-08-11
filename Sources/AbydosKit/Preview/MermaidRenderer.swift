@@ -31,7 +31,14 @@ public final class MermaidRenderer {
 	/// had, an image sized in points on a 2× display with half the pixels it
 	/// needed. Unlike the preview, which is a drawing and has no resolution to
 	/// be wrong about, a PNG has to choose once and for ever.
-	public static let rasterScale: Double = 2
+	///
+	/// `nonisolated` because it is a constant and not state. The renderer is main
+	/// actor-isolated, which made this isolated too, and a default argument is
+	/// evaluated where the *caller* is — so `scale: Double = rasterScale` below
+	/// read main-actor state from wherever the call was written. That is a
+	/// warning today and an error in the Swift 6 language mode. A `let Double`
+	/// has nothing to race over, so saying so is the whole fix.
+	public nonisolated static let rasterScale: Double = 2
 
 	/// Why a diagram was not drawn: the diagram itself, or everything else.
 	///
