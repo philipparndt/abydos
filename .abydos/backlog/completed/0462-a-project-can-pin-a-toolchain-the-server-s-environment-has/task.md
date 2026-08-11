@@ -152,10 +152,6 @@ nothing.
   `rust-toolchain.toml` while the project is open does not change what the strip
   says until the project is opened again.
 
-## Estimate
-
-2026-08-11 10:26 — done, bar the final suite
-
 ## Steps
 
 - [x] Read a project's toolchain pin, for Rust at least, before a server starts
