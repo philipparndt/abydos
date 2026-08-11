@@ -67,9 +67,40 @@ traffic at the language server, and to the undo stack — is the design question
 this item. Measure the `didOpen`/`didClose` traffic before deciding; the server
 is told about every one of them.
 
-Two smaller decisions that follow from it: whether the editor takes focus when a
-row opens it (it must not, or the next ↓ goes to the code and the job stops), and
-whether a click and a keystroke should differ at all.
+Two smaller decisions that follow from it: whether a click and a keystroke should
+differ at all, and — the one that is a present-tense bug rather than a risk —
+where the keyboard is.
+
+### The keyboard never reaches the list, docked or not
+
+Also from the report:
+
+> and keyboard navigation / cursor when it is docked as well, currently the
+> cursor jumps directly to the editor
+
+Two halves, and neither is about the list's own key handling:
+
+- **It is never focused when it appears.** `MainWindowController.dockInSidebar`
+  places the view, unhides the container, moves the divider — and calls
+  `makeFirstResponder` for nothing. The only two `makeFirstResponder` calls in
+  that whole file hand the keyboard to the *terminal*. So the list arrives with
+  the keyboard still wherever it was, which is the editor, and ↓ scrolls code.
+- **Opening a row takes the keyboard away.** `panel.onOpen` calls
+  `editor.open(fileURL:atLine:)`, which focuses the code — so even after
+  clicking into the list, the first row somebody opens ends the keyboard
+  navigation before it has started. That is what "the cursor jumps directly to
+  the editor" is.
+
+So the list has to be focused when it appears and **keep** the keyboard when a row
+opens: the editor scrolls and shows the line, and the caret goes there, but first
+responder stays in the list so ↓ moves to the next usage. There needs to be a
+deliberate way *into* the editor from there — ⏎, or ⇥ — because "look at each of
+these" and "now work on this one" are two different intentions and only the second
+should cost the keyboard.
+
+Both halves are the same fix for the floating window and the docked pane, which is
+an argument for making it once, in whatever holds the list, rather than at each
+place that shows it.
 
 ## The floating window stays; the default turns around
 
@@ -106,8 +137,11 @@ twice. Two things it does not answer and somebody should:
 - [ ] Usages open in the bottom panel, beside search
 - [ ] Multi-selection, and the done state — with the word and the key decided
       against `SearchPane`'s argument rather than around it
-- [ ] Opening as the selection moves, without accumulating a tab per usage and
-      without the editor stealing focus
+- [ ] The list has the keyboard when it appears — nothing calls
+      `makeFirstResponder` for it today, docked or floating
+- [ ] Opening a row keeps the keyboard in the list, with one deliberate way into
+      the editor, so ↓ still reaches the next usage
+- [ ] Opening as the selection moves, without accumulating a tab per usage
 - [ ] Usages arrive docked, with a way from there to a window — the flow the
       `Dock` button runs today, turned around
 - [ ] Decide what the next Find Usages does after somebody has expanded one, and
