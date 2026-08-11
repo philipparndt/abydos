@@ -45,6 +45,19 @@ let revisionGrammars: [(pkg: String, url: String, revision: String, products: [S
 // — a relative path that never resolves during manifest evaluation, so the
 // scanner is dropped and the grammar fails to link. Vendoring lets the source
 // list be stated explicitly. See Scripts/vendor-grammars.sh to update them.
+//
+// **They warn, and they keep their warnings.** The Python and YAML scanners have
+// four `-Wshorten-64-to-32` between them, all in the serialisation path and all
+// harmless there — what they truncate into is bounded by
+// `TREE_SITTER_SERIALIZATION_BUFFER_SIZE`. 0465 asked whether the targets at the
+// bottom of this file should carry `-Wno-shorten-64-to-32` and decided they
+// should not, for two reasons. It would have to be `.unsafeFlags`, since that is
+// the only way to pass a warning option, and an `unsafeFlags` anywhere in a
+// manifest stops the package being usable as a dependency of anything. And
+// silencing the class would also silence a *new* truncation arriving with the
+// next re-vendor, which is exactly the moment somebody wants to see one — these
+// are five files this repository carries and does not read. `make warnings`
+// counts them apart instead, as upstream's and never as a failure of ours.
 let vendoredGrammars = ["CSS", "JavaScript", "Make", "Python", "YAML"]
 
 // Spelled out rather than concatenated inside the Package literal: the type

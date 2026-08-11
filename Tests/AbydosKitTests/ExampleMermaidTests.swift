@@ -24,7 +24,11 @@ struct ExampleMermaidTests {
 	/// Every diagram in `mermaid/`, and the kind of drawing each one is there to
 	/// exercise. The list is the promise: a file added to that folder and not to
 	/// this list fails the last test below.
-	static let examples: [(file: String, kind: String)] = [
+	///
+	/// `nonisolated` because `@Test(arguments:)` reads it from outside the actor
+	/// this suite is pinned to — a warning today and an error in the Swift 6
+	/// language mode. See `MermaidEveryKindLiveTests.kinds`.
+	nonisolated static let examples: [(file: String, kind: String)] = [
 		("render.mmd", "flowchart"),
 		("export.mermaid", "sequenceDiagram"),
 		("document.mmd", "stateDiagram-v2"),

@@ -1288,21 +1288,25 @@ final class EditorViewController: NSViewController {
 	/// So there is no trade and nothing to measure. Decoding a megabyte of UTF-8
 	/// into a `String` is the whole cost, it happens every 0.4 s of typing and on
 	/// every auto-save, and it is now on a queue the keyboard does not share.
+	///
+	/// Through `WeakRelay` rather than two nested `async` calls, and 0465 is why:
+	/// written the obvious way the inner `[weak self]` bought nothing, because the
+	/// outer closure had to hold `self` strongly to build it. The editor was kept
+	/// alive for the length of every decode in flight, which is exactly the gap
+	/// the guard below was written for.
 	private func withText(
 		of document: TextDocument, send: @escaping (String) -> Void
 	) {
 		let snapshot = document.rope
-		EditorViewController.languageTextQueue.async {
-			let text = snapshot.string(in: 0..<snapshot.byteCount)
-			DispatchQueue.main.async { [weak self] in
-				// Closed while its text was being decoded. There is no gap to
-				// close today, because the send follows the build immediately;
-				// there is one now, and a `didChange` for a file the editor no
-				// longer holds is one the server cannot make sense of.
-				guard let self, self.tabs.contains(where: { $0.document === document })
-				else { return }
-				StallWatch.mark("language sync") { send(text) }
-			}
+		WeakRelay.build(on: EditorViewController.languageTextQueue, for: self) {
+			snapshot.string(in: 0..<snapshot.byteCount)
+		} then: { editor, text in
+			// Closed while its text was being decoded. There is no gap to
+			// close today, because the send follows the build immediately;
+			// there is one now, and a `didChange` for a file the editor no
+			// longer holds is one the server cannot make sense of.
+			guard editor.tabs.contains(where: { $0.document === document }) else { return }
+			StallWatch.mark("language sync") { send(text) }
 		}
 	}
 
@@ -2651,7 +2655,7 @@ final class EditorViewController: NSViewController {
 	/// notes.
 	func globalScratchDirectoryForTesting() -> String {
 		let before = Set(ScratchFiles.global().all())
-		tabBar.contextMenuTitlesForTesting(overTab: false)  // builds the same menu
+		_ = tabBar.contextMenuTitlesForTesting(overTab: false)  // builds the same menu
 		newScratch(global: true)
 		guard let made = ScratchFiles.global().all().first(where: { !before.contains($0) })
 		else { return "nothing created" }

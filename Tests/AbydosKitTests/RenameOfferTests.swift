@@ -32,11 +32,11 @@ struct RenameOfferTests {
 
 	// MARK: - The caveat under the field
 
-	@Test func aSyntacticServersRenameSaysSoAndNamesTheSymbol() {
+	@Test func aSyntacticServersRenameSaysSoAndNamesTheSymbol() throws {
 		let subject = RenameSubject(name: "Greeting", range: anywhere, isSyntactic: true)
-		let caveat = try? #require(subject.caveat)
-		#expect(caveat?.contains("matches names rather than types") == true)
-		#expect(caveat?.contains("Greeting") == true)
+		let caveat = try #require(subject.caveat)
+		#expect(caveat.contains("matches names rather than types"))
+		#expect(caveat.contains("Greeting"))
 	}
 
 	@Test func aServerThatReadsTypesHasNothingToWarnAbout() {
@@ -56,23 +56,23 @@ struct RenameOfferTests {
 	/// and then answered the rename itself with `null`. "Nothing to change" is
 	/// also what a caret on a comma means, and by this point the caret was not
 	/// on one — so the server's name is the whole of what there is to say.
-	@Test func aServerThatDeclinesAfterOfferingIsNamed() {
+	@Test func aServerThatDeclinesAfterOfferingIsNamed() throws {
 		let answer = RenameAnswer.nothingToChange(server: "kmp-lsp")
-		let refusal = try? #require(answer.refusal)
-		#expect(refusal?.title == "Nothing was renamed")
-		#expect(refusal?.detail == "kmp-lsp offered this rename and then found nothing to change.")
+		let refusal = try #require(answer.refusal)
+		#expect(refusal.title == "Nothing was renamed")
+		#expect(refusal.detail == "kmp-lsp offered this rename and then found nothing to change.")
 		// Information, not an error: nothing changed and nothing is wrong.
-		#expect(refusal?.isFailure == false)
+		#expect(refusal.isFailure == false)
 		#expect(answer.edit == nil)
 	}
 
-	@Test func aServersOwnWordsAreWhatAFailureSays() {
+	@Test func aServersOwnWordsAreWhatAFailureSays() throws {
 		let answer = RenameAnswer.failed(
 			LSPClient.ClientError.failed(code: -32600, message: "identity is ambiguous")
 		)
-		let refusal = try? #require(answer.refusal)
-		#expect(refusal?.detail.contains("identity is ambiguous") == true)
-		#expect(refusal?.isFailure == true)
+		let refusal = try #require(answer.refusal)
+		#expect(refusal.detail.contains("identity is ambiguous"))
+		#expect(refusal.isFailure)
 	}
 
 	/// An edit says nothing at all. The files changing on screen is the whole

@@ -28,7 +28,13 @@ public final class DrawioRenderer {
 	/// What an exported PNG is rasterised at, for the same reason Mermaid's is:
 	/// a diagram laid out in CSS pixels is soft at 1× on any screen made in the
 	/// last decade, and a PNG has to choose once and for ever.
-	public static let rasterScale: Double = 2
+	///
+	/// `nonisolated` for the reason `MermaidRenderer.rasterScale` is, which is
+	/// written out there: a default argument is evaluated at the call site, so an
+	/// isolated constant is read from wherever the call happens to be. Two
+	/// constants rather than one shared one, because each renderer's output is
+	/// its own decision — they are equal today and nothing says they must be.
+	public nonisolated static let rasterScale: Double = 2
 
 	/// Why a diagram was not drawn: the document, or everything else.
 	public enum Failure: Error, Sendable {

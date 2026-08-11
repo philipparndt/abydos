@@ -35,7 +35,7 @@ public struct Snippet: Equatable, Sendable {
 		var text = ""
 		var caret: Int?
 		var firstStop: Int?
-		var characters = Array(source)
+		let characters = Array(source)
 		var index = 0
 
 		func append(_ string: String) { text += string }

@@ -298,11 +298,16 @@ struct DevContainerTests {
 
 	/// A directory with a go.mod in it, so the Go server has a root to be
 	/// rooted at — the resolution asks the file system, not the file.
+	/// A `go.mod` that was not written leaves a directory the Go server has no
+	/// reason to be rooted at, so the failure is nil rather than dropped: the
+	/// `#require` at the call site then names the fixture instead of the test
+	/// failing later for a reason that is not the one being checked.
 	private func makeGoProject() -> URL? {
-		guard let root = try? JavaTestDirectory.make() else { return nil }
-		try? JavaTestDirectory.write(
-			"module example.com/probe\n", to: root.appendingPathComponent("go.mod")
-		)
+		guard let root = try? JavaTestDirectory.make(),
+		      let _ = try? JavaTestDirectory.write(
+		      	"module example.com/probe\n", to: root.appendingPathComponent("go.mod")
+		      )
+		else { return nil }
 		return URL(fileURLWithPath: FilePath.canonical(root), isDirectory: true)
 	}
 
