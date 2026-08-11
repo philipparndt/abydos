@@ -46,6 +46,37 @@ on the card's menu — "Open Worktree as a Project" and "Open Terminal in
 Worktree". This one is Finder, for when somebody wants the files rather than the
 project or a shell, and it belongs beside them under the same `isPresent` guard.
 
+## An ETA, maintained by whoever is doing the work
+
+Asked for alongside the above: an agent working an item keeps an estimate of how
+much longer it has, and the card shows it beside the fraction.
+
+**It has to be the agent's, not arithmetic.** The tempting version is
+`elapsed / done × remaining` from `BacklogRun.startedAt` and the checklist, which
+needs nobody to write anything — and it is wrong in the way that matters: steps
+are not the same size. An item that ticks three small ones in ten minutes and
+then spends two hours on the fourth would show twenty minutes remaining for the
+whole of those two hours, and be most confident exactly when it is most wrong.
+
+**So it carries when it was said.** An estimate is a claim with a time on it, and
+a card showing "about an hour" without saying whether that was judged four
+minutes ago or four hours ago is the same failure as the profile that names the
+wrong function confidently: a number believed because it is displayed. Stale
+should look stale — the card can grey it, or say "an hour, as of 14:20", but it
+must not present an old guess as a current one.
+
+Two more things to settle while building it:
+
+- **Where it lives.** The item's markdown is the obvious home, since it travels
+  with the work and this whole item is about reading the worktree's copy. A
+  header line or a `## Estimate` section, whichever reads better beside `## Steps`
+  — but one place, parsed the way `## Steps` is, and absent when nobody has said.
+- **`AGENTS.md` has to ask for it**, in step 5 beside ticking the steps, or no
+  agent will maintain one. The instruction should say what makes an estimate
+  worth having: revised when it changes rather than set once, and shortened *or*
+  lengthened honestly — an item that says two hours for six hours running is
+  worse than one that says nothing.
+
 ## The options, and what each costs
 
 1. **The card reads the worktree's copy of the item. — chosen.** `BacklogRun` already
@@ -94,6 +125,10 @@ project or a shell, and it belongs beside them under the same `isPresent` guard.
       the same `isPresent` guard
 - [ ] A worktree that has gone falls back to the project's copy, visibly
 - [ ] All of it on the walk, never in `draw(_:)`
+- [ ] An estimate, written by whoever is working the item, carrying when it was
+      last said, and absent rather than guessed when nobody has said one
+- [ ] The card shows it beside the fraction, and shows a stale one as stale
+- [ ] `AGENTS.md` asks for the estimate in step 5, beside ticking the steps
 - [ ] `AGENTS.md`'s promise in step 5 becomes true, or goes
 - [ ] Write down here what was ruled out on the way
 - [ ] `spec/backlog.md` says what the project now does
