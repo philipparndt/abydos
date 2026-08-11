@@ -113,6 +113,96 @@ Two more things to settle while building it:
   precisely so that drawing costs nothing. Whatever this does must happen on the
   walk, not in `draw(_:)`.
 
+## What it came to, and what was ruled out on the way
+
+**Where the numbers come from.** `BacklogRun.itemInWorktree` finds the item in
+the checkout by number, and `BacklogCard`'s initialiser — which already runs on
+the walk, off the main thread — reads the checklist, the estimate, the pictures
+and the delta off whichever copy it gets, falling back to the project's. Nothing
+was added to `draw(_:)`. Cards with no run pay nothing: `itemInWorktree` touches
+the disk only when a checkout was recorded for that number and is still there.
+
+`Backlog.item(number:)` had to be made cheap first. It built every item in every
+state and then looked for the number, which reads the head of four hundred and
+fifty files; it now matches the directory listing and reads one. That was
+invisible while nothing called it in a loop and would have been a stutter per
+card.
+
+**The card says "in the worktree", not the branch name.** The entry suggested
+the fraction could sit beside the branch — `3/6 in backlog/0455-…` — and that
+was tried and rejected on the layout: this line truncates at the tail, so a
+branch name second would push the estimate, the image count and the spec mark
+off every in-progress card on the board. That there *is* a worktree goes at the
+head where it survives; which one goes at the tail where it can be lost, which
+is where it already was.
+
+**Three lines of marks, and both numbers were photographed rather than
+reasoned about.** At one line the estimate came out as `a…`. At two it reached
+`as of 07:…`, which loses the half of an estimate that matters. Three fits
+`1/12 in the worktree · about an hour, as of 07:11 · backlog/0458-…` with only
+the branch truncated. A card takes only the lines its marks need, so this is a
+line taller for the four or five items being worked on and unchanged for the
+rest of the board.
+
+**`byTruncatingTail` means "this is one line".** With it on the paragraph style
+the second line of the rect was reserved, paid for in card height, and left
+empty while the first still ended in `a…`. `byWordWrapping` plus
+`.truncatesLastVisibleLine` is the pair that wraps *and* ellipsises. That cost a
+photograph to notice and would not have shown in any test this pane can have.
+
+**`markLine` had to change how it measures.** It was `size(withAttributes:)`,
+which is right for a single line placed by its baseline and wrong for a line in
+a wrapped rect — the same "one font metric asked two ways" that this file's
+comments already record from the last time.
+
+### Ruled out
+
+- **Computing the estimate.** Elapsed over ticked, times remaining. Rejected in
+  the entry and worth repeating: it is most confident exactly when it is most
+  wrong, and it would have to be believed because nothing else is on the card.
+  Not built, not even as a fallback where nobody has written one.
+- **A relative age on the card** — "said 25m ago", which is the friendlier
+  phrasing. A card is built when the folder is walked and drawn for as long as
+  nothing changes, so a relative age freezes at the walk: a board left open for
+  three hours would go on saying `5m ago` all afternoon, which is the failure
+  the timestamp exists to prevent, in the display meant to prevent it. The
+  absolute time is a fact that does not rot. The command line prints the age,
+  because a line of output is stamped when it is printed.
+- **A staleness threshold** — greying an estimate older than an hour, or two.
+  There is no defensible number, and printing the time it was said makes an old
+  one look old without one.
+- **The estimate in a header line or frontmatter.** A section beside `## Steps`,
+  parsed the way `## Steps` is, keeps the item one document with no second
+  syntax in it. `## Estimate` is in the template so that the question is
+  visible; the prose under it does not parse, so a fresh item reads as having no
+  estimate rather than a broken one.
+- **A zone on the timestamp.** `2026-08-11 14:20`, local. More correct with an
+  offset and less likely to be typed correctly by hand — and this is a claim
+  about the next few hours, read on the machine the worktree is on. If backlogs
+  ever move between machines this is the line that will have to change.
+- **Dropping the branch name from the card** now that the fraction says there is
+  a worktree. It would have freed the whole tail — the branch is `backlog/` plus
+  the number and slug the card already shows — but 0445 put it there
+  deliberately and nobody asked for it back.
+
+### Not proved
+
+- **No test covers the card.** `BacklogPane` is in the app target, which the
+  suite cannot reach. What there is: `theProgressIsTheWorktreesAndTheStateIsThe
+  Projects` in `BacklogRunnerTests` drives a real worktree, ticks two steps in
+  it, runs the `completed/` move that `done` does, and asserts the branch says
+  2 and the project says 0 — everything below the card. The card itself was
+  photographed, and the menu asked with `--backlog-menu`.
+- **The worktree that has gone was fabricated.** All four live checkouts existed
+  today, so a run entry pointing at a directory that never existed was written
+  into a private copy of `backlog-runs.json` and the board photographed over it:
+  `12/14 in the project`, no branch drawn, and no worktree entries on the menu.
+  Nothing was deleted to test it.
+- **The estimate's usefulness is one data point.** It was maintained on this
+  item while this item was worked — set at two hours, revised to one — which is
+  the cheapest possible test of whether the format is one anybody would keep,
+  and not evidence that anybody else will.
+
 ## Estimate
 
 2026-08-11 07:11 — about an hour
@@ -134,5 +224,5 @@ Two more things to settle while building it:
 - [x] The card shows it beside the fraction, and shows a stale one as stale
 - [x] `AGENTS.md` asks for the estimate in step 5, beside ticking the steps
 - [x] `AGENTS.md`'s promise in step 5 becomes true, or goes
-- [ ] Write down here what was ruled out on the way
-- [ ] `spec/backlog.md` says what the project now does
+- [x] Write down here what was ruled out on the way
+- [x] `spec/backlog.md` says what the project now does
