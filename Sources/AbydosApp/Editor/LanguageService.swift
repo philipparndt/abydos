@@ -709,6 +709,20 @@ final class LanguageService {
 
 	// MARK: - Documents
 
+	/// How many `textDocument/didOpen` and `didClose` notifications have gone
+	/// out, for a script that needs to say what walking a list of results costs
+	/// the server.
+	///
+	/// A count and not a timing. What is claimed about a list of usages walked
+	/// with ↓ is a number of messages, and a number of messages is the same on a
+	/// loaded machine as on an idle one — which a duration is not.
+	private(set) var didOpenCount = 0
+	private(set) var didCloseCount = 0
+
+	var documentTrafficForTesting: String {
+		"didOpen=\(didOpenCount) didClose=\(didCloseCount) open=\(openDocuments.count)"
+	}
+
 	/// A file was opened. Starts a server for it if this is the first of its
 	/// language, and hands it the text.
 	func opened(url: URL, languageId: String, text: String, project: URL) {
@@ -721,6 +735,7 @@ final class LanguageService {
 			// holding a document nobody will ask it about goes on publishing
 			// diagnostics for it, which land on screen from a toolchain that is
 			// no longer the project's.
+			didCloseCount += 1
 			servers[previous]?.client.didClose(uri: uri)
 			deferredOpens[previous]?.removeValue(forKey: uri)
 			documentServers.removeValue(forKey: uri)
@@ -742,6 +757,7 @@ final class LanguageService {
 		}
 		openDocuments[uri] = 1
 		documentServers[uri] = key
+		didOpenCount += 1
 		server.client.didOpen(uri: uri, languageId: languageId, version: 1, text: text)
 	}
 
@@ -778,6 +794,7 @@ final class LanguageService {
 		let uri = uri(for: url)
 		openDocuments.removeValue(forKey: uri)
 		documentServers.removeValue(forKey: uri)
+		didCloseCount += 1
 		server.client.didClose(uri: uri)
 
 		// A closed file's problems are no longer on screen and no longer
@@ -2385,6 +2402,7 @@ final class LanguageService {
 		for (uri, document) in waiting {
 			openDocuments[uri] = 1
 			documentServers[uri] = key
+			didOpenCount += 1
 			server.client.didOpen(
 				uri: uri, languageId: document.languageId, version: 1, text: document.text
 			)

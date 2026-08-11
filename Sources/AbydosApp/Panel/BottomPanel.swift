@@ -63,6 +63,10 @@ final class BottomPanel: NSView {
 			/// the chat is a view change rather than a new process.
 			case review(ReviewPane, TerminalPane)
 			case search(SearchPane)
+			/// Everywhere a symbol is used. Beside search rather than in a
+			/// window of its own, because it is the same checklist over a
+			/// different question and it is read beside the code.
+			case usages(UsagesPane)
 			/// The backlog as a list and a board. A pane rather than a window
 			/// because it is read beside the work, the way the search results
 			/// are — the thing you glance at to see what is next and then go
@@ -107,6 +111,7 @@ final class BottomPanel: NSView {
 			case let .terminal(pane): return pane
 			case let .review(pane, _): return pane
 			case let .search(pane): return pane
+			case let .usages(pane): return pane
 			case let .backlog(pane): return pane
 			case let .debug(pane): return pane
 			case let .profiler(pane): return pane
@@ -154,6 +159,7 @@ final class BottomPanel: NSView {
 				return isStillRunning ? "play.fill" : "stop.fill"
 			case .review: return "sparkles"
 			case .search: return "magnifyingglass"
+			case .usages: return "link"
 			case .backlog: return "checklist"
 			case .debug: return "ladybug"
 			case .profiler: return "gauge.with.needle"
@@ -165,7 +171,7 @@ final class BottomPanel: NSView {
 			switch kind {
 			case let .terminal(pane): return pane
 			case let .review(_, pane): return pane
-			case .search, .debug, .profiler, .backlog: return nil
+			case .search, .usages, .debug, .profiler, .backlog: return nil
 			}
 		}
 	}
@@ -1798,8 +1804,8 @@ final class BottomPanel: NSView {
 		}
 
 		let pane = SearchPane(projectRoot: root)
-		pane.onOpenResult = { [weak self] url, line, _ in
-			self?.onOpenFinding?(url, line)
+		pane.onOpenResult = { [weak self] url, line, _, intent in
+			self?.onOpenResult?(url, line, intent)
 		}
 		let session = Session(title: "Search", kind: .search(pane))
 		sessions.append(session)
@@ -1807,6 +1813,56 @@ final class BottomPanel: NSView {
 		if let query { pane.setQuery(query) }
 		pane.focusField()
 		return pane
+	}
+
+	// MARK: - Usages
+
+	/// A row in a checklist pane — search or usages — was activated, with whether
+	/// the keyboard goes with it.
+	///
+	/// Separate from `onOpenFinding`, which a review's findings and a backlog card
+	/// use and which always means "take me there": a checklist row can also mean
+	/// "show me this one, and leave the keyboard where it is".
+	var onOpenResult: ((URL, Int, ResultChecklist.Intent) -> Void)?
+
+	/// The usages pane if there is one, without making one or moving the
+	/// keyboard.
+	var existingUsagesPane: UsagesPane? {
+		for session in sessions {
+			if case let .usages(pane) = session.kind { return pane }
+		}
+		return nil
+	}
+
+	/// Puts a usages pane in the panel and gives it the keyboard.
+	///
+	/// The pane is made outside and handed in, because the same view moves
+	/// between here and a window of its own and there is only ever one of it. A
+	/// second tab showing the same list is the "three ways to show one list" this
+	/// item exists to avoid.
+	func dockUsages(_ pane: UsagesPane, title: String) {
+		if let index = sessions.firstIndex(where: {
+			if case let .usages(existing) = $0.kind { return existing === pane }
+			return false
+		}) {
+			sessions[index].displayTitle = title
+			activate(sessions[index], focus: true)
+			refreshTabs()
+			return
+		}
+		let session = Session(title: "Usages", kind: .usages(pane))
+		session.displayTitle = title
+		sessions.append(session)
+		activate(session, focus: true)
+	}
+
+	/// Takes the usages tab away without touching the pane, for a list that is
+	/// moving into a window rather than being finished with.
+	func releaseUsages() {
+		guard let index = sessions.firstIndex(where: {
+			if case .usages = $0.kind { return true }; return false
+		}) else { return }
+		close(index: index)
 	}
 
 	// MARK: - The backlog
@@ -2220,6 +2276,14 @@ final class BottomPanel: NSView {
 		rebuildColumns()
 		placeholder.isHidden = true
 		if focus, case .terminal = session.kind { session.terminal?.focus() }
+		// A usages list arrives to be walked with ↓, so it arrives with the
+		// keyboard. Nothing did this before — the list appeared with the keyboard
+		// still in the editor, where ↓ scrolls code — and it is deferred by one
+		// turn because the view has only just been put in the column and a
+		// responder set before that is set on a view with no window.
+		if focus, case let .usages(pane) = session.kind {
+			DispatchQueue.main.async { pane.focusList() }
+		}
 		activeTerminalChanged()
 	}
 
@@ -2936,6 +3000,7 @@ final class BottomPanel: NSView {
 			switch session.kind {
 			case let .review(pane, _): pane.applySettings()
 			case let .search(pane): pane.applySettings()
+			case let .usages(pane): pane.applySettings()
 			case let .backlog(pane): pane.applySettings()
 			case let .debug(pane): pane.applySettings()
 			case let .terminal(pane): pane.terminalView.applyThemeChange()

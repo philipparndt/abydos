@@ -647,8 +647,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			let parts = spec.split(separator: ":").compactMap { Int($0) }
 			DispatchQueue.main.asyncAfter(deadline: .now() + (options.lspWait ?? 12)) {
 				guard parts.count == 2 else { return }
-				controller?.shouldDockUsagesForTesting = options.dockUsages
 				controller?.exerciseFindUsagesForTesting(line: parts[0] - 1, character: parts[1])
+			}
+			// After the list is there and has said what is in it: the report above
+			// runs three seconds behind the request, and a script that pressed ↓
+			// before then would be walking an empty table.
+			if let steps = options.usagesSteps {
+				DispatchQueue.main.asyncAfter(deadline: .now() + (options.lspWait ?? 12) + 4) {
+					controller?.usagesStepsForTesting(steps)
+				}
 			}
 		}
 

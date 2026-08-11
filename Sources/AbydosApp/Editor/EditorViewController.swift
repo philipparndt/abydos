@@ -1020,6 +1020,13 @@ final class EditorViewController: NSViewController {
 
 		if preview, let previewIndex = tabs.firstIndex(where: { $0.isPreview }) {
 			// Replace the provisional tab in place, so it does not jump position.
+			//
+			// The file it held is told to the server as closed, which replacement
+			// did not do: the slot is recycled rather than removed, so nothing went
+			// through `removeTab`, and walking a usage list through forty files
+			// left forty documents open at a server that had been told about every
+			// one of them and about the end of none.
+			announceClosed(tabs[previewIndex])
 			teardown(tabs[previewIndex])
 			tabs[previewIndex] = tab
 			activate(index: previewIndex, focusEditor: focusEditor)
@@ -1686,10 +1693,16 @@ final class EditorViewController: NSViewController {
 
 	/// Opens a file and jumps to a line — the target of review findings and
 	/// search results.
-	func open(fileURL: URL, atLine line: Int) {
+	///
+	/// `focusEditor` and `preview` are what tell "take me to this one" from "show
+	/// me this one": a checklist being walked with ↓ asks for the provisional tab
+	/// and leaves the keyboard in the list, so 263 usages cost one tab rather than
+	/// 263, and the next ↓ still reaches the next row. Both keep the defaults the
+	/// call has always had, so a click and a review finding are unchanged.
+	func open(fileURL: URL, atLine line: Int, focusEditor: Bool = true, preview: Bool = false) {
 		let departure = currentPlace
 		isReportingSuppressed += 1
-		open(fileURL: fileURL, focusEditor: true, preview: false)
+		open(fileURL: fileURL, focusEditor: focusEditor, preview: preview)
 		isReportingSuppressed -= 1
 		reportNavigation(
 			from: departure,
@@ -2270,13 +2283,7 @@ final class EditorViewController: NSViewController {
 	private func removeTab(at index: Int) {
 		guard tabs.indices.contains(index) else { return }
 
-		// A file nobody has open is one the server can stop thinking about.
-		let closing = tabs[index]
-		if let project, let languageId = closing.document?.languageId,
-		   !tabs.contains(where: { $0 !== closing && $0.url == closing.url }) {
-			LanguageService.shared.closed(url: closing.url, languageId: languageId, project: project.scopeRoot)
-		}
-
+		announceClosed(tabs[index])
 		teardown(tabs[index])
 		tabs.remove(at: index)
 
@@ -2319,6 +2326,20 @@ final class EditorViewController: NSViewController {
 		default:
 			return false
 		}
+	}
+
+	/// Tells the server about a file this group has stopped showing.
+	///
+	/// A file nobody has open is one the server can stop thinking about. Said
+	/// once per tab that goes, and only when no other tab here is still showing
+	/// the same file.
+	private func announceClosed(_ closing: Tab) {
+		guard let project, let languageId = closing.document?.languageId,
+		      !tabs.contains(where: { $0 !== closing && $0.url == closing.url })
+		else { return }
+		LanguageService.shared.closed(
+			url: closing.url, languageId: languageId, project: project.scopeRoot
+		)
 	}
 
 	private func teardown(_ tab: Tab) {
@@ -2532,9 +2553,10 @@ final class EditorViewController: NSViewController {
 		}
 	}
 
-	/// What the tab bar shows, in order.
+	/// What the tab bar shows, in order. A provisional tab is marked, because
+	/// "one tab for the whole list" is a claim about which kind of tab it is.
 	var tabTitlesForTesting: [String] {
-		tabs.map { $0.pageTitle ?? $0.url.lastPathComponent }
+		tabs.map { ($0.pageTitle ?? $0.url.lastPathComponent) + ($0.isPreview ? "~" : "") }
 	}
 
 	/// Closes every tab, for swapping one project's editors for another's.
