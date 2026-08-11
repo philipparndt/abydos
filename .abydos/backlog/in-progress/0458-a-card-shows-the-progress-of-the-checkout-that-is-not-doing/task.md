@@ -34,9 +34,21 @@ progress from the worktree**. Same for the two other things a card reads from th
 item and that an agent changes as it goes: the image count and whether there is a
 spec delta.
 
+## Decided: option 1, and the number says where it came from
+
+Chosen, with two additions asked for explicitly: **the card shows that the
+fraction came from a worktree**, and **the worktree's folder can be revealed**.
+The options below are kept as the reasons the others were not taken rather than
+as a choice still open.
+
+Revealing is a third thing to do with a worktree, beside the two 0445 already put
+on the card's menu — "Open Worktree as a Project" and "Open Terminal in
+Worktree". This one is Finder, for when somebody wants the files rather than the
+project or a shell, and it belongs beside them under the same `isPresent` guard.
+
 ## The options, and what each costs
 
-1. **The card reads the worktree's copy of the item.** `BacklogRun` already
+1. **The card reads the worktree's copy of the item. — chosen.** `BacklogRun` already
    carries `worktreePath` and `isPresent`, and a card is already built off the
    main thread by the code that walks the folder — so this is a second read in a
    place that is already doing file system work, and needs no new protocol and no
@@ -77,7 +89,9 @@ spec delta.
 - [ ] The image count and the spec delta come from the same place, for the same
       reason
 - [ ] Where the number came from is visible, so a branch's fraction is not
-      mistaken for the project's
+      mistaken for the project's — asked for explicitly, not inferred
+- [ ] "Reveal Worktree in Finder" on the card's menu, beside 0445's two, under
+      the same `isPresent` guard
 - [ ] A worktree that has gone falls back to the project's copy, visibly
 - [ ] All of it on the walk, never in `draw(_:)`
 - [ ] `AGENTS.md`'s promise in step 5 becomes true, or goes
