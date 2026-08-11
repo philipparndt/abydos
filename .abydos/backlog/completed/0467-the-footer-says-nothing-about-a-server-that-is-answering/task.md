@@ -129,7 +129,7 @@ after are in `images/`.
 
 ## Estimate
 
-2026-08-11 13:15 — about forty minutes left
+2026-08-11 13:35 — done
 
 ## Steps
 
@@ -150,4 +150,4 @@ after are in `images/`.
 - [x] The rule the chip is drawn by is a value the suite can reach, since it was
       the rule that was wrong and the suite could not see it
 - [x] Write down here what was ruled out on the way
-- [ ] `spec/language-servers.md` says what the project now does
+- [x] `spec/language-servers.md` says what the project now does

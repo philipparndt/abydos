@@ -420,6 +420,15 @@ projects; a footer that talks about every one of them is a footer people stop
 reading, and what there is to say about a *missing* server is the strip above the
 file, which has room for the sentence and for the way to fix it.
 
+**A name that fits is drawn however short it is.** The chip is what gives way
+when the editor is narrow, and it gives way in two stages: it is cut at the tail
+first, and dropped entirely when what is left would be too little to read — a
+chip saying `ru…` says nothing anybody can use, and what it crowds out is where
+the caret is. That floor is a claim about the *room*, never about the name: a
+server called `gopls` is a third the width of one called `rust-analyzer` and
+wants none of the room the rule is about, and a bar wide enough for a long name
+is wide enough for a short one.
+
 Clicking it opens the list of what is running. That is where the questions the
 chip raises are answered — whether it is really running, what it costs, which
 executable was resolved, and how to stop it — and it is not the settings page,
@@ -445,6 +454,24 @@ starts, stops, is refused or is reconsidered, which the app already announces.
 - **Then** the footer names the server and the container mark, and does not
   repeat the container's name, which the titlebar's pill is already showing
 
+### Scenario: a short name in a wide editor
+
+- **Given** a Go project whose `go.mod` is in a subdirectory, with `gopls`
+  installed on this machine and answering
+- **When** a `.go` file in it is open in an editor the width of a window
+- **Then** the footer reads `gopls` and nothing else, beside the position and
+  the language
+- **And** it is not dropped for being short: what may drop it is the room it has,
+  not how much of that room it wants
+
+### Scenario: a chip with nowhere to go
+
+- **Given** a server whose name and image together are wider than the bar's
+  remaining space
+- **When** what is left would be too few characters to read
+- **Then** no chip is drawn at all, and the language and the caret's position
+  keep their place
+
 ### Scenario: a file whose language has no server
 
 - **Given** a file of a language nothing is running for and nothing is coming
@@ -465,6 +492,7 @@ starts, stops, is refused or is reconsidered, which the app already announces.
 - **When** the caret is moved
 - **Then** nothing is looked up to draw the footer: what it says was settled when
   the server's state last changed
+
 ## Requirement: A server that started and is not answering says so above the file
 
 Everything else this program knows about a server's health is about *starting*
