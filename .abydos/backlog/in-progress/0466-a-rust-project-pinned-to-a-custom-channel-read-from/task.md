@@ -289,9 +289,15 @@ pulled `espressif/idf-rust` was left, since it is what the recipe builds on.
   `rust-toolchain.toml` or `.abydos/tools.json` while the project is open does not
   change the strip until the project is opened again.
 
-## Estimate
+## One more reading for 0472
 
-2026-08-11 17:51 — about an hour left; both routes driven end to end, tests and spec remain
+`PseudoTerminalTests.runsACommandAndCapturesOutput` went red once here, in a full
+run at a one-minute load average of **32** on a ten-core machine — another agent
+was building. It took **126.6 seconds** in that run and **0.028 seconds** run
+alone straight afterwards, at load 29. The second full run, at load 27 falling,
+passed: 2437 tests in 353 suites. Four thousand times slower for one test in one
+run is not a slow test, it is a test whose deadline is measured against a machine
+that is not idle, which is what 0472 says.
 
 ## Steps
 
