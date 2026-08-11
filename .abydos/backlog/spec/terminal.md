@@ -87,6 +87,15 @@ window appeared reporting the old one until something else happened to resize
 it. The same command then produced a picture of one size on the first run and
 twice that later, with nothing in between to explain it.
 
+Because the number now reaches the program the moment it is worked out, an
+answer that is wrong for a moment is an answer the program acts on. A scale of
+zero is such an answer and is not an absent one: a window that is not on a
+screen reports zero rather than nothing, and a window is not on a screen while
+a display is being woken, unplugged, or moved between. So a scale is used only
+if it is positive, and when none of the offered scales is, the size the
+program already has is left alone rather than replaced by a guess — the last
+answer was worked out on a screen that really existed.
+
 What follows from the true number is not the pane's business to soften. A
 picture taller than the pane scrolls as it is written, because `icat` sizes to
 the width and never to the height; that is what kitty does with the same file,
@@ -105,3 +114,12 @@ and the way to see all of one is to ask for fewer rows.
 - **When** the cell is found to be 16×38 and the grid is still 24 by 80
 - **Then** the terminal reports 1280 by 912 pixels for the same 24 by 80 cells
 - **And** the program is sent `SIGWINCH`, as it is for any other resize
+
+### Scenario: a window that is not on a screen
+
+- **Given** a pane whose window answers a backing scale of zero, and a display
+  behind it whose scale is 2
+- **When** the cell size is worked out
+- **Then** the display's scale is used and the program is told 16×38
+- **And** the program is never told a cell is zero pixels, which would be this
+  terminal saying it cannot show pictures at all

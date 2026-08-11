@@ -69,7 +69,7 @@ budget against 2.9 MB); the transfer being truncated; the prompt erasing it (one
 
 ## Estimate
 
-2026-08-11 13:51 — about an hour and a half left
+2026-08-11 14:07 — waiting on a capture from a run where it fails
 
 ## What four runs measure, on build 937
 
@@ -175,6 +175,26 @@ either `--metal-shot` or `--screenshot` for what was drawn. Eight sessions.
   app's last row is invisible. It is **not** shown to be the user's cause: the
   four runs still drew with a second client attached, and the shot at the end
   was taken after it had gone.
+
+## What this is waiting for
+
+One reproduction on the machine where it happens, with two things captured
+while it is on screen. Neither needs a rebuild — the app in `/Applications`
+does not have them yet, but any build from this branch does:
+
+1.  Launch with `ABYDOS_TERM_LOG=/tmp/pane.log` in the environment and
+    `--report-geometry`, run `kitty icat` four times in the pane, and keep
+    both the log and the `GEOM` lines. The one to read is
+    `winsize=<rows>x<cols> pixels=<h>x<w> ptyCell=<w>x<h>` — `ptyCell=0x0`
+    would be this app telling the pane it cannot show pictures at all, and a
+    `winsize` that disagrees with `rows`/`columns` on the same line is a
+    second tmux client sizing the pane out from under the window.
+2.  A photograph of the same four runs, so the log and the screen can be put
+    beside each other.
+
+Everything else 0397 and this item could ask has been asked. Without a
+capture from a state where it fails there is nothing left here to measure:
+what is measurable on this machine all says it works.
 
 ## What is still not shown
 
