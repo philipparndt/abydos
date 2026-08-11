@@ -15,11 +15,12 @@
 
 An item picked up with `start` is worked on in a checkout of its own, and the
 checklist, the estimate, the pictures and the spec delta are all written there.
-So a card reads those four from that checkout — found by number, because an
-agent that has run `done` has moved its copy to `completed/` on the branch while
-the project still has it in `in-progress/`. Where the item *stands* stays the
-project's answer: the folder it is in is what says who is working on what, and
-work finished on a branch nobody has merged is not finished here.
+So a card reads those four from that checkout — found by number and not by path,
+because the branch may have moved the item into another folder: an agent that
+gets stuck moves its copy to `waiting/` while the project still has it in
+`in-progress/`. Where the item *stands* stays the project's answer: the folder it
+is in is what says who is working on what, and work finished on a branch nobody
+has merged is not finished here.
 
 The card says which copy it is showing, because a fraction from a branch three
 commits ahead is not the same fact as one from the project. Where a checkout is
@@ -37,10 +38,10 @@ card.
 - **Then** its card reads `3/6 in the worktree`, and the item stays in the
   in-progress column
 
-### Scenario: the agent has finished and the branch is not merged
+### Scenario: the branch has parked the item and the project has not
 
-- **Given** an item whose worktree's copy has been moved to `completed/` by
-  `done`, while the project's copy is still in `in-progress/`
+- **Given** an item whose worktree's copy has been moved to `waiting/` on the
+  branch, while the project's copy is still in `in-progress/`
 - **Then** the card is still in the in-progress column, and still shows the
   branch's fraction — the copy is found by number, not by where it sits
 

@@ -198,6 +198,17 @@ comments already record from the last time.
   into a private copy of `backlog-runs.json` and the board photographed over it:
   `12/14 in the project`, no branch drawn, and no worktree entries on the menu.
   Nothing was deleted to test it.
+- **The `completed/` case that motivated finding an item by number cannot
+  actually reach a card.** Found at the end, by photographing the board after
+  running `done` on this very item: `done` moves the copy to `completed/` on the
+  branch *and* forgets the run in the project, deliberately — "a run left in the
+  project's list keeps the dashboard saying somebody is on it". So the card falls
+  back to the project's copy in the same moment, and the fraction reverts. The
+  by-number lookup is still the right one and still load-bearing, for the case
+  `AGENTS.md` sends agents to when they are stuck: a copy moved to `waiting/` on
+  the branch, with the run still recorded. The spec scenario was written for
+  `completed/` and corrected to `waiting/` once this was seen. A requirement
+  nothing implements is worse than no requirement.
 - **The estimate's usefulness is one data point.** It was maintained on this
   item while this item was worked — set at two hours, revised to one — which is
   the cheapest possible test of whether the format is one anybody would keep,
