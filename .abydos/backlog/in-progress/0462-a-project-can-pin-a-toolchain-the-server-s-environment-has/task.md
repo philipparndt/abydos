@@ -60,9 +60,13 @@ Nothing yet — written before the work. But the esp case above is a real
 constraint on any answer: for this project, no image this repository can
 reasonably ship will contain a `rust-analyzer` that Espressif does not publish.
 
+## Estimate
+
+2026-08-11 10:04 — about half a day left
+
 ## Steps
 
-- [ ] Read a project's toolchain pin, for Rust at least, before a server starts
+- [x] Read a project's toolchain pin, for Rust at least, before a server starts
 - [ ] Say plainly when the pin and the chosen image disagree, at the moment the
       image is chosen rather than at the first failed request
 - [ ] Decide whether a recipe can take a toolchain as a build argument, and
