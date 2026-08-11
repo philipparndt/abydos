@@ -47,6 +47,40 @@ machine's, so what got debugged would be a different toolchain from the one the
 project builds with — which is the whole reason a devcontainer's servers live in
 there.
 
+**Nothing is launched on a classpath that is not this project's.** Three ways a
+classpath is not one, and all three used to end in a JVM dying of something that
+read as the project's fault:
+
+- The server answers about **its own fallback workspace** rather than about this
+  project, which is what it does until the import has finished. A well-formed
+  answer for the wrong thing, and taken at face value it compiles against whatever
+  the newest toolchain on the machine is and then fails on the class file version.
+  So an answer counts only when it is *about* the project.
+- The classpath names directories the server **has not compiled into yet**, since
+  it fills them after the import. So the project is compiled before the JVM
+  starts.
+- The server answers, at once and for ever, that there **is no classpath** — which
+  is what an OSGi bundle gets, its dependencies being a target platform rather
+  than anything in its build file. That is an answer and not a wait, and it is
+  said as one: nothing is started, and nobody is left watching a spinner for
+  something that has already happened.
+
+### Scenario: a classpath the server has not worked out yet
+
+- **Given** a Java project whose server has not finished importing it
+- **When** a class in it is debugged
+- **Then** no JVM is started on the classpath the server answers with meanwhile
+- **And** what is being waited for is said, until the answer is about this project
+
+### Scenario: a project whose classpath the server cannot report
+
+- **Given** an OSGi bundle, whose dependencies are in its manifest rather than in
+  its build file
+- **When** a class in it is debugged
+- **Then** it says the server reports no classpath, and that this is its answer
+  rather than a wait
+- **And** no JVM is started
+
 ### Scenario: debugging a project whose editing server is the syntactic one
 
 - **Given** a Java project whose `.abydos/tools.json` chooses the server that
