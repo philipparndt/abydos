@@ -477,25 +477,20 @@ import Testing
 		}
 		// Named as this machine names it, not as /workspace/….
 		#expect(diagnosed.saw(fileURI), "\(probe.tool) diagnosed \(diagnosed.uris) and not \(fileURI)")
-		// And nothing at all came back in the container's names. This is the claim
-		// the test is really here for, and it is now made about every URI the
-		// server chose rather than about whichever one arrived first: a mapping
-		// that missed one would show up as a path under the mount, or as a path in
-		// some other project, and either is a file this machine does not have.
-		// Without the trailing slash a directory URL carries, so that the project's
-		// own URI — which is what jdtls names — compares equal, and so that the
-		// prefix below is a whole path component rather than a string match. Two
-		// projects called `probe` and `probe-notes` are the mistake that rule is
-		// for, and `ContainerPaths.moved` states it on the other side of the wire.
-		let inside = {
-			let home = URL(fileURLWithPath: FilePath.canonical(root), isDirectory: true).absoluteString
-			return home.hasSuffix("/") ? String(home.dropLast()) : home
-		}()
+		// And *nothing* came back under a mount, which is the claim this test is
+		// really here for, now made about every URI the server chose rather than
+		// about whichever one arrived first. A URI naming a file that is genuinely
+		// outside the project is not the failure being looked for — a server may
+		// diagnose a header from its own toolchain, and `ContainerPaths` leaves
+		// what it cannot map exactly as it is on purpose, because saying "no such
+		// file" is the truth about it. A path still under `/workspace` is the
+		// failure: it is a name only the container has, and it is what a mapping
+		// that missed one place looks like.
+		let mounted = paths.mounts.map { "file://\($0.container)" }
 		let strayed = diagnosed.uris.filter { uri in
-			guard uri.hasPrefix("file:") else { return false }
-			return uri != inside && !uri.hasPrefix(inside + "/")
+			mounted.contains { uri == $0 || uri.hasPrefix($0 + "/") }
 		}
-		#expect(strayed.isEmpty, "\(probe.tool) named files outside the project: \(strayed)")
+		#expect(strayed.isEmpty, "\(probe.tool) named files as the container sees them: \(strayed)")
 
 		let symbols = try await settled(within: probe.patience) {
 			try await client.documentSymbols(uri: fileURI)
