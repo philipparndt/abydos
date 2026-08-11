@@ -133,21 +133,33 @@ Replacing anything, or changing what the terminal does with the setting off.
 
 - [x] Build and link libghostty-vt from this project, and write down exactly what
       that cost and what it puts in `Package.swift`
-- [ ] Both kitty protocols — `U=1` placeholders and a `t=f` placement
-- [ ] Say what selection, the render path and prompt detection would each call —
-      and correct the item where it was wrong about who reads the grid
-- [ ] Design the seam from what the callers need, and say whether the old path
-      changes at all
-- [ ] Feed `tmux-prompt.bin`, `return-burst.bin` and 0468's two icat captures to
+- [x] Both kitty protocols — `U=1` placeholders and a `t=f` placement. `t=f`
+      fully; `U=1` only half, and the missing half is the one tmux uses
+- [x] Say what selection, the render path and prompt detection would each call —
+      and correct the item where it was wrong about who reads the grid.
+      `TmuxMirror` does not read it at all, and there is no prompt detection
+- [x] Design the seam from what the callers need, and say whether the old path
+      changes at all. It does not: two new files and two one-line extensions
+- [x] Feed `tmux-prompt.bin`, `return-burst.bin` and 0468's two icat captures to
       both engines and compare, cell for cell
-- [ ] Throughput against `TerminalThroughputTests`, with the load stated
-- [ ] Read its recent history and say how much the API has moved
-- [ ] A setting, off by default, and one place that reads it
-- [ ] Make the half-built parts refuse rather than draw something plausible, and
+- [x] Throughput against `TerminalThroughputTests`, with the load stated
+- [x] Measure what it costs to *read* the grid, which the write benchmark hides.
+      Added on the way, because a 17× parser that loses it back per frame is not
+      a faster terminal
+- [x] Read its recent history and say how much the API has moved
+- [x] A setting, off by default, and one place that reads it
+- [ ] **Wire the setting through `TerminalView` so it actually switches the
+      engine.** Found on the way, and deliberately stopped at: it is about forty
+      more protocol members across ninety call sites in a 3,019-line view, and
+      hurrying it is exactly how the old path stops being untouched. Until it is
+      done the setting changes nothing but what `--report-geometry` prints, and
+      both the setting's own help text and that report say so
+- [x] Make the half-built parts refuse rather than draw something plausible, and
       name in the setting what is missing
-- [ ] Say how somebody reporting a terminal bug will know which engine drew it
-- [ ] Write the recommendation, with the cost of being wrong in each direction
-- [ ] Write down here what was ruled out on the way
+- [x] Say how somebody reporting a terminal bug will know which engine drew it —
+      `engine=` in `--report-geometry`
+- [x] Write the recommendation, with the cost of being wrong in each direction
+- [x] Write down here what was ruled out on the way
 - [ ] No spec change — this item changes nothing about what the project does
 
 ## 1. Can it be built and linked? Yes, and it cost 62 seconds
@@ -434,3 +446,202 @@ were a couple of hours. And no version to pin to except a commit hash, because
 there is still no tag: the README says "the API signatures are still in flux" and
 "we haven't tagged libghostty with a version yet", with no semver policy and no
 changelog.
+
+## 4. Throughput: it parses much faster, and the load was bad
+
+**The load, first, because 0472 exists for this reason.** Taken on a 10-core
+machine with **load average 25.9 rising from 16.9** — `mediaanalysisd` at 173%,
+the user's own Abydos at 33%, `spotlightknowledged`, a `SourceKitService`, and two
+other agents (0465, 0466) building at the same time. That is a bad machine to
+measure on and the absolute numbers should not be quoted anywhere. Both engines
+were measured in the same process, in the same second, on the same bytes, best of
+five passes — so the *ratios* survive the noise even though the numbers do not.
+`ABYDOS_BENCH_ENGINE=abydos|libghostty-vt` now measures one engine alone, which
+is what to use for a real number on a quiet machine.
+
+Release build, `ABYDOS_BENCH=1 swift test -c release --filter TerminalThroughput`:
+
+| Workload | ours | libghostty-vt | |
+|---|---|---|---|
+| plain log output | 20.0 MB/s | **344.4** | 17× |
+| plain, history full | 19.8 MB/s | **344.0** | 17× |
+| colour changes only | 159.2 MB/s | **360.4** | 2.3× |
+| doom fire (truecolour, full repaint) | 135.3 MB/s | **171.3** | 1.3× |
+| wide-ish glyphs only | 39.7 MB/s | **1219.0** | 31× |
+| ascii only | 39.4 MB/s | **1094.5** | 28× |
+
+It is faster everywhere and by a lot on plain text, which is most of what a
+terminal does. That is not surprising and it is not a small thing: ghostty links
+simdutf and highway and scans UTF-8 and base64 with SIMD, which is an
+optimisation nobody here is going to write. The narrowest gap is the DOOM fire
+workload — a truecolour SGR change on every cell — where our own parser has had
+the most attention paid to it.
+
+**But this measures `write` only, and that is not the whole cost.** Ours fills
+`TerminalScreen` as it parses, so a frame reads the grid for nothing: `let screen
+= emulator.screen` is a retain of a value type. libghostty-vt keeps its grid on
+the far side of an FFI boundary, and its untracked grid references are valid only
+"until the next update to the terminal instance", so a snapshot means *copying*.
+`gridSnapshotCost` measures that, and it has to be read together with the table
+above — a parser 17× faster that then costs more per frame than it saved is not a
+win. Measured, on a 40-row screen with 5,200 lines of history:
+
+| | grid snapshot |
+|---|---|
+| ours | **0.000 ms/frame** — a retain of a value type; the benchmark cannot time it |
+| libghostty-vt, through this adapter | **4.372 ms/frame**, a 229 fps ceiling |
+
+**And that 4.4 ms is this adapter being naive, not the library being slow.**
+`copyAllLines` copies *every* line — all 5,240 of them, 524,000 cells across FFI
+at roughly 8 ns each — when a frame needs the forty that are on screen. The cost
+is O(history) where it should be O(viewport): the same copy restricted to the
+visible band is 40/5,240 of it, about **0.03 ms**, which is no problem at all.
+
+So the fair reading is that the parser is genuinely much faster, and the read cost
+is a fixable property of a two-hour adapter, with two fixes in order of
+preference — copy only the visible band, then `render.h`, which exists for exactly
+this, keeps its own per-row dirty state, and is documented as the thing to use
+instead of grid references because those "are not built to sustain the framerates
+needed for rendering large screens". The naive path is in the engine today because
+it is obviously correct, and a wrong fast one would have been much worse.
+`gridSnapshotCost` stays in the suite as the number the replacement has to beat.
+
+What this does *not* license anybody to claim: that switching engines makes the
+terminal 17× faster end to end. It makes the parser much faster and, today, the
+frame slower, and the second half is undone by work not yet done.
+
+## The recommendation
+
+**Keep going, as an option, and do not plan on deleting our emulator.**
+
+That is a different answer from either of the two the item set out to choose
+between, and the evidence is what changed it.
+
+### What the evidence actually said
+
+The item's premise was: *an engine a thousand people use daily gets right the
+class of thing we keep getting wrong.* Half of that held and half of it inverted.
+
+**For it, strongly:**
+
+- It builds and links in 62 seconds with one manifest entry and no shim. Step 1
+  was expected to be the hard part and was the easy part.
+- It parses 17× faster on plain text and faster on everything measured.
+- On real captures it agrees with us cell for cell where it matters:
+  `tmux-prompt.bin`'s 30 visible rows, `return-burst.bin`'s exact line count —
+  the count 0468 turned on — wide glyphs, combining marks, palette-vs-RGB
+  colours.
+- It has things we do not and would not build: reflow on resize, tracked
+  references that follow a cell through scrolling and pruning (better than our
+  `realignSelectionForDiscardedLines`), semantic prompt marks per row, a render
+  state with per-row dirty tracking, and a `t=f` kitty placement path that does
+  the pixel-to-cell arithmetic 0468 was about.
+
+**Against it, and these are the ones that were not predicted:**
+
+- **It reproduces 0404.** `CSI 6 d` on a five-row screen then `CSI A` puts the
+  cursor one row higher in libghostty-vt than in ours, and on the real capture
+  that lands tmux's `(rename-window)` prompt on row 22 instead of row 23, over
+  the pane's own output. That is the reported fault of 0404, in the engine that
+  was supposed to be the one that gets this right. The reason is not that ghostty
+  is careless: **this app turns tmux's status bar off**, which almost nobody does,
+  and with the bar on tmux never parks below a pane. So a widely-tested engine is
+  only well tested *in the configurations many people use*, and ours is not one
+  of them. That is the single most useful thing this item found.
+- **Kitty graphics covers one of the two protocols.** The `U=1` placeholder path
+  — the one that runs inside tmux, which is where the user is — needs a
+  diacritic decoder and fragment maths that libghostty-vt has but does not
+  export, and whose geometry calls explicitly refuse virtual placements. So
+  `UnicodePlaceholder` (226) is not replaceable and `KittyGraphics` (1,066) only
+  partly. 1,292 of the 3,518 lines come straight back.
+- **The API breaks about 9% of commits**, three of six recent breaks landing on
+  `terminal_new` and the option surface, with no tag to pin to and no changelog.
+  Shallow — median under ten lines — but a standing tax, forever.
+- **`discardedLineCount` has no equivalent** and would have to be rebuilt on a
+  tracked reference.
+
+### So the honest shape of the trade
+
+The item framed it as "maintain an emulator" against "maintain a C interop layer".
+The measurements say it is really: **maintain an emulator against maintain a C
+interop layer *and* the parts libghostty-vt does not export *and* the divergences
+where our behaviour is deliberately not theirs.** The saving is not 3,518 lines;
+it is at most ~2,200, and it comes with a tax and at least one behaviour we would
+have to keep patching on top.
+
+Which is why "an option, off by default" is not a compromise here but the right
+answer on the evidence: it is the only arrangement in which the 17× parser and
+the reflow can be had without betting the terminal on an engine that fails the
+one tmux case this app depends on.
+
+### The cost of being wrong, in each direction
+
+**If we adopt it and that turns out to be wrong**, the cost is a terminal whose
+hardest paths we no longer control: a `U=1` picture that does not draw, or a tmux
+prompt on the wrong row, is now a bug we cannot fix in our own code — we can only
+carry a patch, decode diacritics ourselves anyway, or wait upstream. Every
+terminal test in the suite was written against our engine, and those tests are why
+0397, 0404 and 0468 were findable at all; running them against a different engine
+turns some of them from regression tests into disagreements to adjudicate. The
+worst version of this is discovering it gradually, which is exactly what the
+option prevents.
+
+**If we reject it and that turns out to be wrong**, the cost is continuing to pay
+for correctness we could have had: another 0468 — a day, twice — for something
+ghostty already handles, plus a parser an order of magnitude slower on the
+workload terminals actually see, plus reflow on resize that we do not have and
+would be a substantial item of its own. The user's motive is sound and this item
+does not undermine it.
+
+**The cost of the middle course, which is what is recommended, and it is not
+free:** 18 MB in the repository; every build links a library most builds do not
+use; two possible homes for every terminal bug (answered by `engine=` in
+`--report-geometry`); and a second engine that is only worth having if somebody
+actually runs it. That last one is the real risk — an option nobody turns on is
+pure cost — and it is why the user running it daily, which is what he asked for,
+is the whole point rather than a nicety.
+
+### What the next stages are, in order
+
+1. Widen `TerminalEngine` to the ~40 members `TerminalView` uses and switch on the
+   setting. This is the stage that makes the option real, and it is the one that
+   must not disturb the old path.
+2. Move the grid snapshot from per-cell `grid_ref` to `render.h`, which is where
+   the per-frame cost goes away.
+3. Port the `t=f` placement path, which libghostty-vt fully supports.
+4. Decide about `U=1` — port our diacritic decoder onto their cells (the inputs
+   are all exposed: the row placeholder flag, `grid_ref_graphemes`, and the raw
+   `grid_ref_style` colours), or ask ghostty to export theirs.
+5. Take the off-screen-park difference upstream. It is a small, well-evidenced
+   report with a fixture behind it, and it is the kind of thing that gets fixed.
+
+## What was ruled out on the way
+
+- **`libghostty` / `include/ghostty.h` (the internal one).** Confirmed still true
+  and not spent further time on: no cell-level read, no kitty graphics, and it owns
+  the pty. `libghostty-spm` ships this one (`GhosttyKit.xcframework`), which is why
+  it is the wrong package to reach for.
+- **Depending on a published libghostty-vt artifact.** There is none.
+  `git tag | grep -i vt` is empty, the version string is `0.1.0-dev`, and the
+  README says "we haven't tagged libghostty with a version yet". Hence a committed
+  xcframework plus a script that rebuilds it from a named commit.
+- **A compile-time flag instead of a runtime setting.** It would keep the library
+  out of everybody's link, but the user could then not switch the engine on in the
+  app he actually uses, which is the entire point of the option.
+- **Making the seam `TerminalScreen` itself** — i.e. having the new engine build
+  one of ours. Ruled out because `TerminalScreen.scrollback` is `private(set)`, so
+  scrollback cannot be filled from outside without editing the old type, and
+  editing the old type is the one thing that must not happen. Hence
+  `TerminalGridReading`, which both engines satisfy without either being changed.
+- **`grid_ref` as the render path.** Ruled out by its own documentation before it
+  was measured: "not meant to be used as the core of a render loop … Use the
+  render state API for that." Kept only as the obviously-correct implementation to
+  compare `render.h` against.
+- **Running both engines and taking the grid from one and the graphics from the
+  other.** It would appear to work and would be the "silently misrenders" failure
+  in its purest form: placements computed against a grid the other engine
+  produced. Not done, and written down so nobody reaches for it.
+- **Wiring the switch through `TerminalView` in this item.** Not ruled out —
+  deferred deliberately, at the boundary, because it is ~40 protocol members and
+  ninety call sites in a 3,019-line view, and hurrying it is how the old path
+  stops being untouched.
