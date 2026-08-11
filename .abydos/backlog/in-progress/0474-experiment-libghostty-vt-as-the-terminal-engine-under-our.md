@@ -6,9 +6,20 @@
 
 The motive is right and today is the evidence for it: 0468 was one clamped cursor
 advance in our own emulator, found after two investigations and a day, and it is
-exactly the class of thing an engine a thousand people use daily gets right. This
-entry is the experiment, on a branch, with a decision at the end rather than a
-migration.
+exactly the class of thing an engine a thousand people use daily gets right.
+
+This entry is the experiment, on a branch — and the shape it takes was decided
+after the first draft:
+
+> maybe we should do it like the metal renderer and make it an option first and
+> keep my version for a while as well, that way I can really test it
+
+Which is better than any table this item could have produced. **The deliverable is
+a switchable engine, off by default, with the existing emulator untouched**, and
+the judgement comes from weeks of real use rather than an afternoon of
+measurement. The pattern is already here: `terminalGPURendering` defaults to
+false, is read in one place, and the Metal path is simply not built when it is
+off. The user runs with that one *on*, which is the arrangement working.
 
 **But there are two libghostties and the difference decides everything.** The
 apps on `awesome-libghostty` — conterm, Enso, fantastty, Muxy, justty, macterm —
