@@ -139,9 +139,12 @@ to take back.
 
 ↓ from the search field moves the keyboard into the results. ⏎ shows the
 selected match in the editor and gives the keyboard straight back to the list,
-so looking at a result and ticking it off is one hand and no clicks. A click and
-a double-click still hand the keyboard to the editor, because somebody who
-clicked a line of code means to be in it.
+so looking at a result and ticking it off is one hand and no clicks. What it
+shows it in is the editor's provisional tab — the one the project tree's single
+click uses, replaced in place by the next one — so working down a long result
+list with ⏎ leaves one tab behind rather than one per match. A click and a
+double-click still hand the keyboard to the editor, and the tab they open is a
+permanent one, because somebody who clicked a line of code means to be in it.
 
 A click that is building a selection — ⇧-click or ⌘-click — extends the
 selection and opens nothing.
@@ -158,3 +161,9 @@ selection and opens nothing.
 - **Given** a match already selected and open in the editor
 - **When** a match three rows down is ⇧-clicked
 - **Then** the four rows are selected and no other file is opened
+
+### Scenario: ⏎ down a list in several files
+
+- **Given** a search with matches in five files
+- **When** ⏎ is pressed on a match in each of them in turn
+- **Then** the editor holds one provisional tab, showing the last of them

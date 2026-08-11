@@ -338,6 +338,21 @@ symbol rather than on a row position buys. Then: expanded to a window, the windo
 closed, asked again, and the answer opened **in a window**. Docked again, and the
 ticks were still there, because the view moved rather than being rebuilt.
 
+### One knock-on for search, found by driving it afterwards
+
+Sharing the list means sharing what `.preview` does, so search's ⏎ now shows its
+match in the **provisional tab** as well, rather than opening a permanent one and
+putting the responder back a turn later. Working down a long search with ⏎ used to
+leave a tab per match; now it leaves one. The spec sentence about ⏎ giving the
+keyboard straight back is unchanged and still true — driven and checked:
+
+    select:1, ⏎     → opened=[project.yml:21]   who=ChecklistTable
+    click:1         → opened=[… project.yml:21!] who=CodeView
+
+The `!` marks a commit. The click opened once and not twice, which is the check
+that a click does not preview *and* commit, and `spec/search.md` now says which
+kind of tab each of the two leaves behind.
+
 ## Ruled out
 
 - **A second pane sharing only the checklist.** The row type is the same type, so
