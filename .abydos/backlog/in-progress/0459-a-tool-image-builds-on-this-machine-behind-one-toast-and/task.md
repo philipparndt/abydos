@@ -115,8 +115,15 @@ reason is one line somewhere in a hundred of compiler output.
       the toast, and not in the strip above the file
 - [x] Tests the kit can reach: the name test that says build or fetch, and a
       build proving the output arrives while it runs rather than at the end
-- [x] Driven with a recipe that really builds — `ABYDOS_BUILD_TOOL_IMAGES=1` and
-      a cold cache, which 0457 measured at 164 s
+- [x] Driven with a recipe that really builds and a cold cache — `openscad-lsp`
+      through the app, on an image builder that had just been restarted
+- [ ] The same through the gated live test,
+      `ABYDOS_BUILD_TOOL_IMAGES=1 xcrun swift test --filter BuiltToolImageLiveTests`.
+      Not done, and not for want of trying: that suite takes
+      `discover(preference: .automatic)`, which prefers docker, and docker's
+      daemon is down on this machine — so `ensure` fails in half a second
+      against a runtime that is not answering. It still skips itself in a plain
+      `make test`, which is the part that had to stay true, and does
 - [x] Write down here what was ruled out on the way
 - [x] `spec/tool-images.md` says what the project now does
 
@@ -255,13 +262,22 @@ is a real cold build of a real recipe and the same code path.
   machine.
 - **A build that is still going when the project is closed** was not tried. The
   pane's weak reference and `wasClosed` are 0444's and untouched.
-- **Two live tests fail on this machine and neither is this item's.**
-  `ContainerImageLiveTests`' two `preference → .docker` cases fail because
-  docker's daemon is not running — its CLI is on the path pointing at an
-  OrbStack socket that does not exist — so `docker image inspect` answers
-  *"failed to connect to the docker API … no such file or directory"* and
-  `isUnknownImage` quite correctly declines to call that a missing image. The
-  `.apple` case of both passes, and `RuntimeCommand`, `ContainerRuntime.discover`
-  and `isUnknownImage` are byte-identical to `main`. The gap is that a live test
-  skips when the *binary* is missing and not when the *daemon* is: worth an item
-  of its own rather than a change made in passing here.
+- **Docker was down on this machine all morning**, its CLI on the path pointing
+  at an OrbStack socket that does not exist, and it costs two things here.
+
+  `ContainerImageLiveTests`' two `preference → .docker` cases fail: `docker
+  image inspect` answers *"failed to connect to the docker API … no such file
+  or directory"*, and `isUnknownImage` quite correctly declines to call that a
+  missing image. The `.apple` case of both passes, and `RuntimeCommand`,
+  `ContainerRuntime.discover` and `isUnknownImage` are byte-identical to `main`.
+
+  And `BuiltToolImageLiveTests` cannot be run at all: it takes
+  `discover(preference: .automatic)`, which prefers docker, so with
+  `ABYDOS_BUILD_TOOL_IMAGES=1` it asks a dead runtime to build and is told no in
+  half a second. Without the variable it skips itself, which is what matters for
+  `make test` and is what it did.
+
+  Both are the same hole and it is not this item's: a live test skips when the
+  *binary* is missing and not when the *daemon* is, and a suite that has to pick
+  a runtime picks the one that is installed rather than the one that answers.
+  Worth an item of its own rather than a change made in passing here.
