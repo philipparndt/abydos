@@ -612,11 +612,9 @@ public enum BacklogCommands {
 
 		guard let command = start.command else {
 			let names = configuration.known.map(\.name).joined(separator: ", ")
-			out("")
-			out(configuration.known.isEmpty
+			byHand(start, because: configuration.known.isEmpty
 				? "No assistant is configured — run `abydos-backlog init` to choose one."
-				: "None of \(names) is installed, so nothing was started. The worktree is ready.")
-			out(start.prompt)
+				: "None of \(names) is installed, so nothing was started.")
 			return 0
 		}
 
@@ -628,7 +626,28 @@ public enum BacklogCommands {
 
 		out("  agent     \(start.assistant?.name ?? command.executable)")
 		out("")
-		return runInherited(command, in: start.directory)
+		return runInherited(command, in: start.directory, start: start)
+	}
+
+	/// What to say when the worktree was made and the agent was not started.
+	///
+	/// Half of a `start` is irreversible by the time anything can go wrong: the
+	/// branch exists, the worktree exists and the item has moved to
+	/// `in-progress/` in two checkouts. An exit that leaves all of that behind
+	/// without a sentence is how 0451 and 0453 came to look started and not be —
+	/// so whatever the reason, say it, then say where the work is and what the
+	/// agent would have been told, which is enough to carry on by hand.
+	private static func byHand(_ start: BacklogRunner.Start, because reason: String) {
+		out("")
+		out(reason)
+		out("The worktree is ready and \(String(format: "%04d", start.item.number)) has moved "
+			+ "to in-progress/, so pick it up by hand:")
+		out("")
+		out("    cd \(start.directory.path)")
+		out("")
+		out("and give an agent this:")
+		out("")
+		out(start.prompt)
 	}
 
 	/// Runs the assistant with this terminal, and waits.
@@ -636,7 +655,11 @@ public enum BacklogCommands {
 	/// The handles are inherited rather than piped: these are interactive
 	/// programs that draw a whole screen, and a pipe turns one into a
 	/// scrollback of escape sequences.
-	private static func runInherited(_ command: AgentLauncher.Command, in directory: URL) -> Int32 {
+	private static func runInherited(
+		_ command: AgentLauncher.Command,
+		in directory: URL,
+		start: BacklogRunner.Start
+	) -> Int32 {
 		let process = Process()
 		process.executableURL = URL(fileURLWithPath: command.executable)
 		process.arguments = command.arguments
@@ -645,6 +668,7 @@ public enum BacklogCommands {
 			try process.run()
 		} catch {
 			warn("could not start \(command.executable): \(error)")
+			byHand(start, because: "The agent was not started.")
 			return 1
 		}
 		process.waitUntilExit()

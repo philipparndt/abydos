@@ -94,6 +94,36 @@ is made, which is what puts every question about the assistant *after* the calle
 has printed the branch and the worktree. And `start` prints the directory and the
 prompt whenever an agent does not start, from either cause.
 
+## How it was proved
+
+Not by installing: `/Applications/Abydos.app` is the app somebody is using, and
+replacing it to test a command-line tool is not a trade worth making. So
+`make build CONFIG=release BUNDLE_ID=de.rnd7.abydos.item0464 PIN_UUID=0`, and the
+resulting `build/Abydos.app` copied whole into a scratch directory. The layout is
+the layout that matters — `Contents/Resources/bin/abydos-backlog`, signed, inside
+a real bundle — and that copy picks an item up end to end. The old installed
+binary was run against the same throwaway project for the before, and it is the
+crash.
+
+The item picked up was a throwaway: a scratch git repository with a backlog of
+one item, made for this and deleted after. The assistant was a stand-in — a shell
+script named `opencode`, first on the `PATH`, which writes its arguments to a
+file — so no real agent was ever launched and no tmux server was touched. The
+Claude Code path, which is the only one that crashed, was exercised with
+`start 1 --print`: it prints the command it would run, and that command is built
+by exactly the code that used to abort.
+
+The app was never launched, so `Settings.migrate` never ran and the user's
+settings were not reached. `abydos-backlog` reads and writes its own preference
+domain — `abydos-backlog`, since the binary has no bundle identifier — not the
+app's `de.rnd7.ideai`.
+
+`make test` was green on 2381 tests in 349 suites, on the second run. The first
+had two failures, both of them time: `PseudoTerminalTests` waiting 124 seconds
+for output a command produces in 0.35, and one `ContainerLSPLiveTests` case.
+Load average was **65** — two other agents were building on this machine — and
+both suites pass on their own in seconds at load 50.
+
 ## Ruled out
 
 - **`PACKAGE_RESOURCE_BUNDLE_PATH=…/Contents/Resources`** — worth knowing about
@@ -138,10 +168,15 @@ third point was done as well as the first.*
 - [x] Find what on the `start` path touches `Bundle.module`, from a backtrace
 - [x] Decide between carrying the bundle, finding the app, and not asking
 - [x] Find the app: `ModuleResources`, and no `Bundle.module` left in the package
-- [ ] `start` says what happened rather than crashing, when the agent cannot be
+- [x] `start` says what happened rather than crashing, when the agent cannot be
       launched but the worktree was made
 - [x] Tests: nothing to find is `nil`, both bundle layouts, the tool-inside-an-app
       path, and no source reaching for `Bundle.module`
-- [ ] The bundled tool, from a real `.app`, starts an item end to end
+- [x] The bundled tool, from a real `.app`, starts an item end to end
 - [x] Write down here what was ruled out on the way
-- [ ] `spec/backlog.md` says what the project now does
+- [x] `spec/backlog.md` says what the project now does
+
+The step above was written as "the installed tool, from `/Applications`". It was
+done from a copy of the built `.app` in a scratch directory instead, because
+`make install` replaces the app the user is working in. Same bundle, same
+`Contents/Resources/bin`, same signature — see "How it was proved".

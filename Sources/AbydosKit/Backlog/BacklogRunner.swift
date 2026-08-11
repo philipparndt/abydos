@@ -19,11 +19,38 @@ public enum BacklogRunner {
 		/// Nil when the work is happening in the project's own checkout.
 		public let branch: String?
 		public let prompt: String
-		/// How to start the assistant. Nil when none of the configured ones is
-		/// installed — the worktree is still made, and somebody can work in it.
-		public let command: AgentLauncher.Command?
 		public let assistant: BacklogAssistant?
 		public let run: BacklogRun?
+
+		/// How to start the assistant. Nil when none of the configured ones is
+		/// installed — the worktree is still made, and somebody can work in it.
+		///
+		/// Worked out when it is asked for rather than when the worktree is made,
+		/// and that ordering is the whole point. It used to be built while the
+		/// `Start` was, which put every question about the assistant — where its
+		/// binary is, what permissions it may have, and so what the settings say
+		/// — *before* the caller had printed a word. A failure in any of them was
+		/// therefore a `start` that had made a worktree, moved an item, and said
+		/// nothing at all about either (0464). Now the caller has the directory
+		/// and the branch in hand, and can say so, before anything is asked of
+		/// the assistant.
+		public var command: AgentLauncher.Command? {
+			guard let assistant, let executable = assistant.locate() else { return nil }
+			return AgentLauncher.Command(
+				executable: executable,
+				arguments: assistant.arguments(prompt: prompt) + Self.extraArguments(for: assistant)
+			)
+		}
+
+		/// What an agent may do without stopping to ask.
+		///
+		/// Only Claude Code takes one, and it is the same setting the review uses:
+		/// an agent handed one job that then asks whether it may edit the file is
+		/// an agent nobody asked anything, and the question was already answered by
+		/// putting the item in `ready/`.
+		private static func extraArguments(for assistant: BacklogAssistant) -> [String] {
+			assistant == .claude ? AgentLauncher.permissionArguments() : []
+		}
 	}
 
 	public enum Problem: Error, CustomStringConvertible {
@@ -201,33 +228,14 @@ public enum BacklogRunner {
 	) -> Start {
 		let text = prompt(number: item.number, title: item.title, path: relativePath, branch: branch)
 
-		var command: AgentLauncher.Command?
-		if let assistant, let executable = assistant.locate() {
-			command = AgentLauncher.Command(
-				executable: executable,
-				arguments: assistant.arguments(prompt: text) + extraArguments(for: assistant)
-			)
-		}
-
 		return Start(
 			item: item,
 			directory: directory,
 			branch: branch,
 			prompt: text,
-			command: command,
 			assistant: assistant,
 			run: run
 		)
-	}
-
-	/// What an agent may do without stopping to ask.
-	///
-	/// Only Claude Code takes one, and it is the same setting the review uses:
-	/// an agent handed one job that then asks whether it may edit the file is
-	/// an agent nobody asked anything, and the question was already answered by
-	/// putting the item in `ready/`.
-	private static func extraArguments(for assistant: BacklogAssistant) -> [String] {
-		assistant == .claude ? AgentLauncher.permissionArguments() : []
 	}
 
 	/// What the agent is told, which is as little as will do.
