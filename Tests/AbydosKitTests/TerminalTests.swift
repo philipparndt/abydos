@@ -516,8 +516,57 @@ struct PseudoTerminalTests {
 		#expect(started)
 
 		let sawOutput = await wait { collected.text.contains("hello-from-pty") }
-		#expect(sawOutput, "expected output, got: \(collected.text)")
+		// The load in the message, because the three reds this had in one day were
+		// all read as "the machine was busy" and none of them was: see
+		// `aCommandThatIsAlreadyOverDoesNotLoseItsOutput` below, which is the same
+		// failure with the diagnosis in it. 0472.
+		#expect(sawOutput, """
+			expected output after \(Patience.seconds)s, got: \
+			\(collected.text.debugDescription) — \(MachineLoad.said)
+			""")
 		pty.terminate()
+	}
+
+	/// A command that has already finished still shows what it printed.
+	///
+	/// **This is what `runsACommandAndCapturesOutput` going red was.** 0472 filed
+	/// it as a timeout of the same shape as Mermaid's budget — 124 s at load 54,
+	/// 126.6 s and 124 s at load 65, against a `/bin/echo` costing 0.028–0.35 s on
+	/// its own — and it is not that. Nothing was slow. `/bin/echo` writes its line
+	/// and exits while the parent is still starting, and `watchForExit` was closing
+	/// the master descriptor before the read source had taken the bytes out of the
+	/// pty. The output was not late; it was thrown away, and the wait then ran its
+	/// whole deadline for something that was never going to arrive.
+	///
+	/// So the 120 seconds is not the fault and raising or lowering it would have
+	/// fixed nothing: a hang detector is allowed to be generous, and this one was
+	/// detecting a real hang. What it could not do was say which.
+	///
+	/// Twenty of them, because the losing side of a race needs a busy machine, and
+	/// one lost is already the failure — printed with the attempt and the load so a
+	/// red here is read rather than re-run.
+	@Test func aCommandThatIsAlreadyOverDoesNotLoseItsOutput() async {
+		for attempt in 0..<20 {
+			let pty = makePTY()
+			let collected = Collector()
+			pty.onOutput = { collected.append($0) }
+			let word = "gone-\(attempt)"
+			#expect(pty.start(executable: "/bin/echo", arguments: [word]))
+			// Five seconds rather than `Patience.seconds`: this output is either
+			// there in milliseconds or it has been discarded, so there is nothing
+			// for a longer wait to catch — and twenty of them at two minutes each
+			// would outlive the whole run's deadline.
+			let arrived = await wait(timeout: 5) { collected.text.contains(word) }
+			pty.terminate()
+			guard arrived else {
+				Issue.record("""
+					attempt \(attempt + 1) of 20 lost the output of a /bin/echo that \
+					had already finished. Got: \(collected.text.debugDescription) \
+					— \(MachineLoad.said)
+					""")
+				return
+			}
+		}
 	}
 
 	@Test func reportsExitCode() async {
