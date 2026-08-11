@@ -197,10 +197,6 @@ the pid.
   tests considers language-server roles only, and that test now also checks that
   narrowing.
 
-## Estimate
-
-2026-08-11 19:49 — about half an hour left
-
 ## Steps
 
 - [x] Reproduce it deliberately: leave a container, run the suite, watch the
@@ -221,9 +217,13 @@ the pid.
 - [x] The suite green with a stale container present — the whole of it, 2451 tests
       in 355 suites, four times over, with `abydos-lsp-jdtls-<a live pid>-23` up
       throughout and thirteen more leftovers on the machine at the start of one of
-      them. Nothing left behind by any of the four. The only red anywhere in them
-      is `MermaidLiveTests.drawingIsFastEnoughToDoWhileSomebodyTypes`, which is
-      0472's and fails under the load the suite makes for itself
+      them. Nothing left behind by any of the four, and no container case red in
+      any of six runs. Two reds turned up that are neither this item's nor each
+      other's, both timing under the load the suite makes for itself:
+      `MermaidLiveTests.drawingIsFastEnoughToDoWhileSomebodyTypes`, which is
+      0472's, and `TerminalTests.runsACommandAndCapturesOutput`, which waits for
+      `/bin/echo` to arrive down a pty and is worth an item of its own if it
+      recurs
 - [x] Write down here what was ruled out on the way
 - [x] `spec/tool-images.md` says what the project now does — the reuse did not
       change, the cleanup did, and neither was in the spec at all
