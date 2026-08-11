@@ -191,9 +191,11 @@ public final class GhosttyTerminalEngine: TerminalEngine {
 		columns = Int(cols)
 		rows = Int(rowCount)
 
-		var screen: Int32 = 0
+		// `GhosttyTerminalScreen *`, so the imported enum type rather than a
+		// guessed integer width.
+		var screen = GHOSTTY_TERMINAL_SCREEN_PRIMARY
 		if ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_ACTIVE_SCREEN, &screen) == GHOSTTY_SUCCESS {
-			isAlternateScreen = screen != 0
+			isAlternateScreen = screen != GHOSTTY_TERMINAL_SCREEN_PRIMARY
 		}
 	}
 
@@ -233,20 +235,25 @@ public final class GhosttyTerminalEngine: TerminalEngine {
 
 	// MARK: - Grid out
 
+	// `size_t`, not `uint32_t`. Every one of these output types is documented in
+	// the header and getting one wrong is a silent stack write of the wrong
+	// width, which is exactly the kind of bug that passes its tests: the first
+	// draft of this file read both of these into a `UInt32` and the suite was
+	// green.
 	private var totalLineCount: Int {
 		guard let terminal else { return rows }
-		var total: UInt32 = 0
+		var total = 0
 		guard ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_TOTAL_ROWS, &total) == GHOSTTY_SUCCESS
 		else { return rows }
-		return Int(total)
+		return total
 	}
 
 	private var scrollbackCount: Int {
 		guard let terminal else { return 0 }
-		var back: UInt32 = 0
+		var back = 0
 		guard ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_SCROLLBACK_ROWS, &back) == GHOSTTY_SUCCESS
 		else { return 0 }
-		return Int(back)
+		return back
 	}
 
 	/// A snapshot, by copying.
