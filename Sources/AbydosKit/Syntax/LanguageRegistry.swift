@@ -398,7 +398,10 @@ public final class LanguageRegistry {
 	/// This module's own queries for a language, when it has any.
 	private static func supplementDirectory(languageId: String) -> URL? {
 		for base in searchDirectories {
-			let bundle = base.appendingPathComponent("Abydos_AbydosKit.bundle", isDirectory: true)
+			let bundle = base.appendingPathComponent(
+				"\(ModuleResources.bundleName).bundle",
+				isDirectory: true
+			)
 			for layout in ["Contents/Resources/Queries", "Queries"] {
 				let directory = bundle
 					.appendingPathComponent(layout, isDirectory: true)
@@ -409,29 +412,14 @@ public final class LanguageRegistry {
 		return nil
 	}
 
-	/// Anchor for locating this module's own bundle, which is what makes
-	/// resource lookup work under XCTest as well as in the app.
-	private final class BundleAnchor {}
-
 	/// Directories that may contain the grammar resource bundles.
 	///
-	/// Three contexts have to work and they disagree about where resources sit:
-	/// a packaged `.app` (main bundle resources), a bare `swift run` executable
-	/// (the directory next to the binary), and an XCTest run (where `Bundle.main`
-	/// is the *test runner*, not this code). Rather than branch on which one we
-	/// are in, try each candidate and take the first that actually has the file.
-	private static let searchDirectories: [URL] = {
-		var candidates: [URL] = []
-		if let resources = Bundle.main.resourceURL { candidates.append(resources) }
-		candidates.append(Bundle.main.bundleURL)
-
-		let own = Bundle(for: BundleAnchor.self)
-		if let resources = own.resourceURL { candidates.append(resources) }
-		// SPM places dependency bundles beside the test bundle, one level up.
-		candidates.append(own.bundleURL.deletingLastPathComponent())
-
-		return candidates
-	}()
+	/// The same list this module's own resources are found through: the grammar
+	/// bundles and `Abydos_AbydosKit.bundle` are copied into one directory by
+	/// `Scripts/bundle.sh` and emitted into one by `swift build`, so a second
+	/// list here would be a second list to keep in step — and it was already out
+	/// of step, since it did not know about a tool inside the `.app` (0464).
+	private static var searchDirectories: [URL] { ModuleResources.searchDirectories }
 
 	/// Locates a grammar's `queries/` directory.
 	///

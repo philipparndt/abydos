@@ -17,8 +17,15 @@ public final class SchemeLibrary {
 
 	/// Where the shipped ones are: a resource of this module, so they travel
 	/// into `.app` bundles with the grammar queries.
+	///
+	/// Through `ModuleResources` rather than `Bundle.module`, and that matters
+	/// here more than anywhere: this is read while `Settings.shared` is being
+	/// built, which every process that links this module does — including the
+	/// command-line tools, whose resources are not where the generated accessor
+	/// looks. It answered that with `fatalError`, so `abydos-backlog start` died
+	/// reading a setting (0464).
 	public static var bundledDirectory: URL? {
-		Bundle.module.url(forResource: "Schemes", withExtension: nil)
+		ModuleResources.url(forResource: "Schemes", withExtension: nil)
 	}
 
 	/// Where somebody's own go: `~/.config/abydos/schemes`.
