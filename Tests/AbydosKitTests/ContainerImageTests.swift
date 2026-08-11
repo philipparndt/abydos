@@ -248,6 +248,106 @@ struct ContainerImageStoreTests {
 		let outcomes = await [first, second]
         #expect(outcomes[0] == outcomes[1])
 	}
+
+	/// A build's own output arrives while it is still building.
+	///
+	/// The whole of 0459 in one claim. `ensure` has always taken an `output` sink
+	/// and the build branch has always passed it on; what nobody had checked is
+	/// that it arrives *during* the build rather than with the answer — which is
+	/// the only thing that makes a pane worth opening, since 0457 measured a cold
+	/// `rust-analyzer` at 164 seconds and output that appears at the end is 164
+	/// seconds of silence however it is displayed.
+	///
+	/// The claim is deliberately relative — the first piece is heard a second and
+	/// more before the outcome — because an absolute one measures how busy the
+	/// machine running the test is.
+	///
+	/// Stood in for by a script, so this needs no runtime, builds nothing and
+	/// runs in a plain `make test`. It pins the other half of the same branch
+	/// while it is there: a name in this app's namespace is built, and is never
+	/// sent to a registry.
+	@Test func aBuildsOwnOutputArrivesWhileItIsStillBuilding() async throws {
+		let recipe = try #require(ToolImageRecipes.recipe(forTool: "openscad-lsp"))
+
+		let directory = FileManager.default.temporaryDirectory
+			.appendingPathComponent("building-\(UUID().uuidString)")
+		try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+		defer { try? FileManager.default.removeItem(at: directory) }
+
+		// What the stand-in was asked to do, so that "built and not pulled" is
+		// read off the runtime's own arguments rather than inferred from the
+		// outcome.
+		let asked = directory.appendingPathComponent("asked")
+		let script = directory.appendingPathComponent("runtime")
+		try Data("""
+		#!/bin/sh
+		echo "$1" >> \(asked.path)
+		case "$1" in
+		build)
+			echo '#1 [internal] load build definition from Dockerfile'
+			sleep 2
+			echo '#8 writing image sha256:deadbeef'
+			exit 0
+			;;
+		*)
+			echo 'Error: no such image' >&2
+			exit 1
+			;;
+		esac
+
+		""".utf8).write(to: script)
+		try FileManager.default.setAttributes(
+			[.posixPermissions: 0o755], ofItemAtPath: script.path
+		)
+
+		let heard = Heard()
+		let store = ContainerImageStore()
+		let outcome = await store.ensure(
+			recipe.image, using: .docker(script.path), output: { heard.add($0) }
+		)
+		let finished = Date()
+
+		#expect(outcome == .built)
+		let first = try #require(heard.firstAt)
+		#expect(finished.timeIntervalSince(first) > 1)
+		#expect(heard.text.contains("load build definition"))
+		#expect(heard.text.contains("writing image"))
+
+		// Nothing in `abydos-built/` is fetched from anywhere, which is the
+		// requirement this branch exists to keep.
+		let subcommands = try String(contentsOf: asked, encoding: .utf8)
+		#expect(subcommands.contains("build"))
+		#expect(!subcommands.contains("pull"))
+	}
+
+	/// What a command said, and when the first of it was heard.
+	///
+	/// Written from the two threads reading the pipes and read from the test, so
+	/// it locks — the same shape `RuntimeCommand` uses for its one bool.
+	private final class Heard: @unchecked Sendable {
+		private let lock = NSLock()
+		private var pieces = ""
+		private var first: Date?
+
+		func add(_ piece: String) {
+			lock.lock()
+			if first == nil { first = Date() }
+			pieces += piece
+			lock.unlock()
+		}
+
+		var text: String {
+			lock.lock()
+			defer { lock.unlock() }
+			return pieces
+		}
+
+		var firstAt: Date? {
+			lock.lock()
+			defer { lock.unlock() }
+			return first
+		}
+	}
 }
 
 /// Against a real runtime: that the commands this sends are ones the runtime

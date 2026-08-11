@@ -899,6 +899,19 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// and the process.
 	private func recomputeGridSize() {
 		guard let clip = enclosingScrollView?.contentView else { return }
+		// Nothing to measure yet, so nothing is decided. A tab made without being
+		// brought to the front is not laid out until somebody reveals it, and a
+		// pane of no width answers the floor of `max(20, …)` — twenty columns.
+		//
+		// Harmless for a shell, which is told its size when it starts and is not
+		// running before that. Permanent for a pane that is *written into* while
+		// it is hidden, because scrollback does not reflow: 0459 photographed
+		// four hundred lines of a build wrapped into a twenty-character column
+		// down the left of a pane that was full width by the time anybody saw it.
+		// Keeping the eighty columns it was made with is both wider and more
+		// honest — eighty is a width, and twenty was a measurement of a view that
+		// is not on screen.
+		guard clip.bounds.width > 1, clip.bounds.height > 1 else { return }
 		let usableWidth = clip.bounds.width - Self.horizontalInset * 2
 		let usableHeight = clip.bounds.height - Self.verticalInset * 2
 

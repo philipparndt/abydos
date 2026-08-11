@@ -119,11 +119,23 @@ public enum ToolImageRecipes {
 	/// one down somewhere it should not have been, and building the recipe this
 	/// app actually ships is the useful thing to do about it.
 	public static func recipe(forImage image: String) -> Recipe? {
-		let prefix = namespace + "/"
-		guard image.hasPrefix(prefix) else { return nil }
-		let rest = image.dropFirst(prefix.count)
+		guard isBuiltHere(image) else { return nil }
+		let rest = image.dropFirst(namespace.count + 1)
 		let tool = rest.split(separator: ":", maxSplits: 1).first.map(String.init) ?? ""
 		return recipe(forTool: tool)
+	}
+
+	/// Whether an image name is one this app makes rather than one a registry
+	/// has.
+	///
+	/// The name alone, and deliberately cheaper than `recipe(forImage:)`, which
+	/// walks the build context and hashes every file in it to work out what the
+	/// current fingerprint is. Something that only wants to *say* which of a
+	/// build and a fetch is about to happen — the name of a tab, a sentence in
+	/// front of somebody — should not pay for a directory walk to find out, and
+	/// the namespace is the whole answer to that question anyway.
+	public static func isBuiltHere(_ image: String) -> Bool {
+		image.hasPrefix(namespace + "/")
 	}
 
 	/// What a stored value means, once. Anything that is not the "build it here"

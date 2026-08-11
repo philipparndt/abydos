@@ -190,6 +190,39 @@ public enum ContainerImages {
 	}
 }
 
+/// Somewhere to say how getting a container image is going.
+///
+/// The three things worth saying, for a caller with somewhere to show them: the
+/// one sentence before it starts, the runtime's own output as it arrives, and —
+/// the one `ContainerImageStore.ensure` has no need of — the moment the image
+/// part settled.
+///
+/// That third one is here for the callers that get an image in the middle of a
+/// longer job and hand the whole job back as one value. `DiagramExport.export`
+/// fetches an image and then draws several pictures with it, so its caller
+/// cannot tell a registry that refused from a syntax error in a `.puml`; a pane
+/// opened to watch a fetch must not end up with the second one written into it
+/// in red. Nil means it arrived.
+public struct ImageWatch: Sendable {
+	public var step: (@Sendable (String) -> Void)?
+	public var output: (@Sendable (String) -> Void)?
+	public var settled: (@Sendable (String?) -> Void)?
+
+	public init(
+		step: (@Sendable (String) -> Void)? = nil,
+		output: (@Sendable (String) -> Void)? = nil,
+		settled: (@Sendable (String?) -> Void)? = nil
+	) {
+		self.step = step
+		self.output = output
+		self.settled = settled
+	}
+
+	/// Nobody is watching, which is every use from a test and from the command
+	/// line.
+	public static let none = ImageWatch()
+}
+
 /// Makes sure an image is on the machine, once, however many things ask.
 ///
 /// Kept because the answer is worth remembering and the work is worth not

@@ -146,12 +146,21 @@ enum DiagramExportCommand {
 			Toast.post("Cannot export \(url.lastPathComponent)", detail: PlantUML.installHint)
 			return
 		}
+		// An export can need an image, and nothing says a diagram tool's image has
+		// to be one somebody publishes: a recipe can be written for anything, and
+		// then this is minutes. So the pane 0459 gave the language servers is
+		// offered here on the same terms, and costs nothing when the image is
+		// already on the machine — which is every export after the first.
+		var named = ""
+		if case let .image(container, _) = tool { named = container.image }
+		let watch = ImageArrival(image: named, tool: "PlantUML", project: projectRoot).watch
 		Task {
 			let outcome = await DiagramExport.export(
 				source: text, of: url, format: format, tool: tool, theme: theme,
 				progress: { message in
 					DispatchQueue.main.async { Toast.post(message, kind: .information) }
-				}
+				},
+				image: watch
 			)
 			await MainActor.run { report(outcome, for: url, stated: stated, then: then) }
 		}
