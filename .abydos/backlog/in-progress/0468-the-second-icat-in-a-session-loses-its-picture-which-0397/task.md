@@ -289,6 +289,59 @@ promised: the retired lines go into the scrollback, every absolute row stays
 where it was — which is what makes the whole scheme work — and the picture
 lands wholly on the screen with the prompt below it.
 
+## Reproduced, and then fixed
+
+The user's recipe, in the app, in a plain Local pane, on a 36×151 pane with
+`ptyCell=16x38` — near enough their 39×153 — with `TMUX` explicitly removed
+from the app's environment, because a `TMUX` inherited from the shell that
+launches it would put `icat` back on the other path and measure the wrong thing
+for the third time.
+
+`images/symptom-gap-no-picture.png` is the symptom: four `kitty icat` and one
+picture, the first, with a gap where each of the others should be.
+
+The sharpest way to say it is the offline replay of that capture. The same 4544
+bytes, through the old emulator and the new one:
+
+    old:  images=4  positioned=1  at=["5…30"]                                onScreen=8…43
+    new:  images=4  positioned=4  at=["5…30","34…59","63…88","91…116"]       onScreen=82…117
+
+**All four pictures arrive and decode either way** — `images=4` on both lines.
+What differed is that three of the four placements were gone by the time the
+next one was made, erased by the prompt in between. One picture out of four,
+and the first one: *"It now works once … it does not work for the second
+command."*
+
+`virtual=0 runs=0` on every line of both. There is not one placeholder cell in
+the whole capture, which is the measurement that says plainest that 0397 and
+the first pass on this item were reading another protocol.
+
+And the proof, `images/four-runs-four-pictures.png`: the screen filled first,
+then four `kitty icat` in a row, **four pictures**, each centred under its own
+command with the prompt below it. Counted rather than admired — the test
+picture's green bar is found on four separate bands of rows, at
+`y=972-1138, 1238-1404, 1504-1670, 1770-1936` — and counted identically with
+`terminalGPURendering` **off and on**, the same four bands to the pixel. So the
+drawing path is not a variable here; the placement was.
+
+A smaller picture than `palette.png` for that shot, for one reason: four of
+`palette.png` is 112 rows of output and a pane is 36, so three of the four are
+always scrolled away and no single frame can show all four. The bytes and the
+code path are identical.
+
+### Two things this needed that were not there
+
+- **`--run` may now be given more than once**, and each command is left to
+  finish before the next is sent. Four commands handed over together do not
+  work in a plain pane: `icat` reads the tty for the answer to its own queries
+  and reads the queued commands along with it, so four `icat` became one `icat`
+  and three swallowed lines. The first attempt at this reproduction measured
+  one run believing it had measured four.
+- **The replay instrument now counts positioned placements** —
+  `positioned`, `below`, `orphaned`, `at`. It only ever counted the placeholder
+  side, so run against a plain-pane capture it printed
+  `virtual=0 runs=0 placements=0 withoutImage=0` and looked like health.
+
 ## What this was waiting for
 
 **It is not waiting any more**; the recipe above is what arrived. Kept because
@@ -353,19 +406,76 @@ until the font or the display changes.
 Now a scale is used only if it is positive, and when none is, the size the
 program already has is left alone rather than replaced by a guess.
 
+## Which of the earlier rulings survive outside tmux
+
+Every ruling in 0397 and in the first half of this item was taken **inside
+tmux**. They are not thereby wrong — they are about the placeholder protocol,
+and that protocol is still what runs in a tmux pane. But none of them was
+evidence about a plain pane, and two of them pointed the wrong way there.
+Sorted by what is now known:
+
+**Re-checked without tmux, and they hold.**
+
+- *The transfer is truncated.* No. `images=4` on every replay of the plain
+  capture, and `t=f` means the picture never goes through an escape sequence at
+  all — 429 bytes on the wire against 180 KB.
+- *The image is evicted.* No. Four images, 2.9 MB each, against 128 MB, and
+  `orphaned=0` throughout.
+- *The size regression 0397 named — two different cell sizes in one session.*
+  Not this, and it cannot be this here: **a plain pane's `icat` sends no `c=`
+  and no `r=`**, so there is no size in the stream to disagree with itself. It
+  sends `s=732,v=988` and the terminal does the arithmetic, identically every
+  run. `ptyCell=16x38` before and after all four.
+- *A cell of no pixels — `ptyCell=0x0`.* Still a real defect and still fixed
+  (see "What was fixed"), and still not this: it gives no picture **and no
+  gap**, and the gap is exactly what the user has.
+- *GPU rendering.* Not a variable, now measured in a plain pane as well: four
+  pictures on four bands of rows, the same to the pixel with it off and on.
+
+**Turned over by the plain pane. These were true in tmux and false outside it.**
+
+- *"The prompt erases it." Out, and still out — one `ESC[J` per capture, at
+  offset 18, which is tmux clearing on attach.* **This was the cause.** The
+  finding underneath it was right and is worth keeping: `icat` writes four
+  `ESC[J` and tmux swallows them. The conclusion drawn from that — that the
+  prompt therefore does not erase pictures — only ever held *because* tmux was
+  swallowing them. A plain capture has nine, they reach the emulator, and three
+  of the four pictures die on them.
+- *"The emulator mis-reads tmux's placeholder repaint." It does not.* True, and
+  now beside the point: there is no repaint and there are no placeholder cells.
+  The 22,448 cells 0397 counted and called "the mechanism working" were the
+  mechanism working — of the other protocol.
+
+**Not re-checked outside tmux, and deliberately not.** Both are about tmux, so
+a plain pane has nothing to say about either.
+
+- *A second tmux client resizing the pane under the app.* Real, reproduced, and
+  irrelevant to a pane with no tmux in it. Left as it stands.
+- *tmux eating the escapes / `allow-passthrough`.* Same.
+
+**Confirmed from outside this repository.** `kitty icat --help`, on the version
+installed here, says it in kitty's own words:
+
+> `--passthrough [=detect]` … The default is to detect when running inside tmux
+> and automatically use the tmux passthrough escape codes. Note that when this
+> option is enabled it **implies `--unicode-placeholder` as well**.
+
+So the two protocols are one setting, that setting is `detect`, and what it
+detects is tmux. Reading that sentence at the start of 0397 would have saved
+both items.
+
 ## Steps
 
-- [ ] Reproduce it — four runs in one pane, in the app, on the current build
-      — **not done**: eight sessions, four runs each, and it drew every time.
-      What was tried is under "What was ruled out".
+- [x] Reproduce it — four runs in one pane, in the app, on the current build.
+      Not done in tmux, where it drew every time in eight sessions; done at
+      once in a plain pane, which is where the user was.
 - [x] `ABYDOS_TERM_LOG` and `tmux pipe-pane` across all four, and the `c=`/`r=`
       of each written down here
 - [x] Say what differs between run one and run two, in bytes
 - [x] Account for the two prompts on consecutive lines after run one
-- [ ] Fix it, and watch four runs in a row draw four pictures — **not done**,
-      because there is nothing here to watch stop happening. One real defect
-      on the path was fixed and is under "What was fixed"; four runs draw four
-      pictures before and after it.
+- [x] Fix it, and watch four runs in a row draw four pictures. Done, in a plain
+      pane: `images/four-runs-four-pictures.png`, and the offline replay going
+      from `positioned=1` to `positioned=4` on the same bytes.
 - [x] Ask a running app what the program was told the pane is
 - [x] Replay a capture through the emulator from the suite, rather than by
       writing the harness again
@@ -380,7 +490,11 @@ The user then said the pane is not tmux, and these are the steps that made:
       rows below the bottom of the screen
 - [x] A test that fails: the prompt after such a picture erases it
 - [x] Make the room instead of clamping the cursor
-- [ ] Watch the user's own recipe — fill the screen, then four `icat` in a row
+- [x] Watch the user's own recipe — fill the screen, then four `icat` in a row
       in a plain pane — draw four pictures, with GPU rendering off and on
-- [ ] Say which of 0397's rulings were taken inside tmux, which survive outside
+- [x] Say which of 0397's rulings were taken inside tmux, which survive outside
       it, and which were never re-checked
+- [x] Let `--run` be given more than once, so four commands can be typed one at
+      a time — a plain pane cannot be handed them all at once
+- [x] Teach the replay instrument to count positioned placements, so it can see
+      the protocol a plain pane uses

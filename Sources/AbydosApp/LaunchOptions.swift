@@ -28,8 +28,16 @@ struct LaunchOptions {
 	var zoom: Double?
 	/// Open the terminal panel before capture.
 	var openTerminal = false
-	/// Text typed into the terminal before capture.
-	var terminalInput: String?
+	/// Commands typed into the terminal before capture: one per `--run`, each
+	/// given time to finish before the next is sent.
+	///
+	/// A list rather than one string, because a plain pane cannot be handed a
+	/// whole script at once. `kitty icat` outside tmux asks the terminal what it
+	/// can do and reads the tty for the answer — and it reads whatever else is
+	/// waiting there along with it, so four commands sent together become one
+	/// command and three swallowed lines. 0468 is the case that needs four
+	/// `icat` in a row, and it needed them paced.
+	var terminalInput: [String] = []
 	/// Start an agent review before capture.
 	var startReview = false
 	/// Show the backlog dashboard before capture. `list` for the list, anything
@@ -548,7 +556,7 @@ struct LaunchOptions {
 			case "--settings":   options.openSettings = true
 			case "--zoom":       options.zoom = next().flatMap(Double.init)
 			case "--terminal":   options.openTerminal = true
-			case "--run":        options.terminalInput = next()
+			case "--run":        if let line = next() { options.terminalInput.append(line) }
 			case "--review":     options.startReview = true
 			case "--backlog":
 				// The mode is optional, so peek rather than consume: without
