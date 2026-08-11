@@ -112,10 +112,6 @@ nine-second capture, so the toast is still up when the shutter closes:
    "identical apart from the bits that always move". Anybody diffing
    `docs/images` after this should know those two are there.
 
-## Estimate
-
-2026-08-11 12:54 — about half an hour left
-
 ## Steps
 
 - [x] Find out what `--toast` and `--toasts` really do, since whichever answer
@@ -127,4 +123,4 @@ nine-second capture, so the toast is still up when the shutter closes:
       same picture — the toast raised through the hook, the way the machine
       raises it, rather than by calling the toast API
 - [x] Write down here what was ruled out on the way
-- [ ] `spec/screenshots.md` says what the project now does
+- [x] `spec/screenshots.md` says what the project now does
