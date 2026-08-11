@@ -358,6 +358,12 @@ import Testing
 	@Test(.serialized, arguments: probes)
 	func aServerInAContainerAnswersAboutFilesOnThisMachine(_ probe: Probe) async throws {
 		guard let (runtime, image) = available(for: probe) else { return }
+		// What a run that was killed before it could tidy up left behind, on the
+		// way in rather than on the way out: a `defer` and a `deinit` both run only
+		// for the exits that were going well anyway, and the exit that leaves a
+		// container is `run-tests.sh` killing a run for outliving its deadline.
+		// Once per process, and language servers only — see `ContainerLeftovers`.
+		_ = ContainerLeftovers.swept
 		// Said out loud, because a live test that skips is silent and six silent
 		// skips look exactly like six passes — which is the trap `project.md`
 		// warns about, multiplied by six. This is the line that separates "the
@@ -395,10 +401,30 @@ import Testing
 		// are part of that entry point rather than something this side adds.
 		#expect(run.arguments.last == image)
 
+		// The name of the container this is about to start, so that this test can
+		// end the one thing it began. Every container a test removes is one it
+		// noted the name of as it started it — `ContainerCleanupTests` is the rule
+		// written down, and 0435 is what the alternatives cost.
+		let started = try #require(resolved.launch.container)
+
 		let client = LSPClient()
 		client.containerPaths = paths
 		client.callbackQueue = .global()
-		defer { client.stop() }
+		defer {
+			client.stop()
+			// And then waited for. `stop` posts the removal to a background queue
+			// and deliberately does not wait — closing a project should not pause
+			// on a runtime — which is right in the app and not enough here: a test
+			// process exits within milliseconds of its last test, before that queue
+			// has been reached, and the container goes on running with nobody left
+			// who knows its name. That is 0473, and it is why every leak found on
+			// this machine was the *last* container a run started: the five before
+			// it had a whole test's worth of time to be removed in.
+			_ = RuntimeCommand.run(
+				ToolContainers.removal(of: [started.name], using: started.runtime),
+				deadline: ToolContainers.removalDeadline
+			)
+		}
 
 		let file = root.appendingPathComponent(probe.opened)
 		let fileURI = URL(fileURLWithPath: FilePath.canonical(file)).absoluteString
@@ -435,12 +461,41 @@ import Testing
 
 		// Diagnostics are the server's first unprompted word about a file, and
 		// the first chance to see a URI it chose rather than one it was given.
+		//
+		// The file's own, and not merely the first to arrive. This waited for the
+		// first diagnostic of any kind and required it to be about the file just
+		// opened, which is a race the suite lost about half the time on jdtls: an
+		// Eclipse import publishes a diagnostic *against the project directory*
+		// before it publishes one against any file in it — `file:///…/probe`, no
+		// filename — and which of the two lands first is decided by how busy the
+		// machine is. That is the whole of 0473's red suite, and the container an
+		// earlier run had left behind was a coincidence: with one deliberately
+		// present this passes, and on a machine with none it failed twice.
 		let deadline = Date().addingTimeInterval(probe.patience)
-		while diagnosed.uri == nil, Date() < deadline {
+		while !diagnosed.saw(fileURI), Date() < deadline {
 			try? await Task.sleep(nanoseconds: 250_000_000)
 		}
 		// Named as this machine names it, not as /workspace/….
-		#expect(diagnosed.uri == fileURI)
+		#expect(diagnosed.saw(fileURI), "\(probe.tool) diagnosed \(diagnosed.uris) and not \(fileURI)")
+		// And nothing at all came back in the container's names. This is the claim
+		// the test is really here for, and it is now made about every URI the
+		// server chose rather than about whichever one arrived first: a mapping
+		// that missed one would show up as a path under the mount, or as a path in
+		// some other project, and either is a file this machine does not have.
+		// Without the trailing slash a directory URL carries, so that the project's
+		// own URI — which is what jdtls names — compares equal, and so that the
+		// prefix below is a whole path component rather than a string match. Two
+		// projects called `probe` and `probe-notes` are the mistake that rule is
+		// for, and `ContainerPaths.moved` states it on the other side of the wire.
+		let inside = {
+			let home = URL(fileURLWithPath: FilePath.canonical(root), isDirectory: true).absoluteString
+			return home.hasSuffix("/") ? String(home.dropLast()) : home
+		}()
+		let strayed = diagnosed.uris.filter { uri in
+			guard uri.hasPrefix("file:") else { return false }
+			return uri != inside && !uri.hasPrefix(inside + "/")
+		}
+		#expect(strayed.isEmpty, "\(probe.tool) named files outside the project: \(strayed)")
 
 		let symbols = try await settled(within: probe.patience) {
 			try await client.documentSymbols(uri: fileURI)
@@ -492,16 +547,27 @@ import Testing
 		}
 	}
 
-	/// Collects the callback from whichever thread it arrives on.
+	/// Collects the callbacks from whichever thread they arrive on.
+	///
+	/// Every URI rather than the latest one, and in the order they came. A server
+	/// publishes diagnostics about whatever it likes and in whatever order it
+	/// finishes thinking about them — jdtls says something about the project
+	/// directory itself before it says anything about a file in it — so "the one
+	/// that arrived" is not a question with a stable answer, and a test that asked
+	/// it was a coin toss. The whole list is also what makes a failure worth
+	/// reading: it says what the server did name, which is the first thing anybody
+	/// looking at this wants to know.
 	private final class Diagnosed: @unchecked Sendable {
 		private let lock = NSLock()
-		private var value: String?
+		private var seen: [String] = []
 
-		var uri: String? { lock.lock(); defer { lock.unlock() }; return value }
+		var uris: [String] { lock.lock(); defer { lock.unlock() }; return seen }
+
+		func saw(_ uri: String) -> Bool { uris.contains(uri) }
 
 		func record(_ uri: String) {
 			lock.lock()
-			value = uri
+			seen.append(uri)
 			lock.unlock()
 		}
 	}
