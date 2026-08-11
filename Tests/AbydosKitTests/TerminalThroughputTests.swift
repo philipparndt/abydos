@@ -26,6 +26,10 @@ struct TerminalThroughputTests {
 	/// The mean moves by a tenth between runs on a machine doing anything else,
 	/// which is enough to hide a real change or invent one. The best pass is the
 	/// one least interrupted, and it is far steadier.
+	/// Both engines, on the same bytes, so the comparison is like for like
+	/// (item 0474). `ABYDOS_BENCH_ENGINE=abydos` or `=libghostty-vt` measures one
+	/// of them alone, which is what to use when the machine is busy: two engines
+	/// in one run take twice as long and give the second one a warmer machine.
 	private func throughput(
 		_ name: String,
 		bytes: [UInt8],
@@ -33,11 +37,25 @@ struct TerminalThroughputTests {
 		columns: Int = 100,
 		fillScrollback: Bool = false
 	) {
-		let emulator = TerminalEmulator(rows: rows, columns: columns)
+		let wanted = ProcessInfo.processInfo.environment["ABYDOS_BENCH_ENGINE"]
+		let engines: [(String, () -> TerminalEngine)] = [
+			(TerminalEmulator.engineName, { TerminalEmulator(rows: rows, columns: columns) }),
+			(GhosttyTerminalEngine.engineName, { GhosttyTerminalEngine(rows: rows, columns: columns) }),
+		]
+		for (engineName, make) in engines where wanted == nil || wanted == engineName {
+			measure(name, engineName: engineName, engine: make(),
+			        bytes: bytes, fillScrollback: fillScrollback)
+		}
+	}
+
+	private func measure(
+		_ name: String, engineName: String, engine: TerminalEngine,
+		bytes: [UInt8], fillScrollback: Bool
+	) {
 		if fillScrollback {
 			// A terminal that has been open a while sits with its history full,
 			// and what it costs to retire a line is only visible there.
-			emulator.write(String(repeating: "filler\r\n", count: 5_200))
+			engine.write(String(repeating: "filler\r\n", count: 5_200))
 		}
 		let megabytes = Double(bytes.count) / 1_048_576
 		let data = Data(bytes)
@@ -51,13 +69,13 @@ struct TerminalThroughputTests {
 			var elapsed = 0.0
 			var rounds = 0
 			while elapsed < seconds {
-				emulator.write(data)
+				engine.write(data)
 				rounds += 1
 				elapsed = -start.timeIntervalSinceNow
 			}
 			best = max(best, megabytes * Double(rounds) / elapsed)
 		}
-		print("BENCH \(name): \(String(format: "%.1f", best)) MB/s")
+		print("BENCH [\(engineName)] \(name): \(String(format: "%.1f", best)) MB/s")
 	}
 
 	@Test func plainOutput() {
@@ -112,5 +130,40 @@ struct TerminalThroughputTests {
 		let bytes = Array(frame.utf8)
 		print("BENCH fire frame size: \(bytes.count) bytes; 60fps needs \(String(format: "%.1f", Double(bytes.count) * 60 / 1_048_576)) MB/s")
 		throughput("doom fire", bytes: bytes)
+	}
+
+	/// What it costs to *read* the grid, which is the other half of the story
+	/// (item 0474) and the half the write benchmark above hides.
+	///
+	/// Our engine fills `TerminalScreen` as it parses, so a frame reads it for
+	/// nothing — `let screen = emulator.screen` is a retain. libghostty-vt keeps
+	/// the grid on its own side of an FFI boundary, and its grid references are
+	/// documented as valid only "until the next update to the terminal
+	/// instance", so a snapshot means copying. This measures that copy.
+	///
+	/// It is deliberately the naive copy — `grid_ref` per cell — because that is
+	/// what `GhosttyTerminalEngine` does today. `render.h` exists precisely to
+	/// make this cheap and is the fix; this number is what it has to beat.
+	@Test func gridSnapshotCost() {
+		let rows = 40, columns = 100
+		for (name, engine) in [
+			(TerminalEmulator.engineName, TerminalEmulator(rows: rows, columns: columns) as TerminalEngine),
+			(GhosttyTerminalEngine.engineName, GhosttyTerminalEngine(rows: rows, columns: columns)),
+		] {
+			engine.write(String(repeating: "a typical line of terminal output here\r\n", count: 5_200))
+			var best = Double.greatestFiniteMagnitude
+			for _ in 0..<5 {
+				let start = Date()
+				var reads = 0
+				while -start.timeIntervalSinceNow < 0.1 {
+					let grid = engine.grid
+					_ = grid.line(at: grid.totalLineCount - 1)?.cells.count
+					reads += 1
+				}
+				best = min(best, -start.timeIntervalSinceNow / Double(reads))
+			}
+			print("BENCH [\(name)] grid snapshot: \(String(format: "%.3f", best * 1000)) ms/frame "
+				+ "(\(String(format: "%.0f", 1 / best)) fps ceiling)")
+		}
 	}
 }

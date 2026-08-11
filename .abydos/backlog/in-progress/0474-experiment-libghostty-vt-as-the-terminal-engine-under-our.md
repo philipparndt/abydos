@@ -216,3 +216,221 @@ The costs, stated because they are not zero:
   fetching a matching zig by hand. It does not affect anybody who only *builds
   this app* — that is the point of committing the artifact — but it is a cost on
   whoever next updates it.
+
+## 2. Kitty graphics: it covers one of `icat`'s two protocols, not both
+
+**This is the clearest "no" in the item, and it is the answer to the question
+0468 taught us to ask.** 0468 established that `icat` speaks two protocols and
+that which one depends on tmux. libghostty-vt covers one of them.
+
+### `t=f` real placement, outside tmux — fully covered
+
+Everything 0468 needed is there, including the part our own emulator got wrong:
+
+- enumeration: `ghostty_kitty_graphics_placement_iterator_new` /
+  `_placement_next` / `_placement_get`, giving `IMAGE_ID`, `X_OFFSET`,
+  `Y_OFFSET`, `SOURCE_*`, `COLUMNS`, `ROWS`, `Z`
+- position: `ghostty_kitty_graphics_placement_viewport_pos`, which explicitly
+  reports a negative row when the placement has scrolled above the viewport
+- **the footprint from pixels**: `ghostty_kitty_graphics_placement_grid_size` —
+  "if the placement specifies explicit columns and rows, those are returned
+  directly; **otherwise they are calculated from the pixel size and cell
+  dimensions**". That is exactly the `s=732,v=988` with no `c=`/`r=` case 0468
+  measured, done by the library.
+- one call for a whole frame's worth: `_placement_render_info`
+- image bytes ready to upload: always decoded and always uncompressed, with a
+  monotonic `GENERATION` per image and per store, which is a better cache key
+  than the size heuristics we use.
+
+### `U=1` unicode placeholders, inside tmux — half covered, and the half we need is missing
+
+The escape is honoured, the image is stored, and the virtual placement is
+enumerable (`GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IS_VIRTUAL`). There is even a
+fast row flag, `GHOSTTY_ROW_DATA_KITTY_VIRTUAL_PLACEHOLDER`, which is the same
+prefilter ghostty's own renderer uses.
+
+**But the part that turns placeholder cells into picture fragments is not
+exported, and the geometry calls actively refuse virtual placements.**
+`placement_rect` and `placement_viewport_pos` both document returning
+`GHOSTTY_NO_VALUE` for a virtual placement, and `render_info`'s
+`viewport_visible` is documented false "when the placement is fully off-screen
+**or virtual**". Searching the whole of `include/ghostty` finds no `0x10EEEE`, no
+diacritic table, no placeholder iterator and no function with "placeholder" in
+its name other than that row flag.
+
+ghostty *has* this code — `src/terminal/kitty/graphics_unicode.zig`, 1,361 lines,
+including a 297-entry sorted diacritic table, the run-coalescing iterator, the
+fg-colour-to-image-id decoding and the aspect-preserving fragment maths. Its only
+consumer is `src/renderer/image.zig`, which is ghostty's own GUI renderer, and
+`src/lib_vt.zig` exports 16 `ghostty_kitty_graphics_*` functions of which none
+touch it.
+
+So **`UnicodePlaceholder` (226 lines) is not replaceable at all**, and
+`KittyGraphics` (1,066) is only partly. Both stay ours whatever happens. That
+takes the "3,518 lines we could stop maintaining" down by 1,292 before anything
+else is decided — and it removes the tmux path, which is the one the user
+actually runs.
+
+### Two ways to get nothing and think the library is broken
+
+Written down because both are silent, and both would have cost an afternoon:
+
+- **Graphics is off until a non-zero storage limit is set**
+  (`GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_STORAGE_LIMIT`), and the file media are off
+  by default too (`image_limits = .direct`). A forgotten limit is
+  indistinguishable from "this terminal has no graphics" — the library does not
+  even answer `a=q` in that state, deliberately.
+- **Query responses are not encoded at all unless a `WRITE_PTY` callback is
+  installed.** Outside tmux `icat` asks three questions and waits for answers, so
+  with no callback it *hangs* rather than misdraws. `GhosttyTerminalEngine`
+  installs both in `init` so this is not the missing piece later.
+
+Also: animation (`a=f`, `a=a`, `a=c`) is explicitly unimplemented and returns
+"ERROR: unimplemented action". Irrelevant to `icat`, but it is the one thing in
+this area the library says it does not do.
+
+## 3. What the callers would call — and two premises in this item were wrong
+
+The item said "`TmuxMirror` (473 lines), selection and prompt detection". Reading
+the call sites rather than the file names says otherwise, and it makes the seam
+much narrower than feared:
+
+- **`TmuxMirror` does not touch the emulator at all.** Not one reference to
+  `TerminalEmulator`, `TerminalScreen`, `TerminalLine` or `TerminalCell` in all
+  473 lines. It is a `tmux(1)` subprocess wrapper — `list-windows`,
+  `list-clients`, `set-option`, `paste-buffer` — and `@ai_status` is a tmux
+  *window option* read with a format string, not anything on screen. **It is
+  unaffected by the engine.** The item's claim that it "reads the screen" is
+  simply not true of today's code.
+- **There is no prompt detection.** No OSC 133, no semantic marks, no
+  `promptRow`, and no OSC 7 — `TerminalDirectory` says in its own comment why it
+  asks the pty and `pgrep` instead. So there is nothing to put behind the seam
+  and nothing to port. (Worth knowing for later: libghostty-vt would hand this
+  over for free if we ever wanted it, via
+  `GHOSTTY_ROW_DATA_SEMANTIC_PROMPT` per row.)
+
+So the grid is read by two things: **selection** and **the render path**.
+
+| Caller | What it reads | The libghostty-vt call |
+|---|---|---|
+| `TerminalSelection` | absolute `line(at:)`, `totalLineCount`, and per cell `scalar`, `combining`, `isWideTrailer`, column count. Nothing else — no attributes, no cursor | `ghostty_terminal_grid_ref` with `GHOSTTY_POINT_TAG_SCREEN` → `ghostty_grid_ref_cell` → `ghostty_cell_get(CODEPOINT/WIDE)` and `ghostty_grid_ref_graphemes`. Selection *anchors* would be better as `ghostty_terminal_grid_ref_track`, which the header says "follows its cell across … scrolling, scrollback pruning, resize/reflow" — that is strictly better than our `realignSelectionForDiscardedLines` |
+| Render path (`TerminalView`, `TerminalMetalRenderer`) | per frame, a band of rows: `scalar`, `combining`, `isWideTrailer`, `attributes.resolved`, `bold`/`dim`/`italic`/`hidden`/`underline`/`strikethrough`, `link` | **not `grid_ref`.** Its own docs: "The grid reference APIs are **not** meant to be used as the core of a render loop. They are not built to sustain the framerates needed for rendering large screens. Use the render state API for that." So `render.h`: `ghostty_render_state_new`, `_update` (or `_begin_update`/`_end_update` to hold the terminal lock briefly), `_row_iterator_new`/`_next`, `_row_cells_new`/`_next`/`_get_multi` for `RAW`/`STYLE`/`GRAPHEMES_BUF`/`BG_COLOR` |
+| Hyperlinks | `attributes.link` → `emulator.link(for:)` | `ghostty_grid_ref_hyperlink_uri`, which returns the URI itself rather than an index — so our `UInt16` link table would become a cache on our side |
+| Cursor, size, modes | `cursorRow`, `cursorColumn`, `isCursorVisible`, `isAlternateScreen`, `title`, `totalLineCount`, `scrollback.count` | `ghostty_terminal_get_multi` with `CURSOR_X`, `CURSOR_Y`, `CURSOR_VISIBLE`, `ACTIVE_SCREEN`, `TITLE`, `TOTAL_ROWS`, `SCROLLBACK_ROWS` — one call for all of them, which is what `_get_multi` exists for |
+
+**The one thing genuinely missing: `discardedLineCount`.** Ours counts the lines
+that have fallen off the top for good, and the scrollbar and selection realignment
+use it to tell an absolute index from an older frame apart from a current one.
+libghostty-vt prunes its own scrollback (by *bytes*, not lines) and does not
+report how many it threw away. The workaround is a tracked grid reference pinned
+to the oldest line, which reports no value once that line is gone — real, but it
+is bookkeeping we would be adding rather than removing.
+
+Everything else that looked like it might be a problem is not: `GlyphAtlas`,
+`Ligatures` and `ShapedRuns` never see an engine type at all — they are keyed on
+`UInt32` scalars — so they work unchanged under either engine.
+
+## The seam, and why the old path did not have to change
+
+`Sources/AbydosKit/Terminal/TerminalEngine.swift`, and **no file of the old
+engine was edited to make it fit.** `TerminalEmulator` conforms in an extension
+with one line of body (`var grid: TerminalGridReading { screen }`) and
+`TerminalScreen` with one (`var scrollbackCount: Int { scrollback.count }`). Both
+extensions are in the new file.
+
+That was luck earned earlier rather than luck: **the render path already treated
+the screen as a snapshot.** `TerminalView` does `let screen = emulator.screen`
+and then walks the copy, because `TerminalScreen` is a `Sendable` value type. So
+"a grid that keeps the frame it was given" — which is the one hard requirement,
+since libghostty-vt's untracked grid references are explicitly "only valid until
+the next update to the terminal instance" — was already how the caller worked.
+
+Being pedantic about "untouched", because that claim is what makes landing on
+main safe:
+
+- `git show --stat` for the seam commit touches no file under
+  `Sources/AbydosKit/Terminal/` that existed before, except by adding two new
+  ones.
+- No signature changed, no access level changed, no order of operations changed.
+- With the setting off, the bytes take the identical path through the identical
+  code. `TerminalEmulator` does not know the protocol exists at runtime.
+- The 2,410-test suite is still testing the engine it was written for, which
+  matters because those tests are why 0397, 0404 and 0468 were findable.
+
+### What is *not* wired, and why it stopped there
+
+**The setting does not yet switch the engine in `TerminalView`.** It is
+registered, off by default, shown in the settings window, and reported by
+`--report-geometry` as `engine=libghostty-vt(requested,not-wired)` when it is on
+— so it cannot silently look like it is working.
+
+The reason to stop there rather than push on: `TerminalView` reads the emulator
+at about ninety call sites, and roughly forty of the members it uses are not on
+the seam yet — `graphics`, `link(for:)`, `encodeMouse`, `encodeArrow`,
+`encodeModifiedKey`, `mouseTracking`, `bracketedPaste`, `keyboardFlags`,
+`reportsFocus`, `cursorShape`, `onBell`, `onClipboardWrite`, `onOpenFile`,
+`colourLookup`. Widening the protocol to all of them and changing
+`let emulator: TerminalEmulator` to the protocol is a real change to a
+3,019-line view, and doing it in a hurry is exactly how the old path stops being
+untouched. That is the next stage, and it is worth its own commit rather than
+being buried in this one.
+
+The temptation to resist, written down so nobody reaches for it: feeding both
+engines the same bytes and taking the *grid* from libghostty-vt while graphics,
+modes and encoding stay with ours. It would appear to work and would be wrong —
+placements computed by one engine over a grid produced by the other is precisely
+the "silently misrenders" failure that makes a half-built option worse than none.
+
+## 5. How much the API has moved: 9% of commits break something, and shallowly
+
+Measured off the git history of `include/ghostty/vt.h` and `include/ghostty/vt/`.
+
+**Age.** The umbrella header is 10.5 months old (2025-09-24), but the part that
+matters is much younger: `terminal.h` began 2026-03-13, and 22 of the 34 current
+headers were created in the last five months. `snapshot.h` and `io.h` are eight
+days old.
+
+**Rate.** 16 commits touched those headers in the last month, 62 in three, 171 in
+six — about four a week, with 89% of all header commits inside the last six
+months. This is under active construction, not settling.
+
+**Shape of the churn.** Overwhelmingly additive. Over three months: +4,010 /
+−374 lines, and most removals are rewritten doc comments. Public function count
+went 145 → 202 in three months with **2 removed and 2 signatures changed**. Enum
+constants: **+104 added, 0 removed, 0 renumbered**, every enum carrying an
+explicit `*_MAX_VALUE` sentinel.
+
+**Breaks.** Of 66 header commits in four months, **6 (9%) are source-breaking**:
+
+| Commit | What broke |
+|---|---|
+| `03d5fa268` (07-27) | `ghostty_terminal_new` lost its `GhosttyTerminalOptions` struct and became positional `cols, rows`. **Hits every consumer.** |
+| `cfc19e805` (08-05) | `ghostty_terminal_mode_get/set` deleted; migrate to `terminal_set/get` with `GHOSTTY_TERMINAL_OPT_MODE`. Deepest recent one — a call-shape change |
+| `20a1bfa5f` (07-08) | four colour functions went value → pointer. Mechanical |
+| `634ef7198` (07-10) | clipboard callback signature changed, 7 days after being added |
+| `847b8afc8` (05-23) | `selection_validate` removed the same day it was added |
+| `2c1dad790` (04-11) | kitty graphics info structs replaced by enum-tag getters |
+
+**Where the risk is, and it is not evenly spread.** `terminal.h` is the single
+volatile file — 28 commits in three months, and every recent break is in it.
+`screen.h` has had **zero** commits in three months. `grid_ref.h` is unchanged
+since May. `render.h` is +122/−0, purely additive. Of the 40 declarations that
+existed six months ago, **39 are byte-identical today**. So stability tracks the
+area almost perfectly, and the areas the render path and selection need are the
+stable ones.
+
+**Two mitigations that are measurably worth having**, both already applied in
+`GhosttyTerminalEngine`:
+
+- **Include only `<ghostty/vt.h>`, never a sub-header.** Two of the apparent
+  breaks were declarations moving between sub-headers with names and signatures
+  untouched; the umbrella makes both non-events.
+- **Wrap construction and option setup in one place.** Three of the six breaks
+  landed on `terminal_new` and the option/callback surface.
+
+**Expected cost.** Upgrading monthly, a compile break about one month in two;
+quarterly, near certainty. Median fix under ten lines; the two expensive ones
+were a couple of hours. And no version to pin to except a commit hash, because
+there is still no tag: the README says "the API signatures are still in flux" and
+"we haven't tagged libghostty with a version yet", with no semver policy and no
+changelog.

@@ -526,6 +526,22 @@ final class SettingsPaneController: NSViewController {
 					get: { Settings.shared.terminalGPURendering },
 					set: { Settings.shared.terminalGPURendering = $0 }
 				),
+				// The engine switch, and its help says what is missing rather
+				// than leaving it to be discovered. An option that draws
+				// something plausible while quietly lacking a whole category is
+				// worse than no option at all: whoever notices weeks later
+				// cannot tell whether it was the engine, the seam or a real bug.
+				// Item 0474.
+				.toggle(
+					title: "Emulate with libghostty-vt (experimental)",
+					help: "Use ghostty's terminal state machine instead of ours. Unfinished, and not "
+						+ "yet connected to the terminal panel — turning it on today changes nothing "
+						+ "but what --report-geometry says. Kitty graphics is not implemented behind "
+						+ "it, and it puts tmux's prompt a row too high when the status bar is off. "
+						+ "Backlog item 474.",
+					get: { Settings.shared.terminalGhosttyEngine },
+					set: { Settings.shared.terminalGhosttyEngine = $0 }
+				),
 			]),
 			.group(title: "Behaviour", help: nil, rows: [
 				.choice(
