@@ -72,14 +72,14 @@ event.
 
 ## Steps
 
-- [ ] A change to where a tool comes from clears what was remembered about it
+- [x] A change to where a tool comes from clears what was remembered about it
       failing, per project
-- [ ] The same for the choice of server, and for the container runtime
+- [x] The same for the choice of server, and for the container runtime
 - [ ] Decide and record whether a change also starts the server for what is
       already open, or only makes the next open ask
-- [ ] A running server that is no longer the one asked for is handled, and the
+- [x] A running server that is no longer the one asked for is handled, and the
       entry says which way and why
-- [ ] Driven: a project where a server has failed, a setting changed, and the
+- [x] Driven: a project where a server has failed, a setting changed, and the
       right thing starting without reopening anything
 - [ ] Write down here what was ruled out on the way
 - [ ] `spec/language-servers.md` says what the project now does
