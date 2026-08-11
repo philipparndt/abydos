@@ -99,6 +99,13 @@ final class LanguageService {
 	/// Which images a project asks for, read once: it is a file on disk, and the
 	/// answer does not change while a project is open.
 	private var toolImages: [String: ToolImages] = [:]
+	/// Which toolchains a project pins for itself, read once per project.
+	///
+	/// Held for the same reason as the images above and one more of its own:
+	/// finding a pin is a depth-2 walk of the project, and the strip asks for it
+	/// every time a file is opened. Once per project is the same bargain
+	/// `suitedDefinitions` struck when it stopped walking once per server.
+	private var toolchainPins: [String: [ToolchainPin]] = [:]
 	/// Which server a project wants for each language, out of the same file and
 	/// held for the same reason — but asked far harder. Every key a running
 	/// server is filed under now depends on it, so this is read once per
@@ -368,6 +375,14 @@ final class LanguageService {
 		/// way: the answer to "not yet" is to wait, and a language switched off
 		/// for ever because a container was slow is the wrong bargain.
 		let isIgnorable: Bool
+		/// What the button in front of `manual` says.
+		///
+		/// Almost always "How to install", which is what all of these were until
+		/// one of them was not about installing anything: a project pinning a
+		/// toolchain nothing here can supply has no installation to offer, and a
+		/// button saying there is one is the wrong advice printed in the place
+		/// somebody looks for the right one.
+		var detailsTitle: String = "How to install"
 		/// A button offering the one thing that would change this, if there is
 		/// one — see `Offer`. Most notices have none.
 		var offer: Offer? = nil
@@ -459,6 +474,30 @@ final class LanguageService {
 		// says *running*, and there is no container running to put one beside.
 		if let declined = declinedNotice(languageId: languageId, name: name, project: project, key: key) {
 			return declined
+		}
+
+		// **A toolchain this project pins that the server cannot have.** Said
+		// ahead of every state below it, including the running one, because it is
+		// the one thing here that is true whatever the server is doing: it starts,
+		// it answers the handshake, and it then refuses every question about every
+		// file. Sentences about fetching an image or installing a copy are all
+		// beside a project that none of them would read, so this goes first and
+		// they are named inside its own details instead.
+		if let objection = toolchainObjection(for: definition, project: project) {
+			return ServerNotice(
+				languageId: languageId,
+				languageName: name,
+				text: objection.sentence,
+				manual: objection.detail,
+				// Nothing to ignore. "Ignore Rust for ever" would bury a sentence
+				// about a file in this project that says exactly what is wrong with
+				// it, and the strip goes by itself the moment the pin or the choice
+				// of where the server comes from changes.
+				isIgnorable: false,
+				// Not "How to install": the answer here is not an installation and
+				// offering one would be the wrong advice printed on the button.
+				detailsTitle: "What can read it"
+			)
 		}
 
 		// Answering, or at least running and about to. Nothing to say.
@@ -1921,6 +1960,42 @@ final class LanguageService {
 		)
 	}
 
+	/// What this project's own toolchain pin means for where this server comes
+	/// from, or nil when it pins nothing or pins something the server can have.
+	///
+	/// **Known before anything is started**, which is the whole of 0462: the pin
+	/// is a file in the project and the image's toolchain was decided when the
+	/// image was built, so the two can be compared at the moment the image is
+	/// chosen rather than at the first request that comes back empty. 0461 is
+	/// the same failure noticed afterwards, from what the server says; this one
+	/// never needed the server to say anything.
+	///
+	/// The image is taken as *named* rather than as it will resolve. Working out
+	/// that a named image cannot be run here at all means walking the PATH for a
+	/// runtime, which is not a thing to do while a strip is being drawn — and it
+	/// would change only which of two sentences is said about a project neither
+	/// of them can read.
+	private func toolchainObjection(
+		for definition: LanguageServerDefinition, project: URL
+	) -> ToolchainPins.Objection? {
+		let path = project.standardizedFileURL.path
+		let pins = toolchainPins[path] ?? {
+			let read = ToolchainPins.inProject(project)
+			toolchainPins[path] = read
+			return read
+		}()
+		guard let pin = pins.first(where: { $0.tool == definition.name }) else { return nil }
+		let named = images(for: project).image(for: definition.name)
+		return ToolchainPins.objection(
+			to: pin,
+			// The word a recipe is asked for by is not an image name, so it is
+			// turned into the name of the image that would be built — which is
+			// still an image, and still one whose toolchain was fixed when it was
+			// built.
+			comingFrom: named.flatMap { ToolImageRecipes.resolve(image: $0, forTool: definition.name) }
+		)
+	}
+
 	/// The images a project asks for, project first and settings behind it.
 	private func images(for project: URL) -> ToolImages {
 		let path = project.standardizedFileURL.path
@@ -2190,6 +2265,7 @@ final class LanguageService {
 		documentServers = documentServers.filter { !$0.value.hasPrefix(prefix) }
 		missingHints = missingHints.filter { !$0.key.hasPrefix(prefix) }
 		toolImages.removeValue(forKey: project.standardizedFileURL.path)
+		toolchainPins.removeValue(forKey: project.standardizedFileURL.path)
 		serverChoices.removeValue(forKey: project.standardizedFileURL.path)
 		refused = refused.filter { !$0.hasPrefix(prefix) }
 		// The servers inside the project's devcontainer went with the rest of
@@ -2242,6 +2318,7 @@ final class LanguageService {
 		documentServers.removeAll()
 		missingHints.removeAll()
 		toolImages.removeAll()
+		toolchainPins.removeAll()
 		serverChoices.removeAll()
 		refused.removeAll()
 		devcontainerProjects.removeAll()
