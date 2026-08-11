@@ -406,60 +406,6 @@ modes and encoding stay with ours. It would appear to work and would be wrong �
 placements computed by one engine over a grid produced by the other is precisely
 the "silently misrenders" failure that makes a half-built option worse than none.
 
-## 5. How much the API has moved: 9% of commits break something, and shallowly
-
-Measured off the git history of `include/ghostty/vt.h` and `include/ghostty/vt/`.
-
-**Age.** The umbrella header is 10.5 months old (2025-09-24), but the part that
-matters is much younger: `terminal.h` began 2026-03-13, and 22 of the 34 current
-headers were created in the last five months. `snapshot.h` and `io.h` are eight
-days old.
-
-**Rate.** 16 commits touched those headers in the last month, 62 in three, 171 in
-six — about four a week, with 89% of all header commits inside the last six
-months. This is under active construction, not settling.
-
-**Shape of the churn.** Overwhelmingly additive. Over three months: +4,010 /
-−374 lines, and most removals are rewritten doc comments. Public function count
-went 145 → 202 in three months with **2 removed and 2 signatures changed**. Enum
-constants: **+104 added, 0 removed, 0 renumbered**, every enum carrying an
-explicit `*_MAX_VALUE` sentinel.
-
-**Breaks.** Of 66 header commits in four months, **6 (9%) are source-breaking**:
-
-| Commit | What broke |
-|---|---|
-| `03d5fa268` (07-27) | `ghostty_terminal_new` lost its `GhosttyTerminalOptions` struct and became positional `cols, rows`. **Hits every consumer.** |
-| `cfc19e805` (08-05) | `ghostty_terminal_mode_get/set` deleted; migrate to `terminal_set/get` with `GHOSTTY_TERMINAL_OPT_MODE`. Deepest recent one — a call-shape change |
-| `20a1bfa5f` (07-08) | four colour functions went value → pointer. Mechanical |
-| `634ef7198` (07-10) | clipboard callback signature changed, 7 days after being added |
-| `847b8afc8` (05-23) | `selection_validate` removed the same day it was added |
-| `2c1dad790` (04-11) | kitty graphics info structs replaced by enum-tag getters |
-
-**Where the risk is, and it is not evenly spread.** `terminal.h` is the single
-volatile file — 28 commits in three months, and every recent break is in it.
-`screen.h` has had **zero** commits in three months. `grid_ref.h` is unchanged
-since May. `render.h` is +122/−0, purely additive. Of the 40 declarations that
-existed six months ago, **39 are byte-identical today**. So stability tracks the
-area almost perfectly, and the areas the render path and selection need are the
-stable ones.
-
-**Two mitigations that are measurably worth having**, both already applied in
-`GhosttyTerminalEngine`:
-
-- **Include only `<ghostty/vt.h>`, never a sub-header.** Two of the apparent
-  breaks were declarations moving between sub-headers with names and signatures
-  untouched; the umbrella makes both non-events.
-- **Wrap construction and option setup in one place.** Three of the six breaks
-  landed on `terminal_new` and the option/callback surface.
-
-**Expected cost.** Upgrading monthly, a compile break about one month in two;
-quarterly, near certainty. Median fix under ten lines; the two expensive ones
-were a couple of hours. And no version to pin to except a commit hash, because
-there is still no tag: the README says "the API signatures are still in flux" and
-"we haven't tagged libghostty with a version yet", with no semver policy and no
-changelog.
-
 ## 4. Throughput: it parses much faster, and the load was bad
 
 **The load, first, because 0472 exists for this reason.** Taken on a 10-core
@@ -522,6 +468,60 @@ it is obviously correct, and a wrong fast one would have been much worse.
 What this does *not* license anybody to claim: that switching engines makes the
 terminal 17× faster end to end. It makes the parser much faster and, today, the
 frame slower, and the second half is undone by work not yet done.
+
+## 5. How much the API has moved: 9% of commits break something, and shallowly
+
+Measured off the git history of `include/ghostty/vt.h` and `include/ghostty/vt/`.
+
+**Age.** The umbrella header is 10.5 months old (2025-09-24), but the part that
+matters is much younger: `terminal.h` began 2026-03-13, and 22 of the 34 current
+headers were created in the last five months. `snapshot.h` and `io.h` are eight
+days old.
+
+**Rate.** 16 commits touched those headers in the last month, 62 in three, 171 in
+six — about four a week, with 89% of all header commits inside the last six
+months. This is under active construction, not settling.
+
+**Shape of the churn.** Overwhelmingly additive. Over three months: +4,010 /
+−374 lines, and most removals are rewritten doc comments. Public function count
+went 145 → 202 in three months with **2 removed and 2 signatures changed**. Enum
+constants: **+104 added, 0 removed, 0 renumbered**, every enum carrying an
+explicit `*_MAX_VALUE` sentinel.
+
+**Breaks.** Of 66 header commits in four months, **6 (9%) are source-breaking**:
+
+| Commit | What broke |
+|---|---|
+| `03d5fa268` (07-27) | `ghostty_terminal_new` lost its `GhosttyTerminalOptions` struct and became positional `cols, rows`. **Hits every consumer.** |
+| `cfc19e805` (08-05) | `ghostty_terminal_mode_get/set` deleted; migrate to `terminal_set/get` with `GHOSTTY_TERMINAL_OPT_MODE`. Deepest recent one — a call-shape change |
+| `20a1bfa5f` (07-08) | four colour functions went value → pointer. Mechanical |
+| `634ef7198` (07-10) | clipboard callback signature changed, 7 days after being added |
+| `847b8afc8` (05-23) | `selection_validate` removed the same day it was added |
+| `2c1dad790` (04-11) | kitty graphics info structs replaced by enum-tag getters |
+
+**Where the risk is, and it is not evenly spread.** `terminal.h` is the single
+volatile file — 28 commits in three months, and every recent break is in it.
+`screen.h` has had **zero** commits in three months. `grid_ref.h` is unchanged
+since May. `render.h` is +122/−0, purely additive. Of the 40 declarations that
+existed six months ago, **39 are byte-identical today**. So stability tracks the
+area almost perfectly, and the areas the render path and selection need are the
+stable ones.
+
+**Two mitigations that are measurably worth having**, both already applied in
+`GhosttyTerminalEngine`:
+
+- **Include only `<ghostty/vt.h>`, never a sub-header.** Two of the apparent
+  breaks were declarations moving between sub-headers with names and signatures
+  untouched; the umbrella makes both non-events.
+- **Wrap construction and option setup in one place.** Three of the six breaks
+  landed on `terminal_new` and the option/callback surface.
+
+**Expected cost.** Upgrading monthly, a compile break about one month in two;
+quarterly, near certainty. Median fix under ten lines; the two expensive ones
+were a couple of hours. And no version to pin to except a commit hash, because
+there is still no tag: the README says "the API signatures are still in flux" and
+"we haven't tagged libghostty with a version yet", with no semver policy and no
+changelog.
 
 ## The recommendation
 
@@ -694,3 +694,25 @@ disagreeing on a real capture is a bug report either way round.
 
     # rebuild the vendored library from a named ghostty commit (needs zig)
     Scripts/build-libghostty-vt.sh [<commit-ish>]
+
+## The suite, and one failure that could not be named
+
+`make build CONFIG=debug BUNDLE_ID=de.rnd7.abydos.item0474 PIN_UUID=0` builds
+(build 989), and `make test` is green: **2,419 tests in 353 suites**, which is the
+expected ~2,410 plus this item's 8 new tests in 1 new suite.
+
+Said plainly because it is the sort of thing worth not hiding: an earlier run of
+the same suite reported **2,419 tests … failed with 1 issue**, and the name of the
+failing test was lost — the run was piped through a `tail -4` that kept the
+summary line and threw the detail away. The re-run passed at a *higher* load
+(load average 52 rising to 76 on ten cores, against 15–27 for the failing run),
+which is the opposite of what a real regression does, and the terminal suites
+specifically — `GhosttyEngineTests`, `TmuxPromptTests`, `ReturnBurstTests`,
+`TerminalTests`, 155 tests in 20 suites — passed on their own in 0.35 s both
+before and after. 0472 already records that this suite has two tests that go red
+under concurrent builds. So the balance of evidence is a 0472-class flake, but it
+is **not proven**, and the honest version of that sentence is that a failure was
+seen once and could not be identified.
+
+Load throughout: another two agents (0465, 0466) building, `mediaanalysisd` at
+173%, and the user's own Abydos running.
