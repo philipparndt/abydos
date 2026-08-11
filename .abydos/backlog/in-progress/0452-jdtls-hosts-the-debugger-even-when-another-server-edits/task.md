@@ -64,8 +64,15 @@ the ten minutes completion needed.
   editing server is kmp-lsp — and today that offer cannot be honoured. Whatever
   else changes, that lie should stop.
 
+## Estimate
+
+2026-08-11 15:37 — about three hours left, first measurement in
+
 ## Steps
 
+- [x] A way to ask the question at all: `--report-answer` polls the three
+      questions an editor asks, and neither of the debugger's two could be asked
+      — added, beside them, on their own clock
 - [ ] Measure how long jdtls needs before the *adapter* can launch, as against
       before completion answers — the two may be very different
 - [ ] Decide where the classpath comes from, and write down why: jdtls's import,

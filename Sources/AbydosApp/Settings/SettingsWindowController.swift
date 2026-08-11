@@ -610,6 +610,14 @@ final class SettingsPaneController: NSViewController {
 				.joined(separator: ", ")
 			let names = group.candidates.map(\.name)
 			let sole = names.count == 1
+			// What each candidate costs, where there is a choice to make. Two bare
+			// names say what the options are called and nothing about which one
+			// anybody should pick, and the difference between these two is minutes
+			// and gigabytes against type checking. 0449 asked for this line and left
+			// it to whoever knew the trade.
+			let trades = group.candidates
+				.compactMap { candidate in candidate.trade.map { "\(candidate.name) — \($0)" } }
+				.joined(separator: "  ")
 			return .choice(
 				title: title,
 				help: sole
@@ -619,7 +627,8 @@ final class SettingsPaneController: NSViewController {
 					: "Which server answers for this language. A project naming its own in "
 						+ ".abydos/tools.json overrides this — the file wins and this is the "
 						+ "default — and a named server that cannot be started says so rather than "
-						+ "quietly becoming the other one.",
+						+ "quietly becoming the other one."
+						+ (trades.isEmpty ? "" : "  \(trades)"),
 				options: [(
 					label: sole
 						? "\(names.first ?? "") — the only one Abydos has"

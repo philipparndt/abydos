@@ -205,6 +205,17 @@ final class LanguageService {
 	/// rather than once per keystroke in the symbol palette.
 	private var emptied: Set<String> = []
 
+	/// jdtls started for the debugger alone, by project path.
+	///
+	/// **A table of its own, and that is the enforcement rather than a
+	/// convenience.** `servers` is what every query and every `didOpen` is routed
+	/// through, and `workspaceSymbols` fans out over every entry with a project's
+	/// prefix — so a debug host in there would be a second answer to questions the
+	/// chosen server is already answering, which is exactly what 0449 refused.
+	/// Nothing in this table can be reached by asking about a language, and what
+	/// is in it is a `JavaDebugHost`, which has no way to be asked about a file.
+	private var debugHosts: [String: JavaDebugHost] = [:]
+
 	/// The preferences that decide which server answers and where it comes from,
 	/// as they were the last time anything was done about them.
 	private var preferences = ToolPreferences(Settings.shared)
@@ -1075,14 +1086,6 @@ final class LanguageService {
 	/// the debugger from.
 	enum JavaDebugFailure: LocalizedError {
 		case noServer(hint: String)
-		/// The project's Java server is not the one that hosts the debugger.
-		///
-		/// The debug adapter for Java lives *inside* jdtls — it is an Eclipse
-		/// bundle jdtls is told to load — so a project that chose another Java
-		/// server has no adapter at all, however well that server reads the code.
-		/// Told as a consequence of a choice, since it is one: the alternative is
-		/// a Debug button that does nothing and no explanation anywhere.
-		case notTheDebugServer(name: String)
 		case noBundle
 		case refused(String)
 
@@ -1091,9 +1094,6 @@ final class LanguageService {
 			case let .noServer(hint):
 				return "The Java language server is not running for this project, "
 					+ "and it is what hosts the debugger. \(hint)"
-			case let .notTheDebugServer(name):
-				return "This project's Java server is \(name), and the Java debugger lives "
-					+ "inside jdtls rather than beside it. Choose jdtls for Java to debug here."
 			case .noBundle:
 				return "The Java language server is running but has no debugger in it: "
 					+ "the java-debug bundle was not found when it started."
@@ -1103,34 +1103,93 @@ final class LanguageService {
 		}
 	}
 
-	/// Asks jdtls to start a debug session, and returns the port it answers
-	/// with.
+	/// Everything a Java launch needs, and it all has to come from one server.
 	///
-	/// This is the whole reason Java debugging needs the language server: the
-	/// adapter lives inside it. A server that is still importing the project
-	/// refuses, which is worth saying out loud — it is a wait, not a fault.
-	func startJavaDebugAdapter(project: URL) async throws -> Int {
-		guard let server = server(for: "java", project: project), server.client.isRunning else {
-			throw JavaDebugFailure.noServer(
-				hint: missingHints[key(project: project, languageId: "java")]
-					?? LanguageServers.definition(
-						forLanguage: "java", choosing: choices(for: project)
-					)?.installHint ?? ""
+	/// The port and the classpath are two answers from the same jdtls: a port from
+	/// one process and a classpath from another would start a JVM with somebody
+	/// else's idea of where the classes are.
+	struct JavaLaunchTarget {
+		let port: Int
+		let projectName: String?
+		let classPaths: [String]
+		/// Whether this came from a jdtls started for the debugger alone, which is
+		/// what the log and the status line say — the person who chose the fast
+		/// server for editing is paying for a JVM they did not ask to see, and the
+		/// least that owes them is a sentence.
+		let fromDebugHost: Bool
+	}
+
+	/// The port and the classpath a Java launch needs, from whichever jdtls can
+	/// give them.
+	///
+	/// **Two ways in, and which one it is depends on what the project chose for
+	/// editing.**
+	///
+	/// - The chosen server hosts the adapter — jdtls, the default. It is already
+	///   running and has already imported the project, so this is the fast path
+	///   and the one that existed before 0452.
+	/// - The chosen server does not — kmp-lsp. Then jdtls is started *here*, for
+	///   the debugger and nothing else, and the wait for its import is what
+	///   pressing Debug costs. Which is a wait to explain rather than hide: the
+	///   only alternatives were paying it at every project open for the sessions
+	///   that never debug, and having no debugger at all.
+	///
+	/// - Parameter saying: what the wait is waiting for, every time it changes.
+	func javaLaunchTarget(
+		project: URL,
+		anchor: URL?,
+		deadline: TimeInterval = 600,
+		saying: @escaping (String) -> Void = { _ in }
+	) async throws -> JavaLaunchTarget {
+		let anchor = anchor ?? JavaTooling.mainClasses(in: project).first
+			.map { URL(fileURLWithPath: $0.file) }
+
+		// The chosen server, when it is one that hosts an adapter. Nothing starts
+		// a second jdtls beside a jdtls: the one that is running has the import
+		// this needs, and a second would spend the minutes again for the same
+		// answer and hold a second copy of it.
+		if let server = server(for: "java", project: project), server.client.isRunning,
+		   server.definition.hostsDebugAdapter {
+			guard JavaTooling.debugPlugin() != nil else { throw JavaDebugFailure.noBundle }
+			let port = try await portFromEditingServer(server)
+			guard let anchor, let resolved = await javaClasspath(for: anchor, project: project) else {
+				throw JavaDebugFailure.refused(
+					"\(server.definition.name) is running but has no classpath for this project "
+						+ "yet, so there is nothing to start a JVM with. A project it is still "
+						+ "importing cannot be debugged until it has finished."
+				)
+			}
+			return JavaLaunchTarget(
+				port: port, projectName: resolved.projectName,
+				classPaths: resolved.classPaths, fromDebugHost: false
 			)
 		}
-		// `.java` is the setup that puts the java-debug bundle in the initialize
-		// request, so it is exactly the servers that can host an adapter — not a
-		// name to compare against, which would go stale the day jdtls is packaged
-		// under another one.
-		guard server.definition.setup == .java else {
-			throw JavaDebugFailure.notTheDebugServer(name: server.definition.name)
-		}
-		guard JavaTooling.debugPlugin() != nil else { throw JavaDebugFailure.noBundle }
 
-		// Retried, because "not yet" and "never" look the same from here: a
-		// server that is still importing the project refuses, and a few seconds
-		// later the same call succeeds. Pressing debug the moment a project
-		// opens is exactly when this happens.
+		// Nothing that hosts an adapter is answering about files here, so one is
+		// started for the debugger alone.
+		guard let anchor else {
+			throw JavaDebugFailure.refused(
+				"No Java source in this project names a class with a `main` method, so there is "
+					+ "nothing for a classpath to be worked out about."
+			)
+		}
+		let host = try debugHost(for: project)
+		let ready = try await host.waitUntilLaunchable(
+			anchor: anchor, deadline: deadline, saying: saying
+		)
+		return JavaLaunchTarget(
+			port: ready.port, projectName: ready.projectName,
+			classPaths: ready.classPaths, fromDebugHost: true
+		)
+	}
+
+	/// The debug port from a jdtls that is already answering about files.
+	///
+	/// Retried, because "not yet" and "never" look the same from here: a server
+	/// that is still importing refuses, and a few seconds later the same call
+	/// succeeds. Pressing Debug the moment a project opens is exactly when that
+	/// happens.
+	private func portFromEditingServer(_ server: Server) async throws -> Int {
 		var lastError: Error?
 		for attempt in 0..<5 {
 			if attempt > 0 { try? await Task.sleep(nanoseconds: 2_000_000_000) }
@@ -1146,12 +1205,66 @@ final class LanguageService {
 				log("java debug session refused (attempt \(attempt + 1)): \(error.localizedDescription)")
 			}
 		}
-
 		throw JavaDebugFailure.refused(
 			"The Java language server would not start a debug session: "
 				+ "\(lastError?.localizedDescription ?? "no reason given"). A project it is still "
 				+ "importing cannot be debugged yet — the status bar says when it has finished."
 		)
+	}
+
+	/// The jdtls this project debugs through, started if it is not up.
+	///
+	/// Filed under a key of its own so the list of what is running has a row for
+	/// it and Stop reaches it. It is a JVM holding gigabytes that nobody chose,
+	/// and a process this app started and cannot be seen is exactly what 0427 was
+	/// about.
+	private func debugHost(for project: URL) throws -> JavaDebugHost {
+		let key = Self.debugHostKey(project: project)
+		if let existing = debugHosts[key] {
+			if existing.isRunning { return existing }
+			debugHosts.removeValue(forKey: key)
+		}
+		let host = try JavaDebugHost.start(
+			project: project,
+			// A project worked on inside its devcontainer is refused rather than
+			// given a jdtls out here. That was already true before this existed —
+			// `initializationOptions` offers no bundle to a containerised server —
+			// and it is now a sentence rather than a silence.
+			inDevContainer: devContainerNameHoldingServers(for: project)
+		)
+		debugHosts[key] = host
+		log("jdtls started for the debugger alone in \(project.lastPathComponent): "
+			+ "the server answering about files does not host an adapter")
+		NotificationCenter.default.post(name: .ideaiLanguageServersChanged, object: nil)
+
+		Task { @MainActor in
+			do {
+				try await host.handshake()
+			} catch {
+				log("the debugger's jdtls would not shake hands: \(error.localizedDescription)")
+			}
+		}
+		return host
+	}
+
+	/// The devcontainer a project's language servers live inside, when they do.
+	///
+	/// Asked by the debugger, which cannot follow them in there: the java-debug
+	/// bundle is a path on this machine and the JVM would be this machine's, so
+	/// what got debugged would be a different toolchain from what the project
+	/// builds with.
+	func devContainerNameHoldingServers(for project: URL) -> String? {
+		guard usesDevContainer(project) else { return nil }
+		return devcontainers[project]?.session.name ?? "its devcontainer"
+	}
+
+	/// The key a debug host is filed under.
+	///
+	/// The server's name with what it is here for beside it, so a row in the list
+	/// of what is running says why there is a second jdtls — and so it can never
+	/// collide with the key the *editing* jdtls would hold for the same project.
+	static func debugHostKey(project: URL) -> String {
+		LanguageServers.serverKey(project: project, server: "jdtls (debugger)")
 	}
 
 	/// The runtime classpath of the project a file belongs to.
@@ -1177,6 +1290,34 @@ final class LanguageService {
 			log("java classpath unavailable for \(url.lastPathComponent): \(error.localizedDescription)")
 			return nil
 		}
+	}
+
+	/// How far the Java server is from being able to *launch* something, as
+	/// against being able to answer about a file.
+	///
+	/// 0452's central measurement, and a probe of its own rather than
+	/// `startJavaDebugAdapter` because that one retries five times over eight
+	/// seconds — the right thing when somebody has pressed Debug, and ruinous
+	/// when what is being timed is the moment the answer changes.
+	///
+	/// Two questions, because they become answerable at different moments and
+	/// the distance between them is the finding. The port says java-debug is
+	/// loaded and listening, which needs the bundle and nothing else. The
+	/// classpath says the import has got far enough to say what a launch would
+	/// *run*, and a port with an empty classpath is not a debuggable project.
+	func javaDebugReadinessForTesting(
+		url: URL, project: URL
+	) async -> (port: Int?, classPaths: Int) {
+		guard let server = server(for: "java", project: project), server.client.isRunning,
+		      server.definition.setup == .java
+		else { return (nil, 0) }
+
+		var port: Int?
+		if let result = try? await server.client.executeCommand(JavaDebug.startCommand) {
+			port = (result as? Int) ?? (result as? NSNumber)?.intValue
+		}
+		let classPaths = await javaClasspath(for: url, project: project)?.classPaths.count ?? 0
+		return (port, classPaths)
 	}
 
 	// MARK: - Servers
@@ -2500,6 +2641,22 @@ final class LanguageService {
 				chosen: chosenNote(for: server.definition, project: server.project)
 			)
 		}
+		// And the jdtls this app started for the debugger alone, which is a JVM
+		// holding gigabytes that nobody chose. It has to be in this list: it is
+		// the row somebody looks at when they wonder what the memory is, and the
+		// Stop that ends a debugging session's leftovers.
+		+ debugHosts.compactMap { key, host in
+			guard host.isRunning else { return nil }
+			return RunningServer(
+				key: key,
+				command: host.definition.command,
+				project: host.project,
+				pid: host.processIdentifier,
+				containerName: nil,
+				insideContainer: nil,
+				chosen: "the Java debugger, which lives inside \(host.definition.name)"
+			)
+		}
 		.sorted {
 			($0.project.lastPathComponent, $0.command) < ($1.project.lastPathComponent, $1.command)
 		}
@@ -2537,6 +2694,16 @@ final class LanguageService {
 	///   reads when they are trying to work out what the app did on its own.
 	@discardableResult
 	func shutdown(server key: String, because reason: String = "by hand") -> Bool {
+		// A debug host first, since it is under a key of its own and none of what
+		// follows applies to it: it holds no documents, published nothing, and has
+		// no health anybody was told about.
+		if let host = debugHosts.removeValue(forKey: key) {
+			host.stop()
+			log("the debugger's \(host.definition.command) was stopped \(reason) for "
+				+ "\(host.project.lastPathComponent)")
+			NotificationCenter.default.post(name: .ideaiLanguageServersChanged, object: nil)
+			return true
+		}
 		guard let server = servers.removeValue(forKey: key) else { return false }
 		runningNames.removeAll { $0 == server.definition.command }
 		let client = server.client
@@ -2577,6 +2744,9 @@ final class LanguageService {
 		// Over a copy of the keys: `shutdown(server:)` takes each out of the very
 		// table this is walking.
 		for key in Array(servers.keys) where key.hasPrefix(prefix) {
+			shutdown(server: key)
+		}
+		for key in Array(debugHosts.keys) where key.hasPrefix(prefix) {
 			shutdown(server: key)
 		}
 		unavailable = unavailable.filter { !$0.hasPrefix(prefix) }
@@ -2635,6 +2805,12 @@ final class LanguageService {
 			let client = server.client
 			Task { await client.shutdown() }
 		}
+		// The debugger's own jdtls goes with the rest of them, and by the same
+		// promise: a server ends when the app ends, by every way the app ends.
+		// A JVM holding four gigabytes left behind by a quit is worse than most
+		// of what this list is for.
+		for host in debugHosts.values { host.stop() }
+		debugHosts.removeAll()
 		servers.removeAll()
 		runningNames.removeAll()
 		health.removeAll()

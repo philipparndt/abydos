@@ -30,6 +30,15 @@ public final class LSPClient: @unchecked Sendable {
 	public var onDiagnostics: ((_ uri: String, _ diagnostics: [LSPDiagnostic]) -> Void)?
 	/// The server said something to the user — a progress note, a warning.
 	public var onMessage: ((_ level: Int, _ text: String) -> Void)?
+	/// How far the server has got, in its own words.
+	///
+	/// `language/status` is jdtls's own notification rather than part of the
+	/// protocol, which is why nothing read it until something had to *wait* on the
+	/// import: it is the only place the server says which minute of a Tycho
+	/// reactor it is in, and 0452's Debug is a wait that has to say what it is
+	/// waiting for. Every other server sends none, so every other server ignores
+	/// this.
+	public var onStatus: ((_ text: String) -> Void)?
 	/// What the server wrote to its standard error.
 	///
 	/// Not protocol traffic and not shown to anybody, but it is where a server
@@ -770,6 +779,19 @@ public final class LSPClient: @unchecked Sendable {
 			guard let text = parameters["message"] as? String else { return }
 			let level = parameters["type"] as? Int ?? 3
 			callbackQueue.async { self.onMessage?(level, text) }
+
+		case "language/status":
+			// jdtls's own, and its `type` is a word rather than a level:
+			// `Starting`, `Started`, `ProjectStatus`, `ServiceReady`. The two
+			// together are the sentence — "Starting 42% Importing Maven
+			// project(s)" — because the message alone is often only a percentage.
+			let type = parameters["type"] as? String
+			let text = parameters["message"] as? String
+			let said = [type, text].compactMap { $0 }
+				.filter { !$0.isEmpty }
+				.joined(separator: " ")
+			guard !said.isEmpty else { return }
+			callbackQueue.async { self.onStatus?(said) }
 
 		case "workspace/configuration":
 			// One answer per section asked about, and the answer is "nothing

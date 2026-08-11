@@ -66,6 +66,21 @@ public struct LanguageServerDefinition: Equatable, Sendable {
 	/// to be pointed at such a server without the person at the editor knowing.
 	public let isSyntactic: Bool
 
+	/// What choosing this server costs and what it buys, in one line, for the
+	/// page where somebody chooses.
+	///
+	/// Nil for every server that has no competition, because a language with one
+	/// server offers no trade to describe — "gopls, the only one Abydos has" is
+	/// already the whole answer. Set on the two that do, and 0449 asked for it in
+	/// exactly those words: a menu offering two Java servers should say what the
+	/// choice is between rather than two bare names.
+	///
+	/// 0449 left it to 0450, which knew what kmp-lsp trades away, and 0450 wrote
+	/// it into its own entry rather than onto the screen. 0452 is what makes it a
+	/// sentence somebody reads, and it is also what changed one of the two: the
+	/// debugger no longer goes with the choice.
+	public let trade: String?
+
 	/// A directory outside the project that a server has to be able to read.
 	///
 	/// Named on both sides. The host side is relative to the home directory,
@@ -119,6 +134,17 @@ public struct LanguageServerDefinition: Equatable, Sendable {
 		case swift
 	}
 
+	/// Whether the debug adapter for this language can be loaded *into* this
+	/// server.
+	///
+	/// `.java` is exactly that set, and it is the setup rather than the name for
+	/// the reason 0449 gave: a name would go stale the day jdtls is packaged under
+	/// another one. Named here rather than written as `setup == .java` at every
+	/// call site, because since 0452 there are several and one of them asks the
+	/// question of a server the project did *not* choose — which reads as a
+	/// mistake unless the predicate says what it is for.
+	public var hostsDebugAdapter: Bool { setup == .java }
+
 	public init(
 		languageIds: [String],
 		command: String,
@@ -128,7 +154,8 @@ public struct LanguageServerDefinition: Equatable, Sendable {
 		name: String? = nil,
 		setup: Setup = .plain,
 		outside: [OutsideDirectory] = [],
-		isSyntactic: Bool = false
+		isSyntactic: Bool = false,
+		trade: String? = nil
 	) {
 		self.languageIds = languageIds
 		self.command = command
@@ -139,6 +166,7 @@ public struct LanguageServerDefinition: Equatable, Sendable {
 		self.setup = setup
 		self.outside = outside
 		self.isSyntactic = isSyntactic
+		self.trade = trade
 	}
 }
 
@@ -206,7 +234,10 @@ public enum LanguageServers {
 				"pom.xml", "build.gradle", "build.gradle.kts",
 				"settings.gradle", "settings.gradle.kts", ".classpath",
 			],
-			setup: .java
+			setup: .java,
+			trade: "type-aware, and a JVM. It reads the build file for the classpath, so it "
+				+ "knows a call has the wrong argument type — and importing a five-hundred-bundle "
+				+ "reactor is minutes and gigabytes before it answers anything."
 		),
 		// The second opinion about Java, and the reason 0449's mechanism exists.
 		// Rust and tree-sitter: no JVM, no reactor import, and no type checking
@@ -290,7 +321,17 @@ public enum LanguageServers {
 			// different promise from jdtls's. It renames — well, and fast — over
 			// exactly the symbols it indexed, and two unrelated `size()` methods
 			// are one symbol to it.
-			isSyntactic: true
+			isSyntactic: true,
+			// Measured rather than described, and every number here is 0450's.
+			// **The last clause is what 0452 changed**, and it is the reason this
+			// line is worth having at all: until then, choosing this server cost the
+			// debugger outright, and the page where somebody chose said nothing
+			// about it.
+			trade: "instant and syntactic. The whole project navigable in seconds for a fifth of "
+				+ "the memory, no JVM — and no type checking at all, so nothing tells you a call "
+				+ "has the wrong argument type and a rename matches names rather than symbols. "
+				+ "Debugging still works: jdtls is started for the debugger alone when you press "
+				+ "Debug, and that first Debug waits for it to import the project."
 		),
 		LanguageServerDefinition(
 			languageIds: ["json"],
