@@ -75,6 +75,19 @@ final class LanguageService {
 	/// Servers whose image is being fetched, so nothing starts a second fetch
 	/// and nothing reports the server missing while it is on its way.
 	private var fetching: Set<String> = []
+	/// Which of those are a *build* rather than a fetch, so the strip above the
+	/// file can say which.
+	///
+	/// Kept beside `fetching` rather than worked out where the sentence is
+	/// written: the strip is redrawn as the editor is, and finding out would mean
+	/// resolving the server and hashing a build context on every redraw.
+	///
+	/// Only read while `fetching` holds the same key, and written on every one of
+	/// those inserts, so a key left here after a fetch has finished says nothing
+	/// to anybody. That is why it does not have to be removed everywhere
+	/// `fetching` is — only where the whole set is emptied, so it cannot grow
+	/// without bound.
+	private var buildingHere: Set<String> = []
 	/// What was opened while a server's image was still being fetched, by server
 	/// and then by URI.
 	///
@@ -446,9 +459,17 @@ final class LanguageService {
 			return ServerNotice(
 				languageId: languageId,
 				languageName: name,
+				// Three sentences and not two. "Being fetched" was said of a build
+				// as well, and somebody told their server is being downloaded while
+				// a compiler runs for three minutes concludes their network is
+				// broken — the same conflation `ToolImageRecipes.progressMessage`
+				// has its own sentence to avoid. 0459.
 				text: devcontainerProjects[project.standardizedFileURL.path] == true
 					? "\(name)'s language server is starting in this project's devcontainer."
-					: "\(name)'s language server is being fetched.",
+					: buildingHere.contains(key)
+						? "\(name)'s language server is being built on this machine. "
+							+ "It happens once, and the terminal panel shows it happening."
+						: "\(name)'s language server is being fetched.",
 				manual: nil,
 				isIgnorable: false
 			)
@@ -876,6 +897,11 @@ final class LanguageService {
 		// which is the same shape a slow handshake already has. What was opened
 		// meanwhile is kept and sent then.
 		fetching.insert(key)
+		if ToolImageRecipes.isBuiltHere(image.name) {
+			buildingHere.insert(key)
+		} else {
+			buildingHere.remove(key)
+		}
 		log("\(resolved.definition.command) comes from \(image.name); making sure it is here")
 		// **Somewhere to watch it happen**, which is 0459. The sentence below used
 		// to be the whole of what reached the screen, and it was written for a
@@ -885,9 +911,13 @@ final class LanguageService {
 		// opens, on the same terms, and passes the second sink `ensure` has always
 		// taken and this call site never gave it.
 		let built = ToolImageRecipes.isBuiltHere(image.name)
-		let arrival = ImageArrival(
-			image: image.name, tool: resolved.definition.command, project: project
-		)
+		// The **name** and not the command, which is the difference between a tab
+		// called "Building pyright" and one called "Building pyright-langserver".
+		// `LanguageServers.Definition` keeps the two apart for exactly this: the
+		// name is what somebody calls the tool and what they typed to ask for it,
+		// and the command is the binary inside the image.
+		let named = resolved.definition.name
+		let arrival = ImageArrival(image: image.name, tool: named, project: project)
 		Task { @MainActor in
 			let outcome = await ContainerImageStore.shared.ensure(
 				image.name,
@@ -918,7 +948,9 @@ final class LanguageService {
 					// "could not be fetched" was said of a build too, which is the
 					// same conflation 0434 wrote a separate sentence to avoid:
 					// nothing in `abydos-built/` is ever fetched from anywhere.
-					"\(resolved.definition.command) could not be \(built ? "built" : "fetched")",
+					// The name here too, so the corner and the tab it points at are
+					// about the same thing.
+					"\(named) could not be \(built ? "built" : "fetched")",
 					// The reason *and* where the log is, which is where this parts
 					// company with 0444 on purpose — see `ImageArrival.failed`. The
 					// sentence is a diagnosis rather than a summary, so it is worth
@@ -1997,6 +2029,7 @@ final class LanguageService {
 		// the machine either way — but nothing is waiting for it any more, and
 		// the project is read again next time it opens.
 		fetching = fetching.filter { !$0.hasPrefix(prefix) }
+		buildingHere = buildingHere.filter { !$0.hasPrefix(prefix) }
 		deferredOpens = deferredOpens.filter { !$0.key.hasPrefix(prefix) }
 		documentServers = documentServers.filter { !$0.value.hasPrefix(prefix) }
 		missingHints = missingHints.filter { !$0.key.hasPrefix(prefix) }
@@ -2048,6 +2081,7 @@ final class LanguageService {
 		servers.removeAll()
 		runningNames.removeAll()
 		fetching.removeAll()
+		buildingHere.removeAll()
 		deferredOpens.removeAll()
 		documentServers.removeAll()
 		missingHints.removeAll()
