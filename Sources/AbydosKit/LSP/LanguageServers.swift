@@ -31,6 +31,56 @@ public struct LanguageServerDefinition: Equatable, Sendable {
 	/// Anything this server needs worked out per project rather than stated
 	/// once here.
 	public let setup: Setup
+	/// Directories this server reads that are not in the project, for the case
+	/// where it runs from an image and can see only what it is given.
+	///
+	/// Empty for all but one of them, and it is worth saying why rather than
+	/// generalising: what a server needs beyond the project is a fact about
+	/// that server, and the three that plausibly want something differ in
+	/// whether it is the answer or a saving. kmp-lsp resolves a dependency's
+	/// source out of `~/.m2` and `~/.gradle`, so without them it indexes the
+	/// project perfectly and answers nothing at every dependency boundary —
+	/// which is the state 0450's fork exists to end. gopls would like
+	/// `~/go/pkg/mod`, but `ToolImages/gopls/Dockerfile` carries a module cache
+	/// of its own and an empty one costs a download rather than an answer.
+	/// jdtls builds its classpath by *running* Maven, which fetches what it is
+	/// missing, and a read-only `~/.m2` would break that rather than help it.
+	///
+	/// So this is a list, in a table, one line per server, and the line is
+	/// added when somebody has driven it — not a rule applied to all of them
+	/// from one case that happened to be measured.
+	public let outside: [OutsideDirectory]
+
+	/// A directory outside the project that a server has to be able to read.
+	///
+	/// Named on both sides. The host side is relative to the home directory,
+	/// because that is what these are — a person's caches, not a machine's —
+	/// and an absolute path in a table would be one user's. The container side
+	/// is written out rather than derived, because deriving it means guessing
+	/// what `$HOME` is inside somebody's image, and a mount at the wrong place
+	/// in there is not an error: the server starts, finds an empty cache and
+	/// says nothing about it.
+	public struct OutsideDirectory: Equatable, Sendable {
+		/// Where it is on this machine, under the home directory.
+		public let home: String
+		/// Where the image must see it.
+		public let container: String
+		/// Read-only unless the server has to write there.
+		///
+		/// A language server has no business writing to a dependency cache: it
+		/// reads jars out of it, and a mount that lets it do more than that is
+		/// a mount that can corrupt somebody's build on a machine where the
+		/// editor is the newcomer. The exception is a directory that is the
+		/// server's *own* scratch, and even that is only writable because what
+		/// it writes has to be readable from this side afterwards.
+		public let isReadOnly: Bool
+
+		public init(home: String, container: String, isReadOnly: Bool = true) {
+			self.home = home
+			self.container = container
+			self.isReadOnly = isReadOnly
+		}
+	}
 
 	/// Servers that cannot be started from a fixed command line.
 	///
@@ -61,7 +111,8 @@ public struct LanguageServerDefinition: Equatable, Sendable {
 		installHint: String,
 		rootMarkers: [String] = [],
 		name: String? = nil,
-		setup: Setup = .plain
+		setup: Setup = .plain,
+		outside: [OutsideDirectory] = []
 	) {
 		self.languageIds = languageIds
 		self.command = command
@@ -70,6 +121,7 @@ public struct LanguageServerDefinition: Equatable, Sendable {
 		self.rootMarkers = rootMarkers
 		self.name = name ?? command
 		self.setup = setup
+		self.outside = outside
 	}
 }
 
@@ -168,6 +220,51 @@ public enum LanguageServers {
 			rootMarkers: [
 				"pom.xml", "build.gradle", "build.gradle.kts",
 				"settings.gradle", "settings.gradle.kts", ".classpath",
+			],
+			// The three directories it reads that are not in the project, and the
+			// reason 0457 exists. Two are where a dependency's source actually is —
+			// this server has no classpath and runs no build tool, so it finds a
+			// library by walking the caches the build tools left behind — and the
+			// third is where it puts a file unpacked out of a jar so that an editor
+			// can open it. Without them a containerised kmp-lsp indexes the project
+			// perfectly and answers `null` at every dependency boundary, which is
+			// the state 0450's fork was written to end.
+			//
+			// The *caches*, not the tool homes. `~/.m2/settings.xml` and
+			// `~/.gradle/gradle.properties` are where people keep registry
+			// passwords and signing keys, and a language server has no reason to
+			// see either. `~/.m2/repository` and `~/.gradle/caches` are jars.
+			//
+			// `/root`, because that is where `ToolImages/kmp-lsp/Dockerfile` puts
+			// them — and that file sets `MAVEN_REPO_LOCAL`, `GRADLE_USER_HOME` and
+			// `XDG_CACHE_HOME` to match rather than trusting `$HOME` to still be
+			// `/root` in whatever the base image becomes.
+			outside: [
+				LanguageServerDefinition.OutsideDirectory(
+					home: ".m2/repository", container: "/root/.m2/repository"
+				),
+				// `caches` rather than the whole of `~/.gradle`: the server looks
+				// under `caches/modules-2/files-2.1`, and the rest of that
+				// directory is the daemon's, the wrapper's, and the properties
+				// file with the credentials in it.
+				LanguageServerDefinition.OutsideDirectory(
+					home: ".gradle/caches", container: "/root/.gradle/caches"
+				),
+				// The one that is written to, and it has to be. A go-to-definition
+				// into a library is answered by unpacking one entry of a
+				// `-sources.jar` to disk and returning a `file:` URI for it,
+				// because that is what an editor can open. Unpacked inside the
+				// container and nowhere else, that URI names a file this machine
+				// does not have — an answer that looks right and opens nothing,
+				// which is worse than the `null` it replaced.
+				//
+				// The same directory a copy installed here would use, rather than
+				// one of our own beside it: it is that server's cache and it is
+				// keyed by the path of the jar it came from, so the container's
+				// entries and this machine's cannot collide.
+				LanguageServerDefinition.OutsideDirectory(
+					home: ".cache/kmp-lsp", container: "/root/.cache/kmp-lsp", isReadOnly: false
+				),
 			]
 		),
 		LanguageServerDefinition(
@@ -488,6 +585,56 @@ public enum LanguageServers {
 			)
 		case .plain:
 			break
+		}
+	}
+
+	/// The directories this server needs beyond the project, as mounts, for the
+	/// ones this machine actually has.
+	///
+	/// Two decisions live here and both are about a directory that is not there,
+	/// which is an ordinary machine rather than a broken one — a person who has
+	/// never run Maven has no `~/.m2`, and a bind mount of a path that does not
+	/// exist is a runtime error on Apple's `container` and a root-owned empty
+	/// directory conjured into somebody's home folder on docker. Neither is an
+	/// acceptable thing to do to a machine because an editor was opened.
+	///
+	/// - **A read-only directory that is not there is left out.** There is
+	///   nothing to show the server, and saying so by not mounting it is exactly
+	///   true: it then reports no jars, which is the fact.
+	/// - **A writable one is created.** It is not somebody's cache, it is the
+	///   server's own scratch, and the reason it is mounted at all is that this
+	///   side has to be able to read what gets written into it. Left out, the
+	///   server writes inside the container instead and hands back the name of a
+	///   file that exists nowhere here.
+	///
+	/// - Parameter home: this machine's home directory. A parameter rather than
+	///   `NSHomeDirectory()` read in here, so that a test can drive the whole
+	///   thing — the mounts, the mapping and a real server reading a real
+	///   dependency out of a real Maven layout — against a fixture instead of
+	///   against whatever happens to be in the person's own `~/.m2`.
+	public static func mounts(
+		outsideTheProjectFor definition: LanguageServerDefinition,
+		home: URL = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+	) -> [ContainerMount] {
+		let manager = FileManager.default
+		return definition.outside.compactMap { directory in
+			let url = home.appendingPathComponent(directory.home, isDirectory: true)
+			var isDirectory: ObjCBool = false
+			let there = manager.fileExists(atPath: url.path, isDirectory: &isDirectory)
+				&& isDirectory.boolValue
+			if !there {
+				guard !directory.isReadOnly,
+				      (try? manager.createDirectory(at: url, withIntermediateDirectories: true)) != nil
+				else { return nil }
+			}
+			// Canonical on the host side for the same reason the project is: the
+			// server answers with the path it was given, and a mount named one
+			// way while the answer comes back named another maps to nothing.
+			return ContainerMount(
+				host: FilePath.canonical(url),
+				container: directory.container,
+				isReadOnly: directory.isReadOnly
+			)
 		}
 	}
 
@@ -908,7 +1055,8 @@ public enum LanguageServers {
 		project: URL,
 		image: String? = nil,
 		runtime: ContainerRuntime? = nil,
-		choosing choices: LanguageServerChoices
+		choosing choices: LanguageServerChoices,
+		home: URL = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
 	) -> Resolution? {
 		guard let definition = definition(forLanguage: languageId, choosing: choices),
 		      let root = markerDirectory(for: definition, in: project)
@@ -931,10 +1079,19 @@ public enum LanguageServers {
 			// Canonical, both sides. A server resolves a package by realpath,
 			// and a mount named `/tmp/x` while the file it is sent is
 			// `/private/tmp/x` is a mapping that matches nothing.
-			let paths = ContainerPaths(host: FilePath.canonical(project))
+			//
+			// And whatever this server reads that is not in the project, which
+			// for all but one of them is nothing. `paths` carries them as well as
+			// the mount does, because a server given a directory it can read will
+			// name files in it back at us and a name we cannot map is a
+			// go-to-definition that opens nothing.
+			let paths = ContainerPaths(
+				host: FilePath.canonical(project),
+				beyond: mounts(outsideTheProjectFor: definition, home: home)
+			)
 			let container = ToolContainer(
 				image: image,
-				mounts: [paths.mount],
+				mounts: paths.mounts,
 				// Started where the manifest is, in the container's own names.
 				workingDirectory: paths.toContainer(path: FilePath.canonical(root)),
 				// And named, so that stopping the server can also remove the

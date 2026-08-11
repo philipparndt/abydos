@@ -33,12 +33,36 @@ public struct ContainerPaths: Equatable, Sendable {
 	public let host: String
 	/// Where it is mounted inside the container.
 	public let container: String
+	/// Directories the container can see that are *not* in the project, each
+	/// with the name it has on this machine and the name it has in there.
+	///
+	/// Empty for almost everything, and that is the point: the rule stays "one
+	/// project, one mount, and everything else refused". What this adds is a
+	/// short, named list of exceptions somebody wrote down — kmp-lsp's two
+	/// dependency caches, 0434's scratch directory for OpenSCAD — rather than a
+	/// mapping that will translate any path to any other. A path in none of
+	/// them is still refused, which is the sentence at `toContainer(path:)`.
+	public let beyond: [ContainerMount]
 
-	/// - Parameter container: defaults to `/workspace`, which is what most
-	///   images that expect a project use, and is short enough to read in a log.
-	public init(host: String, container: String = "/workspace") {
+	/// - Parameters:
+	///   - container: defaults to `/workspace`, which is what most images that
+	///     expect a project use, and is short enough to read in a log.
+	///   - beyond: directories outside the project this container is also given.
+	///     They must not sit inside one another or inside the project: two
+	///     mappings that could both answer for one path is a coin toss, and the
+	///     one thing this type must never do is answer with a plausible name for
+	///     the wrong file. Nothing here checks that, because the list comes from
+	///     a table somebody maintains rather than from a running program.
+	public init(host: String, container: String = "/workspace", beyond: [ContainerMount] = []) {
 		self.host = Self.trimmed(host)
 		self.container = Self.trimmed(container)
+		self.beyond = beyond.map {
+			ContainerMount(
+				host: Self.trimmed($0.host),
+				container: Self.trimmed($0.container),
+				isReadOnly: $0.isReadOnly
+			)
+		}
 	}
 
 	/// Without a trailing slash, so joining is one rule rather than two.
@@ -55,22 +79,52 @@ public struct ContainerPaths: Equatable, Sendable {
 		ContainerMount(host: host, container: container, isReadOnly: false)
 	}
 
+	/// Every directory this container is given: the project, and whatever else
+	/// was named beyond it.
+	///
+	/// The project first, so a command line reads the way somebody would write
+	/// it by hand and the important mount is the one that is easy to find.
+	public var mounts: [ContainerMount] { [mount] + beyond }
+
 	/// A path on this machine, as the container would name it.
 	///
-	/// Returns nil for anything outside the project — the container cannot see
-	/// it, and inventing a path inside would point the server at the wrong
-	/// file rather than at none.
+	/// Returns nil for anything the container cannot see — inventing a path
+	/// inside would point the server at the wrong file rather than at none.
+	/// "Outside the project" was the whole of that rule until a server turned up
+	/// that reads its dependencies from two directories in the home folder; it
+	/// is now "outside the project and outside everything named beyond it",
+	/// which is the same rule over a list somebody wrote down.
+	///
+	/// The project is asked first because it answers almost every question:
+	/// `beyond` is empty for every server but one, and a message is walked URI
+	/// by URI.
 	public func toContainer(path: String) -> String? {
-		guard path == host || path.hasPrefix(host + "/") else { return nil }
-		if path == host { return container }
-		return container + String(path.dropFirst(host.count))
+		if let inside = Self.moved(path, from: host, to: container) { return inside }
+		for mount in beyond {
+			if let inside = Self.moved(path, from: mount.host, to: mount.container) { return inside }
+		}
+		return nil
 	}
 
 	/// A path the container named, as this machine knows it.
 	public func toHost(path: String) -> String? {
-		guard path == container || path.hasPrefix(container + "/") else { return nil }
-		if path == container { return host }
-		return host + String(path.dropFirst(container.count))
+		if let here = Self.moved(path, from: container, to: host) { return here }
+		for mount in beyond {
+			if let here = Self.moved(path, from: mount.container, to: mount.host) { return here }
+		}
+		return nil
+	}
+
+	/// One mapping applied, or nil when the path is not under `from`.
+	///
+	/// The prefix has to be a whole path component: `/Users/me/project-notes`
+	/// is not in `/Users/me/project`, and the mapping that thinks it is opens a
+	/// file from a different checkout. This is the prefix bug every path
+	/// mapping has once.
+	private static func moved(_ path: String, from: String, to: String) -> String? {
+		if path == from { return to }
+		guard path.hasPrefix(from + "/") else { return nil }
+		return to + String(path.dropFirst(from.count))
 	}
 
 	// MARK: - URIs
