@@ -66,6 +66,10 @@ which calls `shutdown(server:)` and is the one path that clears the flag. That i
 also a hint at the shape of the fix — the same clearing, reached from a different
 event.
 
+## Estimate
+
+2026-08-11 08:37 — about three hours left
+
 ## Steps
 
 - [ ] A change to where a tool comes from clears what was remembered about it
