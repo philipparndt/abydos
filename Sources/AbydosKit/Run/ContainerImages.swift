@@ -69,8 +69,7 @@ public enum ContainerImages {
 			return "Could not reach the registry to fetch \(image). "
 				+ "That usually means no network, or one that needs a proxy."
 		}
-		if text.contains("cannot connect") || text.contains("daemon")
-			|| text.contains("is the docker daemon running") {
+		if isRuntimeDown(output) {
 			return "The container runtime is not running, so \(image) could not be fetched."
 		}
 
@@ -98,6 +97,21 @@ public enum ContainerImages {
 	/// reached. So "not found" counts only when the sentence is about a manifest,
 	/// a reference, an image or a tag, and never when it is about the runtime's
 	/// own plumbing.
+	/// Whether the runtime is installed but not answering.
+	///
+	/// Separate from the sentence above because two callers need the fact rather
+	/// than the wording. `discover` only asks whether the command is on the
+	/// PATH, which is the right first question for the app — it can then say
+	/// which of four things went wrong — and the wrong one for a test, which
+	/// wants to know whether there is anything to talk to before asserting about
+	/// the answer. A suite run with the daemon stopped was otherwise two red
+	/// tests that looked like a code fault.
+	public static func isRuntimeDown(_ output: String) -> Bool {
+		let text = output.lowercased()
+		return text.contains("cannot connect") || text.contains("daemon")
+			|| text.contains("is the docker daemon running")
+	}
+
 	public static func isUnknownImage(_ output: String) -> Bool {
 		let text = output.lowercased()
 		if text.contains("plugin") || text.contains("command not found")

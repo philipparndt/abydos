@@ -281,6 +281,10 @@ struct ContainerImageStoreTests {
 		// but never "that subcommand does not exist", which is what this is for
 		// and is what a wrong verb looks like on both of them.
 		guard asked.succeeded else {
+			// Installed but not answering is not this test's subject. The user
+			// stops one runtime to work with the other, and a suite that goes
+			// red for it reports on the machine rather than on the code.
+			guard !ContainerImages.isRuntimeDown(asked.output) else { return }
 			#expect(
 				ContainerImages.isUnknownImage(asked.output),
 				"\(runtime.name) did not understand the command: \(asked.output.prefix(200))"
@@ -304,6 +308,9 @@ struct ContainerImageStoreTests {
 			ContainerImages.inspect(missing, using: runtime), deadline: 30
 		)
 		#expect(!asked.succeeded)
+		// Same reason as above: a stopped runtime says nothing about whether a
+		// missing image is reported as missing.
+		guard !ContainerImages.isRuntimeDown(asked.output) else { return }
 		#expect(ContainerImages.isUnknownImage(asked.output), "\(asked.output.prefix(200))")
 	}
 }
