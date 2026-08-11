@@ -125,10 +125,6 @@ callers need *is* the seam.
 
 Replacing anything, or changing what the terminal does with the setting off.
 
-## Estimate
-
-2026-08-11 18:17 — about 20 min; suite running, then done
-
 ## Steps
 
 - [x] Build and link libghostty-vt from this project, and write down exactly what
@@ -168,7 +164,9 @@ Replacing anything, or changing what the terminal does with the setting off.
       `engine=` in `--report-geometry`
 - [x] Write the recommendation, with the cost of being wrong in each direction
 - [x] Write down here what was ruled out on the way
-- [ ] No spec change — this item changes nothing about what the project does
+- [x] No spec change — `abydos-backlog done 474` confirms it carries no spec
+      delta. Nothing this item adds changes what the terminal does: the new
+      engine is not connected, and the setting is off
 
 ## 1. Can it be built and linked? Yes, and it cost 62 seconds
 
