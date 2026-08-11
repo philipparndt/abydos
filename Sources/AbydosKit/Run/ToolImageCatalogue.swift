@@ -142,7 +142,25 @@ public enum ToolImageCatalogue {
 					publisher: "the Abydos project"
 				),
 			],
-			requirement: languageServerRequirement("rust-analyzer")
+			// The one requirement here that says what an image *cannot* do, because
+			// for Rust that is a property of the project rather than of the image:
+			// the toolchain is fixed when the image is built and
+			// `rust-toolchain.toml` is read when the project is opened, so a project
+			// pinning a channel by a name only one machine knows is a project no
+			// image will ever read. Said here as well as above the file, since this
+			// is where somebody chooses between the three and it is the choice that
+			// has no good answer. 0462.
+			requirement: languageServerRequirement("rust-analyzer") + """
+			 \nA project pinning a custom toolchain channel — `channel = "esp"` in \
+			rust-toolchain.toml, rather than a release like `stable` or `1.90.0` — \
+			cannot be read from any image, this one included. A custom channel means \
+			whatever was installed under that name in ~/.rustup/toolchains on the \
+			machine reading the project, and rustup resolves it by that directory and \
+			by nothing else; a release it fetches for itself. Such a project wants \
+			“Installed on this machine”, and Abydos says so above the file when it \
+			sees the pin — including where the installed copy has no rust-analyzer in \
+			it either, which is the case for Espressif's `esp` toolchain.
+			"""
 		),
 		Tool(
 			key: "pyright",

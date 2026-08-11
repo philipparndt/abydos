@@ -67,7 +67,7 @@ reasonably ship will contain a `rust-analyzer` that Espressif does not publish.
 ## Steps
 
 - [x] Read a project's toolchain pin, for Rust at least, before a server starts
-- [ ] Say plainly when the pin and the chosen image disagree, at the moment the
+- [x] Say plainly when the pin and the chosen image disagree, at the moment the
       image is chosen rather than at the first failed request
 - [ ] Decide whether a recipe can take a toolchain as a build argument, and
       where a project would ask for one
