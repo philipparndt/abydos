@@ -1484,9 +1484,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if options.openTerminal {
 			controller?.toggleTerminal(nil)
-			if let input = options.terminalInput {
+			// One at a time, spaced out. Given all at once these arrive in the
+			// pty together, and a command that reads the tty itself — `kitty
+			// icat` outside tmux does, to hear what the terminal can do — reads
+			// the ones after it and throws them away.
+			for (index, input) in options.terminalInput.enumerated() {
 				// Give the shell time to print its prompt before typing at it.
-				DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+				DispatchQueue.main.asyncAfter(deadline: .now() + 1.2 + Double(index) * 2.0) {
 					controller?.sendToTerminal(input + "\n")
 				}
 			}

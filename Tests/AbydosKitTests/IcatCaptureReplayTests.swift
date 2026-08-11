@@ -3,7 +3,16 @@ import Testing
 @testable import AbydosKit
 
 /// Replays a real `ABYDOS_TERM_LOG` capture through the emulator and says, after
-/// each `icat` run in it, how much of each picture the grid resolves to.
+/// each `icat` run in it, how much of each picture the terminal can still draw.
+///
+/// Both protocols, because `icat` speaks two and which one it picks depends on
+/// whether tmux is in the way. Inside tmux it writes placeholder cells and the
+/// pictures are worked out from the grid — `virtual`, `runs`, `withoutImage`.
+/// Outside it, it places at the cursor and there are no placeholders at all —
+/// `positioned`, and `below`, which counts the placements whose rows run past
+/// the bottom of the screen. 0468 was `below` being four while everything on
+/// the placeholder side read zero, and the first version of this instrument
+/// could not have said so because it only counted the tmux half.
 ///
 /// An instrument rather than a check, and here rather than in a scratch file
 /// because both 0397 and 0468 built it from nothing and it is the question
@@ -59,6 +68,22 @@ struct IcatCaptureReplayTests {
 			// placement whose picture the terminal no longer holds is a gap on
 			// the screen with nothing in it.
 			let withoutImage = placements.filter { terminal.graphics.images[$0.imageID] == nil }
+
+			// The other protocol, and the one 0468 turned out to be about. With no
+			// tmux in the way `icat` sends no `U=1` and writes no placeholder
+			// cells: it places the picture at the cursor, so what there is to
+			// count is `graphics.placements` rather than anything on the grid.
+			//
+			// `below` is the number that matters there. A placement whose rows run
+			// past the last one on the screen can never be drawn, and it overlaps
+			// everything the shell erases from its next prompt downwards — so it
+			// is both invisible and about to be thrown away.
+			let firstOnScreen = screen.scrollback.count
+			let lastOnScreen = firstOnScreen + screen.rows - 1
+			let positioned = terminal.graphics.placements
+			let below = positioned.filter { $0.rowRange.upperBound > lastOnScreen }
+			let orphaned = positioned.filter { terminal.graphics.images[$0.imageID] == nil }
+
 			print(
 				"ICAT \(label): images=\(terminal.graphics.images.count) "
 				+ "virtual=\(terminal.graphics.virtualPlacements.count) "
@@ -66,6 +91,10 @@ struct IcatCaptureReplayTests {
 				+ "rows=\(Set(placements.map(\.row)).count) "
 				+ "withoutImage=\(withoutImage.count) "
 				+ "shownIDs=\(Set(placements.map(\.imageID)).sorted()) "
+				+ "positioned=\(positioned.count) below=\(below.count) "
+				+ "orphaned=\(orphaned.count) "
+				+ "at=\(positioned.map { "\($0.rowRange.lowerBound)…\($0.rowRange.upperBound)" }) "
+				+ "onScreen=\(firstOnScreen)…\(lastOnScreen) "
 				+ "alt=\(terminal.isAlternateScreen) "
 				+ "grid=\(screen.rows)x\(screen.columns)"
 			)
