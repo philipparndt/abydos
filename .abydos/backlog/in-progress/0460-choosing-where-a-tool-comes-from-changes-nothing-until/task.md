@@ -57,29 +57,136 @@ a project closes.
   field for a custom image name changes on every character; whatever watches has
   to react to a settled value.
 
+## What was decided
+
+- **It starts, it does not only unblock.** An affected project is warmed up as
+  though it had just been opened, and every file on screen is announced again
+  through `.ideaiLanguageServersMoved` — the notification a project moving in or
+  out of its devcontainer already sends, and it does exactly this job. Clearing
+  the memory alone would have been the same fault with a longer fuse: somebody
+  who has just chosen an image goes looking for what is wrong long before they
+  next open a file of that language, and "it works when you go back to the file"
+  is indistinguishable from "it does not work" for as long as they are looking.
+- **A running server that is no longer the one asked for is stopped.** The
+  disruptive reading, chosen for three reasons. The spec already says a project
+  holds one server for a language and no more, because two answering over one
+  file is two sets of diagnostics with no rule for which wins; what the old one
+  goes on publishing is a toolchain the project has stopped using, which is
+  0432's fault; and jdtls's minutes are the cost of the choice just made, paid
+  while the person is looking at the thing they changed rather than at some later
+  moment they cannot connect to it. It goes through `shutdown(server:)` — the
+  Stop button's own path, which is where this entry said the shape of the fix
+  was.
+- **The blast radius is per project and per server.** `ServerReconsideration`
+  works out what one project has to forget and what of it to stop, from the
+  merged choices and images before and after. So a project whose own
+  `.abydos/tools.json` answers the question is untouched when the setting behind
+  it moves; an image chosen for a renderer does not re-import a Java project; and
+  a project with nothing to do is not even walked. Getting this set wrong in
+  either direction was the whole risk, so it is in AbydosKit with eighteen tests
+  on it rather than inline in the reaction.
+- **Coalesced over 400ms rather than debounced per control.** The custom-image
+  field the entry warns about sends its action when the editing ends rather than
+  per character, so today's controls settle by themselves — but a preference
+  change costs a server being stopped and started, and that is not a bill to
+  leave resting on a control's configuration. An empty image is also refused as
+  a change in its own right, which is the other half of the same trap: the popup
+  writes one the moment "Custom" is picked, before anybody has typed a name.
+
 ## Ruled out
 
-Nothing yet — written before the work.
+- **Clearing everything and warming every project up.** It is two lines and it is
+  wrong: somebody choosing an image for PlantUML would restart the Java server in
+  a project they have not looked at since this morning, and the re-import is
+  minutes. What is affected is a question with a real answer, so it is answered.
+- **Watching `.abydos/tools.json` on disk.** `images(for:)` merges the project's
+  file with the settings, and the merged answer is read again here — but only
+  when a *setting* changes. A project's own file edited in the editor still needs
+  the project reopened. That is a second mechanism (a watcher, and a decision
+  about what an editor saving its own project's file every fifteen seconds should
+  cost), and it is not what was reported. Left undone knowingly.
+- **Reacting to `.abydosSettingsChanged` directly.** One notification is posted
+  for every setting written and it says nothing about which one, so anything
+  reacting to it reacts to the appearance slider too. Holding the three
+  preferences as a value and comparing is what makes the reaction specific — and
+  it is also what makes an empty image, or a setting written back unchanged, not
+  a change.
 
-Worth knowing: the workaround that exists today is Running Servers ▸ **Stop**,
-which calls `shutdown(server:)` and is the one path that clears the flag. That is
-also a hint at the shape of the fix — the same clearing, reached from a different
-event.
+Worth knowing: the workaround that existed before this was Running Servers ▸
+**Stop**, which calls `shutdown(server:)` and was the one path that cleared the
+flag. That was also the hint at the shape of the fix, and it is the call this
+now makes.
+
+## What it looked like when driven
+
+`~/.cargo/bin/rust-analyzer` on this machine is a rustup shim for a component
+that is not installed, so the fault reproduces without inventing one. All three
+conditions were driven against the built app under a throwaway bundle identifier,
+with `--choose-setting "Page/Row=value@seconds"`, which sets a value through the
+settings row's own setter while the app is running.
+
+Where a tool comes from — an image chosen for a server that had already failed:
+
+    08:54:05 rust-analyzer started … [/Users/philipparndt/.cargo/bin/rust-analyzer]
+    08:54:06 rust-analyzer stderr: error: Unknown binary 'rust-analyzer' …
+    08:54:06 rust-analyzer handshake failed: The language server is not running.
+    08:54:17 rust-demo: a preference changed — 1 server(s) reconsidered, 0 stopped
+    08:54:17 rust-analyzer comes from pharndt/abydos-rust-analyzer:dev; …
+    08:54:17 rust-analyzer started for rust … [container run …]
+    08:54:17 rust-analyzer was told about 1 file(s) opened while its image …
+    08:54:18 rust-analyzer initialized
+
+Which server answers — Java pointed at the other one while jdtls was running:
+
+    09:04:29 jdtls started for java … [/opt/homebrew/bin/jdtls]
+    09:04:34 jdtls initialized
+    09:04:55 jdtls was stopped because a preference changed for java-demo
+    09:04:55 java-demo: a preference changed — 2 server(s) reconsidered, 1 stopped
+    09:04:55 kmp-lsp is not installed — java in java-demo has no server. …
+
+Two reconsidered and one stopped: both keys, because the server is filed under
+its own name and the project moved from one to the other. Nothing was started in
+kmp-lsp's place, which is the rule the spec already had.
+
+The container runtime — docker's daemon was down on this machine, so the fetch
+had already failed under it:
+
+    09:02:58 rust-analyzer: The container runtime is not running, so
+             pharndt/abydos-rust-analyzer:dev could not be fetched.
+    09:03:16 rust-demo: a preference changed — 1 server(s) reconsidered, 0 stopped
+    09:03:16 rust-analyzer started for rust … [container run …]
+
+And the other direction, which is the stop: a server running from an image, the
+setting put back to the copy installed here, the container's server stopped and
+the installed one tried and failing honestly.
+
+    09:00:26 rust-analyzer was stopped because a preference changed for rust-demo
+    09:00:26 rust-demo: a preference changed — 1 server(s) reconsidered, 1 stopped
+    09:00:26 rust-analyzer started for rust … [/Users/…/.cargo/bin/rust-analyzer]
+    09:00:26 rust-analyzer handshake failed: The language server is not running.
+
+Nothing was reopened in any of them, and no container was left behind.
+
+**Not proved.** Nothing here was driven with the project's own
+`.abydos/tools.json` in play — that a project pinning its own answer is untouched
+is a test rather than a photograph. And the toast a person would see is only in
+the log here: what was watched was `~/Library/Logs/Abydos/lsp.log` and the list
+of running servers, not the corner of the window.
 
 ## Estimate
 
-2026-08-11 08:37 — about three hours left
+2026-08-11 09:07 — about half an hour left
 
 ## Steps
 
 - [x] A change to where a tool comes from clears what was remembered about it
       failing, per project
 - [x] The same for the choice of server, and for the container runtime
-- [ ] Decide and record whether a change also starts the server for what is
+- [x] Decide and record whether a change also starts the server for what is
       already open, or only makes the next open ask
 - [x] A running server that is no longer the one asked for is handled, and the
       entry says which way and why
 - [x] Driven: a project where a server has failed, a setting changed, and the
       right thing starting without reopening anything
-- [ ] Write down here what was ruled out on the way
+- [x] Write down here what was ruled out on the way
 - [ ] `spec/language-servers.md` says what the project now does
