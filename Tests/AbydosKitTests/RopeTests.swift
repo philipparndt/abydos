@@ -115,6 +115,36 @@ struct RopeTests {
 		#expect(r.lineText(3) == "b")
 	}
 
+	// MARK: - The lines a selection touches
+
+	/// What every line-wise gesture asks first — ⇥ over a block, ⌘/ over a
+	/// selection — and it has to give the same answer to both.
+	@Test func aCaretsLineIsItsWholeLineWithoutItsBreak() {
+		let r = Rope("one\ntwo\nthree\n")
+		#expect(r.lineSpan(touchingUTF16: 5..<5) == 4..<7)
+		#expect(r.lineSpan(touchingUTF16: 0..<0) == 0..<3)
+	}
+
+	@Test func aSelectionAcrossTwoLinesCoversBothOfThemWhole() {
+		let r = Rope("one\ntwo\nthree\n")
+		#expect(r.lineSpan(touchingUTF16: 1..<6) == 0..<7)
+	}
+
+	/// The rule that stops a gesture acting on one line too many: dragging the
+	/// mouse to the beginning of the next line is not selecting that line.
+	@Test func aSelectionEndingAtALinesStartStopsAtTheLineAbove() {
+		let r = Rope("one\ntwo\nthree\n")
+		#expect(r.lineSpan(touchingUTF16: 0..<4) == 0..<3)
+	}
+
+	/// The last line of a file with no trailing newline, and the empty line after
+	/// one that has: both have to come back as a range rather than as nothing.
+	@Test func theLastLineHasASpanEvenWhenItIsEmpty() {
+		#expect(Rope("a\nb").lineSpan(touchingUTF16: 3..<3) == 2..<3)
+		#expect(Rope("a\n").lineSpan(touchingUTF16: 2..<2) == 2..<2)
+		#expect(Rope("").lineSpan(touchingUTF16: 0..<0) == 0..<0)
+	}
+
 	// MARK: - Editing
 
 	@Test func insertsAndDeletesLikeReference() {

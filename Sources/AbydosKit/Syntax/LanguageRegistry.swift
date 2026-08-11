@@ -277,6 +277,29 @@ public final class LanguageRegistry {
 
 	static let knownLanguageIds: [String] = Array(Set(extensionMap.values)).sorted()
 
+	/// Every language id this editor can arrive at, by any road.
+	///
+	/// Wider than `knownLanguageIds`, which is only what the picker offers: a
+	/// filename, a fence's alias, a shebang and a registered grammar can all
+	/// produce an id the extension map does not, and `markdown_inline` is
+	/// produced by none of them and is still a language a document can be in.
+	///
+	/// It exists so that a table keyed on language ids can be *checked* rather
+	/// than believed — `CommentSyntax` has one, and a new extension added
+	/// without deciding what ⌘/ does in it should fail a test rather than reach
+	/// somebody's keyboard.
+	public var allLanguageIds: [String] {
+		lock.lock()
+		defer { lock.unlock() }
+
+		var ids = Set(Self.extensionMap.values)
+		ids.formUnion(Self.filenameMap.values)
+		ids.formUnion(Self.fenceAliases.values)
+		ids.formUnion(Self.grammarlessNames.keys)
+		ids.formUnion(definitions.keys)
+		return ids.sorted()
+	}
+
 	// MARK: - Loading
 
 	public func displayName(for languageId: String) -> String {

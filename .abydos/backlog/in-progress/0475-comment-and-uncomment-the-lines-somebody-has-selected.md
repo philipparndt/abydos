@@ -65,12 +65,22 @@ pattern to follow, including its one-undo-per-edit.
   make a small item large. Note what happens today at the boundary rather than
   pretending.
 
+## Estimate
+
+2026-08-11 20:15 — about two hours left
+
 ## Steps
 
-- [ ] Comment syntax as a value in `AbydosKit`, keyed on the same ids
+- [x] Comment syntax as a value in `AbydosKit`, keyed on the same ids
       `languageId(for:)` produces, covering every id in `extensionMap` and not
       only the languages with grammars
-- [ ] The toggle as a pure function: text, line range and syntax in, edits out
+- [x] `LanguageRegistry.allLanguageIds`, so that table can be *checked* rather
+      than believed. Added because "covers every id" is not a claim anybody can
+      make by reading a dictionary, and a new extension is the way it goes stale
+- [x] The toggle as a pure function: text, line range and syntax in, edits out
+- [x] One answer to "which lines does this selection touch", on the rope rather
+      than privately inside the code view. Added because ⌘/ needs the rule ⇥
+      already had, and two copies of it are two things that can drift
 - [ ] ⌘/ in the menu and the responder chain, over a caret and over a selection
 - [ ] One undo for the whole toggle, through the rope, the way 0453 applies edits
 - [ ] The selection still covers the same text afterwards
