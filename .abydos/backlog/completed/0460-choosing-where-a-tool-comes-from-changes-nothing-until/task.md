@@ -173,10 +173,6 @@ is a test rather than a photograph. And the toast a person would see is only in
 the log here: what was watched was `~/Library/Logs/Abydos/lsp.log` and the list
 of running servers, not the corner of the window.
 
-## Estimate
-
-2026-08-11 09:07 — about half an hour left
-
 ## Steps
 
 - [x] A change to where a tool comes from clears what was remembered about it
@@ -189,4 +185,4 @@ of running servers, not the corner of the window.
 - [x] Driven: a project where a server has failed, a setting changed, and the
       right thing starting without reopening anything
 - [x] Write down here what was ruled out on the way
-- [ ] `spec/language-servers.md` says what the project now does
+- [x] `spec/language-servers.md` says what the project now does
