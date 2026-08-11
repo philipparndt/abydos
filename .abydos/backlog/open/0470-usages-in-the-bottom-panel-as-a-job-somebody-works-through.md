@@ -71,14 +71,33 @@ Two smaller decisions that follow from it: whether the editor takes focus when a
 row opens it (it must not, or the next ↓ goes to the code and the job stops), and
 whether a click and a keystroke should differ at all.
 
-## What happens to the floating panel and the Dock button
+## The floating window stays; the default turns around
 
-`UsagesPanel.show(locations:over:)` builds a child window and `onDock` hands its
-content view to `MainWindowController.dockInSidebar`. If usages belong in the
-bottom panel, the sidebar route and the floating window are two arrangements
-nobody asked for and both are code with tests. **Say what happens to them** —
-kept, retired, or reduced to one — rather than leaving three ways to show one
-list.
+Both arrangements are wanted, and only the default is wrong. Added to the report
+after the first pass:
+
+> maybe I also like the current docked variant, but it should started docked and
+> support then the expand to window
+
+So `UsagesPanel.show(locations:over:)` building a child window and putting it in
+the middle of the screen is what changes: **usages arrive docked**, and there is a
+way from there to a window for somebody who wants one big enough to read. The
+`Dock` button becomes its inverse and the flow runs the other way.
+
+Which means the machinery is not thrown away — `onDock` already hands a content
+view across to `MainWindowController`, and a view that can move once can move
+twice. Two things it does not answer and somebody should:
+
+- **A window that has been expanded, then dismissed — what does the next Find
+  Usages do?** Coming back docked when somebody has just chosen a window is an
+  answer that will not be believed; remembering the choice means remembering it
+  somewhere, and per project is a different feeling from per session.
+- **Docked *where*.** The report says the bottom view, and `onDock` today goes to
+  the **sidebar** — so "the current docked variant" and "the bottom view" are two
+  different places, and this item cannot keep both without becoming three ways to
+  show one list. Take the bottom panel, beside search, since that is where the
+  checklist this reuses already lives, and say in the item what became of the
+  sidebar route.
 
 ## Steps
 
@@ -89,7 +108,12 @@ list.
       against `SearchPane`'s argument rather than around it
 - [ ] Opening as the selection moves, without accumulating a tab per usage and
       without the editor stealing focus
-- [ ] Say what becomes of the floating panel and the sidebar dock
+- [ ] Usages arrive docked, with a way from there to a window — the flow the
+      `Dock` button runs today, turned around
+- [ ] Decide what the next Find Usages does after somebody has expanded one, and
+      where that choice is remembered
+- [ ] Say what becomes of the sidebar dock, since the report's "bottom view" and
+      today's docked variant are two different places
 - [ ] Watch somebody work through a real usage list — the 263-location one from
       0469 is a good size
 - [ ] Write down here what was ruled out on the way
