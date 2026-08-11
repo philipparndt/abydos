@@ -2639,6 +2639,13 @@ final class EditorViewController: NSViewController {
 		return codeView.caretReportForTesting
 	}
 
+	/// Presses ⌘/ over a caret or a selection the spec names.
+	func toggleCommentForTesting(_ spec: String) -> (LineComment.Outcome, String)? {
+		guard let codeView = activeTab?.codeView else { return nil }
+		view.window?.makeFirstResponder(codeView)
+		return codeView.toggleCommentForTesting(spec)
+	}
+
 	/// Indents or outdents whole lines, the way Tab and ⇧Tab do.
 	func indentForTesting(fromLine: Int, toLine: Int, outdent: Bool) -> String? {
 		guard let tab = activeTab, let codeView = tab.codeView else { return nil }

@@ -81,10 +81,12 @@ pattern to follow, including its one-undo-per-edit.
 - [x] One answer to "which lines does this selection touch", on the rope rather
       than privately inside the code view. Added because ⌘/ needs the rule ⇥
       already had, and two copies of it are two things that can drift
-- [ ] ⌘/ in the menu and the responder chain, over a caret and over a selection
-- [ ] One undo for the whole toggle, through the rope, the way 0453 applies edits
-- [ ] The selection still covers the same text afterwards
-- [ ] Languages with no line comment: decided, and audible rather than silent
+- [x] ⌘/ in the menu and the responder chain, over a caret and over a selection
+- [x] One undo for the whole toggle, through the rope, the way 0453 applies edits
+- [x] The selection still covers the same text afterwards
+- [x] Languages with no line comment: decided, and audible rather than silent
+- [x] A driver for each of those, since none of it is reachable from the suite:
+      `--comment`, and `--comment-key` for the wiring the suite cannot see
 - [ ] Watch it on a real file of each shape — indented Swift, a Makefile where
       the indent is a tab, YAML, and something with no line comment
 - [ ] Write down here what was ruled out on the way

@@ -194,6 +194,29 @@ struct LineCommentTests {
 		#expect(toggle.offset(9) == 12)
 	}
 
+	/// The wart a Makefile turned up. Both ends of a selection of whole lines sit
+	/// exactly where the token goes when the code is at column zero, and they want
+	/// opposite answers: the start has to stay at the front of the line, or three
+	/// selected lines come back with the first two characters of the first one no
+	/// longer highlighted, while a caret there belongs in front of the code.
+	@Test func theStartOfAWholeLineSelectionStaysAtTheFrontOfTheLine() throws {
+		let toggle = try #require(toggled("build:\n\tswift build", .line("#")))
+		#expect(toggle.text == "# build:\n# \tswift build")
+		#expect(toggle.offset(0, isStartOfSelection: true) == 0)
+		#expect(toggle.offset(0) == 2)
+		// The far end is carried, so the selection still ends after the last
+		// character it ended after.
+		#expect(toggle.offset(19) == 23)
+	}
+
+	/// Uncommenting needs no such distinction: an offset at the front of the line
+	/// is at the front of the line either way.
+	@Test func theStartOfASelectionIsUnaffectedByARemoval() throws {
+		let toggle = try #require(toggled("# build:\n# \tswift build", .line("#")))
+		#expect(toggle.offset(0, isStartOfSelection: true) == 0)
+		#expect(toggle.offset(0) == 0)
+	}
+
 	@Test func uncommentingBringsTheCaretBackWithIt() throws {
 		let toggle = try #require(toggled("// let a = 1"))
 		#expect(toggle.offset(7) == 4)
@@ -223,6 +246,34 @@ struct LineCommentTests {
 		#expect(toggle.text == "// one\n\n// two")
 		// The `t` of `two`: 5 before (3 + 1 + 0 + 1), 11 after.
 		#expect(toggle.offset(5) == 11)
+	}
+
+	// MARK: - One undo for the whole press
+
+	/// The toggle is one replacement over the whole block, and this is what that
+	/// buys: `TextDocument.replace` records one undo entry per call, so applying
+	/// the edits line by line would cost one ⌘Z per line and taking back a ⌘/
+	/// over a forty-line block would take forty of them.
+	@Test func oneUndoTakesTheWholeToggleBack() throws {
+		let url = URL(fileURLWithPath: NSTemporaryDirectory())
+			.appendingPathComponent("abydos-0475-\(UUID().uuidString).swift")
+		let before = "\tlet a = 1\n\tlet b = 2\n\tlet c = 3\n"
+		try before.write(to: url, atomically: true, encoding: .utf8)
+		defer { try? FileManager.default.removeItem(at: url) }
+
+		let document = try TextDocument(url: url)
+		// The same two steps the code view takes, in the same order.
+		let span = document.rope.lineSpan(touchingUTF16: 0..<document.rope.utf16Count)
+		let startByte = document.rope.byteOffset(fromUTF16: span.lowerBound)
+		let endByte = document.rope.byteOffset(fromUTF16: span.upperBound)
+		let block = document.rope.string(in: startByte..<endByte)
+
+		let toggle = try #require(toggled(block, .forLanguage(document.languageId)))
+		document.replace(utf16Range: span, with: toggle.text, caretBefore: 0)
+		#expect(document.rope.string == "\t// let a = 1\n\t// let b = 2\n\t// let c = 3\n")
+
+		#expect(document.undo() != nil)
+		#expect(document.rope.string == before)
 	}
 
 	// MARK: - Real files of each shape

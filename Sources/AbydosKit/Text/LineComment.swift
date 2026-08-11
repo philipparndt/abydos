@@ -88,7 +88,17 @@ public enum LineComment {
 		/// the second ⌘/ acting on something else. Offsets are relative to the
 		/// start of the block at both ends, so the caller adds the block's own
 		/// start back on.
-		public func offset(_ offset: Int) -> Int {
+		///
+		/// - Parameter isStartOfSelection: whether an offset sitting exactly where
+		///   the token goes stays put instead of being carried along by it. The
+		///   two ends of a gesture want opposite answers here, and a Makefile is
+		///   where that shows: the token goes at column zero, and a caret at the
+		///   front of the line belongs in front of the *code* afterwards — which
+		///   is where somebody about to type expects to be — while the *start* of
+		///   a whole-line selection has to stay at the front of the line, or three
+		///   selected lines come back with the first two characters of the first
+		///   one no longer highlighted.
+		public func offset(_ offset: Int, isStartOfSelection: Bool = false) -> Int {
 			var oldStart = 0
 			var newStart = 0
 			for (index, line) in text.components(separatedBy: "\n").enumerated() {
@@ -98,7 +108,9 @@ public enum LineComment {
 				// the block that could come to disagree with this one.
 				let oldLength = line.utf16.count - (edit.inserted.utf16.count - edit.removed)
 				if offset <= oldStart + oldLength {
-					return newStart + column(offset - oldStart, in: edit)
+					return newStart + column(
+						offset - oldStart, in: edit, isStartOfSelection: isStartOfSelection
+					)
 				}
 				// Past this line's break, which neither side ever changes.
 				oldStart += oldLength + 1
@@ -108,13 +120,15 @@ public enum LineComment {
 		}
 
 		/// Where a column within one line ends up.
-		private func column(_ column: Int, in edit: Edit) -> Int {
+		private func column(_ column: Int, in edit: Edit, isStartOfSelection: Bool) -> Int {
 			guard edit.removed > 0 else {
-				// An insertion carries along everything at it or after it: the
-				// caret was in front of that character and belongs in front of
-				// it still, which is what makes ⌘/ over a caret feel like the
-				// line moved rather than the caret.
-				return column < edit.column ? column : column + edit.inserted.utf16.count
+				// An insertion carries along everything after it, and everything
+				// *at* it as well unless this is the start of a selection: the
+				// caret was in front of that character and belongs in front of it
+				// still, which is what makes ⌘/ over a caret feel like the line
+				// moved rather than the caret.
+				let carried = isStartOfSelection ? column > edit.column : column >= edit.column
+				return carried ? column + edit.inserted.utf16.count : column
 			}
 			if column <= edit.column { return column }
 			if column >= edit.column + edit.removed {

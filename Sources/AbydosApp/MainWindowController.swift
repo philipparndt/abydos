@@ -2043,6 +2043,92 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		editor.showFind()
 	}
 
+	/// Edit ▸ Toggle Comment, which is ⌘/.
+	///
+	/// The work is `CodeView.toggleLineComment()` and through it `LineComment`;
+	/// the only thing that happens here is the refusal, because saying something
+	/// needs the window's corner and the code view does not have one.
+	///
+	/// **The refusal is said every press, not once per file.** A stylesheet has no
+	/// line comment and never will, and remembering that it had already been
+	/// mentioned would make the second ⌘/ the silent keystroke this is here to
+	/// avoid — which is the worst of the three ways to answer a gesture a language
+	/// cannot do.
+	@objc func toggleLineComment(_ sender: Any?) {
+		guard let codeView = editor.activeGroup?.activeCodeView else { return }
+		say(codeView.toggleLineComment())
+	}
+
+	/// The refusal, out loud. Split out so the menu item and the driver that
+	/// exercises it produce the same sentence rather than two that can drift.
+	private func say(_ outcome: LineComment.Outcome) {
+		guard case let .unavailable(reason) = outcome else { return }
+		notify("Nothing was commented out", detail: reason, kind: .information)
+	}
+
+	/// Presses ⌘/ over the caret or selection a spec names, and says what came of
+	/// it — which way it went, the sentence a refusal produces, and where the
+	/// selection ended up. `--comment 3:5` or `--comment 3@8`.
+	func toggleCommentForTesting(_ spec: String) {
+		guard let (outcome, report) = editor.toggleCommentForTesting(spec) else {
+			print("COMMENT \(spec): no editor")
+			return
+		}
+		say(outcome)
+		switch outcome {
+		case let .toggled(toggle):
+			print("COMMENT \(spec) \(toggle.commenting ? "commented" : "uncommented") — \(report)")
+		case .nothing:
+			print("COMMENT \(spec) nothing to do — \(report)")
+		case let .unavailable(reason):
+			print("COMMENT \(spec) refused: \(reason)")
+		}
+		fflush(stdout)
+	}
+
+	/// Whether ⌘/ is wired up, which is a different question from whether the
+	/// toggle works and the only one the suite cannot answer.
+	///
+	/// **Not by pressing the key**, and that was tried first. A menu's key
+	/// equivalent is matched against the *key window's* responder chain, and a
+	/// binary launched from a terminal never becomes key — activation is a request
+	/// to the window server that this process is not granted, and it must not be:
+	/// stealing focus from whoever is working is worse than not being tested. So a
+	/// synthesised ⌘/ came back unhandled with no key window, which is
+	/// indistinguishable from a shortcut that is not there. The command palette is
+	/// blank in the same launch for the same reason, for every item in the menu.
+	///
+	/// So the three things that can actually be wrong are checked directly: that
+	/// an item carries `/` with ⌘ and nothing else, that its action is the one this
+	/// class implements, and that walking up from the first responder reaches
+	/// something that answers to it. Given those three, AppKit's own routing is
+	/// what carries the press, and it carries every other item in the same menu.
+	func commentKeyReportForTesting() {
+		let selector = #selector(MainWindowController.toggleLineComment(_:))
+		let items = (NSApp.mainMenu?.items ?? [])
+			.compactMap(\.submenu)
+			.flatMap(\.items)
+			.filter { $0.action == selector }
+
+		var chain: [String] = []
+		var responder: NSResponder? = window?.firstResponder
+		var answers = false
+		while let current = responder {
+			chain.append("\(type(of: current))")
+			if current.responds(to: selector) { answers = true; break }
+			responder = current.nextResponder
+		}
+
+		for item in items {
+			print("COMMENTKEY item “\(item.title)” in “\(item.menu?.title ?? "?")” "
+				+ "key=\(item.keyEquivalent) modifiers=\(item.keyEquivalentModifierMask.rawValue) "
+				+ "command-only=\(item.keyEquivalentModifierMask == [.command])")
+		}
+		if items.isEmpty { print("COMMENTKEY no menu item performs toggleLineComment:") }
+		print("COMMENTKEY responder chain answers=\(answers) via \(chain.joined(separator: " → "))")
+		fflush(stdout)
+	}
+
 	func setFindQuery(_ query: String) { editor.setFindQuery(query) }
 
 	func setProjectSearchQuery(_ query: String) {
