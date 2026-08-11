@@ -98,12 +98,16 @@ prompt whenever an agent does not start, from either cause.
 
 Not by installing: `/Applications/Abydos.app` is the app somebody is using, and
 replacing it to test a command-line tool is not a trade worth making. So
-`make build CONFIG=release BUNDLE_ID=de.rnd7.abydos.item0464 PIN_UUID=0`, and the
-resulting `build/Abydos.app` copied whole into a scratch directory. The layout is
-the layout that matters — `Contents/Resources/bin/abydos-backlog`, signed, inside
-a real bundle — and that copy picks an item up end to end. The old installed
-binary was run against the same throwaway project for the before, and it is the
-crash.
+`make build BUNDLE_ID=de.rnd7.abydos.item0464 PIN_UUID=0`, release and then
+debug, and the resulting `build/Abydos.app` copied whole into a scratch
+directory. The layout is the layout that matters —
+`Contents/Resources/bin/abydos-backlog`, signed, inside a real bundle — and both
+copies pick an item up end to end. The old installed binary was run against the
+same throwaway project for the before, and it is the crash.
+
+Also measured on the same project: a copy of the tool alone in a directory with
+no bundle anywhere near it, which is what `make install-cli` produces. The old
+one aborts, the new one starts the agent.
 
 The item picked up was a throwaway: a scratch git repository with a backlog of
 one item, made for this and deleted after. The assistant was a stand-in — a shell
@@ -118,11 +122,16 @@ settings were not reached. `abydos-backlog` reads and writes its own preference
 domain — `abydos-backlog`, since the binary has no bundle identifier — not the
 app's `de.rnd7.ideai`.
 
-`make test` was green on 2381 tests in 349 suites, on the second run. The first
-had two failures, both of them time: `PseudoTerminalTests` waiting 124 seconds
-for output a command produces in 0.35, and one `ContainerLSPLiveTests` case.
-Load average was **65** — two other agents were building on this machine — and
-both suites pass on their own in seconds at load 50.
+`make build` — release and debug — and `make test` green: 2381 tests in 349
+suites in 30 seconds at load average 22.
+
+An earlier run of the same suite, at **load average 65** with two other agents
+building on this machine, failed two: `PseudoTerminalTests` waited 124 seconds
+for output that a command produces in 0.35, and one `ContainerLSPLiveTests` case
+disagreed about a URI. Both suites pass on their own, and both passed in the run
+above. Worth writing down only because the numbers say which it was — a suite
+that takes 124 seconds to fail is a suite that was starved, not a suite that is
+wrong.
 
 ## Ruled out
 
@@ -158,10 +167,6 @@ third point was done as well as the first.*
 - ~~Whether a tool in an app should reach for `Bundle.module` at all.~~ Nothing
   in this package reaches for it, and a test says so.
 - ~~`start` should not crash when the agent cannot be launched.~~ Done.
-
-## Estimate
-
-2026-08-11 15:13 — about an hour left
 
 ## Steps
 
