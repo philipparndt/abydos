@@ -62,10 +62,10 @@ the fork is deliberate.
 
 - [ ] Read 0434's "two mounts, not one" note, and answer both items with one
       mechanism
-- [ ] A language server can say it needs directories outside the project, and
+- [x] A language server can say it needs directories outside the project, and
       they are mounted read-only
-- [ ] `ContainerPaths` maps them, or says clearly why it does not have to
-- [ ] `ToolImages/kmp-lsp/Dockerfile`, pinned to a commit of the fork, with the
+- [x] `ContainerPaths` maps them, or says clearly why it does not have to
+- [x] `ToolImages/kmp-lsp/Dockerfile`, pinned to a commit of the fork, with the
       reason for the fork written in the file
 - [ ] Driven end to end: a Java project in a container, go-to-definition into a
       `~/.m2` dependency, which is the exact thing 0450 measured going from

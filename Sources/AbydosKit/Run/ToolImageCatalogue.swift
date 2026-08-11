@@ -210,6 +210,30 @@ public enum ToolImageCatalogue {
 		// built here the first time a `.scad` is opened in a project that asks
 		// for it. `options(for:)` adds that entry itself, for any tool a
 		// Dockerfile ships for, so there is nothing to list here.
+		// The other tool with no published image, and for a different reason than
+		// openscad-lsp: what this repository builds is a *fork*, and publishing an
+		// image of somebody else's server with a patch in it under this project's
+		// name is a claim nobody asked us to make. The recipe says which commit and
+		// why, which is a thing a person can read and check; an image on Docker Hub
+		// is not. See `ToolImages/kmp-lsp/Dockerfile`.
+		Tool(
+			key: "kmp-lsp",
+			title: "Java — kmp-lsp",
+			choices: [],
+			requirement: languageServerRequirement("kmp-lsp") + """
+			 \nThis one server is the exception to the sentence above, and it is why \
+			it is chosen at all: it has no classpath and runs no build tool, so it \
+			finds a library's source by walking the caches the build tools left \
+			behind. Abydos mounts three directories into it — ~/.m2/repository and \
+			~/.gradle/caches read-only at /root/.m2/repository and \
+			/root/.gradle/caches, and ~/.cache/kmp-lsp writable at \
+			/root/.cache/kmp-lsp, where it unpacks a source file out of a jar so \
+			that this editor can open it. An image that looks anywhere else for \
+			them finds no dependencies and says nothing about it. It also needs \
+			`kmp-jar-indexer` in the same directory as the server: without it the \
+			whole jar pipeline is skipped, sources JARs included.
+			"""
+		),
 		Tool(
 			key: "openscad-lsp",
 			title: "OpenSCAD — openscad-lsp",
