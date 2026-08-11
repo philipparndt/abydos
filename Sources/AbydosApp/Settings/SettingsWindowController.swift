@@ -822,6 +822,43 @@ enum SettingsSections {
 		all.flatMap { [($0, 0)] + $0.children.map { child in (child, 1) } }
 	}
 
+	/// Sets one row's value, found by page and title, and says what it did.
+	///
+	/// For driving a preference change from the command line, and it goes through
+	/// the row's own `set` — the very closure the control calls — rather than
+	/// writing to `UserDefaults` beside it. That is the point rather than
+	/// tidiness: a value written into the defaults from outside changes the
+	/// stored answer and notifies nobody, which is the state 0460 was reported
+	/// *from*. What has to be exercised is a preference changing while the app is
+	/// running and something reacting to it.
+	static func choose(_ said: String) -> String {
+		guard let slash = said.firstIndex(of: "/"),
+		      let equals = said[slash...].firstIndex(of: "=")
+		else { return "cannot read \(said) — expected Page/Row=value" }
+		let page = String(said[..<slash])
+		let title = String(said[said.index(after: slash)..<equals])
+		let value = String(said[said.index(after: equals)...])
+
+		guard let section = flattened.first(where: { $0.section.title == page })?.section else {
+			return "no settings page called \(page)"
+		}
+		for row in section.rows() {
+			switch row {
+			case let .choice(rowTitle, _, _, _, set) where rowTitle == title,
+			     let .choiceWithActions(rowTitle, _, _, _, set, _) where rowTitle == title,
+			     let .text(rowTitle, _, _, set) where rowTitle == title:
+				set(value)
+				return "\(page) ▸ \(title) = \(value)"
+			case let .toggle(rowTitle, _, _, set, _) where rowTitle == title:
+				set(value == "true" || value == "on")
+				return "\(page) ▸ \(title) = \(value)"
+			default:
+				continue
+			}
+		}
+		return "no row called \(title) on \(page)"
+	}
+
 	static let all: [Section] = [
 		// What the app looks like, first and in one place. It used to be split
 		// between the editor's page and the terminal's, which is how somebody

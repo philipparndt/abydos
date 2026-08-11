@@ -172,6 +172,13 @@ final class LanguageService {
 	/// rather than once per keystroke in the symbol palette.
 	private var emptied: Set<String> = []
 
+	/// The preferences that decide which server answers and where it comes from,
+	/// as they were the last time anything was done about them.
+	private var preferences = ToolPreferences(Settings.shared)
+	/// The reconsideration a settings change has asked for and not had yet, held
+	/// so that the next change cancels it.
+	private var reconsidering: Task<Void, Never>?
+
 	/// Where the log is, for a sentence that tells somebody where to look.
 	static let logPath = DiagnosticLog.path("lsp")
 
@@ -200,6 +207,19 @@ final class LanguageService {
 					alive: await DevContainers.shared.containerNames
 				)
 			}
+		}
+
+		// And a preference that decides which server answers, or where it comes
+		// from. Everything remembered here about a server not working — it is
+		// unavailable, this is the hint above the file, this is what it said — is
+		// an answer given under conditions somebody has just changed, and until
+		// 0460 nothing went back to look. There is one notification for every
+		// setting and it says nothing about which one, so the reading is done in
+		// `settingsChanged`.
+		NotificationCenter.default.addObserver(
+			forName: .abydosSettingsChanged, object: nil, queue: .main
+		) { _ in
+			Task { @MainActor in LanguageService.shared.settingsChanged() }
 		}
 	}
 
@@ -909,6 +929,137 @@ final class LanguageService {
 			replayDeferredOpens(to: server, key: key)
 		}
 		return nil
+	}
+
+	// MARK: - When a preference changes underneath a server
+
+	/// Settings were written. Which setting is not said — there is one
+	/// notification for all of them — so the answer is to look.
+	///
+	/// **Not at once.** Two reasons, and the second is the one that matters.
+	/// Every write posts this, so a slider on the appearance page would otherwise
+	/// walk every open project to discover it has nothing to do. And a text field
+	/// for an image name is a value on its way to being a value: the field this
+	/// app has sends its action when the editing ends rather than per character,
+	/// so today's controls settle by themselves — but a preference change costs a
+	/// server being stopped and started, and that is not a bill to leave resting
+	/// on a control's configuration. Coalescing takes the last of a run of writes
+	/// and acts on that one.
+	private func settingsChanged() {
+		reconsidering?.cancel()
+		reconsidering = Task { @MainActor in
+			try? await Task.sleep(nanoseconds: 400_000_000)
+			guard !Task.isCancelled else { return }
+			self.reconsider()
+		}
+	}
+
+	/// Goes back over what is remembered about servers not working, because a
+	/// preference that decided it has changed.
+	///
+	/// The whole of 0460 is here. A server that failed is not tried again for the
+	/// project — deliberately, since a name that is wrong is wrong every time —
+	/// and until now the only thing that undid it was `shutdown(server:)`, which
+	/// is Stop in the list of running servers. So somebody who chose an image for
+	/// a server that had already failed got nothing at all: no container, no
+	/// build, no message, and nothing on screen disagreeing with what they asked
+	/// for.
+	///
+	/// **It starts what it clears, rather than only unclearing it.** Clearing the
+	/// memory alone would make the *next* file of that language ask again, and
+	/// the person who has just chosen an image is looking at the editor now.
+	/// "It works when you go back to the file" is the same fault with a longer
+	/// fuse — they would have gone and looked for the fault somewhere else long
+	/// before opening that file again. So an affected project is warmed up as
+	/// though it had just been opened, and the files already on screen are
+	/// announced again through `.ideaiLanguageServersMoved`, which is the path a
+	/// project moving in or out of its devcontainer already takes.
+	///
+	/// The cost of that is bounded by `ServerReconsideration` deciding what is
+	/// affected: a project with nothing to do is not walked at all.
+	private func reconsider() {
+		let now = ToolPreferences(Settings.shared)
+		let change = now.changes(since: preferences)
+		guard !change.isEmpty else { return }
+		preferences = now
+
+		// Every project this session has asked anything about, which is what the
+		// choices cache holds. A project switched away from is included, and that
+		// is 0427's promise rather than an oversight: its servers are deliberately
+		// still running, so they are servers this can be wrong about.
+		for path in serverChoices.keys.sorted() {
+			reconsider(URL(fileURLWithPath: path, isDirectory: true), after: change)
+		}
+	}
+
+	private func reconsider(_ project: URL, after change: ToolPreferences.Change) {
+		let path = project.standardizedFileURL.path
+		let wasChoosing = choices(for: project)
+		let wasFrom = images(for: project)
+		// Read again, both of them, and from the project's file as well as from
+		// settings: what is in force is the two merged, and only one half is known
+		// to have moved.
+		serverChoices.removeValue(forKey: path)
+		toolImages.removeValue(forKey: path)
+
+		let decision = ServerReconsideration(
+			change: change,
+			project: project,
+			was: wasChoosing,
+			wasFrom: wasFrom,
+			now: choices(for: project),
+			nowFrom: images(for: project),
+			running: Set(servers.keys),
+			inDevContainer: usesDevContainer(project)
+		)
+		guard !decision.isEmpty else { return }
+
+		// Stopped first, and through the same call the list of running servers
+		// uses, so a server that is no longer the one being asked for goes the way
+		// a server stopped by hand goes: the protocol's own shutdown, the process,
+		// the container if it had one, and the documents it held forgotten.
+		//
+		// **Stopping it is the disruptive reading and it is the right one.** A
+		// project holds one server per language and no more, because two answering
+		// over one file is two sets of diagnostics with no rule for which wins; and
+		// what the old one goes on publishing is a toolchain the project no longer
+		// uses, which is the fault 0432 is about. jdtls's import is minutes and
+		// those minutes are the cost of the choice that was just made, paid now,
+		// while somebody is looking at the thing they changed — rather than at some
+		// later moment they cannot connect to it.
+		for key in decision.stop.sorted() {
+			shutdown(server: key, because: "because a preference changed")
+		}
+
+		for key in decision.forget {
+			unavailable.remove(key)
+			missingHints.removeValue(forKey: key)
+			lastStandardError.removeValue(forKey: key)
+			refused.remove(key)
+			// An image still on its way, for an answer that has been replaced. The
+			// fetch itself is left to finish — the image is worth having on the
+			// machine either way — but taking the key out is what makes it stop at
+			// the guard it already has and not start a server nobody asked for.
+			fetching.remove(key)
+			deferredOpens.removeValue(forKey: key)
+		}
+		for languageId in decision.languages {
+			failures.removeValue(forKey: languageId)
+		}
+		// Said out loud again if it happens again, which is what `shutdown(project:)`
+		// does for the same reason.
+		announced.removeAll()
+
+		log("\(project.lastPathComponent): a preference changed — "
+			+ "\(decision.forget.count) server(s) reconsidered, "
+			+ "\(decision.stop.count) stopped")
+
+		warmUp(project: project)
+		// The files already open have to be announced to whatever answers for them
+		// now: a server that was stopped forgot them, and one that has just started
+		// never knew. Nothing here can reach the text — the editor groups hold it —
+		// which is what this notification is for.
+		NotificationCenter.default.post(name: .ideaiLanguageServersMoved, object: project)
 	}
 
 	// MARK: - Servers inside the project's devcontainer
@@ -1922,8 +2073,13 @@ final class LanguageService {
 	/// file of that language to be opened starts another one and announces the
 	/// file to it. Stopping a server by hand is "not now", not "never again" —
 	/// the alternative would make this list a way to break the editor quietly.
+	///
+	/// - Parameter because: what put it in the log, since this is no longer only
+	///   reached from the Stop button. A line saying a server was stopped by hand
+	///   when nobody touched it is worse than no line: the log is what somebody
+	///   reads when they are trying to work out what the app did on its own.
 	@discardableResult
-	func shutdown(server key: String) -> Bool {
+	func shutdown(server key: String, because reason: String = "by hand") -> Bool {
 		guard let server = servers.removeValue(forKey: key) else { return false }
 		runningNames.removeAll { $0 == server.definition.command }
 		let client = server.client
@@ -1941,7 +2097,7 @@ final class LanguageService {
 			openDocuments.removeValue(forKey: uri)
 		}
 		missingHints.removeValue(forKey: key)
-		log("\(server.definition.command) was stopped by hand for "
+		log("\(server.definition.command) was stopped \(reason) for "
 			+ "\(server.project.lastPathComponent)")
 		NotificationCenter.default.post(name: .ideaiLanguageServersChanged, object: nil)
 		return true

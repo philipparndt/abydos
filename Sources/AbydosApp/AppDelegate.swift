@@ -1500,6 +1500,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			exit(0)
 		}
 
+		// A preference chosen while the app is running, which is the moment 0460
+		// is about. Timed, because a preference changed before anything has been
+		// tried has nothing to reconsider: the case that matters is a server that
+		// has already failed for this project.
+		if let said = options.chooseSetting {
+			DispatchQueue.main.asyncAfter(deadline: .now() + options.chooseSettingAt) {
+				print("CHOSE: \(SettingsSections.choose(said))")
+			}
+		}
+
 		if options.openSettings {
 			controller?.settingsSectionForTesting = options.settingsSection
 			controller?.settingsFoldForTesting = options.settingsFold

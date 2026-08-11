@@ -493,7 +493,18 @@ public enum LanguageServers {
 		case let .noSuchServer(name, _): server = name
 		case .nothing: server = languageId
 		}
-		return "\(project.standardizedFileURL.path)#\(server)"
+		return serverKey(project: project, server: server)
+	}
+
+	/// The same key, for a caller that already knows which server it means.
+	///
+	/// Where a tool comes from is settled under the tool's own name and never
+	/// under a language, so a change to an image is a sentence about one of
+	/// these keys directly. Written once here rather than spelled out again at
+	/// the two call sites: the format is what makes an entry findable, and two
+	/// places agreeing by eye is the sort of thing that stops being true.
+	public static func serverKey(project: URL, server name: String) -> String {
+		"\(project.standardizedFileURL.path)#\(name)"
 	}
 
 	/// Where the command lives, or nil if it is not installed.

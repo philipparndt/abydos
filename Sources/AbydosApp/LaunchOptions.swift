@@ -360,6 +360,19 @@ struct LaunchOptions {
 	var switchTo: String?
 	/// When to switch, in seconds. Read off `--switch-to path@seconds`.
 	var switchToAt: Double = 1.0
+	/// Choose a value on a settings page while the app is running, said as
+	/// `Page/Row=value` or `Page/Row=value@seconds`.
+	///
+	/// Through the row's own setter rather than by writing to the defaults
+	/// behind it, because what 0460 is about is what happens *when a preference
+	/// changes*: a value put into `UserDefaults` from outside changes the stored
+	/// answer and tells nobody, which is the state the fault was reported from
+	/// rather than a way of reproducing it.
+	var chooseSetting: String?
+	/// When to choose it, in seconds. The default is late enough for a project
+	/// to have opened and its servers to have failed, since a preference changed
+	/// before anything has been tried reconsiders nothing.
+	var chooseSettingAt: Double = 10.0
 	/// Rename the terminal tab before capture, as a double-click does.
 	var renameTerminal: String?
 	/// Put two terminals side by side before capture.
@@ -734,6 +747,17 @@ struct LaunchOptions {
 					options.switchToAt = seconds
 				} else {
 					options.switchTo = said
+				}
+			case "--choose-setting":
+				let said = next() ?? ""
+				// `Page/Row=value@seconds`, the way the other timed steps are
+				// said, and a value with no `@` in it keeps the default.
+				if let at = said.lastIndex(of: "@"),
+				   let seconds = Double(said[said.index(after: at)...]) {
+					options.chooseSetting = String(said[..<at])
+					options.chooseSettingAt = seconds
+				} else {
+					options.chooseSetting = said
 				}
 			case "--rename-terminal": options.renameTerminal = next()
 			case "--split-terminals": options.splitTerminals = true
