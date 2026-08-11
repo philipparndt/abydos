@@ -68,6 +68,7 @@ public final class Settings {
 			Key.wordWrap: false,
 			Key.fontLigatures: true,
 			Key.terminalGPURendering: false,
+			Key.terminalGhosttyEngine: false,
 			Key.terminalOptionAsMeta: false,
 			// The Abydos scheme, not the blue one this app started with.
 			//
@@ -115,6 +116,7 @@ public final class Settings {
 		static let wordWrap = "wordWrap"
 		static let fontLigatures = "fontLigatures"
 		static let terminalGPURendering = "terminalGPURendering"
+		static let terminalGhosttyEngine = "terminalGhosttyEngine"
 		static let terminalOptionAsMeta = "terminalOptionAsMeta"
 		static let toolImages = "toolImages"
 		static let languageServers = "languageServers"
@@ -337,6 +339,28 @@ public final class Settings {
 	public var terminalBellStyle: String {
 		get { defaults.string(forKey: Key.terminalBellStyle) ?? "sound" }
 		set { set(newValue, Key.terminalBellStyle) }
+	}
+
+	/// Emulate the terminal with libghostty-vt rather than our own emulator.
+	///
+	/// Off by default, and more emphatically off than `terminalGPURendering` is:
+	/// the two GPU paths draw the same screen, whereas the two *engines* do not
+	/// yet do the same things. libghostty-vt is ghostty's terminal state machine
+	/// — the same code a great many people run daily — and the reason to want it
+	/// is that the hardest bugs this terminal has had (0397, 0468) were ours to
+	/// have. The reason not to is in `GhosttyTerminalEngine.unimplemented`, which
+	/// is the list the settings window shows beside this switch rather than
+	/// something to find out by using it.
+	///
+	/// Item 0474 has the measurements. The short of it: on real captures the two
+	/// engines agree cell for cell on ordinary output, tmux over a scrolling
+	/// pane, wide glyphs and combining marks — and disagree on exactly one thing,
+	/// which is the off-screen cursor park 0404 was filed for, where ours is the
+	/// one that puts tmux's prompt on the right row. Kitty graphics is not
+	/// implemented behind this switch at all.
+	public var terminalGhosttyEngine: Bool {
+		get { defaults.bool(forKey: Key.terminalGhosttyEngine) }
+		set { set(newValue, Key.terminalGhosttyEngine) }
 	}
 
 	/// Draw the terminal on the GPU rather than through CoreGraphics.

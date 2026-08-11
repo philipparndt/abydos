@@ -1665,10 +1665,15 @@ final class TerminalView: NSView, NSTextInputClient {
 		let clipFrame = enclosingScrollView?.contentView.frame.width ?? 0
 		let scale = window?.backingScaleFactor ?? 0
 		return String(
-			format: "alt=%@ rows=%d columns=%d fits=%d window=%.0f clipW=%.0f clipFrameW=%.0f "
+			format: "engine=%@ alt=%@ rows=%d columns=%d fits=%d window=%.0f clipW=%.0f clipFrameW=%.0f "
 				+ "scale=%.1f cell=%.1f "
 				+ "frame=%.1f clip=%.1f origin=%.1f "
 				+ "lastRowBottom=%.1f visible=%@ widthOK=%@",
+			// Which engine emulated this pane. There are two of them now (0474),
+			// so the first question about any terminal bug report is which one
+			// drew it, and this is where the answer is — off the running app,
+			// rather than by asking somebody to remember a setting.
+			Self.engineNameForTesting,
 			emulator.isAlternateScreen ? "yes" : "no",
 			emulator.screen.rows, emulator.screen.columns, max(20, fits),
 			windowWidth, clip.width, clipFrame, scale, cellWidth,
@@ -1676,6 +1681,17 @@ final class TerminalView: NSView, NSTextInputClient {
 			bottomOfLastRow <= clip.origin.y + clip.height + 0.5 ? "yes" : "NO",
 			max(20, fits) == emulator.screen.columns ? "yes" : "NO"
 		) + " " + winsizeForTesting
+	}
+
+	/// The engine this pane is using, and — while the switch is not yet wired
+	/// through this view — what the setting is asking for, so the two can be
+	/// told apart. `libghostty-vt(requested)` means somebody has turned the
+	/// setting on and is *not* getting it, which is the honest thing to print
+	/// until the seam reaches this file. See item 0474.
+	static var engineNameForTesting: String {
+		Settings.shared.terminalGhosttyEngine
+			? "\(GhosttyTerminalEngine.engineName)(requested,not-wired)"
+			: TerminalEmulator.engineName
 	}
 
 	/// What the kernel says this pane is, which is what the program sizing a

@@ -100,6 +100,24 @@ let package = Package(
 		.package(url: "https://github.com/philipparndt/gostl.git", exact: "0.20.2"),
 	] + grammarPackages,
 	targets: [
+		// libghostty-vt — ghostty's terminal state machine on its own, with no
+		// pty and no renderer, as the optional second engine under the terminal
+		// (item 0474). This is NOT `libghostty` / `GhosttyKit.xcframework`, which
+		// is the macOS app's internal glue and says so in its own header; it is
+		// `include/ghostty/vt.h`, the part meant for embedding.
+		//
+		// A binary target because there is nothing to depend on: libghostty-vt
+		// has no release, no tag and no package — it is version `0.1.0-dev`, and
+		// the only way to get one is `zig build -Demit-lib-vt=true` in a ghostty
+		// checkout. Scripts/build-libghostty-vt.sh does exactly that and writes
+		// this xcframework, so it can be rebuilt from a named commit rather than
+		// trusted; the artifact is committed so that a fresh clone and CI need
+		// neither zig nor a 350 MB zig cache.
+		//
+		// What it costs everybody: 18 MB in the repository, and every build
+		// links it whether the setting is on or off, because SPM linkage is a
+		// build-time fact that a runtime setting cannot undo.
+		.binaryTarget(name: "GhosttyVt", path: "Vendor/ghostty-vt.xcframework"),
 		// The DOOM fire terminal stress test, ported so it can run unattended.
 		.executableTarget(name: "FireBench", path: "Sources/FireBench"),
 		// Editor engine: text storage, syntax, folding, git, project model.
@@ -109,6 +127,9 @@ let package = Package(
 			dependencies: [
 				.product(name: "SwiftTreeSitter", package: "SwiftTreeSitter"),
 				.product(name: "SwiftTreeSitterLayer", package: "SwiftTreeSitter"),
+				// The optional second terminal engine. Linked always, used only
+				// when `Settings.terminalGhosttyEngine` is on (0474).
+				"GhosttyVt",
 			] + grammarProducts,
 			// Queries a grammar does not ship itself. tree-sitter-java has no
 			// `folds.scm`, so without this a Java file cannot be folded at all.
@@ -133,7 +154,10 @@ let package = Package(
 			// strict concurrency checking and fights it constantly. Isolation here
 			// is enforced by design (UI on the main thread, parsing behind an
 			// actor) rather than by the 6.0 checker.
-			swiftSettings: [.swiftLanguageMode(.v5)]
+			swiftSettings: [.swiftLanguageMode(.v5)],
+			// libghostty-vt bundles simdutf and highway, which are C++, so the
+			// C++ runtime has to be named or the link fails on their symbols.
+			linkerSettings: [.linkedLibrary("c++")]
 		),
 		// AppKit shell: window, navigator, toolbar, code view.
 		//
