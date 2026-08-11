@@ -117,6 +117,8 @@ preference would go there.
       0.75 to tell a restored split from a default one. Markdown in Split Down
       at 0.35 came back the same way, and a session with no modes in it brought
       the `.scad` back as source and the `.mmd` back split, which is each kind's
-      own default
+      own default. A split restored *behind* the tab in front came up at its own
+      0.8 the moment it was clicked, which is the case the old code could not do
 - [x] Write down here what was ruled out on the way
-- [ ] `spec/<capability>.md` says what the project now does
+- [x] `spec/sessions.md` says what the project now does — a new capability, since
+      nothing in the spec described what a project remembers
