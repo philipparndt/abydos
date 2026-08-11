@@ -49,6 +49,10 @@ suite, which is the expensive kind of failure.
   reporting says something useful — four of them is 4 GB of the runtime's memory
   by the figures in `container ls`.
 
+## Estimate
+
+2026-08-11 19:35 — about two hours left
+
 ## Steps
 
 - [ ] Reproduce it deliberately: leave a container, run the suite, watch the
