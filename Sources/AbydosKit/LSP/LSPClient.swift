@@ -309,8 +309,34 @@ public final class LSPClient: @unchecked Sendable {
 			"completion": [
 				"completionItem": ["snippetSupport": false, "documentationFormat": ["plaintext"]],
 			],
+			// `prepareSupport`, because asking first is how the offer to rename is
+			// only made where there is something to rename. Without it a server
+			// answers `prepareRename` with an error rather than a range, and the
+			// editor cannot tell "not renameable here" from "this server is
+			// broken".
+			"rename": ["prepareSupport": true, "dynamicRegistration": false],
 		],
-		"workspace": ["workspaceFolders": true, "symbol": ["dynamicRegistration": false]],
+		"workspace": [
+			"workspaceFolders": true,
+			"symbol": ["dynamicRegistration": false],
+			// **This is what decides the shape a rename comes back in.** Servers
+			// send the old `changes` map to clients that claim nothing here, and
+			// that map carries text only — so a Java rename that has to move
+			// `Foo.java` to `Bar.java` would arrive with the move silently
+			// missing, leaving a file whose name no longer matches the class in
+			// it. Claiming `documentChanges` and the three resource operations is
+			// what makes the server say the whole of what it means.
+			//
+			// `failureHandling: "abort"` is not decoration either: it is this
+			// client telling the server that a refused edit leaves the project
+			// untouched, which is exactly what `WorkspaceEditPlan` guarantees.
+			"workspaceEdit": [
+				"documentChanges": true,
+				"resourceOperations": ["create", "rename", "delete"],
+				"failureHandling": "abort",
+				"normalizesLineEndings": false,
+			],
+		],
 	]
 
 	/// Asks the server to stop, and makes sure it does.
@@ -446,6 +472,71 @@ public final class LSPClient: @unchecked Sendable {
 			["command": command, "arguments": arguments],
 			timeout: timeout
 		)
+	}
+
+	// MARK: - Changing code
+
+	/// Whether this server renames at all, and whether it will be asked first.
+	///
+	/// Read from what it said at the handshake rather than discovered by asking
+	/// and being refused: an offer that fails is worse than no offer, and the
+	/// only thing a server that cannot rename can answer is an error somebody
+	/// has already committed to reading.
+	///
+	/// `renameProvider` is `true` for a server that renames and takes no options,
+	/// or an object for one that has something to say about it — of which the
+	/// only field anyone sends is `prepareProvider`.
+	public var renames: Bool {
+		let provider = locked { capabilities["renameProvider"] }
+		if let flag = provider as? Bool { return flag }
+		return provider is [String: Any]
+	}
+
+	/// Whether `prepareRename` may be asked of this server.
+	///
+	/// A server that renames but has no prepare must not be asked: several
+	/// answer `MethodNotFound`, which arrives as a refusal and reads exactly
+	/// like a symbol that cannot be renamed. Where it is absent the editor works
+	/// the word out itself, which is what it did before asking anything.
+	public var preparesRenames: Bool {
+		guard let options = locked({ capabilities["renameProvider"] }) as? [String: Any] else {
+			return false
+		}
+		return options["prepareProvider"] as? Bool ?? false
+	}
+
+	/// What would be renamed here, and nil where nothing would.
+	///
+	/// Three shapes on the wire, and the difference between the second and the
+	/// third is the whole reason to ask: a plain range, `{ range, placeholder }`
+	/// where the placeholder is the text to start the field with, and
+	/// `{ defaultBehavior: true }` meaning "yes, and work the word out
+	/// yourself". A server that answers `null` is saying there is nothing here
+	/// to rename, which is an answer and not a failure.
+	public func prepareRename(
+		uri: String, position: LSPPosition
+	) async throws -> LSPRenameTarget? {
+		let result = try await request("textDocument/prepareRename", [
+			"textDocument": ["uri": uri],
+			"position": position.json,
+		])
+		return LSPRenameTarget(json: result)
+	}
+
+	/// The whole change renaming this symbol comes to.
+	///
+	/// The timeout is the request's own and generous by default: a rename is a
+	/// project-wide search followed by a project-wide edit, and jdtls on a large
+	/// reactor takes tens of seconds over it where a hover takes none.
+	public func rename(
+		uri: String, position: LSPPosition, to newName: String, timeout: TimeInterval = 60
+	) async throws -> WorkspaceEdit? {
+		let result = try await request("textDocument/rename", [
+			"textDocument": ["uri": uri],
+			"position": position.json,
+			"newName": newName,
+		], timeout: timeout)
+		return WorkspaceEdit(json: result)
 	}
 
 	public func references(uri: String, position: LSPPosition) async throws -> [LSPLocation] {

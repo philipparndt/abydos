@@ -71,15 +71,50 @@ same mechanism — which is **0456**, filed and explicitly waiting on this one.
   pointed a project at it, the rename that arrives is a different promise from
   jdtls's, and somebody should be told which they are getting.
 
+## Estimate
+
+2026-08-11 12:41 — about four hours left
+
 ## Steps
 
+Finer than the list this was filed with. Each of the four hard parts above is
+more than one thing somebody can go and look at, and the mechanism turned out to
+be worth separating from the gesture that sits on it — which is the item's own
+sentence about itself, made into a checklist.
+
+**The mechanism**
+
+- [x] A `WorkspaceEdit` is read from both shapes, and text edits go into text
+      correctly — backwards by position, characters counted in UTF-16, all three
+      line endings
+- [x] `WorkspaceEditPlan` works the whole edit out without touching anything,
+      simulating `documentChanges` in order so that a file which moves is right
+      whichever way round the server sends it
+- [x] `WorkspaceEditApplier` carries a plan out, and puts back what it did when
+      a write refuses partway
+- [x] A partial failure says exactly what was written and what was not
+- [x] The container edge is *driven* rather than assumed: a workspace edit's map
+      of changes crosses by its keys
+
+**The requests**
+
+- [x] `prepareRename` and `textDocument/rename` on `LSPClient`, and the client
+      capabilities that make a server answer with `documentChanges` at all
 - [ ] `prepareRename` and the server's capabilities decide whether rename is
       offered at all
+- [ ] Somebody is told when the rename on offer is a syntactic one (kmp-lsp)
+      rather than a type-aware one (jdtls)
+
+**The gesture**
+
+- [ ] Where the new name is typed
 - [ ] `textDocument/rename`, and a `WorkspaceEdit` applied to open documents
       through the rope and to closed ones on disk
 - [ ] `documentChanges` as well as `changes`, including a file that moves
 - [ ] One undo for the whole edit
-- [ ] A partial failure says exactly what was written and what was not
+
+**Evidence**
+
 - [ ] Drive it across the corpus — a rename touching several bundles, and the
       same rename with the project in a container, which is the path that was
       built for this and never used

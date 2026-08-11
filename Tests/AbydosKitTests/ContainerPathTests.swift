@@ -79,4 +79,98 @@ struct ContainerPathTests {
 			host: "/Users/me/project", container: "/workspace", isReadOnly: false
 		))
 	}
+
+	// MARK: - A workspace edit crossing
+
+	/// **The message this rewriting was built for and had never carried.**
+	///
+	/// `spec/tool-images.md` has required since the containers were built that
+	/// URIs cross "for the ones that are values and for the ones that are keys,
+	/// so that a workspace edit's map of changes crosses too" — written for a
+	/// message this program did not send until 0453. A `changes` map is the only
+	/// place in the whole protocol where a URI is a dictionary *key*, so a walk
+	/// that looked at values only would bring every edit home and leave the file
+	/// each one belongs to on the container's side: the edits would be applied
+	/// to `/workspace/…`, which is a path this machine does not have.
+	///
+	/// Driven rather than assumed, because nothing had ever driven it.
+	@Test func aWorkspaceEditsMapOfChangesCrossesByItsKeys() {
+		let reply: [String: Any] = [
+			"jsonrpc": "2.0",
+			"id": 7,
+			"result": [
+				"changes": [
+					"file:///workspace/src/main.go": [[
+						"range": [
+							"start": ["line": 4, "character": 5],
+							"end": ["line": 4, "character": 13],
+						],
+						"newText": "greeting",
+					]],
+					"file:///workspace/src/other.go": [],
+				],
+			],
+		]
+
+		let home = paths.hostSide(of: reply)
+		let edit = WorkspaceEdit(json: (home["result"] as? [String: Any]))
+
+		#expect(edit?.changes.map(\.uri) == [
+			"file:///Users/me/project/src/main.go",
+			"file:///Users/me/project/src/other.go",
+		])
+		// And the file each one names is a file on this machine.
+		#expect(WorkspaceEditPlan.fileURL(edit?.changes.first?.uri ?? "")?.path
+			== "/Users/me/project/src/main.go")
+	}
+
+	/// The same for `documentChanges`, where the URI is a value inside a nested
+	/// object and a file operation names two of them.
+	@Test func documentChangesAndAFileThatMovesCrossToo() {
+		let reply: [String: Any] = [
+			"result": [
+				"documentChanges": [
+					[
+						"textDocument": ["uri": "file:///workspace/src/Foo.java", "version": 2],
+						"edits": [[
+							"range": [
+								"start": ["line": 0, "character": 6],
+								"end": ["line": 0, "character": 9],
+							],
+							"newText": "Bar",
+						]],
+					],
+					[
+						"kind": "rename",
+						"oldUri": "file:///workspace/src/Foo.java",
+						"newUri": "file:///workspace/src/Bar.java",
+					],
+				],
+			],
+		]
+
+		let edit = WorkspaceEdit(json: paths.hostSide(of: reply)["result"] as? [String: Any])
+		#expect(edit?.changes.last == .rename(
+			from: "file:///Users/me/project/src/Foo.java",
+			to: "file:///Users/me/project/src/Bar.java",
+			overwrite: false, ignoreIfExists: false
+		))
+	}
+
+	/// And the way out. A rename is asked at a URI, and a server that was given
+	/// this machine's name for the file would answer about no such document.
+	@Test func theQuestionGoesOutUnderTheContainersName() {
+		let request: [String: Any] = [
+			"method": "textDocument/rename",
+			"params": [
+				"textDocument": ["uri": "file:///Users/me/project/src/main.go"],
+				"position": ["line": 4, "character": 5],
+				"newName": "greeting",
+			],
+		]
+
+		let outgoing = paths.containerSide(of: request)
+		let document = (outgoing["params"] as? [String: Any])?["textDocument"] as? [String: Any]
+		#expect(document?["uri"] as? String == "file:///workspace/src/main.go")
+	}
 }
