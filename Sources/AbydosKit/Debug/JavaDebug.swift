@@ -21,6 +21,16 @@ public enum JavaDebug {
 	/// The command that lists the classes with a `main` method, as the language
 	/// server sees them.
 	public static let mainClassCommand = "vscode.java.resolveMainClass"
+	/// The command that compiles what the server has imported.
+	///
+	/// **The step between a classpath and a class file, and 0452 found it by
+	/// getting a `ClassNotFoundException` from a project that was perfectly
+	/// correct.** jdtls compiles into the output directory the build file names —
+	/// `target/classes` for Maven — and it does that *after* the import, so the
+	/// first launch of a session can be handed an entirely right classpath with
+	/// nothing in it yet. VS Code's Java extension builds before it launches for
+	/// this reason, and so does this.
+	public static let buildCommand = "vscode.java.buildWorkspace"
 
 	/// The argument shape `java.project.getClasspaths` wants.
 	///

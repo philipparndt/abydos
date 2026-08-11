@@ -1518,7 +1518,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			// any of them.
 			let rows = SettingsSections.flattened.first { $0.section.title == section }?
 				.section.rows() ?? []
-			for line in SettingsPaneController.describe(rows) { print("SETTING \(line)") }
+			for line in SettingsPaneController.describe(rows, withHelp: options.dumpSettingsHelp) {
+				print("SETTING \(line)")
+			}
 			exit(0)
 		}
 

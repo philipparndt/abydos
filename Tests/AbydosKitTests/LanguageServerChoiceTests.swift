@@ -322,10 +322,15 @@ struct LanguageServerChoiceTests {
 		)
 	}
 
-	/// The debugger stays with jdtls, and that is the price of the fast one: the
-	/// adapter is an Eclipse bundle loaded *inside* that server rather than a
-	/// program beside it, so `setup == .java` is exactly the servers it can be
-	/// offered to.
+	/// The debug bundle goes into jdtls and nothing else, so `setup == .java` is
+	/// exactly the servers it can be offered to.
+	///
+	/// **It is no longer the price of the fast one.** Until 0452 this test's
+	/// comment said it was — choosing kmp-lsp cost the debugger outright, because
+	/// the adapter is an Eclipse bundle loaded *inside* the other server. Since
+	/// 0452 the host is asked for by `JavaDebugHost.definition`, which does not
+	/// consult the project's choice at all, so this entry decides which server the
+	/// bundle goes into and no longer decides whether anybody can debug.
 	@Test func onlyTheServerThatHostsTheDebugBundleIsSetUpAsJava() {
 		#expect(LanguageServers.server(named: "jdtls")?.setup == .java)
 		#expect(LanguageServers.server(named: "kmp-lsp")?.setup == .plain)

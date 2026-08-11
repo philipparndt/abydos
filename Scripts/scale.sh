@@ -158,7 +158,19 @@ grep -E '^(OPEN|ANSWER)' "$LOG" || echo "   nothing — see $LOG"
 # The guard, last so it is the final word: a report whose project line is not
 # the project asked for is a report about whatever was open last, and those look
 # exactly like an answer.
-if grep -q "^OPEN project $PROJECT\$" "$LOG"; then
+#
+# `/private` stripped from both sides before comparing, and 0452 is why. A project
+# under `/tmp` — which is where a scratch clone of the corpus goes — is reached as
+# `/private/tmp/...` by `cd; pwd` and reported by the app as `/tmp/...`, because
+# `standardizingPath` takes `/private` off as a documented special case. So the
+# guard failed on a run whose window was on exactly the right project, which is
+# the worse of the two ways for a guard to be wrong: it cost half an hour of
+# looking for a window that had never gone anywhere, and a guard nobody believes
+# is a guard nobody reads.
+short() { printf '%s' "${1#/private}"; }
+if grep -E '^OPEN project ' "$LOG" | while read -r _ _ said; do
+	[ "$(short "$said")" = "$(short "$PROJECT")" ] || exit 1
+	done && grep -q '^OPEN project ' "$LOG"; then
 	echo
 	echo "   ✓ this was $PROJECT"
 else

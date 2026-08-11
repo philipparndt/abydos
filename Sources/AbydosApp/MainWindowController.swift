@@ -2787,9 +2787,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			runItem.toolTip = configuration.commandLine
 			menu.addItem(runItem)
 
-			// Only Go can be debugged so far, and only through Delve. Listing a
-			// Debug that cannot start would be worse than leaving it out.
-			if configuration.isDebuggable {
+			// Listing a Debug that cannot start would be worse than leaving it
+			// out. Go goes through Delve; Java goes through an adapter inside a
+			// jdtls, which since 0452 is started for the debugger alone when the
+			// server editing the project is not one that hosts it — so what has to
+			// be asked here is whether *anything* can host it, not which server
+			// happens to be answering about files.
+			if configuration.isDebuggable, javaDebugSettledRefusal(configuration) == nil {
 				let debugItem = NSMenuItem(
 					title: "Debug",
 					action: #selector(debugMenuItem(_:)),
@@ -2891,6 +2895,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	private func configuration(for item: NSMenuItem) -> RunConfiguration? {
 		guard let id = item.representedObject as? String else { return nil }
 		return runConfigurations.first { $0.id == id }
+	}
+
+	/// Why Java cannot be debugged here at all, when nothing anybody does now
+	/// would change it — and nil for everything else, including the reasons that
+	/// are worth offering and explaining.
+	///
+	/// Nil for a configuration that is not Java, which is most of them: the
+	/// question is about the Java debugger and asking it of a Go package would
+	/// walk a project for markers that decide nothing.
+	private func javaDebugSettledRefusal(_ configuration: RunConfiguration) -> String? {
+		guard configuration.source == .javaMain, let project else { return nil }
+		let root = project.scopeRoot
+		guard let refusal = JavaDebugHost.refusal(
+			project: root,
+			inDevContainer: LanguageService.shared.devContainerNameHoldingServers(for: root)
+		), refusal.isSettledHere else { return nil }
+		return refusal.localizedDescription
 	}
 
 	/// Starts the native debugger on a configuration's package.
@@ -5851,9 +5872,27 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// minutes is a very different thing to wait for than one that answers
 	/// nothing until it is ready.
 	///
-	/// Asked together each round so a round costs one ten-second request timeout
-	/// rather than three, and the granularity of every figure below is therefore
-	/// the round — a second, plus however long the server took to refuse.
+	/// **And two more, for the debugger**, which is 0452's question and could not
+	/// be asked either: whether the adapter inside the server is listening, and
+	/// whether the import has got far enough to say what a launch would *run*.
+	/// Taken on the same run as the file questions on purpose — one machine, one
+	/// load — so that "the adapter was ready at fifty seconds while completion
+	/// was still silent at eleven minutes" is a comparison rather than two
+	/// readings from two afternoons.
+	///
+	/// **In a loop of their own, and that is not tidiness.** The first reading
+	/// taken here put all five in one round and reported the adapter at 50.6
+	/// seconds — five milliseconds after the outline, in the same round, which is
+	/// the shape of a number bounded by its neighbours rather than measured. A
+	/// round is as slow as the slowest question in it, `completion` was timing out
+	/// at thirty seconds a go, and the adapter had very likely been listening for
+	/// most of that. Two loops, one request each, and the two figures are then
+	/// about the two things.
+	///
+	/// The file questions are asked together each round so a round costs one
+	/// request timeout rather than three, and the granularity of every figure
+	/// below is therefore the round — a second, plus however long the server took
+	/// to refuse.
 	func measureFirstAnswerForTesting(line: Int, character: Int, deadline: TimeInterval) {
 		guard let project else {
 			print("ANSWER no project")
@@ -5871,16 +5910,27 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			fflush(stdout)
 		}
 
+		func silence(_ what: String, _ waited: TimeInterval) {
+			print(String(format: "ANSWER %-16s      —     still silent at %.0f s",
+				(what as NSString).utf8String!, waited))
+			fflush(stdout)
+		}
+
+		/// The file on screen, once the editor has finished opening it. On a large
+		/// project the window arrives before the file does.
+		func onScreen() -> (url: URL, languageId: String)? {
+			guard let url = editor.activeGroup?.activeTabURL,
+			      let languageId = editor.activeGroup?.activeDocument?.languageId
+			else { return nil }
+			return (url, languageId)
+		}
+
+		// What the editor asks for.
 		Task { @MainActor in
 			var outline = false, completion = false, definition = false
 			while !(outline && completion && definition),
 			      Date().timeIntervalSince(LaunchClock.processStart) < deadline {
-				// The file has to be on screen before anything can be asked about
-				// it, and on a large project the window arrives before the editor
-				// has finished opening what it was given.
-				guard let url = editor.activeGroup?.activeTabURL,
-				      let languageId = editor.activeGroup?.activeDocument?.languageId
-				else {
+				guard let (url, languageId) = onScreen() else {
 					try? await Task.sleep(nanoseconds: 500_000_000)
 					continue
 				}
@@ -5913,14 +5963,52 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			// reads as a harness that crashed; "still silent at 300 s" is the
 			// answer to the question that was asked.
 			let waited = Date().timeIntervalSince(LaunchClock.processStart)
-			for (what, answered) in [("outline", outline), ("completion", completion), ("definition", definition)]
-			where !answered {
-				print(String(format: "ANSWER %-16s      —     still silent at %.0f s",
-					(what as NSString).utf8String!, waited))
-			}
+			for (what, answered) in [
+				("outline", outline), ("completion", completion), ("definition", definition),
+			] where !answered { silence(what, waited) }
 			print(String(format: "ANSWER done               %8.0f ms  %@", waited * 1000,
 				LaunchClock.loadSaid as NSString))
 			fflush(stdout)
+		}
+
+		// What the debugger asks for, on its own clock.
+		Task { @MainActor in
+			var adapter = false, classpath = false
+			while !(adapter && classpath),
+			      Date().timeIntervalSince(LaunchClock.processStart) < deadline {
+				guard let open = onScreen() else {
+					try? await Task.sleep(nanoseconds: 500_000_000)
+					continue
+				}
+				// A file that is open and is not Java: nothing here hosts an
+				// adapter, so these are not questions this project can be asked.
+				// Left unsaid rather than reported as silence, which would put two
+				// lines about a debugger at the end of every run that was not
+				// about Java.
+				guard open.languageId == "java" else { return }
+				let url = open.url
+				let ready = await LanguageService.shared
+					.javaDebugReadinessForTesting(url: url, project: root)
+				if !adapter, let port = ready.port {
+					adapter = true
+					say("debug adapter", "listening on port \(port)")
+				}
+				// An answer with nothing in it is an answer, and it is reported as
+				// one. jdtls does that on a Tycho bundle — promptly, and for ever —
+				// and a harness that counted it as silence would report a wait that
+				// was never going to end as a wait.
+				if !classpath, let count = ready.classPaths {
+					classpath = true
+					say("debug classpath", count == 0
+						? "answered, and empty — nothing to launch a JVM with"
+						: "\(count) entries")
+				}
+				try? await Task.sleep(nanoseconds: 1_000_000_000)
+			}
+
+			let waited = Date().timeIntervalSince(LaunchClock.processStart)
+			for (what, answered) in [("debug adapter", adapter), ("debug classpath", classpath)]
+			where !answered { silence(what, waited) }
 		}
 	}
 
@@ -6940,21 +7028,25 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// sources it shows are the ones on this disk.
 		if var request = java {
 			guard let root else { return }
-			let port = try await LanguageService.shared.startJavaDebugAdapter(project: root)
+			// The port and the class files together, from one server: whichever
+			// jdtls can give them, which since 0452 may be one started for the
+			// debugger alone. The class files are here, so a frame from the pod
+			// lands on the source it was compiled from rather than on a
+			// decompiled stub.
+			let target = try await LanguageService.shared.javaLaunchTarget(
+				project: root,
+				anchor: JavaTooling.mainClasses(in: root).first.map { URL(fileURLWithPath: $0.file) },
+				saying: { sentence in self.runControl?.setStatus(sentence, busy: true) }
+			)
 			request.host = "127.0.0.1"
 			request.port = debugForward.localPort
-			// The class files here, so a frame from the pod lands on the source
-			// it was compiled from rather than on a decompiled stub.
-			if let anchor = JavaTooling.mainClasses(in: root).first.map({ URL(fileURLWithPath: $0.file) }),
-			   let resolved = await LanguageService.shared.javaClasspath(for: anchor, project: root) {
-				request.classPaths = resolved.classPaths
-				request.projectName = resolved.projectName
-			}
+			request.classPaths = target.classPaths
+			request.projectName = target.projectName
 
 			guard let session = bottomPanel.startDebugging(
 				adapter: DebugAdapters.java,
 				executable: DebugAdapters.java.command,
-				start: .java(host: "127.0.0.1", port: port, request: request),
+				start: .java(host: "127.0.0.1", port: target.port, request: request),
 				breakpoints: pendingBreakpoints,
 				location: label(for: pod)
 			) else { return }
@@ -7211,11 +7303,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	/// Starts a Java debug session.
 	///
-	/// Two things have to be asked of the language server first, and neither can
-	/// be worked out here: the port its debug adapter is listening on, and the
+	/// Two things have to come from a Java language server and neither can be
+	/// worked out here: the port its debug adapter is listening on, and the
 	/// classpath of the module the class belongs to. A JVM started without the
 	/// second one fails with `ClassNotFoundException` on the class it was asked
 	/// to run, which reads like the class is missing rather than the classpath.
+	///
+	/// **Which server that is may not be the one editing.** Since 0452, a project
+	/// that chose the fast Java server for editing gets a jdtls started here for
+	/// the debugger alone — and the wait for its import is what pressing Debug
+	/// costs on a large project. So the status line says what is being waited for
+	/// while it happens, in the server's own words where it has any: a spinner
+	/// that says nothing looks exactly like a debugger that has hung.
 	private func startJavaDebug(
 		name: String,
 		mainClass: String,
@@ -7235,9 +7334,26 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		runControl?.setStatus("Debugging \(name)…", busy: true)
 
 		Task { @MainActor in
-			let port: Int
+			// Any file in the module will do — the question is about the project
+			// the file belongs to, not the file — so the class's own source is
+			// used when there is one and any main class in the project otherwise.
+			let anchor = anchorFile
+				?? JavaTooling.mainClasses(in: root)
+					.first { $0.name == mainClass }
+					.map { URL(fileURLWithPath: $0.file) }
+
+			let target: LanguageService.JavaLaunchTarget
 			do {
-				port = try await LanguageService.shared.startJavaDebugAdapter(project: root)
+				target = try await LanguageService.shared.javaLaunchTarget(
+					project: root,
+					anchor: anchor,
+					// Strongly, because the `Task` around this already holds self
+					// and a weak capture inside one buys nothing.
+					saying: { sentence in
+						self.runControl?.setStatus(sentence, busy: true)
+						self.bottomPanel.showDebug()?.appendOutput(sentence + "\n")
+					}
+				)
 			} catch {
 				runControl?.setStatus("Java cannot be debugged yet", failed: true)
 				// The missing bundle gets the whole manual rather than one line:
@@ -7246,30 +7362,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				if let failure = error as? LanguageService.JavaDebugFailure, case .noBundle = failure {
 					detail = JavaTooling.debugPluginManual
 				}
+				if let failure = error as? JavaDebugHost.Failure, case .noBundle = failure {
+					detail = JavaTooling.debugPluginManual
+				}
 				notify("Java cannot be debugged yet", detail: detail)
 				return
 			}
 
-			// Any file in the module will do — the question is about the project
-			// the file belongs to, not the file — so the class's own source is
-			// used when there is one and any main class in the project otherwise.
-			let anchor = anchorFile
-				?? JavaTooling.mainClasses(in: root)
-					.first { $0.name == mainClass }
-					.map { URL(fileURLWithPath: $0.file) }
-			var classPaths: [String] = []
-			var projectName: String?
-			if let anchor,
-			   let resolved = await LanguageService.shared.javaClasspath(for: anchor, project: root) {
-				classPaths = resolved.classPaths
-				projectName = resolved.projectName
-			}
-
+			runControl?.setStatus("Debugging \(name)…", busy: true)
 			let request = JavaDebug.Request(
 				kind: .launch,
 				mainClass: mainClass,
-				classPaths: classPaths,
-				projectName: projectName,
+				classPaths: target.classPaths,
+				projectName: target.projectName,
 				workingDirectory: workingDirectory.path,
 				arguments: arguments,
 				vmArguments: vmArguments,
@@ -7278,7 +7383,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			guard let session = bottomPanel.startDebugging(
 				adapter: DebugAdapters.java,
 				executable: DebugAdapters.java.command,
-				start: .java(host: "127.0.0.1", port: port, request: request),
+				start: .java(host: "127.0.0.1", port: target.port, request: request),
 				breakpoints: pendingBreakpoints
 			) else { return }
 			wire(session)

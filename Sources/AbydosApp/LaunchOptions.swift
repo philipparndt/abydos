@@ -441,6 +441,12 @@ struct LaunchOptions {
 	var toggleStrictTmuxOff = false
 	/// Print a settings section's rows and whether each can be used.
 	var dumpSettings: String?
+	/// Print the sentence under each control as well.
+	///
+	/// Off unless asked for: it is a paragraph a row, which drowns out the check
+	/// the dump is usually for. On when the words are the thing being checked —
+	/// 0452's line saying what a Java server costs lives only in the help.
+	var dumpSettingsHelp = false
 	/// Pick a Makefile goal from the run menu, the way clicking it does.
 	var chooseMakeRun: String?
 	/// Drag a tmux tab from one position to another: "from:to".
@@ -611,6 +617,7 @@ struct LaunchOptions {
 			case "--click-panel-tab": options.clickPanelTab = next()
 			case "--untmux":     options.toggleStrictTmuxOff = true
 			case "--dump-settings": options.dumpSettings = next()
+			case "--with-help": options.dumpSettingsHelp = true
 			case "--make-run":   options.chooseMakeRun = next()
 			case "--tmux-drag":  options.dragTmuxTab = next()
 			case "--branch-menu": options.branchMenuRow = next().flatMap(Int.init)
