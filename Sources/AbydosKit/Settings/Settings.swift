@@ -69,7 +69,19 @@ public final class Settings {
 			Key.fontLigatures: true,
 			Key.terminalGPURendering: false,
 			Key.terminalOptionAsMeta: false,
-			Key.appearance: "system",
+			// The Abydos scheme, not the blue one this app started with.
+			//
+			// A registered default rather than a stored value, so this reaches
+			// somebody who has never chosen a theme and nobody else: anyone who
+			// picked one has it written down and keeps it, which is the same
+			// rule the terminal palette above follows and for the same reason.
+			//
+			// `Appearance.defaultFamily` is deliberately *not* what changed. That
+			// constant decodes stored values from before schemes were files —
+			// `dark` meant the blue scheme's dark and still has to — so moving it
+			// would repaint people who did choose, by reinterpreting what they
+			// chose rather than by changing what a fresh installation gets.
+			Key.appearance: Appearance.name(family: "abydos", mode: .system),
 			Key.followsTerminalProject: false,
 			Key.terminalAtStartup: "open",
 			Key.tmuxTabsAtBottom: true,

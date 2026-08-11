@@ -177,3 +177,33 @@ struct AppearanceSettingsTests {
 		#expect(second.terminalScheme == Appearance.followsEditor)
 	}
 }
+
+/// What a fresh installation is painted with.
+///
+/// Two questions that look like one: what somebody who has never chosen gets,
+/// and what a value stored before schemes were files means. The first changed to
+/// the Abydos scheme; the second must not, or choosing `dark` years ago would
+/// silently come to mean a different palette.
+struct FreshInstallationAppearanceTests {
+	@Test func aFreshInstallationIsAbydos() {
+		let settings = Settings(defaults: TestDefaults.make())
+		#expect(settings.themeFamily == "abydos")
+		#expect(settings.appearanceMode == "system")
+	}
+
+	/// The terminal follows the theme without being asked, which was already so
+	/// and is asserted here because the two are one answer to somebody looking
+	/// at a new window.
+	@Test func aFreshInstallationsTerminalFollowsTheTheme() {
+		let settings = Settings(defaults: TestDefaults.make())
+		#expect(settings.terminalScheme == Appearance.followsEditor)
+	}
+
+	/// The legacy decode is untouched: `dark` was the blue scheme's dark before
+	/// schemes were files, and still is.
+	@Test func aValueStoredBeforeSchemesWereFilesStillMeansBlue() {
+		#expect(Appearance.family(of: "dark") == "blue")
+		#expect(Appearance.family(of: "light") == "blue")
+		#expect(Appearance.family(of: "system") == "blue")
+	}
+}
