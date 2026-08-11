@@ -1966,6 +1966,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		symbolInProject.keyEquivalentModifierMask = [.command, .option]
 		editMenu.addItem(symbolInProject)
 
+		// ⇧F6, which is IDEA's, for the same reason the two below are.
+		let rename = NSMenuItem(
+			title: "Rename…",
+			action: #selector(MainWindowController.renameSymbol(_:)),
+			keyEquivalent: String(UnicodeScalar(UInt32(NSF6FunctionKey))!)
+		)
+		rename.keyEquivalentModifierMask = [.shift]
+		editMenu.addItem(rename)
+
 		// IDEA's shortcuts on macOS, since that is where the muscle memory
 		// comes from.
 		let back = NSMenuItem(

@@ -73,7 +73,7 @@ same mechanism — which is **0456**, filed and explicitly waiting on this one.
 
 ## Estimate
 
-2026-08-11 12:41 — about four hours left
+2026-08-11 13:12 — about two hours left
 
 ## Steps
 
@@ -100,9 +100,9 @@ sentence about itself, made into a checklist.
 
 - [x] `prepareRename` and `textDocument/rename` on `LSPClient`, and the client
       capabilities that make a server answer with `documentChanges` at all
-- [ ] `prepareRename` and the server's capabilities decide whether rename is
+- [x] `prepareRename` and the server's capabilities decide whether rename is
       offered at all
-- [ ] Somebody is told when the rename on offer is a syntactic one (kmp-lsp)
+- [x] Somebody is told when the rename on offer is a syntactic one (kmp-lsp)
       rather than a type-aware one (jdtls)
 
 **The gesture**

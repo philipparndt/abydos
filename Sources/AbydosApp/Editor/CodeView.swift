@@ -56,6 +56,8 @@ final class CodeView: NSView, NSTextInputClient {
 	var onGoToDefinition: ((_ line: Int, _ character: Int) -> Void)?
 	/// Asked for everywhere the symbol under the caret is used.
 	var onFindUsages: ((_ line: Int, _ character: Int) -> Void)?
+	/// Asked to rename the symbol under the caret, everywhere it is used.
+	var onRename: ((_ line: Int, _ character: Int) -> Void)?
 	/// Asked to put an agent on the problem the caret is in.
 	var onFixWithAI: ((_ line: Int, _ diagnostic: LSPDiagnostic) -> Void)?
 	/// Asked to watch what is selected while debugging.
@@ -250,6 +252,65 @@ final class CodeView: NSView, NSTextInputClient {
 		// a document that has not grown yet.
 		enclosingScrollView?.contentView.scroll(to: scrollOffset)
 		enclosingScrollView?.reflectScrolledClipView(enclosingScrollView!.contentView)
+
+		needsDisplay = true
+		reportCaretPosition()
+		return true
+	}
+
+	/// Replaces the whole of an open document's text, through the rope.
+	///
+	/// **The half of a workspace edit that is not a file.** A file with an
+	/// editor on it cannot be written behind the editor's back — the buffer and
+	/// the disk would then say different things and whichever the person saved
+	/// next would win — so the change goes through `TextDocument.replace`, which
+	/// is the same door a keystroke goes through: the rope moves, tree-sitter is
+	/// told, the folds are recomputed, the tab goes dirty.
+	///
+	/// One `replace` of the whole file rather than one per edit the server sent,
+	/// and that is deliberate: `TextDocument` records an undo node per `replace`,
+	/// so forty edits in one file would be forty presses of ⌘Z inside that file
+	/// on top of the forty files. One node here is the document's share of the
+	/// one undo this gesture gets.
+	///
+	/// The caret, the collapsed folds and the scroll position are put back the
+	/// way `reloadFromDisk` puts them back, and for the same reason: the file
+	/// under somebody's eyes changed, and losing their place in it is a second
+	/// thing that happened to them.
+	@discardableResult
+	func replaceAllText(with text: String) -> Bool {
+		guard let document, text != document.rope.string else { return false }
+
+		let rope = document.rope
+		let caretByte = rope.byteOffset(fromUTF16: caret)
+		let caretLine = rope.line(atByteOffset: caretByte)
+		let caretColumn = caret - rope.utf16Offset(fromByte: rope.lineByteRange(caretLine).lowerBound)
+		let collapsed = folding.collapsed
+		let scrollOffset = enclosingScrollView?.contentView.bounds.origin ?? .zero
+
+		let length = rope.utf16Offset(fromByte: rope.byteCount)
+		document.replace(utf16Range: 0..<length, with: text, caretBefore: caret)
+
+		folding = FoldingState()
+		folding.setAvailable(document.folds)
+		for line in collapsed where folding.isFoldable(line: line) {
+			folding.toggle(line: line)
+		}
+
+		let line = min(caretLine, max(0, document.lineCount - 1))
+		let lineRange = document.rope.lineByteRange(line)
+		let lineStart = document.rope.utf16Offset(fromByte: lineRange.lowerBound)
+		let lineLength = document.rope.utf16Offset(fromByte: lineRange.upperBound) - lineStart
+		caret = lineStart + min(caretColumn, max(0, lineLength))
+		selectionAnchor = caret
+
+		measureLongestLine()
+		rebuildWrapLayout()
+		updateFrameSize()
+		enclosingScrollView?.contentView.scroll(to: scrollOffset)
+		if let scrollView = enclosingScrollView {
+			scrollView.reflectScrolledClipView(scrollView.contentView)
+		}
 
 		needsDisplay = true
 		reportCaretPosition()
@@ -1271,7 +1332,15 @@ final class CodeView: NSView, NSTextInputClient {
 		NSRect(x: position.x, y: position.y, width: 2, height: lineHeight).fill()
 	}
 
-	private func caretPoint() -> NSPoint? {
+	private func caretPoint() -> NSPoint? { point(forUTF16: caret) }
+
+	/// Where an offset in the document falls, in this view's coordinates.
+	///
+	/// This was the caret's own position and nothing else until a rename needed
+	/// the top-left of a *symbol* rather than of the caret. Folding, word wrap
+	/// and the shaping of the line are the same work for both, and two copies of
+	/// that is two copies to keep agreeing.
+	func point(forUTF16 caret: Int) -> NSPoint? {
 		guard let document else { return nil }
 		let byteOffset = document.rope.byteOffset(fromUTF16: caret)
 		let docLine = document.rope.line(atByteOffset: byteOffset)
@@ -1705,6 +1774,10 @@ final class CodeView: NSView, NSTextInputClient {
 
 		menu.addItem(item("Go to Definition", #selector(goToDefinitionFromMenu)))
 		menu.addItem(item("Find Usages", #selector(findUsagesFromMenu)))
+		// Beside find-usages, because it is the same question with something
+		// done about the answer, and the two are reached from the same place in
+		// every editor anybody has used.
+		menu.addItem(item("Rename…", #selector(renameFromMenu)))
 		// Only with a selection, because what would be watched is the selection:
 		// an expression is `things[i].name`, which no rule about identifiers
 		// under the caret would have picked out on its own.
@@ -1725,7 +1798,7 @@ final class CodeView: NSView, NSTextInputClient {
 	}
 
 	/// Where the caret is, as the protocol counts.
-	private func caretPositionForRequest() -> (line: Int, character: Int)? {
+	func caretPositionForRequest() -> (line: Int, character: Int)? {
 		guard let document else { return nil }
 		let line = document.rope.line(atByteOffset: document.rope.byteOffset(fromUTF16: caret))
 		let lineStart = document.rope.utf16Offset(fromByte: document.rope.byteOffset(ofLine: line))
@@ -1751,6 +1824,96 @@ final class CodeView: NSView, NSTextInputClient {
 		guard let position = caretPositionForRequest() else { return }
 		onFindUsages?(position.line, position.character)
 	}
+
+	@objc func renameFromMenu() {
+		guard let position = caretPositionForRequest() else { return }
+		onRename?(position.line, position.character)
+	}
+
+	// MARK: - Renaming a symbol
+
+	/// The field laid over a symbol while its new name is being typed.
+	///
+	/// A subview of this view rather than a panel above it, which is the whole
+	/// difference between the two kinds of thing this editor puts on screen. The
+	/// completion list is a child window because it has to hang past the
+	/// editor's edges and must never take focus; this is the opposite of both —
+	/// it is *in* the text, it scrolls with it because this view is the scroll
+	/// view's document view, and typing into it is the entire point.
+	private let rename = RenameField()
+
+	var isRenaming: Bool { rename.isOpen }
+
+	/// The word the caret is in, as a range and as text.
+	///
+	/// What a rename is offered for when the server has no `prepareRename` — and
+	/// what tells "the caret is in an identifier" from "the caret is on a comma"
+	/// before anything is asked of anybody.
+	func wordAtCaret() -> (range: Range<Int>, text: String)? {
+		guard let document else { return nil }
+		let line = document.rope.line(atByteOffset: document.rope.byteOffset(fromUTF16: caret))
+		let lineRange = document.rope.lineByteRange(line)
+		let lineStart = document.rope.utf16Offset(fromByte: lineRange.lowerBound)
+		let text = document.rope.string(in: lineRange) as NSString
+
+		let column = caret - lineStart
+		guard column >= 0, column <= text.length else { return nil }
+
+		func isWord(_ unit: unichar) -> Bool {
+			let scalar = Unicode.Scalar(unit)
+			return scalar.map { CharacterSet.alphanumerics.contains($0) || $0 == "_" } ?? false
+		}
+
+		var start = column
+		while start > 0, isWord(text.character(at: start - 1)) { start -= 1 }
+		var end = column
+		while end < text.length, isWord(text.character(at: end)) { end += 1 }
+		guard end > start else { return nil }
+
+		return (
+			range: (lineStart + start)..<(lineStart + end),
+			text: text.substring(with: NSRange(location: start, length: end - start))
+		)
+	}
+
+	/// Opens the field over a range of the document.
+	///
+	/// Returns false when the range cannot be put on screen — a symbol inside a
+	/// fold, most likely — because a field placed at a guess would be a field
+	/// over the wrong word.
+	@discardableResult
+	func beginRename(
+		utf16Range: Range<Int>, name: String, caveat: String?,
+		commit: @escaping (String) -> Bool
+	) -> Bool {
+		guard let start = point(forUTF16: utf16Range.lowerBound),
+		      let end = point(forUTF16: utf16Range.upperBound),
+		      end.y == start.y
+		else { return false }
+
+		rename.onCommit = commit
+		rename.onCancel = { [weak self] in self?.window?.makeFirstResponder(self) }
+		rename.begin(
+			over: NSRect(
+				x: start.x, y: start.y,
+				width: max(end.x - start.x, Theme.current.scaled(24)), height: lineHeight
+			),
+			in: self,
+			name: name,
+			font: Theme.current.editorFont,
+			caveat: caveat
+		)
+		return true
+	}
+
+	func refuseRename(_ title: String, detail: String? = nil) { rename.refuse(title, detail: detail) }
+
+	func endRename() { rename.end() }
+
+	/// Types a name into the open field and presses Return, for a test with no
+	/// keyboard.
+	@discardableResult
+	func commitRenameForTesting(_ name: String) -> Bool { rename.commitForTesting(name) }
 
 	override func mouseDragged(with event: NSEvent) {
 		let point = convert(event.locationInWindow, from: nil)
@@ -2489,6 +2652,24 @@ final class CodeView: NSView, NSTextInputClient {
 	@objc func redo(_ sender: Any?) {
 		guard let document, let restored = document.redo() else { return }
 		afterEdit(caret: restored)
+	}
+
+	/// The document's undo is not the rename field's.
+	///
+	/// While a name is being typed the field is a subview of this one, so the
+	/// field editor's responder chain runs through here — and ⌘Z over a field
+	/// means "take back what I just typed into it", not "take back the last edit
+	/// to the file". Answering no is what lets the field editor have it.
+	///
+	/// `responds(to:)` rather than a no-op body, which is the same lesson the
+	/// navigator learned: `tryToPerform` asks this and not the method, so a body
+	/// that did nothing would *swallow* ⌘Z and leave the field with no undo at
+	/// all.
+	override func responds(to selector: Selector!) -> Bool {
+		if selector == #selector(undo(_:)) || selector == #selector(redo(_:)) {
+			guard !isRenaming else { return false }
+		}
+		return super.responds(to: selector)
 	}
 
 	@objc override func selectAll(_ sender: Any?) {

@@ -739,6 +739,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		editor.onFindUsages = { [weak self] url, line, character in
 			self?.findUsages(in: url, line: line, character: character)
 		}
+		editor.onRename = { [weak self] url, line, character in
+			self?.renameSymbol(in: url, line: line, character: character)
+		}
 		editor.onWatch = { [weak self] expression in
 			self?.watchFromEditor(expression)
 		}
@@ -4441,6 +4444,219 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	///
 	/// The server's answer rather than a text search: it knows a `Close` on one
 	/// type from a `Close` on another, which grep never will.
+	// MARK: - Renaming a symbol
+
+	/// Renaming the symbol at a position, from the offer to the files on disk.
+	///
+	/// The whole of 0453's gesture, and it is four steps with a decision at each
+	/// of the first three:
+	///
+	///  1. **Is there anything to rename here, and will this server do it?**
+	///     Asked before a field appears, because an offer that fails is worse
+	///     than an absence.
+	///  2. **The name is typed where the old one is** — `RenameField`, over the
+	///     symbol, in the text. Not a dialog: the navigator renames a file in
+	///     place on its row, and this is that gesture one layer in.
+	///  3. **The server is asked**, and what comes back is a description of a
+	///     change rather than a change.
+	///  4. **The change is worked out in full and then made**, by
+	///     `WorkspaceEditPlan` and `WorkspaceEditApplier`, which is where every
+	///     hard part of this lives: open documents against closed ones, files
+	///     that move, one undo, and what to do when it fails halfway.
+	/// Edit ▸ Rename…, which is ⇧F6.
+	///
+	/// The same gesture the context menu offers, from the caret rather than from
+	/// where somebody right-clicked. Silent when there is no file open: a menu
+	/// item that does nothing is better than one that says so.
+	@objc func renameSymbol(_ sender: Any?) {
+		guard let group = editor.activeGroup,
+		      let codeView = group.activeCodeView,
+		      let url = group.activeTabURL,
+		      let position = codeView.caretPositionForRequest()
+		else { return }
+		renameSymbol(in: url, line: position.line, character: position.character)
+	}
+
+	private func renameSymbol(in url: URL, line: Int, character: Int) {
+		guard let project,
+		      let group = editor.activeGroup,
+		      let codeView = group.activeCodeView,
+		      let languageId = group.activeDocument?.languageId
+		else { return }
+
+		let position = LSPPosition(line: line, character: character)
+		let word = codeView.wordAtCaret()
+		let fallback = word.map {
+			RenameSubject(
+				name: $0.text,
+				range: LSPRange(
+					start: LSPPosition(line: line, character: character),
+					end: LSPPosition(line: line, character: character)
+				)
+			)
+		}
+
+		Task { @MainActor in
+			let offer = await LanguageService.shared.renameOffer(
+				url: url, position: position, languageId: languageId,
+				project: project.scopeRoot, fallback: fallback
+			)
+
+			guard case let .offered(subject) = offer else {
+				// Two of the three refusals say nothing at all — no server, and
+				// the server's own "nothing here", which is what the caret being
+				// on a bracket looks like every time.
+				if let refusal = offer.refusal {
+					notify("Cannot rename here", detail: refusal, kind: .information)
+				}
+				return
+			}
+
+			// The extent to lay the field over. The server's range where it gave
+			// one, since it knows things the editor's idea of a word does not —
+			// a Swift `` `default` `` is one symbol and three tokens.
+			guard let extent = self.utf16Range(of: subject, in: codeView, fallback: word?.range) else {
+				return
+			}
+
+			codeView.beginRename(
+				utf16Range: extent, name: subject.name, caveat: subject.caveat
+			) { [weak self] newName in
+				guard let self else { return true }
+				self.performRename(
+					in: url, position: position, to: newName,
+					languageId: languageId, project: project.scopeRoot
+				)
+				return true
+			}
+		}
+	}
+
+	/// The symbol's extent in the document, from whichever of the two answers
+	/// there is.
+	private func utf16Range(
+		of subject: RenameSubject, in codeView: CodeView, fallback: Range<Int>?
+	) -> Range<Int>? {
+		guard let document = codeView.document else { return fallback }
+		let rope = document.rope
+		func offset(_ position: LSPPosition) -> Int? {
+			guard position.line >= 0, position.line < rope.lineCount else { return nil }
+			let start = rope.utf16Offset(fromByte: rope.byteOffset(ofLine: position.line))
+			return start + position.character
+		}
+		guard let start = offset(subject.range.start), let end = offset(subject.range.end),
+		      end > start
+		else { return fallback }
+		return start..<end
+	}
+
+	/// Asks for the edit and makes it.
+	private func performRename(
+		in url: URL, position: LSPPosition, to newName: String,
+		languageId: String, project: URL
+	) {
+		Task { @MainActor in
+			let answer = await LanguageService.shared.rename(
+				url: url, position: position, to: newName, languageId: languageId, project: project
+			)
+
+			switch answer {
+			case let .failure(error):
+				notify("Nothing was renamed", detail: error.localizedDescription)
+			case let .success(edit) where edit.isEmpty:
+				notify("Nothing was renamed", detail: "The server found nothing to change.", kind: .information)
+			case let .success(edit):
+				self.apply(edit, named: newName)
+			}
+		}
+	}
+
+	/// Turns a workspace edit into files, and puts one entry on the undo stack
+	/// for the whole of it.
+	private func apply(_ edit: WorkspaceEdit, named newName: String) {
+		let files = workspaceEditFiles()
+		let plan = WorkspaceEditPlan.make(edit, contents: files.contents, exists: files.exists)
+
+		// Tabs on files that are about to move are closed first, so that nothing
+		// auto-saves a buffer back to a path the move has just emptied.
+		let reopening = plan.moves.compactMap { move -> (from: URL, to: URL)? in
+			editor.document(for: move.from) != nil ? (move.from, move.to) : nil
+		}
+		for move in reopening { editor.closeTab(showing: move.from) }
+
+		let outcome = WorkspaceEditApplier.apply(plan, to: files)
+
+		for move in reopening where FileManager.default.fileExists(atPath: move.to.path) {
+			editor.open(fileURL: move.to)
+		}
+		navigator.reloadTree()
+
+		if let summary = outcome.summary {
+			notify(summary.title, detail: summary.detail, kind: outcome.isUntouched ? .warning : .error)
+		}
+
+		guard case let .applied(applied) = outcome, !applied.isEmpty else { return }
+		remember(applied, named: newName)
+	}
+
+	/// The one undo entry for the whole rename.
+	///
+	/// One entry however many files it was — the rule `FileUndo` settled for
+	/// what the tree does, and this is the editor's version of it. Forty files
+	/// renamed and undone forty times is not an undo, and neither is forty
+	/// presses that each take back one file's worth of a refactoring that only
+	/// makes sense whole.
+	///
+	/// On the *tree's* undo stack rather than each document's, and that is the
+	/// only place it can be: a document's `UndoTree` is that document's history
+	/// and knows nothing of the thirty-nine others, and a rename that also moved
+	/// a file is not a text edit at all.
+	private func remember(_ plan: WorkspaceEditPlan, named newName: String) {
+		navigator.rememberWorkspaceEdit(plan, title: "Rename to “\(newName)”") { [weak self] plan in
+			guard let self else { return }
+			let files = self.workspaceEditFiles()
+			// Same shape as applying: the tabs on files that are about to move
+			// back are closed first.
+			let reopening = plan.moves.compactMap { move -> (from: URL, to: URL)? in
+				self.editor.document(for: move.to) != nil ? (move.to, move.from) : nil
+			}
+			for move in reopening { self.editor.closeTab(showing: move.from) }
+
+			let outcome = WorkspaceEditApplier.reverse(plan, in: files)
+
+			for move in reopening where FileManager.default.fileExists(atPath: move.to.path) {
+				self.editor.open(fileURL: move.to)
+			}
+			self.navigator.reloadTree()
+			if let summary = outcome.summary {
+				self.notify(summary.title, detail: summary.detail)
+			}
+		}
+	}
+
+	/// The files a workspace edit acts on, in this window.
+	///
+	/// **This is where an open document stops being a file.** A file with an
+	/// editor on it is read from its rope and written through it, so the buffer
+	/// and the disk never come to say different things; everything else is read
+	/// and written on disk without an editor being made for it, which is what a
+	/// rename across five hundred bundles needs.
+	private func workspaceEditFiles() -> WorkspaceEditFiles {
+		let disk = WorkspaceEditFiles.disk
+		return WorkspaceEditFiles(
+			contents: { [weak self] url in
+				self?.editor.document(for: url)?.rope.string ?? disk.contents(url)
+			},
+			exists: disk.exists,
+			write: { [weak self] url, text in
+				guard self?.editor.applyRenamedText(text, to: url) != true else { return }
+				try disk.write(url, text)
+			},
+			move: disk.move,
+			trash: disk.trash
+		)
+	}
+
 	private func findUsages(in url: URL, line: Int, character: Int) {
 		guard let project, let languageId = editor.activeGroup?.activeDocument?.languageId else { return }
 

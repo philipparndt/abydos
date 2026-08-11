@@ -145,6 +145,7 @@ final class EditorViewController: NSViewController {
 	var onFileReloaded: ((URL) -> Void)?
 	/// Asked for everywhere a symbol is used, at a zero-based position.
 	var onFindUsages: ((URL, Int, Int) -> Void)?
+	var onRename: ((URL, Int, Int) -> Void)?
 	/// Watch what is selected, while something is being debugged.
 	var onWatch: ((String) -> Void)?
 	/// Asked to put an agent on a problem: the file, the line, and what the
@@ -190,11 +191,68 @@ final class EditorViewController: NSViewController {
 	/// Which of source, preview or a split the file in front is being shown in.
 	var currentPreviewMode: PreviewMode { activeTab?.previewMode ?? .source }
 	var activeDocument: TextDocument? { activeTab?.document }
+	/// The view the caret is in, for a gesture that has to be drawn where the
+	/// text is rather than reported about.
+	var activeCodeView: CodeView? { activeTab?.codeView }
 
 	/// The open document for a file, if this group is the one holding it.
 	func document(for url: URL) -> TextDocument? {
 		let path = FilePath.canonical(url)
 		return tabs.first { FilePath.canonical($0.url) == path }?.document
+	}
+
+	/// Puts new text into an open file, through the rope, and writes it.
+	///
+	/// The open half of applying a workspace edit. Written as well as changed,
+	/// because a rename that left forty buffers dirty and the files as they were
+	/// would be a refactoring nobody's compiler has heard of — and because the
+	/// language server has to be told, or its next answer is about the file as
+	/// it was.
+	@discardableResult
+	func applyRenamedText(_ text: String, to url: URL) -> Bool {
+		let path = FilePath.canonical(url)
+		guard let tab = tabs.first(where: { FilePath.canonical($0.url) == path }),
+		      let document = tab.document
+		else { return false }
+
+		// Through the view when there is one, so the caret and the folds are put
+		// back; through the document when the tab has never been shown.
+		if let codeView = tab.codeView {
+			guard codeView.replaceAllText(with: text) else { return false }
+		} else {
+			let length = document.rope.utf16Offset(fromByte: document.rope.byteCount)
+			document.replace(utf16Range: 0..<length, with: text, caretBefore: 0)
+		}
+		try? document.save()
+		refreshTabBar()
+
+		guard let project, let languageId = document.languageId else { return true }
+		LanguageService.shared.changed(
+			url: tab.url, languageId: languageId, text: text, project: project.scopeRoot
+		)
+		LanguageService.shared.saved(
+			url: tab.url, languageId: languageId, text: text, project: project.scopeRoot
+		)
+		return true
+	}
+
+	/// Closes the tab on a file a workspace edit has moved or taken away.
+	///
+	/// A tab whose file is no longer at that path is a tab that will write it
+	/// back there on the next auto-save, which would undo half of what was just
+	/// done. Closing it is the honest answer and it is what the caller then
+	/// reopens under the new name.
+	@discardableResult
+	func closeTab(showing url: URL) -> Bool {
+		let path = FilePath.canonical(url)
+		guard let index = tabs.firstIndex(where: { FilePath.canonical($0.url) == path }) else {
+			return false
+		}
+		// `removeTab` rather than `closeTab`: the file has already moved, so
+		// there is nothing to offer to save and a prompt about discarding it
+		// would be a question about a file that is not there.
+		removeTab(at: index)
+		return true
 	}
 
 	/// Breakpoints to draw, per absolute file path, with verification state.
@@ -1134,6 +1192,9 @@ final class EditorViewController: NSViewController {
 		}
 		codeView.onFindUsages = { [weak self] line, character in
 			self?.onFindUsages?(tab.url, line, character)
+		}
+		codeView.onRename = { [weak self] line, character in
+			self?.onRename?(tab.url, line, character)
 		}
 		codeView.onWatch = { [weak self] expression in
 			self?.onWatch?(expression)

@@ -898,6 +898,111 @@ final class LanguageService {
 		}
 	}
 
+	// MARK: - Changing code
+
+	/// Whether renaming can be offered where the caret is.
+	///
+	/// Asked before anything appears on screen, because an offer that fails is
+	/// worse than an absence: a field that opens, takes a name and then says the
+	/// server cannot do this has wasted somebody's attention and taught them not
+	/// to try again.
+	///
+	/// Two gates, in this order and for different reasons. **The server's
+	/// capabilities** say whether it renames at all, and that is a fact about
+	/// the server rather than about the caret — a server that does not rename
+	/// should never be asked, and several answer `MethodNotFound` in a way that
+	/// is indistinguishable from "nothing here". **`prepareRename`** then says
+	/// whether there is anything at this position, and that is the ordinary
+	/// silent no.
+	///
+	/// - Parameter fallback: the word under the caret as the editor sees it, for
+	///   the servers that rename but have no `prepareRename` — which is most of
+	///   them. Asking those anyway gets a refusal that reads exactly like a
+	///   symbol that cannot be renamed, so the editor's own answer is used
+	///   instead. It is the answer it had before it asked anything.
+	func renameOffer(
+		url: URL,
+		position: LSPPosition,
+		languageId: String,
+		project: URL,
+		fallback: RenameSubject?
+	) async -> RenameOffer {
+		guard let (key, server) = ready(languageId, project: project, for: "rename") else {
+			return .noServer
+		}
+		guard server.client.renames else { return .serverCannot(server: server.definition.name) }
+
+		let syntactic = server.definition.isSyntactic
+		func offer(_ subject: RenameSubject?) -> RenameOffer {
+			guard var subject else { return .notHere }
+			subject.isSyntactic = syntactic
+			return .offered(subject)
+		}
+
+		guard server.client.preparesRenames else { return offer(fallback) }
+
+		do {
+			guard let target = try await server.client.prepareRename(
+				uri: uri(for: url), position: position
+			) else {
+				// The server's own "nothing here", which is an answer rather
+				// than a failure and is not evidence about its health.
+				return .notHere
+			}
+			answered(withContent: true, for: key)
+			// `{ defaultBehavior: true }` is the server saying yes and leaving
+			// the extent to the editor, which is exactly the fallback.
+			guard let range = target.range else { return offer(fallback) }
+			return offer(RenameSubject(
+				name: target.placeholder ?? fallback?.name ?? "",
+				range: range
+			))
+		} catch {
+			note(error, asked: "prepareRename", of: server, about: url)
+			// Not `answered(withContent: false)`. A server that will not answer
+			// this one question has not failed to read the project — several
+			// answer `MethodNotFound` for it while working perfectly — and
+			// counting it against the server's health would put a sentence above
+			// the file about a rename nobody has done yet.
+			return offer(fallback)
+		}
+	}
+
+	/// The whole change renaming this symbol comes to, or nil when the server
+	/// would not say.
+	///
+	/// Nothing is applied here. What comes back is a description of a change,
+	/// and turning it into files is `WorkspaceEditPlan` and whoever knows which
+	/// documents are open — which is not this class.
+	func rename(
+		url: URL,
+		position: LSPPosition,
+		to newName: String,
+		languageId: String,
+		project: URL
+	) async -> Result<WorkspaceEdit, Error> {
+		guard let (key, server) = ready(languageId, project: project, for: "rename") else {
+			return .failure(LSPClient.ClientError.notRunning)
+		}
+		do {
+			guard let edit = try await server.client.rename(
+				uri: uri(for: url), position: position, to: newName
+			) else {
+				// A server that answers `null` has decided there is nothing to
+				// do. Rare after a `prepareRename` said otherwise, and an empty
+				// edit rather than a failure: nothing changed, and nothing is
+				// wrong.
+				return .success(WorkspaceEdit(changes: []))
+			}
+			answered(withContent: !edit.isEmpty, for: key)
+			return .success(edit)
+		} catch {
+			note(error, asked: "rename", of: server, about: url)
+			answered(withContent: false, for: key)
+			return .failure(error)
+		}
+	}
+
 	/// The server for a question, or nil with a line in the log saying there
 	/// was none — "no answer" and "nobody was asked" look identical on screen.
 	///

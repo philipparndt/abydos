@@ -10,23 +10,23 @@ import Foundation
 /// worth having if it has been driven, and a write that refuses is not
 /// something a test can arrange on a real disk without making the machine
 /// strange.
-public struct WorkspaceEditFiles: Sendable {
+public struct WorkspaceEditFiles {
 	/// What a file holds, or nil when it cannot be read.
-	public var contents: @Sendable (URL) -> String?
-	public var exists: @Sendable (URL) -> Bool
-	public var write: @Sendable (URL, String) throws -> Void
-	public var move: @Sendable (URL, URL) throws -> Void
+	public var contents: (URL) -> String?
+	public var exists: (URL) -> Bool
+	public var write: (URL, String) throws -> Void
+	public var move: (URL, URL) throws -> Void
 	/// To the trash, never deleted outright — the rule `FileUndo` settled. A ⌘Z
 	/// that cannot put a file back should at least leave it somewhere the Finder
 	/// can.
-	public var trash: @Sendable (URL) throws -> Void
+	public var trash: (URL) throws -> Void
 
 	public init(
-		contents: @escaping @Sendable (URL) -> String?,
-		exists: @escaping @Sendable (URL) -> Bool,
-		write: @escaping @Sendable (URL, String) throws -> Void,
-		move: @escaping @Sendable (URL, URL) throws -> Void,
-		trash: @escaping @Sendable (URL) throws -> Void
+		contents: @escaping (URL) -> String?,
+		exists: @escaping (URL) -> Bool,
+		write: @escaping (URL, String) throws -> Void,
+		move: @escaping (URL, URL) throws -> Void,
+		trash: @escaping (URL) throws -> Void
 	) {
 		self.contents = contents
 		self.exists = exists
@@ -36,7 +36,7 @@ public struct WorkspaceEditFiles: Sendable {
 	}
 
 	/// The plain answer: the files as they are on disk.
-	public static let disk = WorkspaceEditFiles(
+	public static var disk: WorkspaceEditFiles { WorkspaceEditFiles(
 		contents: { try? String(contentsOf: $0, encoding: .utf8) },
 		exists: { FileManager.default.fileExists(atPath: $0.path) },
 		write: { url, text in
@@ -52,7 +52,7 @@ public struct WorkspaceEditFiles: Sendable {
 			try FileManager.default.moveItem(at: from, to: to)
 		},
 		trash: { try FileManager.default.trashItem(at: $0, resultingItemURL: nil) }
-	)
+	) }
 }
 
 /// Carrying out a `WorkspaceEditPlan`, and putting it back when that is what

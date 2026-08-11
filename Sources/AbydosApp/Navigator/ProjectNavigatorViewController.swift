@@ -503,7 +503,12 @@ final class ProjectNavigatorViewController: NSViewController {
 		reloadTree()
 	}
 
-	private func reloadTree() {
+	/// Redraws the tree from the file system.
+	///
+	/// Internal rather than private since 0453: a workspace edit from a language
+	/// server changes files nobody in this window went near, and the tree that
+	/// is showing them is not otherwise told.
+	func reloadTree() {
 		StallWatch.mark("navigator reload") { reloadTreeMarked() }
 	}
 
@@ -1829,6 +1834,28 @@ final class ProjectNavigatorViewController: NSViewController {
 			target.navigator?.takeBack(action)
 		}
 		fileUndo.setActionName(action.gesture.title)
+	}
+
+	/// Puts one entry on this stack for a whole workspace edit.
+	///
+	/// **On the tree's stack, and this is the only place it can be.** A rename
+	/// through a language server changes forty files, most of which nothing in
+	/// this window has open; a `TextDocument`'s own `UndoTree` is that document's
+	/// history and knows nothing of the other thirty-nine, and a rename that
+	/// also moved `Foo.java` to `Bar.java` is not a text edit at all. This stack
+	/// already holds the gestures that act on files rather than on text, which is
+	/// exactly what a workspace edit is, and it is already the stack somebody's
+	/// ⌘Z reaches from the tree.
+	///
+	/// One entry, however many files — the rule `remember` above settled, for the
+	/// same reason: forty presses that each take back one file's worth of a
+	/// refactoring which only makes sense whole is not an undo.
+	func rememberWorkspaceEdit(
+		_ plan: WorkspaceEditPlan, title: String, undo: @escaping (WorkspaceEditPlan) -> Void
+	) {
+		guard !plan.isEmpty else { return }
+		fileUndo.registerUndo(withTarget: undoTarget) { _ in undo(plan) }
+		fileUndo.setActionName(title)
 	}
 
 	/// When a file was last written, for the check that stops an undo throwing
