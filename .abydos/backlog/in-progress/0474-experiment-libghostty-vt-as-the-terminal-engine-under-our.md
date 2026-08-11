@@ -101,24 +101,118 @@ harness is written. `TerminalThroughputTests` is the same trick for speed.
    answerable by looking: read its git history for the last few months and say how
    often and how deeply the surface has moved.
 
+## What the deliverable became, mid-item
+
+It was "a branch, a table of answers and a recommendation". The user changed it
+to something better:
+
+> maybe we should do it like the metal renderer and make it an option first and
+> keep my version for a while as well, that way I can really test it
+
+and then:
+
+> I think that way we can implement the libghostty directly on main in a working
+> tree, as we won't harm the existing terminal much
+
+So the deliverable is **libghostty-vt as a switchable engine, off by default,
+with `TerminalEmulator` untouched** — the shape `terminalGPURendering` already
+has, where the user runs with the option *on* while the default is *off*, and
+real use is the test rather than any table. The five questions stand: they are
+all prerequisites, and question 3 stops being informational, because what the
+callers need *is* the seam.
+
 ## Deliberately not in this item
 
-Replacing anything. This ends in a branch, a table of answers and a
-recommendation. If the answer is yes, the migration is its own item — or several,
-since a change of engine touches every terminal test we have and those tests are
-the reason today's bugs were findable.
+Replacing anything, or changing what the terminal does with the setting off.
+
+## Estimate
+
+2026-08-11 17:41 — about two hours left; step 1 is a from-source zig build
 
 ## Steps
 
-- [ ] Build and link libghostty-vt from this project, and write down exactly what
+- [x] Build and link libghostty-vt from this project, and write down exactly what
       that cost and what it puts in `Package.swift`
+- [ ] Both kitty protocols — `U=1` placeholders and a `t=f` placement
+- [ ] Say what selection, the render path and prompt detection would each call —
+      and correct the item where it was wrong about who reads the grid
+- [ ] Design the seam from what the callers need, and say whether the old path
+      changes at all
 - [ ] Feed `tmux-prompt.bin`, `return-burst.bin` and 0468's two icat captures to
       both engines and compare, cell for cell
-- [ ] Both kitty protocols — `U=1` placeholders and a `t=f` placement
-- [ ] Say whether `TmuxMirror`, selection and prompt detection can be written on
-      its grid API, with the specific call for each
 - [ ] Throughput against `TerminalThroughputTests`, with the load stated
 - [ ] Read its recent history and say how much the API has moved
+- [ ] A setting, off by default, and one place that reads it
+- [ ] Make the half-built parts refuse rather than draw something plausible, and
+      name in the setting what is missing
+- [ ] Say how somebody reporting a terminal bug will know which engine drew it
 - [ ] Write the recommendation, with the cost of being wrong in each direction
 - [ ] Write down here what was ruled out on the way
 - [ ] No spec change — this item changes nothing about what the project does
+
+## 1. Can it be built and linked? Yes, and it cost 62 seconds
+
+This was the stop condition, and it passed far more easily than the item feared.
+
+**There is a build target for exactly this.** `zig build -Demit-lib-vt=true
+-Doptimize=ReleaseFast` in a ghostty checkout. `-Demit-lib-vt` is a first-class
+option (`src/build/Config.zig:80`) which turns off the macOS app, the internal
+xcframework and the docs, and builds vt.h's library alone. It is not a hack or a
+private target: ghostty means for this to be built on its own, and
+`GhosttyDist.zig` even has a separate source manifest for it.
+
+| | |
+|---|---|
+| zig needed | 0.16.0 — and `build.zig.zon` says `minimum_zig_version = "0.16.0"`, which is **exactly** what `brew install zig` gives today |
+| clone | `--filter=blob:none`, about 20 s |
+| build | **62 s wall**, 176 s CPU, from cold, no errors |
+| cache left behind | 350 MB in the checkout, 248 MB in `~/.cache/zig` |
+| what it emits | `libghostty-vt.a` (8.4 MB arm64), a dylib, **and a universal `ghostty-vt.xcframework`** carrying a `module.modulemap` |
+| link needs | `-lc++` and nothing else — simdutf and highway are C++ but sit *inside* the archive, and not one symbol is left unresolved |
+| exported symbols | 192 `ghostty_*` |
+
+**It ships a `module.modulemap` naming the module `GhosttyVt`**, so Swift imports
+it with no shim, no bridging header, no `unsafeFlags`:
+
+    .binaryTarget(name: "GhosttyVt", path: "Vendor/ghostty-vt.xcframework")
+
+plus `linkerSettings: [.linkedLibrary("c++")]` on `AbydosKit`. That is the whole
+manifest change — two lines and a dependency entry. `xcrun swift build --target
+AbydosKit` then compiles Swift calling `ghostty_terminal_new`,
+`ghostty_terminal_vt_write` and `ghostty_terminal_get`, and the equivalent C
+program prints the grid back:
+
+    size = 80x24
+    row 0: |hello world|
+    row 2: |    placed|
+    row0 wrap=0 kittyPlaceholder=0 dirty=1
+
+### What it puts in the repository, and what that costs everybody
+
+`Scripts/build-libghostty-vt.sh` pins the ghostty commit (**426386b85**) and
+rebuilds the artifact from it; `Vendor/ghostty-vt.xcframework` is the artifact —
+**18 MB, committed, macOS-only** (the build also emits iOS slices, another 17 MB
+this app can never load, which the script drops).
+
+Committing a binary needs a reason, and the reason is that **there is nothing to
+depend on**. libghostty-vt has no release, no tag, no Swift package and no
+published artifact; its version string is `0.1.0-dev` and `git tag | grep -i vt`
+is empty. `libghostty-spm` ships `GhosttyKit.xcframework`, which is the *other*
+library and the wrong one. So the choice is a committed artifact, or every clone
+and every CI run needing zig plus 62 seconds plus 350 MB of cache. The artifact
+is much the cheaper for everybody who is not changing it.
+
+The costs, stated because they are not zero:
+
+- **18 MB in git**, and again on each rebuild of the artifact.
+- **Every build links it, with the setting on or off.** SPM linkage is a
+  build-time fact and a runtime setting cannot undo it. A compile-time flag would
+  avoid that but would also mean the user could not switch the engine on in the
+  app they actually use, which is the whole point of the option.
+- **Upgrading is a deliberate act, not a version bump.** There is no version to
+  bump, and the header says of itself that it "is definitely going to change".
+- `brew install zig` giving exactly 0.16.0 is luck, and it will not hold. When
+  ghostty's minimum moves past Homebrew's zig, rebuilding the artifact means
+  fetching a matching zig by hand. It does not affect anybody who only *builds
+  this app* — that is the point of committing the artifact — but it is a cost on
+  whoever next updates it.
