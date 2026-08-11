@@ -71,7 +71,7 @@ reasonably ship will contain a `rust-analyzer` that Espressif does not publish.
       image is chosen rather than at the first failed request
 - [ ] Decide whether a recipe can take a toolchain as a build argument, and
       where a project would ask for one
-- [ ] Record, in the Rust recipe itself, that a project pinning a custom channel
+- [x] Record, in the Rust recipe itself, that a project pinning a custom channel
       cannot use it, so the next person does not rediscover it
 - [ ] Write down here what was ruled out on the way
 - [ ] `spec/tool-images.md` says what the project now does
