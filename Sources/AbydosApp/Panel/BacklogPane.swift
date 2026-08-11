@@ -927,6 +927,30 @@ final class BacklogColumnView: NSView {
 		widthChanged(to: cardWidth)
 	}
 
+	/// The table says when its own width changed, because `layout()` is too
+	/// early to ask.
+	///
+	/// `layout()` runs on this view, and the table lays its column out during
+	/// its *own* pass afterwards — so `cardWidth` read from here is still the
+	/// previous width, `widthChanged` sees no difference, and the cached row
+	/// heights are never thrown away. That is invisible while a board is only
+	/// ever built once, and obvious the moment somebody drags the panel to the
+	/// side and back: every card keeps the height it had at the old width while
+	/// its text is drawn at the new one, so titles truncate, marks land on them
+	/// and the text runs outside the card altogether.
+	///
+	/// A frame notification fires when the width has actually changed, which is
+	/// the thing being waited for. It cannot loop: `measuredWidth` tracks only
+	/// the width, and re-measuring rows changes the table's *height*.
+	private func watchTableWidth() {
+		tableView.postsFrameChangedNotifications = true
+		NotificationCenter.default.addObserver(
+			forName: NSView.frameDidChangeNotification, object: tableView, queue: .main
+		) { [weak self] _ in
+			MainActor.assumeIsolated { self?.widthChanged(to: self?.cardWidth ?? 0) }
+		}
+	}
+
 	init(state: BacklogState) {
 		self.state = state
 		super.init(frame: .zero)
@@ -959,6 +983,7 @@ final class BacklogColumnView: NSView {
 		table.registerForDraggedTypes([Self.dragType])
 		table.setDraggingSourceOperationMask(.move, forLocal: true)
 		tableView = table
+		watchTableWidth()
 
 		let scrollView = NSScrollView()
 		scrollView.documentView = table
@@ -1139,8 +1164,15 @@ private final class BacklogCardView: NSView {
 	private var tint = NSColor.gray
 	private var progress: BacklogItem.Progress?
 
-	private static let inset: CGFloat = 8
-	private static let gutter: CGFloat = 10
+	/// The breathing room inside a card, and the gap between a card and the
+	/// column's edge.
+	///
+	/// Both came down — 8 to 6, and 10 to 6 — because a board is read by
+	/// scanning it, and padding is space that pushes the next card off the
+	/// screen. At the old numbers a column of five cards showed four, and the
+	/// gutter was doing the work the gap between rows already does.
+	private static let inset: CGFloat = 6
+	private static let gutter: CGFloat = 6
 	private static let barHeight: CGFloat = 3
 
 	func configure(_ card: BacklogCard) {
@@ -1206,6 +1238,22 @@ private final class BacklogCardView: NSView {
 		let path = NSBezierPath(roundedRect: card, xRadius: Theme.current.scaled(5), yRadius: Theme.current.scaled(5))
 		Theme.current.selectionInactive.setFill()
 		path.fill()
+
+		// Nothing a card draws leaves the card.
+		//
+		// A guard rather than a feature, and it earns its place: a row's height
+		// is measured once and cached, so any moment where the cached height is
+		// wrong for the width being drawn at puts more text on a card than fits.
+		// Without a clip that text simply carries on — over the card's rounded
+		// edge, over the gap, and over the card below, which is what dragging
+		// the panel to the side and back used to look like.
+		//
+		// With it, the same fault truncates instead: still wrong, still worth
+		// fixing, and contained to the card it belongs to rather than making
+		// three of its neighbours unreadable as well.
+		NSGraphicsContext.saveGraphicsState()
+		defer { NSGraphicsContext.restoreGraphicsState() }
+		path.setClip()
 		// A stripe in the state's colour down the left edge, which is what
 		// makes a card recognisable at the speed somebody scans a board: the
 		// title is what it is about, the stripe is where it stands.
