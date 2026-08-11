@@ -126,12 +126,27 @@ tool still honours the preference exactly.
 ### What one costs when nothing fails
 
 On Apple's runtime a container is a virtual machine: `container ls` reports **1024
-MB and 4 CPUs each**, held whether the server inside is doing anything or not. Six
-of them accumulated on this machine in a day. The time cost is smaller than it
-looked — the filtered suite is 15–20 s with one present and the same without, and
-the 124 s against 31 s in the report above was not reproducible in either
-direction. Disk is nil: the image is shared and a stopped container holds a few
-megabytes of layer.
+MB and 4 CPUs each**, held whether the server inside is doing anything or not.
+Fifteen of them were on this machine by the end of the afternoon, from branches
+that do not have this fix — fifteen gigabytes of the runtime's memory to hold six
+idle language servers nobody is talking to. The *time* cost is smaller than it
+looked: the filtered suite is 15–20 s with one present and the same without, the
+whole suite 28 s, and the 124 s against 31 s in the report above was not
+reproducible in either direction. Disk is nil — the image is shared and a stopped
+container holds a few megabytes of layer.
+
+### One thing the pid in a name cannot survive
+
+A container is stale exactly when the process in its name is gone, and macOS
+recycles process ids. Of the fifteen above, five named `…-30748-…` were spared by
+every sweep because pid 30748 had been handed to a `swift-frontend` since: the name
+says the owner is alive, the owner is somebody else entirely, and nothing here can
+tell the difference. Left alone rather than guessed at — a sweep that decided a
+*live* process was not really the owner is the one mistake in this area that costs
+somebody their running server, which is the whole of 0435. Cheap to live with now
+that a run cleans up after itself, and if it ever matters what it wants is the
+container's start time compared against the process's, not a cleverer reading of
+the pid.
 
 ## Ruled out
 
@@ -176,7 +191,9 @@ megabytes of layer.
       run left is swept on the way *in*
 - [x] Sweep every runtime installed rather than the preferred one, which is why
       the leaks were never swept on this machine
-- [x] The suite green with a stale container present
+- [x] The suite green with a stale container present — the whole of it, twice,
+      with `abydos-lsp-jdtls-<a live pid>-23` up throughout and thirteen more
+      leftovers on the machine at the start of the second
 - [x] Write down here what was ruled out on the way
 - [x] `spec/tool-images.md` says what the project now does — the reuse did not
       change, the cleanup did, and neither was in the spec at all
