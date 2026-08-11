@@ -145,8 +145,16 @@ public enum ProcessPipes {
 		// character in the piece rather than in the whole, which the strings
 		// returned below are not — nothing is lost, and what is being fed here is
 		// a runtime's progress lines.
+		//
+		// `@Sendable` written on the inner closure and not left to be inferred.
+		// Every parameter in this chain is already `@Sendable` — this one, `drain`'s
+		// below, and `RuntimeCommand.run`'s above it — but the annotation does not
+		// reach through `Optional.map`: the transform's result type is inferred
+		// bare, so the closure literal was built non-Sendable and then converted,
+		// which is a data-race warning today and a Swift 6 error later. Saying it
+		// here costs no caller anything.
 		let pieces: (@Sendable (Data) -> Void)? = onOutput.map { report in
-			{ chunk in report(String(decoding: chunk, as: UTF8.self)) }
+			{ @Sendable chunk in report(String(decoding: chunk, as: UTF8.self)) }
 		}
 		let data = drain(process, out: out, err: err, input: input, stdin: stdin, onOutput: pieces)
 		return (

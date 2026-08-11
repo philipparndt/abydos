@@ -135,8 +135,9 @@ decision below being a real one.
       test for the case the comment describes
 - [ ] The same shape in `MainWindowController.renameSymbol` — found by
       collecting the list again, and the second one that is a bug
-- [ ] `ProcessPipes.drain(onOutput:)` takes a `@Sendable` closure, and the
-      callers follow
+- [x] `ProcessPipes.drain(onOutput:)` takes a `@Sendable` closure, and the
+      callers follow — it already did, and there was nothing for the callers
+      to follow. See below.
 - [x] `rasterScale` in both renderers, one decision for both — `nonisolated`
 - [ ] The four tidying ones
 - [ ] The three `try? #require` in `RenameOfferTests`, which assert nothing
