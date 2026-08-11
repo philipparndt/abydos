@@ -79,16 +79,29 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 	/// Only ours — everything this app starts is named `abydos-…` — and only
 	/// those whose starter is no longer running, so two copies of this app open
 	/// at once leave each other's alone.
+	///
+	/// **Every runtime installed rather than the preferred one**, and that is
+	/// 0473. This asked `discover` for one runtime, which honours the preference,
+	/// and on a machine with the docker CLI installed and its daemon deliberately
+	/// stopped the preference names docker: `docker ps -a` then failed, a listing
+	/// that did not succeed was read as "nothing to remove", and every container
+	/// actually left behind was in Apple's runtime, which nobody looked at. Six of
+	/// them accumulated in a day that way. A leftover is in whichever runtime
+	/// started it, and nothing says that is the one anybody would choose today.
 	private static func sweepContainersLeftBehind() {
 		DispatchQueue.global(qos: .utility).async {
-			guard let runtime = ContainerRuntime.discover(
-				preference: ContainerRuntime.Preference(rawValue: Settings.shared.containerRuntime)
-					?? .automatic
-			) else { return }
-			let removed = ToolContainers.shared.sweep(using: runtime)
-			guard !removed.isEmpty else { return }
-			print("Removed \(removed.count) container(s) left by an earlier run: "
-				+ removed.joined(separator: ", "))
+			for runtime in ContainerRuntime.installed() {
+				let removed = ToolContainers.shared.sweep(using: runtime)
+				guard !removed.isEmpty else { continue }
+				// Which runtime is in the line because it is the next question
+				// anybody reading it asks, and because a sweep that did not say
+				// where it had looked is what hid the fault above for a day. What
+				// one of these costs while it is up: on Apple's runtime a container
+				// is a virtual machine, and `container ls` reports a gigabyte of
+				// memory and four cores for each of ours.
+				print("Removed \(removed.count) \(runtime.name) container(s) left by an "
+					+ "earlier run: " + removed.joined(separator: ", "))
+			}
 		}
 	}
 

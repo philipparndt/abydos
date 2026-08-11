@@ -358,6 +358,12 @@ import Testing
 	@Test(.serialized, arguments: probes)
 	func aServerInAContainerAnswersAboutFilesOnThisMachine(_ probe: Probe) async throws {
 		guard let (runtime, image) = available(for: probe) else { return }
+		// What a run that was killed before it could tidy up left behind, on the
+		// way in rather than on the way out: a `defer` and a `deinit` both run only
+		// for the exits that were going well anyway, and the exit that leaves a
+		// container is `run-tests.sh` killing a run for outliving its deadline.
+		// Once per process, and language servers only — see `ContainerLeftovers`.
+		_ = ContainerLeftovers.swept
 		// Said out loud, because a live test that skips is silent and six silent
 		// skips look exactly like six passes — which is the trap `project.md`
 		// warns about, multiplied by six. This is the line that separates "the
@@ -395,10 +401,55 @@ import Testing
 		// are part of that entry point rather than something this side adds.
 		#expect(run.arguments.last == image)
 
+		// The name of the container this is about to start, so that this test can
+		// end the one thing it began. Every container a test removes is one it
+		// noted the name of as it started it — `ContainerCleanupTests` is the rule
+		// written down, and 0435 is what the alternatives cost.
+		let started = try #require(resolved.launch.container)
+
 		let client = LSPClient()
 		client.containerPaths = paths
 		client.callbackQueue = .global()
-		defer { client.stop() }
+		defer {
+			client.stop()
+			// And then waited for, and then checked. `stop` posts the removal to a
+			// background queue and deliberately does not wait — closing a project
+			// should not pause on a runtime — which is right in the app and not
+			// enough here: a test process exits within milliseconds of its last
+			// test, before that queue has been reached, and the container goes on
+			// running with nobody left who knows its name. That is 0473, and it is
+			// why every leak found on this machine was the *last* container a run
+			// started: the five before it had a whole test's worth of time to be
+			// removed in.
+			//
+			// Asked again if it is still there, because once was not always enough.
+			// A full run on a machine already holding fifteen containers left
+			// `abydos-lsp-jdtls-<pid>-25` up having been sent `rm --force` — the
+			// runtime asked to remove a container it was still starting. Twenty
+			// seconds rather than `ToolContainers.removalDeadline`: that one is
+			// short so that a *quit* cannot visibly hang, and nothing about a test
+			// is in a hurry to exit.
+			var gone = false
+			for attempt in 1 ... 3 where !gone {
+				_ = RuntimeCommand.run(
+					ToolContainers.removal(of: [started.name], using: started.runtime), deadline: 20
+				)
+				gone = !RuntimeCommand.run(
+					ToolContainers.inspection(of: started.name, using: started.runtime), deadline: 20
+				).succeeded
+				// `usleep` and not `Thread.sleep`, which is unavailable from an
+				// asynchronous context and an error in the Swift 6 language mode —
+				// and not `Task.sleep`, because a `defer` cannot await. Blocking a
+				// second here is the point: the container is being given time to
+				// finish coming up so that it can be removed.
+				if !gone { usleep(UInt32(attempt) * 1_000_000) }
+			}
+			// And it is a claim rather than a hope. A run that quietly fails to
+			// clean up is exactly what this item is about: five agents in a day
+			// each found the leftovers by hand and none of them found a failing
+			// test, because there was not one.
+			#expect(gone, "\(probe.tool) left \(started.name) behind")
+		}
 
 		let file = root.appendingPathComponent(probe.opened)
 		let fileURI = URL(fileURLWithPath: FilePath.canonical(file)).absoluteString
@@ -435,12 +486,36 @@ import Testing
 
 		// Diagnostics are the server's first unprompted word about a file, and
 		// the first chance to see a URI it chose rather than one it was given.
+		//
+		// The file's own, and not merely the first to arrive. This waited for the
+		// first diagnostic of any kind and required it to be about the file just
+		// opened, which is a race the suite lost about half the time on jdtls: an
+		// Eclipse import publishes a diagnostic *against the project directory*
+		// before it publishes one against any file in it — `file:///…/probe`, no
+		// filename — and which of the two lands first is decided by how busy the
+		// machine is. That is the whole of 0473's red suite, and the container an
+		// earlier run had left behind was a coincidence: with one deliberately
+		// present this passes, and on a machine with none it failed twice.
 		let deadline = Date().addingTimeInterval(probe.patience)
-		while diagnosed.uri == nil, Date() < deadline {
+		while !diagnosed.saw(fileURI), Date() < deadline {
 			try? await Task.sleep(nanoseconds: 250_000_000)
 		}
 		// Named as this machine names it, not as /workspace/….
-		#expect(diagnosed.uri == fileURI)
+		#expect(diagnosed.saw(fileURI), "\(probe.tool) diagnosed \(diagnosed.uris) and not \(fileURI)")
+		// And *nothing* came back under a mount, which is the claim this test is
+		// really here for, now made about every URI the server chose rather than
+		// about whichever one arrived first. A URI naming a file that is genuinely
+		// outside the project is not the failure being looked for — a server may
+		// diagnose a header from its own toolchain, and `ContainerPaths` leaves
+		// what it cannot map exactly as it is on purpose, because saying "no such
+		// file" is the truth about it. A path still under `/workspace` is the
+		// failure: it is a name only the container has, and it is what a mapping
+		// that missed one place looks like.
+		let mounted = paths.mounts.map { "file://\($0.container)" }
+		let strayed = diagnosed.uris.filter { uri in
+			mounted.contains { uri == $0 || uri.hasPrefix($0 + "/") }
+		}
+		#expect(strayed.isEmpty, "\(probe.tool) named files as the container sees them: \(strayed)")
 
 		let symbols = try await settled(within: probe.patience) {
 			try await client.documentSymbols(uri: fileURI)
@@ -492,16 +567,27 @@ import Testing
 		}
 	}
 
-	/// Collects the callback from whichever thread it arrives on.
+	/// Collects the callbacks from whichever thread they arrive on.
+	///
+	/// Every URI rather than the latest one, and in the order they came. A server
+	/// publishes diagnostics about whatever it likes and in whatever order it
+	/// finishes thinking about them — jdtls says something about the project
+	/// directory itself before it says anything about a file in it — so "the one
+	/// that arrived" is not a question with a stable answer, and a test that asked
+	/// it was a coin toss. The whole list is also what makes a failure worth
+	/// reading: it says what the server did name, which is the first thing anybody
+	/// looking at this wants to know.
 	private final class Diagnosed: @unchecked Sendable {
 		private let lock = NSLock()
-		private var value: String?
+		private var seen: [String] = []
 
-		var uri: String? { lock.lock(); defer { lock.unlock() }; return value }
+		var uris: [String] { lock.lock(); defer { lock.unlock() }; return seen }
+
+		func saw(_ uri: String) -> Bool { uris.contains(uri) }
 
 		func record(_ uri: String) {
 			lock.lock()
-			value = uri
+			seen.append(uri)
 			lock.unlock()
 		}
 	}
