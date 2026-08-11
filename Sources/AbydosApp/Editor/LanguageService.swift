@@ -46,6 +46,11 @@ final class LanguageService {
 		/// which for a server in the project's devcontainer is not the same
 		/// question as what stopping the server removes.
 		let insideContainer: String?
+		/// Where this server came from, in the terms the footer beside the caret
+		/// says it. Worked out once, here, while the launch is still in hand —
+		/// the view that shows it is redrawn on every caret move and has to be
+		/// handed a value rather than allowed to go and ask for one.
+		let origin: LanguageServerFooter.Origin
 	}
 
 	/// Keyed by project path and language.
@@ -514,7 +519,7 @@ final class LanguageService {
 		// A second progress report would be two things counting the same pull.
 		// The strip's job here is only to say why nothing is answering yet, and
 		// then to stop saying it.
-		if fetching.contains(key) {
+		if let arriving = arriving(key: key, project: project) {
 			return ServerNotice(
 				languageId: languageId,
 				languageName: name,
@@ -523,12 +528,11 @@ final class LanguageService {
 				// a compiler runs for three minutes concludes their network is
 				// broken — the same conflation `ToolImageRecipes.progressMessage`
 				// has its own sentence to avoid. 0459.
-				text: devcontainerProjects[project.standardizedFileURL.path] == true
-					? "\(name)'s language server is starting in this project's devcontainer."
-					: buildingHere.contains(key)
-						? "\(name)'s language server is being built on this machine. "
-							+ "It happens once, and the terminal panel shows it happening."
-						: "\(name)'s language server is being fetched.",
+				//
+				// Written once, in `LanguageServerFooter`, because the chip beside
+				// the caret says the same three things in its tool tip and 0463
+				// asked that the two agree rather than each invent a vocabulary.
+				text: LanguageServerFooter.arrivalSentence(languageName: name, state: arriving),
 				manual: nil,
 				isIgnorable: false
 			)
@@ -562,6 +566,78 @@ final class LanguageService {
 				+ "for completion, problems and go-to-declaration.",
 			manual: suggestion.manual,
 			isIgnorable: true
+		)
+	}
+
+	/// Which of the three waits a server is in, or nil when it is not waiting.
+	///
+	/// One table lookup and two set lookups; nothing here touches the disk.
+	/// `fetching` is the whole of "on its way" and the other two only say which
+	/// kind of way it is, which is why they are read inside it — `buildingHere`
+	/// is only meaningful while `fetching` holds the same key, and says nothing
+	/// to anybody otherwise.
+	private func arriving(key: String, project: URL) -> LanguageServerFooter.State? {
+		guard fetching.contains(key) else { return nil }
+		if devcontainerProjects[project.standardizedFileURL.path] == true { return .starting }
+		return buildingHere.contains(key) ? .building : .fetching
+	}
+
+	// MARK: - What the footer beside the caret should say
+
+	/// The server answering for a file, for the chip beside the caret's
+	/// position, or nil for nothing.
+	///
+	/// **Nothing here asks the file system anything, and that is the constraint
+	/// rather than a nicety.** The answer is pushed into a view that redraws on
+	/// every caret move, so this must stay a handful of lookups: the project's
+	/// choices, which are cached; the table of running servers; the two sets that
+	/// say what is on its way. In particular there is no `LanguageServers.suits`,
+	/// which walks the project two levels deep, and no `executable`, which walks
+	/// the `PATH` — both of which `notice` above can afford because the strip is
+	/// refreshed when a file is opened and this is read beside every keystroke.
+	///
+	/// **Nil is the common answer and the deliberate one.** A file whose language
+	/// has no server running and none coming says nothing at all: most files in
+	/// most projects are in that state, and a footer that nags about every one of
+	/// them is a footer people stop reading. What there is to say about a missing
+	/// server is the strip above the file, which has room for the sentence, the
+	/// install hint and a way to switch it off for good.
+	///
+	/// **Which server, when a file's language has several.** The question does
+	/// not arise, and `LanguageServers.serverKey` is why: a running server is
+	/// filed under the *server's* name rather than the language's, so a `.c` and
+	/// a `.cpp` in one project both find the one `clangd` entry and the chip says
+	/// `clangd` under either. The footer follows the file, the file names its
+	/// language, and the key turns that into the one server that answers for it.
+	func footer(forLanguage languageId: String, project: URL) -> LanguageServerFooter? {
+		let key = key(project: project, languageId: languageId)
+		let languageName = LanguageRegistry.shared.displayName(for: languageId)
+
+		if let server = servers[key], server.client.isRunning {
+			return LanguageServerFooter(
+				command: server.definition.command,
+				languageName: languageName,
+				origin: server.origin,
+				state: .answering
+			)
+		}
+
+		guard let arriving = arriving(key: key, project: project),
+		      let definition = LanguageServers.definition(
+		      	forLanguage: languageId, choosing: choices(for: project)
+		      )
+		else { return nil }
+		// Where it will come from, said now rather than when it lands: a server
+		// being fetched has no launch yet, and the two states the wait can be in
+		// are exactly the two the name of the image tells apart.
+		let origin: LanguageServerFooter.Origin = arriving == .starting
+			? .devcontainer(name: nil)
+			: .image(images(for: project).image(for: definition.name) ?? "")
+		return LanguageServerFooter(
+			command: definition.command,
+			languageName: languageName,
+			origin: origin,
+			state: arriving
 		)
 	}
 
@@ -1871,7 +1947,8 @@ final class LanguageService {
 			client: client,
 			definition: resolved.definition,
 			project: project,
-			insideContainer: resolved.launch.hostContainerName
+			insideContainer: resolved.launch.hostContainerName,
+			origin: resolved.launch.origin
 		)
 		servers[key] = server
 

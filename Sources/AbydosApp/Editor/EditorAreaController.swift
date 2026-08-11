@@ -111,12 +111,18 @@ final class EditorAreaController: NSViewController {
 		install(rootView: first.view)
 	}
 
-	/// Shows the active group's caret position and language.
+	/// Shows the active group's caret position, language and server.
+	///
+	/// Every caret move comes through here, so all three are reads of values the
+	/// group is already holding. `statusServer` in particular is worked out when
+	/// a server starts, stops or is refused — never here: the three draw in one
+	/// view, and a lookup on this path would be a lookup per keystroke.
 	private func refreshStatus(from group: EditorViewController?) {
 		guard let group, group === activeGroup else { return }
 		statusBar.isHidden = group.isEmpty
 		statusBar.setPosition(line: group.statusLine, column: group.statusColumn)
 		statusBar.setLanguage(group.statusLanguage)
+		statusBar.setServer(group.statusServer)
 	}
 
 	// MARK: - Groups

@@ -107,6 +107,17 @@ final class EditorViewController: NSViewController {
 	private(set) var statusLine = 1
 	private(set) var statusColumn = 1
 	private(set) var statusLanguage: String?
+	/// The server answering for the active tab, or nil when there is none to
+	/// name.
+	///
+	/// **Held rather than asked for.** The status bar is redrawn every time the
+	/// caret moves, and this is worked out only when the server's state changes
+	/// — the same moments the strip above the file is refreshed from, which
+	/// includes `.ideaiLanguageServersChanged`. Reading it from `draw` would put
+	/// the project's choices on the path of the arrow keys, which is the fault
+	/// 0443 built a card's own struct to avoid and 0458 had to make
+	/// `Backlog.item(number:)` cheap for.
+	private(set) var statusServer: LanguageServerFooter?
 	var onStatusChanged: ((EditorViewController) -> Void)?
 	private var placeholder: NSTextField!
 	/// The one thing an empty window can offer to do.
@@ -546,6 +557,11 @@ final class EditorViewController: NSViewController {
 		document.setLanguage(languageId)
 		statusLanguage = document.displayLanguageName
 		onStatusChanged?(self)
+		// And which server answers, since that is the language's question one
+		// layer down: saying a file is Rust is saying rust-analyzer is what would
+		// answer about it, and the chip beside the language must not go on naming
+		// the server for the language it used to be.
+		refreshServerState()
 		// The document fires onSyntaxUpdated, which refreshes folds and repaints.
 	}
 
@@ -592,7 +608,21 @@ final class EditorViewController: NSViewController {
 	// MARK: - The missing-server banner
 
 	@objc private func languageServersChanged() {
+		refreshServerState()
+	}
+
+	/// What the strip above the file and the chip beside the caret should both
+	/// say about this file's server.
+	///
+	/// One refresh, because they are one question asked at two lengths: the strip
+	/// is the sentence with the button and the chip is the name with the mark.
+	/// Called from the places a server's state can have changed under a file —
+	/// activating a tab, a scope moving, choosing a language by hand, and
+	/// `.ideaiLanguageServersChanged`, which every start, stop, refusal and
+	/// reconsideration already posts.
+	private func refreshServerState() {
 		refreshServerBanner()
+		refreshServerFooter()
 	}
 
 	/// A project's servers moved between this machine and its devcontainer.
@@ -641,6 +671,29 @@ final class EditorViewController: NSViewController {
 		serverBanner.show(notice)
 		serverBanner.isHidden = false
 		serverBannerHeight.constant = LanguageServerBanner.height
+	}
+
+	/// Works out what the footer's chip says and pushes it, if it has changed.
+	///
+	/// A diff tab is left out for the reason the strip leaves it out: the file
+	/// beside it is a revision nobody's server has been told about, and naming a
+	/// server over it would claim it is being checked.
+	///
+	/// The push is skipped when the answer is the same, which it is for the whole
+	/// of a session in which nothing starts or stops. `.ideaiLanguageServersChanged`
+	/// is posted by every window's servers, not only this one's, so without the
+	/// comparison a project opening in another window would repaint every status
+	/// bar in the app.
+	private func refreshServerFooter() {
+		var footer: LanguageServerFooter?
+		if let project, let tab = activeTab, !tab.isDiff, let languageId = tab.document?.languageId {
+			footer = LanguageService.shared.footer(
+				forLanguage: languageId, project: project.scopeRoot
+			)
+		}
+		guard footer != statusServer else { return }
+		statusServer = footer
+		onStatusChanged?(self)
 	}
 
 	private func hideServerBanner() {
@@ -823,7 +876,7 @@ final class EditorViewController: NSViewController {
 				project: project.scopeRoot
 			)
 		}
-		refreshServerBanner()
+		refreshServerState()
 	}
 
 	/// A scratch was renamed, moved, or thrown away: follow it.
@@ -2052,7 +2105,7 @@ final class EditorViewController: NSViewController {
 		// two-line file — but any click between two tabs did the same.
 		tab.codeView?.reportCaretPosition()
 		onStatusChanged?(self)
-		refreshServerBanner()
+		refreshServerState()
 		updateChrome()
 		refreshTabBar()
 		onActivated?(self)
@@ -2697,6 +2750,23 @@ final class EditorStatusView: NSView {
 	private var isLanguageHovered = false
 	private var trackingArea: NSTrackingArea?
 
+	/// What the server chip says and what its tool tip says, already worked out.
+	///
+	/// Two strings and nothing else, which is the whole design: `setPosition` is
+	/// called on every caret move and draws in this same view, so anything this
+	/// bar has to *find out* would be found out beside every keystroke. The
+	/// finding out happens in `LanguageService.footer(forLanguage:project:)`, is
+	/// pushed here when a server starts, stops or is refused, and is a value by
+	/// the time it arrives.
+	private var serverText = ""
+	private var serverDetail = ""
+	private var serverRect = NSRect.zero
+	private var isServerHovered = false
+	/// The rectangle the tool tip is currently registered for, so it is put back
+	/// only when it has moved rather than on every redraw. Nil asks for it to be
+	/// registered again whatever the rectangle says.
+	private var toolTipRect: NSRect?
+
 	override var isFlipped: Bool { true }
 
 	func setPosition(line: Int, column: Int) {
@@ -2706,6 +2776,23 @@ final class EditorStatusView: NSView {
 
 	func setLanguage(_ name: String?) {
 		languageText = name ?? "Plain Text"
+		needsDisplay = true
+	}
+
+	/// Which server is answering for the file, or nothing at all.
+	///
+	/// **Nothing at all is the common case and the deliberate one.** Most files
+	/// in most projects have no server, and a chip saying so on every one of them
+	/// would be a footer people learn to stop reading — which would cost the
+	/// sentence it is here to say. The strip above the file is what talks about a
+	/// server that is missing; this only names one that exists.
+	func setServer(_ footer: LanguageServerFooter?) {
+		let text = footer?.text(containerMark: MainWindowController.containerMark) ?? ""
+		let detail = footer?.detail ?? ""
+		guard text != serverText || detail != serverDetail else { return }
+		serverText = text
+		serverDetail = detail
+		toolTipRect = nil
 		needsDisplay = true
 	}
 
@@ -2724,27 +2811,47 @@ final class EditorStatusView: NSView {
 	}
 
 	override func mouseMoved(with event: NSEvent) {
-		let inside = languageRect.contains(convert(event.locationInWindow, from: nil))
-		guard inside != isLanguageHovered else { return }
-		isLanguageHovered = inside
+		let point = convert(event.locationInWindow, from: nil)
+		let language = languageRect.contains(point)
+		let server = !serverRect.isEmpty && serverRect.contains(point)
+		guard language != isLanguageHovered || server != isServerHovered else { return }
+		isLanguageHovered = language
+		isServerHovered = server
 		needsDisplay = true
 	}
 
 	override func mouseExited(with event: NSEvent) {
-		guard isLanguageHovered else { return }
+		guard isLanguageHovered || isServerHovered else { return }
 		isLanguageHovered = false
+		isServerHovered = false
 		needsDisplay = true
 	}
 
 	override func mouseDown(with event: NSEvent) {
 		let point = convert(event.locationInWindow, from: nil)
-		guard languageRect.contains(point) else { return }
-		showLanguageMenu(at: NSPoint(x: languageRect.minX, y: languageRect.maxY))
+		if languageRect.contains(point) {
+			showLanguageMenu(at: NSPoint(x: languageRect.minX, y: languageRect.maxY))
+			return
+		}
+
+		// **The list of what is running, and not the settings page.** Both were
+		// candidates and they answer different questions. The chip states a fact
+		// about *this project* — this server, from here, now — and the questions
+		// that follow from reading it are whether it is really running, what it
+		// is costing, which executable the system resolved and how to stop it;
+		// that window answers all four and has the Stop. Settings is where the
+		// answer is *changed*, but a settings page knows no project — the spec
+		// says as much where it explains why a chosen server's row is in the list
+		// and not in Settings — so a click landing there would answer a question
+		// nobody had just asked.
+		guard !serverRect.isEmpty, serverRect.contains(point) else { return }
+		RunningToolsWindowController.shared.show()
 	}
 
 	override func resetCursorRects() {
 		super.resetCursorRects()
 		addCursorRect(languageRect, cursor: .pointingHand)
+		if !serverRect.isEmpty { addCursorRect(serverRect, cursor: .pointingHand) }
 	}
 
 	private func showLanguageMenu(at point: NSPoint) {
@@ -2794,7 +2901,16 @@ final class EditorStatusView: NSView {
 			.foregroundColor: Theme.current.gitIgnored,
 		]
 
-		// Right-aligned, position then language.
+		// Right-aligned: server, then position, then language at the edge.
+		//
+		// **The order is about which one is allowed to lose.** The language and
+		// the caret's position are a handful of characters and never more, so
+		// they are laid out first and keep their place; the server is beside the
+		// language — the same fact one layer down — and is the one that can be a
+		// name and an image tag together, so it takes whatever room the other two
+		// leave and truncates at the tail. 0458 hit this on a card and settled it
+		// the same way: say the important part first.
+		let gap = Theme.current.scaled(16)
 		var x = bounds.width - Theme.current.scaled(12)
 		for (index, text) in [languageText, positionText].enumerated() where !text.isEmpty {
 			let attributed = NSAttributedString(string: text, attributes: attributes)
@@ -2805,22 +2921,86 @@ final class EditorStatusView: NSView {
 			// The language is a control, so it gets a hit area and a hover
 			// background — otherwise nothing suggests it can be clicked.
 			if index == 0 {
-				let padding = Theme.current.scaled(5)
-				languageRect = NSRect(
-					x: origin.x - padding,
-					y: bounds.midY - size.height / 2 - padding / 2,
-					width: size.width + padding * 2,
-					height: size.height + padding
-				)
-				if isLanguageHovered {
-					NSColor.white.withAlphaComponent(0.08).setFill()
-					NSBezierPath(roundedRect: languageRect, xRadius: 4, yRadius: 4).fill()
-				}
+				languageRect = chipRect(around: origin, size: size)
+				if isLanguageHovered { highlight(languageRect) }
 			}
 
 			attributed.draw(at: origin)
-			x -= Theme.current.scaled(16)
+			x -= gap
 		}
+
+		drawServer(leftOf: x, attributes: attributes)
+	}
+
+	/// The server chip, in the room the position and the language left.
+	private func drawServer(leftOf right: CGFloat, attributes: [NSAttributedString.Key: Any]) {
+		defer { refreshServerToolTip() }
+		serverRect = .zero
+		guard !serverText.isEmpty else { return }
+
+		var truncating = attributes
+		let paragraph = NSMutableParagraphStyle()
+		paragraph.lineBreakMode = .byTruncatingTail
+		truncating[.paragraphStyle] = paragraph
+		let attributed = NSAttributedString(string: serverText, attributes: truncating)
+		let size = attributed.size()
+
+		// Dropped rather than shown as two letters and an ellipsis. A chip
+		// reading `ru…` says nothing anybody can use, and what it would be
+		// crowding out — the language and where the caret is — is what this bar
+		// was for before the chip existed.
+		let room = right - Theme.current.scaled(12) - Theme.current.scaled(10)
+		let width = min(size.width, room)
+		guard width >= Theme.current.scaled(56) else { return }
+
+		let origin = NSPoint(x: right - Theme.current.scaled(12) - width, y: bounds.midY - size.height / 2)
+		serverRect = chipRect(around: origin, size: NSSize(width: width, height: size.height))
+		if isServerHovered { highlight(serverRect) }
+		attributed.draw(in: NSRect(origin: origin, size: NSSize(width: width, height: size.height)))
+	}
+
+	/// The hit area and hover background of a chip, around the text it holds.
+	private func chipRect(around origin: NSPoint, size: NSSize) -> NSRect {
+		let padding = Theme.current.scaled(5)
+		return NSRect(
+			x: origin.x - padding,
+			y: bounds.midY - size.height / 2 - padding / 2,
+			width: size.width + padding * 2,
+			height: size.height + padding
+		)
+	}
+
+	private func highlight(_ rect: NSRect) {
+		NSColor.white.withAlphaComponent(0.08).setFill()
+		NSBezierPath(roundedRect: rect, xRadius: 4, yRadius: 4).fill()
+	}
+
+	/// Puts the tool tip back where the chip is now.
+	///
+	/// On the chip's rectangle rather than on the whole bar, because the bar is
+	/// mostly empty and a tool tip over the empty part would be a sentence about
+	/// a language server appearing under the mouse on its way somewhere else.
+	/// Done here because here is where the rectangle is known — the caret's
+	/// position changes width, so the chip beside it moves — and guarded so that
+	/// a redraw for a caret that moved within the same line costs nothing.
+	private func refreshServerToolTip() {
+		guard serverRect != toolTipRect else { return }
+		toolTipRect = serverRect
+		removeAllToolTips()
+		guard !serverRect.isEmpty else { return }
+		addToolTip(serverRect, owner: serverDetail as NSString, userData: nil)
+	}
+
+	// MARK: - Testing
+
+	/// What the bar is saying about the server, for a photograph to be checked
+	/// against — the words and the rectangle they were measured into, since a
+	/// card measured at one width and drawn at another is a fault this project
+	/// has had twice.
+	var serverReportForTesting: String {
+		serverText.isEmpty
+			? "no server"
+			: "\(serverText) [\(Int(serverRect.width))×\(Int(serverRect.height))]"
 	}
 }
 
