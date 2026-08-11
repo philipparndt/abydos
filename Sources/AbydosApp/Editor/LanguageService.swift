@@ -117,6 +117,10 @@ final class LanguageService {
 	/// document opened and once per query, and a file read at that rate on the
 	/// main actor is a keystroke somebody feels.
 	private var serverChoices: [String: LanguageServerChoices] = [:]
+	/// What a project says about a server's executable and its initialize
+	/// options, out of the same file and held for the same reason as the two
+	/// above.
+	private var serverOverrides: [String: LanguageServerOverrides] = [:]
 	/// Choices already refused out loud, by server key, so a project naming a
 	/// server nobody has says so once rather than once per file opened.
 	private var refused: Set<String> = []
@@ -505,6 +509,42 @@ final class LanguageService {
 		// says *running*, and there is no container running to put one beside.
 		if let declined = declinedNotice(languageId: languageId, name: name, project: project, key: key) {
 			return declined
+		}
+
+		// **An executable somebody named, with nothing at that path.** Ahead of
+		// the pin below it, which is the only thing ahead of everything else, and
+		// the order is the argument: a pin is a fact about the project that several
+		// routes might yet answer, and this is a line in a file that is wrong.
+		// Whoever wrote the path is the person looking at the strip and can fix it
+		// in one edit, so it is the first thing said.
+		//
+		// Said rather than falling through to the install hint at the bottom of
+		// this function, which would be false twice: something *was* named, and
+		// "rustup component add rust-analyzer" is the advice that produces the proxy
+		// a named path exists to get away from. 0466.
+		if let named = overrides(for: project).override(forTool: definition.name),
+		   let command = named.command,
+		   LanguageServers.executable(for: definition.running(command)) == nil,
+		   // Not in a container. The path is the container's there, and this side
+		   // has no way to look at it — a path that is absent here is the ordinary
+		   // case rather than the fault, and the server failing to start says so
+		   // through `ServerHealth` instead.
+		   images(for: project).image(for: definition.name) == nil,
+		   !usesDevContainer(project) {
+			return ServerNotice(
+				languageId: languageId,
+				languageName: name,
+				text: "\(definition.name) was pointed at \(command), and there is nothing to "
+					+ "run there, so this file has no language server.",
+				manual: LanguageServerOverrides.refusal(
+					command: command, forTool: definition.name, source: named.source
+				),
+				// Nothing to ignore: it is one line in a file, and the strip goes the
+				// moment the line is right.
+				isIgnorable: false,
+				problem: true,
+				detailsTitle: "What was named"
+			)
 		}
 
 		// **A toolchain this project pins that the server cannot have.** Said
@@ -1984,7 +2024,13 @@ final class LanguageService {
 		let session = attachment.session
 		guard let resolved = LanguageServers.resolve(
 			languageId: languageId, project: project, inDevContainer: session,
-			choosing: choices(for: project)
+			choosing: choices(for: project),
+			// Named for the container's own PATH, and honoured here for the same
+			// reason as everywhere else: a devcontainer built on a toolchain manager
+			// has that manager's proxy on its PATH too.
+			command: LanguageServers.definition(
+				forLanguage: languageId, choosing: choices(for: project)
+			).flatMap { overrides(for: project).command(forTool: $0.name) }
 		) else {
 			unavailable.insert(key)
 			log("nothing to start for \(languageId) in \(project.path)")
@@ -2443,7 +2489,13 @@ final class LanguageService {
 					options: LanguageServers.initializationOptions(
 						for: resolved.definition,
 						root: canonical(resolved.root),
-						inContainer: resolved.launch.paths != nil
+						inContainer: resolved.launch.paths != nil,
+						// And whatever this project says to tell it, which for every
+						// server but jdtls is the only thing in there. 0466's case is
+						// rust-analyzer's `procMacro.server`, a path into a toolchain
+						// this repository cannot know the name of.
+						merging: overrides(for: project)
+							.initializationOptions(forTool: resolved.definition.name)
 					),
 					timeout: isJava ? 120 : 10
 				)
@@ -2517,7 +2569,12 @@ final class LanguageService {
 		}
 		return LanguageServers.resolve(
 			languageId: languageId, project: project, image: image, runtime: runtime,
-			choosing: choices
+			choosing: choices,
+			// The executable this project or this person named for the server, if
+			// either did. Asked of the *chosen* server's name, like the image above
+			// and for the same reason.
+			command: LanguageServers.definition(forLanguage: languageId, choosing: choices)
+				.flatMap { overrides(for: project).command(forTool: $0.name) }
 		)
 	}
 
@@ -2547,13 +2604,25 @@ final class LanguageService {
 		}()
 		guard let pin = pins.first(where: { $0.tool == definition.name }) else { return nil }
 		let named = images(for: project).image(for: definition.name)
+		let resolved = named.flatMap {
+			ToolImageRecipes.resolve(image: $0, forTool: definition.name)
+		}
 		return ToolchainPins.objection(
 			to: pin,
 			// The word a recipe is asked for by is not an image name, so it is
 			// turned into the name of the image that would be built — which is
 			// still an image, and still one whose toolchain was fixed when it was
 			// built.
-			comingFrom: named.flatMap { ToolImageRecipes.resolve(image: $0, forTool: definition.name) }
+			comingFrom: resolved,
+			// An executable already named for this server answers the pin, so there
+			// is nothing to say. Whether that path is any good is the sentence above
+			// this one in `notice`, and it says so on its own.
+			command: overrides(for: project).command(forTool: definition.name),
+			// And a recipe from this repository chosen instead of the tool's own is
+			// this project's own answer to the channel — see `isVariantRecipe`.
+			imageKnowsChannel: resolved.map {
+				ToolImageRecipes.isVariantRecipe($0, forTool: definition.name)
+			} ?? false
 		)
 	}
 
@@ -2585,6 +2654,20 @@ final class LanguageService {
 			settings: LanguageServerChoices.settings(Settings.shared.languageServers)
 		)
 		serverChoices[path] = resolved
+		return resolved
+	}
+
+	/// What a project says about a server's executable and what to tell it,
+	/// project first and settings behind it — the same order as everything else
+	/// out of this file.
+	func overrides(for project: URL) -> LanguageServerOverrides {
+		let path = project.standardizedFileURL.path
+		if let known = serverOverrides[path] { return known }
+		let resolved = LanguageServerOverrides.resolve(
+			project: LanguageServerOverrides.inProject(project),
+			settings: LanguageServerOverrides.settings(Settings.shared.serverCommands)
+		)
+		serverOverrides[path] = resolved
 		return resolved
 	}
 

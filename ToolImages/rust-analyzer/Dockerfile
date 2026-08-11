@@ -22,21 +22,54 @@
 # names a *release* the two reconcile themselves — rustup below fetches `1.90.0`
 # or `nightly-2025-01-01` when it is asked for one, so a pinned release is
 # slower on the first request and is not broken. Where it names a **custom
-# channel** they do not and cannot: `channel = "esp"` means the directory
+# channel** this image does not answer it: `channel = "esp"` means the directory
 # `~/.rustup/toolchains/esp` on the machine reading the project, put there by an
-# installer of its own, and rustup resolves it by that directory and by nothing
-# else. No image reached by name has it, this one included.
+# installer of its own, and `rustup toolchain install esp` has nothing to install
+# it from. That is the sentence this file proves, and it is the only one.
 #
-# Espressif's `esp` toolchain is the sharp end of it, and neither route answers
-# it. Not this image, for the reason above. Not a build argument passing the
-# channel in, since there is nothing for rustup to install it *from*. Not the
-# copy on the machine either: espup builds the fork with
-# `rust-analyzer-proc-macro-srv` and *without* rust-analyzer itself, and rustup
-# will not add a component to a custom toolchain. And not a mount of the host's
-# toolchain, which is `aarch64-apple-darwin` binaries that will not run in a
-# Linux container. So there is nothing to add to this file that would change it,
-# and what the editor does instead is say so before starting anything — see
-# `ToolchainPin` in AbydosKit. 0462.
+# **What this file used to say next was too strong, and 0466 measured it.** It
+# said that no image reached by name has the `esp` toolchain, that the copy on
+# the machine cannot answer it either, and therefore that there was nothing to
+# add to this file that would change it. All three are wrong, and the third
+# would cost somebody an afternoon:
+#
+#   * `espressif/idf-rust:esp32_<version>` has the fork in it, published for
+#     `linux/arm64` as well as `linux/amd64` and built by `esp-rs/rust-build`.
+#     Pulled and inspected: `~/.rustup/toolchains/esp` is there and is the
+#     default toolchain. `espup` also installs inside a container — it downloads
+#     a prebuilt Linux fork, which is a different act from asking rustup for a
+#     channel it has never heard of.
+#   * **The pin does not decide which rust-analyzer runs.** It decides which
+#     `cargo` and `rustc` read the project, which is right and wanted. The server
+#     is an ordinary program that shells out to the pinned toolchain, so any
+#     recent one reads the project. Measured against the project this came from:
+#     a stable 1.95 rust-analyzer resolved the sysroot into
+#     `~/.rustup/toolchains/esp/lib/rustlib/src` and expanded
+#     `#[derive(Serialize)]` out of a dylib the fork's own `rustc` had compiled.
+#   * So the missing piece was never the toolchain. It is that **the fork ships
+#     no rust-analyzer** — `libexec/rust-analyzer-proc-macro-srv` and nothing in
+#     `bin/` — **and every route reached the server through a rustup proxy that
+#     insists on getting it from the pinned toolchain**, which inside such a
+#     project says:
+#
+#         error: 'rust-analyzer' is not installed for the custom toolchain 'esp'.
+#
+#     A *path* instead of a name is the whole of the fix, and a project or a
+#     person can now write one down: `{"rust-analyzer": {"command": "…"}}` in
+#     `.abydos/tools.json`, or the Executable field in Settings ▸ Tools. See
+#     `LanguageServerOverrides` in AbydosKit, and `ToolchainPin`, whose notice
+#     above the file now offers this rather than closing the subject.
+#
+# Two things do stay ruled out. A **mount of the host's toolchain** into a Linux
+# container: `~/.rustup/toolchains/esp` is `aarch64-apple-darwin` binaries.
+# And **`rustup component add` on a custom toolchain**, which rustup refuses by
+# design and says so.
+#
+# This recipe is not the place for any of it: an esp image is a gigabyte of
+# Espressif's base and would be paid for by every Rust project on the machine to
+# serve the one that pins the fork. `ToolImages/rust-analyzer-esp/Dockerfile` is
+# beside this one for that project, and it is a separate file for exactly that
+# reason. 0462, 0466.
 FROM rust:1.97-bookworm
 
 # From rustup rather than from the project's GitHub releases, which is the other
