@@ -4303,6 +4303,54 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	}
 
 	/// Right-clicks in the editor and finds usages of whatever is at the caret.
+	/// Renames the symbol at a position, the way somebody would, and says what
+	/// happened to the files.
+	///
+	/// Through the same door the context menu uses, and through the field: the
+	/// name really is typed into `RenameField` and committed, so what this drives
+	/// is the gesture and not a shortcut past it.
+	func exerciseRenameForTesting(line: Int, character: Int, to newName: String) {
+		guard let url = editor.activeGroup?.activeTabURL else {
+			print("RENAME: no file open")
+			return
+		}
+		renameSymbol(in: url, line: line, character: character)
+
+		DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) { [weak self] in
+			guard let self, let codeView = self.editor.activeGroup?.activeCodeView else { return }
+			guard codeView.isRenaming else {
+				print("RENAME: no field opened")
+				return
+			}
+			print("RENAME: field open on “\(codeView.renameTextForTesting ?? "")”")
+			codeView.commitRenameForTesting(newName)
+
+			DispatchQueue.main.asyncAfter(deadline: .now() + 6.0) {
+				let buffer = self.editor.activeGroup?.activeDocument?.rope.string ?? ""
+				print("RENAME: the open buffer "
+					+ (buffer.contains(newName) ? "says" : "does not say") + " \(newName)")
+				let root = self.project?.scopeRoot
+				let hits = root.map { Self.filesContaining(newName, under: $0) } ?? []
+				print("RENAME: \(hits.count) files on disk say \(newName)")
+				for name in hits.prefix(10) { print("RENAME FILE: \(name)") }
+			}
+		}
+	}
+
+	/// Which files under a directory hold a word. For the driver above only.
+	private static func filesContaining(_ word: String, under root: URL) -> [String] {
+		guard let walk = FileManager.default.enumerator(
+			at: root, includingPropertiesForKeys: nil
+		) else { return [] }
+		var found: [String] = []
+		for case let url as URL in walk {
+			guard !url.hasDirectoryPath else { continue }
+			guard let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
+			if text.contains(word) { found.append(url.lastPathComponent) }
+		}
+		return found.sorted()
+	}
+
 	func exerciseFindUsagesForTesting(line: Int, character: Int) {
 		guard let url = editor.activeGroup?.activeTabURL else { return }
 		findUsages(in: url, line: line, character: character)

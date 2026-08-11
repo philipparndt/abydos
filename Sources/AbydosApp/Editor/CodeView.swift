@@ -1915,6 +1915,10 @@ final class CodeView: NSView, NSTextInputClient {
 	@discardableResult
 	func commitRenameForTesting(_ name: String) -> Bool { rename.commitForTesting(name) }
 
+	/// What the open field says, so a driver can show the field really opened on
+	/// the symbol rather than on whatever was nearby.
+	var renameTextForTesting: String? { rename.textForTesting }
+
 	override func mouseDragged(with event: NSEvent) {
 		let point = convert(event.locationInWindow, from: nil)
 

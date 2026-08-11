@@ -71,6 +71,129 @@ same mechanism — which is **0456**, filed and explicitly waiting on this one.
   pointed a project at it, the rename that arrives is a different promise from
   jdtls's, and somebody should be told which they are getting.
 
+## What was decided, and what was found
+
+### Failing halfway: three layers, and the first one does the work
+
+Not "write atomically" — there is no atomic multi-file write on this operating
+system and pretending otherwise would have been a lie in a comment. Not "undo
+what was done" on its own either, because a rollback is a second thing that can
+fail. The answer is:
+
+1. **Everything is read, edited and checked while nothing has been written.**
+   `WorkspaceEditPlan` is a pure function of the edit and the text. Almost every
+   reason an edit fails is knowable there — a file that is not there, a range
+   the file does not have, two edits over one character, a rename onto a name
+   something holds — and **one refusal means nothing happens at all**.
+2. **A write that fails anyway is put back**, from the previous contents the
+   plan already carries. That is the same information ⌘Z needs, so the rollback
+   and the undo are literally the same walk over the same data. Two mechanisms
+   here would be two that come to disagree.
+3. **A rollback that cannot finish names every file on both sides.** It takes
+   the file system refusing twice, and when it happens being exact is all that
+   is left.
+
+`WorkspaceEditPlanTests` drives all three, including twenty files with the
+fifteenth read-only, and the floor where the write refuses *and* the putting
+back refuses.
+
+### Where the name is typed
+
+A field over the symbol, in the text, scrolling with it — the navigator's
+in-place rename one layer in, as the item guessed. A subview of `CodeView` and
+not a child panel: the completion list is a panel because it must hang past the
+editor's edges and must never take focus, and this is the opposite of both.
+
+`RenameField` is the navigator's pattern *extracted* rather than copied a fourth
+time — there were already three near-identical copies (the navigator row, the
+terminal tab strip, the changes pane), each with its own version of the same
+four rules. The two that are easy to get wrong and cost somebody a day: never
+`makeFirstResponder` on the field that already has it, and clear the field
+before removing it from its superview.
+
+### When the server will not do it
+
+Two gates, in order, and only one of the three refusals is said out loud. This
+is the first thing in the whole app to read `LSPClient.capabilities` — nothing
+had ever gated on them.
+
+`prepareRename` is asked **only of servers that advertise it**, which was not
+obvious: several servers rename and answer `MethodNotFound` to that question,
+and a refusal is indistinguishable from "nothing here". For those the word under
+the caret is what the field opens on.
+
+## What was found on the way
+
+**The container edge held.** `spec/tool-images.md` has required since the
+containers were built that URIs cross for map keys as well as values "so that a
+workspace edit's map crosses" — written for a message this program had never
+sent. It is correct: a `changes` map keyed by `file:///workspace/…` comes home
+keyed by this machine's paths, and a rename really does cross both ways against
+a containerised gopls under Apple `container`. Driven now, in
+`ContainerPathTests` and in `RenameLiveTests`, and in the app.
+
+**jdtls sends both shapes, and the old one is empty.** Renaming
+`ObservableTracker` over five of `eclipse.platform.ui`'s bundles, jdtls answered
+with a `changes` map of **zero** files and a `documentChanges` list of **32**,
+plus the file move. So a client that read `changes` — which is what a client
+that claims nothing in its capabilities is sent — applies nothing at all and
+reports success. That is the strongest argument there is for both the
+`documentChanges`-wins rule and for growing `LSPClient.clientCapabilities`, and
+it was measured rather than reasoned about.
+
+**kmp-lsp advertises rename, prepares it, and then answers `null`.** Version
+0.25.0 says `renameProvider: {prepareProvider: true}`; `prepareRename` answers
+with a real range and placeholder; `textDocument/rename` answers `null` — for a
+class, for a method, and for a private field, on the corpus and on a two-file
+toy Java project. Its `rename_impl` returns `Ok(None)` when `classify_cursor`
+cannot classify the cursor from the parse tree, and for Java it apparently
+cannot. Its own refusals (ambiguous identity, library symbol, an override
+relationship) come back as *errors* with reasons; this is not one of those.
+
+So the syntactic caveat this item built is written, tested and correct, and the
+server it was built for does not currently deliver a Java rename to put it in
+front of. **This is exactly the failure the item named — an offer that fails —
+arriving from the server rather than from the app**, and it is a case the two
+gates cannot catch, because the server says yes twice and then does nothing.
+The app's answer is honest but thin: "The server found nothing to change."
+Worth filing on its own.
+
+**jdtls without a target platform scopes a rename to one bundle.**
+`ObservableTracker` is used in 62 files across the five databinding bundles;
+jdtls renamed 32, all inside its own bundle. The five import as five Eclipse
+projects with no inter-bundle classpath, because a PDE workspace resolves
+dependencies through a target platform that nothing here provides. Not a defect
+in this item — the mechanism carried every file the server named — but it is why
+the corpus evidence is "32 files and a file that moved" rather than "six
+bundles".
+
+## Ruled out
+
+- **Writing atomically.** No such thing across files. A staging directory and a
+  final flurry of moves narrows the window and does not close it, and it doubles
+  the number of file operations that can fail. Checking first and reversing
+  second is smaller and covers more.
+- **A dialog for the new name.** See above; and `Toast.swift`'s rule about not
+  interrupting is the same rule.
+- **Each `TextEdit` applied to an open document as its own `replace`.**
+  `TextDocument` records an undo node per `replace`, so a file with forty edits
+  in it would take forty presses of ⌘Z *inside that file* on top of everything
+  else. One replacement of the whole text is one node, and the caret, the folds
+  and the scroll position are put back the way `reloadFromDisk` puts them back.
+- **Putting the undo on the document's own `UndoTree`.** It cannot hold this: a
+  document's history knows nothing of the other thirty-nine, and a rename that
+  moved `Foo.java` to `Bar.java` is not a text edit at all. It goes on the tree's
+  stack, which already holds the gestures that act on files rather than on text.
+- **Retargeting an open tab when its file moves.** `Tab.url` is a `let` and
+  everything hanging off it — the language server's document, the breakpoints,
+  the session — is keyed by that path. The tab is closed before the move and
+  reopened after it, which loses the caret and is honest about it.
+- **Trusting `changes` when a server sends both.** Measured above: it is empty.
+- **Renaming in the corpus itself.** Every corpus run is over an APFS clone made
+  by the test and thrown away. `Scripts/corpus.sh` puts somebody's checkout
+  there, and a test that renamed thirty files in it would break every other test
+  that reads it.
+
 ## Estimate
 
 2026-08-11 13:12 — about two hours left
@@ -107,16 +230,18 @@ sentence about itself, made into a checklist.
 
 **The gesture**
 
-- [ ] Where the new name is typed
-- [ ] `textDocument/rename`, and a `WorkspaceEdit` applied to open documents
+- [x] Where the new name is typed
+- [x] `textDocument/rename`, and a `WorkspaceEdit` applied to open documents
       through the rope and to closed ones on disk
-- [ ] `documentChanges` as well as `changes`, including a file that moves
-- [ ] One undo for the whole edit
+- [x] `documentChanges` as well as `changes`, including a file that moves
+- [x] One undo for the whole edit
 
 **Evidence**
 
-- [ ] Drive it across the corpus — a rename touching several bundles, and the
+- [x] Drive it across the corpus — a rename touching several bundles, and the
       same rename with the project in a container, which is the path that was
       built for this and never used
-- [ ] Write down here what was ruled out on the way
-- [ ] `spec/language-servers.md` says what the project now does
+- [x] Write down here what was ruled out on the way
+- [x] `spec/language-servers.md` says what the project now does — and
+      `spec/tool-images.md`, whose container requirement this is the first thing
+      to exercise

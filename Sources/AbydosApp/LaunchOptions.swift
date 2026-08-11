@@ -291,6 +291,12 @@ struct LaunchOptions {
 	var symbolProject = false
 	/// Find usages of the symbol at line:character (1-based line).
 	var usagesAt: String?
+	/// Rename the symbol at line:character to a new name, as `line:char=NewName`.
+	///
+	/// The whole gesture from outside, so that a rename can be *driven* rather
+	/// than read about: the field opens over the symbol, the name is typed into
+	/// it, Return is pressed, and what the files say afterwards is printed.
+	var renameAt: String?
 	/// Jump to the definition of the symbol at line:character (1-based line).
 	var definitionAt: String?
 	/// Dock the usages list into the sidebar after finding them.
@@ -711,6 +717,7 @@ struct LaunchOptions {
 			case "--symbols":    options.symbolQuery = next() ?? ""
 			case "--symbols-project": options.symbolProject = true
 			case "--usages":     options.usagesAt = next()
+			case "--rename":     options.renameAt = next()
 			case "--definition": options.definitionAt = next()
 			case "--dock-usages": options.dockUsages = true
 			case "--lsp-wait":   options.lspWait = next().flatMap(Double.init)
