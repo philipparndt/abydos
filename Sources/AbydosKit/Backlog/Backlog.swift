@@ -148,9 +148,29 @@ public struct Backlog: Sendable {
 		BacklogState.board.flatMap { items(in: $0) }
 	}
 
+	/// One item, wherever it happens to be.
+	///
+	/// Every state is looked in, and that is the point rather than thoroughness:
+	/// a number is the only durable name an item has, and the folder it is in is
+	/// the one thing about it that changes. The board asks this of a *worktree*
+	/// to find the copy an agent is ticking, and by then that copy may have been
+	/// moved to `completed/` by `done` while the project still has it in
+	/// `in-progress/` — so a path would be the wrong question.
+	///
+	/// The names are matched before anything is read. This used to build every
+	/// item in every state and then look for the number, which reads the head of
+	/// four hundred and fifty files to answer a question the directory listing
+	/// already answers — cheap enough once, and this now runs per card on a walk
+	/// that a board waits for.
 	public func item(number: Int) -> BacklogItem? {
+		let manager = FileManager.default
 		for state in BacklogState.allCases {
-			if let found = items(in: state).first(where: { $0.number == number }) { return found }
+			let folder = directory(for: state)
+			guard let names = try? manager.contentsOfDirectory(atPath: folder.path) else { continue }
+			for name in names.sorted() {
+				guard let parsed = BacklogItem.parseName(name), parsed.number == number else { continue }
+				if let found = BacklogItem(at: folder.appendingPathComponent(name), state: state) { return found }
+			}
 		}
 		return nil
 	}

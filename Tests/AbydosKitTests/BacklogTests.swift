@@ -99,6 +99,29 @@ struct BacklogTests {
 		#expect(backlog.items(in: .open).map(\.number) == [1])
 	}
 
+	// MARK: - Finding one
+
+	@Test func anItemIsFoundByItsNumberWhereverItIs() throws {
+		let root = try makeProject()
+		defer { cleanUp(root) }
+		let backlog = Backlog(projectRoot: root)
+		try BacklogSetup.run(projectRoot: root, assistants: [])
+
+		_ = try backlog.create(title: "Still open")
+		let moved = try backlog.move(try backlog.create(title: "Finished"), to: .completed)
+		let folder = try backlog.move(
+			try backlog.create(title: "With a picture", carriesFiles: true), to: .waiting
+		)
+
+		#expect(backlog.item(number: 1)?.state == .open)
+		#expect(backlog.item(number: 2)?.number == moved.number)
+		#expect(backlog.item(number: 2)?.state == .completed)
+		// Both shapes, since the folder form has no `.md` on the end of its name.
+		#expect(backlog.item(number: 3)?.state == .waiting)
+		#expect(backlog.item(number: 3)?.folder?.lastPathComponent == folder.folder?.lastPathComponent)
+		#expect(backlog.item(number: 99) == nil)
+	}
+
 	@Test func theTitleComesFromTheHeadingWithoutItsNumber() throws {
 		let root = try makeProject()
 		defer { cleanUp(root) }

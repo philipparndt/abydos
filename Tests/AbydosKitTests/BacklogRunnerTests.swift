@@ -85,6 +85,62 @@ struct BacklogRunnerTests {
 		#expect(run?.isPresent == true)
 	}
 
+	/// The fault 0458 was written for, as a test: an agent ticks in its own
+	/// checkout, and until the branch lands the project's copy still says what it
+	/// said when the item was picked up.
+	@Test func theProgressIsTheWorktreesAndTheStateIsTheProjects() async throws {
+		let root = try makeRepository()
+		defer { cleanUp(root) }
+		try BacklogSetup.run(projectRoot: root, assistants: [])
+		let backlog = Backlog(projectRoot: root)
+		let item = try backlog.move(try backlog.create(title: "Ticked on the branch"), to: .ready)
+		commit(root)
+
+		let start = try await BacklogRunner.start(item, in: backlog, assistant: nil)
+		defer { _ = GitRepository.runSync(["worktree", "remove", "--force", start.directory.path], in: root) }
+
+		// The agent works: it ticks two steps and moves its copy to `completed/`,
+		// which is what `done` does on the branch. None of it reaches the project
+		// until somebody merges.
+		let there = Backlog(projectRoot: start.directory)
+		let onBranch = try #require(there.item(number: 1))
+		var ticked = 0
+		let text = onBranch.text().components(separatedBy: "\n").map { line -> String in
+			guard line.contains("- [ ]"), ticked < 2 else { return line }
+			ticked += 1
+			return line.replacingOccurrences(of: "- [ ]", with: "- [x]")
+		}.joined(separator: "\n")
+		try text.write(to: onBranch.file, atomically: true, encoding: .utf8)
+		_ = try there.move(onBranch, to: .completed)
+
+		let run = try #require(BacklogRuns(projectRoot: root).run(for: 1))
+		let copy = try #require(run.itemInWorktree)
+
+		// Found by number, because the two copies are no longer at the same path.
+		#expect(copy.state == .completed)
+		#expect(backlog.item(number: 1)?.state == .inProgress)
+
+		// And the fraction a card should show is the branch's, not the one the
+		// project's copy has been holding since the item was picked up.
+		#expect(copy.progress()?.done == 2)
+		#expect(backlog.item(number: 1)?.progress()?.done == 0)
+	}
+
+	@Test func aWorktreeThatIsGoneHasNoCopyToRead() throws {
+		let root = try makeRepository()
+		defer { cleanUp(root) }
+		let run = BacklogRun(
+			number: 1,
+			branch: "backlog/0001-a",
+			worktree: root.appendingPathComponent("../never-made"),
+			assistant: "claude"
+		)
+		// The project's copy is then all there is, and a caller that gets nothing
+		// back knows to say so rather than pass an old number off as the branch's.
+		#expect(run.isPresent == false)
+		#expect(run.itemInWorktree == nil)
+	}
+
 	@Test func aWorktreeCanFindTheCheckoutItWasMadeFrom() async throws {
 		let root = try makeRepository()
 		defer { cleanUp(root) }
