@@ -5834,9 +5834,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 					adapter = true
 					say("debug adapter", "listening on port \(port)")
 				}
-				if !classpath, ready.classPaths > 0 {
+				// An answer with nothing in it is an answer, and it is reported as
+				// one. jdtls does that on a Tycho bundle — promptly, and for ever —
+				// and a harness that counted it as silence would report a wait that
+				// was never going to end as a wait.
+				if !classpath, let count = ready.classPaths {
 					classpath = true
-					say("debug classpath", "\(ready.classPaths) entries")
+					say("debug classpath", count == 0
+						? "answered, and empty — nothing to launch a JVM with"
+						: "\(count) entries")
 				}
 				try? await Task.sleep(nanoseconds: 1_000_000_000)
 			}
@@ -6871,9 +6877,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			let target = try await LanguageService.shared.javaLaunchTarget(
 				project: root,
 				anchor: JavaTooling.mainClasses(in: root).first.map { URL(fileURLWithPath: $0.file) },
-				saying: { [weak self] sentence in
-					self?.runControl?.setStatus(sentence, busy: true)
-				}
+				saying: { sentence in self.runControl?.setStatus(sentence, busy: true) }
 			)
 			request.host = "127.0.0.1"
 			request.port = debugForward.localPort
@@ -7184,9 +7188,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				target = try await LanguageService.shared.javaLaunchTarget(
 					project: root,
 					anchor: anchor,
-					saying: { [weak self] sentence in
-						self?.runControl?.setStatus(sentence, busy: true)
-						self?.bottomPanel.showDebug()?.appendOutput(sentence + "\n")
+					// Strongly, because the `Task` around this already holds self
+					// and a weak capture inside one buys nothing.
+					saying: { sentence in
+						self.runControl?.setStatus(sentence, busy: true)
+						self.bottomPanel.showDebug()?.appendOutput(sentence + "\n")
 					}
 				)
 			} catch {

@@ -1159,6 +1159,26 @@ final class LanguageService {
 						+ "importing cannot be debugged until it has finished."
 				)
 			}
+			// An answer with nothing in it, which is a different thing from no
+			// answer and was the older code's silent failure: it sent the launch
+			// anyway and the JVM died with `ClassNotFoundException` on the class
+			// somebody had asked for. Measured on a Tycho bundle, where this is what
+			// jdtls says and goes on saying.
+			guard !resolved.classPaths.isEmpty else {
+				throw JavaDebugHost.Failure.noClasspath(
+					project: resolved.projectName ?? project.lastPathComponent
+				)
+			}
+			// Compiled first, for the reason `JavaDebug.buildCommand` records: a
+			// classpath is a set of directories and jdtls fills them after the
+			// import, so the first launch of a session can be handed a right
+			// classpath with nothing in it. A no-op when nothing has changed, which
+			// is the ordinary case here — this path is a project somebody has been
+			// editing.
+			saying("Compiling the project, so there is something on the classpath to run")
+			_ = try? await server.client.executeCommand(
+				JavaDebug.buildCommand, arguments: [false], timeout: 300
+			)
 			return JavaLaunchTarget(
 				port: port, projectName: resolved.projectName,
 				classPaths: resolved.classPaths, fromDebugHost: false
@@ -1177,6 +1197,13 @@ final class LanguageService {
 		let ready = try await host.waitUntilLaunchable(
 			anchor: anchor, deadline: deadline, saying: saying
 		)
+		// What a JVM is about to be started with, in the log. A launch that fails
+		// says `ClassNotFoundException` on the class somebody asked for, which
+		// names the symptom and not one thing about the cause; this is the line
+		// that does. Once per session, not per keystroke.
+		log("java launch in \(project.lastPathComponent) from the debugger's own jdtls: "
+			+ "project \(ready.projectName ?? "unnamed"), \(ready.classPaths.count) classpath "
+			+ "entries, first \(ready.classPaths.first ?? "none")")
 		return JavaLaunchTarget(
 			port: ready.port, projectName: ready.projectName,
 			classPaths: ready.classPaths, fromDebugHost: true
@@ -1272,6 +1299,13 @@ final class LanguageService {
 	/// Java cannot be started without one and nothing but the build knows it,
 	/// which is why this asks the server that read the build file rather than
 	/// guessing from `target/` and `build/`.
+	///
+	/// **An answer about another project is not an answer.** Before jdtls has
+	/// imported the project it replies about `jdt.ls-java-project`, the fallback
+	/// workspace it keeps inside its own `-data` directory — a well-formed
+	/// classpath, for the wrong thing. Taking it starts a JVM that fails with
+	/// `UnsupportedClassVersionError` or `ClassNotFoundException`, which reads as a
+	/// broken project. See `JavaDebugHost.classpath(for:)`, where this was found.
 	func javaClasspath(for url: URL, project: URL) async -> (projectName: String?, classPaths: [String])? {
 		guard let server = server(for: "java", project: project), server.client.isRunning else { return nil }
 		do {
@@ -1280,12 +1314,17 @@ final class LanguageService {
 				arguments: [uri(for: url), JavaDebug.classpathOptions()]
 			)
 			guard let object = result as? [String: Any] else { return nil }
+			guard let answeredFor = object["projectRoot"] as? String,
+			      JavaDebugHost.isInside(answeredFor, project)
+			else {
+				log("java classpath for \(url.lastPathComponent) came back about "
+					+ "\((object["projectRoot"] as? String) ?? "no project") rather than about "
+					+ "\(project.lastPathComponent) — the import has not finished")
+				return nil
+			}
 			let paths = object["classpaths"] as? [String] ?? []
 			let modules = object["modulepaths"] as? [String] ?? []
-			let root = (object["projectRoot"] as? String).map {
-				URL(fileURLWithPath: $0).lastPathComponent
-			}
-			return (root, paths + modules)
+			return (URL(fileURLWithPath: answeredFor).lastPathComponent, paths + modules)
 		} catch {
 			log("java classpath unavailable for \(url.lastPathComponent): \(error.localizedDescription)")
 			return nil
@@ -1305,19 +1344,38 @@ final class LanguageService {
 	/// loaded and listening, which needs the bundle and nothing else. The
 	/// classpath says the import has got far enough to say what a launch would
 	/// *run*, and a port with an empty classpath is not a debuggable project.
+	/// - Returns: the port, and what the classpath command said — `nil` for a
+	///   question it did not answer, and a count for one it did. **The difference
+	///   matters and cost an hour to find.** On a Tycho bundle jdtls answers
+	///   `getClasspaths` promptly and with *nothing in it*, which through a
+	///   `?? 0` is indistinguishable from a server that has not finished — and one
+	///   of those is a wait and the other is an answer nobody should wait for.
 	func javaDebugReadinessForTesting(
 		url: URL, project: URL
-	) async -> (port: Int?, classPaths: Int) {
+	) async -> (port: Int?, classPaths: Int?) {
 		guard let server = server(for: "java", project: project), server.client.isRunning,
-		      server.definition.setup == .java
-		else { return (nil, 0) }
+		      server.definition.hostsDebugAdapter
+		else { return (nil, nil) }
 
 		var port: Int?
 		if let result = try? await server.client.executeCommand(JavaDebug.startCommand) {
 			port = (result as? Int) ?? (result as? NSNumber)?.intValue
 		}
-		let classPaths = await javaClasspath(for: url, project: project)?.classPaths.count ?? 0
-		return (port, classPaths)
+		return (port, await javaClasspathCount(for: url, project: project))
+	}
+
+	/// How many entries the classpath command answered with, or nil when it did
+	/// not answer at all.
+	private func javaClasspathCount(for url: URL, project: URL) async -> Int? {
+		guard let server = server(for: "java", project: project), server.client.isRunning,
+		      let result = try? await server.client.executeCommand(
+		      	JavaDebug.classpathCommand,
+		      	arguments: [uri(for: url), JavaDebug.classpathOptions()]
+		      ),
+		      let object = result as? [String: Any]
+		else { return nil }
+		return (object["classpaths"] as? [String] ?? []).count
+			+ (object["modulepaths"] as? [String] ?? []).count
 	}
 
 	// MARK: - Servers
@@ -1571,6 +1629,25 @@ final class LanguageService {
 		// later moment they cannot connect to it.
 		for key in decision.stop.sorted() {
 			shutdown(server: key, because: "because a preference changed")
+		}
+
+		// And the debugger's own jdtls, if the project has just asked for a server
+		// that hosts the adapter itself. It is then a second JVM importing the same
+		// reactor for an answer the editing server is about to have, and the next
+		// Debug would go through that one — so what this leaves running is a
+		// gigabyte or two of nothing.
+		//
+		// Only in that direction. A project that has just moved *away* from jdtls
+		// keeps its debug host, because it is what debugging goes through now.
+		let hostKey = Self.debugHostKey(project: project)
+		if debugHosts[hostKey] != nil,
+		   LanguageServers.definition(
+		   	forLanguage: "java", choosing: choices(for: project)
+		   )?.hostsDebugAdapter == true {
+			shutdown(
+				server: hostKey,
+				because: "because the project's own Java server now hosts the debugger"
+			)
 		}
 
 		for key in decision.forget {

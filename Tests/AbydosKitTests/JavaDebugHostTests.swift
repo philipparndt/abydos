@@ -101,6 +101,48 @@ struct JavaDebugHostTests {
 		#expect(said.localizedDescription.contains("Importing Maven project(s)"))
 	}
 
+	/// An answer with nothing in it is not a wait, and it does not read as one.
+	///
+	/// Measured on a Tycho bundle: jdtls answers `getClasspaths` at once with an
+	/// empty list, because that bundle's classpath comes from an OSGi target
+	/// platform and its pom declares nothing. The older code sent the launch
+	/// anyway and the JVM died with `ClassNotFoundException` on the class somebody
+	/// had asked for, which reads as a missing class.
+	@Test func anEmptyClasspathIsAnAnswerAndNotAWait() {
+		let said = JavaDebugHost.Failure.noClasspath(project: "org.eclipse.sirius")
+		#expect(said.localizedDescription.contains("org.eclipse.sirius"))
+		// It must not read as "come back in a minute", because it will say the same
+		// thing in a minute.
+		#expect(said.localizedDescription.contains("not still working it out"))
+		// And it cannot decide whether Debug is offered: nothing knows it until a
+		// server has been asked.
+		#expect(!JavaDebugHost.Failure.noClasspath(project: "x").isSettledHere)
+	}
+
+	/// A classpath about another project is not this project's classpath.
+	///
+	/// jdtls answers `getClasspaths` about `jdt.ls-java-project` — its own fallback
+	/// workspace, inside its `-data` directory — until the real import has
+	/// finished. It is a well-formed answer for the wrong thing, and taking it
+	/// compiled a class against the newest JDK on the machine and launched it on an
+	/// older one: `UnsupportedClassVersionError`, from a project that pins its
+	/// release in its pom and has nothing wrong with it.
+	@Test func aClasspathAboutSomebodyElsesProjectIsNotAnAnswer() throws {
+		let root = try JavaTestDirectory.make()
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		#expect(JavaDebugHost.isInside(root.path, root))
+		#expect(JavaDebugHost.isInside(root.appendingPathComponent("src").path, root))
+		// The fallback, which lives in the caches directory and not in any project.
+		#expect(!JavaDebugHost.isInside(
+			JavaDebugHost.workspace(for: root).appendingPathComponent("jdt.ls-java-project").path,
+			root
+		))
+		// And the neighbour whose name starts the same way, which is the mistake a
+		// bare `hasPrefix` makes.
+		#expect(!JavaDebugHost.isInside(root.path + "-old", root))
+	}
+
 	/// Where somebody chooses between two servers, both of them say what they
 	/// cost.
 	///

@@ -68,6 +68,16 @@ public final class JavaDebugHost {
 		case refused(String)
 		/// It is running and still importing. Not a fault — a wait.
 		case stillImporting(seconds: Int, saying: String?)
+		/// It answered, and the answer was that this project has no classpath.
+		///
+		/// Which is not a wait and not a failure of this app. Measured on a Tycho
+		/// bundle, whose classpath comes from an OSGi target platform resolved
+		/// against p2 repositories rather than from its pom — 27 lines, no
+		/// `<dependency>` in it — so there is nothing jdtls could report and it
+		/// reports nothing, at once. Said plainly, because the alternative is a JVM
+		/// that starts and dies with `ClassNotFoundException` on the class somebody
+		/// asked for, which reads as a missing class.
+		case noClasspath(project: String)
 
 		/// Whether nothing anybody does in this session will change this answer.
 		///
@@ -81,7 +91,12 @@ public final class JavaDebugHost {
 		public var isSettledHere: Bool {
 			switch self {
 			case .nothingHostsIt, .inDevContainer: return true
-			case .notInstalled, .noBundle, .refused, .stillImporting: return false
+			// `noClasspath` is settled about the *project* rather than about the
+			// machine, and it is not knowable until a server has been asked — so it
+			// cannot decide whether Debug is offered, only what is said when it is
+			// pressed.
+			case .notInstalled, .noBundle, .refused, .stillImporting, .noClasspath:
+				return false
 			}
 		}
 
@@ -103,6 +118,11 @@ public final class JavaDebugHost {
 				let said = saying.map { " It says: \($0)" } ?? ""
 				return "jdtls has been importing this project for \(seconds) s and cannot start a "
 					+ "debug session until it has finished.\(said)"
+			case let .noClasspath(project):
+				return "jdtls reports no classpath for \(project), so there is nothing to start a "
+					+ "JVM with. It is not still working it out — that is its answer. An OSGi "
+					+ "bundle is the case this was measured on: its classpath comes from a target "
+					+ "platform rather than from its pom, and nothing here can read one."
 			}
 		}
 	}
@@ -284,29 +304,85 @@ public final class JavaDebugHost {
 
 	/// The runtime classpath of the project a file belongs to, which is what a
 	/// launch cannot be built without.
-	public func classpath(for url: URL) async -> (projectName: String?, classPaths: [String])? {
+	///
+	/// **`nil` and empty are two different answers and this keeps them apart.**
+	/// `nil` is a question the server did not answer *about this project*, which
+	/// means waiting is the right thing. An empty list is an answer — jdtls does
+	/// exactly that, promptly and for ever, for a project whose classpath is not in
+	/// its build file — and waiting for it to change is waiting for something that
+	/// has already happened.
+	///
+	/// **A third answer looks like the first and is the one that cost an
+	/// afternoon.** Before jdtls has imported the project it answers about
+	/// `jdt.ls-java-project`, the fallback workspace it keeps inside its own `-data`
+	/// directory for files that belong to no project it knows. That answer is a
+	/// perfectly well-formed classpath with one entry in it, and taking it produced
+	/// a launch that compiled `Main.java` against the newest JDK on the machine and
+	/// then failed with `UnsupportedClassVersionError` — a sentence about Java
+	/// versions, from a project that pins its release in its pom and had nothing
+	/// wrong with it. So the answer has to be *about* the project: `projectRoot`
+	/// inside the root this server was given, or it is not an answer yet.
+	public func classpath(
+		for url: URL
+	) async -> (projectName: String?, classPaths: [String])? {
 		guard isRunning else { return nil }
 		guard let result = try? await client.executeCommand(
 			JavaDebug.classpathCommand,
 			arguments: [url.absoluteString, JavaDebug.classpathOptions()]
 		), let object = result as? [String: Any] else { return nil }
+		guard let answeredFor = object["projectRoot"] as? String,
+		      Self.isInside(answeredFor, root)
+		else { return nil }
 		let paths = object["classpaths"] as? [String] ?? []
 		let modules = object["modulepaths"] as? [String] ?? []
-		let name = (object["projectRoot"] as? String).map {
-			URL(fileURLWithPath: $0).lastPathComponent
-		}
-		let all = paths + modules
-		return all.isEmpty ? nil : (name, all)
+		return (URL(fileURLWithPath: answeredFor).lastPathComponent, paths + modules)
+	}
+
+	/// Whether a path the server named is inside the project it was rooted at.
+	///
+	/// Canonical on both sides and with the separator on the prefix, so `/proj-old`
+	/// is not inside `/proj` — the same care `DebugAdapters` takes for the same
+	/// reason.
+	public static func isInside(_ path: String, _ root: URL) -> Bool {
+		let inside = FilePath.canonicalEvenIfMissing(URL(fileURLWithPath: path))
+		let outer = FilePath.canonical(root)
+		return inside == outer || inside.hasPrefix(outer + "/")
+	}
+
+	/// Asks the server to compile what it has imported.
+	///
+	/// Not fatal, whatever it answers. The status codes are jdtls's own — failed,
+	/// succeeded, succeeded with errors, cancelled — and "with errors" is the
+	/// ordinary state of a large project somebody is halfway through: the class
+	/// being launched may compile perfectly while something else does not. So the
+	/// build is *waited for* and its verdict is not used as a veto; if the class
+	/// really is not there, the JVM says so and that is a better sentence than one
+	/// invented here.
+	@discardableResult
+	public func buildWorkspace(timeout: TimeInterval = 300) async -> Bool {
+		guard isRunning else { return false }
+		let result = try? await client.executeCommand(
+			JavaDebug.buildCommand, arguments: [false], timeout: timeout
+		)
+		return result != nil
 	}
 
 	/// Everything a launch needs, waited for rather than asked once.
 	///
 	/// **This is the wait 0452 chose to pay.** Both halves have to be there: the
 	/// port says java-debug is listening, and the classpath says the import has
-	/// got far enough to say what a launch would *run*. A port with an empty
-	/// classpath starts a JVM that fails with `ClassNotFoundException` on the
-	/// class it was asked for, which reads as a missing class rather than as a
-	/// server that had not finished.
+	/// got far enough to say what a launch would *run*. A JVM started with an
+	/// empty classpath fails with `ClassNotFoundException` on the class it was
+	/// asked for, which reads as a missing class rather than as a server that had
+	/// not finished.
+	///
+	/// **And it stops waiting when the answer is that there is no classpath.**
+	/// Measured on a Tycho bundle: jdtls answers `getClasspaths` at once, with an
+	/// empty list, and goes on doing so — because that bundle's classpath comes
+	/// from an OSGi target platform and not from its pom, which is 27 lines and
+	/// declares no dependency at all. Waiting for that to change is waiting for
+	/// something that has already happened, and the person watching deserves the
+	/// sentence rather than the spinner.
 	///
 	/// - Parameter saying: called with what the wait is waiting for, every time
 	///   that changes. A spinner that says nothing looks like a hang, and this is
@@ -319,9 +395,26 @@ public final class JavaDebugHost {
 	) async throws -> (port: Int, projectName: String?, classPaths: [String]) {
 		var port: Int?
 		var said: String?
-		while age < deadline {
+		// The deadline is this wait's, and `age` is the server's. They are
+		// different numbers and both are wanted: somebody who presses Debug a
+		// second time gets a fresh budget rather than an instant refusal, and what
+		// they are told is how long the *import* has been going, which is the
+		// number that means something.
+		let started = Date()
+		while Date().timeIntervalSince(started) < deadline {
 			if port == nil { port = try? await startDebugSession() }
 			if let port, let resolved = await classpath(for: anchor) {
+				guard !resolved.classPaths.isEmpty else {
+					throw Failure.noClasspath(project: resolved.projectName ?? root.lastPathComponent)
+				}
+				// A classpath is a set of directories, and on the first launch of a
+				// session they are empty: jdtls compiles into them *after* the
+				// import. Measured — a JVM started here at that moment failed with
+				// `ClassNotFoundException` on a class that was in the file it was
+				// looking at.
+				saying("Compiling the project, so there is something on the classpath "
+					+ "to run — \(Int(age)) s")
+				await buildWorkspace()
 				return (port, resolved.projectName, resolved.classPaths)
 			}
 
@@ -329,6 +422,9 @@ public final class JavaDebugHost {
 				? "Starting the Java debugger inside jdtls"
 				: "Waiting for jdtls to finish importing the project, "
 					+ "which is where the classpath comes from"
+			// Deliberately the same sentence for "did not answer" and "answered
+			// about its own fallback project": both mean the import has not
+			// finished, and they are one thing to a person waiting.
 			let sentence = "\(waiting) — \(Int(age)) s"
 				+ (lastStatus.map { ". It says: \($0)" } ?? "")
 			if sentence != said {

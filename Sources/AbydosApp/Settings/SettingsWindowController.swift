@@ -46,22 +46,46 @@ final class SettingsWindowController: NSWindowController {
 final class SettingsPaneController: NSViewController {
 	/// A row's title and whether it can be used, for checking that a switch
 	/// which depends on another really is greyed out with it.
-	static func describe(_ rows: [Row]) -> [String] {
+	///
+	/// - Parameter withHelp: also print the sentence under each control. Off by
+	///   default because it is a paragraph a row and makes the common check —
+	///   which rows are here, which is on, which is greyed out — unreadable. On
+	///   when the *words* are the thing being checked, which 0452 needed: the line
+	///   saying what a Java server costs is only in the help, and a dump that
+	///   printed titles alone could not show that it was there.
+	static func describe(_ rows: [Row], withHelp: Bool = false) -> [String] {
 		rows.map { row in
+			let line: String
+			var help: String?
 			switch row {
-			case let .toggle(title, _, get, _, isEnabled):
+			case let .toggle(title, said, get, _, isEnabled):
 				let state = get() ? "on " : "off"
-				return "\(state) \(isEnabled?() ?? true ? "        " : "disabled") \(title)"
-			case let .slider(title, _, _, _, _, _, _): return "        slider   \(title)"
-			case let .stepper(title, _, _, _, _):      return "        stepper  \(title)"
-			case let .text(title, _, _, _):            return "        text     \(title)"
-			case let .choice(title, _, _, get, _):     return "\(get())  choice   \(title)"
-			case let .choiceWithActions(title, _, _, get, _, actions):
-				return "\(get())  choice   \(title) [\(actions.map(\.symbol).joined(separator: " "))]"
-			case let .button(title, label, _):         return "        [\(label)] \(title)"
-			case let .group(title, _, rows):
-				return (["── \(title) ──"] + describe(rows).map { "  " + $0 }).joined(separator: "\nSETTING ")
+				line = "\(state) \(isEnabled?() ?? true ? "        " : "disabled") \(title)"
+				help = said
+			case let .slider(title, said, _, _, _, _, _):
+				line = "        slider   \(title)"
+				help = said
+			case let .stepper(title, said, _, _, _):
+				line = "        stepper  \(title)"
+				help = said
+			case let .text(title, said, _, _):
+				line = "        text     \(title)"
+				help = said
+			case let .choice(title, said, _, get, _):
+				line = "\(get())  choice   \(title)"
+				help = said
+			case let .choiceWithActions(title, said, _, get, _, actions):
+				line = "\(get())  choice   \(title) [\(actions.map(\.symbol).joined(separator: " "))]"
+				help = said
+			case let .button(title, label, _):
+				line = "        [\(label)] \(title)"
+			case let .group(title, said, rows):
+				line = (["── \(title) ──"] + describe(rows, withHelp: withHelp).map { "  " + $0 })
+					.joined(separator: "\nSETTING ")
+				help = said
 			}
+			guard withHelp, let help else { return line }
+			return line + "\nSETTING            ↳ " + help
 		}
 	}
 
