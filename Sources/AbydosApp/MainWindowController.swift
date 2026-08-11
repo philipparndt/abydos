@@ -4484,7 +4484,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			// A server that has already said it cannot work is the answer to
 			// "why is this empty" — better than the guess that it might still
 			// be starting, which it will never stop doing.
-			if let failure = LanguageService.shared.failures[languageId] {
+			if let failure = LanguageService.shared.failure(
+				forLanguage: languageId, project: project.scopeRoot
+			) {
 				return "The \(languageId) language server cannot read this project.\n\(failure)"
 					+ "\n\n\(LanguageService.logPath) has the rest."
 			}

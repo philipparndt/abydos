@@ -183,13 +183,21 @@ final class LanguageService {
 	/// the same key the server would have been filed under, and cleared when
 	/// one starts under it.
 	private var missingHints: [String: String] = [:]
-	/// A server that is running and has said it cannot work, and what it said.
+	/// What is known about each server *after* it started — see `ServerHealth`,
+	/// which is where the rule for reading it is written down.
 	///
 	/// The state that had no name before: `gopls` starts, answers the
 	/// handshake, publishes a diagnostic — and knows nothing about any symbol,
 	/// because it could not load the workspace. Everything asking about it saw
 	/// "a server is running", so every empty answer read as "nothing here".
-	private(set) var failures: [String: String] = [:]
+	///
+	/// **Keyed by the server, the way `servers` and `missingHints` are**, and
+	/// not by the language, which is what this was. 0432's fault one table
+	/// along: "rust-analyzer cannot read this project" is a sentence about
+	/// *that* project, and a table keyed by the language alone put it above a
+	/// file in the next one — a Rust project that fails leaves every other Rust
+	/// project on the machine looking broken for the rest of the session.
+	private var health: [String: ServerHealth] = [:]
 	/// Failures already said out loud, so a server that repeats itself on every
 	/// file does not repeat the toast on every file.
 	private var announced: Set<String> = []
@@ -380,13 +388,20 @@ final class LanguageService {
 		/// way: the answer to "not yet" is to wait, and a language switched off
 		/// for ever because a container was slow is the wrong bargain.
 		let isIgnorable: Bool
+		/// Whether this is something being reported rather than something being
+		/// offered. It decides the glyph, and the glyph is what the strip is
+		/// read by from across the room: a lightbulb is an idea somebody could
+		/// act on, and "your server is not answering for this project" is not
+		/// one of those.
+		var problem: Bool = false
 		/// What the button in front of `manual` says.
 		///
 		/// Almost always "How to install", which is what all of these were until
-		/// one of them was not about installing anything: a project pinning a
+		/// two of them were not about installing anything: a project pinning a
 		/// toolchain nothing here can supply has no installation to offer, and a
-		/// button saying there is one is the wrong advice printed in the place
-		/// somebody looks for the right one.
+		/// server that is installed, started and complaining has nothing left to
+		/// install either. A button saying there is one is the wrong advice
+		/// printed in the place somebody looks for the right one.
 		var detailsTitle: String = "How to install"
 		/// A button offering the one thing that would change this, if there is
 		/// one — see `Offer`. Most notices have none.
@@ -502,6 +517,43 @@ final class LanguageService {
 				// Not "How to install": the answer here is not an installation and
 				// offering one would be the wrong advice printed on the button.
 				detailsTitle: "What can read it"
+			)
+		}
+
+		// **The third state, and the whole of 0461.** A server that started and
+		// then could not make sense of the project is in none of the states
+		// below: it is not missing, it is not on its way, and the line under
+		// this one used to return nil for it because a client that is running
+		// looked like a client that is answering. What the server said about
+		// itself is the evidence, and `ServerHealth` is the rule for reading it.
+		//
+		// In front of the running-server return rather than behind it, for the
+		// same reason the devcontainer sentence above is: these are the sentences
+		// a *running* server has to say about itself, and a return before them
+		// hides exactly the case they exist for.
+		//
+		// *Behind* the pinned toolchain, though, and the two came from the same
+		// project: 0462 knows the cause and can say what would read it, while
+		// this only knows the server complained and can quote it. Where both
+		// would fire, the one that names the reason is the better sentence.
+		if let health = health[key], let text = health.sentence(for: definition.command) {
+			return ServerNotice(
+				languageId: languageId,
+				languageName: name,
+				text: text,
+				// Its own words, which are nearly always better than anything
+				// this app could write: "custom toolchain 'esp' specified in
+				// override file '/workspace/esp32/rust-toolchain.toml' is not
+				// installed" names the toolchain, the file and the fault.
+				manual: health.said.map { "\($0)\n\n\(Self.logPath) has the rest." },
+				// Never. "Ignore Rust" is about the language on this machine and
+				// this is about one project's toolchain; and the strip goes by
+				// itself when the server starts answering.
+				isIgnorable: false,
+				problem: true,
+				// Not "How to install": there is nothing missing to install, and
+				// what somebody wants here is the sentence the server wrote.
+				detailsTitle: "What it said"
 			)
 		}
 
@@ -737,21 +789,29 @@ final class LanguageService {
 	// MARK: - Questions
 
 	func definition(url: URL, position: LSPPosition, languageId: String, project: URL) async -> [LSPLocation] {
-		guard let server = ready(languageId, project: project, for: "definition") else { return [] }
+		guard let (key, server) = ready(languageId, project: project, for: "definition") else { return [] }
 		do {
-			return try await server.client.definition(uri: uri(for: url), position: position)
+			let found = try await server.client.definition(uri: uri(for: url), position: position)
+			// Only the answer with something in it is evidence. An empty one is
+			// what the cursor being on a comma looks like, every time.
+			if !found.isEmpty { answered(withContent: true, for: key) }
+			return found
 		} catch {
 			note(error, asked: "definition", of: server, about: url)
+			answered(withContent: false, for: key)
 			return []
 		}
 	}
 
 	func hover(url: URL, position: LSPPosition, languageId: String, project: URL) async -> LSPHover? {
-		guard let server = ready(languageId, project: project, for: "hover") else { return nil }
+		guard let (key, server) = ready(languageId, project: project, for: "hover") else { return nil }
 		do {
-			return try await server.client.hover(uri: uri(for: url), position: position)
+			let hover = try await server.client.hover(uri: uri(for: url), position: position)
+			if hover != nil { answered(withContent: true, for: key) }
+			return hover
 		} catch {
 			note(error, asked: "hover", of: server, about: url)
+			answered(withContent: false, for: key)
 			return nil
 		}
 	}
@@ -762,11 +822,14 @@ final class LanguageService {
 		languageId: String,
 		project: URL
 	) async -> [LSPCompletion] {
-		guard let server = ready(languageId, project: project, for: "completion") else { return [] }
+		guard let (key, server) = ready(languageId, project: project, for: "completion") else { return [] }
 		do {
-			return try await server.client.completion(uri: uri(for: url), position: position)
+			let completions = try await server.client.completion(uri: uri(for: url), position: position)
+			if !completions.isEmpty { answered(withContent: true, for: key) }
+			return completions
 		} catch {
 			note(error, asked: "completion", of: server, about: url)
+			answered(withContent: false, for: key)
 			return []
 		}
 	}
@@ -780,31 +843,39 @@ final class LanguageService {
 		var found: [LSPSymbol] = []
 		for (key, server) in servers where key.hasPrefix(prefix) {
 			do {
-				found += try await server.client.workspaceSymbols(query: query)
+				let symbols = try await server.client.workspaceSymbols(query: query)
+				if !symbols.isEmpty { answered(withContent: true, for: key) }
+				found += symbols
 			} catch {
 				log("\(server.definition.command) workspace/symbol failed: \(error.localizedDescription)")
+				answered(withContent: false, for: key)
 			}
 		}
 		return found
 	}
 
 	func documentSymbols(url: URL, languageId: String, project: URL) async -> [LSPSymbol] {
-		guard let server = ready(languageId, project: project, for: "documentSymbol") else { return [] }
+		guard let (key, server) = ready(languageId, project: project, for: "documentSymbol") else { return [] }
 		do {
 			let symbols = try await server.client.documentSymbols(uri: uri(for: url))
 			// Empty is an answer, and a suspicious one: it is what a server
-			// that never loaded the workspace says about every file in it.
+			// that never loaded the workspace says about every file in it. It
+			// is only *evidence* where the server has already said something is
+			// wrong — see `ServerHealth` — because a file with nothing declared
+			// in it gives the same answer and there are plenty of those.
 			//
 			// Once per file: this is asked again on every keystroke in the
 			// symbol palette, and a log written per keystroke is a log nobody
 			// can read.
 			if symbols.isEmpty, emptied.insert("\(server.definition.command)|\(url.path)").inserted {
 				log("\(server.definition.command) declared nothing in \(url.lastPathComponent)"
-					+ (failures[languageId].map { " — it had already said: \($0)" } ?? ""))
+					+ (health[key]?.said.map { " — it had already said: \($0)" } ?? ""))
 			}
+			answered(withContent: !symbols.isEmpty, for: key)
 			return symbols
 		} catch {
 			note(error, asked: "documentSymbol", of: server, about: url)
+			answered(withContent: false, for: key)
 			return []
 		}
 	}
@@ -815,28 +886,75 @@ final class LanguageService {
 		languageId: String,
 		project: URL
 	) async -> [LSPLocation] {
-		guard let server = ready(languageId, project: project, for: "references") else { return [] }
+		guard let (key, server) = ready(languageId, project: project, for: "references") else { return [] }
 		do {
-			return try await server.client.references(uri: uri(for: url), position: position)
+			let found = try await server.client.references(uri: uri(for: url), position: position)
+			if !found.isEmpty { answered(withContent: true, for: key) }
+			return found
 		} catch {
 			note(error, asked: "references", of: server, about: url)
+			answered(withContent: false, for: key)
 			return []
 		}
 	}
 
 	/// The server for a question, or nil with a line in the log saying there
 	/// was none — "no answer" and "nobody was asked" look identical on screen.
-	private func ready(_ languageId: String, project: URL, for question: String) -> Server? {
-		guard let server = servers[key(project: project, languageId: languageId)] else {
+	///
+	/// The key comes back with it because how the question went is filed under
+	/// the server, and working it out a second time at every call site is a walk
+	/// of the project's choices for an answer already in hand.
+	private func ready(
+		_ languageId: String, project: URL, for question: String
+	) -> (key: String, server: Server)? {
+		let key = key(project: project, languageId: languageId)
+		guard let server = servers[key] else {
 			log("no \(languageId) server for \(project.lastPathComponent): \(question) unanswered")
 			return nil
 		}
-		return server
+		return (key, server)
 	}
 
 	private func note(_ error: Error, asked question: String, of server: Server, about url: URL) {
 		log("\(server.definition.command) \(question) failed for \(url.lastPathComponent): "
 			+ error.localizedDescription)
+	}
+
+	// MARK: - What a server has said about itself since it started
+
+	/// What this project's server for a language said, when it is not working.
+	///
+	/// Read by the empty state of the symbol palette, which is where this used
+	/// to be the *first* thing anybody heard — 0461 — and where the sentence it
+	/// produces is already the right one.
+	func failure(forLanguage languageId: String, project: URL) -> String? {
+		let health = health[key(project: project, languageId: languageId)]
+		guard let health, !health.isWorking else { return nil }
+		return health.said
+	}
+
+	/// How a question to a server went.
+	///
+	/// Nothing at all when the server has said nothing wrong, which is nearly
+	/// every call: this is on the path of every completion and every hover, and
+	/// the whole of it there is one dictionary lookup. Where a server *has* said
+	/// something, this is what decides between the two readings of it — an
+	/// answer with content in it takes the sentence back, and a question it
+	/// could not answer confirms it.
+	private func answered(withContent: Bool, for key: String) {
+		guard let current = health[key], !current.isWorking else { return }
+		changeHealth(of: key) { $0.answered(withContent: withContent) }
+	}
+
+	/// Records something about a server's health, and tells the screen only when
+	/// the answer actually moved.
+	private func changeHealth(of key: String, _ change: (inout ServerHealth) -> Void) {
+		var health = self.health[key] ?? ServerHealth()
+		let before = health
+		change(&health)
+		guard health != before else { return }
+		self.health[key] = health
+		NotificationCenter.default.post(name: .ideaiLanguageServersChanged, object: nil)
 	}
 
 	func diagnostics(for url: URL) -> [LSPDiagnostic] {
@@ -1077,7 +1195,10 @@ final class LanguageService {
 				// wrong every time, and a registry that wants a sign-in wants
 				// one until somebody gives it. Reopening the project asks again.
 				unavailable.insert(key)
-				failures[languageId] = reason
+				// Not running and never will be, under the conditions in force:
+				// the strip says so rather than leaving the file looking like
+				// one whose language nobody has a server for.
+				changeHealth(of: key) { $0.stopped(saying: reason) }
 				log("\(resolved.definition.command): \(reason)")
 				Toast.post(
 					// "could not be fetched" was said of a build too, which is the
@@ -1211,15 +1332,19 @@ final class LanguageService {
 			missingHints.removeValue(forKey: key)
 			lastStandardError.removeValue(forKey: key)
 			refused.remove(key)
+			// **Where 0461 meets 0460.** A server that is running and cannot read
+			// the project is exactly the state somebody fixes by choosing another
+			// image, another server or a runtime that works — and what it said
+			// was said about a toolchain that is no longer the one being asked
+			// for. Left behind, the strip would go on reporting a refusal from a
+			// server that has since been replaced.
+			health.removeValue(forKey: key)
 			// An image still on its way, for an answer that has been replaced. The
 			// fetch itself is left to finish — the image is worth having on the
 			// machine either way — but taking the key out is what makes it stop at
 			// the guard it already has and not start a server nobody asked for.
 			fetching.remove(key)
 			deferredOpens.removeValue(forKey: key)
-		}
-		for languageId in decision.languages {
-			failures.removeValue(forKey: languageId)
 		}
 		// Said out loud again if it happens again, which is what `shutdown(project:)`
 		// does for the same reason.
@@ -1893,7 +2018,7 @@ final class LanguageService {
 		// Everything the server says about itself goes to the log, and the part
 		// of it that means "I cannot work" is said out loud once.
 		client.onMessage = { [weak self] level, text in
-			self?.serverSaid(level: level, text: text, definition: resolved.definition, languageId: languageId)
+			self?.serverSaid(level: level, text: text, definition: resolved.definition, key: key)
 		}
 		client.onStandardError = { [weak self] text in
 			guard let self else { return }
@@ -1951,6 +2076,11 @@ final class LanguageService {
 			origin: resolved.launch.origin
 		)
 		servers[key] = server
+		// A new process is a new question: whatever the last server under this
+		// key said about the project was said by a program that is not running
+		// any more, and leaving it here would put a strip over a server that has
+		// not been given the chance to say anything.
+		health.removeValue(forKey: key)
 
 		Task { @MainActor in
 			// The handshake has to finish before anything else is sent, but
@@ -1988,7 +2118,14 @@ final class LanguageService {
 				// 'rust-analyzer' in official toolchain" says what to do, and
 				// "the language server is not running" does not.
 				let said = lastStandardError[key] ?? error.localizedDescription
-				failures[languageId] = said
+				// **The reproduction 0461 was written from ends here.** The
+				// rust-analyzer image, pointed at a project that pins a
+				// toolchain the image has not got, prints one line on standard
+				// error and exits before the handshake — so the toast said it
+				// once and then nothing on screen said anything at all, because
+				// the strip above the file only ever knew about servers that had
+				// not been *started*.
+				changeHealth(of: key) { $0.stopped(saying: said) }
 				Toast.post(
 					"\(resolved.definition.command) did not answer",
 					detail: "\(said)\n\(Self.logPath) has the rest.",
@@ -2154,7 +2291,7 @@ final class LanguageService {
 		level: Int,
 		text: String,
 		definition: LanguageServerDefinition,
-		languageId: String
+		key: String
 	) {
 		let line = Self.oneLine(text)
 		// Everything down to info, which is where a server says what it made of
@@ -2163,12 +2300,15 @@ final class LanguageService {
 		// generous with it.
 		if level <= 3 { log("\(definition.command) says [\(Self.levelName(level))] \(line)") }
 
-		// 1 is an error in the protocol's numbering, and only an error means
-		// "this server is not going to answer anything". Warnings are ordinary
-		// enough that a toast for each would be the thing people turn off.
+		// 1 is an error in the protocol's numbering. Warnings are ordinary
+		// enough that a toast for each would be the thing people turn off — and
+		// **measured, the level is a poorer signal than it looks**: the
+		// rust-analyzer image this repository builds reports a project it could
+		// not load at level 2, and reports `duplicate DidOpenTextDocument`, which
+		// costs nothing, at level 1. That is why an error here is a report and
+		// not a verdict; `ServerHealth` is where the difference is written down.
 		guard level == 1 else { return }
-		failures[languageId] = line
-		NotificationCenter.default.post(name: .ideaiLanguageServersChanged, object: nil)
+		changeHealth(of: key) { $0.said(line) }
 
 		// Once per server, not once per message. A server that cannot load a
 		// workspace says so again for every file opened afterwards, with a
@@ -2309,6 +2449,9 @@ final class LanguageService {
 			openDocuments.removeValue(forKey: uri)
 		}
 		missingHints.removeValue(forKey: key)
+		// What it said about this project went with it: the next server started
+		// under this key is a new process and a new question.
+		health.removeValue(forKey: key)
 		log("\(server.definition.command) was stopped \(reason) for "
 			+ "\(server.project.lastPathComponent)")
 		NotificationCenter.default.post(name: .ideaiLanguageServersChanged, object: nil)
@@ -2376,7 +2519,7 @@ final class LanguageService {
 		// checkout where the container it named exists again.
 		staleDevcontainerChoices.remove(path)
 		devcontainerFailures.remove(path)
-		failures.removeAll()
+		health = health.filter { !$0.key.hasPrefix(prefix) }
 		announced.removeAll()
 		emptied.removeAll()
 		NotificationCenter.default.post(name: .ideaiLanguageServersChanged, object: nil)
@@ -2389,6 +2532,7 @@ final class LanguageService {
 		}
 		servers.removeAll()
 		runningNames.removeAll()
+		health.removeAll()
 		fetching.removeAll()
 		buildingHere.removeAll()
 		deferredOpens.removeAll()
