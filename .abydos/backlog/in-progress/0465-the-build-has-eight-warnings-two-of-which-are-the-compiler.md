@@ -193,6 +193,19 @@ Checked by breaking it on purpose — an unmutated `var` in `AbydosKit`, and
 `nonisolated` taken back off `ExampleMermaidTests.examples` — and both came back
 named, with paths, and the exit status was 1.
 
+## What the suite said
+
+`make build CONFIG=debug` and `make test` green: **2414 tests in 353 suites**,
+one suite and four tests more than before, which is `WeakRelayTests`. `make
+warnings` reports nothing of ours and the vendored grammars' four.
+
+The first full run had one failure,
+`ContainerLSPLiveTests.aServerInAContainerAnswersAboutFilesOnThisMachine`, jdtls
+case — **0473**, and not this item's. It passed on its own in 16.8 s with no
+stale container in the way, and the whole suite passed on the second run with
+the leaked one removed first. The two tests 0472 names as load-sensitive both
+passed, at load averages of 15 and 37 with another agent building.
+
 ## Ruled out
 
 - **Making the *outer* capture weak and leaving the fix in
@@ -226,10 +239,6 @@ named, with paths, and the exit status was 1.
   and the function already had a nil for "no fixture" — so the failure goes
   there and the `#require` at the call site names it.
 
-## Estimate
-
-2026-08-11 17:39 — about an hour left
-
 ## Steps
 
 - [x] The weak capture in `EditorViewController`, as a behaviour change with a
@@ -251,3 +260,13 @@ named, with paths, and the exit status was 1.
 - [x] Write down here what was ruled out on the way
 - [ ] `spec/<capability>.md` says what the project now does, if anything
       user-visible changed — the weak capture is the only candidate
+
+  Not done, and not going to be: nothing user-visible changed. Both weak
+  captures are about how long an object lives after its window or its document
+  has gone, and in both cases what somebody sees is the same before and after —
+  the editor's guard already refused a `didChange` for a document it no longer
+  holds, and a rename field laid over a closed window's code view was never
+  seen by anybody. `make warnings` is a build verb rather than a capability of
+  the program, so it belongs in `project.md`, which now has it, and not in a
+  `spec/` file. Adding a requirement here would be a requirement about the
+  repository and not about what the app does.
