@@ -158,9 +158,16 @@ is not running, so the wait photographed is the fetch and not the build. The
 build's sentence is the strip's own, unchanged since 0459, and the chip reads it
 from the same function as the other two.
 
+One flake on the way, written down because it is nothing to do with this:
+`PseudoTerminalTests.runsACommandAndCapturesOutput` failed once under a loaded
+machine — 123 seconds and no output from the child — and passes in 0.03 seconds
+on its own and in the whole suite on the next run. `forkpty` on a busy
+multithreaded process, which is what that suite's own comment says it is. 2296
+tests in 338 suites are green.
+
 ## Estimate
 
-2026-08-11 11:40 — done
+2026-08-11 10:41 — done
 
 ## Steps
 
