@@ -229,6 +229,11 @@ The costs, stated because they are not zero:
   build-time fact and a runtime setting cannot undo it. A compile-time flag would
   avoid that but would also mean the user could not switch the engine on in the
   app they actually use, which is the whole point of the option.
+- **In the shipped binary it is small**: measured on build 989, the linker keeps
+  191 of the 192 exported symbols and **0.81 MB of text in a 56 MB binary**. So
+  the repository pays 18 MB and the app pays under a megabyte — the archive is
+  large because it is universal and carries simdutf and highway for every SIMD
+  target, and the linker throws most of that away.
 - **Upgrading is a deliberate act, not a version bump.** There is no version to
   bump, and the header says of itself that it "is definitely going to change".
 - `brew install zig` giving exactly 0.16.0 is luck, and it will not hold. When

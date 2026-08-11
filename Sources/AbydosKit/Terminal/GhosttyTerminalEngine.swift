@@ -92,7 +92,12 @@ public final class GhosttyTerminalEngine: TerminalEngine {
 			"Kitty graphics: images and placements are parsed but never drawn "
 				+ "(the unicode-placeholder protocol tmux uses is not in libghostty-vt's C API)",
 			"OSC 440 (abydos open-file), OSC 52 clipboard, OSC 4/10/11/12 colour queries",
-			"Mouse, focus and modified-key encoding — still answered by TerminalEmulator's encoders",
+			// The library does have these — `ghostty/vt/key/encoder.h` and
+			// `mouse/encoder.h` — they are simply not wired up here yet. Named
+			// anyway, because from outside "not implemented" and "not wired" look
+			// the same and both mean the pane will not behave.
+			"Key, mouse and focus encoding not wired (the library has encoders; this engine ignores them)",
+			"discardedLineCount always reports 0, so the scrollbar and selection realignment are wrong after pruning",
 		]
 	}
 
