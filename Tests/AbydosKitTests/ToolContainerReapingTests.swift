@@ -216,6 +216,37 @@ struct ContainerCleanupTests {
 	}
 }
 
+/// What a run that never got to tidy up left behind, cleared before this one
+/// starts a container of its own.
+///
+/// This is 0473's half of the fix that a teardown cannot be. A live test removes
+/// the container it started — see `ContainerLSPLiveTests`, which waits for the
+/// removal rather than posting it — and that covers every exit except the ones
+/// that matter most: the run killed by `run-tests.sh` for outliving its deadline,
+/// and the crash. Neither runs a `defer` and neither runs a `deinit`. So the
+/// *next* run does it, which needs nothing to have survived the last one.
+///
+/// Two properties keep this from becoming the bug it is fixing:
+///
+/// - **Once per process**, because a sweep is a machine-wide thing and there are
+///   six cases in the suite that calls it. A `static let` is exactly that, and it
+///   is initialised on the first live test that is actually going to start a
+///   container rather than at some point nothing can name.
+/// - **Language servers only.** Every container it removes has a dead owner, so
+///   nothing running can lose one — except in the one place where a dead owner is
+///   a fiction somebody needs: `theSweepTakesWhatAnEarlierRunLeft` starts
+///   `abydos-probe-sweep-<a pid it declares dead>-1` and then watches its own
+///   sweep take it. A sweep of every role, running beside that test in the same
+///   bundle, removes it first and fails it — trading today's flake for a rarer
+///   one, which is not a fix.
+enum ContainerLeftovers {
+	/// The names removed, so a test can say what it cleared. Referenced for the
+	/// effect rather than the value: `_ = ContainerLeftovers.swept`.
+	static let swept: [String] = ContainerRuntime.installed().flatMap { runtime in
+		ToolContainers().sweep(using: runtime, inRole: { $0.hasPrefix("lsp-") })
+	}
+}
+
 /// Which runtime, now that a container can be removed on either.
 struct ContainerRuntimePreferenceTests {
 	/// Docker first when nothing is asked for. The reason is no longer cleanup —
@@ -241,6 +272,26 @@ struct ContainerRuntimePreferenceTests {
 		#expect(caveat?.contains("over the network") == true)
 		#expect(caveat?.contains("removing a container by name") == false)
 		#expect(ContainerRuntime.docker("/usr/bin/docker").caveat == nil)
+	}
+
+	/// Cleaning up asks every runtime installed, whatever was preferred.
+	///
+	/// The preference decides where a tool *starts*. It cannot decide where a
+	/// container left by an earlier run is, and 0473 is what happens when the
+	/// sweep behaves as though it could: on a machine with the docker CLI present
+	/// and its daemon stopped, `automatic` names docker, the listing fails, and the
+	/// containers in Apple's runtime are never looked at.
+	@Test func cleaningUpLooksInEveryRuntimeThatIsHere() {
+		let both: (String) -> String? = { name in
+			["container": "/usr/local/bin/container", "docker": "/usr/bin/docker"][name]
+		}
+		#expect(ContainerRuntime.installed(locate: both)
+			== [.docker("/usr/bin/docker"), .apple("/usr/local/bin/container")])
+		// One of them installed is a list of one, and none is empty rather than a
+		// runtime nothing can run.
+		#expect(ContainerRuntime.installed(locate: { $0 == "container" ? "/usr/local/bin/container" : nil })
+			== [.apple("/usr/local/bin/container")])
+		#expect(ContainerRuntime.installed(locate: { _ in nil }).isEmpty)
 	}
 
 	/// The case that stays: somebody who asks for Apple's gets Apple's.
@@ -412,6 +463,17 @@ struct ContainerRuntimePreferenceTests {
 		#expect(started.succeeded, "could not start the container: \(started.output)")
 		#expect(exists(name, using: runtime))
 		#expect(listed(name, using: runtime), "the sweep's listing cannot see it")
+
+		// First, the narrowing 0473 added, on the container that made it
+		// necessary: a sweep told to consider only language servers leaves this
+		// one alone, dead owner and all. That is what lets the live suites in this
+		// bundle sweep at all — one of them running beside this test would
+		// otherwise remove the container above before the line below could see it.
+		let others = ToolContainers().sweep(
+			using: runtime, inRole: { $0.hasPrefix("lsp-") }, isAlive: { $0 != dead }
+		)
+		#expect(!others.contains(name), "a sweep of another role took this test's container")
+		#expect(exists(name, using: runtime))
 
 		let removed = ToolContainers().sweep(using: runtime, isAlive: { $0 != dead })
 		// Contains rather than equals: every other `abydos-…` is reported alive

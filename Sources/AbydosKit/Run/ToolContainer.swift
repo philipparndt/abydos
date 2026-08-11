@@ -114,6 +114,27 @@ public enum ContainerRuntime: Equatable, Sendable {
 		return nil
 	}
 
+	/// Every runtime installed here, whatever anybody preferred.
+	///
+	/// For *cleaning up*, and it is deliberately not `discover`. Choosing where
+	/// to start a tool is one runtime and a stated preference decides it. Finding
+	/// what an earlier run left behind is every runtime, because a container is in
+	/// whichever one started it and nothing says that is still the preferred one:
+	/// a person who has switched to Apple's since has containers in docker that
+	/// the sweep will never look at again.
+	///
+	/// This is 0473's whole account of why the leaks piled up for a day. On the
+	/// machine they piled up on, the docker *CLI* is installed and its daemon is
+	/// deliberately stopped — so `automatic` named docker, `docker ps -a` failed,
+	/// the sweep at launch treated that as "nothing to remove" and returned, and
+	/// every container of ours was in Apple's runtime the whole time. Six of them
+	/// accumulated in a day and each one is a virtual machine holding a gigabyte.
+	public static func installed(
+		locate: (String) -> String? = { Executables.locate($0) }
+	) -> [ContainerRuntime] {
+		[dockerLike(locate), locate("container").map { .apple($0) }].compactMap { $0 }
+	}
+
 	/// What this app cannot promise about this runtime, or nil when it can
 	/// promise everything.
 	///

@@ -157,7 +157,7 @@ public final class GhosttyTerminalEngine: TerminalEngine {
 
 	public func write(_ string: String) {
 		guard let terminal else { return }
-		var bytes = Array(string.utf8)
+		let bytes = Array(string.utf8)
 		bytes.withUnsafeBufferPointer { buffer in
 			guard let base = buffer.baseAddress else { return }
 			ghostty_terminal_vt_write(terminal, base, buffer.count)

@@ -306,9 +306,17 @@ public final class ToolContainers: @unchecked Sendable {
 	/// app killed outright removes nothing on the way out, so the next one to
 	/// start does it. Cheap — one listing and, only when there is something to
 	/// remove, one removal.
+	/// - Parameter inRole: which roles to consider — `lsp-jdtls`,
+	///   `plantuml-server` — and by default every one of ours. Narrowing it is
+	///   for the test bundle and for nothing in the app: a suite in there starts
+	///   a container owned by a pid it has *declared* dead in order to watch a
+	///   sweep take it, and a sweep of every role running beside that test
+	///   removes it first and fails it. Somebody's app, by contrast, wants
+	///   everything an earlier one of it left, whatever role that was in.
 	@discardableResult
 	public func sweep(
 		using runtime: ContainerRuntime,
+		inRole matches: (String) -> Bool = { _ in true },
 		isAlive: (pid_t) -> Bool = ToolContainers.isAlive
 	) -> [String] {
 		guard let listing = Self.listing(using: runtime) else { return [] }
@@ -318,7 +326,12 @@ public final class ToolContainers: @unchecked Sendable {
 			.split(separator: "\n")
 			.map { $0.trimmingCharacters(in: .whitespaces) }
 			.filter { !$0.isEmpty }
+		// A name of ours in a shape this version does not understand has no role,
+		// and the empty string is the honest answer to ask the predicate about:
+		// the app's accepts it, and a caller that named the roles it started did
+		// not name that one.
 		let dead = Self.stale(among: names, isAlive: isAlive)
+			.filter { matches(Self.role(of: $0) ?? "") }
 		guard !dead.isEmpty else { return [] }
 		_ = RuntimeCommand.run(
 			Self.removal(of: dead, using: runtime), deadline: Self.removalDeadline
