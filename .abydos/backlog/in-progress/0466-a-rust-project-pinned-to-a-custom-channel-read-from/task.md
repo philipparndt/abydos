@@ -162,6 +162,75 @@ Rust: every toolchain manager that puts a proxy on the `PATH` has this shape.
 And `LanguageServers.initializationOptions` exists, so `procMacro.server` has
 somewhere to go; it needs to be settable per project rather than compiled in.
 
+## What was built, and what it looked like in the app
+
+**A project or a person can name the executable.** `LanguageServerOverrides`
+reads it out of the file the images and the choices already come from:
+
+    { "rust-analyzer": { "command": "~/.rustup/toolchains/…/bin/rust-analyzer" } }
+
+and Settings ▸ Tools has an Executable field per tool beside its Custom image.
+The file wins and the setting is the default, as everywhere else out of that file
+— but **key by key rather than entry by entry**, which is the one thing here worth
+arguing about. A project that names only `initializationOptions` must not take
+away a command somebody set for every project, and replacing the entry wholesale
+would: the symptom is a server that stops starting because a line about proc
+macros was added, and nothing on screen would connect the two.
+
+`~` is expanded on the side where it means this machine's home and left alone on
+the side where it means an image's, which is why the expansion is in
+`executable(for:)` and not in the reader. **Inside `initializationOptions` nothing
+is expanded at all**, and that is a limitation rather than an oversight: those are
+one server's settings and this app has no schema for any of them, so guessing that
+a leading `~` is a path would be right for `procMacro.server` and wrong for the
+first setting whose value legitimately starts with one. A server wanting an
+absolute path has to be given one.
+
+**Driven against the real project, with the pin in place.** On a build of this
+branch, `--open ~/dev/smarthome/projects/opentherm-wolf-cwl --file …/esp32/src/
+scheduler.rs --banner-at 3,6,10,18`, four readings all the same:
+
+    This project pins the Rust toolchain ‘esp’, and the copy of it on this
+    machine has no rust-analyzer in it — but rust-analyzer from
+    ‘stable-aarch64-apple-darwin’ reads it, if you name that path for
+    rust-analyzer rather than letting rustup pick.
+
+The first half is 0462's sentence and is still right. The second half is what this
+item added, and behind the button — “What can read it” — the details now end in a
+*What to do* section with the line to paste, instead of the paragraph that ended
+"there is nothing this editor can do about it".
+
+Then against a copy of that project carrying the `command` and the
+`procMacro.server`: no banner at 4, 20, 60 or 120 seconds, and
+
+    LSP: servers=[…, "~/.rustup/toolchains/stable-aarch64-apple-darwin/bin/
+    rust-analyzer", …] diagnostics=0 for scheduler.rs
+
+The named path is what started, and the file is clean. (A copy, because the real
+project is the user's and rust-analyzer writes to `target/`.)
+
+**The image route, built and driven.** `ToolImages/rust-analyzer-esp/Dockerfile`,
+`FROM espressif/idf-rust:esp32_1.95.0.0` — pulled with Apple `container`,
+linux/arm64, 973 MiB compressed, and its `~/.rustup/toolchains/esp` is the default
+toolchain. Inside it, side by side:
+
+    $ container run --rm <built> --version
+    rust-analyzer 1.95.0 (5980761 2026-04-14)
+    $ container run --rm --entrypoint rust-analyzer <built> --version
+    error: 'rust-analyzer' is not installed for the custom toolchain 'esp'.
+
+which is the one line that makes the recipe work and the one that is easy to get
+wrong. Driven over the protocol with the project mounted: `health: ok`,
+`quiescent: true`, `Vec` resolving into
+`/home/esp/.rustup/toolchains/esp/lib/rustlib/src` **inside the container**, and
+the serde derive expanding. Asked for as
+`{"rust-analyzer": {"image": "build:rust-analyzer-esp"}}` — a recipe nothing can
+ask for is not a route, so `resolve(image:forTool:)` learned that a recipe need not
+be the tool's own.
+
+Nothing was pushed anywhere. The image built here was removed afterwards; the
+pulled `espressif/idf-rust` was left, since it is what the recipe builds on.
+
 ## Ruled out
 
 - **Mounting the host's `esp` toolchain into a Linux container** — the
@@ -170,6 +239,55 @@ somewhere to go; it needs to be settable per project rather than compiled in.
 - **`rustup component add` on a custom toolchain** — rustup refuses by design,
   and says so: *"this is a custom toolchain, which cannot use `rustup component
   add`"*.
+- **Putting the esp base into the existing `rust-analyzer` recipe.** It would
+  work and it would charge every Rust project on the machine a gigabyte of
+  Espressif's toolchain to serve the one that pins the fork. Two recipes instead,
+  which is what made `build:<recipe>` necessary.
+- **`FROM rust` plus `espup install`, for the recipe.** It does work — espup
+  downloads a prebuilt Linux fork, so a container is not the obstacle the
+  Dockerfile implied — and it rebuilds that download on every recipe edit for no
+  gain over a published image that already has it. Written into the recipe as the
+  route not taken, since the *fact* that espup works in a container is the part
+  that was wrong before.
+- **Installing `rust-src` from the release toolchain in the esp recipe.** The
+  other recipe does it and here it is wasted: the fork ships its own, and the
+  server reads the sysroot the *pin* resolves to rather than its own. Measured, in
+  both places — `Vec` lands in `~/.rustup/toolchains/esp/lib/rustlib/src` on the
+  machine and in the container.
+- **Doing the release install as `root` in the recipe.** Costs an hour if
+  attempted: rustup keeps toolchains under a *user's* home, so as root it installs
+  into a `RUSTUP_HOME` nothing else can see — and sets that user's default
+  toolchain rather than leaving `esp` the default, which is the answer the whole
+  image depends on. The recipe installs as `esp` and has a `test` line asserting
+  the default is still `esp`.
+- **Expanding `~` inside `initializationOptions`.** Above: no schema, so no way to
+  know which values are paths.
+- **Offering the second recipe in Settings ▸ Tools.** It exists for a property of
+  a *project* — which channel it pins — and a person choosing it once would be
+  choosing Espressif's toolchain for their ordinary Rust as well.
+- **Guessing whether a *stranger's* image knows about the channel.** The pin stops
+  objecting for a recipe from this repository, because that is a file whose
+  comment somebody can read and shipping it at all is this project's own answer.
+  For `some/registry:tag` there is nothing to read, so the objection stands and the
+  way to silence it is to name the command — which is what that image needs anyway,
+  since `espressif/idf-rust` puts the proxy first on its `PATH`.
+
+## Left over
+
+- **`procMacro.server` is insurance, not the answer, and nothing tests the day it
+  becomes the answer.** Today the built-in server gives byte-identical
+  expansions, because the fork is 1.95.0-nightly and the analyzer is 1.95.0. The
+  failure this protects against needs two toolchains far enough apart to break the
+  bridge, and this machine has no such pair. The setting is proven *live* — a
+  bogus path turns the server's health to a warning and every expansion to
+  "Expansion had errors" — which is as far as it can be taken here.
+- **The esp recipe pins two versions that have to move together**, the image tag
+  and the release toolchain, and nothing checks that they agree. A mismatch does
+  not fail loudly: everything answers except macro expansion. The Dockerfile says
+  so at the pin.
+- **The pin is still read once per project**, as 0462 left it, so editing
+  `rust-toolchain.toml` or `.abydos/tools.json` while the project is open does not
+  change the strip until the project is opened again.
 
 ## Estimate
 
@@ -191,7 +309,7 @@ somewhere to go; it needs to be settable per project rather than compiled in.
       saying there is nothing to be done
 - [x] A recipe nothing can ask for is not a route — `build:<recipe>` names one
       that is not the tool's own, and the pin stops objecting to it
-- [ ] Drive the corrected notice against the real project, with the pin in place
-- [ ] Write down here what was ruled out on the way
-- [ ] `spec/tool-images.md` and `spec/language-servers.md` say what the project
+- [x] Drive the corrected notice against the real project, with the pin in place
+- [x] Write down here what was ruled out on the way
+- [x] `spec/tool-images.md` and `spec/language-servers.md` say what the project
       now does

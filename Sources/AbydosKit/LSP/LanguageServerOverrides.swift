@@ -77,6 +77,15 @@ public struct LanguageServerOverrides: Equatable, Sendable {
 		///
 		/// Deep, key by key, so a project adding `procMacro.server` to jdtls-style
 		/// options does not silently drop the runtimes underneath it.
+		///
+		/// **Passed through exactly as written, `~` and all.** Unlike `command`
+		/// above, nothing in here is known to be a path — these are one server's
+		/// settings, and this app does not have a schema for any of them. Guessing
+		/// that a string starting with `~` is a home-relative path would be right
+		/// for `procMacro.server` and wrong for the first setting whose value
+		/// legitimately begins with one. So a server that wants an absolute path has
+		/// to be given one, and the recipe beside this writes them out in full for
+		/// the same reason.
 		public let initializationOptions: [String: JSONValue]
 		/// Which of the two files said it, for the sentence somebody reads when it
 		/// turns out to be wrong.
