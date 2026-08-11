@@ -74,6 +74,125 @@ struct ProjectSessionTests {
 	}
 }
 
+/// How a tab was being shown, which used not to be remembered at all: a `.scad`
+/// put in Split Right so the model sat beside the source came back as the source
+/// alone on the next project switch, and the same for every other file with a
+/// rendered form. See 0454.
+struct PreviewModeSessionTests {
+	private func temporaryRoot() throws -> URL {
+		let root = FileManager.default.temporaryDirectory
+			.appendingPathComponent("session-\(UUID().uuidString)")
+		try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+		return root
+	}
+
+	@Test func theModeAndTheDividerSurviveBeingWrittenDown() throws {
+		let root = try temporaryRoot()
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		try SessionStore.write(
+			ProjectSession(files: [
+				ProjectSession.OpenFile(
+					path: "/p/case.scad", line: 12,
+					previewMode: .splitRight, dividerFraction: 0.7
+				),
+			]),
+			in: root
+		)
+
+		let file = try #require(SessionStore.read(in: root)?.files.first)
+		#expect(file.previewMode == .splitRight)
+		#expect(file.dividerFraction == 0.7)
+		#expect(file.line == 12)
+	}
+
+	/// A split whose mode is remembered but whose divider is at its default is
+	/// still not the tab somebody left, so the fraction goes beside the mode —
+	/// and only where there is a divider to have.
+	@Test func aTabThatWasNotSplitWritesNoDivider() throws {
+		let root = try temporaryRoot()
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		try SessionStore.write(
+			ProjectSession(files: [
+				ProjectSession.OpenFile(path: "/p/notes.md", previewMode: .preview),
+			]),
+			in: root
+		)
+
+		let file = try #require(SessionStore.read(in: root)?.files.first)
+		#expect(file.previewMode == .preview)
+		#expect(file.dividerFraction == nil)
+	}
+
+	/// Every tab open on the day this shipped was written by a version that did
+	/// not record the mode. Read as `.source`, every diagram and every picture
+	/// would have come back as text once, and blamed the change that added it.
+	@Test func aSessionFromBeforeTheModeWasRecordedGetsTheKindsDefault() {
+		#expect(FilePreview.restoredMode(nil, for: URL(fileURLWithPath: "/p/flow.puml")) == .splitRight)
+		#expect(FilePreview.restoredMode(nil, for: URL(fileURLWithPath: "/p/shot.png")) == .preview)
+		#expect(FilePreview.restoredMode(nil, for: URL(fileURLWithPath: "/p/notes.md")) == .source)
+	}
+
+	@Test func aRememberedModeIsWhatTheTabComesBackIn() {
+		let model = URL(fileURLWithPath: "/p/case.scad")
+		#expect(FilePreview.restoredMode(.splitRight, for: model) == .splitRight)
+		#expect(FilePreview.restoredMode(.preview, for: model) == .preview)
+		// The source of a diagram, which its kind does not open as: a choice
+		// somebody made, not an absence.
+		#expect(FilePreview.restoredMode(.source, for: URL(fileURLWithPath: "/p/flow.puml")) == .source)
+	}
+
+	/// A mode is only meaningful where there is something to show. A `.swift` has
+	/// no rendered form, and a `.drawio` has no source half — its own editor owns
+	/// the document — so neither can honour a split written against it.
+	@Test func aModeTheFileCannotBeShownInIsIgnored() {
+		#expect(FilePreview.restoredMode(.splitRight, for: URL(fileURLWithPath: "/p/main.swift")) == .source)
+		#expect(FilePreview.restoredMode(.preview, for: URL(fileURLWithPath: "/p/main.swift")) == .source)
+		#expect(FilePreview.restoredMode(.splitRight, for: URL(fileURLWithPath: "/p/plan.drawio")) == .preview)
+		#expect(FilePreview.restoredMode(.source, for: URL(fileURLWithPath: "/p/part.stl")) == .preview)
+	}
+
+	/// The session file is JSON on disk that anything may have written.
+	@Test func aDividerThatIsNotAFractionOfAPaneIsRefused() {
+		#expect(SessionStore.dividerFraction(0.35) == 0.35)
+		#expect(SessionStore.dividerFraction(nil) == nil)
+		#expect(SessionStore.dividerFraction(0) == nil)
+		#expect(SessionStore.dividerFraction(1) == nil)
+		#expect(SessionStore.dividerFraction(-0.5) == nil)
+		#expect(SessionStore.dividerFraction(Double.nan) == nil)
+		#expect(SessionStore.dividerFraction("half") == nil)
+	}
+
+	/// A mode this version has never heard of — a session written by a later one
+	/// — means nothing rather than something wrong, and the kind decides.
+	@Test func aModeThisVersionDoesNotKnowIsNotGuessedAt() throws {
+		let root = try temporaryRoot()
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		try SessionStore.write(
+			ProjectSession(files: [ProjectSession.OpenFile(path: "/p/flow.puml")]),
+			in: root
+		)
+		let file = AbydosFolder.sessionFile(in: root)
+		let object = try #require(
+			try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any]
+		)
+		var files = try #require(object["files"] as? [[String: Any]])
+		files[0]["mode"] = "splitDiagonally"
+		var edited = object
+		edited["files"] = files
+		try JSONSerialization.data(withJSONObject: edited).write(to: file)
+
+		let read = try #require(SessionStore.read(in: root)?.files.first)
+		#expect(read.previewMode == nil)
+		#expect(
+			FilePreview.restoredMode(read.previewMode, for: URL(fileURLWithPath: read.path))
+				== .splitRight
+		)
+	}
+}
+
 /// Finding the projects inside a project.
 struct SubprojectTests {
 	private func make(_ layout: [String: [String]]) throws -> URL {

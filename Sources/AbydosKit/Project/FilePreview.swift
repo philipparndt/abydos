@@ -148,6 +148,23 @@ public enum FilePreview {
 		}
 	}
 
+	/// The mode a file comes back in, given whatever a session remembered.
+	///
+	/// Two things are deliberately not `.source`. A session written before modes
+	/// were recorded remembers nothing, and nothing means the kind's own default:
+	/// read as `.source` instead, every `.puml` and every picture anybody had open
+	/// would come back as text exactly once, on the day this shipped. And a mode
+	/// the file cannot be shown in — `splitRight` against a `.swift`, or against a
+	/// `.drawio`, whose editor owns the document and has no source half — is a
+	/// note about a file that has since changed its name or its kind, so it is
+	/// dropped rather than obeyed.
+	public static func restoredMode(_ remembered: PreviewMode?, for url: URL) -> PreviewMode {
+		guard let remembered, availableModes(for: url).contains(remembered) else {
+			return defaultMode(for: url)
+		}
+		return remembered
+	}
+
 	/// Whether the file can be shown as text at all.
 	///
 	/// A binary mesh cannot, so the control offers no source or split for it.

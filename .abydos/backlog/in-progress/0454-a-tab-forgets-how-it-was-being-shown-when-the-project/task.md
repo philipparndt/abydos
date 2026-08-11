@@ -48,10 +48,10 @@ other for whoever wants it.
 
 ## Steps
 
-- [ ] `OpenFile` carries the preview mode, and an absent one means the default
+- [x] `OpenFile` carries the preview mode, and an absent one means the default
       for that file kind
 - [ ] `restore(_:)` puts the mode back, and the divider with it, after layout
-- [ ] A mode is ignored for a file that has no preview
+- [x] A mode is ignored for a file that has no preview
 - [ ] Seen by eye: a `.scad` in Split Right, a project switch, and back
 - [ ] Write down here what was ruled out on the way
 - [ ] `spec/<capability>.md` says what the project now does
