@@ -145,7 +145,12 @@ public struct ServerHealth: Equatable, Sendable {
 			return "\(command) is running and cannot read this project, so nothing here "
 				+ "will be answered."
 		case .notAnswering:
-			return "\(command) started for this project and is not running any more."
+			// Not "started and stopped", though that is the commonest way in:
+			// an image that could not be built or fetched lands here too, and
+			// that server never started at all. What both have in common is the
+			// only thing worth saying — nothing is running for this project, and
+			// here is what was said about it.
+			return "\(command) is not running for this project."
 		}
 	}
 }

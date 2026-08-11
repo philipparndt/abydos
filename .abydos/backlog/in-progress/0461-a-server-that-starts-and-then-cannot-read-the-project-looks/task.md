@@ -57,9 +57,86 @@ Two places, both already arriving and neither consulted:
   for the thing 0460 built — reconsidering when a preference changes — and
   somebody who fixes the toolchain should not have to reopen the project.
 
+## What was found, and what was ruled out
+
+**The evidence the item expected to be arriving mostly is not.** The plan was to
+read `window/showMessage` and `window/logMessage` at error level, which are
+already parsed and already logged. Measured, on this machine:
+
+- The `rust-analyzer` image this repository builds reports a project it could
+  not load at **level 2, a warning** — "Failed to read Cargo metadata with
+  dependencies for `/workspace/Cargo.toml`", then "cargo check failed to start".
+  Its **level 1** messages are things like `duplicate DidOpenTextDocument`,
+  which costs nothing. The level sorts these exactly the wrong way round.
+- `gopls` opened on a `.go` file outside any module said nothing at all in fifty
+  seconds; it treats a lone file as an ad-hoc package.
+- 0450 already recorded that jdtls silent at 601 seconds never says it failed.
+- And in the reproduction on this machine the diagnosis arrives on **standard
+  error** and nowhere else, because the process exits before the handshake.
+
+So the message is a weaker signal than the item assumed, and the two states that
+carry the weight in practice are the server that stopped and the request that
+failed.
+
+**Ruled out: asking the server a question and reading an empty answer as proof.**
+This was the plan for confirming a report without waiting to be asked, and it
+does not work. Driven by hand against the built image: a project whose
+`Cargo.toml` names a crate that does not exist makes rust-analyzer complain
+twice — and then answer `textDocument/documentSymbol` and `workspace/symbol` for
+45 seconds *exactly as it answers for a project that loads*, because it indexes
+the crate from source and only the dependencies are missing. Both projects gave
+7, 1, 1 and 2 items for the same four queries. A probe would have called that
+server broken.
+
+**Ruled out: waiting for the server to say it has finished, through `$/progress`.**
+The idea was to avoid a timer by asking only once the last outstanding progress
+token ended. Measured, rust-analyzer's tokens are fine-grained enough that the
+outstanding count reaches zero six times during a load — the first at 6.3
+seconds, before `cargo metadata` had run at all. "Nothing outstanding" is not
+"finished".
+
+**Ruled out: any error within N seconds of initialising**, which the item
+already doubted and which the measurements above settle: for the one server
+there is a real reproduction for, the fatal message is not an error and the
+errors are not fatal.
+
+**What was built instead**: two readings of the same evidence. A message at
+error level puts the server's own words on screen as a *report* — it is running,
+it complained, here is what about — and any answer with content in it takes that
+back within seconds, which is what a busy server that logged something
+survivable does. The stronger sentence, that it cannot read the project, needs
+the report *and* a question it could not answer. A server that is not running at
+all skips both: it has already proved it.
+
+**What was seen on screen**, with the built image and the real project:
+
+- `opentherm-wolf-cwl`, file `esp32/src/main.rs` — the strip, at 10, 25 and 40
+  seconds: *rust-analyzer is not running for this project.*, with "What it said"
+  carrying `error: custom toolchain 'esp' specified in override file
+  '/workspace/esp32/rust-toolchain.toml' is not installed`. The screenshot is in
+  `images/`.
+- A Rust project the same server reads fine — no strip, at 10, 25 and 40
+  seconds.
+- The project whose `Cargo.toml` cannot be resolved, where the server complains
+  twice and goes on answering — **no strip**, which is the whole of not crying
+  wolf.
+
+**A limit, deliberately.** "Ignore for Rust" still silences this, because the
+strip is asked for with the ignore list and that guard is at the top of
+`notice(forLanguage:project:)`. Somebody who has said they do not want a Rust
+server is not told that the Rust server they are not being offered is not
+answering. Left alone rather than quietly redefining what that button means.
+
+**A limit that is not deliberate.** The `reported` and `cannotRead` sentences
+were exercised in tests and by driving the protocol by hand, and **were not seen
+on screen with a real server**, because no server on this machine produced a
+level-1 message about a project it could not read in the time this took. The
+state that was seen on screen, against the real project, is the one the
+reproduction produces.
+
 ## Estimate
 
-2026-08-11 10:21 — about two hours left
+2026-08-11 10:41 — about twenty minutes left
 
 ## Steps
 
@@ -74,6 +151,6 @@ Two places, both already arriving and neither consulted:
       broken for the session
 - [x] A server that started and then *stopped* says so too — which is what the
       reproduction on this machine actually produces
-- [ ] Watch it happen against the real project, rather than only in a test
-- [ ] Write down here what was ruled out on the way
-- [ ] `spec/language-servers.md` says what the project now does
+- [x] Watch it happen against the real project, rather than only in a test
+- [x] Write down here what was ruled out on the way
+- [x] `spec/language-servers.md` says what the project now does

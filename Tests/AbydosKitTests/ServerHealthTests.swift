@@ -74,7 +74,7 @@ struct ServerHealthTests {
 		health.stopped(saying: "error: custom toolchain 'esp' specified in override file "
 			+ "'/workspace/esp32/rust-toolchain.toml' is not installed")
 		#expect(health.sentence(for: "rust-analyzer")
-			== "rust-analyzer started for this project and is not running any more.")
+			== "rust-analyzer is not running for this project.")
 		// Nothing can be asked of a process that is gone, so an answer arriving
 		// from somewhere does not move it.
 		health.answered(withContent: true)
