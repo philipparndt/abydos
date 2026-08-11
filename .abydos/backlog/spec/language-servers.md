@@ -165,6 +165,11 @@ choice can be seen rather than inferred — the settings page knows no project �
 and the person reading it is exactly the one wondering why the server running is
 the one they are paying for.
 
+**A jdtls started for the debugger alone has a row of its own**, saying that is
+what it is there for. Nobody chose it and nothing on screen would otherwise
+account for it, and it is the largest thing in the list: a JVM importing a
+reactor. This is where its memory is read and where it is stopped.
+
 A server running inside the project's devcontainer says where it lives and
 gives no number, since its client out here is a few megabytes and the container
 below it is a row of its own. Stopping a server that has a container of its own
@@ -195,6 +200,14 @@ asking a container runtime for memory costs about a second of its attention.
 - **When** that server is running and the list is read
 - **Then** its row says the language it was chosen for and that the choice came
   from `.abydos/tools.json`
+
+### Scenario: the jdtls a debugging session started
+
+- **Given** a project whose editing server hosts no adapter, and a debugging
+  session started in it
+- **When** the list is read
+- **Then** there is a row for jdtls saying it is there for the debugger
+- **And** its Stop ends it
 
 ### Scenario: arriving from the footer
 
@@ -229,13 +242,21 @@ statement about the project, and a personal preference that quietly overrode it
 would mean two people on one repository being answered by two different
 programs.
 
+**Where there is a choice to make, each candidate says what it costs**, in a line
+beside the two names. Two bare names say what the options are called and nothing
+about which one anybody should pick, and the difference between these two is
+minutes and gigabytes against knowing that a call has the wrong argument type. A
+language with one server carries no such line, because it offers no trade.
+
 Nothing is chosen from the build files. A `pom.xml` would select the server that
 reads poms, which is exactly wrong for the person whose reason for wanting the
 fast one is that the slow one hurts on the project the pom describes.
 
-Not two at once, either. Two servers for one language means two sets of
-diagnostics over one file and no rule for which wins, so a project holds the
-chosen one and only the chosen one.
+Not two at once, either: two servers *answering about one file* means two sets of
+diagnostics and no rule for which wins, so a project holds the chosen one and only
+the chosen one. What that rules out is a second opinion about the code, and not a
+second process — the jdtls a debugging session starts answers about no file at
+all.
 
 ### Scenario: a project names a server for a language
 
@@ -258,6 +279,13 @@ chosen one and only the chosen one.
   shows the root markers of both
 - **When** the project's servers are started
 - **Then** one server runs for that language, the one chosen
+
+### Scenario: choosing between two servers
+
+- **Given** a language with two servers to choose between
+- **When** the settings page is read
+- **Then** each of them says in one line what it costs and what it buys
+- **And** a language with one server says only that it is the only one
 
 ## Requirement: A chosen server that cannot be started says so
 
@@ -296,21 +324,6 @@ language whose server nobody installed.
 - **When** a `.java` file in it is opened
 - **Then** what is said names `gopls` and says it answers for Go rather than
   for Java
-
-## Requirement: The Java debugger belongs to the server that hosts it
-
-Debugging Java goes through the Java language server, because the debug adapter
-is a bundle loaded inside it rather than a program beside it. A project whose
-Java server is a different one has no adapter at all, however well that server
-reads the code, and is told so as the consequence of a choice — which is what it
-is — rather than being left with a Debug button that does nothing.
-
-### Scenario: debugging with a Java server that hosts no adapter
-
-- **Given** a project whose chosen Java server is not the one the debug bundle
-  loads into
-- **When** a debug session is started
-- **Then** it says the debugger lives inside the other server, and names it
 
 ## Requirement: Choosing where a server comes from takes effect now
 
@@ -755,3 +768,71 @@ While a name is being typed, ⌘Z belongs to the field and takes back the typing
 - **Given** a rename that moved `Foo.java` to `Bar.java`
 - **When** it is undone
 - **Then** the file is back under its old name with its old text
+
+## Requirement: Debugging Java does not depend on which server edits it
+
+The Java debug adapter is an Eclipse bundle loaded *inside* jdtls rather than a
+program beside it — so it needs a jdtls, and it needs one that has imported the
+project, because a launch is a class and a classpath and the import is what
+computes the classpath. What it does **not** need is for jdtls to be the server
+answering about files. A project that chose the fast syntactic server for
+editing, because its five hundred bundles take minutes and gigabytes to import,
+gets a jdtls started for the debugger alone.
+
+**Started when somebody presses Debug, and not before.** Importing at every
+project open would be instant debugging paid for by every session that never
+debugs, which is most of them and is exactly the cost the fast server was chosen
+to avoid. So the first Debug of a session waits, and **says what it is waiting
+for** while it does: how long it has been, and what the server itself last said
+about how far it has got. A wait that says nothing is indistinguishable from a
+debugger that has hung.
+
+**It answers nothing about any file.** The chosen server answers about files and
+this one answers two questions about the project — where the adapter is listening,
+and what the classpath is. It is not in the table that requests and open
+documents are routed through, it is never told a document is open, and the
+compilation problems jdtls reports for everything it imports reach nothing. Two
+servers over one file with two sets of diagnostics and no rule for which wins is
+still refused; this is not that.
+
+**A project whose Java server is jdtls already debugs through the server it has.**
+Nothing starts a second jdtls beside a jdtls: the one that is running has the
+import, and a second would spend the minutes again for the same answer and hold a
+second copy of it. And should the project's choice move to a server that hosts
+the adapter, the one started for the debugger is stopped, since what it holds is
+then a gigabyte of nothing.
+
+**A project worked on inside its own devcontainer still has no Java debugger**,
+and now says so. The bundle is a path on this machine and the JVM would be this
+machine's, so what got debugged would be a different toolchain from the one the
+project builds with — which is the whole reason a devcontainer's servers live in
+there.
+
+### Scenario: debugging a project whose editing server is the syntactic one
+
+- **Given** a Java project whose `.abydos/tools.json` chooses the server that
+  hosts no debug adapter
+- **When** a class in it is debugged
+- **Then** jdtls is started for the debugger alone and the session runs
+- **And** while it is waited for, what is being waited for is said, with how long
+  it has been
+
+### Scenario: what the debugger's server is asked
+
+- **Given** a debugging session running through a jdtls started for the debugger
+- **When** a file in the project is opened, edited and asked about
+- **Then** that server is told nothing about it and is asked nothing about it
+- **And** nothing it says about any file appears anywhere
+
+### Scenario: the editing server already hosts the adapter
+
+- **Given** a Java project whose server is jdtls, running and importing finished
+- **When** a class in it is debugged
+- **Then** the session goes through that server and no second one is started
+
+### Scenario: a project worked on in its devcontainer
+
+- **Given** a Java project whose servers run inside its own devcontainer
+- **When** a class in it is debugged
+- **Then** it says the debugger is a bundle loaded into a jdtls on this machine,
+  and that working on this machine is what it would take
