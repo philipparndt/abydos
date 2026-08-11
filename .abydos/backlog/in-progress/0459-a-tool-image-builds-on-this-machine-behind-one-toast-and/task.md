@@ -82,9 +82,9 @@ the whole.
 - [ ] A failed build leaves its output where somebody can read it, and the toast
       points at the pane rather than summarising the compiler
 - [x] The other callers of `ensure` get the same treatment, not just this one
-- [ ] A pane that is only ever a report is not written into `.abydos/session.json`
+- [x] A pane that is only ever a report is not written into `.abydos/session.json`
       — found on the way, and the same fault 0444 fixed for the devcontainer tab
-- [ ] Tests the kit can reach: the name test that says build or fetch, and a real
+- [x] Tests the kit can reach: the name test that says build or fetch, and a
       build proving the output arrives while it runs rather than at the end
 - [ ] Driven with a recipe that really builds — `ABYDOS_BUILD_TOOL_IMAGES=1` and
       a cold cache, which 0457 measured at 164 s

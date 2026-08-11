@@ -62,6 +62,26 @@ struct ToolImageRecipeTests {
 		#expect(ToolImageRecipes.recipe(forImage: "abydos-built/nosuchtool:abc") == nil)
 	}
 
+	/// Which of a build and a fetch is about to happen, from the name alone.
+	///
+	/// Asked by anything that has to *say* which — a tab called "Building
+	/// rust-analyzer" rather than "Fetching" it, and the difference between a
+	/// sentence about seconds and one about minutes. `recipe(forImage:)` answers
+	/// the same question and walks the whole build context hashing every file in
+	/// it to do so, which is not a price the name of a tab should pay.
+	@Test func aNameSaysWhetherItIsBuiltHereWithoutHashingAnything() {
+		#expect(ToolImageRecipes.isBuiltHere("abydos-built/rust-analyzer:9f1c2ab34de5"))
+		// True for a tool with no recipe, unlike `recipe(forImage:)`: the
+		// namespace is a statement about where an image comes from, and nothing
+		// in it was ever fetched from a registry whether or not this build of the
+		// app still ships the Dockerfile.
+		#expect(ToolImageRecipes.isBuiltHere("abydos-built/nosuchtool:abc"))
+
+		#expect(!ToolImageRecipes.isBuiltHere("plantuml/plantuml:1.2025.4"))
+		#expect(!ToolImageRecipes.isBuiltHere("abydos/gopls:dev"))
+		#expect(!ToolImageRecipes.isBuiltHere(""))
+	}
+
 	// MARK: - What the fingerprint answers to
 
 	@Test func aRecipeThatChangesIsANewImageAndOneThatDoesNotIsTheSame() throws {
