@@ -316,6 +316,13 @@ force when it was given, and a preference is exactly those conditions changing.
 Until it was reconsidered, the one way back was Stop in the list of running
 servers.
 
+**What a running server said about the project is remembered the same way and
+forgotten with the rest.** A server that started and cannot read the project is
+exactly the state somebody fixes by choosing another image, another server, or a
+runtime that works — and what it said was said about a toolchain that is no
+longer the one being asked for. Left behind, the strip above the file would go
+on reporting a refusal from a server that has since been replaced.
+
 **A stored preference that changes nothing until something restarts is worse
 than one that was not stored**, because it looks like it worked: there is no
 error to read and nothing on screen disagrees with what was asked for. Somebody
@@ -349,6 +356,7 @@ to start.
 - **When** Settings ▸ Tools ▸ Rust — rust-analyzer is set to a container image
 - **Then** the server starts from that image without the project being reopened
 - **And** the file already open is announced to it
+- **And** what the old server said about the project is no longer above the file
 
 ### Scenario: a project that changes which server answers
 
@@ -370,3 +378,70 @@ to start.
 - **Given** a project whose `.abydos/tools.json` names the image for a tool
 - **When** the setting for that tool is changed to something else
 - **Then** the project's server is neither stopped nor restarted
+
+## Requirement: A server that started and is not answering says so above the file
+
+Everything else this program knows about a server's health is about *starting*
+one: it is installed or it is not, its image is here or it is being fetched, the
+handshake was answered or it was not. A server that starts, answers the
+handshake and then cannot make sense of what it was pointed at is in none of
+those states, and the strip above the file went away the moment the client was
+running — so a project the server could not read looked exactly like one where
+everything worked, until somebody opened the outline and found it empty.
+
+It is not one server's problem. jdtls with a classpath it could not resolve,
+gopls outside a module, clangd with no `compile_commands.json` and rust-analyzer
+against a toolchain the image has not got all start, all answer the handshake,
+and all then know nothing.
+
+So the strip has a third thing to say, beside "install this" and "this is on its
+way": **what the server said about itself since it started**, in the server's own
+words behind a button that says so. Three ways in and one sentence each — it is
+running and has reported a problem; it is running and could not answer either;
+it is not running at all, because it exited on the way up or because its image
+never arrived. **None of them reads as a crash**: two say the server is running,
+all three name the project rather than the server, and the next project this
+server is asked about may be perfectly readable.
+
+**An error message on its own is not enough to call a server broken.** Servers
+log errors that are not fatal, and measured on the `rust-analyzer` image this
+repository builds, the levels do not sort them: a project it could not load is
+reported as a *warning*, and `duplicate DidOpenTextDocument`, which costs
+nothing, as an *error*. So a message puts the server's own words on screen as a
+report and no more; the stronger sentence — it cannot read this project — waits
+for a question it could not answer as well. **Any answer with content in it takes
+both back**, which is what a server that grumbled and went on working does
+within seconds.
+
+What the empty symbol palette says is unchanged and stops being the first
+anybody hears it.
+
+### Scenario: a server that exits because the project pins a toolchain it has not got
+
+- **Given** a Rust project whose `rust-toolchain.toml` names a toolchain the
+  server's image does not carry
+- **When** a file in it is opened
+- **Then** the strip above the file says `rust-analyzer` is not running for this
+  project
+- **And** its details are the server's own words — the toolchain, the file that
+  named it, and where the rest of the log is
+
+### Scenario: a server that complains and goes on working
+
+- **Given** a project whose server reports a problem at error level and then
+  answers questions about the file normally
+- **When** the file is open
+- **Then** nothing is said above it
+
+### Scenario: a server that says it cannot work and then cannot answer
+
+- **Given** a running server that has reported a problem with the project
+- **When** a question is put to it and comes back empty or fails
+- **Then** the strip says it is running and cannot read this project
+
+### Scenario: what one project's server said is not said about another
+
+- **Given** two projects in the same language, one whose server cannot read it
+  and one whose server is fine
+- **When** a file in each is opened
+- **Then** only the first has anything above it
