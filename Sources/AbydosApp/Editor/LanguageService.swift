@@ -968,38 +968,45 @@ final class LanguageService {
 		}
 	}
 
-	/// The whole change renaming this symbol comes to, or nil when the server
-	/// would not say.
+	/// The whole change renaming this symbol comes to, and which server said so
+	/// when it comes to nothing.
 	///
 	/// Nothing is applied here. What comes back is a description of a change,
 	/// and turning it into files is `WorkspaceEditPlan` and whoever knows which
 	/// documents are open — which is not this class.
+	///
+	/// The server's name travels with the answer rather than being looked up
+	/// again at the call site: which server was asked is decided here, by
+	/// `ready`, and working it out a second time somewhere else is a chance for
+	/// the two to disagree about who declined.
 	func rename(
 		url: URL,
 		position: LSPPosition,
 		to newName: String,
 		languageId: String,
 		project: URL
-	) async -> Result<WorkspaceEdit, Error> {
+	) async -> RenameAnswer {
 		guard let (key, server) = ready(languageId, project: project, for: "rename") else {
-			return .failure(LSPClient.ClientError.notRunning)
+			return .failed(LSPClient.ClientError.notRunning)
 		}
+		let name = server.definition.name
 		do {
+			// A server that answers `null`, or an edit that touches nothing, has
+			// decided there is nothing to do. Not a failure — nothing changed,
+			// and nothing is wrong — but not silent either, now that a
+			// `prepareRename` has already agreed there is a symbol here: the
+			// name of the server that changed its mind is what there is to say.
 			guard let edit = try await server.client.rename(
 				uri: uri(for: url), position: position, to: newName
 			) else {
-				// A server that answers `null` has decided there is nothing to
-				// do. Rare after a `prepareRename` said otherwise, and an empty
-				// edit rather than a failure: nothing changed, and nothing is
-				// wrong.
-				return .success(WorkspaceEdit(changes: []))
+				return .nothingToChange(server: name)
 			}
 			answered(withContent: !edit.isEmpty, for: key)
-			return .success(edit)
+			return edit.isEmpty ? .nothingToChange(server: name) : .edit(edit)
 		} catch {
 			note(error, asked: "rename", of: server, about: url)
 			answered(withContent: false, for: key)
-			return .failure(error)
+			return .failed(error)
 		}
 	}
 

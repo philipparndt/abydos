@@ -4608,14 +4608,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				url: url, position: position, to: newName, languageId: languageId, project: project
 			)
 
-			switch answer {
-			case let .failure(error):
-				notify("Nothing was renamed", detail: error.localizedDescription)
-			case let .success(edit) where edit.isEmpty:
-				notify("Nothing was renamed", detail: "The server found nothing to change.", kind: .information)
-			case let .success(edit):
-				self.apply(edit, named: newName)
+			// The sentences live on `RenameAnswer`, where the other rename
+			// sentences do, so what is said can be read without a window.
+			guard let refusal = answer.refusal else {
+				if let edit = answer.edit { self.apply(edit, named: newName) }
+				return
 			}
+			notify(
+				refusal.title, detail: refusal.detail,
+				kind: refusal.isFailure ? .error : .information
+			)
 		}
 	}
 

@@ -65,3 +65,59 @@ public enum RenameOffer: Equatable, Sendable {
 		}
 	}
 }
+
+/// What came back from asking a server for the change, once a name has been
+/// typed and accepted.
+///
+/// Three answers rather than two, because a server can pass both of the gates
+/// in `RenameOffer` — say it renames, then say there is a symbol here — and
+/// answer the rename itself with nothing at all. kmp-lsp 0.25.0 did exactly
+/// that for every Java symbol (0469), and that is a third thing: not an edit,
+/// and not a failure either.
+///
+/// It is also the one place where **naming the server is the whole of what
+/// there is to say**. "Nothing to change" is what a caret on a comma means as
+/// well, and by this point the caret was not on a comma: a name was typed and
+/// accepted over a symbol the server itself picked out. Which server declined
+/// is the only fact that distinguishes the two, and it is a fact about
+/// something somebody chose and can change.
+public enum RenameAnswer: Sendable {
+	/// The change to make.
+	case edit(WorkspaceEdit)
+	/// The server was asked and answered with no edit — `null`, or an edit
+	/// that touches nothing.
+	case nothingToChange(server: String)
+	/// The server refused, or could not be reached. Its own words are in the
+	/// error.
+	case failed(any Error)
+
+	/// The change, or nil for the two answers that are not one.
+	public var edit: WorkspaceEdit? {
+		guard case let .edit(edit) = self else { return nil }
+		return edit
+	}
+
+	/// What to say out loud, and nil when there is an edit to apply instead —
+	/// the files changing on screen is the whole of what was asked for.
+	///
+	/// `isFailure` separates the two that have something to say: a server
+	/// declining is information, and a server erroring is not.
+	public var refusal: (title: String, detail: String, isFailure: Bool)? {
+		switch self {
+		case .edit:
+			return nil
+		case let .nothingToChange(server):
+			return (
+				title: "Nothing was renamed",
+				detail: "\(server) offered this rename and then found nothing to change.",
+				isFailure: false
+			)
+		case let .failed(error):
+			return (
+				title: "Nothing was renamed",
+				detail: error.localizedDescription,
+				isFailure: true
+			)
+		}
+	}
+}
