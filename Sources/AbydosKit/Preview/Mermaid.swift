@@ -279,14 +279,14 @@ public enum Mermaid {
 
 	/// Where the vendored bundle lives, in whichever bundle this module is in.
 	public static var bundleURL: URL? {
-		Bundle.module.url(forResource: "mermaid.min", withExtension: "js", subdirectory: "mermaid")
-			?? Bundle.module.url(forResource: "mermaid.min", withExtension: "js")
+		ModuleResources.url(forResource: "mermaid.min", withExtension: "js", subdirectory: "mermaid")
+			?? ModuleResources.url(forResource: "mermaid.min", withExtension: "js")
 	}
 
 	/// The vendored bundle's version, as `Scripts/vendor-mermaid.sh` wrote it.
 	public static var version: String? {
-		guard let url = Bundle.module.url(forResource: "VERSION", withExtension: nil, subdirectory: "mermaid")
-			?? Bundle.module.url(forResource: "VERSION", withExtension: nil),
+		guard let url = ModuleResources.url(forResource: "VERSION", withExtension: nil, subdirectory: "mermaid")
+			?? ModuleResources.url(forResource: "VERSION", withExtension: nil),
 			let text = try? String(contentsOf: url, encoding: .utf8)
 		else { return nil }
 		let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)

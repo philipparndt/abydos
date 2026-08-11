@@ -149,7 +149,7 @@ public final class DrawioRenderer {
 			(path as NSString).deletingLastPathComponent
 		)
 		let name = (path as NSString).lastPathComponent
-		return Bundle.module.url(
+		return ModuleResources.url(
 			forResource: (name as NSString).deletingPathExtension,
 			withExtension: (name as NSString).pathExtension,
 			subdirectory: folder
@@ -159,7 +159,7 @@ public final class DrawioRenderer {
 	/// The directory the vendored tree sits in, which is what the editor's URL
 	/// scheme serves from.
 	public static var assetsRoot: URL? {
-		Bundle.module.url(forResource: "drawio", withExtension: nil)
+		ModuleResources.url(forResource: "drawio", withExtension: nil)
 			?? asset("VERSION")?.deletingLastPathComponent()
 	}
 
