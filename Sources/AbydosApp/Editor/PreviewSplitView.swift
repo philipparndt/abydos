@@ -16,12 +16,55 @@ final class PreviewSplitView: NSSplitView, NSSplitViewDelegate {
 	/// back rather than lost.
 	private static var minimumPane: CGFloat { Theme.current.scaled(48) }
 
+	/// Where the divider is wanted, as a fraction of the whole, until the split
+	/// is big enough to be told.
+	///
+	/// A split is built while its tab is being opened, and at that moment it has
+	/// no size — a restored tab that is not the one in front is never laid out at
+	/// all until somebody clicks it. So the fraction is kept here and spent at
+	/// the first layout with room in it, which is also the only honest answer to
+	/// "where is your divider" for a split that has never had one.
+	///
+	/// Set before the split is in a window, which is where it is built, so there
+	/// is no layout to ask for: the first one comes with being installed.
+	var wantedFraction: CGFloat?
+
+	/// Where the divider is now, as a fraction of the whole, or nil for a split
+	/// that has not been laid out and was not told where to put it.
+	var currentFraction: CGFloat? {
+		if let wantedFraction { return wantedFraction }
+		guard arrangedSubviews.count == 2 else { return nil }
+		let total = isVertical ? bounds.width : bounds.height
+		guard total > 0 else { return nil }
+		let first = arrangedSubviews[0]
+		return (isVertical ? first.frame.width : first.frame.height) / total
+	}
+
 	override init(frame frameRect: NSRect) {
 		super.init(frame: frameRect)
 		delegate = self
 	}
 
 	required init?(coder: NSCoder) { fatalError("not used") }
+
+	override func layout() {
+		super.layout()
+		guard let fraction = wantedFraction else { return }
+		// Not until both halves fit. A split laid out at a few points once — a
+		// window being restored, a pane mid-animation — would spend the fraction
+		// against that, have it clamped to the minimum by the delegate below, and
+		// then keep *those* proportions for ever, since a resize preserves
+		// whatever it finds.
+		let total = isVertical ? bounds.width : bounds.height
+		guard total > 2 * Self.minimumPane else { return }
+
+		// Cleared before the move and not after, because `setPosition` lays the
+		// split out again from inside this call. 5edc084 is the same shape — a
+		// divider answering a resize by resizing — and it died of a stack
+		// overflow before anybody saw the divider.
+		wantedFraction = nil
+		setPosition((total * fraction).rounded(), ofDividerAt: 0)
+	}
 
 	func splitView(
 		_ splitView: NSSplitView,

@@ -48,6 +48,12 @@ final class EditorViewController: NSViewController {
 		var sourceView: NSView?
 		/// How this tab is currently showing a file that has both forms.
 		var previewMode: PreviewMode = .source
+		/// Where this tab's divider is, when it is split, as a fraction of the
+		/// pane. Asked of the split view itself rather than kept in step with it:
+		/// a divider is dragged, and nothing tells us when.
+		var dividerFraction: Double? {
+			(contentView as? PreviewSplitView)?.currentFraction.map { Double($0) }
+		}
 		var isMarkdown: Bool { document?.languageId == "markdown" }
 		var isShowingMarkdownPreview: Bool { previewMode != .source && isMarkdown }
 
@@ -870,7 +876,18 @@ final class EditorViewController: NSViewController {
 		return tabs.firstIndex { FilePath.canonical($0.url) == wanted }
 	}
 
-	func open(fileURL: URL, focusEditor: Bool = false, preview: Bool = false) {
+	/// - Parameters:
+	///   - preview: a provisional tab, the italic one a single click opens.
+	///   - mode: how to show it, when a session remembered. Nil is not `.source`
+	///     but "whatever this kind of file opens as" — see `FilePreview`.
+	///   - dividerFraction: where the divider was, for a mode that has one.
+	func open(
+		fileURL: URL,
+		focusEditor: Bool = false,
+		preview: Bool = false,
+		mode: PreviewMode? = nil,
+		dividerFraction: Double? = nil
+	) {
 		let departure = currentPlace
 		defer {
 			DispatchQueue.main.async { [weak self] in
@@ -886,7 +903,9 @@ final class EditorViewController: NSViewController {
 			return
 		}
 
-		guard let tab = makeTab(for: fileURL, preview: preview) else { return }
+		guard let tab = makeTab(
+			for: fileURL, preview: preview, mode: mode, dividerFraction: dividerFraction
+		) else { return }
 
 		if preview, let previewIndex = tabs.firstIndex(where: { $0.isPreview }) {
 			// Replace the provisional tab in place, so it does not jump position.
@@ -900,7 +919,12 @@ final class EditorViewController: NSViewController {
 		}
 	}
 
-	private func makeTab(for fileURL: URL, preview: Bool) -> Tab? {
+	private func makeTab(
+		for fileURL: URL,
+		preview: Bool,
+		mode: PreviewMode? = nil,
+		dividerFraction: Double? = nil
+	) -> Tab? {
 		// Rendering a huge or binary blob as text helps nobody, but refusing to
 		// open it is not the answer either — the tab explains itself and offers
 		// the hex viewer instead.
@@ -1093,10 +1117,15 @@ final class EditorViewController: NSViewController {
 		// an SVG in a documentation folder is a picture first and its path data
 		// second, and a PlantUML file is a diagram somebody is checking against
 		// the lines that describe it, so it opens with both.
-		let opening = FilePreview.defaultMode(for: fileURL)
+		//
+		// Unless a session says otherwise, in which case that is what it opens
+		// as. Decided here rather than by putting the tab right afterwards, so a
+		// `.scad` coming back as its source does not build a model view first and
+		// throw it away — a restore opens every tab the project had at once.
+		let opening = FilePreview.restoredMode(mode, for: fileURL)
 		if opening != .source, FilePreview.hasPreview(fileURL) {
 			tab.previewMode = opening
-			tab.contentView = makeContentView(for: tab, mode: opening)
+			tab.contentView = makeContentView(for: tab, mode: opening, dividerFraction: dividerFraction)
 		}
 		return tab
 	}
@@ -1598,8 +1627,11 @@ final class EditorViewController: NSViewController {
 		activate(index: index, focusEditor: mode == .source)
 	}
 
-	/// The view for a tab in a given mode.
-	private func makeContentView(for tab: Tab, mode: PreviewMode) -> NSView {
+	/// The view for a tab in a given mode, with the divider a session remembered
+	/// or down the middle.
+	private func makeContentView(
+		for tab: Tab, mode: PreviewMode, dividerFraction: Double? = nil
+	) -> NSView {
 		let source = tab.sourceView
 		guard mode != .source else { return source ?? tab.contentView }
 
@@ -1614,12 +1646,13 @@ final class EditorViewController: NSViewController {
 		split.addArrangedSubview(source)
 		split.addArrangedSubview(preview)
 
-		DispatchQueue.main.async { [weak split] in
-			guard let split else { return }
-			let total = mode.splitsSideBySide ? split.bounds.width : split.bounds.height
-			guard total > 0 else { return }
-			split.setPosition(total / 2, ofDividerAt: 0)
-		}
+		// The split has no size yet — it is not in a window — so the fraction is
+		// left with it and spent at its first real layout. This used to be a
+		// half-and-half computed a runloop turn later, which found a size only
+		// because the tab happened to be the one in front; the split built for a
+		// tab behind it measured zero, gave up, and lived on whatever
+		// `adjustSubviews` had left.
+		split.wantedFraction = dividerFraction.map { CGFloat($0) } ?? 0.5
 		return split
 	}
 
@@ -2308,7 +2341,12 @@ final class EditorViewController: NSViewController {
 				ProjectSession.OpenFile(
 					path: tab.url.path,
 					line: (tab.codeView?.caretLine ?? 0) + 1,
-					isPreview: tab.isPreview
+					isPreview: tab.isPreview,
+					// Only for a file that has a rendered form. Every other tab is
+					// `.source` and always will be, and writing that down for each
+					// of them says nothing.
+					previewMode: FilePreview.hasPreview(tab.url) ? tab.previewMode : nil,
+					dividerFraction: tab.dividerFraction
 				)
 			},
 			activePath: activeTab?.url.path
@@ -2321,7 +2359,13 @@ final class EditorViewController: NSViewController {
 		for file in session.files {
 			let url = URL(fileURLWithPath: file.path)
 			guard FileManager.default.fileExists(atPath: file.path) else { continue }
-			open(fileURL: url, focusEditor: false, preview: file.isPreview)
+			open(
+				fileURL: url,
+				focusEditor: false,
+				preview: file.isPreview,
+				mode: file.previewMode,
+				dividerFraction: file.dividerFraction
+			)
 			if file.line > 1 {
 				// Deferred: a document that has just been opened has not laid
 				// out, so scrolling to a line now would measure against nothing.
