@@ -49,6 +49,76 @@ to take the existing answer.
 Not in this item: staging *hunks*, which `GitPatch.stage` already exists for and
 is a different gesture at a different granularity.
 
+## What was decided, and what it cost
+
+`images/changes-flat-before.png` and `images/changes-tree.png` are the same
+change set before and after: eleven unstaged files across nine folders, two of
+them staged, one of those also edited again since.
+
+**Which folders exist: only the ones with a change under them.** The shape is
+built in `GitChangeTree`, in the kit, so that which folders exist and what each
+one says are claims the suite can check — the pane is in the app target, which
+it cannot reach.
+
+**How much of a folder is staged: a count.** `6` when all of what changed under
+it is on this side, `4 of 6` in the modified colour when it is not, and a
+sentence on the tooltip. There is no checkbox to give a mixed state to and
+there was never going to be one — the pane is deliberately two lists rather
+than one with ticks, which is what lets it show a file that is in both.
+
+*Entries* are counted rather than paths. A file staged and then edited again is
+one path in both lists; counting paths made its folder read `1 of 1` and call
+itself whole while a commit would have left the second edit behind. Counting
+entries makes it `1 of 2` on both sides, with no special case anywhere.
+
+**Single-child chains are not collapsed** — as the item guessed. It costs more
+than it sounded like it would: the tree in the screenshot is 26 rows where the
+flat list was 11, because 15 of them are folders and most of those have one
+child. That is the honest price of the structure, and it can be folded away by
+hand, which is remembered. The reason for paying it stands: a folded row would
+not be a folder, and it would take away the row that stages the outer folder on
+its own, in a window whose other tree does not fold anything.
+
+**Expansion is kept the negative way round** — a set of folders shut by hand,
+so a folder that appears while somebody is working arrives open. The trees
+arrive unfolded for the same reason `StructurePane` does: an outline that has
+to be unfolded before it says anything is slower to read than what it replaced.
+
+## Ruled out on the way
+
+**A set of collapsed folders built from `didCollapse` notifications.** Folding
+one folder posts `didCollapse` for every folder *under* it as well — they have
+stopped being displayed — so the set said somebody had shut six folders when
+they had shut one, and opening it again gave back a folder whose insides were
+all closed. Fixed by asking the view instead: before each rebuild, walk the
+*visible* rows and record which folders are not expanded. A folder inside a shut
+one is not a row, nothing can be said about it, and whatever it was last seen
+doing it keeps doing.
+
+**Passing the side of the index as `inout`.** `reloadData()` asks the data
+source for its rows while it runs, and the data source reads the very property
+being exclusively held. Swift traps on it, at launch, every time.
+
+**The pane surviving at all.** Two days of this looked like the tree folding
+itself up a second after it was unfolded, and it was not the tree: opening a
+window on the changes pane built it up to *three* times — the sidebar asks for
+it, the wait queued before the repository was read installs it again, and
+finishing the read installs it a third time. Each was a new `ChangesPane` and
+took the last one's state with it. The commit message half typed into the pane
+went the same way and always had. Two guards in `MainWindowController`, each
+saying what the comment beside it already claimed, and it is built once.
+
+## Not proved
+
+The pane cannot be reached from the suite, so what is claimed about the *view*
+— expansion surviving a rebuild, where the selection lands, what git is handed
+— was driven through `--changes-tree` against a scratch repository and read off
+the app's own output, three runs each. `GitChangeTree` itself has a suite.
+
+Nothing was measured on a change set of hundreds of files. 0446's lesson was
+taken as a design rule rather than re-measured: the tree is rebuilt whole and
+put back by path, which is what the navigator does.
+
 ## Steps
 
 - [x] The changes are a tree of folders relative to the root, only where there
@@ -58,6 +128,6 @@ is a different gesture at a different granularity.
 - [x] A part-staged folder says so
 - [x] Expansion and selection survive a refresh, using `TreeSelection`
 - [x] Multi-selection across files and folders does the obvious thing
-- [ ] Seen by eye on a project with a deep change set
-- [ ] Write down here what was ruled out on the way
-- [ ] `spec/<capability>.md` says what the project now does
+- [x] Seen by eye on a project with a deep change set
+- [x] Write down here what was ruled out on the way
+- [x] `spec/<capability>.md` says what the project now does
