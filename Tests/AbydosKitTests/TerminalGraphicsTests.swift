@@ -271,6 +271,62 @@ struct TerminalGraphicsTests {
 		#expect(terminal.cursorColumn == 0)
 	}
 
+	// MARK: - A picture that does not fit under the cursor
+
+	/// A picture placed where there is not room for it scrolls the screen, the
+	/// way printing that many lines would.
+	///
+	/// This is the whole of 0468. `icat` outside tmux places a picture at the
+	/// cursor and lets the *terminal* make room for it — it prints no rows of
+	/// its own and it is told nothing about how tall the pane is. The cursor
+	/// advance was a `moveCursor`, which clamps at the last row, so nothing
+	/// scrolled and the picture kept the rows it had been given: rows below the
+	/// bottom of the screen, which are never drawn and never will be.
+	@Test func aPictureTooTallForWhatIsLeftScrollsTheScreen() throws {
+		let terminal = emulator(rows: 10, columns: 40)
+		// Eight rows of output, so the cursor sits two rows from the bottom.
+		terminal.write(String(repeating: "line\r\n", count: 8))
+		#expect(terminal.cursorRow == 8)
+
+		// 30×100 pixels at 10×20 a cell is three columns by five rows, and only
+		// two of those five rows are left.
+		terminal.write(graphics("a=T,s=30,v=100,f=24;\(rawRGB(width: 30, height: 100))"))
+
+		let placement = try #require(terminal.graphics.placements.last)
+		#expect(placement.rows == 5)
+		// Three rows had to be made, so three went into the scrollback.
+		#expect(terminal.screen.scrollback.count == 3)
+		// Which puts every row of the picture on the screen.
+		let firstOnScreen = terminal.screen.scrollback.count
+		let lastOnScreen = firstOnScreen + terminal.screen.rows - 1
+		#expect(placement.rowRange.lowerBound >= firstOnScreen)
+		#expect(placement.rowRange.upperBound <= lastOnScreen)
+	}
+
+	/// The prompt that follows such a picture does not erase it.
+	///
+	/// This is the symptom as it was reported — "shows the picture and loses it
+	/// while still reserving the space". A placement whose rows run past the
+	/// bottom of the screen overlaps whatever the shell erases from the prompt
+	/// downwards, so `ESC[J` — which zsh writes before every prompt, and which
+	/// tmux swallows, which is why no measurement taken inside tmux ever saw
+	/// this — took the picture with it.
+	@Test func thePromptAfterSuchAPictureDoesNotEraseIt() {
+		let terminal = emulator(rows: 10, columns: 40)
+		terminal.write(String(repeating: "line\r\n", count: 8))
+
+		// Exactly what `icat` writes with no tmux in the way: back to the left
+		// edge, across to the picture's indent, the placement, a newline.
+		terminal.write("\r\u{1B}[18C")
+		terminal.write(graphics("a=T,q=2,s=30,v=100,f=24;\(rawRGB(width: 30, height: 100))"))
+		terminal.write("\r\n")
+		#expect(terminal.graphics.placements.count == 1)
+
+		// And what the shell writes next: its partial-line mark, then the erase.
+		terminal.write("%" + String(repeating: " ", count: 39) + "\r \r\u{1B}[J")
+		#expect(terminal.graphics.placements.count == 1)
+	}
+
 	@Test func somethingSentEarlierCanBeShownAgainElsewhere() {
 		let terminal = emulator()
 		terminal.write(graphics("i=4,s=20,v=40,a=t,t=d,f=24;\(rawRGB(width: 20, height: 40))"))

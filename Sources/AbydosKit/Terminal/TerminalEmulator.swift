@@ -1309,7 +1309,21 @@ public final class TerminalEmulator {
 		if let advance = result.cursorAdvance {
 			// Down first, then across, so a picture wider than what is left of the
 			// row still lands the cursor on the row the image ends on.
-			moveCursor(row: cursorRow + advance.rows, column: cursorColumn)
+			//
+			// A line feed for each row rather than one move to the row it ends on.
+			// A move *clamps* at the last row, and a picture placed where fewer
+			// rows are left than it needs then keeps the rows it was given —
+			// rows below the bottom of the screen, which are never drawn, and
+			// which overlap everything the shell erases from its next prompt
+			// downwards, so `ESC[J` took the picture away. A feed makes the room
+			// instead: the retired lines go into the scrollback, every absolute
+			// row stays where it was, and the picture comes onto the screen.
+			//
+			// This is what a program placing a picture is asking for. It is told
+			// nothing about how tall the pane is — `icat` outside tmux sends no
+			// `r` at all — so making room is the terminal's part, exactly as it
+			// is when a program prints that many lines.
+			for _ in 0..<advance.rows { lineFeed() }
 			for _ in 0..<advance.columns {
 				if cursorColumn == screen.columns - 1 {
 					cursorColumn = 0

@@ -19,6 +19,32 @@ row. The first leaves a gap and then **two prompts stacked on consecutive lines*
 the three after it leave neither a picture nor a gap. So the first run does
 something the rest do not, which is the half 0397 never saw.
 
+## The pane is not tmux, and that is the whole item
+
+Everything below this heading and above "What four runs measure" was written
+before the user said the one thing that mattered:
+
+> I am currently not using tmux for this, it is working in tmux right now.
+
+Every measurement in 0397 and in the first pass on this item was taken **inside
+tmux** — the captures came through `tmux pipe-pane`, and 0397's 22,448
+placeholder cells were tmux re-emitting them. A plain Local pane had never been
+measured, and it is a different protocol. That is why two careful
+investigations both concluded it works.
+
+The user's recipe, which they say reproduces every time:
+
+1.  In a plain (non-tmux) Local pane, press Return until about 80% of the
+    screen is filled.
+2.  `kitty icat ~/dev/abydos-docs/images/palette.png`.
+
+The space is reserved and no picture is drawn — the state the original 0397
+report described and neither investigation could produce.
+
+See **"What `icat` writes when there is no tmux"** and **"What it turned out to
+be"** below. The two sections above are kept as they were written, because what
+they say about the tmux path is true; they are simply about the other path.
+
 ## Start where 0397 said to
 
 Everything below is that item's method and it works; do not invent a new one.
@@ -69,7 +95,7 @@ budget against 2.9 MB); the transfer being truncated; the prompt erasing it (one
 
 ## Estimate
 
-2026-08-11 14:07 — waiting on a capture from a run where it fails
+2026-08-11 15:13 — just picked up again with the user's recipe; a few hours
 
 ## What four runs measure, on build 937
 
@@ -176,7 +202,99 @@ either `--metal-shot` or `--screenshot` for what was drawn. Eight sessions.
   four runs still drew with a second client attached, and the shot at the end
   was taken after it had gone.
 
-## What this is waiting for
+## What `icat` writes when there is no tmux
+
+The one thing nobody had measured. `icat` under a plain pty of 39×153 with
+`TMUX` unset, its every byte kept: **429 bytes**, against 180 KB inside tmux.
+It is not the same protocol.
+
+    ESC[?s ESC[*x ESC[4l …                          the usual mode setting
+    ESC_G a=q,f=24,s=1,v=1,S=3,i=1        ;MTIz            can you take bytes?
+    ESC_G a=q,f=24,t=t,s=1,v=1,S=87,i=2   ;<a temp path>   …a temporary file?
+    ESC_G a=q,f=24,t=s,s=1,v=1,S=18,i=3   ;<a shm name>    …shared memory?
+    ESC[c                                                  and are you there?
+
+**Outside tmux `icat` asks the terminal what it can do, and waits for an
+answer.** Inside tmux it cannot get one, so it never asks and falls back to
+sending the whole PNG as base64. Answering those three the way this app's
+`decode` does — OK, OK, `EBADF:shared memory transfer is not supported` — and
+`icat` then sends its picture as one line:
+
+    CR  ESC[53C  ESC_G a=T,q=2,f=100,t=f,s=732,v=988,X=2 ;<the file's path>  ESC\  CRLF
+
+Against what every capture in this item and in 0397 has, which was tmux's:
+
+    ESC_G a=T,q=2,f=100,m=1,U=1,s=732,v=988,X=2,c=46,r=26,i=2071036375 ;<180 KB>
+
+Six differences, and five of them matter:
+
+- **`t=f`** — the picture is a *path*, not 180 KB of base64. That is the whole
+  429 bytes against 180 KB.
+- **no `U=1`** — it is **not a virtual placement**. It is placed at the cursor,
+  as a real entry in `graphics.placements`.
+- **no placeholder cells at all.** No U+10EEEE, no diacritics, no rows written
+  by `icat`. So the entire mechanism 0397 and this item measured — 22,448
+  placeholder cells, `runs`, `withoutImage=0`, the offline replay — is about a
+  path a plain pane never takes.
+- **no `c=` and no `r=`.** `icat` says nothing about how many cells to use; the
+  terminal works it out from the pixels. So "the `c=`/`r=` of every run is the
+  first number to read" has no number to read here.
+- **no `i=` and no `I=`**, so the terminal assigns the id.
+- `m=1` absent: one chunk, because a path is short.
+
+The `ESC[53C` is `icat`'s centring, `(153 − 46) / 2 = 53` — the same arithmetic
+0397 closed column 62 with, arrived at by `icat` itself rather than by tmux
+repainting spaces.
+
+`Scripts/icat-notmux.py` in the item's folder is the harness: it runs a command
+under a pty of a chosen size with `TMUX` unset and answers the graphics queries
+as this app does, so what `icat` sends outside tmux can be read without a
+window.
+
+## What it turned out to be
+
+**The cursor advance after a placement clamped instead of scrolling.**
+
+A plain pane's `icat` places the picture at the cursor and expects the terminal
+to make room for it — it is told nothing about how tall the pane is, and sends
+no `r`. The terminal answers by moving the cursor down the height of the
+picture, and `TerminalEmulator` did that with `moveCursor`, which clamps at
+`screen.rows - 1`. So when fewer rows were left than the picture needed:
+
+- nothing scrolled, and
+- the placement kept the rows it had been given — absolute rows running past
+  the bottom of the screen, which are never drawn.
+
+Then the shell drew its prompt, and zsh writes `ESC[J` before every one of
+them. `erasePictures` takes the pictures standing on erased rows, and a
+placement stretching seventeen rows below the last visible one **overlaps
+everything erased from the prompt downwards**. So the picture was placed, drawn
+for one frame, and then erased by the prompt — while the gap stayed, because
+the gap is the cursor having moved.
+
+That is the original 0397 report word for word: *"the second shows the picture
+and loses it while still reserving the space"*. And it is invisible inside
+tmux twice over: `icat` uses placeholder cells there, which are re-derived from
+the grid and cannot go stale, and tmux swallows the `ESC[J` — 0397 measured
+exactly that and drew the opposite conclusion from it.
+
+It also explains "it now works once". A first `icat` in a fresh pane has the
+whole screen below the cursor, so nothing clamps and the picture draws. The
+user's recipe fills the screen *first* precisely to take that room away, which
+is why it reproduces every time and why nothing that did not fill the screen
+first ever did.
+
+Now the advance is a line feed per row. Feeding makes the room the picture was
+promised: the retired lines go into the scrollback, every absolute row stays
+where it was — which is what makes the whole scheme work — and the picture
+lands wholly on the screen with the prompt below it.
+
+## What this was waiting for
+
+**It is not waiting any more**; the recipe above is what arrived. Kept because
+it says what to capture, and because the first item asked for the wrong two
+things: a `c=`/`r=` that a plain pane never sends, and a placeholder replay of
+a path that has no placeholders.
 
 One reproduction on the machine where it happens, with two things captured
 while it is on screen. Neither needs a rebuild — the app in `/Applications`
@@ -251,5 +369,18 @@ program already has is left alone rather than replaced by a guess.
 - [x] Ask a running app what the program was told the pane is
 - [x] Replay a capture through the emulator from the suite, rather than by
       writing the harness again
-- [x] Write down here what was ruled out on the way
-- [x] `spec/terminal.md` says what the project now does
+- [ ] Write down here what was ruled out on the way
+- [ ] `spec/terminal.md` says what the project now does
+
+The user then said the pane is not tmux, and these are the steps that made:
+
+- [x] Capture what `icat` writes with **no** tmux, and say how it differs in
+      bytes from every capture taken so far
+- [x] A test that fails: a picture placed where there is not room for it keeps
+      rows below the bottom of the screen
+- [x] A test that fails: the prompt after such a picture erases it
+- [x] Make the room instead of clamping the cursor
+- [ ] Watch the user's own recipe — fill the screen, then four `icat` in a row
+      in a plain pane — draw four pictures, with GPU rendering off and on
+- [ ] Say which of 0397's rulings were taken inside tmux, which survive outside
+      it, and which were never re-checked
