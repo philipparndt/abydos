@@ -19,6 +19,12 @@ or the runtime handing back an old one is the first thing to find out, and it ma
 be a **bug in the reuse rather than in the tests** — which would make this an item
 about the app and not about hygiene.
 
+> **The paragraph above is wrong, and so are the two merge commits on `main` that
+> repeat it.** It was measured honestly and it does not survive being reproduced
+> deliberately: with a stale container present the suite passes and with none it
+> fails. Read *What it turned out to be*, below, before acting on anything here.
+> The leak is real; the connection to the failure is not.
+
 ## What is known about the sweep
 
 There is already a sweep, and it works — one agent saw the app print `Removed 4
@@ -212,9 +218,12 @@ the pid.
       container behind with `rm --force` already sent
 - [x] Sweep every runtime installed rather than the preferred one, which is why
       the leaks were never swept on this machine
-- [x] The suite green with a stale container present — the whole of it, twice,
-      with `abydos-lsp-jdtls-<a live pid>-23` up throughout and thirteen more
-      leftovers on the machine at the start of the second
+- [x] The suite green with a stale container present — the whole of it, 2451 tests
+      in 355 suites, four times over, with `abydos-lsp-jdtls-<a live pid>-23` up
+      throughout and thirteen more leftovers on the machine at the start of one of
+      them. Nothing left behind by any of the four. The only red anywhere in them
+      is `MermaidLiveTests.drawingIsFastEnoughToDoWhileSomebodyTypes`, which is
+      0472's and fails under the load the suite makes for itself
 - [x] Write down here what was ruled out on the way
 - [x] `spec/tool-images.md` says what the project now does — the reuse did not
       change, the cleanup did, and neither was in the spec at all
