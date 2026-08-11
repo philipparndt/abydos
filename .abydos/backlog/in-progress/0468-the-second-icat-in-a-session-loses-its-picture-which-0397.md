@@ -67,12 +67,62 @@ budget against 2.9 MB); the transfer being truncated; the prompt erasing it (one
 `ESC[J` per capture, at offset 18, tmux clearing on attach). Read that item's
 "What was ruled out, with what" before spending an afternoon on any of them.
 
+## Estimate
+
+2026-08-11 13:51 — about an hour and a half left
+
+## What four runs measure, on build 937
+
+Six sessions in the app, driven by `--terminal` with `ABYDOS_TERM_LOG` on the
+pane and `tmux pipe-pane -o` on `icat`'s own side, four `kitty icat
+~/dev/abydos-docs/images/palette.png` in each. The numbers 0397 asked for:
+
+    run 1  a=T,q=2,f=100,m=1,U=1,s=732,v=988,X=2,c=46,r=26,i=2071036375
+    run 2  a=T,q=2,f=100,m=1,U=1,s=732,v=988,X=2,c=46,r=26,i=1706439561
+    run 3  a=T,q=2,f=100,m=1,U=1,s=732,v=988,X=2,c=46,r=26,i=4089325352
+    run 4  a=T,q=2,f=100,m=1,U=1,s=732,v=988,X=2,c=46,r=26,i=1393558142
+
+**`c=46,r=26` on every run of every session.** One size in one pane, which is
+what 0397 said would have to be true for this not to be the size regression
+again — so it is not that. The id is fresh each time and no run sends a
+delete.
+
+### What differs between run one and run two, in bytes
+
+Not the command, and not `icat`'s own output: 180 KB either side, byte for
+byte the same but for the id and the terminal-width padding. What differs is
+one thing, and it is tmux rather than `icat`:
+
+- **run 1 does not scroll, run 2 does.** In a 33-row pane the cursor after run
+  one is at row 29 and `history_size` is 1; after run two it is at row 32 and
+  `history_size` is 26; runs three and four add 28 each. 2 prompt rows + 26
+  picture rows = 28, so the first picture is the only one that fits under a
+  prompt without pushing anything off the top.
+- The terminal is handed 251 KB for run 1 and 221 KB for run 2 — the
+  difference is tmux's repaint, not the picture.
+- Three `ESC[J` in a whole four-run capture, at offsets 18, 2944 and 213538:
+  tmux clearing on attach, exactly as 0397 measured. `icat` writes four (one
+  per prompt) and tmux swallows them.
+
+### It draws, on this machine, six times over
+
+`--metal-shot` and `--screenshot` after the fourth run, at 33 rows, at 16 and
+at 15, GPU rendering off and on, eight seconds apart and 1.2 seconds apart:
+**four runs draw four pictures every time.** Replaying the captures through
+the emulator offline agrees — after each run every placeholder run resolves
+and no placement is missing its image:
+
+    after run 1: images=1 virtual=1 runs=26 placements=26 withoutImage=0
+    after run 2: images=2 virtual=2 runs=28 placements=28 withoutImage=0
+    after run 3: images=3 virtual=3 runs=28 placements=28 withoutImage=0
+    after run 4: images=4 virtual=4 runs=29 placements=29 withoutImage=0
+
 ## Steps
 
 - [ ] Reproduce it — four runs in one pane, in the app, on the current build
-- [ ] `ABYDOS_TERM_LOG` and `tmux pipe-pane` across all four, and the `c=`/`r=`
+- [x] `ABYDOS_TERM_LOG` and `tmux pipe-pane` across all four, and the `c=`/`r=`
       of each written down here
-- [ ] Say what differs between run one and run two, in bytes
+- [x] Say what differs between run one and run two, in bytes
 - [ ] Account for the two prompts on consecutive lines after run one
 - [ ] Fix it, and watch four runs in a row draw four pictures
 - [ ] Write down here what was ruled out on the way
