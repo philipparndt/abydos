@@ -67,7 +67,7 @@ the fork is deliberate.
 - [x] `ContainerPaths` maps them, or says clearly why it does not have to
 - [x] `ToolImages/kmp-lsp/Dockerfile`, pinned to a commit of the fork, with the
       reason for the fork written in the file
-- [ ] Driven end to end: a Java project in a container, go-to-definition into a
+- [x] Driven end to end: a Java project in a container, go-to-definition into a
       `~/.m2` dependency, which is the exact thing 0450 measured going from
       `null` to a file and a line
 - [ ] Write down here what was ruled out on the way
