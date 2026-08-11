@@ -495,6 +495,22 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if !options.commentBlocks.isEmpty {
+			// A second apart, so each press lands on the text the one before it
+			// left rather than on a rope still being reparsed.
+			for (step, spec) in options.commentBlocks.enumerated() {
+				DispatchQueue.main.asyncAfter(deadline: .now() + 2.5 + Double(step)) {
+					controller?.toggleCommentForTesting(spec)
+				}
+			}
+		}
+
+		if options.commentKey {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+				controller?.commentKeyReportForTesting()
+			}
+		}
+
 		if let spec = options.indentBlock {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
 				let parts = spec.split(separator: ":").map(String.init)
@@ -1986,6 +2002,18 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
 		editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
 		editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+		editMenu.addItem(.separator())
+
+		// ⌘/, which is Xcode's, VS Code's and IDEA's alike — the one shortcut in
+		// this menu nobody has to be told. `"/"` was unbound anywhere in the app,
+		// so nothing had to give it up.
+		let toggleComment = NSMenuItem(
+			title: "Toggle Comment",
+			action: #selector(MainWindowController.toggleLineComment(_:)),
+			keyEquivalent: "/"
+		)
+		toggleComment.keyEquivalentModifierMask = [.command]
+		editMenu.addItem(toggleComment)
 		editMenu.addItem(.separator())
 		let symbolInFile = NSMenuItem(
 			title: "Go to Declaration\u{2026}",

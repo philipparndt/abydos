@@ -371,6 +371,27 @@ public struct Rope: Sendable {
 		string(in: lineByteRange(line))
 	}
 
+	/// The whole lines a UTF-16 range touches, as a UTF-16 range.
+	///
+	/// Without the last line's own newline, so replacing what comes back rewrites
+	/// those lines rather than joining them to the one after. This is what every
+	/// line-wise gesture needs first — ⇥ and ⇧⇥ over a block, ⌘/ over a selection
+	/// — and it lived privately inside the code view until there were two of them.
+	///
+	/// **A range ending exactly at a line's start stops at the line above.**
+	/// Dragging the mouse to the beginning of the next line is not selecting that
+	/// line, and an editor that thought otherwise indents or comments out one
+	/// line too many every single time.
+	public func lineSpan(touchingUTF16 range: Range<Int>) -> Range<Int> {
+		let firstLine = line(atByteOffset: byteOffset(fromUTF16: range.lowerBound))
+		let lastOffset = max(range.lowerBound, range.upperBound - (range.isEmpty ? 0 : 1))
+		let lastLine = line(atByteOffset: byteOffset(fromUTF16: lastOffset))
+
+		let start = utf16Offset(fromByte: byteOffset(ofLine: firstLine))
+		let end = utf16Offset(fromByte: lineByteRange(lastLine).upperBound)
+		return start..<max(start, end)
+	}
+
 	// MARK: - UTF-16 conversion
 
 	/// UTF-16 offset ↔ byte offset, both O(log n). AppKit and CoreText speak

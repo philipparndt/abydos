@@ -172,6 +172,13 @@ struct LaunchOptions {
 	var commitBody: String?
 	/// `from:to:in|out` — indent or outdent a block, for checking Tab.
 	var indentBlock: String?
+	/// Press ⌘/ over `from:to`, or over a bare caret at `line@column`. Given more
+	/// than once it is pressed again, which is how the second press can be
+	/// watched taking the comment off the same lines.
+	var commentBlocks: [String] = []
+	/// Say whether ⌘/ is wired up: the menu item, its key, and whether the
+	/// responder chain answers to its action.
+	var commentKey = false
 	/// Prints what the editor is holding, saved or not.
 	var printText = false
 	/// The palette to run in, so a capture does not depend on whoever's
@@ -722,6 +729,8 @@ struct LaunchOptions {
 			case "--burst": options.burstFrames = next().flatMap(Int.init)
 			case "--commit-body": options.commitBody = next()
 			case "--indent-block": options.indentBlock = next()
+			case "--comment": if let spec = next() { options.commentBlocks.append(spec) }
+			case "--comment-key": options.commentKey = true
 			case "--print-text": options.printText = true
 			case "--theme": options.theme = next()
 			case "--debug-inspect": options.debugInspect = true

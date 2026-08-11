@@ -761,6 +761,9 @@ final class EditorAreaController: NSViewController {
 	func indentForTesting(fromLine: Int, toLine: Int, outdent: Bool) -> String? {
 		activeGroup.indentForTesting(fromLine: fromLine, toLine: toLine, outdent: outdent)
 	}
+	func toggleCommentForTesting(_ spec: String) -> (LineComment.Outcome, String)? {
+		activeGroup.toggleCommentForTesting(spec)
+	}
 
 	func showFind() { activeGroup.showFind() }
 	func setFindQuery(_ query: String) { activeGroup.setFindQuery(query) }

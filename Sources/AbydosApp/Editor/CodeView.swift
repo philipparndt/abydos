@@ -2394,26 +2394,11 @@ final class CodeView: NSView, NSTextInputClient {
 		guard let document else { return false }
 		let selection = selectedUTF16Range()
 		guard !selection.isEmpty || includingCaretLine else { return false }
+		guard let block = selectedLineBlock() else { return false }
 
-		let rope = document.rope
-		let firstLine = rope.line(atByteOffset: rope.byteOffset(fromUTF16: selection.lowerBound))
-		// A selection ending exactly at a line's start stops at the line above:
-		// dragging to the beginning of the next line is not selecting it.
-		let lastOffset = max(selection.lowerBound, selection.upperBound - (selection.isEmpty ? 0 : 1))
-		let lastLine = rope.line(atByteOffset: rope.byteOffset(fromUTF16: lastOffset))
-
-		let start = rope.utf16Offset(fromByte: rope.byteOffset(ofLine: firstLine))
-		let endByte = rope.lineByteRange(lastLine).upperBound
-		var end = rope.utf16Offset(fromByte: endByte)
-		// Without the line's own break, so replacing does not eat it.
-		if end > start, rope.string(in: rope.byteOffset(fromUTF16: end - 1)..<endByte) == "\n" {
-			end -= 1
-		}
-		guard end >= start else { return false }
-
-		let before = rope.string(
-			in: rope.byteOffset(fromUTF16: start)..<rope.byteOffset(fromUTF16: end)
-		)
+		let start = block.range.lowerBound
+		let end = block.range.upperBound
+		let before = block.text
 		let after = shift == .indent
 			? LineIndent.indent(before, using: "\t")
 			: LineIndent.outdent(before, tabWidth: Settings.shared.tabWidth)
@@ -2433,6 +2418,79 @@ final class CodeView: NSView, NSTextInputClient {
 			selectionAnchor = start
 		}
 		return true
+	}
+
+	/// The whole lines the selection touches, as a UTF-16 range and their text.
+	///
+	/// The geometry is the rope's — `lineSpan(touchingUTF16:)` — so that ⇥ and ⌘/
+	/// agree about which lines a selection is on. They did not have to before
+	/// there were two of them, and two copies of "a selection ending at a line's
+	/// start stops at the line above" is exactly the kind of rule that drifts.
+	private func selectedLineBlock() -> (range: Range<Int>, text: String)? {
+		guard let document else { return nil }
+		let rope = document.rope
+		let range = rope.lineSpan(touchingUTF16: selectedUTF16Range())
+		let startByte = rope.byteOffset(fromUTF16: range.lowerBound)
+		let endByte = rope.byteOffset(fromUTF16: range.upperBound)
+		return (range, rope.string(in: startByte..<endByte))
+	}
+
+	/// ⌘/: comments out the lines the selection touches, or takes the comment
+	/// off if they all already carry one.
+	///
+	/// Everything that decides *what* happens is in `LineComment`, which is a
+	/// value in the engine and therefore something the suite can drive. What is
+	/// left here is the two things only a view can do: cut the block out of the
+	/// rope and put it back as **one** replacement — one ⌘Z for the whole press,
+	/// however many lines — and move the selection so it still covers the same
+	/// characters afterwards.
+	///
+	/// The outcome is returned rather than acted on, because the one case that
+	/// has to be said out loud belongs to whoever owns the window's corner.
+	@discardableResult
+	func toggleLineComment() -> LineComment.Outcome {
+		guard let document, let block = selectedLineBlock() else { return .nothing }
+
+		let outcome = LineComment.toggle(
+			block.text, syntax: CommentSyntax.forLanguage(document.languageId)
+		)
+		guard case let .toggled(toggle) = outcome else { return outcome }
+
+		let selection = selectedUTF16Range()
+		let start = block.range.lowerBound
+		let anchor = selectionAnchor
+		let grew = toggle.text.utf16.count - block.text.utf16.count
+
+		// The same characters afterwards, carried along by whatever went in in
+		// front of them — not the whole lines. ⇥ widens the selection to the
+		// lines it moved, which is right for indenting because indenting *is*
+		// about the lines; a ⌘/ that did it would answer the second press with a
+		// different range than the first, and pressing it twice would no longer
+		// leave the file as it was found.
+		//
+		// An offset past the end of the block moves by the whole change and not
+		// through the per-line arithmetic. That is the selection whose end sits
+		// on the *next* line's first column: the block deliberately stops before
+		// that line, so the offset is outside it and has to be carried rather
+		// than clamped to the block's end, which would eat a character.
+		func moved(_ offset: Int) -> Int {
+			guard offset >= start else { return offset }
+			let within = offset - start
+			guard within <= block.text.utf16.count else { return offset + grew }
+			return start + toggle.offset(
+				within, isStartOfSelection: !selection.isEmpty && offset == selection.lowerBound
+			)
+		}
+
+		let movedCaret = moved(caret)
+		let movedAnchor = moved(anchor)
+		_ = document.replace(utf16Range: block.range, with: toggle.text, caretBefore: caret)
+
+		afterEdit(caret: movedCaret)
+		// `afterEdit` collapses the selection onto the caret, so the anchor goes
+		// back afterwards rather than before, the way `shiftLines` does it.
+		if !selection.isEmpty { selectionAnchor = movedAnchor }
+		return outcome
 	}
 
 	private func insertTextAtCaret(_ text: String) {
@@ -2513,6 +2571,37 @@ final class CodeView: NSView, NSTextInputClient {
 	var lineHeightForTesting: CGFloat { lineHeight }
 
 	/// Selects whole lines and presses Tab or ⇧Tab, the way somebody would.
+	/// Puts a caret or a selection where the spec says, presses ⌘/, and says what
+	/// came of it.
+	///
+	/// `from:to` selects those whole lines; `line@column` is a bare caret. The
+	/// caret report is half the answer and the more interesting half: whether the
+	/// same characters are still selected afterwards is invisible in a picture of
+	/// a commented block, and it is the whole of what decides whether the second
+	/// press acts on the same thing as the first.
+	func toggleCommentForTesting(_ spec: String) -> (LineComment.Outcome, String) {
+		guard let document else { return (.nothing, "no document") }
+		let rope = document.rope
+
+		if let at = spec.firstIndex(of: "@"),
+		   let line = Int(spec[..<at]),
+		   let column = Int(spec[spec.index(after: at)...]) {
+			let start = rope.utf16Offset(fromByte: rope.byteOffset(ofLine: line))
+			setCaret(start + column, extendingSelection: false)
+		} else {
+			let lines = spec.split(separator: ":").compactMap { Int($0) }
+			guard lines.count == 2 else {
+				return (.nothing, "spec should be from:to or line@column")
+			}
+			let start = rope.utf16Offset(fromByte: rope.byteOffset(ofLine: lines[0]))
+			let end = rope.utf16Offset(fromByte: rope.lineByteRange(lines[1]).upperBound)
+			selectionAnchor = start
+			setCaret(end, extendingSelection: true)
+		}
+
+		return (toggleLineComment(), caretReportForTesting)
+	}
+
 	func indentForTesting(fromLine: Int, toLine: Int, outdent: Bool) {
 		guard let document else { return }
 		let rope = document.rope
