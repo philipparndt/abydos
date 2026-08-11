@@ -123,3 +123,39 @@ and the way to see all of one is to ask for fewer rows.
 - **Then** the display's scale is used and the program is told 16×38
 - **And** the program is never told a cell is zero pixels, which would be this
   terminal saying it cannot show pictures at all
+
+## Requirement: A picture placed where there is not room for it makes the room
+
+A program placing a picture at the cursor is told nothing about how tall the
+pane is, and does not ask. `kitty icat` outside tmux sends the pixel size and
+no number of rows at all, and leaves it to the terminal to work out how many
+cells that comes to and to move the cursor past them. Making room for those
+rows is therefore the terminal's part, exactly as it is when a program prints
+that many lines: the rows above go into the scrollback, and the picture ends up
+on the screen with the cursor below it.
+
+Clamping the cursor at the last row instead — which is what a cursor *move*
+does, and a picture's rows are not a move — leaves the picture standing on rows
+below the bottom of the screen. Those rows are never drawn, so the picture is
+invisible while the space it took is still spoken for. Worse, they overlap
+everything a program erases from below the cursor, and a shell erases from its
+prompt down before printing each one: the picture is taken away by the next
+prompt. Both halves of "the picture is lost and the gap is kept" are that one
+clamp.
+
+This is the same rule the placeholder protocol gets for free. There, a picture
+is spelled out in ordinary text and moves when the text moves; a picture placed
+at the cursor has to be given the rows deliberately.
+
+### Scenario: a picture taller than what is left below the cursor
+
+- **Given** a pane of 10 rows with the cursor on row 8
+- **When** a picture five rows tall is placed at the cursor
+- **Then** the screen scrolls three rows, and three lines go into the scrollback
+- **And** every row of the picture is on the screen
+
+### Scenario: the prompt after such a picture
+
+- **Given** a picture just placed where there was not room for it
+- **When** the shell writes its next prompt, erasing from the cursor downwards
+- **Then** the picture is still there
