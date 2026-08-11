@@ -290,6 +290,136 @@ struct BacklogTests {
 		#expect(backlog.items(in: .ready).isEmpty)
 	}
 
+	// MARK: - How much longer
+
+	@Test func anEstimateIsTheClaimAndTheTimeItWasMade() {
+		let markdown = """
+		# 1. A thing
+
+		## Estimate
+
+		2026-08-11 14:20 — about an hour left
+
+		## Steps
+
+		- [ ] Do it
+		"""
+		let estimate = BacklogItem.estimate(in: markdown)
+		#expect(estimate?.text == "about an hour left")
+
+		var components = DateComponents()
+		components.year = 2026
+		components.month = 8
+		components.day = 11
+		components.hour = 14
+		components.minute = 20
+		#expect(estimate?.saidAt == Calendar.current.date(from: components))
+	}
+
+	@Test func anEstimateSurvivesTheWaysSomebodyWouldWriteIt() {
+		let hyphen = BacklogItem.parseEstimate("2026-08-11 09:05 - two more days")
+		#expect(hyphen?.text == "two more days")
+		#expect(BacklogItem.parseEstimate("- 2026-08-11 09:05 — a bullet")?.text == "a bullet")
+		#expect(BacklogItem.parseEstimate("2026-08-11 09:05: a colon")?.text == "a colon")
+		#expect(BacklogItem.parseEstimate("2026-08-11 09:05 nothing between")?.text == "nothing between")
+
+		// A claim with no time on it is not an estimate. That is the whole rule:
+		// "about an hour" that could have been judged this morning is the kind of
+		// number somebody believes because it is on the screen.
+		#expect(BacklogItem.parseEstimate("about an hour left") == nil)
+		#expect(BacklogItem.parseEstimate("2026-08-11 14:20") == nil)
+		#expect(BacklogItem.parseEstimate("2026-13-40 99:99 — not a time") == nil)
+	}
+
+	@Test func anItemNobodyHasEstimatedHasNoEstimate() throws {
+		let root = try makeProject()
+		defer { cleanUp(root) }
+		let backlog = Backlog(projectRoot: root)
+		try BacklogSetup.run(projectRoot: root, assistants: [])
+
+		// Straight off the template, which carries the heading and a line of
+		// prose saying what to write under it. Absent, not a guess and not a
+		// broken parse of the instructions.
+		let item = try backlog.create(title: "Nobody has said")
+		#expect(item.text().contains("## Estimate"))
+		#expect(item.estimate() == nil)
+	}
+
+	@Test func anEstimateOutsideItsSectionIsNotOne() {
+		let markdown = """
+		# 1. A thing
+
+		## Ruled out
+
+		2026-08-11 14:20 — this is a note about what happened, not a claim
+
+		## Steps
+
+		- [ ] Do it
+		"""
+		#expect(BacklogItem.estimate(in: markdown) == nil)
+	}
+
+	@Test func anEstimateSaysWhenItWasSaidAndTheDayWhenItWasNotToday() throws {
+		var components = DateComponents()
+		components.year = 2026
+		components.month = 8
+		components.day = 11
+		components.hour = 14
+		components.minute = 20
+		let saidAt = try #require(Calendar.current.date(from: components))
+		let estimate = BacklogItem.Estimate(text: "about an hour left", saidAt: saidAt)
+
+		let sameDay = try #require(Calendar.current.date(byAdding: .hour, value: 3, to: saidAt))
+		#expect(estimate.summary(now: sameDay) == "about an hour left, as of 14:20")
+
+		// Tomorrow, an estimate made at 14:20 must not read as if it were made
+		// this afternoon.
+		let nextDay = try #require(Calendar.current.date(byAdding: .day, value: 1, to: saidAt))
+		#expect(estimate.summary(now: nextDay) == "about an hour left, as of 11 Aug 14:20")
+	}
+
+	@Test func writingAnEstimateReplacesTheOneThatWasThere() {
+		let markdown = """
+		# 1. A thing
+
+		## Estimate
+
+		2026-08-11 09:00 — most of a day
+
+		## Steps
+
+		- [ ] Do it
+		"""
+		let written = BacklogItem.writingEstimate("2026-08-11 14:20 — about an hour left", into: markdown)
+		#expect(BacklogItem.estimate(in: written)?.text == "about an hour left")
+		#expect(!written.contains("most of a day"))
+		#expect(written.contains("- [ ] Do it"))
+
+		let cleared = BacklogItem.writingEstimate(nil, into: written)
+		#expect(BacklogItem.estimate(in: cleared) == nil)
+		// The heading goes with it: an empty section is a question nobody has
+		// answered, and somebody who has just said they no longer know has.
+		#expect(!cleared.contains("## Estimate"))
+		#expect(cleared.contains("- [ ] Do it"))
+	}
+
+	@Test func anItemWithNoEstimateSectionGetsOneAboveItsSteps() {
+		let markdown = """
+		# 1. A thing
+
+		What is wrong.
+
+		## Steps
+
+		- [ ] Do it
+		"""
+		let written = BacklogItem.writingEstimate("2026-08-11 14:20 — an hour", into: markdown)
+		let headings = written.components(separatedBy: "\n").filter { $0.hasPrefix("## ") }
+		#expect(headings == ["## Estimate", "## Steps"])
+		#expect(BacklogItem.estimate(in: written)?.text == "an hour")
+	}
+
 	@Test func aSpecDeltaIsNotAnAttachment() throws {
 		let root = try makeProject()
 		defer { cleanUp(root) }

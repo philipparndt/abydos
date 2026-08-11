@@ -113,6 +113,10 @@ Two more things to settle while building it:
   precisely so that drawing costs nothing. Whatever this does must happen on the
   walk, not in `draw(_:)`.
 
+## Estimate
+
+2026-08-11 06:54 — about two hours left
+
 ## Steps
 
 - [ ] A card's progress comes from the worktree when there is one, found by
@@ -125,7 +129,7 @@ Two more things to settle while building it:
       the same `isPresent` guard
 - [ ] A worktree that has gone falls back to the project's copy, visibly
 - [ ] All of it on the walk, never in `draw(_:)`
-- [ ] An estimate, written by whoever is working the item, carrying when it was
+- [x] An estimate, written by whoever is working the item, carrying when it was
       last said, and absent rather than guessed when nobody has said one
 - [ ] The card shows it beside the fraction, and shows a stale one as stale
 - [ ] `AGENTS.md` asks for the estimate in step 5, beside ticking the steps

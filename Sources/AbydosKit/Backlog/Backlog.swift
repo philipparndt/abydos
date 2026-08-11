@@ -85,6 +85,9 @@ public struct Backlog: Sendable {
 	public static let taskFileName = "task.md"
 	/// The global spec, and the name of a delta folder inside an item.
 	public static let specDirectoryName = "spec"
+	/// What an estimate looks like, shown wherever one is asked for so that the
+	/// shape is never described in prose and then guessed at.
+	public static let exampleEstimate = "2026-08-11 14:20 \u{2014} about an hour left"
 	/// The canonical instructions, which every assistant's own file points at.
 	public static let instructionsFileName = "AGENTS.md"
 	public static let projectFileName = "project.md"
@@ -341,6 +344,13 @@ public struct Backlog: Sendable {
 	/// list of what would make it done, and the two always disagreed by the
 	/// end — so `## Steps` is both: the work in the order it happens, ticked as
 	/// it happens, ending with the two steps every item has.
+	///
+	/// `## Estimate` is here empty rather than left out, for the same reason the
+	/// other headings are: a section nobody has filled in is a visible question,
+	/// and a section that does not exist is one nobody thinks to ask. The line of
+	/// prose under it does not parse as an estimate — a line without a timestamp
+	/// in front is skipped — so an item nobody has estimated reads as no
+	/// estimate rather than as a broken one.
 	static func template(number: Int, title: String) -> String {
 		"""
 		# \(number). \(title)
@@ -352,6 +362,13 @@ public struct Backlog: Sendable {
 
 		What has already been tried and did not work, and why — so the next
 		person does not spend the afternoon finding out again.
+
+		## Estimate
+
+		How much longer this has, and when that was last judged — one line, the
+		time first: `\(Self.exampleEstimate)`. Revised when it changes,
+		lengthened as honestly as it is shortened, and left out rather than
+		guessed at.
 
 		## Steps
 
