@@ -112,6 +112,19 @@ which is why every leftover found today was `abydos-lsp-jdtls-*`. Confirmed
 directly: after one run, `abydos-lsp-jdtls-92786-6` was still up with no process
 92786 on the machine.
 
+### One removal was not always enough
+
+Worth knowing before somebody trusts a single `rm --force` again. On a machine
+already holding fifteen containers, and with another suite running beside this one,
+a full run left `abydos-lsp-jdtls-<its pid>-25` up *having sent the removal* — the
+runtime asked to remove a container it was still in the middle of starting. The
+same removal takes 0.2 s on a quiet machine and was measured at 3.1 s on a busy
+one, which is not a wide margin under the app's ten-second deadline either. So the
+test asks, checks with an `inspect`, and asks again up to three times, and then
+**expects** the container to be gone rather than hoping: a run that quietly fails
+to clean up is exactly this item, and what made it cost five agents a day each is
+that there was no failing test anywhere.
+
 ### Why they piled up rather than being swept
 
 The sweep at launch asked `ContainerRuntime.discover`, which honours the
@@ -134,6 +147,12 @@ looked: the filtered suite is 15–20 s with one present and the same without, t
 whole suite 28 s, and the 124 s against 31 s in the report above was not
 reproducible in either direction. Disk is nil — the image is shared and a stopped
 container holds a few megabytes of layer.
+
+The sweep's line now names the runtime it removed from, which is the question
+somebody reading it actually has, and not how much memory came back. Asking for
+that means `container ls --format json` per sweep and a second answer to parse, for
+a number that is the runtime's default in every case here — worth having only if
+somebody is ever surprised by the figure rather than by the count.
 
 ### One thing the pid in a name cannot survive
 
@@ -189,6 +208,8 @@ the pid.
 - [x] Clean up where a crashed run is covered too, not only a tidy exit — the
       container this test started is removed and waited for, and what an earlier
       run left is swept on the way *in*
+- [x] Check the removal rather than assume it, after one run under load left a
+      container behind with `rm --force` already sent
 - [x] Sweep every runtime installed rather than the preferred one, which is why
       the leaks were never swept on this machine
 - [x] The suite green with a stale container present — the whole of it, twice,

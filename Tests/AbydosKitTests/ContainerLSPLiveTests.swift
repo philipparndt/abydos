@@ -412,18 +412,43 @@ import Testing
 		client.callbackQueue = .global()
 		defer {
 			client.stop()
-			// And then waited for. `stop` posts the removal to a background queue
-			// and deliberately does not wait — closing a project should not pause
-			// on a runtime — which is right in the app and not enough here: a test
-			// process exits within milliseconds of its last test, before that queue
-			// has been reached, and the container goes on running with nobody left
-			// who knows its name. That is 0473, and it is why every leak found on
-			// this machine was the *last* container a run started: the five before
-			// it had a whole test's worth of time to be removed in.
-			_ = RuntimeCommand.run(
-				ToolContainers.removal(of: [started.name], using: started.runtime),
-				deadline: ToolContainers.removalDeadline
-			)
+			// And then waited for, and then checked. `stop` posts the removal to a
+			// background queue and deliberately does not wait — closing a project
+			// should not pause on a runtime — which is right in the app and not
+			// enough here: a test process exits within milliseconds of its last
+			// test, before that queue has been reached, and the container goes on
+			// running with nobody left who knows its name. That is 0473, and it is
+			// why every leak found on this machine was the *last* container a run
+			// started: the five before it had a whole test's worth of time to be
+			// removed in.
+			//
+			// Asked again if it is still there, because once was not always enough.
+			// A full run on a machine already holding fifteen containers left
+			// `abydos-lsp-jdtls-<pid>-25` up having been sent `rm --force` — the
+			// runtime asked to remove a container it was still starting. Twenty
+			// seconds rather than `ToolContainers.removalDeadline`: that one is
+			// short so that a *quit* cannot visibly hang, and nothing about a test
+			// is in a hurry to exit.
+			var gone = false
+			for attempt in 1 ... 3 where !gone {
+				_ = RuntimeCommand.run(
+					ToolContainers.removal(of: [started.name], using: started.runtime), deadline: 20
+				)
+				gone = !RuntimeCommand.run(
+					ToolContainers.inspection(of: started.name, using: started.runtime), deadline: 20
+				).succeeded
+				// `usleep` and not `Thread.sleep`, which is unavailable from an
+				// asynchronous context and an error in the Swift 6 language mode —
+				// and not `Task.sleep`, because a `defer` cannot await. Blocking a
+				// second here is the point: the container is being given time to
+				// finish coming up so that it can be removed.
+				if !gone { usleep(UInt32(attempt) * 1_000_000) }
+			}
+			// And it is a claim rather than a hope. A run that quietly fails to
+			// clean up is exactly what this item is about: five agents in a day
+			// each found the leftovers by hand and none of them found a failing
+			// test, because there was not one.
+			#expect(gone, "\(probe.tool) left \(started.name) behind")
 		}
 
 		let file = root.appendingPathComponent(probe.opened)
