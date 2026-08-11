@@ -55,8 +55,7 @@ organise imports, extract method — and it is a larger surface: actions have to
 offered where the cursor is, resolved lazily, and some of them are commands
 rather than edits. **This item is rename and the `WorkspaceEdit` machinery
 underneath it.** If that lands well, code actions are mostly a menu on top of the
-same mechanism, and they should be their own item written after there is
-something to build on.
+same mechanism — which is **0456**, filed and explicitly waiting on this one.
 
 ## Worth deciding
 
