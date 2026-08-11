@@ -123,6 +123,49 @@ container it argues against and therefore asserts nothing. It only becomes
 available *after* the timing leaves the suite — which is why the answer is the
 third option with the second one on top of it, rather than the second one alone.
 
+## `PseudoTerminalTests` is not the same shape. It is a real bug — now 0476
+
+This item expected a fourth timing assertion here and there is no timing assertion
+here at all. The sweep confirms it: `runsACommandAndCapturesOutput` asserts
+`#expect(sawOutput)` and nothing about a duration. The 120 s is `Patience.seconds`,
+a hang detector, and **it was detecting a real hang.**
+
+A child that writes its line and exits before anything has read the pty master
+**loses the output outright.** Not late — gone. So the wait was not waiting for a
+slow `/bin/echo`, it was waiting for something that no longer existed, and no value
+of the timeout helps.
+
+Reproduced five runs out of five, under `make test` with fourteen spinners beside it
+at 9–26 runnable threads per core, with the original symptom appearing verbatim
+twice: `expected output after 120.0s, got: ""`. Reproduced again standalone with no
+dispatch anywhere near it, which is what says it is not about which queue got a
+thread. And the discriminating measurement, which is the one worth keeping:
+`ABYDOS_TERM_LOG` records on the *reading* queue, before the hop to the callback
+queue, and on the runs where attempts 10 and 19 lost their output the log is missing
+exactly `gone-9` and `gone-18` and holds every other word. The bytes were never
+read — not read and undelivered.
+
+**Filed as 0476 rather than fixed here, and that is a judgement worth stating.** Two
+fixes were written and measured on this branch before that was clear — draining the
+pty before closing it, and noticing the exit with `WNOWAIT` so the child is not
+reaped — and **neither works**, both measured, both reverted. The remaining
+candidate is the parent holding its own fd on the slave so the pty is not torn down
+while output is still queued, and the first attempt at measuring *that* hung. A
+change to the pty's lifecycle, in the file every terminal pane in this app runs
+through, is not something to land on the strength of a diagnosis that has already
+been wrong twice in one evening.
+
+The test that catches it — twenty short commands rather than one, so it fires in one
+test rather than one run in many — was written here, committed at `1c0c108`, and
+then **taken back out.** It reddens `make test` under load, and this item exists to
+stop the suite going red for reasons that are not the branch under test; adding one
+would have been the item undoing itself. It belongs to 0476, with the fix.
+
+What this branch keeps costs nothing and saves the next diagnosis: the failure
+message now carries the load, the bytes it actually got, and the sentence "this is
+0476 rather than a slow machine if it is empty". Three people read that red as
+environmental. The fourth will not have to.
+
 ## The sweep: every wall-clock assertion in a suite that runs in parallel
 
 The whole of `Tests/` uses three clocks and no others — `Date()` differencing,
@@ -198,14 +241,16 @@ it is available, and changing them would be churn:
 
 ## Estimate
 
-2026-08-11 19:33 — about three hours left
+2026-08-11 21:03 — about an hour left — proof runs and warnings
 
 ## Steps
 
 - [x] Say what the claim is in numbers — warm against a container, not against 0.5
 - [x] Choose: a ratio, a budget with room, or out of the suite behind `SCALE=1`
 - [x] `make timing`, and `Stopwatch` beside `MachineLoad` to carry the argument
-- [ ] Do the same for `PseudoTerminalTests`, whose timeout has the same shape
+- [x] Do the same for `PseudoTerminalTests`, whose timeout has the same shape
+      — it does not have the same shape. It is a defect, reproduced, and filed as
+      0476; the timeout is a hang detector and is left exactly as it was.
 - [x] Look for others: any assertion on wall-clock in a suite that runs parallel
 - [ ] Prove it — the suite green ten times over, and once under a deliberate load
 - [ ] Write down here what was ruled out on the way

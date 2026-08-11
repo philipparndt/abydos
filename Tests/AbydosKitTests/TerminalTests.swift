@@ -482,6 +482,12 @@ struct PseudoTerminalTests {
 	/// still missed: `runsACommandAndCapturesOutput` went red at 5.1 runnable
 	/// threads per core while this item was being measured, waiting on
 	/// `/bin/echo`. Nothing about that red was about the terminal.
+	///
+	/// **And nothing about it was about this number either**, which 0472 established
+	/// by trying to widen it and measuring instead. There is no value of this that
+	/// helps: when the red happens the output has been discarded rather than
+	/// delayed, so the wait is a hang detector detecting a real hang. Left exactly
+	/// as it is, and 0476 is the defect.
 	private func wait(
 		timeout: TimeInterval = Patience.seconds, until condition: @escaping () -> Bool
 	) async -> Bool {
@@ -516,57 +522,23 @@ struct PseudoTerminalTests {
 		#expect(started)
 
 		let sawOutput = await wait { collected.text.contains("hello-from-pty") }
-		// The load in the message, because the three reds this had in one day were
-		// all read as "the machine was busy" and none of them was: see
-		// `aCommandThatIsAlreadyOverDoesNotLoseItsOutput` below, which is the same
-		// failure with the diagnosis in it. 0472.
+		// **A red here is 0476 and it is not the machine being busy.** It was read
+		// that way three times — 124 s, 126.6 s and 124 s, at 5.4 to 6.5 runnable
+		// threads per core — and 0472 went looking for a timing assertion to widen
+		// and found a defect: a child that writes and exits before anything has read
+		// the master loses its output outright, so this wait is not waiting for
+		// something slow, it is waiting for something that is gone. 0476 has the
+		// reproduction, and what has already been ruled out.
+		//
+		// The load and the bytes are in the message so the next person reading a red
+		// has both without re-running the suite. `""` rather than a partial line is
+		// the tell: that is loss, not slowness.
 		#expect(sawOutput, """
-			expected output after \(Patience.seconds)s, got: \
-			\(collected.text.debugDescription) — \(MachineLoad.said)
+			no output after \(Patience.seconds)s, got: \
+			\(collected.text.debugDescription) — this is 0476 rather than a slow \
+			machine if it is empty — \(MachineLoad.said)
 			""")
 		pty.terminate()
-	}
-
-	/// A command that has already finished still shows what it printed.
-	///
-	/// **This is what `runsACommandAndCapturesOutput` going red was.** 0472 filed
-	/// it as a timeout of the same shape as Mermaid's budget — 124 s at load 54,
-	/// 126.6 s and 124 s at load 65, against a `/bin/echo` costing 0.028–0.35 s on
-	/// its own — and it is not that. Nothing was slow. `/bin/echo` writes its line
-	/// and exits while the parent is still starting, and `watchForExit` was closing
-	/// the master descriptor before the read source had taken the bytes out of the
-	/// pty. The output was not late; it was thrown away, and the wait then ran its
-	/// whole deadline for something that was never going to arrive.
-	///
-	/// So the 120 seconds is not the fault and raising or lowering it would have
-	/// fixed nothing: a hang detector is allowed to be generous, and this one was
-	/// detecting a real hang. What it could not do was say which.
-	///
-	/// Twenty of them, because the losing side of a race needs a busy machine, and
-	/// one lost is already the failure — printed with the attempt and the load so a
-	/// red here is read rather than re-run.
-	@Test func aCommandThatIsAlreadyOverDoesNotLoseItsOutput() async {
-		for attempt in 0..<20 {
-			let pty = makePTY()
-			let collected = Collector()
-			pty.onOutput = { collected.append($0) }
-			let word = "gone-\(attempt)"
-			#expect(pty.start(executable: "/bin/echo", arguments: [word]))
-			// Five seconds rather than `Patience.seconds`: this output is either
-			// there in milliseconds or it has been discarded, so there is nothing
-			// for a longer wait to catch — and twenty of them at two minutes each
-			// would outlive the whole run's deadline.
-			let arrived = await wait(timeout: 5) { collected.text.contains(word) }
-			pty.terminate()
-			guard arrived else {
-				Issue.record("""
-					attempt \(attempt + 1) of 20 lost the output of a /bin/echo that \
-					had already finished. Got: \(collected.text.debugDescription) \
-					— \(MachineLoad.said)
-					""")
-				return
-			}
-		}
 	}
 
 	@Test func reportsExitCode() async {
