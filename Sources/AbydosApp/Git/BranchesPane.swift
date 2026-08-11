@@ -15,6 +15,10 @@ final class BranchesPane: NSView {
 
 	private let root: URL
 
+	/// The work tree this pane is showing, so the window can tell whether the
+	/// one it has is the one it wants rather than building another.
+	var repositoryRoot: URL { root }
+
 	private var branches: [GitBranch] = []
 	/// Where this repository lives on the web, when it lives anywhere: read
 	/// from the remote, so GitHub and an Enterprise install are the same case.

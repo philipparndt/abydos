@@ -7,6 +7,12 @@ import AbydosKit
 /// Two lists rather than one with checkboxes. The index is a real thing with
 /// its own contents — a file can be half in it — and a single list with a tick
 /// per row cannot show that a file is in both states at once.
+///
+/// Each list is a tree of the folders the changes are in, because the project
+/// is a tree: a flat column of near-identical paths differing in the middle is
+/// hard to read, and staging a directory used to mean selecting every file
+/// under it by hand. `GitChangeTree` decides the shape; this decides what the
+/// rows look like and what happens to them.
 final class ChangesPane: NSView {
 	/// A change was selected, to show its diff.
 	var onSelectChange: ((GitChange) -> Void)?
@@ -15,11 +21,43 @@ final class ChangesPane: NSView {
 
 	private let root: URL
 
+	/// The work tree this pane is showing, so the window can tell whether the
+	/// one it has is the one it wants rather than building another.
+	var repositoryRoot: URL { root }
+
 	private var status = GitWorkingCopyStatus()
-	private var unstagedTable: ChangesTableView!
-	private var stagedTable: ChangesTableView!
+	private var unstagedTable: ChangesOutlineView!
+	private var stagedTable: ChangesOutlineView!
 	private var unstagedHeader: SectionHeaderView!
 	private var stagedHeader: SectionHeaderView!
+
+	/// One side of the index, as rows.
+	///
+	/// The tree is thrown away and built again on every refresh — which happens
+	/// on every filesystem event — so everything that has to outlive a rebuild
+	/// is kept here as paths. Rebuilding and re-deriving is what `TreeSelection`
+	/// exists for in the navigator, and 0446 is why nothing here tries to be
+	/// cleverer than that.
+	private struct Side {
+		var roots: [GitChangeNode] = []
+		var byPath: [String: GitChangeNode] = [:]
+		/// Folders somebody folded shut. Held the negative way round because a
+		/// changes tree wants to arrive open: a pane that shows five folder
+		/// names where the flat list showed twenty files has told you less than
+		/// it did before, and a folder that appears while you are working is
+		/// new work you should see.
+		var collapsed: Set<String> = []
+		/// Where the selection goes when everything selected has been staged
+		/// away. See `rememberWhereTheSelectionGoes`.
+		var fallback: String?
+	}
+
+	private var unstagedSide = Side()
+	private var stagedSide = Side()
+
+	/// Set while the pane is putting expansion or selection back after a
+	/// rebuild, so that its own work is not mistaken for somebody's.
+	private var isRestoring = false
 
 	private var subjectField: NSTextField!
 	private var bodyView: NSTextView!
@@ -68,10 +106,16 @@ final class ChangesPane: NSView {
 		stagedHeader.onAction = { [weak self] in self?.unstageSelected() }
 
 		unstagedTable = makeTable()
-		unstagedTable.onActivate = { [weak self] in self?.stageSelected() }
+		unstagedTable.onActivate = { [weak self] row in
+			guard let self else { return }
+			self.activate(row: row, in: self.unstagedTable)
+		}
 		unstagedTable.menu = makeChangeMenu()
 		stagedTable = makeTable()
-		stagedTable.onActivate = { [weak self] in self?.unstageSelected() }
+		stagedTable.onActivate = { [weak self] row in
+			guard let self else { return }
+			self.activate(row: row, in: self.stagedTable)
+		}
 		stagedTable.menu = makeChangeMenu()
 
 		let unstagedScroll = makeScrollView(for: unstagedTable)
@@ -193,8 +237,8 @@ final class ChangesPane: NSView {
 		}
 	}
 
-	private func makeTable() -> ChangesTableView {
-		let table = ChangesTableView()
+	private func makeTable() -> ChangesOutlineView {
+		let table = ChangesOutlineView()
 		table.headerView = nil
 		table.backgroundColor = Theme.current.sidebarBackground
 		table.selectionHighlightStyle = .regular
@@ -202,7 +246,12 @@ final class ChangesPane: NSView {
 		table.rowSizeStyle = .custom
 		table.intercellSpacing = .zero
 		table.gridStyleMask = []
-		table.addTableColumn(NSTableColumn(identifier: NSUserInterfaceItemIdentifier("change")))
+		// The navigator's indent, so the two trees in the window line up.
+		table.indentationPerLevel = Theme.current.scaled(14)
+		table.autoresizesOutlineColumn = false
+		let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("change"))
+		table.addTableColumn(column)
+		table.outlineTableColumn = column
 		table.delegate = self
 		table.dataSource = self
 		return table
@@ -235,12 +284,147 @@ final class ChangesPane: NSView {
 	}
 
 	private func reload() {
-		unstagedTable.reloadData()
-		stagedTable.reloadData()
+		rebuild(unstagedTable, staged: false, changes: status.unstaged, against: status.staged)
+		rebuild(stagedTable, staged: true, changes: status.staged, against: status.unstaged)
+		// Files, not rows: "Commit 7 Files" has to keep meaning seven files
+		// however many folders they are spread over.
 		unstagedHeader.setCount(status.unstaged.count)
 		stagedHeader.setCount(status.staged.count)
 		updateCommitButton()
 	}
+
+	/// Builds one side's tree again and puts back what was on screen.
+	///
+	/// `refreshGitStatus` runs on every filesystem event, so this is the path a
+	/// build writing files takes dozens of times a minute. A rebuild that let
+	/// the tree fold itself up would collapse the pane under somebody halfway
+	/// through reviewing it, which is the fault this ordering exists to avoid.
+	/// Nothing here takes the side as `inout`. `reloadData` asks the data source
+	/// for the rows while it runs, and the data source reads the very property
+	/// that would be exclusively held — which Swift traps on, and did.
+	private func rebuild(
+		_ outline: ChangesOutlineView,
+		staged: Bool,
+		changes: [GitChange],
+		against other: [GitChange]
+	) {
+		let selected = selectedPaths(in: outline)
+		let collapsed = collapsedPaths(in: outline)
+		let roots = GitChangeTree.build(changes, against: other)
+		let byPath = GitChangeTree.index(roots)
+		if staged {
+			stagedSide.roots = roots
+			stagedSide.byPath = byPath
+			stagedSide.collapsed = collapsed
+		} else {
+			unstagedSide.roots = roots
+			unstagedSide.byPath = byPath
+			unstagedSide.collapsed = collapsed
+		}
+
+		isRestoring = true
+		outline.reloadData()
+		expand(roots, in: outline, collapsed: collapsed)
+		restore(selection: selected, in: outline, staged: staged)
+		isRestoring = false
+	}
+
+	/// Which folders are folded shut, read off the tree rather than remembered
+	/// as it happened.
+	///
+	/// Asking the view is the only way to get this right. `collapseItem` posts
+	/// `didCollapse` for every folder *under* the one that was folded as well —
+	/// they have stopped being displayed — and a set built from those
+	/// notifications says somebody shut six folders when they shut one, so
+	/// opening it again gave back a folder whose insides were all closed.
+	///
+	/// The visible rows only, and starting from what was already known: a
+	/// folder inside a shut one is not a row and nothing here has anything to
+	/// say about it, so whatever it was last seen doing it keeps doing.
+	private func collapsedPaths(in outline: NSOutlineView) -> Set<String> {
+		var found = side(for: outline).collapsed
+		for row in 0..<outline.numberOfRows {
+			guard let node = outline.item(atRow: row) as? GitChangeNode, node.isFolder else { continue }
+			if outline.isItemExpanded(node) { found.remove(node.path) } else { found.insert(node.path) }
+		}
+		return found
+	}
+
+	private func expand(_ nodes: [GitChangeNode], in outline: NSOutlineView, collapsed: Set<String>) {
+		for node in nodes where node.isFolder && !collapsed.contains(node.path) {
+			outline.expandItem(node)
+			expand(node.children, in: outline, collapsed: collapsed)
+		}
+	}
+
+	/// The paths of every selected row, in tree order.
+	///
+	/// All of them rather than the first: this is the shrinking-selection fault
+	/// `TreeSelection` was written for, and a pane that quietly cut a selection
+	/// of five down to one every time a file was saved would be the same bug in
+	/// a second place.
+	private func selectedPaths(in outline: NSOutlineView) -> [String] {
+		TreeSelection.paths(rows: Array(outline.selectedRowIndexes)) { row in
+			(outline.item(atRow: row) as? GitChangeNode)?.path
+		}
+	}
+
+	private func restore(selection paths: [String], in outline: NSOutlineView, staged: Bool) {
+		let side = self.side(for: outline)
+		let rows = TreeSelection.rows(for: paths) { path in
+			guard let node = side.byPath[path] else { return -1 }
+			return outline.row(forItem: node)
+		}
+		if !rows.isEmpty {
+			outline.selectRowIndexes(IndexSet(rows), byExtendingSelection: false)
+			setFallback(nil, staged: staged)
+			return
+		}
+
+		// Everything that was selected has gone — which is the ordinary outcome
+		// of staging, since a folder with nothing left under it stops being a
+		// row. Land on the nearest row above where it was rather than nowhere:
+		// the next Return should act on something near what was just staged,
+		// and a pane that empties its own selection makes the keyboard useless
+		// exactly when it is being used.
+		guard !paths.isEmpty, let target = side.fallback else { return }
+		setFallback(nil, staged: staged)
+		var candidate: String? = target
+		while let path = candidate {
+			if let node = side.byPath[path] {
+				let row = outline.row(forItem: node)
+				if row >= 0 { outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false) }
+				return
+			}
+			// The row above may have been staged in the same gesture, so its
+			// folder is gone too; the folder above that is still a row.
+			let parent = (path as NSString).deletingLastPathComponent
+			candidate = parent.isEmpty ? nil : parent
+		}
+	}
+
+	/// Notes where the selection should land once these rows have been staged
+	/// away, before the command that takes them.
+	///
+	/// `TreeSelection.surviving` answers it: the nearest row above that is not
+	/// going. In an outline view "the sibling above, or the parent when there
+	/// is no sibling above" is the same movement, which is why one walk up the
+	/// visible rows gives both.
+	private func rememberWhereTheSelectionGoes(in outline: NSOutlineView, staged: Bool) {
+		setFallback(TreeSelection.surviving(above: Set(outline.selectedRowIndexes)) { row in
+			(outline.item(atRow: row) as? GitChangeNode)?.path
+		}, staged: staged)
+	}
+
+	private func setFallback(_ path: String?, staged: Bool) {
+		if staged { stagedSide.fallback = path } else { unstagedSide.fallback = path }
+	}
+
+	/// The side an outline view belongs to.
+	private func side(for outline: NSOutlineView) -> Side {
+		outline === stagedTable ? stagedSide : unstagedSide
+	}
+
 
 	private func updateCommitButton() {
 		let count = status.staged.count
@@ -326,28 +510,25 @@ final class ChangesPane: NSView {
 		return menu
 	}
 
-	/// The change the menu was opened on, whichever list it is in.
-	private var clickedChange: (change: GitChange, isStaged: Bool)? {
+	/// The row the menu was opened on, whichever list it is in.
+	private var clickedNode: (node: GitChangeNode, isStaged: Bool)? {
 		for table in [unstagedTable, stagedTable] {
-			guard let table else { continue }
-			let row = table.clickedRow >= 0 ? table.clickedRow : -1
-			guard row >= 0 else { continue }
-			let source = table === stagedTable ? status.staged : status.unstaged
-			guard source.indices.contains(row) else { continue }
-			return (source[row], table === stagedTable)
+			guard let table, table.clickedRow >= 0 else { continue }
+			guard let node = table.item(atRow: table.clickedRow) as? GitChangeNode else { continue }
+			return (node, table === stagedTable)
 		}
 		return nil
 	}
 
 	@objc private func revealClicked() {
-		guard let clicked = clickedChange else { return }
-		NSWorkspace.shared.activateFileViewerSelecting([root.appendingPathComponent(clicked.change.path)])
+		guard let clicked = clickedNode else { return }
+		NSWorkspace.shared.activateFileViewerSelecting([root.appendingPathComponent(clicked.node.path)])
 	}
 
 	@objc private func copyClickedPath() {
-		guard let clicked = clickedChange else { return }
+		guard let clicked = clickedNode else { return }
 		NSPasteboard.general.clearContents()
-		NSPasteboard.general.setString(clicked.change.path, forType: .string)
+		NSPasteboard.general.setString(clicked.node.path, forType: .string)
 	}
 
 	/// Offers a pattern for this file and writes it once it is agreed.
@@ -357,8 +538,8 @@ final class ChangesPane: NSView {
 	/// guessing wrong writes a line into a tracked file somebody else has to
 	/// notice and undo.
 	@objc private func ignoreClicked() {
-		guard let clicked = clickedChange else { return }
-		let path = clicked.change.path
+		guard let clicked = clickedNode else { return }
+		let path = clicked.node.path
 		let isDirectory = (try? root.appendingPathComponent(path)
 			.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
 		let suggestions = GitIgnore.suggestions(for: path, isDirectory: isDirectory)
@@ -417,25 +598,30 @@ final class ChangesPane: NSView {
 	/// The selection when the click landed inside it, and the clicked row
 	/// otherwise — the rule every list follows, and the one that makes
 	/// stashing a handful of files a single gesture.
-	private func stashablePaths() -> [String] {
-		guard let clicked = clickedChange else {
-			return (status.staged + status.unstaged).map(\.path)
+	/// What git is given, and how many changed files that covers — no longer the
+	/// same number, now that one of those paths can be a folder.
+	private func stashable() -> (paths: [String], files: Int) {
+		guard let clicked = clickedNode, let table = clicked.isStaged ? stagedTable : unstagedTable else {
+			let everything = status.staged + status.unstaged
+			return (GitChangeTree.reduce(everything.map(\.path)), everything.count)
 		}
-		let table = clicked.isStaged ? stagedTable : unstagedTable
-		let selected = selectedChanges(in: table ?? NSTableView()).map(\.path)
-		return selected.contains(clicked.change.path) ? selected : [clicked.change.path]
+		let selected = selectedPaths(in: table)
+		let chosen = GitChangeTree.reduce(
+			selected.contains(clicked.node.path) ? selected : [clicked.node.path]
+		)
+		let side = self.side(for: table)
+		return (chosen, chosen.reduce(0) { $0 + (side.byPath[$1]?.count ?? 1) })
 	}
 
 	@objc private func stashSelected() {
-		let paths = stashablePaths()
+		let (paths, files) = stashable()
 		guard !paths.isEmpty else { return }
+		let name = (paths[0] as NSString).lastPathComponent
 		promptForStashMessage(
-			title: paths.count == 1
-				? "Stash “\((paths[0] as NSString).lastPathComponent)”"
-				: "Stash \(paths.count) files",
+			title: files == 1 ? "Stash “\(name)”" : "Stash \(files) files",
 			message: "The changes come out of the working copy and wait in the list, "
 				+ "under whatever this says.",
-			suggestion: paths.count == 1 ? (paths[0] as NSString).lastPathComponent : ""
+			suggestion: files == 1 ? name : ""
 		) { [weak self] message in
 			guard let self else { return }
 			self.run { await GitStash.push(in: self.root, message: message, paths: paths) }
@@ -489,30 +675,47 @@ final class ChangesPane: NSView {
 		}
 	}
 
-	private func selectedChanges(in table: NSTableView) -> [GitChange] {
-		let source = table === stagedTable ? status.staged : status.unstaged
-		return table.selectedRowIndexes.compactMap { source.indices.contains($0) ? source[$0] : nil }
+	/// Return, or a double-click.
+	///
+	/// A double-click on a folder opens it, as it does in the project tree, and
+	/// only Return or the button stages one. Staging forty files off a stray
+	/// second click is a lot to have to undo, and the two trees in this window
+	/// answering the same gesture differently would be worse than either.
+	private func activate(row: Int, in outline: ChangesOutlineView) {
+		if row >= 0, let node = outline.item(atRow: row) as? GitChangeNode, node.isFolder {
+			if outline.isItemExpanded(node) { outline.collapseItem(node) } else { outline.expandItem(node) }
+			return
+		}
+		if outline === stagedTable { unstageSelected() } else { stageSelected() }
 	}
 
 	@objc private func stageClicked() {
-		guard let clicked = clickedChange else { return }
-		run { await GitWorkingCopy.stage(paths: [clicked.change.path], in: self.root) }
+		guard let clicked = clickedNode else { return }
+		run { await GitWorkingCopy.stage(paths: [clicked.node.path], in: self.root) }
 	}
 
 	@objc private func unstageClicked() {
-		guard let clicked = clickedChange else { return }
-		run { await GitWorkingCopy.unstage(paths: [clicked.change.path], in: self.root) }
+		guard let clicked = clickedNode else { return }
+		run { await GitWorkingCopy.unstage(paths: [clicked.node.path], in: self.root) }
 	}
 
+	/// Stages what is selected — a folder as one path, which is the whole of
+	/// what folder staging costs.
+	///
+	/// `git add` has always taken a directory and `-A` already means a deletion
+	/// under it is staged as a deletion, so a folder is one argument instead of
+	/// forty in the same argument list. `unstage` is the same shape.
 	private func stageSelected() {
-		let paths = selectedChanges(in: unstagedTable).map(\.path)
+		let paths = GitChangeTree.reduce(selectedPaths(in: unstagedTable))
 		guard !paths.isEmpty else { return }
+		rememberWhereTheSelectionGoes(in: unstagedTable, staged: false)
 		run { await GitWorkingCopy.stage(paths: paths, in: self.root) }
 	}
 
 	private func unstageSelected() {
-		let paths = selectedChanges(in: stagedTable).map(\.path)
+		let paths = GitChangeTree.reduce(selectedPaths(in: stagedTable))
 		guard !paths.isEmpty else { return }
+		rememberWhereTheSelectionGoes(in: stagedTable, staged: true)
 		run { await GitWorkingCopy.unstage(paths: paths, in: self.root) }
 	}
 
@@ -603,17 +806,76 @@ final class ChangesPane: NSView {
 
 	/// Selects the first unstaged change, so the screenshot harness can verify
 	/// the diff without a click.
+	///
+	/// The first *file*: row 0 is a folder as soon as anything has changed
+	/// below the root, and a folder has no diff to show.
 	func selectFirstChangeForTesting() {
-		guard !status.unstaged.isEmpty else { return }
-		unstagedTable.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+		for row in 0..<unstagedTable.numberOfRows {
+			guard (unstagedTable.item(atRow: row) as? GitChangeNode)?.change != nil else { continue }
+			unstagedTable.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+			return
+		}
+	}
+
+	/// What the two trees are showing, as lines, for driving the pane from the
+	/// command line. Indented by depth, with a folder's tally after its name.
+	func changesTreeForTesting() -> String {
+		var lines: [String] = []
+		for (title, outline) in [("Unstaged", unstagedTable!), ("Staged", stagedTable!)] {
+			lines.append("\(title) (\(outline.numberOfRows) rows)")
+			for row in 0..<outline.numberOfRows {
+				guard let node = outline.item(atRow: row) as? GitChangeNode else { continue }
+				let indent = String(repeating: "  ", count: outline.level(forRow: row) + 1)
+				let selected = outline.selectedRowIndexes.contains(row) ? " <-" : ""
+				if node.isFolder {
+					let tally = node.isPartial ? "\(node.count) of \(node.total)" : "\(node.count)"
+					let shut = outline.isItemExpanded(node) ? "" : " [shut]"
+					lines.append("\(indent)\(node.name)/  \(tally)\(shut)\(selected)")
+				} else {
+					lines.append("\(indent)\(node.name)\(selected)")
+				}
+			}
+		}
+		return lines.joined(separator: "\n")
+	}
+
+	/// Selects the rows whose paths these are, in the named list, and stages or
+	/// unstages them — the keyboard's gesture, driven from outside.
+	func stageForTesting(paths: [String], staged: Bool) {
+		let outline = staged ? stagedTable! : unstagedTable!
+		let side = self.side(for: outline)
+		let rows = TreeSelection.rows(for: paths) { path in
+			guard let node = side.byPath[path] else { return -1 }
+			return outline.row(forItem: node)
+		}
+		guard !rows.isEmpty else { return }
+		outline.selectRowIndexes(IndexSet(rows), byExtendingSelection: false)
+		// What git is actually given, which is the claim worth printing: a
+		// screenshot of the tree afterwards cannot show whether the folder went
+		// as one argument or as forty.
+		print("CHANGES \(staged ? "unstage" : "stage"): "
+			+ GitChangeTree.reduce(selectedPaths(in: outline)).joined(separator: " "))
+		if staged { unstageSelected() } else { stageSelected() }
+	}
+
+	/// Folds a folder shut or open, so a refresh can be asked what it did with
+	/// it — and so that reopening one by hand can be asked whether what is
+	/// inside it came back open too.
+	func setExpandedForTesting(path: String, expanded: Bool, staged: Bool) {
+		let outline = staged ? stagedTable! : unstagedTable!
+		guard let node = side(for: outline).byPath[path] else { return }
+		if expanded { outline.expandItem(node) } else { outline.collapseItem(node) }
 	}
 
 	func applyThemeChange() {
 		layer?.backgroundColor = Theme.current.sidebarBackground.cgColor
 		subjectField.font = Theme.current.uiFont(12)
 		bodyView.font = Theme.current.uiFont(12)
-		unstagedTable.reloadData()
-		stagedTable.reloadData()
+		// A zoom changes the indent as well as the type, and through `reload`
+		// so that the trees come back open where they were open.
+		unstagedTable.indentationPerLevel = Theme.current.scaled(14)
+		stagedTable.indentationPerLevel = Theme.current.scaled(14)
+		reload()
 	}
 }
 
@@ -629,7 +891,7 @@ extension ChangesPane: NSMenuDelegate {
 			return entry
 		}
 
-		guard let clicked = clickedChange else {
+		guard let clicked = clickedNode else {
 			// Nothing under the pointer, so the only thing on offer is what
 			// applies to the lot.
 			if !status.staged.isEmpty || !status.unstaged.isEmpty {
@@ -638,19 +900,29 @@ extension ChangesPane: NSMenuDelegate {
 			return
 		}
 
-		menu.addItem(item(clicked.isStaged ? "Unstage" : "Stage", clicked.isStaged
-			? #selector(unstageClicked) : #selector(stageClicked)))
+		// A folder says how much it is about to take. "Stage" over a folder of
+		// forty files is the same three words as over one file, and the
+		// difference between them is the whole reason folder staging is worth
+		// having and the whole reason it is worth being careful with.
+		let verb = clicked.isStaged ? "Unstage" : "Stage"
+		let title = clicked.node.isFolder
+			? "\(verb) “\(clicked.node.name)” (\(clicked.node.count) file"
+				+ "\(clicked.node.count == 1 ? "" : "s"))"
+			: verb
+		menu.addItem(item(title, clicked.isStaged ? #selector(unstageClicked) : #selector(stageClicked)))
 		menu.addItem(.separator())
 		// Only for something git is not already tracking: ignoring a tracked
-		// file does nothing, which is a confusing thing to offer.
-		if clicked.change.kind == .untracked {
+		// file does nothing, which is a confusing thing to offer. Never for a
+		// folder — `-uall` reports the files inside an untracked directory
+		// individually, so a folder row here is always one this pane invented.
+		if clicked.node.change?.kind == .untracked {
 			menu.addItem(item("Add to .gitignore\u{2026}", #selector(ignoreClicked)))
 		}
 		menu.addItem(.separator())
 		// What is chosen, or what was clicked when nothing is.
-		let chosen = stashablePaths()
+		let chosen = stashable().files
 		menu.addItem(item(
-			chosen.count > 1 ? "Stash \(chosen.count) Files…" : "Stash This File…",
+			chosen > 1 ? "Stash \(chosen) Files…" : "Stash This File…",
 			#selector(stashSelected)
 		))
 		menu.addItem(item("Stash All Changes…", #selector(stashEverything)))
@@ -660,32 +932,72 @@ extension ChangesPane: NSMenuDelegate {
 	}
 }
 
-extension ChangesPane: NSTableViewDataSource, NSTableViewDelegate {
-	func numberOfRows(in tableView: NSTableView) -> Int {
-		(tableView === stagedTable ? status.staged : status.unstaged).count
+extension ChangesPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
+	func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
+		guard let node = item as? GitChangeNode else { return side(for: outlineView).roots.count }
+		return node.children.count
 	}
 
-	func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+	func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
+		guard let node = item as? GitChangeNode else { return side(for: outlineView).roots[index] }
+		return node.children[index]
+	}
+
+	func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
+		(item as? GitChangeNode)?.isFolder ?? false
+	}
+
+	func outlineView(_ outlineView: NSOutlineView, heightOfRowByItem item: Any) -> CGFloat {
 		Theme.current.scaled(22)
 	}
 
-	func tableView(_ tableView: NSTableView, viewFor column: NSTableColumn?, row: Int) -> NSView? {
-		let source = tableView === stagedTable ? status.staged : status.unstaged
-		guard source.indices.contains(row) else { return nil }
-		return ChangeRowView(change: source[row])
+	func outlineView(_ outlineView: NSOutlineView, viewFor column: NSTableColumn?, item: Any) -> NSView? {
+		guard let node = item as? GitChangeNode else { return nil }
+		guard let change = node.change else {
+			return ChangeFolderRowView(node: node, isStaged: outlineView === stagedTable)
+		}
+		return ChangeRowView(change: change)
 	}
 
-	func tableViewSelectionDidChange(_ notification: Notification) {
-		guard let table = notification.object as? NSTableView else { return }
-		guard let change = selectedChanges(in: table).first else { return }
+	func outlineView(_ outlineView: NSOutlineView, typeSelectStringFor column: NSTableColumn?, item: Any) -> String? {
+		(item as? GitChangeNode)?.name
+	}
+
+	func outlineViewItemDidExpand(_ notification: Notification) {
+		guard !isRestoring, let outline = notification.object as? NSOutlineView else { return }
+		guard let node = notification.userInfo?["NSObject"] as? GitChangeNode else { return }
+		// What is inside it comes back open too, unless it was shut on purpose.
+		// The children are new objects since the last rebuild, so the outline
+		// view has no memory of them and would otherwise hand back a folder
+		// whose insides are shut while everything around it is open.
+		isRestoring = true
+		expand(node.children, in: outline, collapsed: side(for: outline).collapsed)
+		isRestoring = false
+	}
+
+	func outlineViewSelectionDidChange(_ notification: Notification) {
+		// Not while the pane is putting its own selection back: a refresh runs
+		// on every filesystem event, and reopening the diff each time would
+		// throw away wherever somebody had scrolled to in it.
+		guard !isRestoring else { return }
+		guard let outline = notification.object as? NSOutlineView else { return }
+		guard outline.numberOfSelectedRows > 0 else { return }
 
 		// Selecting in one list clears the other, so the diff on screen always
 		// belongs to the row that is highlighted.
-		let other = table === stagedTable ? unstagedTable : stagedTable
+		let other = outline === stagedTable ? unstagedTable : stagedTable
 		if !(other?.selectedRowIndexes.isEmpty ?? true) {
 			other?.deselectAll(nil)
 		}
 
+		// A folder has no diff of its own — it is not a thing git can be asked
+		// about — so selecting one leaves up whatever was being read. Clearing
+		// the pane on the way past a folder row would make arrowing down
+		// through the tree flash it empty every second row.
+		let changes = outline.selectedRowIndexes.sorted().compactMap {
+			(outline.item(atRow: $0) as? GitChangeNode)?.change
+		}
+		guard let change = changes.first else { return }
 		onSelectChange?(change)
 	}
 }
@@ -696,14 +1008,19 @@ extension ChangesPane: NSTextFieldDelegate {
 	}
 }
 
-/// Table that reports Return and double-click, for stage/unstage.
-private final class ChangesTableView: NSTableView {
-	var onActivate: (() -> Void)?
+/// Tree that reports Return and double-click, for stage/unstage.
+///
+/// Left and right arrows are left to `NSOutlineView`, which already folds and
+/// unfolds with them — the keyboard expansion the navigator has, for nothing.
+private final class ChangesOutlineView: NSOutlineView {
+	/// The row under the pointer for a click, and -1 from the keyboard, where
+	/// the selection is what counts rather than any one row.
+	var onActivate: ((Int) -> Void)?
 
 	override func keyDown(with event: NSEvent) {
 		// 36 is Return, 76 the numeric keypad's.
 		if event.keyCode == 36 || event.keyCode == 76 {
-			onActivate?()
+			onActivate?(-1)
 			return
 		}
 		super.keyDown(with: event)
@@ -711,7 +1028,7 @@ private final class ChangesTableView: NSTableView {
 
 	override func mouseDown(with event: NSEvent) {
 		super.mouseDown(with: event)
-		if event.clickCount == 2 { onActivate?() }
+		if event.clickCount == 2 { onActivate?(clickedRow) }
 	}
 }
 
@@ -770,7 +1087,12 @@ private final class SectionHeaderView: NSView {
 	}
 }
 
-/// One changed path: status letter, icon, name, then the directory.
+/// One changed file: git's status letter, then the name.
+///
+/// No directory after the name any more. The row sits under the folders it is
+/// in, so repeating them on every row would be the flat list drawn inside the
+/// tree — and it was only ever there because there was nowhere else to say
+/// which of three `GitBlame.swift` was which.
 private final class ChangeRowView: NSView {
 	private let change: GitChange
 
@@ -803,34 +1125,12 @@ private final class ChangeRowView: NSView {
 		))
 		x = badge.maxX + Theme.current.scaled(6)
 
-		// The name first, and it gives way before the directory does: two files
-		// with the same name in different places are told apart by the
-		// directory, so that is the part worth keeping when the pane is narrow.
-		let limit = bounds.maxX - RowMetrics.trailingInset
-		x = RowMetrics.draw(
+		RowMetrics.draw(
 			change.name,
 			font: Theme.current.uiFont(12),
 			colour: Theme.current.sidebarText,
-			at: x, in: bounds, limit: limit
+			at: x, in: bounds, limit: bounds.maxX - RowMetrics.trailingInset
 		)
-
-		guard !change.directory.isEmpty else { return }
-		let paragraph = NSMutableParagraphStyle()
-		// From the head: the end of a path says where the file is; the start of
-		// it is the same for everything in the project.
-		paragraph.lineBreakMode = .byTruncatingHead
-		let directory = NSAttributedString(string: change.directory, attributes: [
-			.font: Theme.current.uiFont(10.5),
-			.foregroundColor: Theme.current.gitIgnored,
-			.paragraphStyle: paragraph,
-		])
-		let start = x + Theme.current.scaled(6)
-		directory.draw(in: NSRect(
-			x: start,
-			y: bounds.midY - directory.size().height / 2,
-			width: max(0, limit - start),
-			height: directory.size().height
-		))
 	}
 
 	private func letter(for kind: GitChange.Kind) -> String {
@@ -856,6 +1156,75 @@ private final class ChangeRowView: NSView {
 	}
 }
 
+
+/// A folder with changes under it: the navigator's folder glyph, the name, and
+/// how much of what changed under it is on this side of the index.
+///
+/// **Half staged is a state git does not have.** A folder is not something it
+/// tracks, so nothing in `git status` can be asked whether a directory is
+/// wholly in the index; the pane works it out by counting, and then has to say
+/// so, because two lists make a folder sitting under "Staged" look finished and
+/// somebody who reads it that way commits half of it.
+///
+/// It says so as a number rather than a new symbol to learn: `6` when
+/// everything that changed under the folder is on this side, and `4 of 6` — in
+/// the colour a modified file is drawn in, so it reads as something to look at
+/// — when it is not. There is no checkbox to give a mixed state to and there
+/// was never going to be one: the pane is deliberately two lists rather than
+/// one with ticks, which is what lets it show a file that is in both.
+private final class ChangeFolderRowView: NSView {
+	private let node: GitChangeNode
+
+	override var isFlipped: Bool { true }
+
+	init(node: GitChangeNode, isStaged: Bool) {
+		self.node = node
+		super.init(frame: .zero)
+
+		// The count is small and the arithmetic behind it is not obvious, so
+		// the sentence is on the row rather than in a release note.
+		let side = isStaged ? "staged" : "not staged"
+		toolTip = node.isPartial
+			? "\(node.count) of the \(node.total) changes under \(node.path) are \(side). "
+				+ "\(isStaged ? "Unstaging" : "Staging") the folder takes all of them."
+			: "\(node.count) change\(node.count == 1 ? "" : "s") under \(node.path), all \(side)."
+	}
+
+	required init?(coder: NSCoder) { fatalError("not used") }
+
+	override func draw(_ dirtyRect: NSRect) {
+		var x = Theme.current.scaled(8)
+		let glyph = Theme.current.scaled(13)
+
+		// In the slot the status letter occupies on a file row, and fitted
+		// rather than stretched to fill it: `folder.fill` is half again as wide
+		// as it is tall, and squeezed into a square it stops looking like a
+		// folder at all — a rounded box with a notch, next to a tree of real
+		// folders in the same window.
+		FileIcon.folder()?.drawFitted(
+			in: NSRect(x: x, y: bounds.midY - glyph / 2, width: glyph, height: glyph)
+		)
+		x += glyph + Theme.current.scaled(6)
+
+		let tally = NSAttributedString(
+			string: node.isPartial ? "\(node.count) of \(node.total)" : "\(node.count)",
+			attributes: [
+				.font: Theme.current.uiFont(10.5, weight: node.isPartial ? .semibold : .regular),
+				.foregroundColor: node.isPartial ? Theme.current.gitModified : Theme.current.gitIgnored,
+			]
+		)
+		let size = tally.size()
+		let right = bounds.maxX - RowMetrics.trailingInset
+		tally.draw(at: NSPoint(x: right - size.width, y: bounds.midY - size.height / 2))
+
+		RowMetrics.draw(
+			node.name,
+			font: Theme.current.uiFont(12, weight: .medium),
+			colour: Theme.current.sidebarText,
+			at: x, in: bounds, limit: right - size.width - Theme.current.scaled(6)
+		)
+	}
+}
 
 /// A text field with room around its text.
 ///
