@@ -214,10 +214,6 @@ comments already record from the last time.
   the cheapest possible test of whether the format is one anybody would keep,
   and not evidence that anybody else will.
 
-## Estimate
-
-2026-08-11 07:11 — about an hour
-
 ## Steps
 
 - [x] A card's progress comes from the worktree when there is one, found by
