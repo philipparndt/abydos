@@ -139,8 +139,8 @@ decision below being a real one.
       callers follow — it already did, and there was nothing for the callers
       to follow. See below.
 - [x] `rasterScale` in both renderers, one decision for both — `nonisolated`
-- [ ] The four tidying ones
-- [ ] The three `try? #require` in `RenameOfferTests`, which assert nothing
+- [x] The four tidying ones
+- [x] The three `try? #require` in `RenameOfferTests`, which assert nothing
 - [ ] Decide whether the vendored grammars get a flag, and say why either way
 - [ ] Decide how a warning gets noticed next time, and put that in place
 - [ ] Write down here what was ruled out on the way

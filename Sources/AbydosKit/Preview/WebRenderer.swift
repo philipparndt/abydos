@@ -148,7 +148,9 @@ public final class WebRenderer {
 	private func startReaping() {
 		guard reaper == nil else { return }
 		reaper = Task { [weak self] in
-			while let self, await self.reapIfIdle() {
+			// No `await` on the call: this renderer is main-actor isolated, so the
+			// task it starts is too, and `reapIfIdle` is a plain call from here.
+			while let self, self.reapIfIdle() {
 				try? await Task.sleep(nanoseconds: 30_000_000_000)
 			}
 		}

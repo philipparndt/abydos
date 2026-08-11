@@ -2651,7 +2651,7 @@ final class EditorViewController: NSViewController {
 	/// notes.
 	func globalScratchDirectoryForTesting() -> String {
 		let before = Set(ScratchFiles.global().all())
-		tabBar.contextMenuTitlesForTesting(overTab: false)  // builds the same menu
+		_ = tabBar.contextMenuTitlesForTesting(overTab: false)  // builds the same menu
 		newScratch(global: true)
 		guard let made = ScratchFiles.global().all().first(where: { !before.contains($0) })
 		else { return "nothing created" }
