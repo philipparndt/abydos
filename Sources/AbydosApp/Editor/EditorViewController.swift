@@ -2945,13 +2945,18 @@ final class EditorStatusView: NSView {
 		let attributed = NSAttributedString(string: serverText, attributes: truncating)
 		let size = attributed.size()
 
-		// Dropped rather than shown as two letters and an ellipsis. A chip
-		// reading `ru…` says nothing anybody can use, and what it would be
-		// crowding out — the language and where the caret is — is what this bar
-		// was for before the chip existed.
+		// Whether there is room to say it, and how much of it is said, decided in
+		// `LanguageServerFooter` — a rule the suite can reach rather than a
+		// comparison written where the drawing is. 0467 is why: the rule used to
+		// be here, it asked the wrong question, and nothing in the suite could
+		// see it ask.
 		let room = right - Theme.current.scaled(12) - Theme.current.scaled(10)
-		let width = min(size.width, room)
-		guard width >= Theme.current.scaled(56) else { return }
+		guard let fits = LanguageServerFooter.chipWidth(
+			text: Double(size.width),
+			room: Double(room),
+			legibleAt: Double(Theme.current.scaled(56))
+		) else { return }
+		let width = CGFloat(fits)
 
 		let origin = NSPoint(x: right - Theme.current.scaled(12) - width, y: bounds.midY - size.height / 2)
 		serverRect = chipRect(around: origin, size: NSSize(width: width, height: size.height))

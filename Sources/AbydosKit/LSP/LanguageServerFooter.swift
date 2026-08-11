@@ -117,6 +117,32 @@ public struct LanguageServerFooter: Equatable, Sendable {
 		}
 	}
 
+	/// How wide the chip is drawn in the room the caret's position and the
+	/// language leave it, or nil when it should not be drawn at all.
+	///
+	/// **Here rather than in the bar, because it is a rule and not a layout.**
+	/// 0467 is what the other arrangement cost: the bar asked whether the width
+	/// it was about to draw reached a floor, and `gopls` — thirty points, five
+	/// characters — never reached it in an editor of any width. The chip was
+	/// missing for every short server name from the day it shipped, over a
+	/// server that was answering, and nothing could say so: the suite cannot
+	/// reach the view, and every state 0463 photographed said `rust-analyzer`
+	/// with an image tag after it, which is two hundred points.
+	///
+	/// The floor is about a chip that has to be *cut*. `ru…` says nothing
+	/// anybody can use, and what it crowds out — the language, where the caret
+	/// is — is what this bar was for before the chip existed. A name that fits
+	/// in the room is not being cut and is drawn whatever its length.
+	///
+	/// - Parameters:
+	///   - text: what the whole chip would measure, drawn.
+	///   - room: what is left of the bar to the left of the position.
+	///   - legibleAt: the least a truncated chip may be and still be read.
+	public static func chipWidth(text: Double, room: Double, legibleAt floor: Double) -> Double? {
+		guard room >= min(text, floor) else { return nil }
+		return min(text, room)
+	}
+
 	/// The whole of it, for the tool tip, in sentences.
 	///
 	/// The last line says where the click goes, because a chip that is a control

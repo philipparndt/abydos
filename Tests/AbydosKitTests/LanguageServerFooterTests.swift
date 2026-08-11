@@ -115,3 +115,48 @@ struct LanguageServerFooterTests {
 		#expect(image.origin == .image("golang/gopls:latest"))
 	}
 }
+
+/// Whether the chip is drawn at all, and how much of it.
+///
+/// This is 0467, and 0467 is a rule that lived in the view. The bar asked
+/// whether the width it was about to draw reached a floor of 56 points — and
+/// `gopls` is thirty points wide, so it failed that question in an editor of
+/// any width and the chip was simply absent for every short server name from
+/// the morning it shipped. Nothing could catch it: the geometry was in the app
+/// target, where this suite cannot reach, and every example anybody wrote or
+/// photographed said `rust-analyzer`, which is wide enough to pass.
+///
+/// So the rule is a value now, and these are the cases it has.
+struct LanguageServerChipWidthTests {
+	private let floor = 56.0
+
+	/// The regression itself, in the numbers measured off the window it was
+	/// reported from: `gopls` at 30 points, with 1204 points of empty bar left
+	/// of the caret's position.
+	@Test func aShortNameIsDrawnWhenThereIsRoomForIt() {
+		#expect(LanguageServerFooter.chipWidth(text: 30, room: 1204, legibleAt: floor) == 30)
+	}
+
+	/// The floor is about a chip being *cut*, and a name that fits in less than
+	/// the floor is not a chip being cut.
+	@Test func theFloorDoesNotApplyToANameThatFits() {
+		#expect(LanguageServerFooter.chipWidth(text: 30, room: 30, legibleAt: floor) == 30)
+		#expect(LanguageServerFooter.chipWidth(text: 55, room: 55, legibleAt: floor) == 55)
+	}
+
+	/// What the floor is for: `ru…` says nothing anybody can use, and what it
+	/// crowds out — the language, where the caret is — is what this bar was for
+	/// before the chip existed.
+	@Test func aChipCutBelowWhatCanBeReadIsDroppedInstead() {
+		#expect(LanguageServerFooter.chipWidth(text: 200, room: 40, legibleAt: floor) == nil)
+		#expect(LanguageServerFooter.chipWidth(text: 30, room: 12, legibleAt: floor) == nil)
+	}
+
+	/// And a long chip in room enough to cut it usefully takes the room it has,
+	/// since the name is written first and the image tag is what the ellipsis
+	/// eats.
+	@Test func aLongChipIsCutToTheRoomItHas() {
+		#expect(LanguageServerFooter.chipWidth(text: 200, room: 120, legibleAt: floor) == 120)
+		#expect(LanguageServerFooter.chipWidth(text: 200, room: 300, legibleAt: floor) == 200)
+	}
+}
