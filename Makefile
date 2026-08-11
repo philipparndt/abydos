@@ -84,6 +84,20 @@ TEST_TIMEOUT ?= 300
 test: ## Run the test suite (FILTER=name, TEST_TIMEOUT=seconds)
 	@Scripts/run-tests.sh $(TEST_TIMEOUT) $(SWIFT) test $(SWIFT_JOBS) $(if $(FILTER),--filter $(FILTER))
 
+# Nothing above depends on this, and that is the design.
+#
+# 0465 swept fifteen warnings out of a build that had had eight the same
+# morning: an incremental build only reports the files it recompiled, so a
+# warning is seen once by whoever happens to be watching the tail of a build and
+# then never again. `-warnings-as-errors` across the package is not the answer —
+# a wall that stops work gets turned off, and the vendored grammars are upstream
+# C that this repository does not get to fix. So: one verb somebody runs, which
+# recompiles all of this repository's code and none of anybody else's, and which
+# fails only on warnings that are ours. Run it before finishing a backlog item.
+.PHONY: warnings
+warnings: ## Every warning in this repository's own code (JOBS=N)
+	@JOBS="$(JOBS)" Scripts/warnings.sh
+
 .PHONY: perf
 perf: ## Run the performance suite in release and print timings
 	@$(SWIFT) test $(SWIFT_JOBS) -c release --filter PerformanceTests 2>&1 | grep -E '^PERF|Test run with'

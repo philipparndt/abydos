@@ -141,10 +141,94 @@ what these become.
 Four new warnings in one day, from two merges, is the argument for the last
 decision below being a real one.
 
+## The vendored grammars keep their warnings
+
+**No flag.** `Sources/Grammars/TreeSitter{Python,YAML}Vendored` go on printing
+their four `-Wshorten-64-to-32`, and `Package.swift` now says why beside the
+list they are in:
+
+- The only way to pass a warning option in a manifest is `.unsafeFlags`, and an
+  `unsafeFlags` anywhere in a manifest stops the package being usable as a
+  dependency of anything. This one vends `AbydosKit` and `AbydosApp` as products.
+- Silencing the class would silence a *new* truncation arriving with the next
+  `Scripts/vendor-grammars.sh` run, which is exactly the moment somebody wants to
+  see one. These are five files the repository carries and nobody here reads.
+
+All four are in the serialisation path and harmless there — what they truncate
+into is bounded by `TREE_SITTER_SERIALIZATION_BUFFER_SIZE` — which is the reason
+it is safe to leave them printing rather than the reason to hide them.
+
+## How a warning gets noticed next time
+
+`make warnings` — `Scripts/warnings.sh`. One verb, about a minute, exits
+non-zero on a warning that is ours and prints every one with a file and a line.
+`project.md` now says to run it before finishing an item, which is the moment it
+was written for.
+
+Three things it had to get right, each of which cost a version:
+
+1. **An incremental build cannot answer the question.** It only reports the files
+   it recompiled, which is the whole reason eight became fifteen unnoticed. But a
+   clean scratch path means eighteen grammar packages, a 20 MB generated Kotlin
+   parser and draw.io — several minutes to be told about our own Swift, which is
+   how a check stops being run. So it keeps its scratch path (`build/warnings`,
+   its own, so it does not throw away anybody's incremental build) and deletes
+   one directory inside it: `out/Intermediates.noindex/Abydos.build`, which is
+   everything this package compiles and nothing anybody else's. **67 seconds
+   measured, `-j 4`**, against about two minutes cold. And there is no target
+   list to keep in step with `Package.swift` — the rule is the package's name.
+2. **Both halves.** `swift build` and then `swift build --build-tests` in the
+   same scratch path; one of the fifteen was in a file no test target sees.
+3. **A grep for a path undercounts.** Three of the fifteen were printed as
+   `macro expansion @Test:13:388: warning: …` with no file on the line at all,
+   and the item's own collection had missed all three. The script greps for a
+   warning and then puts the file back on the front, taking it from the
+   `expanded code originates here` note the compiler prints underneath.
+
+It is deliberately **not** `-warnings-as-errors`, and not wired into `make
+build` or `make test`: a wall that stops work gets turned off, and this package
+could not have that wall anyway while it carries upstream C.
+
+Checked by breaking it on purpose — an unmutated `var` in `AbydosKit`, and
+`nonisolated` taken back off `ExampleMermaidTests.examples` — and both came back
+named, with paths, and the exit status was 1.
+
+## Ruled out
+
+- **Making the *outer* capture weak and leaving the fix in
+  `EditorViewController`**, which is what the item proposed. It works and the
+  warning goes, but nothing can test it: `AbydosKitTests` is the only test
+  target and it does not depend on `AbydosApp`, so there is no way to make the
+  claim checkable from where the code was. Hence `WeakRelay` in `AbydosKit` —
+  one caller, which is worth it here because the claim is a lifetime and a
+  lifetime is exactly the sort of thing nobody notices being broken again.
+- **`guard let self` before the `await` in the rename task.** That binds `self`
+  strongly for the whole of the round trip, which is the thing being fixed. It
+  goes after.
+- **A strong `self` on the decode queue** — `queue.async { [weak self] in … ;
+  guard let self else { return }; … }`. Reads well, removes the warning, and
+  puts the last release of an `NSViewController` on a background queue whenever
+  the main thread let go during the decode. `WeakRelay` holds the owner weakly at
+  both hops and strongly nowhere, so that cannot happen.
+- **Moving `rasterScale` out of the two renderers into one shared constant.**
+  They are equal today by coincidence; each is a decision about that renderer's
+  own output. Two `nonisolated` constants, not one.
+- **`scale: Double? = nil` with the default resolved inside the body**, which
+  would also have removed the isolation warning. It hides the default from the
+  signature, and what the number is happens to be the interesting part of it.
+- **`-Wno-shorten-64-to-32` on the vendored targets**, above.
+- **A known-noise list in the checker.** The vendored C is separated by *path*
+  (`Sources/Grammars/*Vendored`) rather than by a list of accepted warnings. A
+  list of accepted warnings needs editing every time upstream moves a line, and
+  a list nobody can be bothered to edit becomes a list that hides things.
+- **`_ =` on the dropped `try?` in `makeGoProject`.** The fixture's `go.mod` not
+  being written leaves a directory the Go server has no reason to be rooted at,
+  and the function already had a nil for "no fixture" — so the failure goes
+  there and the `#require` at the call site names it.
 
 ## Estimate
 
-2026-08-11 17:20 — about three hours left
+2026-08-11 17:39 — about an hour left
 
 ## Steps
 
@@ -160,8 +244,10 @@ decision below being a real one.
       `@Test(arguments:)` tables — found only because the first count was wrong
 - [x] The four tidying ones
 - [x] The three `try? #require` in `RenameOfferTests`, which assert nothing
-- [ ] Decide whether the vendored grammars get a flag, and say why either way
-- [ ] Decide how a warning gets noticed next time, and put that in place
-- [ ] Write down here what was ruled out on the way
+- [x] Decide whether the vendored grammars get a flag, and say why either way —
+      no flag, and `Package.swift` says why beside the list
+- [x] Decide how a warning gets noticed next time, and put that in place —
+      `make warnings`, and `project.md` says when to run it
+- [x] Write down here what was ruled out on the way
 - [ ] `spec/<capability>.md` says what the project now does, if anything
       user-visible changed — the weak capture is the only candidate

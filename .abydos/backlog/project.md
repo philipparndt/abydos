@@ -11,11 +11,21 @@ the cluster arrange themselves around it.
     make run        # build debug and launch it
     make dev        # build debug and run in the foreground, logs on the terminal
     make test       # the suite (FILTER=name, TEST_TIMEOUT=seconds)
+    make warnings   # every warning in this repository's own code
     make install    # copy into /Applications
 
 Swift Package Manager underneath; `make` exists because the app is a bundle and
 `swift run` cannot make one. Xcode 16 or newer, macOS 14 or newer. `make help`
 lists the rest.
+
+**`make warnings` before finishing an item.** It is not part of `make build` on
+purpose — nothing is `-warnings-as-errors` here, and a wall that stops work gets
+turned off — so it is a verb somebody runs, and if nobody runs it the count goes
+back up. An ordinary build cannot answer the question: it is incremental, and it
+only reports the files it recompiled, so a warning is seen once by whoever
+happens to be watching the tail of a build and then never again. 0465 is the
+account of what that costs. About a minute, and it fails on warnings that are
+ours while counting the vendored grammars' C apart, because that is upstream's.
 
 Some suites need something running — Docker or Apple's `container`, a
 Kubernetes context, a language server. Those are named `…LiveTests` and skip
