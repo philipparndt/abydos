@@ -73,6 +73,24 @@ proxy and the proxy refuses a component a custom toolchain has not got.
 So the shape of the item stands as written. Neither route answers that project,
 and no amount of work here changes it.
 
+**Both sentences were driven against the real project**, not only against a
+temporary directory. `--open ~/dev/smarthome/projects/opentherm-wolf-cwl --file
+esp32/src/config.rs --lsp-banner report`, on a build of this branch, says:
+
+    This project pins the Rust toolchain ‘esp’, and the copy of it on this
+    machine has no rust-analyzer in it, so nothing here can read the project.
+
+and with `rust-analyzer` set to come from an image:
+
+    This project pins the Rust toolchain ‘esp’, which is installed by name on a
+    machine and is in no image, so rust-analyzer will start and then answer
+    nothing about it.
+
+`images/the-strip-on-the-esp-project.png` is the first of those above the file.
+The old failure is still visible underneath it in the earlier of those runs —
+the "rust-analyzer did not answer" toast, arriving seconds later, which is what
+this replaces as the first thing anybody hears.
+
 **The state before a server starts is worth more than it looks.** Everything
 needed to know this project cannot be read is on disk: the channel is in a file,
 the image's toolchain was decided when the image was built, and whether the
@@ -136,7 +154,7 @@ nothing.
 
 ## Estimate
 
-2026-08-11 10:17 — the work is done; the suite still to run through
+2026-08-11 10:26 — done, bar the final suite
 
 ## Steps
 
