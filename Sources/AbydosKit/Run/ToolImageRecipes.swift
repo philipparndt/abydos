@@ -140,9 +140,46 @@ public enum ToolImageRecipes {
 
 	/// What a stored value means, once. Anything that is not the "build it here"
 	/// word is an image name and is left exactly as it was.
+	///
+	/// `build:<recipe>` names a *different* recipe for the same tool, and 0466 is
+	/// why there is one. A tool usually has one recipe and `build` is the whole
+	/// question; rust-analyzer has two, because a project pinning Espressif's fork
+	/// needs an image built on a gigabyte of Espressif's toolchain and no other
+	/// Rust project should pay for that. So
+	/// `{"rust-analyzer": {"image": "build:rust-analyzer-esp"}}` builds
+	/// `ToolImages/rust-analyzer-esp/Dockerfile`, and everything downstream is
+	/// unchanged: the name is still `abydos-built/<recipe>:<fingerprint>`, so
+	/// `recipe(forImage:)` finds its way back, an edited recipe still rebuilds, and
+	/// nothing had to learn about variants.
+	///
+	/// Deliberately not offered in Settings ▸ Tools. A second recipe exists for a
+	/// property of a *project* — which channel it pins — and a person choosing it
+	/// for every project they open would be choosing the Espressif toolchain for
+	/// their ordinary Rust as well.
 	public static func resolve(image stored: String, forTool tool: String) -> String? {
-		guard stored == buildHere else { return stored.isEmpty ? nil : stored }
-		return recipe(forTool: tool)?.image
+		if stored == buildHere { return recipe(forTool: tool)?.image }
+		if stored.hasPrefix(buildHere + ":") {
+			let named = String(stored.dropFirst(buildHere.count + 1))
+			return named.isEmpty ? nil : recipe(forTool: named)?.image
+		}
+		return stored.isEmpty ? nil : stored
+	}
+
+	/// Whether an image is one of this repository's recipes chosen *instead of* a
+	/// tool's own, which is the only way a recipe answering a custom toolchain
+	/// channel can be asked for.
+	///
+	/// It exists so `ToolchainPins.objection` can stop objecting to it. The app
+	/// cannot know what is inside a stranger's image and warns about every one of
+	/// them for that reason — but a recipe in `ToolImages/` is this project's own
+	/// file, and shipping one at all is this project saying it answers the channel.
+	/// Reading its comment is a thing somebody can do; guessing at
+	/// `some/registry:tag` is not.
+	public static func isVariantRecipe(_ image: String, forTool tool: String) -> Bool {
+		guard isBuiltHere(image) else { return false }
+		let rest = image.dropFirst(namespace.count + 1)
+		let named = rest.split(separator: ":", maxSplits: 1).first.map(String.init) ?? ""
+		return !named.isEmpty && named != tool && recipe(forTool: named) != nil
 	}
 
 	// MARK: - The fingerprint

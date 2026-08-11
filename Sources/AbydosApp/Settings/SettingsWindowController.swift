@@ -723,6 +723,30 @@ final class SettingsPaneController: NSViewController {
 					Settings.shared.toolImages = images
 				}
 			),
+			// **Which program, as distinct from where it comes from.** Empty on
+			// nearly every machine, and it is here because the two are not the same
+			// question: a tool reached by *name* goes through whatever owns that name
+			// on the `PATH`, and a toolchain manager's proxy refuses to run a server
+			// its pinned toolchain has not got rather than running the one installed
+			// beside it. A path is the way past that. 0466.
+			.text(
+				title: "Executable",
+				help: "The program to run, as a path — empty looks the tool's own name up "
+					+ "on the PATH, which is what nearly every machine wants. ~ is expanded. "
+					+ "Worth setting where the name on the PATH belongs to a toolchain manager "
+					+ "rather than to the tool: ~/.cargo/bin/rust-analyzer is a symlink to "
+					+ "rustup, and in a project pinning a toolchain that has no rust-analyzer "
+					+ "in it the proxy refuses instead of running the copy installed beside "
+					+ "it. Where the tool comes from an image this is the path inside that "
+					+ "image. A project's .abydos/tools.json overrides it.",
+				get: { Settings.shared.serverCommands[tool.key] ?? "" },
+				set: { command in
+					var commands = Settings.shared.serverCommands
+					let wanted = command.trimmingCharacters(in: .whitespaces)
+					commands[tool.key] = wanted.isEmpty ? nil : wanted
+					Settings.shared.serverCommands = commands
+				}
+			),
 		]
 	}
 

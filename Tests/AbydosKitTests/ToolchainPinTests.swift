@@ -119,7 +119,12 @@ struct ToolchainPinTests {
 			ToolchainPins.objection(to: pin, comingFrom: "pharndt/abydos-rust-analyzer:dev")
 		)
 		#expect(objection.sentence.contains("esp"))
-		#expect(objection.sentence.contains("no image"))
+		// "no ordinary image" since 0466, which is the correction rather than a
+		// softening: `espressif/idf-rust` is an image with the fork in it, and the
+		// recipe beside this one builds another. What a custom channel is in no
+		// image *reached by an ordinary Rust recipe* is still true and is what this
+		// sentence is about.
+		#expect(objection.sentence.contains("no ordinary image"))
 		// Every route named, including the one that is not being used, because
 		// the question somebody has on reading it is what to do instead.
 		#expect(objection.detail.contains("Installed on this machine")
@@ -178,5 +183,111 @@ struct ToolchainPinTests {
 		)
 		let objection = try #require(ToolchainPins.objection(to: pin, comingFrom: nil, home: home))
 		#expect(objection.sentence.contains("no toolchain of that name"))
+	}
+
+	// MARK: - What 0466 corrected
+
+	private func executable(_ home: URL, _ path: String) throws {
+		try FileManager.default.setAttributes(
+			[.posixPermissions: 0o755], ofItemAtPath: home.appendingPathComponent(path).path
+		)
+	}
+
+	private let espPin = ToolchainPin(
+		tool: "rust-analyzer", file: URL(fileURLWithPath: "/p/esp32/rust-toolchain.toml"),
+		channel: "esp", kind: .custom
+	)
+
+	/// **The claim 0462 got wrong.** It looked in the *pinned* toolchain, found no
+	/// server and concluded that nothing on this machine could read the project —
+	/// a statement about one directory presented as a statement about the machine.
+	/// A release toolchain beside it has the server, and the pin does not decide
+	/// which server runs, so there is something to offer and it is named.
+	@Test func aServerInAnotherToolchainIsOfferedRatherThanTheSubjectBeingClosed() throws {
+		let home = try project([
+			"toolchains/esp/bin/cargo": "#!/bin/sh\n",
+			"toolchains/esp/libexec/rust-analyzer-proc-macro-srv": "#!/bin/sh\n",
+			"toolchains/stable-aarch64-apple-darwin/bin/rust-analyzer": "#!/bin/sh\n",
+		])
+		try executable(home, "toolchains/stable-aarch64-apple-darwin/bin/rust-analyzer")
+
+		let objection = try #require(ToolchainPins.objection(to: espPin, comingFrom: nil, home: home))
+		// Still says what is wrong…
+		#expect(objection.sentence.contains("no rust-analyzer in it"))
+		// …and then what reads it, which is the half that was missing.
+		#expect(objection.sentence.contains("stable-aarch64-apple-darwin"))
+		#expect(objection.sentence.contains("reads it"))
+		#expect(objection.detail.contains("\"command\""))
+		#expect(objection.detail.contains("Settings ▸ Tools"))
+		// And the sentence this file used to end on is gone.
+		#expect(!objection.detail.contains("nothing this editor can do"))
+	}
+
+	@Test func theServersOnThisMachineAreFoundWhereverTheyAre() throws {
+		let home = try project([
+			"toolchains/esp/bin/cargo": "#!/bin/sh\n",
+			"toolchains/my-fork/bin/rust-analyzer": "#!/bin/sh\n",
+			"toolchains/1.95.0-aarch64-apple-darwin/bin/rust-analyzer": "#!/bin/sh\n",
+		])
+		try executable(home, "toolchains/my-fork/bin/rust-analyzer")
+		try executable(home, "toolchains/1.95.0-aarch64-apple-darwin/bin/rust-analyzer")
+
+		let found = ToolchainPins.servers(named: "rust-analyzer", in: home)
+		#expect(found.map(\.toolchain) == ["1.95.0-aarch64-apple-darwin", "my-fork"])
+		// A release first, because it is the one most likely to be close in version
+		// to a fork — and a proc macro is loaded across that boundary.
+		#expect(found.first?.path.hasSuffix("bin/rust-analyzer") == true)
+	}
+
+	/// **An executable already named answers the pin, so there is nothing to
+	/// object to.** This is the whole of 0466's correction in one assertion: the
+	/// pin decides which `cargo` and `rustc` read the project — which is right —
+	/// and it does not decide which server binary runs.
+	@Test func anExecutableAlreadyNamedForTheServerAnswersThePin() throws {
+		let home = try project(["toolchains/esp/bin/cargo": "#!/bin/sh\n"])
+		#expect(ToolchainPins.objection(
+			to: espPin, comingFrom: nil,
+			command: "~/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rust-analyzer",
+			home: home
+		) == nil)
+		// Including where it comes from an image, since the command is the command
+		// *inside* it and the image's own proxy is what it is getting away from.
+		#expect(ToolchainPins.objection(
+			to: espPin, comingFrom: "espressif/idf-rust:esp32_1.95.0.0",
+			command: "/home/esp/rust-analyzer", home: home
+		) == nil)
+		// An empty one is not a command and changes nothing.
+		#expect(ToolchainPins.objection(
+			to: espPin, comingFrom: nil, command: "", home: home
+		) != nil)
+	}
+
+	/// A recipe from this repository chosen *instead of* the tool's own is this
+	/// project's own answer to the channel, and an app that warned about its own
+	/// answer is one nobody believes the second time. Every other image is still
+	/// objected to, because what is in a stranger's image cannot be known from its
+	/// name.
+	@Test func aRecipeChosenForThisChannelIsNotObjectedTo() throws {
+		let home = try project(["toolchains/esp/bin/cargo": "#!/bin/sh\n"])
+		#expect(ToolchainPins.objection(
+			to: espPin, comingFrom: "abydos-built/rust-analyzer-esp:abc123abc123",
+			imageKnowsChannel: true, home: home
+		) == nil)
+		#expect(ToolchainPins.objection(
+			to: espPin, comingFrom: "espressif/idf-rust:esp32_1.95.0.0",
+			imageKnowsChannel: false, home: home
+		) != nil)
+	}
+
+	/// The detail names both routes now, and names them as things to do rather
+	/// than as things that will not work.
+	@Test func theDetailSaysWhatToDoAndNamesTheImageThatHasTheFork() throws {
+		let home = try project(["toolchains/esp/bin/cargo": "#!/bin/sh\n"])
+		let objection = try #require(ToolchainPins.objection(to: espPin, comingFrom: nil, home: home))
+		#expect(objection.detail.contains("What to do:"))
+		#expect(objection.detail.contains("rustup component add rust-analyzer --toolchain stable"))
+		#expect(objection.detail.contains("espressif/idf-rust"))
+		// And the reason the proxy is what fails, quoted as rustup says it.
+		#expect(objection.detail.contains("is not installed for the custom toolchain"))
 	}
 }

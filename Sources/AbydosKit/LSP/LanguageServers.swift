@@ -168,6 +168,30 @@ public struct LanguageServerDefinition: Equatable, Sendable {
 		self.isSyntactic = isSyntactic
 		self.trade = trade
 	}
+
+	/// The same server, run from this executable instead of from whatever the
+	/// `PATH` calls it.
+	///
+	/// The `name` is carried over untouched, and that is the whole reason this is
+	/// a method rather than a second table: the name is what a running server is
+	/// filed under, what an image is chosen for and what a project names in
+	/// `.abydos/tools.json`, and a definition whose name changed with its command
+	/// would be a different server to every one of those. See
+	/// `LanguageServerOverrides` for why a command has to be nameable at all.
+	public func running(_ executable: String) -> LanguageServerDefinition {
+		LanguageServerDefinition(
+			languageIds: languageIds,
+			command: executable,
+			arguments: arguments,
+			installHint: installHint,
+			rootMarkers: rootMarkers,
+			name: name,
+			setup: setup,
+			outside: outside,
+			isSyntactic: isSyntactic,
+			trade: trade
+		)
+	}
 }
 
 /// Which server answers for which language, and whether it is installed.
@@ -589,9 +613,15 @@ public enum LanguageServers {
 	/// shell has, then the usual homes. A GUI app inherits almost nothing of a
 	/// login shell's `PATH`, and without that middle source everything works
 	/// from a terminal and nothing works from the Dock.
+	/// A command containing `/` is a path and is taken as one, `~` expanded —
+	/// which is what makes `LanguageServerOverrides` usable from a file two people
+	/// share. A path is not searched for and not substituted: something named and
+	/// absent is nil, and the caller says which of "not installed" and "not where
+	/// you said" it was.
 	public static func executable(for definition: LanguageServerDefinition) -> String? {
 		if definition.command.contains("/") {
-			return FileManager.default.isExecutableFile(atPath: definition.command) ? definition.command : nil
+			let path = (definition.command as NSString).expandingTildeInPath
+			return FileManager.default.isExecutableFile(atPath: path) ? path : nil
 		}
 
 		if XcodeToolchain.owns(definition.command),
@@ -727,12 +757,21 @@ public enum LanguageServers {
 	///   and the debug bundle are paths, and a path here names nothing there —
 	///   an image that wants a JDK has to carry one, which is what the tool
 	///   catalogue tells whoever builds it.
+	/// - Parameter merging: what the project or the person said to add, from
+	///   `LanguageServerOverrides`. Merged over the table above rather than
+	///   replacing it, key by key and all the way down, so that a project adding
+	///   one setting to a server this app already configures keeps the rest of it.
+	///   This is also the only way a server that gets *nothing* from the table —
+	///   which is every server but jdtls — can be told anything at all.
 	public static func initializationOptions(
 		for definition: LanguageServerDefinition,
 		root: URL,
-		inContainer: Bool = false
+		inContainer: Bool = false,
+		merging extra: [String: JSONValue] = [:]
 	) -> [String: Any]? {
-		guard definition.setup == .java else { return nil }
+		guard definition.setup == .java else {
+			return extra.isEmpty ? nil : extra.mapValues(\.any)
+		}
 
 		var options: [String: Any] = [:]
 		if !inContainer, let plugin = JavaTooling.debugPlugin() { options["bundles"] = [plugin] }
@@ -771,7 +810,27 @@ public enum LanguageServers {
 				"format": ["enabled": false],
 			],
 		]
-		return options
+		return extra.isEmpty ? options : deepMerging(options, over: extra)
+	}
+
+	/// One JSON object over another, the second winning, recursing where both
+	/// sides hold an object.
+	///
+	/// Two objects merged shallowly is the mistake worth avoiding by hand here:
+	/// `settings.java.format` added from a project file would replace the whole of
+	/// `settings`, taking the runtimes and the build configuration with it, and
+	/// the symptom would be a Java project compiled against the wrong JDK because
+	/// somebody turned formatting on.
+	static func deepMerging(_ base: [String: Any], over extra: [String: JSONValue]) -> [String: Any] {
+		var merged = base
+		for (key, value) in extra {
+			if case let .object(nested) = value, let below = merged[key] as? [String: Any] {
+				merged[key] = deepMerging(below, over: nested)
+			} else {
+				merged[key] = value.any
+			}
+		}
+		return merged
 	}
 
 	/// The environment to start a server in.
@@ -1127,17 +1186,27 @@ public enum LanguageServers {
 	///   - choices: which server the project wants for this language. Which
 	///     server and where it comes from are two questions, and they stay two:
 	///     this decides the first and `image` the second.
+	///   - command: the executable to run instead of the definition's own, when a
+	///     project or a person named one. Honoured on both routes and it has to
+	///     be: a name resolved through a toolchain manager's proxy is the thing
+	///     `LanguageServerOverrides` exists to get away from, and the proxy is on
+	///     the `PATH` inside an image as readily as out here — `espressif/idf-rust`
+	///     has `/home/esp/.cargo/bin` first in its `PATH` and no rust-analyzer
+	///     behind it. Where it is a container the path is the container's; nothing
+	///     from this machine means anything in there.
 	public static func resolve(
 		languageId: String,
 		project: URL,
 		image: String? = nil,
 		runtime: ContainerRuntime? = nil,
 		choosing choices: LanguageServerChoices,
+		command: String? = nil,
 		home: URL = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
 	) -> Resolution? {
 		guard let definition = definition(forLanguage: languageId, choosing: choices),
 		      let root = markerDirectory(for: definition, in: project)
 		else { return nil }
+		let command = command.flatMap { $0.isEmpty ? nil : $0 }
 
 		// `build` is not an image name but a request for one, and this is where
 		// it becomes a name — the tag carries the recipe's fingerprint, so it
@@ -1168,6 +1237,12 @@ public enum LanguageServers {
 			)
 			let container = ToolContainer(
 				image: image,
+				// The entry point unless a command was named, and then that instead.
+				// It arrives after the image name, so it *replaces* the image's `CMD`
+				// and is appended to any `ENTRYPOINT` — which is why the recipes here
+				// put the server on the entry point and an image somebody else built
+				// may need naming rather than trusting.
+				command: command.map { [$0] } ?? [],
 				mounts: paths.mounts,
 				// Started where the manifest is, in the container's own names.
 				workingDirectory: paths.toContainer(path: FilePath.canonical(root)),
@@ -1184,13 +1259,20 @@ public enum LanguageServers {
 			)
 		}
 
-		guard let executable = executable(for: definition) else { return nil }
+		// A named command goes through `executable(for:)` rather than round it, so
+		// the one rule about what a command is — a `/` in it makes it a path — is
+		// stated once and in the place everything else already asks. A path with
+		// nothing executable at it comes back nil here, the same as a server that
+		// is not installed, and the sentence about *which* of those it was belongs
+		// to whoever is going to say it: `LanguageServerOverrides.refusal`.
+		let running = command.map(definition.running) ?? definition
+		guard let executable = executable(for: running) else { return nil }
 		return Resolution(
-			definition: definition,
+			definition: running,
 			root: root,
 			launch: .installed(
 				executable: executable,
-				arguments: arguments(for: definition, root: root)
+				arguments: arguments(for: running, root: root)
 			)
 		)
 	}
@@ -1219,11 +1301,16 @@ public enum LanguageServers {
 	/// - **The root is the container's.** Rooted where the manifest is, as the
 	///   container names it, which is under the workspace folder the *file*
 	///   asked for rather than `/workspace`.
+	/// - Parameter command: what to run inside, when one was named. A path here is
+	///   the *container's* path, like everything else on this route, and a project
+	///   that names one is a project saying its own devcontainer keeps the server
+	///   somewhere the container's `PATH` does not reach.
 	public static func resolve(
 		languageId: String,
 		project: URL,
 		inDevContainer session: DevContainers.Session,
-		choosing choices: LanguageServerChoices
+		choosing choices: LanguageServerChoices,
+		command: String? = nil
 	) -> Resolution? {
 		guard let definition = definition(forLanguage: languageId, choosing: choices),
 		      let root = markerDirectory(for: definition, in: project)
@@ -1239,7 +1326,7 @@ public enum LanguageServers {
 			root: root,
 			launch: .devcontainer(
 				session: session,
-				command: definition.command,
+				command: command.flatMap { $0.isEmpty ? nil : $0 } ?? definition.command,
 				arguments: definition.arguments,
 				root: inside
 			)

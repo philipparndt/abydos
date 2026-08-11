@@ -173,22 +173,25 @@ somewhere to go; it needs to be settable per project rather than compiled in.
 
 ## Estimate
 
-2026-08-11 17:16 — about two hours left; the proc-macro measurement decides most of it
+2026-08-11 17:51 — about an hour left; both routes driven end to end, tests and spec remain
 
 ## Steps
 
-- [ ] A project can name the executable for a server, not only the image —
+- [x] A project can name the executable for a server, not only the image —
       absolute path, honoured by `executable(for:)`, which already handles it
 - [x] Prove or disprove the proc-macro leg before building anything else:
       stable rust-analyzer + `procMacro.server` in the esp toolchain, against
       the real project — **it holds**, both with and without the setting
-- [ ] Per-project `initializationOptions`, if the leg above holds
-- [ ] A recipe for the image route, if the leg above holds — entry point an
+- [x] Per-project `initializationOptions`, if the leg above holds
+- [x] A recipe for the image route, if the leg above holds — entry point an
       absolute path, and a comment saying why it is not the shim
-- [ ] Correct `ToolImages/rust-analyzer/Dockerfile`, whose claim that nothing
+- [x] Correct `ToolImages/rust-analyzer/Dockerfile`, whose claim that nothing
       could change it is what this item disproves
-- [ ] 0462's notice offers whichever of these turns out to work, instead of
+- [x] 0462's notice offers whichever of these turns out to work, instead of
       saying there is nothing to be done
+- [x] A recipe nothing can ask for is not a route — `build:<recipe>` names one
+      that is not the tool's own, and the pin stops objecting to it
+- [ ] Drive the corrected notice against the real project, with the pin in place
 - [ ] Write down here what was ruled out on the way
 - [ ] `spec/tool-images.md` and `spec/language-servers.md` say what the project
       now does

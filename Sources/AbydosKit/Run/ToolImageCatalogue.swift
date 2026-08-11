@@ -142,24 +142,33 @@ public enum ToolImageCatalogue {
 					publisher: "the Abydos project"
 				),
 			],
-			// The one requirement here that says what an image *cannot* do, because
-			// for Rust that is a property of the project rather than of the image:
-			// the toolchain is fixed when the image is built and
-			// `rust-toolchain.toml` is read when the project is opened, so a project
-			// pinning a channel by a name only one machine knows is a project no
-			// image will ever read. Said here as well as above the file, since this
-			// is where somebody chooses between the three and it is the choice that
-			// has no good answer. 0462.
+			// The one requirement here that says what *these* images cannot do,
+			// because for Rust that is a property of the project rather than of the
+			// image: the toolchain is fixed when the image is built and
+			// `rust-toolchain.toml` is read when the project is opened. Said here as
+			// well as above the file, since this is where somebody chooses between
+			// the three. 0462 — and 0466, which cut the second half of it down to
+			// what was measured: a custom channel rules out *these* images, not every
+			// image and not this machine.
 			requirement: languageServerRequirement("rust-analyzer") + """
 			 \nA project pinning a custom toolchain channel — `channel = "esp"` in \
 			rust-toolchain.toml, rather than a release like `stable` or `1.90.0` — \
-			cannot be read from any image, this one included. A custom channel means \
-			whatever was installed under that name in ~/.rustup/toolchains on the \
-			machine reading the project, and rustup resolves it by that directory and \
-			by nothing else; a release it fetches for itself. Such a project wants \
-			“Installed on this machine”, and Abydos says so above the file when it \
-			sees the pin — including where the installed copy has no rust-analyzer in \
-			it either, which is the case for Espressif's `esp` toolchain.
+			cannot be read from an ordinary Rust image, these included. A custom \
+			channel means whatever was installed under that name in \
+			~/.rustup/toolchains on the machine reading the project, and \
+			`rustup toolchain install` has nothing to fetch it from; a release it \
+			fetches for itself.
+
+			What does read such a project is a rust-analyzer reached by a path rather \
+			than by name, because the pin decides which cargo and rustc read the \
+			project and not which server runs. Reached by name it is rustup's proxy, \
+			which asks the pinned toolchain for a component Espressif's fork does not \
+			build, and refuses. So: install a server — `rustup component add \
+			rust-analyzer --toolchain stable` — and give its path as the Executable \
+			above, or in .abydos/tools.json as {"rust-analyzer": {"command": "…"}}. \
+			For the container route there is a second recipe in this repository, asked \
+			for as {"rust-analyzer": {"image": "build:rust-analyzer-esp"}}. Abydos says \
+			which of these applies above the file when it sees the pin.
 			"""
 		),
 		Tool(

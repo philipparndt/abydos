@@ -118,6 +118,7 @@ public final class Settings {
 		static let terminalOptionAsMeta = "terminalOptionAsMeta"
 		static let toolImages = "toolImages"
 		static let languageServers = "languageServers"
+		static let serverCommands = "serverCommands"
 		static let containerRuntime = "containerRuntime"
 		static let devContainerConsent = "devContainerConsent"
 		static let devContainerChoice = "devContainerChoice"
@@ -390,6 +391,21 @@ public final class Settings {
 	public var languageServers: [String: String] {
 		get { defaults.dictionary(forKey: Key.languageServers) as? [String: String] ?? [:] }
 		set { set(newValue, Key.languageServers) }
+	}
+
+	/// The executable to run for a server, by the server's name, where the name
+	/// on the `PATH` is not the program.
+	///
+	/// A path rather than a command, `~` allowed. The case it exists for is a
+	/// toolchain manager's proxy: `~/.cargo/bin/rust-analyzer` is a symlink to
+	/// `rustup`, and in a project pinning a toolchain that has no rust-analyzer in
+	/// it the proxy refuses rather than running one. Empty for every server on
+	/// nearly every machine, and `LanguageServerOverrides` is what reads it — with
+	/// a project's own `.abydos/tools.json` in front of it, the same way round as
+	/// the images and the choices above.
+	public var serverCommands: [String: String] {
+		get { defaults.dictionary(forKey: Key.serverCommands) as? [String: String] ?? [:] }
+		set { set(newValue, Key.serverCommands) }
 	}
 
 	/// Which projects are worked on inside the devcontainer they name, and which
