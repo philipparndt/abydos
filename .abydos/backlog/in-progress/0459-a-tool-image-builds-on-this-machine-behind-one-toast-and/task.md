@@ -69,15 +69,23 @@ their own precisely so a chatty build cannot deadlock against a full pipe, and
 across two reads comes back as a replacement character in the piece and not in
 the whole.
 
+## Estimate
+
+2026-08-11 08:36 — about three hours left — the wiring is small, the cold build to watch is 164 s and the app has to be driven
+
 ## Steps
 
-- [ ] `LanguageService` passes `onOutput` as well as `progress`
+- [x] `LanguageService` passes `onOutput` as well as `progress`
 - [ ] The output lands in a pane, on 0444's terms — no keyboard, opened only if
       the work is still going after three seconds, and its tab taken away if
       nobody could have watched it
 - [ ] A failed build leaves its output where somebody can read it, and the toast
       points at the pane rather than summarising the compiler
-- [ ] The other callers of `ensure` get the same treatment, not just this one
+- [x] The other callers of `ensure` get the same treatment, not just this one
+- [ ] A pane that is only ever a report is not written into `.abydos/session.json`
+      — found on the way, and the same fault 0444 fixed for the devcontainer tab
+- [ ] Tests the kit can reach: the name test that says build or fetch, and a real
+      build proving the output arrives while it runs rather than at the end
 - [ ] Driven with a recipe that really builds — `ABYDOS_BUILD_TOOL_IMAGES=1` and
       a cold cache, which 0457 measured at 164 s
 - [ ] Write down here what was ruled out on the way

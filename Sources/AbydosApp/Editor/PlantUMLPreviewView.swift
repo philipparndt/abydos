@@ -158,20 +158,35 @@ final class PlantUMLPreviewView: DiagramPaneView {
 		// screen is indistinguishable from a tool that has hung, so it says
 		// what it is doing while it happens.
 		if case let .image(container, runtime) = tool {
+			// The notice in this pane says *what* is happening and has room for one
+			// sentence; the terminal tab holds what the runtime is saying while it
+			// does it. Both, because they answer different questions — and the tab
+			// is there at all because nothing says a diagram tool must be a pull:
+			// a recipe can be written for anything, and then this is minutes. 0459.
+			let arrival = ImageArrival(
+				image: container.image, tool: "PlantUML", project: projectRoot
+			)
+			// Taken here rather than inside the task: the task is not on the main
+			// actor and `arrival` is, so the sinks have to be lifted out of it
+			// while this still is.
+			let watch = arrival.watch
 			Task { [weak self] in
 				let outcome = await ContainerImageStore.shared.ensure(
 					container.image,
 					using: runtime,
 					progress: { message in
+						watch.step?(message)
 						DispatchQueue.main.async {
 							guard let self, self.tool == tool else { return }
 							self.notice = message
 							self.needsDisplay = true
 						}
-					}
+					},
+					output: watch.output
 				)
 				if case let .failed(reason) = outcome {
 					await MainActor.run {
+						arrival.failed(reason)
 						guard let self else { return }
 						self.spinner.stopAnimation(nil)
 						self.running = nil
@@ -180,6 +195,7 @@ final class PlantUMLPreviewView: DiagramPaneView {
 					}
 					return
 				}
+				await MainActor.run { arrival.arrived() }
 
 				// One PlantUML kept warm, asked over HTTP: a container and a JVM
 				// per diagram is two seconds, and the same picture from a server

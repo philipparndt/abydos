@@ -3649,8 +3649,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 	}
 
-	/// How long a devcontainer may take to come up before the panel is opened to
-	/// show it happening.
+	/// How long something nobody asked to watch may take before the panel is
+	/// opened to show it happening.
 	///
 	/// **Nobody asked for a pane here**, which is what the number is for. The
 	/// language servers start a container because a file was opened, and a warm
@@ -3659,6 +3659,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// be put away by hand. Past this, the thing being waited for is a pull, a
 	/// build or a `postCreateCommand`, all of which are minutes, and minutes of
 	/// silence is the complaint 0444's part 4 comes from.
+	///
+	/// The same number governs an image being fetched or built (0459), and for the
+	/// same arithmetic rather than by analogy: an image already on the machine is
+	/// answered for in milliseconds, and one that is not is a gigabyte or a
+	/// compiler.
 	private static let containerBuildRevealDelay: TimeInterval = 3
 
 	/// A pane for a devcontainer that is being brought up for this project's
@@ -3690,27 +3695,72 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// the shell this becomes leaves the editor where it was.
 	private func watchDevContainerStarting(choice: DevContainerFile.Choice) -> PreparingTerminal {
 		let root = devContainerRoot ?? choice.file.deletingLastPathComponent()
-		let preparing = bottomPanel.newPreparingTerminal(
+		let preparing = paneThatOpensLate(
 			title: Self.containerTabTitle(for: choice, in: root),
-			subject: root.lastPathComponent,
-			takesFocus: false,
-			select: false
+			subject: root.lastPathComponent
 		)
-		// A start too quick to have been watched takes its tab away again rather
-		// than leaving a shell nobody asked for — see `vanishesUnlessRevealed`,
-		// where the arithmetic of one tab per session is written down.
-		preparing.vanishesUnlessRevealed = true
 		preparing.step("Starting \(root.lastPathComponent) in \(choice.name)…")
+		return preparing
+	}
+
+	/// A pane for an image being fetched or built for this project, or nil when
+	/// no window is showing that project.
+	///
+	/// The same shape as `watchDevContainerStarting`, found the same way and for
+	/// the same reason: the caller is `LanguageService` or a diagram, neither of
+	/// which has a window, and the project is the only thing either of them knows
+	/// that a window can be found by. Nil means the toast that was there before.
+	///
+	/// Either root, because either is what somebody would call this project: a
+	/// language server is started for a subproject when one is open, and a
+	/// diagram is exported against the project as a whole.
+	static func watchImageArriving(
+		project: URL, title: String, subject: String
+	) -> PreparingTerminal? {
+		let root = FilePath.canonical(project)
+		let window = NSApp.windows.lazy
+			.compactMap { $0.windowController as? MainWindowController }
+			.first { controller in
+				[controller.scopeRoot, controller.project?.root]
+					.compactMap { $0 }
+					.contains { FilePath.canonical($0) == root }
+			}
+		return window.map { $0.paneThatOpensLate(title: title, subject: subject) }
+	}
+
+	/// A pane for work nobody asked to watch: the tab is made now and shown
+	/// later, or never.
+	///
+	/// **The panel is not opened yet**, and that is the one decision here. The tab
+	/// is made at once so that everything the work says is in it from the first
+	/// line — there is no second chance at the output of a `docker build` — but a
+	/// panel that shows itself is a panel that moved under somebody who was
+	/// reading a file, so it waits to see whether there is anything worth showing.
+	/// The keyboard is never touched either way: `takesFocus` is false, so even a
+	/// shell this becomes leaves the editor where it was.
+	///
+	/// One method for both the devcontainer coming up and the image arriving,
+	/// because the terms are one decision rather than two that happen to agree —
+	/// 0444 settled them and 0459 took them unchanged, and two copies would be two
+	/// things to keep in step.
+	private func paneThatOpensLate(title: String, subject: String) -> PreparingTerminal {
+		let preparing = bottomPanel.newPreparingTerminal(
+			title: title, subject: subject, takesFocus: false, select: false
+		)
+		// Work too quick to have been watched takes its tab away again rather than
+		// leaving a pane nobody asked for — see `vanishesUnlessRevealed`, where the
+		// arithmetic of one tab per session is written down.
+		preparing.vanishesUnlessRevealed = true
 		preparing.onRefused = { [weak self, weak preparing] in
 			preparing?.reveal()
 			self?.setPanelVisible(true)
 		}
 		DispatchQueue.main.asyncAfter(deadline: .now() + Self.containerBuildRevealDelay) {
 			[weak self, weak preparing] in
-			// Still preparing: a container that came up while nobody was looking
-			// has nothing left to show, and a tab that was closed meanwhile is
-			// somebody saying they do not want to watch.
-			guard let preparing, preparing.isOpen, !preparing.isShell else { return }
+			// Still going: work that finished while nobody was looking has nothing
+			// left to show, and a tab that was closed meanwhile is somebody saying
+			// they do not want to watch.
+			guard let preparing, preparing.isOpen, !preparing.isDone else { return }
 			preparing.reveal()
 			self?.setPanelVisible(true)
 		}

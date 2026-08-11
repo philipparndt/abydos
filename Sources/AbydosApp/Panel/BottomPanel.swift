@@ -2818,9 +2818,19 @@ final class BottomPanel: NSView {
 	/// Only plain terminals: a debugger, a profiler or a review is attached to
 	/// something that is not running any more, and reopening one would be
 	/// reopening a window onto nothing.
+	///
+	/// And only ones with a shell in them. A pane that is a *report* — a launch
+	/// log, a pod's output, an image being built — is a terminal by construction
+	/// and has never run a process, so restoring it opens a shell in the
+	/// project's directory called "Building rust-analyzer". That is the shape of
+	/// the fault 0444 found by watching tabs accumulate to three, and 0459 would
+	/// have added a second source of it: a build's pane is the one kind that
+	/// never becomes a shell at all, so the tab somebody kept to read would come
+	/// back every session as a prompt.
 	func captureTerminals() -> [ProjectSession.OpenTerminal] {
 		sessions.compactMap { session in
 			guard case .terminal = session.kind, !session.hasExited else { return nil }
+			guard session.terminal?.showsOutputOnly != true else { return nil }
 			return ProjectSession.OpenTerminal(
 				name: session.displayTitle,
 				directory: session.directory?.path,

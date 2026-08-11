@@ -877,16 +877,33 @@ final class LanguageService {
 		// meanwhile is kept and sent then.
 		fetching.insert(key)
 		log("\(resolved.definition.command) comes from \(image.name); making sure it is here")
+		// **Somewhere to watch it happen**, which is 0459. The sentence below used
+		// to be the whole of what reached the screen, and it was written for a
+		// pull: `ensure` also *builds*, from a Dockerfile this app ships, and a
+		// cold `rust-analyzer` is 164 seconds of a compiler saying nothing anybody
+		// could see. `ImageArrival` opens the same pane the devcontainer path
+		// opens, on the same terms, and passes the second sink `ensure` has always
+		// taken and this call site never gave it.
+		let built = ToolImageRecipes.isBuiltHere(image.name)
+		let arrival = ImageArrival(
+			image: image.name, tool: resolved.definition.command, project: project
+		)
 		Task { @MainActor in
 			let outcome = await ContainerImageStore.shared.ensure(
 				image.name,
 				using: image.runtime,
-				progress: { message in
-					// A pull with nothing on screen is indistinguishable from a
-					// feature that does not work.
-					Task { @MainActor in Toast.post(message, kind: .information) }
-				}
+				progress: arrival.watch.step,
+				output: arrival.watch.output
 			)
+			// The pane is ended before anything else, and whatever the project did
+			// meanwhile: a tab left saying a build is happening after it has
+			// stopped is worse than no tab.
+			var tab: String?
+			if case let .failed(reason) = outcome {
+				tab = arrival.failed(reason)
+			} else {
+				arrival.arrived()
+			}
 			// Gone while the image was on its way: the project was closed, and a
 			// server started for it now would be a process nobody is waiting for.
 			guard fetching.remove(key) != nil else { return }
@@ -898,8 +915,19 @@ final class LanguageService {
 				failures[languageId] = reason
 				log("\(resolved.definition.command): \(reason)")
 				Toast.post(
-					"\(resolved.definition.command) could not be fetched",
-					detail: reason,
+					// "could not be fetched" was said of a build too, which is the
+					// same conflation 0434 wrote a separate sentence to avoid:
+					// nothing in `abydos-built/` is ever fetched from anywhere.
+					"\(resolved.definition.command) could not be \(built ? "built" : "fetched")",
+					// The reason *and* where the log is, which is where this parts
+					// company with 0444 on purpose — see `ImageArrival.failed`. The
+					// sentence is a diagnosis rather than a summary, so it is worth
+					// having in the corner; the tab is for the one failure that is a
+					// line somewhere in a hundred.
+					detail: tab.map {
+						"\(reason)\nWhat the \(built ? "build" : "fetch") printed is in the "
+							+ "\($0) tab in the terminal panel."
+					} ?? reason,
 					kind: .error
 				)
 				NotificationCenter.default.post(name: .ideaiLanguageServersChanged, object: nil)

@@ -299,6 +299,12 @@ public enum DiagramExport {
 	///     are named after.
 	///   - progress: for the one thing worth saying while this happens, which is
 	///     that a container image is being fetched.
+	///   - image: where getting that image is reported to somebody with a pane to
+	///     put it in — what the runtime printed, and the moment that part settled.
+	///     An export is a fetch and then several renders, and the one value this
+	///     hands back cannot tell those apart: without the second, a pane opened
+	///     to watch a fetch would end up with a syntax error in a `.puml` written
+	///     into it in red. See `ImageWatch`.
 	/// - Returns: the files written, in order.
 	///   - theme: which way round to draw it. Ignored, along with the `-dark`
 	///     naming, when the diagram states a look of its own — the file wins, so
@@ -309,7 +315,8 @@ public enum DiagramExport {
 		format: PlantUML.Format,
 		tool: PlantUML.Tool,
 		theme: DiagramTheme? = nil,
-		progress: @escaping @Sendable (String) -> Void = { _ in }
+		progress: @escaping @Sendable (String) -> Void = { _ in },
+		image: ImageWatch = .none
 	) async -> Result<[URL], Failure> {
 		let name = url.lastPathComponent
 		let blocks = diagrams(in: source)
@@ -331,9 +338,18 @@ public enum DiagramExport {
 		// indistinguishable from a hang.
 		if case let .image(container, runtime) = tool {
 			let outcome = await ContainerImageStore.shared.ensure(
-				container.image, using: runtime, progress: progress
+				container.image, using: runtime,
+				progress: { message in
+					progress(message)
+					image.step?(message)
+				},
+				output: image.output
 			)
-			if case let .failed(reason) = outcome { return .failure(Failure(reason)) }
+			if case let .failed(reason) = outcome {
+				image.settled?(reason)
+				return .failure(Failure(reason))
+			}
+			image.settled?(nil)
 		}
 
 		// One diagram means the whole file, exactly as the preview draws it —

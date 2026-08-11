@@ -61,9 +61,18 @@ final class PreparingTerminal {
 	/// Whether there is still a pane to write into.
 	var isOpen: Bool { !wasClosed && pane != nil }
 
-	/// Whether the pane has stopped being a report and started being a shell,
-	/// which is the moment there is nothing left to watch.
+	/// Whether the pane has stopped being a report and started being a shell.
 	private(set) var isShell = false
+
+	/// Whether there is anything left to watch.
+	///
+	/// Not the same question as `isShell`, and telling the two apart is what 0459
+	/// needed: a devcontainer's pane ends by becoming a shell, and a tool image's
+	/// pane ends with an image on the machine and nothing to attach to. Whoever is
+	/// waiting to decide whether the wait is worth showing wants this one —
+	/// `isShell` would reveal a panel three seconds after a build had already
+	/// finished and taken its own tab away.
+	private(set) var isDone = false
 
 	/// Told when the thing being got ready could not be, so that whoever opened
 	/// this pane can put it where it can be read.
@@ -134,8 +143,34 @@ final class PreparingTerminal {
 		pane.write(text)
 	}
 
+	/// It worked, and there is nothing for this pane to become.
+	///
+	/// The third ending, and the one a **tool image** has. A devcontainer coming
+	/// up leaves a container somebody can be given a prompt inside; a build
+	/// leaves an image and nothing to attach to. So the pane stops being written
+	/// to and keeps every line above one green one, which is the whole of what
+	/// there is to keep.
+	///
+	/// Nothing is said when the tab has gone. An image that arrived is the
+	/// ordinary case and not news — unlike `becomeShell`, where the toast exists
+	/// to say that the next terminal in the container will open at once.
+	func finish(_ sentence: String) {
+		isDone = true
+		guard let pane, isOpen else { return }
+		// Nobody could have watched it, so there is nothing to keep — the same
+		// arithmetic as `becomeShell`'s and it bites harder here, because this
+		// pane never becomes a shell: a tab left behind by every cached image
+		// would be a dead one.
+		if vanishesUnlessRevealed, !wasRevealed {
+			closeTab?()
+			return
+		}
+		pane.write("\u{1B}[1;32m\(sentence)\u{1B}[0m\r\n")
+	}
+
 	/// It worked: this pane is now that shell.
 	func becomeShell(running command: (executable: String, arguments: [String])) {
+		isDone = true
 		guard let pane, isOpen else {
 			// Not a failure and worth saying: what was asked for is up, and the
 			// next terminal in it opens at once.
@@ -167,6 +202,7 @@ final class PreparingTerminal {
 
 	/// It did not work, and the pane keeps every word of why.
 	func refuse(_ sentence: String) {
+		isDone = true
 		guard let pane, isOpen else {
 			Toast.post("\(subject)'s devcontainer was not started", detail: sentence, kind: .error)
 			return
