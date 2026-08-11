@@ -109,7 +109,7 @@ before this one runs — there is no cold render left to take. And the thing the
 claim compares against is a *container*, which this test does not start.
 
 Where a same-run ratio genuinely is available it is now the assertion that runs at
-every load: `PlantUMLServerTests` draws the same diagram through a pipe and
+every load: `PlantUMLServerLiveTests` draws the same diagram through a pipe and
 through the server seconds apart in one run, and `warmSeconds < oldSeconds / 4` is
 kept unconditional while `warmSeconds < 0.5` moved behind `make timing`. That is
 this option winning where it applies.
@@ -199,7 +199,7 @@ seconds apart in one run — `lineLookupsAreLogarithmic`, `editsAreIndependentOf
 copied out of a log later carries the one fact needed to argue with it.
 
 **Guarded absolutes, now behind `make timing`:** `MermaidLiveTests` (0.5 → 0.1 s),
-`DrawioLiveTests` (1.0 → 0.1 s), `PlantUMLServerTests` (0.5 s, with its ratio kept
+`DrawioLiveTests` (1.0 → 0.1 s), `PlantUMLServerLiveTests` (0.5 s, with its ratio kept
 unconditional).
 
 **`TerminalThroughputTests`** asserts nothing at all — five tests, every body
@@ -239,9 +239,80 @@ it is available, and changing them would be churn:
   keystroke `< 0.002`, reparse, fold ranges `< 10.0`). Load-immune already; that is
   the point of them.
 
-## Estimate
+## Ruled out on the way
 
-2026-08-11 21:03 — about an hour left — proof runs and warnings
+- **Widening the Mermaid budget.** The first thing anybody reaches for, and it
+  cannot work: see the arithmetic above. Any bound the suite can pass is above the
+  container the test argues against.
+- **Lowering `MachineLoad.busy` from 4.0 so the guard catches the suite.** This
+  would have made the symptom go away and is the worst available answer. The guard
+  would then skip on nearly every `make test`, so the bound would be dead code that
+  looks alive — and 0435's argument for having the guard at all is that it should
+  be *rare*, not routine. The threshold is unchanged. What changed is that the
+  bound is no longer asked of a run that cannot answer it.
+- **A cold-against-warm ratio for Mermaid or draw.io.** Ruled out twice over: the
+  claim is absolute (see above), and there is no cold render available — the
+  renderer is a shared singleton, already warm by the time this test runs, with no
+  way to unload its page. Kept where it does work, in `PlantUMLServerLiveTests`.
+- **`SCALE=1` itself, rather than a verb of its own.** `SCALE=1` means "the corpus
+  is on this disk and I want it walked", and `ScaleLiveTests` needs several
+  gigabytes of Eclipse beside the checkout. A warm render needs nothing. Sharing
+  the variable would have made `make scale` fail for want of a corpus on anybody
+  who only wanted a render timed. `TIMING=1` and `make timing` instead — the shape
+  of `SCALE=1`, not the same switch.
+- **Draining the pty before closing it, and `WNOWAIT`.** Both written, both
+  measured, both wrong. See the 0476 section.
+- **Raising or lowering `Patience.seconds`.** No value helps a wait for something
+  that has been discarded. Unchanged.
+- **`.serialized` as protection.** It orders tests *within* a suite. A serialised
+  suite still runs beside the other three hundred and fifty, so it protects nothing
+  that this item is about — worth writing down, because it reads as though it
+  should.
+
+## Proof
+
+**Thirteen runs of the full suite, 2450 tests in 355 suites. Twelve fully green.**
+The thirteenth failed on one thing, `ContainerLSPLiveTests`'s jdtls case, which is
+0473 — two containers were still running whose owning pids were long dead
+(`abydos-lsp-jdtls-32768-25` and `-44368-25`, started at 19:22 and 19:24). Removed,
+re-ran, green. **Nothing timing-related failed in any of the thirteen.**
+
+Ten consecutive, on a machine that was busy with other people's work throughout —
+2.4 to 9.9 runnable threads per core, which already spans and exceeds the 5.4–6.5
+of the reds this item was filed about:
+
+    per core  3.5  3.9  4.1  5.6  6.0  6.7  6.8  7.3  8.2  8.6  9.9
+
+Then two under fourteen deliberate spinners, at **15.8 and 22.6 per core**, and one
+more at 14.2 after the sweep.
+
+**The warm render the old bound was asserting on, across those thirteen runs:**
+
+    0.1689  0.4466  0.4511  0.4743  0.4847  0.5309  0.5484  0.5591
+    0.5782  0.5910  0.6828  1.0684  1.1024
+
+A factor of six and a half, from the same code on the same machine, decided
+entirely by what else was running. **Eight of the first eleven are over the old
+0.5 s bound**, and the last two are over **1.0 s** — that is, at 15.8 and 22.6 per
+core a warm render costs *more than the container it is arguing against*. There is
+no absolute number that survives that range, which is the item's thesis arriving as
+a measurement rather than as arithmetic.
+
+Every one of the thirteen printed the figure and the load, and the line saying the
+bound was not applied. That is the part to keep.
+
+### What is not proven here
+
+`PlantUMLServerLiveTests` — whose ratio this item made unconditional and whose
+absolute it moved behind `make timing` — **never ran**. It needs a container runtime
+and skipped itself on every one of the thirteen. It compiles, and the change is two
+lines with no new variables in them, but it is the one thing here covered by
+argument rather than by a green, and somebody with a runtime up should watch it once.
+
+`make timing` itself was run on a quiet machine and took the asserting branch — the
+proof being that it printed the measurement with **no** "not bounding" line, where
+`make test` prints both. So the bound is live rather than vacuous, which is the trap
+the old code fell into: it was passing *by being skipped* at 4.1 per core.
 
 ## Steps
 
@@ -252,6 +323,14 @@ it is available, and changing them would be churn:
       — it does not have the same shape. It is a defect, reproduced, and filed as
       0476; the timeout is a hang detector and is left exactly as it was.
 - [x] Look for others: any assertion on wall-clock in a suite that runs parallel
-- [ ] Prove it — the suite green ten times over, and once under a deliberate load
-- [ ] Write down here what was ruled out on the way
-- [ ] `spec/<capability>.md` says what the project now does, if anything does
+- [x] Three wall-clock bounds in `PerformanceTests` onto processor time
+- [x] Every printed duration and rate carries its load, `BENCH` lines included
+- [x] `make warnings` at zero for this repository's Swift
+- [x] Write down here what was ruled out on the way
+- [x] Prove it — the suite green ten times over, and once under a deliberate load
+- [ ] No spec delta — nothing the program does changed
+
+The last one will not be ticked, because there is nothing to tick. Everything here
+is the test suite and two `make` verbs; `spec/` is the account of what the *program*
+does, and a requirement about how this repository measures itself does not belong in
+it. The one line of `Sources/` that changed is `var` to `let`.
