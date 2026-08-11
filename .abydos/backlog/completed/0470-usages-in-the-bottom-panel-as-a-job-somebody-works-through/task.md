@@ -377,10 +377,6 @@ ticks were still there, because the view moved rather than being rebuilt.
   `~/Library/Caches/abydos/index/<project>-<hash>`, which is worth knowing before
   spending twenty minutes wondering why Find Usages is empty.
 
-## Estimate
-
-2026-08-11 15:50 — about two hours left
-
 ## Steps
 
 - [x] Decide whether this is one list shared with search or a pane sharing its
