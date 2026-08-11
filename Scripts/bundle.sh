@@ -146,18 +146,34 @@ cp Resources/Info.plist "$CONTENTS/Info.plist"
 
 # Under a different identifier when asked.
 #
-# The app ships as `dev.philipparndt.ideai`, which it went back to: macOS files
-# the Local Network grant under the bundle identifier and cannot carry one from
-# an app's old name to its new one, so the rename to `de.rnd7.ideai` for the App
+# The app ships as `de.rnd7.ideai`, the App Store identifier, and the two days
+# it took to get back to that are worth keeping written down.
+#
+# macOS files the Local Network grant under the bundle identifier and cannot
+# carry one from an app's old name to its new one, so the rename for the App
 # Store left the permission behind. That normally costs nothing — a renamed app
 # is asked about again — but the prompt is presented by UserEventAgent through
-# nehelper, and on macOS 27 beta nehelper refuses it the connection: every
-# request defaults to denied and no dialog can appear for an app that holds no
-# grant. The denial is inherited by everything the app launches, so a debugger
-# or a program under test loses the LAN with EHOSTUNREACH.
+# nehelper, and on macOS 27 up to and including beta 4 (build 26A5388g) nehelper
+# refused it the connection: every request defaulted to denied and no dialog
+# could appear for an app that held no grant. The denial is inherited by
+# everything the app launches, so a debugger or a program under test lost the
+# LAN with EHOSTUNREACH — "connect: no route to host", with nothing to click.
+# The only way to work was to go back to `dev.philipparndt.ideai`, which already
+# held a grant from before the rename.
 #
-# This override is what tries the other identifier — the App Store one, once
-# that prompt works again — without editing the plist by hand.
+# **Fixed in 26A5406e.** Installed under `de.rnd7.ideai` on that build, macOS
+# asked for local network access the first time the app wanted it, and granting
+# it restored the LAN for the app and for everything it launches. The same bug
+# was reported against Ghostty, Warp, iTerm2 and VS Code, so it was the system
+# rather than any of them, and it is not worth carrying a workaround for a
+# version of the OS nobody is on any more.
+#
+# This override remains for going back — to the old identifier if the grant is
+# ever lost again, or to a throwaway one for a build that must not touch the
+# real app's settings or its grant. An agent building a copy to drive should use
+# it, and should pass PIN_UUID=0 with it: a build under the real identifier with
+# an unpinned UUID is the one combination that can take the grant away from the
+# installed app.
 if [ -n "${BUNDLE_ID:-}" ]; then
 	/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$CONTENTS/Info.plist" >/dev/null
 	echo "    bundle id: $BUNDLE_ID"

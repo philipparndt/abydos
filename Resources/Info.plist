@@ -7,7 +7,7 @@
 	<key>CFBundleDisplayName</key>
 	<string>Abydos</string>
 	<key>CFBundleIdentifier</key>
-	<string>dev.philipparndt.ideai</string>
+	<string>de.rnd7.ideai</string>
 	<key>CFBundleExecutable</key>
 	<string>Abydos</string>
 	<!-- The catalog, which Xcode compiles and the App Store reads. -->
