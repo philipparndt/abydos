@@ -188,6 +188,9 @@ struct LaunchOptions {
 	/// A comma-separated script for the project tree: `down`, `up`, `right`,
 	/// `left`, `collapse`, `locate`.
 	var treeSteps: String?
+	/// A comma-separated script for the changes tree: `report`, `stage:<path>`,
+	/// `unstage:<path>`, `shut:<path>`, `open:<path>`, `refresh`.
+	var changesSteps: String?
 	/// How many keystrokes to time in the terminal.
 	var typingPresses: Int?
 	/// Print what opening this project cost, at each of these many seconds in.
@@ -544,6 +547,7 @@ struct LaunchOptions {
 			case "--push":       options.pushChanges = true
 			case "--navigate":   options.navigateSteps = next()
 			case "--tree":       options.treeSteps = next()
+			case "--changes-tree": options.changesSteps = next()
 			case "--type-latency": options.typingPresses = next().flatMap(Int.init)
 			case "--report-open":
 				options.openReportsAt = (next() ?? "10")

@@ -955,6 +955,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		// A fixed moment rather than one measured back from the screenshot: a
+		// script that stages a folder and looks again has `settle`s in it and
+		// runs for several seconds, which the shot is timed to outlast.
+		if let steps = options.changesSteps {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+				controller?.changesStepsForTesting(steps)
+			}
+		}
+
 		if let steps = options.searchSteps {
 			// A fixed moment rather than one measured back from the screenshot,
 			// unlike the tree's: a script that ticks rows, presses ⌘Z and looks

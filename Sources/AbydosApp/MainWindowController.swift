@@ -4616,6 +4616,63 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	func pushChangesForTesting() { changesPane?.pushForTesting() }
 
+	/// Drives the changes tree from the command line: `report`, `stage:<path>`,
+	/// `unstage:<path>`, `shut:<path>`, `open:<path>`, `refresh`,
+	/// `settle[:seconds]`.
+	///
+	/// The pane lives in the app target, where the suite cannot reach it, and
+	/// the questions this pane turns on — does staging a folder take everything
+	/// under it, does the tree stay open across a refresh, where does the
+	/// selection land once what was selected has been staged away — are about
+	/// *this view* rather than about the tree it is drawn from. A screenshot is
+	/// one frame of that and not the sequence, so the sequence is scripted, the
+	/// way `--tree` scripts the navigator.
+	func changesStepsForTesting(_ steps: String) {
+		if changesPane == nil { showSidebarTool(.changes) }
+		guard let pane = changesPane else {
+			print("CHANGES: no changes pane")
+			return
+		}
+
+		let script = steps.split(separator: ",").map(String.init)
+		for (index, step) in script.enumerated() {
+			// Everything after a `settle` goes back to the run loop: git runs
+			// off the main queue and answers on it, so a nested wait here would
+			// never see the tree it is waiting for.
+			if step == "settle" || step.hasPrefix("settle:") {
+				let seconds = step.hasPrefix("settle:")
+					? Double(step.dropFirst("settle:".count)) ?? 1.5
+					: 1.5
+				let rest = script[(index + 1)...].joined(separator: ",")
+				guard !rest.isEmpty else { return }
+				DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+					self?.changesStepsForTesting(rest)
+				}
+				return
+			}
+
+			let argument = String(step.drop(while: { $0 != ":" }).dropFirst())
+			switch step.prefix(while: { $0 != ":" }) {
+			case "report":
+				print("CHANGES:\n\(pane.changesTreeForTesting())")
+			case "stage":
+				pane.stageForTesting(paths: argument.split(separator: "+").map(String.init), staged: false)
+			case "unstage":
+				pane.stageForTesting(paths: argument.split(separator: "+").map(String.init), staged: true)
+			case "shut":
+				pane.setExpandedForTesting(path: argument, expanded: false, staged: false)
+			case "open":
+				pane.setExpandedForTesting(path: argument, expanded: true, staged: false)
+			// What a file being written does to the pane, on demand: what is
+			// still open and still selected afterwards is the whole question.
+			case "refresh":
+				pane.refresh()
+			default:
+				print("CHANGES: no such step \(step)")
+			}
+		}
+	}
+
 	/// Clicks into the commit details field and types there.
 	///
 	/// Opens the pane first: it is only built once the repository has been

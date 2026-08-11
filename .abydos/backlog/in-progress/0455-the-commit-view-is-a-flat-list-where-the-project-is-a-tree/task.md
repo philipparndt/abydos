@@ -51,13 +51,13 @@ is a different gesture at a different granularity.
 
 ## Steps
 
-- [ ] The changes are a tree of folders relative to the root, only where there
+- [x] The changes are a tree of folders relative to the root, only where there
       is a change
-- [ ] Staging and unstaging a folder acts on everything under it, through the
+- [x] Staging and unstaging a folder acts on everything under it, through the
       one path `git add` already accepts
-- [ ] A part-staged folder says so
+- [x] A part-staged folder says so
 - [ ] Expansion and selection survive a refresh, using `TreeSelection`
-- [ ] Multi-selection across files and folders does the obvious thing
+- [x] Multi-selection across files and folders does the obvious thing
 - [ ] Seen by eye on a project with a deep change set
 - [ ] Write down here what was ruled out on the way
 - [ ] `spec/<capability>.md` says what the project now does

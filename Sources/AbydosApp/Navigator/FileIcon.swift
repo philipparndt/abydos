@@ -21,6 +21,15 @@ enum FileIcon {
 		render(key: "dir.subproject", spec: Spec(symbol: "folder.fill", color: .hex(0x6B9BD8)))
 	}
 
+	/// The plain folder glyph, for a tree whose rows are not `FileNode`s.
+	///
+	/// The changes pane's folders are made up out of the paths git reported and
+	/// have no node behind them; a folder there that did not look like a folder
+	/// in the navigator would be two ideas about the same thing in one window.
+	static func folder() -> NSImage? {
+		render(key: "dir", spec: Spec(symbol: "folder.fill", color: .hex(0x8A9099)))
+	}
+
 	static func image(for node: FileNode, isExpanded: Bool) -> NSImage? {
 		let key: String
 		let spec: Spec
@@ -29,12 +38,8 @@ enum FileIcon {
 			// One folder glyph regardless of state: IDEA signals expansion with
 			// the disclosure triangle, not by swapping the icon. Excluded output
 			// directories get the same orange IDEA marks them with.
-			key = node.isExcluded ? "dir.excluded" : "dir"
-			spec = Spec(
-				symbol: "folder.fill",
-				color: node.isExcluded ? .hex(0xC77B3B) : .hex(0x8A9099)
-			)
-			return render(key: key, spec: spec)
+			guard node.isExcluded else { return folder() }
+			return render(key: "dir.excluded", spec: Spec(symbol: "folder.fill", color: .hex(0xC77B3B)))
 		} else {
 			let ext = node.url.pathExtension.lowercased()
 			let file = specification(forExtension: ext, filename: node.name.lowercased())
