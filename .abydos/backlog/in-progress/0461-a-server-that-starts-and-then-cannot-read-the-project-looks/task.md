@@ -63,16 +63,16 @@ Two places, both already arriving and neither consulted:
 
 ## Steps
 
-- [ ] The app notices a server that has started and cannot read the project,
+- [x] The app notices a server that has started and cannot read the project,
       from what the server says rather than from a request nobody made
-- [ ] The strip says so, as a third state, without reading as a crash
-- [ ] The failing-request path keeps its message, which is already good, and
+- [x] The strip says so, as a third state, without reading as a crash
+- [x] The failing-request path keeps its message, which is already good, and
       stops being the first anybody hears
-- [ ] Not fooled by a server that logs an error and goes on working
-- [ ] What a server said is remembered per project rather than per language, or
+- [x] Not fooled by a server that logs an error and goes on working
+- [x] What a server said is remembered per project rather than per language, or
       one project's broken toolchain makes every other one of that language look
       broken for the session
-- [ ] A server that started and then *stopped* says so too — which is what the
+- [x] A server that started and then *stopped* says so too — which is what the
       reproduction on this machine actually produces
 - [ ] Watch it happen against the real project, rather than only in a test
 - [ ] Write down here what was ruled out on the way

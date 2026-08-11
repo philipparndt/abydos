@@ -127,7 +127,6 @@ struct ToolPreferencesTests {
 		)
 		#expect(decision.forget == [key("rust-analyzer")])
 		#expect(decision.stop.isEmpty)
-		#expect(decision.languages == ["rust"])
 	}
 
 	/// A server running from the copy on this machine is not the one that was
@@ -179,7 +178,6 @@ struct ToolPreferencesTests {
 		// no longer asked for, the new one so a refusal from an earlier session
 		// is not in the way of the server that is.
 		#expect(decision.forget == [key("jdtls"), key("kmp-lsp")])
-		#expect(decision.languages == ["java"])
 	}
 
 	/// The project's own file overrides the setting, so the setting moving does

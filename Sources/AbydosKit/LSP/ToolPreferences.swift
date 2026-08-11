@@ -120,10 +120,6 @@ public struct ServerReconsideration: Equatable, Sendable {
 	/// because another server has been chosen for its language or because it is
 	/// no longer meant to be coming from where it came from.
 	public let stop: Set<String>
-	/// Languages whose remembered failure — what a running server said about
-	/// itself — belongs to one of the above.
-	public let languages: Set<String>
-
 	public var isEmpty: Bool { forget.isEmpty && stop.isEmpty }
 
 	/// - Parameters:
@@ -150,7 +146,6 @@ public struct ServerReconsideration: Equatable, Sendable {
 	) {
 		var forget: Set<String> = []
 		var stop: Set<String> = []
-		var languages: Set<String> = []
 
 		// **Which server answers for a language.** A server is filed under its
 		// own name, so choosing another one moves the project to a key of its
@@ -175,7 +170,6 @@ public struct ServerReconsideration: Equatable, Sendable {
 			forget.insert(before)
 			forget.insert(after)
 			if running.contains(before) { stop.insert(before) }
-			languages.insert(languageId)
 		}
 
 		// **Where a tool comes from.** A project worked on inside its own
@@ -207,14 +201,10 @@ public struct ServerReconsideration: Equatable, Sendable {
 				// replace, and nothing on screen disagrees with what was asked
 				// for.
 				if running.contains(key) { stop.insert(key) }
-				languages.formUnion(
-					LanguageServers.server(named: tool, among: servers)?.languageIds ?? []
-				)
 			}
 		}
 
 		self.forget = forget
 		self.stop = stop
-		self.languages = languages
 	}
 }

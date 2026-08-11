@@ -114,16 +114,22 @@ final class LanguageServerBanner: NSView {
 		label.stringValue = notice.text
 		label.toolTip = notice.manual
 		detailsButton.isHidden = notice.manual == nil
+		detailsButton.setLabel(notice.detailsTitle)
 		offerButton.isHidden = notice.offer == nil
 		if let offer = notice.offer { offerButton.setLabel(offer.title) }
 		ignoreButton.isHidden = !notice.isIgnorable
 		ignoreButton.setLabel("Ignore for \(notice.languageName)")
 		ignoreButton.toolTip = "Never offer a \(notice.languageName) server again"
 		// A lightbulb is an idea somebody could act on; a wait is not one. The
-		// two states of this strip look different from across the room, which is
-		// the distance most of them are read from. An offer is an idea too — the
-		// devcontainer somebody turned down, offered back — so it lights as well.
-		symbolName = notice.manual == nil && notice.offer == nil ? "hourglass" : "lightbulb"
+		// states of this strip look different from across the room, which is the
+		// distance most of them are read from. An offer is an idea too — the
+		// devcontainer somebody turned down, offered back — so it lights as
+		// well. **A server that started and is not answering for this project is
+		// none of those**: it is a report, and it wears the sign that means read
+		// this rather than the one that means here is a thought. 0461.
+		symbolName = notice.problem
+			? "exclamationmark.triangle"
+			: notice.manual == nil && notice.offer == nil ? "hourglass" : "lightbulb"
 		applyTheme()
 	}
 
