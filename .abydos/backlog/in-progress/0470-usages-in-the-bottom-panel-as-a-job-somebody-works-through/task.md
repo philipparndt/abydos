@@ -252,29 +252,159 @@ in the panel — the choice of a window stands. **Dock** in the window is how yo
 ask for it back, and it is the same button as **Expand** with its title turned
 around, which is what the item asked for.
 
+## Watched working through a real list
+
+216 usages of `Theme.current.uiFont` in 42 files, from sourcekit-lsp over this
+project — the same order of size as 0469's 263, and reachable without going near
+the jdtls another agent is holding. Driven with a new `--usages-steps`, which is
+`--search-steps`' vocabulary because it is the same list. The machine was under
+a load average of 5 to 35 throughout (four other agents building), which is why
+everything claimed below is a **count** rather than a duration.
+
+The project was guarded with `--report-open`, which printed
+`OPEN project …/abydos-backlog-0470-…` before any step ran.
+
+### It arrives docked, with the keyboard
+
+    USAGES: in window=false panel=true
+    USAGES heading: 216 usages in 42 files window=false undo=— redo=— opened=[]
+    USAGES who: …ChecklistTable
+
+`panel=true`, `opened=[]`, and the first responder is the list's own table. That
+is both halves of the reported bug: before this the list was a floating window
+and the keyboard was still in the editor.
+
+### ↓ through it, and what it costs the server
+
+    USAGES traffic: didOpen=2 didClose=1 open=1 tabs=1 [Theme.swift]
+    ↓×5   → didOpen=5 didClose=3 open=2 tabs=2 [Theme.swift BreakpointOptionsSheet.swift~]
+    ↓×5   → didOpen=6 didClose=4 open=2 tabs=2 [Theme.swift CompletionPopup.swift~]
+    ↓ held ×200 → didOpen=7 didClose=5 open=2 tabs=2 [Theme.swift RunningToolsWindowController.swift~]
+    ⏎     → didOpen=7 didClose=5 open=2 tabs=2 [Theme.swift RunningToolsWindowController.swift]
+
+The `~` is the provisional tab. Read down that column:
+
+- **210 presses cost 5 `didOpen`s and one tab.** The traffic is one notification
+  per *file* the walk crossed, not one per row: five presses that stayed inside
+  one file added nothing, because the provisional tab was already showing it.
+- **A key held down through 200 rows cost exactly one.** One `didOpen`, one
+  reveal — `RunningToolsWindowController.swift:338`, the row it stopped on — and
+  the tab count did not move.
+- `didClose` tracks `didOpen` one behind, which is the leak this item fixed:
+  before it the provisional slot was recycled without ever telling the server,
+  and this column would have read `didClose=1` the whole way down while `open`
+  climbed to 6.
+- Nine reveals for 210 presses, and the last line shows the ⏎: the same file,
+  no new notification, and the tab has lost its `~` — the provisional tab
+  became a permanent one at the moment somebody committed to it.
+- After every ↓ group, `who` was still `ChecklistTable`. After the ⏎ it was
+  `CodeView`. That is the whole design in two words.
+
+### The checklist, on this list
+
+    ␣               → 216 usages in 42 files · 1 done   undo=Mark as Done
+    ⌫  then ⌘⌫      → 216 usages in 42 files · 1 done   undo=Mark as Done
+    ⌘Z              → 216 usages in 42 files            redo=Mark as Done
+    ⇧⌘Z             → 216 usages in 42 files · 1 done
+    ✓ (hide)        → 216 usages in 42 files · 1 done
+
+⌫ and ⌘⌫ moved nothing and marked nothing, which is the point of choosing ␣. The
+heading never lost the count of what was found, including with the done rows
+hidden.
+
+Multi-selection, over rows 3, 4 and 5 — a match in one file, the *heading* of the
+next file, which has four matches, and the first of those four:
+
+    select 3+4+5, ␣ → · 5 done
+    select 0, ␣     → · 6 done
+    ✓ (hide)        → 249 rows, and the list now starts at the fourth file
+
+Five and not two: the heading brought its whole file with it, and the match
+already inside that file was not counted twice. Then hiding took the three files
+that were now entirely done away, headings and all — 258 rows down to 249, which
+is six matches and three headings.
+
+### Out to a window and back, and asking again
+
+    ␣                          → · 1 done  window=false
+    again                      → · 1 done  window=false
+    expand                     → · 1 done  window=true   who=ChecklistTable
+    close, again               → · 1 done  window=true    who=ChecklistTable
+    …and from the window: dock → · 1 done  window=false   who=ChecklistTable
+
+`again` is a second Find Usages at the same position — a fresh answer from the
+server — and the tick came back on it, which is what the marks being keyed on the
+symbol rather than on a row position buys. Then: expanded to a window, the window
+closed, asked again, and the answer opened **in a window**. Docked again, and the
+ticks were still there, because the view moved rather than being rebuilt.
+
+## Ruled out
+
+- **A second pane sharing only the checklist.** The row type is the same type, so
+  sharing the whole list was available and sharing less would have meant two
+  tables, two key handlers and two sets of cells drifting apart.
+- **Removing rows on ␣, or on any other key.** Argued at length above. The `✓`
+  toggle already gives the shortening list, so a removal would have bought
+  nothing and cost the one thing a list of file names must not have.
+- **Adding a field to `SearchChecklist.Question` to keep the two panes' marks
+  apart.** Unnecessary: each pane owns its own `SearchChecklist`, so there is no
+  shared namespace to collide in and the usages pane can key its questions on
+  the definition site with no risk of meeting a search for the same string.
+- **`NSApp.currentEvent?.isARepeat` for the held-key case.** It is set by the
+  event loop rather than by a press, so nothing driving the table directly could
+  be believed about it — and a script that cannot check the claim is a claim
+  nobody will check. The flag now comes off the event `ChecklistTable.keyDown`
+  received.
+- **Revealing from `tableViewSelectionDidChange`.** A click changes the selection
+  too, so a click would have previewed *and* committed — opening the same file
+  twice. The reveal is driven from `keyDown`, around `super`, by comparing the
+  selection before and after.
+- **Previewing the first row when the list appears.** The selection lands on the
+  first file heading instead. A list that moved the editor before anybody asked
+  is worse than one where the first ↓ is the first usage — and landing on the
+  first *match* would have meant the first ↓ skipped it.
+- **Keeping the sidebar split with one pane in it.** Nothing else was ever docked
+  there, so the split, its divider and `DockedPane` went with the route.
+- **Timing anything.** Four other agents were building on this machine and the
+  load average moved between 5 and 72 while these runs happened. Every number
+  above is a count of messages, rows or tabs, all of which mean the same thing on
+  a busy machine as on an idle one.
+- **A 263-usage Java list from 0469's corpus run.** jdtls on `eclipse.platform.ui`
+  is minutes of indexing and is the server item 0452 is working on right now; a
+  216-usage Swift list in this project is the same size and did not touch it.
+  sourcekit-lsp does need its index warmed first — `references` answers with
+  nothing until it has built the package into
+  `~/Library/Caches/abydos/index/<project>-<hash>`, which is worth knowing before
+  spending twenty minutes wondering why Find Usages is empty.
+
 ## Estimate
 
-2026-08-11 15:27 — about three hours left
+2026-08-11 15:50 — about two hours left
 
 ## Steps
 
 - [x] Decide whether this is one list shared with search or a pane sharing its
       checklist, and say why
-- [ ] Usages open in the bottom panel, beside search
-- [ ] Multi-selection, and the done state — with the word and the key decided
+- [x] Usages open in the bottom panel, beside search
+- [x] Multi-selection, and the done state — with the word and the key decided
       against `SearchPane`'s argument rather than around it
-- [ ] The list has the keyboard when it appears — nothing calls
+- [x] The list has the keyboard when it appears — nothing calls
       `makeFirstResponder` for it today, docked or floating
-- [ ] Opening a row keeps the keyboard in the list, with one deliberate way into
+- [x] Opening a row keeps the keyboard in the list, with one deliberate way into
       the editor, so ↓ still reaches the next usage
-- [ ] Opening as the selection moves, without accumulating a tab per usage
-- [ ] Usages arrive docked, with a way from there to a window — the flow the
+- [x] Opening as the selection moves, without accumulating a tab per usage
+- [x] Usages arrive docked, with a way from there to a window — the flow the
       `Dock` button runs today, turned around
 - [x] Decide what the next Find Usages does after somebody has expanded one, and
       where that choice is remembered
 - [x] Say what becomes of the sidebar dock, since the report's "bottom view" and
       today's docked variant are two different places
-- [ ] Watch somebody work through a real usage list — the 263-location one from
+- [x] Watch somebody work through a real usage list — the 263-location one from
       0469 is a good size
-- [ ] Write down here what was ruled out on the way
-- [ ] `spec/<capability>.md` says what the project now does
+- [x] Move the `LSPLocation` → `FileSearchResult` conversion into `AbydosKit`,
+      so the one part of this with answers that can be wrong has tests
+- [x] Tell the language server about the file a recycled provisional tab held —
+      found on the way, and this feature would have exercised it hard
+- [x] A `--usages-steps` verb, since nothing in the window layer has a test
+- [x] Write down here what was ruled out on the way
+- [x] `spec/<capability>.md` says what the project now does

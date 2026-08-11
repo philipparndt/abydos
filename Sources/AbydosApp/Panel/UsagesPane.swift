@@ -156,7 +156,7 @@ final class UsagesPane: NSView {
 	func show(locations: [LSPLocation], of symbol: String, at origin: String, root: URL?) {
 		subject = symbol.isEmpty ? "Usages" : symbol
 		locationCount = locations.count
-		let results = Self.results(from: locations, root: root)
+		let results = UsageResults.group(locations, root: root)
 		fileCount = results.count
 		list.question = SearchChecklist.Question(query: origin, options: SearchOptions())
 		list.setResults(results)
@@ -182,70 +182,6 @@ final class UsagesPane: NSView {
 	func focusList() { list.focusList() }
 
 	var hasKeyboard: Bool { list.hasKeyboard }
-
-	/// Grouped by file, in path order, with the line's text where it can be read.
-	///
-	/// One read per file rather than one per usage: a file with forty hits in it
-	/// should be opened once.
-	private static func results(from locations: [LSPLocation], root: URL?) -> [FileSearchResult] {
-		var byFile: [String: [LSPLocation]] = [:]
-		for location in locations {
-			guard let path = location.url?.path else { continue }
-			byFile[path, default: []].append(location)
-		}
-
-		var results: [FileSearchResult] = []
-		for path in byFile.keys.sorted() {
-			let url = URL(fileURLWithPath: path)
-			let inFile = (byFile[path] ?? []).sorted { $0.range.start.line < $1.range.start.line }
-			let lines = (try? String(contentsOfFile: path, encoding: .utf8))?
-				.components(separatedBy: "\n") ?? []
-
-			// Where each line starts, in the UTF-16 units the editor selects
-			// with, so a row carries a range that means something rather than a
-			// placeholder nothing checks.
-			var lineStarts: [Int] = []
-			lineStarts.reserveCapacity(lines.count)
-			var offset = 0
-			for line in lines {
-				lineStarts.append(offset)
-				offset += line.utf16.count + 1
-			}
-
-			var matches: [SearchMatch] = []
-			for location in inFile {
-				let index = location.range.start.line
-				let text = lines.indices.contains(index) ? lines[index] : ""
-				let start = lineStarts.indices.contains(index) ? lineStarts[index] : 0
-				let from = start + min(location.range.start.character, text.utf16.count)
-				let to = location.range.end.line == index
-					? start + min(location.range.end.character, text.utf16.count)
-					: from
-				matches.append(SearchMatch(
-					utf16Range: from..<max(from, to),
-					line: index,
-					lineText: text
-				))
-			}
-			results.append(FileSearchResult(
-				url: url,
-				relativePath: Self.relativePath(of: url, under: root),
-				matches: matches
-			))
-		}
-		return results
-	}
-
-	/// Shown in the file heading. Relative to the project where it is under it,
-	/// and the whole path where it is not — a usage in a dependency outside the
-	/// tree is worth showing rather than dropping.
-	private static func relativePath(of url: URL, under root: URL?) -> String {
-		guard let root else { return url.path }
-		let rootPath = root.standardizedFileURL.path
-		let path = url.standardizedFileURL.path
-		guard path.hasPrefix(rootPath + "/") else { return path }
-		return String(path.dropFirst(rootPath.count + 1))
-	}
 
 	// MARK: - Driving it from a script
 

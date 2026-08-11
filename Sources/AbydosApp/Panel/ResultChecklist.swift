@@ -141,6 +141,9 @@ final class ResultChecklist: NSView {
 		table.action = #selector(rowClicked)
 		table.doubleAction = #selector(rowClicked)
 		table.onKeyDown = { [weak self] event in self?.handleTableKey(event) ?? false }
+		table.onSelectionMovedByKey = { [weak self] isARepeat in
+			self?.selectionMoved(isARepeat: isARepeat)
+		}
 		table.markUndoManager = { [weak self] in self?.markUndo }
 		table.menu = makeRowMenu()
 		tableView = table
@@ -195,18 +198,16 @@ final class ResultChecklist: NSView {
 	/// code instead of walking the results.
 	func focusList() {
 		window?.makeFirstResponder(tableView)
-		if tableView.selectedRow < 0, let first = firstMatchRow {
-			select(first)
-		}
+		// On the first heading, not on the first match, and nothing is shown yet.
+		// A list that opened a file the moment it appeared would have moved the
+		// editor before anybody asked; landing on the heading means the first ↓ is
+		// the first usage, rather than the first ↓ skipping it.
+		if tableView.selectedRow < 0, !rows.isEmpty { select(0) }
 	}
 
 	var hasKeyboard: Bool {
 		guard let responder = window?.firstResponder else { return false }
 		return responder === tableView
-	}
-
-	private var firstMatchRow: Int? {
-		rows.indices.first { if case .match = rows[$0] { return true }; return false }
 	}
 
 	private func select(_ row: Int) {
@@ -302,15 +303,22 @@ final class ResultChecklist: NSView {
 
 	/// Shows what the selection has just landed on, if this list does that.
 	///
+	/// Driven from the table's `keyDown` and not from `selectionDidChange`, which
+	/// is two decisions in one. A click must not come through here — it opens
+	/// through the table's action, deliberately and with the keyboard, and a
+	/// click that both previewed and committed would open the same file twice.
+	/// And the repeat flag has to come off the event that moved the selection:
+	/// `NSApp.currentEvent` is set by the event loop rather than by a press, so
+	/// nothing driving the table directly could be believed about it.
+	///
 	/// **Held ↓ does not open a file per row.** A key held down through 263
 	/// usages sends 263 selection changes, and revealing each one would be 263
 	/// editor opens and a `textDocument/didOpen` per file the walk passed
-	/// through. `isARepeat` is what tells the two apart: a single press shows
-	/// its row at once, because a preview that arrives 120ms late feels broken;
-	/// a repeat schedules the reveal and each further repeat cancels the one
-	/// before, so holding the key shows exactly one file — the row it stopped
-	/// on.
-	private func revealSelection() {
+	/// through. `isARepeat` is what tells the two apart: a single press shows its
+	/// row at once, because a preview that arrives 120ms late feels broken; a
+	/// repeat schedules the reveal and each further repeat cancels the one
+	/// before, so holding the key shows exactly one file — the row it stopped on.
+	private func selectionMoved(isARepeat: Bool) {
 		guard opensOnSelectionChange, !restoringSelection else { return }
 		pendingReveal?.cancel()
 		pendingReveal = nil
@@ -320,7 +328,7 @@ final class ResultChecklist: NSView {
 		      case let .match(result, match, _, _) = rows[index]
 		else { return }
 
-		guard NSApp.currentEvent?.isARepeat == true else {
+		guard isARepeat else {
 			reveal(result, match)
 			return
 		}
@@ -588,10 +596,8 @@ final class ResultChecklist: NSView {
 		default:
 			if step.hasPrefix("select:") {
 				let wanted = step.dropFirst("select:".count).split(separator: "+").compactMap { Int($0) }
-				restoringSelection = true
 				tableView.selectRowIndexes(IndexSet(wanted), byExtendingSelection: false)
-				restoringSelection = false
-				revealSelection()
+				selectionMoved(isARepeat: false)
 				return true
 			}
 			// `click:4` and `shift-click:4`, as the pointer sends them. The
@@ -667,6 +673,7 @@ final class ResultChecklist: NSView {
 		let next = max(0, min(rows.count - 1, from + delta))
 		tableView.selectRowIndexes(IndexSet(integer: next), byExtendingSelection: extending)
 		tableView.scrollRowToVisible(next)
+		selectionMoved(isARepeat: false)
 	}
 
 	/// ↓ from a field above the list, moving the keyboard into it.
@@ -716,10 +723,6 @@ extension ResultChecklist: NSTableViewDataSource, NSTableViewDelegate {
 		ChecklistRowView()
 	}
 
-	func tableViewSelectionDidChange(_ notification: Notification) {
-		revealSelection()
-	}
-
 	func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
 		guard rows.indices.contains(row) else { return nil }
 		switch rows[row] {
@@ -754,6 +757,8 @@ private final class ChecklistUndoTarget {
 /// half-remembered key must do nothing here rather than something.
 private final class ChecklistTable: NSTableView {
 	var onKeyDown: ((NSEvent) -> Bool)?
+	/// The selection was moved by a key, with whether that key was held down.
+	var onSelectionMovedByKey: ((Bool) -> Void)?
 	var markUndoManager: (() -> UndoManager?)?
 
 	override var acceptsFirstResponder: Bool { true }
@@ -787,7 +792,13 @@ private final class ChecklistTable: NSTableView {
 
 	override func keyDown(with event: NSEvent) {
 		if onKeyDown?(event) == true { return }
+		// Around `super`, because the arrow keys are its own: what a press did to
+		// the selection is the difference between before and after it.
+		let before = selectedRowIndexes
 		super.keyDown(with: event)
+		if selectedRowIndexes != before {
+			onSelectionMovedByKey?(event.isARepeat)
+		}
 	}
 
 	override func becomeFirstResponder() -> Bool {

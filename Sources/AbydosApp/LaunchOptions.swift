@@ -303,8 +303,8 @@ struct LaunchOptions {
 	///
 	/// The same vocabulary `--search-steps` has, because it is the same list:
 	/// `focus`, `down`, `up`, `space`, `rows`, `select:3`, `click:4`, `undo`,
-	/// `settle:<n>` … plus its own `expand`, `dock`, `heading`, `traffic` and
-	/// `hold-down:<n>`, which is a held ↓ rather than n separate presses.
+	/// `settle:<n>` … plus its own `expand`, `dock`, `close`, `again`, `heading`,
+	/// `traffic` and `hold-down:<n>`, which is a held ↓ rather than n presses.
 	///
 	/// `--dock-usages` went with the sidebar dock it asked for: the list now
 	/// arrives docked in the bottom panel, and `expand` moves it out to a window.

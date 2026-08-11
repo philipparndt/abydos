@@ -4409,6 +4409,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			// What the walk cost the language server, which is the number item 470
 			// asked for: a count of notifications rather than a duration, so it
 			// means the same on a machine with four builds running on it.
+			// The close button on the expanded window, which is being finished with
+			// the list rather than asking for it back in the panel.
+			if step == "close" {
+				usagesWindow?.close()
+				continue
+			}
+			// Find Usages again, at the same place. Two claims need it: the ticks
+			// come back on the same symbol, and a window that was expanded and
+			// closed is what the next answer opens in.
+			if step == "again" {
+				if let last = lastUsagesRequest {
+					findUsages(in: last.url, line: last.line, character: last.character)
+				}
+				continue
+			}
 			if step == "traffic" {
 				let group = editor.activeGroup
 				print("USAGES traffic: \(LanguageService.shared.documentTrafficForTesting) "
@@ -4709,8 +4724,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		)
 	}
 
+	/// What was last asked about, so a script can ask again — which is how the
+	/// two claims about asking twice get checked: the ticks come back, and the
+	/// choice of a window is remembered.
+	private var lastUsagesRequest: (url: URL, line: Int, character: Int)?
+
 	private func findUsages(in url: URL, line: Int, character: Int) {
 		guard let project, let languageId = editor.activeGroup?.activeDocument?.languageId else { return }
+		lastUsagesRequest = (url, line, character)
 
 		Task { @MainActor in
 			let locations = await LanguageService.shared.references(
