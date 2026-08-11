@@ -263,27 +263,33 @@ struct PlantUMLServerAddressTests {
 			return
 		}
 
-		// Generous by an order of magnitude against what was measured — hundredths
-		// of a second warm against seconds for the pipe — and only made where a
-		// stopwatch means anything. Half a second of wall clock on a machine with
-		// nothing left to give is not a statement about whether the server is
-		// being reused; the byte-for-byte comparison above is, and it is made
-		// either way. See `MachineLoad.canBeTimed`.
+		// **Something arrives at once is kept, and 0435 is the argument for keeping
+		// it.** The one time a bound here went red it was telling the truth — the
+		// server really had been taken away and the render really did take seconds
+		// — and deleting it would have removed the only thing in the suite that
+		// noticed. A live test whose title is "arrives at once" has to assert that
+		// something arrives at once, or it is asserting that two renders agree,
+		// which they would with no server at all.
 		//
-		// **Kept, deliberately, and 0435 is the argument for keeping it.** The one
-		// time this bound went red it was telling the truth — the server really had
-		// been taken away and the render really did take seconds — and deleting it
-		// would have removed the only thing in the suite that noticed. A live test
-		// whose title is "arrives at once" has to assert that something arrives at
-		// once, or it is asserting that two renders agree, which they would with no
-		// server at all.
-		guard MachineLoad.canBeTimed else {
-			print("PERF plantuml: not timing the warm render — \(MachineLoad.said)")
+		// So the *ratio* is asserted at any load and the absolute is not. This is
+		// the one place in this suite where 0472's first candidate answer is
+		// actually available: `oldSeconds` is a pipe render taken in *this* run,
+		// seconds apart from the warm one, on the same machine. A loaded machine
+		// slows both, so the quarter holds where half a second does not — and the
+		// quarter is the claim, which is that the server is being reused rather
+		// than that the wall clock read some particular number. Half a second of
+		// wall clock on a machine with nothing left to give says nothing about
+		// reuse; the byte-for-byte comparison above and the container-name check
+		// below it do, and both are made at any load.
+		#expect(warmSeconds < oldSeconds / 4, """
+			warm \(warmSeconds)s against \(oldSeconds)s through the pipe \
+			— \(MachineLoad.said)
+			""")
+		guard Stopwatch.maySay("PERF plantuml", "the warm render") else {
 			await servers.stopAll()
 			return
 		}
 		#expect(warmSeconds < 0.5)
-		#expect(warmSeconds < oldSeconds / 4)
 
 		await servers.stopAll()
 	}

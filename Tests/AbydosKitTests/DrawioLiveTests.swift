@@ -399,12 +399,9 @@ struct DrawioLiveTests {
 		}
 		let each = Date().timeIntervalSince(began) / 5
 		print("DRAWIO: \(String(format: "%.4f", each))s a warm render, \(MachineLoad.said)")
-		// Only where a stopwatch means anything — the same reasoning as Mermaid's
-		// twin of this test, written out under `MachineLoad.canBeTimed`.
-		guard MachineLoad.canBeTimed else {
-			print("DRAWIO: not timing the warm render — \(MachineLoad.said)")
-			return
-		}
-		#expect(each < 1.0, "a warm render took \(each)s")
+		// Only in a run that asked to be timed — the same reasoning as Mermaid's
+		// twin of this test, written out under `Stopwatch`.
+		guard Stopwatch.maySay("DRAWIO", "the warm render") else { return }
+		#expect(each < 0.1, "a warm render took \(each)s — \(MachineLoad.said)")
 	}
 }

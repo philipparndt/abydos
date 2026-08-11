@@ -464,6 +464,18 @@ struct MermaidLiveTests {
 	/// The measurement the whole decision rests on: the second diagram and every
 	/// one after it costs hundredths of a second, against a second a piece from
 	/// a container that has no server mode to keep warm.
+	///
+	/// The number in the claim is **0.0139 s against about 1.0 s** — a factor of
+	/// forty — and the bound below is a tenth of a second, which is an order of
+	/// magnitude under the thing it argues against and seven times over the thing
+	/// it measures. It used to be 0.5 s, which is neither: it sits between the two
+	/// answers, closer to the wrong one, and 0.46 s is what a passing run of the
+	/// suite produced. 0472 has the four readings.
+	///
+	/// The measurement is taken on every run and printed with the load beside it.
+	/// The bound is only put on it by a run that asked — `make timing` — because a
+	/// tenth of a second is not something the suite can be held to while three
+	/// hundred and fifty other suites run beside it. `Stopwatch` is the argument.
 	@Test func drawingIsFastEnoughToDoWhileSomebodyTypes() async throws {
 		guard await canDraw() else { return }
 		_ = await MermaidRenderer.shared.draw(Self.flowchart, format: .svg)
@@ -473,14 +485,10 @@ struct MermaidLiveTests {
 		}
 		let each = Date().timeIntervalSince(began) / 5
 		print("MERMAID: \(String(format: "%.4f", each))s a warm render, \(MachineLoad.said)")
-		// Only where a stopwatch means anything. This bound is about the renderer
-		// keeping its page loaded; on a machine with nothing left to give it is
-		// about the scheduler instead, and a red from it says nothing anybody can
-		// act on. See `MachineLoad.canBeTimed`, and 0435 for what it cost.
-		guard MachineLoad.canBeTimed else {
-			print("MERMAID: not timing the warm render — \(MachineLoad.said)")
-			return
-		}
-		#expect(each < 0.5, "a warm render took \(each)s, which is not a preview that follows typing")
+		guard Stopwatch.maySay("MERMAID", "the warm render") else { return }
+		#expect(each < 0.1, """
+			a warm render took \(each)s against 0.0139s measured, which is not a \
+			preview that follows typing — \(MachineLoad.said)
+			""")
 	}
 }

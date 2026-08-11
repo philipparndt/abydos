@@ -98,6 +98,31 @@ test: ## Run the test suite (FILTER=name, TEST_TIMEOUT=seconds)
 warnings: ## Every warning in this repository's own code (JOBS=N)
 	@JOBS="$(JOBS)" Scripts/warnings.sh
 
+# The bounds on how long a warm render takes, which `make test` measures and
+# deliberately does not assert.
+#
+# 0472 is the argument and it is arithmetic rather than taste. The Mermaid warm
+# render is 0.0139 s alone and 0.46–0.60 s inside `make test`, because the suite's
+# own parallelism puts a ten-core machine at load 35–40. The claim being defended
+# is a factor of forty — hundredths of a second against about a second a piece
+# from a container with no server mode to keep warm — so the harness's penalty and
+# the effect it is meant to detect are the same order, and *no* absolute bound
+# taken inside `make test` can tell them apart. One below the container is red
+# every run; one above the suite's own figure says nothing at all.
+#
+# So the measurement stays in `make test`, printed with the load beside it, and
+# the bound is put on it here: serialised, and by somebody who has decided that
+# this run is a measurement. The same shape as `make scale` and 0474's
+# `ABYDOS_BENCH=1`, for the same reason.
+#
+# Start it on a machine you are not otherwise using — `--no-parallel` stops the
+# suite loading itself, not everything else. `Stopwatch` still declines to assert
+# above four runnable threads per core, and says so with the load.
+.PHONY: timing
+timing: ## Assert the warm-render bounds, serialised, on a quiet machine
+	@TIMING=1 $(SWIFT) test $(SWIFT_JOBS) --no-parallel \
+		--filter 'MermaidLiveTests|DrawioLiveTests|PlantUMLServerLiveTests'
+
 .PHONY: perf
 perf: ## Run the performance suite in release and print timings
 	@$(SWIFT) test $(SWIFT_JOBS) -c release --filter PerformanceTests 2>&1 | grep -E '^PERF|Test run with'

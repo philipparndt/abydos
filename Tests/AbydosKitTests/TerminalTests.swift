@@ -482,6 +482,12 @@ struct PseudoTerminalTests {
 	/// still missed: `runsACommandAndCapturesOutput` went red at 5.1 runnable
 	/// threads per core while this item was being measured, waiting on
 	/// `/bin/echo`. Nothing about that red was about the terminal.
+	///
+	/// **And nothing about it was about this number either**, which 0472 established
+	/// by trying to widen it and measuring instead. There is no value of this that
+	/// helps: when the red happens the output has been discarded rather than
+	/// delayed, so the wait is a hang detector detecting a real hang. Left exactly
+	/// as it is, and 0476 is the defect.
 	private func wait(
 		timeout: TimeInterval = Patience.seconds, until condition: @escaping () -> Bool
 	) async -> Bool {
@@ -516,7 +522,22 @@ struct PseudoTerminalTests {
 		#expect(started)
 
 		let sawOutput = await wait { collected.text.contains("hello-from-pty") }
-		#expect(sawOutput, "expected output, got: \(collected.text)")
+		// **A red here is 0476 and it is not the machine being busy.** It was read
+		// that way three times — 124 s, 126.6 s and 124 s, at 5.4 to 6.5 runnable
+		// threads per core — and 0472 went looking for a timing assertion to widen
+		// and found a defect: a child that writes and exits before anything has read
+		// the master loses its output outright, so this wait is not waiting for
+		// something slow, it is waiting for something that is gone. 0476 has the
+		// reproduction, and what has already been ruled out.
+		//
+		// The load and the bytes are in the message so the next person reading a red
+		// has both without re-running the suite. `""` rather than a partial line is
+		// the tell: that is loss, not slowness.
+		#expect(sawOutput, """
+			no output after \(Patience.seconds)s, got: \
+			\(collected.text.debugDescription) — this is 0476 rather than a slow \
+			machine if it is empty — \(MachineLoad.said)
+			""")
 		pty.terminate()
 	}
 

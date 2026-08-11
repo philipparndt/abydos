@@ -9,6 +9,15 @@ import SwiftTreeSitter
 /// Thresholds are deliberately loose — they are regression tripwires for a
 /// debug build on shared CI-style hardware, not benchmarks. Actual timings are
 /// printed so a slow change is visible even when it stays under the limit.
+///
+/// **Every bound in this file is on processor time or on a ratio, and none is on
+/// a wall clock.** This suite runs beside the other three hundred and fifty, and
+/// the same query that costs 38 ms alone measures 66 ms with the suite around it;
+/// on the run 0472 was written from, a rope build read 648 ms and a line-mapping
+/// loop 843 ms against a 2.0 s bound, at load 40 on ten cores. There is nothing
+/// in this file that waits for anything, so a wall clock over it is a
+/// measurement of what the machine was doing instead. `cpuTime` for an absolute,
+/// `time` for a ratio or a print — and `MachineLoad.said` beside both.
 struct PerformanceTests {
 	/// ~9 MB / ~200k lines of realistic Swift.
 	static func makeLargeSource(lines: Int) -> String {
@@ -28,11 +37,22 @@ struct PerformanceTests {
 		print(String(format: "PERF %-38s %8s", (label as NSString).utf8String!, (value as NSString).utf8String!))
 	}
 
+	/// A wall clock, for figures that go into a *ratio* or into a print.
+	///
+	/// **Nothing in this file bounds one of these.** A wall clock here has the
+	/// other three hundred and fifty suites in it, and 0472 is what an absolute
+	/// bound on that costs; the two claims still measured this way are ratios
+	/// between two figures taken seconds apart on the same machine, which is the
+	/// one form load does not move. Anything absolute uses `cpuTime`.
+	///
+	/// The load is printed beside it either way, so a number copied out of a log
+	/// months later carries the one fact needed to argue with it.
 	static func time(_ label: String, _ body: () -> Void) -> TimeInterval {
 		let start = DispatchTime.now().uptimeNanoseconds
 		body()
 		let elapsed = Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000_000
-		print(String(format: "PERF %-38s %8.2f ms", (label as NSString).utf8String!, elapsed * 1000))
+		print(String(format: "PERF %-38s %8.2f ms wall  [%@]",
+		             (label as NSString).utf8String!, elapsed * 1000, MachineLoad.said))
 		return elapsed
 	}
 
@@ -90,12 +110,19 @@ struct PerformanceTests {
 		let source = Self.makeLargeSource(lines: 200_000)
 		print("PERF source size: \(source.utf8.count / 1_000_000) MB, \(source.utf8.count) bytes")
 
+		// Processor time, for the reason `cpuTime` gives and the reason
+		// `foldComputationIsReasonableOnHugeFile` had to learn the hard way. This
+		// was `Self.time`, and the 648 ms it reported inside a `make test` at load
+		// 40 has the whole suite's scheduling in it. Nothing here waits on
+		// anything, so wall clock and processor time differ only by what the
+		// machine was doing instead of this. 0472 swept the three bounds in this
+		// file that were still on a wall clock.
 		var rope = Rope("")
-		let elapsed = Self.time("build rope (200k lines)") {
+		let elapsed = Self.cpuTime("build rope (200k lines)") {
 			rope = Rope(source)
 		}
 		#expect(rope.lineCount == 200_001)
-		#expect(elapsed < 5.0, "rope construction took \(elapsed)s")
+		#expect(elapsed < 5.0, "rope construction took \(elapsed)s of processor time")
 	}
 
 	// MARK: - Random access
@@ -280,18 +307,23 @@ struct PerformanceTests {
 		let ranges = (0..<20_000).map { FoldRange(startLine: $0 * 5, endLine: $0 * 5 + 3) }
 		state.setAvailable(ranges)
 
-		let collapseTime = Self.time("collapse 20k regions") {
+		// Both on processor time, and the second is why: it read 843 ms against a
+		// 2.0 s bound inside a `make test` at load 34, which is a margin of 2.4 in
+		// a number the suite's own parallelism moves by a factor of thirty. Pure
+		// arithmetic over an array with nothing to wait for — so the wall clock
+		// was measuring the other three hundred and fifty suites. 0472.
+		let collapseTime = Self.cpuTime("collapse 20k regions") {
 			state.collapseAll()
 		}
-		#expect(collapseTime < 2.0)
+		#expect(collapseTime < 2.0, "collapsing took \(collapseTime)s of processor time")
 
 		var checksum = 0
-		let mapTime = Self.time("100k visual→document line lookups") {
+		let mapTime = Self.cpuTime("100k visual→document line lookups") {
 			for i in 0..<100_000 {
 				checksum &+= state.documentLine(forVisualLine: i % 40_000)
 			}
 		}
 		#expect(checksum != 0)
-		#expect(mapTime < 2.0, "line mapping took \(mapTime)s")
+		#expect(mapTime < 2.0, "line mapping took \(mapTime)s of processor time")
 	}
 }

@@ -19,6 +19,12 @@ import Testing
 /// The app itself ships release.
 ///
 /// ABYDOS_BENCH_SECONDS lengthens each pass, for sampling under a profiler.
+///
+/// **Every line printed here carries the load it was taken at.** It was the one
+/// place in the suite that printed a rate without one, and 0474 — which is what
+/// these numbers were written for — had to say in the item that its own table was
+/// taken at load 25.9 and that the absolutes should not be quoted anywhere. A
+/// figure with no load beside it is a figure somebody quotes.
 @Suite(.enabled(if: ProcessInfo.processInfo.environment["ABYDOS_BENCH"] != nil))
 struct TerminalThroughputTests {
 	/// Best of several passes.
@@ -75,7 +81,8 @@ struct TerminalThroughputTests {
 			}
 			best = max(best, megabytes * Double(rounds) / elapsed)
 		}
-		print("BENCH [\(engineName)] \(name): \(String(format: "%.1f", best)) MB/s")
+		print("BENCH [\(engineName)] \(name): \(String(format: "%.1f", best)) MB/s"
+			+ "  [\(MachineLoad.said)]")
 	}
 
 	@Test func plainOutput() {
@@ -163,7 +170,7 @@ struct TerminalThroughputTests {
 				best = min(best, -start.timeIntervalSinceNow / Double(reads))
 			}
 			print("BENCH [\(name)] grid snapshot: \(String(format: "%.3f", best * 1000)) ms/frame "
-				+ "(\(String(format: "%.0f", 1 / best)) fps ceiling)")
+				+ "(\(String(format: "%.0f", 1 / best)) fps ceiling)  [\(MachineLoad.said)]")
 		}
 	}
 }

@@ -72,6 +72,61 @@ enum MachineLoad {
 	static var canBeTimed: Bool { (perCore ?? 0) < busy }
 }
 
+/// Whether this run is one that may put a bound on how long something took.
+///
+/// `MachineLoad.canBeTimed` was the first answer to 0435 and it is not enough,
+/// which is what 0472 measured. `MermaidLiveTests.drawingIsFastEnoughToDoWhile`
+/// `SomebodyTypes` asserted `each < 0.5` on the same commit and the same machine
+/// four times in one day:
+///
+///     alone                     0.0139 s   load 16.9
+///     in the suite, passing     0.4619 s   load 37.3
+///     in the suite, failing     0.5041 s   load 37.3
+///     in the suite, failing     0.5796 s   load 40.0
+///     in the suite, failing     0.6050 s   load 35.0
+///
+/// Nothing else was running for the passing one. **The suite's own parallelism
+/// is what costs the other thirty-three fortieths of that**, and the claim the
+/// test defends — hundredths of a second warm against about a second from a
+/// container with no server mode to keep warm — is a factor of forty. The
+/// harness's penalty and the effect are the same order, so no absolute bound
+/// measured inside `make test` can tell them apart. One below the container is
+/// red every time; one above the suite's own figure says nothing.
+///
+/// So the measurement stays in `make test`, printed with its load, and the
+/// *bound* moves to a run that asked for it: `make timing`, which is serialised
+/// and which somebody starts on a machine they are not otherwise using. That is
+/// the shape `make scale` (`SCALE=1`, `--no-parallel`) and 0474's
+/// `ABYDOS_BENCH=1` already have, for the same reason.
+///
+/// **The load line is printed either way**, including the line saying the bound
+/// was not applied. Every one of 0472's diagnoses took minutes rather than an
+/// afternoon because the number was already in the log, and a run that quietly
+/// asserted nothing must not read like a run that asserted and passed.
+enum Stopwatch {
+	/// `TIMING=1`, said by `make timing` and by nothing else.
+	static var asked: Bool { ProcessInfo.processInfo.environment["TIMING"] == "1" }
+
+	/// Whether to assert a bound on `what` — and, when not, why not.
+	///
+	/// One sentence for all of them, so the three suites that time a warm render
+	/// say the same thing in the same words. They did not: two printed "not
+	/// timing the warm render" and the third printed nothing at all, and telling
+	/// a skipped bound from a passing one meant reading the source.
+	static func maySay(_ tag: String, _ what: String) -> Bool {
+		guard asked else {
+			print("\(tag): not bounding \(what) — this run did not ask for it "
+				+ "(make timing does). \(MachineLoad.said)")
+			return false
+		}
+		guard MachineLoad.canBeTimed else {
+			print("\(tag): not bounding \(what) — \(MachineLoad.said)")
+			return false
+		}
+		return true
+	}
+}
+
 /// How long a test waits for something to happen, said once.
 ///
 /// Seven suites had seven numbers — 1, 3, 10, 20, 30, 60, 90 seconds — each
