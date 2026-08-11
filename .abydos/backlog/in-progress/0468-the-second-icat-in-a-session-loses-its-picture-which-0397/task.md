@@ -95,7 +95,7 @@ budget against 2.9 MB); the transfer being truncated; the prompt erasing it (one
 
 ## Estimate
 
-2026-08-11 15:13 — just picked up again with the user's recipe; a few hours
+2026-08-11 15:55 — done, pending the item being folded
 
 ## What four runs measure, on build 937
 
@@ -479,8 +479,10 @@ both items.
 - [x] Ask a running app what the program was told the pane is
 - [x] Replay a capture through the emulator from the suite, rather than by
       writing the harness again
-- [ ] Write down here what was ruled out on the way
-- [ ] `spec/terminal.md` says what the project now does
+- [x] Write down here what was ruled out on the way — and, this time,
+      which of it was ruled out *inside tmux* and therefore ruled out
+      nothing about the pane where it fails
+- [x] `spec/terminal.md` says what the project now does
 
 The user then said the pane is not tmux, and these are the steps that made:
 
