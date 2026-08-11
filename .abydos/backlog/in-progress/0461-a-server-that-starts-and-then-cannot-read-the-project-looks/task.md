@@ -57,6 +57,10 @@ Two places, both already arriving and neither consulted:
   for the thing 0460 built — reconsidering when a preference changes — and
   somebody who fixes the toolchain should not have to reopen the project.
 
+## Estimate
+
+2026-08-11 10:21 — about two hours left
+
 ## Steps
 
 - [ ] The app notices a server that has started and cannot read the project,
@@ -65,5 +69,11 @@ Two places, both already arriving and neither consulted:
 - [ ] The failing-request path keeps its message, which is already good, and
       stops being the first anybody hears
 - [ ] Not fooled by a server that logs an error and goes on working
+- [ ] What a server said is remembered per project rather than per language, or
+      one project's broken toolchain makes every other one of that language look
+      broken for the session
+- [ ] A server that started and then *stopped* says so too — which is what the
+      reproduction on this machine actually produces
+- [ ] Watch it happen against the real project, rather than only in a test
 - [ ] Write down here what was ruled out on the way
 - [ ] `spec/language-servers.md` says what the project now does
