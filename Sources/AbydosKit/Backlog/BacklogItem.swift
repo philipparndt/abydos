@@ -248,6 +248,198 @@ public struct BacklogItem: Identifiable, Sendable, Equatable {
 		return total == 0 ? nil : Progress(done: done, total: total)
 	}
 
+	// MARK: - How much longer it has
+
+	/// What whoever is working the item thinks is left of it, and when they
+	/// thought it.
+	///
+	/// The time is half the value and not decoration. An estimate is a claim
+	/// with a moment attached, and "about an hour" on a card that does not say
+	/// whether that was judged four minutes ago or four hours ago is a number
+	/// believed because it is displayed. So there is no `Estimate` without a
+	/// `saidAt`: a line that does not carry one does not parse.
+	public struct Estimate: Equatable, Sendable {
+		/// What was said, in the words it was said in — "about an hour left",
+		/// "two more days", "no idea, a day at least".
+		public let text: String
+		/// When it was said.
+		public let saidAt: Date
+
+		public init(text: String, saidAt: Date) {
+			self.text = text
+			self.saidAt = saidAt
+		}
+
+		/// `about an hour left, as of 14:20`, which is what a card shows.
+		///
+		/// The time it was said rather than how long ago it was said, and that
+		/// is the one decision in here worth defending. A relative age — "said
+		/// 25m ago" — is the friendlier phrasing and it is the wrong one: a card
+		/// is built when the folder is walked and drawn on every scroll after
+		/// that, so a relative age is frozen at the moment of the walk and a
+		/// board left open for three hours would go on saying `5m ago` all
+		/// afternoon. That is exactly the failure this is meant to prevent, in
+		/// the display meant to prevent it. An absolute time is a fact that does
+		/// not rot, and the reader has a clock.
+		///
+		/// The day is added when it was not said today, because `as of 14:20` on
+		/// a card is otherwise indistinguishable from yesterday's.
+		public func summary(now: Date = Date()) -> String {
+			let sameDay = Calendar.current.isDate(saidAt, inSameDayAs: now)
+			return "\(text), as of \((sameDay ? Self.clock : Self.dayAndClock).string(from: saidAt))"
+		}
+
+		private static let clock: DateFormatter = {
+			let formatter = DateFormatter()
+			formatter.locale = Locale(identifier: "en_US_POSIX")
+			formatter.dateFormat = "HH:mm"
+			return formatter
+		}()
+
+		private static let dayAndClock: DateFormatter = {
+			let formatter = DateFormatter()
+			formatter.locale = Locale(identifier: "en_US_POSIX")
+			formatter.dateFormat = "d MMM HH:mm"
+			return formatter
+		}()
+	}
+
+	/// The estimate written into the item, or nothing where nobody has written
+	/// one.
+	///
+	/// Read out of the markdown for the same reason the checklist is: it travels
+	/// with the work, an agent revises it in the same commit as everything else,
+	/// and nothing has to be kept in step with it.
+	///
+	/// **Nothing computes this.** The arithmetic version — time elapsed, over
+	/// steps ticked, times steps left — needs nobody to write anything and is
+	/// wrong precisely where an estimate matters, because steps are not the same
+	/// size: an item that ticks three small ones in ten minutes and then spends
+	/// two hours on the fourth would claim twenty minutes remaining for the whole
+	/// of those two hours, and be most confident when it was most wrong. Absent
+	/// is a better answer than derived, so absent is what this returns.
+	public func estimate() -> Estimate? {
+		Self.estimate(in: text())
+	}
+
+	/// The first line under `## Estimate` that carries a time.
+	///
+	/// Shape: `2026-08-11 14:20 — about an hour left`. The timestamp leads
+	/// because a prefix is the parse that cannot be got wrong halfway through a
+	/// sentence — an estimate written as words followed by a date would need
+	/// this to guess where one ended and the other began, and "two days, maybe
+	/// three" is a sentence with numbers in it.
+	///
+	/// Lines that do not start with a timestamp are skipped rather than failing
+	/// the section, which is what lets the template keep a line of prose saying
+	/// what to write there: an item nobody has estimated reads as no estimate,
+	/// not as a broken one.
+	///
+	/// Local time, no zone. This is a claim about the next few hours, read on
+	/// the machine the worktree is on, by a person who is looking at a clock in
+	/// the same room; an offset would be more correct and less likely to be
+	/// typed correctly by hand.
+	static func estimate(in markdown: String) -> Estimate? {
+		var inSection = false
+		for line in markdown.split(separator: "\n", omittingEmptySubsequences: false) {
+			let trimmed = line.trimmingCharacters(in: .whitespaces)
+			if trimmed.hasPrefix("#") {
+				let heading = trimmed.drop { $0 == "#" }.trimmingCharacters(in: .whitespaces)
+				// Any other heading ends it. An estimate in the middle of the
+				// prose under `## Ruled out` is a sentence about a day in March.
+				inSection = heading.lowercased() == "estimate"
+				continue
+			}
+			guard inSection, let found = parseEstimate(trimmed) else { continue }
+			return found
+		}
+		return nil
+	}
+
+	/// `2026-08-11 14:20 — about an hour left`, split at the timestamp.
+	static func parseEstimate(_ line: String) -> Estimate? {
+		// A bullet is allowed, because a list is what somebody writes without
+		// thinking about it and rejecting `- 2026-…` would be a format that
+		// fails silently.
+		var rest = Substring(line)
+		if let bullet = rest.first, "-*+".contains(bullet), rest.dropFirst().hasPrefix(" ") {
+			rest = rest.dropFirst().drop { $0 == " " }
+		}
+		let stamp = rest.prefix(16)
+		guard stamp.count == 16, let saidAt = Self.timestamps.date(from: String(stamp)) else { return nil }
+
+		var text = rest.dropFirst(16).trimmingCharacters(in: .whitespaces)
+		// One separator, whichever was reached for: an em dash, a hyphen, a
+		// colon, or nothing at all.
+		if let first = text.first, "\u{2014}\u{2013}-:".contains(first) {
+			text = String(text.dropFirst()).trimmingCharacters(in: .whitespaces)
+		}
+		return text.isEmpty ? nil : Estimate(text: text, saidAt: saidAt)
+	}
+
+	/// How an estimate writes the time it was said.
+	public static let timestampFormat = "yyyy-MM-dd HH:mm"
+
+	private static let timestamps: DateFormatter = {
+		let formatter = DateFormatter()
+		formatter.locale = Locale(identifier: "en_US_POSIX")
+		formatter.dateFormat = BacklogItem.timestampFormat
+		formatter.isLenient = false
+		return formatter
+	}()
+
+	/// The line to write into an item, for whoever is stamping one now.
+	public static func estimateLine(_ text: String, at when: Date = Date()) -> String {
+		"\(timestamps.string(from: when)) \u{2014} \(text)"
+	}
+
+	/// The item's markdown with the estimate replaced, or removed for `nil`.
+	///
+	/// The whole of the section's body goes, rather than the estimate line
+	/// inside it. An estimate is one line by design and the section holds
+	/// nothing else — the template's line of prose under the heading is
+	/// instructions to whoever writes the first one, and keeping it underneath a
+	/// real estimate would leave every item telling its reader how to write the
+	/// thing they are looking at.
+	///
+	/// Removing takes the heading with it. An empty `## Estimate` reads as a
+	/// question nobody has answered, and somebody who has just said they no
+	/// longer know has answered it.
+	public static func writingEstimate(_ line: String?, into markdown: String) -> String {
+		var lines = markdown.components(separatedBy: "\n")
+		let headings = lines.indices.filter { lines[$0].trimmingCharacters(in: .whitespaces).hasPrefix("#") }
+
+		if let start = headings.first(where: {
+			lines[$0].trimmingCharacters(in: .whitespaces)
+				.drop { $0 == "#" }
+				.trimmingCharacters(in: .whitespaces)
+				.lowercased() == "estimate"
+		}) {
+			let end = headings.first { $0 > start } ?? lines.count
+			let body = line.map { ["", $0, ""] } ?? []
+			lines.replaceSubrange(start..<end, with: line == nil ? [] : [lines[start]] + body)
+			return lines.joined(separator: "\n")
+		}
+
+		guard let line else { return markdown }
+		// In front of `## Steps` where there is one, because that is where the
+		// template puts it and an item whose sections are in a different order
+		// on every second file is a document nobody can skim.
+		let section = ["## Estimate", "", line, ""]
+		if let steps = headings.first(where: {
+			lines[$0].trimmingCharacters(in: .whitespaces)
+				.drop { $0 == "#" }
+				.trimmingCharacters(in: .whitespaces)
+				.lowercased() == "steps"
+		}) {
+			lines.insert(contentsOf: section, at: steps)
+		} else {
+			if lines.last?.isEmpty == false { lines.append("") }
+			lines.append(contentsOf: section)
+		}
+		return lines.joined(separator: "\n")
+	}
+
 	/// The path to write in a prompt or a commit message: relative to the
 	/// project, because an absolute one is somebody else's machine.
 	public func displayPath(from projectRoot: URL) -> String {

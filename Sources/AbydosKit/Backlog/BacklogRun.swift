@@ -26,6 +26,32 @@ public struct BacklogRun: Codable, Sendable, Equatable, Identifiable {
 		FileManager.default.fileExists(atPath: worktreePath)
 	}
 
+	/// The item as it stands in the checkout the work is happening in.
+	///
+	/// The project's copy and the branch's copy are the same file in two
+	/// checkouts, and they answer different questions. Where an item *is* —
+	/// which state folder it sits in — is the project's answer, because a branch
+	/// nobody has merged is not something anybody else can act on. How far along
+	/// it is is the branch's answer, because that is where the ticking happens:
+	/// an agent ticks a step in the commit that finishes it, in its own worktree,
+	/// and the project's copy stays at whatever it said when the item was picked
+	/// up until the branch lands — which is the moment nobody needs to watch it
+	/// any more. Measured while 0454 was being worked: 0 of 6 in the project, 3
+	/// of 6 on the branch.
+	///
+	/// Found **by number and not by path**: an agent that has run `done` has
+	/// moved its copy to `completed/` on the branch while the project still has
+	/// it in `in-progress/`, so the two copies are not at the same path and a
+	/// path is the one thing that cannot be assumed here.
+	///
+	/// `nil` where the checkout is gone, or where the branch has no readable copy
+	/// of the item — the caller then has the project's copy, which is all there
+	/// is, and should say so rather than pass it off as the branch's.
+	public var itemInWorktree: BacklogItem? {
+		guard isPresent else { return nil }
+		return Backlog(projectRoot: worktree).item(number: number)
+	}
+
 	public init(number: Int, branch: String, worktree: URL, assistant: String, startedAt: Date = Date()) {
 		self.number = number
 		self.branch = branch

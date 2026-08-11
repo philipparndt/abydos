@@ -24,6 +24,7 @@ public enum BacklogCommands {
 			case "new": return try new(arguments)
 			case "move", "mv": return try move(arguments)
 			case "attach": return try attach(arguments)
+			case "eta", "estimate": return try eta(arguments)
 			case "next": return try next()
 			case "start": return try await start(arguments)
 			case "spec": return try spec(arguments)
@@ -240,6 +241,16 @@ public enum BacklogCommands {
 			out("\n---\nNo `## Steps` checklist, so there is no saying what is left.")
 		}
 
+		// Beside the fraction, because they are two halves of the same question
+		// and only one of them can be counted. How much is done is arithmetic on
+		// the checklist; how much longer it has is a judgement, and nothing here
+		// makes one up when nobody has offered one.
+		if let estimate = item.estimate() {
+			out("Estimate: \(estimate.summary())\(Self.age(of: estimate))")
+		} else {
+			out("No estimate \u{2014} `abydos-backlog eta \(item.number) \"about an hour left\"` writes one.")
+		}
+
 		let attachments = item.attachments()
 		if !attachments.isEmpty {
 			out("\n---\nCarries:")
@@ -323,6 +334,69 @@ public enum BacklogCommands {
 			out("\(String(format: "%04d", item.number)) is a folder now, so it can carry things.")
 		}
 		return 0
+	}
+
+	/// `eta <number> "about an hour left"` — the estimate, stamped with now.
+	///
+	/// A command rather than "edit the heading yourself", and it is the whole
+	/// reason to expect anybody to keep one: the value of an estimate is the time
+	/// attached to it, and a time attached by hand is a time somebody copies off
+	/// the line above when they are in a hurry. Stamping it is the difference
+	/// between a field that is maintained and a field that is decorative.
+	///
+	/// It writes into the item wherever the item is — which, run inside a
+	/// worktree, is that worktree's copy. That is the copy the board now reads,
+	/// so an agent estimating from where it is working is estimating on the card.
+	private static func eta(_ arguments: [String]) throws -> Int32 {
+		let backlog = try existing()
+		let options = Options(arguments)
+		guard let first = options.rest.first else {
+			throw Failure("abydos-backlog eta <number> \"about an hour left\"")
+		}
+		let item = try find([first], in: backlog)
+		let said = options.rest.dropFirst().joined(separator: " ").trimmingCharacters(in: .whitespaces)
+
+		guard !said.isEmpty || options.has("clear") else {
+			guard let estimate = item.estimate() else {
+				out("\(String(format: "%04d", item.number)) has no estimate.")
+				out("  abydos-backlog eta \(item.number) \"about an hour left\"")
+				return 0
+			}
+			out("\(String(format: "%04d", item.number))  \(estimate.summary())\(Self.age(of: estimate))")
+			return 0
+		}
+
+		let line = options.has("clear") ? nil : BacklogItem.estimateLine(said)
+		let written = BacklogItem.writingEstimate(line, into: item.text())
+		try written.write(to: item.file, atomically: true, encoding: .utf8)
+
+		// Read back rather than echoed: `estimate()` opens the file, so what is
+		// printed is what the next reader of this item will see, and a line this
+		// could not parse says so here rather than on a card tomorrow.
+		if let estimate = item.estimate() {
+			out("\(String(format: "%04d", item.number))  \(estimate.summary())")
+		} else {
+			out("\(String(format: "%04d", item.number))  no estimate now.")
+		}
+		return 0
+	}
+
+	/// ` — said 25 minutes ago`, for the places that print once.
+	///
+	/// Only where the output is a moment. A card cannot say this: it is built
+	/// when the folder is walked and drawn for as long as nothing changes, so a
+	/// relative age on a card is frozen at the walk and would go on claiming five
+	/// minutes all afternoon. A line of terminal output is stamped when it is
+	/// printed and scrolls away, which is exactly the case a relative age suits.
+	private static func age(of estimate: BacklogItem.Estimate) -> String {
+		let seconds = Date().timeIntervalSince(estimate.saidAt)
+		guard seconds >= 60 else { return " \u{2014} said just now" }
+		let minutes = Int(seconds / 60)
+		guard minutes >= 60 else { return " \u{2014} said \(minutes) minute\(minutes == 1 ? "" : "s") ago" }
+		let hours = minutes / 60
+		guard hours >= 24 else { return " \u{2014} said \(hours) hour\(hours == 1 ? "" : "s") ago" }
+		let days = hours / 24
+		return " \u{2014} said \(days) day\(days == 1 ? "" : "s") ago"
 	}
 
 	// MARK: - The spec
@@ -719,6 +793,7 @@ public enum BacklogCommands {
 		  new "title" [--files]   write one down. --files gives it a folder
 		  move <number> <state>   move it along
 		  attach <number> <file>  put a screenshot beside it
+		  eta <number> ["…"]      how much longer it has, stamped with now. --clear drops it
 		  next                    the lowest-numbered ready item
 		  start [number]          worktree, branch, agent. Defaults to `next`
 		  runs [prune]            what this machine has going

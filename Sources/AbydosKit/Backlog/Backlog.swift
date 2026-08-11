@@ -85,6 +85,9 @@ public struct Backlog: Sendable {
 	public static let taskFileName = "task.md"
 	/// The global spec, and the name of a delta folder inside an item.
 	public static let specDirectoryName = "spec"
+	/// What an estimate looks like, shown wherever one is asked for so that the
+	/// shape is never described in prose and then guessed at.
+	public static let exampleEstimate = "2026-08-11 14:20 \u{2014} about an hour left"
 	/// The canonical instructions, which every assistant's own file points at.
 	public static let instructionsFileName = "AGENTS.md"
 	public static let projectFileName = "project.md"
@@ -148,9 +151,29 @@ public struct Backlog: Sendable {
 		BacklogState.board.flatMap { items(in: $0) }
 	}
 
+	/// One item, wherever it happens to be.
+	///
+	/// Every state is looked in, and that is the point rather than thoroughness:
+	/// a number is the only durable name an item has, and the folder it is in is
+	/// the one thing about it that changes. The board asks this of a *worktree*
+	/// to find the copy an agent is ticking, and by then that copy may have been
+	/// moved to `completed/` by `done` while the project still has it in
+	/// `in-progress/` — so a path would be the wrong question.
+	///
+	/// The names are matched before anything is read. This used to build every
+	/// item in every state and then look for the number, which reads the head of
+	/// four hundred and fifty files to answer a question the directory listing
+	/// already answers — cheap enough once, and this now runs per card on a walk
+	/// that a board waits for.
 	public func item(number: Int) -> BacklogItem? {
+		let manager = FileManager.default
 		for state in BacklogState.allCases {
-			if let found = items(in: state).first(where: { $0.number == number }) { return found }
+			let folder = directory(for: state)
+			guard let names = try? manager.contentsOfDirectory(atPath: folder.path) else { continue }
+			for name in names.sorted() {
+				guard let parsed = BacklogItem.parseName(name), parsed.number == number else { continue }
+				if let found = BacklogItem(at: folder.appendingPathComponent(name), state: state) { return found }
+			}
 		}
 		return nil
 	}
@@ -321,6 +344,13 @@ public struct Backlog: Sendable {
 	/// list of what would make it done, and the two always disagreed by the
 	/// end — so `## Steps` is both: the work in the order it happens, ticked as
 	/// it happens, ending with the two steps every item has.
+	///
+	/// `## Estimate` is here empty rather than left out, for the same reason the
+	/// other headings are: a section nobody has filled in is a visible question,
+	/// and a section that does not exist is one nobody thinks to ask. The line of
+	/// prose under it does not parse as an estimate — a line without a timestamp
+	/// in front is skipped — so an item nobody has estimated reads as no
+	/// estimate rather than as a broken one.
 	static func template(number: Int, title: String) -> String {
 		"""
 		# \(number). \(title)
@@ -332,6 +362,13 @@ public struct Backlog: Sendable {
 
 		What has already been tried and did not work, and why — so the next
 		person does not spend the afternoon finding out again.
+
+		## Estimate
+
+		How much longer this has, and when that was last judged — one line, the
+		time first: `\(Self.exampleEstimate)`. Revised when it changes,
+		lengthened as honestly as it is shortened, and left out rather than
+		guessed at.
 
 		## Steps
 

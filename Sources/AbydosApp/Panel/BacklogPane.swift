@@ -8,18 +8,56 @@ import AbydosKit
 /// board redraws on every scroll — so they are done once, on the thread that
 /// re-reads the folder, and what reaches `draw(_:)` is five fields.
 struct BacklogCard {
+	/// Which copy of the item the checklist, the pictures and the delta were
+	/// read from.
+	///
+	/// **State from the project, progress from the worktree**, and the two are
+	/// not the same question. Where an item stands is the project's answer —
+	/// `in-progress/` until the branch lands, because work finished on a branch
+	/// nobody has merged is not done here. How far along it is is the branch's
+	/// answer, because the ticking happens there: measured while 0454 was being
+	/// worked, the project's copy said 0 of 6 and the branch's said 3 of 6, and
+	/// the card showed the first — the fraction the item had at the moment it was
+	/// picked up, held there until the merge, which is when nobody needs to watch
+	/// it any more.
+	enum Source: Equatable {
+		/// The project's own copy, which for an item nobody has picked up is the
+		/// only copy there is.
+		case project
+		/// The checkout the work is happening in. Which one is `run`, which the
+		/// card carries anyway in order to draw the branch and to offer the
+		/// three things its menu does with it.
+		case worktree
+	}
+
 	let item: BacklogItem
 	let progress: BacklogItem.Progress?
+	let estimate: BacklogItem.Estimate?
 	let images: Int
 	let hasSpecDelta: Bool
 	let run: BacklogRun?
+	let source: Source
 
 	init(_ item: BacklogItem, run: BacklogRun?) {
 		self.item = item
-		self.progress = item.progress()
-		self.images = item.images().count
-		self.hasSpecDelta = !item.specDeltas().isEmpty
 		self.run = run
+
+		// The second read, and it is here rather than anywhere nearer the
+		// drawing on purpose: this initialiser runs on the walk that re-reads
+		// the folder, off the main thread, and `draw(_:)` runs on every scroll.
+		// A fraction that costs a file open is a fraction nobody should be able
+		// to put on a card.
+		//
+		// Nothing extra is paid by the cards that have no run, which is nearly
+		// all of them: `itemInWorktree` is `nil` without touching the disk
+		// unless a checkout was recorded for this number and is still there.
+		let onBranch = run?.itemInWorktree
+		let copy = onBranch ?? item
+		self.progress = copy.progress()
+		self.estimate = copy.estimate()
+		self.images = copy.images().count
+		self.hasSpecDelta = !copy.specDeltas().isEmpty
+		self.source = onBranch == nil ? .project : .worktree
 	}
 
 	var number: Int { item.number }
@@ -547,6 +585,21 @@ final class BacklogPane: NSView {
 			terminal.representedObject = run.worktree
 			terminal.toolTip = run.worktreePath
 			menu.addItem(terminal)
+
+			// The third thing to do with a worktree, and the one for when
+			// somebody wants the files rather than the project or a shell —
+			// a diff to drag somewhere, a screenshot the agent left in the
+			// item's folder. Under the same guard as the other two, so all
+			// three appear and disappear together with the checkout.
+			let inFinder = NSMenuItem(
+				title: "Reveal Worktree in Finder",
+				action: #selector(revealWorktreeFromMenu(_:)),
+				keyEquivalent: ""
+			)
+			inFinder.target = self
+			inFinder.representedObject = run.worktree
+			inFinder.toolTip = run.worktreePath
+			menu.addItem(inFinder)
 		}
 
 		menu.addItem(.separator())
@@ -601,6 +654,14 @@ final class BacklogPane: NSView {
 	@objc private func openWorktreeTerminalFromMenu(_ sender: NSMenuItem) {
 		guard let worktree = sender.representedObject as? URL else { return }
 		onOpenWorktreeTerminal?(worktree)
+	}
+
+	/// The worktree itself, selected in its parent — not opened as a window on
+	/// its contents. A checkout of this project has forty entries at its root
+	/// and none of them is what somebody asked to see; the directory is.
+	@objc private func revealWorktreeFromMenu(_ sender: NSMenuItem) {
+		guard let worktree = sender.representedObject as? URL else { return }
+		NSWorkspace.shared.activateFileViewerSelecting([worktree])
 	}
 
 	@objc private func moveFromMenu(_ sender: NSMenuItem) {
@@ -1198,8 +1259,37 @@ private final class BacklogCardView: NSView {
 			attributes: [.font: font]
 		)
 		return ceil(bounds.height) + numberLine + Theme.current.scaled(2)
-			+ footer(marks: !BacklogPalette.marks(for: card).isEmpty, progress: card.progress != nil)
+			+ footer(
+				markLines: markLines(BacklogPalette.marks(for: card), width: available),
+				progress: card.progress != nil
+			)
 			+ inset * 2 + Theme.current.scaled(6)
+	}
+
+	/// How many lines the marks want, and never more than three.
+	///
+	/// One line was enough while the longest thing on it was a branch name at
+	/// the end, which is the one mark that can be lost. It stopped being enough
+	/// when the fraction gained "in the worktree" and an estimate arrived behind
+	/// it: photographed on a board at the width a five-column panel gives, `1/12
+	/// in the worktree` filled the line and the estimate came out as `a…`, which
+	/// is worse than not drawing it — a card that shows the first letter of a
+	/// fact is a card somebody has to open anyway. At two lines the estimate got
+	/// as far as `as of 07:…`, which loses the half of it that matters.
+	///
+	/// Three, and no more. A card only takes the lines its marks need, so this
+	/// is a line taller for the four or five items being worked on and unchanged
+	/// for the rest of the board; and past three the tail is a branch name that
+	/// is the item's number and title with a prefix on it, which the card is
+	/// already showing and the menu can open.
+	static func markLines(_ marks: String, width: CGFloat) -> Int {
+		guard !marks.isEmpty else { return 0 }
+		let bounds = (marks as NSString).boundingRect(
+			with: NSSize(width: width, height: CGFloat.greatestFiniteMagnitude),
+			options: [.usesLineFragmentOrigin, .usesFontLeading],
+			attributes: [.font: Theme.current.uiFont(11)]
+		)
+		return min(3, max(1, Int((ceil(bounds.height) / markLine).rounded())))
 	}
 
 	/// The two measures the height and the drawing must agree on.
@@ -1217,13 +1307,25 @@ private final class BacklogCardView: NSView {
 			.size(withAttributes: [.font: Theme.current.uiFont(11, weight: .medium)]).height
 	}
 
+	/// One line of the marks, measured the way the marks are drawn.
+	///
+	/// `boundingRect` and not `size(withAttributes:)`, which is what this used
+	/// while the marks were a single line placed by its baseline. They are wrapped
+	/// into a rect now, and a wrapped line advances by the line-fragment height —
+	/// so counting lines with one metric and reserving them with the other is the
+	/// same fault this comment was written about the first time, one font metric
+	/// asked two ways.
 	static var markLine: CGFloat {
-		("0/0" as NSString).size(withAttributes: [.font: Theme.current.uiFont(11)]).height
+		("0/0" as NSString).boundingRect(
+			with: NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude),
+			options: [.usesLineFragmentOrigin, .usesFontLeading],
+			attributes: [.font: Theme.current.uiFont(11)]
+		).height
 	}
 
-	/// What sits below the title: the marks line, and the bar when there is one.
-	static func footer(marks: Bool, progress: Bool) -> CGFloat {
-		var footer: CGFloat = marks ? markLine : 0
+	/// What sits below the title: the marks, and the bar when there is one.
+	static func footer(markLines: Int, progress: Bool) -> CGFloat {
+		var footer = markLine * CGFloat(markLines)
 		if progress { footer += Theme.current.scaled(Self.barHeight) + Theme.current.scaled(4) }
 		return footer
 	}
@@ -1290,7 +1392,11 @@ private final class BacklogCardView: NSView {
 		// when it measured at a different width from the one the card is drawn
 		// at, so this is the half that makes the overlap impossible rather than
 		// unlikely. `lines` is the same measure the height reserves two of.
-		let footer = Self.footer(marks: !marks.isEmpty, progress: progress != nil)
+		// The same count the height reserved, from the same string at the same
+		// width, so that the two can only disagree when the cached height is
+		// stale for the width being drawn at — which the clip above contains.
+		let markLines = Self.markLines(marks, width: width)
+		let footer = Self.footer(markLines: markLines, progress: progress != nil)
 		let titleRect = NSRect(
 			x: x, y: y, width: width, height: max(0, card.maxY - y - inset - footer)
 		)
@@ -1335,20 +1441,28 @@ private final class BacklogCardView: NSView {
 		// point it had no width to obey and ran out past the card's rounded
 		// edge and over its neighbour.
 		//
-		// Tail rather than middle: what a mark says first is what identifies it
-		// — `3/7`, `2 images`, `spec`, and a branch that begins with the number
-		// — so the end is the part that can go.
+		// Wrapping, with the last visible line truncated: what a mark says first
+		// is what identifies it — `3/7`, `2 images`, `spec`, and a branch that
+		// begins with the number — so the end is the part that can go, and the
+		// order the marks are built in is the order they are lost in.
+		//
+		// **`byWordWrapping`, not `byTruncatingTail`.** A truncating line break
+		// mode means "this is one line", so with it the second line of the rect
+		// was reserved, paid for in card height, and left empty while the first
+		// line ended in `a…`. Photographed before it was understood, which is
+		// the only way this pane's faults have ever been found.
 		let paragraph = NSMutableParagraphStyle()
-		paragraph.lineBreakMode = .byTruncatingTail
+		paragraph.lineBreakMode = .byWordWrapping
 		let markAttributes: [NSAttributedString.Key: Any] = [
 			.font: Theme.current.uiFont(11),
 			.foregroundColor: Theme.current.gitIgnored,
 			.paragraphStyle: paragraph,
 		]
-		let markHeight = (marks as NSString).size(withAttributes: markAttributes).height
+		let markHeight = Self.markLine * CGFloat(markLines)
 		(marks as NSString).draw(
-			in: NSRect(x: x, y: bottom - markHeight, width: width, height: markHeight),
-			withAttributes: markAttributes
+			with: NSRect(x: x, y: bottom - markHeight, width: width, height: markHeight),
+			options: [.usesLineFragmentOrigin, .usesFontLeading, .truncatesLastVisibleLine],
+			attributes: markAttributes
 		)
 	}
 }
@@ -1466,13 +1580,43 @@ enum BacklogPalette {
 		}
 	}
 
-	/// The line under a card: how far along it is, what it carries, and where
-	/// it is being worked on.
-	static func marks(for card: BacklogCard) -> String {
+	/// The line under a card: how far along it is, how much longer it has, what
+	/// it carries, and where it is being worked on.
+	///
+	/// The order is the order it can be lost in. This line truncates at the tail
+	/// on a narrow column, so what is written first is what survives — and the
+	/// fraction and the estimate are the two things that change while somebody is
+	/// watching the board, while the branch name is both the longest and the one
+	/// that has not changed since the item was picked up.
+	static func marks(for card: BacklogCard, now: Date = Date()) -> String {
 		var marks: [String] = []
-		// First, because it is the one thing that changes while somebody is
-		// watching the board.
-		if let progress = card.progress { marks.append(progress.summary) }
+
+		if let progress = card.progress {
+			// The fraction says which copy it came from, because a fraction read
+			// off a branch three commits ahead of the project is not the same
+			// fact as one read off the project, and a card that shows the one as
+			// the other is how somebody comes to trust a number they should not.
+			//
+			// Four words rather than the branch name, though the branch is the
+			// more precise answer and is already on the line: this end of the
+			// line is the end that survives a narrow column, and a branch name
+			// here would push everything after it off every in-progress card on
+			// the board. Which worktree is at the tail, where it can be lost;
+			// that there is one is at the head, where it cannot.
+			switch card.source {
+			case .worktree: marks.append("\(progress.summary) in the worktree")
+			case .project:
+				// Said only where there is something to mistake it for. An item
+				// nobody has picked up has one copy, and "in the project" on
+				// every card of a board is a distinction without a difference —
+				// but on an item with a checkout recorded and gone, it is the
+				// difference between an old number and a current one.
+				marks.append(card.run == nil
+					? progress.summary
+					: "\(progress.summary) in the project")
+			}
+		}
+		if let estimate = card.estimate { marks.append(estimate.summary(now: now)) }
 		if card.images > 0 { marks.append("\(card.images) image\(card.images == 1 ? "" : "s")") }
 		if card.hasSpecDelta { marks.append("spec") }
 		if let run = card.run, run.isPresent { marks.append(run.branch) }
