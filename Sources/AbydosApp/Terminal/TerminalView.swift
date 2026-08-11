@@ -837,12 +837,22 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// 8×19, and kitty's `icat`, which sizes a picture from exactly this, asked
 	/// for half the cells it needed. The picture then changed size the moment
 	/// anything resized the pane and the true number went out.
+	/// A scale of zero is skipped rather than believed — see `CellPixelSize`,
+	/// which is where that decision and its consequences are written down.
 	private func updateCellPixelSize() {
-		let scale = window?.backingScaleFactor
-			?? window?.screen?.backingScaleFactor
-			?? NSScreen.main?.backingScaleFactor
-			?? 2
-		let size = (width: Int((cellWidth * scale).rounded()), height: Int((cellHeight * scale).rounded()))
+		let size = CellPixelSize.pixels(
+			cellWidth: Double(cellWidth),
+			cellHeight: Double(cellHeight),
+			scales: [
+				window.map { Double($0.backingScaleFactor) },
+				window?.screen.map { Double($0.backingScaleFactor) },
+				NSScreen.main.map { Double($0.backingScaleFactor) },
+				// A machine with no display at all, which is where 0397 left the
+				// flat two: the last resort rather than the first answer.
+				2,
+			]
+		)
+		guard let size else { return }
 		emulator.cellPixelSize = size
 		pty.cellPixelSize = size
 	}
@@ -1665,7 +1675,29 @@ final class TerminalView: NSView, NSTextInputClient {
 			frame.height, clip.height, clip.origin.y, bottomOfLastRow,
 			bottomOfLastRow <= clip.origin.y + clip.height + 0.5 ? "yes" : "NO",
 			max(20, fits) == emulator.screen.columns ? "yes" : "NO"
+		) + " " + winsizeForTesting
+	}
+
+	/// What the kernel says this pane is, which is what the program sizing a
+	/// picture actually reads.
+	///
+	/// Read back off the device rather than from what was last handed to it: the
+	/// claim worth checking is that the program on the other end can see the
+	/// number, not that this file remembered writing it. `icat` derives how many
+	/// cells a picture needs from one thing only — `ypixel / rows` and `xpixel /
+	/// columns` — so a `c=`/`r=` that surprises somebody is answered here and
+	/// nowhere else, and a cell of `0x0` is the terminal saying it cannot show
+	/// pictures at all. 0397 had to work this out from `icat`'s own bytes; 0468
+	/// wanted it from a running app and there was no way to ask.
+	var winsizeForTesting: String {
+		guard let reported = pty.reportedWindowSize else { return "winsize=none" }
+		let cell = (
+			width: reported.columns > 0 ? reported.pixelWidth / reported.columns : 0,
+			height: reported.rows > 0 ? reported.pixelHeight / reported.rows : 0
 		)
+		return "winsize=\(reported.rows)x\(reported.columns)"
+			+ " pixels=\(reported.pixelHeight)x\(reported.pixelWidth)"
+			+ " ptyCell=\(cell.width)x\(cell.height)"
 	}
 
 	/// Draws what is on screen through Metal and writes it out as a PNG.
