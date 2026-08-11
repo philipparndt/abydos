@@ -115,23 +115,23 @@ Two more things to settle while building it:
 
 ## Estimate
 
-2026-08-11 06:54 — about two hours left
+2026-08-11 07:11 — about an hour
 
 ## Steps
 
-- [ ] A card's progress comes from the worktree when there is one, found by
+- [x] A card's progress comes from the worktree when there is one, found by
       number rather than by path
-- [ ] The image count and the spec delta come from the same place, for the same
+- [x] The image count and the spec delta come from the same place, for the same
       reason
-- [ ] Where the number came from is visible, so a branch's fraction is not
+- [x] Where the number came from is visible, so a branch's fraction is not
       mistaken for the project's — asked for explicitly, not inferred
-- [ ] "Reveal Worktree in Finder" on the card's menu, beside 0445's two, under
+- [x] "Reveal Worktree in Finder" on the card's menu, beside 0445's two, under
       the same `isPresent` guard
-- [ ] A worktree that has gone falls back to the project's copy, visibly
-- [ ] All of it on the walk, never in `draw(_:)`
+- [x] A worktree that has gone falls back to the project's copy, visibly
+- [x] All of it on the walk, never in `draw(_:)`
 - [x] An estimate, written by whoever is working the item, carrying when it was
       last said, and absent rather than guessed when nobody has said one
-- [ ] The card shows it beside the fraction, and shows a stale one as stale
+- [x] The card shows it beside the fraction, and shows a stale one as stale
 - [ ] `AGENTS.md` asks for the estimate in step 5, beside ticking the steps
 - [ ] `AGENTS.md`'s promise in step 5 becomes true, or goes
 - [ ] Write down here what was ruled out on the way
