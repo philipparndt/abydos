@@ -339,6 +339,24 @@ and nothing goes through it yet. What remains is a piece of work of its own:
 - [ ] Repin GoSTL here once it is tagged, and prove a model with an `include`
       renders the same in the container as it does with the installed copy
 
+**Since 0457, the second of those mounts exists.** Nothing above has been
+changed — this is a note added on 2026-08-11 by the item that hit the same
+shape from the other side. kmp-lsp reads a dependency's source out of
+`~/.m2/repository` and `~/.gradle/caches`, which is the same "the project *and*
+something outside it" this entry recorded and left, so it was built once:
+`ContainerPaths` now carries directories `beyond` the project and maps a path in
+one of them in both directions, while everything in none of them is refused
+exactly as before. An `OpenSCADCommand` that runs a container constructs
+`ContainerPaths` with the scratch directory as the thing beyond, and gets this
+entry's third question — what happens to a path outside both — answered by that
+being nil.
+
+What 0457 does **not** give the remaining steps here is the declaring half. Its
+list of directories hangs off a language server definition, and a renderer is
+not one; and OpenSCAD's scratch directory is different per call, so there is
+nothing to write in a table. The per-call working directory this entry warns
+about is still this entry's.
+
 The last three are not being done under this number. They are the second half
 of the item and they are a piece of work of their own; the section above says
 what is established for whoever picks them up, and the seam they need is open
