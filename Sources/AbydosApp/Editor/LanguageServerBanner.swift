@@ -67,6 +67,8 @@ final class LanguageServerBanner: NSView {
 		label.textColor = Theme.current.sidebarHeaderText
 		label.lineBreakMode = .byTruncatingTail
 
+		// The title is set again from every notice — see `ServerNotice.detailsTitle`
+		// — and this is only what it says before there is one to read.
 		detailsButton = DrawnButton(title: "How to install") { [weak self] in self?.onDetails?() }
 		offerButton = DrawnButton(title: "") { [weak self] in self?.onOffer?() }
 		ignoreButton = DrawnButton(title: "Ignore") { [weak self] in self?.onIgnore?() }
@@ -114,6 +116,7 @@ final class LanguageServerBanner: NSView {
 		label.stringValue = notice.text
 		label.toolTip = notice.manual
 		detailsButton.isHidden = notice.manual == nil
+		detailsButton.setLabel(notice.detailsTitle)
 		offerButton.isHidden = notice.offer == nil
 		if let offer = notice.offer { offerButton.setLabel(offer.title) }
 		ignoreButton.isHidden = !notice.isIgnorable

@@ -193,6 +193,30 @@ public enum ToolImageRecipes {
 	/// No `--platform`: the machine builds for the architecture it is, which is
 	/// the only one it will ever run this image on. That is the saving, and
 	/// naming a platform here would spend it.
+	///
+	/// **And no `--build-arg`, which 0462 asked about and decided against for
+	/// now.** It would work, and the condition on it is the thing worth writing
+	/// down rather than the answer: the image is named `<tool>:<fingerprint of
+	/// the context>`, so an argument that is *not* in the fingerprint would give
+	/// two different images one name, and the next project would silently get the
+	/// one built for the last. Hashing the arguments beside the files is a few
+	/// lines and makes the naming hold again — a different argument is a
+	/// different image, which is exactly what "an edited recipe rebuilds" already
+	/// says. `.abydos/tools.json` has the room to ask for one, too: its object
+	/// shape was added for exactly this kind of thing.
+	///
+	/// What is missing is a use. The case it was raised for is Rust, and neither
+	/// half of Rust wants it: a pinned *release* already works, because rustup
+	/// inside the image fetches a release it has not got, and a pinned *custom
+	/// channel* cannot be built at all — there is nothing for rustup to install
+	/// it from, whatever it is told the name is. So the mechanism would cost a
+	/// full toolchain image per project and answer neither, which is the shape of
+	/// thing this repository already refuses to list as known-good elsewhere. See
+	/// `ToolchainPin`.
+	///
+	/// The day something does want it — a jdtls image on the JDK a project's
+	/// `.java-version` names, once an image without a network makes Java stop
+	/// hiding this — the argument goes in the fingerprint first.
 	public static func build(
 		_ recipe: Recipe, using runtime: ContainerRuntime
 	) -> (executable: String, arguments: [String]) {
