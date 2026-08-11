@@ -317,14 +317,54 @@ is a guard nobody reads. Fixed by comparing both sides with `/private` off.
 by another agent's scale run on 0470, which is why the numbers above are recorded
 here rather than cited to a file. Later files are prefixed with the item number.
 
-**`ContainerLSPLiveTests`'s leak, seen.** The app's own sweep printed `Removed 4
-container(s) left by an earlier run: abydos-lsp-jdtls-65883-6, …-57863-23,
-…-52074-23, …-67876-23`. Cleaned up by the app rather than by hand, and not
-touched here — it is still the leak 0427's note describes.
+**`ContainerLSPLiveTests`'s leak, seen but not reproduced.** The app's own sweep
+printed `Removed 4 container(s) left by an earlier run: abydos-lsp-jdtls-65883-6,
+…-57863-23, …-52074-23, …-67876-23` on one of these launches, so the leftovers are
+real and the sweep does clear the orphans. Three others — `…-53519-23`,
+`…-64145-23`, `…-66987-23`, started 14:29 to 14:34 — survived that sweep, which
+means their owning processes were still alive; they are somebody else's and were
+left alone. **The full suite run here left none of its own**, checked twenty
+seconds after it finished, so this run has nothing to clean up and the leak was
+not reproduced.
 
-## Estimate
+## Driven for real
 
-2026-08-11 16:00 — about two hours left, a second measurement running
+A one-class Maven project under a scratch directory, with
+`{"languages": {"java": "kmp-lsp"}}` in its `.abydos/tools.json`, against a build
+under a bundle id of its own. Everything below is from cold: the project's
+`target/`, its Eclipse metadata and the debugger's `-data` directory all deleted
+first.
+
+    16:24:35  jdtls started for the debugger alone in 0452-javaproj:
+              the server answering about files does not host an adapter
+    16:24:41  java launch in 0452-javaproj from the debugger's own jdtls:
+              project 0452-javaproj, 1 classpath entries,
+              first …/0452-javaproj/target/classes
+    [debug]   total is 10
+
+Six seconds from the host starting to a launch, on a one-class project. kmp-lsp is
+not installed on this machine, so the strip above the file says so and *no Java
+server was answering about files at all* — which makes the point rather than
+weakening it: the debugger needed nothing from the editing server.
+
+Its row in Running Servers, read at 40 seconds:
+
+    jdtls | 0452-javaproj — the Java debugger, which lives inside jdtls | 40s | 549,3 MB
+
+And the settings page, dumped with `--dump-settings "Language servers" --with-help`:
+
+    choice   Java
+       ↳ Which server answers for this language. … jdtls — type-aware, and a JVM.
+         … kmp-lsp — instant and syntactic. … Debugging still works: jdtls is
+         started for the debugger alone when you press Debug, and that first Debug
+         waits for it to import the project.
+    choice   Go
+       ↳ gopls is the only server Abydos has for this. …
+
+The two failures that came before that worked, both driven rather than reasoned
+about, are in **What surprised** above: a launch handed jdtls's fallback project's
+classpath, and a launch handed a right classpath pointing at a directory jdtls had
+not compiled into yet.
 
 ## Steps
 
@@ -354,5 +394,5 @@ touched here — it is still the leak 0427's note describes.
       the dump printed titles alone
 - [x] Driven for real: a project whose editing server is not jdtls, debugged from
       cold, and the row it leaves in Running Servers
-- [ ] Write down here what was ruled out on the way
-- [ ] `spec/language-servers.md` says what the project now does
+- [x] Write down here what was ruled out on the way
+- [x] `spec/language-servers.md` says what the project now does
