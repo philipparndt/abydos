@@ -56,7 +56,7 @@ is a different gesture at a different granularity.
 - [x] Staging and unstaging a folder acts on everything under it, through the
       one path `git add` already accepts
 - [x] A part-staged folder says so
-- [ ] Expansion and selection survive a refresh, using `TreeSelection`
+- [x] Expansion and selection survive a refresh, using `TreeSelection`
 - [x] Multi-selection across files and folders does the obvious thing
 - [ ] Seen by eye on a project with a deep change set
 - [ ] Write down here what was ruled out on the way

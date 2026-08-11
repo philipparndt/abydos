@@ -21,6 +21,10 @@ final class ChangesPane: NSView {
 
 	private let root: URL
 
+	/// The work tree this pane is showing, so the window can tell whether the
+	/// one it has is the one it wants rather than building another.
+	var repositoryRoot: URL { root }
+
 	private var status = GitWorkingCopyStatus()
 	private var unstagedTable: ChangesOutlineView!
 	private var stagedTable: ChangesOutlineView!

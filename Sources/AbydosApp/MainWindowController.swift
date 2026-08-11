@@ -1007,9 +1007,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			self.navigator.refreshGitStatus()
 
 			// Changes, history and branches hold on to one repository, so a
-			// different work tree needs them built again.
+			// *different* work tree needs them built again — which is what
+			// this said and not what it did. Rebuilding whatever the answer
+			// came back as threw away a pane somebody was already using:
+			// reading the repository finishes a second or two after a window
+			// opens, and it took with it the commit message half typed into the
+			// pane and the folders unfolded in it.
 			if self.currentSidebarTool == .changes || self.currentSidebarTool == .branches {
-				self.install(tool: self.currentSidebarTool, force: true)
+				let holding = self.currentSidebarTool == .changes
+					? self.changesPane?.repositoryRoot
+					: self.branchesPane?.repositoryRoot
+				if holding != (self.scopeRoot ?? self.project?.root) {
+					self.install(tool: self.currentSidebarTool, force: true)
+				}
 			}
 			self.refreshRunConfigurations()
 		}
@@ -7524,6 +7534,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			await self?.project?.loadGit()
 			guard let self, self.pendingSidebarTool == tool else { return }
 			self.pendingSidebarTool = nil
+			// It may have arrived while this was waiting: reading a repository
+			// takes long enough that a window told to open on the changes pane
+			// gets there first, and building it a second time on top of itself
+			// threw away the one that was already on screen.
+			guard self.currentSidebarTool != tool || self.primaryToolView == nil else {
+				self.updateSidebarSelection()
+				return
+			}
 			guard self.makeToolView(tool) != nil else { return }
 			self.install(tool: tool, force: true)
 			self.updateSidebarSelection()
