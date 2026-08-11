@@ -196,7 +196,7 @@ bundles".
 
 ## Estimate
 
-2026-08-11 14:36 — about twenty minutes left
+2026-08-11 13:12 — about two hours left
 
 ## Steps
 

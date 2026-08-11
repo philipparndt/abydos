@@ -377,8 +377,20 @@ import Testing
 	/// checkout and it is somebody's checkout: a test that renamed thirty files
 	/// in it would break the corpus for every other test that uses it. An APFS
 	/// clone is metadata only and is thrown away afterwards.
+	///
+	/// **Asked for rather than merely available**, under `SCALE=1`, which is the
+	/// switch `ScaleLiveTests` already uses for corpus work and for the same
+	/// reason. This one imports five Eclipse projects into a JVM, and measured
+	/// here it takes the suite from 44 seconds to over two minutes and the load
+	/// average past ninety — at which point timing assertions in unrelated
+	/// suites start failing, which is exactly the "five people proving the red
+	/// was not theirs" that `MachineLoad` was written about. Evidence worth
+	/// having is not worth having at the cost of everybody else's.
+	///
+	///     make test SCALE=1 FILTER=jdtlsRenamesOverTheCorpus
 	@Test func jdtlsRenamesOverTheCorpusAndMovesAFileInIt() async throws {
-		let corpus = URL(fileURLWithPath: ProcessInfo.processInfo.environment["ABYDOS_CORPUS"]
+		guard ProcessInfo.processInfo.environment["SCALE"] != nil else { return }
+		let corpus = URL(fileURLWithPath: ProcessInfo.processInfo.environment["CORPUS"]
 			?? NSString(string: "~/dev/abydos-corpus").expandingTildeInPath)
 		let bundles = corpus.appendingPathComponent("platform/eclipse.platform.ui/bundles")
 		guard FileManager.default.fileExists(atPath: bundles.path) else {
