@@ -797,6 +797,33 @@ struct LanguageServerRootTests {
 		#expect(LanguageServers.suits(go, root: root))
 	}
 
+	/// The root moves and the key does not, which is what makes one lookup right
+	/// for everybody.
+	///
+	/// 0467 was reported against exactly this shape — `mqtt-lamarzocco` with its
+	/// `go.mod` in `app/`, so gopls is *started* at a directory that is not the
+	/// project — and the first suspicion was that the footer went blank because
+	/// it rebuilt the key from the group's project while the document had been
+	/// filed under the root the server was started at. It had not: the key
+	/// carries the project it was asked about and never the manifest directory,
+	/// so the chip, the strip, and every question a file asks all name the same
+	/// entry. Asserted here so the two cannot drift apart, since the day they do
+	/// the symptom is silence.
+	@Test func aServerRootedBelowTheProjectIsStillFiledUnderTheProject() throws {
+		let root = try makeTree(["README.md", "app/go.mod", "app/main.go"])
+		defer { try? FileManager.default.removeItem(at: root) }
+		let go = try #require(LanguageServers.definition(forLanguage: "go", choosing: .none))
+
+		let started = LanguageServers.markerDirectory(for: go, in: root)
+		#expect(started?.lastPathComponent == "app")
+
+		let key = LanguageServers.serverKey(project: root, languageId: "go", choosing: .none)
+		#expect(key == "\(root.standardizedFileURL.path)#gopls")
+		#expect(key != LanguageServers.serverKey(
+			project: try #require(started), languageId: "go", choosing: .none
+		))
+	}
+
 	@Test func findsOneTwoLevelsDown() throws {
 		let root = try makeTree(["services/api/go.mod"])
 		defer { try? FileManager.default.removeItem(at: root) }
