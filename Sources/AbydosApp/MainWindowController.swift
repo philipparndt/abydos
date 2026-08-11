@@ -161,11 +161,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	private var primaryToolView: NSView?
 	private var primaryToolTop: NSLayoutConstraint?
 	private var primaryContainer: NSView!
-	/// The pane below the sidebar's tool, for anything docked there.
-	private var dockContainer: ColoredView!
-	private var sidebarSplit: NSSplitView!
-	/// What is docked, so it can be swapped or sent back to a window.
-	private var dockedView: NSView?
 	private(set) var currentSidebarTool: SidebarToolKind = .project
 	/// Height the titlebar covers, applied to sidebar panes that do not inset
 	/// themselves.
@@ -231,17 +226,39 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	}()
 
 	/// Where everywhere-this-is-used is listed.
-	private lazy var usagesPanel: UsagesPanel = {
-		let panel = UsagesPanel()
-		panel.onOpen = { [weak self] location in
-			guard let url = location.url else { return }
-			self?.editor.open(fileURL: url, atLine: location.range.start.line + 1)
+	///
+	/// One per window, made once and moved between its two hosts rather than
+	/// rebuilt for each: the ticks somebody has put on the list are in it, and a
+	/// pane rebuilt on the way to a window would arrive with the work undone.
+	private lazy var usagesPane: UsagesPane = {
+		let pane = UsagesPane()
+		pane.onOpen = { [weak self] url, line, intent in
+			self?.openFromChecklist(url, line: line, intent: intent)
 		}
-		panel.onDock = { [weak self] view, title in
-			self?.dockInSidebar(view, title: title)
-		}
-		return panel
+		pane.onExpand = { [weak self] in self?.expandUsages() }
+		pane.onDock = { [weak self] in self?.dockUsages() }
+		return pane
 	}()
+
+	/// The window a usages list has been expanded into, while there is one.
+	private var usagesWindow: UsagesWindow?
+
+	/// Whether the next Find Usages arrives in a window rather than in the panel.
+	///
+	/// **Per window, in memory, and not written to disk.** Coming back docked
+	/// when somebody has just asked for a window is an answer nobody believes, so
+	/// the choice has to be remembered somewhere; the question is how long for.
+	/// A usage list is transient and so is the reason for wanting it big — this
+	/// symbol has two hundred usages and the panel is forty rows tall. That is
+	/// the shape of the current job rather than a preference about the program,
+	/// which is why it is not in `Settings`: one Expand would otherwise decide
+	/// how Find Usages behaved for months. Per project was the other candidate
+	/// and was ruled out for the same reason plus a worse one — it would be the
+	/// only thing in `ProjectSession` that is about a list nothing restores.
+	///
+	/// It survives the window being closed, which is the case the item names:
+	/// expand, read it, close it, ask again, and the answer is a window.
+	private var usagesOpenInWindow = false
 
 	/// Where news the user did not ask for goes.
 	private lazy var toasts = ToastPresenter(window: window)
@@ -504,29 +521,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		navigatorContainer = ColoredView(color: Theme.current.sidebarBackground)
 		navigatorContainer.colourSource = { Theme.current.sidebarBackground }
 
-		// The sidebar is two stacked panes: the tool on top, and whatever has
-		// been docked underneath it. The lower one takes no room until
-		// something is in it.
-		let sidebarSplit = ThinDividerSplitView()
-		sidebarSplit.isVertical = false
-		sidebarSplit.dividerStyle = .thin
-		sidebarSplit.translatesAutoresizingMaskIntoConstraints = false
-		navigatorContainer.addSubview(sidebarSplit)
-		NSLayoutConstraint.activate([
-			sidebarSplit.topAnchor.constraint(equalTo: navigatorContainer.topAnchor),
-			sidebarSplit.bottomAnchor.constraint(equalTo: navigatorContainer.bottomAnchor),
-			sidebarSplit.leadingAnchor.constraint(equalTo: navigatorContainer.leadingAnchor),
-			sidebarSplit.trailingAnchor.constraint(equalTo: navigatorContainer.trailingAnchor),
-		])
-
+		// The sidebar holds the tool and nothing else. It used to be a split with a
+		// second pane underneath for a docked view, and the only thing ever docked
+		// there was the usages list — which item 470 moved into the bottom panel
+		// beside search, where the checklist it shares already lives. A split with
+		// one pane in it and a divider nobody can reach is not worth keeping for a
+		// route nothing takes.
 		let toolContainer = ColoredView(color: Theme.current.sidebarBackground)
 		toolContainer.colourSource = { Theme.current.sidebarBackground }
-		dockContainer = ColoredView(color: Theme.current.sidebarBackground)
-		dockContainer.colourSource = { Theme.current.sidebarBackground }
-		dockContainer.isHidden = true
-		sidebarSplit.addArrangedSubview(toolContainer)
-		sidebarSplit.addArrangedSubview(dockContainer)
-		self.sidebarSplit = sidebarSplit
+		toolContainer.translatesAutoresizingMaskIntoConstraints = false
+		navigatorContainer.addSubview(toolContainer)
+		NSLayoutConstraint.activate([
+			toolContainer.topAnchor.constraint(equalTo: navigatorContainer.topAnchor),
+			toolContainer.bottomAnchor.constraint(equalTo: navigatorContainer.bottomAnchor),
+			toolContainer.leadingAnchor.constraint(equalTo: navigatorContainer.leadingAnchor),
+			toolContainer.trailingAnchor.constraint(equalTo: navigatorContainer.trailingAnchor),
+		])
 
 		primaryContainer = toolContainer
 
@@ -637,6 +647,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			guard let self else { return }
 			self.makeRoomForTheEditor()
 			self.editor.open(fileURL: url, atLine: line)
+		}
+		// A checklist row, which also says whether the keyboard goes with it. Room
+		// is made for the editor either way — a preview nobody can see is not one
+		// — but a preview leaves the keyboard in the list.
+		bottomPanel.onOpenResult = { [weak self] url, line, intent in
+			guard let self else { return }
+			self.makeRoomForTheEditor()
+			self.openFromChecklist(url, line: line, intent: intent)
 		}
 		bottomPanel.onOpenFileFromTerminal = { [weak self] request in
 			self?.openFromTerminal(request)
@@ -4356,14 +4374,49 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		findUsages(in: url, line: line, character: character)
 		DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
 			guard let self else { return }
-			let rows = self.usagesPanel.rowsForTesting
-			print("USAGES: \(rows.count) rows")
-			for row in rows.prefix(8) { print("USAGE: \(row)") }
+			print("USAGES: in window=\(self.usagesInWindowForTesting) "
+				+ "panel=\(self.bottomPanel.existingUsagesPane != nil)")
+			self.usagesPane.stepForTesting("heading")
+			self.usagesPane.stepForTesting("who")
+		}
+	}
 
-			if self.shouldDockUsagesForTesting {
-				self.usagesPanel.dockForTesting()
-				print("USAGES: docked=\(self.hasDockedPaneForTesting)")
+	/// Works the usages list from the command line, the way `--search-steps`
+	/// works the search one.
+	///
+	/// `settle` is handled here for the same reason it is there: the list is
+	/// filled from an answer that arrives on the main queue, and a script that
+	/// pressed on regardless would be asking about rows that had not been built.
+	func usagesStepsForTesting(_ steps: String) {
+		let script = steps.split(separator: ",").map(String.init)
+		guard bottomPanel.existingUsagesPane != nil || usagesInWindowForTesting else {
+			print("USAGES: no list")
+			return
+		}
+		runUsagesSteps(script)
+	}
+
+	private func runUsagesSteps(_ script: [String]) {
+		for (index, step) in script.enumerated() {
+			if step == "settle" || step.hasPrefix("settle:") {
+				let seconds = Double(step.dropFirst("settle:".count)) ?? 0.5
+				let rest = Array(script.dropFirst(index + 1))
+				DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+					self?.runUsagesSteps(rest)
+				}
+				return
 			}
+			// What the walk cost the language server, which is the number item 470
+			// asked for: a count of notifications rather than a duration, so it
+			// means the same on a machine with four builds running on it.
+			if step == "traffic" {
+				let group = editor.activeGroup
+				print("USAGES traffic: \(LanguageService.shared.documentTrafficForTesting) "
+					+ "tabs=\(group?.tabCount ?? 0) "
+					+ "[\(group?.tabTitlesForTesting.joined(separator: " ") ?? "")]")
+				continue
+			}
+			usagesPane.stepForTesting(step)
 		}
 	}
 
@@ -4436,57 +4489,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// than once in a sitting.
 	static var lastProfilerAddress = "localhost:6060"
 
-	/// Puts a view in the sidebar, under whichever tool is showing.
-	///
-	/// Results are worth keeping beside the code rather than on top of it: a
-	/// list of usages is something you work through, and a window that covers
-	/// what you are reading is in the way by the second one.
-	func dockInSidebar(_ view: NSView, title: String) {
-		dockedView?.removeFromSuperview()
-
-		let host = DockedPane(title: title, content: view)
-		host.onClose = { [weak self] in self?.undockFromSidebar() }
-		host.translatesAutoresizingMaskIntoConstraints = false
-		dockContainer.addSubview(host)
-		NSLayoutConstraint.activate([
-			host.topAnchor.constraint(equalTo: dockContainer.topAnchor),
-			host.bottomAnchor.constraint(equalTo: dockContainer.bottomAnchor),
-			host.leadingAnchor.constraint(equalTo: dockContainer.leadingAnchor),
-			host.trailingAnchor.constraint(equalTo: dockContainer.trailingAnchor),
-		])
-		dockedView = host
-
-		dockContainer.isHidden = false
-		if navigatorContainer.isHidden { toggleNavigator(nil) }
-
-		// The tool keeps the larger share the first time, and the divider can be
-		// dragged to whatever suits after that. Positioned once the split has a
-		// height: asking before it has laid out sets a divider in a view that
-		// is still zero tall, which leaves the docked pane filling everything.
-		placeDockDivider(attemptsLeft: 20)
-	}
-
-	private func placeDockDivider(attemptsLeft: Int) {
-		navigatorContainer.layoutSubtreeIfNeeded()
-		let height = sidebarSplit.bounds.height
-		guard height > 200 else {
-			guard attemptsLeft > 0 else { return }
-			DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-				self?.placeDockDivider(attemptsLeft: attemptsLeft - 1)
-			}
-			return
-		}
-		sidebarSplit.setPosition(height * 0.6, ofDividerAt: 0)
-	}
-
-	func undockFromSidebar() {
-		dockedView?.removeFromSuperview()
-		dockedView = nil
-		dockContainer.isHidden = true
-	}
-
-	var hasDockedPaneForTesting: Bool { dockedView != nil }
-	var shouldDockUsagesForTesting = false
+	/// Whether the usages list is showing in a window rather than in the panel.
+	var usagesInWindowForTesting: Bool { usagesWindow != nil }
 
 	/// Everywhere the symbol at a position is used.
 	///
@@ -4724,7 +4728,139 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				editor.open(fileURL: target, atLine: only.range.start.line + 1)
 				return
 			}
-			usagesPanel.show(locations: locations, over: window)
+			showUsages(
+				locations,
+				of: symbolName(in: url, line: line, character: character),
+				at: "\(url.path):\(line):\(character)"
+			)
+		}
+	}
+
+	/// The word the caret is on, for the heading and the tab.
+	///
+	/// Read out of the open document rather than asked of the server: the server
+	/// has already answered the only question worth a round trip, and a heading
+	/// that says "usages of `Close`" is worth more than one that says "usages"
+	/// only if it arrives with the list.
+	private func symbolName(in url: URL, line: Int, character: Int) -> String {
+		guard let text = editor.document(for: url)?.rope.string else { return "" }
+		let lines = text.components(separatedBy: "\n")
+		guard lines.indices.contains(line) else { return "" }
+		let units = Array(lines[line].utf16)
+		guard character <= units.count else { return "" }
+
+		func isWord(_ unit: UInt16) -> Bool {
+			guard let scalar = Unicode.Scalar(unit) else { return false }
+			return CharacterSet.alphanumerics.contains(scalar) || scalar == "_"
+		}
+
+		var start = min(character, max(0, units.count - 1))
+		var end = start
+		while start > 0, isWord(units[start - 1]) { start -= 1 }
+		while end < units.count, isWord(units[end]) { end += 1 }
+		guard end > start else { return "" }
+		return String(decoding: units[start..<end], as: UTF16.self)
+	}
+
+	/// Puts one symbol's usages wherever the last answer to that question was.
+	private func showUsages(_ locations: [LSPLocation], of symbol: String, at origin: String) {
+		usagesPane.show(
+			locations: locations, of: symbol, at: origin, root: project?.scopeRoot
+		)
+		if usagesOpenInWindow {
+			expandUsages()
+		} else {
+			dockUsages()
+		}
+	}
+
+	/// The list in the bottom panel, beside search.
+	private func dockUsages() {
+		usagesOpenInWindow = false
+		if let usagesWindow {
+			usagesWindow.onClose = nil
+			usagesWindow.contentView = nil
+			usagesWindow.close()
+			self.usagesWindow = nil
+		}
+		usagesPane.isInWindow = false
+		usagesPane.removeFromSuperview()
+		setPanelVisible(true)
+		bottomPanel.dockUsages(usagesPane, title: usagesPane.title)
+	}
+
+	/// The same view, in a window big enough to read two hundred rows in.
+	private func expandUsages() {
+		usagesOpenInWindow = true
+		bottomPanel.releaseUsages()
+		usagesPane.removeFromSuperview()
+		usagesPane.isInWindow = true
+
+		let window = usagesWindow ?? makeUsagesWindow()
+		usagesWindow = window
+		window.title = usagesPane.title
+		window.contentView = usagesPane
+
+		if let parent = self.window {
+			let frame = parent.frame
+			let size = NSSize(
+				width: min(760, frame.width - 80), height: min(520, frame.height - 160)
+			)
+			window.setFrame(NSRect(
+				x: frame.midX - size.width / 2,
+				y: frame.midY - size.height / 2,
+				width: size.width,
+				height: size.height
+			), display: true)
+			parent.addChildWindow(window, ordered: .above)
+		}
+		if NSApp.isActive {
+			window.makeKeyAndOrderFront(nil)
+		} else {
+			window.orderFront(nil)
+		}
+		// The same call the docked route needs, for the same reason: a list nobody
+		// gave the keyboard to is one ↓ cannot walk.
+		DispatchQueue.main.async { [weak self] in self?.usagesPane.focusList() }
+	}
+
+	private func makeUsagesWindow() -> UsagesWindow {
+		// No full-size content: the heading would be drawn under the titlebar, on
+		// top of the title and the traffic lights.
+		let window = UsagesWindow(
+			contentRect: NSRect(x: 0, y: 0, width: 760, height: 520),
+			styleMask: [.titled, .closable, .resizable],
+			backing: .buffered,
+			defer: true
+		)
+		window.backgroundColor = Theme.current.editorBackground
+		// Closing is being finished with the list, not asking for it back in the
+		// panel: the choice of a window stands, so the next Find Usages opens one.
+		window.onClose = { [weak self] in
+			guard let self, let window = self.usagesWindow else { return }
+			window.parent?.removeChildWindow(window)
+			self.usagesPane.removeFromSuperview()
+			window.contentView = nil
+			self.usagesWindow = nil
+			window.orderOut(nil)
+		}
+		return window
+	}
+
+	/// A row in a checklist pane was activated.
+	///
+	/// The whole of item 470's keyboard answer is in the two branches. A preview
+	/// asks for the provisional tab and does not take first responder, so the
+	/// editor scrolls, shows the line and puts the caret there while the keyboard
+	/// stays in the list and ↓ reaches the next row. A commit is the deliberate
+	/// way in — ⏎ or ⇥ from the list, or a click, which is somebody who meant to
+	/// be in that line of code.
+	private func openFromChecklist(_ url: URL, line: Int, intent: ResultChecklist.Intent) {
+		switch intent {
+		case .preview:
+			editor.open(fileURL: url, atLine: line, focusEditor: false, preview: true)
+		case .commit:
+			editor.open(fileURL: url, atLine: line)
 		}
 	}
 

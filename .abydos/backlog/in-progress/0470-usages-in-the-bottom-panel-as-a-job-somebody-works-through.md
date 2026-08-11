@@ -130,9 +130,135 @@ twice. Two things it does not answer and somebody should:
   checklist this reuses already lives, and say in the item what became of the
   sidebar route.
 
+## What was decided
+
+### One list, shared — `ResultChecklist`
+
+Not "a pane that shares the checklist and not the view". The whole list *is*
+shared: the table, the rows, the ticking, the file headings, the `✓`, the undo
+and the key handling came out of `SearchPane` into `ResultChecklist`, and both
+panes put their own controls above it. Search puts a query field and three
+option toggles there; usages puts a heading. Neither owns a line of the ticking.
+
+The reason it could be the whole view and not only the model is that the row
+type turned out to be the same one. A usage is a path, a line and the text of
+that line, which is a `SearchMatch` in a `FileSearchResult` — the type
+`SearchChecklist` already keys its marks on. `UsagesPane` converts `LSPLocation`s
+into those, reading each file once, which the old panel did anyway to show the
+line. Nothing in `AbydosKit` had to change.
+
+`SearchPane` went from 942 lines to 260, and there is one copy of the done logic
+rather than two, let alone three.
+
+### Done, not delete — ␣, and the row stays
+
+`SearchPane`'s argument survives the one thing usages have that search does not.
+The word is **done**, the key is **␣**, the row stays struck through, and ⌫ and
+⌘⌫ do nothing at all. The report asked for deletion; this is the answer to it:
+
+- The hazard is unchanged and is the whole of the original argument. ⌘⌫ in the
+  project tree moves a file to the trash. The usages list is *more* alike than
+  the search list is, not less: it is nothing but file names and lines of code,
+  it now sits in the same panel as search, and it is reached from a context menu
+  in the editor rather than from a search field — so somebody arrives at it
+  without having typed anything that would remind them which pane they are in.
+- The moving-target objection is unchanged too, and matters more here than in
+  search. A list that removes rows as they are ticked moves everything under the
+  pointer on every press. In search you are usually deciding row by row; in a
+  usage list of 263 you run ␣, ↓, ␣, ↓ down a file, and a list that reflows
+  under that is one where the next ␣ lands on something nobody looked at.
+- The transience argument for "gone" does not actually need a removal. What it
+  wants is a list that empties as the work is done, and the `✓` toggle already
+  gives exactly that, reversibly, with no keystroke that is destructive-shaped.
+  Turning it on is the shortening list; turning it off is the audit.
+- And transience cuts the other way as well. Because the marks are keyed on the
+  question — here the definition site of the symbol — asking Find Usages again
+  about the same symbol brings the ticks back. That is the normal thing to do
+  after fixing one of them, and a list that had *deleted* rows would have
+  nothing to bring back.
+
+So no removal; therefore no new keystroke to invent and no "N were here" heading
+either. The heading counts what was found and puts the progress beside it:
+`263 usages in 41 files · 12 done`.
+
+### Where the keyboard is
+
+Both halves of the present-tense bug were real and are fixed in one place,
+`ResultChecklist`, so the window and the panel get it from the same code.
+
+- **Focused when it appears.** `BottomPanel.activate` now calls `focusList()` for
+  a usages session, and `expandUsages` does the same for the window. Before this,
+  nothing in `MainWindowController` called `makeFirstResponder` for the list at
+  all — the only two calls in the file hand the keyboard to the terminal.
+- **Keeps the keyboard when a row opens.** `onOpen` carries an `Intent`.
+  `.preview` opens with `focusEditor: false` into the provisional tab, so the
+  editor scrolls, shows the line and puts the caret there while first responder
+  stays in the list; `.commit` is the old behaviour and hands the keyboard over.
+- **One deliberate way in**, and it is both ⏎ and ⇥, under one rule written into
+  the code: **⏎ does the thing the selection has not already done.** In usages
+  the selection already previews, so ⏎ means "now I am going to work on this one"
+  and goes into the editor. In search the selection previews nothing, so ⏎ is the
+  preview and gives the keyboard straight back — unchanged, and the search spec
+  still reads true. ⇥ is the same gesture as ⏎ in usages, and is left alone in
+  search where it still walks the key view loop to the query field.
+
+### Opening as the selection moves, and what it costs the server
+
+`isARepeat` is the whole answer. A single ↓ reveals its row at once, because a
+preview that arrives 120ms late feels broken. A *repeated* ↓ schedules the reveal
+and each further repeat cancels the one before, so a key held down through 263
+rows reveals one file: the row it stopped on. Walking deliberately reveals one
+file per row you stop on, and re-reveals nothing — a row already showing is not
+opened a second time.
+
+The tab side was already solved one pane over and did not need inventing: the
+editor has a single **provisional tab**, italic in the tab bar, replaced in place
+by the next preview and promoted when it is edited or committed to. It is what
+the navigator's single-click and the diff list already use, for this exact
+reason. `.preview` asks for it, so 263 usages cost one tab.
+
+**A leak found on the way, and fixed.** Preview replacement in
+`EditorViewController.open` called `teardown` on the tab it recycled but never
+`LanguageService.closed` — the slot is reused rather than removed, so nothing
+went through `removeTab`. Walking a usage list through forty files would have
+left forty documents open at a server that had been told about every one of them
+and about the end of none. `announceClosed` is now called from both paths.
+
+### What became of the sidebar dock
+
+**Gone.** `dockInSidebar`, `undockFromSidebar`, `placeDockDivider`,
+`dockContainer`, `dockedView`, the `sidebarSplit` that existed to hold it and
+`DockedPane.swift` are all deleted, as is `Editor/UsagesPanel.swift`. The usages
+list was the only thing ever docked there — nothing else in the app called
+`dockInSidebar` — so keeping it would have been exactly the third way to show one
+list that this item exists to prevent. The sidebar is now the tool and nothing
+else, with no split and no divider nobody can reach.
+
+### After an Expand, and where the choice lives
+
+Remembered **per window, in memory, not written to disk**
+(`usagesOpenInWindow`). Expand, read it, close the window, ask again: a window.
+
+Per project and `Settings` were both ruled out for the same reason. Wanting a
+window is a fact about the current job — *this* symbol has two hundred usages and
+the panel is forty rows tall — not a preference about the program, and one Expand
+should not decide how Find Usages behaves for the next month. Per project had a
+second problem: it would be the only thing in `ProjectSession` that is about a
+list nothing restores. Restarting the app is a fresh start and gets the default
+back, which is the right amount of memory for something this transient.
+
+Closing the expanded window is *finishing with the list*, not asking for it back
+in the panel — the choice of a window stands. **Dock** in the window is how you
+ask for it back, and it is the same button as **Expand** with its title turned
+around, which is what the item asked for.
+
+## Estimate
+
+2026-08-11 15:27 — about three hours left
+
 ## Steps
 
-- [ ] Decide whether this is one list shared with search or a pane sharing its
+- [x] Decide whether this is one list shared with search or a pane sharing its
       checklist, and say why
 - [ ] Usages open in the bottom panel, beside search
 - [ ] Multi-selection, and the done state — with the word and the key decided
@@ -144,9 +270,9 @@ twice. Two things it does not answer and somebody should:
 - [ ] Opening as the selection moves, without accumulating a tab per usage
 - [ ] Usages arrive docked, with a way from there to a window — the flow the
       `Dock` button runs today, turned around
-- [ ] Decide what the next Find Usages does after somebody has expanded one, and
+- [x] Decide what the next Find Usages does after somebody has expanded one, and
       where that choice is remembered
-- [ ] Say what becomes of the sidebar dock, since the report's "bottom view" and
+- [x] Say what becomes of the sidebar dock, since the report's "bottom view" and
       today's docked variant are two different places
 - [ ] Watch somebody work through a real usage list — the 263-location one from
       0469 is a good size

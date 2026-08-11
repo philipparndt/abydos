@@ -299,8 +299,16 @@ struct LaunchOptions {
 	var renameAt: String?
 	/// Jump to the definition of the symbol at line:character (1-based line).
 	var definitionAt: String?
-	/// Dock the usages list into the sidebar after finding them.
-	var dockUsages = false
+	/// Work the usages list once it has arrived, as a comma-separated script.
+	///
+	/// The same vocabulary `--search-steps` has, because it is the same list:
+	/// `focus`, `down`, `up`, `space`, `rows`, `select:3`, `click:4`, `undo`,
+	/// `settle:<n>` … plus its own `expand`, `dock`, `heading`, `traffic` and
+	/// `hold-down:<n>`, which is a held ↓ rather than n separate presses.
+	///
+	/// `--dock-usages` went with the sidebar dock it asked for: the list now
+	/// arrives docked in the bottom panel, and `expand` moves it out to a window.
+	var usagesSteps: String?
 	/// Wait this long before capturing, for a language server to answer.
 	var lspWait: Double?
 	/// Rewrite the open file externally after this many seconds.
@@ -719,7 +727,7 @@ struct LaunchOptions {
 			case "--usages":     options.usagesAt = next()
 			case "--rename":     options.renameAt = next()
 			case "--definition": options.definitionAt = next()
-			case "--dock-usages": options.dockUsages = true
+			case "--usages-steps": options.usagesSteps = next()
 			case "--lsp-wait":   options.lspWait = next().flatMap(Double.init)
 			case "--external-edit": options.externalEdit = next().flatMap(Double.init)
 			case "--send-bytes": options.terminalBytes = next()

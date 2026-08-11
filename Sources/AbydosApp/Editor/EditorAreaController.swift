@@ -726,8 +726,8 @@ final class EditorAreaController: NSViewController {
 		activeGroup.openDiff(for: change, root: root, text: text)
 	}
 
-	func open(fileURL: URL, atLine line: Int) {
-		activeGroup.open(fileURL: fileURL, atLine: line)
+	func open(fileURL: URL, atLine line: Int, focusEditor: Bool = true, preview: Bool = false) {
+		activeGroup.open(fileURL: fileURL, atLine: line, focusEditor: focusEditor, preview: preview)
 	}
 
 	/// Puts the caret on a 1-based line of whatever is open, for `:` in the
