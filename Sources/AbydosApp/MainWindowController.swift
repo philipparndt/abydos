@@ -203,7 +203,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// enough git answers first — so a pill that is only ever *told* the branch
 	/// misses it. Anything that needs the branch awaits this instead, whenever
 	/// it happens to come into existence.
-	private var branchRead: Task<String?, Never>?
+	/// The whole of HEAD and not just its name: a branch with nothing committed
+	/// on it is drawn differently, and the capsule cannot tell from a string.
+	private var branchRead: Task<GitRepository.Head?, Never>?
 	private var titlebarContainer: NSView?
 	private var toolStripWidthConstraint: NSLayoutConstraint!
 
@@ -840,7 +842,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				// terminal is exactly the case this watcher exists for.
 				Task { @MainActor in
 					await current.loadGit()
-					self.capsule?.setBranch(await current.git?.currentBranch())
+					let head = await current.git?.currentHead()
+					self.capsule?.setBranch(head?.name, isUnborn: head?.isUnborn ?? false)
 					self.layoutTitlebarPills()
 				}
 			}
@@ -1010,19 +1013,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// One task, kept: it is what the branch pill awaits when the toolbar gets
 	/// around to building it.
 	@discardableResult
-	private func readGit() -> Task<String?, Never> {
+	private func readGit() -> Task<GitRepository.Head?, Never> {
 		branchRead?.cancel()
-		let read = Task { @MainActor [weak self] () -> String? in
+		let read = Task { @MainActor [weak self] () -> GitRepository.Head? in
 			guard let self, let project = self.project else { return nil }
 			await project.loadGit()
-			return await project.git?.currentBranch()
+			return await project.git?.currentHead()
 		}
 		branchRead = read
 
 		Task { @MainActor [weak self] in
-			let branch = await read.value
+			let head = await read.value
 			guard let self, !Task.isCancelled else { return }
-			self.capsule?.setBranch(branch)
+			self.capsule?.setBranch(head?.name, isUnborn: head?.isUnborn ?? false)
 			// The capsule only gets its width once it has a name to show.
 			self.layoutTitlebarPills()
 			self.navigator.refreshGitStatus()
@@ -8994,7 +8997,10 @@ extension MainWindowController: NSToolbarDelegate {
 			// Whatever the current read of the repository says, whenever it
 			// says it: this item may be built before or after git answers.
 			if let read = branchRead {
-				Task { @MainActor in capsule.setBranch(await read.value) }
+				Task { @MainActor in
+					let head = await read.value
+					capsule.setBranch(head?.name, isUnborn: head?.isUnborn ?? false)
+				}
 			}
 			self.capsule = capsule
 			item.view = capsule

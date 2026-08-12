@@ -430,6 +430,16 @@ final class ChangesPane: NSView {
 		let count = status.staged.count
 		let hasSubject = !subjectField.stringValue.trimmingCharacters(in: .whitespaces).isEmpty
 
+		// There has to *be* a last commit to amend. In a repository that has
+		// been `git init`ed and not committed to yet the box was live, and
+		// ticking it and pressing the button put `fatal: You have nothing to
+		// amend` on screen — git's answer to a question the page should not
+		// have asked.
+		let canAmend = pushState?.hasCommits ?? true
+		if !canAmend, amendCheckbox.state == .on { amendCheckbox.state = .off }
+		amendCheckbox.isEnabled = canAmend
+		amendCheckbox.toolTip = canAmend ? nil : "There is no commit to amend yet"
+
 		// Amend can commit nothing new — rewording the last commit is a normal
 		// thing to want — so it is the one case where an empty index is allowed.
 		let isAmending = amendCheckbox.state == .on
@@ -453,14 +463,12 @@ final class ChangesPane: NSView {
 		pushButton.keyEquivalent = primary == .push ? "\r" : ""
 	}
 
+	/// Nil only where there is no branch at all — a detached HEAD, or a pane
+	/// still waiting for its first read. Every other reason the button is the
+	/// way it is comes from the state itself, so that it can be checked without
+	/// a window.
 	private var pushTooltip: String {
-		guard let pushState else { return "Push this branch" }
-		guard pushState.hasRemote else { return "This repository has no remote" }
-		guard let upstream = pushState.upstream else {
-			return "Push “\(pushState.branch)” to origin and track it"
-		}
-		if pushState.ahead == 0 { return "Nothing to push to \(upstream)" }
-		return "Push \(pushState.ahead) commit\(pushState.ahead == 1 ? "" : "s") to \(upstream)"
+		pushState?.explanation ?? "Push this branch"
 	}
 
 	/// Re-reads where the branch stands, and says so on the button.

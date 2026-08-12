@@ -31,6 +31,7 @@ final class TitlebarCapsule: NSView, TitlebarMenuAnchor {
 	private var name = ""
 	private var worktree: String?
 	private var branch: String?
+	private var branchIsUnborn = false
 
 	private var trackingArea: NSTrackingArea?
 	private var heightConstraint: NSLayoutConstraint?
@@ -102,15 +103,38 @@ final class TitlebarCapsule: NSView, TitlebarMenuAnchor {
 	/// checkout, in the same place and shape a subproject would qualify it.
 	func setWorktree(_ worktree: String?) {
 		self.worktree = worktree
-		toolTip = worktree.map { "Worktree \($0) of \(name)" }
+		updateToolTip()
 		invalidateIntrinsicContentSize()
 		needsDisplay = true
 	}
 
-	func setBranch(_ branch: String?) {
+	/// - Parameter isUnborn: the branch is real and named, and nothing has been
+	///   committed on it yet — a repository straight out of `git init`.
+	///
+	/// It shows, because the name is a fact and showing nothing was the bug
+	/// (item 0477), and it shows *quietly*: dimmed to the weight of the shortcut
+	/// hint beside it, with the reason on the tooltip. The name at full weight
+	/// would read as an ordinary branch, and on this one the commit page, the
+	/// push button and the branch menu all behave differently — a titlebar that
+	/// said `main` in the usual way would be the only thing in the window not
+	/// admitting there is nothing there.
+	func setBranch(_ branch: String?, isUnborn: Bool = false) {
 		self.branch = branch
+		self.branchIsUnborn = isUnborn
+		updateToolTip()
 		invalidateIntrinsicContentSize()
 		needsDisplay = true
+	}
+
+	/// One tooltip out of the two things that qualify what is on the capsule.
+	///
+	/// Both were written straight onto `toolTip` at one point, and whichever
+	/// arrived second was the only one anybody ever saw.
+	private func updateToolTip() {
+		var parts: [String] = []
+		if let worktree { parts.append("Worktree \(worktree) of \(name)") }
+		if let branch, branchIsUnborn { parts.append("On \(branch) — no commits yet") }
+		toolTip = parts.isEmpty ? nil : parts.joined(separator: "\n")
 	}
 
 	/// Whether the right half has anything to say. A directory that is not a
@@ -376,7 +400,12 @@ final class TitlebarCapsule: NSView, TitlebarMenuAnchor {
 		guard let branch else { return }
 		let attributed = NSAttributedString(string: branch, attributes: [
 			.font: Self.labelFont,
-			.foregroundColor: Theme.current.sidebarText,
+			// The dimmer of the two, and the same one the ⇧⌘P hint is drawn in:
+			// a branch with nothing on it is there, and is not yet a place
+			// anything has happened.
+			.foregroundColor: branchIsUnborn
+				? Theme.current.gutterText
+				: Theme.current.sidebarText,
 		])
 		let size = attributed.size()
 		let x = divider + Self.padding
