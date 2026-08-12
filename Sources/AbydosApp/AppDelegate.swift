@@ -1189,6 +1189,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let path = options.tabCloseHover {
+			DispatchQueue.main.asyncAfter(deadline: .now() + max(3, options.screenshotDelay)) {
+				controller?.tabCloseHoverForTesting(to: path)
+				exit(0)
+			}
+		}
+
 		if let width = options.sidebarWidth {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
 				controller?.openSidebarForTesting(width: CGFloat(width))

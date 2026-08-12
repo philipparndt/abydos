@@ -1084,6 +1084,34 @@ final class BottomPanel: NSView {
 		return "strip: \(before)\n  clicked \(index) -> showing \"\(showing)\""
 	}
 
+	/// Puts a tab that cannot be closed on tmux's strip, without a tmux server.
+	///
+	/// The tab that must *not* light up under the pointer is a tmux window, and
+	/// standing a server up inside a screenshot run to produce one is a great
+	/// deal of machinery for a rounded rect — a `--run` that starts tmux does not
+	/// even reach the mirror in the seconds such a run lasts. What is being
+	/// checked is the state, and the state is an item whose `isClosable` is
+	/// false on the strip that draws them.
+	func seedUnclosableTabForTesting() {
+		guard let column = columnViews.first else { return }
+		column.strip.isMirroringTmux = false
+		column.mirrorStrip.isMirroringTmux = true
+		column.mirrorStrip.setItems(
+			[
+				PanelTabItem(
+					title: "0:build", hasExited: false, isTerminal: true,
+					isClosable: false, tmuxIndex: 0
+				),
+				PanelTabItem(
+					title: "1:shell", hasExited: false, isTerminal: true,
+					isClosable: false, tmuxIndex: 1
+				),
+			],
+			activeIndex: 0
+		)
+		column.showsMirrorStrip = true
+	}
+
 	/// Closes a tab on tmux's own strip, as its menu does.
 	func closeTmuxTabForTesting(_ index: Int) {
 		columnViews.first?.mirrorStrip.pressCloseForTesting(index)
@@ -3141,7 +3169,7 @@ final class PanelContentView: NSView {
 }
 
 /// Compact tab strip with add and hide affordances.
-final class PanelTabStrip: NSView {
+final class PanelTabStrip: NSView, TabCloseHovering {
 	var onSelect: ((Int) -> Void)?
 	var onClose: ((Int) -> Void)?
 	/// A tab renamed in place. An empty name gives it back to the shell.
@@ -3403,6 +3431,29 @@ final class PanelTabStrip: NSView {
 	/// Picks "Close" from a tab's menu, without a mouse.
 	func pressCloseForTesting(_ index: Int) { onClose?(index) }
 
+	/// Puts the pointer on a tab's ✕, or off the strip, and says what the strip
+	/// now believes is under it.
+	///
+	/// Through `updateHover` rather than by setting the two flags: what is being
+	/// checked is what the pointer does, and a harness that assigned the state
+	/// directly would pass with the hit test wired to nothing — which is very
+	/// nearly the bug this strip had.
+	var tabCountForTesting: Int { items.count }
+
+	@discardableResult
+	func hoverCloseForTesting(_ index: Int?) -> String {
+		if let frame = index.flatMap({ frames[safe: $0] }) {
+			let close = closeRect(for: frame)
+			updateHover(at: NSPoint(x: close.midX, y: close.midY))
+		} else {
+			clearHover()
+		}
+		let item = index.flatMap { items[safe: $0] }
+		return "panel \(isMirroringTmux ? "(tmux)" : "      ")"
+			+ " \"\(item?.title ?? "-")\" closable=\(item?.isClosable ?? true)"
+			+ " -> tab=\(hoveredIndex.map(String.init) ?? "none") close=\(hoveredClose)"
+	}
+
 	func setItems(_ items: [PanelTabItem], activeIndex: Int?) {
 		self.items = items
 		self.activeIndex = activeIndex
@@ -3638,7 +3689,10 @@ final class PanelTabStrip: NSView {
 	}
 
 	override func mouseMoved(with event: NSEvent) {
-		let point = convert(event.locationInWindow, from: nil)
+		updateHover(at: convert(event.locationInWindow, from: nil))
+	}
+
+	private func updateHover(at point: NSPoint) {
 		let index = frames.firstIndex { $0.contains(point) }
 
 		// The same question the click asks, and asked the same way: a tmux
@@ -3655,6 +3709,10 @@ final class PanelTabStrip: NSView {
 	}
 
 	override func mouseExited(with event: NSEvent) {
+		clearHover()
+	}
+
+	private func clearHover() {
 		hoveredIndex = nil
 		hoveredClose = false
 		needsDisplay = true

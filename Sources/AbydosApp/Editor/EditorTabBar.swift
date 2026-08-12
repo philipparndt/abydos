@@ -258,8 +258,10 @@ final class EditorTabBar: NSView {
 	}
 
 	override func mouseMoved(with event: NSEvent) {
-		let point = convert(event.locationInWindow, from: nil)
+		updateHover(at: convert(event.locationInWindow, from: nil))
+	}
 
+	private func updateHover(at point: NSPoint) {
 		let overPreview = !previewModes.isEmpty && previewButtonFrame.contains(point)
 		if overPreview != isPreviewHovered {
 			isPreviewHovered = overPreview
@@ -277,6 +279,10 @@ final class EditorTabBar: NSView {
 	}
 
 	override func mouseExited(with event: NSEvent) {
+		clearHover()
+	}
+
+	private func clearHover() {
 		hoveredIndex = nil
 		hoveredClose = false
 		isPreviewHovered = false
@@ -731,6 +737,25 @@ extension EditorTabBar {
 extension Array {
 	subscript(safe index: Int) -> Element? {
 		indices.contains(index) ? self[index] : nil
+	}
+}
+
+extension EditorTabBar: TabCloseHovering {
+	var tabCountForTesting: Int { items.count }
+
+	@discardableResult
+	func hoverCloseForTesting(_ index: Int?) -> String {
+		// Through `updateHover` rather than by setting the two flags: what is
+		// being checked is what the pointer does, and a harness that assigns the
+		// state directly would pass with the hit test wired to nothing.
+		if let frame = index.flatMap({ frames[safe: $0] }) {
+			let close = closeRect(for: frame)
+			updateHover(at: NSPoint(x: close.midX, y: close.midY))
+		} else {
+			clearHover()
+		}
+		return "editor       \"\(items[safe: index ?? -1]?.title ?? "-")\" closable=true"
+			+ " -> tab=\(hoveredIndex.map(String.init) ?? "none") close=\(hoveredClose)"
 	}
 }
 

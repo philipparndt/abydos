@@ -249,6 +249,9 @@ struct LaunchOptions {
 	var sidebarWidth: Double?
 	/// Draw the sidebar's pane straight into a file.
 	var sidebarShot: String?
+	/// Light the ✕ on the first tab of every strip in the window and photograph
+	/// it, then take the pointer off them all and photograph that.
+	var tabCloseHover: String?
 	/// Fold a merge in the history, to check the graph.
 	var collapseRow: Int?
 	/// Open tmux's own menu and move the pointer through it.
@@ -675,6 +678,7 @@ struct LaunchOptions {
 			case "--switch-appearance": options.switchAppearance = next()
 			case "--sidebar-width": options.sidebarWidth = next().flatMap(Double.init)
 			case "--sidebar-shot": options.sidebarShot = next()
+			case "--tab-close-hover": options.tabCloseHover = next()
 			case "--collapse-row": options.collapseRow = next().flatMap(Int.init)
 			case "--tmux-menu": options.tmuxMenuHovers = next().flatMap(Int.init) ?? 0
 			case "--cmd-hover":  options.commandHoverAt = next()

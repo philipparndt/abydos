@@ -47,3 +47,21 @@ enum TabCloseButton {
 		cross.stroke()
 	}
 }
+
+/// A strip of tabs whose ✕ can be put under the pointer without a pointer.
+///
+/// A screenshot run has no mouse, and the half of a hover that goes wrong is the
+/// half a screenshot cannot show anyway: the plate still sitting there after the
+/// pointer has left. Both strips answer with what they think is under the
+/// pointer, so the leaving is a line of text rather than a squint.
+@MainActor protocol TabCloseHovering: NSView {
+	/// How many tabs there are to try, so a run can walk all of them rather than
+	/// trusting that the first one is representative — the tab that must *not*
+	/// light up is never the first.
+	var tabCountForTesting: Int { get }
+
+	/// Hovers the ✕ of a tab, or — with `nil` — takes the pointer off the strip
+	/// entirely, and says what the strip now believes.
+	@discardableResult
+	func hoverCloseForTesting(_ index: Int?) -> String
+}
