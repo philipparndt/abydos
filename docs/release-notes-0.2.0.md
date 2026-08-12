@@ -308,9 +308,3 @@ there. A budget that sits between those two numbers is a coin, not a check.
 The corpus harness drives real projects — 500 bundles of Eclipse Platform — and a
 stall log names its own suspects, which is how a filesystem event walking 45,772
 files per keystroke was found: 667,907 ms down to 10,779.
-
-
-## Install
-
-Download the DMG, open it and drag Abydos to Applications. The build is signed
-with a Developer ID and notarised. Requires macOS 14 or newer.
