@@ -54,9 +54,9 @@ probably the honest middle; say which was chosen and why.
 
 - [x] `closeRect` becomes a method of the strip, asked by the click, the hover
       and the drawing alike
-- [ ] `hoveredClose` beside `hoveredIndex`, cleared on exit as that one is
-- [ ] The same highlight the editor draws, shared rather than copied
-- [ ] A tab that cannot be closed does not light up
+- [x] `hoveredClose` beside `hoveredIndex`, cleared on exit as that one is
+- [x] The same highlight the editor draws, shared rather than copied
+- [x] A tab that cannot be closed does not light up
 - [ ] Watch both strips side by side, and the pointer leaving each
 - [ ] Write down here what was ruled out on the way
 - [ ] `spec/<capability>.md` says what the project now does, if it says anything

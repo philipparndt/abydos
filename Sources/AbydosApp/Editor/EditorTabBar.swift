@@ -645,21 +645,12 @@ final class EditorTabBar: NSView {
 			Theme.current.gitModified.setFill()
 			dot.fill()
 		} else if isActive || hoveredIndex == index {
-			if hoveredClose && hoveredIndex == index {
-				let path = NSBezierPath(roundedRect: close.insetBy(dx: -1, dy: -1), xRadius: 4, yRadius: 4)
-				NSColor.white.withAlphaComponent(0.12).setFill()
-				path.fill()
-			}
-			let cross = NSBezierPath()
-			let inset: CGFloat = 4
-			cross.move(to: NSPoint(x: close.minX + inset, y: close.minY + inset))
-			cross.line(to: NSPoint(x: close.maxX - inset, y: close.maxY - inset))
-			cross.move(to: NSPoint(x: close.maxX - inset, y: close.minY + inset))
-			cross.line(to: NSPoint(x: close.minX + inset, y: close.maxY - inset))
-			cross.lineWidth = 1.3
-			cross.lineCapStyle = .round
-			Theme.current.sidebarText.setStroke()
-			cross.stroke()
+			TabCloseButton.draw(
+				in: close,
+				hovered: hoveredClose && hoveredIndex == index,
+				inset: 4,
+				lineWidth: 1.3
+			)
 		}
 	}
 }

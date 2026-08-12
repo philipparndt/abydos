@@ -3264,6 +3264,10 @@ final class PanelTabStrip: NSView {
 	private var maximizeButtonFrame: NSRect = .zero
 	private var followButtonFrame: NSRect = .zero
 	private var hoveredIndex: Int?
+	/// Whether the pointer is on the hovered tab's ✕ rather than the rest of it,
+	/// which is the difference between "click to select" and "click to close" and
+	/// so has to be visible before the click.
+	private var hoveredClose = false
 	private var trackingArea: NSTrackingArea?
 	private var pressedIndex: Int?
 	private var pressOrigin: NSPoint = .zero
@@ -3636,14 +3640,23 @@ final class PanelTabStrip: NSView {
 	override func mouseMoved(with event: NSEvent) {
 		let point = convert(event.locationInWindow, from: nil)
 		let index = frames.firstIndex { $0.contains(point) }
-		if index != hoveredIndex {
+
+		// The same question the click asks, and asked the same way: a tmux
+		// window has no ✕ to be over, so the pointer never lights one up there.
+		let overClose = index.map { index in
+			(items[safe: index]?.isClosable ?? true) && closeRect(for: frames[index]).contains(point)
+		} ?? false
+
+		if index != hoveredIndex || overClose != hoveredClose {
 			hoveredIndex = index
+			hoveredClose = overClose
 			needsDisplay = true
 		}
 	}
 
 	override func mouseExited(with event: NSEvent) {
 		hoveredIndex = nil
+		hoveredClose = false
 		needsDisplay = true
 	}
 
@@ -4062,17 +4075,15 @@ final class PanelTabStrip: NSView {
 		}
 
 		if item.isClosable, isActive || isHovered {
-			let close = closeRect(for: rect)
-			let cross = NSBezierPath()
-			let inset = Theme.current.scaled(3)
-			cross.move(to: NSPoint(x: close.minX + inset, y: close.minY + inset))
-			cross.line(to: NSPoint(x: close.maxX - inset, y: close.maxY - inset))
-			cross.move(to: NSPoint(x: close.maxX - inset, y: close.minY + inset))
-			cross.line(to: NSPoint(x: close.minX + inset, y: close.maxY - inset))
-			cross.lineWidth = 1.2
-			cross.lineCapStyle = .round
-			Theme.current.sidebarText.setStroke()
-			cross.stroke()
+			// `isHovered` is this tab being the hovered one and `hoveredClose` is
+			// the pointer being on a cross, so the two together name this cross
+			// without the drawing needing to know its own index.
+			TabCloseButton.draw(
+				in: closeRect(for: rect),
+				hovered: isHovered && hoveredClose,
+				inset: Theme.current.scaled(3),
+				lineWidth: 1.2
+			)
 		}
 	}
 
@@ -4174,17 +4185,12 @@ final class PanelTabStrip: NSView {
 		label.draw(at: NSPoint(x: rect.minX + padding, y: rect.midY - size.height / 2))
 
 		if isActive || isHovered {
-			let close = closeRect(for: rect)
-			let cross = NSBezierPath()
-			let inset = Theme.current.scaled(3)
-			cross.move(to: NSPoint(x: close.minX + inset, y: close.minY + inset))
-			cross.line(to: NSPoint(x: close.maxX - inset, y: close.maxY - inset))
-			cross.move(to: NSPoint(x: close.maxX - inset, y: close.minY + inset))
-			cross.line(to: NSPoint(x: close.minX + inset, y: close.maxY - inset))
-			cross.lineWidth = 1.2
-			cross.lineCapStyle = .round
-			Theme.current.sidebarText.setStroke()
-			cross.stroke()
+			TabCloseButton.draw(
+				in: closeRect(for: rect),
+				hovered: isHovered && hoveredClose,
+				inset: Theme.current.scaled(3),
+				lineWidth: 1.2
+			)
 		}
 	}
 
