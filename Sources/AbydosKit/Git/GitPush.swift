@@ -16,45 +16,77 @@ public enum GitPush {
 		public let behind: Int
 		/// Whether the repository has any remote at all.
 		public let hasRemote: Bool
+		/// Whether anything has been committed on the branch. False in a
+		/// repository that has been `git init`ed and not committed to yet: the
+		/// branch is real and it is named, and there is no commit to send.
+		public let hasCommits: Bool
 
 		public init(
 			branch: String,
 			upstream: String? = nil,
 			ahead: Int = 0,
 			behind: Int = 0,
-			hasRemote: Bool = true
+			hasRemote: Bool = true,
+			hasCommits: Bool = true
 		) {
 			self.branch = branch
 			self.upstream = upstream
 			self.ahead = ahead
 			self.behind = behind
 			self.hasRemote = hasRemote
+			self.hasCommits = hasCommits
 		}
 
 		/// Pushing would do something.
 		public var canPush: Bool {
-			guard hasRemote else { return false }
+			guard hasCommits, hasRemote else { return false }
 			return upstream == nil || ahead > 0
 		}
 
 		/// What a button offering the push should say.
 		public var buttonTitle: String {
-			guard hasRemote else { return "Push" }
+			guard hasRemote, hasCommits else { return "Push" }
 			if upstream == nil { return "Publish Branch" }
 			return ahead > 0 ? "Push \(ahead)" : "Push"
+		}
+
+		/// Why the button is the way it is, for the tooltip on it.
+		///
+		/// Here rather than in the pane so that every reason is written in one
+		/// place and can be checked without a window: the unborn branch is the
+		/// case that used to reach the pane as `nil` and read "Push this
+		/// branch", which is the one thing this repository cannot do.
+		public var explanation: String {
+			guard hasCommits else { return "“\(branch)” has no commits yet" }
+			guard hasRemote else { return "This repository has no remote" }
+			guard let upstream else { return "Push “\(branch)” to origin and track it" }
+			if ahead == 0 { return "Nothing to push to \(upstream)" }
+			return "Push \(ahead) commit\(ahead == 1 ? "" : "s") to \(upstream)"
 		}
 	}
 
 	public static func state(in root: URL) async -> State? {
-		async let branchResult = GitRepository.run(["rev-parse", "--abbrev-ref", "HEAD"], in: root)
+		async let headRead = GitRepository.head(in: root)
 		async let remotesResult = GitRepository.run(["remote"], in: root)
 
-		let branch = await branchResult.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-		// Detached, or a repository with no commits: there is no branch to push.
-		guard await branchResult.exitCode == 0, !branch.isEmpty, branch != "HEAD" else { return nil }
+		let head = await headRead
+		// Detached, or not a work tree at all: there is no branch to push, and
+		// nothing true to say about one either.
+		guard let branch = head.name else { return nil }
 
 		let hasRemote = await !remotesResult.stdout
 			.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+
+		// An unborn branch used to come back nil here too — the comment said
+		// "or a repository with no commits" and meant it — and the page then
+		// offered a disabled Push whose tooltip said "Push this branch". The
+		// push itself is still impossible: `git push -u origin main` from here
+		// has no ref to send and fails. What changed is that the state can now
+		// say *which* branch has nothing on it, which is the difference between
+		// a refusal and silence.
+		guard !head.isUnborn else {
+			return State(branch: branch, hasRemote: hasRemote, hasCommits: false)
+		}
 
 		let format = ["%(refname:short)", "%(upstream:short)", "%(upstream:track)"]
 			.joined(separator: "\u{1F}")

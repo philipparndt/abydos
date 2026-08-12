@@ -73,6 +73,41 @@ struct GitPushStateTests {
 		#expect(ahead.buttonTitle == "Push 1")
 	}
 
+	/// A repository with nothing committed still knows which branch it is on,
+	/// and still cannot push it. What changed with item 0477 is that it can now
+	/// say which branch that is instead of coming back as nothing at all.
+	@Test func namesTheBranchItCannotPushYet() async throws {
+		let root = URL(fileURLWithPath: "/tmp")
+			.appendingPathComponent("push-empty-\(UUID().uuidString)")
+		try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+		defer { try? FileManager.default.removeItem(at: root) }
+		_ = GitRepository.runSync(["init", "-q", "-b", "main", "."], in: root)
+		let remote = root.appendingPathExtension("remote.git")
+		defer { try? FileManager.default.removeItem(at: remote) }
+		_ = GitRepository.runSync(["init", "-q", "--bare", remote.path], in: root)
+		_ = GitRepository.runSync(["remote", "add", "origin", remote.path], in: root)
+
+		let state = try #require(await GitPush.state(in: root))
+		#expect(state.branch == "main")
+		#expect(!state.hasCommits)
+		#expect(state.hasRemote)
+		// There is no ref to send, so the offer is not made — and the button no
+		// longer reads "Publish Branch" for a branch that cannot be published.
+		#expect(!state.canPush)
+		#expect(state.buttonTitle == "Push")
+		#expect(state.explanation == "“main” has no commits yet")
+	}
+
+	/// A detached HEAD has no branch to push and no name to offer, which is a
+	/// different answer from the one above and has to stay one.
+	@Test func offersNothingForADetachedHead() async throws {
+		let root = try makeRepository()
+		defer { try? FileManager.default.removeItem(at: root) }
+		#expect(GitRepository.runSync(["checkout", "-q", "--detach"], in: root).exitCode == 0)
+
+		#expect(await GitPush.state(in: root) == nil)
+	}
+
 	/// Pushing what the remote already moved past fails rather than forcing.
 	@Test func reportsARejectedPush() async throws {
 		let root = try makeRepository()

@@ -36,10 +36,85 @@ public actor GitRepository {
 
 	private var statusCache: [String: GitFileStatus] = [:]
 	private var directoryCache: [String: GitFileStatus] = [:]
-	private var branchName: String?
+	private var headState: Head = .detached
 
 	public init(root: URL) {
 		self.root = root
+	}
+
+	/// Where `HEAD` points.
+	///
+	/// Three states and not two, because there are three. A repository made by
+	/// `git init` and not yet committed to is *on* a branch — `.git/HEAD` says
+	/// `ref: refs/heads/main` from the first moment — and what does not exist is
+	/// a commit for that name to point at. Calling it "no branch" put it in with
+	/// a detached checkout and with a directory that is not a work tree at all,
+	/// which is how the titlebar came to show nothing for a repository whose
+	/// branch name was sitting in a file (item 0477).
+	public enum Head: Sendable, Equatable {
+		/// A branch with at least one commit on it.
+		case branch(String)
+		/// A branch that exists as a name only: nothing has been committed yet.
+		case unborn(String)
+		/// No branch — a commit, tag or remote ref checked out directly. Also
+		/// what a directory that is not a work tree answers, which every caller
+		/// wants to read the same way: there is no branch name to show.
+		case detached
+
+		/// The branch's name, or nil when there is not one.
+		public var name: String? {
+			switch self {
+			case .branch(let name), .unborn(let name): return name
+			case .detached: return nil
+			}
+		}
+
+		/// A branch with nothing on it yet.
+		public var isUnborn: Bool {
+			if case .unborn = self { return true }
+			return false
+		}
+	}
+
+	/// Which branch the work tree is on, and whether anything is on it.
+	///
+	/// The one place that asks. It used to be asked in four, all of them with
+	/// `rev-parse --abbrev-ref HEAD`, which **resolves the commit and then names
+	/// it** — so in a repository where nothing has been committed it fails
+	/// outright rather than answering, and the branch name is right there in
+	/// `.git/HEAD` while rev-parse says `fatal: ambiguous argument 'HEAD'`.
+	///
+	/// `symbolic-ref` reads the reference itself, which is the question being
+	/// asked, and it is plumbing, so its output is a promise rather than a
+	/// convenience. `branch --show-current` answers the same thing, but it is
+	/// porcelain, it needs git 2.22, and it prints an empty line for a detached
+	/// HEAD where symbolic-ref exits non-zero — a second rule to remember for no
+	/// gain.
+	///
+	/// A detached HEAD comes back `.detached` because symbolic-ref *fails*
+	/// there. The old question answered the literal string `HEAD` for it, and
+	/// every one of the four callers separately had to know to turn that into
+	/// nil.
+	public static func head(in root: URL) async -> Head {
+		// `--quiet` so a detached HEAD is an exit code rather than a line on
+		// stderr; it is an ordinary state, not an error.
+		async let symbolic = run(["symbolic-ref", "--quiet", "--short", "HEAD"], in: root)
+		// Asked at the same time rather than after it, because two processes in
+		// parallel cost what one does, and this is the question that separates a
+		// branch from an unborn one: `--verify --quiet` is exit 0 when HEAD
+		// resolves to a commit and exit 1, silently, when there is none.
+		async let resolved = run(["rev-parse", "--verify", "--quiet", "HEAD"], in: root)
+
+		let symbolicResult = await symbolic
+		let name = symbolicResult.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard symbolicResult.exitCode == 0, !name.isEmpty else {
+			// Still awaited: an `async let` dropped without being read is a
+			// cancelled child task, and cancelling a subprocess we started is
+			// not what "we do not need the answer" should mean.
+			_ = await resolved
+			return .detached
+		}
+		return await resolved.exitCode == 0 ? .branch(name) : .unborn(name)
 	}
 
 	/// Locates the enclosing work tree, or nil if the directory is not in one.
@@ -60,7 +135,10 @@ public actor GitRepository {
 		)
 	}
 
-	public func currentBranch() -> String? { branchName }
+	public func currentBranch() -> String? { headState.name }
+
+	/// The branch and whether it has anything on it, as of the last refresh.
+	public func currentHead() -> Head { headState }
 
 	/// How many files the working copy has that HEAD does not agree with.
 	///
@@ -73,7 +151,7 @@ public actor GitRepository {
 
 	/// Re-reads branch and per-file status.
 	public func refresh() async {
-		async let branch = Self.run(["rev-parse", "--abbrev-ref", "HEAD"], in: root)
+		async let head = Self.head(in: root)
 		async let status = Self.run(
 			// --porcelain=v1 is a stability-guaranteed format. -uall lists files
 			// inside untracked directories instead of collapsing to the directory,
@@ -85,11 +163,13 @@ public actor GitRepository {
 			in: root
 		)
 
-		let branchResult = await branch
-		if branchResult.exitCode == 0 {
-			let name = branchResult.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-			branchName = (name.isEmpty || name == "HEAD") ? nil : name
-		}
+		// Assigned whatever comes back, rather than only on success as the old
+		// `rev-parse` guard did. That guard kept the last known branch when git
+		// failed — but the commonest failure it was covering for was a
+		// repository with nothing committed, which now has an answer, and
+		// keeping a stale name through a real failure is worse than saying
+		// nothing.
+		headState = await head
 
 		let statusResult = await status
         guard statusResult.exitCode == 0 else { return }

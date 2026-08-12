@@ -19,13 +19,22 @@ enum BranchMenu {
 				return
 			}
 			let root = await git.root
-			let current = await git.currentBranch()
+			let head = await git.currentHead()
+			let current = head.name
 
 			// `git branch` sorted by most recent commit puts the branches the user
 			// actually moves between at the top.
 			let branches = await Self.branches(in: root)
 
-			guard !branches.isEmpty else {
+			// An unborn branch is in no list git can produce: `git branch` reads
+			// refs, and a branch with nothing committed on it has no ref yet. It
+			// is still the branch this work tree is on, and a menu that refused
+			// to open at all was the other half of item 0477 — asking the pill's
+			// question properly would have gained nothing while the menu behind
+			// it stayed shut.
+			let unlisted = head.isUnborn ? current : nil
+
+			guard !branches.isEmpty || unlisted != nil else {
 				pill.isMenuOpen = false
 				return
 			}
@@ -74,6 +83,17 @@ enum BranchMenu {
 			}
 
 			if handedOff { menu.addItem(.separator()) }
+
+			if let unlisted {
+				// Named, ticked and not selectable: checking out the branch you
+				// are already on is nothing, and `git checkout` of a branch with
+				// no commits is an error rather than nothing.
+				let item = NSMenuItem(title: unlisted, action: nil, keyEquivalent: "")
+				item.state = .on
+				item.isEnabled = false
+				item.toolTip = "No commits yet"
+				menu.addItem(item)
+			}
 
 			for branch in branches {
 				let item = NSMenuItem(
@@ -125,13 +145,12 @@ enum BranchMenu {
 	///
 	/// Asked of git rather than of `GitRepository.currentBranch()`, which
 	/// answers from a cache that only a loaded repository has filled — a fresh
-	/// one says nil however checked out it is.
+	/// one says nil however checked out it is. Which is what this comment said
+	/// before, while the question underneath it was `rev-parse --abbrev-ref
+	/// HEAD`: the one question a freshly created repository cannot answer.
+	/// `GitRepository.head(in:)` is now the only place that asks.
 	static func currentBranch(in root: URL) async -> String? {
-		let result = await GitRepository.run(["rev-parse", "--abbrev-ref", "HEAD"], in: root)
-		guard result.exitCode == 0 else { return nil }
-		let name = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-		// `HEAD` is git's way of saying it is detached, which is not a branch.
-		return (name.isEmpty || name == "HEAD") ? nil : name
+		await GitRepository.head(in: root).name
 	}
 
 	/// The branches this repository has, most recently committed to first.

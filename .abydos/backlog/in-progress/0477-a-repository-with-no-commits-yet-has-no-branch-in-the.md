@@ -61,10 +61,14 @@ Whichever command is chosen, both states need a test.
   (0455), blame, the git panel: a first commit has no parent, so `HEAD~1` is not a
   thing anywhere in that repository. Look before deciding this is a one-line fix.
 
+## Estimate
+
+2026-08-12 06:05 — about two hours left
+
 ## Steps
 
-- [ ] One place answers "which branch", and the four callers use it
-- [ ] An unborn branch answers with its name; a detached HEAD still answers nil
+- [x] One place answers "which branch", and the four callers use it
+- [x] An unborn branch answers with its name; a detached HEAD still answers nil
 - [ ] The titlebar shows something honest in a repository with no commits
 - [ ] Walk the rest of the git surface in that repository — diff, commit, push,
       blame, the panel — and say what else assumes a commit
