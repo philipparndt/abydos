@@ -134,7 +134,16 @@ public enum ShortcutText {
 		default:
 			// A letter is written the way it is printed on the key, which is
 			// upper case; the shift, where there is one, is already a symbol.
-			return key.count == 1 ? key.uppercased() : key
+			//
+			// Only where the upper case is still *one* character, because for some
+			// it is not: `ß` upper-cases to `SS`, and a key equivalent of ß —
+			// which is exactly what the system moved ⌘/ to on a German keyboard,
+			// see 0479 — was written down as **⌘SS**, a shortcut for a key nobody
+			// has. A capital that changes the length of the key is not a capital,
+			// it is a spelling rule for words.
+			guard key.count == 1 else { return key }
+			let capital = key.uppercased()
+			return capital.count == 1 ? capital : key
 		}
 	}
 }

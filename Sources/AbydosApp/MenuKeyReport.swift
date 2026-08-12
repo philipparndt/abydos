@@ -16,16 +16,23 @@ import AppKit
 /// So the answer is *measured*, not worked out. AppKit is handed the keystrokes a
 /// keyboard can actually make and asked which of its own items each one matches,
 /// which is the same code path a real press takes and the only account of the
-/// matching rules that cannot be out of date. Two of those rules were surprising
-/// enough to be worth naming, and both were found here:
+/// matching rules that cannot be out of date. The rule it turns out to follow is
+/// worth naming, because it is more generous than the documentation reads:
 ///
-/// - **An extra shift is forgiven.** An item declaring `/` with ⌘ alone *is*
-///   matched by ⌘⇧7 on a German keyboard, even though the event carries a shift
-///   the mask does not.
-/// - **An extra option is not.** `[` on a German keyboard is ⌥5, and no press
-///   reaches an item declaring `[` — which is what the automatic localisation is
-///   there for, and why turning it off across the app would be a cure worse than
-///   the disease.
+/// **A modifier the mask does not ask for is forgiven when it is what types the
+/// character.** An item declaring `/` with ⌘ alone is matched by ⌘⇧7 on a German
+/// keyboard, and one declaring `[` with ⌘ alone is matched by ⌥⌘5 — shift and
+/// option both. Control is not, or not simply: ⌃⌘W does *not* reach an item
+/// declaring `w`, while ⌃⇧⌘7 does reach one declaring `/`. Whatever that rule is,
+/// it is AppKit's, and a report that only listed the presses somebody expected
+/// would be an opinion rather than a measurement.
+///
+/// The consequence is that the automatic localisation is a *better* answer rather
+/// than the only one, and one place where it is the only one: with the literals
+/// kept, `⌘\` and `⇧⌘\` collapse onto the same press on a German keyboard, because
+/// `\` is ⌥⇧7 there and the shift is then forgiven for both. Split Right answers
+/// and **Split Down cannot be pressed at all**. That is measured too, and it is why
+/// this report exists rather than a rule of thumb.
 ///
 /// ## Why it does not press the real menu
 ///
@@ -123,6 +130,46 @@ enum MenuKeyReport {
 		}
 	}
 
+	/// Every press that reaches this item, named, as events somebody can send.
+	///
+	/// For closing the loop: the sweep says a press *matches*, and handing those
+	/// same events to the real menu bar says each match runs the action. Which is as
+	/// close to a real keystroke as a process without the keyboard can get — the
+	/// window server's delivery is the only part left out, and 0475 established
+	/// that a binary driven from a terminal cannot have that.
+	///
+	/// All of them and not the first, because "it works" is a claim about each key
+	/// somebody might press: ⌘/ on a numeric keypad reaches the same item as ⌘⇧7 on
+	/// the main block, and a check that stopped at the first would have said nothing
+	/// about the second.
+	static func presses(reaching item: NSMenuItem) -> [(name: String, event: NSEvent)] {
+		guard let layout = KeyboardLayout.current() else { return [] }
+		let sink = Sink()
+		let shadow = NSMenu()
+		let holder = NSMenuItem()
+		let flat = NSMenu(title: "shadow")
+		let copy = NSMenuItem(
+			title: "one",
+			action: #selector(Sink.matched(_:)),
+			keyEquivalent: item.keyEquivalent
+		)
+		copy.keyEquivalentModifierMask = item.keyEquivalentModifierMask
+		copy.target = sink
+		copy.allowsAutomaticKeyEquivalentLocalization = false
+		flat.addItem(copy)
+		holder.submenu = flat
+		shadow.addItem(holder)
+
+		var found: [(name: String, event: NSEvent)] = []
+		for keystroke in keystrokes {
+			guard let event = keystroke.event() else { continue }
+			sink.matches = 0
+			_ = shadow.performKeyEquivalent(with: event)
+			if sink.matches > 0 { found.append((keystroke.describe(on: layout), event)) }
+		}
+		return found
+	}
+
 	// MARK: what a person can press
 
 	/// A key held down with modifiers — the event side of the question, where
@@ -156,6 +203,17 @@ enum MenuKeyReport {
 			if modifiers.contains(.shift) { flags.insert(.maskShift) }
 			if modifiers.contains(.option) { flags.insert(.maskAlternate) }
 			if modifiers.contains(.control) { flags.insert(.maskControl) }
+			// A press on the numeric keypad carries this, and a report about the
+			// keypad's `/` that left it out would be a report about a press nobody
+			// makes. It changes no answer here — AppKit tolerates it — and that is
+			// worth knowing rather than assuming, since AppKit does *not* tolerate
+			// the neighbouring function flag: an item declaring `/` is not matched by
+			// an otherwise identical event with `maskSecondaryFn` set. Which is also
+			// the proof that a real keypad press does not carry that one, because if
+			// it did, ⌘ with a keypad key would work in no application at all.
+			if KeyboardLayout.numericKeypadKeyCodes.contains(keyCode) {
+				flags.insert(.maskNumericPad)
+			}
 			made.flags = flags
 			guard let event = NSEvent(cgEvent: made) else { return nil }
 			// The modifier keys themselves — right command is key code 54 — come
@@ -172,9 +230,15 @@ enum MenuKeyReport {
 		/// on the key rather than what the press produces. ⇧7 and not ⇧/, because
 		/// the 7 key is the one that gets pressed.
 		func describe(on layout: KeyboardLayout) -> String {
+			// Some key codes a layout answers for are not keys anybody has: 70 and
+			// 77 on a German layout type U+001C and U+001E, and `/` and `+` when
+			// shifted, so they turn up among the presses that reach a shortcut.
+			// Printed as themselves they were invisible, and a report with a gap
+			// where a key should be reads as a bug in the report.
 			let unshifted = layout.characters(for: KeyboardLayout.Press(keyCode: keyCode))
+			let printable = unshifted.unicodeScalars.allSatisfy { $0.value >= 0x20 }
 			let named = ShortcutText.describe(
-				key: unshifted.isEmpty ? "<key \(keyCode)>" : unshifted,
+				key: unshifted.isEmpty || !printable ? "<key \(keyCode)>" : unshifted,
 				control: modifiers.contains(.control),
 				option: modifiers.contains(.option),
 				shift: modifiers.contains(.shift),

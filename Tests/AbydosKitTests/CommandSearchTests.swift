@@ -90,6 +90,19 @@ struct ShortcutTextTests {
 		#expect(ShortcutText.describe(key: "\u{F702}", option: true, command: true) == "⌥⌘←")
 	}
 
+	/// A key whose capital is two letters keeps its own.
+	///
+	/// `ß` upper-cases to `SS`, and the system puts a key equivalent on ß readily:
+	/// it is where ⌘/ was moved to on a German keyboard, which is what 0479 was
+	/// about. So the palette wrote that shortcut as **⌘SS** — two keys, neither of
+	/// them one to press. A capital that changes the length of the key is a
+	/// spelling rule for words rather than a name for a key.
+	@Test func keepsAKeyWhoseCapitalWouldBeTwoLetters() {
+		#expect(ShortcutText.describe(key: "ß", command: true) == "⌘ß")
+		#expect(ShortcutText.describe(key: "ö", command: true) == "⌘Ö")
+		#expect(ShortcutText.describe(key: "/", command: true) == "⌘/")
+	}
+
 	/// An item with no key equivalent has no shortcut to show, rather than an
 	/// empty box where one would be.
 	@Test func saysNothingWhenThereIsNoKey() {

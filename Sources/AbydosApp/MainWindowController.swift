@@ -2185,6 +2185,27 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 					+ (finding.presses.isEmpty ? "NOTHING" : finding.presses.joined(separator: " or ")))
 			}
 		}
+
+		// And then each of those presses, at the real menu bar, with the text watched
+		// either side of it. The sweep says a press *matches*; this says the match
+		// reaches the editor and changes the file, which is the question somebody
+		// asking "does ⌘/ work" is actually asking. Everything but the window
+		// server's own delivery is in this path.
+		//
+		// Every press rather than the first, because they are not the same key: on a
+		// German keyboard ⌘⇧7 is the slash on the main block and ⌘/ is the one on the
+		// numeric keypad, and somebody who reaches for the keypad is asking a
+		// question the first press cannot answer.
+		if let item = items.first {
+			for (name, event) in MenuKeyReport.presses(reaching: item) {
+				let before = editorTextForTesting()
+				let handled = NSApp.mainMenu?.performKeyEquivalent(with: event) ?? false
+				let after = editorTextForTesting()
+				print("COMMENTKEY \(name) at the real menu: answered "
+					+ "\(handled ? "it" : "NOTHING") and the text "
+					+ "\(before == after ? "DID NOT CHANGE" : "changed")")
+			}
+		}
 		fflush(stdout)
 	}
 
