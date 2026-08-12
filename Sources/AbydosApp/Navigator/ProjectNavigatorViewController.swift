@@ -2512,7 +2512,12 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 			case #selector(contextOpenExternally):
 				item.isHidden = node?.isDirectory ?? true
 			case #selector(contextPreviewModel):
-				item.isHidden = !(node.map { ModelPreview.canPreview($0.url) } ?? false)
+				// `holdsAModel` rather than `canPreview`, for the same reason Export
+				// above uses `holdsADiagram`: a go3mf recipe is a `.yaml`, and the
+				// name of a `.yaml` says nothing at all. This reads the head of the
+				// one file that was right-clicked, and only when it is named like a
+				// recipe could be — the row, never the tree. See 0482.
+				item.isHidden = !(node.map { !$0.isDirectory && ModelPreview.holdsAModel($0.url) } ?? false)
 					|| !ModelPreview.isAvailable
 			case #selector(contextOpenSubproject):
 				// Only a folder, and not the one already being worked on.
