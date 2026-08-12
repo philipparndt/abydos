@@ -60,16 +60,38 @@ Related: **0482** asks for a go3mf recipe to be openable in the viewer, and sett
 that as an *option* rather than a default. If both land, the two answers have to be
 consistent or the reason for the difference has to be written down.
 
+## What was found before starting
+
+**The premise above is stale, and in the item's favour.** `FilePreview.kind(for:)`
+*does* already answer for a `.scad`:
+
+    case "scad", "stl", "3mf":
+        return .model
+
+It has done since a110bcc, "Choose source, preview or split from the tab bar", the
+commit that invented `FilePreview` and moved this decision into it. So there is no
+second mechanism to join up — and `ModelPreview.isViewableModel` **has had no caller
+since that same commit**. `grep -rn isViewableModel Sources Tests` finds exactly its
+own definition, and nothing else.
+
+The two files were therefore never disagreeing about anything the program does: one
+comment describes behaviour, the other describes a function nothing asks. That
+settles "which mechanism grows" by deletion rather than by design, which is a better
+answer than either the item offered.
+
+## Estimate
+
+2026-08-12 14:25 — about ninety minutes left
+
 ## Steps
 
-- [ ] Decide which mechanism grows, and make the two stop answering the same
-      question differently
+- [ ] Which mechanism grows: `FilePreview` already did, and `isViewableModel` is
+      dead — say so, and delete it rather than leave two comments arguing
 - [ ] `.scad` opens split right, with the divider where a mesh wants it
-- [ ] Say what happens with no OpenSCAD, with a slow render, and with twenty files
-      opened at once
-- [ ] A provisional open does not start a render per row
-- [ ] Overturn `ModelPreview.isViewableModel`'s comment in writing, or explain why
-      the two files still disagree
+- [ ] Measure a cold and a warm render, saying what the load was
+- [ ] A provisional open does not start a render per row, and neither does a
+      restored session of twenty
+- [ ] Say what happens with no OpenSCAD and with a slow render
 - [ ] Watch it on a real `.scad`, cold and warm
 - [ ] Write down here what was ruled out on the way
-- [ ] `spec/<capability>.md` says what the project now does
+- [ ] `spec/previews.md` says what the project now does
