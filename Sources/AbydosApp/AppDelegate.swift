@@ -511,6 +511,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if options.menuKeys {
+			// After the menu is built and the system has had its chance to move
+			// anything: the relocation happens when the menu becomes the
+			// application's, and reading a key equivalent before that reports the
+			// literal from the source rather than the one somebody will press.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+				MenuKeyReport.print()
+				if !options.isScreenshotRun { exit(0) }
+			}
+		}
+
 		if let spec = options.indentBlock {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
 				let parts = spec.split(separator: ":").map(String.init)
@@ -2020,6 +2031,37 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			keyEquivalent: "/"
 		)
 		toggleComment.keyEquivalentModifierMask = [.command]
+		// **The one item in this menu bar that keeps its literal key**, and 0479 is
+		// the account of why. Left to itself, the system moves a key equivalent it
+		// judges awkward on the current layout to one that needs no shift: `/` on a
+		// German keyboard is ⇧7, so the menu read **⌘ß**, and the person who had
+		// asked for ⌘/ pressed ⌘⇧7 and got nothing. Both halves of that were
+		// measured — ⌘ß was the only press that reached it, and ⌘⇧7 reached nothing
+		// — with `--comment-key`.
+		//
+		// Turning the relocation off works *here* because AppKit forgives a modifier
+		// the mask does not ask for when that modifier is what types the character,
+		// so ⌘⇧7 reaches this item with `/` intact. Measured, not reasoned about,
+		// and it is the whole reason this is the fix rather than declaring the
+		// shortcut twice.
+		//
+		// **It is off for this item and nothing else**, and that is a judgement the
+		// same measurement supports. The other punctuation shortcuts here — `[`, `]`
+		// for Back and Forward, `\` for the splits, `=` for Zoom In — all need ⌥ on
+		// this keyboard, so keeping *their* literals costs a whole extra modifier
+		// where the relocation gives them one key in the same place it is on a US
+		// keyboard: ⌘Ö rather than ⌥⌘5. Worse, `\` is ⌥⇧7, so with the literal kept
+		// the forgiven shift makes `⌘\` and `⇧⌘\` **the same press** — Split Right
+		// answers and Split Down becomes unpressable. `/` has neither problem: one
+		// extra shift, no collision with anything.
+		//
+		// So the cost of this line is that a German user presses ⌘⇧7 rather than
+		// ⌘ß, for the shortcut every editor documents, spelled in the menu the way
+		// somebody told "⌘/" would look for it. ⌘ß was a key nobody would ever try,
+		// so what that cost was the whole feature. `--menu-keys` prints which press
+		// reaches every shortcut in the menu bar, which is how all of this stopped
+		// being a guess.
+		toggleComment.allowsAutomaticKeyEquivalentLocalization = false
 		editMenu.addItem(toggleComment)
 		editMenu.addItem(.separator())
 		let symbolInFile = NSMenuItem(
