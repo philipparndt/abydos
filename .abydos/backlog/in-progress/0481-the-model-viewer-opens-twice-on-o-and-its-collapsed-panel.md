@@ -63,15 +63,31 @@ each icon is when its expanded row is a word and a `KeyHint`, and what happens w
 section has more icons than the panel is wide. Look at every section rather than only
 the one in the report, since the rule now applies to all of them.
 
+## Estimate
+
+2026-08-12 13:50 — about two hours left
+
+## Where the work is
+
+The fork's branch is **`abydos/o-and-collapsed-icons`**, made off
+`abydos/openscad-command` so that branch's three unreviewed commits are underneath
+this one and a single review and a single tag serve both. It is worked in a git
+worktree at `/Users/philipparndt/dev/gostl-0481`, because `~/dev/3d/gostl` is the
+user's own checkout and is not to be disturbed.
+
 ## Steps
 
-- [ ] Find out whether the double-open was seen embedded or standalone, by counting
-      entries per press and observers registered
+- [ ] Count `openWithGo3mf` entries per press and `OpenWithGo3mf` observers
+      registered, embedded and standalone, and say which pair the report is
 - [ ] One owner for `o`, with the other made impossible rather than absent
 - [ ] A row of icons in the collapsed state, for every section and not only the one
       reported, with an answer for a section too wide for the panel
 - [ ] Open-in-go3mf is the one asked about, and it is an icon like the rest
-- [ ] Watch both in the embedded viewer, which is where it was reported
+- [ ] Watch both in the embedded viewer, which is where it was reported, against a
+      local path override in this worktree's `Package.swift`
+- [ ] Take the path override back out, so the branch carries no path only one
+      machine has
+- [ ] GoSTL's own suite green, and `make warnings` clean here
 - [ ] Write down here what was ruled out on the way
 - [ ] A branch in `~/dev/3d/gostl` and nothing else — no tag, no push, no repin
 - [ ] `spec/<capability>.md` says what the project now does, if the embedded viewer
