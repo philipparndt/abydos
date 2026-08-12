@@ -511,6 +511,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if options.menuKeys {
+			// After the menu is built and the system has had its chance to move
+			// anything: the relocation happens when the menu becomes the
+			// application's, and reading a key equivalent before that reports the
+			// literal from the source rather than the one somebody will press.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+				MenuKeyReport.print()
+				if !options.isScreenshotRun { exit(0) }
+			}
+		}
+
 		if let spec = options.indentBlock {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
 				let parts = spec.split(separator: ":").map(String.init)

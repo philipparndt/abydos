@@ -179,6 +179,10 @@ struct LaunchOptions {
 	/// Say whether ⌘/ is wired up: the menu item, its key, and whether the
 	/// responder chain answers to its action.
 	var commentKey = false
+	/// Every shortcut in the menu bar, and which press reaches it on the keyboard
+	/// layout this machine is set to. The only way to see what the system did to
+	/// a key equivalent after it was declared.
+	var menuKeys = false
 	/// Prints what the editor is holding, saved or not.
 	var printText = false
 	/// The palette to run in, so a capture does not depend on whoever's
@@ -735,6 +739,7 @@ struct LaunchOptions {
 			case "--indent-block": options.indentBlock = next()
 			case "--comment": if let spec = next() { options.commentBlocks.append(spec) }
 			case "--comment-key": options.commentKey = true
+			case "--menu-keys": options.menuKeys = true
 			case "--print-text": options.printText = true
 			case "--theme": options.theme = next()
 			case "--debug-inspect": options.debugInspect = true

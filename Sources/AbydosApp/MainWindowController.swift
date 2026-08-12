@@ -2145,6 +2145,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// class implements, and that walking up from the first responder reaches
 	/// something that answers to it. Given those three, AppKit's own routing is
 	/// what carries the press, and it carries every other item in the same menu.
+	///
+	/// **Those three were not enough**, and 0479 is what they missed. All three
+	/// were satisfied on a German keyboard — the item was there, the mask was ⌘
+	/// alone, the chain answered — while no press a person could make reached it:
+	/// the system had moved the shortcut from `/` to ß, and this report printed
+	/// `key=ß` without anybody reading it as a shortcut nobody would find. So it
+	/// now also says which press matches, from `MenuKeyReport`, because *which key*
+	/// is the question and the wiring was never the part that was wrong.
 	func commentKeyReportForTesting() {
 		let selector = #selector(MainWindowController.toggleLineComment(_:))
 		let items = (NSApp.mainMenu?.items ?? [])
@@ -2168,6 +2176,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 		if items.isEmpty { print("COMMENTKEY no menu item performs toggleLineComment:") }
 		print("COMMENTKEY responder chain answers=\(answers) via \(chain.joined(separator: " → "))")
+		if let layout = KeyboardLayout.current() {
+			let sweep = MenuKeyReport.findings(in: NSApp.mainMenu, layout: layout)
+				.filter { finding in items.contains { $0.title == finding.title } }
+			for finding in sweep {
+				print("COMMENTKEY on “\(layout.name)” the menu says \(finding.shortcut), "
+					+ "and it is pressed as "
+					+ (finding.presses.isEmpty ? "NOTHING" : finding.presses.joined(separator: " or ")))
+			}
+		}
 		fflush(stdout)
 	}
 
