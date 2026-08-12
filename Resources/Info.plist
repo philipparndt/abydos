@@ -2,44 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>CFBundleName</key>
-	<string>Abydos</string>
 	<key>CFBundleDisplayName</key>
 	<string>Abydos</string>
-	<key>CFBundleIdentifier</key>
-	<string>de.rnd7.ideai</string>
-	<key>CFBundleExecutable</key>
-	<string>Abydos</string>
-	<!-- The catalog, which Xcode compiles and the App Store reads. -->
-	<key>CFBundleIconName</key>
-	<string>AppIcon</string>
-	<!-- The loose .icns, for the bundle `make bundle` assembles by hand. -->
-	<key>CFBundleIconFile</key>
-	<string>Abydos</string>
-	<key>CFBundlePackageType</key>
-	<string>APPL</string>
-	<!-- Required by App Store Connect, and the shelf the app belongs on. -->
-	<key>LSApplicationCategoryType</key>
-	<string>public.app-category.developer-tools</string>
-	<key>CFBundleShortVersionString</key>
-	<string>0.1.0</string>
-	<key>CFBundleVersion</key>
-	<string>1</string>
-	<key>LSMinimumSystemVersion</key>
-	<string>14.0</string>
-	<key>NSHighResolutionCapable</key>
-	<true/>
-	<!-- The palette follows the theme setting, including the system's own. -->
-	<key>NSRequiresAquaSystemAppearance</key>
-	<false/>
-	<!-- Without this key macOS has nothing to put in the Local Network prompt,
-	     so on some releases it never asks and simply denies. The denial is
-	     inherited by everything the app spawns — a debugger, a test run, the
-	     program being debugged — and surfaces there as EHOSTUNREACH, which a
-	     Go program reports as "connect: no route to host" and nothing in the
-	     message points back at a permission the app never asked for. -->
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>Abydos builds, runs and debugs your projects. Programs it launches on your behalf may connect to services on your local network, such as a database, a message broker or a Kubernetes cluster.</string>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>
@@ -47,16 +11,39 @@
 			<string>Folder</string>
 			<key>CFBundleTypeRole</key>
 			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
 			<key>LSItemContentTypes</key>
 			<array>
 				<string>public.folder</string>
 			</array>
-			<!-- Alternate, not Owner: Finder owns folders. This only offers
-			     the app under "Open With" for a folder somebody wants to
-			     open as a project. -->
-			<key>LSHandlerRank</key>
-			<string>Alternate</string>
 		</dict>
 	</array>
+	<key>CFBundleExecutable</key>
+	<string>Abydos</string>
+	<key>CFBundleIconFile</key>
+	<string>Abydos</string>
+	<key>CFBundleIconName</key>
+	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>de.rnd7.ideai</string>
+	<key>CFBundleName</key>
+	<string>Abydos</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.2.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.developer-tools</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Abydos builds, runs and debugs your projects. Programs it launches on your behalf may connect to services on your local network, such as a database, a message broker or a Kubernetes cluster.</string>
+	<key>NSRequiresAquaSystemAppearance</key>
+	<false/>
 </dict>
 </plist>
