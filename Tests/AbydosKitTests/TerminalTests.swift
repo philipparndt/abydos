@@ -536,9 +536,181 @@ struct PseudoTerminalTests {
 		#expect(sawOutput, """
 			no output after \(Patience.seconds)s, got: \
 			\(collected.text.debugDescription) — this is 0476 rather than a slow \
-			machine if it is empty — \(MachineLoad.said)
+			machine if it is empty — \(pty.diagnostics) — \(MachineLoad.said)
 			""")
 		pty.terminate()
+	}
+
+	/// A command that has already finished still shows what it printed.
+	///
+	/// **This is what `runsACommandAndCapturesOutput` going red was.** 0472 filed
+	/// it as a timeout of the same shape as Mermaid's budget — 124 s at load 54,
+	/// 126.6 s and 124 s at load 65, against a `/bin/echo` costing 0.028–0.35 s on
+	/// its own — and it was not that. Nothing was slow. A macOS pty gives output
+	/// the child has written 600 ms to be read and then discards it, so a reading
+	/// queue that does not get a thread inside 600 ms comes back to an empty
+	/// terminal. The output was not late; it was thrown away, and the wait then ran
+	/// its whole deadline for something that was never going to arrive. 0476 has the
+	/// measurement, and `PseudoTerminal` holds a descriptor on the child's end of
+	/// the terminal now, which is what takes the deadline away.
+	///
+	/// So the 120 seconds was never the fault, and raising or lowering it would have
+	/// fixed nothing: a hang detector is allowed to be generous, and this one was
+	/// detecting a real hang. What it could not do was say which.
+	///
+	/// Written against the exit rather than against a clock, and that is the part
+	/// worth keeping. 0472's version gave each attempt five seconds to produce its
+	/// line, which is a second race on a busy machine: twenty `/bin/echo`s at five
+	/// seconds each cannot tell whether output was lost or the machine was slow,
+	/// and that confusion is what the whole item came out of. What the fix promises
+	/// is an *order* — the exit is not announced until everything the program
+	/// printed has been handed over — so this waits for the exit, with the suite's
+	/// ordinary hang detector, and asks what had arrived by the time it came. A red
+	/// here cannot be a slow machine.
+	///
+	/// Twenty of them, because the losing side of a race needs a busy machine, and
+	/// one lost is already the failure — reported with the attempt and the load so
+	/// a red here is read rather than re-run.
+	@Test func aCommandThatIsAlreadyOverDoesNotLoseItsOutput() async {
+		for attempt in 0..<20 {
+			let pty = makePTY()
+			let collected = Collector()
+			let outputWhenItExited = Box<String?>(nil)
+			let codeWhenItExited = Box<Int32?>(nil)
+			pty.onOutput = { collected.append($0) }
+			// Read from inside the exit callback rather than after it. The claim
+			// is that output is delivered before the exit is announced, so what
+			// has been collected at this moment is the whole of the answer — and
+			// the callback queue is serial, so this runs after every delivery.
+			pty.onExit = { code in
+				outputWhenItExited.value = collected.text
+				codeWhenItExited.value = code
+			}
+
+			let word = "gone-\(attempt)"
+			#expect(pty.start(executable: "/bin/echo", arguments: [word]))
+
+			let exited = await wait { outputWhenItExited.value != nil }
+			// Asked before `terminate()`, which closes the terminal and would take
+			// the answer with it.
+			let diagnostics = pty.diagnostics
+			pty.terminate()
+
+			guard exited else {
+				Issue.record("""
+					attempt \(attempt + 1) of 20: a /bin/echo never reported its exit \
+					within \(Patience.seconds)s — \(diagnostics) — \(MachineLoad.said)
+					""")
+				return
+			}
+			guard outputWhenItExited.value?.contains(word) == true else {
+				// The exit status is in the message because "no output" has two
+				// causes and they want different fixes: 0 means `/bin/echo` printed
+				// its line and this lost it, and 127 means the exec never happened,
+				// so there was nothing to lose and the machine is the story after
+				// all. Guessing which cost this item most of a day.
+				Issue.record("""
+					attempt \(attempt + 1) of 20 lost the output of a /bin/echo that \
+					had already finished: by the time it said it had exited — \
+					status \(codeWhenItExited.value.map(String.init) ?? "none") — it \
+					had delivered \((outputWhenItExited.value ?? "").debugDescription) \
+					— \(diagnostics) — \(MachineLoad.said)
+					""")
+				return
+			}
+		}
+	}
+
+	/// Output survives a reader that does not read for two seconds.
+	///
+	/// The same defect as `aCommandThatIsAlreadyOverDoesNotLoseItsOutput`, arranged
+	/// rather than waited for. That one needs a machine loaded enough that the
+	/// reading queue waits longer than the pty's 600 ms grace period for a thread,
+	/// which is a thing you can provoke and not a thing you can ask for; this one
+	/// suspends the reader outright, which is the same condition and arrives every
+	/// time. It is the test to run while working on this, and the reason the other
+	/// one is not the only evidence.
+	///
+	/// Two seconds because the deadline is 600 ms and the point is to be well past
+	/// it. A pty that is going to throw output away has done it by then.
+	@Test func outputSurvivesAReaderThatIsNotReading() async {
+		let pty = makePTY()
+		let collected = Collector()
+		pty.onOutput = { collected.append($0) }
+
+		#expect(pty.start(executable: "/bin/echo", arguments: ["survived"]))
+		pty.setReadingSuspended(true)
+		try? await Task.sleep(nanoseconds: 2_000_000_000)
+		pty.setReadingSuspended(false)
+
+		let arrived = await wait { collected.text.contains("survived") }
+		#expect(arrived, """
+			a /bin/echo's output did not survive two seconds of nobody reading: \
+			got \(collected.text.debugDescription) — \(pty.diagnostics)
+			""")
+		pty.terminate()
+	}
+
+	/// Twenty terminals come and go without leaving a descriptor or a child.
+	///
+	/// Here because the fix for 0476 makes both newly possible to get wrong. It
+	/// holds a second descriptor — the child's end of the terminal — so there are
+	/// two to close rather than one. And holding it is exactly what lets the
+	/// child's exit wait indefinitely for somebody to read, so a terminal that
+	/// stopped reading without also closing would leave a process alive for ever.
+	/// A pty that leaks either of those is worse than the bug it was fixing.
+	@Test func leavesNoDescriptorAndNoChildBehind() async {
+		let before = Self.openDescriptorCount()
+		var children: [pid_t] = []
+
+		for _ in 0..<20 {
+			let pty = makePTY()
+			let exited = Box<Bool>(false)
+			pty.onExit = { _ in exited.value = true }
+			#expect(pty.start(executable: "/bin/echo", arguments: ["tidy"]))
+			// `childProcessID` and not `state`, which stops naming the process the
+			// moment it exits — and a `/bin/echo` can be gone before the next line
+			// of this test runs, which is how this first went red.
+			children.append(pty.childProcessID)
+			#expect(await wait { exited.value })
+			pty.terminate()
+		}
+
+		#expect(children.count == 20, "every attempt should have reported a pid")
+
+		// Nothing left unreaped. Asked about each pid this test started rather
+		// than with `waitpid(-1)`, which would take a child belonging to another
+		// suite running beside this one and break whoever was waiting for it.
+		// ECHILD is the answer that means somebody has already reaped it.
+		for pid in children {
+			var status: Int32 = 0
+			let found = waitpid(pid, &status, WNOHANG)
+			#expect(
+				found == -1 && errno == ECHILD,
+				"pid \(pid) is still a child of this process"
+			)
+		}
+
+		// The descriptors close on the reading queue, once the read source has
+		// finished with them, so they are not all gone the instant `terminate()`
+		// returns — a moment to settle, rather than an assertion about how fast.
+		let settled = await wait { Self.openDescriptorCount() <= before + 2 }
+		#expect(settled, """
+			descriptors went from \(before) to \(Self.openDescriptorCount()) over \
+			twenty terminals — two leaked per terminal would be forty
+			""")
+	}
+
+	/// How many descriptors this process has open.
+	///
+	/// The number itself means nothing; that twenty terminals do not move it is
+	/// the whole assertion.
+	private static func openDescriptorCount() -> Int {
+		var count = 0
+		for descriptor in 0..<Int32(getdtablesize()) where fcntl(descriptor, F_GETFD) >= 0 {
+			count += 1
+		}
+		return count
 	}
 
 	@Test func reportsExitCode() async {
