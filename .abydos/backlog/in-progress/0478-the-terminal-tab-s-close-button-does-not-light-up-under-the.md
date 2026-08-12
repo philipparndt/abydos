@@ -46,9 +46,13 @@ probably the honest middle; say which was chosen and why.
   box; if it does and the strip does not, that is the same bug wearing a
   different coat.
 
+## Estimate
+
+2026-08-12 06:40 — about thirty minutes left
+
 ## Steps
 
-- [ ] `closeRect` becomes a method of the strip, asked by the click, the hover
+- [x] `closeRect` becomes a method of the strip, asked by the click, the hover
       and the drawing alike
 - [ ] `hoveredClose` beside `hoveredIndex`, cleared on exit as that one is
 - [ ] The same highlight the editor draws, shared rather than copied

@@ -3437,6 +3437,22 @@ final class PanelTabStrip: NSView {
 		}
 	}
 
+	/// Where a tab's ✕ goes.
+	///
+	/// A method rather than a local inside `mouseDown`, which is where it used
+	/// to be: the click knew where the cross was and nothing else did, so the
+	/// pointer could not tell it was over one and the strip drew no hover.
+	/// Three callers now — the click, the hover and the drawing — and one
+	/// answer between them.
+	private func closeRect(for tabRect: NSRect) -> NSRect {
+		NSRect(
+			x: tabRect.maxX - padding - closeSize,
+			y: tabRect.midY - closeSize / 2,
+			width: closeSize,
+			height: closeSize
+		)
+	}
+
 	/// Where a tab's status badge goes: where the ✕ would be, which a tmux tab
 	/// does not have.
 	private func badgeRect(in rect: NSRect) -> NSRect {
@@ -3664,14 +3680,8 @@ final class PanelTabStrip: NSView {
 		}
 
 		guard let index = frames.firstIndex(where: { $0.contains(point) }) else { return }
-		let closeRect = NSRect(
-			x: frames[index].maxX - padding - closeSize,
-			y: frames[index].midY - closeSize / 2,
-			width: closeSize,
-			height: closeSize
-		)
 		let closable = items.indices.contains(index) ? items[index].isClosable : true
-		if closable, closeRect.contains(point) {
+		if closable, closeRect(for: frames[index]).contains(point) {
 			onClose?(index)
 		} else {
 			onSelect?(index)
@@ -4052,12 +4062,7 @@ final class PanelTabStrip: NSView {
 		}
 
 		if item.isClosable, isActive || isHovered {
-			let close = NSRect(
-				x: rect.maxX - padding - closeSize,
-				y: rect.midY - closeSize / 2,
-				width: closeSize,
-				height: closeSize
-			)
+			let close = closeRect(for: rect)
 			let cross = NSBezierPath()
 			let inset = Theme.current.scaled(3)
 			cross.move(to: NSPoint(x: close.minX + inset, y: close.minY + inset))
@@ -4169,12 +4174,7 @@ final class PanelTabStrip: NSView {
 		label.draw(at: NSPoint(x: rect.minX + padding, y: rect.midY - size.height / 2))
 
 		if isActive || isHovered {
-			let close = NSRect(
-				x: rect.maxX - padding - closeSize,
-				y: rect.midY - closeSize / 2,
-				width: closeSize,
-				height: closeSize
-			)
+			let close = closeRect(for: rect)
 			let cross = NSBezierPath()
 			let inset = Theme.current.scaled(3)
 			cross.move(to: NSPoint(x: close.minX + inset, y: close.minY + inset))
