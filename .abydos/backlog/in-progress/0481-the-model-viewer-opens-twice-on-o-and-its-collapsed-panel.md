@@ -132,7 +132,7 @@ user's own checkout and is not to be disturbed.
 
 - [x] Count `openWithGo3mf` entries per press and `OpenWithGo3mf` observers
       registered, embedded and standalone, and say which pair the report is
-- [ ] One place builds the `go3mf` arguments, and it cannot ask go3mf to open the
+- [x] One place builds the `go3mf` arguments, and it cannot ask go3mf to open the
       result — so the result is opened once, by whoever knows the build finished
 - [ ] One owner for `o`, with the other made impossible rather than absent
 - [ ] A row of icons in the collapsed state, for every section and not only the one
