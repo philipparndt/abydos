@@ -154,9 +154,49 @@ cannot photograph the panel** — the model tab composites GoSTL's Metal frame o
 the view tree, so the SwiftUI overlays are behind it. Worth knowing before anybody
 tries to photograph this pane again.
 
-## Estimate
+## Ruled out on the way
 
-2026-08-12 14:19 — about an hour left
+- **Both mechanisms this item proposed.** One observer, not several; one entry into
+  `openWithGo3mf` per press, not two. Measured in both configurations, numbers
+  above. Neither was the bug, and neither can be now: the observer is gone and the
+  menu cannot bind a bare key.
+- **`Model/STLExporter.swift`.** The report said "export button", and the exporter
+  writes an STL to a file. `o` does not go near it; the item settled this before the
+  work started and nothing found since disagrees.
+- **`--open` being unreliable as a subprocess.** The comment that justified the
+  second opening claimed it. A logging `open` put first on the `PATH` sees exactly
+  one call for every `go3mf build … --open`, with stdout and stderr both captured.
+  The comment was wrong, and it had been believed for as long as it had been there.
+- **Photographing the pane with Abydos's `--screenshot`.** The panel never appears:
+  the model tab hands GoSTL's Metal frame to the container and it composites over
+  the view tree, so every SwiftUI overlay is behind it. Two runs were spent on this.
+  What works is `bitmapImageRepForCachingDisplay` on the pane's own view tree —
+  AppKit cannot see the Metal layer, so the viewport comes out blank and the
+  overlays come out exactly as they are. That is how the folded rows in the embedded
+  viewer were looked at.
+- **Driving the app from outside.** `osascript` has no assistive access on this
+  machine, so System Events cannot type or click, and neither can `CGEvent`. Every
+  keystroke and click in this investigation was an `NSEvent` built inside the app
+  and sent through `NSApp.sendEvent`, which is the same entry point a real one takes.
+  Worth knowing: a synthetic `keyDown` skips AppKit's key-equivalent stage, so it
+  always reaches the first responder — which is why the menu path had to be
+  established separately rather than by pressing the key.
+- **Abydos's `--type`** types into the editor's text view, not into the pane, so it
+  cannot reach the viewport at all.
+
+## What is left, and it is not this branch's to do
+
+Nothing here consumes any of it until the package has a version carrying it:
+`Package.swift:100` still says `exact: "0.20.2"`, and it was put back exactly as it
+was after being pointed at a local path for the watching. Tagging the fork, pushing
+it and repinning are the user's calls, and `abydos/openscad-command`'s three commits
+are underneath this branch waiting on the same one.
+
+One thing the reviewer should know: **GoSTL's suite has one red that is not this
+work's.** `STLParserTests.testInvalidASCIIFormat` — `XCTAssertThrowsError failed:
+did not throw an error` — fails identically on `abydos/openscad-command` with none
+of these commits applied, checked in a throwaway worktree at that commit. 101 of
+102 pass, and this branch touches nothing the parser reads.
 
 ## Where the work is
 
@@ -176,12 +216,38 @@ user's own checkout and is not to be disturbed.
 - [x] A row of icons in the collapsed state, for every section and not only the one
       reported, with an answer for a section too wide for the panel
 - [x] Open-in-go3mf is the one asked about, and it is an icon like the rest
-- [ ] Watch both in the embedded viewer, which is where it was reported, against a
+- [x] Watch both in the embedded viewer, which is where it was reported, against a
       local path override in this worktree's `Package.swift`
-- [ ] Take the path override back out, so the branch carries no path only one
+- [x] Take the path override back out, so the branch carries no path only one
       machine has
-- [ ] GoSTL's own suite green, and `make warnings` clean here
-- [ ] Write down here what was ruled out on the way
-- [ ] A branch in `~/dev/3d/gostl` and nothing else — no tag, no push, no repin
+- [x] GoSTL's own suite green, and `make warnings` clean here
+- [x] Write down here what was ruled out on the way
+- [x] A branch in `~/dev/3d/gostl` and nothing else — no tag, no push, no repin
 - [ ] `spec/<capability>.md` says what the project now does, if the embedded viewer
       is described there at all
+
+      **Not done, and not to be done.** There is no capability for the viewer:
+      `spec/` names thirteen and none of them describes the model tab. The only
+      mention anywhere is `sessions.md`, which uses a `.scad` beside its source as
+      an example of a split layout being remembered — a claim about splits, not
+      about the viewer. Every behaviour that changed here is inside a dependency
+      this repository cannot even consume yet, so a requirement written now would
+      describe what Abydos does *not* do until somebody tags GoSTL and repins.
+      GoSTL's own living documentation is where it went instead:
+      `features/external_tools.feature`, `features/info_panel.feature`,
+      `features/menus.feature` and `features/keyboard_shortcuts.feature`, which is
+      what that repository's CLAUDE.md asks for.
+
+## Watched in the embedded viewer
+
+Both halves, in a model tab in Abydos built against the branch, with the counting
+still in place and the built `.3mf` handed to a logging shim instead of BambuStudio:
+
+- One `keyDown` for `o` → **one** entry into the build, argv
+  `["build", "…/cube.stl", "-o", "…/cube.3mf"]` with no `--open`, and **one** open
+  request. Before the fix the same press produced two.
+- **Clicking the go3mf icon in the folded Tools row** → one entry, one open
+  request. So the icon the report asked for works in the place the report was made,
+  and not only in a preview.
+- A picture of the pane with all three sections folded: `Info` keeps the material
+  icon, `View` keeps six, `Tools` keeps six ending in `cube.transparent`.
