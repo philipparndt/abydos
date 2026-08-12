@@ -1353,6 +1353,45 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		install(tool: currentSidebarTool, force: true)
 	}
 
+	/// Puts the pointer on the ✕ of every tab of every strip in the window and
+	/// says what each strip made of it, then photographs the window with the
+	/// first ✕ of each hovered and again with the pointer off them all.
+	///
+	/// The strips are found by walking the window rather than asked of the editor
+	/// and the panel in turn. What is being checked is that the two agree, and one
+	/// walk both puts them in the same picture and picks up a third strip if
+	/// somebody adds one — which is how this went wrong in the first place: the
+	/// editor's strip grew a hover and the panel's was somewhere else.
+	func tabCloseHoverForTesting(to path: String) {
+		guard let window else { return }
+		bottomPanel.seedUnclosableTabForTesting()
+		window.contentView?.layoutSubtreeIfNeeded()
+		let strips = Self.tabStrips(under: window.contentView)
+
+		print("HOVER: \(strips.count) strips")
+		// Every tab, not only the first: the one that must *not* light up is a
+		// tmux window, and tmux's windows are never at the front of a strip.
+		for strip in strips {
+			for index in 0..<max(strip.tabCountForTesting, 1) {
+				print("  on  \(strip.hoverCloseForTesting(index))")
+			}
+			strip.hoverCloseForTesting(0)
+		}
+		WindowCapture.write(window: window, to: path)
+
+		for strip in strips { print("  off \(strip.hoverCloseForTesting(nil))") }
+		WindowCapture.write(
+			window: window, to: (path as NSString).deletingPathExtension + "-left.png"
+		)
+		fflush(stdout)
+	}
+
+	private static func tabStrips(under view: NSView?) -> [any TabCloseHovering] {
+		guard let view else { return [] }
+		let here = view as? (any TabCloseHovering)
+		return (here.map { [$0] } ?? []) + view.subviews.flatMap { tabStrips(under: $0) }
+	}
+
 	/// Draws the sidebar's pane into a file, whatever the window is doing.
 	///
 	/// The window capture goes through the compositor and a pane that has just

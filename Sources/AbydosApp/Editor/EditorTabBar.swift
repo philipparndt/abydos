@@ -258,8 +258,10 @@ final class EditorTabBar: NSView {
 	}
 
 	override func mouseMoved(with event: NSEvent) {
-		let point = convert(event.locationInWindow, from: nil)
+		updateHover(at: convert(event.locationInWindow, from: nil))
+	}
 
+	private func updateHover(at point: NSPoint) {
 		let overPreview = !previewModes.isEmpty && previewButtonFrame.contains(point)
 		if overPreview != isPreviewHovered {
 			isPreviewHovered = overPreview
@@ -277,6 +279,10 @@ final class EditorTabBar: NSView {
 	}
 
 	override func mouseExited(with event: NSEvent) {
+		clearHover()
+	}
+
+	private func clearHover() {
 		hoveredIndex = nil
 		hoveredClose = false
 		isPreviewHovered = false
@@ -645,21 +651,12 @@ final class EditorTabBar: NSView {
 			Theme.current.gitModified.setFill()
 			dot.fill()
 		} else if isActive || hoveredIndex == index {
-			if hoveredClose && hoveredIndex == index {
-				let path = NSBezierPath(roundedRect: close.insetBy(dx: -1, dy: -1), xRadius: 4, yRadius: 4)
-				NSColor.white.withAlphaComponent(0.12).setFill()
-				path.fill()
-			}
-			let cross = NSBezierPath()
-			let inset: CGFloat = 4
-			cross.move(to: NSPoint(x: close.minX + inset, y: close.minY + inset))
-			cross.line(to: NSPoint(x: close.maxX - inset, y: close.maxY - inset))
-			cross.move(to: NSPoint(x: close.maxX - inset, y: close.minY + inset))
-			cross.line(to: NSPoint(x: close.minX + inset, y: close.maxY - inset))
-			cross.lineWidth = 1.3
-			cross.lineCapStyle = .round
-			Theme.current.sidebarText.setStroke()
-			cross.stroke()
+			TabCloseButton.draw(
+				in: close,
+				hovered: hoveredClose && hoveredIndex == index,
+				inset: 4,
+				lineWidth: 1.3
+			)
 		}
 	}
 }
@@ -740,6 +737,28 @@ extension EditorTabBar {
 extension Array {
 	subscript(safe index: Int) -> Element? {
 		indices.contains(index) ? self[index] : nil
+	}
+}
+
+extension EditorTabBar: TabCloseHovering {
+	var tabCountForTesting: Int { items.count }
+
+	@discardableResult
+	func hoverCloseForTesting(_ index: Int?) -> String {
+		// Through `updateHover` rather than by setting the two flags: what is
+		// being checked is what the pointer does, and a harness that assigns the
+		// state directly would pass with the hit test wired to nothing.
+		if let frame = index.flatMap({ frames[safe: $0] }) {
+			let close = closeRect(for: frame)
+			updateHover(at: NSPoint(x: close.midX, y: close.midY))
+		} else {
+			clearHover()
+		}
+		// Every editor tab closes, so there is no `isClosable` to report — it is
+		// printed as a constant so the two strips' lines read the same way.
+		let title = index.flatMap { items[safe: $0] }?.title ?? "-"
+		return "editor       \"\(title)\" closable=true"
+			+ " -> tab=\(hoveredIndex.map(String.init) ?? "none") close=\(hoveredClose)"
 	}
 }
 
