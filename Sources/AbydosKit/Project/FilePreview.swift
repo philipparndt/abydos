@@ -172,20 +172,6 @@ public enum FilePreview {
 		}
 	}
 
-	/// The source half's share of a split, for a file opening in one.
-	///
-	/// Down the middle for a diagram: the text and the picture are both read, and
-	/// neither is the subject. A model is not that — sixty columns of OpenSCAD is
-	/// a wide line, while a mesh is being turned around and wants area in both
-	/// directions — so the shape gets the larger half.
-	///
-	/// A number rather than a rule inside the split view, because a session that
-	/// remembers where somebody put the divider must win over it, and that
-	/// comparison is easier to read where the two answers meet.
-	public static func defaultDividerFraction(for url: URL) -> Double {
-		kind(for: url) == .model ? 0.4 : 0.5
-	}
-
 	/// The mode a file comes back in, given whatever a session remembered.
 	///
 	/// Two things are deliberately not `.source`. A session written before modes

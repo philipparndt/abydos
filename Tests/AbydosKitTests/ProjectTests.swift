@@ -245,13 +245,6 @@ struct FilePreviewTests {
 		#expect(FilePreview.defaultMode(for: url("a.mmd")) == .splitRight)
 	}
 
-	/// The shape gets the larger half; a diagram and its text split evenly.
-	@Test func aModelIsGivenMoreOfTheSplitThanADiagramIs() {
-		#expect(FilePreview.defaultDividerFraction(for: url("a.scad")) == 0.4)
-		#expect(FilePreview.defaultDividerFraction(for: url("a.puml")) == 0.5)
-		#expect(FilePreview.defaultDividerFraction(for: url("a.md")) == 0.5)
-	}
-
 	/// The new default is only for a tab that says nothing: somebody who put a
 	/// `.scad` back to plain text gets plain text when the project reopens.
 	@Test func aScadStillComesBackHowItWasLeft() {

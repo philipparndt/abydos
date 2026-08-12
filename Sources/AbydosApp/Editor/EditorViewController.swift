@@ -1784,11 +1784,16 @@ final class EditorViewController: NSViewController {
 		// tab behind it measured zero, gave up, and lived on whatever
 		// `adjustSubviews` had left.
 		//
-		// A session's remembered divider beats the kind's default, which is why
-		// the default is not simply half: a model gives the shape the larger half.
-		split.wantedFraction = CGFloat(
-			dividerFraction ?? FilePreview.defaultDividerFraction(for: tab.url)
-		)
+		// Half for a model too, which 0483 tried to change and measured its way
+		// back from. A mesh looks like it wants the larger half — it is being
+		// turned around, where a line of OpenSCAD is narrow — and at 0.4 the file
+		// that asked for this feature was clipped while the viewport around the
+		// part had margins to spare. A 3D view zooms to fit, so it degrades
+		// gracefully with less width; text stops at a hard edge. And the longest
+		// line of the median `.scad` in the owner's own 493 of them is 93 columns,
+		// which no fraction of a 970 pt pane fits — so the divider is not the
+		// lever, and half is the answer for the same reason it is everywhere else.
+		split.wantedFraction = dividerFraction.map { CGFloat($0) } ?? 0.5
 		return split
 	}
 
