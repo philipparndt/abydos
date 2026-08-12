@@ -56,6 +56,88 @@ The second case is the same program with the `waitpid` taken out. So the bytes a
 in the pty for a while and then they are not, and something about the child being
 finished with is what ends them.
 
+## What it actually is: a 600 ms deadline in the kernel
+
+Measured, not inferred. The three instruments are in `images/` beside this file,
+which is where `abydos-backlog attach` puts things; each is one
+`clang -o x x.c -lutil` away from saying it again on another machine.
+
+**A macOS pty gives unread output exactly 600 ms after the child exits, and then
+discards it.** Read the master at 600 ms and the bytes are there; read it at
+605 ms and the master is at EOF and they are gone. Nine runs, four delays each,
+the same boundary every time:
+
+    delay=595ms  -> bytes        delay=605ms  -> LOST (eof)
+    delay=600ms  -> bytes        delay=615ms  -> LOST (eof)
+
+`ptysweep.c` is the whole measurement: `forkpty`, the child writes and `_exit`s,
+the parent sleeps a chosen number of milliseconds and then reads.
+
+The deadline is spent inside the child's own exit. `ptyprobe2.c` has the child
+write one byte down a pipe as its last instruction before `_exit`, so "finished
+its work" and "finished exiting" are two separate timestamps:
+
+       0.5ms  child reached _exit
+       0.5ms  master readable
+     602.0ms  master: IN HUP, child: zombie      <- output discarded here
+
+Half a millisecond to do its work, and then **601 ms inside the kernel before it
+becomes a zombie**. That wait is the kernel giving the terminal's output queue a
+chance to be read. It is a grace period, not a hang: when the queue *is* read it
+ends at once. Same program, parent draining the master:
+
+       0.5ms  child reached _exit
+       1.0ms  master: IN HUP, child: zombie      <- 601ms becomes 1ms
+
+So the sequence is: the child exits, the kernel waits up to 600 ms for somebody
+to take the output, then revokes the controlling terminal — which closes the last
+descriptor on the slave, and closing the last slave descriptor flushes the
+terminal's queues. On Linux the buffered output survives that close for the
+reader; on macOS it does not, and that difference is the whole defect.
+
+### Two things this corrects in the account above
+
+- **Reaping has nothing to do with it.** The reading in "Reproduced, both in the
+  suite and on its own" — *not waited for at all, then read: "hello-from-pty"* —
+  is an artifact of reading too early. That program slept less than 600 ms. With
+  no `waitpid` anywhere in it and a 3 s sleep, the answer is `NOTHING [n=0]`,
+  exactly as when it reaps. `waitpid` correlated with the loss only because it
+  takes about as long to return as the deadline takes to expire: the child is not
+  a zombie until the deadline has passed, so `waitpid` cannot return any sooner.
+  That is also why `waitid`/`WNOWAIT` measured the same — it waits for the same
+  moment.
+- **`FIONREAD` cannot see this.** On a pty master it answers 0 while a `read`
+  would return bytes, so it is no use as an instrument here. Measured, after an
+  hour of believing an empty queue.
+
+## Why holding the slave open hung
+
+Because it works, and the standalone program waited for the child before reading.
+Holding a slave descriptor removes the deadline — the kernel then waits for the
+output queue to be drained with **no bound at all**: measured out to 15 s, bytes
+still there, child still not a zombie. So
+
+- the child cannot finish exiting until somebody reads the master, and
+- the program was waiting for the child to finish exiting before reading it.
+
+Each waiting for the other, for ever. The hang was the fix working.
+
+It is released the moment anything drains it, and by two other things as well —
+measured, three runs each, because `terminate()` depends on it:
+
+| the parent does | child reaped after |
+|---|---|
+| reads the master | 0.7 ms |
+| closes the master | 0.6 ms |
+| closes its own held slave | 0.6 ms |
+
+And **EOF still arrives.** This item expected that holding a slave would mean the
+master never reports EOF, so exit would have to be learnt from `waitpid` alone.
+That is not true of a `forkpty` child: it is a session leader and this is its
+controlling terminal, so when its exit completes the kernel revokes the terminal
+and closes *every* descriptor on it, the parent's held one included. Measured:
+the reader gets its bytes and then EOF, in every run.
+
 ## Ruled out
 
 - **Closing the master too early in `watchForExit`.** This was 0472's first
@@ -114,10 +196,14 @@ performed on the reading queue so an in-flight read has finished with the number
 first — and reverted it with the rest. It is in that branch's history if it saves
 any time.
 
+## Estimate
+
+2026-08-12 06:23 — about two hours left — proving the mechanism first
+
 ## Steps
 
-- [ ] Find out when a macOS pty discards output the child has written
-- [ ] Find out why holding the slave open hung the standalone reproduction
+- [x] Find out when a macOS pty discards output the child has written
+- [x] Find out why holding the slave open hung the standalone reproduction
 - [ ] Fix it, whatever it turns out to be
 - [ ] Put `aCommandThatIsAlreadyOverDoesNotLoseItsOutput` back, from `1c0c108`
 - [ ] One owner for the master descriptor, closing it once and on the read queue
