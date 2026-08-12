@@ -77,9 +77,20 @@ while IFS= read -r -d '' nested; do
 	echo "    signed $(basename "$nested")"
 done < <(find "$APP/Contents" \
 	\( -name "*.framework" -o -name "*.xpc" -o -name "*.bundle" \) -type d -print0
-	find "$APP/Contents" \( -name "*.dylib" -o -name "*.so" \) -type f -print0
-	# The helpers beside the main executable, which is signed last with the app.
-	find "$APP/Contents/MacOS" -type f -perm -111 ! -name "$MAIN" -print0)
+	# Every Mach-O in the bundle, wherever it is and whatever it is called —
+	# which is what the paragraph above says and what this used to only half do.
+	# It looked in `Contents/MacOS`, and the command-line tools live in
+	# `Contents/Resources/bin`: `abydos-backlog` and `abydos-bench` went out
+	# unsigned, the check below caught them, and cutting 0.2.0 stopped after the
+	# tag was already made. Asking the file what it is costs one `file` per
+	# executable and cannot go stale when the next tool is added.
+	#
+	# `.dylib` and `.so` are covered by this too, since they are Mach-O; the
+	# scripts in `bin` are not and are correctly left to be sealed as resources.
+	while IFS= read -r -d '' candidate; do
+		[ "$candidate" = "$APP/Contents/MacOS/$MAIN" ] && continue
+		file -b "$candidate" | grep -q "Mach-O" && printf '%s\0' "$candidate"
+	done < <(find "$APP/Contents" -type f -perm -111 -print0))
 
 codesign --force --timestamp --options runtime --sign "$IDENTITY" "$APP"
 codesign --verify --strict --verbose=2 "$APP"
