@@ -8,6 +8,12 @@ and then, correcting the first draft of this item:
 
 > gostl can show such files as 3d objects and also export and open them
 
+> **Read *What was found* below before acting on the next four paragraphs.** They are
+> what was believed when this was picked up, and the part that says GoSTL already does
+> the whole render turns out to be false — including, exactly backwards, the claim about
+> the temporary file. Left standing rather than edited, because being wrong in a
+> readable way is how the next person avoids checking it a third time.
+
 **Which is true, and it is nearly the whole item.** The first draft of this entry
 designed a render pipeline for Abydos to run — `go3mf combine`, a decision about
 where the `.3mf` lands, staleness, error reporting. None of that is ours to build,
@@ -141,7 +147,13 @@ The overlay's presence is read from the code, not from a picture.
 `output:` the recipe declares (relative to the working directory it already sets), or
 it builds in a temporary *directory* so the recipe's own name lands somewhere harmless
 — and the second is the one that also stops the preview from writing into the project.
-Item **0481** is open in that fork now, which is where such a change belongs.
+
+**The same boundary 0481 stopped at, and for the same reason.** 0481 put its fix on
+`abydos/openscad-command` in `~/dev/3d/gostl` and went no further: `Package.swift:100`
+still says `exact: "0.20.2"`, and tagging, pushing and repinning are the user's calls.
+This needs one more commit on that branch, and then the single tag and repin unblocks
+both items at once. Nothing was written there by this item — that repository was read
+only, and 0481 was being worked in it at the time.
 
 **Not Abydos's to fix**, and this was checked rather than assumed. Abydos hands the
 viewer a URL and nothing else; every workaround on this side means Abydos running
@@ -199,7 +211,7 @@ to a wrong cube is worse than no door.
 
 ## Estimate
 
-2026-08-12 14:52 — Abydos's side is done; waiting on GoSTL
+2026-08-12 14:52 — Abydos side done; waiting on one gostl commit, a tag and a repin
 
 ## Steps
 
@@ -215,7 +227,8 @@ to a wrong cube is worse than no door.
 - [x] Watched on `~/dev/3d/other/hubelino/adapter-set.yaml` — read-only, on a copy
 - [x] Write down here what was ruled out on the way
 - [ ] A GoSTL whose `go3mf` invocation survives a recipe that names its own `output:`
-      — the reason this is waiting, and not Abydos's to write. See *So it waits*.
+      — one commit on `abydos/openscad-command` in `~/dev/3d/gostl`, then the tag and
+      the repin that 0481 is also waiting on. Not Abydos's to write; see *So it waits*.
 - [ ] `spec/<capability>.md` says what the project now does
 
 The third step is unticked because it does not work, not because it was not tried: the
