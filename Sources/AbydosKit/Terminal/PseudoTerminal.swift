@@ -347,6 +347,9 @@ public final class PseudoTerminal {
 			return false
 		}
 		let pid = fork()
+		// Stamped here so "how long until the child was reaped" is measured from
+		// the fork and not from the end of the setup below.
+		let forkReturned = Date()
 
 		if pid < 0 {
 			close(master)
@@ -364,8 +367,15 @@ public final class PseudoTerminal {
 			// trouble — a program only turns on colour and full-screen drawing for
 			// a terminal it believes it owns — and it is what `posix_spawn` cannot
 			// express.
+			//
+			// Its answer is checked, which `forkpty` did not leave room to do: it
+			// puts the slave onto stdin, stdout and stderr *after* taking the
+			// terminal, so a failure means the program runs with this process's own
+			// descriptors — writing what should have been a pane's output onto the
+			// app's stdout. Better to be a child that exited than a child talking
+			// to the wrong end of the machine.
 			close(master)
-			login_tty(slave)
+			if login_tty(slave) != 0 { _exit(127) }
 			if let directoryPath { chdir(directoryPath) }
 			execve(executablePath, argumentArray, environmentArray)
 			// Only reached if exec failed; _exit avoids running atexit handlers
@@ -378,7 +388,7 @@ public final class PseudoTerminal {
 		readCounts.lock()
 		holdsChildEnd = slave >= 0
 		readCounts.unlock()
-		forkedAt = Date()
+		forkedAt = forkReturned
 		childProcessID = pid
 		state = .running(pid: pid)
 
