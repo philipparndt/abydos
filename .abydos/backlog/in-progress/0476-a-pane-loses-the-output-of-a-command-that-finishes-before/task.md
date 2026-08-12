@@ -138,6 +138,56 @@ controlling terminal, so when its exit completes the kernel revokes the terminal
 and closes *every* descriptor on it, the parent's held one included. Measured:
 the reader gets its bytes and then EOF, in every run.
 
+## The second half: holding it is not enough if you take it too late
+
+Holding the child's end was right and it did not fix it. Measured, the full suite
+under fourteen spinners, three runs, every failure the same shape:
+
+    attempt 5 of 20 lost the output of a /bin/echo that had already finished:
+    status 0 — delivered "" — pty /dev/ttys222: child's end taken, 0 bytes in
+    1 reads, read source fired 0×, child reaped 0ms after the fork, terminal
+    still open — load 242.0 over 10 cores (24.2 per core)
+
+Read it in order. `/bin/echo` exited **0**, so it ran and printed. The child's end
+**was** taken. The read source fired **0 times** — nothing ever read. And the
+child was already reaped by the time `start` finished, with the terminal **still
+open** rather than at end of file. The only account that fits all four is that the
+child wrote, exited and had its output discarded *before this process held the
+descriptor that would have saved it* — and then the descriptor was taken anyway,
+faithfully and far too late, onto a terminal that was already empty.
+
+`forkpty` is what forces that. It opens the pair, forks, and **closes the slave on
+the parent's side before it returns**, so the only way to get one back is to
+reopen `/dev/ttysNN` by name *after* the child already exists. Between `forkpty`
+returning and the next two statements running there is a thread that can be
+descheduled, and at twenty runnable threads per core it is descheduled for longer
+than 600 ms.
+
+`images/window.c` makes it deterministic, by sleeping 700 ms where load would
+otherwise deschedule. Three runs each, no load required:
+
+    late   slave=held stall=700ms -> NOTHING             LOST
+    early  slave=held stall=700ms -> hello-from-pty..    SURVIVED
+
+`late` is `forkpty` and reopen afterwards. `early` is `openpty` then `fork`, so
+the descriptor exists before the child does. **The descriptor is held in both.**
+
+So the fix is `openpty` + `fork` + `login_tty`, in that order, and `fork` has to
+be reached through `dlsym` because Swift's Darwin overlay marks it unavailable.
+`login_tty` is precisely what `forkpty` was doing in the child — setsid, TIOCSCTTY,
+the slave onto stdin, stdout and stderr — and `posix_spawn` still cannot express
+it, which is why the answer is not "use posix_spawn".
+
+### Why this took a third measurement rather than a second
+
+Because the first fix looked like it worked, and the thing that told the truth was
+an instrument rather than a rerun. `PseudoTerminal.diagnostics` is in the source
+now for that reason: whether the child's end was held, how many times the read
+source fired, how long the child took to be reaped, and whether the terminal was
+at end of file. The first version of it asked the *descriptor* whether it was
+still held, which reads "not held" every time — by the time there is an empty pane
+to complain about, the terminal has been closed. An hour went on that.
+
 ## Ruled out
 
 - **Closing the master too early in `watchForExit`.** This was 0472's first
@@ -198,7 +248,7 @@ any time.
 
 ## Estimate
 
-2026-08-12 06:53 — about an hour left - fix written and green, proving it catches the defect under load
+2026-08-12 07:26 — another hour - the held descriptor was taken too late to help; closing the window now
 
 ## Steps
 

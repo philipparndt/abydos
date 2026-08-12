@@ -536,7 +536,7 @@ struct PseudoTerminalTests {
 		#expect(sawOutput, """
 			no output after \(Patience.seconds)s, got: \
 			\(collected.text.debugDescription) — this is 0476 rather than a slow \
-			machine if it is empty — \(MachineLoad.said)
+			machine if it is empty — \(pty.diagnostics) — \(MachineLoad.said)
 			""")
 		pty.terminate()
 	}
@@ -576,36 +576,79 @@ struct PseudoTerminalTests {
 			let pty = makePTY()
 			let collected = Collector()
 			let outputWhenItExited = Box<String?>(nil)
+			let codeWhenItExited = Box<Int32?>(nil)
 			pty.onOutput = { collected.append($0) }
 			// Read from inside the exit callback rather than after it. The claim
 			// is that output is delivered before the exit is announced, so what
 			// has been collected at this moment is the whole of the answer — and
 			// the callback queue is serial, so this runs after every delivery.
-			pty.onExit = { _ in outputWhenItExited.value = collected.text }
+			pty.onExit = { code in
+				outputWhenItExited.value = collected.text
+				codeWhenItExited.value = code
+			}
 
 			let word = "gone-\(attempt)"
 			#expect(pty.start(executable: "/bin/echo", arguments: [word]))
 
 			let exited = await wait { outputWhenItExited.value != nil }
+			// Asked before `terminate()`, which closes the terminal and would take
+			// the answer with it.
+			let diagnostics = pty.diagnostics
 			pty.terminate()
 
 			guard exited else {
 				Issue.record("""
 					attempt \(attempt + 1) of 20: a /bin/echo never reported its exit \
-					within \(Patience.seconds)s — \(MachineLoad.said)
+					within \(Patience.seconds)s — \(diagnostics) — \(MachineLoad.said)
 					""")
 				return
 			}
 			guard outputWhenItExited.value?.contains(word) == true else {
+				// The exit status is in the message because "no output" has two
+				// causes and they want different fixes: 0 means `/bin/echo` printed
+				// its line and this lost it, and 127 means the exec never happened,
+				// so there was nothing to lose and the machine is the story after
+				// all. Guessing which cost this item most of a day.
 				Issue.record("""
 					attempt \(attempt + 1) of 20 lost the output of a /bin/echo that \
-					had already finished: by the time it said it had exited it had \
-					delivered \((outputWhenItExited.value ?? "").debugDescription) \
-					— \(MachineLoad.said)
+					had already finished: by the time it said it had exited — \
+					status \(codeWhenItExited.value.map(String.init) ?? "none") — it \
+					had delivered \((outputWhenItExited.value ?? "").debugDescription) \
+					— \(diagnostics) — \(MachineLoad.said)
 					""")
 				return
 			}
 		}
+	}
+
+	/// Output survives a reader that does not read for two seconds.
+	///
+	/// The same defect as `aCommandThatIsAlreadyOverDoesNotLoseItsOutput`, arranged
+	/// rather than waited for. That one needs a machine loaded enough that the
+	/// reading queue waits longer than the pty's 600 ms grace period for a thread,
+	/// which is a thing you can provoke and not a thing you can ask for; this one
+	/// suspends the reader outright, which is the same condition and arrives every
+	/// time. It is the test to run while working on this, and the reason the other
+	/// one is not the only evidence.
+	///
+	/// Two seconds because the deadline is 600 ms and the point is to be well past
+	/// it. A pty that is going to throw output away has done it by then.
+	@Test func outputSurvivesAReaderThatIsNotReading() async {
+		let pty = makePTY()
+		let collected = Collector()
+		pty.onOutput = { collected.append($0) }
+
+		#expect(pty.start(executable: "/bin/echo", arguments: ["survived"]))
+		pty.setReadingSuspended(true)
+		try? await Task.sleep(nanoseconds: 2_000_000_000)
+		pty.setReadingSuspended(false)
+
+		let arrived = await wait { collected.text.contains("survived") }
+		#expect(arrived, """
+			a /bin/echo's output did not survive two seconds of nobody reading: \
+			got \(collected.text.debugDescription) — \(pty.diagnostics)
+			""")
+		pty.terminate()
 	}
 
 	/// Twenty terminals come and go without leaving a descriptor or a child.
@@ -625,7 +668,10 @@ struct PseudoTerminalTests {
 			let exited = Box<Bool>(false)
 			pty.onExit = { _ in exited.value = true }
 			#expect(pty.start(executable: "/bin/echo", arguments: ["tidy"]))
-			if case let .running(pid) = pty.state { children.append(pid) }
+			// `childProcessID` and not `state`, which stops naming the process the
+			// moment it exits — and a `/bin/echo` can be gone before the next line
+			// of this test runs, which is how this first went red.
+			children.append(pty.childProcessID)
 			#expect(await wait { exited.value })
 			pty.terminate()
 		}

@@ -164,6 +164,86 @@ public final class PseudoTerminal {
 	/// The grid last reported, so a change of cell size can be reported with it.
 	private var grid: (rows: Int, columns: Int) = (24, 80)
 
+	/// What this terminal has done, for whoever has to explain an empty pane.
+	///
+	/// 0476 was three wrong diagnoses in one evening, and every one of them would
+	/// have been settled in a minute by these four numbers: whether the descriptor
+	/// that keeps output alive was obtained, whether anything was ever read, how
+	/// much, and what the program's exit status was. A failure that quotes them
+	/// says which mechanism it was; one that says `""` starts the evening again.
+	public struct Diagnostics: Sendable, CustomStringConvertible {
+		/// Whether this process holds the child's end of the terminal.
+		///
+		/// Recorded when it was taken and never cleared, rather than asked of the
+		/// descriptor now. Asking now was the first version and the answer was
+		/// useless: by the time anything has an empty pane to complain about the
+		/// terminal has been closed, so it says "no" whether it was held for the
+		/// whole run or never obtained at all.
+		public var holdsChildEnd: Bool
+		/// How many times the read source fired — as distinct from how many times
+		/// anything read, since the exit path reads once on its own account. Zero
+		/// here with output missing says the reading queue never got a thread,
+		/// which is a different fault from the pty discarding anything.
+		public var sourceEvents: Int
+		public var reads: Int
+		public var bytesRead: Int
+		/// How long the child took to be reaped, measured from the fork.
+		///
+		/// Worth having because it separates two failures that look identical from
+		/// outside. Around 600 ms is the kernel's grace period running out, which
+		/// means nothing was protecting the output. A millisecond or two means the
+		/// child was already finished with this terminal.
+		public var millisecondsToExit: Double
+		/// What the last read got: `0` is end of file, so the terminal had already
+		/// been torn down; `EAGAIN` means it was alive and simply empty.
+		public var lastReadErrno: Int32
+		public var terminalName: String?
+
+		public var description: String {
+			let ending = lastReadErrno == 0
+				? "at end of file"
+				: "still open (\(String(cString: strerror(lastReadErrno))))"
+			return """
+				pty \(terminalName ?? "unnamed"): child's end \
+				\(holdsChildEnd ? "held" : "NOT HELD"), \(bytesRead) bytes in \
+				\(reads) reads, read source fired \(sourceEvents)×, child reaped \
+				\(String(format: "%.0f", millisecondsToExit))ms after the fork, \
+				terminal \(ending)
+				"""
+		}
+	}
+
+	public var diagnostics: Diagnostics {
+		readCounts.lock()
+		defer { readCounts.unlock() }
+		return Diagnostics(
+			holdsChildEnd: holdsChildEnd,
+			sourceEvents: sourceEvents,
+			reads: reads,
+			bytesRead: bytesRead,
+			millisecondsToExit: millisecondsToExit,
+			lastReadErrno: lastReadErrno,
+			terminalName: slaveName
+		)
+	}
+
+	/// The process on the other end, for as long as there is one.
+	///
+	/// Separate from `state`, which stops naming it the moment it exits — so a
+	/// caller that wants to check afterwards that nothing was left behind has
+	/// nothing to ask about. That is not hypothetical: it is how the test for
+	/// exactly that failed on its first run.
+	public private(set) var childProcessID: pid_t = -1
+
+	private let readCounts = NSLock()
+	private var reads = 0
+	private var sourceEvents = 0
+	private var bytesRead = 0
+	private var holdsChildEnd = false
+	private var millisecondsToExit: Double = -1
+	private var lastReadErrno: Int32 = -1
+	private var forkedAt = Date()
+
 	public init() {}
 
 	/// The size to hand the kernel: cells, and the pixels they come to.
@@ -229,20 +309,64 @@ public final class PseudoTerminal {
 			directoryPath.map { Foundation.free($0) }
 		}
 
+		// `openpty` and `fork`, rather than the `forkpty` that used to be here.
+		// They do the same three things — open the pair, fork, and give the child
+		// the terminal — but in that order, and the order is the whole point.
+		//
+		// `forkpty` hands the parent only the master: it closes the slave on this
+		// side before it returns. This process has to hold a descriptor on the
+		// child's end or the pty discards output nobody read within 600 ms (all of
+		// `TerminalDescriptors` is about why), and with `forkpty` the only way to
+		// get one back is to reopen it by name *after* the child already exists.
+		//
+		// **That window is not theoretical and it is not small.** Measured, with
+		// the reopen in place and the full suite under load: the child wrote its
+		// line, exited, had its output discarded and was reaped — all before this
+		// side got as far as the reopen. The descriptor was obtained, faithfully,
+		// and it was obtained too late to protect anything. Between `forkpty`
+		// returning and the next few statements running there is a thread that can
+		// be descheduled, and on a machine at twenty runnable threads per core it
+		// is descheduled for longer than the deadline.
+		//
+		// Opened before the fork there is no window at all: the descriptor exists
+		// before the child does, so there is no instant at which the child's output
+		// is unprotected.
 		var master: Int32 = -1
-		// forkpty does the fork, opens the pty pair, makes the slave the child's
-		// controlling terminal and wires it to stdin/stdout/stderr. Doing that by
-		// hand needs setsid plus TIOCSCTTY in the child, which posix_spawn cannot
-		// express.
-		let pid = forkpty(&master, nil, nil, &size)
+		var slave: Int32 = -1
+		guard openpty(&master, &slave, nil, nil, &size) == 0 else { return false }
+
+		// Named before the fork too, for the same reason and one more: `ptsname_r`
+		// rather than `ptsname`, which answers into a static buffer shared by the
+		// whole process. Two panes starting at once is the ordinary case here.
+		var nameBuffer = [CChar](repeating: 0, count: 128)
+		let name = ptsname_r(master, &nameBuffer, nameBuffer.count) == 0
+			? String(validatingCString: nameBuffer) : nil
+
+		guard let fork = Self.systemFork else {
+			close(master)
+			close(slave)
+			return false
+		}
+		let pid = fork()
 
 		if pid < 0 {
+			close(master)
+			close(slave)
 			return false
 		}
 
 		if pid == 0 {
-			// Child. Three C calls on memory that already existed before the
-			// fork, and nothing else — see the note above the fork.
+			// Child. C calls on memory that already existed before the fork, and
+			// nothing else — see the note above the fork.
+			//
+			// `login_tty` is the part `forkpty` did here: `setsid`, then TIOCSCTTY
+			// to take this terminal as the controlling one, then the slave onto
+			// stdin, stdout and stderr. It is the whole reason a pty is worth the
+			// trouble — a program only turns on colour and full-screen drawing for
+			// a terminal it believes it owns — and it is what `posix_spawn` cannot
+			// express.
+			close(master)
+			login_tty(slave)
 			if let directoryPath { chdir(directoryPath) }
 			execve(executablePath, argumentArray, environmentArray)
 			// Only reached if exec failed; _exit avoids running atexit handlers
@@ -250,30 +374,14 @@ public final class PseudoTerminal {
 			_exit(127)
 		}
 
-		let name = String(validatingCString: ptsname(master)) ?? nil
 		slaveName = name
-
-		// A descriptor of our own on the child's end of the terminal, which is
-		// what stops the pty throwing away output nobody has read yet. The whole
-		// of 0476 is in `TerminalDescriptors`; in one line, the queue is flushed
-		// when the *last* slave descriptor closes, and this one does not.
-		//
-		// `forkpty` hands the parent only the master — it closes the slave on
-		// this side before returning — so it has to be opened again by name.
-		// Doing it here rather than before the fork is not a race worth guarding,
-		// because the master is open and that is what reserves the name: measured,
-		// a pty opened alongside this one gets a different `/dev/ttysNN`, and this
-		// name goes on belonging to this terminal even after the child has gone.
-		// So the worst this can do is fail, for a child that has already exited
-		// without printing anything — and then there is nothing to lose anyway.
-		//
-		// `O_NOCTTY` because this process must not take the child's terminal as
-		// its own: a session leader that opens a tty without it acquires it, and
-		// then a pane closing would send SIGHUP to the app.
-		let slave = name.map { open($0, O_RDWR | O_NOCTTY) } ?? -1
-
 		descriptors.adopt(master: master, slave: slave)
+		readCounts.lock()
+		holdsChildEnd = slave >= 0
+		readCounts.unlock()
+		forkedAt = Date()
 		childPID = pid
+		childProcessID = pid
 		state = .running(pid: pid)
 
 		// Anything the merge refused, said in the pane it was refused for.
@@ -411,6 +519,26 @@ public final class PseudoTerminal {
 		return refusal + "\r\n"
 	}
 
+	/// C's `fork`, which Swift's Darwin overlay refuses to expose.
+	///
+	/// It is marked unavailable — "Please use threads or posix_spawn*()" — and for
+	/// almost everything that is the right advice. This is the exception: the child
+	/// has to call `setsid` and TIOCSCTTY on a terminal descriptor between the fork
+	/// and the exec, and `posix_spawn` has no way to say that. `forkpty` was doing
+	/// exactly this fork underneath; the only thing that changed is that this side
+	/// now keeps the slave, which it must.
+	///
+	/// Resolved by name rather than declared with `@_silgen_name`, so what is
+	/// happening is a documented C API call and not a compiler-internal attribute
+	/// that could mean something different next release.
+	private static let systemFork: (@convention(c) () -> pid_t)? = {
+		// RTLD_DEFAULT: the ordinary search order, which is where libc is.
+		guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "fork") else {
+			return nil
+		}
+		return unsafeBitCast(symbol, to: (@convention(c) () -> pid_t).self)
+	}()
+
 	/// A null-terminated C array of copies, for `execve`.
 	static func cStrings(_ strings: [String]) -> UnsafeMutablePointer<UnsafeMutablePointer<CChar>?> {
 		let array = UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>.allocate(capacity: strings.count + 1)
@@ -462,6 +590,9 @@ public final class PseudoTerminal {
 		let source = DispatchSource.makeReadSource(fileDescriptor: master, queue: readQueue)
 		source.setEventHandler { [weak self] in
 			guard let self else { return }
+			self.readCounts.lock()
+			self.sourceEvents += 1
+			self.readCounts.unlock()
 			let gathered = self.readWhatIsThere()
 			guard !gathered.isEmpty else { return }
 			self.deliver(gathered)
@@ -491,12 +622,19 @@ public final class PseudoTerminal {
 	private func readWhatIsThere(limit: Int = 512 * 1024) -> Data {
 		var gathered = Data()
 		var buffer = [UInt8](repeating: 0, count: 64 * 1024)
+		var ending: Int32 = -1
 		while gathered.count < limit {
-			let count = descriptors.withMaster { read($0, &buffer, buffer.count) } ?? 0
+			let count = descriptors.withMaster { read($0, &buffer, buffer.count) } ?? -1
+			if count <= 0 { ending = count == 0 ? 0 : errno }
 			guard count > 0 else { break }
 			gathered.append(contentsOf: buffer[0..<count])
 			if count < buffer.count { break }
 		}
+		readCounts.lock()
+		reads += 1
+		bytesRead += gathered.count
+		lastReadErrno = ending
+		readCounts.unlock()
 		return gathered
 	}
 
@@ -699,6 +837,9 @@ public final class PseudoTerminal {
 			}
 
 			guard let self else { return }
+			self.readCounts.lock()
+			self.millisecondsToExit = -self.forkedAt.timeIntervalSinceNow * 1000
+			self.readCounts.unlock()
 			// Through the reading queue, and that is what makes the order true
 			// rather than likely. It is serial, so a read already running has
 			// finished and handed its bytes on before this block starts, and
