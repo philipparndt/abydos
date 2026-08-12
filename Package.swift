@@ -97,7 +97,7 @@ let package = Package(
 		// could be reproduced or even identified afterwards. Pinning needed
 		// GoSTL's manifest at the root of its repository, which is what v0.20.2
 		// is — the same viewer as v0.20.1, moved so it can be depended on.
-		.package(url: "https://github.com/philipparndt/gostl.git", exact: "0.21.0"),
+		.package(url: "https://github.com/philipparndt/gostl.git", exact: "0.22.0"),
 	] + grammarPackages,
 	targets: [
 		// libghostty-vt — ghostty's terminal state machine on its own, with no
