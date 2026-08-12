@@ -117,8 +117,11 @@ public enum FilePreview {
 	/// The mode a file opens in.
 	///
 	/// A mesh has no source worth reading — an STL is a list of triangles — so
-	/// it opens rendered. Anything written by hand opens as what it is, and the
-	/// preview is asked for.
+	/// it opens rendered. Something written by hand opens as what it is, unless
+	/// the rendered half is what the writing is *for*, in which case it opens
+	/// with both: a `.puml`, a `.mmd` and a `.scad` are all being checked against
+	/// the picture they make. A `.md` is not — it is read as well as rendered —
+	/// so it opens as itself and the preview is asked for.
 	public static func defaultMode(for url: URL) -> PreviewMode {
 		switch kind(for: url) {
 		case .image:
@@ -142,10 +145,45 @@ public enum FilePreview {
 			// compressed object graph, so there is no source half to offer.
 			return .preview
 		case .model:
-			return hasReadableSource(url) ? .source : .preview
+			// A mesh has nothing to read, so there is nothing to put beside it.
+			guard hasReadableSource(url) else { return .preview }
+			// A `.scad` is the PlantUML case exactly, and 0483 is the argument:
+			// source somebody types whose whole purpose is the shape it makes, so
+			// checking one against the other is the work.
+			//
+			// What used to be written against this lived in
+			// `ModelPreview.isViewableModel` — "a .scad file is source, and
+			// editing it is the point — its preview is a separate tab, opened
+			// deliberately" — and it had had no caller since this file was
+			// written, so it described a decision nothing enforced. It is gone
+			// rather than left to argue with the case above it.
+			//
+			// The reason this took measuring rather than deciding is what the
+			// default costs: a `.scad` is rendered by running OpenSCAD, where a
+			// picture is read off the disk. On the corpus it was measured against
+			// that is 200 ms, against the 0.4 s PlantUML spends starting a JVM for
+			// the split two cases up — so the cheaper of the two defaults is this
+			// one. What made it safe anyway is that the pane's viewer is built
+			// lazily, so a walk down a directory of models renders none of them:
+			// `ModelContainerView` is where that is, and why.
+			return .splitRight
 		case .markdown, .none:
 			return .source
 		}
+	}
+
+	/// The source half's share of a split, for a file opening in one.
+	///
+	/// Down the middle for a diagram: the text and the picture are both read, and
+	/// neither is the subject. A model is not that — sixty columns of OpenSCAD is
+	/// a wide line, while a mesh is being turned around and wants area in both
+	/// directions — so the shape gets the larger half.
+	///
+	/// A number rather than a rule inside the split view, because a session that
+	/// remembers where somebody put the divider must win over it, and that
+	/// comparison is easier to read where the two answers meet.
+	public static func defaultDividerFraction(for url: URL) -> Double {
+		kind(for: url) == .model ? 0.4 : 0.5
 	}
 
 	/// The mode a file comes back in, given whatever a session remembered.

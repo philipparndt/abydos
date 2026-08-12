@@ -1783,7 +1783,12 @@ final class EditorViewController: NSViewController {
 		// because the tab happened to be the one in front; the split built for a
 		// tab behind it measured zero, gave up, and lived on whatever
 		// `adjustSubviews` had left.
-		split.wantedFraction = dividerFraction.map { CGFloat($0) } ?? 0.5
+		//
+		// A session's remembered divider beats the kind's default, which is why
+		// the default is not simply half: a model gives the shape the larger half.
+		split.wantedFraction = CGFloat(
+			dividerFraction ?? FilePreview.defaultDividerFraction(for: tab.url)
+		)
 		return split
 	}
 
@@ -1791,7 +1796,11 @@ final class EditorViewController: NSViewController {
 	private func makePreview(for tab: Tab) -> NSView {
 		switch FilePreview.kind(for: tab.url) {
 		case .model:
-			return makeModelView(for: tab.url)
+			// A provisional tab waits before rendering; one somebody committed to
+			// does not. `makeModelView` says why the wait exists at all.
+			return makeModelView(
+				for: tab.url, startAfter: tab.isPreview ? Self.provisionalRenderDelay : 0
+			)
 		case .image:
 			return ImageFileViewer(url: tab.url).scrollView
 		case .plantuml:
@@ -1996,6 +2005,17 @@ final class EditorViewController: NSViewController {
 	var canPreviewMarkdown: Bool { activeTab?.isMarkdown ?? false }
 	var isShowingMarkdownPreview: Bool { activeTab?.isShowingMarkdownPreview ?? false }
 
+	/// How long a provisional tab's model pane waits before it renders anything.
+	///
+	/// The same 0.4 s `PlantUMLPreviewView` debounces by, and for the same
+	/// reason: arrowing down a directory gives each file a provisional tab that
+	/// lives for as long as the next keypress takes, and a walk must not cost one
+	/// render per row. 0470 measured that shape for usages and found the traffic
+	/// was one `didOpen` per *file crossed* — which is the good answer there and
+	/// the bad one here, because every row of a directory of models is a
+	/// different file.
+	private static let provisionalRenderDelay: TimeInterval = 0.4
+
 	/// A tab showing a 3D model, hosted from GoSTL.
 	///
 	/// The viewer is a SwiftUI view from a package rather than a second
@@ -2005,31 +2025,42 @@ final class EditorViewController: NSViewController {
 	/// A SwiftUI view leaves its unpainted regions transparent, which against
 	/// the window shows through as a different shade from the code beside it.
 	/// The container settles that without GoSTL having to know about it.
-	private func makeModelView(for fileURL: URL) -> NSView {
+	///
+	/// The hosting view is built by the container rather than here, once the pane
+	/// has actually been on screen for `startAfter`. Loading a model is not free
+	/// and a `.scad` is the expensive end of it — GoSTL runs OpenSCAD, and it
+	/// does so on the main actor, so however long the render takes is time this
+	/// window is not drawing. Since 0483 that happens without being asked for,
+	/// which is only affordable if it happens once for the file somebody stopped
+	/// at rather than once for every file they went past.
+	private func makeModelView(for fileURL: URL, startAfter: TimeInterval = 0) -> NSView {
 		let container = ModelContainerView(color: Theme.current.editorBackground)
-		// The viewer sits in a pane rather than a window of its own: it takes the
-		// editor's background so the split reads as one surface, and keeps its
-		// menu panel folded away, since the panel is wider than the pane often is.
-		let hosting = NSHostingView(rootView: ContentView(
-			fileURL: fileURL,
-			embedding: ContentView.EmbeddingOptions(
-				backgroundColor: Theme.current.editorBackground,
-				showsMenuPanel: false,
-				// Kept so a screenshot of this window can include the model.
-				snapshotHandle: { [weak container] provider in container?.snapshot = provider }
-			)
-		))
+		container.startAfter = startAfter
+		container.makeViewer = { [weak container] in
+			// The viewer sits in a pane rather than a window of its own: it takes
+			// the editor's background so the split reads as one surface, and keeps
+			// its menu panel folded away, since the panel is wider than the pane
+			// often is.
+			let hosting = NSHostingView(rootView: ContentView(
+				fileURL: fileURL,
+				embedding: ContentView.EmbeddingOptions(
+					backgroundColor: Theme.current.editorBackground,
+					showsMenuPanel: false,
+					// Kept so a screenshot of this window can include the model.
+					snapshotHandle: { [weak container] provider in container?.snapshot = provider }
+				)
+			))
 
-		// Kept out of Auto Layout on purpose. NSHostingView publishes the
-		// SwiftUI view's size as constraints and invalidates them from inside
-		// the window's own constraint pass; splitting the editor re-parents the
-		// view during exactly that pass, and AppKit raises rather than
-		// re-entering it. The container sizes it directly instead, which is how
-		// the rest of the editor lays out anyway.
-		hosting.sizingOptions = []
-		hosting.translatesAutoresizingMaskIntoConstraints = true
-		hosting.frame = container.bounds
-		container.addSubview(hosting)
+			// Kept out of Auto Layout on purpose. NSHostingView publishes the
+			// SwiftUI view's size as constraints and invalidates them from inside
+			// the window's own constraint pass; splitting the editor re-parents the
+			// view during exactly that pass, and AppKit raises rather than
+			// re-entering it. The container sizes it directly instead, which is how
+			// the rest of the editor lays out anyway.
+			hosting.sizingOptions = []
+			hosting.translatesAutoresizingMaskIntoConstraints = true
+			return hosting
+		}
 		return container
 	}
 
@@ -2099,12 +2130,19 @@ final class EditorViewController: NSViewController {
 		return tab
 	}
 
+	/// A tab that is nothing but the model — a mesh, which has no source half.
+	///
+	/// The wait applies here too. A `.stl` is parsed rather than rendered, so it
+	/// is the cheap end of this, but a directory of them is walked the same way
+	/// and each row still costs a Metal device and a spatial index.
 	private func makeModelTab(for fileURL: URL, preview: Bool) -> Tab {
 		let tab = Tab(
 			url: fileURL,
 			document: nil,
 			codeView: nil,
-			contentView: makeModelView(for: fileURL),
+			contentView: makeModelView(
+				for: fileURL, startAfter: preview ? Self.provisionalRenderDelay : 0
+			),
 			isPreview: preview
 		)
 		tab.previewMode = .preview
@@ -3115,6 +3153,45 @@ private final class ModelContainerView: ColoredView, SnapshotDrawable {
 	/// tree — where a Metal layer's contents are not. Without this the model
 	/// photographs as an empty rectangle.
 	var snapshot: ContentView.EmbeddingOptions.SnapshotProvider?
+
+	/// Builds the viewer, and is thrown away once it has.
+	var makeViewer: (() -> NSView)?
+
+	/// How long this pane must have been on screen before that happens.
+	var startAfter: TimeInterval = 0
+
+	private var pending: DispatchWorkItem?
+
+	/// Built on being *shown*, not on being made.
+	///
+	/// Which is the whole guard. A provisional tab is created, activated and then
+	/// replaced in place by the next row of the tree, so a pane that leaves the
+	/// window before its delay is up has its work cancelled and renders nothing;
+	/// and a session restored with twenty model tabs lays out only the one in
+	/// front, so the other nineteen cost nothing at all until somebody clicks
+	/// them. Keying off creation instead would have paid for all twenty at once,
+	/// on the main actor, before the window was even up.
+	override func viewDidMoveToWindow() {
+		super.viewDidMoveToWindow()
+		guard window != nil else {
+			pending?.cancel()
+			pending = nil
+			return
+		}
+		guard makeViewer != nil, pending == nil else { return }
+		let work = DispatchWorkItem { [weak self] in
+			guard let self, let make = self.makeViewer else { return }
+			// Cleared first: the viewer is built once, and this pane may be shown
+			// and hidden many times.
+			self.makeViewer = nil
+			self.pending = nil
+			let viewer = make()
+			viewer.frame = self.bounds
+			self.addSubview(viewer)
+		}
+		pending = work
+		DispatchQueue.main.asyncAfter(deadline: .now() + startAfter, execute: work)
+	}
 
 	override func layout() {
 		super.layout()

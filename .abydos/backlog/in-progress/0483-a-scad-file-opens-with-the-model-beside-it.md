@@ -85,9 +85,9 @@ answer than either the item offered.
 
 ## Steps
 
-- [ ] Which mechanism grows: `FilePreview` already did, and `isViewableModel` is
+- [x] Which mechanism grows: `FilePreview` already did, and `isViewableModel` is
       dead — say so, and delete it rather than leave two comments arguing
-- [ ] `.scad` opens split right, with the divider where a mesh wants it
+- [x] `.scad` opens split right, with the divider where a mesh wants it
 - [ ] Measure a cold and a warm render, saying what the load was
 - [ ] A provisional open does not start a render per row, and neither does a
       restored session of twenty
