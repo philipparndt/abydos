@@ -1,13 +1,13 @@
 {
-  "originHash" : "e5e0bab1841177a678493799fcfc940b1cfe15d7a8c5722ef45dff4cb2e6c32b",
+  "originHash" : "399df731ee0fffe57e4910eeb1211db0e0a33bda6c0c0692ce5c616fa1745443",
   "pins" : [
     {
       "identity" : "gostl",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/philipparndt/gostl.git",
       "state" : {
-        "revision" : "fcd36bfdcd4164fbdeb264ccf98f1cda1d468f25",
-        "version" : "0.20.2"
+        "revision" : "cb8565c067153174c963aca52d8bf2059b42473a",
+        "version" : "0.21.0"
       }
     },
     {
