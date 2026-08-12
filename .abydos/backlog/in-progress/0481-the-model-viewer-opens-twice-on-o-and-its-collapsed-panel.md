@@ -116,9 +116,47 @@ each icon is when its expanded row is a word and a `KeyHint`, and what happens w
 section has more icons than the panel is wide. Look at every section rather than only
 the one in the report, since the rule now applies to all of them.
 
+## What the folded rows are
+
+One icon per action, the name and the key in the tooltip because the word is gone.
+Three decisions, all of them the item's to make:
+
+| section | folded row |
+|---|---|
+| Info | material (`m`) — the section's only action; the rest of it is readings |
+| View | wireframe (`w`), grid (`g`), slicing (`⇧X`), build plate (`⌘B`), plate orientation when a plate is on, home view (`7`), reset view (`ESC`) |
+| Tools | distance (`d`), angle (`a`), radius (`r`), triangles (`t`), level (`l`), clear all (`c`) when there are measurements, **open with go3mf (`o`)** |
+
+- **A set of modes is one icon**, because that is already what the keyboard does:
+  `w` cycles off/all/edge rather than selecting one, and the open section's radio
+  buttons are the same action written out. On is drawn in orange, as the open row
+  draws a filled radio button.
+- **The six camera presets are left out**, and that is the one place the "every
+  action" rule is not followed. They are one action with six arguments; six
+  unlabelled directional icons are unreadable where "Front" is not; and the two a
+  folded panel is actually for — go home, undo what dragging did — are there. All
+  six stay one chevron away. Said rather than quietly dropped.
+- **Too wide wraps.** Not scroll and not truncate: the panel is already inside a
+  vertical `ScrollView` so another line costs nothing and everything stays
+  reachable, a horizontal scroller inside a vertical one is a gesture both of them
+  want and hides what it holds behind a swipe nobody knows is there, and truncating
+  drops actions, which is the complaint that put the icons there. It is not
+  hypothetical either — the panel is only as wide as the pane it floats over, and
+  embedded beside an editor that is often less than the 260pt it prefers.
+- The set **follows the state**, as the open section's does. Folding Tools halfway
+  through a measurement keeps ending and cancelling it rather than going empty at
+  the worst moment.
+
+The rows were looked at by rendering `MainMenuPanel` into a bitmap offscreen at
+284pt and at 150pt, which is also how the wrapping was checked: three across, two
+rows, nothing clipped. That was necessary because **Abydos's own `--screenshot`
+cannot photograph the panel** — the model tab composites GoSTL's Metal frame over
+the view tree, so the SwiftUI overlays are behind it. Worth knowing before anybody
+tries to photograph this pane again.
+
 ## Estimate
 
-2026-08-12 13:50 — about two hours left
+2026-08-12 14:19 — about an hour left
 
 ## Where the work is
 
@@ -135,9 +173,9 @@ user's own checkout and is not to be disturbed.
 - [x] One place builds the `go3mf` arguments, and it cannot ask go3mf to open the
       result — so the result is opened once, by whoever knows the build finished
 - [x] One owner for `o`, with the other made impossible rather than absent
-- [ ] A row of icons in the collapsed state, for every section and not only the one
+- [x] A row of icons in the collapsed state, for every section and not only the one
       reported, with an answer for a section too wide for the panel
-- [ ] Open-in-go3mf is the one asked about, and it is an icon like the rest
+- [x] Open-in-go3mf is the one asked about, and it is an icon like the rest
 - [ ] Watch both in the embedded viewer, which is where it was reported, against a
       local path override in this worktree's `Package.swift`
 - [ ] Take the path override back out, so the branch carries no path only one
