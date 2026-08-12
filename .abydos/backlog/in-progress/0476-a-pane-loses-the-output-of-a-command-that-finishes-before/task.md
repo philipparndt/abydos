@@ -211,6 +211,41 @@ to complain about, the terminal has been closed. An hour went on that.
 - **A slow machine.** The output is `""`, never partial, and a `/bin/echo` does
   not take two minutes.
 
+### Ruled out while fixing it
+
+Four things that fitted the evidence and were wrong, each measured rather than
+argued out of. They are here because each one is an afternoon.
+
+- **The exec never happening.** A `/bin/echo` that could not start would produce
+  an empty pane honestly, and at twenty threads per core that is not a silly
+  thought. Ruled out twice: 300 `forkpty`+`execve` runs under the same load, 0
+  failures and 0 silent; and the exit status is now in the failure message, and it
+  is `0` every time. `127` would have meant the machine and not the terminal.
+- **`ptsname` handing two panes the same terminal.** It answers into a static
+  buffer shared by the process, `openpty` uses it, and eight test files start ptys
+  in suites that run in parallel — so a child writing into somebody else's
+  terminal fitted every number. Measured with each thread writing a token of its
+  own into its slave and requiring that token back out of its own master: **1040
+  of 1040 correctly paired**. libc is not doing this. (The code uses `ptsname_r`
+  anyway, since there is no reason to hold the only unsafe version.)
+- **Running out of descriptors.** The fix doubles the descriptors per pane, so an
+  `open` failing with `EMFILE` under a full suite was worth an hour. The limit on
+  this machine is 1048576, and 360 concurrent opens failed 0 times.
+- **Holding the child's end being sufficient.** It is necessary and it is not
+  sufficient — the whole second half of this item. See above.
+
+## What was worth doing, from "Also worth doing here"
+
+Both of the independent problems named below are gone, and they turned out to be
+part of the fix rather than beside it: holding a second descriptor means there are
+two things to close, and closing them late or twice is exactly what the new
+lifecycle cannot afford. `TerminalDescriptors` is the single owner — one close,
+taken with an rwlock so it runs after every syscall already in flight and exactly
+once, hung off the read source's cancel handler so dispatch has finished with the
+number first. It also resumes a suspended source before cancelling it, because a
+suspended source never runs its cancel handler, and with a slave held that would
+leave the child unable to ever finish exiting.
+
 ## Worth trying next
 
 - **The parent keeping its own fd on the slave**, so the child exiting is not the
@@ -223,6 +258,13 @@ to complain about, the terminal has been closed. An hour went on that.
 - Whatever it is, it wants to be understood rather than worked around: the
   question "when exactly does a macOS pty discard queued output" has a definite
   answer and this item should write it down.
+
+**Both were right, and both are answered above.** The parent keeping an fd on the
+slave is the fix — but taken before the fork, not after, which is the part that
+guess did not contain and which cost the second half of the day. The hang was the
+technique working: with the deadline gone the child waits for somebody to read,
+and the program measuring it was waiting for the child. And the definite answer
+is 600 ms.
 
 ## Also worth doing here, and not in 0472
 
@@ -258,5 +300,7 @@ any time.
 - [x] Put `aCommandThatIsAlreadyOverDoesNotLoseItsOutput` back, from `1c0c108`
 - [x] One owner for the master descriptor, closing it once and on the read queue
 - [ ] Prove it — the suite green under the load that reproduced it five times
-- [ ] Write down here what was ruled out on the way
-- [ ] `spec/terminal.md` says a short command's output is not lost
+- [ ] Check the app itself, since the launch path changed from `forkpty` to
+      `openpty` + `fork` + `login_tty`
+- [x] Write down here what was ruled out on the way
+- [x] `spec/terminal.md` says a short command's output is not lost

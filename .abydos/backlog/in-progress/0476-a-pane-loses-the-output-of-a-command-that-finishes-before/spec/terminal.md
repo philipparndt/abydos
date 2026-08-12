@@ -22,6 +22,15 @@ So the pane keeps a descriptor of its own on the child's end of the terminal, fo
 as long as the child runs. The queue is only flushed when the *last* one closes,
 and the pane's is still open, so there is no deadline to lose a race against.
 
+**It takes that descriptor before the child exists**, and the order is part of the
+requirement rather than an implementation detail. Taking it afterwards — which is
+what `forkpty` leaves you to do, since it closes the parent's copy before
+returning — leaves a window in which the child can write, exit and lose its output
+to a descriptor that is obtained a moment too late. The window is as long as this
+process can go unscheduled, which on a loaded machine is longer than 600 ms. So
+the terminal is opened, then the child is forked into it: there is no instant at
+which a pane's output is unprotected.
+
 This turns a lost-output bug into a lifecycle obligation, and that is the part
 worth stating: with the deadline gone, **the child's exit waits for the pane to
 read the terminal or close it** rather than for 600 ms. So the pane closes both
