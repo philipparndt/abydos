@@ -8,44 +8,56 @@ Filed from 0476 rather than fixed there, because it is not that item's defect an
 widening somebody else's performance bound is not a thing to do on the way past.
 
 `PerformanceTests.foldComputationIsReasonableOnHugeFile` expects fold computation
-over 100k lines to take under 10 seconds of **processor** time. Measured inside a
-`make test` with fourteen spinners beside it, at 34 to 36 runnable threads per
-core, it takes 10.4 to 11.1 — over by 4 to 11 per cent:
+over 100k lines to take under 10 seconds of **processor** time. It is a coin toss,
+and the machine does not have to be busy for it to land badly — **the suite's own
+parallelism is enough**. Measured, all three conditions:
 
-| | processor time | load | per core |
-|---|---|---|---|
-| red | 10.44 s | 362 | 36.2 |
-| red | 11.09 s | 362 | 36.2 |
-| red | 10.78 s | 126 | 12.7 |
+| condition | processor time | verdict |
+|---|---|---|
+| the test on its own, six runs | 5.81, 5.83, 5.83, 6.02, 6.97, 7.15 s | green, margin 1.4–1.7× |
+| inside `make test`, nothing else running | 10.10 s | **red**, by 1 per cent |
+| inside `make test`, fourteen spinners (12–36 threads/core) | 10.44, 10.78, 11.09 s | **red**, by 4–11 per cent |
 
-**Green with nothing else running**: the whole suite passes in 32 s, 2498 tests,
-no issues. So the bound is only reachable when the machine is busy.
+So it is neither a slow fold nor a busy machine. Alone the work has half again as
+much room as it needs; what puts it over is the other three hundred and fifty-six
+suites running beside it, and a fourteen-spinner load only adds a few per cent on
+top of that. A full `make test` on an idle machine is already enough to make this
+red about half the time.
 
-The interesting part is that this is exactly the failure 0472 already fixed once,
-in the same file, and processor time was the fix. The comment above
-`foldingStateMapsLinesQuickly` says it: a wall-clock number inside `make test`
-"was measuring the other three hundred and fifty suites", so the bounds were moved
-to `cpuTime`. That was right and it is not sufficient here — processor time is not
-load-independent either. Twenty threads per core compete for cache and memory
-bandwidth, and the same arithmetic costs more cycles. So either
+This is exactly the failure 0472 already fixed once, in the same file, and
+processor time was the fix. The comment above `foldingStateMapsLinesQuickly` says
+so: a wall-clock number inside `make test` "was measuring the other three hundred
+and fifty suites", so the bounds moved to `cpuTime`. **That was right and it is not
+enough.** Processor time is not concurrency-independent — the same arithmetic costs
+more cycles when thirty-odd threads are competing for cache and memory bandwidth,
+and this measurement is 1.7× larger inside the suite than outside it. `cpuTime`
+removed the scheduling and left the contention.
 
-- the bound wants widening to whatever a busy machine actually costs, with the
-  measurement written beside it, or
-- this budget wants the treatment the third row suggests: it was already red at
-  12.7 threads per core, which is inside the range `make test` produces on its
-  own, so it may simply be too tight rather than load-sensitive.
-
-Deciding which needs a sweep, which is why this is a written-down item and not a
-one-line change.
+So the sweep 0472 did for the three bounds in that file wants doing again with the
+suite running, because "on its own" is the condition none of these tests are ever
+actually measured in. `elapsed < 10.0` against a real 10.10 is not a budget, it is
+a coin. Whether the answer is a wider number, a smaller input, or a bound that
+tolerates the suite explicitly is the thing to decide — with the numbers above
+written beside whatever is chosen, since the next person will otherwise re-measure
+all three conditions.
 
 ## Ruled out
 
-- **A change in the fold code.** Nothing in 0476 goes near it. The third row
-  above is from 0476's *baseline* run, with the pty fix not yet applied.
+- **A change in the fold code, or anything in 0476.** Nothing in that item goes
+  near folding — it is all `PseudoTerminal`. And the 10.78 s row is from 0476's
+  own *baseline* run, taken before its fix existed.
+- **A busy machine being necessary.** It is red inside a plain `make test` on an
+  idle machine, at 10.10 s. Fourteen spinners add only a few per cent on top.
+- **The fold itself being too slow.** On its own it is 5.8 to 7.2 s against a 10 s
+  bound, six runs out of six.
 
 ## Steps
 
-- [ ] Measure what the fold takes at 1, 10 and 35 runnable threads per core
-- [ ] Decide between widening the bound and lowering the work, and say which here
+- [x] Measure the fold on its own, inside `make test`, and inside `make test`
+      under load — the three conditions above
+- [ ] Decide between a wider bound, a smaller input, and a bound that says out
+      loud that it is measured inside the suite; say which here and why
+- [ ] Sweep the other two bounds in `PerformanceTests` the same way, since they
+      were set by the same reasoning
 - [ ] Write down here what was ruled out on the way
-- [ ] `spec/` if any of this is behaviour rather than a test bound
+- [ ] `spec/` if any of this turns out to be behaviour rather than a test bound

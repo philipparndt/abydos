@@ -298,11 +298,16 @@ harder than the 9 to 26 that reproduced it five times out of five. Seven runs:
 | 5 | 3 clean; 2 with one failure each, and it is `foldComputationIsReasonableOnHugeFile` |
 | 2 | **clean**, on the final tree, no issues at all |
 
-**No 0476 failure in any of the seven.** The fold budget is not this item's and not
-this item's fault — it wants 10 s of processor time and takes 10.4 to 11.1 under
-that load, it was already red in this item's own *baseline* run before any fix
-existed, and the suite is green with nothing else running: 2498 tests, 357 suites,
-32 s, no issues. Filed as 0480 rather than widened on the way past.
+**No 0476 failure in any of the seven.** Nor unloaded: 2498 tests, 357 suites, 31
+to 33 s.
+
+The fold budget is not this item's and not this item's fault. It wants 10 s of
+processor time; on its own it takes 5.8 to 7.2, inside a plain `make test` it takes
+10.10, and inside one under load 10.4 to 11.1 — so it is a coin toss that the
+suite's own parallelism is enough to lose, and it was already red in this item's
+*baseline* run before any fix existed. Filed as **0480** with all three
+measurements, rather than widened on the way past: it is somebody's performance
+budget and which way to move it is a decision, not a tidy-up.
 
 The nicest number is not a pass or a fail. Under that load
 `runsACommandAndCapturesOutput` takes **10 to 12 seconds** where it used to take
