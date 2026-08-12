@@ -50,29 +50,27 @@ input handler is the only one that can work there and the menu must not double i
 chevron and nothing to press. The "Open with go3mf" button and its `KeyHint(key:
 "o")` (line 620) go with everything else.
 
-What is asked for is that the collapsed state still offers the action. Which raises
-the question the item cannot answer from outside: **is one action enough?** A
-collapsed section that keeps exactly one of its buttons is a rule that needs a reason,
-and "the one somebody wants while looking at a model" is a judgement about this panel
-rather than about panels. Look at what else is in there — export, and whatever sits
-beside it — and decide whether the collapsed state gets a row of icons, one button, or
-a different arrangement entirely.
+**A row of icons, and the one that was asked about is open-in-go3mf** — asked and
+answered, since the report said "export" and `o` opens in go3mf rather than writing a
+file through `Model/STLExporter.swift`:
 
-**And say what the button is.** The report says *export* and then *(like pressing o)*,
-and `o` opens the model in go3mf, which is not the same thing as
-`Model/STLExporter.swift`. Those are two different actions and the collapsed panel
-may want either or both. Ask what was meant if it is not obvious from the panel, and
-write the answer down — the wrong one here is a button that looks right and does
-something else.
+> open in go3mf, and a row of icons
+
+So the collapsed state keeps a compact row rather than one button, which also settles
+the rule: no section has to justify *which* of its actions survives collapsing,
+because they all do, as icons. Two things that follow and are not decided here — what
+each icon is when its expanded row is a word and a `KeyHint`, and what happens when a
+section has more icons than the panel is wide. Look at every section rather than only
+the one in the report, since the rule now applies to all of them.
 
 ## Steps
 
 - [ ] Find out whether the double-open was seen embedded or standalone, by counting
       entries per press and observers registered
 - [ ] One owner for `o`, with the other made impossible rather than absent
-- [ ] Decide what the collapsed panel offers, and why that and not more
-- [ ] Say whether the button exports or opens in go3mf, from what was meant rather
-      than from what is easiest
+- [ ] A row of icons in the collapsed state, for every section and not only the one
+      reported, with an answer for a section too wide for the panel
+- [ ] Open-in-go3mf is the one asked about, and it is an icon like the rest
 - [ ] Watch both in the embedded viewer, which is where it was reported
 - [ ] Write down here what was ruled out on the way
 - [ ] A branch in `~/dev/3d/gostl` and nothing else — no tag, no push, no repin
