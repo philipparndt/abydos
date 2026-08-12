@@ -68,12 +68,20 @@ is probably still wrong is that the useless item is on *every* one of them.
   Abydos. `findGo3mfExecutable` throws; where that throw surfaces in an embedded
   viewer is worth one look.
 
+## Estimate
+
+2026-08-12 14:23 — about two hours left
+
 ## Steps
 
 - [ ] A content test for a go3mf recipe, bounded — say what it reads and how much —
       or a decided, written reason for not testing at all
 - [ ] Nothing that walks a tree reads a file to answer this
 - [ ] A `.yaml` that passes reaches the embedded viewer, and GoSTL does the rest
+- [ ] The option is in the two places a model's already is — the tab's preview
+      control and the navigator's *Preview in GoSTL* — and nowhere else
+- [ ] A recipe opens as its text and not as a model, and the difference from 0483's
+      `.scad` is written down rather than inherited
 - [ ] What GoSTL's failure looks like from inside Abydos, including `go3mf` absent
 - [ ] Watched on `~/dev/3d/other/hubelino/adapter-set.yaml` — read-only, on a copy
 - [ ] Write down here what was ruled out on the way
