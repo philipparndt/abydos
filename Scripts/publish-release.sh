@@ -65,7 +65,14 @@ git tag -a "$TAG" -m "Abydos $VERSION"
 #
 # After the tag, so the build number and commit stamped into the bundle are
 # the ones the tag names.
-make --no-print-directory build CONFIG=release
+# `PIN_UUID=0` is not optional here, and leaving it out is why this script used to
+# refuse itself at the next step. The pin exists so a *local* build keeps the macOS
+# Local Network grant, which is filed against one executable UUID; a release
+# carrying that borrowed UUID is a release whose crash reports cannot say which
+# build they came from, and `release.sh` checks for exactly that. `make release`
+# passed it and this path did not, so the one command that is meant to do the whole
+# thing was the one that stopped halfway — after tagging.
+make --no-print-directory build CONFIG=release PIN_UUID=0
 Scripts/release.sh
 
 test -f "$DMG" || { echo "expected $DMG and it is not there"; exit 1; }
