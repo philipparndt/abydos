@@ -198,15 +198,15 @@ any time.
 
 ## Estimate
 
-2026-08-12 06:23 — about two hours left — proving the mechanism first
+2026-08-12 06:53 — about an hour left - fix written and green, proving it catches the defect under load
 
 ## Steps
 
 - [x] Find out when a macOS pty discards output the child has written
 - [x] Find out why holding the slave open hung the standalone reproduction
-- [ ] Fix it, whatever it turns out to be
-- [ ] Put `aCommandThatIsAlreadyOverDoesNotLoseItsOutput` back, from `1c0c108`
-- [ ] One owner for the master descriptor, closing it once and on the read queue
+- [x] Fix it: hold a descriptor on the child's end of the terminal
+- [x] Put `aCommandThatIsAlreadyOverDoesNotLoseItsOutput` back, from `1c0c108`
+- [x] One owner for the master descriptor, closing it once and on the read queue
 - [ ] Prove it — the suite green under the load that reproduced it five times
 - [ ] Write down here what was ruled out on the way
 - [ ] `spec/terminal.md` says a short command's output is not lost

@@ -1,6 +1,78 @@
 import Foundation
 import Darwin
 
+/// The descriptors of one pseudo-terminal, and the only thing that may close
+/// them.
+///
+/// Both of them, because they belong together. The master is the end this
+/// process reads and writes. The slave is the child's end, and this process
+/// keeps a descriptor on it for as long as the child runs — which is the whole
+/// of 0476. **A macOS pty gives output the child has written 600 ms to be read,
+/// and then discards it**: the child's exit waits that long for the terminal's
+/// queue to be drained, and when the wait runs out the kernel revokes the
+/// terminal, the last slave descriptor closes, and closing it flushes the queue.
+/// A `/bin/echo` whose output nobody read within 600 ms had not printed late, it
+/// had printed nothing. Holding a slave descriptor here removes the deadline —
+/// measured out to 15 s with the bytes still there — because the queue is only
+/// flushed when the *last* slave descriptor goes, and this one has not.
+///
+/// It costs one thing, and it is the reason this class exists rather than a
+/// second `Int32` beside the first: with the deadline gone, **the child cannot
+/// finish exiting until this pty is read or closed**. Read it and the child is
+/// reaped in under a millisecond; close either descriptor and the same; do
+/// neither and it waits for ever. So there must be no path that stops reading
+/// without also closing, and there is exactly one close, here.
+///
+/// A lock and not a flag, because closing a descriptor number is not a local
+/// act: the kernel may hand the same number straight back out, so a `read`, an
+/// `ioctl` or a second `close` already on its way lands on a file belonging to
+/// something else. The many users take it shared — several threads use these
+/// numbers at once and none of them conflicts — and the close takes it
+/// exclusively, so it runs after every call already in flight, and once.
+private final class TerminalDescriptors: @unchecked Sendable {
+	private let lock = UnsafeMutablePointer<pthread_rwlock_t>.allocate(capacity: 1)
+	private var master: Int32 = -1
+	private var slave: Int32 = -1
+
+	init() { pthread_rwlock_init(lock, nil) }
+
+	deinit {
+		close()
+		pthread_rwlock_destroy(lock)
+		lock.deallocate()
+	}
+
+	/// Takes ownership of a freshly opened pair.
+	func adopt(master: Int32, slave: Int32) {
+		pthread_rwlock_wrlock(lock)
+		self.master = master
+		self.slave = slave
+		pthread_rwlock_unlock(lock)
+	}
+
+	/// Runs `body` with the master, or answers nil if it has been closed.
+	///
+	/// The answer being optional is the point: every caller has to say what it
+	/// does when the terminal has gone, rather than making a syscall on -1 and
+	/// reading the result as a failure of the terminal.
+	func withMaster<T>(_ body: (Int32) -> T) -> T? {
+		pthread_rwlock_rdlock(lock)
+		defer { pthread_rwlock_unlock(lock) }
+		guard master >= 0 else { return nil }
+		return body(master)
+	}
+
+	var isOpen: Bool { withMaster { _ in true } ?? false }
+
+	/// Closes both, once, whoever asks and however often they ask.
+	func close() {
+		pthread_rwlock_wrlock(lock)
+		if master >= 0 { Darwin.close(master); master = -1 }
+		if slave >= 0 { Darwin.close(slave); slave = -1 }
+		pthread_rwlock_unlock(lock)
+	}
+}
+
 /// A child process attached to a real pseudo-terminal.
 ///
 /// A real PTY rather than pipes, for three reasons that matter here:
@@ -31,7 +103,8 @@ public final class PseudoTerminal {
 	/// Called when the process exits, with its status.
 	public var onExit: ((Int32) -> Void)?
 
-	private var masterDescriptor: Int32 = -1
+	/// The master and the slave, and the one place either of them is closed.
+	private let descriptors = TerminalDescriptors()
 	/// The terminal's own device, as the child sees it.
 	///
 	/// Kept because it is how the tmux server is asked about the client running
@@ -45,6 +118,9 @@ public final class PseudoTerminal {
 	/// Bytes the pty could not take yet.
 	private var pendingOutput = Data()
 	private let writeLock = NSRecursiveLock()
+	/// Guards the read source and whether it is suspended, so that suspending,
+	/// resuming and cancelling it cannot happen at once from three threads.
+	private let sourceLock = NSLock()
 	private let writeQueue = DispatchQueue(label: "ideai.pty.write")
 	private let readQueue = DispatchQueue(label: "ideai.pty.read", qos: .userInitiated)
 	/// Whether reading is paused because the reader has a backlog.
@@ -174,8 +250,29 @@ public final class PseudoTerminal {
 			_exit(127)
 		}
 
-		masterDescriptor = master
-		slaveName = String(validatingCString: ptsname(master)) ?? nil
+		let name = String(validatingCString: ptsname(master)) ?? nil
+		slaveName = name
+
+		// A descriptor of our own on the child's end of the terminal, which is
+		// what stops the pty throwing away output nobody has read yet. The whole
+		// of 0476 is in `TerminalDescriptors`; in one line, the queue is flushed
+		// when the *last* slave descriptor closes, and this one does not.
+		//
+		// `forkpty` hands the parent only the master — it closes the slave on
+		// this side before returning — so it has to be opened again by name.
+		// Doing it here rather than before the fork is not a race worth guarding,
+		// because the master is open and that is what reserves the name: measured,
+		// a pty opened alongside this one gets a different `/dev/ttysNN`, and this
+		// name goes on belonging to this terminal even after the child has gone.
+		// So the worst this can do is fail, for a child that has already exited
+		// without printing anything — and then there is nothing to lose anyway.
+		//
+		// `O_NOCTTY` because this process must not take the child's terminal as
+		// its own: a session leader that opens a tty without it acquires it, and
+		// then a pane closing would send SIGHUP to the app.
+		let slave = name.map { open($0, O_RDWR | O_NOCTTY) } ?? -1
+
+		descriptors.adopt(master: master, slave: slave)
 		childPID = pid
 		state = .running(pid: pid)
 
@@ -361,31 +458,53 @@ public final class PseudoTerminal {
 
 	private func startReading() {
 		ignoreBrokenPipes()
-		let source = DispatchSource.makeReadSource(fileDescriptor: masterDescriptor, queue: readQueue)
+		guard let master = descriptors.withMaster({ $0 }) else { return }
+		let source = DispatchSource.makeReadSource(fileDescriptor: master, queue: readQueue)
 		source.setEventHandler { [weak self] in
 			guard let self else { return }
-
-			// Gathered into one delivery rather than one per read. A program
-			// painting a whole screen produces its frame in many small writes,
-			// and handing each of them over separately was costing far more in
-			// hops between queues than the bytes themselves cost to parse.
-			var gathered = Data()
-			var buffer = [UInt8](repeating: 0, count: 64 * 1024)
-			while gathered.count < 512 * 1024 {
-				let count = read(self.masterDescriptor, &buffer, buffer.count)
-				guard count > 0 else { break }
-				gathered.append(contentsOf: buffer[0..<count])
-				if count < buffer.count { break }
-			}
+			let gathered = self.readWhatIsThere()
 			guard !gathered.isEmpty else { return }
-			self.recordRawOutput(gathered)
-
-			self.callbackQueue.async {
-				self.onOutput?(gathered)
-			}
+			self.deliver(gathered)
 		}
+		// The close hangs off the cancel handler rather than following the
+		// `cancel()` call, because dispatch runs this once the source has
+		// genuinely finished with the descriptor. Closing a number a source is
+		// still watching is the way a source ends up reporting events about
+		// whatever file the kernel handed the number to next. It holds the
+		// descriptors and not `self`, so it still closes them if the terminal
+		// itself has been deallocated by then.
+		source.setCancelHandler { [descriptors] in descriptors.close() }
 		source.resume()
 		readSource = source
+	}
+
+	/// Everything the pty has for us right now.
+	///
+	/// Gathered into one delivery rather than one per read. A program painting a
+	/// whole screen produces its frame in many small writes, and handing each of
+	/// them over separately was costing far more in hops between queues than the
+	/// bytes themselves cost to parse.
+	///
+	/// Always on `readQueue`, which is serial — so "what is in the pty" is only
+	/// ever asked by one thread, and the last read before the terminal closes has
+	/// finished before the descriptor goes.
+	private func readWhatIsThere(limit: Int = 512 * 1024) -> Data {
+		var gathered = Data()
+		var buffer = [UInt8](repeating: 0, count: 64 * 1024)
+		while gathered.count < limit {
+			let count = descriptors.withMaster { read($0, &buffer, buffer.count) } ?? 0
+			guard count > 0 else { break }
+			gathered.append(contentsOf: buffer[0..<count])
+			if count < buffer.count { break }
+		}
+		return gathered
+	}
+
+	private func deliver(_ gathered: Data) {
+		recordRawOutput(gathered)
+		callbackQueue.async {
+			self.onOutput?(gathered)
+		}
 	}
 
 	/// Every byte the program produced, appended to a file, when asked.
@@ -409,28 +528,36 @@ public final class PseudoTerminal {
 		}
 	}
 
+	/// The terminal device the child sees, which is how tmux is asked about the
+	/// client sitting on it.
+	public var ttyName: String? { slaveName }
+
+	/// Where the process in the foreground of this terminal currently is.
+	public func currentDirectory() -> URL? {
+		descriptors.withMaster {
+			TerminalDirectory.current(masterDescriptor: $0, slaveName: slaveName)
+		} ?? nil
+	}
+
 	/// Stops or resumes taking bytes out of the pty.
 	///
 	/// While stopped the bytes stay in the pty's buffer and, once it is full,
 	/// the process writing to it blocks — which is how a terminal tells a
 	/// program that it is going faster than anyone can look at.
-	/// Where the process in the foreground of this terminal currently is.
-	/// The terminal device the child sees, which is how tmux is asked about
-	/// the client sitting on it.
-	public var ttyName: String? { slaveName }
-
-	public func currentDirectory() -> URL? {
-		TerminalDirectory.current(masterDescriptor: masterDescriptor, slaveName: slaveName)
-	}
-
+	///
+	/// Under a lock rather than hopped onto the reading queue. Both keep the
+	/// suspends and resumes balanced, which is what matters — an unbalanced
+	/// count is a source that never runs again or a crash — but the lock also
+	/// makes it synchronous, and the close path needs that: it has to know
+	/// whether the source is suspended before it cancels it. A hop would leave
+	/// the answer in a queue that may not run for a while, which is exactly the
+	/// condition this is all about.
 	public func setReadingSuspended(_ suspended: Bool) {
-		readQueue.async { [weak self] in
-			guard let self, let source = self.readSource else { return }
-			guard suspended != self.isReadingSuspended else { return }
-			self.isReadingSuspended = suspended
-			// Balanced by construction: the flag changes only here, on one queue.
-			if suspended { source.suspend() } else { source.resume() }
-		}
+		sourceLock.lock()
+		defer { sourceLock.unlock() }
+		guard let source = readSource, suspended != isReadingSuspended else { return }
+		isReadingSuspended = suspended
+		if suspended { source.suspend() } else { source.resume() }
 	}
 
 	/// Sends bytes to the program, however many there are.
@@ -441,7 +568,7 @@ public final class PseudoTerminal {
 	/// enough to make room, rather than dropped: the old loop broke out on that
 	/// and the rest of a paste simply never arrived.
 	public func write(_ data: Data) {
-		guard masterDescriptor >= 0, isRunning, !data.isEmpty else { return }
+		guard descriptors.isOpen, isRunning, !data.isEmpty else { return }
 		writeLock.lock()
 		pendingOutput.append(data)
 		writeLock.unlock()
@@ -478,8 +605,17 @@ public final class PseudoTerminal {
 				// and a canonical-mode line discipline takes about a line at a
 				// time, so this happens often and should cost nothing while it
 				// waits.
-				var descriptor = pollfd(fd: self.masterDescriptor, events: Int16(POLLOUT), revents: 0)
-				_ = poll(&descriptor, 1, 200)
+				//
+				// It waits with the descriptors held, which delays nothing that
+				// matters: reading holds them the same way and the two do not
+				// exclude each other. Only a close waits, and only when there is
+				// a paste still going out that the program has stopped reading.
+				let waited = self.descriptors.withMaster { master -> Int32 in
+					var descriptor = pollfd(fd: master, events: Int16(POLLOUT), revents: 0)
+					return poll(&descriptor, 1, 200)
+				}
+				// The terminal went while we were queueing: nothing left to wait for.
+				guard waited != nil else { break }
 			}
 			self?.writeLock.lock()
 			self?.isDraining = false
@@ -493,13 +629,14 @@ public final class PseudoTerminal {
 		defer { writeLock.unlock() }
 
 		while !pendingOutput.isEmpty {
-			guard masterDescriptor >= 0 else {
+			let written = pendingOutput.withUnsafeBytes { raw -> Int? in
+				guard let base = raw.baseAddress else { return nil }
+				return descriptors.withMaster { Darwin.write($0, base, raw.count) }
+			}
+			// No terminal any more, so what is queued has nowhere to go.
+			guard let written else {
 				pendingOutput.removeAll()
 				return false
-			}
-			let written = pendingOutput.withUnsafeBytes { raw -> Int in
-				guard let base = raw.baseAddress else { return 0 }
-				return Darwin.write(masterDescriptor, base, raw.count)
 			}
 			if written > 0 {
 				pendingOutput.removeFirst(written)
@@ -521,14 +658,11 @@ public final class PseudoTerminal {
 
 	/// Tells the process the pane changed size, so it can reflow.
 	public func resize(rows: Int, columns: Int) {
-		guard masterDescriptor >= 0 else {
-			// Nothing to tell yet, but the numbers are still the ones the child
-			// will be started with.
-			grid = (max(1, rows), max(1, columns))
-			return
-		}
+		// `windowSize` records the numbers whether or not there is anything to
+		// tell them to: with no terminal yet these are the ones the child will be
+		// started with.
 		var size = windowSize(rows: rows, columns: columns)
-		_ = ioctl(masterDescriptor, TIOCSWINSZ, &size)
+		guard descriptors.withMaster({ ioctl($0, TIOCSWINSZ, &size) }) != nil else { return }
 		// SIGWINCH is what full-screen applications actually listen for.
 		if case let .running(pid) = state {
 			kill(pid, SIGWINCH)
@@ -541,9 +675,8 @@ public final class PseudoTerminal {
 	/// because the claim worth checking is that the program on the other end can
 	/// see the change — not that this file remembered it.
 	public var reportedWindowSize: (rows: Int, columns: Int, pixelWidth: Int, pixelHeight: Int)? {
-		guard masterDescriptor >= 0 else { return nil }
 		var size = winsize()
-		guard ioctl(masterDescriptor, TIOCGWINSZ, &size) == 0 else { return nil }
+		guard descriptors.withMaster({ ioctl($0, TIOCGWINSZ, &size) }) == 0 else { return nil }
 		return (Int(size.ws_row), Int(size.ws_col), Int(size.ws_xpixel), Int(size.ws_ypixel))
 	}
 
@@ -565,32 +698,84 @@ public final class PseudoTerminal {
 				code = 128 + (status & 0x7F)
 			}
 
-			(self?.callbackQueue ?? .main).async {
-				guard let self else { return }
-				self.state = .exited(code: code)
-				self.readSource?.cancel()
-				self.readSource = nil
-				if self.masterDescriptor >= 0 {
-					close(self.masterDescriptor)
-					self.masterDescriptor = -1
+			guard let self else { return }
+			// Through the reading queue, and that is what makes the order true
+			// rather than likely. It is serial, so a read already running has
+			// finished and handed its bytes on before this block starts, and
+			// anything still sitting in the pty is taken here — all of it before
+			// the terminal is closed and before the exit is announced. A pane
+			// that showed a command's exit above its output would be showing
+			// them in the order two queues happened to get threads.
+			//
+			// Not `callbackQueue`, which is where this used to be. That queue
+			// belongs to whoever is watching — the main queue in the app — and
+			// closing the terminal from it meant closing it while the reading
+			// queue might still be inside a read on the same descriptor.
+			self.readQueue.async {
+				self.deliverWhatIsLeft()
+				self.closeDescriptors()
+				self.callbackQueue.async {
+					self.state = .exited(code: code)
+					self.onExit?(code)
 				}
-				self.onExit?(code)
 			}
 		}
 	}
 
-	/// Sends SIGHUP and closes the master, ending the session.
+	/// Takes what the program left in the pty and hands it on.
+	///
+	/// With a slave descriptor held, `waitpid` cannot return until the pty has
+	/// been drained, so by this point the read source has usually had it all
+	/// already and this finds nothing. It runs anyway, for the case where the
+	/// slave could not be opened: then the old deadline is back, and this is the
+	/// last chance anybody has at those bytes.
+	private func deliverWhatIsLeft() {
+		while true {
+			let gathered = readWhatIsThere()
+			guard !gathered.isEmpty else { return }
+			deliver(gathered)
+		}
+	}
+
+	/// Sends SIGHUP and closes the terminal, ending the session.
 	public func terminate() {
 		if case let .running(pid) = state {
 			// The whole foreground process group, so children go too.
 			kill(-pid, SIGHUP)
 			kill(pid, SIGHUP)
 		}
-		readSource?.cancel()
+		closeDescriptors()
+	}
+
+	/// Closes the terminal: one place, once, whoever asks.
+	///
+	/// Both callers used to do this themselves — this one and the exit watcher —
+	/// each guarding on the descriptor being set and neither knowing about the
+	/// other. Closing a descriptor number twice is not harmless: the kernel may
+	/// hand the number out again in between, and the second close then lands on a
+	/// file belonging to something else entirely.
+	private func closeDescriptors() {
+		sourceLock.lock()
+		let source = readSource
 		readSource = nil
-		if masterDescriptor >= 0 {
-			close(masterDescriptor)
-			masterDescriptor = -1
+		// A cancelled source that is suspended does not run its cancel handler
+		// until something resumes it, and the close hangs off that handler. It
+		// would matter anyway; it matters much more now that this process holds a
+		// slave descriptor, because a child cannot finish exiting until the pty is
+		// read or closed. A terminal left shut would leave the child waiting for
+		// ever, which is a worse bug than the one being fixed.
+		if source != nil, isReadingSuspended {
+			source?.resume()
+			isReadingSuspended = false
+		}
+		sourceLock.unlock()
+
+		if let source {
+			source.cancel()
+		} else {
+			// Never started, or already closed: nothing is watching the
+			// descriptors, so there is nothing to wait for.
+			descriptors.close()
 		}
 	}
 
