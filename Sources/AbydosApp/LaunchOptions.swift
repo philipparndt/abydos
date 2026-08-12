@@ -249,8 +249,8 @@ struct LaunchOptions {
 	var sidebarWidth: Double?
 	/// Draw the sidebar's pane straight into a file.
 	var sidebarShot: String?
-	/// Light the ✕ on the first tab of every strip in the window and photograph
-	/// it, then take the pointer off them all and photograph that.
+	/// Put the pointer on the ✕ of every tab of every strip in the window, say
+	/// what each strip made of it, and photograph it hovered and then left.
 	var tabCloseHover: String?
 	/// Fold a merge in the history, to check the graph.
 	var collapseRow: Int?

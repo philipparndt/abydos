@@ -754,7 +754,10 @@ extension EditorTabBar: TabCloseHovering {
 		} else {
 			clearHover()
 		}
-		return "editor       \"\(items[safe: index ?? -1]?.title ?? "-")\" closable=true"
+		// Every editor tab closes, so there is no `isClosable` to report — it is
+		// printed as a constant so the two strips' lines read the same way.
+		let title = index.flatMap { items[safe: $0] }?.title ?? "-"
+		return "editor       \"\(title)\" closable=true"
 			+ " -> tab=\(hoveredIndex.map(String.init) ?? "none") close=\(hoveredClose)"
 	}
 }

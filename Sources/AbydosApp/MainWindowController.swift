@@ -1353,8 +1353,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		install(tool: currentSidebarTool, force: true)
 	}
 
-	/// Puts the pointer on the ✕ of the first tab of every strip in the window,
-	/// photographs that, takes it off all of them and photographs that too.
+	/// Puts the pointer on the ✕ of every tab of every strip in the window and
+	/// says what each strip made of it, then photographs the window with the
+	/// first ✕ of each hovered and again with the pointer off them all.
 	///
 	/// The strips are found by walking the window rather than asked of the editor
 	/// and the panel in turn. What is being checked is that the two agree, and one
