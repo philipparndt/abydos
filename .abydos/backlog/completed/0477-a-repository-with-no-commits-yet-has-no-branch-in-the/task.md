@@ -166,10 +166,6 @@ the damage was all in naming HEAD as a revision, not in walking back from it.
   an error rather than a no-op. It is a row that says where you are, not a
   destination.
 
-## Estimate
-
-2026-08-12 06:29 — about twenty minutes left
-
 ## Steps
 
 - [x] One place answers "which branch", and the four callers use it
