@@ -10,8 +10,27 @@ public enum ModelPreview {
 	/// Extensions the viewer can show.
 	public static let previewableExtensions: Set<String> = ["stl", "3mf", "scad"]
 
+	/// Whether the viewer can show this file, from its name alone.
+	///
+	/// Costs nothing, so this is the one to ask about more than one file.
 	public static func canPreview(_ url: URL) -> Bool {
 		previewableExtensions.contains(url.pathExtension.lowercased())
+	}
+
+	/// Whether the viewer can show this file, having looked at it.
+	///
+	/// The same split `DiagramExport` has between `isDiagram` and `holdsADiagram`,
+	/// and for the same reason: `canPreview` is a question about the name and this
+	/// is a question about the contents. A go3mf recipe is a `.yaml`, and a
+	/// repository's `.yaml` is nearly always a workflow, so the name cannot decide
+	/// it and offering the viewer on all of them would be wrong far more often than
+	/// right.
+	///
+	/// **Reads at most `Go3mfRecipe.inspectedBytes` of one file**, and only when the
+	/// name is a `.yaml` or `.yml`. Ask it about the row somebody right-clicked;
+	/// never about the rows around it.
+	public static func holdsAModel(_ url: URL) -> Bool {
+		canPreview(url) || Go3mfRecipe.looksLikeRecipe(url)
 	}
 
 	/// Extensions that open *as* a model rather than as text.

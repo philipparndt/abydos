@@ -8872,8 +8872,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	/// Which modes the file in front can be shown in, and which it is in now.
 	func previewModeState() -> (available: [PreviewMode], current: PreviewMode)? {
-		guard let url = editor.activeGroup?.activeTabURL else { return nil }
-		let modes = FilePreview.availableModes(for: url)
+		// Asked of the group, which asks the tab. A menu is validated on every open,
+		// so this cannot be a question that reads the file — the tab decided it once,
+		// when it opened. See 0482.
+		guard let modes = editor.activeGroup?.activeTabPreviewModes else { return nil }
 		guard modes.count > 1 else { return nil }
 		return (modes, editor.activeGroup?.currentPreviewMode ?? .source)
 	}

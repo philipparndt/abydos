@@ -48,6 +48,20 @@ final class EditorViewController: NSViewController {
 		var sourceView: NSView?
 		/// How this tab is currently showing a file that has both forms.
 		var previewMode: PreviewMode = .source
+		/// Whether this file is a go3mf recipe — a `.yaml` the 3D viewer can build
+		/// and show — which its name cannot say.
+		///
+		/// **Decided once, when the tab opens, and kept.** The tab bar asks what
+		/// modes a file has on every refresh, and a refresh follows a keystroke; a
+		/// question that reads the file could not live there. So the one bounded read
+		/// happens where the file is being opened anyway, and everything afterwards
+		/// asks the tab.
+		///
+		/// The cost of keeping it: a `.yaml` that *becomes* a recipe while it is open
+		/// is still text until it is reopened. That is the right way round — the
+		/// alternative re-reads a file on every redraw to catch an edit somebody
+		/// makes once — and closing and reopening the tab settles it.
+		var looksLikeRecipe = false
 		/// Where this tab's divider is, when it is split, as a fraction of the
 		/// pane. Asked of the split view itself rather than kept in step with it:
 		/// a divider is dragged, and nothing tells us when.
@@ -190,6 +204,10 @@ final class EditorViewController: NSViewController {
 	var activeTabURL: URL? { activeTab?.url }
 	/// Which of source, preview or a split the file in front is being shown in.
 	var currentPreviewMode: PreviewMode { activeTab?.previewMode ?? .source }
+	/// Which modes the file in front can be shown in, from the tab rather than from
+	/// the name — a `.yaml` has a rendered form only when it is a go3mf recipe, and
+	/// the tab is what knows.
+	var activeTabPreviewModes: [PreviewMode] { activeTab.map { availableModes(for: $0) } ?? [] }
 	var activeDocument: TextDocument? { activeTab?.document }
 	/// The view the caret is in, for a gesture that has to be drawn where the
 	/// text is rather than reported about.
@@ -1132,6 +1150,10 @@ final class EditorViewController: NSViewController {
 		}
 
 		let tab = Tab(url: fileURL, document: document, codeView: codeView, contentView: scrollView, isPreview: preview)
+		// The one place a file is looked *inside* to decide what previews it has.
+		// Costs nothing unless the name is a `.yaml`, and then the head of it, once
+		// per tab — see `Tab.looksLikeRecipe` for why it is not asked again.
+		tab.looksLikeRecipe = Go3mfRecipe.looksLikeRecipe(fileURL)
 
 		// Clicking a name in the blame column says what that commit was.
 		codeView.onShowBlameDetail = { entry in
@@ -1243,8 +1265,8 @@ final class EditorViewController: NSViewController {
 		// as. Decided here rather than by putting the tab right afterwards, so a
 		// `.scad` coming back as its source does not build a model view first and
 		// throw it away — a restore opens every tab the project had at once.
-		let opening = FilePreview.restoredMode(mode, for: fileURL)
-		if opening != .source, FilePreview.hasPreview(fileURL) {
+		let opening = FilePreview.restoredMode(mode, for: fileURL, looksLikeRecipe: tab.looksLikeRecipe)
+		if opening != .source, FilePreview.hasPreview(fileURL, looksLikeRecipe: tab.looksLikeRecipe) {
 			tab.previewMode = opening
 			tab.contentView = makeContentView(for: tab, mode: opening, dividerFraction: dividerFraction)
 		}
@@ -1748,7 +1770,7 @@ final class EditorViewController: NSViewController {
 	/// Shows a file's source, its rendered form, or both.
 	func setPreviewMode(_ mode: PreviewMode) {
 		guard let tab = activeTab, let index = activeIndex else { return }
-		guard FilePreview.availableModes(for: tab.url).contains(mode) else { return }
+		guard availableModes(for: tab).contains(mode) else { return }
 		guard mode != tab.previewMode else { return }
 
 		tab.previewMode = mode
@@ -1756,6 +1778,15 @@ final class EditorViewController: NSViewController {
 
 		activeIndex = nil
 		activate(index: index, focusEditor: mode == .source)
+	}
+
+	/// Which modes a tab's file can be shown in.
+	///
+	/// Asked of the *tab* rather than of the URL, because one file's answer is not in
+	/// its name: a `.yaml` has a rendered form when it is a go3mf recipe, and the tab
+	/// is where that was decided, once, when it opened.
+	func availableModes(for tab: Tab) -> [PreviewMode] {
+		FilePreview.availableModes(for: tab.url, looksLikeRecipe: tab.looksLikeRecipe)
 	}
 
 	/// The view for a tab in a given mode, with the divider a session remembered
@@ -1789,8 +1820,11 @@ final class EditorViewController: NSViewController {
 
 	/// The rendered form of a file, whichever kind it has.
 	private func makePreview(for tab: Tab) -> NSView {
-		switch FilePreview.kind(for: tab.url) {
+		switch FilePreview.kind(for: tab.url, looksLikeRecipe: tab.looksLikeRecipe) {
 		case .model:
+			// Including a go3mf recipe, which reaches the viewer as the `.yaml` it
+			// is: GoSTL runs `go3mf build` on it into a temporary `.3mf`, watches
+			// the recipe and rebuilds when it changes. Nothing of that is here.
 			return makeModelView(for: tab.url)
 		case .image:
 			return ImageFileViewer(url: tab.url).scrollView
@@ -2226,7 +2260,7 @@ final class EditorViewController: NSViewController {
 		// The control belongs to the active tab: a file with no rendered form
 		// shows none, so the strip does not offer something that does nothing.
 		if let tab = activeTab, !tab.isDiff {
-			let modes = FilePreview.availableModes(for: tab.url)
+			let modes = availableModes(for: tab)
 			tabBar.setPreview(
 				// One mode is no choice: a PNG and a binary mesh each have only
 				// their rendered form, and a control whose menu holds the item
@@ -2484,7 +2518,9 @@ final class EditorViewController: NSViewController {
 					// Only for a file that has a rendered form. Every other tab is
 					// `.source` and always will be, and writing that down for each
 					// of them says nothing.
-					previewMode: FilePreview.hasPreview(tab.url) ? tab.previewMode : nil,
+					previewMode: FilePreview.hasPreview(
+						tab.url, looksLikeRecipe: tab.looksLikeRecipe
+					) ? tab.previewMode : nil,
 					dividerFraction: tab.dividerFraction
 				)
 			},

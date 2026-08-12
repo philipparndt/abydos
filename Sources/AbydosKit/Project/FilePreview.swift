@@ -80,7 +80,16 @@ public enum FilePreview {
 		}
 	}
 
-	public static func kind(for url: URL) -> Kind? {
+	/// What a file's rendered form is.
+	///
+	/// - Parameter looksLikeRecipe: what a look *inside* the file said, for the one
+	///   case a name cannot decide — a `.yaml` is a 3D model when it is a go3mf
+	///   recipe and text when it is a workflow, and only its contents say which.
+	///   Defaults to `false`, so everything that runs over a tree keeps asking the
+	///   question that costs nothing. `Go3mfRecipe.looksLikeRecipe(_:)` is what
+	///   answers it, and the rule about who may call that is written there.
+	public static func kind(for url: URL, looksLikeRecipe: Bool = false) -> Kind? {
+		if looksLikeRecipe, Go3mfRecipe.hasRecipeExtension(url) { return .model }
 		switch url.pathExtension.lowercased() {
 		case "md", "markdown", "mdx":
 			return .markdown
@@ -112,15 +121,17 @@ public enum FilePreview {
 		}
 	}
 
-	public static func hasPreview(_ url: URL) -> Bool { kind(for: url) != nil }
+	public static func hasPreview(_ url: URL, looksLikeRecipe: Bool = false) -> Bool {
+		kind(for: url, looksLikeRecipe: looksLikeRecipe) != nil
+	}
 
 	/// The mode a file opens in.
 	///
 	/// A mesh has no source worth reading — an STL is a list of triangles — so
 	/// it opens rendered. Anything written by hand opens as what it is, and the
 	/// preview is asked for.
-	public static func defaultMode(for url: URL) -> PreviewMode {
-		switch kind(for: url) {
+	public static func defaultMode(for url: URL, looksLikeRecipe: Bool = false) -> PreviewMode {
+		switch kind(for: url, looksLikeRecipe: looksLikeRecipe) {
 		case .image:
 			// Opening a picture shows the picture. An SVG has text worth
 			// reading and the control offers it, but nobody clicks a diagram
@@ -141,6 +152,24 @@ public enum FilePreview {
 			// A PDF is the finished document and nothing else. Its bytes are a
 			// compressed object graph, so there is no source half to offer.
 			return .preview
+		case .model where looksLikeRecipe && Go3mfRecipe.hasRecipeExtension(url):
+			// A go3mf recipe opens as its text, and the model is *asked for*. Not
+			// the same answer a `.scad` gets, and the difference is deliberate
+			// rather than inherited (0482 beside 0483):
+			//
+			//  * A `.scad` is one thing whose whole purpose is one shape, and
+			//    opening it renders that shape. A recipe is an assembly — it names
+			//    a `.scad` per part, so its model is *every* part's render and then
+			//    a `go3mf build` on top, which is the slowest preview in the app by
+			//    a wide margin.
+			//  * And a `.scad` is a `.scad`. Whether a `.yaml` is a recipe at all
+			//    was decided by reading the head of it, and a default that starts
+			//    minutes of rendering off the back of a guess about a file's
+			//    contents is a default that makes opening YAML feel dangerous.
+			//
+			// So the preview control offers Preview and both splits, and nothing
+			// happens until somebody picks one.
+			return .source
 		case .model:
 			return hasReadableSource(url) ? .source : .preview
 		case .markdown, .none:
@@ -158,9 +187,13 @@ public enum FilePreview {
 	/// `.drawio`, whose editor owns the document and has no source half — is a
 	/// note about a file that has since changed its name or its kind, so it is
 	/// dropped rather than obeyed.
-	public static func restoredMode(_ remembered: PreviewMode?, for url: URL) -> PreviewMode {
-		guard let remembered, availableModes(for: url).contains(remembered) else {
-			return defaultMode(for: url)
+	public static func restoredMode(
+		_ remembered: PreviewMode?, for url: URL, looksLikeRecipe: Bool = false
+	) -> PreviewMode {
+		guard let remembered,
+		      availableModes(for: url, looksLikeRecipe: looksLikeRecipe).contains(remembered)
+		else {
+			return defaultMode(for: url, looksLikeRecipe: looksLikeRecipe)
 		}
 		return remembered
 	}
@@ -185,8 +218,8 @@ public enum FilePreview {
 	}
 
 	/// Modes worth offering for a file.
-	public static func availableModes(for url: URL) -> [PreviewMode] {
-		guard hasPreview(url) else { return [] }
+	public static func availableModes(for url: URL, looksLikeRecipe: Bool = false) -> [PreviewMode] {
+		guard hasPreview(url, looksLikeRecipe: looksLikeRecipe) else { return [] }
 		return hasReadableSource(url) ? PreviewMode.allCases : [.preview]
 	}
 }
