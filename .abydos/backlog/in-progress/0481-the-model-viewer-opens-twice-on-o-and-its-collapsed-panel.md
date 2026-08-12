@@ -134,7 +134,7 @@ user's own checkout and is not to be disturbed.
       registered, embedded and standalone, and say which pair the report is
 - [x] One place builds the `go3mf` arguments, and it cannot ask go3mf to open the
       result — so the result is opened once, by whoever knows the build finished
-- [ ] One owner for `o`, with the other made impossible rather than absent
+- [x] One owner for `o`, with the other made impossible rather than absent
 - [ ] A row of icons in the collapsed state, for every section and not only the one
       reported, with an answer for a section too wide for the panel
 - [ ] Open-in-go3mf is the one asked about, and it is an icon like the rest
