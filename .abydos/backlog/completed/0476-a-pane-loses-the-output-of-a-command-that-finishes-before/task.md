@@ -288,10 +288,6 @@ performed on the reading queue so an in-flight read has finished with the number
 first — and reverted it with the rest. It is in that branch's history if it saves
 any time.
 
-## Estimate
-
-2026-08-12 07:56 — about fifteen minutes - one loaded run left to confirm, then done
-
 ## Proved
 
 `make test` under fourteen spinners, at **34 to 36 runnable threads per core** —
