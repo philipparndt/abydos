@@ -290,7 +290,7 @@ any time.
 
 ## Estimate
 
-2026-08-12 07:26 — another hour - the held descriptor was taken too late to help; closing the window now
+2026-08-12 07:41 — about thirty minutes - three loaded runs green, two to go, then the app itself
 
 ## Steps
 

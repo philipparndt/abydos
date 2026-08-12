@@ -110,7 +110,6 @@ public final class PseudoTerminal {
 	/// Kept because it is how the tmux server is asked about the client running
 	/// here, rather than about whichever client it last spoke to.
 	public private(set) var slaveName: String?
-	private var childPID: pid_t = -1
 	private var readSource: DispatchSourceRead?
 	/// Whether a drain is already running, so writing again only adds to what
 	/// it is working through.
@@ -380,7 +379,6 @@ public final class PseudoTerminal {
 		holdsChildEnd = slave >= 0
 		readCounts.unlock()
 		forkedAt = Date()
-		childPID = pid
 		childProcessID = pid
 		state = .running(pid: pid)
 
