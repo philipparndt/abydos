@@ -254,10 +254,6 @@ keypad press is not a main-block press with a different key code:
   rather than blanket. Which is incidentally the proof that a real keypad press does
   not carry it: if it did, ⌘ with a keypad key would work in no application at all.
 
-## Estimate
-
-2026-08-12 08:17 — about twenty minutes left, for the suite and the warnings
-
 ## Steps
 
 - [x] Measure which press fires it today, with `commentKeyReportForTesting`
