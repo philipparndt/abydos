@@ -14,13 +14,19 @@ public enum ModelPreview {
 		previewableExtensions.contains(url.pathExtension.lowercased())
 	}
 
-	/// Extensions that open *as* a model rather than as text.
-	///
-	/// OpenSCAD is left out: a .scad file is source, and editing it is the
-	/// point — its preview is a separate tab, opened deliberately.
-	public static func isViewableModel(_ url: URL) -> Bool {
-		["stl", "3mf"].contains(url.pathExtension.lowercased())
-	}
+	// What a model file *opens as* is not asked here, and there is no
+	// `isViewableModel` any more. There was one, and it said OpenSCAD was left
+	// out because "a .scad file is source, and editing it is the point — its
+	// preview is a separate tab, opened deliberately". That stopped being true
+	// of the program the day `FilePreview` was written: nothing called it from
+	// a110bcc onwards, so for a fortnight it was a decision with no code under
+	// it, disagreeing in comments with `FilePreview.defaultMode` two files away.
+	// 0483 settled the disagreement — a `.scad` now opens with the model beside
+	// it — and deleted the loser rather than editing it, because a second place
+	// to look up "what does this open as" is how the two came to disagree.
+	//
+	// This type answers one question now: can the viewer show this file. That is
+	// what the navigator's context menu asks, and it is a different question.
 
 	/// The installed GoSTL, or nil.
 	///

@@ -227,12 +227,29 @@ struct FilePreviewTests {
 	}
 
 	/// A mesh has no source worth reading — an STL is a list of triangles — so
-	/// it opens rendered. Anything handwritten opens as what it is.
+	/// it opens rendered. Markdown is read as well as rendered, so it opens as
+	/// itself.
 	@Test func meshesOpenRenderedAndSourceOpensAsText() {
 		#expect(FilePreview.defaultMode(for: url("a.stl")) == .preview)
 		#expect(FilePreview.defaultMode(for: url("a.3mf")) == .preview)
-		#expect(FilePreview.defaultMode(for: url("a.scad")) == .source)
 		#expect(FilePreview.defaultMode(for: url("a.md")) == .source)
+	}
+
+	/// A `.scad` is the PlantUML case: the text is what is edited and the shape
+	/// is what it is for, so both halves are on screen. 0483.
+	@Test func aScadOpensWithTheModelBesideIt() {
+		#expect(FilePreview.defaultMode(for: url("a.scad")) == .splitRight)
+		#expect(FilePreview.defaultMode(for: url("A.SCAD")) == .splitRight)
+		// The same conclusion the two diagram kinds reach, from the same premise.
+		#expect(FilePreview.defaultMode(for: url("a.puml")) == .splitRight)
+		#expect(FilePreview.defaultMode(for: url("a.mmd")) == .splitRight)
+	}
+
+	/// The new default is only for a tab that says nothing: somebody who put a
+	/// `.scad` back to plain text gets plain text when the project reopens.
+	@Test func aScadStillComesBackHowItWasLeft() {
+		#expect(FilePreview.restoredMode(.source, for: url("a.scad")) == .source)
+		#expect(FilePreview.restoredMode(nil, for: url("a.scad")) == .splitRight)
 	}
 
 	/// Offering "Source" for a binary mesh would show a screen of noise.
