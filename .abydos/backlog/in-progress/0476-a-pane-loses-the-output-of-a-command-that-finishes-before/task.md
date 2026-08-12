@@ -290,17 +290,58 @@ any time.
 
 ## Estimate
 
-2026-08-12 07:41 — about thirty minutes - three loaded runs green, two to go, then the app itself
+2026-08-12 07:56 — about fifteen minutes - one loaded run left to confirm, then done
+
+## Proved
+
+`make test` under fourteen spinners, at **34 to 36 runnable threads per core** —
+harder than the 9 to 26 that reproduced it five times out of five. Seven runs:
+
+| runs | result |
+|---|---|
+| 5 | 3 clean; 2 with one failure each, and it is `foldComputationIsReasonableOnHugeFile` |
+| 2 | **clean**, on the final tree, no issues at all |
+
+**No 0476 failure in any of the seven.** The fold budget is not this item's and not
+this item's fault — it wants 10 s of processor time and takes 10.4 to 11.1 under
+that load, it was already red in this item's own *baseline* run before any fix
+existed, and the suite is green with nothing else running: 2498 tests, 357 suites,
+32 s, no issues. Filed as 0480 rather than widened on the way past.
+
+The nicest number is not a pass or a fail. Under that load
+`runsACommandAndCapturesOutput` takes **10 to 12 seconds** where it used to take
+0.03 — and that is the fix doing exactly what it claims. The reading queue really
+is waiting ten seconds for a thread; the output waits with it and arrives. Before,
+the same starvation past 600 ms meant there was nothing left to arrive.
+
+And the app itself, since the launch path changed: built under a throwaway bundle
+identifier, opened on a scratch project, `echo hello-from-0476 && /bin/echo
+second-line` sent to a pane. Both lines in the pane and the prompt back. tmux is
+what is running in it, which is the strongest available check of the new child
+setup — tmux will not start without a controlling terminal it believes in, so
+`login_tty` doing `forkpty`'s old job is confirmed by something that refuses to
+work otherwise. Nothing left behind: no process of its own still
+running, and `leavesNoDescriptorAndNoChildBehind` passes under load in every run.
 
 ## Steps
 
 - [x] Find out when a macOS pty discards output the child has written
 - [x] Find out why holding the slave open hung the standalone reproduction
 - [x] Fix it: hold a descriptor on the child's end of the terminal
+- [x] Take it *before* the fork rather than after — `openpty` + `fork` +
+      `login_tty` instead of `forkpty`. Added after the first fix measured as not
+      working: the descriptor was being taken faithfully, and too late.
+- [x] `PseudoTerminal.diagnostics`, so an empty pane says which mechanism it was
+      instead of needing the afternoon spent again
 - [x] Put `aCommandThatIsAlreadyOverDoesNotLoseItsOutput` back, from `1c0c108`
+- [x] A reproduction that does not need a loaded machine —
+      `outputSurvivesAReaderThatIsNotReading`, and `images/window.c` for the part
+      only a stall can show
+- [x] A test that twenty terminals leave neither a descriptor nor a child, since
+      holding a second descriptor makes both newly possible to get wrong
 - [x] One owner for the master descriptor, closing it once and on the read queue
-- [ ] Prove it — the suite green under the load that reproduced it five times
-- [ ] Check the app itself, since the launch path changed from `forkpty` to
+- [x] Prove it — the suite green under the load that reproduced it five times
+- [x] Check the app itself, since the launch path changed from `forkpty` to
       `openpty` + `fork` + `login_tty`
 - [x] Write down here what was ruled out on the way
 - [x] `spec/terminal.md` says a short command's output is not lost
