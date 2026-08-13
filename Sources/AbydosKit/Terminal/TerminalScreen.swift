@@ -384,36 +384,11 @@ public struct TerminalScreen: Sendable {
 
 	/// Plain text of the whole buffer, used for copy and for feeding an agent's
 	/// output to a parser.
-	/// The last few lines that say something.
-	///
-	/// Used to show that a long-running agent is alive without making the user
-	/// switch to its terminal: a status message it chooses to send is sparse,
-	/// but its output moves continuously.
-	///
-	/// Lines made only of frame — box drawing, rules, a bare prompt character —
-	/// are skipped. A full-screen TUI keeps its input box pinned to the bottom,
-	/// so the last non-blank lines are its borders, and a tail of those tells
-	/// you nothing about whether anything is happening.
-	public func recentLines(_ count: Int) -> [String] {
-		guard count > 0 else { return [] }
-		var result: [String] = []
-		var index = totalLineCount - 1
-		while index >= 0, result.count < count {
-			if let line = line(at: index) {
-				let text = line.text.trimmingCharacters(in: .whitespaces)
-				if Self.isSubstantive(text) { result.append(text) }
-			}
-			index -= 1
-		}
-		return result.reversed()
-	}
-
-	/// Whether a line carries words rather than decoration.
-	static func isSubstantive(_ text: String) -> Bool {
-		text.unicodeScalars.contains {
-			CharacterSet.alphanumerics.contains($0)
-		}
-	}
+	// `recentLines` and `isSubstantive` used to be here. They moved to the
+	// `TerminalGridReading` extension in `TerminalSelection.swift` for item
+	// 0485, unchanged, so that both engines have them; `TerminalScreen`
+	// conforms, so `screen.recentLines(3)` and `TerminalScreen.isSubstantive`
+	// still resolve to exactly the same code.
 
 	public func allText() -> String {
 		(Array(scrollback) + lines).map(\.text).joined(separator: "\n")

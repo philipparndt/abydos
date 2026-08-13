@@ -1,14 +1,21 @@
 import AppKit
 import AbydosKit
 
-/// Renders a `TerminalEmulator`'s grid and forwards input to its process.
+/// Renders a `TerminalEngine`'s grid and forwards input to its process.
 ///
 /// Same virtualisation principle as the code view: only the rows in the
 /// viewport are drawn, and cells are batched into runs of identical attributes
 /// so a full-colour screen costs a handful of draw calls rather than one per
 /// character.
 final class TerminalView: NSView, NSTextInputClient {
-	private let emulator: TerminalEmulator
+	/// Whatever is emulating this pane.
+	///
+	/// A `TerminalEngine` rather than a `TerminalEmulator` since item 0485, which
+	/// is what makes `Settings.terminalGhosttyEngine` mean something. The property
+	/// kept its name on purpose: renaming it would have turned eighty-four call
+	/// sites into diff noise around the handful of lines that actually changed,
+	/// and this is the file the item most wanted left recognisable.
+	private let emulator: TerminalEngine
 	private let pty: PseudoTerminal
 
 	/// Fired when the process exits, so the panel can label the tab.
@@ -130,7 +137,7 @@ final class TerminalView: NSView, NSTextInputClient {
 		command: (executable: String, arguments: [String])? = nil,
 		startsProcess: Bool = true
 	) {
-		emulator = TerminalEmulator(rows: 24, columns: 80)
+		emulator = Self.makeEngine(rows: 24, columns: 80)
 		pty = PseudoTerminal()
 		super.init(frame: .zero)
 
@@ -299,14 +306,14 @@ final class TerminalView: NSView, NSTextInputClient {
 					executable: command.executable,
 					arguments: command.arguments,
 					workingDirectory: launch.0,
-					rows: self.emulator.screen.rows,
-					columns: self.emulator.screen.columns
+					rows: self.emulator.grid.rows,
+					columns: self.emulator.grid.columns
 				)
 			} else {
 				self.pty.startLoginShell(
 					workingDirectory: launch.0,
-					rows: self.emulator.screen.rows,
-					columns: self.emulator.screen.columns
+					rows: self.emulator.grid.rows,
+					columns: self.emulator.grid.columns
 				)
 			}
 			self.startCursorBlink()
@@ -651,7 +658,7 @@ final class TerminalView: NSView, NSTextInputClient {
 		let visible = visibleRect
 		guard visible.width >= 1, visible.height >= 1 else { return }
 
-		let screen = emulator.screen
+		let screen = emulator.grid
 		let first = max(0, Int(floor((visible.minY - Self.verticalInset) / cellHeight)))
 		let last = min(shownLineCount, Int(ceil((visible.maxY - Self.verticalInset) / cellHeight)) + 1)
 		guard last > first else { return }
@@ -777,7 +784,7 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// The cursor is drawn over a cell that is otherwise unchanged, so both the
 	/// row it left and the row it is on have to be repainted.
 	private func invalidateCursorRows() {
-		let row = emulator.screen.scrollback.count + emulator.cursorRow
+		let row = emulator.grid.scrollbackCount + emulator.cursorRow
 		guard row != lastDrawnCursorRow else { return }
 		if let previous = lastDrawnCursorRow {
 			setNeedsDisplay(rect(forAbsoluteRows: previous...previous))
@@ -873,7 +880,7 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// the document height — goes through this one definition rather than
 	/// through the screen's own count.
 	var shownLineCount: Int {
-		emulator.screen.totalLineCount
+		emulator.grid.totalLineCount
 	}
 
 	/// How much of the pane's height is not a whole row.
@@ -928,7 +935,7 @@ final class TerminalView: NSView, NSTextInputClient {
 		let columns = max(20, Int(floor(usableWidth / max(1, cellWidth))))
 		let rows = max(4, Int(floor(usableHeight / max(1, cellHeight))))
 
-		guard rows != emulator.screen.rows || columns != emulator.screen.columns else { return }
+		guard rows != emulator.grid.rows || columns != emulator.grid.columns else { return }
 		// A resize reflows what the absolute rows mean, and there is no honest
 		// mapping from the old grid to the new one.
 		setSelection(nil)
@@ -939,8 +946,8 @@ final class TerminalView: NSView, NSTextInputClient {
 
 	private func updateFrameSize() {
 		let totalRows = emulator.isAlternateScreen
-			? emulator.screen.rows
-			: emulator.screen.totalLineCount
+			? emulator.grid.rows
+			: emulator.grid.totalLineCount
 		let height = CGFloat(totalRows) * cellHeight + Self.verticalInset * 2
 		let width = enclosingScrollView?.contentSize.width ?? bounds.width
 		let newSize = NSSize(width: max(width, 10), height: max(height, 10))
@@ -996,7 +1003,7 @@ final class TerminalView: NSView, NSTextInputClient {
 		TerminalPalette.background.setFill()
 		dirtyRect.fill()
 
-		let screen = emulator.screen
+		let screen = emulator.grid
 		let firstRow = max(0, Int(floor((dirtyRect.minY - Self.verticalInset) / cellHeight)))
 		let lastRow = min(shownLineCount, Int(ceil((dirtyRect.maxY - Self.verticalInset) / cellHeight)) + 1)
 		guard lastRow > firstRow else { return }
@@ -1068,7 +1075,7 @@ final class TerminalView: NSView, NSTextInputClient {
 		guard emulator.graphics.hasVirtualPlacements else { return [] }
 		var runs: [UnicodePlaceholder.Run] = []
 		for index in firstRow..<lastRow {
-			guard let line = emulator.screen.line(at: index) else { continue }
+			guard let line = emulator.grid.line(at: index) else { continue }
 			runs += UnicodePlaceholder.runs(in: line.cells, screenRow: index)
 		}
 		guard !runs.isEmpty else { return [] }
@@ -1473,7 +1480,7 @@ final class TerminalView: NSView, NSTextInputClient {
 		// the foot of the pane, on a line that is not the one it is on.
 		guard place.row < shownLineCount else { return }
 
-		let screen = emulator.screen
+		let screen = emulator.grid
 		let row = place.row
 		let column = place.column
 		let x = (Self.horizontalInset + CGFloat(column) * cellWidth).rounded()
@@ -1534,7 +1541,7 @@ final class TerminalView: NSView, NSTextInputClient {
 		guard cursorVisible else { return nil }
 
 		let here = (
-			row: emulator.screen.scrollback.count + emulator.cursorRow,
+			row: emulator.grid.scrollbackCount + emulator.cursorRow,
 			column: emulator.cursorColumn
 		)
 		guard !emulator.isCursorVisible else {
@@ -1638,7 +1645,7 @@ final class TerminalView: NSView, NSTextInputClient {
 		return true
 	}
 
-	var totalRowsForTesting: Int { max(1, emulator.screen.totalLineCount) }
+	var totalRowsForTesting: Int { max(1, emulator.grid.totalLineCount) }
 
 	/// Where the process in the foreground of this terminal is.
 	func currentDirectory() -> URL? { pty.currentDirectory() }
@@ -1673,25 +1680,44 @@ final class TerminalView: NSView, NSTextInputClient {
 			// so the first question about any terminal bug report is which one
 			// drew it, and this is where the answer is — off the running app,
 			// rather than by asking somebody to remember a setting.
-			Self.engineNameForTesting,
+			engineNameForTesting,
 			emulator.isAlternateScreen ? "yes" : "no",
-			emulator.screen.rows, emulator.screen.columns, max(20, fits),
+			emulator.grid.rows, emulator.grid.columns, max(20, fits),
 			windowWidth, clip.width, clipFrame, scale, cellWidth,
 			frame.height, clip.height, clip.origin.y, bottomOfLastRow,
 			bottomOfLastRow <= clip.origin.y + clip.height + 0.5 ? "yes" : "NO",
-			max(20, fits) == emulator.screen.columns ? "yes" : "NO"
+			max(20, fits) == emulator.grid.columns ? "yes" : "NO"
 		) + " " + winsizeForTesting
 	}
 
-	/// The engine this pane is using, and — while the switch is not yet wired
-	/// through this view — what the setting is asking for, so the two can be
-	/// told apart. `libghostty-vt(requested)` means somebody has turned the
-	/// setting on and is *not* getting it, which is the honest thing to print
-	/// until the seam reaches this file. See item 0474.
-	static var engineNameForTesting: String {
-		Settings.shared.terminalGhosttyEngine
-			? "\(GhosttyTerminalEngine.engineName)(requested,not-wired)"
-			: TerminalEmulator.engineName
+	/// The engine this pane is actually using.
+	///
+	/// Read off the instance rather than off the setting, which is the difference
+	/// between reporting what is drawing and reporting what somebody asked for.
+	/// A pane made before the setting was changed keeps the engine it was made
+	/// with, and this says so. Item 0474 added it and item 0485 made it true.
+	var engineNameForTesting: String { type(of: emulator).engineName }
+
+	/// Builds the engine the setting asks for.
+	///
+	/// **The setting is read once, when a pane is made**, and not afterwards: an
+	/// engine holds the scrollback, the modes and the images, and swapping one out
+	/// under a running shell would throw all three away mid-session. Turning the
+	/// setting on therefore applies to the next pane, which is the same rule
+	/// `terminalGPURendering` follows.
+	///
+	/// If libghostty-vt will not start — the library missing, or
+	/// `ghostty_terminal_new` failing — this falls back to ours rather than
+	/// handing back an engine whose every call is a no-op. A pane that draws
+	/// nothing is worse than a pane drawn by the other engine, and
+	/// `--report-geometry` prints which one it got.
+	private static func makeEngine(rows: Int, columns: Int) -> TerminalEngine {
+		guard Settings.shared.terminalGhosttyEngine else {
+			return TerminalEmulator(rows: rows, columns: columns)
+		}
+		let ghostty = GhosttyTerminalEngine(rows: rows, columns: columns)
+		guard ghostty.isUsable else { return TerminalEmulator(rows: rows, columns: columns) }
+		return ghostty
 	}
 
 	/// What the kernel says this pane is, which is what the program sizing a
@@ -1728,7 +1754,7 @@ final class TerminalView: NSView, NSTextInputClient {
 		let rows = 40
 		let width = max(bounds.width, 400)
 		let height = CGFloat(rows) * cellHeight + Self.verticalInset * 2
-		let screen = emulator.screen
+		let screen = emulator.grid
 		var lines: [(index: Int, line: TerminalLine)] = []
 		for row in 0..<rows {
 			guard let line = screen.line(at: row) else { continue }
@@ -1745,7 +1771,7 @@ final class TerminalView: NSView, NSTextInputClient {
 		)
 		renderer.buildImages(
 			placements: emulator.graphics.placements
-				+ placeholderPlacements(from: 0, to: emulator.screen.scrollback.count + emulator.screen.rows),
+				+ placeholderPlacements(from: 0, to: emulator.grid.scrollbackCount + emulator.grid.rows),
 			store: emulator.graphics,
 			frame: frame
 		)
@@ -1756,7 +1782,7 @@ final class TerminalView: NSView, NSTextInputClient {
 			// Drawn whatever has focus: a window rendered offscreen has none,
 			// and the cursor is one of the things worth being able to look at.
 			cursor: .init(
-				row: screen.scrollback.count + emulator.cursorRow,
+				row: screen.scrollbackCount + emulator.cursorRow,
 				column: emulator.cursorColumn,
 				colour: TerminalPalette.cursor.components
 			)
@@ -1774,7 +1800,7 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// What is on the screen and in the scrollback, for a check that something
 	/// typed into a terminal answered.
 	var screenTextForTesting: String {
-		let screen = emulator.screen
+		let screen = emulator.grid
 		return (0..<screen.totalLineCount)
 			.compactMap { screen.line(at: $0)?.text }
 			.joined(separator: "\n")
@@ -1952,11 +1978,14 @@ final class TerminalView: NSView, NSTextInputClient {
 			code = Int(scalar.value)
 		}
 
+		// Every argument spelled out: a protocol requirement cannot carry default
+		// values, and ⌘ is never passed on because the app keeps it.
 		return emulator.encodeModifiedKey(
 			code: code,
 			shift: flags.contains(.shift),
 			option: flags.contains(.option),
-			control: flags.contains(.control)
+			control: flags.contains(.control),
+			command: false
 		)
 	}
 
@@ -2144,7 +2173,7 @@ final class TerminalView: NSView, NSTextInputClient {
 		let lastRow = max(0, shownLineCount - 1)
 		return TerminalPosition(
 			row: max(0, min(row, lastRow)),
-			column: max(0, min(column, emulator.screen.columns))
+			column: max(0, min(column, emulator.grid.columns))
 		)
 	}
 
@@ -2160,7 +2189,7 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// every discarded line renumbers everything above the selection, and a
 	/// selection left alone would drift down the screen on its own.
 	private func realignSelectionForDiscardedLines() {
-		let discarded = emulator.screen.discardedLineCount
+		let discarded = emulator.grid.discardedLineCount
 		defer { lastDiscardedLineCount = discarded }
 
 		let shift = discarded - lastDiscardedLineCount
@@ -2189,7 +2218,7 @@ final class TerminalView: NSView, NSTextInputClient {
 		let column = Int((point.x - Self.horizontalInset) / max(1, cellWidth)) + 1
 		var row = Int((point.y - Self.verticalInset) / max(1, cellHeight))
 		// The protocol addresses the visible grid, so scrollback is subtracted.
-		row -= emulator.screen.scrollback.count
+		row -= emulator.grid.scrollbackCount
 		return (max(1, row + 1), max(1, column))
 	}
 
@@ -2197,7 +2226,7 @@ final class TerminalView: NSView, NSTextInputClient {
 	private func windowPoint(row: Int, column: Int) -> NSPoint {
 		let x = Self.horizontalInset + (CGFloat(column - 1) + 0.5) * cellWidth
 		let y = Self.verticalInset
-			+ (CGFloat(row - 1 + emulator.screen.scrollback.count) + 0.5) * cellHeight
+			+ (CGFloat(row - 1 + emulator.grid.scrollbackCount) + 0.5) * cellHeight
 		return convert(NSPoint(x: x, y: y), to: nil)
 	}
 
@@ -2241,7 +2270,7 @@ final class TerminalView: NSView, NSTextInputClient {
 
 	/// The visible grid, so a test can aim at the last row.
 	var gridSizeForTesting: (rows: Int, columns: Int) {
-		(emulator.screen.rows, emulator.screen.columns)
+		(emulator.grid.rows, emulator.grid.columns)
 	}
 
 	private func modifiers(_ event: NSEvent) -> (Bool, Bool, Bool) {
@@ -2311,9 +2340,9 @@ final class TerminalView: NSView, NSTextInputClient {
 		switch event.clickCount {
 		case 2:
 			let position = characterPosition(for: event)
-			setSelection(emulator.screen.wordSelection(atRow: position.row, column: position.column))
+			setSelection(emulator.grid.wordSelection(atRow: position.row, column: position.column))
 		case 3...:
-			setSelection(emulator.screen.lineSelection(atRow: characterPosition(for: event).row))
+			setSelection(emulator.grid.lineSelection(atRow: characterPosition(for: event).row))
 		default:
 			let position = selectionPosition(for: event)
 			isSelecting = true
@@ -2378,7 +2407,7 @@ final class TerminalView: NSView, NSTextInputClient {
 		let row = Int((point.y - Self.verticalInset) / max(1, cellHeight))
 		let column = Int((point.x - Self.horizontalInset) / max(1, cellWidth))
 		guard row >= 0, column >= 0,
-		      let line = emulator.screen.line(at: row),
+		      let line = emulator.grid.line(at: row),
 		      column < line.cells.count
 		else { return nil }
 
@@ -2489,7 +2518,11 @@ final class TerminalView: NSView, NSTextInputClient {
 					button: button,
 					row: position.row,
 					column: position.column,
-					isRelease: false
+					isRelease: false,
+					isDrag: false,
+					shift: false,
+					option: false,
+					control: false
 				) {
 					pty.write(sequence)
 				}
@@ -2515,14 +2548,14 @@ final class TerminalView: NSView, NSTextInputClient {
 		// Only what is selected. Copying the entire buffer when nothing is
 		// selected is a surprise nobody wants pasted somewhere else.
 		guard let selection else { return }
-		let text = emulator.screen.text(in: selection)
+		let text = emulator.grid.text(in: selection)
 		guard !text.isEmpty else { return }
 		NSPasteboard.general.clearContents()
 		NSPasteboard.general.setString(text, forType: .string)
 	}
 
 	@objc override func selectAll(_ sender: Any?) {
-		setSelection(emulator.screen.fullSelection)
+		setSelection(emulator.grid.fullSelection)
 	}
 
 	@objc private func clearSelection() {
@@ -2581,7 +2614,7 @@ final class TerminalView: NSView, NSTextInputClient {
 
 	/// The last few non-blank lines, for a progress summary elsewhere.
 	func recentOutput(_ count: Int) -> [String] {
-		emulator.screen.recentLines(count)
+		emulator.grid.recentLines(count)
 	}
 
 	/// Writes text as though typed. Used to drive a session programmatically —
@@ -2692,7 +2725,7 @@ final class TerminalView: NSView, NSTextInputClient {
 
 	func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
 		guard let window else { return .zero }
-		let row = emulator.screen.scrollback.count + emulator.cursorRow
+		let row = emulator.grid.scrollbackCount + emulator.cursorRow
 		let rect = NSRect(
 			x: Self.horizontalInset + CGFloat(emulator.cursorColumn) * cellWidth,
 			y: Self.verticalInset + CGFloat(row) * cellHeight,

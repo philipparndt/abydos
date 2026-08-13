@@ -204,14 +204,398 @@ struct GhosttyEngineTests {
 
 	/// The engine says what it cannot do, rather than drawing something
 	/// plausible. This is the condition for the option being safe to ship
-	/// half-built: kitty graphics is the notable gap and it has to be named.
+	/// half-built.
 	@Test func theGhosttyEngineDeclaresWhatIsMissing() {
 		let theirs = GhosttyTerminalEngine(rows: 4, columns: 10)
-		#expect(!theirs.unimplemented.isEmpty)
-		#expect(theirs.unimplemented.contains { $0.contains("Kitty graphics") })
+		theirs.cellPixelSize = (width: 10, height: 20)
+		// Three entries and each is a refusal or a named divergence, not a guess:
+		// OSC 440 does nothing at all, modifyOtherKeys sends the ordinary bytes
+		// rather than a sequence nobody asked for, and the tmux prompt row is
+		// *named* rather than a silently different pane. Item 0485 emptied the rest.
+		#expect(theirs.unimplemented.count == 3)
+		#expect(theirs.unimplemented.contains { $0.contains("OSC 440") })
+		#expect(theirs.unimplemented.contains { $0.contains("status bar is off") })
+		#expect(theirs.unimplemented.contains { $0.contains("modifyOtherKeys") })
+		// Kitty graphics is no longer on the list, which is item 0485's step one.
+		#expect(!theirs.unimplemented.contains { $0.contains("Kitty graphics: images") })
 		// And ours claims nothing missing, because every terminal test in the
 		// suite was written against it.
 		#expect(TerminalEmulator(rows: 4, columns: 10).unimplemented.isEmpty)
+	}
+
+	/// A pane with no cell size says so rather than pretending it could place a
+	/// picture. A cell of no pixels is how a terminal tells `icat` it cannot show
+	/// one, and 0468 is what happens when that answer is wrong.
+	@Test func anEngineWithNoCellSizeSaysPicturesCannotBePlaced() {
+		let theirs = GhosttyTerminalEngine(rows: 4, columns: 10)
+		#expect(theirs.unimplemented.contains { $0.contains("no cell size") })
+	}
+
+	// MARK: - The sixteen members, both engines held to one answer (item 0485)
+
+	/// Both engines, the same bytes, the same modes.
+	///
+	/// These are what `TerminalView` asks before it decides whether to wrap a
+	/// paste, report focus, hold a frame, send a mouse event or draw a bar
+	/// cursor — so a disagreement here is a pane that behaves differently under
+	/// the setting, which is the whole thing item 0485 is trying not to ship.
+	@Test func theModesAgreeInBothEngines() throws {
+		let ours = TerminalEmulator(rows: 6, columns: 20)
+		let theirs = GhosttyTerminalEngine(rows: 6, columns: 20)
+		try #require(theirs.isUsable)
+
+		for engine: TerminalEngine in [ours, theirs] {
+			#expect(engine.bracketedPaste == false)
+			#expect(engine.reportsFocus == false)
+			#expect(engine.isSynchronizingOutput == false)
+			#expect(engine.mouseTracking == .off)
+			#expect(engine.cursorShape == .block)
+		}
+
+		// Everything a program turns on, in one go.
+		let on = "\u{1B}[?2004h\u{1B}[?1004h\u{1B}[?1003h\u{1B}[?2026h\u{1B}[5 q"
+		ours.write(on)
+		theirs.write(on)
+		for engine: TerminalEngine in [ours, theirs] {
+			#expect(engine.bracketedPaste == true)
+			#expect(engine.reportsFocus == true)
+			#expect(engine.isSynchronizingOutput == true)
+			#expect(engine.mouseTracking == .anyEvent)
+			#expect(engine.cursorShape == .bar)
+		}
+
+		// And off again, because a mode that cannot be cleared freezes a pane:
+		// synchronised output in particular stops the screen being drawn at all.
+		let off = "\u{1B}[?2004l\u{1B}[?1004l\u{1B}[?1003l\u{1B}[?2026l\u{1B}[2 q"
+		ours.write(off)
+		theirs.write(off)
+		for engine: TerminalEngine in [ours, theirs] {
+			#expect(engine.bracketedPaste == false)
+			#expect(engine.reportsFocus == false)
+			#expect(engine.isSynchronizingOutput == false)
+			#expect(engine.mouseTracking == .off)
+			#expect(engine.cursorShape == .block)
+		}
+	}
+
+	/// The three weaker mouse modes, which the view treats differently: a program
+	/// that asked for presses only must not be sent every movement.
+	@Test func eachMouseTrackingModeIsReportedInBothEngines() throws {
+		for (mode, expected) in [
+			(1000, TerminalMouseTracking.click),
+			(1002, .buttonEvent),
+			(1003, .anyEvent),
+		] {
+			let ours = TerminalEmulator(rows: 6, columns: 20)
+			let theirs = GhosttyTerminalEngine(rows: 6, columns: 20)
+			try #require(theirs.isUsable)
+			ours.write("\u{1B}[?\(mode)h")
+			theirs.write("\u{1B}[?\(mode)h")
+			#expect(ours.mouseTracking == expected)
+			#expect(theirs.mouseTracking == expected, "mode \(mode)")
+		}
+	}
+
+	/// Arrow keys, which change shape when a program asks for application cursor
+	/// keys — and every full-screen program does.
+	@Test func arrowKeysEncodeTheSameInBothEngines() throws {
+		let ours = TerminalEmulator(rows: 6, columns: 20)
+		let theirs = GhosttyTerminalEngine(rows: 6, columns: 20)
+		try #require(theirs.isUsable)
+
+		for direction: TerminalArrowKey in [.up, .down, .left, .right] {
+			#expect(ours.encodeArrow(direction) == theirs.encodeArrow(direction))
+			#expect(ours.encodeArrow(direction).hasPrefix("\u{1B}["))
+		}
+
+		ours.write("\u{1B}[?1h")
+		theirs.write("\u{1B}[?1h")
+		for direction: TerminalArrowKey in [.up, .down, .left, .right] {
+			#expect(ours.encodeArrow(direction) == theirs.encodeArrow(direction))
+			#expect(ours.encodeArrow(direction).hasPrefix("\u{1B}O"), "application cursor keys")
+		}
+	}
+
+	/// The kitty keyboard protocol, which is how a program tells Shift+Enter from
+	/// Enter. Both engines must answer nothing until it is asked for, and then the
+	/// same bytes.
+	@Test func theKittyKeyboardProtocolEncodesTheSameInBothEngines() throws {
+		let ours = TerminalEmulator(rows: 6, columns: 20)
+		let theirs = GhosttyTerminalEngine(rows: 6, columns: 20)
+		try #require(theirs.isUsable)
+
+		// Nothing asked for: the caller's own key handling keeps the keystroke.
+		for engine: TerminalEngine in [ours, theirs] {
+			#expect(engine.reportsModifiedKeys == false)
+			#expect(engine.encodeModifiedKey(
+				code: 13, shift: true, option: false, control: false, command: false) == nil)
+		}
+
+		ours.write("\u{1B}[>1u")
+		theirs.write("\u{1B}[>1u")
+		for engine: TerminalEngine in [ours, theirs] {
+			#expect(engine.reportsModifiedKeys == true)
+		}
+		// Shift+Enter, Ctrl+I and Ctrl+A — the pairs the protocol exists for.
+		for (code, shift, control) in [(13, true, false), (9, false, true), (97, false, true)] {
+			let a = ours.encodeModifiedKey(
+				code: code, shift: shift, option: false, control: control, command: false)
+			let b = theirs.encodeModifiedKey(
+				code: code, shift: shift, option: false, control: control, command: false)
+			#expect(a == b, "code \(code): ours \(a ?? "nil") theirs \(b ?? "nil")")
+			#expect(a != nil)
+		}
+		// Nothing held stays what it always was, in both.
+		#expect(ours.encodeModifiedKey(
+			code: 13, shift: false, option: false, control: false, command: false) == nil)
+		#expect(theirs.encodeModifiedKey(
+			code: 13, shift: false, option: false, control: false, command: false) == nil)
+	}
+
+	/// **xterm's `modifyOtherKeys` is the one named divergence in key encoding**,
+	/// and this test is what keeps it honest.
+	///
+	/// Ours honours `CSI > 4 ; 2 m`. libghostty-vt does not report whether it is
+	/// on: no `GHOSTTY_TERMINAL_DATA_*` kind carries it, and its own key encoder
+	/// cannot be used as an oracle because that encoder emits the
+	/// `CSI 27;mods;code~` form whether or not the program asked — measured, and
+	/// written down in `GhosttyKeyEncoding`.
+	///
+	/// So under this engine an ambiguous key sends its ordinary bytes, which is the
+	/// conservative direction and what every terminal without the feature does. It
+	/// is named in `unimplemented`, and this test fails if that entry is ever
+	/// dropped without the behaviour changing.
+	@Test func theOlderModifyOtherKeysProtocolIsOursAloneAndSaysSo() throws {
+		let ours = TerminalEmulator(rows: 6, columns: 20)
+		let theirs = GhosttyTerminalEngine(rows: 6, columns: 20)
+		try #require(theirs.isUsable)
+
+		ours.write("\u{1B}[>4;2m")
+		theirs.write("\u{1B}[>4;2m")
+		#expect(ours.reportsModifiedKeys == true)
+		#expect(ours.encodeModifiedKey(
+			code: 13, shift: true, option: false, control: false, command: false)
+			== "\u{1B}[27;2;13~")
+
+		// Theirs sends nothing special, and admits it in words.
+		#expect(theirs.reportsModifiedKeys == false)
+		#expect(theirs.encodeModifiedKey(
+			code: 13, shift: true, option: false, control: false, command: false) == nil)
+		#expect(theirs.unimplemented.contains { $0.contains("modifyOtherKeys") })
+	}
+
+	/// Mouse reporting, in both forms. SGR is the only one that can address a
+	/// terminal wider than 223 columns, and the legacy form is what a program that
+	/// never asked for SGR still gets.
+	@Test func mouseEventsEncodeTheSameInBothEngines() throws {
+		let ours = TerminalEmulator(rows: 30, columns: 100)
+		let theirs = GhosttyTerminalEngine(rows: 30, columns: 100)
+		try #require(theirs.isUsable)
+
+		// Not tracking: nothing at all, so a click selects text instead.
+		for engine: TerminalEngine in [ours, theirs] {
+			#expect(engine.encodeMouse(
+				button: .left, row: 3, column: 5, isRelease: false,
+				isDrag: false, shift: false, option: false, control: false) == nil)
+		}
+
+		ours.write("\u{1B}[?1002h\u{1B}[?1006h")
+		theirs.write("\u{1B}[?1002h\u{1B}[?1006h")
+		for (button, isRelease, isDrag) in [
+			(TerminalMouseButton.left, false, false),
+			(.left, true, false),
+			(.left, false, true),
+			(.right, false, false),
+			(.scrollUp, false, false),
+		] {
+			let a = ours.encodeMouse(
+				button: button, row: 3, column: 5, isRelease: isRelease,
+				isDrag: isDrag, shift: false, option: false, control: false)
+			let b = theirs.encodeMouse(
+				button: button, row: 3, column: 5, isRelease: isRelease,
+				isDrag: isDrag, shift: false, option: false, control: false)
+			#expect(a == b, "\(button) release=\(isRelease) drag=\(isDrag)")
+			#expect(a != nil)
+		}
+
+		// The legacy form, with SGR turned back off.
+		ours.write("\u{1B}[?1006l")
+		theirs.write("\u{1B}[?1006l")
+		#expect(ours.encodeMouse(
+			button: .left, row: 3, column: 5, isRelease: false,
+			isDrag: false, shift: false, option: false, control: false)
+			== theirs.encodeMouse(
+				button: .left, row: 3, column: 5, isRelease: false,
+				isDrag: false, shift: false, option: false, control: false))
+	}
+
+	/// A hyperlink: OSC 8 through both engines, and the address readable back out
+	/// of the cell it is on. libghostty-vt hands back the URI itself rather than an
+	/// index, so this is the interning working.
+	@Test func aHyperlinkIsReadableFromTheCellInBothEngines() throws {
+		let ours = TerminalEmulator(rows: 4, columns: 20)
+		let theirs = GhosttyTerminalEngine(rows: 4, columns: 20)
+		try #require(theirs.isUsable)
+
+		let script = "\u{1B}]8;;https://example.com/x\u{1B}\\link\u{1B}]8;;\u{1B}\\ plain"
+		ours.write(script)
+		theirs.write(script)
+
+		for engine: TerminalEngine in [ours, theirs] {
+			let grid = engine.grid
+			let row = try #require(grid.line(at: grid.scrollbackCount))
+			let id = row.cells[0].attributes.link
+			#expect(id != 0, "\(type(of: engine).engineName) lost the hyperlink")
+			#expect(engine.link(for: id) == "https://example.com/x")
+			// And the text after the link is not part of it.
+			#expect(row.cells[5].attributes.link == 0)
+		}
+	}
+
+	/// A BEL reaches the application in both engines.
+	@Test func theBellRingsInBothEngines() throws {
+		let ours = TerminalEmulator(rows: 4, columns: 10)
+		let theirs = GhosttyTerminalEngine(rows: 4, columns: 10)
+		try #require(theirs.isUsable)
+
+		var rung = 0
+		ours.onBell = { rung += 1 }
+		theirs.onBell = { rung += 1 }
+		ours.write("a\u{07}")
+		theirs.write("a\u{07}")
+		#expect(rung == 2)
+	}
+
+	/// OSC 52, which is how a copy made inside tmux or over ssh reaches the
+	/// clipboard of the machine somebody is sitting at.
+	@Test func aClipboardWriteArrivesInBothEngines() throws {
+		let ours = TerminalEmulator(rows: 4, columns: 10)
+		let theirs = GhosttyTerminalEngine(rows: 4, columns: 10)
+		try #require(theirs.isUsable)
+
+		var written: [String] = []
+		ours.onClipboardWrite = { written.append($0) }
+		theirs.onClipboardWrite = { written.append($0) }
+		let payload = Data("copied".utf8).base64EncodedString()
+		ours.write("\u{1B}]52;c;\(payload)\u{1B}\\")
+		theirs.write("\u{1B}]52;c;\(payload)\u{1B}\\")
+		#expect(written == ["copied", "copied"])
+	}
+
+	/// The grid snapshot, which the view reads about twenty times a frame, is the
+	/// visible rows and not the scrollback.
+	///
+	/// 0474 measured the old shape at 4.372 ms a frame — 524,000 cells across FFI
+	/// to draw forty rows — and this is the property that fixed it, asserted
+	/// rather than timed: `make timing` is where a budget lives, and a count of
+	/// what the snapshot holds is stable on any machine at any load.
+	@Test func theSnapshotHoldsTheVisibleRowsAndFetchesHistoryOnDemand() throws {
+		let theirs = GhosttyTerminalEngine(rows: 10, columns: 20)
+		try #require(theirs.isUsable)
+		for index in 0..<200 { theirs.write("row \(index)\r\n") }
+
+		let grid = theirs.grid
+		#expect(grid.totalLineCount > 100, "there should be history to not copy")
+		// The visible band reads straight out of the snapshot.
+		let last = try #require(grid.line(at: grid.totalLineCount - 2))
+		#expect(last.text == "row 199")
+		// And a row from history is still readable — fetched, then kept.
+		let old = try #require(grid.line(at: 5))
+		#expect(old.text == "row 5")
+		#expect(grid.line(at: 5)?.text == "row 5")
+		// Out of range in either direction is nil rather than a guess.
+		#expect(grid.line(at: -1) == nil)
+		#expect(grid.line(at: grid.totalLineCount) == nil)
+	}
+
+	/// **The render path is on `render.h`, not on grid references.**
+	///
+	/// Grid references say so themselves — "not meant to be used as the core of a
+	/// render loop … Use the render state API for that" — and 0474 kept them only
+	/// because they were the obviously-correct version to compare against. They are
+	/// still the fallback, and still what reads scrollback, which is not a render
+	/// loop. This asserts the fallback is not what is running: it produces
+	/// identical rows, which is what makes it safe and also what would make a
+	/// permanent silent fallback invisible.
+	@Test func theVisibleRowsComeFromTheRenderState() throws {
+		let theirs = GhosttyTerminalEngine(rows: 6, columns: 20)
+		try #require(theirs.isUsable)
+		theirs.write("hello\r\n\u{1B}[1;31mred\u{1B}[0m")
+
+		_ = theirs.grid
+		#expect(theirs.usedRenderStateForVisibleRows)
+	}
+
+	/// And the two ways of reading the same rows agree, cell for cell, on a real
+	/// capture. This is what licenses the fallback to exist at all.
+	@Test func theRenderStateAndGridReferencesReadTheSameRows() throws {
+		let data = try fixture("tmux-prompt.bin")
+		let theirs = GhosttyTerminalEngine(rows: 30, columns: 100)
+		try #require(theirs.isUsable)
+		theirs.write(data)
+
+		let grid = theirs.grid
+		try #require(theirs.usedRenderStateForVisibleRows)
+		let fromRenderState = rowsOf(grid, from: grid.scrollbackCount, count: 30)
+		let fromGridRefs = (0..<30).map { offset in
+			theirs.copyLines(from: grid.scrollbackCount + offset, count: 1)
+				.first?.text ?? "<none>"
+		}
+		let differing = zip(fromRenderState, fromGridRefs).enumerated()
+			.filter { $0.element.0 != $0.element.1 }.map(\.offset)
+		#expect(differing.isEmpty, "rows \(differing) differ between the two read paths")
+	}
+
+	/// A snapshot asked for a history row *after* the terminal has moved on
+	/// refuses rather than handing back whatever is at that index now.
+	///
+	/// The visible band it copied is still the frame it was given; history it never
+	/// copied cannot be, and a selection quietly copying text it was never over is
+	/// the worst kind of failure this engine could have.
+	@Test func aStaleSnapshotRefusesAHistoryRowItNeverCopied() throws {
+		let theirs = GhosttyTerminalEngine(rows: 10, columns: 20)
+		try #require(theirs.isUsable)
+		for index in 0..<200 { theirs.write("row \(index)\r\n") }
+
+		let grid = theirs.grid
+		let visibleBefore = grid.line(at: grid.totalLineCount - 2)?.text
+		theirs.write("something else\r\n")
+
+		#expect(grid.line(at: 5) == nil, "a history row from a moved-on terminal")
+		// The copied band is unchanged, which is what "keeps the frame it was
+		// given" means.
+		#expect(grid.line(at: grid.totalLineCount - 2)?.text == visibleBefore)
+	}
+
+	/// `discardedLineCount`, which 0474 found had no answer at all and which the
+	/// scrollbar and the selection both depend on.
+	///
+	/// Both engines are given far more lines than they will keep, and both must
+	/// report that lines went. Not the same *number*: ours prunes by lines and
+	/// libghostty-vt by bytes, so how much history each holds is a design
+	/// difference rather than a bug. What must hold is that the count moves, that
+	/// it only ever grows, and that `discarded + totalLineCount` accounts for every
+	/// line ever produced.
+	@Test func discardedLinesAreCountedInBothEngines() throws {
+		let theirs = GhosttyTerminalEngine(rows: 10, columns: 20)
+		try #require(theirs.isUsable)
+		// A small byte budget, so pruning happens inside a test rather than after
+		// a hundred thousand lines.
+		theirs.setScrollbackByteLimitForTesting(64 * 1024)
+
+		let produced = 20_000
+		for index in 0..<produced { theirs.write("line \(index)\r\n") }
+
+		let grid = theirs.grid
+		#expect(grid.discardedLineCount > 0, "nothing was reported as pruned")
+		// Every line is accounted for: what is kept plus what went is what was
+		// produced. `+1` for the row the cursor is on after the last newline.
+		#expect(grid.discardedLineCount + grid.totalLineCount == produced + 1)
+
+		// And it only grows.
+		let before = grid.discardedLineCount
+		for index in 0..<1_000 { theirs.write("more \(index)\r\n") }
+		#expect(theirs.grid.discardedLineCount >= before)
 	}
 
 	/// Both engines answer to the same name-carrying protocol, so a bug report

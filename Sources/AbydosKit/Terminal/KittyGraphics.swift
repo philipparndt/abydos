@@ -322,6 +322,37 @@ public final class TerminalImageStore {
 
 	public init() {}
 
+	// MARK: Adopting another engine's store
+
+	/// Replaces everything with images and placements worked out elsewhere.
+	///
+	/// Written for item 0485 and used by `GhosttyTerminalEngine` alone. When
+	/// libghostty-vt is the engine, *it* parses the kitty escapes and keeps the
+	/// images and the virtual placements; this store then holds a copy of them so
+	/// that everything on our side of the seam — `placements(for:)`, the texture
+	/// cache in `TerminalView`, the Metal renderer — carries on working from the
+	/// same type it always did.
+	///
+	/// Purely additive: nothing in the old engine calls it, and none of the
+	/// parsing, budgeting or eviction below is reachable from here. `generation`
+	/// is bumped only when something actually changed, because the view's texture
+	/// cache is keyed on it and a bump every frame would rebuild every texture.
+	func adopt(
+		images newImages: [UInt32: TerminalImage],
+		placements newPlacements: [TerminalImagePlacement],
+		virtual newVirtual: [VirtualKey: VirtualPlacement]
+	) {
+		let unchanged = newImages == images
+			&& newPlacements == placements
+			&& newVirtual == virtualPlacements
+		guard !unchanged else { return }
+		images = newImages
+		placements = newPlacements
+		virtualPlacements = newVirtual
+		storedBytes = newImages.values.reduce(0) { $0 + $1.byteCount }
+		generation += 1
+	}
+
 	// MARK: Screens
 
 	/// Placements belong to the screen they were made on.

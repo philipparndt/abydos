@@ -148,9 +148,17 @@ struct TerminalThroughputTests {
 	/// documented as valid only "until the next update to the terminal
 	/// instance", so a snapshot means copying. This measures that copy.
 	///
-	/// It is deliberately the naive copy — `grid_ref` per cell — because that is
-	/// what `GhosttyTerminalEngine` does today. `render.h` exists precisely to
-	/// make this cheap and is the fix; this number is what it has to beat.
+	/// **A byte goes in between every read** (item 0485), and that matters to what
+	/// this measures. The engine caches its snapshot until the next write, because
+	/// `TerminalView` reads `emulator.grid` about twenty times in a frame; reading
+	/// it in a tight loop with nothing arriving would time the cache and report a
+	/// number that is true and useless. A frame in a real terminal follows bytes
+	/// arriving, so the loop makes bytes arrive — one mode set, which invalidates
+	/// the snapshot without changing a single cell.
+	///
+	/// What 0474 measured here was the naive version: `grid_ref` per cell over
+	/// *every* row, 4.372 ms a frame on this shape. Item 0485 made it the visible
+	/// rows through `render.h`, with scrollback fetched only when something asks.
 	@Test func gridSnapshotCost() {
 		let rows = 40, columns = 100
 		for (name, engine) in [
@@ -163,6 +171,9 @@ struct TerminalThroughputTests {
 				let start = Date()
 				var reads = 0
 				while -start.timeIntervalSinceNow < 0.1 {
+					// Cheapest thing that says "the terminal changed" without moving
+					// the cursor, scrolling, or touching a cell.
+					engine.write("\u{1B}[?25h")
 					let grid = engine.grid
 					_ = grid.line(at: grid.totalLineCount - 1)?.cells.count
 					reads += 1
