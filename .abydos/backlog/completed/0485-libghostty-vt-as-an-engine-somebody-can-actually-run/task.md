@@ -86,10 +86,6 @@ keeps it honest. An engine that silently misrenders is worse than no option,
 because the person who notices weeks later cannot tell whether it was the engine,
 the seam or a real bug — and they will be told to look at all three.
 
-## Estimate
-
-2026-08-13 11:18 — wired and green; render.h, the differential tests and the write-up left — about two hours
-
 ## Step one's answer: yes, and nothing has to be exported upstream
 
 **The tmux image path works behind libghostty-vt with no upstream change.** This
