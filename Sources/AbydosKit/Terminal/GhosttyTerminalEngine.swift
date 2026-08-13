@@ -1004,15 +1004,15 @@ public final class GhosttyTerminalEngine: TerminalEngine {
 	private func attributes(
 		of cell: GhosttyCell, at ref: inout GhosttyGridRef
 	) -> TerminalAttributes {
-		var attributes = TerminalAttributes()
+		let plain = TerminalAttributes()
 		var styled = false
 		ghostty_cell_get(cell, GHOSTTY_CELL_DATA_HAS_STYLING, &styled)
-		guard styled else { return attributes }
+		guard styled else { return plain }
 
 		var style = GhosttyStyle()
 		style.size = MemoryLayout<GhosttyStyle>.size
-		guard ghostty_grid_ref_style(&ref, &style) == GHOSTTY_SUCCESS else { return attributes }
-		return self.attributes(from: style)
+		guard ghostty_grid_ref_style(&ref, &style) == GHOSTTY_SUCCESS else { return plain }
+		return attributes(from: style)
 	}
 
 	/// One `GhosttyStyle` as our attributes. Shared by both read paths, so the

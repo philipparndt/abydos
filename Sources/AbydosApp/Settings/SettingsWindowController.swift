@@ -531,14 +531,15 @@ final class SettingsPaneController: NSViewController {
 				// something plausible while quietly lacking a whole category is
 				// worse than no option at all: whoever notices weeks later
 				// cannot tell whether it was the engine, the seam or a real bug.
-				// Item 0474.
+				// Items 0474 and 0485.
 				.toggle(
 					title: "Emulate with libghostty-vt (experimental)",
-					help: "Use ghostty's terminal state machine instead of ours. Unfinished, and not "
-						+ "yet connected to the terminal panel — turning it on today changes nothing "
-						+ "but what --report-geometry says. Kitty graphics is not implemented behind "
-						+ "it, and it puts tmux's prompt a row too high when the status bar is off. "
-						+ "Backlog item 474.",
+					help: "Use ghostty's terminal state machine instead of ours: much faster at "
+						+ "plain output, and it reflows on resize, which ours does not. Applies to "
+						+ "panes opened after the change, not to open ones. Three known "
+						+ "differences: `abydos <file>` typed in a pane will not open it, a program "
+						+ "using xterm's older modifyOtherKeys gets ordinary bytes, and tmux's own "
+						+ "prompts draw a row too high when the status bar is off. Backlog item 485.",
 					get: { Settings.shared.terminalGhosttyEngine },
 					set: { Settings.shared.terminalGhosttyEngine = $0 }
 				),
