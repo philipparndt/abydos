@@ -73,14 +73,74 @@ and reading rows off *that* rather than through the protocol thirty-two times. T
 second is smaller and is closer to what the code did before. **A fix that makes the
 option impossible is not a fix** — the setting has to survive.
 
+## Estimate
+
+2026-08-13 13:24 — cause found: the 2.8x was the benchmark, not the code; about an hour left
+
+## The 2.8× is the benchmark, not the code
+
+**Reproduced on one commit, which is what settles it.** `gridSnapshotCost` now
+prints its loop both ways, and both of 0487's numbers come out of the same
+binary at HEAD:
+
+| the loop | fps ceiling | 0487's table |
+|---|---|---|
+| `grid` + `line(at:)`, nothing arriving | **14,846,435** | "before" 14,355,417 |
+| `write("\u{1B}[?25h")` first, then the same | **5,136,060** | "after" 5,060,321 |
+
+Release build, load 6.2 over ten cores, 0.6 per core.
+
+0485 added that write, at `bad228a`, and said why: the libghostty-vt snapshot is
+cached until the next write, so a tight read loop timed the cache. For *our*
+engine the snapshot was already free — a retain of a value type — so the write
+became the only work in the loop, and adding it slowed the line by 2.8×. Two
+different loops, two numbers, one unchanged draw path. **Nothing in that table
+is a measurement of the same thing before and after.**
+
+The lesson is not "the bench was wrong" — 0485 needed that write and was right
+to add it. It is that a benchmark whose *body* changed cannot be compared across
+the change, and this one was compared. Both figures are printed now, each
+labelled, so the next person cannot read one against the other by accident.
+
+## What a frame actually costs, and the existential hypothesis is dead
+
+`drawPathCost` measures a frame the way `TerminalView` asks for one —
+`takeDirtyRange`, `grid`, `totalLineCount`, forty rows of `line(at:)` and their
+cells, `scrollbackCount + cursorRow`, the cursor, the two graphics questions —
+and measures the identical frame off the concrete `TerminalEmulator` beside it.
+Same release binary, same run, load 6.2 over ten cores (0.6 per core):
+
+| | after a write | nothing new |
+|---|---|---|
+| ours, through the seam | **2.32 µs/frame** (430,560 fps) | 2.18 µs (459,786) |
+| ours, concrete, as before 0485 | **2.10 µs/frame** (476,891 fps) | 1.94 µs (516,605) |
+| libghostty-vt, through the seam | 160 µs/frame (6,235 fps) | 2.00 µs (502,135) |
+
+**The seam costs our engine 1.11× a frame: 0.22 µs.** At 60 Hz that is 13 µs a
+second, about one part in eighty thousand of one core. Thirty-two existential
+call sites, a witness table the optimiser cannot specialise, a value type boxed
+on every access — all real, all measured, and all together they come to nothing
+a person could feel. **The hypothesis fits the number that moved and is not the
+cause of anything**, because the number that moved was not a regression.
+
+The libghostty-vt row is worth keeping for its own reason: 160 µs after a write
+and 2 µs with nothing new is the snapshot cache working exactly as 0485 said,
+and it is the reason its frame is eighty times ours rather than eighty thousand.
+
 ## Steps
 
-- [ ] Reproduce it as a number, in a release build, with the setting off
-- [ ] Say what the draw path costs per frame before and after 0485
-- [ ] Confirm or kill the existential hypothesis with a measurement, not a reading
+- [x] Reproduce it as a number, in a release build, with the setting off —
+      both of the table's numbers, from one binary at HEAD. It is the bench
+- [x] Say what the draw path costs per frame before and after 0485 —
+      2.10 µs concrete, 2.32 µs through the seam, on a 16,700 µs frame
+- [x] Confirm or kill the existential hypothesis with a measurement, not a
+      reading — **killed**, at 1.11× of a 2 µs frame
+- [ ] Which build the report was made against, and what is in it
 - [ ] Check `takeDirtyRange` is still reporting what it used to
+- [ ] Measure the felt path in the app itself, in the configuration the report
+      was made in, rather than only the seam in a test
 - [ ] Fix it with the option intact, and say what the number is afterwards
-- [ ] A bench that would have caught this — the suite measured writes and not draws,
+- [x] A bench that would have caught this — the suite measured writes and not draws,
       which is why a 2.8× on the one draw number was the only clue
 - [ ] Write down here what was ruled out on the way
 - [ ] `spec/terminal.md` only if behaviour changed; a performance fix may need no
