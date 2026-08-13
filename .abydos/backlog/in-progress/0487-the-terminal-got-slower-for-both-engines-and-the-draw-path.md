@@ -136,7 +136,8 @@ and it is the reason its frame is eighty times ours rather than eighty thousand.
 - [x] Confirm or kill the existential hypothesis with a measurement, not a
       reading — **killed**, at 1.11× of a 2 µs frame
 - [ ] Which build the report was made against, and what is in it
-- [ ] Check `takeDirtyRange` is still reporting what it used to
+- [x] Check `takeDirtyRange` is still reporting what it used to — it is, and
+      `TerminalDirtyRangeTests` says so now rather than nobody saying so
 - [ ] Measure the felt path in the app itself, in the configuration the report
       was made in, rather than only the seam in a test
 - [ ] Fix it with the option intact, and say what the number is afterwards

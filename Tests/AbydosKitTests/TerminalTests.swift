@@ -1530,3 +1530,69 @@ struct SynchronisedOutputTests {
 		#expect(emulator.screen.lines[0].text.hasPrefix("hello"))
 	}
 }
+
+/// How much of the view a line of output asks to have redrawn.
+///
+/// This is the number that decides what output costs on the CoreGraphics path:
+/// `TerminalView.invalidateChangedRows` repaints the rows in the dirty range, and
+/// gives up and repaints the whole viewport once that range covers half of it. A
+/// seam that reported the whole buffer where it used to report a row would draw a
+/// screenful for every line printed, at forty times the cost, with nothing else
+/// in the program having changed.
+///
+/// **Nothing asserted any of this before item 0487**, which is why ruling it out
+/// meant reading the code rather than running something. Asserted through
+/// `TerminalEngine` on purpose: the range crossing the seam is exactly the part
+/// that can change while none of the emulator's own code does.
+struct TerminalDirtyRangeTests {
+	/// A printed line dirties the row it landed on and the blank one that
+	/// replaced it. Two rows out of five thousand, not five thousand.
+	///
+	/// Two rather than one because the line scrolls: the text keeps its absolute
+	/// index as it becomes history, and the new bottom row is a different index.
+	/// Both have to be drawn, and that is what the range says.
+	@Test func aPrintedLineDirtiesTwoRows() {
+		let engine: TerminalEngine = TerminalEmulator(rows: 6, columns: 20)
+		// Fill the grid first, and take what filling it dirtied, so the next line
+		// scrolls and the range below is one line's worth and nothing else.
+		engine.write(String(repeating: "filler\r\n", count: 20))
+		_ = engine.takeDirtyRange()
+
+		engine.write("one more line\r\n")
+		let range = engine.takeDirtyRange()
+		#expect(range?.count == 2, "one printed line: \(String(describing: range))")
+		#expect(range?.upperBound == engine.grid.totalLineCount - 1)
+		// The number the view's own decision turns on: fewer than half a viewport,
+		// so it repaints two rows rather than all of them.
+		#expect((range?.count ?? .max) < engine.grid.rows / 2)
+
+		// And nothing left once it has been taken, which is what makes the frame
+		// after a frame free.
+		#expect(engine.takeDirtyRange() == nil)
+	}
+
+	/// A line falling out of history renumbers every absolute index, and *that*
+	/// really is the whole document.
+	///
+	/// The other half of the claim above: the range is not always small, and the
+	/// case where it is not is the case it must not be small in. Kept beside it so
+	/// that anybody narrowing the range for speed has to argue with this one too.
+	///
+	/// Enough lines to fill the default history and then push one out of it: the
+	/// emulator's scrollback limit cannot be set from outside it, so this reaches
+	/// the limit rather than shortening it. Forty kilobytes, a couple of
+	/// milliseconds.
+	@Test func aDiscardedLineDirtiesEverything() {
+		let engine: TerminalEngine = TerminalEmulator(rows: 4, columns: 20)
+		engine.write(String(repeating: "filler\r\n", count: 5_010))
+		let before = engine.grid.discardedLineCount
+		#expect(before > 0, "the history has to be full for this to be the case being tested")
+		_ = engine.takeDirtyRange()
+
+		engine.write("this one pushes a line off the top\r\n")
+		#expect(engine.grid.discardedLineCount > before)
+		let range = engine.takeDirtyRange()
+		#expect(range?.lowerBound == 0)
+		#expect((range?.count ?? 0) >= engine.grid.totalLineCount)
+	}
+}
