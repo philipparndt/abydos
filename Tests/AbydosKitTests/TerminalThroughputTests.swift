@@ -280,10 +280,14 @@ struct TerminalThroughputTests {
 		}
 	}
 
+	/// Microseconds rather than the milliseconds the write benches print: a frame
+	/// here is single figures of them, and `%.3f` of a millisecond rounds our
+	/// engine's whole frame to "0.002" — a number that cannot be compared with
+	/// anything, which is the failure this test exists to prevent.
 	private func report(engine: String, how: String, writing: Bool, seconds: Double) {
 		print("BENCH [\(engine)] draw path, \(how), "
 			+ (writing ? "a byte in first" : "nothing new")
-			+ ": \(String(format: "%.3f", seconds * 1000)) ms/frame "
+			+ ": \(String(format: "%.2f", seconds * 1_000_000)) µs/frame "
 			+ "(\(String(format: "%.0f", 1 / seconds)) fps ceiling)  [\(MachineLoad.said)]")
 	}
 
