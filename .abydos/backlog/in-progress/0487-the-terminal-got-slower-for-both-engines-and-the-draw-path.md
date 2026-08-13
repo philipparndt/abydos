@@ -73,10 +73,6 @@ and reading rows off *that* rather than through the protocol thirty-two times. T
 second is smaller and is closer to what the code did before. **A fix that makes the
 option impossible is not a fix** — the setting has to survive.
 
-## Estimate
-
-2026-08-13 13:45 — cause confirmed, no code change needed; about 30 minutes of writing up left
-
 ## The 2.8× is the benchmark, not the code
 
 **Reproduced on one commit, which is what settles it.** `gridSnapshotCost` now
