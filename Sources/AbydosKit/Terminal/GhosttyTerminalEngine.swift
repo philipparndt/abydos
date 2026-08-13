@@ -64,6 +64,17 @@ public final class GhosttyTerminalEngine: TerminalEngine {
 	private var terminal: GhosttyTerminal?
 	private var pendingResponse = ""
 
+	/// Kitty graphics, in the type both drawing paths already read.
+	///
+	/// libghostty-vt parses the escapes, reassembles the chunks, inflates,
+	/// decodes and evicts; this store holds a copy of what it ended up with, and
+	/// `UnicodePlaceholder` on top of the grid supplies the `U=1` half the library
+	/// does not export. See `GhosttyGraphicsBridge`, which is where item 0485's
+	/// first question is answered.
+	public let graphics = TerminalImageStore()
+	/// libghostty-vt's own storage stamp, so an unchanged store costs one call.
+	private var graphicsGeneration: UInt64 = 0
+
 	public var onUpdate: (() -> Void)?
 	public var onResponse: ((String) -> Void)?
 
@@ -80,6 +91,7 @@ public final class GhosttyTerminalEngine: TerminalEngine {
 	public var cellPixelSize: (width: Int, height: Int) = (0, 0) {
 		didSet {
 			guard cellPixelSize != oldValue else { return }
+			graphics.cellPixelSize = cellPixelSize
 			applySize()
 		}
 	}
@@ -132,6 +144,15 @@ public final class GhosttyTerminalEngine: TerminalEngine {
 			handle, GHOSTTY_TERMINAL_OPT_WRITE_PTY,
 			unsafeBitCast(writePty, to: UnsafeMutableRawPointer.self))
 
+		// Kitty graphics is off until a non-zero storage limit is set, and a
+		// forgotten limit looks exactly like "this terminal has no graphics" — the
+		// library will not even answer `a=q` in that state. The same 128 MB budget
+		// our own store uses, so a picture that fits one fits the other.
+		var storageLimit = KittyGraphics.memoryBudget
+		ghostty_terminal_set(handle, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_STORAGE_LIMIT, &storageLimit)
+		// And PNG, which is what `icat` sends (`f=100`), needs a decoder from us.
+		GhosttyPngDecoder.install()
+
 		applySize()
 	}
 
@@ -167,6 +188,7 @@ public final class GhosttyTerminalEngine: TerminalEngine {
 
 	private func afterWrite() {
 		refreshState()
+		syncGraphics()
 		// The whole grid, because libghostty-vt tracks dirtiness per row inside
 		// its render state rather than as a range, and this engine does not use
 		// the render state yet. Honest and slow rather than clever and wrong: the
@@ -202,6 +224,27 @@ public final class GhosttyTerminalEngine: TerminalEngine {
 		if ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_ACTIVE_SCREEN, &screen) == GHOSTTY_SUCCESS {
 			isAlternateScreen = screen != GHOSTTY_TERMINAL_SCREEN_PRIMARY
 		}
+	}
+
+	/// Copies libghostty-vt's kitty storage into ours, when it has changed.
+	///
+	/// Two stamps, not one. libghostty-vt's own generation says whether the set of
+	/// images and placements changed; it deliberately does *not* change when a
+	/// placement merely *moves*, because scrolling moves placements without
+	/// touching storage. So a pane that has ever shown a picture re-reads the
+	/// geometry each write, and a pane that never has — which is nearly all of
+	/// them — costs exactly one FFI call.
+	private func syncGraphics() {
+		guard let terminal else { return }
+		guard let snapshot = GhosttyGraphicsBridge.snapshot(
+			of: terminal, scrollbackCount: scrollbackCount)
+		else { return }
+		guard snapshot.generation != 0 || graphicsGeneration != 0 else { return }
+		graphicsGeneration = snapshot.generation
+		graphics.adopt(
+			images: snapshot.images,
+			placements: snapshot.placements,
+			virtual: snapshot.virtual)
 	}
 
 	// MARK: - Size

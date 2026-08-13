@@ -86,10 +86,90 @@ keeps it honest. An engine that silently misrenders is worse than no option,
 because the person who notices weeks later cannot tell whether it was the engine,
 the seam or a real bug — and they will be told to look at all three.
 
+## Estimate
+
+2026-08-13 10:54 — step one is YES: the tmux image path works, no upstream export needed. About four hours of wiring left
+
+## Step one's answer: yes, and nothing has to be exported upstream
+
+**The tmux image path works behind libghostty-vt with no upstream change.** This
+was the question to answer before building anything, and it is a "yes" — so this
+is a wiring job and not a wiring job plus an upstream contribution. Six tests in
+`GhosttyGraphicsTests` are the evidence and all six passed the first time they
+ran.
+
+0474's "no" was right about the API and wrong about what we need from it. It
+observed, correctly, that `placement_rect` and `placement_viewport_pos` both
+document returning `GHOSTTY_NO_VALUE` for a virtual placement, and that no
+`0x10EEEE`, diacritic table or placeholder iterator exists anywhere in the
+headers. But **those two calls answer the one question a placeholder picture does
+not need asked**: "where on the screen is this placement". For a `U=1` picture
+the *cells* are the answer — that is the entire point of the indirection, and why
+the picture survives tmux moving it. Everything a placeholder layer actually
+needs is exported:
+
+| What our decoder needs | Where it comes from | Confirmed by |
+|---|---|---|
+| the cell is U+10EEEE | `ghostty_cell_get(CODEPOINT)` | `aPlaceholderCellSurvivesLibghosttysGrid` |
+| its row/column diacritics | `ghostty_grid_ref_graphemes` | same |
+| the image id, in the raw fg colour | `ghostty_grid_ref_style().fg_color` | same — still `.rgb(0x00,0x04,0xD2)`, unresolved |
+| the picture's size in cells | `PLACEMENT_DATA_COLUMNS`/`_ROWS` on the virtual placement | `aVirtualPlacementComesAcrossWithItsSizeInCells` |
+| the resolved source rect | `placement_source_rect` — which does **not** refuse virtual placements | same |
+| the pixels | `ghostty_kitty_graphics_image(id)` → `WIDTH`/`HEIGHT`/`FORMAT`/`DATA_PTR` | same |
+
+The distinction that makes it work: `placement_grid_size` refuses a virtual
+placement, but the **raw** `COLUMNS`/`ROWS` getters do not, and they hold exactly
+the `c=46,r=26` that 0468 measured on every one of `icat`'s four runs.
+`ghostty_kitty_graphics_image` takes a bare id and does not know or care whether
+the placement referring to it is virtual.
+
+### So what comes back is 226 lines, not 1,292
+
+`UnicodePlaceholder` (226) stays — the diacritic table and the fragment
+arithmetic — plus `GhosttyGraphicsBridge`, which is new and is not a second
+implementation of anything. What does **not** come back is the whole of
+`KittyGraphics`' parser: the APC key/value parsing, chunk reassembly, base64,
+zlib inflate, id-from-number assignment, the memory budget and LRU eviction, and
+the `t=f` pixels-to-cells arithmetic 0468 was about. libghostty-vt does all of
+that, and `TerminalImageStore` behind this engine holds a *copy of its answers*
+rather than a parse of its own.
+
+### Two things that would have looked like "the library cannot do this"
+
+Both silent, both cost nothing now because they are written down:
+
+- **`icat` sends `f=100`, which is PNG, and libghostty-vt has no PNG decoder.**
+  Every PNG transmit is rejected until one is installed through
+  `GHOSTTY_SYS_OPT_DECODE_PNG`. `GhosttyPngDecoder` installs the same ImageIO
+  path `KittyGraphics.decodePNG` uses, so both engines decode a picture
+  identically. `aPngTransmitIsDecodedThroughTheDecoderWeInstall` fails loudly if
+  it is ever not installed.
+- **CoreGraphics will only draw into a *premultiplied* bitmap, and the kitty
+  protocol's RGBA is straight alpha.** So the decode callback undoes the
+  premultiplication before handing the buffer over, because the bridge
+  premultiplies on the way out and doing it twice draws every partly transparent
+  picture too dark. A picture that is subtly wrong is the exact failure this item
+  is most concerned with, and it would have been invisible on the opaque
+  screenshots `icat` is usually pointed at.
+
+### One thing this required that 0474 said would not happen
+
+`KittyGraphics.swift` — an old-engine file — gained one method,
+`TerminalImageStore.adopt(images:placements:virtual:)`. It is purely additive:
+nothing in the old engine calls it, no existing member changed, and none of the
+parsing or eviction is reachable through it. It exists because `images`,
+`placements` and `virtualPlacements` are `private(set)`, so a store cannot be
+filled from another file, and 0474 had already ruled out the alternative
+(building a `TerminalScreen` from outside) for the same reason. **With the
+setting off the old path is byte-identical**, which is the property that
+mattered; "no old file edited at all" was a stronger claim than the one being
+kept, and this is the cost of it.
+
 ## Steps
 
-- [ ] Try our placeholder layer on libghostty-vt's grid and placement store, and
-      say early whether the tmux image path can work without an upstream export
+- [x] Try our placeholder layer on libghostty-vt's grid and placement store, and
+      say early whether the tmux image path can work without an upstream export.
+      **Yes, with no upstream change** — see above
 - [ ] The sixteen missing members, with `screen`'s six call sites moved to `grid`
 - [ ] `TerminalView` holds a `TerminalEngine`, chosen by the setting
 - [ ] The render path off `grid_ref` and on to `render.h`
