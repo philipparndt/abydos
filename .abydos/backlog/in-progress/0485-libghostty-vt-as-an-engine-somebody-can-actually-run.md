@@ -88,7 +88,7 @@ the seam or a real bug — and they will be told to look at all three.
 
 ## Estimate
 
-2026-08-13 10:54 — step one is YES: the tmux image path works, no upstream export needed. About four hours of wiring left
+2026-08-13 11:18 — wired and green; render.h, the differential tests and the write-up left — about two hours
 
 ## Step one's answer: yes, and nothing has to be exported upstream
 
@@ -170,11 +170,12 @@ kept, and this is the cost of it.
 - [x] Try our placeholder layer on libghostty-vt's grid and placement store, and
       say early whether the tmux image path can work without an upstream export.
       **Yes, with no upstream change** — see above
-- [ ] The sixteen missing members, with `screen`'s six call sites moved to `grid`
-- [ ] `TerminalView` holds a `TerminalEngine`, chosen by the setting
+- [x] The sixteen missing members, with `screen`'s six call sites moved to `grid`
+- [x] `TerminalView` holds a `TerminalEngine`, chosen by the setting
 - [ ] The render path off `grid_ref` and on to `render.h`
-- [ ] The snapshot costs the visible rows rather than the scrollback
-- [ ] An answer for `discardedLineCount`, or a reason it is not needed
+- [x] The snapshot costs the visible rows rather than the scrollback
+- [x] An answer for `discardedLineCount`, or a reason it is not needed —
+      a tracked grid reference anchored to the bottom row after every write
 - [ ] Every terminal test that can run against both engines does, and the list of
       those that cannot is written here with why
 - [ ] 0404's three escapes: fixed, or reported upstream and named in
