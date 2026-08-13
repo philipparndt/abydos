@@ -745,15 +745,184 @@ public final class GhosttyTerminalEngine: TerminalEngine {
 			totalLineCount: totalLineCount,
 			scrollbackCount: scrollback,
 			discardedLineCount: discardedLineCount,
-			visible: copyLines(from: scrollback, count: rows),
+			// The render state for the rows on screen, which is what a frame reads
+			// and what its documentation says to use. `copyLines` — grid references
+			// — remains for scrollback, which the render state does not cover and
+			// which is not a render loop.
+			visible: visibleRows(from: scrollback),
 			source: self,
 			writeCount: writeCount)
 		cachedGrid = made
 		return made
 	}
 
-	/// Rows `from ..< from + count`, in absolute indices.
-	fileprivate func copyLines(from: Int, count: Int) -> [TerminalLine] {
+	/// Whether the last read of the visible rows came from the render state.
+	///
+	/// A test asserts this, because the fallback below produces *identical* rows —
+	/// that is what makes it a safe fallback — and a silent permanent fallback
+	/// would therefore be invisible. It is the difference between the render path
+	/// being on `render.h` and merely being able to be.
+	public private(set) var usedRenderStateForVisibleRows = false
+
+	/// The rows on screen: the render state if it will answer, grid references if
+	/// it will not.
+	private func visibleRows(from scrollback: Int) -> [TerminalLine] {
+		if let fromRenderState = copyVisibleRowsFromRenderState() {
+			usedRenderStateForVisibleRows = true
+			return fromRenderState
+		}
+		usedRenderStateForVisibleRows = false
+		return copyLines(from: scrollback, count: rows)
+	}
+
+	/// The rows on screen, from the render state.
+	///
+	/// **This is the hot path, and `render.h` is what it is meant to use.** Grid
+	/// references say so themselves: "the grid reference APIs are *not* meant to be
+	/// used as the core of a render loop. They are not built to sustain the
+	/// framerates needed for rendering large screens. Use the render state API for
+	/// that." The difference in practice is that a grid reference costs a point
+	/// resolution *per cell* — `ghostty_terminal_grid_ref` walks the page list to
+	/// find the node — while the render state hands out a row iterator and then a
+	/// cell iterator that simply advance.
+	///
+	/// Two things still need a grid reference and are asked for per *row* rather
+	/// than per cell, only when the row says it has them: a grapheme cluster's
+	/// codepoints, and a hyperlink's URI. The render state reports the cluster
+	/// length and can write the codepoints, but there is no URI accessor on it at
+	/// all, so a row carrying a link falls back for that row alone. Ordinary output
+	/// has neither, and pays for neither.
+	///
+	/// Returns nil if there is no render state, in which case the caller falls back
+	/// to `copyLines`, which is the obviously-correct version and the one the
+	/// differential tests were first written against.
+	private func copyVisibleRowsFromRenderState() -> [TerminalLine]? {
+		guard let renderState else { return nil }
+
+		var iterator: GhosttyRenderStateRowIterator?
+		guard ghostty_render_state_row_iterator_new(nil, &iterator) == GHOSTTY_SUCCESS,
+		      let rowIterator = iterator
+		else { return nil }
+		defer { ghostty_render_state_row_iterator_free(rowIterator) }
+		guard ghostty_render_state_get(
+			renderState, GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR, &iterator) == GHOSTTY_SUCCESS
+		else { return nil }
+
+		var cellsHandle: GhosttyRenderStateRowCells?
+		guard ghostty_render_state_row_cells_new(nil, &cellsHandle) == GHOSTTY_SUCCESS,
+		      let cells = cellsHandle
+		else { return nil }
+		defer { ghostty_render_state_row_cells_free(cells) }
+
+		var lines: [TerminalLine] = []
+		lines.reserveCapacity(rows)
+		var codepoints = [UInt32](repeating: 0, count: 16)
+		// The absolute index of the first row on screen, for the rows that have to
+		// fall back to a grid reference.
+		let firstRow = scrollbackCount
+
+		while ghostty_render_state_row_iterator_next(rowIterator) {
+			var line = TerminalLine(columns: columns)
+
+			var rawRow = GhosttyRow()
+			var hasHyperlink = false
+			if ghostty_render_state_row_get(
+				rowIterator, GHOSTTY_RENDER_STATE_ROW_DATA_RAW, &rawRow) == GHOSTTY_SUCCESS {
+				ghostty_row_get(rawRow, GHOSTTY_ROW_DATA_HYPERLINK, &hasHyperlink)
+			}
+
+			guard ghostty_render_state_row_get(
+				rowIterator, GHOSTTY_RENDER_STATE_ROW_DATA_CELLS, &cellsHandle) == GHOSTTY_SUCCESS
+			else {
+				lines.append(line)
+				continue
+			}
+
+			var column = 0
+			while column < columns, ghostty_render_state_row_cells_next(cells) {
+				defer { column += 1 }
+
+				var rawCell = GhosttyCell()
+				guard ghostty_render_state_row_cells_get(
+					cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW, &rawCell) == GHOSTTY_SUCCESS
+				else { continue }
+
+				var scalar: UInt32 = 0
+				var wide: Int32 = 0
+				ghostty_cell_get(rawCell, GHOSTTY_CELL_DATA_CODEPOINT, &scalar)
+				ghostty_cell_get(rawCell, GHOSTTY_CELL_DATA_WIDE, &wide)
+
+				var cell = TerminalCell(scalar: scalar == 0 ? 0x20 : scalar)
+				cell.isWideTrailer = wide == 2
+
+				// The *raw* style, so a palette index stays an index and the editor's
+				// theme decides what "red" is. The render state also offers resolved
+				// RGB, which is what a renderer with no theme of its own would want.
+				var styled = false
+				ghostty_render_state_row_cells_get(
+					cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_HAS_STYLING, &styled)
+				if styled {
+					var style = GhosttyStyle()
+					style.size = MemoryLayout<GhosttyStyle>.size
+					if ghostty_render_state_row_cells_get(
+						cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE, &style) == GHOSTTY_SUCCESS {
+						cell.attributes = attributes(from: style)
+					}
+				}
+
+				// A grapheme cluster, when there is one. The length comes off the
+				// render state; the codepoints go into a buffer we own.
+				var clusterLength: UInt32 = 0
+				ghostty_render_state_row_cells_get(
+					cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_LEN, &clusterLength)
+				if clusterLength > 1 {
+					if Int(clusterLength) > codepoints.count {
+						codepoints = [UInt32](repeating: 0, count: Int(clusterLength))
+					}
+					let wrote = codepoints.withUnsafeMutableBufferPointer { buffer in
+						ghostty_render_state_row_cells_get(
+							cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_BUF,
+							buffer.baseAddress) == GHOSTTY_SUCCESS
+					}
+					if wrote {
+						var text = ""
+						for index in 0..<Int(clusterLength) {
+							if let unicode = UnicodeScalar(codepoints[index]) {
+								text.unicodeScalars.append(unicode)
+							}
+						}
+						cell.combining = text
+					}
+				}
+				line.cells[column] = cell
+			}
+
+			// A row with a link on it: the URIs are not on the render state, so this
+			// one row is read again through grid references. Rare enough that a whole
+			// extra row costs less than a check per cell would.
+			if hasHyperlink,
+			   let refetched = copyLines(from: firstRow + lines.count, count: 1).first {
+				for index in 0..<min(line.cells.count, refetched.cells.count) {
+					line.cells[index].attributes.link = refetched.cells[index].attributes.link
+				}
+			}
+			lines.append(line)
+		}
+
+		// The render state should hand back exactly the rows on screen. If it hands
+		// back a different number the caller is being lied to about the size of the
+		// grid, and falling back is better than drawing a short screen.
+		guard lines.count == rows else { return nil }
+		return lines
+	}
+
+	/// Rows `from ..< from + count`, in absolute indices, through grid references.
+	///
+	/// Not the render path — see `copyVisibleRowsFromRenderState` — but the right
+	/// tool for scrollback, which the render state does not cover: a grid reference
+	/// is documented as "a snapshot … meant to be read and have their values cached
+	/// immediately", which is exactly what a scroll back into history is.
+	func copyLines(from: Int, count: Int) -> [TerminalLine] {
 		guard let terminal, count > 0 else { return [] }
 		var lines: [TerminalLine] = []
 		lines.reserveCapacity(count)
@@ -843,7 +1012,13 @@ public final class GhosttyTerminalEngine: TerminalEngine {
 		var style = GhosttyStyle()
 		style.size = MemoryLayout<GhosttyStyle>.size
 		guard ghostty_grid_ref_style(&ref, &style) == GHOSTTY_SUCCESS else { return attributes }
+		return self.attributes(from: style)
+	}
 
+	/// One `GhosttyStyle` as our attributes. Shared by both read paths, so the
+	/// render state and grid references cannot come to disagree about a colour.
+	private func attributes(from style: GhosttyStyle) -> TerminalAttributes {
+		var attributes = TerminalAttributes()
 		// The *raw* style, not the resolved foreground colour. Resolving would
 		// put a palette index through the palette and hand back RGB, and this
 		// app deliberately keeps a colour unresolved so the editor's theme

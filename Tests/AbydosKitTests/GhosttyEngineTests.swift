@@ -508,6 +508,44 @@ struct GhosttyEngineTests {
 		#expect(grid.line(at: grid.totalLineCount) == nil)
 	}
 
+	/// **The render path is on `render.h`, not on grid references.**
+	///
+	/// Grid references say so themselves — "not meant to be used as the core of a
+	/// render loop … Use the render state API for that" — and 0474 kept them only
+	/// because they were the obviously-correct version to compare against. They are
+	/// still the fallback, and still what reads scrollback, which is not a render
+	/// loop. This asserts the fallback is not what is running: it produces
+	/// identical rows, which is what makes it safe and also what would make a
+	/// permanent silent fallback invisible.
+	@Test func theVisibleRowsComeFromTheRenderState() throws {
+		let theirs = GhosttyTerminalEngine(rows: 6, columns: 20)
+		try #require(theirs.isUsable)
+		theirs.write("hello\r\n\u{1B}[1;31mred\u{1B}[0m")
+
+		_ = theirs.grid
+		#expect(theirs.usedRenderStateForVisibleRows)
+	}
+
+	/// And the two ways of reading the same rows agree, cell for cell, on a real
+	/// capture. This is what licenses the fallback to exist at all.
+	@Test func theRenderStateAndGridReferencesReadTheSameRows() throws {
+		let data = try fixture("tmux-prompt.bin")
+		let theirs = GhosttyTerminalEngine(rows: 30, columns: 100)
+		try #require(theirs.isUsable)
+		theirs.write(data)
+
+		let grid = theirs.grid
+		try #require(theirs.usedRenderStateForVisibleRows)
+		let fromRenderState = rowsOf(grid, from: grid.scrollbackCount, count: 30)
+		let fromGridRefs = (0..<30).map { offset in
+			theirs.copyLines(from: grid.scrollbackCount + offset, count: 1)
+				.first?.text ?? "<none>"
+		}
+		let differing = zip(fromRenderState, fromGridRefs).enumerated()
+			.filter { $0.element.0 != $0.element.1 }.map(\.offset)
+		#expect(differing.isEmpty, "rows \(differing) differ between the two read paths")
+	}
+
 	/// A snapshot asked for a history row *after* the terminal has moved on
 	/// refuses rather than handing back whatever is at that index now.
 	///

@@ -172,7 +172,9 @@ kept, and this is the cost of it.
       **Yes, with no upstream change** — see above
 - [x] The sixteen missing members, with `screen`'s six call sites moved to `grid`
 - [x] `TerminalView` holds a `TerminalEngine`, chosen by the setting
-- [ ] The render path off `grid_ref` and on to `render.h`
+- [x] The render path off `grid_ref` and on to `render.h` — the visible rows
+      come from the render state; scrollback stays on grid references, which is
+      what they are for
 - [x] The snapshot costs the visible rows rather than the scrollback
 - [x] An answer for `discardedLineCount`, or a reason it is not needed —
       a tracked grid reference anchored to the bottom row after every write
