@@ -118,10 +118,24 @@ warnings: ## Every warning in this repository's own code (JOBS=N)
 # Start it on a machine you are not otherwise using — `--no-parallel` stops the
 # suite loading itself, not everything else. `Stopwatch` still declines to assert
 # above four runnable threads per core, and says so with the load.
+#
+# The terminal's draw path is bounded here too, and in *release*, which is why it
+# is a second run rather than another name in the filter above. Item 0487 spent a
+# morning on a 2.8× that turned out to be a benchmark whose body had changed, and
+# the reason there was one number to misread and no other is that
+# `TerminalThroughputTests` measured writes and never a draw. It measures one now,
+# and both of that test's assertions want this verb: the seam-against-concrete
+# ratio is load-immune and runs whenever `ABYDOS_BENCH` is set, while the absolute
+# microseconds-a-frame bound is an absolute and belongs to a run somebody asked
+# for. Release, because existential dispatch and value-type accessors cost almost
+# nothing in a debug build — nothing is specialised there to begin with — so a
+# debug bound would be blind to the whole class of regression this guards.
 .PHONY: timing
 timing: ## Assert the warm-render bounds, serialised, on a quiet machine
 	@TIMING=1 $(SWIFT) test $(SWIFT_JOBS) --no-parallel \
 		--filter 'MermaidLiveTests|DrawioLiveTests|PlantUMLServerLiveTests'
+	@TIMING=1 ABYDOS_BENCH=1 $(SWIFT) test $(SWIFT_JOBS) -c release --no-parallel \
+		--filter 'TerminalThroughputTests/drawPathCost'
 
 .PHONY: perf
 perf: ## Run the performance suite in release and print timings
