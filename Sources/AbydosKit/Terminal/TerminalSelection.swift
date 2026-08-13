@@ -103,7 +103,16 @@ public extension TerminalLine {
 	}
 }
 
-public extension TerminalScreen {
+/// Reading a grid: selection, and the two gestures that make one.
+///
+/// **On `TerminalGridReading` rather than on `TerminalScreen`** (item 0485).
+/// Every body below is written in terms of `line(at:)` and `totalLineCount` and
+/// nothing else, so widening the extension gives both engines one
+/// implementation instead of two — and it is what let the six `emulator.screen`
+/// call sites in `TerminalView` become `emulator.grid`. Not one line of any body
+/// changed when it moved; `TerminalScreen` conforms, so every existing caller
+/// still resolves exactly what it used to.
+public extension TerminalGridReading {
 	/// Total number of rows, scrollback included.
 	var selectableRowCount: Int { totalLineCount }
 
@@ -149,5 +158,36 @@ public extension TerminalScreen {
 			anchor: TerminalPosition(row: 0, column: 0),
 			head: TerminalPosition(row: totalLineCount - 1, column: last.cells.count)
 		)
+	}
+
+	/// The last few lines that say something.
+	///
+	/// Used to show that a long-running agent is alive without making the user
+	/// switch to its terminal: a status message it chooses to send is sparse,
+	/// but its output moves continuously.
+	///
+	/// Lines made only of frame — box drawing, rules, a bare prompt character —
+	/// are skipped. A full-screen TUI keeps its input box pinned to the bottom,
+	/// so the last non-blank lines are its borders, and a tail of those tells
+	/// you nothing about whether anything is happening.
+	func recentLines(_ count: Int) -> [String] {
+		guard count > 0 else { return [] }
+		var result: [String] = []
+		var index = totalLineCount - 1
+		while index >= 0, result.count < count {
+			if let line = line(at: index) {
+				let text = line.text.trimmingCharacters(in: .whitespaces)
+				if Self.isSubstantive(text) { result.append(text) }
+			}
+			index -= 1
+		}
+		return result.reversed()
+	}
+
+	/// Whether a line carries words rather than decoration.
+	static func isSubstantive(_ text: String) -> Bool {
+		text.unicodeScalars.contains {
+			CharacterSet.alphanumerics.contains($0)
+		}
 	}
 }

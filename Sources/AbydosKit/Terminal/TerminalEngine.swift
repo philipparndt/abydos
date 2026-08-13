@@ -55,12 +55,38 @@ public protocol TerminalGridReading {
 	func line(at index: Int) -> TerminalLine?
 }
 
+// MARK: - The vocabulary the callers already speak
+
+// These five names were `TerminalEmulator.MouseButton`, `.MouseTracking`,
+// `.CursorShape`, `.ArrowKey` and `.ColourQuery`, and the protocol below needs
+// them without naming one of its own implementations. They are typealiases
+// rather than moved declarations for one reason: moving them would edit the old
+// engine, and item 0485's rule is that the old path does not change. Every
+// existing `TerminalEmulator.MouseButton` at a call site still compiles, and
+// there is now one place to move them properly if the old engine ever goes.
+
+public typealias TerminalMouseButton = TerminalEmulator.MouseButton
+public typealias TerminalMouseTracking = TerminalEmulator.MouseTracking
+public typealias TerminalCursorShape = TerminalEmulator.CursorShape
+public typealias TerminalArrowKey = TerminalEmulator.ArrowKey
+public typealias TerminalColourQuery = TerminalEmulator.ColourQuery
+
 /// An engine: bytes in, grid and state out.
 ///
 /// Only the members some caller actually uses. Deliberately *not* here:
 /// `TerminalKeys`' AppKit key mapping, `Ligatures`, `ShapedRuns`, `GlyphAtlas`,
 /// `RedrawThrottle`, the parse budget and the pty — none of them touch an
 /// engine, and all of them stay exactly where they are whichever engine is on.
+///
+/// **`screen` is deliberately absent.** `TerminalView` used to reach through it
+/// for six things — `text(in:)`, `wordSelection`, `lineSelection`,
+/// `fullSelection`, `recentLines` and `selectableRowCount` — and that was the
+/// seam leaking a concrete type. All six are written in terms of `line(at:)` and
+/// `totalLineCount` and nothing else, so they moved to an extension on
+/// `TerminalGridReading` (in `TerminalSelection.swift`) where both engines get
+/// them from one implementation. Nothing was rewritten to make that happen; the
+/// extension's `TerminalScreen` became `TerminalGridReading` and the bodies are
+/// untouched.
 public protocol TerminalEngine: AnyObject {
 	/// Which engine this is, for `--report-geometry` and for bug reports.
 	///
@@ -97,6 +123,67 @@ public protocol TerminalEngine: AnyObject {
 
 	var onUpdate: (() -> Void)? { get set }
 	var onResponse: ((String) -> Void)? { get set }
+
+	// MARK: What a program has asked the terminal to do
+	//
+	// Modes, in other words, and a VT state machine keeps every one of them by
+	// definition. They are read-only here because the view only reads them: a
+	// mode is set by the program, through the bytes, and a caller that wrote one
+	// would be lying to the program about what it asked for.
+
+	/// 2004 — whether a paste should be wrapped in `ESC [ 200 ~` … `ESC [ 201 ~`.
+	var bracketedPaste: Bool { get }
+	/// 2026 — whether a program is part-way through rewriting the screen, in
+	/// which case what is on the grid is half-drawn and drawing it flickers.
+	var isSynchronizingOutput: Bool { get }
+	/// 1004 — whether the program wants to hear about focus coming and going.
+	var reportsFocus: Bool { get }
+	/// 9 / 1000 / 1002 / 1003 — how the program wants pointer events reported.
+	var mouseTracking: TerminalMouseTracking { get }
+	/// Whether either the kitty keyboard protocol or xterm's `modifyOtherKeys`
+	/// is on, in which case an ambiguous key is sent in its unambiguous form.
+	var reportsModifiedKeys: Bool { get }
+	/// DECSCUSR — what shape the cursor should be drawn as.
+	var cursorShape: TerminalCursorShape { get }
+
+	// MARK: Encoding, on the way back to the program
+	//
+	// No default arguments, because a protocol requirement cannot have them. The
+	// two callers that used to omit arguments now pass them, which is three lines
+	// at the call sites and one fewer way for the two engines to differ.
+
+	func encodeArrow(_ direction: TerminalArrowKey) -> String
+	/// The kitty or xterm form of an ambiguous key, or nil when the program has
+	/// not asked and the ordinary bytes should be sent.
+	func encodeModifiedKey(
+		code: Int, shift: Bool, option: Bool, control: Bool, command: Bool
+	) -> String?
+	/// A pointer event, or nil when the program is not tracking the mouse.
+	/// Coordinates are 1-based.
+	func encodeMouse(
+		button: TerminalMouseButton, row: Int, column: Int,
+		isRelease: Bool, isDrag: Bool, shift: Bool, option: Bool, control: Bool
+	) -> String?
+
+	// MARK: Things a program asks of the application, not of the grid
+
+	/// BEL.
+	var onBell: (() -> Void)? { get set }
+	/// OSC 52 — a copy made inside tmux, or over ssh, reaching the clipboard of
+	/// the machine somebody is sitting at.
+	var onClipboardWrite: ((String) -> Void)? { get set }
+	/// OSC 440 — `abydos <file>` typed in this pane.
+	var onOpenFile: ((TerminalOpenRequest) -> Void)? { get set }
+	/// A program asked what a colour is, and only whoever owns the palette can
+	/// say. `nil` means "no such colour" and nothing is sent.
+	var colourLookup: ((TerminalColourQuery) -> (red: Double, green: Double, blue: Double)?)? { get set }
+
+	// MARK: Pictures and links
+
+	/// The images on the screen and where they are shown.
+	var graphics: TerminalImageStore { get }
+	/// The address behind a hyperlink cell, by the id the cell carries.
+	func link(for id: UInt16) -> String?
 
 	/// What this engine cannot do yet, in words fit to show somebody.
 	///
