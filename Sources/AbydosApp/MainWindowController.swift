@@ -1318,6 +1318,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// swapped for their counterparts.
 		if Theme.apply() { applyPalette() }
 
+		// Whatever the theme did, the terminal's palette may have moved on its
+		// own: "Terminal colours" is a setting of its own and can change while
+		// the theme stands still. `applyPalette` above runs only when the theme
+		// actually changed, so this cannot live in there.
+		//
+		// It matters now in a way it did not before: `TerminalScheme.current` used
+		// to be worked out on every access, so a changed scheme took effect by
+		// itself and nobody had to say so. It is remembered now, because working
+		// it out meant two `UserDefaults` reads per frame, so forgetting it is
+		// something that has to be *done* — and this is the moment a preference
+		// changed. Cheap: it nils a cache, and the table is rebuilt on the next
+		// draw rather than here.
+		TerminalPalette.invalidate()
+
 		editor.applySettings()
 		navigator.applySettings()
 		toolStrip.applySettings()

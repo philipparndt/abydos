@@ -41,6 +41,11 @@ enum TerminalPalette {
 	/// The scheme has not changed, but what it resolves to has: the one that
 	/// follows the editor is a different set of colours in daylight.
 	@MainActor static func invalidate() {
+		// The resolved scheme first, or the rebuild below would compare against
+		// the answer this is being called to stop trusting. `TerminalScheme.current`
+		// is remembered now — see the note on it — so this is the one place that
+		// says the remembering has stopped being true.
+		TerminalScheme.forget()
 		builtFor = nil
 	}
 
