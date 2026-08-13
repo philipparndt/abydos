@@ -20,32 +20,20 @@ import GhosttyVt
 /// and attributes, scrollback, wrapping, reflow, cursor, alternate screen,
 /// title. That is enough to run a shell and read it.
 ///
-/// **Kitty graphics is not implemented here and refuses rather than half-works.**
-/// See `unimplemented`. The reason is specific and worth knowing before anybody
-/// tries: libghostty-vt covers one of `icat`'s two protocols and not the other.
-/// 0468 established which two they are.
+/// **Kitty graphics works, including inside tmux** (item 0485). 0474 concluded it
+/// could not, because the part of the `U=1` unicode-placeholder protocol that
+/// turns placeholder cells into picture fragments is not exported and the geometry
+/// calls refuse virtual placements outright. That was right about the API and
+/// wrong about what is needed from it: those calls answer "where on the screen is
+/// this placement", and for a placeholder picture the *cells* answer that.
+/// `GhosttyGraphicsBridge` is where this is set out, with the evidence.
 ///
-/// - The **`t=f` real placement** used outside tmux is fully covered.
-///   `ghostty_kitty_graphics_placement_iterator_new` enumerates placements, and
-///   `ghostty_kitty_graphics_placement_grid_size` even does the thing 0468
-///   needed — "if the placement specifies explicit columns and rows those are
-///   returned directly; otherwise they are calculated from the pixel size and
-///   cell dimensions" — which is exactly the `s=`/`v=`-with-no-`c=`/`r=` case.
-/// - The **`U=1` unicode placeholder** protocol used inside tmux is only half
-///   covered. The escape is honoured and the virtual placement is stored and
-///   enumerable (`GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IS_VIRTUAL`), but the
-///   part that turns placeholder cells into picture fragments is *not exported*.
-///   The geometry calls actively refuse virtual placements — `placement_rect`
-///   and `placement_viewport_pos` both document returning `GHOSTTY_NO_VALUE` for
-///   them — and there is no U+10EEEE constant, no diacritic table and no
-///   placeholder iterator anywhere in the headers. ghostty has that code
-///   (`src/terminal/kitty/graphics_unicode.zig`, 1,361 lines, with a 297-entry
-///   diacritic table) but its only consumer is ghostty's own GUI renderer, and
-///   `src/lib_vt.zig` exports none of it.
-///
-/// So `UnicodePlaceholder` (226 lines) is not replaceable by this library at
-/// all, and `KittyGraphics` (1,066) is only partly. Both stay on our side of the
-/// seam whatever happens.
+/// - The **`t=f` real placement** used outside tmux is libghostty-vt's entirely,
+///   `ghostty_kitty_graphics_placement_grid_size` included — which does the
+///   pixels-to-cells arithmetic 0468 was about.
+/// - The **`U=1` placeholders** used inside tmux are libghostty-vt's store read
+///   through our `UnicodePlaceholder` decoder, which needs three things off a
+///   cell and two off the store and gets all five.
 ///
 /// ## Two things the library requires that are easy to get silently wrong
 ///
@@ -98,9 +86,14 @@ public final class GhosttyTerminalEngine: TerminalEngine {
 	public private(set) var title: String?
 	public private(set) var isAlternateScreen = false
 
-	/// libghostty-vt's own key encoder. See `GhosttyKeyEncoding` for why the
-	/// arithmetic is not repeated here.
-	private let keys = GhosttyKeyEncoding()
+	/// libghostty-vt's render state, kept for the life of the engine.
+	///
+	/// `render.h` is what its own documentation points at instead of grid
+	/// references — "the grid reference APIs are **not** meant to be used as the
+	/// core of a render loop" — and it is also the only place some state is
+	/// reported at all, the cursor's visual shape among it. Updated once per write,
+	/// which is where its dirty tracking is consumed.
+	private var renderState: GhosttyRenderState?
 
 	/// Hyperlink addresses, interned so a cell can carry a `UInt16` the way ours
 	/// does.
@@ -142,6 +135,14 @@ public final class GhosttyTerminalEngine: TerminalEngine {
 			// `GhosttyEngineTests.theParkRuleIsWhereTheTwoEnginesDiffer`.
 			"tmux's prompts draw one row too high when tmux's status bar is off "
 				+ "(libghostty-vt clamps the off-screen cursor park; item 0404 is the same fault in ours)",
+			// The kitty protocol is honoured; xterm's older `CSI > 4 ; 2 m` cannot
+			// be, because libghostty-vt does not report its state and its own
+			// encoder emits that form whether or not it was asked for. A program
+			// using it gets ordinary bytes, which is what a terminal without the
+			// feature does — the conservative direction rather than a sequence
+			// nobody asked for. `GhosttyKeyEncoding` has the measurement.
+			"xterm's modifyOtherKeys (`CSI > 4 ; 2 m`) is not reported by libghostty-vt, "
+				+ "so an ambiguous key sends its ordinary bytes; the kitty protocol works",
 		]
 		// A pane with no view attached has no cell size, and a cell of no pixels
 		// is how a terminal says it cannot show pictures. Named only when it is
@@ -236,13 +237,20 @@ public final class GhosttyTerminalEngine: TerminalEngine {
 		// And PNG, which is what `icat` sends (`f=100`), needs a decoder from us.
 		GhosttyPngDecoder.install()
 
+		var render: GhosttyRenderState?
+		if ghostty_render_state_new(nil, &render) == GHOSTTY_SUCCESS { renderState = render }
+
 		applySize()
+		// Once up front, so anything read before the first byte arrives — the
+		// cursor shape, in particular — has a state to read from.
+		updateRenderState()
 	}
 
 	deinit {
 		// The anchor first: a tracked reference may outlive its terminal, but
 		// freeing it while the terminal is still there is the documented order.
 		if let anchor { ghostty_tracked_grid_ref_free(anchor) }
+		if let renderState { ghostty_render_state_free(renderState) }
 		if let terminal { ghostty_terminal_free(terminal) }
 	}
 
@@ -333,44 +341,76 @@ public final class GhosttyTerminalEngine: TerminalEngine {
 	/// terminal wider than 223 columns.
 	private var usesSgrMouse: Bool { mode(1006) }
 
+	/// What shape the cursor should be, as the program last asked (DECSCUSR).
+	///
+	/// **From the render state**, which is the only place libghostty-vt reports it.
+	/// `GHOSTTY_TERMINAL_DATA_CURSOR_STYLE` is a trap here and cost a crash to
+	/// find: despite the name it is the cursor's *SGR style* — the attributes newly
+	/// printed characters get — and its output type is a whole `GhosttyStyle`. Read
+	/// into a four-byte enum, as the first draft did, it writes a large struct over
+	/// a small stack slot and the process traps. The shape is
+	/// `GHOSTTY_RENDER_STATE_DATA_CURSOR_VISUAL_STYLE`, on the render state.
+	///
+	/// Blinking is not honoured — a cursor that blinks repaints the screen twice a
+	/// second whatever the program is doing — but the shape is: vim in insert mode
+	/// asks for a bar, and a block there is a lie about what typing will do.
 	public var cursorShape: TerminalCursorShape {
-		guard let terminal else { return .block }
-		var style = GHOSTTY_TERMINAL_CURSOR_STYLE_BLOCK
-		guard ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_CURSOR_STYLE, &style)
-			== GHOSTTY_SUCCESS
+		guard let render = renderState else { return .block }
+		var style = GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK
+		guard ghostty_render_state_get(
+			render, GHOSTTY_RENDER_STATE_DATA_CURSOR_VISUAL_STYLE, &style) == GHOSTTY_SUCCESS
 		else { return .block }
 		switch style {
-		case GHOSTTY_TERMINAL_CURSOR_STYLE_BAR: return .bar
-		case GHOSTTY_TERMINAL_CURSOR_STYLE_UNDERLINE: return .underline
+		case GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BAR: return .bar
+		case GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_UNDERLINE: return .underline
 		// A hollow block is a block that is not focused, and whether this pane has
 		// the keyboard is the view's own business — it draws the outline itself.
 		default: return .block
 		}
 	}
 
+	/// Whether the kitty keyboard protocol's disambiguation is on.
+	///
+	/// Bit 1 only, which is the one that matters: "disambiguate escape codes" is
+	/// how a program tells Shift+Enter from Enter. xterm's older
+	/// `modifyOtherKeys` is *not* part of this answer and cannot be — see
+	/// `GhosttyKeyEncoding` for the measurement, and `unimplemented` for the
+	/// admission.
 	public var reportsModifiedKeys: Bool {
 		guard let terminal else { return false }
-		return keys.reportsModifiedKeys(terminal: terminal)
+		return GhosttyKeyEncoding.kittyFlags(terminal: terminal) & 1 != 0
 	}
 
 	// MARK: - Encoding, on the way back to the program
+	//
+	// The arithmetic is `TerminalEmulator`'s, on purpose, so that a pane sends the
+	// same bytes under either engine. What libghostty-vt supplies is the state
+	// that decides it. `GhosttyKeyEncoding` records why its own encoders are not
+	// used, with what was measured.
 
 	public func encodeArrow(_ direction: TerminalArrowKey) -> String {
-		guard let terminal, let encoded = keys.arrow(direction, terminal: terminal) else {
-			// The same bytes with no terminal to ask. Not a guess: `ESC [ A` is what
-			// a terminal that has never been told otherwise sends.
-			return "\u{1B}[" + direction.rawValue
-		}
-		return encoded
+		// DECCKM, mode 1: every full-screen program turns it on, and an arrow key
+		// sent in the wrong form moves the cursor in a shell instead of in vim.
+		let prefix = mode(1) ? "\u{1B}O" : "\u{1B}["
+		return prefix + direction.rawValue
 	}
 
 	public func encodeModifiedKey(
 		code: Int, shift: Bool, option: Bool, control: Bool, command: Bool
 	) -> String? {
-		guard let terminal else { return nil }
-		return keys.modifiedKey(
-			code: code, shift: shift, option: option, control: control, command: command,
-			terminal: terminal)
+		guard let terminal, GhosttyKeyEncoding.kittyFlags(terminal: terminal) & 1 != 0
+		else { return nil }
+
+		// 1 is "no modifiers", and each one adds its bit.
+		var modifiers = 1
+		if shift { modifiers += 1 }
+		if option { modifiers += 2 }
+		if control { modifiers += 4 }
+		if command { modifiers += 8 }
+		// Nothing held is what it always was; a protocol that changed those would
+		// break every program that only asked about the modified ones.
+		guard modifiers > 1 else { return nil }
+		return "\u{1B}[\(code);\(modifiers)u"
 	}
 
 	/// A pointer event, in the form the program asked for.
@@ -463,9 +503,21 @@ public final class GhosttyTerminalEngine: TerminalEngine {
 	private var writeCount = 0
 	fileprivate var currentWriteCount: Int { writeCount }
 
+	/// Brings the render state up to the terminal as it is now.
+	///
+	/// One phase, not two. The two-phase form exists so a renderer thread can hold
+	/// a lock over the terminal for the `begin` alone; this engine is written to
+	/// and read from the same queue, so there is no lock to shorten and the
+	/// convenience call is the honest one.
+	private func updateRenderState() {
+		guard let terminal, let renderState else { return }
+		_ = ghostty_render_state_update(renderState, terminal)
+	}
+
 	private func afterWrite() {
 		writeCount += 1
 		refreshState()
+		updateRenderState()
 		updateDiscardedLineCount()
 		syncGraphics()
 		// The whole grid, because libghostty-vt tracks dirtiness per row inside
@@ -533,6 +585,7 @@ public final class GhosttyTerminalEngine: TerminalEngine {
 		self.columns = max(1, columns)
 		applySize()
 		refreshState()
+		updateRenderState()
 		dirty = 0...max(0, totalLineCount - 1)
 	}
 
@@ -552,6 +605,7 @@ public final class GhosttyTerminalEngine: TerminalEngine {
 		guard let terminal else { return }
 		ghostty_terminal_reset(terminal)
 		refreshState()
+		updateRenderState()
 		dirty = 0...max(0, totalLineCount - 1)
 	}
 
@@ -632,6 +686,17 @@ public final class GhosttyTerminalEngine: TerminalEngine {
 			anchor = created
 		}
 		anchorIndex = bottom
+	}
+
+	/// Shrinks the scrollback budget so a test can see pruning happen.
+	///
+	/// libghostty-vt's default byte budget is large enough that reaching it in a
+	/// test would mean writing a hundred thousand lines, and the thing worth
+	/// testing is the counting rather than the budget.
+	func setScrollbackByteLimitForTesting(_ bytes: Int) {
+		guard let terminal else { return }
+		var limit = bytes
+		ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_BYTES, &limit)
 	}
 
 	private var scrollbackCount: Int {
