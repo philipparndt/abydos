@@ -1038,6 +1038,17 @@ public final class TerminalEmulator {
 			graphics.restorePlacements(alternateGraphics)
 			alternateGraphics = []
 		}
+		// Every row on the screen is now a different row, and no write said so:
+		// the grid was swapped for another one whole, taking its dirty range
+		// with it.
+		//
+		// It has to be said out loud, because the dirty range is the only
+		// account of what changed that a renderer gets. Both draw paths used to
+		// get away with not being told — the document's height changes as the
+		// scrollback comes and goes, and AppKit repaints a view whose frame
+		// changed — but the GPU path now keeps the instances it built for each
+		// row (0488) and nothing about a frame size reaches that.
+		screen.markAllDirty()
 		scrollTop = 0
 		scrollBottom = screen.rows - 1
 		isParkedBelowScreen = false
@@ -1500,6 +1511,9 @@ public final class TerminalEmulator {
 	public func reset() {
 		let rows = screen.rows, columns = screen.columns
 		screen = TerminalScreen(rows: rows, columns: columns)
+		// A fresh grid reports nothing dirty, and everything about it is. See
+		// `setAlternateScreen`, which replaces the screen for the other reason.
+		screen.markAllDirty()
 		attributes = TerminalAttributes()
 		cursorRow = 0
 		cursorColumn = 0

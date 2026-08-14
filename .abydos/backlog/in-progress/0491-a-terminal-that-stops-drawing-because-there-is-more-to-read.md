@@ -82,7 +82,7 @@ about the first of those.
 
 ## Estimate
 
-2026-08-14 14:24 — about two hours left: renders 1 to 51-56 on plain, both re-lands and the suite to go
+2026-08-14 14:34 — about an hour: 0489 back in at 60 renders, 0488 and the cursor-up artefact left
 
 ## First, the thing that makes half of the above wrong
 

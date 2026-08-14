@@ -33,6 +33,8 @@ enum Mode: String, CaseIterable {
 	case matrix
 	case plain
 	case history
+	case status
+	case prompt
 	case colour
 	case glyphs
 	case ascii
@@ -44,6 +46,8 @@ enum Mode: String, CaseIterable {
 		case .matrix: return "hundreds of different glyphs moving, on the glyph cache"
 		case .plain: return "ordinary log output, which is what a build looks like"
 		case .history: return "the same once scrollback is full, where a terminal lives"
+		case .status: return "one row rewritten in place, which is a progress bar or a clock"
+		case .prompt: return "the prompt line rewritten under cursor-up, as history does"
 		case .colour: return "colour escapes and nothing else"
 		case .glyphs: return "one wide glyph per cell and nothing else"
 		case .ascii: return "one narrow glyph per cell and nothing else"
@@ -394,6 +398,71 @@ func drawPlain() {
 	}
 }
 
+/// A screenful of log once, and then one row of it rewritten where it stands.
+///
+/// Every other pattern here changes the whole screen between one frame and the
+/// next — that is what makes them benchmarks — and so none of them could show
+/// what item 0488 is about. A progress bar, a clock, a status line, vim's ruler
+/// and a shell echoing a keystroke are all this shape instead: a screen that is
+/// almost entirely the same as the one before it.
+///
+/// The row is addressed rather than reprinted, and the screen does not scroll,
+/// so what the terminal is told changed is one row out of however many it has.
+/// A renderer that believes it draws one row and a renderer that draws the
+/// screen produce the identical picture here, which is exactly why the number to
+/// watch is not this program's frame rate but `ABYDOS_METAL_PROBE`'s
+/// `cells/render`.
+func drawStatus(_ frame: Int) {
+	// The backdrop, once. Printed rather than addressed so it scrolls into
+	// history as real output would, and so the rows below carry text: a blank
+	// row and a full one cost a renderer that builds every row the same, and it
+	// should be obvious in the numbers if one ever does not.
+	if frame == 0 {
+		for row in 0..<rows {
+			lineCounter += 1
+			emit("\(escape)3\(lineCounter % 8)m[\(lineCounter)] some typical log line with words\(escape)0m")
+			if row + 1 < rows { output.append(contentsOf: newline) }
+		}
+		return
+	}
+	// A third of the way down, so that a renderer getting the row wrong is
+	// wrong somewhere visible rather than at an edge.
+	let row = max(1, rows / 3)
+	emit("\(escape)\(row);1H\(escape)2K  frame \(frame) — every other row is unchanged")
+}
+
+/// The prompt line rewritten where it stands, which is what pressing the up arrow
+/// through a shell's history does.
+///
+/// Carriage return, the prompt, the recalled command, `ESC[K` to erase whatever
+/// the last one left, and the cursor stays on the row. **The commands get
+/// shorter and longer in turn**, because that is what makes a renderer keeping a
+/// row visible rather than merely wrong: a tail left behind by a longer command
+/// is text on screen that the emulator does not have.
+///
+/// Here because item 0488 was reverted partly on a report of exactly this — stale
+/// text when the shell rewrites the prompt line under cursor-up — and no bench
+/// covered it, so there was nothing to argue with. `status` is not the same
+/// pattern: it addresses a row absolutely and never touches the one the cursor is
+/// on, and the cursor is the one thing that changes a row without the engine
+/// being written to.
+func drawPrompt(_ frame: Int) {
+	if frame == 0 {
+		for _ in 0..<max(1, rows - 1) {
+			lineCounter += 1
+			emit("\(escape)3\(lineCounter % 8)m[\(lineCounter)] some typical log line with words\(escape)0m")
+			output.append(contentsOf: newline)
+		}
+	}
+	// Lengths that go up and down rather than only down, so both the tail a
+	// shorter command has to erase and the cells a longer one has to fill are
+	// exercised.
+	let widths = [58, 12, 34, 4, 47, 21, 63, 8]
+	let width = widths[frame % widths.count]
+	let recalled = "echo " + String(repeating: "x", count: width) + "-\(frame)"
+	emit("\r\(escape)38;5;39mprompt$\(escape)0m \(recalled)\(escape)K")
+}
+
 /// A truecolour escape per cell and nothing drawn: the half of the fire that is
 /// escape parsing rather than glyphs.
 func drawColour() {
@@ -486,6 +555,20 @@ signal(SIGINT) { _ in
 	default: break
 	}
 
+	// `status` is paced whether or not anybody asked, and it is the one mode
+	// that is. The others are measurements of how much a terminal can take, and
+	// the way to find that out is never to wait. This one is a measurement of
+	// what one *frame* costs a terminal that has almost nothing to redraw — and
+	// a pattern going flat out never gets a frame drawn at all: forty bytes a
+	// time, hundreds of thousands of times a second, keeps the parser
+	// permanently behind, and a terminal that is behind holds its redraws back
+	// and paints once a quarter second. Which is correct of it, and measures the
+	// throttle instead of the thing being asked about.
+	// `prompt` is held for the same reason as `status`, and more so: a shell
+	// rewrites its prompt line when somebody presses a key, so a hundred thousand
+	// rewrites a second is not a picture of anything. Ten a second is.
+	let pace = frameRate ?? (mode == .status ? 60 : mode == .prompt ? 10 : nil)
+
 	let start = Date()
 	var frames = 0
 	var totalBytes = 0
@@ -513,6 +596,10 @@ signal(SIGINT) { _ in
 			drawRain()
 		case .plain, .history:
 			drawPlain()
+		case .status:
+			drawStatus(frames)
+		case .prompt:
+			drawPrompt(frames)
 		case .colour:
 			drawColour()
 		case .glyphs:
@@ -529,8 +616,8 @@ signal(SIGINT) { _ in
 		// frame's share of a second. Measured from the start rather than added
 		// up frame by frame, so a slow frame is caught up with instead of
 		// pushing every frame after it later.
-		if let frameRate {
-			let due = start.addingTimeInterval(Double(frames) / frameRate)
+		if let pace {
+			let due = start.addingTimeInterval(Double(frames) / pace)
 			let idle = due.timeIntervalSinceNow
 			if idle > 0 { Thread.sleep(forTimeInterval: idle) }
 		}
@@ -540,15 +627,15 @@ signal(SIGINT) { _ in
 	let perFrame = frames > 0 ? totalBytes / frames : 0
 	return String(
 		format: "firebench: %-8@%@ %5d frames in %4.1fs [ %7.2f fps ] %dx%d, %7d B/frame, %6.1f MB/s",
-		mode.rawValue, frameRate.map { String(format: " held to %.0f", $0) } ?? "",
+		mode.rawValue, pace.map { String(format: " held to %.0f", $0) } ?? "",
 		frames, elapsed, Double(frames) / elapsed, columns, rows, perFrame,
 		Double(totalBytes) / elapsed / 1_048_576
 	)
 }
 
 // One mode if one was asked for, otherwise all of them: the whole point of the
-// other five is that they can be read against each other, and a suite nobody
-// runs because it has to be run seven times is a suite of one.
+// others is that they can be read against each other, and a suite nobody runs
+// because it has to be run eight times is a suite of one.
 let wanted = modeGiven ? [mode] : Mode.allCases
 let each = duration ?? (modeGiven ? 20 : 10)
 var summaries: [String] = []
