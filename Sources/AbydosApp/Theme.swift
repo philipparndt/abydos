@@ -49,6 +49,10 @@ struct Theme {
 		}
 		previous = current
 		current = wanted
+		// The kept symbols were drawn in the old scheme's shades. Emptied here
+		// rather than left to be overwritten, because the old ones would never be
+		// asked for again and a theme somebody flips twice would keep both.
+		forgetSymbols()
 		return true
 	}
 
@@ -227,12 +231,43 @@ struct Theme {
 	/// The weight asked for is the weight at a design size; what is actually
 	/// drawn comes from `opticalWeight(_:at:)`, since the size here has usually
 	/// been through the zoom already.
+	/// **Kept, because building one is not cheap and this is called while drawing.**
+	/// `NSImage(systemSymbolName:)` goes to CoreUI's glyph catalogue, and applying
+	/// a configuration rasterises it — `CUINamedVectorGlyph` and its neighbours
+	/// were about six per cent of a fire-benchmark profile, all of it the panel's
+	/// tab strip drawing the same handful of icons again on every frame while the
+	/// terminal below it streamed.
+	///
+	/// Keyed on everything that changes the picture: the name, the size, the
+	/// weight, and the colour — which is baked in, since AppKit only tints a
+	/// template image when a *control* draws it, so a hand-drawn symbol has its
+	/// colour in the configuration rather than at the call to draw. Two shades of
+	/// the same icon are therefore two entries, which is why the colour is in the
+	/// key rather than assumed constant.
+	///
+	/// Not bounded: the set of symbols this interface draws is a fixed list in the
+	/// source, times a handful of sizes and shades. It grows to that and stops.
+	/// The zoom changes the sizes, and a theme change the shades, so it is emptied
+	/// when either moves rather than left to accumulate a second set that will
+	/// never be asked for again.
 	static func symbol(_ name: String, size: CGFloat, color: NSColor, weight: NSFont.Weight = .regular) -> NSImage? {
+		let rgb = color.usingColorSpace(.sRGB) ?? color
+		let key = "\(name)|\(size)|\(weight.rawValue)|"
+			+ "\(rgb.redComponent),\(rgb.greenComponent),\(rgb.blueComponent),\(rgb.alphaComponent)"
+		if let kept = symbolCache[key] { return kept }
 		guard let base = NSImage(systemSymbolName: name, accessibilityDescription: nil) else { return nil }
 		let config = NSImage.SymbolConfiguration(pointSize: size, weight: opticalWeight(weight, at: size))
 			.applying(.init(paletteColors: [color]))
-		return base.withSymbolConfiguration(config) ?? base
+		let made = base.withSymbolConfiguration(config) ?? base
+		symbolCache[key] = made
+		return made
 	}
+
+	private nonisolated(unsafe) static var symbolCache: [String: NSImage] = [:]
+
+	/// Throws the drawn symbols away, for a zoom or a theme that changed both the
+	/// sizes and the shades they were built for.
+	static func forgetSymbols() { symbolCache.removeAll(keepingCapacity: true) }
 
 	/// The largest point size any symbol in this interface is asked for at 1×.
 	private static let symbolDesignSize: CGFloat = 16

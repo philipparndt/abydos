@@ -661,10 +661,27 @@ public final class PseudoTerminal {
 	/// reproducing those from the program that sent them is guesswork: what
 	/// `script` records is what the program wrote, not what arrived here after
 	/// tmux and the line discipline had their turn.
-	private func recordRawOutput(_ data: Data) {
+	/// Where raw output is recorded, asked of the environment **once**.
+	///
+	/// `ProcessInfo.environment` builds a fresh dictionary out of `environ` every
+	/// time it is read, and this is called for every chunk that arrives from the
+	/// pty. In a CPU profile of the fire benchmark `recordRawOutput` was 2,488 of
+	/// 85,488 samples — about three per cent of the run spent deciding not to log,
+	/// on a machine where the variable is not set at all.
+	///
+	/// A `static let` because the environment of a running process does not
+	/// change: `setenv` from another thread is not something this program does,
+	/// and a diagnostic that has to be turned on before launch is the only kind
+	/// that would catch the first bytes anyway.
+	private static let rawOutputPath: String? = {
 		guard let path = ProcessInfo.processInfo.environment["ABYDOS_TERM_LOG"],
 		      !path.isEmpty
-		else { return }
+		else { return nil }
+		return path
+	}()
+
+	private func recordRawOutput(_ data: Data) {
+		guard let path = Self.rawOutputPath else { return }
 		if let handle = FileHandle(forWritingAtPath: path) {
 			handle.seekToEndOfFile()
 			try? handle.write(contentsOf: data)
