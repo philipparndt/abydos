@@ -525,7 +525,31 @@ signal(SIGINT) { _ in
 /// every mode in turn: each needs its own clock, its own counters and its own
 /// seed, and a mode that resizes the screen must not be measured against a
 /// frame drawn at the old size.
-@MainActor func run(_ mode: Mode, seconds: Double) -> String {
+/// How long a phase names itself before it starts drawing.
+///
+/// Outside the clock, so it costs the measurement nothing — which is the whole
+/// reason it is here rather than drawn in a corner while the mode runs. `status`
+/// writes fifty-eight bytes a frame; a label on screen would be a fifth of the
+/// traffic it exists to measure, and the number would then be about the label.
+let announcement: TimeInterval = 0.8
+
+@MainActor func run(_ mode: Mode, number: Int, of total: Int, seconds: Double) -> String {
+	// The tab's name, which is where this belongs: Abydos titles a terminal tab
+	// from whatever the program sets, so the phase is legible without a pixel of
+	// the pane being spent on it. Sent before the clock starts.
+	emit("\u{1B}]0;firebench \(number)/\(total) — \(mode.rawValue)\u{1B}\\")
+
+	// And said on the screen too, for the phases that look like nothing is
+	// happening because nothing is *meant* to be: `status` rewrites one row and
+	// `prompt` one line, and both were reported as a defect before they said what
+	// they were. Cleared below, and over before the measurement begins.
+	emit("\(escape)0m\(escape)2J\(escape)H")
+	let heading = "  firebench \(number)/\(total): \(mode.rawValue)"
+	emit("\(escape)\(max(1, rows / 2));1H\(escape)1m\(heading)\(escape)0m")
+	emit("\(escape)\(max(2, rows / 2 + 1));1H  \(mode.explanation)")
+	flush()
+	Thread.sleep(forTimeInterval: announcement)
+
 	// **Reset before clearing, and the order is the bug this had.** The fire ends
 	// with one of its own background colours still set — the top of that palette
 	// is a pale yellow-white — and `2J` fills the screen with whatever background
@@ -639,8 +663,8 @@ signal(SIGINT) { _ in
 let wanted = modeGiven ? [mode] : Mode.allCases
 let each = duration ?? (modeGiven ? 20 : 10)
 var summaries: [String] = []
-for one in wanted {
-	summaries.append(run(one, seconds: each))
+for (index, one) in wanted.enumerated() {
+	summaries.append(run(one, number: index + 1, of: wanted.count, seconds: each))
 }
 
 restore()
