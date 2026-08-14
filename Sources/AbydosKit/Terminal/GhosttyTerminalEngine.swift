@@ -59,7 +59,13 @@ public final class GhosttyTerminalEngine: TerminalEngine {
 	/// `UnicodePlaceholder` on top of the grid supplies the `U=1` half the library
 	/// does not export. See `GhosttyGraphicsBridge`, which is where item 0485's
 	/// first question is answered.
-	public let graphics = TerminalImageStore()
+	///
+	/// Computed rather than stored, so that reading it brings the store up to date
+	/// first (item 0492): `syncGraphics` runs on the read now, and a caller reaching
+	/// straight for `graphics.placements` must not be handed the state as of some
+	/// earlier frame.
+	public var graphics: TerminalImageStore { bringUpToDate(); return imageStore }
+	private let imageStore = TerminalImageStore()
 	/// libghostty-vt's own storage stamp, so an unchanged store costs one call.
 	private var graphicsGeneration: UInt64 = 0
 
@@ -80,19 +86,31 @@ public final class GhosttyTerminalEngine: TerminalEngine {
 		didSet { applyPalette() }
 	}
 
-	public private(set) var cursorRow = 0
-	public private(set) var cursorColumn = 0
-	public private(set) var isCursorVisible = true
+	// Read across the FFI boundary by `refreshState`, which runs on the *read* and
+	// not on the write (item 0492). Every one of these is therefore a computed
+	// property over a cached value, and the cache is what `bringUpToDate` fills.
+	public var cursorRow: Int { bringUpToDate(); return cachedCursorRow }
+	public var cursorColumn: Int { bringUpToDate(); return cachedCursorColumn }
+	public var isCursorVisible: Bool { bringUpToDate(); return cachedCursorVisible }
+	public var isAlternateScreen: Bool { bringUpToDate(); return cachedAlternateScreen }
 	public private(set) var title: String?
-	public private(set) var isAlternateScreen = false
+
+	private var cachedCursorRow = 0
+	private var cachedCursorColumn = 0
+	private var cachedCursorVisible = true
+	private var cachedAlternateScreen = false
 
 	/// libghostty-vt's render state, kept for the life of the engine.
 	///
 	/// `render.h` is what its own documentation points at instead of grid
 	/// references — "the grid reference APIs are **not** meant to be used as the
 	/// core of a render loop" — and it is also the only place some state is
-	/// reported at all, the cursor's visual shape among it. Updated once per write,
-	/// which is where its dirty tracking is consumed.
+	/// reported at all, the cursor's visual shape among it.
+	///
+	/// **Updated once before each read, not once per write** (item 0492): 18.5 µs a
+	/// call against 4.7 µs to parse the kilobyte that provoked it, paid 1,400 times a
+	/// second to be read 60 times. Its dirty tracking is consumed by the update, which
+	/// is also where `noteDirtyRows` gets the rows that changed.
 	private var renderState: GhosttyRenderState?
 
 	/// Hyperlink addresses, interned so a cell can carry a `UInt16` the way ours
@@ -114,7 +132,7 @@ public final class GhosttyTerminalEngine: TerminalEngine {
 	public var cellPixelSize: (width: Int, height: Int) = (0, 0) {
 		didSet {
 			guard cellPixelSize != oldValue else { return }
-			graphics.cellPixelSize = cellPixelSize
+			imageStore.cellPixelSize = cellPixelSize
 			applySize()
 		}
 	}
@@ -241,9 +259,9 @@ public final class GhosttyTerminalEngine: TerminalEngine {
 		if ghostty_render_state_new(nil, &render) == GHOSTTY_SUCCESS { renderState = render }
 
 		applySize()
-		// Once up front, so anything read before the first byte arrives — the
-		// cursor shape, in particular — has a state to read from.
-		updateRenderState()
+		// Nothing is brought up to date here. `isStale` starts true, so the first
+		// caller to read anything — the cursor shape before a single byte has arrived,
+		// among them — gets a render state built for it then (item 0492).
 	}
 
 	deinit {
@@ -355,6 +373,7 @@ public final class GhosttyTerminalEngine: TerminalEngine {
 	/// second whatever the program is doing — but the shape is: vim in insert mode
 	/// asks for a bar, and a block there is a lie about what typing will do.
 	public var cursorShape: TerminalCursorShape {
+		bringRenderStateUpToDate()
 		guard let render = renderState else { return .block }
 		var style = GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK
 		guard ghostty_render_state_get(
@@ -509,23 +528,50 @@ public final class GhosttyTerminalEngine: TerminalEngine {
 	/// a lock over the terminal for the `begin` alone; this engine is written to
 	/// and read from the same queue, so there is no lock to shorten and the
 	/// convenience call is the honest one.
-	private func updateRenderState() {
+	///
+	/// **Once per frame, not once per write** (item 0492). It used to run from
+	/// `afterWrite`, at 18.5 µs a call on a 40×100 screen with history against 4.7 µs
+	/// to parse the kilobyte that provoked it — four times the cost of the work it was
+	/// reacting to, and it was the smaller half of what that item found. `render.h`
+	/// exists to be brought up to date when a frame is about to be drawn — its own
+	/// documentation says "update it from a terminal instance whenever you need" — and
+	/// the terminal accumulates its dirty state until an update consumes it, so
+	/// skipping updates loses nothing but the work.
+	func updateRenderState() {
 		guard let terminal, let renderState else { return }
+		renderStateUpdates += 1
 		_ = ghostty_render_state_update(renderState, terminal)
 	}
 
+	/// How many times the render state has been brought up to date.
+	///
+	/// The one number that says whether item 0492's fault is back. It is not a
+	/// timing, so a test can assert on it at any load: a thousand writes and one read
+	/// is one update, and a thousand updates is the old behaviour whatever the
+	/// machine was doing.
+	public private(set) var renderStateUpdates = 0
+
 	private func afterWrite() {
 		writeCount += 1
-		refreshState()
-		updateRenderState()
+		isStale = true
+		isRenderStateStale = true
+		// The one thing that stays on the parse path, and it is here for accuracy
+		// rather than for cost: the anchor that counts pruned lines has to be
+		// re-pinned to the bottom row *often*, because a burst that scrolls further
+		// than the whole buffer between two pinnings prunes the anchor itself and the
+		// count then falls back to a lower bound. Three FFI calls, and `writePathCosts`
+		// cannot even measure them against a 4.67 µs write — so it is not what was
+		// wrong, and it stays where it is exact.
 		updateDiscardedLineCount()
-		syncGraphics()
-		// The whole grid, because libghostty-vt tracks dirtiness per row inside
-		// its render state rather than as a range, and this engine does not use
-		// the render state yet. Honest and slow rather than clever and wrong: the
-		// Metal path throws the dirty range away anyway, and the CoreGraphics
-		// path will simply repaint more than it needs to.
-		dirty = 0...max(0, totalLineCount - 1)
+		// Everything else that used to be here is now `bringUpToDate()`, run at most
+		// once before the next read rather than once per write (item 0492) — except
+		// when somebody is measuring the difference, which is what this is for.
+		if TerminalCatchUp.perWrite {
+			bringRenderStateUpToDate()
+			dirty = 0...max(0, totalLineCount - 1)
+		}
+		// What is left is the two things a caller cannot ask for later: a reply the
+		// program is waiting on, and the notification that says bytes arrived.
 		if !pendingResponse.isEmpty {
 			let response = pendingResponse
 			pendingResponse = ""
@@ -534,7 +580,186 @@ public final class GhosttyTerminalEngine: TerminalEngine {
 		onUpdate?()
 	}
 
-	private func refreshState() {
+	// MARK: - Two tiers of catching up (item 0492)
+	//
+	// The engine is written to far more often than it is read — 1,400 deliveries a
+	// second against 60 frames, on item 0491's measurement — so nothing that a
+	// caller could ask for later happens on the parse path. What is left is split in
+	// two, because the two halves differ by forty times.
+	//
+	// `TerminalThroughputTests.writePathCosts` prints these, per write, on a 40×100
+	// screen with 5,200 lines of history and a kilobyte a write:
+	//
+	// | per write | measured |
+	// |---|---|
+	// | `ghostty_terminal_vt_write` — the actual parse | 4.67 µs |
+	// | the cheap tier: cursor, size, screen, graphics, anchor | below noise, −0.01 µs |
+	// | `ghostty_render_state_update` | 18.48 µs |
+	// | a grid snapshot — the visible rows copied | 194.22 µs |
+	//
+	// So the cheap tier stays wherever it likes and the other two are what item 0492
+	// was about. The snapshot is the larger by ten times and is not even in this file's
+	// gift: `TerminalView` used to ask for one on the parse path, once per delivery, to
+	// read a line count off it. `TerminalMetrics` is where that went.
+	//
+	// The cheap tier answers everything but the rows: where the cursor is, how big
+	// the grid is, how much history there is, which pictures exist. The expensive one
+	// is the render state, and only two things need it — the rows of a frame, and the
+	// dirty rows that say which of them to draw.
+
+	/// True when the cheap tier is behind the terminal.
+	private var isStale = true
+	/// True when the render state is behind the terminal.
+	private var isRenderStateStale = true
+
+	/// Brings the cheap state up to the terminal as it is now.
+	///
+	/// Six `ghostty_terminal_get` calls and a graphics generation check, so it is
+	/// safe to call from every accessor and from twenty places in a frame.
+	private func bringUpToDate() {
+		guard isStale, terminal != nil else { return }
+		isStale = false
+		refreshState()
+		syncGraphics()
+	}
+
+	/// Brings the render state up to date, which is the expensive half.
+	///
+	/// Only the rows of a frame and the dirty range need this, so only `grid` and
+	/// `takeDirtyRange` — and `cursorShape`, which the library reports nowhere else —
+	/// ask for it. Calling it from the parse path is what item 0492 was filed about.
+	private func bringRenderStateUpToDate() {
+		bringUpToDate()
+		guard isRenderStateStale, terminal != nil else { return }
+		isRenderStateStale = false
+		updateRenderState()
+		noteDirtyRows()
+	}
+
+	/// The rows the render state says changed, unioned into the dirty range.
+	///
+	/// **This is what 0488's row cache was being denied** (item 0492). The engine
+	/// used to answer `0...totalLineCount - 1` after every write, which is a truthful
+	/// "everything may have changed" and defeats a cache whose whole point is to keep
+	/// the rows that did not.
+	///
+	/// libghostty-vt keeps dirtiness at two layers and `render.h` exports both: a
+	/// global state that is `FALSE`, `PARTIAL` or `FULL`, and a flag per row. `FULL`
+	/// means something changed that is not a row — the viewport moved, the palette
+	/// changed, the screen was swapped — and the honest answer to that is still the
+	/// whole document. `PARTIAL` is the case worth having: the prompt rewritten under
+	/// cursor-up dirties one row out of forty-seven.
+	///
+	/// The update call does not clear either layer — its documentation is explicit
+	/// that "setting one dirty state doesn't unset the other" — so both are cleared
+	/// here, and nothing else in this engine reads them.
+	private func noteDirtyRows() {
+		guard let renderState else {
+			dirty = 0...max(0, totalLineCount - 1)
+			return
+		}
+
+		var state = GHOSTTY_RENDER_STATE_DIRTY_FULL
+		guard ghostty_render_state_get(
+			renderState, GHOSTTY_RENDER_STATE_DATA_DIRTY, &state) == GHOSTTY_SUCCESS
+		else {
+			dirty = 0...max(0, totalLineCount - 1)
+			return
+		}
+
+		// Cleared whatever it said, and before the rows: a return in between would
+		// leave the global flag set and every later frame would read `FULL`.
+		var clean = GHOSTTY_RENDER_STATE_DIRTY_FALSE
+		_ = ghostty_render_state_set(renderState, GHOSTTY_RENDER_STATE_OPTION_DIRTY, &clean)
+
+		if state == GHOSTTY_RENDER_STATE_DIRTY_FULL {
+			clearRowDirtyFlags()
+			note(dirty: 0...max(0, totalLineCount - 1))
+			return
+		}
+		if state == GHOSTTY_RENDER_STATE_DIRTY_FALSE {
+			// Nothing changed, so nothing to draw again — and no rows to clear,
+			// because a clean frame has none set.
+			return
+		}
+
+		var iterator: GhosttyRenderStateRowIterator?
+		guard ghostty_render_state_row_iterator_new(nil, &iterator) == GHOSTTY_SUCCESS,
+		      let rowIterator = iterator
+		else {
+			note(dirty: 0...max(0, totalLineCount - 1))
+			return
+		}
+		defer { ghostty_render_state_row_iterator_free(rowIterator) }
+		guard ghostty_render_state_get(
+			renderState, GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR, &iterator) == GHOSTTY_SUCCESS
+		else {
+			note(dirty: 0...max(0, totalLineCount - 1))
+			return
+		}
+
+		// Absolute rows, which is what the seam speaks: viewport row 0 is the first
+		// row of the active grid, and everything above it is scrollback.
+		let firstRow = scrollbackCount
+		var row = 0
+		var lowest = Int.max
+		var highest = Int.min
+		var off = false
+		while ghostty_render_state_row_iterator_next(rowIterator) {
+			defer { row += 1 }
+			var isDirty = false
+			guard ghostty_render_state_row_get(
+				rowIterator, GHOSTTY_RENDER_STATE_ROW_DATA_DIRTY, &isDirty) == GHOSTTY_SUCCESS,
+				isDirty
+			else { continue }
+			lowest = min(lowest, firstRow + row)
+			highest = max(highest, firstRow + row)
+			_ = ghostty_render_state_row_set(
+				rowIterator, GHOSTTY_RENDER_STATE_ROW_OPTION_DIRTY, &off)
+		}
+		guard lowest <= highest else { return }
+		note(dirty: lowest...highest)
+	}
+
+	/// Unsets every row's dirty flag, for the `FULL` case where they were not read.
+	///
+	/// Left set they would come back as a `PARTIAL` frame's answer later, naming rows
+	/// that changed before the last frame rather than since it.
+	private func clearRowDirtyFlags() {
+		guard let renderState else { return }
+		var iterator: GhosttyRenderStateRowIterator?
+		guard ghostty_render_state_row_iterator_new(nil, &iterator) == GHOSTTY_SUCCESS,
+		      let rowIterator = iterator
+		else { return }
+		defer { ghostty_render_state_row_iterator_free(rowIterator) }
+		guard ghostty_render_state_get(
+			renderState, GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR, &iterator) == GHOSTTY_SUCCESS
+		else { return }
+		var off = false
+		while ghostty_render_state_row_iterator_next(rowIterator) {
+			_ = ghostty_render_state_row_set(
+				rowIterator, GHOSTTY_RENDER_STATE_ROW_OPTION_DIRTY, &off)
+		}
+	}
+
+	/// Unions a range into what `takeDirtyRange` will hand over.
+	///
+	/// Several batches of output are parsed between two frames and each of them may
+	/// bring the engine up to date, so the range a frame is given has to be the union
+	/// of all of them — the same reason `TerminalDirtyRows` exists on the other side.
+	private func note(dirty range: ClosedRange<Int>) {
+		guard let existing = dirty else {
+			dirty = range
+			return
+		}
+		dirty = min(existing.lowerBound, range.lowerBound)...max(existing.upperBound, range.upperBound)
+	}
+
+	// `internal` rather than `private` so `TerminalThroughputTests.writePathCosts`
+	// can time each phase on its own (item 0492). Their cost per call is the whole
+	// question that item was filed to answer, and a profile of `afterWrite` as one
+	// lump is what had it guessing.
+	func refreshState() {
 		guard let terminal else { return }
 		var cx: UInt16 = 0, cy: UInt16 = 0, visible = false
 		var cols: UInt16 = 0, rowCount: UInt16 = 0
@@ -543,9 +768,9 @@ public final class GhosttyTerminalEngine: TerminalEngine {
 		ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_CURSOR_VISIBLE, &visible)
 		ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_COLS, &cols)
 		ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_ROWS, &rowCount)
-		cursorColumn = Int(cx)
-		cursorRow = Int(cy)
-		isCursorVisible = visible
+		cachedCursorColumn = Int(cx)
+		cachedCursorRow = Int(cy)
+		cachedCursorVisible = visible
 		columns = Int(cols)
 		rows = Int(rowCount)
 
@@ -553,7 +778,7 @@ public final class GhosttyTerminalEngine: TerminalEngine {
 		// guessed integer width.
 		var screen = GHOSTTY_TERMINAL_SCREEN_PRIMARY
 		if ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_ACTIVE_SCREEN, &screen) == GHOSTTY_SUCCESS {
-			isAlternateScreen = screen != GHOSTTY_TERMINAL_SCREEN_PRIMARY
+			cachedAlternateScreen = screen != GHOSTTY_TERMINAL_SCREEN_PRIMARY
 		}
 	}
 
@@ -565,14 +790,14 @@ public final class GhosttyTerminalEngine: TerminalEngine {
 	/// touching storage. So a pane that has ever shown a picture re-reads the
 	/// geometry each write, and a pane that never has — which is nearly all of
 	/// them — costs exactly one FFI call.
-	private func syncGraphics() {
+	func syncGraphics() {
 		guard let terminal else { return }
 		guard let snapshot = GhosttyGraphicsBridge.snapshot(
 			of: terminal, scrollbackCount: scrollbackCount)
 		else { return }
 		guard snapshot.generation != 0 || graphicsGeneration != 0 else { return }
 		graphicsGeneration = snapshot.generation
-		graphics.adopt(
+		imageStore.adopt(
 			images: snapshot.images,
 			placements: snapshot.placements,
 			virtual: snapshot.virtual)
@@ -584,9 +809,12 @@ public final class GhosttyTerminalEngine: TerminalEngine {
 		self.rows = max(1, rows)
 		self.columns = max(1, columns)
 		applySize()
+		// A resize reflows, so nothing about the old picture survives; the range says
+		// so, and the two stale flags send the rest through the next read.
+		isStale = true
+		isRenderStateStale = true
 		refreshState()
-		updateRenderState()
-		dirty = 0...max(0, totalLineCount - 1)
+		note(dirty: 0...max(0, totalLineCount - 1))
 	}
 
 	private func applySize() {
@@ -604,12 +832,31 @@ public final class GhosttyTerminalEngine: TerminalEngine {
 	public func reset() {
 		guard let terminal else { return }
 		ghostty_terminal_reset(terminal)
+		isStale = true
+		isRenderStateStale = true
 		refreshState()
-		updateRenderState()
-		dirty = 0...max(0, totalLineCount - 1)
+		note(dirty: 0...max(0, totalLineCount - 1))
+	}
+
+	/// The size and the history, without copying a row.
+	///
+	/// Two `ghostty_terminal_get` calls on top of the cheap tier, and that is the
+	/// point of it existing (item 0492): the parse path used to reach for `grid` to
+	/// answer these, and `grid` copies the visible rows.
+	public var metrics: TerminalMetrics {
+		bringUpToDate()
+		return TerminalMetrics(
+			rows: rows,
+			columns: columns,
+			totalLineCount: totalLineCount,
+			scrollbackCount: scrollbackCount,
+			discardedLineCount: discardedLineCount)
 	}
 
 	public func takeDirtyRange() -> ClosedRange<Int>? {
+		// The rows that changed are read off the render state, and the render state is
+		// brought up to date here rather than on the parse path (item 0492).
+		bringRenderStateUpToDate()
 		defer { dirty = nil }
 		return dirty
 	}
@@ -657,20 +904,31 @@ public final class GhosttyTerminalEngine: TerminalEngine {
 	private var anchor: GhosttyTrackedGridRef?
 	private var anchorIndex = 0
 
-	private func updateDiscardedLineCount() {
+	func updateDiscardedLineCount() {
 		guard let terminal else { return }
 		let bottom = max(0, totalLineCount - 1)
 
 		if let anchor {
 			var coordinate = GhosttyPointCoordinate()
+			var pruned = 0
 			if ghostty_tracked_grid_ref_point(anchor, GHOSTTY_POINT_TAG_SCREEN, &coordinate)
 				== GHOSTTY_SUCCESS {
 				// Its index can only have gone *down*, and only by pruning.
-				discardedLineCount += max(0, anchorIndex - Int(coordinate.y))
+				pruned = max(0, anchorIndex - Int(coordinate.y))
 			} else {
 				// Gone. At least everything up to and including it was pruned.
-				discardedLineCount += anchorIndex + 1
+				pruned = anchorIndex + 1
 			}
+			discardedLineCount += pruned
+			// A line leaving history renumbers every absolute row, and
+			// `TerminalDirtyRows` unions ranges taken at different moments as absolute
+			// rows — which is only sound because the moment of renumbering is also a
+			// moment the whole document is marked.
+			// `TerminalDirtyRangeTests.aDiscardedLineDirtiesEverything` asserts that of
+			// our engine; this is the same promise from this one, and it has to be made
+			// here rather than in `noteDirtyRows` because pruning is counted on the
+			// parse path and the rows are read on the frame.
+			if pruned > 0 { note(dirty: 0...bottom) }
 		}
 
 		var point = GhosttyPoint()
@@ -738,6 +996,7 @@ public final class GhosttyTerminalEngine: TerminalEngine {
 	private var cachedGrid: GhosttyGrid?
 
 	public var grid: TerminalGridReading {
+		bringRenderStateUpToDate()
 		if let cachedGrid, cachedGrid.matches(writeCount: writeCount) { return cachedGrid }
 		let scrollback = scrollbackCount
 		let made = GhosttyGrid(

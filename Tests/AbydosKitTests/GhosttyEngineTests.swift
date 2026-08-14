@@ -604,4 +604,202 @@ struct GhosttyEngineTests {
 		#expect(TerminalEmulator.engineName == "abydos")
 		#expect(GhosttyTerminalEngine.engineName == "libghostty-vt")
 	}
+
+	// MARK: - What happens on a write, and what waits for a read (item 0492)
+
+	/// **A thousand writes and one read is one render-state update.**
+	///
+	/// This is item 0492 as an assertion rather than a timing, which is what makes it
+	/// worth having: `ghostty_render_state_update` brings a whole viewport up to date
+	/// and used to run from `afterWrite`, so the app paid for it 1,400 times a second
+	/// to read it 60 times. A count is stable at any load, and it is the number that
+	/// moves if anybody puts the call back on the parse path.
+	@Test func aThousandWritesAndOneReadIsOneRenderStateUpdate() throws {
+		let theirs = GhosttyTerminalEngine(rows: 24, columns: 80)
+		try #require(theirs.isUsable)
+		let before = theirs.renderStateUpdates
+
+		for index in 0..<1_000 { theirs.write("line \(index)\r\n") }
+		#expect(theirs.renderStateUpdates == before, "a write must not update the render state")
+
+		// Reading the rows is what needs it, and needs it once however many times the
+		// view asks — `TerminalView` reads `grid` about twenty times a frame.
+		_ = theirs.grid
+		_ = theirs.grid
+		_ = theirs.takeDirtyRange()
+		#expect(theirs.renderStateUpdates == before + 1)
+
+		// One more write, one more read, one more update. Not zero: a frame after
+		// output has to see the output.
+		theirs.write("and one more\r\n")
+		_ = theirs.grid
+		#expect(theirs.renderStateUpdates == before + 2)
+	}
+
+	/// The cheap answers do not need a snapshot, and that is what `metrics` is for.
+	///
+	/// `TerminalView.realignSelectionForDiscardedLines` runs on every delivery of
+	/// output and wants one number: how many lines have been pruned. It used to ask
+	/// `emulator.grid` for it, and for this engine a snapshot means copying every
+	/// visible cell across the FFI boundary — 194 µs a call against 4.67 µs to parse
+	/// the kilobyte that provoked it. Asserted as a count of render-state updates,
+	/// because that is the observable side of "no snapshot was taken".
+	@Test func theMetricsAnswerWithoutASnapshot() throws {
+		let theirs = GhosttyTerminalEngine(rows: 10, columns: 40)
+		try #require(theirs.isUsable)
+		for index in 0..<200 { theirs.write("row \(index)\r\n") }
+		_ = theirs.grid
+		let after = theirs.renderStateUpdates
+
+		for index in 0..<200 {
+			theirs.write("more \(index)\r\n")
+			// Exactly what the parse path asks for, once per delivery.
+			_ = theirs.metrics.discardedLineCount
+			_ = theirs.metrics.totalLineCount
+		}
+		#expect(theirs.renderStateUpdates == after, "metrics must not cost a render state")
+	}
+
+	/// Both engines agree that `metrics` and the snapshot describe the same terminal.
+	///
+	/// The seam gained a second way to ask the same questions, and the failure it
+	/// could have is that the two disagree — a scrollbar drawn from one and rows
+	/// fetched by the other, off by a line.
+	@Test func metricsAndTheSnapshotAgreeInBothEngines() throws {
+		let data = try fixture("return-burst.bin")
+		for engine in [
+			TerminalEmulator(rows: 30, columns: 100) as TerminalEngine,
+			GhosttyTerminalEngine(rows: 30, columns: 100),
+		] {
+			let name = type(of: engine).engineName
+			engine.write(data)
+			let metrics = engine.metrics
+			let grid = engine.grid
+			#expect(metrics.rows == grid.rows, "\(name) rows")
+			#expect(metrics.columns == grid.columns, "\(name) columns")
+			#expect(metrics.totalLineCount == grid.totalLineCount, "\(name) totalLineCount")
+			#expect(metrics.scrollbackCount == grid.scrollbackCount, "\(name) scrollbackCount")
+			#expect(metrics.discardedLineCount == grid.discardedLineCount, "\(name) discarded")
+		}
+	}
+
+	// MARK: - The dirty range this engine used to throw away (item 0492)
+
+	/// **A prompt rewritten in place dirties one row, in both engines.**
+	///
+	/// This engine used to answer `0...totalLineCount - 1` after every write, which is
+	/// truthful and useless: item 0488's row cache keeps what it built for every row
+	/// that did not change, and a range covering the document tells it nothing was
+	/// kept. libghostty-vt tracks dirtiness per row inside its render state and
+	/// `render.h` exports it; this is that, turned into the range the seam speaks.
+	///
+	/// The pattern is `abydos-bench --mode prompt`: cursor up, clear the line, write it
+	/// again — a shell redrawing its prompt when somebody presses a key.
+	@Test func aPromptRewriteDirtiesOneRowInBothEngines() throws {
+		for engine in [
+			TerminalEmulator(rows: 12, columns: 40) as TerminalEngine,
+			GhosttyTerminalEngine(rows: 12, columns: 40),
+		] {
+			let name = type(of: engine).engineName
+			// Fill the screen and scroll a while, so there is history and the range
+			// below is measured against a document rather than a blank grid.
+			engine.write(String(repeating: "filler\r\n", count: 60))
+			engine.write("$ a recalled command\r\n")
+			_ = engine.takeDirtyRange()
+
+			// The prompt line, rewritten where it already is.
+			engine.write("\u{1B}[1A\u{1B}[2K$ a longer recalled command")
+			let range = engine.takeDirtyRange()
+			let rows = engine.metrics.rows
+			#expect(range != nil, "\(name) reported nothing changed")
+			#expect(
+				(range?.count ?? .max) <= 2,
+				"\(name) dirtied \(range?.count ?? -1) rows for a one-line rewrite")
+			#expect(
+				(range?.count ?? .max) < rows / 2,
+				"\(name): under half a viewport is what the CoreGraphics path turns on")
+
+			// And taking it clears it, so the frame after a frame is free.
+			#expect(engine.takeDirtyRange() == nil, "\(name) reported the same rows twice")
+		}
+	}
+
+	/// A line falling out of history renumbers every absolute row, and that really is
+	/// the whole document — in this engine too.
+	///
+	/// `TerminalDirtyRows` unions ranges taken at different moments as absolute rows,
+	/// and that is only sound because the moment of renumbering is also a moment the
+	/// whole document is marked. Ours is held to this by
+	/// `TerminalDirtyRangeTests.aDiscardedLineDirtiesEverything`; making the range
+	/// narrow here without making the same promise would have broken the union
+	/// quietly, which is the failure that shows up as a stale row weeks later.
+	@Test func aDiscardedLineDirtiesEverythingHereToo() throws {
+		let theirs = GhosttyTerminalEngine(rows: 8, columns: 40)
+		try #require(theirs.isUsable)
+		// A small byte budget, so pruning happens inside a test.
+		theirs.setScrollbackByteLimitForTesting(32 * 1024)
+		for index in 0..<4_000 { theirs.write("line \(index)\r\n") }
+		let before = theirs.metrics.discardedLineCount
+		try #require(before > 0, "the history has to be full for this to be the case tested")
+		_ = theirs.takeDirtyRange()
+
+		// Written until a line actually goes, rather than a fixed number of them.
+		// **libghostty-vt prunes a page at a time, not a line at a time**, which is
+		// worth knowing for anybody testing this: four hundred more lines went in here
+		// and the count did not move, because the page they went into had room. Ours
+		// prunes per line and this loop would end on its first turn.
+		var index = 0
+		while theirs.metrics.discardedLineCount == before, index < 20_000 {
+			theirs.write("pushes a line off the top \(index)\r\n")
+			index += 1
+		}
+		#expect(theirs.metrics.discardedLineCount > before, "nothing was pruned in 20,000 lines")
+		let range = theirs.takeDirtyRange()
+		#expect(range?.lowerBound == 0, "pruning must dirty from the first row")
+		#expect((range?.count ?? 0) >= theirs.metrics.totalLineCount)
+	}
+
+	/// Swapping the whole grid for another one is a change, and this engine has to
+	/// report it as one.
+	///
+	/// The case item 0488 found: a renderer that keeps what it built per row draws the
+	/// shell's last screen underneath a program that has just taken the terminal over.
+	/// The old answer here — the whole document, always — could not get this wrong. A
+	/// narrow answer can, which is why this is asserted rather than assumed.
+	@Test func takingOverTheScreenDirtiesEverythingHereToo() throws {
+		let theirs = GhosttyTerminalEngine(rows: 8, columns: 40)
+		try #require(theirs.isUsable)
+		theirs.write(String(repeating: "history\r\n", count: 40))
+		_ = theirs.takeDirtyRange()
+
+		theirs.write("\u{1B}[?1049h")
+		#expect(theirs.takeDirtyRange()?.lowerBound == 0, "the alternate screen")
+
+		theirs.write("a full screen program")
+		_ = theirs.takeDirtyRange()
+
+		theirs.write("\u{1B}[?1049l")
+		#expect(theirs.takeDirtyRange()?.lowerBound == 0, "and handing it back")
+
+		theirs.write("more output\r\n")
+		_ = theirs.takeDirtyRange()
+		theirs.reset()
+		#expect(theirs.takeDirtyRange()?.lowerBound == 0, "a reset")
+	}
+
+	/// Nothing new is nothing to draw.
+	///
+	/// The other half of a narrow dirty range, and the half a cache depends on: a
+	/// frame drawn for a reason of its own — a cursor blink, a window coming forward —
+	/// must not be told that rows changed when none did. The old answer failed this by
+	/// construction and it did not matter, because the range was the document anyway.
+	@Test func aFrameWithNothingNewIsToldNothingChanged() throws {
+		let theirs = GhosttyTerminalEngine(rows: 8, columns: 40)
+		try #require(theirs.isUsable)
+		theirs.write("hello\r\n")
+		_ = theirs.takeDirtyRange()
+		#expect(theirs.takeDirtyRange() == nil)
+		_ = theirs.grid
+		#expect(theirs.takeDirtyRange() == nil, "a snapshot is not a change")
+	}
 }
