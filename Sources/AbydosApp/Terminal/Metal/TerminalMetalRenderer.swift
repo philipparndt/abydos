@@ -30,6 +30,8 @@ private struct Uniforms {
 	var bell: Float = 0
 	/// Seconds since it rang, which keeps the wobble moving as it fades.
 	var bellTime: Float = 0
+	/// Where the visible window is in the document the cells were built in.
+	var scroll: SIMD2<Float> = .zero
 }
 
 /// Draws the terminal grid on the GPU.
@@ -52,6 +54,88 @@ final class TerminalMetalRenderer {
 	private var instances: [CellInstance] = []
 	private var instanceBuffer: MTLBuffer?
 
+	/// What each row came to last time it was built, keyed by line number.
+	///
+	/// This is the whole of item 0488. A frame used to turn every cell on screen
+	/// into instances whether it had changed or not — 10,904 of them on this
+	/// machine, every frame, for ever — and the engine has been able to say
+	/// which rows moved the entire time. A row nobody has touched is copied out
+	/// of here instead, which is a memcpy where it was a palette lookup, an
+	/// atlas lookup and a ligature scan per cell.
+	///
+	/// Keyed by *line number* rather than by the absolute row it currently sits
+	/// at, because absolute rows shift when history is dropped and a key that
+	/// moves under what it names is not a key. See `TerminalDirtyRows`.
+	private var rowCache: [Int: [CellInstance]] = [:]
+
+	/// The line whose top edge is at `inset.y` in the coordinates cached rows
+	/// are built in.
+	///
+	/// Cells go into the buffer measured from here and the scroll offset in the
+	/// uniforms takes them the rest of the way, so a row keeps its instances
+	/// while the picture scrolls under it. Moved only when the distance from it
+	/// grows far enough to be worth worrying about in a `Float` — which costs
+	/// one frame built in full, once every 32,768 lines that leave history.
+	private var documentBase = 0
+	private static let longestRunFromBase = 1 << 15
+
+	/// Whether rows are kept between frames at all. `ABYDOS_METAL_ROW_CACHE=0`
+	/// says no, and every row of every frame is built as it was before 0488.
+	///
+	/// Here because of the morning item 0487 spent: it read two numbers from two
+	/// binaries whose benchmark body had changed in between, and neither figure
+	/// was a measurement of the same thing as the other. One binary that can be
+	/// asked for either behaviour cannot make that mistake — the before and the
+	/// after come out of the same build, the same window, the same load and the
+	/// same minute, and the only difference between them is the thing being
+	/// measured.
+	private static let keepsRows = ProcessInfo.processInfo.environment["ABYDOS_METAL_ROW_CACHE"] != "0"
+
+	/// What the cached rows were built against. Anything here changing means
+	/// every one of them is about something that is no longer true.
+	private struct RowContext: Equatable {
+		var cellSize: CGSize
+		var inset: CGPoint
+		var background: SIMD4<Float>
+		var foreground: SIMD4<Float>
+		var baselineFromTop: CGFloat
+		var scale: CGFloat
+		var hoveredLink: UInt16
+		var ligatures: Bool
+		var faces: ObjectIdentifier
+		var atlas: ObjectIdentifier
+		var atlasGeneration: Int
+		var documentBase: Int
+		var cutouts: [Cutout]
+	}
+
+	private var rowContext: RowContext?
+	/// The cursor in the frame before this one, and which line it was on, so the
+	/// row it has left is built again along with the one it has arrived on.
+	///
+	/// The line number rather than the absolute row it came in as: a frame later,
+	/// the absolute row may be a different line.
+	private var lastCursor: Cursor?
+	private var lastCursorLine: Int?
+
+	/// Cells built this frame, and rows. Both are for `ABYDOS_METAL_PROBE`,
+	/// which is how item 0488 was found and how it is shown to have worked.
+	private(set) var cellsBuilt = 0
+	private(set) var rowsBuilt = 0
+
+	/// Where the window is in the document, for the uniforms.
+	private var scroll = SIMD2<Float>(0, 0)
+
+	/// Throws away every row kept from the last frame.
+	///
+	/// For the changes that alter the picture without altering the grid — a
+	/// theme, a font, the keyboard arriving. `repaint()` means "all of this may
+	/// differ", and this is what that means for a renderer that keeps things.
+	func invalidateRows() {
+		rowCache.removeAll(keepingCapacity: true)
+		rowContext = nil
+	}
+
 	/// One texture per picture the terminal is holding, built the first time it
 	/// is drawn and kept until the program deletes it.
 	private var imageTextures: [UInt32: MTLTexture] = [:]
@@ -68,7 +152,12 @@ final class TerminalMetalRenderer {
 	/// the cheaper choice — one uniform quad rather than a test per cell — but it
 	/// would paint flat over a picture placed below the text and leave nothing of
 	/// it to see. These are the cells that must leave their background alone.
-	private var cutouts: [(rows: ClosedRange<Int>, columns: Range<Int>)] = []
+	private struct Cutout: Equatable {
+		var rows: ClosedRange<Int>
+		var columns: Range<Int>
+	}
+
+	private var cutouts: [Cutout] = []
 
 	/// Points to pixels.
 	var scale: CGFloat {
@@ -237,6 +326,10 @@ final class TerminalMetalRenderer {
 		var origin: CGPoint
 		var background: SIMD4<Float>
 		var foreground: SIMD4<Float>
+		/// How many lines have fallen out of history, which is the difference
+		/// between the absolute rows this frame names and the line numbers the
+		/// kept rows are filed under.
+		var discardedLineCount = 0
 	}
 
 	/// Turns rows of cells into instances.
@@ -251,7 +344,12 @@ final class TerminalMetalRenderer {
 	}
 
 	/// Where the block cursor is, and what colour it is.
-	struct Cursor {
+	///
+	/// Equatable because a cursor is the one thing that changes a row without
+	/// the engine having written to it: the cell under a block is turned inside
+	/// out as it is built, so the row the cursor arrives on and the row it has
+	/// left both have to be built again even though neither changed.
+	struct Cursor: Equatable {
 		var row: Int
 		var column: Int
 		var colour: SIMD4<Float>
@@ -282,15 +380,61 @@ final class TerminalMetalRenderer {
 		)
 	}
 
+	/// Turns the rows of a frame into instances, building only the ones that
+	/// changed and copying the rest out of the frame before.
+	///
+	/// `changed` is the rows the engine reported, as line numbers — see
+	/// `TerminalDirtyRows` for why they are line numbers and not the absolute
+	/// rows `rows` carries. Nil means the engine reported nothing, which is a
+	/// frame drawn for some other reason: the cursor moving, the bell, a scroll.
 	func build(
 		rows: [(index: Int, line: TerminalLine)],
+		changed: ClosedRange<Int>? = nil,
 		frame: Frame,
 		faces: TerminalFaces,
 		overlays: [Overlay] = [],
 		cursor: Cursor? = nil
 	) {
 		instances.removeAll(keepingCapacity: true)
+		cellsBuilt = 0
+		rowsBuilt = 0
+		// First, because emptying the atlas moves every glyph in it and the
+		// rows kept from the last frame are full of coordinates into it.
 		atlas.setCellMetrics(size: frame.cellSize, baselineFromTop: faces.baselineFromTop)
+
+		// Asked to keep nothing, which is the renderer as it was before 0488 and
+		// is how the two are measured against each other.
+		if !Self.keepsRows { rowCache.removeAll(keepingCapacity: true) }
+
+		// Far enough from where the kept rows are measured from that a `Float`
+		// is worth thinking about: measure from here instead. One frame built in
+		// full, once every 32,768 lines that leave history.
+		let fromBase = frame.discardedLineCount - documentBase
+		if fromBase < 0 || fromBase > Self.longestRunFromBase {
+			documentBase = frame.discardedLineCount
+			rowCache.removeAll(keepingCapacity: true)
+		}
+
+		// Everything a kept row assumed and cannot check for itself.
+		let context = RowContext(
+			cellSize: frame.cellSize,
+			inset: frame.inset,
+			background: frame.background,
+			foreground: frame.foreground,
+			baselineFromTop: faces.baselineFromTop,
+			scale: scale,
+			hoveredLink: hoveredLink,
+			ligatures: Settings.shared.fontLigatures,
+			faces: ObjectIdentifier(faces.regular),
+			atlas: ObjectIdentifier(atlas),
+			atlasGeneration: atlas.generation,
+			documentBase: documentBase,
+			cutouts: cutouts
+		)
+		if rowContext != context {
+			rowCache.removeAll(keepingCapacity: true)
+			rowContext = context
+		}
 
 		let pixel = Float(scale)
 		func snap(_ value: Float) -> Float { (value * pixel).rounded() / pixel }
@@ -299,14 +443,31 @@ final class TerminalMetalRenderer {
 		// next cell's near edge rather than its own width rounded separately.
 		// Otherwise neighbouring backgrounds miss each other by a fraction of a
 		// pixel and a dark seam runs between the segments of a prompt.
+		//
+		// In the document rather than in the window: the scroll offset is
+		// subtracted in the shader, so where a row sits does not depend on where
+		// the window is looking. That is what lets a row keep the instances it
+		// was built with while output scrolls the picture under it. It comes out
+		// at the same whole point either way, because the inset and the cell are
+		// both whole numbers of points and only the offset is not.
 		func columnEdge(_ column: Int) -> Float {
-			Float((frame.inset.x + CGFloat(column) * frame.cellSize.width - frame.origin.x).rounded())
+			Float((frame.inset.x + CGFloat(column) * frame.cellSize.width).rounded())
 		}
 		func rowEdge(_ row: Int) -> Float {
-			Float((frame.inset.y + CGFloat(row) * frame.cellSize.height - frame.origin.y).rounded())
+			let line = row + frame.discardedLineCount - documentBase
+			return Float((frame.inset.y + CGFloat(line) * frame.cellSize.height).rounded())
 		}
 
-		for (index, line) in rows {
+		scroll = SIMD2(
+			Float(frame.origin.x.rounded()),
+			Float((frame.origin.y
+				+ CGFloat(frame.discardedLineCount - documentBase) * frame.cellSize.height).rounded())
+		)
+
+		/// One row's worth of instances, in document coordinates.
+		func buildRow(index: Int, line: TerminalLine) -> [CellInstance] {
+			var built: [CellInstance] = []
+			built.reserveCapacity(line.cells.count)
 			let y = rowEdge(index)
 			let rowHeight = rowEdge(index + 1) - y
 			// Just below the baseline, where an underline belongs.
@@ -442,19 +603,69 @@ final class TerminalMetalRenderer {
 					}
 				}
 
-				instances.append(instance)
+				built.append(instance)
+				// Counted here rather than from the row's width, so that it is
+				// the same count as the instances it used to be: a cell a wide
+				// glyph has swallowed produces neither.
+				cellsBuilt += 1
 
 				// Lines through and under the text, which the GPU path never
 				// drew at all: a man page's underlined headings and a diff's
 				// struck-out text came out plain.
 				let isLinked = cursor == nil && cell.attributes.link != 0 && cell.attributes.link == hoveredLink
 				if cell.attributes.underline || isLinked {
-					instances.append(rule(x: x, width: width, y: y + underlineOffset, colour: foreground))
+					built.append(rule(x: x, width: width, y: y + underlineOffset, colour: foreground))
 				}
 				if cell.attributes.strikethrough {
-					instances.append(rule(x: x, width: width, y: y + rowHeight * 0.45, colour: foreground))
+					built.append(rule(x: x, width: width, y: y + rowHeight * 0.45, colour: foreground))
 				}
 			}
+			rowsBuilt += 1
+			return built
+		}
+
+		// The cursor is drawn into the cell it is on, so the row it has arrived
+		// on and the row it has left are both out of date however little the
+		// engine says changed. Everything else that moves without a row being
+		// written to — the selection, the hovered link, the bell — is either
+		// laid over the cells afterwards or is a uniform, except the link, which
+		// is in the context above and takes the lot.
+		let cursorLine = cursor.map { $0.row + frame.discardedLineCount }
+		if cursor != lastCursor {
+			for line in [cursorLine, lastCursorLine] {
+				guard let line else { continue }
+				rowCache[line] = nil
+			}
+			lastCursor = cursor
+			lastCursorLine = cursorLine
+		}
+
+		for (index, line) in rows {
+			let number = index + frame.discardedLineCount
+			if let kept = rowCache[number], !(changed?.contains(number) ?? false) {
+				instances.append(contentsOf: kept)
+				continue
+			}
+			let built = buildRow(index: index, line: line)
+			rowCache[number] = built
+			instances.append(contentsOf: built)
+		}
+
+		// Rows nobody can see are dropped, every frame and not only when there
+		// are too many of them, and that is a correctness rule rather than a
+		// bound on memory. A row off screen goes on changing — output arrives at
+		// the bottom while somebody reads history further up — and the range
+		// that said so is taken by a frame which had no reason to build it. So
+		// what a kept row is allowed to mean is exactly this: it was on screen
+		// when the last frame was built, and every range since has been asked.
+		// Anything else has to be built again when it comes back into view.
+		if let first = rows.first?.index, let last = rows.last?.index {
+			let shown = (first + frame.discardedLineCount)...(last + frame.discardedLineCount)
+			if rowCache.count != rows.count {
+				rowCache = rowCache.filter { shown.contains($0.key) }
+			}
+		} else {
+			rowCache.removeAll(keepingCapacity: true)
 		}
 
 		// After the cells, so they land on top of them: the selection tints what
@@ -588,7 +799,7 @@ final class TerminalMetalRenderer {
 
 			if placement.z < 0 {
 				imagesBelow.append((payload, texture))
-				cutouts.append((
+				cutouts.append(Cutout(
 					rows: placement.rowRange,
 					columns: placement.column..<(placement.column + placement.columns)
 				))
@@ -672,7 +883,9 @@ final class TerminalMetalRenderer {
 		      let encoder = commands.makeRenderCommandEncoder(descriptor: pass)
 		else { return }
 
-		var uniforms = Uniforms(viewport: viewport, bell: bell.strength, bellTime: bell.elapsed)
+		var uniforms = Uniforms(
+			viewport: viewport, bell: bell.strength, bellTime: bell.elapsed, scroll: scroll
+		)
 
 		// A picture with a negative z goes behind the text, one without goes in
 		// front, and the cells are drawn between them. Three passes in the one

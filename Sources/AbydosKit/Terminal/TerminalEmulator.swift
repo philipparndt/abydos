@@ -468,25 +468,19 @@ public final class TerminalEmulator {
 		}
 
 		if width == 2, cursorColumn == screen.columns - 1 {
-			screen.setCell(
-				row: cursorRow,
-				column: cursorColumn,
-				cell: TerminalCell(scalar: 0x20, attributes: attributes)
-			)
+			screen.setScalar(row: cursorRow, column: cursorColumn, scalar: 0x20, attributes: attributes)
 			cursorColumn = 0
 			lineFeed()
 		}
 
-		screen.setCell(
-			row: cursorRow,
-			column: cursorColumn,
-			cell: TerminalCell(scalar: scalar.value, attributes: attributes)
-		)
+		screen.setScalar(row: cursorRow, column: cursorColumn, scalar: scalar.value, attributes: attributes)
 		if width == 2 {
-			screen.setCell(
+			screen.setScalar(
 				row: cursorRow,
 				column: cursorColumn + 1,
-				cell: TerminalCell(scalar: 0x20, attributes: attributes, isWideTrailer: true)
+				scalar: 0x20,
+				attributes: attributes,
+				isWideTrailer: true
 			)
 		}
 
@@ -1044,6 +1038,17 @@ public final class TerminalEmulator {
 			graphics.restorePlacements(alternateGraphics)
 			alternateGraphics = []
 		}
+		// Every row on the screen is now a different row, and no write said so:
+		// the grid was swapped for another one whole, taking its dirty range
+		// with it.
+		//
+		// It has to be said out loud, because the dirty range is the only
+		// account of what changed that a renderer gets. Both draw paths used to
+		// get away with not being told — the document's height changes as the
+		// scrollback comes and goes, and AppKit repaints a view whose frame
+		// changed — but the GPU path now keeps the instances it built for each
+		// row (0488) and nothing about a frame size reaches that.
+		screen.markAllDirty()
 		scrollTop = 0
 		scrollBottom = screen.rows - 1
 		isParkedBelowScreen = false
@@ -1055,23 +1060,29 @@ public final class TerminalEmulator {
 		switch mode {
 		case 0: // cursor to end
 			eraseInLine(mode: 0)
-			for row in (cursorRow + 1)..<screen.rows {
-				screen[row] = screen.blankLine(attributes: attributes)
-			}
+			blankRows((cursorRow + 1)..<screen.rows)
 			erasePictures(from: cursorRow, to: screen.rows - 1)
 		case 1: // start to cursor
 			eraseInLine(mode: 1)
-			for row in 0..<cursorRow {
-				screen[row] = screen.blankLine(attributes: attributes)
-			}
+			blankRows(0..<cursorRow)
 			erasePictures(from: 0, to: cursorRow)
 		case 2, 3:
-			for row in 0..<screen.rows {
-				screen[row] = screen.blankLine(attributes: attributes)
-			}
+			blankRows(0..<screen.rows)
 			erasePictures(from: 0, to: screen.rows - 1)
 		default:
 			break
+		}
+	}
+
+	/// Blanks whole rows in place, carrying the current background.
+	///
+	/// In place rather than `screen[row] = screen.blankLine(…)`: a full-screen
+	/// erase is what a program does at the start of every repaint, and the
+	/// replacement spelling allocated a row of cells and freed the old one for
+	/// each of the forty rows.
+	private func blankRows(_ rows: Range<Int>) {
+		for row in rows {
+			screen.blank(row: row, columns: 0..<screen.columns, attributes: attributes)
 		}
 	}
 
@@ -1088,16 +1099,13 @@ public final class TerminalEmulator {
 
 	private func eraseInLine(mode: Int) {
 		guard cursorRow < screen.rows else { return }
-		var blank = TerminalCell.blank
-		blank.attributes.background = attributes.background
-
 		switch mode {
 		case 0:
-			for column in cursorColumn..<screen.columns { screen[cursorRow].cells[column] = blank }
+			screen.blank(row: cursorRow, columns: cursorColumn..<screen.columns, attributes: attributes)
 		case 1:
-			for column in 0...min(cursorColumn, screen.columns - 1) { screen[cursorRow].cells[column] = blank }
+			screen.blank(row: cursorRow, columns: 0..<(cursorColumn + 1), attributes: attributes)
 		case 2:
-			screen[cursorRow] = screen.blankLine(attributes: attributes)
+			screen.blank(row: cursorRow, columns: 0..<screen.columns, attributes: attributes)
 		default:
 			break
 		}
@@ -1141,9 +1149,7 @@ public final class TerminalEmulator {
 		guard cursorRow < screen.rows else { return }
 		let end = min(cursorColumn + count, screen.columns)
 		guard cursorColumn < end else { return }
-		var blank = TerminalCell.blank
-		blank.attributes.background = attributes.background
-		for column in cursorColumn..<end { screen[cursorRow].cells[column] = blank }
+		screen.blank(row: cursorRow, columns: cursorColumn..<end, attributes: attributes)
 	}
 
 	// MARK: - SGR
@@ -1505,6 +1511,9 @@ public final class TerminalEmulator {
 	public func reset() {
 		let rows = screen.rows, columns = screen.columns
 		screen = TerminalScreen(rows: rows, columns: columns)
+		// A fresh grid reports nothing dirty, and everything about it is. See
+		// `setAlternateScreen`, which replaces the screen for the other reason.
+		screen.markAllDirty()
 		attributes = TerminalAttributes()
 		cursorRow = 0
 		cursorColumn = 0

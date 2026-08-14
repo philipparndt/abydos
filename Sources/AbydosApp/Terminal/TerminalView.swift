@@ -70,8 +70,20 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// does exactly that — and parsing every byte the moment it arrives leaves
 	/// the main thread no time to draw or to listen, which reads as a freeze
 	/// however fast the parser is.
-	private var pending: [Data] = []
+	private var pending: [PendingOutput] = []
 	private var pendingBytes = 0
+
+	/// A delivery from the pty, when it arrived, and how much of it is parsed.
+	///
+	/// The arrival time is what makes "behind" measurable. `!pending.isEmpty`
+	/// answers "is there more to read", which is not the same question and is
+	/// permanently true against a program that writes as fast as it is read
+	/// (item 0491).
+	///
+	private struct PendingOutput {
+		let data: Data
+		let arrivedAt: Date
+	}
 	private var drainScheduled = false
 	private var isReadingSuspended = false
 	/// When the screen was last drawn, for pacing redraws while catching up.
@@ -85,10 +97,51 @@ final class TerminalView: NSView, NSTextInputClient {
 	private var behindSince: Date?
 
 	/// How long parsing may take before yielding so the screen can be drawn.
+	///
+	/// A deadline checked between deliveries, not inside one: a delivery is
+	/// however many bytes were in the pty when it was read, up to 512 KB, and it
+	/// goes into the engine whole. So this bounds the parse work per frame only
+	/// as far as one delivery fits in a frame, and an engine that takes longer
+	/// than that over one is an engine that costs frames. Deliberately not
+	/// sliced; item 0491 says what that was measured to cost.
 	private static let parseBudget: TimeInterval = 0.006
-	/// Backlog at which the process is made to wait, and the one it resumes at.
+	/// How far behind the picture may fall before the process is made to wait,
+	/// and how far it has to have caught up before the process runs again.
+	///
+	/// A tenth of a second is about six frames: long enough that an ordinary
+	/// program never touches it, short enough that nobody sees the delay. There
+	/// is nothing to be gained by letting it grow — a deeper queue does not parse
+	/// any faster, so every extra millisecond of it is a millisecond the screen
+	/// is out of date for no return.
+	private static let backlogHoldTime: TimeInterval = 0.1
+	private static let backlogResumeTime: TimeInterval = 0.03
+	/// The same limits in bytes, as the backstop for one very large delivery.
 	private static let backlogHighWater = 4 << 20
 	private static let backlogLowWater = 1 << 20
+
+	/// The two rules item 0491 replaced, kept switchable so both sides can be
+	/// measured out of **one** binary.
+	///
+	/// That is not a convenience. The measurements this item exists to correct
+	/// were taken from two different builds with a setting changed in between,
+	/// and the setting turned out to be what moved the number — so a comparison
+	/// that cannot be made out of one binary in one sitting is not a comparison.
+	/// `ABYDOS_TERM_BEHIND=queue` asks "is the queue empty" again, and
+	/// `ABYDOS_TERM_HOLD=bytes` makes the process wait on four megabytes rather
+	/// than on a tenth of a second.
+	private static let behindMeansQueueNotEmpty =
+		ProcessInfo.processInfo.environment["ABYDOS_TERM_BEHIND"] == "queue"
+	private static let holdsOnBytesOnly =
+		ProcessInfo.processInfo.environment["ABYDOS_TERM_HOLD"] == "bytes"
+
+	/// What the engine has said changed since the last frame was built.
+	///
+	/// The GPU path builds these rows and copies the rest out of the frame
+	/// before, which is item 0488; `TerminalDirtyRows` is where the two awkward
+	/// parts of that live — the union across batches, and the fact that a line
+	/// leaving history renumbers every absolute row.
+	private var dirtyRows = TerminalDirtyRows()
+
 	/// Text selected with the mouse, in absolute rows. Nil when nothing is.
 	private var selection: TerminalSelection?
 	private var isSelecting = false
@@ -189,8 +242,8 @@ final class TerminalView: NSView, NSTextInputClient {
 			return (Double(srgb.redComponent), Double(srgb.greenComponent), Double(srgb.blueComponent))
 		}
 
-		pty.onOutput = { [weak self] data in
-			self?.enqueue(data)
+		pty.onOutput = { [weak self] data, arrivedAt in
+			self?.enqueue(data, arrivedAt: arrivedAt)
 		}
 		pty.onExit = { [weak self] code in
 			self?.emulator.write("\r\n[process exited with status \(code)]\r\n")
@@ -321,18 +374,67 @@ final class TerminalView: NSView, NSTextInputClient {
 	}
 
 	/// Takes output from the process and asks for it to be parsed soon.
-	private func enqueue(_ data: Data) {
+	private func enqueue(_ data: Data, arrivedAt: Date) {
 		if InputProbe.enabled, keyPressedAt != nil, keyEchoedAt == nil { keyEchoedAt = Date() }
-		if pending.isEmpty, behindSince == nil { behindSince = Date() }
-		pending.append(data)
+		pending.append(PendingOutput(data: data, arrivedAt: arrivedAt))
 		pendingBytes += data.count
+		applyBackPressure()
+		scheduleDrain()
+	}
 
-		// Far enough behind that the process should wait for us.
-		if !isReadingSuspended, pendingBytes >= Self.backlogHighWater {
+	/// How far behind the program the picture on screen is, in seconds.
+	///
+	/// The oldest delivery nobody has parsed yet, measured from when it came off
+	/// the pty. Zero when everything that has arrived has been parsed, which is
+	/// the only state in which the grid is what the program last said.
+	///
+	/// This is the measurement item 0491 exists to introduce, and what it
+	/// replaces is `!pending.isEmpty` — "there are bytes I have not parsed" —
+	/// which is a different question with a different answer. Against a program
+	/// that writes as fast as it is read the queue is never empty, so the old
+	/// question was permanently answered yes and the screen was permanently held
+	/// at one frame a second. Worse, it got *more* wrong as the parser got
+	/// faster: a drain that keeps up reads more per second and empties the queue
+	/// less often. Seconds behind have no such coupling — a hundred milliseconds
+	/// behind is a hundred milliseconds behind whatever the parser costs and
+	/// whichever pattern the program is writing.
+	/// Both queues, because there are two and only one of them used to be
+	/// counted: what has been handed over and not parsed, and what the pty has
+	/// read and not handed over yet.
+	private var staleBy: TimeInterval {
+		let queued = pending.first.map { -$0.arrivedAt.timeIntervalSinceNow } ?? 0
+		let held = pty.undeliveredBacklog.oldestAt.map { -$0.timeIntervalSinceNow } ?? 0
+		return max(queued, held)
+	}
+
+	/// Everything read from the process and not yet on the grid.
+	private var backlogBytes: Int { pendingBytes + pty.undeliveredBacklog.bytes }
+
+	/// Makes the program wait when the picture would otherwise fall behind it.
+	///
+	/// Two limits, and the one that matters is the first. **Time**, because a
+	/// backlog is only harmful in proportion to how long it takes to show: a
+	/// queue holding a second of parsing is a screen a second out of date, and
+	/// no amount of it improves throughput — the parser is the limit either way,
+	/// and everything queued beyond what it can take is staleness bought for
+	/// nothing. **Bytes**, still, as the backstop for a single enormous
+	/// delivery, since one read gathers up to 512 KB and the time limit cannot
+	/// see inside it.
+	///
+	/// This also shortens the exposure item 0468 found — a macOS pty discards
+	/// unread output 600 ms after the child exits — because a queue bounded at a
+	/// tenth of a second drains, and resumes, far sooner than one bounded at
+	/// four megabytes, which on a slow pattern took seconds.
+	private func applyBackPressure() {
+		let behind = Self.holdsOnBytesOnly ? 0 : staleBy
+		let bytes = backlogBytes
+		if !isReadingSuspended, behind >= Self.backlogHoldTime || bytes >= Self.backlogHighWater {
 			isReadingSuspended = true
 			pty.setReadingSuspended(true)
+		} else if isReadingSuspended, behind <= Self.backlogResumeTime, bytes <= Self.backlogLowWater {
+			isReadingSuspended = false
+			pty.setReadingSuspended(false)
 		}
-		scheduleDrain()
 	}
 
 	private func scheduleDrain() {
@@ -360,21 +462,26 @@ final class TerminalView: NSView, NSTextInputClient {
 		let deadline = Date().addingTimeInterval(Self.parseBudget)
 
 		while !pending.isEmpty {
+			if MetalProbe.enabled { MetalProbe.note(staleBy: staleBy) }
 			let chunk = pending.removeFirst()
-			pendingBytes -= chunk.count
+			pendingBytes -= chunk.data.count
 			let parseStart = MetalProbe.enabled ? Date() : nil
-			emulator.write(chunk)
-			if let parseStart { MetalProbe.parseSeconds += -parseStart.timeIntervalSinceNow }
+			emulator.write(chunk.data)
+			if let parseStart {
+				let spent = -parseStart.timeIntervalSinceNow
+				MetalProbe.parseSeconds += spent
+				MetalProbe.note(delivery: spent, bytes: chunk.data.count)
+			}
 			if Date() >= deadline { break }
 		}
 
 		if let title = emulator.title { onTitleChange?(title) }
 
-		// Caught up enough that the process may carry on.
-		if isReadingSuspended, pendingBytes <= Self.backlogLowWater {
-			isReadingSuspended = false
-			pty.setReadingSuspended(false)
-		}
+		// Caught up enough that the process may carry on — or, having spent the
+		// budget without catching up, far enough behind that it should wait.
+		// Asked here as well as on arrival because staleness grows with the clock
+		// and not only with what the program sends.
+		applyBackPressure()
 
 		// Caught up: draw what it all came to. Redraws asked for while there
 		// was still a backlog were skipped, and this is the one that shows the
@@ -389,14 +496,23 @@ final class TerminalView: NSView, NSTextInputClient {
 	private func scheduleRedraw() {
 		guard !redrawScheduled else { return }
 
-		// Not for every batch while there is a backlog: each one paints a screen
-		// the program has already replaced, which is what a locked screen looks
-		// like when it comes back — an agent's clock sprinting through minutes
-		// it already spent. A burst is held until it drains and drawn once; a
-		// program that keeps outrunning the parser goes back to showing progress
-		// after a quarter of a second, so a long build never looks frozen.
+		// Held back only while the picture is genuinely out of date: each frame
+		// drawn out of a backlog paints a screen the program has already
+		// replaced, which is what a locked screen looks like when it comes back
+		// — an agent's clock sprinting through minutes it already spent. What
+		// says so is how many seconds behind the oldest unparsed delivery is,
+		// not whether there is anything left to parse; item 0491 is the day that
+		// distinction cost.
+		let behind = Self.behindMeansQueueNotEmpty
+			? (pending.isEmpty ? 0 : .greatestFiniteMagnitude)
+			: staleBy
+		if behind >= RedrawThrottle.liveWindow {
+			if behindSince == nil { behindSince = Date() }
+		} else {
+			behindSince = nil
+		}
 		guard RedrawThrottle.shouldDraw(
-			isBehind: !pending.isEmpty,
+			staleBy: behind,
 			sinceLastDraw: Date().timeIntervalSince(lastRedrawAt),
 			behindFor: behindSince.map { -$0.timeIntervalSinceNow } ?? 0
 		) else { return }
@@ -435,10 +551,16 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// Marking the view for display reaches CoreGraphics only; the GPU path
 	/// draws when it is told to.
 	private func repaint() {
-		guard metal != nil else {
+		guard let metal else {
 			needsDisplay = true
 			return
 		}
+		// Everything that calls this is saying the whole picture may differ for a
+		// reason the engine cannot have reported — a theme, a font, the keyboard
+		// arriving, a link under the pointer. The renderer keeps what it built
+		// for each row and has no way to know about any of them, so this is
+		// where it is told.
+		metal.renderer.invalidateRows()
 		requestFrame()
 	}
 
@@ -712,7 +834,8 @@ final class TerminalView: NSView, NSTextInputClient {
 			inset: CGPoint(x: Self.horizontalInset, y: Self.verticalInset),
 			origin: visible.origin,
 			background: background,
-			foreground: TerminalPalette.foreground.components
+			foreground: TerminalPalette.foreground.components,
+			discardedLineCount: screen.discardedLineCount
 		)
 		// Before the cells: what this decides about pictures behind the text is
 		// what stops those cells painting over them.
@@ -724,6 +847,10 @@ final class TerminalView: NSView, NSTextInputClient {
 		)
 		metal.renderer.build(
 			rows: rows,
+			// Everything the engine has reported since the last frame, as line
+			// numbers. Taken here rather than in `invalidateChangedRows`, which
+			// runs several times per frame and only gathers.
+			changed: dirtyRows.take(discardedLineCount: screen.discardedLineCount),
 			frame: frame,
 			faces: faces,
 			overlays: overlays,
@@ -745,7 +872,9 @@ final class TerminalView: NSView, NSTextInputClient {
 		)
 		if let encodeStart { MetalProbe.encodeSeconds += -encodeStart.timeIntervalSinceNow }
 		MetalProbe.renders += 1
-		MetalProbe.cells += metal.renderer.instanceCount
+		MetalProbe.cells += metal.renderer.cellsBuilt
+		MetalProbe.rows += metal.renderer.rowsBuilt
+		MetalProbe.instances += metal.renderer.instanceCount
 	}
 
 	/// Repaints the lines that changed, rather than the whole view.
@@ -756,9 +885,18 @@ final class TerminalView: NSView, NSTextInputClient {
 	private func invalidateChangedRows() {
 		pruneImageCache()
 		if metal != nil {
-			// Nothing to work out: the GPU redraws what is on screen, and what
-			// that costs does not depend on how much of it changed.
-			_ = emulator.takeDirtyRange()
+			// Gathered rather than acted on. Output is parsed to a budget and
+			// several batches of it arrive between two frames, so what the frame
+			// needs is the union of what each of them changed — and the engine
+			// hands its answer over once and forgets it.
+			//
+			// It used to be thrown away here, with a comment saying the GPU
+			// redraws what is on screen and does not care how much of it
+			// changed. That is true of the GPU and was never true of the work of
+			// handing it the cells: item 0488 measured a quarter of a second per
+			// second spent building 10,904 cells forty-three times, while the
+			// GPU that received them idled at 9 ms.
+			dirtyRows.note(emulator.takeDirtyRange())
 			requestFrame()
 			return
 		}
@@ -1672,8 +1810,9 @@ final class TerminalView: NSView, NSTextInputClient {
 		let clipFrame = enclosingScrollView?.contentView.frame.width ?? 0
 		let scale = window?.backingScaleFactor ?? 0
 		return String(
-			format: "engine=%@ alt=%@ rows=%d columns=%d fits=%d window=%.0f clipW=%.0f clipFrameW=%.0f "
-				+ "scale=%.1f cell=%.1f "
+			format: "engine=%@ gpu=%@ link=%@ onScreen=%@ alt=%@ rows=%d columns=%d fits=%d "
+				+ "window=%.0f clipW=%.0f "
+				+ "clipFrameW=%.0f scale=%.1f cell=%.1f "
 				+ "frame=%.1f clip=%.1f origin=%.1f "
 				+ "lastRowBottom=%.1f visible=%@ widthOK=%@",
 			// Which engine emulated this pane. There are two of them now (0474),
@@ -1681,6 +1820,20 @@ final class TerminalView: NSView, NSTextInputClient {
 			// drew it, and this is where the answer is — off the running app,
 			// rather than by asking somebody to remember a setting.
 			engineNameForTesting,
+			// And which renderer drew it, for the same reason and one more: every
+			// number `ABYDOS_METAL_PROBE` prints is zero when this says no, and a
+			// probe reporting zero renders looks exactly like a renderer doing
+			// nothing rather than like a renderer that was never made.
+			metal != nil ? "yes" : "no",
+			// The two other ways that probe reads zero while everything works.
+			// The GPU path draws on the display's clock, and AppKit stops that
+			// clock for a view whose window nobody can see — so a benchmark run
+			// behind another window renders nothing, draws its picture through
+			// the CoreGraphics path instead, screenshots perfectly, and reports
+			// zeroes. That cost an hour of item 0488 before either of these
+			// existed to be asked.
+			displayLink != nil ? "yes" : "no",
+			(window?.occlusionState.contains(.visible) ?? false) ? "yes" : "no",
 			emulator.isAlternateScreen ? "yes" : "no",
 			emulator.grid.rows, emulator.grid.columns, max(20, fits),
 			windowWidth, clip.width, clipFrame, scale, cellWidth,
@@ -1814,7 +1967,7 @@ final class TerminalView: NSView, NSTextInputClient {
 
 	/// Shows text that came from somewhere other than a pty.
 	func append(_ text: String) {
-		enqueue(Data(text.utf8))
+		enqueue(Data(text.utf8), arrivedAt: Date())
 	}
 
 	@objc func clearConsole(_ sender: Any?) { clear() }
@@ -2019,15 +2172,23 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// wrong was not the rule but how often it was consulted, and a test of the
 	/// rule alone would have passed while the screen still replayed a minute of
 	/// somebody's afternoon.
+	/// Arrival times are spread backwards rather than all stamped now, and that
+	/// is the whole point of the exercise: what makes this a backlog is that the
+	/// frames in it were produced while nobody could see them. Twenty a second is
+	/// what a spinner and a clock come to, so forty thousand of them is a little
+	/// over half an hour of somebody's afternoon — and every frame but the last
+	/// is history, which is what the rule has to notice (item 0491).
 	func burstForTesting(frames: Int) {
 		TerminalView.drawCountForTesting = 0
+		let now = Date()
 		for frame in 0..<frames {
 			// A repaint of the kind an agent's window sends: home the cursor,
 			// draw a spinner and a clock, over and over.
 			let seconds = frame % 600
 			let spinner = ["|", "/", "-", "\\"][frame % 4]
 			let picture = "\u{1B}[H\u{1B}[2J\(spinner) working (\(seconds)s)\r\n"
-			enqueue(Data(picture.utf8))
+			let age = Double(frames - frame) / 20
+			enqueue(Data(picture.utf8), arrivedAt: now.addingTimeInterval(-age))
 		}
 	}
 
@@ -3050,19 +3211,58 @@ enum MetalProbe {
 	nonisolated(unsafe) static var encodeSeconds = 0.0
 	nonisolated(unsafe) static var parseSeconds = 0.0
 	nonisolated(unsafe) static var renders = 0
+	/// Cells a frame turned into instances, which is what item 0488 is about.
+	///
+	/// It used to be the instance count, and while every cell on screen was
+	/// built every frame the two were the same number — 10,904 either way. They
+	/// are not the same number any more, so both are printed: `cells/render` is
+	/// the work done, `instances/render` is what the GPU was handed, and it is
+	/// still the whole screen because the rows that were not built are still in
+	/// the buffer from the frame that did build them.
 	nonisolated(unsafe) static var cells = 0
+	nonisolated(unsafe) static var rows = 0
+	nonisolated(unsafe) static var instances = 0
+
+	/// The inputs to the redraw policy, since the policy is now a claim about
+	/// them (item 0491).
+	///
+	/// `stale` is the worst the picture got: how many milliseconds behind the pty
+	/// the oldest unparsed delivery was when the drain reached it. `delivery` is
+	/// the longest single `write` — the parse work that could not be broken up,
+	/// and therefore the floor under how long a frame can be blocked.
+	nonisolated(unsafe) static var worstStaleSeconds = 0.0
+	nonisolated(unsafe) static var worstDeliverySeconds = 0.0
+	nonisolated(unsafe) static var worstDeliveryBytes = 0
+	nonisolated(unsafe) static var deliveries = 0
+
+	static func note(staleBy: TimeInterval) {
+		worstStaleSeconds = max(worstStaleSeconds, staleBy)
+	}
+
+	static func note(delivery seconds: TimeInterval, bytes: Int) {
+		deliveries += 1
+		if seconds > worstDeliverySeconds {
+			worstDeliverySeconds = seconds
+			worstDeliveryBytes = bytes
+		}
+	}
 
 	static func start() {
 		guard enabled else { return }
 		Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
 			let ms = { (value: Double) in String(format: "%.0f", value * 1000) }
-			FileHandle.standardError.write(Data((
-				"METALPROBE renders=\(renders) cells/render=\(renders > 0 ? cells / renders : 0) "
-					+ "parse=\(ms(parseSeconds))ms build=\(ms(buildSeconds))ms "
-					+ "drawable=\(ms(drawableSeconds))ms encode=\(ms(encodeSeconds))ms\n"
-			).utf8))
+			let per = { (total: Int) in renders > 0 ? total / renders : 0 }
+			var line = "METALPROBE renders=\(renders) cells/render=\(per(cells)) "
+			line += "rows/render=\(per(rows)) instances/render=\(per(instances)) "
+			line += "parse=\(ms(parseSeconds))ms build=\(ms(buildSeconds))ms "
+			line += "drawable=\(ms(drawableSeconds))ms encode=\(ms(encodeSeconds))ms "
+			line += "stale=\(ms(worstStaleSeconds))ms deliveries=\(deliveries) "
+			line += "worst=\(ms(worstDeliverySeconds))ms/\(worstDeliveryBytes / 1024)K\n"
+			FileHandle.standardError.write(Data(line.utf8))
 			buildSeconds = 0; drawableSeconds = 0; encodeSeconds = 0; parseSeconds = 0
-			renders = 0; cells = 0
+			renders = 0; cells = 0; rows = 0; instances = 0
+			worstStaleSeconds = 0; worstDeliverySeconds = 0; worstDeliveryBytes = 0
+			deliveries = 0
 		}
 	}
 }

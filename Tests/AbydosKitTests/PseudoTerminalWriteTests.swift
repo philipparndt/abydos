@@ -12,7 +12,7 @@ struct PseudoTerminalWriteTests {
 	@Test func everythingWrittenArrivesEvenWhenItIsFarTooMuch() async throws {
 		let terminal = PseudoTerminal()
 		let received = Received()
-		terminal.onOutput = { received.append($0) }
+		terminal.onOutput = { chunk, _ in received.append(chunk) }
 
 		// `cat` sends back whatever it is given, so what arrives is the measure
 		// of what got through.
@@ -96,6 +96,96 @@ struct PseudoTerminalWriteTests {
 		#expect(after.columns == 120)
 		#expect(after.pixelWidth == 120 * 16)
 		#expect(after.pixelHeight == 40 * 38)
+	}
+
+	/// Output carries the moment it was **read**, not the moment somebody got
+	/// round to it.
+	///
+	/// This is the measurement the whole redraw policy rests on (item 0491), and
+	/// the difference is the whole point: while the main thread is busy, the wait
+	/// for it is part of how far behind the screen is. A stamp taken inside the
+	/// handler would read zero for a backlog of any depth, which is how a
+	/// third of a second of unshown output stayed invisible.
+	@Test func outputSaysWhenItWasReadRatherThanWhenItWasHandled() async throws {
+		let terminal = PseudoTerminal()
+		let queue = DispatchQueue(label: "ideai.tests.pty.blocked")
+		terminal.callbackQueue = queue
+		let ages = Ages()
+		terminal.onOutput = { _, readAt in ages.note(-readAt.timeIntervalSinceNow) }
+
+		// The queue is held for a third of a second before anything can be
+		// handled, which is what a busy main thread does.
+		queue.async { Thread.sleep(forTimeInterval: 0.3) }
+
+		try #require(terminal.start(executable: "/bin/cat", arguments: [], rows: 24, columns: 80))
+		defer { terminal.terminate() }
+		terminal.write(Data("hello\n".utf8))
+
+		#expect(await ages.waitForOne(seconds: 10))
+		// Anything much over the block is the read time; anything near zero is the
+		// handler's own clock, which is the fault.
+		#expect(ages.first > 0.1, "handed over aged \(ages.first)s, which reads as no backlog")
+	}
+
+	/// Reads arriving while a hand-over is still waiting are merged into it.
+	///
+	/// Two things at once, and they are the same thing: the callback queue can
+	/// never become the place a backlog hides, and an engine with a fixed cost per
+	/// `write` is not charged it per kilobyte. Fifteen thousand hops a second was
+	/// what log output cost before this.
+	@Test func readsAreMergedWhileAHandOverIsWaiting() async throws {
+		let terminal = PseudoTerminal()
+		let queue = DispatchQueue(label: "ideai.tests.pty.merging")
+		terminal.callbackQueue = queue
+		let received = Received()
+		let handOvers = Ages()
+		terminal.onOutput = { chunk, _ in
+			received.append(chunk)
+			handOvers.note(Double(chunk.count))
+		}
+
+		try #require(terminal.start(executable: "/bin/cat", arguments: [], rows: 24, columns: 80))
+		defer { terminal.terminate() }
+
+		// Held long enough that every echo below has been read before anything is
+		// handed over.
+		queue.async { Thread.sleep(forTimeInterval: 0.5) }
+		for line in 0..<200 { terminal.write(Data("line \(line)\n".utf8)) }
+
+		#expect(await received.wait(forText: "line 199", seconds: 20))
+		// 200 writes, echoed back as 200-odd reads, and far fewer hand-overs than
+		// that: the exact number is the machine's, the order of magnitude is the
+		// contract.
+		#expect(handOvers.count < 50, "\(handOvers.count) hand-overs for 200 lines")
+	}
+
+	/// Collects how long output had been waiting, or how big it was.
+	private final class Ages: @unchecked Sendable {
+		private let lock = NSLock()
+		private var values: [Double] = []
+
+		func note(_ value: Double) {
+			lock.lock(); values.append(value); lock.unlock()
+		}
+
+		var count: Int {
+			lock.lock(); defer { lock.unlock() }
+			return values.count
+		}
+
+		var first: Double {
+			lock.lock(); defer { lock.unlock() }
+			return values.first ?? -1
+		}
+
+		func waitForOne(seconds: TimeInterval) async -> Bool {
+			let deadline = Date().addingTimeInterval(seconds)
+			while Date() < deadline {
+				if count > 0 { return true }
+				try? await Task.sleep(nanoseconds: 20_000_000)
+			}
+			return count > 0
+		}
 	}
 
 	/// Collects what the program sends back.

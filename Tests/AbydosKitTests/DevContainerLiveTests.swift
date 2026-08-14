@@ -200,7 +200,7 @@ import Testing
 		let command = DevContainers.terminalCommand(session)
 		let terminal = PseudoTerminal()
 		let seen = Collected()
-		terminal.onOutput = { seen.append($0) }
+		terminal.onOutput = { chunk, _ in seen.append(chunk) }
 		guard terminal.start(
 			executable: command.executable, arguments: command.arguments, rows: 24, columns: 80
 		) else {
