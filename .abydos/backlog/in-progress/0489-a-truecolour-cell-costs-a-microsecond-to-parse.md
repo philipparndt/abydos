@@ -278,10 +278,6 @@ than making it trivial, and both need `combining` to leave the struct, which cha
 public type read by `TerminalView`, the Metal renderer, `TerminalSelection` and
 `UnicodePlaceholder`. That is an item of its own and it now has a number to beat.
 
-## Estimate
-
-2026-08-14 10:18 — measurements all in; running the full suite and make warnings, then done
-
 ## Ruled out on the way
 
 Most of the value of this item is here. Every one of these was measured, not reasoned
@@ -330,6 +326,24 @@ about.
   a fill where the old code did an allocation and a fill. The evicted line goes into the
   grid slot first and the local is dropped before anything is written, and that is not
   style: it is the difference between 16.7 and 108.8.
+- **Handing the retired line to `append` directly instead of through a local**, so that
+  a screen with no history — the alternate screen, which is what every full-screen
+  program runs on — cannot hold a second reference to the row about to be blanked.
+  `ScrollbackBuffer.append` returns the caller's own line when the capacity is zero, so
+  `let retired` still being in scope reads like the copy-on-write trap that cost 23.4 →
+  16.7 above. **It is not one.** Measured on the plain pattern with `ESC[?1049h` in front
+  of it, back to back: **145.9 MB/s with the local, 141.6 without** — and the run without
+  it had the quieter machine (0.7 per core against 1.2). The optimiser is already ending
+  that lifetime at the call. Reverted, because 2,555 tests are green on the version with
+  it and an unmeasurable change to this function is not worth a rebuild.
+
+  Two things worth keeping from having looked, though. **`firebench` emits `ESC[?1049h`
+  and the in-process `doomFire` bench does not**, so the bench and the fire somebody
+  actually runs scroll through different branches — the bench through the ring and the
+  eviction, the real fire through neither. And plain output on the alternate screen runs
+  at **146 MB/s against 116 on the main screen**, because with no history there is no ring
+  write and nothing to evict. Neither is a defect; both are things the next person
+  measuring this would otherwise assume the other way round.
 - **`swift build --build-tests -c release`**, which is how these benches look as though
   they should be built. It fails in this package with `unable to resolve Swift module
   dependency to a compatible module: 'AbydosKit'` — `@testable` needs `-enable-testing`
@@ -337,6 +351,10 @@ about.
   fix; an hour not to lose.
 - **The engine seam and libghostty-vt**, both already ruled out by the item and neither
   revisited. Nothing here went near either.
+
+## Estimate
+
+2026-08-14 10:39 — done bar the final green run
 
 ## Steps
 
