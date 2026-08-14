@@ -45,10 +45,6 @@ Measure with the same instrument that found it, and say the load: `ABYDOS_METAL_
 gives `renders`, `cells/render` and `build` directly, and `cells/render` falling below
 the grid size is the proof the change did what it says.
 
-## Estimate
-
-2026-08-14 09:28 — about an hour left; measured, writing it up
-
 ## How it works, and why it reaches further than the title
 
 A kept row cannot be built in the window's coordinates. Output arriving at the
