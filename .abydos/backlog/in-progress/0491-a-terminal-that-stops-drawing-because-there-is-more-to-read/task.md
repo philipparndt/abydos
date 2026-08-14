@@ -80,10 +80,6 @@ second to one did not appear in its own table. `ABYDOS_METAL_PROBE=1` prints `re
 `cells/render`, `parse` and `build` together, and any change to this policy is a claim
 about the first of those.
 
-## Estimate
-
-2026-08-14 14:34 — about an hour: 0489 back in at 60 renders, 0488 and the cursor-up artefact left
-
 ## First, the thing that makes half of the above wrong
 
 **The three rows this item was filed on were not measured on the same terminal
@@ -286,6 +282,23 @@ the report was made on the pane was doing exactly that.
   `--window-size`.
 - **`renders=0` proves nothing** (0488's trap, still true): AppKit stops the display
   link when the window is behind another.
+
+## Proof
+
+`xcrun swift test` and `make test`, back to back: **2,564 tests in 363 suites, both
+runs fully green**, load 7.2 rising to 23 over ten cores during each. Including
+`foldComputationIsReasonableOnHugeFile` — 0480's known intermittent — at 8.4 s against
+its 10 s bound. The terminal suites on their own,
+`Terminal|Ghostty|Icat|UnicodePlaceholder|LigatureRun`, 331 tests in 48 suites, green
+after each of the three changes separately. No terminal test was edited except for the
+second parameter `onOutput` now carries.
+
+`make warnings`: no warnings in this repository's Swift. `make build CONFIG=debug`:
+builds.
+
+The counts are 2,564 and 363 against the 2,555 and 362 this item was handed, and the
+difference is the two tests added here for the delivery contract plus 0488's own tests
+coming back with it.
 
 ## Steps
 
