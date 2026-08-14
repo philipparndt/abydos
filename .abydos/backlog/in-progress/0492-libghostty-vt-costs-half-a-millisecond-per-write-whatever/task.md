@@ -94,7 +94,7 @@ been passed by a fix that left the fault in.
 
 ## Estimate
 
-2026-08-14 16:19 — VERDICT: bar met, keep it — 58.0 against our 60.1 MB/s, renders 60/60; writing up
+2026-08-14 16:39 — done bar the finishing checks — kept, 0.96x ours on the fire
 
 ## What the per-call cost actually is, and it is not what the item said
 
@@ -198,6 +198,20 @@ reproduces the numbers this item was filed on to the millisecond — `parse=682m
 1,268 deliveries a second, which is the 0.49 ms a write the item derived — so there is
 no doubt about what was being fixed.
 
+### Which binary each table came from, since there are two of them
+
+Being exact about this, because it is the thing this project has twice got wrong. The
+first table is **build 1147**, six runs, engine switched by the setting and nothing
+else. The second is the same tree plus `TerminalCatchUp` — the switch could not have
+been used to take the first table, because it did not exist yet — six runs, one
+environment variable apart. **Each table is internally one binary**, which is what the
+comparison inside it needs.
+
+They are also cross-checkable, and they check out: libghostty-vt's `parse` on the fire
+is 313 ms in the first table and 316 in the second, and ours is 427 against 444. The
+switch defaults off, so the code the "after" rows measure is the code the first table
+measures.
+
 `stale` is the line to read for somebody sitting in front of it: the picture was **863
 milliseconds** out of date on the fire and is now **5**. And `prompt` — a shell
 redrawing its prompt line, which is what a keystroke looks like — went from 2.1 ms of
@@ -225,6 +239,31 @@ parse per 80-byte delivery to 0.1.
 - [x] `spec/terminal.md` says what the project now does — two requirements added:
       what an engine reports as changed, and the size and history being a cheap
       question that does not copy the screen
+
+## The proof
+
+`make build CONFIG=debug`: builds. `make warnings`: **no warnings in this
+repository's Swift**, the four vendored C ones only. `make test`: **2,572 tests in
+363 suites**, one failure and it is 0480's known intermittent —
+`foldComputationIsReasonableOnHugeFile` at 10.62 s against its 10 s bound, on a
+machine that had just built the app twice. 2,572 against the 2,564 this item was
+handed, and the difference is the eight tests added here: seven in
+`GhosttyEngineTests` and `writePathCosts`.
+
+The terminal suites on their own, `Terminal|Ghostty|Icat|UnicodePlaceholder|LigatureRun`:
+**345 tests in 49 suites, green.**
+
+And the two benches that exist to catch a frame getting more expensive, which is the
+direction this item pushes work in — `make timing`'s `drawPathCost`, release, load 3.6:
+
+| | before this item (0485/0487) | now |
+|---|---|---|
+| libghostty-vt's grid snapshot, a byte in first | 0.165 ms/frame | **0.152 ms/frame** |
+| ours, same | 0.000 ms (a retain) | **0.000 ms** |
+| the seam costs a frame, against the concrete type | 1.09–1.11× | **1.11×** |
+
+Nothing moved. The frame was already paying for the snapshot once; what changed is
+that the parse path is not paying for it 1,400 times a second as well.
 
 ## What was ruled out on the way
 
