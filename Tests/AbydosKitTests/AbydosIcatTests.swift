@@ -199,7 +199,7 @@ struct AbydosIcatTests {
 		pty.cellPixelSize = (width: 8, height: 16)
 
 		let collected = IcatCollector()
-		pty.onOutput = { [weak pty] chunk in
+		pty.onOutput = { [weak pty] chunk, _ in
 			collected.append(chunk)
 			guard answering, collected.takeQueryOnce() else { return }
 			// `ESC _ G i=31;OK ESC \` — what a terminal with the protocol says

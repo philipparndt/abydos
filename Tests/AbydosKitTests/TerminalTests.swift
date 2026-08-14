@@ -511,7 +511,7 @@ struct PseudoTerminalTests {
 		let pty = makePTY()
 		let collected = Collector()
 
-		pty.onOutput = { data in collected.append(data) }
+		pty.onOutput = { data, _ in collected.append(data) }
 
 		let started = pty.start(
 			executable: "/bin/echo",
@@ -577,7 +577,7 @@ struct PseudoTerminalTests {
 			let collected = Collector()
 			let outputWhenItExited = Box<String?>(nil)
 			let codeWhenItExited = Box<Int32?>(nil)
-			pty.onOutput = { collected.append($0) }
+			pty.onOutput = { chunk, _ in collected.append(chunk) }
 			// Read from inside the exit callback rather than after it. The claim
 			// is that output is delivered before the exit is announced, so what
 			// has been collected at this moment is the whole of the answer — and
@@ -636,7 +636,7 @@ struct PseudoTerminalTests {
 	@Test func outputSurvivesAReaderThatIsNotReading() async {
 		let pty = makePTY()
 		let collected = Collector()
-		pty.onOutput = { collected.append($0) }
+		pty.onOutput = { chunk, _ in collected.append(chunk) }
 
 		#expect(pty.start(executable: "/bin/echo", arguments: ["survived"]))
 		pty.setReadingSuspended(true)
@@ -729,7 +729,7 @@ struct PseudoTerminalTests {
 	@Test func childSeesATerminal() async {
 		let pty = makePTY()
 		let collected = Collector()
-		pty.onOutput = { collected.append($0) }
+		pty.onOutput = { chunk, _ in collected.append(chunk) }
 
 		#expect(pty.start(
 			executable: "/bin/sh",
@@ -745,7 +745,7 @@ struct PseudoTerminalTests {
 	@Test func windowSizeIsReportedToTheChild() async {
 		let pty = makePTY()
 		let collected = Collector()
-		pty.onOutput = { collected.append($0) }
+		pty.onOutput = { chunk, _ in collected.append(chunk) }
 
 		#expect(pty.start(
 			executable: "/bin/sh",
@@ -763,7 +763,7 @@ struct PseudoTerminalTests {
 	@Test func writesReachTheChild() async {
 		let pty = makePTY()
 		let collected = Collector()
-		pty.onOutput = { collected.append($0) }
+		pty.onOutput = { chunk, _ in collected.append(chunk) }
 
 		#expect(pty.start(executable: "/bin/cat"))
 		try? await Task.sleep(nanoseconds: 200_000_000)

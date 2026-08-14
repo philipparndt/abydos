@@ -171,7 +171,12 @@ Three changes, and they are one change:
 - [x] The screen draws at the display's rate while a program keeps up
 - [x] A genuine backlog — a locked screen, an app switch — still does not replay
       history — 40,000 frames, **7 draws**, the same as the old rule
-- [ ] A program that writes one frame and exits still has it drawn (0468)
+- [x] A program that writes one frame and exits still has it drawn (0468) —
+      `runsACommandAndCapturesOutput` and
+      `aCommandThatHasFinishedStillShowsWhatItPrinted` are that guard and are green,
+      and the time limit on the backlog *shortens* the exposure they were written
+      for: the reader now resumes after a tenth of a second rather than after four
+      megabytes have been parsed
 - [ ] `renders` measured for `fire`, `plain` and a prompt rewritten under cursor-up
 - [ ] Re-land 0489, then 0488, each with `renders` before and after
 - [ ] Write down here what was ruled out on the way
