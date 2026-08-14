@@ -1089,7 +1089,16 @@ final class TerminalView: NSView, NSTextInputClient {
 		// `metrics` rather than `grid`, and it matters: this runs once per turn of the
 		// main queue while output pours in, and for libghostty-vt a snapshot means
 		// copying every visible cell across the FFI boundary (item 0492).
-		let size = emulator.metrics
+		let size: TerminalMetrics = TerminalCatchUp.perWrite
+			? {
+				let grid = emulator.grid
+				return TerminalMetrics(
+					rows: grid.rows, columns: grid.columns,
+					totalLineCount: grid.totalLineCount,
+					scrollbackCount: grid.scrollbackCount,
+					discardedLineCount: grid.discardedLineCount)
+			}()
+			: emulator.metrics
 		let totalRows = emulator.isAlternateScreen ? size.rows : size.totalLineCount
 		let height = CGFloat(totalRows) * cellHeight + Self.verticalInset * 2
 		let width = enclosingScrollView?.contentSize.width ?? bounds.width
@@ -2359,7 +2368,9 @@ final class TerminalView: NSView, NSTextInputClient {
 		// for a snapshot here was half of item 0492: 1,400 snapshots a second, each of
 		// them eleven thousand cells copied out of libghostty-vt, to answer one number
 		// that engine already had to hand.
-		let discarded = emulator.metrics.discardedLineCount
+		let discarded = TerminalCatchUp.perWrite
+			? emulator.grid.discardedLineCount
+			: emulator.metrics.discardedLineCount
 		defer { lastDiscardedLineCount = discarded }
 
 		let shift = discarded - lastDiscardedLineCount

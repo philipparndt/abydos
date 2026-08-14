@@ -566,6 +566,12 @@ public final class GhosttyTerminalEngine: TerminalEngine {
 		// once before the next read rather than once per write (item 0492). What is
 		// left is the two things a caller cannot ask for later: a reply the program is
 		// waiting on, and the notification that says bytes arrived.
+		if TerminalCatchUp.perWrite {
+			// The old behaviour, for a measurement out of one binary: the render state
+			// on every write, and the whole document reported as changed.
+			bringRenderStateUpToDate()
+			dirty = 0...max(0, totalLineCount - 1)
+		}
 		if !pendingResponse.isEmpty {
 			let response = pendingResponse
 			pendingResponse = ""

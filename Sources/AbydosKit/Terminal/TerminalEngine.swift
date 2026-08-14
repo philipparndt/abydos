@@ -55,6 +55,24 @@ public protocol TerminalGridReading {
 	func line(at index: Int) -> TerminalLine?
 }
 
+/// The catch-up policy libghostty-vt had before item 0492, restorable at launch.
+///
+/// **So that a before and an after come out of one binary.** Two figures taken from
+/// two builds are two figures, and this project has twice acted on a pair that could
+/// not be compared — 0488 and 0489 were both reverted that way, and 0491 had to
+/// refuse to print a number for exactly this reason. `ABYDOS_TERM_BEHIND` and
+/// `ABYDOS_TERM_HOLD` are 0491's version of the same idea.
+///
+/// `ABYDOS_GHOSTTY_PER_WRITE=1` puts back both halves of the old behaviour: the
+/// render state brought up to date on every write with the whole document reported
+/// dirty, and `TerminalView` asking `grid` — a snapshot — for the numbers it now gets
+/// from `TerminalMetrics`. Read once, at launch, because a policy that could change
+/// between two frames is not a policy anybody can measure.
+public enum TerminalCatchUp {
+	public static let perWrite =
+		ProcessInfo.processInfo.environment["ABYDOS_GHOSTTY_PER_WRITE"] != nil
+}
+
 /// How big the terminal is and how much history it has, without a snapshot of
 /// its rows.
 ///
