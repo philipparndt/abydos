@@ -857,7 +857,18 @@ final class BottomPanel: NSView {
 	/// Coalesced: a build's output is thousands of chunks and one question is
 	/// enough for all of them.
 	private func scheduleMirrorCheck() {
-		guard mirrorsTmux, !mirrorCheckScheduled else { return }
+		// The cheap test first, and that ordering is the whole of it: `mirrorsTmux`
+		// reads two preferences, this is called for every chunk that arrives from
+		// a pty, and the work below is already coalesced to one question per tenth
+		// of a second. Asked the other way round, a build's output paid for
+		// thousands of `UserDefaults` reads to reach a `return` — 1,131 samples in
+		// `scheduleMirrorCheck` and 1,101 in `mirrorsTmux` out of 61,655 in a fire
+		// benchmark, with the preference machinery under them. The coalescing was
+		// there; it was just behind the expensive half of the guard.
+		//
+		// `directoryCheckScheduled` beside it has the two the right way round
+		// already, which is where this was noticed.
+		guard !mirrorCheckScheduled, mirrorsTmux else { return }
 		mirrorCheckScheduled = true
 		DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
 			self?.mirrorCheckScheduled = false
