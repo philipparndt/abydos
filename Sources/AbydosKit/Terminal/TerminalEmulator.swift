@@ -468,19 +468,25 @@ public final class TerminalEmulator {
 		}
 
 		if width == 2, cursorColumn == screen.columns - 1 {
-			screen.setScalar(row: cursorRow, column: cursorColumn, scalar: 0x20, attributes: attributes)
+			screen.setCell(
+				row: cursorRow,
+				column: cursorColumn,
+				cell: TerminalCell(scalar: 0x20, attributes: attributes)
+			)
 			cursorColumn = 0
 			lineFeed()
 		}
 
-		screen.setScalar(row: cursorRow, column: cursorColumn, scalar: scalar.value, attributes: attributes)
+		screen.setCell(
+			row: cursorRow,
+			column: cursorColumn,
+			cell: TerminalCell(scalar: scalar.value, attributes: attributes)
+		)
 		if width == 2 {
-			screen.setScalar(
+			screen.setCell(
 				row: cursorRow,
 				column: cursorColumn + 1,
-				scalar: 0x20,
-				attributes: attributes,
-				isWideTrailer: true
+				cell: TerminalCell(scalar: 0x20, attributes: attributes, isWideTrailer: true)
 			)
 		}
 
@@ -1049,29 +1055,23 @@ public final class TerminalEmulator {
 		switch mode {
 		case 0: // cursor to end
 			eraseInLine(mode: 0)
-			blankRows((cursorRow + 1)..<screen.rows)
+			for row in (cursorRow + 1)..<screen.rows {
+				screen[row] = screen.blankLine(attributes: attributes)
+			}
 			erasePictures(from: cursorRow, to: screen.rows - 1)
 		case 1: // start to cursor
 			eraseInLine(mode: 1)
-			blankRows(0..<cursorRow)
+			for row in 0..<cursorRow {
+				screen[row] = screen.blankLine(attributes: attributes)
+			}
 			erasePictures(from: 0, to: cursorRow)
 		case 2, 3:
-			blankRows(0..<screen.rows)
+			for row in 0..<screen.rows {
+				screen[row] = screen.blankLine(attributes: attributes)
+			}
 			erasePictures(from: 0, to: screen.rows - 1)
 		default:
 			break
-		}
-	}
-
-	/// Blanks whole rows in place, carrying the current background.
-	///
-	/// In place rather than `screen[row] = screen.blankLine(…)`: a full-screen
-	/// erase is what a program does at the start of every repaint, and the
-	/// replacement spelling allocated a row of cells and freed the old one for
-	/// each of the forty rows.
-	private func blankRows(_ rows: Range<Int>) {
-		for row in rows {
-			screen.blank(row: row, columns: 0..<screen.columns, attributes: attributes)
 		}
 	}
 
@@ -1088,13 +1088,16 @@ public final class TerminalEmulator {
 
 	private func eraseInLine(mode: Int) {
 		guard cursorRow < screen.rows else { return }
+		var blank = TerminalCell.blank
+		blank.attributes.background = attributes.background
+
 		switch mode {
 		case 0:
-			screen.blank(row: cursorRow, columns: cursorColumn..<screen.columns, attributes: attributes)
+			for column in cursorColumn..<screen.columns { screen[cursorRow].cells[column] = blank }
 		case 1:
-			screen.blank(row: cursorRow, columns: 0..<(cursorColumn + 1), attributes: attributes)
+			for column in 0...min(cursorColumn, screen.columns - 1) { screen[cursorRow].cells[column] = blank }
 		case 2:
-			screen.blank(row: cursorRow, columns: 0..<screen.columns, attributes: attributes)
+			screen[cursorRow] = screen.blankLine(attributes: attributes)
 		default:
 			break
 		}
@@ -1138,7 +1141,9 @@ public final class TerminalEmulator {
 		guard cursorRow < screen.rows else { return }
 		let end = min(cursorColumn + count, screen.columns)
 		guard cursorColumn < end else { return }
-		screen.blank(row: cursorRow, columns: cursorColumn..<end, attributes: attributes)
+		var blank = TerminalCell.blank
+		blank.attributes.background = attributes.background
+		for column in cursorColumn..<end { screen[cursorRow].cells[column] = blank }
 	}
 
 	// MARK: - SGR
