@@ -28,12 +28,34 @@ import Foundation
 
 // MARK: - Arguments
 
-enum Mode: String {
+enum Mode: String, CaseIterable {
 	case fire
 	case matrix
+	case plain
+	case history
+	case colour
+	case glyphs
+	case ascii
+
+	/// What this mode is for, in the line that reports it.
+	var explanation: String {
+		switch self {
+		case .fire: return "a truecolour change on every cell, the whole screen each frame"
+		case .matrix: return "hundreds of different glyphs moving, on the glyph cache"
+		case .plain: return "ordinary log output, which is what a build looks like"
+		case .history: return "the same once scrollback is full, where a terminal lives"
+		case .colour: return "colour escapes and nothing else"
+		case .glyphs: return "one wide glyph per cell and nothing else"
+		case .ascii: return "one narrow glyph per cell and nothing else"
+		}
+	}
 }
 
-var duration: Double = 20
+/// Ten seconds each when every mode is run, twenty for one asked for by name:
+/// a suite that takes a minute and a half is one somebody runs, and a single
+/// mode is usually being watched rather than collected.
+var duration: Double?
+var modeGiven = false
 var reportPath: String?
 var mode = Mode.fire
 /// Frames a second to hold to, or nil to go as fast as the terminal will take.
@@ -64,9 +86,11 @@ while let flag = arguments.first {
 		if !arguments.isEmpty { arguments.removeFirst() }
 	case "--mode":
 		guard let named = arguments.first, let chosen = Mode(rawValue: named) else {
-			FileHandle.standardError.write(Data("firebench: --mode is fire or matrix\n".utf8))
+			let known = Mode.allCases.map(\.rawValue).joined(separator: ", ")
+			FileHandle.standardError.write(Data("firebench: --mode is one of \(known)\n".utf8))
 			exit(2)
 		}
+		modeGiven = true
 		mode = chosen
 		arguments.removeFirst()
 	case "--fps":
@@ -80,8 +104,14 @@ while let flag = arguments.first {
 	case "--ascii":
 		asciiRain = true
 	case "--help", "-h":
-		print("usage: firebench [--mode fire|matrix] [--seconds 20] [--fps [60]] "
+		let known = Mode.allCases.map(\.rawValue).joined(separator: "|")
+		print("usage: firebench [--mode \(known)] [--seconds N] [--fps [60]] "
 			+ "[--ascii] [--report path]")
+		print("")
+		print("With no --mode, every one of them is run in turn for ten seconds each:")
+		for mode in Mode.allCases {
+			print("  \(mode.rawValue.padding(toLength: 8, withPad: " ", startingAt: 0))\(mode.explanation)")
+		}
 		exit(0)
 	default:
 		FileHandle.standardError.write(Data("unknown option \(flag)\n".utf8))
@@ -342,12 +372,66 @@ func drawRain() {
 	}
 }
 
-// MARK: - Run
 
-switch mode {
-case .fire:   seedFire()
-case .matrix: seedRain()
+// MARK: - The patterns that are not pictures
+
+/// The rest of the modes write text rather than draw something, and they are
+/// here because the numbers were only ever available on the wrong side of the
+/// line: `TerminalThroughputTests` measures an engine in-process, with no pty,
+/// no drain, no renderer and no app. This measures what a terminal actually
+/// does with the same bytes.
+///
+/// The byte patterns match that suite's deliberately, so the two can be read
+/// against each other — where they disagree, the difference is everything
+/// between the parser and the screen.
+
+/// One line of log per row, coloured the way a build's output is.
+func drawPlain() {
+	for row in 0..<rows {
+		lineCounter += 1
+		emit("\(escape)3\(lineCounter % 8)m[\(lineCounter)] some typical log line with words \(escape)0m")
+		if row + 1 < rows { output.append(contentsOf: newline) }
+	}
 }
+
+/// A truecolour escape per cell and nothing drawn: the half of the fire that is
+/// escape parsing rather than glyphs.
+func drawColour() {
+	for row in 0..<rows {
+		for column in 0..<columns {
+			emit("\(escape)38;2;\((row * 6 + column) % 256);\((column * 3) % 256);0m")
+		}
+		if row + 1 < rows { output.append(contentsOf: newline) }
+	}
+}
+
+/// One glyph per cell, the same one, with no colour changes at all: the other
+/// half, which lands on the glyph cache and on nothing else.
+func drawGlyphs(_ glyph: [UInt8]) {
+	for row in 0..<rows {
+		for _ in 0..<columns { output.append(contentsOf: glyph) }
+		if row + 1 < rows { output.append(contentsOf: newline) }
+	}
+}
+
+nonisolated(unsafe) var lineCounter = 0
+let narrowGlyph = Array("x".utf8)
+
+/// Fills the scrollback before `history` is measured, so what is timed is a
+/// terminal that has to evict a line for every line it takes — which is where
+/// one spends almost all of its life, and which `plain` on a fresh screen is
+/// not.
+func fillScrollback() {
+	for _ in 0..<4000 {
+		lineCounter += 1
+		emit("\(escape)3\(lineCounter % 8)m[\(lineCounter)] some typical log line with words \(escape)0m\r\n")
+		if output.count > 1 << 18 { flush() }
+	}
+	flush()
+	lineCounter = 0
+}
+
+// MARK: - Run
 
 // Alternate screen, no cursor, and no wrapping — a glyph in the bottom right
 // corner scrolls a terminal that is still allowed to wrap. Restored however
@@ -366,61 +450,98 @@ signal(SIGINT) { _ in
 	exit(130)
 }
 
-let start = Date()
-nonisolated(unsafe) var frames = 0
-nonisolated(unsafe) var totalBytes = 0
+/// One mode, for a while, reported as a line.
+///
+/// A function rather than the loop this used to be, because the default is now
+/// every mode in turn: each needs its own clock, its own counters and its own
+/// seed, and a mode that resizes the screen must not be measured against a
+/// frame drawn at the old size.
+@MainActor func run(_ mode: Mode, seconds: Double) -> String {
+	switch mode {
+	case .fire: seedFire()
+	case .matrix: seedRain()
+	case .history: fillScrollback()
+	default: break
+	}
+	emit("\(escape)2J")
+	flush()
 
-while -start.timeIntervalSinceNow < duration {
-	// Followed live, so the picture fills the screen even if it was resized
-	// after the benchmark started.
-	let current = terminalSize()
-	if current.columns != columns || current.rows != rows {
-		columns = current.columns
-		rows = current.rows
+	let start = Date()
+	var frames = 0
+	var totalBytes = 0
+
+	while -start.timeIntervalSinceNow < seconds {
+		// Followed live, so the picture fills the screen even if it was resized
+		// after the benchmark started.
+		let current = terminalSize()
+		if current.columns != columns || current.rows != rows {
+			columns = current.columns
+			rows = current.rows
+			switch mode {
+			case .fire: seedFire()
+			case .matrix: seedRain()
+			default: break
+			}
+		}
+
 		switch mode {
-		case .fire:   seedFire()
-		case .matrix: seedRain()
+		case .fire:
+			stepFire()
+			drawFire()
+		case .matrix:
+			stepRain()
+			drawRain()
+		case .plain, .history:
+			drawPlain()
+		case .colour:
+			drawColour()
+		case .glyphs:
+			drawGlyphs(halfBlock)
+		case .ascii:
+			drawGlyphs(narrowGlyph)
+		}
+
+		totalBytes += output.count
+		flush()
+		frames += 1
+
+		// Watching rather than measuring: sleep out whatever is left of this
+		// frame's share of a second. Measured from the start rather than added
+		// up frame by frame, so a slow frame is caught up with instead of
+		// pushing every frame after it later.
+		if let frameRate {
+			let due = start.addingTimeInterval(Double(frames) / frameRate)
+			let idle = due.timeIntervalSinceNow
+			if idle > 0 { Thread.sleep(forTimeInterval: idle) }
 		}
 	}
 
-	switch mode {
-	case .fire:
-		stepFire()
-		drawFire()
-	case .matrix:
-		stepRain()
-		drawRain()
-	}
-
-	totalBytes += output.count
-	flush()
-	frames += 1
-
-	// Watching rather than measuring: sleep out whatever is left of this
-	// frame's share of a second. Measured from the start rather than added up
-	// frame by frame, so a slow frame is caught up with instead of pushing
-	// every frame after it later.
-	if let frameRate {
-		let due = start.addingTimeInterval(Double(frames) / frameRate)
-		let idle = due.timeIntervalSinceNow
-		if idle > 0 { Thread.sleep(forTimeInterval: idle) }
-	}
+	let elapsed = -start.timeIntervalSinceNow
+	let perFrame = frames > 0 ? totalBytes / frames : 0
+	return String(
+		format: "firebench: %-8@%@ %5d frames in %4.1fs [ %7.2f fps ] %dx%d, %7d B/frame, %6.1f MB/s",
+		mode.rawValue, frameRate.map { String(format: " held to %.0f", $0) } ?? "",
+		frames, elapsed, Double(frames) / elapsed, columns, rows, perFrame,
+		Double(totalBytes) / elapsed / 1_048_576
+	)
 }
 
-let elapsed = -start.timeIntervalSinceNow
-restore()
+// One mode if one was asked for, otherwise all of them: the whole point of the
+// other five is that they can be read against each other, and a suite nobody
+// runs because it has to be run seven times is a suite of one.
+let wanted = modeGiven ? [mode] : Mode.allCases
+let each = duration ?? (modeGiven ? 20 : 10)
+var summaries: [String] = []
+for one in wanted {
+	summaries.append(run(one, seconds: each))
+}
 
-let fps = Double(frames) / elapsed
-let perFrame = frames > 0 ? totalBytes / frames : 0
-let summary = String(
-	format: "firebench: %@%@, %d frames in %.1fs [ %.2f fps ] %dx%d, %d B/frame, %.1f MB/s",
-	mode.rawValue, frameRate.map { String(format: " held to %.0f", $0) } ?? "",
-	frames, elapsed, fps, columns, rows, perFrame,
-	Double(totalBytes) / elapsed / 1_048_576
-)
-print(summary)
+restore()
+for line in summaries { print(line) }
 // Written out as well, so a script can read the result without also watching
 // the screen.
 if let reportPath {
-	try? (summary + "\n").write(toFile: reportPath, atomically: true, encoding: .utf8)
+	try? (summaries.joined(separator: "\n") + "\n").write(
+		toFile: reportPath, atomically: true, encoding: .utf8
+	)
 }
