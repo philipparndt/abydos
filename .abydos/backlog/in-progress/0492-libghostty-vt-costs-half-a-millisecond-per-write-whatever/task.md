@@ -92,10 +92,6 @@ below parity therefore means the app-side per-call cost is still what decides th
 number, which is exactly what this item is about. A bar of "half as fast" would have
 been passed by a fix that left the fault in.
 
-## Estimate
-
-2026-08-14 16:39 — done bar the finishing checks — kept, 0.96x ours on the fire
-
 ## What the per-call cost actually is, and it is not what the item said
 
 `TerminalThroughputTests.writePathCosts` times each thing `afterWrite` used to do as
@@ -212,10 +208,19 @@ is 313 ms in the first table and 316 in the second, and ours is 427 against 444.
 switch defaults off, so the code the "after" rows measure is the code the first table
 measures.
 
+And the second table was retaken on **build 1149**, the final tree, after the last
+tidying commit — 56.9 MB/s against 56.5, ours 60.6 against 61.3, the before 5.2 with
+`parse=683ms` and 1,297 deliveries. Nothing after the measurement changed what was
+measured.
+
 `stale` is the line to read for somebody sitting in front of it: the picture was **863
 milliseconds** out of date on the fire and is now **5**. And `prompt` — a shell
 redrawing its prompt line, which is what a keystroke looks like — went from 2.1 ms of
 parse per 80-byte delivery to 0.1.
+
+## Estimate
+
+2026-08-14 16:48 — finished — libghostty-vt is KEPT: 58.0 against our 60.1 MB/s, renders 60/60
 
 ## Steps
 
