@@ -278,6 +278,25 @@ than making it trivial, and both need `combining` to leave the struct, which cha
 public type read by `TerminalView`, the Metal renderer, `TerminalSelection` and
 `UnicodePlaceholder`. That is an item of its own and it now has a number to beat.
 
+## Proof
+
+**Six runs of the full suite, 2,555 tests in 362 suites. Four fully green.** The two
+reds are the same single test both times, and it is not this item's:
+
+    foldComputationIsReasonableOnHugeFile() — Expectation failed: elapsed < 10.0
+    PerformanceTests.swift:301
+
+That is item **0480**, the known intermittent, and it is a wall-clock bound in a suite
+that loads a ten-core machine to eighteen — 0472's argument, in the one place the sweep
+left an absolute. Nothing terminal-related failed in any of the six.
+
+The terminal suites on their own — `Terminal|Ghostty|Icat|UnicodePlaceholder|LigatureRun`,
+**329 tests in 48 suites** — were run green after each of the two changes, separately, and
+**not one test was edited.** That is the constraint this item was given and it is the one
+that mattered: 0397, 0404, 0468 and 0476 were all found through that suite.
+
+`make warnings`: no warnings in this repository's Swift. `make build CONFIG=debug`: builds.
+
 ## Ruled out on the way
 
 Most of the value of this item is here. Every one of these was measured, not reasoned
