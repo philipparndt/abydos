@@ -492,14 +492,34 @@ signal(SIGINT) { _ in
 /// seed, and a mode that resizes the screen must not be measured against a
 /// frame drawn at the old size.
 @MainActor func run(_ mode: Mode, seconds: Double) -> String {
+	// **Reset before clearing, and the order is the bug this had.** The fire ends
+	// with one of its own background colours still set — the top of that palette
+	// is a pale yellow-white — and `2J` fills the screen with whatever background
+	// is in force. So the mode after it started by painting the pane the colour
+	// the fire went out on, and every cell it then wrote carried it. Reported as
+	// "no longer full screen", because a rain over a pale block is a pale block
+	// the size of the rain.
+	//
+	// The size is asked again here too rather than trusted from the last mode:
+	// `fillScrollback` above can scroll a pane that has since been resized, and a
+	// mode seeded at the old width draws a picture the width of the old one.
+	let sizeNow = terminalSize()
+	columns = sizeNow.columns
+	rows = sizeNow.rows
+	emit("\(escape)0m\(escape)2J\(escape)H")
+	flush()
+
+	// Seeded *after* the size is known, which is the other half of the same bug:
+	// the fire's rows and the rain's columns are arrays as wide as the screen, and
+	// seeding them from the last mode's width draws a picture the width of the
+	// last mode. The frame loop below only re-seeds when the size *changes*, so a
+	// seed at the wrong size is never noticed — it just stays wrong.
 	switch mode {
 	case .fire: seedFire()
 	case .matrix: seedRain()
 	case .history: fillScrollback()
 	default: break
 	}
-	emit("\(escape)2J")
-	flush()
 
 	// `status` is paced whether or not anybody asked, and it is the one mode
 	// that is. The others are measurements of how much a terminal can take, and
