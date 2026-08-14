@@ -94,15 +94,59 @@ been passed by a fix that left the fault in.
 
 ## Estimate
 
-2026-08-14 15:28 — bar set, measuring the per-write cost — verdict in a few hours
+2026-08-14 15:52 — engine and seam done; measuring in the app next
+
+## What the per-call cost actually is, and it is not what the item said
+
+`TerminalThroughputTests.writePathCosts` times each thing `afterWrite` used to do as
+the *difference* between a loop that writes and a loop that writes and then does it —
+because every one of them is free when nothing has changed since it last ran, and
+timed in a tight loop with nothing arriving they would all report the cost of finding
+nothing to do. 40×100 with 5,200 lines of history, a kilobyte a write, release, load
+19.9 over ten cores:
+
+| per write | measured |
+|---|---|
+| `ghostty_terminal_vt_write` — the parse itself | **4.67 µs** |
+| `refreshState`, the discarded-line anchor, `syncGraphics` | **below noise**, −0.01 µs |
+| `ghostty_render_state_update` | **18.48 µs** |
+| **a grid snapshot — the visible rows copied** | **194.22 µs** |
+
+So the render state is real — four times the cost of the work it was reacting to —
+**and it is the smaller half.** The larger one is not in the engine at all, and this
+item did not suspect it: `TerminalView.realignSelectionForDiscardedLines` runs on
+every delivery of output and read `emulator.grid.discardedLineCount`. For our engine
+`grid` is a retain of a value type and that line is free. For libghostty-vt it copies
+every visible cell out of the library, and 0485 built the snapshot cache keyed on the
+write count, so a write invalidates it and the next read rebuilds it. **1,400
+snapshots a second, eleven thousand cells each, to read one integer.**
+
+Scaled to the pane the item measured — 235×47, 11,045 cells against this bench's
+4,000 — that is about 530 µs of snapshot plus 51 µs of render state per write, against
+the 490 µs the item derived from `parse=690ms` and 1,400 deliveries. The arithmetic
+closes.
+
+### And that is what the C API question comes down to
+
+**Yes, all of it is reachable.** `render.h` exports both layers of dirty tracking —
+`GHOSTTY_RENDER_STATE_DATA_DIRTY` for the global `FALSE`/`PARTIAL`/`FULL` state and
+`GHOSTTY_RENDER_STATE_ROW_DATA_DIRTY` per row, with setters for both so the caller can
+clear them, which its documentation is explicit the update call does not do. Nothing
+had to be exported and nothing had to go upstream. 0485's warning that the answer is
+sometimes no does not apply here.
 
 ## Steps
 
-- [ ] Say what `ghostty_render_state_update` costs, per call, with a number
-- [ ] Find out whether anything reads the render state, and stop updating it on the
-      parse path if nothing does
-- [ ] A dirty range from libghostty-vt's per-row dirtiness, so 0488's row cache
-      applies to it too
+- [x] Say what `ghostty_render_state_update` costs, per call, with a number —
+      **18.48 µs**, and the snapshot beside it at **194.22 µs**, table above
+- [x] Find out whether anything reads the render state, and stop updating it on the
+      parse path if nothing does — things do read it (0485 put the visible rows and
+      the cursor shape on it), so it moved to the *read* rather than being deleted:
+      `bringRenderStateUpToDate`, and `aThousandWritesAndOneReadIsOneRenderStateUpdate`
+      is the guard
+- [x] A dirty range from libghostty-vt's per-row dirtiness, so 0488's row cache
+      applies to it too — `noteDirtyRows`, with `FULL` still answering the whole
+      document; four tests, including the two promises ours is held to
 - [ ] `renders` and end-to-end MB/s for `fire`, `plain` and `prompt`, both engines,
       out of one binary
 - [ ] Say whether the bar was met, and so whether the engine is kept or removed

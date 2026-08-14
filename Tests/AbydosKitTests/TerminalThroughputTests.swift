@@ -196,6 +196,78 @@ struct TerminalThroughputTests {
 		}
 	}
 
+	/// What each thing this engine used to do *per write* costs, per write.
+	///
+	/// Item 0492 was filed on arithmetic — 1,400 deliveries a second and 690 ms of
+	/// parse is 0.49 ms a write, for deliveries of about a kilobyte — and arithmetic
+	/// says a fixed cost per call without saying which call. This is the which.
+	///
+	/// Each phase is timed as the *difference* between a loop that writes and a loop
+	/// that writes and then does the phase, because every one of them is cheap or free
+	/// when nothing has changed since the last time it ran: the render state consumes
+	/// the terminal's dirty state, the graphics store compares a generation stamp, and
+	/// a snapshot is cached until the next write. Timed in a tight loop with nothing
+	/// arriving they would all report the cost of finding nothing to do, which is a
+	/// number that is true and useless — the same trap `gridSnapshotCost` documents.
+	///
+	/// A kilobyte a write, because that is what 0491 measured the app handing over:
+	/// about ten cells of the fire, which is what makes half a millisecond so plainly
+	/// not a per-byte cost.
+	@Test func writePathCosts() {
+		let rows = 40, columns = 100
+		let engine = GhosttyTerminalEngine(rows: rows, columns: columns)
+		engine.write(String(repeating: "a typical line of terminal output here\r\n", count: 5_200))
+
+		// A kilobyte of the fire: a truecolour change and a half-block per cell.
+		var chunk = ""
+		var cell = 0
+		while chunk.utf8.count < 1_024 {
+			chunk += "\u{1B}[38;2;\(cell % 256);\((cell * 3) % 256);0m\u{2580}"
+			cell += 1
+			if cell % columns == 0 { chunk += "\r\n" }
+		}
+		let bytes = chunk.utf8.count
+
+		func cost(_ phase: (() -> Void)?) -> Double {
+			var best = Double.greatestFiniteMagnitude
+			for _ in 0..<5 {
+				let start = Date()
+				var writes = 0
+				while -start.timeIntervalSinceNow < 0.1 {
+					engine.write(chunk)
+					phase?()
+					writes += 1
+				}
+				best = min(best, -start.timeIntervalSinceNow / Double(writes))
+			}
+			return best
+		}
+
+		let writeAlone = cost(nil)
+		let phases: [(String, () -> Void)] = [
+			("refreshState (6 terminal gets)", { engine.refreshState() }),
+			("updateDiscardedLineCount (the anchor)", { engine.updateDiscardedLineCount() }),
+			("syncGraphics", { engine.syncGraphics() }),
+			("ghostty_render_state_update", { engine.updateRenderState() }),
+			("the grid snapshot (visible rows)", { _ = engine.grid }),
+		]
+		print("BENCH [libghostty-vt] write path, \(bytes) bytes a write:"
+			+ " the write itself \(String(format: "%.2f", writeAlone * 1_000_000)) µs"
+			+ "  [\(MachineLoad.said)]")
+		for (name, phase) in phases {
+			let together = cost(phase)
+			print("BENCH [libghostty-vt] write path, + \(name): "
+				+ "\(String(format: "%.2f", (together - writeAlone) * 1_000_000)) µs a write"
+				+ "  [\(MachineLoad.said)]")
+		}
+
+		// Not a bound on any of them — `make timing` is where a budget lives, and
+		// these are absolutes on a machine at an unknown load. What is asserted is the
+		// shape the item turns on: a write costs something, so the difference is
+		// meaningful arithmetic rather than division by noise.
+		#expect(writeAlone > 0)
+	}
+
 	// MARK: - The other half: what a frame asks for
 
 	/// What one *frame* costs, which is what the benches above leave out.

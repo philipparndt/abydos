@@ -55,6 +55,47 @@ public protocol TerminalGridReading {
 	func line(at index: Int) -> TerminalLine?
 }
 
+/// How big the terminal is and how much history it has, without a snapshot of
+/// its rows.
+///
+/// **Why this is separate from `TerminalGridReading`** (item 0492). A snapshot has
+/// to keep the frame it was given, so for an engine that holds its grid on the far
+/// side of an FFI boundary asking for one means *copying the visible rows* — eleven
+/// thousand cells on a full-screen pane. That is the right price to draw a frame and
+/// the wrong price to answer "how tall is the document".
+///
+/// `TerminalView` asked `emulator.grid` for exactly that, on the parse path, once
+/// per delivery: `realignSelectionForDiscardedLines` wanted `discardedLineCount` and
+/// `updateFrameSize` wanted the row count. At 1,400 deliveries a second that was
+/// 1,400 snapshots a second to draw sixty frames, and it was half of why
+/// libghostty-vt ran forty times slower in the app than our own engine while being
+/// the faster parser of the two.
+///
+/// Every field here is a number both engines already have to hand. Nothing in it
+/// requires copying a row, and nothing in it is allowed to.
+public struct TerminalMetrics: Sendable, Equatable {
+	/// Rows in the active grid, not counting scrollback.
+	public var rows: Int
+	public var columns: Int
+	/// Scrollback plus active grid.
+	public var totalLineCount: Int
+	/// Where the active grid starts, in absolute indices.
+	public var scrollbackCount: Int
+	/// Lines that have fallen off the top for good.
+	public var discardedLineCount: Int
+
+	public init(
+		rows: Int, columns: Int, totalLineCount: Int,
+		scrollbackCount: Int, discardedLineCount: Int
+	) {
+		self.rows = rows
+		self.columns = columns
+		self.totalLineCount = totalLineCount
+		self.scrollbackCount = scrollbackCount
+		self.discardedLineCount = discardedLineCount
+	}
+}
+
 // MARK: - The vocabulary the callers already speak
 
 // These five names were `TerminalEmulator.MouseButton`, `.MouseTracking`,
@@ -103,7 +144,14 @@ public protocol TerminalEngine: AnyObject {
 	func reset()
 
 	/// The grid, as a snapshot that survives later writes.
+	///
+	/// **Not for metadata.** Ask `metrics` for the size, the scrollback offset or the
+	/// discarded count: a snapshot copies rows, and on the parse path that is item
+	/// 0492's fault.
 	var grid: TerminalGridReading { get }
+
+	/// The size and the history, cheaply — see `TerminalMetrics`.
+	var metrics: TerminalMetrics { get }
 
 	var cursorRow: Int { get }
 	var cursorColumn: Int { get }
@@ -211,6 +259,18 @@ extension TerminalEmulator: TerminalEngine {
 	/// snapshot the protocol asks for. This is why the seam costs the old engine
 	/// nothing: the render path was already written this way.
 	public var grid: TerminalGridReading { screen }
+
+	/// Five field reads off a value type this engine fills as it parses. Ours never
+	/// had item 0492's fault — this is the same numbers under the name the seam now
+	/// uses, so that the *other* engine can answer them without copying a screen.
+	public var metrics: TerminalMetrics {
+		TerminalMetrics(
+			rows: screen.rows,
+			columns: screen.columns,
+			totalLineCount: screen.totalLineCount,
+			scrollbackCount: screen.scrollback.count,
+			discardedLineCount: screen.discardedLineCount)
+	}
 
 	/// Nothing missing — this is the engine every terminal test was written
 	/// against.

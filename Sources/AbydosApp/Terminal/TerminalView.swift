@@ -359,14 +359,14 @@ final class TerminalView: NSView, NSTextInputClient {
 					executable: command.executable,
 					arguments: command.arguments,
 					workingDirectory: launch.0,
-					rows: self.emulator.grid.rows,
-					columns: self.emulator.grid.columns
+					rows: self.emulator.metrics.rows,
+					columns: self.emulator.metrics.columns
 				)
 			} else {
 				self.pty.startLoginShell(
 					workingDirectory: launch.0,
-					rows: self.emulator.grid.rows,
-					columns: self.emulator.grid.columns
+					rows: self.emulator.metrics.rows,
+					columns: self.emulator.metrics.columns
 				)
 			}
 			self.startCursorBlink()
@@ -922,7 +922,7 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// The cursor is drawn over a cell that is otherwise unchanged, so both the
 	/// row it left and the row it is on have to be repainted.
 	private func invalidateCursorRows() {
-		let row = emulator.grid.scrollbackCount + emulator.cursorRow
+		let row = emulator.metrics.scrollbackCount + emulator.cursorRow
 		guard row != lastDrawnCursorRow else { return }
 		if let previous = lastDrawnCursorRow {
 			setNeedsDisplay(rect(forAbsoluteRows: previous...previous))
@@ -1018,7 +1018,9 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// the document height — goes through this one definition rather than
 	/// through the screen's own count.
 	var shownLineCount: Int {
-		emulator.grid.totalLineCount
+		// `metrics` and not `grid`: this is read from the parse path by way of
+		// `updateFrameSize`, and a snapshot copies the visible rows (item 0492).
+		emulator.metrics.totalLineCount
 	}
 
 	/// How much of the pane's height is not a whole row.
@@ -1073,7 +1075,8 @@ final class TerminalView: NSView, NSTextInputClient {
 		let columns = max(20, Int(floor(usableWidth / max(1, cellWidth))))
 		let rows = max(4, Int(floor(usableHeight / max(1, cellHeight))))
 
-		guard rows != emulator.grid.rows || columns != emulator.grid.columns else { return }
+		let size = emulator.metrics
+		guard rows != size.rows || columns != size.columns else { return }
 		// A resize reflows what the absolute rows mean, and there is no honest
 		// mapping from the old grid to the new one.
 		setSelection(nil)
@@ -1083,9 +1086,11 @@ final class TerminalView: NSView, NSTextInputClient {
 	}
 
 	private func updateFrameSize() {
-		let totalRows = emulator.isAlternateScreen
-			? emulator.grid.rows
-			: emulator.grid.totalLineCount
+		// `metrics` rather than `grid`, and it matters: this runs once per turn of the
+		// main queue while output pours in, and for libghostty-vt a snapshot means
+		// copying every visible cell across the FFI boundary (item 0492).
+		let size = emulator.metrics
+		let totalRows = emulator.isAlternateScreen ? size.rows : size.totalLineCount
 		let height = CGFloat(totalRows) * cellHeight + Self.verticalInset * 2
 		let width = enclosingScrollView?.contentSize.width ?? bounds.width
 		let newSize = NSSize(width: max(width, 10), height: max(height, 10))
@@ -1679,7 +1684,7 @@ final class TerminalView: NSView, NSTextInputClient {
 		guard cursorVisible else { return nil }
 
 		let here = (
-			row: emulator.grid.scrollbackCount + emulator.cursorRow,
+			row: emulator.metrics.scrollbackCount + emulator.cursorRow,
 			column: emulator.cursorColumn
 		)
 		guard !emulator.isCursorVisible else {
@@ -1783,7 +1788,7 @@ final class TerminalView: NSView, NSTextInputClient {
 		return true
 	}
 
-	var totalRowsForTesting: Int { max(1, emulator.grid.totalLineCount) }
+	var totalRowsForTesting: Int { max(1, emulator.metrics.totalLineCount) }
 
 	/// Where the process in the foreground of this terminal is.
 	func currentDirectory() -> URL? { pty.currentDirectory() }
@@ -1835,11 +1840,11 @@ final class TerminalView: NSView, NSTextInputClient {
 			displayLink != nil ? "yes" : "no",
 			(window?.occlusionState.contains(.visible) ?? false) ? "yes" : "no",
 			emulator.isAlternateScreen ? "yes" : "no",
-			emulator.grid.rows, emulator.grid.columns, max(20, fits),
+			emulator.metrics.rows, emulator.metrics.columns, max(20, fits),
 			windowWidth, clip.width, clipFrame, scale, cellWidth,
 			frame.height, clip.height, clip.origin.y, bottomOfLastRow,
 			bottomOfLastRow <= clip.origin.y + clip.height + 0.5 ? "yes" : "NO",
-			max(20, fits) == emulator.grid.columns ? "yes" : "NO"
+			max(20, fits) == emulator.metrics.columns ? "yes" : "NO"
 		) + " " + winsizeForTesting
 	}
 
@@ -1924,7 +1929,7 @@ final class TerminalView: NSView, NSTextInputClient {
 		)
 		renderer.buildImages(
 			placements: emulator.graphics.placements
-				+ placeholderPlacements(from: 0, to: emulator.grid.scrollbackCount + emulator.grid.rows),
+				+ placeholderPlacements(from: 0, to: screen.scrollbackCount + screen.rows),
 			store: emulator.graphics,
 			frame: frame
 		)
@@ -2334,7 +2339,7 @@ final class TerminalView: NSView, NSTextInputClient {
 		let lastRow = max(0, shownLineCount - 1)
 		return TerminalPosition(
 			row: max(0, min(row, lastRow)),
-			column: max(0, min(column, emulator.grid.columns))
+			column: max(0, min(column, emulator.metrics.columns))
 		)
 	}
 
@@ -2350,7 +2355,11 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// every discarded line renumbers everything above the selection, and a
 	/// selection left alone would drift down the screen on its own.
 	private func realignSelectionForDiscardedLines() {
-		let discarded = emulator.grid.discardedLineCount
+		// **`metrics`, not `grid`.** This runs on every delivery of output, and asking
+		// for a snapshot here was half of item 0492: 1,400 snapshots a second, each of
+		// them eleven thousand cells copied out of libghostty-vt, to answer one number
+		// that engine already had to hand.
+		let discarded = emulator.metrics.discardedLineCount
 		defer { lastDiscardedLineCount = discarded }
 
 		let shift = discarded - lastDiscardedLineCount
@@ -2379,7 +2388,7 @@ final class TerminalView: NSView, NSTextInputClient {
 		let column = Int((point.x - Self.horizontalInset) / max(1, cellWidth)) + 1
 		var row = Int((point.y - Self.verticalInset) / max(1, cellHeight))
 		// The protocol addresses the visible grid, so scrollback is subtracted.
-		row -= emulator.grid.scrollbackCount
+		row -= emulator.metrics.scrollbackCount
 		return (max(1, row + 1), max(1, column))
 	}
 
@@ -2387,7 +2396,7 @@ final class TerminalView: NSView, NSTextInputClient {
 	private func windowPoint(row: Int, column: Int) -> NSPoint {
 		let x = Self.horizontalInset + (CGFloat(column - 1) + 0.5) * cellWidth
 		let y = Self.verticalInset
-			+ (CGFloat(row - 1 + emulator.grid.scrollbackCount) + 0.5) * cellHeight
+			+ (CGFloat(row - 1 + emulator.metrics.scrollbackCount) + 0.5) * cellHeight
 		return convert(NSPoint(x: x, y: y), to: nil)
 	}
 
@@ -2431,7 +2440,7 @@ final class TerminalView: NSView, NSTextInputClient {
 
 	/// The visible grid, so a test can aim at the last row.
 	var gridSizeForTesting: (rows: Int, columns: Int) {
-		(emulator.grid.rows, emulator.grid.columns)
+		(emulator.metrics.rows, emulator.metrics.columns)
 	}
 
 	private func modifiers(_ event: NSEvent) -> (Bool, Bool, Bool) {
@@ -2886,7 +2895,7 @@ final class TerminalView: NSView, NSTextInputClient {
 
 	func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
 		guard let window else { return .zero }
-		let row = emulator.grid.scrollbackCount + emulator.cursorRow
+		let row = emulator.metrics.scrollbackCount + emulator.cursorRow
 		let rect = NSRect(
 			x: Self.horizontalInset + CGFloat(emulator.cursorColumn) * cellWidth,
 			y: Self.verticalInset + CGFloat(row) * cellHeight,
