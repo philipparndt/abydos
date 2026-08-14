@@ -163,6 +163,130 @@ Three changes, and they are one change:
   a millisecond per `write` on its render state whatever the size — which is where
   45 frames a second became 1.
 
+## What it does now: `renders`, for all three patterns and both engines
+
+Every figure out of **one binary**, 1920×1050, 235×47 = 11,045 cells, GPU path,
+throwaway bundle id and defaults domain, twelve seconds a mode. "Before" is
+`ABYDOS_TERM_BEHIND=queue ABYDOS_TERM_HOLD=bytes`, which restores the rule this item
+replaces; the delivery model is not switchable, so the last table separates the two.
+Loads printed with every run, 4.9–9.8 over ten cores throughout.
+
+**Our engine, with 0489 and 0488 both back in:**
+
+| pattern | renders | cells/render | rows/render | parse | stale | end to end |
+|---|---|---|---|---|---|---|
+| `plain` | **60** | 11,045 | 47 | 517 ms | 10 ms | 46.4 MB/s |
+| `fire` | **60** | 11,045 | 47 | 410 ms | 14 ms | 58.2 MB/s |
+| `prompt` | **10 of 10** | **235** | **1** | 1 ms | 3 ms | held to 10 fps |
+
+`prompt` is the pattern that did not exist: the prompt line rewritten under cursor-up
+at ten frames a second, with the recalled command changing length every frame. It is
+held to ten because a shell rewrites its prompt when somebody presses a key, and a
+hundred thousand rewrites a second is a picture of nothing.
+
+**Where it started**, on main with both reverts in, before any of this:
+
+| pattern | engine | renders | parse | build | measured on |
+|---|---|---|---|---|---|
+| `fire` | ours | 38–45 | 502–527 ms | 226–265 ms | main, both reverts in |
+| `fire` | libghostty-vt | **1** | 686–697 ms | 5–6 ms | main, both reverts in |
+| `fire` | ours | 41–42 | 512–519 ms | 230–234 ms | old rule, old back-pressure |
+| `plain` | ours | **1–2** | 628–657 ms | 2–4 ms | old rule, old back-pressure |
+
+The last two are the old rule restored by environment variable on a build that had
+the arrival stamp and nothing else, which is why `fire` agrees with the first row to
+within the noise. `plain` on libghostty-vt has no "before": by the time it was asked
+the delivery model had already changed, and a number that cannot be taken out of the
+same binary as its pair is not a number this item is willing to print.
+
+`plain` — a build scrolling past, which is what somebody watches all day — was **one
+frame a second on our engine before any of this**, on main, with both fixes out, with
+`stale=` reading 284–322 ms every second. It is sixty now, ten milliseconds behind.
+That is the finding this item was filed to reach and it was hiding behind the fire,
+which was the only pattern anybody was benchmarking.
+
+### Which of the two changes did which, since both were needed
+
+Same final binary, the rule switched by environment variable:
+
+| | our engine, `plain` | our engine, `fire` | libghostty-vt, `fire` |
+|---|---|---|---|
+| the old rule | 60 | 60 | **1** (5.8 MB/s) |
+| the new rule | 60 | 60 | **44–49** (11.4 MB/s) |
+
+**On our engine the delivery model does the work**, and the honest reading is that
+with 128 KB hand-overs the queue empties every drain, so "is the queue empty" comes
+out right again — by luck, exactly as it did at 43 frames a second before the parser
+was fixed. **On an engine slow enough that it never empties, the rule is worth 1
+against 45.** Which is the point: the old question was right whenever it happened to
+be, and this one is right because it asks about the thing somebody is complaining
+about.
+
+## Ruled out on the way
+
+- **Slicing a delivery to fit the frame budget**, which is what "bound the parse work
+  per frame" first suggested. Measured and rejected: libghostty-vt costs about half a
+  millisecond per `write` whatever the write's size, so smaller pieces multiply a
+  fixed cost — at a kilobyte a write it manages 2 MB/s where at 128 KB it manages 130.
+  Slicing is a death spiral on any engine with a per-call cost: the estimate of what
+  fits the budget falls, so the slices get smaller, so more of them are needed. The
+  budget therefore stays a deadline *between* deliveries, one delivery is indivisible,
+  and where one delivery does not fit a frame that is the engine's cost to fix — filed
+  as **0492**.
+- **Merging deliveries with no limit**, the other end of the same dial: 4.9 MB
+  hand-overs, one `write` blocking 235 ms, and `plain` down to **14** renders a
+  second. 128 KB is between the two and both walls were measured rather than guessed.
+- **One merged buffer with one timestamp.** The first version of the merge kept a
+  single `Data` and the read time of its oldest byte, and reported bytes read tens of
+  milliseconds apart as all being as old as the first — which holds back frames that
+  were current. A list of pieces, each stamped, merged only while the last is under
+  the limit.
+- **Whether the queue is growing or shrinking**, which this item guessed was the most
+  promising. It is on the wrong side: `stale=` across a 40,000-frame backlog reads
+  1,921,640 ms, 1,585,285, 1,227,283, 855,634, 469,285 — a burst shrinks monotonically,
+  and so does a program keeping up.
+- **Bytes behind.** Only staleness after dividing by a parse rate that moves ten times
+  between patterns and four and a half between builds of the parser.
+- **A tighter `liveWindow`.** A quarter of a second is what `burstHoldOff` already was,
+  so there is one figure rather than two. Worth knowing for whoever tunes it: the worst
+  staleness observed is about twice `backlogHoldTime`, because the reader stops when it
+  is a tenth of a second behind and what is already queued still has to be parsed.
+- **Time-based back-pressure as the cure for the backlog case.** It is not, and this is
+  worth writing down: `enqueue` runs on the main queue, so when the main thread is
+  starved — a locked screen, App Nap — nothing that lives there can measure or bound
+  anything. That is exactly why the arrival stamp moved to the reading queue: it is the
+  one place that still runs, and a stamp taken there makes a main-queue backlog visible
+  to the rule even though back-pressure cannot reach it.
+- **Chasing `parse=` as a measure of the parser.** It is not one when the drain is
+  saturated: 6 ms of budget every 8 ms is 750 ms a second whatever the parser costs, so
+  `parse=690ms` was the *duty cycle*. This item's opening "parse went **up** with a
+  faster parser" is that, and it does not need explaining by anything about 0489.
+
+### And the cursor-up artefact 0488 went out on
+
+**Not reproduced, in three attempts, all photographed** — see 0488, which has them. A
+tenth `ESC[1A ESC[2K` rewrite, a prompt line rewritten in place with the command
+changing length so a kept row would leave a tail, and a real login shell with a real
+up arrow recalling a command long enough to wrap the line. All three drew correctly
+with the row cache on. `abydos-bench --mode prompt` is that pattern permanently, which
+is what the revert asked for and what nothing had.
+
+What *is* fixed is the thing indistinguishable from it: a terminal drawn once a second
+shows the previous picture for up to a second after every keystroke, and on the engine
+the report was made on the pane was doing exactly that.
+
+## Two traps, for whoever measures this next
+
+- **A throwaway defaults domain is not clean.** `AppDelegate` calls
+  `Settings.migrate(from: "de.rnd7.ideai")`, which copies the whole of somebody's old
+  domain into a fresh bundle identifier unless `appearance`, `terminalScheme` and
+  `uiScale` are all already set in it. That is how two items came to be measured on an
+  engine nobody chose for them, and it also brings over the window frame — which
+  changes the grid, and therefore `cells/render`. Seed those three keys, and pin
+  `--window-size`.
+- **`renders=0` proves nothing** (0488's trap, still true): AppKit stops the display
+  link when the window is behind another.
+
 ## Steps
 
 - [x] Say what "stale" should mean, in something measurable, and why the
@@ -177,7 +301,8 @@ Three changes, and they are one change:
       and the time limit on the backlog *shortens* the exposure they were written
       for: the reader now resumes after a tenth of a second rather than after four
       megabytes have been parsed
-- [ ] `renders` measured for `fire`, `plain` and a prompt rewritten under cursor-up
-- [ ] Re-land 0489, then 0488, each with `renders` before and after
-- [ ] Write down here what was ruled out on the way
-- [ ] `spec/terminal.md` says what the project now does
+- [x] `renders` measured for `fire`, `plain` and a prompt rewritten under cursor-up —
+      the third of those needed a pattern, so `abydos-bench --mode prompt` is one now
+- [x] Re-land 0489, then 0488, each with `renders` before and after
+- [x] Write down here what was ruled out on the way
+- [x] `spec/terminal.md` says what the project now does
