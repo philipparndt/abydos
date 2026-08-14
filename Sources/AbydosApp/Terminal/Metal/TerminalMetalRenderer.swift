@@ -79,6 +79,18 @@ final class TerminalMetalRenderer {
 	private var documentBase = 0
 	private static let longestRunFromBase = 1 << 15
 
+	/// Whether rows are kept between frames at all. `ABYDOS_METAL_ROW_CACHE=0`
+	/// says no, and every row of every frame is built as it was before 0488.
+	///
+	/// Here because of the morning item 0487 spent: it read two numbers from two
+	/// binaries whose benchmark body had changed in between, and neither figure
+	/// was a measurement of the same thing as the other. One binary that can be
+	/// asked for either behaviour cannot make that mistake — the before and the
+	/// after come out of the same build, the same window, the same load and the
+	/// same minute, and the only difference between them is the thing being
+	/// measured.
+	private static let keepsRows = ProcessInfo.processInfo.environment["ABYDOS_METAL_ROW_CACHE"] != "0"
+
 	/// What the cached rows were built against. Anything here changing means
 	/// every one of them is about something that is no longer true.
 	private struct RowContext: Equatable {
@@ -389,6 +401,10 @@ final class TerminalMetalRenderer {
 		// First, because emptying the atlas moves every glyph in it and the
 		// rows kept from the last frame are full of coordinates into it.
 		atlas.setCellMetrics(size: frame.cellSize, baselineFromTop: faces.baselineFromTop)
+
+		// Asked to keep nothing, which is the renderer as it was before 0488 and
+		// is how the two are measured against each other.
+		if !Self.keepsRows { rowCache.removeAll(keepingCapacity: true) }
 
 		// Far enough from where the kept rows are measured from that a `Float`
 		// is worth thinking about: measure from here instead. One frame built in
