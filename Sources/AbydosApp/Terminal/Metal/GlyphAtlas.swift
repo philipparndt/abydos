@@ -128,22 +128,11 @@ final class GlyphAtlas {
 		self.scale = scale
 	}
 
-	/// Counts the times every entry in the atlas became invalid at once.
-	///
-	/// A glyph's place in the atlas is normalised coordinates into a texture,
-	/// and anything that keeps those — the renderer keeps a frame's worth of
-	/// them, one array per row, and copies them forward — is holding a claim
-	/// about a texture it does not own. Emptying the atlas moves every glyph,
-	/// so this is how a holder can tell that what it kept is no longer about
-	/// anything.
-	private(set) var generation = 0
-
 	func removeAll() {
 		entries.removeAll(keepingCapacity: true)
 		glyphEntries.removeAll(keepingCapacity: true)
 		coverage.reset()
 		colour.reset()
-		generation += 1
 	}
 
 	/// The atlas entry for a code point, rasterising it the first time.

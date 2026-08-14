@@ -37,19 +37,6 @@ enum TerminalShaders {
 		// separate from the decay so the wobble keeps travelling while fading
 		// rather than freezing as it dims.
 		float bellTime;
-		// Where the visible window sits in the document the cells were built
-		// in, in points.
-		//
-		// Cells arrive in *document* coordinates — measured from a line the
-		// terminal had rather than from the top of the window — and this is
-		// what turns them into the window's. Subtracted here rather than on the
-		// way in for one reason: it is the only part of a cell's position that
-		// changes when nothing about the cell did. Output arriving at the
-		// bottom of a view that follows it moves the whole picture by a row,
-		// and so does a line falling out of history. Both used to mean building
-		// every cell on screen again in order to move it; both are now this one
-		// number.
-		float2 scroll;
 	};
 
 	struct Varying {
@@ -91,13 +78,6 @@ enum TerminalShaders {
 	) {
 		CellInstance cell = cells[instanceID];
 		float2 corner = corners[vertexID];
-
-		// Out of the document and into the window, before anything else reads a
-		// position: the wobble below is a function of where a row is on screen,
-		// and everything after it works in the window's coordinates as it
-		// always did.
-		cell.origin -= uniforms.scroll;
-		cell.glyphOrigin -= uniforms.scroll;
 
 		// The quad covers the cell, or the glyph when there is one — a glyph may
 		// reach outside its cell, as descenders and accents do.
