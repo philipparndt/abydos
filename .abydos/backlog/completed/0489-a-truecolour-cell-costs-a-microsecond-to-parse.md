@@ -371,10 +371,6 @@ about.
 - **The engine seam and libghostty-vt**, both already ruled out by the item and neither
   revisited. Nothing here went near either.
 
-## Estimate
-
-2026-08-14 10:39 — done bar the final green run
-
 ## Steps
 
 - [x] Say where the microsecond goes, from a profile of the parser rather than a guess
