@@ -89,6 +89,14 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// Backlog at which the process is made to wait, and the one it resumes at.
 	private static let backlogHighWater = 4 << 20
 	private static let backlogLowWater = 1 << 20
+	/// What the engine has said changed since the last frame was built.
+	///
+	/// The GPU path builds these rows and copies the rest out of the frame
+	/// before, which is item 0488; `TerminalDirtyRows` is where the two awkward
+	/// parts of that live — the union across batches, and the fact that a line
+	/// leaving history renumbers every absolute row.
+	private var dirtyRows = TerminalDirtyRows()
+
 	/// Text selected with the mouse, in absolute rows. Nil when nothing is.
 	private var selection: TerminalSelection?
 	private var isSelecting = false
@@ -435,10 +443,16 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// Marking the view for display reaches CoreGraphics only; the GPU path
 	/// draws when it is told to.
 	private func repaint() {
-		guard metal != nil else {
+		guard let metal else {
 			needsDisplay = true
 			return
 		}
+		// Everything that calls this is saying the whole picture may differ for a
+		// reason the engine cannot have reported — a theme, a font, the keyboard
+		// arriving, a link under the pointer. The renderer keeps what it built
+		// for each row and has no way to know about any of them, so this is
+		// where it is told.
+		metal.renderer.invalidateRows()
 		requestFrame()
 	}
 
@@ -712,7 +726,8 @@ final class TerminalView: NSView, NSTextInputClient {
 			inset: CGPoint(x: Self.horizontalInset, y: Self.verticalInset),
 			origin: visible.origin,
 			background: background,
-			foreground: TerminalPalette.foreground.components
+			foreground: TerminalPalette.foreground.components,
+			discardedLineCount: screen.discardedLineCount
 		)
 		// Before the cells: what this decides about pictures behind the text is
 		// what stops those cells painting over them.
@@ -724,6 +739,10 @@ final class TerminalView: NSView, NSTextInputClient {
 		)
 		metal.renderer.build(
 			rows: rows,
+			// Everything the engine has reported since the last frame, as line
+			// numbers. Taken here rather than in `invalidateChangedRows`, which
+			// runs several times per frame and only gathers.
+			changed: dirtyRows.take(discardedLineCount: screen.discardedLineCount),
 			frame: frame,
 			faces: faces,
 			overlays: overlays,
@@ -745,7 +764,9 @@ final class TerminalView: NSView, NSTextInputClient {
 		)
 		if let encodeStart { MetalProbe.encodeSeconds += -encodeStart.timeIntervalSinceNow }
 		MetalProbe.renders += 1
-		MetalProbe.cells += metal.renderer.instanceCount
+		MetalProbe.cells += metal.renderer.cellsBuilt
+		MetalProbe.rows += metal.renderer.rowsBuilt
+		MetalProbe.instances += metal.renderer.instanceCount
 	}
 
 	/// Repaints the lines that changed, rather than the whole view.
@@ -756,9 +777,18 @@ final class TerminalView: NSView, NSTextInputClient {
 	private func invalidateChangedRows() {
 		pruneImageCache()
 		if metal != nil {
-			// Nothing to work out: the GPU redraws what is on screen, and what
-			// that costs does not depend on how much of it changed.
-			_ = emulator.takeDirtyRange()
+			// Gathered rather than acted on. Output is parsed to a budget and
+			// several batches of it arrive between two frames, so what the frame
+			// needs is the union of what each of them changed — and the engine
+			// hands its answer over once and forgets it.
+			//
+			// It used to be thrown away here, with a comment saying the GPU
+			// redraws what is on screen and does not care how much of it
+			// changed. That is true of the GPU and was never true of the work of
+			// handing it the cells: item 0488 measured a quarter of a second per
+			// second spent building 10,904 cells forty-three times, while the
+			// GPU that received them idled at 9 ms.
+			dirtyRows.note(emulator.takeDirtyRange())
 			requestFrame()
 			return
 		}
@@ -1672,8 +1702,9 @@ final class TerminalView: NSView, NSTextInputClient {
 		let clipFrame = enclosingScrollView?.contentView.frame.width ?? 0
 		let scale = window?.backingScaleFactor ?? 0
 		return String(
-			format: "engine=%@ alt=%@ rows=%d columns=%d fits=%d window=%.0f clipW=%.0f clipFrameW=%.0f "
-				+ "scale=%.1f cell=%.1f "
+			format: "engine=%@ gpu=%@ link=%@ onScreen=%@ alt=%@ rows=%d columns=%d fits=%d "
+				+ "window=%.0f clipW=%.0f "
+				+ "clipFrameW=%.0f scale=%.1f cell=%.1f "
 				+ "frame=%.1f clip=%.1f origin=%.1f "
 				+ "lastRowBottom=%.1f visible=%@ widthOK=%@",
 			// Which engine emulated this pane. There are two of them now (0474),
@@ -1681,6 +1712,20 @@ final class TerminalView: NSView, NSTextInputClient {
 			// drew it, and this is where the answer is — off the running app,
 			// rather than by asking somebody to remember a setting.
 			engineNameForTesting,
+			// And which renderer drew it, for the same reason and one more: every
+			// number `ABYDOS_METAL_PROBE` prints is zero when this says no, and a
+			// probe reporting zero renders looks exactly like a renderer doing
+			// nothing rather than like a renderer that was never made.
+			metal != nil ? "yes" : "no",
+			// The two other ways that probe reads zero while everything works.
+			// The GPU path draws on the display's clock, and AppKit stops that
+			// clock for a view whose window nobody can see — so a benchmark run
+			// behind another window renders nothing, draws its picture through
+			// the CoreGraphics path instead, screenshots perfectly, and reports
+			// zeroes. That cost an hour of item 0488 before either of these
+			// existed to be asked.
+			displayLink != nil ? "yes" : "no",
+			(window?.occlusionState.contains(.visible) ?? false) ? "yes" : "no",
 			emulator.isAlternateScreen ? "yes" : "no",
 			emulator.grid.rows, emulator.grid.columns, max(20, fits),
 			windowWidth, clip.width, clipFrame, scale, cellWidth,
@@ -3050,19 +3095,31 @@ enum MetalProbe {
 	nonisolated(unsafe) static var encodeSeconds = 0.0
 	nonisolated(unsafe) static var parseSeconds = 0.0
 	nonisolated(unsafe) static var renders = 0
+	/// Cells a frame turned into instances, which is what item 0488 is about.
+	///
+	/// It used to be the instance count, and while every cell on screen was
+	/// built every frame the two were the same number — 10,904 either way. They
+	/// are not the same number any more, so both are printed: `cells/render` is
+	/// the work done, `instances/render` is what the GPU was handed, and it is
+	/// still the whole screen because the rows that were not built are still in
+	/// the buffer from the frame that did build them.
 	nonisolated(unsafe) static var cells = 0
+	nonisolated(unsafe) static var rows = 0
+	nonisolated(unsafe) static var instances = 0
 
 	static func start() {
 		guard enabled else { return }
 		Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
 			let ms = { (value: Double) in String(format: "%.0f", value * 1000) }
+			let per = { (total: Int) in renders > 0 ? total / renders : 0 }
 			FileHandle.standardError.write(Data((
-				"METALPROBE renders=\(renders) cells/render=\(renders > 0 ? cells / renders : 0) "
+				"METALPROBE renders=\(renders) cells/render=\(per(cells)) "
+					+ "rows/render=\(per(rows)) instances/render=\(per(instances)) "
 					+ "parse=\(ms(parseSeconds))ms build=\(ms(buildSeconds))ms "
 					+ "drawable=\(ms(drawableSeconds))ms encode=\(ms(encodeSeconds))ms\n"
 			).utf8))
 			buildSeconds = 0; drawableSeconds = 0; encodeSeconds = 0; parseSeconds = 0
-			renders = 0; cells = 0
+			renders = 0; cells = 0; rows = 0; instances = 0
 		}
 	}
 }

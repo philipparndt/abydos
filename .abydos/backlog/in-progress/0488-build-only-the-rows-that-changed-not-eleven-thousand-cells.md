@@ -45,6 +45,10 @@ Measure with the same instrument that found it, and say the load: `ABYDOS_METAL_
 gives `renders`, `cells/render` and `build` directly, and `cells/render` falling below
 the grid size is the proof the change did what it says.
 
+## Estimate
+
+2026-08-14 08:09 — about four hours left; baseline reproduced at cells/render=10904
+
 ## Steps
 
 - [ ] The renderer builds from `takeDirtyRange` rather than the whole grid

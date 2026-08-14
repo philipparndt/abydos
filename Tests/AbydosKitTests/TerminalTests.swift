@@ -1595,4 +1595,123 @@ struct TerminalDirtyRangeTests {
 		#expect(range?.lowerBound == 0)
 		#expect((range?.count ?? 0) >= engine.grid.totalLineCount)
 	}
+
+	/// Swapping the grid for another one whole is a change, and it has to be
+	/// reported as one.
+	///
+	/// Found by item 0488, which made the dirty range load-bearing for the GPU
+	/// path: a renderer keeping what it built for each row draws the shell's last
+	/// screen underneath a program that has just taken the terminal over. Neither
+	/// path had ever needed the range for this — a screen coming or going changes
+	/// the document's height, and AppKit repaints a view whose frame changed —
+	/// which is why nothing said so and nothing failed.
+	@Test func takingOverTheScreenDirtiesEverything() {
+		let engine: TerminalEngine = TerminalEmulator(rows: 6, columns: 20)
+		engine.write(String(repeating: "history\r\n", count: 30))
+		_ = engine.takeDirtyRange()
+
+		// The alternate screen, which is what vim and less and the benchmark ask
+		// for. A blank grid with no history of its own, so every absolute row on
+		// screen now means a different line.
+		engine.write("\u{1B}[?1049h")
+		#expect(engine.takeDirtyRange()?.lowerBound == 0)
+
+		engine.write("a full screen program")
+		_ = engine.takeDirtyRange()
+
+		// And handing it back, where the rows are the shell's again.
+		engine.write("\u{1B}[?1049l")
+		#expect(engine.takeDirtyRange()?.lowerBound == 0)
+
+		// The same for a reset, which empties the screen and the history without
+		// writing to a single cell.
+		engine.write("more output\r\n")
+		_ = engine.takeDirtyRange()
+		engine.write("\u{1B}c")
+		#expect(engine.takeDirtyRange()?.lowerBound == 0)
+	}
+}
+
+/// Gathering what changed between one frame and the next.
+///
+/// The renderer builds the rows in here and copies the others out of the frame
+/// before (0488), so this is where two things that were nobody's job now live.
+struct TerminalDirtyRowsTests {
+	/// Nothing reported is nothing to build. A frame drawn for another reason —
+	/// the cursor, the bell, a scroll — has to be able to tell.
+	@Test func nothingReportedIsNothingToBuild() {
+		var rows = TerminalDirtyRows()
+		#expect(rows.isEmpty)
+		rows.note(nil)
+		#expect(rows.isEmpty)
+		#expect(rows.take(discardedLineCount: 0) == nil)
+	}
+
+	/// Several batches of output arrive between two frames, because parsing runs
+	/// to a budget and yields. Taking the range clears it, so the frame sees only
+	/// the last batch unless somebody keeps the union — and a frame that drew
+	/// only the last batch would be missing every row the ones before it changed.
+	@Test func batchesBetweenTwoFramesAreOneRange() {
+		var rows = TerminalDirtyRows()
+		rows.note(10...11)
+		rows.note(30...31)
+		rows.note(20...20)
+		#expect(rows.take(discardedLineCount: 0) == 10...31)
+		#expect(rows.isEmpty, "taking it is what starts the next frame's gathering")
+	}
+
+	/// Line numbers rather than absolute rows, which is the whole reason this is a
+	/// type and not two lines in the view.
+	///
+	/// A row's absolute index is its place in scrollback-plus-grid, and every line
+	/// that falls out of history moves all of them by one. A renderer keeping what
+	/// it built for a row cannot file it under a number that shifts underneath it,
+	/// so what comes out here is counted from the first line the terminal had.
+	@Test func rangesComeOutAsLineNumbers() {
+		var rows = TerminalDirtyRows()
+		rows.note(0...2)
+		#expect(rows.take(discardedLineCount: 5_000) == 5_000...5_002)
+		#expect(TerminalDirtyRows.lineNumber(ofAbsoluteRow: 3, discardedLineCount: 40) == 43)
+	}
+
+	/// What a printed line actually costs the renderer, end to end through the
+	/// engine: two rows out of a screenful, not the screenful.
+	///
+	/// The claim `TerminalDirtyRangeTests` makes about the range, made again about
+	/// the thing that consumes it. Forty-seven rows is the height of the pane this
+	/// item was measured on.
+	@Test func aPrintedLineIsTwoRowsOfAScreenful() {
+		let engine: TerminalEngine = TerminalEmulator(rows: 47, columns: 232)
+		engine.write(String(repeating: "filler\r\n", count: 60))
+		_ = engine.takeDirtyRange()
+
+		var rows = TerminalDirtyRows()
+		rows.note(engine.takeDirtyRange())
+		engine.write("one more line\r\n")
+		rows.note(engine.takeDirtyRange())
+
+		let changed = rows.take(discardedLineCount: engine.grid.discardedLineCount)
+		#expect(changed?.count == 2, "\(String(describing: changed))")
+	}
+
+	/// And what a line leaving history costs: the document, today.
+	///
+	/// This is the honest limit of the change and the reason it is pinned rather
+	/// than left to be discovered. `TerminalScreen` marks everything when a line
+	/// is discarded, because absolute rows shift and that is the only way to say
+	/// so through a range of them. A renderer working in line numbers does not
+	/// need to be told — nothing it holds moved — and it is told anyway, so a
+	/// terminal whose history is full builds every row for every line printed.
+	@Test func aDiscardedLineIsStillTheWholeDocument() {
+		let engine: TerminalEngine = TerminalEmulator(rows: 4, columns: 20)
+		engine.write(String(repeating: "filler\r\n", count: 5_010))
+		#expect(engine.grid.discardedLineCount > 0, "the history has to be full")
+		_ = engine.takeDirtyRange()
+
+		var rows = TerminalDirtyRows()
+		engine.write("this one pushes a line off the top\r\n")
+		rows.note(engine.takeDirtyRange())
+		let changed = rows.take(discardedLineCount: engine.grid.discardedLineCount)
+		#expect((changed?.count ?? 0) >= engine.grid.totalLineCount)
+	}
 }
