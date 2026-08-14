@@ -92,6 +92,31 @@ public struct TerminalCell: Equatable, Sendable {
 	}
 
 	public static let blank = TerminalCell(scalar: 0x20)
+
+	/// Overwrites this cell with a single code point, field by field.
+	///
+	/// Not `cell = TerminalCell(scalar:attributes:)`, and the difference is the
+	/// whole reason this exists. `combining` is a `String?`, so a `TerminalCell`
+	/// is not a plain value as far as the compiler is concerned: assigning one
+	/// destroys the old cell and copies the new one through outlined value
+	/// witnesses, each releasing and retaining a string that is nil in
+	/// essentially every cell a terminal ever holds. Filling a row that way
+	/// cost two hundred reference-counting calls for a hundred columns of
+	/// text.
+	///
+	/// Written a field at a time it is four stores and, when the cell being
+	/// overwritten had no cluster on it, a pointer comparison — no reference
+	/// counting at all. `initializeWithCopy for TerminalCell` and `outlined
+	/// destroy of TerminalCell` were the top two entries in a profile of the
+	/// parser reading ordinary log output; this is what they were.
+	mutating func write(scalar: UInt32, attributes: TerminalAttributes, isWideTrailer: Bool = false) {
+		// Checked rather than cleared: nil is what it almost always already is,
+		// and assigning nil over nil is still a release.
+		if combining != nil { combining = nil }
+		self.scalar = scalar
+		self.attributes = attributes
+		self.isWideTrailer = isWideTrailer
+	}
 }
 
 /// One row of cells.
@@ -243,7 +268,7 @@ public struct TerminalScreen: Sendable {
 		markDirty(rows: row...row)
 		lines[row].cells.withUnsafeMutableBufferPointer { cells in
 			for offset in 0..<count {
-				cells[column + offset] = TerminalCell(
+				cells[column + offset].write(
 					scalar: UInt32(bytes[start + offset]),
 					attributes: attributes
 				)
@@ -257,6 +282,24 @@ public struct TerminalScreen: Sendable {
 		lines[row].cells[column] = cell
 	}
 
+	/// Writes one code point into a cell, keeping no cluster on it.
+	///
+	/// The same thing as `setCell` with a freshly built cell, without paying
+	/// for the copy — see `TerminalCell.write`.
+	public mutating func setScalar(
+		row: Int,
+		column: Int,
+		scalar: UInt32,
+		attributes: TerminalAttributes,
+		isWideTrailer: Bool = false
+	) {
+		guard row >= 0, row < rows, column >= 0, column < columns else { return }
+		markDirty(rows: row...row)
+		lines[row].cells.withUnsafeMutableBufferPointer { cells in
+			cells[column].write(scalar: scalar, attributes: attributes, isWideTrailer: isWideTrailer)
+		}
+	}
+
 	/// Scrolls the region [top, bottom] up by one, pushing the top line into
 	/// scrollback when the region is the whole screen.
 	public mutating func scrollUp(top: Int, bottom: Int, attributes: TerminalAttributes) {
@@ -266,11 +309,34 @@ public struct TerminalScreen: Sendable {
 		if !(top == 0 && bottom == rows - 1) { markDirty(rows: top...bottom) }
 
 		let retired = lines[top]
+		// The line that fell out of the far end of history, whose storage the
+		// blank line arriving at the bottom of the screen can have.
+		//
+		// A scroll retires the top line into history and needs a blank one at
+		// the bottom, and once history is full — which is where a terminal
+		// spends almost all of its life — a line falls out of the other end at
+		// the same moment. It is the right length and nothing refers to it any
+		// more, so the blank line is written over it rather than a new array
+		// being allocated and the old one freed.
+		//
+		// `TerminalCell` carries a `String?`, so neither of those is cheap: the
+		// allocation copies every cell one at a time and the free destroys
+		// every cell one at a time. Together they were **most of what it cost
+		// this emulator to read plain log output** — a line of text scrolls
+		// once per fifty bytes, where a screen of colour changes scrolls once
+		// per fifteen hundred, which is why plain output measured six times
+		// slower than the path that parses an escape sequence per cell.
+		//
+		// `ScrollbackBuffer.append` has handed the displaced line back for
+		// exactly this since it was written, and says so in its own comment.
+		// Nothing took it until now.
+		var recycled: TerminalLine?
 		// Only a full-height region represents lines leaving the screen; a
 		// restricted scroll region is an application redrawing in place.
 		if top == 0 && bottom == rows - 1 {
-			if scrollback.append(retired) != nil {
+			if let evicted = scrollback.append(retired) {
 				discardedLineCount += 1
+				recycled = evicted
 				// Every absolute index just shifted by one, so nothing is where
 				// the view last drew it.
 				markAllDirty()
@@ -284,7 +350,48 @@ public struct TerminalScreen: Sendable {
 		for row in top..<bottom {
 			lines[row] = lines[row + 1]
 		}
-		lines[bottom] = blankLine(attributes: attributes)
+
+		// The evicted line goes into the slot *before* it is blanked, and the
+		// local reference to it is dropped, so that the grid is its only owner
+		// when the blanking runs. Passing it to something that blanks it and
+		// hands it back would leave two references to the same storage for as
+		// long as the call lasts, and an array with two references copies
+		// itself before it is written to — which measured *slower* than
+		// allocating a fresh line, the thing this is here to avoid.
+		if recycled?.cells.count == columns {
+			lines[bottom] = recycled.unsafelyUnwrapped
+			recycled = nil
+			blank(row: bottom, columns: 0..<columns, attributes: attributes)
+		} else {
+			lines[bottom] = blankLine(attributes: attributes)
+		}
+	}
+
+	/// Writes blanks over part of a row already in the grid, in place.
+	///
+	/// The whole erase family goes through this rather than assigning cell by
+	/// cell through `subscript(row:)`. That subscript has a getter and a setter
+	/// and no `_modify`, so `screen[row].cells[column] = blank` is a read of the
+	/// whole line, a mutation, and a write back — and while the getter's copy is
+	/// alive the line's storage has two owners, so the mutation **copies every
+	/// cell in the row**. A loop over the columns therefore cost a hundred
+	/// copies of a hundred cells to erase one line of a hundred columns, and
+	/// marked the row dirty a hundred times over on the way.
+	public mutating func blank(row: Int, columns range: Range<Int>, attributes: TerminalAttributes) {
+		guard row >= 0, row < rows else { return }
+		let range = range.clamped(to: 0..<columns)
+		guard !range.isEmpty else { return }
+		markDirty(rows: row...row)
+		// Erasure carries the current background, which is how full-width
+		// coloured bars are drawn, and nothing else about the attributes.
+		var blank = TerminalAttributes()
+		blank.background = attributes.background
+		lines[row].cells.withUnsafeMutableBufferPointer { cells in
+			// Field by field, for the reason `TerminalCell.write` gives.
+			for index in range.clamped(to: cells.indices) {
+				cells[index].write(scalar: 0x20, attributes: blank)
+			}
+		}
 	}
 
 	public mutating func scrollDown(top: Int, bottom: Int, attributes: TerminalAttributes) {
