@@ -59,6 +59,7 @@ public final class GhosttyTerminalEngine: TerminalEngine {
 	/// `UnicodePlaceholder` on top of the grid supplies the `U=1` half the library
 	/// does not export. See `GhosttyGraphicsBridge`, which is where item 0485's
 	/// first question is answered.
+	///
 	/// Computed rather than stored, so that reading it brings the store up to date
 	/// first (item 0492): `syncGraphics` runs on the read now, and a caller reaching
 	/// straight for `graphics.placements` must not be handed the state as of some
@@ -563,15 +564,14 @@ public final class GhosttyTerminalEngine: TerminalEngine {
 		// wrong, and it stays where it is exact.
 		updateDiscardedLineCount()
 		// Everything else that used to be here is now `bringUpToDate()`, run at most
-		// once before the next read rather than once per write (item 0492). What is
-		// left is the two things a caller cannot ask for later: a reply the program is
-		// waiting on, and the notification that says bytes arrived.
+		// once before the next read rather than once per write (item 0492) — except
+		// when somebody is measuring the difference, which is what this is for.
 		if TerminalCatchUp.perWrite {
-			// The old behaviour, for a measurement out of one binary: the render state
-			// on every write, and the whole document reported as changed.
 			bringRenderStateUpToDate()
 			dirty = 0...max(0, totalLineCount - 1)
 		}
+		// What is left is the two things a caller cannot ask for later: a reply the
+		// program is waiting on, and the notification that says bytes arrived.
 		if !pendingResponse.isEmpty {
 			let response = pendingResponse
 			pendingResponse = ""
@@ -585,7 +585,7 @@ public final class GhosttyTerminalEngine: TerminalEngine {
 	// The engine is written to far more often than it is read — 1,400 deliveries a
 	// second against 60 frames, on item 0491's measurement — so nothing that a
 	// caller could ask for later happens on the parse path. What is left is split in
-	// two, because the two halves differ by a factor of four hundred:
+	// two, because the two halves differ by forty times.
 	//
 	// `TerminalThroughputTests.writePathCosts` prints these, per write, on a 40×100
 	// screen with 5,200 lines of history and a kilobyte a write:

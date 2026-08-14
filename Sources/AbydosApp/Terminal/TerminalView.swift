@@ -922,7 +922,7 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// The cursor is drawn over a cell that is otherwise unchanged, so both the
 	/// row it left and the row it is on have to be repainted.
 	private func invalidateCursorRows() {
-		let row = emulator.metrics.scrollbackCount + emulator.cursorRow
+		let row = sizeAndHistory.scrollbackCount + emulator.cursorRow
 		guard row != lastDrawnCursorRow else { return }
 		if let previous = lastDrawnCursorRow {
 			setNeedsDisplay(rect(forAbsoluteRows: previous...previous))
@@ -1017,10 +1017,26 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// Everything that walks rows — both renderers, the selection, the mouse,
 	/// the document height — goes through this one definition rather than
 	/// through the screen's own count.
-	var shownLineCount: Int {
-		// `metrics` and not `grid`: this is read from the parse path by way of
-		// `updateFrameSize`, and a snapshot copies the visible rows (item 0492).
-		emulator.metrics.totalLineCount
+	var shownLineCount: Int { sizeAndHistory.totalLineCount }
+
+	/// How big the terminal is and how much history it has — **not a snapshot**.
+	///
+	/// Everything on this side of the seam that wants a count rather than a row goes
+	/// through here, because the alternative is what item 0492 was: `emulator.grid`,
+	/// asked once per delivery of output, copying eleven thousand cells out of
+	/// libghostty-vt to read one integer. For our own engine the two are the same
+	/// five field reads.
+	///
+	/// The environment variable is `TerminalCatchUp`'s, and it is here so that the
+	/// before and the after can be measured out of one binary rather than two.
+	private var sizeAndHistory: TerminalMetrics {
+		guard TerminalCatchUp.perWrite else { return emulator.metrics }
+		let grid = emulator.grid
+		return TerminalMetrics(
+			rows: grid.rows, columns: grid.columns,
+			totalLineCount: grid.totalLineCount,
+			scrollbackCount: grid.scrollbackCount,
+			discardedLineCount: grid.discardedLineCount)
 	}
 
 	/// How much of the pane's height is not a whole row.
@@ -1075,7 +1091,7 @@ final class TerminalView: NSView, NSTextInputClient {
 		let columns = max(20, Int(floor(usableWidth / max(1, cellWidth))))
 		let rows = max(4, Int(floor(usableHeight / max(1, cellHeight))))
 
-		let size = emulator.metrics
+		let size = sizeAndHistory
 		guard rows != size.rows || columns != size.columns else { return }
 		// A resize reflows what the absolute rows mean, and there is no honest
 		// mapping from the old grid to the new one.
@@ -1086,19 +1102,10 @@ final class TerminalView: NSView, NSTextInputClient {
 	}
 
 	private func updateFrameSize() {
-		// `metrics` rather than `grid`, and it matters: this runs once per turn of the
-		// main queue while output pours in, and for libghostty-vt a snapshot means
-		// copying every visible cell across the FFI boundary (item 0492).
-		let size: TerminalMetrics = TerminalCatchUp.perWrite
-			? {
-				let grid = emulator.grid
-				return TerminalMetrics(
-					rows: grid.rows, columns: grid.columns,
-					totalLineCount: grid.totalLineCount,
-					scrollbackCount: grid.scrollbackCount,
-					discardedLineCount: grid.discardedLineCount)
-			}()
-			: emulator.metrics
+		// `sizeAndHistory` rather than `emulator.grid`, and it matters: this runs once
+		// per turn of the main queue while output pours in, and for libghostty-vt a
+		// snapshot means copying every visible cell across the FFI boundary (0492).
+		let size = sizeAndHistory
 		let totalRows = emulator.isAlternateScreen ? size.rows : size.totalLineCount
 		let height = CGFloat(totalRows) * cellHeight + Self.verticalInset * 2
 		let width = enclosingScrollView?.contentSize.width ?? bounds.width
@@ -2368,9 +2375,7 @@ final class TerminalView: NSView, NSTextInputClient {
 		// for a snapshot here was half of item 0492: 1,400 snapshots a second, each of
 		// them eleven thousand cells copied out of libghostty-vt, to answer one number
 		// that engine already had to hand.
-		let discarded = TerminalCatchUp.perWrite
-			? emulator.grid.discardedLineCount
-			: emulator.metrics.discardedLineCount
+		let discarded = sizeAndHistory.discardedLineCount
 		defer { lastDiscardedLineCount = discarded }
 
 		let shift = discarded - lastDiscardedLineCount
