@@ -73,6 +73,29 @@ inherits `de.rnd7.ideai`'s settings (0491 has the trap).
   to block a frame — measured at 235 ms for 4.9 MB — so the rest has to come out of
   the per-write cost itself.
 
+## The bar, set before anything was measured
+
+This is a trial with a kill criterion, and the criterion was written down first so
+that "improved somewhat" could not be the answer:
+
+> **libghostty-vt reaches at least 0.8× our engine's end-to-end MB/s on `fire` and
+> on `plain`, and the same `renders` to within 10% on all three patterns, out of one
+> binary with the engine switched by the setting.**
+>
+> Met: it stays. Not met: the recommendation is to take libghostty-vt out of the
+> project entirely — the xcframework, the engine, the setting and the seam if
+> nothing else uses it — and put the effort into our own parser instead.
+
+0.8× and not 0.5×, because libghostty-vt's parser is *faster* than ours in process
+(0489: 162.8 MB/s against 136.2 on the fire, 337.9 against 23.4 on plain). Anything
+below parity therefore means the app-side per-call cost is still what decides the
+number, which is exactly what this item is about. A bar of "half as fast" would have
+been passed by a fix that left the fault in.
+
+## Estimate
+
+2026-08-14 15:28 — bar set, measuring the per-write cost — verdict in a few hours
+
 ## Steps
 
 - [ ] Say what `ghostty_render_state_update` costs, per call, with a number
@@ -82,5 +105,6 @@ inherits `de.rnd7.ideai`'s settings (0491 has the trap).
       applies to it too
 - [ ] `renders` and end-to-end MB/s for `fire`, `plain` and `prompt`, both engines,
       out of one binary
+- [ ] Say whether the bar was met, and so whether the engine is kept or removed
 - [ ] Write down here what was ruled out on the way
 - [ ] `spec/terminal.md` only if behaviour changed
