@@ -98,8 +98,15 @@ public final class PseudoTerminal {
 	/// on a running main run loop.
 	public var callbackQueue: DispatchQueue = .main
 
-	/// Bytes read from the process.
-	public var onOutput: ((Data) -> Void)?
+	/// Bytes read from the process, and the moment they were taken off the pty.
+	///
+	/// The time comes from here rather than from the handler because the handler
+	/// runs on `callbackQueue` — the main queue, in the app — and the question
+	/// somebody asks of a terminal is "how far behind what the program has
+	/// already said is the picture on the screen". When the main thread is busy,
+	/// the hop is part of that answer, and a stamp taken after it would report
+	/// zero for exactly the backlog it exists to find.
+	public var onOutput: ((Data, Date) -> Void)?
 	/// Called when the process exits, with its status.
 	public var onExit: ((Int32) -> Void)?
 
@@ -419,8 +426,9 @@ public final class PseudoTerminal {
 					refusal.trimmingCharacters(in: .whitespacesAndNewlines), to: "tmux"
 				)
 			}
+			let refusedAt = Date()
 			callbackQueue.async { [weak self] in
-				self?.onOutput?(Data(refusal.utf8))
+				self?.onOutput?(Data(refusal.utf8), refusedAt)
 			}
 		}
 
@@ -646,11 +654,106 @@ public final class PseudoTerminal {
 		return gathered
 	}
 
+	/// Bytes read but not yet handed over, in pieces, each stamped with when the
+	/// first of its bytes was read.
+	///
+	/// A list rather than one buffer so that no byte is reported older than it is:
+	/// a read is merged into the last piece while that piece is still under the
+	/// hand-over limit, and starts a new one after that. One merged buffer would
+	/// have to carry a single stamp for bytes read tens of milliseconds apart, and
+	/// the only safe choice — the oldest — reports a screen further behind than it
+	/// is and holds back frames that were current.
+	private var held: [(bytes: Data, readAt: Date)] = []
+	private var heldBytes = 0
+	private var deliveryScheduled = false
+	private let deliveryLock = NSLock()
+
+	/// Hands bytes to the callback queue, one delivery in flight at a time.
+	///
+	/// `readWhatIsThere` already gathers everything the pty has into one
+	/// delivery, and this does the same thing one level up: everything read
+	/// *while the last delivery is still waiting to be looked at* is gathered
+	/// into the next one. Only ever one block is queued, so the callback queue
+	/// cannot become the place a backlog hides (item 0491).
+	///
+	/// It used to hop once per read, and that had two costs which turned out to
+	/// be the same cost. A busy terminal read a kilobyte at a time and posted
+	/// fifteen thousand blocks a second at the main thread; and because each
+	/// block carried its own bytes, the queue of blocks *was* the backlog — a
+	/// third of a second of output on ordinary log output, nearly three seconds
+	/// on a slow engine, none of it visible to anything counting what was left to
+	/// parse, and none of it something back-pressure could reach. Merging makes
+	/// the queue of unparsed output the only queue there is, which is what lets it
+	/// be measured and bounded.
+	///
+	/// Memory is no worse than it was: the same bytes were previously held by the
+	/// same number of blocks, one `Data` each, and are now one buffer.
+	///
+	/// Handed over in pieces of at most `deliveryLimit`, and both halves of that
+	/// number were measured. Too small and an engine with a fixed cost per write
+	/// pays it per kilobyte — libghostty-vt spends about half a millisecond
+	/// bringing its render state up to date on every `write`, whatever its size,
+	/// which at a kilobyte a read is where forty-five frames a second became one.
+	/// Too large and a single `write` runs past the frame it is in: merging with
+	/// no limit at all produced deliveries of five megabytes that took 235 ms,
+	/// and the screen fell to fourteen frames a second on ordinary log output.
 	private func deliver(_ gathered: Data) {
 		recordRawOutput(gathered)
-		callbackQueue.async {
-			self.onOutput?(gathered)
+		// Stamped on the reading queue, before the hop, for the reason on
+		// `onOutput`: the wait for the main thread is part of how stale these
+		// bytes are by the time anybody could see them. The stamp kept is the
+		// *oldest* in the batch, because that is how far behind the picture is.
+		let readAt = Date()
+		deliveryLock.lock()
+		if !held.isEmpty, held[held.count - 1].bytes.count < Self.deliveryLimit {
+			held[held.count - 1].bytes.append(gathered)
+		} else {
+			held.append((gathered, readAt))
 		}
+		heldBytes += gathered.count
+		let alreadyOnItsWay = deliveryScheduled
+		deliveryScheduled = true
+		deliveryLock.unlock()
+		guard !alreadyOnItsWay else { return }
+
+		handOver()
+	}
+
+	/// How much a single hand-over may carry.
+	private static let deliveryLimit = 128 << 10
+
+	private func handOver() {
+		callbackQueue.async {
+			self.deliveryLock.lock()
+			guard !self.held.isEmpty else {
+				self.deliveryScheduled = false
+				self.deliveryLock.unlock()
+				return
+			}
+			let piece = self.held.removeFirst()
+			self.heldBytes -= piece.bytes.count
+			// More left over: the flag stays up, so a read arriving meanwhile
+			// merges into what is here rather than queueing a second hand-over.
+			let more = !self.held.isEmpty
+			self.deliveryScheduled = more
+			self.deliveryLock.unlock()
+			self.onOutput?(piece.bytes, piece.readAt)
+			if more { self.handOver() }
+		}
+	}
+
+	/// Bytes read from the pty and not yet handed to `onOutput`, and when the
+	/// oldest of them was read.
+	///
+	/// Read by whoever is deciding how far behind the screen is and whether the
+	/// program should be made to wait. It has to be asked here because these bytes
+	/// have left the pty and not arrived anywhere else: counting only what the
+	/// caller has been given would report an empty backlog for output that is
+	/// already a second old (item 0491).
+	public var undeliveredBacklog: (bytes: Int, oldestAt: Date?) {
+		deliveryLock.lock()
+		defer { deliveryLock.unlock() }
+		return (heldBytes, held.first?.readAt)
 	}
 
 	/// Every byte the program produced, appended to a file, when asked.

@@ -32,7 +32,60 @@ import Foundation
 /// writing — so both are treated the same way, and the rate is chosen for what
 /// it costs to be wrong. Being slow to show a flood costs a coarser picture of
 /// a build; being fast to show a burst costs the flicker this exists to stop.
+///
+/// ## What "behind" means, and what it used to mean (item 0491)
+///
+/// It means **how many seconds out of date the picture is**: how long ago the
+/// oldest delivery nobody has parsed yet came off the pty. It used to mean "the
+/// queue is not empty", and that was wrong in a way that got worse the faster
+/// the terminal became.
+///
+/// A program writing as fast as it is read leaves the queue non-empty for ever,
+/// so the old question was permanently answered yes and the screen was
+/// permanently held to one frame a second — while every frame it declined to
+/// draw was current. What had been hiding it was slowness: before the parser was
+/// fixed, the backlog reached its high-water mark, the reader was suspended, the
+/// queue emptied, and the screen drew forty-three times a second *because the
+/// parser could not keep up*. Making the parser four and a half times faster
+/// took that away and the screen stopped. Two measured improvements were
+/// reverted before the rule underneath them was read.
+///
+/// Seconds have no such coupling. A tenth of a second behind is a tenth of a
+/// second behind whatever the parser costs, whichever pattern the program is
+/// writing, and on whichever engine — which is the whole point of measuring the
+/// thing somebody is complaining about rather than a proxy for it.
+///
+/// Two candidates lost, and both for the same reason:
+///
+/// - **Bytes behind.** Bytes are only staleness after dividing by a parse rate,
+///   and that rate moves by a factor of ten between patterns and by four and a
+///   half between releases of the parser. A byte threshold therefore means a
+///   different number of seconds for every pattern and every build — which is
+///   exactly the coupling that produced this fault.
+/// - **Whether the queue is growing or shrinking.** It sounds like the right
+///   question and it does not separate the two cases. A burst drains — its queue
+///   *shrinks*, monotonically, and it is the case the hold-off exists for. A
+///   program keeping up holds a queue that is flat or shrinking too. The sign of
+///   the derivative puts both on the same side of the line, and it needs a
+///   window to measure over while the decision has to be made every frame.
 public enum RedrawThrottle {
+	/// How far behind the picture may be and still count as the program's
+	/// current picture.
+	///
+	/// A quarter of a second — the same number as `burstHoldOff` and for the same
+	/// reason, so there is one figure to argue with rather than two. Under it,
+	/// what is on the grid is what the program is saying now, give or take a few
+	/// frames nobody can perceive, and it is drawn at whatever rate the display
+	/// refreshes. Over it, the terminal is working through something that has
+	/// already happened.
+	///
+	/// Not zero, and not one frame. The queue is normally non-empty — output
+	/// arrives while the last of it is still being parsed — and a threshold
+	/// tighter than the time it takes to read and parse one delivery would put
+	/// a healthy terminal permanently on the wrong side of the line, which is the
+	/// fault this replaces.
+	public static let liveWindow: TimeInterval = 0.25
+
 	/// How often to draw while still behind.
 	///
 	/// Once a second, not twenty times: every one of those pictures has already
@@ -51,16 +104,19 @@ public enum RedrawThrottle {
 	public static let burstHoldOff: TimeInterval = 0.25
 
 	/// - Parameters:
-	///   - isBehind: whether output is still waiting to be parsed.
+	///   - staleBy: how long ago the oldest delivery nobody has parsed yet came
+	///     off the pty, in seconds. Zero when everything that arrived is parsed.
 	///   - sinceLastDraw: how long ago the screen was last drawn.
-	///   - behindFor: how long there has been a backlog without a break.
+	///   - behindFor: how long `staleBy` has been over `liveWindow` without a
+	///     break.
 	public static func shouldDraw(
-		isBehind: Bool,
+		staleBy: TimeInterval,
 		sinceLastDraw: TimeInterval,
 		behindFor: TimeInterval
 	) -> Bool {
-		// Caught up: this is the picture the program means.
-		guard isBehind else { return true }
+		// Current: this is the picture the program means, whether or not more of
+		// it is already on the way.
+		guard staleBy >= liveWindow else { return true }
 
 		// Still inside a burst: the frame being offered is one the program has
 		// already replaced, and the one worth drawing comes when it drains.
