@@ -141,24 +141,83 @@ one caller threw the storage away and allocated a new row instead.**
 
 ## Measured, in-process, before and after
 
-`ABYDOS_BENCH=1 ABYDOS_BENCH_ENGINE=abydos xcrun swift test -c release`, the two
-builds run back to back in one sitting so the loads are comparable:
+`ABYDOS_BENCH=1 ABYDOS_BENCH_ENGINE=abydos xcrun swift test -c release`, the two builds
+run back to back in one sitting so the loads are comparable. MB/s, before at load 4.8
+over 10 cores (0.5 per core), after at 3.7 (0.4):
 
 | bench | before | after | |
 |---|---|---|---|
-| **plain log output** | **23.7** | **67.6** | **2.9×** |
-| **plain, history full** | **23.7** | **67.6** | **2.9×** |
-| ascii only | 44.1 | 166.9 | **3.8×** |
-| wide-ish glyphs only | 41.4 | 74.1 | 1.8× |
-| colour changes only | 178.9 | 205.2 | 1.15× |
-| doom fire | 135.5 | 169.1 | 1.25× |
+| **plain log output** | **23.9** | **108.8** | **4.6×** |
+| **plain, history full** | **23.6** | **116.1** | **4.9×** |
+| ascii only | 43.6 | 278.1 | **6.4×** |
+| wide-ish glyphs only | 41.4 | 77.4 | 1.9× |
+| colour changes only | 181.9 | 211.5 | 1.16× |
+| doom fire | 135.2 | 168.8 | 1.25× |
 
-MB/s. Before at load 5.5 over 10 cores (0.5 per core), after at 3.1 (0.3 per core) —
-both quiet, and the effects are two to four times where the load differs by a fifth.
+Three consecutive runs of the finished build, load 0.4 per core throughout, so the
+spread is on the record rather than one figure being quoted: plain **115.1 / 113.4 /
+111.0**, plain-history **115.6 / 115.6 / 113.6**, ascii **283.9 / 283.7 / 284.8**,
+wide **80.2 / 80.4 / 80.6**, colour **211.1 / 210.4 / 210.5**, fire **168.3 / 168.8 /
+169.6**. A couple of per cent, against effects of two to six times.
 
-For scale against the item's own table: `plain` was 23.4 against libghostty-vt's
-337.9, a factor of fourteen. It is now a factor of five, and none of what closed it
-was in the parser.
+For scale against the item's own table: `plain` was 23.4 against libghostty-vt's 337.9,
+a factor of fourteen. It is a factor of three now, and none of what closed it was in
+the parser.
+
+## And end to end, in the app, over a pty — which is where the number is largest
+
+The rule this item sets is that a win in-process has to be shown in the app or admitted
+not to be one. `abydos-bench` in a real pane of a release build, `ABYDOS_METAL_PROBE=1`,
+twelve seconds a mode, the two builds differing only in these two files. Every run is
+guarded: the first thing the pane runs is `pwd` into a file, and the driver refuses to
+read a measurement unless that file names the throwaway project it was told to open —
+the shell in the pane saying where it is, which is what `abydos-bench` inherits.
+
+`parse=` is the probe's own figure: how many milliseconds of each second the app spent
+inside `TerminalEmulator.write`.
+
+| mode | parse, before | parse, after | end to end |
+|---|---|---|---|
+| **plain log output** | **698 ms/s** | **12 ms/s** | 3.3 → 3.3 MB/s |
+| **plain, history full** | **700 ms/s** | **10 ms/s** | 3.3 → 3.3 MB/s |
+| doom fire | 99 ms/s | 83 ms/s | 11.2 → 11.2 MB/s |
+
+Loads 0.8–1.3 per core, printed with each run.
+
+**Ordinary log output was costing the app seven tenths of every second in the parser.
+It costs one hundredth now.** That is the same shape as the 505 ms this item was filed
+about, on the pattern somebody watches all day rather than on a benchmark — and it is a
+far larger effect in the app than in the test, because the app's grid is 235×46 rather
+than 100×40, so the row it allocated and freed per newline was two and a third times
+wider.
+
+**And the end-to-end MB/s did not move, on any mode.** Said plainly, because this item's
+own rule says to: at 3.3 MB/s arriving against a parser that manages a hundred and ten,
+**the parser was never what limited plain output end to end** — `RedrawThrottle`, the
+read loop and the 6 ms `parseBudget` are. What the fix bought the app is not more bytes
+through; it is seven tenths of a second of main thread back, which is what everything
+else in the app was waiting for.
+
+Two things this measurement is not. It is **not** comparable with the item's 505 ms in
+absolute terms: that was taken with `terminalGPURendering` on, and in this harness the
+Metal path never engaged (`renders=0` in every second of every run), so these figures
+are the CoreGraphics path. Why the setting did not take is not chased here — the GPU
+path is 0488's half of the frame, and `parse=` is measured on the way in and is the same
+figure either way. And the fire's 99 → 83 is **1.19×**, which agrees with the
+in-process 1.25× and is nothing like a halving; the fire is the one pattern this fix
+does least for, because the fire homes the cursor and barely scrolls.
+
+## The item's "microsecond per cell" is an artefact of the arithmetic
+
+Worth writing down, because the title rests on it. The probe reports `renders` and
+`parse` per second, and `cells/render` is the size of the grid — so `parse` divided by
+`renders × cells` is only a per-cell cost if every parsed frame was also drawn. It was
+not: the fire outruns the draw and the app coalesces. At the 456 µs a 40×100 fire frame
+measures in-process, 505 ms of parsing is about **three hundred and seventy frames**,
+not forty-three — and 505 ms over 370 × 11,750 cells is **115 ns a cell**, which is what
+the bench says a truecolour SGR and a glyph cost and is inside the "few hundred
+nanoseconds" the item asks for. The microsecond was 505 ms divided by the frames that
+reached the screen instead of the frames that reached the parser.
 
 ## What changed, function by function
 
@@ -195,21 +254,111 @@ to make the merge legible rather than a guess. Every edit is on the parse path.
 - `blankRows(_:)` — **new**, and `eraseInDisplay(mode:)` uses it in place of
   `screen[row] = screen.blankLine(…)` per row.
 
+## What is left, and the number that says how much
+
+The parse path is now, on plain output, one thing: **blanking the row that arrives at the
+bottom of the screen.** A profile of the finished build puts 6,045 of `lineFeed`'s 7,161
+samples in `TerminalScreen.blank` — 84 per cent — and none of them is reference counting
+any more. They are stores.
+
+A `TerminalCell` is about forty-eight bytes: a `UInt32` scalar, a sixteen-byte
+`String?`, a `TerminalAttributes` of two colour enums, eight `Bool`s and a `UInt16`, and
+another `Bool`. Blanking a 235-column row therefore writes about eleven kilobytes, per
+newline. **That is the whole of what is left**, and it is the *width* of the cell rather
+than its non-triviality — which is worth knowing before anybody spends a day on the
+obvious idea:
+
+**Measured, as a throwaway experiment and then reverted.** `combining` was replaced by a
+computed property returning nil, making `TerminalCell` trivially copyable — the change a
+future item would make properly by interning clusters out of the cell. Release, same
+sitting: plain **107.7 → 134.1** and ascii **271.8 → 295.4**. So making the cell trivial
+is worth about **a quarter on plain output and a tenth on ascii** — real, and not the
+several times that removing an allocation was. Shrinking the cell would be worth more
+than making it trivial, and both need `combining` to leave the struct, which changes a
+public type read by `TerminalView`, the Metal renderer, `TerminalSelection` and
+`UnicodePlaceholder`. That is an item of its own and it now has a number to beat.
+
 ## Estimate
 
-2026-08-14 09:02 — plain text answered: it is the newline, not the parser — a scroll cost 1.7 us against 7.7 ns for a cell of text, and 97% of it was a malloc and a free per line for a String? that is nil. In-process 23.7 -> 67.6 MB/s on plain. Left: the O(rows) row shift, then end-to-end confirmation
+2026-08-14 10:18 — measurements all in; running the full suite and make warnings, then done
+
+## Ruled out on the way
+
+Most of the value of this item is here. Every one of these was measured, not reasoned
+about.
+
+- **All five of the item's own candidates for the common path.** Taken in order:
+  - *Per-scalar work in `put(scalar:)` that should be per-run.* There is none to find:
+    `write` already cuts printable ASCII into runs and `putASCII` puts a whole run in at
+    once, and in the profile of the fault it was **136 samples against `lineFeed`'s
+    1,302**. The text was never the problem.
+  - *A grapheme-breaking pass over text with no combining marks in it.* Not happening.
+    `TerminalCell.scalar` is a number precisely so that no `Character` is built per cell,
+    `displayWidth` short-circuits ASCII before any Unicode lookup, and `widthCache` holds
+    the rest. Nothing in the plain profile is in the Unicode tables at all.
+  - *`TerminalCell` copied where it could be written in place.* **This one was right**,
+    and `initializeWithCopy for TerminalCell` in the item's profile was the clue — but
+    not where it reads as pointing. The copies were not of cells being written by the
+    parser; they were of a hundred *blank* cells being allocated and a hundred more being
+    freed, per newline, by the scroll.
+  - *Bounds or wrap checks per cell rather than per line.* Measured and absent.
+    `setASCII` checks the row and the run once and then writes through an unsafe buffer
+    pointer; `putASCII` computes the room in the row once per run. Neither shows in a
+    profile.
+  - *Scrollback eviction doing work proportional to the buffer.* Already fixed before
+    this item, and its own comment says so: `ScrollbackBuffer` is a ring, `append` is
+    O(1), and eviction is **81 samples of 4,301**. The tell was in the item's own table
+    — `plain` and `plain, history full` were 23.4 and 23.6, and an eviction cost
+    proportional to five thousand lines could not have produced two numbers that equal.
+- **The SGR path, which is step four of this item.** Written, measured, reverted. With
+  the common path fixed the fire is 4,000 SGRs and 4,000 glyphs in 456 µs, so SGR is now
+  the majority of *that* pattern — and the cheap, safe version of the fix buys nothing
+  measurable. `executeCSI`'s switch has `where` clauses on the cases for `q` and `u`
+  ahead of the one for `m`, so it cannot all become a jump table and an SGR was walking
+  two dozen comparisons to reach its own handler; hoisting SGR to the top of the function
+  gave colour **209.9 → 211.2**, fire **167.4 → 170.4** — and `wide-ish glyphs`, which
+  contains no CSI sequence whatsoever, moved **76.1 → 80.0** in the same run. The
+  control moved as much as the treatment, so the treatment is not distinguishable from
+  the machine. Reverted rather than kept: it is a special case in the densest function in
+  the file, and 0397, 0404, 0468 and 0476 all came out of that function. **A parser that
+  is fast and subtly wrong costs more than the milliseconds are worth**, and a special
+  case worth zero milliseconds is all cost.
+- **Reusing the evicted line by handing it to something that blanks it and gives it
+  back.** The obvious spelling, and it made things **worse: plain 23.4 → 16.7 MB/s.**
+  While the call is running, the caller's local and the callee's binding are two
+  references to one array, so the write copies the row before touching it — a copy *and*
+  a fill where the old code did an allocation and a fill. The evicted line goes into the
+  grid slot first and the local is dropped before anything is written, and that is not
+  style: it is the difference between 16.7 and 108.8.
+- **`swift build --build-tests -c release`**, which is how these benches look as though
+  they should be built. It fails in this package with `unable to resolve Swift module
+  dependency to a compatible module: 'AbydosKit'` — `@testable` needs `-enable-testing`
+  and that spelling does not pass it. `swift test -c release` does, and works. Nothing to
+  fix; an hour not to lose.
+- **The engine seam and libghostty-vt**, both already ruled out by the item and neither
+  revisited. Nothing here went near either.
 
 ## Steps
 
 - [x] Say where the microsecond goes, from a profile of the parser rather than a guess
       — 97 per cent of it is in `lineFeed`, and half of that is `malloc` and half is
-      `free`, both of them per-cell because `TerminalCell` holds a `String?`
+      `free`, both of them per-cell because `TerminalCell` holds a `String?`. And the
+      microsecond itself is an artefact: 505 ms over the frames that were *drawn*
+      rather than the frames that were parsed. Per cell it was 115 ns
 - [x] Find why plain text is six times slower than colour changes, which is backwards
       — because plain text line-feeds every fifty bytes and colour changes every
       fifteen hundred, and a scroll cost 1.7 µs against 7.7 ns for a cell of text
-- [ ] Fix what that turns out to be, measured in-process and end to end
-- [ ] The SGR path, if it is still worth it once the common path is fixed
-- [ ] No behaviour changes: the emulator suite is the guard, and every terminal test
+- [x] Fix what that turns out to be, measured in-process and end to end — in-process
+      23.9 → 108.8 MB/s on plain; in the app, parse 698 → 12 ms of every second. The
+      end-to-end *throughput* did not move and it is said above why: the parser was
+      not what limited it
+- [x] The SGR path, if it is still worth it once the common path is fixed — measured
+      and **declined**, with the control moving as far as the treatment. See above
+- [x] No behaviour changes: the emulator suite is the guard, and every terminal test
       passes unchanged
-- [ ] Write down here what was ruled out on the way
+- [x] Write down here what was ruled out on the way
 - [ ] No spec delta expected — this is speed, not behaviour
+
+The last one will not be ticked, for 0472's and 0487's reason: `spec/` is the account of
+what the program does, and nothing the program does changed. Every terminal test asserts
+exactly what it asserted before and none of them was touched.
