@@ -167,8 +167,59 @@ public struct TerminalScreen: Sendable {
 	public private(set) var rows: Int
 	public private(set) var columns: Int
 
-	/// The active grid, `rows` tall.
-	public private(set) var lines: [TerminalLine]
+	/// The active grid, `rows` tall, held as a ring.
+	///
+	/// `grid[firstRow]` is the top row on screen and the numbering wraps from
+	/// there. A ring rather than an array in screen order because that is what a
+	/// scroll is: the top row leaves for history, a blank one arrives at the
+	/// bottom, and every row in between keeps its contents and changes its
+	/// number. In an array that means assigning forty rows one position up, and
+	/// assigning a `TerminalLine` retains one array and releases another — so a
+	/// forty-row screen paid eighty reference-counting calls for every newline,
+	/// which after the allocation was fixed was the largest thing left in the
+	/// parser. Turning the ring is one addition.
+	private var grid: [TerminalLine]
+	/// Where the top row of the screen sits in `grid`.
+	private var firstRow = 0
+
+	/// The active grid in screen order, top row first.
+	///
+	/// Materialised from the ring, so this is a copy rather than the storage and
+	/// is for the things that want the whole screen at once — `allText`, and the
+	/// tests that read `screen.lines[0]`. Everything on the parse path indexes
+	/// the ring instead.
+	public var lines: [TerminalLine] {
+		guard firstRow != 0 else { return grid }
+		var ordered = [TerminalLine]()
+		ordered.reserveCapacity(grid.count)
+		for row in 0..<grid.count { ordered.append(grid[storageIndex(row)]) }
+		return ordered
+	}
+
+	/// Where a screen row lives in the ring.
+	@inline(__always)
+	private func storageIndex(_ row: Int) -> Int {
+		let index = firstRow + row
+		return index < grid.count ? index : index - grid.count
+	}
+
+	/// Turns the ring so that screen row `by` becomes row 0.
+	@inline(__always)
+	private mutating func rotate(by offset: Int) {
+		let index = firstRow + offset
+		if index >= grid.count { firstRow = index - grid.count }
+		else if index < 0 { firstRow = index + grid.count }
+		else { firstRow = index }
+	}
+
+	/// Puts the ring back in screen order, for the rare changes that add and
+	/// remove rows rather than move them.
+	private mutating func straighten() {
+		guard firstRow != 0 else { return }
+		grid = lines
+		firstRow = 0
+	}
+
 	/// Completed lines that scrolled off the top.
 	public private(set) var scrollback: ScrollbackBuffer
 
@@ -228,11 +279,11 @@ public struct TerminalScreen: Sendable {
 		let clampedColumns = max(1, columns)
 		self.rows = clampedRows
 		self.columns = clampedColumns
-		self.lines = (0..<clampedRows).map { _ in TerminalLine(columns: clampedColumns) }
+		self.grid = (0..<clampedRows).map { _ in TerminalLine(columns: clampedColumns) }
 		self.scrollback = ScrollbackBuffer(capacity: maximumScrollback)
 	}
 
-	public var totalLineCount: Int { scrollback.count + lines.count }
+	public var totalLineCount: Int { scrollback.count + grid.count }
 
 	/// Indexes scrollback and the active grid as one continuous buffer, which is
 	/// what the view scrolls through.
@@ -240,13 +291,13 @@ public struct TerminalScreen: Sendable {
 		if index < 0 { return nil }
 		if index < scrollback.count { return scrollback[index] }
 		let active = index - scrollback.count
-		return active < lines.count ? lines[active] : nil
+		return active < grid.count ? grid[storageIndex(active)] : nil
 	}
 
 	public subscript(row: Int) -> TerminalLine {
-		get { lines[row] }
+		get { grid[storageIndex(row)] }
 		set {
-			lines[row] = newValue
+			grid[storageIndex(row)] = newValue
 			markDirty(rows: row...row)
 		}
 	}
@@ -266,7 +317,7 @@ public struct TerminalScreen: Sendable {
 	) {
 		guard row >= 0, row < rows, column >= 0, column + count <= columns else { return }
 		markDirty(rows: row...row)
-		lines[row].cells.withUnsafeMutableBufferPointer { cells in
+		grid[storageIndex(row)].cells.withUnsafeMutableBufferPointer { cells in
 			for offset in 0..<count {
 				cells[column + offset].write(
 					scalar: UInt32(bytes[start + offset]),
@@ -279,7 +330,7 @@ public struct TerminalScreen: Sendable {
 	public mutating func setCell(row: Int, column: Int, cell: TerminalCell) {
 		guard row >= 0, row < rows, column >= 0, column < columns else { return }
 		markDirty(rows: row...row)
-		lines[row].cells[column] = cell
+		grid[storageIndex(row)].cells[column] = cell
 	}
 
 	/// Writes one code point into a cell, keeping no cluster on it.
@@ -295,7 +346,7 @@ public struct TerminalScreen: Sendable {
 	) {
 		guard row >= 0, row < rows, column >= 0, column < columns else { return }
 		markDirty(rows: row...row)
-		lines[row].cells.withUnsafeMutableBufferPointer { cells in
+		grid[storageIndex(row)].cells.withUnsafeMutableBufferPointer { cells in
 			cells[column].write(scalar: scalar, attributes: attributes, isWideTrailer: isWideTrailer)
 		}
 	}
@@ -304,11 +355,24 @@ public struct TerminalScreen: Sendable {
 	/// scrollback when the region is the whole screen.
 	public mutating func scrollUp(top: Int, bottom: Int, attributes: TerminalAttributes) {
 		guard top >= 0, bottom < rows, top <= bottom else { return }
+		let isWholeScreen = top == 0 && bottom == rows - 1
 		// A region that is not the whole screen moves its lines within the grid,
 		// so all of them have to be drawn again.
-		if !(top == 0 && bottom == rows - 1) { markDirty(rows: top...bottom) }
+		if !isWholeScreen { markDirty(rows: top...bottom) }
 
-		let retired = lines[top]
+		// A restricted scroll region is an application redrawing in place: it
+		// moves lines within the grid rather than off the end of it, so the ring
+		// cannot be turned and the rows are assigned. It is a handful of rows and
+		// it is not what streaming output does.
+		guard isWholeScreen else {
+			for row in top..<bottom {
+				grid[storageIndex(row)] = grid[storageIndex(row + 1)]
+			}
+			grid[storageIndex(bottom)] = blankLine(attributes: attributes)
+			return
+		}
+
+		let retired = grid[firstRow]
 		// The line that fell out of the far end of history, whose storage the
 		// blank line arriving at the bottom of the screen can have.
 		//
@@ -331,25 +395,23 @@ public struct TerminalScreen: Sendable {
 		// exactly this since it was written, and says so in its own comment.
 		// Nothing took it until now.
 		var recycled: TerminalLine?
-		// Only a full-height region represents lines leaving the screen; a
-		// restricted scroll region is an application redrawing in place.
-		if top == 0 && bottom == rows - 1 {
-			if let evicted = scrollback.append(retired) {
-				discardedLineCount += 1
-				recycled = evicted
-				// Every absolute index just shifted by one, so nothing is where
-				// the view last drew it.
-				markAllDirty()
-			} else {
-				// The retired line keeps its index and its contents; only the
-				// blank line arriving at the bottom is new.
-				markDirty(absolute: (scrollback.count + rows - 1)...(scrollback.count + rows - 1))
-			}
+		if let evicted = scrollback.append(retired) {
+			discardedLineCount += 1
+			recycled = evicted
+			// Every absolute index just shifted by one, so nothing is where
+			// the view last drew it.
+			markAllDirty()
+		} else {
+			// The retired line keeps its index and its contents; only the
+			// blank line arriving at the bottom is new.
+			markDirty(absolute: (scrollback.count + rows - 1)...(scrollback.count + rows - 1))
 		}
 
-		for row in top..<bottom {
-			lines[row] = lines[row + 1]
-		}
+		// The whole scroll, for a full-height region: the slot that held the top
+		// row becomes the bottom row, and every other row keeps its place in
+		// memory and changes its number.
+		let vacated = firstRow
+		rotate(by: 1)
 
 		// The evicted line goes into the slot *before* it is blanked, and the
 		// local reference to it is dropped, so that the grid is its only owner
@@ -359,11 +421,13 @@ public struct TerminalScreen: Sendable {
 		// itself before it is written to — which measured *slower* than
 		// allocating a fresh line, the thing this is here to avoid.
 		if recycled?.cells.count == columns {
-			lines[bottom] = recycled.unsafelyUnwrapped
+			grid[vacated] = recycled.unsafelyUnwrapped
 			recycled = nil
-			blank(row: bottom, columns: 0..<columns, attributes: attributes)
+			blank(storage: vacated, columns: 0..<columns, attributes: attributes)
 		} else {
-			lines[bottom] = blankLine(attributes: attributes)
+			// Nothing fell out of history, so the retired line is still in it and
+			// its storage is not ours to write over.
+			grid[vacated] = blankLine(attributes: attributes)
 		}
 	}
 
@@ -379,14 +443,23 @@ public struct TerminalScreen: Sendable {
 	/// marked the row dirty a hundred times over on the way.
 	public mutating func blank(row: Int, columns range: Range<Int>, attributes: TerminalAttributes) {
 		guard row >= 0, row < rows else { return }
+		markDirty(rows: row...row)
+		blank(storage: storageIndex(row), columns: range, attributes: attributes)
+	}
+
+	/// The same, by position in the ring and without marking anything dirty.
+	///
+	/// For `scrollUp`, which has already said what changed — and said it more
+	/// precisely than a row can: a scroll that discards a line dirties the whole
+	/// document and one that does not dirties a single row.
+	private mutating func blank(storage index: Int, columns range: Range<Int>, attributes: TerminalAttributes) {
 		let range = range.clamped(to: 0..<columns)
 		guard !range.isEmpty else { return }
-		markDirty(rows: row...row)
 		// Erasure carries the current background, which is how full-width
 		// coloured bars are drawn, and nothing else about the attributes.
 		var blank = TerminalAttributes()
 		blank.background = attributes.background
-		lines[row].cells.withUnsafeMutableBufferPointer { cells in
+		grid[index].cells.withUnsafeMutableBufferPointer { cells in
 			// Field by field, for the reason `TerminalCell.write` gives.
 			for index in range.clamped(to: cells.indices) {
 				cells[index].write(scalar: 0x20, attributes: blank)
@@ -397,12 +470,26 @@ public struct TerminalScreen: Sendable {
 	public mutating func scrollDown(top: Int, bottom: Int, attributes: TerminalAttributes) {
 		guard top >= 0, bottom < rows, top <= bottom else { return }
 		markDirty(rows: top...bottom)
+
+		// A full-height region is the ring turning the other way: the bottom
+		// row's contents are discarded — a reverse index keeps no history — and a
+		// blank row arrives at the top.
+		if top == 0 && bottom == rows - 1 {
+			rotate(by: -1)
+			if grid[firstRow].cells.count == columns {
+				blank(storage: firstRow, columns: 0..<columns, attributes: attributes)
+			} else {
+				grid[firstRow] = blankLine(attributes: attributes)
+			}
+			return
+		}
+
 		var row = bottom
 		while row > top {
-			lines[row] = lines[row - 1]
+			grid[storageIndex(row)] = grid[storageIndex(row - 1)]
 			row -= 1
 		}
-		lines[top] = blankLine(attributes: attributes)
+		grid[storageIndex(top)] = blankLine(attributes: attributes)
 	}
 
 	public func blankLine(attributes: TerminalAttributes) -> TerminalLine {
@@ -442,8 +529,14 @@ public struct TerminalScreen: Sendable {
 		let newColumns = max(1, newColumns)
 		guard newRows != rows || newColumns != columns else { return 0 }
 
+		// A resize adds and removes rows at both ends rather than moving them, so
+		// it is the one thing the ring cannot express. It happens when somebody
+		// drags a window edge; the rest of this method is the code it always was,
+		// working on a grid that is back in screen order.
+		straighten()
+
 		if newColumns != columns {
-			for index in lines.indices { lines[index].resize(to: newColumns) }
+			for index in grid.indices { grid[index].resize(to: newColumns) }
 			for index in scrollback.indices { scrollback[index].resize(to: newColumns) }
 		}
 		columns = newColumns
@@ -458,30 +551,30 @@ public struct TerminalScreen: Sendable {
 			// prompt — and everything above it — into scrollback, which is the
 			// "previous lines disappeared" case.
 			var fromBottom = 0
-			var index = lines.count - 1
-			while fromBottom < excess, index > cursorRow, lines[index].isBlank {
+			var index = grid.count - 1
+			while fromBottom < excess, index > cursorRow, grid[index].isBlank {
 				fromBottom += 1
 				index -= 1
 			}
-			lines.removeLast(fromBottom)
+			grid.removeLast(fromBottom)
 
 			let fromTop = excess - fromBottom
 			if fromTop > 0 {
-				for line in lines.prefix(fromTop) {
+				for line in grid.prefix(fromTop) {
 					if scrollback.append(line) != nil { discardedLineCount += 1 }
 				}
-				lines.removeFirst(fromTop)
+				grid.removeFirst(fromTop)
 				cursorDelta = -fromTop
 			}
 		} else if newRows > rows {
 			var needed = newRows - rows
 			while needed > 0, let recovered = scrollback.popLast() {
-				lines.insert(recovered, at: 0)
+				grid.insert(recovered, at: 0)
 				needed -= 1
 				cursorDelta += 1
 			}
 			while needed > 0 {
-				lines.append(TerminalLine(columns: newColumns))
+				grid.append(TerminalLine(columns: newColumns))
 				needed -= 1
 			}
 		}
