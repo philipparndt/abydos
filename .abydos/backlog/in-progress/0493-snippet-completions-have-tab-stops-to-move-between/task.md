@@ -57,15 +57,22 @@ the flag would be giving us plain text we already handle.
   `cube(size = ${1:size});$0` — fewer arguments, still `size = size`. It is a
   taste question about defaults and it does not need this item.
 
+## Estimate
+
+2026-08-15 15:58 — a couple of hours: the code is written, the build and the watching are not
+
 ## Steps
 
-- [ ] `Snippet` carries the stops it found — number, range, default — instead of
+- [x] `Snippet` carries the stops it found — number, range, default — instead of
       one caret offset
 - [ ] Inserting a snippet selects the first stop, so typing replaces it
 - [ ] Tab and Shift-Tab move between the stops, and the last Tab goes to `$0`
 - [ ] The ranges survive typing inside a stop and editing elsewhere on the line
 - [ ] A session ends, by whatever was decided, and Tab goes back to the document
-- [ ] Repeated stops do whatever was decided, and a test says which
+- [x] Repeated stops do whatever was decided, and a test says which — one stop
+      at the first mention, no mirroring, and a nested stop is not one either
+- [ ] A `--snippet` driver, so what the keys do can be watched from outside the
+      app rather than described
 - [ ] Watched in a `.scad`: `cube` + Tab, type `10`, Tab, and the line reads
       `cube(size = 10, center = false);`
 - [ ] Watched against a second server, so this is not shaped round openscad-lsp
