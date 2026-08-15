@@ -764,6 +764,7 @@ final class EditorAreaController: NSViewController {
 	func toggleCommentForTesting(_ spec: String) -> (LineComment.Outcome, String)? {
 		activeGroup.toggleCommentForTesting(spec)
 	}
+	func exerciseSnippetForTesting(_ spec: String) { activeGroup.exerciseSnippetForTesting(spec) }
 
 	func showFind() { activeGroup.showFind() }
 	func setFindQuery(_ query: String) { activeGroup.setFindQuery(query) }

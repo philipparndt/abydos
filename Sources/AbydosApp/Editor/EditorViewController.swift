@@ -1383,6 +1383,51 @@ final class EditorViewController: NSViewController {
 		codeView.doCommand(by: #selector(NSResponder.insertNewline(_:)))
 	}
 
+	/// Takes a completion the way the list does, then works the keys, saying
+	/// where the caret and the selection are after each one.
+	///
+	/// The spec is a server's own `insertText` and then what to do to it, `|`
+	/// between: `tab`, `backtab`, `esc`, `home` and `end` are those keys, and
+	/// anything else is typed a character at a time. So
+	///
+	///     cube(size = ${1:size}, center = false);$0|10|tab
+	///
+	/// is what openscad-lsp answers `cube` with, `10` typed over the stop it
+	/// selects, and Tab to the end of the line.
+	///
+	/// Through `applyCompletion` and `doCommand` — the same two doors a chosen
+	/// completion and a key press come through — because what is worth watching
+	/// is whether Tab reaches the stops, and a driver that called the stepping
+	/// method directly would prove nothing about that.
+	func exerciseSnippetForTesting(_ spec: String) {
+		guard let codeView = activeTab?.codeView else {
+			print("SNIPPET: no editor")
+			return
+		}
+		view.window?.makeFirstResponder(codeView)
+
+		let steps = spec.components(separatedBy: "|")
+		codeView.applyCompletion(Snippet.expand(steps[0]), replacingPrefixOfLength: 0)
+		print("SNIPPET inserted: \(codeView.caretReportForTesting)")
+
+		for step in steps.dropFirst() {
+			switch step {
+			case "tab":     codeView.doCommand(by: #selector(NSResponder.insertTab(_:)))
+			case "backtab": codeView.doCommand(by: #selector(NSResponder.insertBacktab(_:)))
+			case "esc":     codeView.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
+			case "home":    codeView.doCommand(by: #selector(NSResponder.moveToBeginningOfLine(_:)))
+			case "end":     codeView.doCommand(by: #selector(NSResponder.moveToEndOfLine(_:)))
+			default:        simulateTyping(step)
+			}
+			print("SNIPPET \(step): \(codeView.caretReportForTesting)")
+		}
+
+		for line in textTailLinesForTesting(3) where !line.isEmpty {
+			print("SNIPPET line: |\(line.replacingOccurrences(of: "\t", with: "→"))|")
+		}
+		fflush(stdout)
+	}
+
 	/// The last few lines of the file, for looking at what typing produced.
 	func textTailLinesForTesting(_ count: Int) -> [String] {
 		guard let document = activeTab?.document else { return [] }
@@ -1494,15 +1539,12 @@ final class EditorViewController: NSViewController {
 			guard let self else { return }
 			// A snippet is not text to paste: `union() $0` means "put the caret
 			// between the braces", and inserted as written it is a syntax
-			// error somebody has to go back and delete.
+			// error somebody has to go back and delete. Where it has more than
+			// one place for the caret to go, the view steps through them on Tab.
 			let snippet = item.isSnippet
 				? Snippet.expand(item.insertText)
 				: Snippet(text: item.insertText, caret: item.insertText.utf16.count)
-			codeView?.applyCompletion(
-				snippet.text,
-				replacingPrefixOfLength: self.completionPrefixLength,
-				caretOffset: snippet.caret
-			)
+			codeView?.applyCompletion(snippet, replacingPrefixOfLength: self.completionPrefixLength)
 		}
 		guard let point = codeView.caretScreenPoint() else { return }
 		completions.show(

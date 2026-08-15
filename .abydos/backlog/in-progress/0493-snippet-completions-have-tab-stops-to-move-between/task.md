@@ -65,16 +65,16 @@ the flag would be giving us plain text we already handle.
 
 - [x] `Snippet` carries the stops it found — number, range, default — instead of
       one caret offset
-- [ ] Inserting a snippet selects the first stop, so typing replaces it
-- [ ] Tab and Shift-Tab move between the stops, and the last Tab goes to `$0`
+- [x] Inserting a snippet selects the first stop, so typing replaces it
+- [x] Tab and Shift-Tab move between the stops, and the last Tab goes to `$0`
 - [x] The ranges survive typing inside a stop and editing elsewhere on the line
-- [ ] A session ends, by whatever was decided, and Tab goes back to the document
+- [x] A session ends, by whatever was decided, and Tab goes back to the document
 - [x] Repeated stops do whatever was decided, and a test says which — one stop
       at the first mention, no mirroring, and a nested stop is not one either
-- [ ] A `--snippet` driver, so what the keys do can be watched from outside the
+- [x] A `--snippet` driver, so what the keys do can be watched from outside the
       app rather than described
-- [ ] Watched in a `.scad`: `cube` + Tab, type `10`, Tab, and the line reads
+- [x] Watched in a `.scad`: `cube` + Tab, type `10`, Tab, and the line reads
       `cube(size = 10, center = false);`
-- [ ] Watched against a second server, so this is not shaped round openscad-lsp
+- [x] Watched against a second server, so this is not shaped round openscad-lsp
 - [ ] Write down here what was ruled out on the way
 - [ ] `spec/language-servers.md` says what the project now does

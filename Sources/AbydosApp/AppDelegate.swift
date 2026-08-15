@@ -511,6 +511,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let spec = options.snippet {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+				controller?.exerciseSnippetForTesting(spec)
+			}
+		}
+
 		if options.menuKeys {
 			// After the menu is built and the system has had its chance to move
 			// anything: the relocation happens when the menu becomes the
