@@ -110,10 +110,6 @@ The four questions above, answered, and the answers that were tried first.
   rerun under `make`. The Makefile pins `xcrun swift` for exactly this and says
   why; `make test` and `make build` are the verbs.
 
-## Estimate
-
-2026-08-15 15:58 — a couple of hours: the code is written, the build and the watching are not
-
 ## Steps
 
 - [x] `Snippet` carries the stops it found — number, range, default — instead of
@@ -130,4 +126,4 @@ The four questions above, answered, and the answers that were tried first.
       `cube(size = 10, center = false);`
 - [x] Watched against a second server, so this is not shaped round openscad-lsp
 - [x] Write down here what was ruled out on the way
-- [ ] `spec/language-servers.md` says what the project now does
+- [x] `spec/language-servers.md` says what the project now does
