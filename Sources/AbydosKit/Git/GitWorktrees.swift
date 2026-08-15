@@ -17,6 +17,34 @@ public struct GitWorktree: Equatable, Sendable, Identifiable {
 	public var id: String { path.path }
 	public var name: String { path.lastPathComponent }
 
+	/// The branch is real and named, and nothing has been committed on it yet —
+	/// a checkout straight out of `git init`.
+	///
+	/// Read off the head rather than asked for: `git worktree list --porcelain`
+	/// answers `HEAD 0000000000000000000000000000000000000000` beside a perfectly
+	/// good `branch refs/heads/main`, which 0477 confirmed while walking the git
+	/// surface of a repository with no commits. So the third of that item's three
+	/// states is already in the output, for free, and nothing has to run.
+	public var isUnborn: Bool {
+		!head.isEmpty && head.allSatisfy { $0 == "0" }
+	}
+
+	/// How this checkout reads when it has to be named beside the others.
+	///
+	/// The three states 0477 settled for the titlebar's branch, said in one line
+	/// because a menu row has one: a branch, a branch with nothing on it, or a
+	/// commit checked out directly. Nothing is the one answer that is not
+	/// allowed — `detached` used to arrive here as an empty string and a row that
+	/// said only its folder name was the same silence 0477 was filed about.
+	public var summary: String {
+		if let branch {
+			return isUnborn ? "\(branch) — no commits yet" : branch
+		}
+		// Seven characters, which is what git abbreviates to and what anybody
+		// pasting it back into git will be given anyway.
+		return head.isEmpty ? "detached" : "detached at \(head.prefix(7))"
+	}
+
 	public init(
 		path: URL,
 		branch: String?,

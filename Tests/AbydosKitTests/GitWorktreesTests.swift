@@ -152,6 +152,51 @@ struct GitWorktreesTests {
 		#expect(worktrees[2].branch == "wip")
 	}
 
+	/// 0477's three states, from the one listing and without running anything
+	/// else: a branch, a branch with nothing on it, and a commit checked out
+	/// directly.
+	@Test func namesTheThreeStatesABranchCanBeIn() {
+		let worktrees = GitWorktrees.parse("""
+		worktree /dev/project
+		HEAD abc1234def5678
+		branch refs/heads/main
+
+		worktree /dev/project-fresh
+		HEAD 0000000000000000000000000000000000000000
+		branch refs/heads/main
+
+		worktree /dev/project-detached
+		HEAD def4567abc1234
+		detached
+
+		""")
+		#expect(worktrees.count == 3)
+
+		#expect(!worktrees[0].isUnborn)
+		#expect(worktrees[0].summary == "main")
+
+		#expect(worktrees[1].isUnborn)
+		#expect(worktrees[1].summary == "main — no commits yet")
+
+		#expect(!worktrees[2].isUnborn)
+		#expect(worktrees[2].summary == "detached at def4567")
+	}
+
+	/// The one in the listing this repository actually produces, rather than one
+	/// written out by hand: `git init` and nothing committed.
+	@Test func aCheckoutWithNothingCommittedSaysSo() async throws {
+		let root = URL(fileURLWithPath: NSTemporaryDirectory())
+			.appendingPathComponent("worktree-unborn-\(UUID().uuidString)")
+		try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+		defer { try? FileManager.default.removeItem(at: root) }
+		_ = GitRepository.runSync(["init", "-q", "-b", "main", "."], in: root)
+
+		let worktree = try #require(await GitWorktrees.list(in: root).first)
+		#expect(worktree.branch == "main")
+		#expect(worktree.isUnborn)
+		#expect(worktree.summary == "main — no commits yet")
+	}
+
 	@Test func survivesOutputWithoutATrailingBlankLine() {
 		let worktrees = GitWorktrees.parse("worktree /dev/a\nHEAD abc\nbranch refs/heads/main")
 		#expect(worktrees.count == 1)

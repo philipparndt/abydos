@@ -164,7 +164,7 @@ guess about their names would be answering it badly.
       that two windows on two checkouts is a wanted arrangement
 - [x] Decide: the chip becomes a control, or a pill of its own — and say why
 - [x] Decide what to do about many backlog worktrees, and say what was chosen
-- [ ] `GitWorktree` says when a checkout's branch has no commits on it, with a test
+- [x] `GitWorktree` says when a checkout's branch has no commits on it, with a test
 - [ ] `readWorktree` keeps the whole list rather than the one containing the window
 - [ ] `WorktreePillButton`, its overflow menu item and `.low` priority
 - [ ] The primary checkout is in the list and named, so there is a way back
