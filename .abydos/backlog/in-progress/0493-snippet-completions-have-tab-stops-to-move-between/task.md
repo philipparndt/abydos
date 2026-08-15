@@ -57,6 +57,59 @@ the flag would be giving us plain text we already handle.
   `cube(size = ${1:size});$0` — fewer arguments, still `size = size`. It is a
   taste question about defaults and it does not need this item.
 
+## What was decided, and what was ruled out
+
+The four questions above, answered, and the answers that were tried first.
+
+- **What ends a session: an edit anywhere but the stop being typed into,
+  Escape, and Tab off the last stop.** The rule is deliberately narrow, and the
+  reason is that the alternative cannot be done honestly: to survive an edit
+  somewhere else, a stop has to be *guessed* forward, and a wrong guess puts
+  the caret in the middle of a word half a line away rather than failing. A
+  session that simply ends is a Tab that indents, which is what somebody
+  expects from an editor that is no longer doing anything.
+- **Ruled out: ending it when the caret leaves the stops.** Tried, and it is a
+  hook in `setCaret`, in the mouse handler, and in anything else that moves the
+  caret — three places to forget. Nothing goes wrong if the session outlives a
+  click, because the ranges are still true: an edit is what invalidates them,
+  and an edit already ends it. So the caret is checked lazily, at the one
+  moment it matters — `covers(caret:)` when Tab is pressed — and Tab after a
+  click somewhere else indents.
+- **Tab off the last stop eats the key** rather than inserting a tab. Neither
+  is obviously right; a swallowed Tab at the end of a call somebody has just
+  filled in is invisible, and a tab character in the middle of one is not.
+- **Ruled out: mirroring a repeated `${1:x}`.** Every editor that does this
+  properly types into both at once, and doing it badly is worse than not doing
+  it: the second copy keeps the *old* default and ships in somebody's file. One
+  stop at the first mention, the second left as text, and a test that says so.
+- **Ruled out: nested stops.** `${1:${2:i}}` would give two ranges of which one
+  contains the other, and typing into the outer one destroys the inner. Only
+  top-level stops are visited.
+- **Ruled out: following the edits from `CodeView`'s own editing methods.** They
+  all call `document.replace`, so it looked like a small change to route them
+  through one helper — but that is ten call sites, and it would miss undo,
+  redo, and a workspace edit arriving from a rename. `TextDocument.onTextReplaced`
+  is one hook that sees all of them, and it is the same shape as the
+  `onLinesChanged` breakpoints already use. Its offsets are only worked out when
+  something is listening.
+
+### What surprised
+
+- **The stops are not in the order they appear in the text.** rust-analyzer
+  answers `match` with `$0` sitting *inside* the braces, textually before the
+  arm it wants filled in first. So what moves a stop along after an edit has to
+  be where it is, not when it is visited — which is a different loop from the
+  one written first, and `movesStopsThatSitAfterTheEditWhicheverOrderTheyAreVisitedIn`
+  is that lesson.
+- **`#expect` cannot call a mutating member** — `$0.edited(…)` inside the macro
+  expansion is immutable. Hence a local before each check in
+  `SnippetSessionTests`, which reads worse and is the only thing that compiles.
+- **`swift build` is not the build.** A bare one here ran under Swiftly's
+  6.1.2 rather than Xcode's toolchain — visible in the `swift-frontend`
+  processes, which is the only way it announces itself — and was stopped and
+  rerun under `make`. The Makefile pins `xcrun swift` for exactly this and says
+  why; `make test` and `make build` are the verbs.
+
 ## Estimate
 
 2026-08-15 15:58 — a couple of hours: the code is written, the build and the watching are not
@@ -76,5 +129,5 @@ the flag would be giving us plain text we already handle.
 - [x] Watched in a `.scad`: `cube` + Tab, type `10`, Tab, and the line reads
       `cube(size = 10, center = false);`
 - [x] Watched against a second server, so this is not shaped round openscad-lsp
-- [ ] Write down here what was ruled out on the way
+- [x] Write down here what was ruled out on the way
 - [ ] `spec/language-servers.md` says what the project now does
