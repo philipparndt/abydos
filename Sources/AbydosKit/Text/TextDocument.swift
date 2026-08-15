@@ -320,17 +320,40 @@ public final class TextDocument {
 	/// them.
 	public var onLinesChanged: ((_ firstLine: Int, _ removed: Int, _ inserted: Int) -> Void)?
 
+	/// The same edit in the unit the view edits in: which UTF-16 range went,
+	/// and how much text came in its place.
+	///
+	/// `onLinesChanged` is this for whole lines, which suits a breakpoint. A
+	/// snippet's tab stops are spans within a line, and lines cannot tell them
+	/// where they went. Said for undo and redo as well, which are edits like
+	/// any other to anything holding a place in the text.
+	///
+	/// The offsets cost three lookups into the rope, so they are worked out
+	/// only when somebody is listening.
+	public var onTextReplaced: ((_ utf16Range: Range<Int>, _ insertedUTF16Count: Int) -> Void)?
+
 	private func applyEdit(byteRange: Range<Int>, newBytes: [UInt8]) {
 		// Positions must be captured against the *old* text — tree-sitter needs
 		// both the old and new end to map the tree forward.
 		let startPoint = point(forByte: byteRange.lowerBound)
 		let oldEndPoint = point(forByte: byteRange.upperBound)
+		let replacedUTF16: Range<Int>? = onTextReplaced.map { _ in
+			let lower = rope.utf16Offset(fromByte: byteRange.lowerBound)
+			return lower..<rope.utf16Offset(fromByte: byteRange.upperBound)
+		}
 
 		rope.replace(byteRange: byteRange, with: newBytes)
 		generation += 1
 
 		let newEndByte = byteRange.lowerBound + newBytes.count
 		let newEndPoint = point(forByte: newEndByte)
+
+		if let replacedUTF16 {
+			onTextReplaced?(
+				replacedUTF16,
+				rope.utf16Offset(fromByte: newEndByte) - replacedUTF16.lowerBound
+			)
+		}
 
 		// The same three numbers tree-sitter is about to be given, in lines.
 		if startPoint.row != oldEndPoint.row || startPoint.row != newEndPoint.row {
