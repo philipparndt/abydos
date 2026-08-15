@@ -29,7 +29,6 @@ final class TitlebarCapsule: NSView, TitlebarMenuAnchor {
 	private var pressedHalf: Half?
 
 	private var name = ""
-	private var worktree: String?
 	private var branch: String?
 	private var branchIsUnborn = false
 
@@ -58,9 +57,6 @@ final class TitlebarCapsule: NSView, TitlebarMenuAnchor {
 	/// it clips what is taller, so this is the ceiling. Four points at each end
 	/// keep the capsule off the window's top edge and off the seam under it.
 	private static let rowMargin: CGFloat = 4
-
-	private static var chipPadding: CGFloat { Theme.current.scaled(6) }
-	private static var chipFont: NSFont { Theme.current.uiFont(11, weight: .medium) }
 
 	private static var labelFont: NSFont { Theme.current.uiFont(13, weight: .medium) }
 	private static var nameFont: NSFont { Theme.current.uiFont(13, weight: .semibold) }
@@ -95,19 +91,6 @@ final class TitlebarCapsule: NSView, TitlebarMenuAnchor {
 		needsDisplay = true
 	}
 
-	/// Which linked worktree this window is looking at, or nil for the main one.
-	///
-	/// The name stays the repository's — a worktree of ideai is still ideai, and
-	/// a titlebar that said `titlebar-capsule` would be naming a directory
-	/// rather than the thing being worked on. The chip after it says which
-	/// checkout, in the same place and shape a subproject would qualify it.
-	func setWorktree(_ worktree: String?) {
-		self.worktree = worktree
-		updateToolTip()
-		invalidateIntrinsicContentSize()
-		needsDisplay = true
-	}
-
 	/// - Parameter isUnborn: the branch is real and named, and nothing has been
 	///   committed on it yet — a repository straight out of `git init`.
 	///
@@ -121,20 +104,14 @@ final class TitlebarCapsule: NSView, TitlebarMenuAnchor {
 	func setBranch(_ branch: String?, isUnborn: Bool = false) {
 		self.branch = branch
 		self.branchIsUnborn = isUnborn
-		updateToolTip()
+		// The only thing that qualifies what is on the capsule now. It shared
+		// this line with the worktree chip until 0490 moved that into a pill of
+		// its own, and the two of them writing straight onto `toolTip` — which
+		// is what they did at first — meant whichever arrived second was the
+		// only one anybody ever saw. On two views it cannot happen again.
+		toolTip = isUnborn ? branch.map { "On \($0) — no commits yet" } : nil
 		invalidateIntrinsicContentSize()
 		needsDisplay = true
-	}
-
-	/// One tooltip out of the two things that qualify what is on the capsule.
-	///
-	/// Both were written straight onto `toolTip` at one point, and whichever
-	/// arrived second was the only one anybody ever saw.
-	private func updateToolTip() {
-		var parts: [String] = []
-		if let worktree { parts.append("Worktree \(worktree) of \(name)") }
-		if let branch, branchIsUnborn { parts.append("On \(branch) — no commits yet") }
-		toolTip = parts.isEmpty ? nil : parts.joined(separator: "\n")
 	}
 
 	/// Whether the right half has anything to say. A directory that is not a
@@ -167,13 +144,8 @@ final class TitlebarCapsule: NSView, TitlebarMenuAnchor {
 			+ Self.padding
 	}
 
-	private var chipWidth: CGFloat {
-		guard let worktree else { return 0 }
-		return Self.gap + Self.chipPadding * 2 + width(of: worktree, font: Self.chipFont)
-	}
-
 	private var projectWidth: CGFloat {
-		Self.padding + width(of: name, font: Self.nameFont) + chipWidth
+		Self.padding + width(of: name, font: Self.nameFont)
 			+ Self.gap + Self.chevronWidth + Self.padding
 	}
 
@@ -335,46 +307,14 @@ final class TitlebarCapsule: NSView, TitlebarMenuAnchor {
 		let x = shape.minX + Self.padding
 		attributed.draw(at: NSPoint(x: x, y: shape.midY - size.height / 2))
 
-		var end = x + ceil(size.width)
-		if let worktree {
-			end = drawChip(worktree, after: end, in: shape)
-		}
-
 		// The chevron is drawn only for the half being pointed at: at rest the
 		// capsule is two words and a hint.
 		if hoveredHalf == .project || openHalf == .project {
 			drawChevron(
-				at: NSPoint(x: end + Self.gap, y: shape.midY),
+				at: NSPoint(x: x + ceil(size.width) + Self.gap, y: shape.midY),
 				color: Theme.current.sidebarText.withAlphaComponent(0.8)
 			)
 		}
-	}
-
-	/// The worktree's own folder name, in a chip after the project's.
-	///
-	/// - Returns: where it ends, so what follows can be placed after it.
-	private func drawChip(_ text: String, after x: CGFloat, in shape: NSRect) -> CGFloat {
-		let attributed = NSAttributedString(string: text, attributes: [
-			.font: Self.chipFont,
-			.foregroundColor: Theme.current.sidebarText,
-		])
-		let size = attributed.size()
-		let height = Theme.current.scaled(17)
-		let rect = NSRect(
-			x: x + Self.gap,
-			y: shape.midY - height / 2,
-			width: Self.chipPadding * 2 + ceil(size.width),
-			height: height
-		)
-
-		let radius = Theme.current.scaled(4)
-		Theme.current.selectionInactive.setFill()
-		NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()
-		attributed.draw(at: NSPoint(
-			x: rect.minX + Self.chipPadding,
-			y: rect.midY - size.height / 2
-		))
-		return rect.maxX
 	}
 
 	private func drawDivider(in shape: NSRect) {

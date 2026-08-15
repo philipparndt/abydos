@@ -45,22 +45,72 @@ public enum ProjectDiscovery {
 	/// cheap; running `git` once per candidate would not be, and this list can
 	/// run to hundreds.
 	public static func lastActivity(of url: URL) -> Date {
-		let candidates = [
-			".git/index",
-			".git/HEAD",
-			".git/FETCH_HEAD",
-			".git",              // A worktree's .git is a file.
-		]
-
 		var latest = Date.distantPast
-		for candidate in candidates {
-			let path = url.appendingPathComponent(candidate).path
+		func consider(_ path: String) {
 			guard let attributes = try? FileManager.default.attributesOfItem(atPath: path),
 			      let modified = attributes[.modificationDate] as? Date
-			else { continue }
+			else { return }
 			if modified > latest { latest = modified }
 		}
+
+		for candidate in [".git/index", ".git/HEAD", ".git/FETCH_HEAD"] {
+			consider(url.appendingPathComponent(candidate).path)
+		}
+
+		// **A linked worktree keeps none of that where the list above looks.**
+		// Its `.git` is a file rather than a directory — which this knew, and
+		// stat'ing that file is what it did about it. But the file is a one-line
+		// pointer written when the worktree was made and never touched again, so
+		// its mtime dates the *creation* and nothing else, and being the newest
+		// of the times considered it drowned out every other one. Everything that
+		// moves lives at the far end of the pointer, in
+		// `<the primary>/.git/worktrees/<name>/`.
+		//
+		// Found in 0490, ordering seventy-four checkouts into a menu, where
+		// without this every one of them was dated from its `abydos-backlog
+		// start` and the one somebody committed in this morning sorted below one
+		// made in March and abandoned.
+		if let pointer = gitDirectory(of: url) {
+			consider(pointer.appendingPathComponent("index").path)
+			consider(pointer.appendingPathComponent("HEAD").path)
+		} else {
+			// Not a linked worktree, or a pointer that no longer leads anywhere.
+			// The file's own time is a poor answer and it is better than none.
+			consider(url.appendingPathComponent(".git").path)
+		}
 		return latest
+	}
+
+	/// Where a linked worktree's git metadata actually lives, or nil when this is
+	/// an ordinary checkout whose `.git` is a directory.
+	///
+	/// Reading the file rather than running `git rev-parse --git-dir`, which is
+	/// the same answer at the cost of a process — and this is called once per
+	/// candidate on a list that runs to hundreds. The format is one line,
+	/// `gitdir: <path>`, and git has written exactly that since linked worktrees
+	/// were added.
+	private static func gitDirectory(of url: URL) -> URL? {
+		let dotGit = url.appendingPathComponent(".git")
+		var isDirectory: ObjCBool = false
+		guard FileManager.default.fileExists(atPath: dotGit.path, isDirectory: &isDirectory),
+		      !isDirectory.boolValue,
+		      let text = try? String(contentsOf: dotGit, encoding: .utf8)
+		else { return nil }
+
+		let line = text.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard line.hasPrefix("gitdir:") else { return nil }
+		let path = String(line.dropFirst("gitdir:".count))
+			.trimmingCharacters(in: .whitespaces)
+		guard !path.isEmpty else { return nil }
+		// Relative when the worktree and the repository were linked with relative
+		// paths, which `git worktree add --relative-paths` does.
+		let pointed = path.hasPrefix("/")
+			? URL(fileURLWithPath: path)
+			: url.appendingPathComponent(path).standardizedFileURL
+		// A pointer whose far end is gone — the repository moved, or was deleted
+		// out from under a worktree somebody kept — is no answer, and the caller
+		// has a worse one to fall back on.
+		return FileManager.default.fileExists(atPath: pointed.path) ? pointed : nil
 	}
 
 	/// Walks `roots` and returns the checkouts below them, most recent first.

@@ -203,6 +203,138 @@ final class SubprojectPillButton: PillButton {
 	}
 }
 
+/// Which checkout of this repository the window is looking at.
+///
+/// **Not the capsule's chip made clickable, and 0490 is where that was weighed.**
+/// The chip said which linked worktree the window was on and said *nothing at
+/// all* on the primary — which is the whole of the report: `~/dev/abydos` showed
+/// `abydos | main` and no way to reach any of the other checkouts. A control that
+/// is invisible in the place it is most needed is not a control, and every chip
+/// you could invent for the primary is worse than none: `abydos [abydos]` is the
+/// name twice, `abydos [main]` puts the branch a divider away from the branch.
+/// It would also have made a third hit target inside a capsule whose own comment
+/// says it stays two.
+///
+/// So the chip is retired into this pill, and the doctrine it carried survives
+/// untouched: **a worktree of ideai is still ideai**. The capsule goes on saying
+/// the repository's name; this says which of its checkouts, in the place the
+/// subproject pill qualifies which corner of it.
+///
+/// **It says only what the capsule beside it has not**, the way
+/// `DevContainerPillButton` says only the mark and keeps the container's name
+/// for its tool tip. On the primary that is nothing at all — the capsule has
+/// just said `abydos`, and saying it again a few points to the right is noise.
+/// On a worktree named after its branch it is *also* nothing, because the
+/// capsule's right half is showing that branch a foot to the left; a pill
+/// reading `backlog-0490-worktrees` beside a capsule reading
+/// `backlog/0490-worktrees-chosen-from-the-titlebar` was a hundred and fifty
+/// points spent on a word already on screen, and it was enough to push this pill
+/// into the toolbar's overflow — leaving the one window that most needed the
+/// control as the one window without it. `GitWorktrees.qualifier` is the rule.
+///
+/// What is left is a worktree somebody named themselves — `hotfix` on
+/// `release/2.1` — where the directory is the only thing saying why that
+/// checkout exists.
+///
+/// `house` and `folder` are the branches pane's own vocabulary for the primary
+/// and a linked worktree, so a checkout marked one way in the sidebar is not
+/// marked another way up here.
+///
+/// **Absent entirely for a repository with one checkout**, which is the rule the
+/// branches pane keeps for its Worktrees section — *"a repository nobody has
+/// added a worktree to should not carry a section explaining that it has one"*.
+/// Nobody's titlebar gains furniture unless they use worktrees.
+final class WorktreePillButton: PillButton {
+	/// Which checkout, and whether it is the one the repository was cloned into.
+	struct State: Equatable {
+		/// The words to draw, or nil when the titlebar has already said them.
+		let name: String?
+		/// The directory this checkout really is, for the tool tip — which has
+		/// room for it and is where somebody goes when the pill is wordless.
+		let full: String
+		let isPrimary: Bool
+	}
+
+	private var state: State?
+
+	private static var iconSize: CGFloat { Theme.current.scaled(13) }
+	private static var horizontalPadding: CGFloat { Theme.current.scaled(7) }
+	private static var gap: CGFloat { Theme.current.scaled(6) }
+	private static var chevronWidth: CGFloat { Theme.current.scaled(7) }
+
+	var hasWorktrees: Bool { state != nil }
+
+	/// Which checkout it stands for, which on the primary is not what it draws.
+	var worktree: State? { state }
+
+	/// - Parameters:
+	///   - state: which checkout this is, or nil when there is only one and the
+	///     pill has nothing to offer.
+	///   - count: how many the repository has, for the tool tip. The menu is the
+	///     only place the list itself belongs, but a pill that will open a list
+	///     should say roughly how long it is before it is opened.
+	func setWorktree(_ state: State?, count: Int = 0) {
+		self.state = state
+		isHidden = (state == nil)
+		toolTip = state.map { current in
+			let where_ = current.isPrimary
+				? "Primary checkout — \(current.full)"
+				: "Worktree \(current.full)"
+			return count > 1 ? "\(where_)\n\(count) checkouts of this repository" : where_
+		}
+		invalidateIntrinsicContentSize()
+		needsDisplay = true
+	}
+
+	/// What is drawn beside the icon, which is often nothing.
+	private var label: String? { state?.name }
+
+	override var intrinsicContentSize: NSSize {
+		// A toolbar measures a hidden view too, and warns about a zero dimension:
+		// a sliver rather than nothing.
+		guard state != nil else { return NSSize(width: 1, height: Theme.current.scaled(28)) }
+		let textWidth = label.map {
+			ceil(($0 as NSString).size(withAttributes: [.font: PillButton.labelFont]).width)
+				+ Self.gap
+		} ?? 0
+		return NSSize(
+			width: PillButton.inset * 2 + Self.horizontalPadding * 2 + Self.iconSize
+				+ Self.gap + textWidth + Self.chevronWidth,
+			height: Theme.current.scaled(30)
+		)
+	}
+
+	override func drawContent(in rect: NSRect) {
+		guard let state else { return }
+		var x = Self.horizontalPadding + PillButton.inset
+
+		let tint = Theme.current.sidebarText
+		if let icon = Theme.symbol(
+			state.isPrimary ? "house" : "folder",
+			size: 11 * Theme.current.scale,
+			color: tint
+		) {
+			icon.drawFitted(in: NSRect(
+				x: x, y: rect.midY - Self.iconSize / 2,
+				width: Self.iconSize, height: Self.iconSize
+			))
+			x += Self.iconSize + Self.gap
+		}
+
+		if let label {
+			let attributed = NSAttributedString(string: label, attributes: [
+				.font: PillButton.labelFont,
+				.foregroundColor: Theme.current.sidebarHeaderText,
+			])
+			let size = attributed.size()
+			attributed.draw(at: NSPoint(x: x, y: rect.midY - size.height / 2))
+			x += ceil(size.width) + Self.gap
+		}
+
+		drawChevron(at: NSPoint(x: x, y: rect.midY), color: tint)
+	}
+}
+
 /// The devcontainer this project is worked on inside, or the one it has and is
 /// not using.
 ///
