@@ -196,7 +196,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	}
 	private var capsule: TitlebarCapsule!
 	private var subprojectPill: SubprojectPillButton!
+	private var worktreePill: WorktreePillButton!
 	private var devContainerPill: DevContainerPillButton!
+
+	/// Every checkout of this repository, most recently worked on first, as the
+	/// worktree pill's menu will offer them.
+	///
+	/// Kept rather than asked for when the menu opens: `readWorktree` has already
+	/// run git for the pill itself, so a second listing at the moment somebody
+	/// clicks would be the same answer bought again with a pause in front of it.
+	private var worktrees: [GitWorktree] = []
 	/// Reading the repository, as a job rather than an answer.
 	///
 	/// The toolbar builds its items when it chooses, and in a repository small
@@ -921,6 +930,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		capsule?.updateHeight()
 		capsule?.invalidateIntrinsicContentSize()
 		subprojectPill?.invalidateIntrinsicContentSize()
+		worktreePill?.invalidateIntrinsicContentSize()
 		devContainerPill?.invalidateIntrinsicContentSize()
 		// The run strip measures itself from the theme's scale, so it has to be
 		// asked again — otherwise zooming the window leaves the one control
@@ -1050,12 +1060,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		return read
 	}
 
-	/// Names the window after the repository rather than after the directory.
+	/// Names the window after the repository, and fills the pill that says which
+	/// of its checkouts this is.
 	///
 	/// A linked worktree is another checkout of the same project, so
 	/// `ideai/.claude/worktrees/titlebar-capsule` is still ideai — naming it
-	/// after its folder would name the checkout and lose the project. The chip
-	/// beside the name says which checkout it is.
+	/// after its folder would name the checkout and lose the project. The pill
+	/// beside the name says which checkout it is, and opens the list of them.
+	///
+	/// **The whole list is kept, and 0490 is why.** This asked git for every
+	/// checkout, found the one containing this window and threw the rest away, so
+	/// the titlebar could say which worktree it was on and offer no way to any
+	/// other — and on the primary it said nothing at all, because "primary" was
+	/// read as "nothing to say". That is the report: `~/dev/abydos` showed
+	/// `abydos | main` and no sign that fifty other checkouts existed.
 	///
 	/// Asked of git rather than read off the path: a worktree can be created
 	/// anywhere, including outside the repository it belongs to.
@@ -1064,27 +1082,70 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		let root = project.root
 
 		Task { @MainActor [weak self] in
-			let worktrees = await GitWorktrees.list(in: root)
+			let listed = await GitWorktrees.list(in: root)
 			// Another project may have been opened while git was answering.
 			guard let self, self.project?.root == root else { return }
 
 			// The window may be opened at the worktree itself or somewhere
 			// inside it, so the deepest one containing this root is the one.
-			let containing = worktrees
+			//
+			// Deepest matters more than it looks here: an agent harness puts its
+			// checkouts under `<the primary>/.claude/worktrees/`, so the primary
+			// contains them by path and a shallower match would name every one of
+			// those windows after the wrong checkout.
+			let containing = listed
 				.filter { root.path == $0.path.path || root.path.hasPrefix($0.path.path + "/") }
 				.max { $0.path.path.count < $1.path.path.count }
 
-			guard let containing, !containing.isPrimary,
-			      let primary = worktrees.first(where: { $0.isPrimary })
-			else {
-				self.capsule?.setWorktree(nil)
-				self.layoutTitlebarPills()
-				return
+			// Ordered once, here, so the menu is not sorting seventy-four entries
+			// in front of somebody who has just clicked. Most recently worked on
+			// first, from mtimes rather than from git — the same estimate, and the
+			// same reasoning, the project switcher's scan uses.
+			self.worktrees = Self.order(listed)
+
+			if let primary = listed.first(where: { $0.isPrimary }), containing?.isPrimary == false {
+				self.capsule?.setProject(name: primary.name)
 			}
 
-			self.capsule?.setProject(name: primary.name)
-			self.capsule?.setWorktree(containing.name)
+			// One checkout is not a choice, and a repository nobody has added a
+			// worktree to should not carry a control explaining that it has one.
+			self.worktreePill?.setWorktree(
+				listed.count > 1 && containing != nil
+					? WorktreePillButton.State(
+						name: containing?.name ?? root.lastPathComponent,
+						isPrimary: containing?.isPrimary ?? false
+					)
+					: nil,
+				count: listed.count
+			)
 			self.layoutTitlebarPills()
+		}
+	}
+
+	/// The primary first, then most recently worked on first.
+	///
+	/// The primary is pinned rather than left to the ordering because it is the
+	/// way back: it is the checkout every other one was made from, and on a
+	/// repository whose main branch has been quiet for a week it would otherwise
+	/// sink below fifty branches somebody is actually on.
+	///
+	/// Everything else is `ProjectDiscovery.lastActivity`, which stats git's
+	/// metadata rather than running git — written for the project scan with the
+	/// note that *"this list can run to hundreds"*, which turns out to be the
+	/// literal case here.
+	static func order(_ worktrees: [GitWorktree]) -> [GitWorktree] {
+		let activity = Dictionary(
+			uniqueKeysWithValues: worktrees.map {
+				($0.path.path, ProjectDiscovery.lastActivity(of: $0.path))
+			}
+		)
+		return worktrees.sorted { left, right in
+			if left.isPrimary != right.isPrimary { return left.isPrimary }
+			let a = activity[left.path.path] ?? .distantPast
+			let b = activity[right.path.path] ?? .distantPast
+			// By name when the mtimes tie, so the order does not shuffle between
+			// two readings of the same repository.
+			return a == b ? left.name < right.name : a > b
 		}
 	}
 
@@ -1148,7 +1209,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// name, and colour is kept for the switcher — where there is more than
 		// one project on screen and it has something to tell apart.
 		capsule?.setProject(name: project.name)
-		capsule?.setWorktree(nil)
+		// Cleared rather than left standing: the pill of the project being left
+		// would sit in the titlebar of the one arriving until git answered, and
+		// the two repositories have nothing to do with each other.
+		worktrees = []
+		worktreePill?.setWorktree(nil)
 		capsule?.setBranch(nil)
 		refreshDevContainerPill()
 		layoutTitlebarPills()
@@ -4390,6 +4455,40 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				+ item.title
 				+ (item.isEnabled ? "" : " (disabled)")
 		}.joined(separator: " | ")
+	}
+
+	/// What the worktree pill says, for the harness.
+	///
+	/// Absence is the interesting reading and the one a screenshot cannot give:
+	/// a repository with one checkout should have no pill at all, and an empty
+	/// stretch of toolbar looks exactly like one that has not finished loading.
+	/// On the primary the pill is deliberately wordless, so what it *shows* and
+	/// what it *is* are printed separately — a dump that read the name off the
+	/// drawing would record nothing on the very window the report was about.
+	func worktreePillForTesting() -> String {
+		guard let pill = worktreePill, pill.hasWorktrees else {
+			return "WORKTREE: (none) [listed=\(worktrees.count)]"
+		}
+		let here = worktrees.first { $0.path.path == project?.root.standardizedFileURL.path }
+		return "WORKTREE: shows=\(here?.isPrimary == true ? "(icon only)" : here?.name ?? "-")"
+			+ " at=\(here.map { $0.isPrimary ? "primary" : "linked" } ?? "-")"
+			+ " listed=\(worktrees.count)"
+			+ " tip=\((pill.toolTip ?? "-").replacingOccurrences(of: "\n", with: " / "))"
+	}
+
+	/// What the worktree menu offers, for the harness — including how much of it
+	/// went behind `More…`, which is the whole claim on a repository with
+	/// seventy-four checkouts.
+	func worktreeMenuForTesting() -> String {
+		guard worktreePill?.hasWorktrees == true else { return "WORKTREEMENU: (no pill)" }
+		func describe(_ items: [NSMenuItem]) -> String {
+			items.map { item in
+				guard !item.isSeparatorItem else { return "—" }
+				let submenu = item.submenu.map { " { \(describe($0.items)) }" } ?? ""
+				return (item.state == .on ? "✓" : "") + item.title + submenu
+			}.joined(separator: " | ")
+		}
+		return "WORKTREEMENU: " + describe(worktreeMenu().items)
 	}
 
 	/// Presses the pill menu's entry whose words are these.
@@ -8418,8 +8517,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			let pane = BranchesPane(root: scopeRoot ?? project.root)
 			// A worktree is a project in its own right, so opening one is
 			// switching to it rather than checking anything out.
+			//
+			// Through the delegate, which this was the one caller not doing
+			// (0490): a bare `switchProject` took over the window whatever the
+			// setting said, and opened a second window on a checkout that
+			// already had one. The backlog card, the project switcher and now
+			// the titlebar all go through the same door.
 			pane.onOpenWorktree = { [weak self] path in
-				self?.switchProject(to: path)
+				guard let self else { return }
+				(NSApp.delegate as? AppDelegate)?.open(projectAt: path, from: self)
 			}
 			pane.onRepositoryChanged = { [weak self] in
 				// A checkout changes the branch the titlebar shows, so the
@@ -9056,6 +9162,7 @@ extension MainWindowController: NSToolbarDelegate {
 	// renaming would rebuild everybody's toolbar from the default.
 	private static let capsuleItem = NSToolbarItem.Identifier("ideai.capsule")
 	private static let subprojectItem = NSToolbarItem.Identifier("ideai.subproject")
+	private static let worktreeItem = NSToolbarItem.Identifier("ideai.worktree")
 	private static let devContainerItem = NSToolbarItem.Identifier("ideai.devcontainer")
 	private static let runItem = NSToolbarItem.Identifier("ideai.run")
 
@@ -9068,7 +9175,15 @@ extension MainWindowController: NSToolbarDelegate {
 	/// order the sentence goes in: this project, this corner of it, and the
 	/// machine that corner's tools are on.
 	func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-		[Self.capsuleItem, Self.subprojectItem, Self.devContainerItem, .flexibleSpace, Self.runItem]
+		// The worktree pill next to the capsule and before the subproject, because
+		// it qualifies the same thing the capsule's left half names — which
+		// checkout — where the subproject qualifies which corner of it and the
+		// devcontainer qualifies what it is built with. Reading left to right
+		// then goes from the widest question to the narrowest.
+		[
+			Self.capsuleItem, Self.worktreeItem, Self.subprojectItem, Self.devContainerItem,
+			.flexibleSpace, Self.runItem,
+		]
 	}
 
 	func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -9158,6 +9273,21 @@ extension MainWindowController: NSToolbarDelegate {
 			item.visibilityPriority = .low
 			return item
 
+		case Self.worktreeItem:
+			let item = NSToolbarItem(itemIdentifier: identifier)
+			let pill = WorktreePillButton()
+			pill.onClick = { [weak self] in self?.showWorktreeMenu() }
+			pill.setWorktree(nil)
+			worktreePill = pill
+			item.view = pill
+			item.menuFormRepresentation = menuItem("Worktree", #selector(showWorktreeMenuItem(_:)))
+			item.visibilityPriority = .low
+			// The toolbar builds its items when it chooses, which may be long
+			// after git answered — so the reading is taken again rather than
+			// waited for. Same reason the devcontainer pill does it below.
+			readWorktree()
+			return item
+
 		case Self.devContainerItem:
 			let item = NSToolbarItem(itemIdentifier: identifier)
 			let pill = DevContainerPillButton()
@@ -9222,6 +9352,105 @@ extension MainWindowController: NSToolbarDelegate {
 			at: NSPoint(x: 0, y: (anchor?.bounds.maxY ?? 0) + Theme.current.scaled(4)),
 			in: anchor
 		)
+	}
+
+	@objc fileprivate func showWorktreeMenuItem(_ sender: Any?) { showWorktreeMenu() }
+
+	/// How many checkouts the menu shows before the rest go behind `More…`.
+	///
+	/// Ten is a menu somebody reads. This repository answers seventy-four —
+	/// about fifty from `abydos-backlog start` and twenty an agent harness left
+	/// under `.claude/worktrees/` — and a flat list of those is a wall the eye
+	/// slides off, which is the same as not being there.
+	private static let worktreesShown = 10
+
+	/// The checkouts of this repository, so moving between them is a menu rather
+	/// than a hunt through the file system.
+	///
+	/// The primary is always here and always first, because it is the way back
+	/// and the pill would otherwise be a door that only opens outward. So is the
+	/// one this window is on, ticked, even when the ordering would have put it
+	/// past the cap — a menu whose tick is not in it reads as being nowhere.
+	@objc func showWorktreeMenu() {
+		let anchor: NSView? = worktreePill ?? capsule
+		worktreeMenu().popUp(
+			positioning: nil,
+			at: NSPoint(x: 0, y: (anchor?.bounds.maxY ?? 0) + Theme.current.scaled(4)),
+			in: anchor
+		)
+	}
+
+	/// Built apart from being shown, so the harness can read it: a menu cannot be
+	/// photographed while it is open, and the interesting claim about this one is
+	/// what it does with seventy-four entries.
+	private func worktreeMenu() -> NSMenu {
+		let menu = NSMenu()
+		let current = project?.root.standardizedFileURL.path
+
+		// The directory is gone, so the one thing a row here can do would fail.
+		// They stay in the branches pane, where removing one is the point.
+		let present = worktrees.filter { !$0.isMissing }
+
+		var shown = Array(present.prefix(Self.worktreesShown))
+		if let here = present.first(where: { $0.path.path == current }),
+		   !shown.contains(where: { $0.path.path == here.path.path }) {
+			shown.append(here)
+		}
+		let rest = present.filter { entry in !shown.contains { $0.path.path == entry.path.path } }
+
+		for worktree in shown { menu.addItem(worktreeItem(worktree, current: current)) }
+
+		if !rest.isEmpty {
+			menu.addItem(.separator())
+			let more = NSMenuItem(title: "More — \(rest.count) older", action: nil, keyEquivalent: "")
+			let submenu = NSMenu()
+			for worktree in rest { submenu.addItem(worktreeItem(worktree, current: current)) }
+			more.submenu = submenu
+			menu.addItem(more)
+		}
+
+		// Adding, removing and revealing a checkout all live in the branches
+		// pane already, with a filter field in front of them. The titlebar is
+		// for going somewhere; this is the way through to the rest.
+		menu.addItem(.separator())
+		menu.addItem(menuItem("Show All Worktrees…", #selector(toggleBranchesView(_:))))
+		return menu
+	}
+
+	/// One checkout: its folder name, and what is checked out there.
+	///
+	/// The branch is on the item rather than only in the tool tip, because the
+	/// folder name is a decision somebody made months ago and the branch is what
+	/// they are looking for. `GitWorktree.summary` says it in all three of the
+	/// states 0477 settled — a branch, one with nothing on it, and a commit
+	/// checked out directly — so a detached worktree reads as `detached at
+	/// abc1234` here rather than as a bare folder name.
+	private func worktreeItem(_ worktree: GitWorktree, current: String?) -> NSMenuItem {
+		let item = NSMenuItem(
+			title: "\(worktree.name) — \(worktree.summary)",
+			action: #selector(openWorktreeFromMenu(_:)),
+			keyEquivalent: ""
+		)
+		item.target = self
+		item.representedObject = worktree.path
+		item.state = worktree.path.path == current ? .on : .off
+		item.toolTip = worktree.isPrimary
+			? "\(worktree.path.path)\nThe checkout this repository was cloned into"
+			: worktree.path.path
+		return item
+	}
+
+	@objc private func openWorktreeFromMenu(_ sender: NSMenuItem) {
+		guard let url = sender.representedObject as? URL,
+		      url.standardizedFileURL.path != project?.root.standardizedFileURL.path
+		else { return }
+		// Through the delegate rather than `switchProject`, the way a worktree
+		// opened from a backlog card or the project switcher goes: this window or
+		// a new one, whichever the setting says, and a checkout already open in
+		// another window is raised rather than opened twice. That last part is
+		// what makes the arrangement 0454 relies on — a card's work in a worktree
+		// while another window sits on the primary — survive being clicked at.
+		(NSApp.delegate as? AppDelegate)?.open(projectAt: url, from: self)
 	}
 
 	@objc private func openSubprojectFromMenu(_ sender: NSMenuItem) {

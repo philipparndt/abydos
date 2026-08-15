@@ -502,6 +502,22 @@ struct LaunchOptions {
 	/// while it is open.
 	var devContainerMenuAt: Double?
 
+	/// Print what the titlebar's worktree pill says, at each of these many
+	/// seconds in.
+	///
+	/// The two readings that matter are both invisible to a screenshot: a
+	/// repository with one checkout has no pill, which looks like a toolbar that
+	/// has not loaded; and on the primary the pill is an icon with no words, so
+	/// there is nothing on screen saying which checkout it stands for. Several
+	/// times rather than one, because the pill is filled in when git answers and
+	/// again when the toolbar builds its items, and those arrive in either order.
+	var worktreePillAt: [Double] = []
+
+	/// Print what the worktree pill's menu offers, this many seconds in — which
+	/// on a repository with seventy-odd checkouts is the whole of what this is
+	/// for, and a menu cannot be photographed while it is open.
+	var worktreeMenuAt: Double?
+
 	/// Print what the terminal panel holds, at each of these many seconds in.
 	///
 	/// The panel is the only witness to a devcontainer being brought up where
@@ -657,6 +673,11 @@ struct LaunchOptions {
 					.split(separator: ",").compactMap { Double($0) }
 			case "--panel-tail":
 				options.panelTabsTail = next().flatMap(Int.init) ?? 12
+			case "--worktree-pill":
+				options.worktreePillAt = (next() ?? "8")
+					.split(separator: ",").compactMap { Double($0) }
+			case "--worktree-menu":
+				options.worktreeMenuAt = next().flatMap(Double.init) ?? 8
 			case "--devcontainer-menu":
 				options.devContainerMenuAt = next().flatMap(Double.init) ?? 8
 			case "--press-devcontainer-menu":

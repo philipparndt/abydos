@@ -165,13 +165,13 @@ guess about their names would be answering it badly.
 - [x] Decide: the chip becomes a control, or a pill of its own — and say why
 - [x] Decide what to do about many backlog worktrees, and say what was chosen
 - [x] `GitWorktree` says when a checkout's branch has no commits on it, with a test
-- [ ] `readWorktree` keeps the whole list rather than the one containing the window
-- [ ] `WorktreePillButton`, its overflow menu item and `.low` priority
-- [ ] The primary checkout is in the list and named, so there is a way back
-- [ ] A detached or unborn worktree reads honestly, the way 0477 settled for branches
-- [ ] Ordering, the cap and the way through to the branches pane
-- [ ] Choosing one goes through the delegate — and the branches pane does too
-- [ ] A capture flag that reads the pill and its menu, since neither photographs
+- [x] `readWorktree` keeps the whole list rather than the one containing the window
+- [x] `WorktreePillButton`, its overflow menu item and `.low` priority
+- [x] The primary checkout is in the list and named, so there is a way back
+- [x] A detached or unborn worktree reads honestly, the way 0477 settled for branches
+- [x] Ordering, the cap and the way through to the branches pane
+- [x] Choosing one goes through the delegate — and the branches pane does too
+- [x] A capture flag that reads the pill and its menu, since neither photographs
 - [ ] Watch it on this repository, which has seventy-four worktrees at once
 - [ ] Write down here what was ruled out on the way
 - [ ] `spec/version-control.md` says what the project now does
