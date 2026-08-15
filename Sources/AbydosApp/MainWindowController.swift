@@ -1109,13 +1109,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 			// One checkout is not a choice, and a repository nobody has added a
 			// worktree to should not carry a control explaining that it has one.
+			let primaryName = listed.first { $0.isPrimary }?.name ?? root.lastPathComponent
 			self.worktreePill?.setWorktree(
-				listed.count > 1 && containing != nil
-					? WorktreePillButton.State(
-						name: containing?.name ?? root.lastPathComponent,
-						isPrimary: containing?.isPrimary ?? false
+				listed.count > 1 ? containing.map {
+					// The words are whatever the capsule beside it has not
+					// already said — which on the primary, and on a worktree
+					// named after the branch showing a foot to the left, is
+					// nothing at all.
+					WorktreePillButton.State(
+						name: GitWorktrees.qualifier(for: $0, primaryName: primaryName),
+						full: $0.name,
+						isPrimary: $0.isPrimary
 					)
-					: nil,
+				} : nil,
 				count: listed.count
 			)
 			self.layoutTitlebarPills()
@@ -4442,9 +4448,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		guard let pill = worktreePill, pill.hasWorktrees else {
 			return "WORKTREE: (none) [listed=\(worktrees.count)]"
 		}
-		let here = worktrees.first { $0.path.path == project?.root.standardizedFileURL.path }
-		return "WORKTREE: shows=\(here?.isPrimary == true ? "(icon only)" : here?.name ?? "-")"
-			+ " at=\(here.map { $0.isPrimary ? "primary" : "linked" } ?? "-")"
+		let state = pill.worktree
+		return "WORKTREE: shows=\(state?.name ?? "(icon only)")"
+			+ " of=\(state?.full ?? "-")"
+			+ " at=\(state.map { $0.isPrimary ? "primary" : "linked" } ?? "-")"
 			+ " listed=\(worktrees.count)"
 			+ " tip=\((pill.toolTip ?? "-").replacingOccurrences(of: "\n", with: " / "))"
 	}
@@ -9371,13 +9378,21 @@ extension MainWindowController: NSToolbarDelegate {
 		}
 		let rest = present.filter { entry in !shown.contains { $0.path.path == entry.path.path } }
 
-		for worktree in shown { menu.addItem(worktreeItem(worktree, current: current)) }
+		// What every other row is named against, so a folder that only repeats
+		// its branch can be told from one somebody chose.
+		let primaryName = present.first { $0.isPrimary }?.name ?? project?.name ?? ""
+
+		for worktree in shown {
+			menu.addItem(worktreeItem(worktree, current: current, primaryName: primaryName))
+		}
 
 		if !rest.isEmpty {
 			menu.addItem(.separator())
 			let more = NSMenuItem(title: "More — \(rest.count) older", action: nil, keyEquivalent: "")
 			let submenu = NSMenu()
-			for worktree in rest { submenu.addItem(worktreeItem(worktree, current: current)) }
+			for worktree in rest {
+				submenu.addItem(worktreeItem(worktree, current: current, primaryName: primaryName))
+			}
 			more.submenu = submenu
 			menu.addItem(more)
 		}
@@ -9390,7 +9405,18 @@ extension MainWindowController: NSToolbarDelegate {
 		return menu
 	}
 
-	/// One checkout: its folder name, and what is checked out there.
+	/// The longest a row is allowed to be before the tail is dropped.
+	///
+	/// A branch here is named after a backlog item, and a backlog item's branch
+	/// carries most of its title — `backlog/0479-toggle-comment-answers-to-a-key-
+	/// nobody-asked-for-on-a`. Ten of those side by side is a menu as wide as the
+	/// display, which is not a menu somebody reads either. The tail goes rather
+	/// than the middle because what tells these apart is at the front: the
+	/// number.
+	private static let worktreeTitleLimit = 52
+
+	/// One checkout: what is checked out there, and its folder name when that
+	/// says something the branch does not.
 	///
 	/// The branch is on the item rather than only in the tool tip, because the
 	/// folder name is a decision somebody made months ago and the branch is what
@@ -9398,18 +9424,28 @@ extension MainWindowController: NSToolbarDelegate {
 	/// states 0477 settled — a branch, one with nothing on it, and a commit
 	/// checked out directly — so a detached worktree reads as `detached at
 	/// abc1234` here rather than as a bare folder name.
-	private func worktreeItem(_ worktree: GitWorktree, current: String?) -> NSMenuItem {
+	private func worktreeItem(
+		_ worktree: GitWorktree, current: String?, primaryName: String
+	) -> NSMenuItem {
+		let label = GitWorktrees.label(for: worktree, primaryName: primaryName)
 		let item = NSMenuItem(
-			title: "\(worktree.name) — \(worktree.summary)",
+			title: label.count > Self.worktreeTitleLimit
+				? label.prefix(Self.worktreeTitleLimit - 1) + "…"
+				: label,
 			action: #selector(openWorktreeFromMenu(_:)),
 			keyEquivalent: ""
 		)
 		item.target = self
 		item.representedObject = worktree.path
 		item.state = worktree.path.path == current ? .on : .off
-		item.toolTip = worktree.isPrimary
-			? "\(worktree.path.path)\nThe checkout this repository was cloned into"
-			: worktree.path.path
+		// The whole of it, which the title may have dropped the tail of, and the
+		// directory — the one thing a row never shows and the thing somebody
+		// needs when two branches read alike.
+		item.toolTip = [
+			label,
+			worktree.path.path,
+			worktree.isPrimary ? "The checkout this repository was cloned into" : nil,
+		].compactMap { $0 }.joined(separator: "\n")
 		return item
 	}
 

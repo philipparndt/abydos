@@ -220,12 +220,25 @@ final class SubprojectPillButton: PillButton {
 /// the repository's name; this says which of its checkouts, in the place the
 /// subproject pill qualifies which corner of it.
 ///
-/// **Two states, the way `DevContainerPillButton` has two and for the same
-/// reason.** On a linked worktree it says that worktree's folder name. On the
-/// primary it is an icon and a chevron with no words: the capsule has just said
-/// `abydos` and saying it again a few points to the right is noise. `house` and
-/// `folder` are the branches pane's own vocabulary for the two, so a checkout
-/// marked one way in the sidebar is not marked another way up here.
+/// **It says only what the capsule beside it has not**, the way
+/// `DevContainerPillButton` says only the mark and keeps the container's name
+/// for its tool tip. On the primary that is nothing at all — the capsule has
+/// just said `abydos`, and saying it again a few points to the right is noise.
+/// On a worktree named after its branch it is *also* nothing, because the
+/// capsule's right half is showing that branch a foot to the left; a pill
+/// reading `backlog-0490-worktrees` beside a capsule reading
+/// `backlog/0490-worktrees-chosen-from-the-titlebar` was a hundred and fifty
+/// points spent on a word already on screen, and it was enough to push this pill
+/// into the toolbar's overflow — leaving the one window that most needed the
+/// control as the one window without it. `GitWorktrees.qualifier` is the rule.
+///
+/// What is left is a worktree somebody named themselves — `hotfix` on
+/// `release/2.1` — where the directory is the only thing saying why that
+/// checkout exists.
+///
+/// `house` and `folder` are the branches pane's own vocabulary for the primary
+/// and a linked worktree, so a checkout marked one way in the sidebar is not
+/// marked another way up here.
 ///
 /// **Absent entirely for a repository with one checkout**, which is the rule the
 /// branches pane keeps for its Worktrees section — *"a repository nobody has
@@ -234,7 +247,11 @@ final class SubprojectPillButton: PillButton {
 final class WorktreePillButton: PillButton {
 	/// Which checkout, and whether it is the one the repository was cloned into.
 	struct State: Equatable {
-		let name: String
+		/// The words to draw, or nil when the titlebar has already said them.
+		let name: String?
+		/// The directory this checkout really is, for the tool tip — which has
+		/// room for it and is where somebody goes when the pill is wordless.
+		let full: String
 		let isPrimary: Bool
 	}
 
@@ -247,6 +264,9 @@ final class WorktreePillButton: PillButton {
 
 	var hasWorktrees: Bool { state != nil }
 
+	/// Which checkout it stands for, which on the primary is not what it draws.
+	var worktree: State? { state }
+
 	/// - Parameters:
 	///   - state: which checkout this is, or nil when there is only one and the
 	///     pill has nothing to offer.
@@ -258,19 +278,16 @@ final class WorktreePillButton: PillButton {
 		isHidden = (state == nil)
 		toolTip = state.map { current in
 			let where_ = current.isPrimary
-				? "Primary checkout — \(current.name)"
-				: "Worktree \(current.name)"
+				? "Primary checkout — \(current.full)"
+				: "Worktree \(current.full)"
 			return count > 1 ? "\(where_)\n\(count) checkouts of this repository" : where_
 		}
 		invalidateIntrinsicContentSize()
 		needsDisplay = true
 	}
 
-	/// What is drawn beside the icon, which on the primary is nothing.
-	private var label: String? {
-		guard let state, !state.isPrimary else { return nil }
-		return state.name
-	}
+	/// What is drawn beside the icon, which is often nothing.
+	private var label: String? { state?.name }
 
 	override var intrinsicContentSize: NSSize {
 		// A toolbar measures a hidden view too, and warns about a zero dimension:

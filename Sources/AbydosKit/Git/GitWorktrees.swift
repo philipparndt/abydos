@@ -234,10 +234,133 @@ public enum GitWorktrees {
 	/// first thing anybody would do is add it to `.gitignore` — which is a
 	/// worse answer than putting it somewhere else.
 	public static func suggestedPath(for branch: String, root: URL) -> URL {
+		root.deletingLastPathComponent().appendingPathComponent(
+			suggestedName(for: branch, repository: root.lastPathComponent),
+			isDirectory: true
+		)
+	}
+
+	/// The directory name `suggestedPath` would give a worktree of this branch.
+	///
+	/// Apart from the path so that a *name already on disk* can be tested against
+	/// it, which is how a list of them tells a folder that says something from
+	/// one that only repeats the branch beside it. See `label(for:primaryName:)`.
+	public static func suggestedName(for branch: String, repository: String) -> String {
 		let safe = branch
 			.replacingOccurrences(of: "/", with: "-")
 			.replacingOccurrences(of: " ", with: "-")
-		let parent = root.deletingLastPathComponent()
-		return parent.appendingPathComponent("\(root.lastPathComponent)-\(safe)", isDirectory: true)
+		return "\(repository)-\(safe)"
+	}
+
+	/// What names this checkout in a list of them.
+	///
+	/// **The obvious row is the same words twice.** Every worktree this app makes
+	/// — from the branches pane and from `abydos-backlog start` alike — is named
+	/// by `suggestedPath`, which builds the directory *out of* the branch, so
+	/// folder and branch together read:
+	///
+	///     abydos-backlog-0479-toggle-comment-answers-to-a-key-nobody-asked-for-on-a
+	///       — backlog/0479-toggle-comment-answers-to-a-key-nobody-asked-for-on-a
+	///
+	/// a hundred and thirty characters of menu for one fact, measured on this
+	/// repository. Two rules cut it, and both are about saying nothing twice:
+	///
+	/// - **The repository's name comes off the front of the folder**, because
+	///   every row in this list is a checkout of the same repository and the
+	///   control that opened it has just said which. `abydos-backlog-0492-…`
+	///   becomes `backlog-0492-…`.
+	/// - **When one of the two names contains the other, the shorter one
+	///   stands alone.** It identifies the checkout exactly as well and costs a
+	///   line half the width. That covers the derived names above, and it covers
+	///   an agent harness's `agent-a0644…` on a branch called
+	///   `worktree-agent-a0644…` from the other direction.
+	///
+	/// Compared with the slashes flattened, because that is the one difference
+	/// `suggestedName` makes and it is not a difference in what the name says.
+	///
+	/// The primary keeps its full name whatever its branch is: it is the
+	/// repository itself and the way back, and `main` alone would not say so.
+	/// The worktree's directory without the repository's name on the front of it.
+	///
+	/// `suggestedPath` builds `<repository>-<branch>`, so every checkout of
+	/// abydos is called `abydos-something` — and in a titlebar that has just said
+	/// `abydos`, or a menu of nothing but checkouts of it, those seven characters
+	/// are on every line and say nothing. Only when something is left: a worktree
+	/// somebody called exactly `abydos-` keeps the name it has.
+	public static func shortName(of worktree: GitWorktree, primaryName: String) -> String {
+		let prefix = primaryName + "-"
+		guard worktree.name.hasPrefix(prefix), worktree.name.count > prefix.count
+		else { return worktree.name }
+		return String(worktree.name.dropFirst(prefix.count))
+	}
+
+	public static func label(for worktree: GitWorktree, primaryName: String) -> String {
+		let folder = shortName(of: worktree, primaryName: primaryName)
+		switch naming(of: worktree, primaryName: primaryName) {
+		case .branchOnly:
+			return worktree.branch ?? worktree.summary
+		case .folderOnly:
+			return folder
+		case .both:
+			return "\(folder) — \(worktree.summary)"
+		}
+	}
+
+	/// What a titlebar should add beside a branch it is already showing, or nil
+	/// when the branch has said it.
+	///
+	/// The window's own titlebar has the tightest budget of anywhere this list
+	/// appears — the capsule beside it can want half the width on a branch named
+	/// after a backlog item — so the rule that keeps a *menu row* from saying the
+	/// same thing twice matters more here, not less. A pill reading
+	/// `backlog-0490-worktrees` next to a capsule reading
+	/// `backlog/0490-worktrees-chosen-from-the-titlebar` is a hundred and fifty
+	/// points spent on a word already on screen, and it was enough to push the
+	/// pill into the toolbar's overflow — where the one window that most needed
+	/// the control was the one window without it.
+	///
+	/// Nil for the primary too, for the reason the pill's own comment gives: the
+	/// capsule has just said the repository's name.
+	public static func qualifier(for worktree: GitWorktree, primaryName: String) -> String? {
+		// The primary keeps its name in a *list*, where it has to be told from
+		// the others, and loses it here, where the capsule has just said it. The
+		// one case where the two callers want opposite things.
+		guard !worktree.isPrimary else { return nil }
+		switch naming(of: worktree, primaryName: primaryName) {
+		// Either containment, not just the one the menu drops. A menu row has no
+		// branch beside it, so when the folder is the shorter of two names for
+		// the same thing the row shows the folder; here the branch is on screen
+		// three inches to the left, so the shorter name is redundant rather than
+		// preferable.
+		case .branchOnly, .folderOnly: return nil
+		case .both: return shortName(of: worktree, primaryName: primaryName)
+		}
+	}
+
+	/// Which of a checkout's two names says something the other does not.
+	private enum Naming { case branchOnly, folderOnly, both }
+
+	private static func naming(of worktree: GitWorktree, primaryName: String) -> Naming {
+		// The primary is the repository itself and the way back, so its name is
+		// never dropped from a list — `main` alone would not say which repository
+		// it is the main of.
+		guard !worktree.isPrimary else { return .both }
+
+		// Detached, or a branch with nothing on it. Neither shortening applies:
+		// there is no ordinary branch name to weigh the folder against, and the
+		// state is the thing that has to be said (0477).
+		guard let branch = worktree.branch, !worktree.isUnborn else { return .both }
+
+		let folder = shortName(of: worktree, primaryName: primaryName)
+		let flattened = branch.replacingOccurrences(of: "/", with: "-")
+		// The folder was made out of the branch, so the branch is the whole of
+		// what it said. Tested against the full name as well as the shortened
+		// one, since the repository's prefix is what `suggestedName` puts there.
+		if worktree.name.contains(flattened) || folder.contains(flattened) { return .branchOnly }
+		// And the other way about: an agent harness's `agent-a0644…` on a branch
+		// called `worktree-agent-a0644…`, where the folder is the shorter of two
+		// names for the same thing.
+		if flattened.contains(folder) { return .folderOnly }
+		return .both
 	}
 }

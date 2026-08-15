@@ -126,9 +126,10 @@ The pill answers all of that and costs less furniture than it looks:
   trade `DevContainerPillButton` made and argued at length: the capsule already
   said the project's name and `abydos` twice is noise. The sentence is on the
   tooltip.
-- **On a linked worktree it says the worktree's folder name** — which is the chip
-  moved, not a new thing to read, and the doctrine the chip carried survives
-  intact: the capsule still says `abydos`, the pill says which checkout.
+- **On a linked worktree it says whatever the capsule has not.** This started as
+  "the worktree's folder name" — the chip moved — and watching it said otherwise;
+  see below. The doctrine the chip carried survives either way: the capsule says
+  `abydos`, the pill says which checkout.
 - `.low` priority so it collapses before the run control, and a
   `menuFormRepresentation` for when it does.
 
@@ -158,6 +159,95 @@ No pruning policy is invented here. Which worktrees deserve to exist is
 `abydos-backlog runs prune`'s question, and a menu that hid checkouts on a
 guess about their names would be answering it badly.
 
+## What watching it changed, on this repository
+
+Three things, and none of them was visible from the code.
+
+**1. `lastActivity` was measuring the wrong file, so the ordering ordered
+nothing.** Every one of the fifty backlog worktrees came back with the same date:
+its `abydos-backlog start`. `ProjectDiscovery.lastActivity` knew a worktree's
+`.git` is a file — there is a comment saying so — and stat'ed *that file*, which
+is a one-line `gitdir:` pointer written at creation and never touched again.
+Being the newest of the times considered, it drowned out every other one.
+Everything that moves is at the far end of the pointer, in
+`<the primary>/.git/worktrees/<name>/`. Following it is four lines and it is the
+whole of why the ordering means anything — the project switcher's scan reads the
+same helper, so its list was dated the same wrong way and is not any more.
+
+**2. A row saying both names said the same thing twice, at 130 characters.**
+
+    abydos-backlog-0479-toggle-comment-answers-to-a-key-nobody-asked-for-on-a
+      — backlog/0479-toggle-comment-answers-to-a-key-nobody-asked-for-on-a
+
+`suggestedPath` builds the directory *out of* the branch, so for every worktree
+this app makes, one of the two names is the other. Two rules cut it: the
+repository's name comes off the front of the folder (every row is a checkout of
+the same repository, and the control that opened the menu has just said which),
+and when either name contains the other the shorter one stands alone. That last
+one works in both directions — it drops the folder for
+`abydos-backlog-0479-…`, and it drops the *branch* for an agent harness's
+`agent-a0644…` checked out on `worktree-agent-a0644…`. Titles are then capped at
+52 characters, from the tail, because what tells these apart is the number at the
+front.
+
+**3. The pill fell into the toolbar's overflow on the window that most needed
+it.** On `abydos-backlog-0490-worktrees` the capsule wants half the titlebar for
+`abydos | backlog/0490-worktrees-chosen-from-the-titlebar`, and one more pill was
+enough to tip the toolbar over — so `.low` did exactly what it is for and the
+worktree control vanished behind `»`. The fix is the same rule as the menu's,
+applied harder: **a titlebar says only what the capsule beside it has not.** The
+branch is on screen a foot to the left, so a pill reading `backlog-0490-worktrees`
+is 150 points spent on a word already there. It goes wordless, it fits, and the
+run control comes back to the right-hand end where it belongs.
+
+What is left is the case the pill exists for: a worktree somebody named
+themselves. `fixture | release/2.1` with a pill reading `hotfix` — see
+`images/a-worktree-somebody-named-says-its-name.png`.
+
+Watched on this repository at 75 checkouts (`images/…-at-last.png` and
+`…-nothing-twice.png`), and on a fixture built for the states this repository does
+not have: a hand-named directory, a detached worktree, and `git worktree add
+--orphan`, which turns out to be the one way a *linked* worktree can be on a
+branch with nothing on it. The menu reads `hotfix — release/2.1`, `spike —
+detached at 404fde9` and `fresh — fixture-fresh — no commits yet`.
+
+## Ruled out
+
+- **Making the existing chip clickable.** The argument is in full above; the
+  short of it is that the chip is blank on the primary, which is where the
+  report was written.
+- **Reusing the window, the way a subproject does.** It would be this one
+  control disagreeing with the switcher, the backlog card and the branches pane
+  about what opening a checkout means, and it would break the arrangement 0454
+  relies on by taking over the window sitting on the primary.
+- **Grouping the backlog's worktrees into a section of their own.** It reads well
+  on this repository and nowhere else: it needs the menu to know that
+  `abydos-backlog-NNNN-…` is special, which is one app's convention leaking into
+  a general git control. Last-activity ordering sinks the stale ones without
+  knowing anything about what they are, and it works for somebody whose worktrees
+  are called something else entirely.
+- **Hiding the `.claude/worktrees/agent-…` checkouts.** Same objection, and worse:
+  they are real checkouts somebody may want, and a control that silently omits
+  twenty of seventy-five is lying about what the repository has. They sink to the
+  bottom of `More…` on their own, which is the honest version of the same result.
+- **Pruning from the menu.** `abydos-backlog runs prune` and the branches pane
+  both do this already, with a confirmation. A titlebar menu is for going
+  somewhere.
+- **A filter field, the way the project switcher has one.** An `NSMenu` cannot be
+  typed at, and building a popover for this would be a second project switcher.
+  `Show All Worktrees…` reaches the branches pane, which has the filter field
+  already and can add and remove them too.
+- **Asking git for each worktree's last commit date.** Truer than an mtime and
+  seventy-five subprocesses to sort a menu, in front of somebody who has just
+  clicked. `lastActivity` is a stat and it was written for exactly this
+  objection.
+- **Listing worktrees whose directory is gone.** The only thing a row can do is
+  open one, and that fails. They stay in the branches pane, where removing them
+  is the point.
+- **Rebuilding the list when the menu opens.** `readWorktree` has already run git
+  for the pill, so a second listing at the moment of the click buys the same
+  answer with a pause in front of it. The list is kept.
+
 ## Steps
 
 - [x] Decide what switching does — reuse the window or open one — against the fact
@@ -172,10 +262,10 @@ guess about their names would be answering it badly.
 - [x] Ordering, the cap and the way through to the branches pane
 - [x] Choosing one goes through the delegate — and the branches pane does too
 - [x] A capture flag that reads the pill and its menu, since neither photographs
-- [ ] Watch it on this repository, which has seventy-four worktrees at once
-- [ ] Write down here what was ruled out on the way
+- [x] Watch it on this repository, which has seventy-four worktrees at once
+- [x] Write down here what was ruled out on the way
 - [ ] `spec/version-control.md` says what the project now does
 
 ## Estimate
 
-2026-08-15 10:49 — about three hours left — the decisions are made, the drawing is not
+2026-08-15 11:42 — about forty minutes left — the spec and the suite

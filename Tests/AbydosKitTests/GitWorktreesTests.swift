@@ -197,6 +197,105 @@ struct GitWorktreesTests {
 		#expect(worktree.summary == "main — no commits yet")
 	}
 
+	// MARK: - Naming one in a list
+
+	/// Every worktree this app makes is named out of its branch, so a row that
+	/// showed both said the same thing twice — at a hundred and thirty
+	/// characters, on this repository.
+	@Test func aFolderNamedAfterItsBranchIsNotSaidTwice() {
+		let derived = GitWorktree(
+			path: URL(fileURLWithPath: "/dev/abydos-backlog-0479-toggle-comment"),
+			branch: "backlog/0479-toggle-comment", head: "abc1234", isPrimary: false
+		)
+		#expect(GitWorktrees.label(for: derived, primaryName: "abydos")
+			== "backlog/0479-toggle-comment")
+	}
+
+	/// A directory somebody named themselves is worth reading, because it is the
+	/// only thing saying why that checkout exists — and the repository's own name
+	/// comes off the front of it, since every row in the list is a checkout of
+	/// that repository.
+	@Test func aFolderNamedBySomebodyKeepsItsNameWithoutTheRepositorySPrefix() {
+		let chosen = GitWorktree(
+			path: URL(fileURLWithPath: "/dev/abydos-ghostty-write"),
+			branch: "backlog/0492-libghostty-vt-costs-half-a-millisecond",
+			head: "abc1234", isPrimary: false
+		)
+		#expect(GitWorktrees.label(for: chosen, primaryName: "abydos")
+			== "ghostty-write — backlog/0492-libghostty-vt-costs-half-a-millisecond")
+	}
+
+	/// The rule the other way about: an agent harness names the directory and
+	/// then the branch after it, so the folder is the shorter of two names for
+	/// the same thing.
+	@Test func aBranchNamedAfterItsFolderLosesToTheFolder() {
+		let agent = GitWorktree(
+			path: URL(fileURLWithPath: "/dev/x/.claude/worktrees/agent-a0644a283cb87a9eb"),
+			branch: "worktree-agent-a0644a283cb87a9eb", head: "abc1234", isPrimary: false
+		)
+		#expect(GitWorktrees.label(for: agent, primaryName: "abydos")
+			== "agent-a0644a283cb87a9eb")
+	}
+
+	/// The primary is the repository itself and the way back, so it says which
+	/// repository even when its branch would have stood alone.
+	@Test func theOneTheRepositoryWasClonedIntoAlwaysSaysItsName() {
+		let primary = GitWorktree(
+			path: URL(fileURLWithPath: "/dev/abydos"),
+			branch: "main", head: "abc1234", isPrimary: true
+		)
+		#expect(GitWorktrees.label(for: primary, primaryName: "abydos") == "abydos — main")
+	}
+
+	/// The two states with no branch to fall back on keep their folder name,
+	/// because otherwise the row would be `detached at abc1234` and nothing else.
+	@Test func aCheckoutWithNoBranchStillSaysWhereItIs() {
+		let detached = GitWorktree(
+			path: URL(fileURLWithPath: "/dev/abydos-spike"),
+			branch: nil, head: "abc1234def", isPrimary: false
+		)
+		#expect(GitWorktrees.label(for: detached, primaryName: "abydos")
+			== "spike — detached at abc1234")
+
+		let unborn = GitWorktree(
+			path: URL(fileURLWithPath: "/dev/abydos-fresh"),
+			branch: "main", head: String(repeating: "0", count: 40), isPrimary: false
+		)
+		#expect(GitWorktrees.label(for: unborn, primaryName: "abydos")
+			== "fresh — main — no commits yet")
+	}
+
+	/// What the titlebar adds beside a branch it is already showing, which is
+	/// less than a menu row adds because the branch is on screen there.
+	@Test func aTitlebarSaysOnlyWhatTheBranchBesideItHasNot() {
+		func qualifier(folder: String, branch: String?, isPrimary: Bool = false) -> String? {
+			GitWorktrees.qualifier(
+				for: GitWorktree(
+					path: URL(fileURLWithPath: "/dev/\(folder)"),
+					branch: branch, head: "abc1234def", isPrimary: isPrimary
+				),
+				primaryName: "abydos"
+			)
+		}
+
+		// The capsule has said the repository's name.
+		#expect(qualifier(folder: "abydos", branch: "main", isPrimary: true) == nil)
+		// …and here it has said the branch, which the folder was made out of.
+		#expect(qualifier(
+			folder: "abydos-backlog-0490-worktrees",
+			branch: "backlog/0490-worktrees-chosen-from-the-titlebar"
+		) == nil)
+		// The other containment: a menu row would show the folder as the shorter
+		// of the two, but the longer one is already up there.
+		#expect(qualifier(
+			folder: "agent-a0644a283cb87a9eb", branch: "worktree-agent-a0644a283cb87a9eb"
+		) == nil)
+		// A directory somebody chose, which nothing else on the titlebar says.
+		#expect(qualifier(folder: "abydos-hotfix", branch: "release/2.1") == "hotfix")
+		// No branch on the capsule to have said anything.
+		#expect(qualifier(folder: "abydos-spike", branch: nil) == "spike")
+	}
+
 	// MARK: - Ordering
 
 	/// The primary is the way back, so it is first whether or not anybody has
