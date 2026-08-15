@@ -265,7 +265,3 @@ detached at 404fde9` and `fresh — fixture-fresh — no commits yet`.
 - [x] Watch it on this repository, which has seventy-four worktrees at once
 - [x] Write down here what was ruled out on the way
 - [x] `spec/version-control.md` says what the project now does
-
-## Estimate
-
-2026-08-15 11:42 — about forty minutes left — the spec and the suite
