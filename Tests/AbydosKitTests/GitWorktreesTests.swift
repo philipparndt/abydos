@@ -197,6 +197,86 @@ struct GitWorktreesTests {
 		#expect(worktree.summary == "main — no commits yet")
 	}
 
+	// MARK: - Ordering
+
+	/// The primary is the way back, so it is first whether or not anybody has
+	/// touched it lately — which on a repository with fifty branch worktrees is
+	/// exactly the case that would have buried it.
+	@Test func theOneTheRepositoryWasClonedIntoComesFirstEvenWhenItIsTheStalest() async throws {
+		let root = try makeRepository()
+		defer { cleanUp(root) }
+
+		for name in ["alpha", "beta"] {
+			_ = await GitWorktrees.add(
+				at: GitWorktrees.suggestedPath(for: name, root: root),
+				branch: name, createBranch: true, in: root
+			)
+		}
+
+		// The primary made first and untouched since; the others after it.
+		let ordered = GitWorktrees.byRecentActivity(await GitWorktrees.list(in: root))
+		#expect(ordered.count == 3)
+		#expect(ordered.first?.isPrimary == true)
+	}
+
+	/// What makes a menu of seventy-four usable: the one being worked in is near
+	/// the top rather than wherever git happened to create it.
+	///
+	/// **The times are set rather than produced.** Three worktrees made in a row
+	/// are made within the same second, and a filesystem mtime has one second to
+	/// tell them apart with — so a test that worked in one of them and hoped
+	/// proved nothing about the ordering and everything about how fast the
+	/// machine is. Stating the input says the claim exactly: given these times,
+	/// this order.
+	@Test func theMostRecentlyWorkedInComesBeforeTheOthers() async throws {
+		let root = try makeRepository()
+		defer { cleanUp(root) }
+
+		for name in ["first", "second", "third"] {
+			_ = await GitWorktrees.add(
+				at: GitWorktrees.suggestedPath(for: name, root: root),
+				branch: name, createBranch: true, in: root
+			)
+		}
+
+		// A linked worktree's own `.git` is a pointer written once, so the index
+		// this touches is the one at the far end of it — which is the whole of
+		// what `lastActivity` had to learn to follow for this ordering to mean
+		// anything.
+		let metadata = root.appendingPathComponent(".git/worktrees")
+		for (name, minutes) in [("main-first", 5), ("main-second", 90), ("main-third", 30)] {
+			// Both, because both are read: `index` moves on status, add and
+			// commit, `HEAD` on a checkout, and a worktree is as recent as the
+			// later of them.
+			for file in ["index", "HEAD"] {
+				try FileManager.default.setAttributes(
+					[.modificationDate: Date().addingTimeInterval(-60 * Double(minutes))],
+					ofItemAtPath: metadata.appendingPathComponent("\(name)/\(file)").path
+				)
+			}
+		}
+
+		let ordered = GitWorktrees.byRecentActivity(await GitWorktrees.list(in: root))
+		#expect(ordered.map(\.name) == ["main", "main-first", "main-third", "main-second"])
+	}
+
+	/// Two readings of an untouched repository must not shuffle the menu under
+	/// somebody who is looking at it.
+	@Test func anOrderWithNothingToTellApartIsStillTheSameOrderTwice() {
+		let worktrees = ["/dev/p-c", "/dev/p-a", "/dev/p-b"].enumerated().map {
+			GitWorktree(
+				path: URL(fileURLWithPath: $0.element), branch: "x", head: "abc",
+				isPrimary: $0.offset == 0
+			)
+		}
+		// None of these exists, so every mtime is distantPast and only the tie
+		// break is left to decide.
+		let once = GitWorktrees.byRecentActivity(worktrees).map(\.name)
+		let twice = GitWorktrees.byRecentActivity(worktrees.reversed()).map(\.name)
+		#expect(once == ["p-c", "p-a", "p-b"])
+		#expect(twice == ["p-c", "p-a", "p-b"])
+	}
+
 	@Test func survivesOutputWithoutATrailingBlankLine() {
 		let worktrees = GitWorktrees.parse("worktree /dev/a\nHEAD abc\nbranch refs/heads/main")
 		#expect(worktrees.count == 1)

@@ -76,6 +76,44 @@ public enum GitWorktrees {
 		return parse(result.stdout)
 	}
 
+	/// The primary first, then most recently worked on first.
+	///
+	/// A list of checkouts in git's own order is a list in the order they were
+	/// created, which for a repository somebody has been working in for months is
+	/// close to random. Ordering by activity puts what is being worked on at the
+	/// top, which is what makes a menu of it usable at all — this repository has
+	/// **74**, about fifty from `abydos-backlog start` and twenty an agent
+	/// harness left under `.claude/worktrees/`.
+	///
+	/// The primary is pinned rather than left to the ordering because it is the
+	/// way back — the checkout every other one was made from — and on a
+	/// repository whose main branch has been quiet for a week it would otherwise
+	/// sink below fifty branches somebody is actually on.
+	///
+	/// Everything else is `ProjectDiscovery.lastActivity`, which stats git's
+	/// metadata rather than running git; it was written for the project scan with
+	/// the note that *"this list can run to hundreds"*, which turns out to be the
+	/// literal case here. Seventy-four `git log`s to sort a menu would be a pause
+	/// in front of a click.
+	public static func byRecentActivity(_ worktrees: [GitWorktree]) -> [GitWorktree] {
+		// Measured once per checkout rather than inside the comparison, which
+		// would stat each of them some tens of times over.
+		let activity = Dictionary(
+			worktrees.map { ($0.path.path, ProjectDiscovery.lastActivity(of: $0.path)) },
+			uniquingKeysWith: { first, _ in first }
+		)
+		return worktrees.sorted { left, right in
+			if left.isPrimary != right.isPrimary { return left.isPrimary }
+			let a = activity[left.path.path] ?? .distantPast
+			let b = activity[right.path.path] ?? .distantPast
+			// By name when the times tie, so two readings of the same repository
+			// do not shuffle the menu under somebody who is looking at it. A
+			// worktree whose directory is gone has no mtime at all, and there can
+			// be any number of those.
+			return a == b ? left.name < right.name : a > b
+		}
+	}
+
 	/// `git worktree list --porcelain` emits records separated by blank lines,
 	/// each a set of `key value` lines with bare keys for the flags.
 	static func parse(_ text: String) -> [GitWorktree] {

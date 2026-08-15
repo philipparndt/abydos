@@ -1101,7 +1101,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			// in front of somebody who has just clicked. Most recently worked on
 			// first, from mtimes rather than from git — the same estimate, and the
 			// same reasoning, the project switcher's scan uses.
-			self.worktrees = Self.order(listed)
+			self.worktrees = GitWorktrees.byRecentActivity(listed)
 
 			if let primary = listed.first(where: { $0.isPrimary }), containing?.isPrimary == false {
 				self.capsule?.setProject(name: primary.name)
@@ -1119,33 +1119,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				count: listed.count
 			)
 			self.layoutTitlebarPills()
-		}
-	}
-
-	/// The primary first, then most recently worked on first.
-	///
-	/// The primary is pinned rather than left to the ordering because it is the
-	/// way back: it is the checkout every other one was made from, and on a
-	/// repository whose main branch has been quiet for a week it would otherwise
-	/// sink below fifty branches somebody is actually on.
-	///
-	/// Everything else is `ProjectDiscovery.lastActivity`, which stats git's
-	/// metadata rather than running git — written for the project scan with the
-	/// note that *"this list can run to hundreds"*, which turns out to be the
-	/// literal case here.
-	static func order(_ worktrees: [GitWorktree]) -> [GitWorktree] {
-		let activity = Dictionary(
-			uniqueKeysWithValues: worktrees.map {
-				($0.path.path, ProjectDiscovery.lastActivity(of: $0.path))
-			}
-		)
-		return worktrees.sorted { left, right in
-			if left.isPrimary != right.isPrimary { return left.isPrimary }
-			let a = activity[left.path.path] ?? .distantPast
-			let b = activity[right.path.path] ?? .distantPast
-			// By name when the mtimes tie, so the order does not shuffle between
-			// two readings of the same repository.
-			return a == b ? left.name < right.name : a > b
 		}
 	}
 
