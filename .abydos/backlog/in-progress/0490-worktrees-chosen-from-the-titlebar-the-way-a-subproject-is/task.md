@@ -264,7 +264,7 @@ detached at 404fde9` and `fresh — fixture-fresh — no commits yet`.
 - [x] A capture flag that reads the pill and its menu, since neither photographs
 - [x] Watch it on this repository, which has seventy-four worktrees at once
 - [x] Write down here what was ruled out on the way
-- [ ] `spec/version-control.md` says what the project now does
+- [x] `spec/version-control.md` says what the project now does
 
 ## Estimate
 
