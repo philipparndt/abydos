@@ -2118,6 +2118,12 @@ final class CodeView: NSView, NSTextInputClient {
 			setCaret(document?.rope.utf16Count ?? 0, extendingSelection: false)
 		case #selector(scrollPageUp(_:)), #selector(pageUp(_:)):     movePage(-1, extending: false)
 		case #selector(scrollPageDown(_:)), #selector(pageDown(_:)): movePage(1, extending: false)
+		// ⇧⇞ and ⇧⇟ are selectors of their own and arrived here as nothing at
+		// all, so the page keys moved the caret and left the selection behind.
+		// Found by pressing them from outside the app while watching ⇧↓ at the
+		// end of a file, which is the same sentence one key bigger.
+		case #selector(pageUpAndModifySelection(_:)):   movePage(-1, extending: true)
+		case #selector(pageDownAndModifySelection(_:)): movePage(1, extending: true)
 		case #selector(deleteBackward(_:)):      deleteBackward()
 		case #selector(deleteForward(_:)):       deleteForward()
 		case #selector(insertNewline(_:)):       insertNewlineWithIndent()

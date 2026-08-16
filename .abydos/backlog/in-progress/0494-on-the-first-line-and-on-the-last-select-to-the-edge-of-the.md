@@ -67,6 +67,8 @@ is true. It is answered below, by running it.
       be got at from `AbydosKit`
 - [x] A driver so the keys can be watched from outside the app, as `--word-nav`
       does for ⌥←/⌥→
+- [x] ⇧⇞ and ⇧⇟ arrive at the editor at all — found by watching them, and not
+      in the report
 - [ ] Watched: ⇧↑ on the first line, ⇧↓ on the last, the bare ↑ and ↓ in the
       same two places, and all of it again in a wrapped file
 - [ ] Answered by running it: was ↑/↓ inside a soft-wrapped line broken before
