@@ -468,3 +468,49 @@ press.
 - **Given** the caret at the end of `    fourth line, indented four spaces`
 - **When** ⌃K is pressed
 - **Then** nothing changes: that line and the one below it are still two lines
+## Requirement: ⌃O opens a line under the caret and leaves the caret alone
+
+⌃O is `open-line`: it splits the line at the caret and does not move the
+caret. What was in front of the caret stays where it is; what was behind it
+becomes the next line; the caret stays between them, at the end of the first
+half. Pressing it repeatedly pushes the rest of the line further down the
+file and never moves the caret off the character it was on.
+
+macOS sends ⌃O as **two** commands in order — insert a newline, then step back
+one character — and the editor answers the first with a **bare** newline. It
+does not copy the indent of the line it splits, and the second half is not
+re-indented, so on an indented line the line that appears is empty rather than
+full of whitespace.
+
+That is a decision about what open-line is, and it is what makes the two
+commands cancel. The step back is one character, so the caret returns to where
+it started only if the insertion moved it by exactly one. An indent-copying
+newline would move it by one plus the indent and leave the caret inside
+whitespace it had just written — on a line the caret is deliberately not
+being moved to. Return is the key that carries the indent, because Return puts
+the caret on the new line and somebody is about to type there; ⌃O does not,
+so it does not.
+
+The caret keeps its offset, not its column, and after the split those are the
+same thing: the text before it is unchanged.
+
+### Scenario: ⌃O with the caret in the middle of a word
+
+- **Given** the line `third li|ne of the file` with the caret at offset 51, after the `i`
+- **When** ⌃O is pressed
+- **Then** the line reads `third li`, the next line reads `ne of the file`
+- **And** the caret is still at offset 51, at the end of the first half
+
+### Scenario: ⌃O at the end of an indented line
+
+- **Given** a line indented with a tab, `→indented fifth line of the file`, the caret at its end
+- **When** ⌃O is pressed
+- **Then** an empty line appears after it — empty, with no copy of the tab
+- **And** the caret is still at the end of the indented line, at the same offset
+
+### Scenario: ⌃O on an empty line
+
+- **Given** the caret on an empty line, with `sixth lines` on the line below
+- **When** ⌃O is pressed
+- **Then** there are two empty lines and `sixth lines` has moved down one
+- **And** the caret is still on the first of them, at the same offset

@@ -2811,6 +2811,42 @@ final class EditorViewController: NSViewController {
 		return codeView.caretReportForTesting
 	}
 
+	/// The caret's line and the one after it, with `|` where the caret is.
+	///
+	/// `caretReportForTesting` prints the *selected* text, which is empty
+	/// whenever the caret is collapsed — so a key that inserts a newline and
+	/// leaves the caret where it was reads exactly like a key that did
+	/// nothing. `textTailForTesting` is no help either: it reports the end of
+	/// the file, and an edit in the middle of one does not reach it. A key
+	/// that inserts text has to show the text.
+	///
+	/// Tabs come out as `⇥`, because the question a driver asks about an
+	/// inserted line is usually whether it is empty or full of whitespace, and
+	/// a real tab in a terminal transcript answers that invisibly.
+	///
+	/// The line count comes with them. A newline inserted at the end of a line
+	/// leaves an empty line after it, and the line after *that* one was
+	/// already there — so two lines of text are the same either side of the
+	/// press and only the count says the file grew.
+	var caretLinesForTesting: String {
+		guard let codeView = activeTab?.codeView, let document = activeTab?.document else {
+			return "no file"
+		}
+		let rope = document.rope
+		let offset = codeView.caretOffset
+		let index = rope.line(atByteOffset: rope.byteOffset(fromUTF16: offset))
+		let start = rope.utf16Offset(fromByte: rope.lineByteRange(index).lowerBound)
+		let units = Array(rope.lineText(index).utf16)
+		let column = max(0, min(offset - start, units.count))
+		let marked = String(decoding: units[0..<column], as: UTF16.self) + "|"
+			+ String(decoding: units[column...], as: UTF16.self)
+		let shown = { (text: String) in text.replacingOccurrences(of: "\t", with: "⇥") }
+		let next = index + 1 < document.lineCount ? rope.lineText(index + 1) : nil
+		return "line \(index) “\(shown(marked))”"
+			+ (next.map { " then \(index + 1) “\(shown($0))”" } ?? " (last line)")
+			+ " — \(document.lineCount) lines"
+	}
+
 	/// Presses ⌘/ over a caret or a selection the spec names.
 	func toggleCommentForTesting(_ spec: String) -> (LineComment.Outcome, String)? {
 		guard let codeView = activeTab?.codeView else { return nil }
