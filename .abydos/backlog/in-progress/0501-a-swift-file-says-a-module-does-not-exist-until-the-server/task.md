@@ -193,6 +193,25 @@ good: `said` keeps the first diagnosis and the state stays `.working`, so a
 server that really cannot read the project says so again once it is ready and is
 believed then.
 
+## The first thirty seconds, before and after
+
+Both are the same package with its index scratch directory deleted, opened by
+the same driver, photographed at t+22 s: `images/watch-before.png` is the build
+at `cfb5ecf`, `images/watch-after.png` the build with the change in.
+
+| | before | after |
+| --- | --- | --- |
+| t+2 s | file drawn, no error | file drawn, no error |
+| t+13 s | `No such module 'Cadova'`, red | `No such module 'Cadova'`, red — unchanged |
+| footer, throughout | `sourcekit-lsp` | `sourcekit-lsp — preparing` |
+| tool tip | "sourcekit-lsp is answering for Swift in this project, from …" | "sourcekit-lsp is building what this project depends on … may be about the build rather than about the code" |
+| t+20 s | strip: *"sourcekit-lsp is running and says something is wrong with this project"*, and a red toast: *"sourcekit-lsp cannot read this project"* | nothing above the file, no toast |
+| t+70 s | error clears, footer unchanged | error clears, footer back to `sourcekit-lsp` |
+
+The one thing deliberately identical in both columns is the red on line 1. That
+is the decision: nothing is hidden, and what changed is that the minute it lives
+in now has a name.
+
 ## Estimate
 
 2026-08-16 14:25 — about an hour left
@@ -209,7 +228,7 @@ believed then.
 - [x] Do it, for a file whose dependencies have not been built yet
 - [x] Keep what a server says while it is preparing out of `ServerHealth` —
       found by watching, not by reading
-- [ ] Watched: open a Swift package with a clean `.build`, and see what the
+- [x] Watched: open a Swift package with a clean `.build`, and see what the
       first thirty seconds look like now
 - [ ] Say whether this is Swift-only, and why that is or is not right
 - [ ] Write down here what was ruled out on the way
