@@ -209,13 +209,13 @@ beside its source, `runs=1 model=hex-key-holder.3mf`.
 - [x] `drawn=` reports what the pane *paints*, not what its layout manager could
       lay out — the first version of this number could not tell the fault from
       the fix and is corrected above
-- [ ] Watched against **this** fixture, not the spike, with a screenshot of the
+- [x] Watched against **this** fixture, not the spike, with a screenshot of the
       model in the split
 - [x] A regression test that would have caught this — 0499's watching passed
       because it used a package with one target and no product rename
-- [ ] `make test` and `make warnings` are clean
-- [ ] Write down here what was ruled out on the way
-- [ ] `spec/previews.md` says what the project now does, if the behaviour it
+- [x] `make test` and `make warnings` are clean
+- [x] Write down here what was ruled out on the way
+- [x] `spec/previews.md` says what the project now does, if the behaviour it
       describes turns out to be wrong rather than just absent
 
 The step about `drawn=` is found work rather than a bigger plan: the number was
@@ -303,5 +303,4 @@ above rather than deleted.
 
 ## Estimate
 
-2026-08-16 18:10 — the fix is written; what is left is a build and one watched
-run, which is under an hour for somebody who can run `make`
+2026-08-16 18:36 — done
