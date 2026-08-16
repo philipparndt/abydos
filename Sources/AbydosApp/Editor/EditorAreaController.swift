@@ -778,6 +778,19 @@ final class EditorAreaController: NSViewController {
 	}
 	func exerciseSnippetForTesting(_ spec: String) { activeGroup.exerciseSnippetForTesting(spec) }
 
+	/// The Cadova pane somebody is looking at, for the driver that watches one.
+	///
+	/// The active group first, because "the tab in front" is what the driver
+	/// claims to be reporting — and then every other group, because **a pane that
+	/// exists must not be reported missing**. 0507 spent an afternoon on a driver
+	/// that said `no cadova pane in the tab in front` while the app plainly had
+	/// one, and a report of absence is only worth having if it has looked
+	/// everywhere it could have looked.
+	var cadovaPreview: CadovaPreviewView? {
+		if let front = (activeGroup ?? groups.first)?.cadovaPreview { return front }
+		return groups.compactMap(\.cadovaPreview).first
+	}
+
 	func showFind() { activeGroup.showFind() }
 	func setFindQuery(_ query: String) { activeGroup.setFindQuery(query) }
 	func findNext() { activeGroup.findNext() }

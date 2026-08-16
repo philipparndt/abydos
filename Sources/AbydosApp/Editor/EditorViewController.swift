@@ -2096,6 +2096,36 @@ final class EditorViewController: NSViewController {
 		return nil
 	}
 
+	/// What the tab in front actually is, when something looking for a pane in it
+	/// did not find one.
+	///
+	/// **A driver that can only say "not found" lies by omission**, and 0507 is
+	/// what that costs: `--cadova-watch` said `no cadova pane in the tab in front`
+	/// for a file that had one built for it, and the report was believed for long
+	/// enough to be written into an item as evidence. It was true and useless —
+	/// the tab in front was not the file at all. So the negative answer now comes
+	/// with the tab it was asked about, the mode that tab is in, and the classes
+	/// in its content view, which between them say *which* of the possible reasons
+	/// it is.
+	var activeTabDescriptionForTesting: String {
+		let open = "open=[" + tabs.map(\.url.lastPathComponent).joined(separator: " ") + "]"
+		guard let tab = activeTab else {
+			return "no active tab (\(tabs.count) tabs, group \(groupID.uuidString.prefix(4))) \(open)"
+		}
+		return "tab=\(tab.url.path) mode=\(tab.previewMode) "
+			+ "cadova=\(tab.cadova?.product ?? "none") \(open) "
+			+ "content=[\(Self.classes(in: tab.contentView).joined(separator: " "))]"
+	}
+
+	/// The class names in a view tree, outermost first, for a driver's report.
+	private static func classes(in view: NSView, depth: Int = 0) -> [String] {
+		// Two levels of subviews is enough to tell a split from a scroll view and
+		// far short of the hundreds a code view holds.
+		guard depth < 3 else { return [] }
+		return [String(describing: type(of: view))]
+			+ view.subviews.flatMap { classes(in: $0, depth: depth + 1) }
+	}
+
 	/// The rendered Markdown pane the file in front is showing, when it is
 	/// showing one.
 	///
