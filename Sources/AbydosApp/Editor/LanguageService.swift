@@ -1140,6 +1140,18 @@ final class LanguageService {
 	/// could not answer confirms it.
 	private func answered(withContent: Bool, for key: String) {
 		guard let current = health[key], !current.isWorking else { return }
+		// An empty answer from a server that is still preparing is not evidence
+		// of anything: it is what preparing *looks like*. Hover and completion
+		// over a module that has not been built yet come back with nothing for
+		// the whole of that minute, and reading those as the failed question
+		// that turns a report into "cannot read this project" would put the
+		// strongest sentence this app has over the most ordinary thing a Swift
+		// project does. 0501.
+		//
+		// An answer *with* content is still taken, and taken gladly: it is the
+		// evidence that withdraws a sentence, and there is no case for holding
+		// good news back.
+		guard withContent || !preparing.contains(key) else { return }
 		changeHealth(of: key) { $0.answered(withContent: withContent) }
 	}
 
@@ -2780,6 +2792,26 @@ final class LanguageService {
 		// costs nothing, at level 1. That is why an error here is a report and
 		// not a verdict; `ServerHealth` is where the difference is written down.
 		guard level == 1 else { return }
+
+		// **Not while it is preparing**, and this is the second half of 0501
+		// rather than a nicety. Watched in the real app on a cold open of a
+		// package with eighteen C++ targets: `sourcekit-lsp` reports the
+		// subprocesses of its own index build at error level — `Finished with
+		// signal 2`, `Finished with exit code 1` — and every one of them landed
+		// here, so twenty seconds into a perfectly ordinary first open the strip
+		// said the server *cannot read this project* and a red toast said it
+		// again. That sentence is 0461's, it is about a server that will never
+		// answer, and it was being said about one that answered thirty seconds
+		// later.
+		//
+		// `ServerHealth` already says the level is a poorer signal than it looks
+		// and that a message is a report rather than a verdict. This is the same
+		// argument with a fact the app now has: the server has said it is not
+		// ready, so what it says about failures while it gets ready is about the
+		// build. Nothing is lost for good — `said` keeps the *first* diagnosis
+		// and the state is still `.working`, so a server that really cannot read
+		// the project says so again on the next file and is believed then.
+		guard !preparing.contains(key) else { return }
 		changeHealth(of: key) { $0.said(line) }
 
 		// Once per server, not once per message. A server that cannot load a

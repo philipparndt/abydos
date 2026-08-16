@@ -154,9 +154,48 @@ down when it appears — the text would jump twice for nothing. The strip is als
 for what is wrong or missing, and a server that is preparing is neither; it is
 running, and it will answer.
 
+## What watching it found that reading it did not
+
+The chip was written, built and opened on a cold package, and the screenshot at
+t+22 s had something in it nobody had predicted: the strip above the file saying
+**"sourcekit-lsp is running and says something is wrong with this project"**, and
+a red toast saying **"sourcekit-lsp cannot read this project"**. Those are 0461's
+sentences, and 0461 is about a server that will never answer. This one answered
+thirty seconds later.
+
+The cause is in `lsp.log`, and it is the same shape as the diagnostic:
+
+    14:11:58 sourcekit-lsp says [error] 🟪🟩⬛️ Finished with signal 2 in 0.40s
+    14:06:30 sourcekit-lsp says [error] ⬜️🟩⬜️ Finished with exit code 1 in 2.16s
+
+Those are the *subprocesses of the server's own index build* — it starts one
+`swift build` per target and one indexing process per file, and it reports the
+ones that do not exit cleanly at **level 1**. `LanguageService.serverSaid` takes
+level 1 as a report, and `ServerHealth` then only needs a question the server
+could not answer to escalate that to "cannot read this project" — which is
+exactly what hover and completion over an unbuilt module do for the whole of the
+same minute. Both halves of `.cannotRead`, both of them false, both of them
+caused by preparation.
+
+**Checked rather than assumed**, and both directions were watched:
+
+- *Before* (`watch-before.png`, the build at `cfb5ecf`): `No such module 'Cadova'`
+  in red, footer `sourcekit-lsp`, indistinguishable from a healthy server. The
+  toast and the strip appear in the same run a few seconds later.
+- *After* (`watch-after.png`): the same red diagnostic, still not suppressed;
+  footer `sourcekit-lsp — preparing`; **no strip and no toast**.
+
+So the item grew a step. While a server is preparing, what it says at error level
+does not reach `ServerHealth`, and an empty answer is not counted against it —
+an answer *with* content still is, because that is the evidence that withdraws a
+sentence and there is no case for holding good news back. Nothing is lost for
+good: `said` keeps the first diagnosis and the state stays `.working`, so a
+server that really cannot read the project says so again once it is ready and is
+believed then.
+
 ## Estimate
 
-2026-08-16 13:46 — about two hours left
+2026-08-16 14:25 — about an hour left
 
 ## Steps
 
@@ -168,6 +207,8 @@ running, and it will answer.
 - [x] Ask for `window.workDoneProgress`, and read `$/progress` in `LSPClient`
 - [x] The footer's chip says it, and the tool tip says the sentence
 - [x] Do it, for a file whose dependencies have not been built yet
+- [x] Keep what a server says while it is preparing out of `ServerHealth` —
+      found by watching, not by reading
 - [ ] Watched: open a Swift package with a clean `.build`, and see what the
       first thirty seconds look like now
 - [ ] Say whether this is Swift-only, and why that is or is not right
