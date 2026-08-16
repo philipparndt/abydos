@@ -326,7 +326,10 @@ indistinguishable from a pane that has hung.
 - [x] `FilePreview` takes the facts a name cannot give as one value rather than
       as a growing list of booleans
 - [x] Running the target produces a 3MF the viewer opens
-- [x] Saving re-runs it, debounced, and the previous run is cancelled
+- [x] Saving re-runs it, debounced, and two runs never overlap — by coalescing
+      and not by cancelling. The step was written asking for cancelling; a
+      `swift build` cannot be cancelled without corrupting `.build`, and the
+      measurements that settled it are above
 - [x] A build or run that fails says so where somebody will see it
 - [x] A driver that reports what a Cadova pane is doing, so it can be watched
 - [x] Watched in the app: open a Cadova model, see geometry, change a constant,
