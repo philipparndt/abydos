@@ -61,6 +61,23 @@ The `subproject=cadova-models` on it is that stored session's subproject chip,
 which is how the titlebar goes on claiming the narrowing after the project
 underneath it has been swapped.
 
+## Watched in the app, after
+
+Same command as the first line above, on the build with the rule in it, and the
+tmux pane put back in `cadova-models` first so the run is the reported one:
+
+    CWD 1s: …/cadova-models  project=cadova-models subproject=whole tabs=[main.swift]
+    CWD 9s: …/cadova-models  project=cadova-models subproject=whole tabs=[main.swift]
+
+and the move that must keep working, typed into the pane rather than simulated:
+
+    Abydos --open …/cadova-models --terminal --run "cd .." --report-cwd
+    CWD 1s: …/abydos-examples/cadova-models  project=cadova-models    tabs=[main.swift]
+    CWD 2s: …/abydos-examples               project=abydos-examples  tabs=[]
+
+One second on the project it was opened on, and the moment the shell really
+walks out, the window is with it.
+
 ## Worth deciding
 
 - **What a terminal's directory should mean when it has not changed.** The
@@ -78,17 +95,79 @@ underneath it has been swapped.
   and it happens without asking. Even with the switch made deliberate, throwing
   away open tabs for a project change is worth looking at.
 
+## What was decided: none of the three, and the second question is the answer
+
+The three candidates are all about *when* a terminal's directory may be
+believed. None of them is needed, because the fault is not in the timing of the
+answer — it is in the question. `ProjectRoot.find` answers **"which repository
+is this directory in"**, and the window was reading it as **"where has the shell
+gone"**. Those are the same question only while the project *is* its repository,
+which is why nobody had seen this until a project was opened at a subdirectory.
+
+So the rule is one line, and it is the one `terminalDirectoryChanged` has always
+claimed in its own comment — *"moving between directories inside one changes
+nothing"* — said about **the project** rather than about the repository:
+
+    a directory inside the project the window is already on is not a move.
+
+`ProjectRoot.projectToFollow(from:current:)` in `AbydosKit` is that rule, and
+`terminalDirectoryChanged` asks it instead of `find`. A shell that steps *out*
+of the project is genuinely somewhere else and is followed exactly as before.
+
+This is the item's second question — whether a project opened at a subdirectory
+should resist widening — answered as **yes, and only that far**. It resists
+while the shell is still inside it, which is the case where nothing happened;
+it does not resist a shell that walks out, because a project that could never be
+left would make following the terminal mean nothing for every project that is
+not its own git root, and `cd ..` is the case the reporter would hit next.
+
+### Why not the other three
+
+- **"Do not follow a directory the terminal was *restored* into."** The right
+  description of the symptom and the wrong place to fix it. It needs a flag
+  threaded from `restoreTerminals` through `BottomPanel.reportWorkingDirectory`
+  into the window, it is a fact about *this launch* rather than about anything
+  true of the program, and it is only testable by launching the app — there is
+  no test target for `AbydosApp`. And it would not have fixed the general case:
+  the old code asked `find` about every directory a shell reported, so `cd
+  Sources` inside `cadova-models`, hours later, in a terminal nobody restored,
+  threw the project away just as readily. The chosen rule covers that one too,
+  and it was run rather than argued:
+
+      Abydos --open …/cadova-models --terminal --run "cd Sources" --report-cwd
+      CWD 1s: …/cadova-models          project=cadova-models tabs=[main.swift]
+      CWD 2s: …/cadova-models/Sources  project=cadova-models tabs=[main.swift]
+- **"Do not follow until the terminal has reported twice."** Cheaper still and
+  wrong in a way that is hard to see: `activeTerminalChanged` deliberately
+  clears `lastReportedDirectory` so that *selecting another terminal tab* is
+  followed at once, which is the feature working as designed. A "second report"
+  rule either breaks that or has to make an exception for it, and either way it
+  is a heuristic about counting rather than a statement about projects. It also
+  leaves the bug in place for any shell that does report twice.
+- **"Never switch away from a project somebody named explicitly."** This is the
+  feature turned off for exactly the people using it. `--open` and the recent
+  projects list are how every project gets opened; there is no such thing as a
+  project the window is on that nobody named. It would have made the reported
+  case work and following the terminal useless.
+
+**The third question — what happens to the tabs — is not addressed here** and no
+step was taken for it. The restore still replaces what is open, without asking,
+whenever a switch does happen. That is now only on real moves, which is the
+whole of what this item claimed; a switch somebody caused by walking their shell
+into another project restoring that project's tabs is the feature rather than
+the fault. Worth its own item, and it is not this one.
+
 ## Steps
 
 - [x] An instrument that says which project the window is on, second by second,
       beside where the terminal is — `--report-cwd` says only the second half
 - [x] Reproduce it from outside the app, without a screenshot run to mask it
-- [ ] Decide what a restored terminal's directory means, and write it down
-- [ ] Opening a project inside a repository keeps that project
-- [ ] A real `cd` somewhere else still follows, and there is a check for both
-- [ ] Answer the second question — whether a project opened at a subdirectory
+- [x] Decide what a restored terminal's directory means, and write it down
+- [x] Opening a project inside a repository keeps that project
+- [x] A real `cd` somewhere else still follows, and there is a check for both
+- [x] Answer the second question — whether a project opened at a subdirectory
       should resist widening at all — in here, whether or not it is acted on
-- [ ] Watched: open `abydos-examples/cadova-models`, wait, and the window is
+- [x] Watched: open `abydos-examples/cadova-models`, wait, and the window is
       still on it with its own tabs
 - [ ] `make test` and `make warnings` are clean
 - [ ] Write down here what was ruled out on the way
@@ -97,4 +176,4 @@ underneath it has been swapped.
 
 ## Estimate
 
-2026-08-16 19:05 — about two hours left
+2026-08-16 19:36 — under an hour left
