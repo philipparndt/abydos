@@ -587,6 +587,63 @@ class DiagramPaneView: NSView {
 	/// Swaps between fitting the pane's width and the drawing's own size — the
 	/// double-click the canvas forwards, and what a test presses.
 	func toggleFit() { setFit(fit == .width ? .actual : .width) }
+
+	// MARK: - Watched from outside
+
+	/// Where this pane puts its message and its indicator, in one line, for the
+	/// driver behind `--diagram-watch`.
+	///
+	/// **The two rectangles and not one.** What 0512 is about is where they are
+	/// *relative to each other*, and a report naming only one of them cannot
+	/// say. There is no test target for `AbydosApp` — 0507 records why, and view
+	/// code is deliberately not in `AbydosKit` — so this line is the instrument:
+	/// print both in the pane's own coordinates and whether they overlap is
+	/// arithmetic anybody can do on it, with no window to look at.
+	///
+	/// The pane is unflipped, so the larger y of each pair is the higher edge on
+	/// screen.
+	var reportForTesting: String {
+		layoutSubtreeIfNeeded()
+		let state = image != nil ? "picture" : (notice == nil ? "nothing" : "message")
+		return "DIAGRAM: state=\(state) bounds=\(Int(bounds.width))x\(Int(bounds.height)) "
+			+ "centre=\(bounds.midY) notice=\(noticeRectangleForTesting) "
+			+ "spinner=\(rectangleForTesting(spinner)) said=\(notice ?? "")"
+	}
+
+	/// Where the message lands, worked out the way `draw(_:)` works it out.
+	///
+	/// A second copy of the drawing's own arithmetic, which is a thing to be
+	/// wary of — it is exactly the fault 0511 found in the Cadova pane's
+	/// `drawn=`, where the report measured the string *without* the paragraph
+	/// style the pane drew it with and the two answers were free to disagree.
+	/// The same font, the same width and the same paragraph style are used here
+	/// for that reason. It is a copy at all only because the message is drawn
+	/// rather than being a view with a frame to ask, and that is the thing this
+	/// item changes.
+	private var noticeRectangleForTesting: String {
+		guard image == nil, let notice else { return "none" }
+		let text = NSAttributedString(string: notice, attributes: [
+			.font: Theme.current.uiFont(12),
+			.paragraphStyle: {
+				let style = NSMutableParagraphStyle()
+				style.alignment = .center
+				return style
+			}(),
+		])
+		let width = max(80, bounds.width - 64)
+		let height = text.boundingRect(
+			with: NSSize(width: width, height: .greatestFiniteMagnitude),
+			options: [.usesLineFragmentOrigin]
+		).height
+		let top = (bounds.height - height) / 2 + 12
+		return "32,\(top) \(width)x\(height)"
+	}
+
+	private func rectangleForTesting(_ view: NSView) -> String {
+		guard !view.isHidden, view.superview != nil else { return "none" }
+		let frame = view.convert(view.bounds, to: self)
+		return "\(frame.minX),\(frame.minY) \(frame.width)x\(frame.height)"
+	}
 }
 
 /// The drawing itself, inside the pane's scroll view.

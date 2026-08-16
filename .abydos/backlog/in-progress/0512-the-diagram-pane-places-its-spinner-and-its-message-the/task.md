@@ -42,6 +42,44 @@ better:
 - **The message is a complaint rather than build output**, so it is at least
   text somebody wrote, not whatever SwiftPM said last.
 
+## Measured in this pane, before anything was changed
+
+Printed from the running app by `--diagram-watch`, which is new here and is
+below. `notice=` is the rect `draw(_:)` hands the text and `spinner=` is
+`spinner.frame`, both in the pane's own coordinates, so whether they overlap is
+arithmetic on the line. The pane is unflipped, so a larger y is further **up**
+the screen.
+
+    808 × 627 pane, centre 313.5 — a Mermaid fault on one line
+      notice=32,318.0 744x15    → y 318…333,     centre 325.5
+      spinner=396,324.0 16x16   → y 324…340,     centre 332
+      → overlapping on y 324…333, nine points of a sixteen-point indicator
+
+    448 × 693 pane, centre 346.5 — mid-render, "Nothing to draw yet."
+      notice=32,351.0 384x15    → y 351…366
+      spinner=216,357.0 16x16   → y 357…373
+      → the reported picture, and `0512-before-crop.png` is it: the spokes
+        between the "to" and the "draw"
+
+    448 × 667 pane, centre 333.5 — PlantUML's install hint, three lines
+      notice=32,323.0 384x45    → y 323…368
+      spinner=216,344.0 16x16   → y 344…360
+      → the indicator is *entirely* inside the message
+
+    228 × 653 pane, centre 326.5 — the same Mermaid fault, four lines
+      notice=32,308.5 164x60    → y 308.5…368.5
+      spinner=106,337.0 16x16   → y 337…353
+      → entirely inside again, and further in
+
+So this pane's numbers are 0511's numbers: **the message's centre is `H/2 + 12`
+and the indicator's is `H/2 + 18` at every width and every height**, six points
+apart and both pushed the same way. 0511's correction holds here too — the
+`-h/2` in the origin and the `+h/2` of the rect's own extent cancel, so the
+message's centre does not drift with its length. What its length does is what
+the last two readings show: the block grows into the indicator from both
+directions, and by three lines the indicator is not overlapping the message, it
+is inside it.
+
 ## What it should be
 
 What 0511 did to `CadovaPreviewView`: one `NSStackView`, vertical, centred, the
@@ -65,13 +103,20 @@ whichever pane is being edited.
 
 ## Steps
 
-- [ ] Measure this pane's own two rectangles in the app, rather than assuming
+- [x] Measure this pane's own two rectangles in the app, rather than assuming
       0511's numbers carry over
 - [ ] The indicator and the message are laid out together
 - [ ] A message of two or three lines does not reach the indicator
 - [ ] Decide whether the message stays put or re-centres when nothing is
       turning, and correct the comment at `:513` either way
+- [ ] Decide whether the message goes on wrapping or truncates as 0511's does,
+      and say why on its own terms rather than by what 0511 concluded
+- [ ] The message follows a theme change and a ⌘+ as it did while it was drawn
 - [ ] Watched, with a screenshot of a diagram pane mid-render
 - [ ] `make test` and `make warnings` are clean
 - [ ] Write down here what was ruled out on the way
 - [ ] The spec, if this changes what the project does
+
+## Estimate
+
+2026-08-16 21:45 — about two hours left

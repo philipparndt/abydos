@@ -176,6 +176,19 @@ struct LaunchOptions {
 	/// building → model again when somebody saves.
 	var cadovaWatchSeconds: Double?
 
+	/// Report where the diagram pane in the active tab puts its message and its
+	/// turning indicator, once a second, for this many seconds.
+	///
+	/// 0512's instrument, and it makes the same argument `--cadova-watch` makes
+	/// one pane over. What that item is about is where two things are *relative
+	/// to each other*, which no screenshot settles to a point and no unit test
+	/// can ask — there is no test target for `AbydosApp`. So the two rectangles
+	/// are printed in the pane's own coordinates and whether they overlap is
+	/// arithmetic anybody can do on the line. Over time rather than once,
+	/// because a diagram pane's states are a sequence: a message with nothing
+	/// turning, then one with the indicator over it, then a picture.
+	var diagramWatchSeconds: Double?
+
 	/// Keys to press in the palette's list, comma separated.
 	var switcherKeys: String?
 
@@ -799,6 +812,15 @@ struct LaunchOptions {
 					index += 1
 				} else {
 					options.cadovaWatchSeconds = 30
+				}
+			case "--diagram-watch":
+				// Peeked rather than consumed, for the reason above: `--diagram-watch
+				// --file render.puml` must open the file.
+				if index + 1 < arguments.count, let seconds = Double(arguments[index + 1]) {
+					options.diagramWatchSeconds = seconds
+					index += 1
+				} else {
+					options.diagramWatchSeconds = 10
 				}
 			case "--appearance-walk": options.appearanceWalk = next()
 			case "--copy-path": options.copyPath = next() ?? "down"
