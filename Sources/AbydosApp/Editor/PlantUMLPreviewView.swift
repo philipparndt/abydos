@@ -147,7 +147,7 @@ final class PlantUMLPreviewView: DiagramPaneView {
 		// Only one at a time: a diagram that takes a second to draw would
 		// otherwise leave a JVM running for every keystroke that started one.
 		running?.terminate()
-		spinner.startAnimation(nil)
+		spin(true)
 		notice = "Drawing with \(tool.description)…"
 		image = nil
 		needsDisplay = true
@@ -188,7 +188,7 @@ final class PlantUMLPreviewView: DiagramPaneView {
 					await MainActor.run {
 						arrival.failed(reason)
 						guard let self else { return }
-						self.spinner.stopAnimation(nil)
+						self.spin(false)
 						self.running = nil
 						self.notice = reason
 						self.needsDisplay = true
@@ -210,7 +210,7 @@ final class PlantUMLPreviewView: DiagramPaneView {
 				) {
 					await MainActor.run {
 						guard let self, self.lastSource == source else { return }
-						self.spinner.stopAnimation(nil)
+						self.spin(false)
 						self.running = nil
 						self.finish(drawn: drawn, complaint: "")
 					}
@@ -266,7 +266,7 @@ final class PlantUMLPreviewView: DiagramPaneView {
 		guard ToolProcesses.shared.adopt(process) else {
 			running = nil
 			if let containerName { ToolContainers.shared.releaseInBackground(containerName) }
-			spinner.stopAnimation(nil)
+			spin(false)
 			notice = ToolProcesses.tooManyMessage
 			needsDisplay = true
 			return
@@ -299,7 +299,7 @@ final class PlantUMLPreviewView: DiagramPaneView {
 			// instead, and that is the part that works.
 			if let containerName { ToolContainers.shared.releaseInBackground(containerName) }
 			guard let self, self.running === process else { return }
-			self.spinner.stopAnimation(nil)
+			self.spin(false)
 			self.running = nil
 			self.image = nil
 			self.notice = "\(tool.description) did not answer within \(Int(Self.deadline)) seconds."
@@ -336,7 +336,7 @@ final class PlantUMLPreviewView: DiagramPaneView {
 			DispatchQueue.main.async {
 				guard let self else { return }
 				watchdog.cancel()
-				self.spinner.stopAnimation(nil)
+				self.spin(false)
 				self.running = nil
 				self.finish(drawn: drawn, complaint: complaint)
 			}

@@ -31,11 +31,25 @@ class DiagramPaneView: NSView {
 	}
 
 	/// The picture, or nil while there is none to show.
-	var image: NSImage?
+	///
+	/// It takes the message away with it, which used to be a `guard image == nil`
+	/// at the top of `draw(_:)`. A message is what there is *instead* of a
+	/// picture, so the two are never both on screen — see `refreshNotice`.
+	var image: NSImage? {
+		didSet { refreshNotice() }
+	}
+
 	/// Its own size in points, which for a drawing is the only size it has.
 	var naturalSize: CGSize = .zero
+
 	/// What to say instead of a picture: nothing drawn yet, or why not.
-	var notice: String?
+	///
+	/// Assigned from four subclasses and always has been, so it stays a settable
+	/// property and the label follows it from here rather than every caller
+	/// having to remember a second line.
+	var notice: String? {
+		didSet { refreshNotice() }
+	}
 	/// What to say *beside* a picture, which is a different thing: the notice
 	/// replaces the drawing and this sits under it.
 	///
@@ -64,7 +78,45 @@ class DiagramPaneView: NSView {
 	/// other way up.
 	var paper: NSColor = .white
 
-	let spinner = NSProgressIndicator()
+	/// The turning indicator. Private, and driven by `spin(_:)`: it has to be
+	/// hidden as well as stopped now that it is in a stack, and a subclass
+	/// reaching for `startAnimation` directly would leave the hole `spin(_:)`
+	/// exists to close.
+	private let spinner = NSProgressIndicator()
+
+	/// The message itself. See `noticeStack`.
+	private let noticeLabel = NSTextField(labelWithString: "")
+
+	/// The indicator above the message, as one thing.
+	///
+	/// **0512 was these two placed separately against the same centre**, and
+	/// 0511 was the identical pair in `CadovaPreviewView`. The indicator sat at
+	/// `centerY - 18` and the message was drawn from an origin of its own,
+	/// `(bounds.height - height) / 2 + 12`. Auto Layout's geometry is top-down
+	/// whatever a view's own flippedness, so `-18` is *above* the centre in this
+	/// unflipped view's coordinates and the message's centre is 12 above it: six
+	/// points apart, both pushed the same way. Measured in the app, before
+	/// anything was changed — an 808 × 627 pane, a one-line Mermaid fault:
+	/// message `y 318…333`, indicator `y 324…340`, nine points of overlap.
+	///
+	/// A stack because the separation is then a property of the arrangement — 8
+	/// points, once, stated where the arrangement is — rather than the
+	/// difference between two constants tuned against one string at one width.
+	/// Two constants cannot be right for a message that wraps: this one's
+	/// centre was pinned at `H/2 + 12` whatever its height, so every extra line
+	/// grew *into* the indicator from both directions, and at three lines the
+	/// indicator was not overlapping the message but inside it.
+	private let noticeStack = NSStackView()
+
+	/// How wide the message may be before it wraps, kept as a constraint so the
+	/// one number can be changed when the pane is resized.
+	///
+	/// The label's `preferredMaxLayoutWidth` is set from the same expression at
+	/// the same moment, and that is not belt and braces: a label whose
+	/// constraint says one width and whose text was measured for another wraps
+	/// to a height that fits neither.
+	private var noticeWidth: NSLayoutConstraint!
+
 	/// The zoom being watched, so the pane can stop watching when it goes.
 	private var watchingSettings: NSObjectProtocol?
 	/// Which palette the picture on screen was drawn for, so a settings change
@@ -117,15 +169,52 @@ class DiagramPaneView: NSView {
 		spinner.style = .spinning
 		spinner.controlSize = .small
 		spinner.isDisplayedWhenStopped = false
-		spinner.translatesAutoresizingMaskIntoConstraints = false
-		addSubview(spinner)
+
+		// **The message wraps, and goes on wrapping.** 0511 made the Cadova
+		// pane's notice one line truncated in the middle, and that is right
+		// there and wrong here: that notice is the last line `swift build`
+		// printed, arbitrary text that changes several times a second, where
+		// this one is a sentence somebody wrote to be read — "Nothing to draw
+		// yet — a diagram starts with @startuml.", a Mermaid fault naming the
+		// file and the line, or the PlantUML hint, whose middle is the command
+		// to type. Eliding the middle of any of those throws away the part that
+		// is worth showing. So the arrangement has to *hold* a block that grows
+		// rather than forbid one, which is what a stack does and what two
+		// constants could not.
+		noticeLabel.alignment = .center
+		noticeLabel.maximumNumberOfLines = 0
+		noticeLabel.lineBreakMode = .byWordWrapping
+		noticeLabel.cell?.wraps = true
+		noticeLabel.cell?.isScrollable = false
+		noticeLabel.isHidden = true
+		applyNoticeStyle()
+
+		noticeStack.orientation = .vertical
+		noticeStack.alignment = .centerX
+		noticeStack.spacing = 8
+		// The indicator first, so it is the one on top: a vertical stack fills
+		// from the top down in the stack's own geometry, whatever the view under
+		// it thinks about which way y runs.
+		noticeStack.setViews([spinner, noticeLabel], in: .center)
+		noticeStack.translatesAutoresizingMaskIntoConstraints = false
+		addSubview(noticeStack)
+		noticeWidth = noticeLabel.widthAnchor.constraint(equalToConstant: 80)
 		NSLayoutConstraint.activate([
-			spinner.centerXAnchor.constraint(equalTo: centerXAnchor),
-			// Above the message rather than behind it: both are shown while a
-			// diagram is being drawn, and centred on the same point the text
-			// runs straight through the spinner.
-			spinner.centerYAnchor.constraint(equalTo: centerYAnchor, constant: -18),
+			noticeStack.centerXAnchor.constraint(equalTo: centerXAnchor),
+			// **Centred, with nothing offset from it by hand.** The comment that
+			// used to sit over the drawing said the message stayed put whether
+			// or not something was turning, so that it would not jump when the
+			// drawing finished. It cannot keep that promise in this pane and it
+			// costs to try — see `spin(_:)`.
+			noticeStack.centerYAnchor.constraint(equalTo: centerYAnchor),
+			noticeWidth,
 		])
+		// **Stopped, and therefore not in the stack at all.** Watched happening
+		// without this line: a `.puml` on a machine with no PlantUML showed the
+		// install hint 22 points low, under 24 points of nothing, because the
+		// pane says that from `init` and nothing ever calls `spin`. See
+		// `spin(_:)` for why `isDisplayedWhenStopped` does not cover it.
+		spin(false)
 
 		menu = makeContextMenu()
 
@@ -150,6 +239,15 @@ class DiagramPaneView: NSView {
 	/// followed the change only when it was reopened.
 	private func settingsChanged() {
 		needsDisplay = true
+		// **The message is a label now, so it has to be told.** It used to be
+		// drawn, and `draw(_:)` read `Theme.current` on every repaint, so both a
+		// palette change and a ⌘+ reached it for nothing. A label reads its font
+		// and its colour once, when they are set. This is the same trap 0423
+		// records for `ScalingPage` and the settings page, and it is why 0511's
+		// "read once at `init`" does not carry over: the Cadova pane's
+		// background is handed to `ColoredView` at `init` and never follows a
+		// theme, where this pane follows one deliberately.
+		applyNoticeStyle()
 		// ⌘+ arrives here. The drawing is laid out again at the new zoom and the
 		// top of it is put back on screen, because a zoom that leaves somebody
 		// looking at the middle of a diagram they were reading from the top is
@@ -159,6 +257,54 @@ class DiagramPaneView: NSView {
 		guard Theme.current.name != drawnForTheme else { return }
 		drawnForTheme = Theme.current.name
 		themeChanged()
+	}
+
+	/// The message's font and colour, from the theme as it stands.
+	///
+	/// The same twelve-point UI font and the same 85% of the sidebar's text
+	/// colour `draw(_:)` used, said in one place instead of on every repaint.
+	private func applyNoticeStyle() {
+		noticeLabel.font = Theme.current.uiFont(12)
+		noticeLabel.textColor = Theme.current.sidebarText.withAlphaComponent(0.85)
+	}
+
+	/// Whether the indicator is turning, and whether it is in the arrangement at
+	/// all.
+	///
+	/// **`isDisplayedWhenStopped` is not enough on its own**, and this is the
+	/// trap 0511 wrote down after paying for it: it stops the indicator
+	/// *drawing* without setting `isHidden`, and `NSStackView` closes up around
+	/// a hidden arranged view rather than an invisible one. Left to it, every
+	/// message with nothing turning above it would sit eight points plus sixteen
+	/// of nothing below the middle of the pane.
+	///
+	/// **And that state is this pane's ordinary one**, which is where the
+	/// argument parts company with the comment that used to be over the drawing.
+	/// That comment held the message at a fixed offset so it would not jump when
+	/// the drawing finished. It cannot: when a render ends the message either
+	/// goes away entirely, replaced by the picture, or is *replaced by different
+	/// text* — a compiler's complaint of three or four lines where "Drawing with
+	/// …" was one — so the block moves whatever the anchor does. What the fixed
+	/// offset does buy is a reserved sixteen-point hole above an empty file's
+	/// "Nothing to draw yet.", above a diagram half typed that does not parse,
+	/// and above the hint on a machine with no PlantUML — states this pane sits
+	/// in for as long as somebody leaves it, unlike the Cadova pane, where 0511
+	/// found the lone notice was over before the first frame.
+	func spin(_ turning: Bool) {
+		if turning { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
+		spinner.isHidden = !turning
+	}
+
+	/// Puts the message in its label, and takes the label out when there is none.
+	///
+	/// Hidden rather than emptied, because an empty label is still a view with a
+	/// line's height in it and the stack would keep the indicator off centre by
+	/// half of it. The rule for *when* is the `guard image == nil` that used to
+	/// be at the top of `draw(_:)`: a message is what there is instead of a
+	/// picture, and one drawn over a diagram is a line of text on a drawing.
+	private func refreshNotice() {
+		noticeLabel.stringValue = notice ?? ""
+		noticeLabel.isHidden = image != nil || (notice?.isEmpty ?? true)
 	}
 
 	/// The palette changed while this diagram was open. A subclass draws it
@@ -386,6 +532,17 @@ class DiagramPaneView: NSView {
 
 	/// Puts the scroll view where it goes and lays the drawing out inside it.
 	override func layout() {
+		// How wide the message may be before it wraps: the same `pane − 64` the
+		// drawn message had, from one expression feeding both the constraint and
+		// the width the label measures its own text at. Guarded on having
+		// changed, because setting `preferredMaxLayoutWidth` invalidates the
+		// label's intrinsic size and asks for another pass — which is fine once
+		// and is a loop if it happens every time.
+		let room = max(80, bounds.width - 64)
+		if noticeWidth.constant != room {
+			noticeWidth.constant = room
+			noticeLabel.preferredMaxLayoutWidth = room
+		}
 		super.layout()
 		// The foot of the pane is left to the caption and the readout, so the
 		// scrolling picture cannot cover either of them.
@@ -489,33 +646,18 @@ class DiagramPaneView: NSView {
 		canvas.scroll(NSPoint(x: 0, y: max(0, document.height - visible.height)))
 	}
 
+	/// The background, the caption at the foot and the number in the corner.
+	///
+	/// The message in the middle used to be drawn here too, from an origin
+	/// worked out against the pane's centre, while the indicator was placed
+	/// against that same centre by a constraint. Nothing measured the two
+	/// together, so nothing could keep them apart — see `noticeStack`, which is
+	/// where they both are now.
 	override func draw(_ dirtyRect: NSRect) {
 		Theme.current.editorBackground.setFill()
 		dirtyRect.fill()
 		drawCaption()
 		drawScaleReadout()
-
-		guard image == nil, let notice else { return }
-		let text = NSAttributedString(string: notice, attributes: [
-			.font: Theme.current.uiFont(12),
-			.foregroundColor: Theme.current.sidebarText.withAlphaComponent(0.85),
-			.paragraphStyle: {
-				let style = NSMutableParagraphStyle()
-				style.alignment = .center
-				return style
-			}(),
-		])
-		let width = max(80, bounds.width - 64)
-		let height = text.boundingRect(
-			with: NSSize(width: width, height: .greatestFiniteMagnitude),
-			options: [.usesLineFragmentOrigin]
-		).height
-		// Below the spinner's place, whether or not one is turning: the message
-		// sits in the same spot either way, so it does not jump when the drawing
-		// finishes.
-		let top = (bounds.height - height) / 2 + 12
-		text.draw(with: NSRect(x: 32, y: top, width: width, height: height),
-		          options: [.usesLineFragmentOrigin])
 	}
 
 	/// The one line at the foot of the pane, under whatever is above it.
@@ -602,43 +744,24 @@ class DiagramPaneView: NSView {
 	///
 	/// The pane is unflipped, so the larger y of each pair is the higher edge on
 	/// screen.
+	/// **The views' own frames, not a second sum that agrees with the drawing by
+	/// hand.** Before this item the message was drawn, so the report had to work
+	/// out where it landed a second time — the same width and the same
+	/// `boundingRect`, and free to disagree the moment either copy was edited.
+	/// That is the shape of the fault 0511 found in the Cadova pane's `drawn=`,
+	/// where one copy had the paragraph style and the other did not. Asking the
+	/// views is the only version that cannot drift.
 	var reportForTesting: String {
 		layoutSubtreeIfNeeded()
 		let state = image != nil ? "picture" : (notice == nil ? "nothing" : "message")
 		return "DIAGRAM: state=\(state) bounds=\(Int(bounds.width))x\(Int(bounds.height)) "
-			+ "centre=\(bounds.midY) notice=\(noticeRectangleForTesting) "
+			+ "centre=\(bounds.midY) notice=\(rectangleForTesting(noticeLabel)) "
 			+ "spinner=\(rectangleForTesting(spinner)) said=\(notice ?? "")"
 	}
 
-	/// Where the message lands, worked out the way `draw(_:)` works it out.
-	///
-	/// A second copy of the drawing's own arithmetic, which is a thing to be
-	/// wary of — it is exactly the fault 0511 found in the Cadova pane's
-	/// `drawn=`, where the report measured the string *without* the paragraph
-	/// style the pane drew it with and the two answers were free to disagree.
-	/// The same font, the same width and the same paragraph style are used here
-	/// for that reason. It is a copy at all only because the message is drawn
-	/// rather than being a view with a frame to ask, and that is the thing this
-	/// item changes.
-	private var noticeRectangleForTesting: String {
-		guard image == nil, let notice else { return "none" }
-		let text = NSAttributedString(string: notice, attributes: [
-			.font: Theme.current.uiFont(12),
-			.paragraphStyle: {
-				let style = NSMutableParagraphStyle()
-				style.alignment = .center
-				return style
-			}(),
-		])
-		let width = max(80, bounds.width - 64)
-		let height = text.boundingRect(
-			with: NSSize(width: width, height: .greatestFiniteMagnitude),
-			options: [.usesLineFragmentOrigin]
-		).height
-		let top = (bounds.height - height) / 2 + 12
-		return "32,\(top) \(width)x\(height)"
-	}
-
+	/// One view's rectangle in the pane's own coordinates, or `none` when it is
+	/// not on screen — which for the indicator is the state a message alone has
+	/// to look right in.
 	private func rectangleForTesting(_ view: NSView) -> String {
 		guard !view.isHidden, view.superview != nil else { return "none" }
 		let frame = view.convert(view.bounds, to: self)

@@ -105,13 +105,15 @@ whichever pane is being edited.
 
 - [x] Measure this pane's own two rectangles in the app, rather than assuming
       0511's numbers carry over
-- [ ] The indicator and the message are laid out together
-- [ ] A message of two or three lines does not reach the indicator
-- [ ] Decide whether the message stays put or re-centres when nothing is
+- [x] The indicator and the message are laid out together
+- [x] A message of two or three lines does not reach the indicator
+- [x] Decide whether the message stays put or re-centres when nothing is
       turning, and correct the comment at `:513` either way
-- [ ] Decide whether the message goes on wrapping or truncates as 0511's does,
+- [x] Decide whether the message goes on wrapping or truncates as 0511's does,
       and say why on its own terms rather than by what 0511 concluded
-- [ ] The message follows a theme change and a ⌘+ as it did while it was drawn
+- [x] The message follows a theme change and a ⌘+ as it did while it was drawn
+- [x] The indicator is out of the arrangement before anything has ever spun, not
+      only after something has stopped — found by the line above, and new here
 - [ ] Watched, with a screenshot of a diagram pane mid-render
 - [ ] `make test` and `make warnings` are clean
 - [ ] Write down here what was ruled out on the way
