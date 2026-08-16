@@ -1823,35 +1823,76 @@ final class BottomPanel: NSView {
 	/// The search pane if there already is one, without making one or moving the
 	/// keyboard. `showSearch` does both, which is wrong for a script that has
 	/// just put the keyboard in the result list on purpose.
-	var existingSearchPane: SearchPane? {
-		for session in sessions {
-			if case let .search(pane) = session.kind { return pane }
-		}
-		return nil
-	}
+	///
+	/// Answered from the field rather than by walking the sessions since item
+	/// 506: the pane goes on existing while it is showing under the project view
+	/// or in a window of its own, where it has no tab here to be found by.
+	private(set) var existingSearchPane: SearchPane?
 
-	@discardableResult
-	func showSearch(query: String? = nil) -> SearchPane? {
+	/// Makes the search pane if this window has not had one, without showing it
+	/// anywhere. Where it goes is the window's business — it has a placement to
+	/// honour and this does not know it.
+	func makeSearchPaneIfNeeded() -> SearchPane? {
+		if let existingSearchPane { return existingSearchPane }
 		guard let root = workingDirectory else { return nil }
-
-		if let index = sessions.firstIndex(where: { if case .search = $0.kind { return true }; return false }),
-		   case let .search(pane) = sessions[index].kind {
-			activate(sessions[index], focus: false)
-			if let query { pane.setQuery(query) }
-			pane.focusField()
-			return pane
-		}
-
 		let pane = SearchPane(projectRoot: root)
 		pane.onOpenResult = { [weak self] url, line, _, intent in
 			self?.onOpenResult?(url, line, intent)
 		}
-		let session = Session(title: "Search", kind: .search(pane))
-		sessions.append(session)
-		activate(session, focus: false)
+		existingSearchPane = pane
+		return pane
+	}
+
+	@discardableResult
+	func showSearch(query: String? = nil) -> SearchPane? {
+		guard let pane = makeSearchPaneIfNeeded() else { return nil }
+		dockSearch(pane, beside: false, focusList: false)
 		if let query { pane.setQuery(query) }
 		pane.focusField()
 		return pane
+	}
+
+	/// Puts the search pane in the panel: a tab in the strip, or a column of its
+	/// own beside whatever terminal is showing.
+	func dockSearch(_ pane: SearchPane, beside: Bool, focusList: Bool) {
+		let session = sessions.first {
+			if case let .search(existing) = $0.kind { return existing === pane }
+			return false
+		} ?? {
+			let made = Session(title: "Search", kind: .search(pane))
+			sessions.append(made)
+			return made
+		}()
+		place(session, beside: beside, focusList: focusList)
+	}
+
+	/// Takes the search tab away without touching the pane, for a list that is
+	/// moving to another home rather than being finished with.
+	func releaseSearch() {
+		guard let session = sessions.first(where: {
+			if case .search = $0.kind { return true }; return false
+		}) else { return }
+		close(session, keepingPane: true)
+	}
+
+	/// Where a results list sits inside the panel: a tab in the strip, or a
+	/// column of its own with a terminal in the other.
+	///
+	/// The two are genuinely different homes and it took looking at the running
+	/// app to see it. A tab is *instead of* a terminal — click the terminal and
+	/// the list is gone. A column is *beside* one, both on screen, which is what
+	/// "in the terminal area" turns out to mean once the tab is already there.
+	private func place(_ session: Session, beside: Bool, focusList: Bool) {
+		if beside {
+			putBeside(session, on: .right)
+			return
+		}
+		// Back into the one strip. Nothing has to unsplit this by hand: a column
+		// exists only while a session says it is in it, so the list leaving
+		// column one is the split going away, unless something else is out there.
+		session.column = 0
+		activate(session, focus: focusList)
+		refreshTabs()
 	}
 
 	// MARK: - Usages
@@ -1879,29 +1920,26 @@ final class BottomPanel: NSView {
 	/// between here and a window of its own and there is only ever one of it. A
 	/// second tab showing the same list is the "three ways to show one list" this
 	/// item exists to avoid.
-	func dockUsages(_ pane: UsagesPane, title: String) {
-		if let index = sessions.firstIndex(where: {
+	func dockUsages(_ pane: UsagesPane, title: String, beside: Bool, focusList: Bool = true) {
+		let session = sessions.first {
 			if case let .usages(existing) = $0.kind { return existing === pane }
 			return false
-		}) {
-			sessions[index].displayTitle = title
-			activate(sessions[index], focus: true)
-			refreshTabs()
-			return
-		}
-		let session = Session(title: "Usages", kind: .usages(pane))
+		} ?? {
+			let made = Session(title: "Usages", kind: .usages(pane))
+			sessions.append(made)
+			return made
+		}()
 		session.displayTitle = title
-		sessions.append(session)
-		activate(session, focus: true)
+		place(session, beside: beside, focusList: focusList)
 	}
 
 	/// Takes the usages tab away without touching the pane, for a list that is
-	/// moving into a window rather than being finished with.
+	/// moving to another home rather than being finished with.
 	func releaseUsages() {
-		guard let index = sessions.firstIndex(where: {
+		guard let session = sessions.first(where: {
 			if case .usages = $0.kind { return true }; return false
 		}) else { return }
-		close(index: index)
+		close(session, keepingPane: true)
 	}
 
 	// MARK: - The backlog
@@ -2314,16 +2352,29 @@ final class BottomPanel: NSView {
 
 		rebuildColumns()
 		placeholder.isHidden = true
-		if focus, case .terminal = session.kind { session.terminal?.focus() }
-		// A usages list arrives to be walked with ↓, so it arrives with the
-		// keyboard. Nothing did this before — the list appeared with the keyboard
-		// still in the editor, where ↓ scrolls code — and it is deferred by one
-		// turn because the view has only just been put in the column and a
-		// responder set before that is set on a view with no window.
-		if focus, case let .usages(pane) = session.kind {
-			DispatchQueue.main.async { pane.focusList() }
-		}
+		if focus { giveKeyboard(to: session) }
 		activeTerminalChanged()
+	}
+
+	/// Puts the keyboard where this kind of pane wants it.
+	///
+	/// A usages list arrives to be walked with ↓, so it arrives with the
+	/// keyboard. Nothing did this before — the list appeared with the keyboard
+	/// still in the editor, where ↓ scrolls code — and it is deferred by one
+	/// turn because the view has only just been put in the column and a
+	/// responder set before that is set on a view with no window.
+	///
+	/// Search is here for item 506's sake rather than 470's: a search pane that
+	/// is *moved* is one with rows in it already, and the rows are what somebody
+	/// is looking at. Asking for search in the first place still lands in the
+	/// field, which is a different call.
+	private func giveKeyboard(to session: Session) {
+		switch session.kind {
+		case .terminal: session.terminal?.focus()
+		case let .usages(pane): DispatchQueue.main.async { pane.focusList() }
+		case let .search(pane): DispatchQueue.main.async { pane.focusList() }
+		default: break
+		}
 	}
 
 	/// Puts a pane on one side, with whatever was showing on the other.
@@ -2353,7 +2404,15 @@ final class BottomPanel: NSView {
 
 		rebuildColumns()
 		placeholder.isHidden = true
-		session.terminal?.focus()
+		// Whatever this pane wants the keyboard for, not `session.terminal`.
+		//
+		// This is the line item 506's hardest case turned on. A results list has
+		// no terminal, so `session.terminal?.focus()` did nothing at all — and
+		// the terminal now showing in the other column had just been given the
+		// keyboard by whatever put it there. A list put beside a terminal
+		// therefore arrived with every key going to the shell: ↓ scrolled its
+		// scrollback and ␣ typed a space at a prompt.
+		giveKeyboard(to: session)
 		activeTerminalChanged()
 	}
 
@@ -2764,8 +2823,16 @@ final class BottomPanel: NSView {
 	/// Replacing the only session would otherwise close the panel and open it
 	/// again, which from the outside looks exactly like pressing debug having
 	/// toggled it shut.
-	private func close(_ session: Session, hidingWhenEmpty: Bool = true) {
+	/// `keepingPane` is a tab going away with its pane still wanted — a results
+	/// list on its way to another home. Without it, closing the tab is also
+	/// forgetting the pane, which is what the ✕ means and what a move must not.
+	private func close(
+		_ session: Session, hidingWhenEmpty: Bool = true, keepingPane: Bool = false
+	) {
 		guard let index = sessions.firstIndex(where: { $0 === session }) else { return }
+		if !keepingPane, case let .search(pane) = session.kind, pane === existingSearchPane {
+			existingSearchPane = nil
+		}
 		switch session.kind {
 		case let .review(pane, _): pane.shutdown()
 		case let .debug(pane): pane.shutdown()
@@ -2817,6 +2884,10 @@ final class BottomPanel: NSView {
 		guard sessions.indices.contains(index) else { return }
 		rename(sessions[index], to: name)
 	}
+
+	/// How many columns the panel is showing, so a script can tell a list that
+	/// is a tab in the strip from one that is beside a terminal.
+	var columnCountForTesting: Int { columnCount }
 
 	/// The strip of the column in front, so the harness can run what its menu
 	/// runs.

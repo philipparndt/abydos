@@ -20,24 +20,24 @@ import AbydosKit
 /// conversion that makes the sharing possible at all. It costs one pass over
 /// each file to read the lines, which the old panel did anyway.
 ///
-/// ## Docked, with a way out to a window
+/// ## Four homes, one view
 ///
-/// This lives in the bottom panel beside search — that is where the checklist it
-/// reuses already lives, and a list of usages is read beside the code rather
-/// than on top of it. **Expand** moves the very same view into a window for
-/// somebody who wants one big enough to read, and **Dock** in that window moves
-/// it back. One view, two hosts, no third way to show the list.
-final class UsagesPane: NSView {
+/// This arrives in the bottom panel beside search — that is where the checklist
+/// it reuses already lives, and a list of usages is read beside the code rather
+/// than on top of it. The **Place** control moves the very same view to any of
+/// `ResultPlacement`'s four homes: the panel, under the project view, beside the
+/// terminals, or a window of its own. One view, four hosts, and the ticks and
+/// the scroll position survive every move because the view moves rather than
+/// being rebuilt.
+final class UsagesPane: NSView, ResultsPane {
 	/// A row was activated, with whether the keyboard goes with it.
 	var onOpen: ((URL, Int, ResultChecklist.Intent) -> Void)?
-	/// Asked to move out of the bottom panel and into a window of its own.
-	var onExpand: (() -> Void)?
-	/// Asked to come back into the bottom panel.
-	var onDock: (() -> Void)?
+	/// Asked to move to one of the four homes.
+	var onPlace: ((ResultPlacement) -> Void)?
 
 	private var heading: NSTextField!
 	private var hideDoneButton: NSButton!
-	private var moveButton: NSButton!
+	private var placeControl: PlacementControl!
 	private let list = ResultChecklist()
 
 	/// What the heading says before the tally, so the pane can be labelled.
@@ -45,10 +45,13 @@ final class UsagesPane: NSView {
 	private var locationCount = 0
 	private var fileCount = 0
 
-	/// Whether the pane is currently in a window rather than in the panel, which
-	/// is the only thing the move button's title depends on.
-	var isInWindow = false {
-		didSet { updateMoveButton() }
+	/// Where the pane is showing, which is the only thing the control's title
+	/// depends on.
+	private(set) var placement: ResultPlacement = .panel
+
+	func setPlacement(_ placement: ResultPlacement) {
+		self.placement = placement
+		placeControl.setPlacement(placement)
 	}
 
 	init() {
@@ -74,12 +77,10 @@ final class UsagesPane: NSView {
 		hideDoneButton.font = Theme.current.uiFont(10, weight: .medium)
 		hideDoneButton.toolTip = "Hide the rows marked done (␣ marks the selection)"
 
-		moveButton = NSButton(title: "Expand", target: self, action: #selector(moveClicked))
-		moveButton.bezelStyle = .rounded
-		moveButton.controlSize = .small
-		moveButton.font = Theme.current.uiFont(10, weight: .medium)
+		placeControl = PlacementControl()
+		placeControl.onChoose = { [weak self] home in self?.onPlace?(home) }
 
-		let controls = NSStackView(views: [heading, hideDoneButton, moveButton])
+		let controls = NSStackView(views: [heading, hideDoneButton, placeControl])
 		controls.orientation = .horizontal
 		controls.spacing = 6
 		controls.alignment = .centerY
@@ -117,30 +118,19 @@ final class UsagesPane: NSView {
 			list.trailingAnchor.constraint(equalTo: trailingAnchor),
 			list.bottomAnchor.constraint(equalTo: bottomAnchor),
 		])
-		updateMoveButton()
 	}
 
 	private var controlsHeight: NSLayoutConstraint!
-
-	private func updateMoveButton() {
-		moveButton.title = isInWindow ? "Dock" : "Expand"
-		moveButton.toolTip = isInWindow
-			? "Put these back in the panel below the editor"
-			: "Show these in a window of their own"
-	}
 
 	@objc private func hideDoneChanged() {
 		list.setHidesDone(hideDoneButton.state == .on)
 		updateHeading()
 	}
 
-	@objc private func moveClicked() {
-		if isInWindow { onDock?() } else { onExpand?() }
-	}
-
 	func applySettings() {
 		controlsHeight.constant = Theme.current.scaled(30)
 		heading.font = Theme.current.uiFont(11)
+		placeControl.applySettings()
 		list.applySettings()
 	}
 
@@ -164,7 +154,7 @@ final class UsagesPane: NSView {
 	}
 
 	/// The pane's own name for its tab and its window title.
-	var title: String { subject == "Usages" ? "Usages" : "Usages of \(subject)" }
+	var paneTitle: String { subject == "Usages" ? "Usages" : "Usages of \(subject)" }
 
 	private func updateHeading() {
 		var text = "\(locationCount) usage\(locationCount == 1 ? "" : "s") "
@@ -187,14 +177,40 @@ final class UsagesPane: NSView {
 
 	func stepForTesting(_ step: String) {
 		switch step {
-		case "expand": onExpand?()
-		case "dock": onDock?()
+		// The two names item 470's scripts use, kept: `expand` and `dock` are
+		// still exactly two of the four homes, and a step renamed is a script
+		// somewhere that stops meaning anything.
+		case "expand": onPlace?(.window)
+		case "dock": onPlace?(.panel)
 		case "heading":
 			print("USAGES heading: \(heading.stringValue) "
-				+ "window=\(isInWindow) "
+				+ "where=\(placement.rawValue) "
 				+ list.undoStateForTesting
 				+ " opened=[\(list.openedForTesting.joined(separator: " "))]")
+			fflush(stdout)
 		default:
+			if step.hasPrefix("place:"),
+			   let home = ResultPlacement(rawValue: String(step.dropFirst("place:".count))) {
+				onPlace?(home)
+				return
+			}
+			// The control itself rather than the callback under it.
+			if step.hasPrefix("menu:"),
+			   let home = ResultPlacement(rawValue: String(step.dropFirst("menu:".count))) {
+				print("USAGES menu: \(placeControl.chooseForTesting(home))")
+				fflush(stdout)
+				return
+			}
+			// A key pressed at the *window*, so the responder chain decides who
+			// gets it. `space-key` and its neighbours go straight to the table,
+			// which is the right test of what the table does with a key and no
+			// test at all of whether the key would have reached it — and that is
+			// the whole question in the home where the list sits beside a
+			// terminal, which wants every keystroke it can get.
+			if step.hasPrefix("window-key:") {
+				pressAtWindowForTesting(String(step.dropFirst("window-key:".count)))
+				return
+			}
 			list.stepForTesting(step)
 		}
 	}
@@ -202,13 +218,13 @@ final class UsagesPane: NSView {
 	var openedForTesting: [String] { list.openedForTesting }
 }
 
-/// The window a usages list is expanded into.
+/// The window a results list is expanded into.
 ///
 /// A panel rather than a window so it floats over the code it is about without
 /// taking the editor's key status away from the project window it belongs to;
 /// `canBecomeKey` because a list nobody can type in is not one this item is
 /// about.
-final class UsagesWindow: NSPanel {
+final class ResultsWindow: NSPanel {
 	var onClose: (() -> Void)?
 
 	override var canBecomeKey: Bool { true }

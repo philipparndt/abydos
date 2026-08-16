@@ -11,8 +11,11 @@ import AbydosKit
 /// pane, which is the same job over a different question. This pane is the query
 /// field, the three options, the `✓` toggle and the status line — everything that
 /// is about *what is in* the list rather than about working through it.
-final class SearchPane: NSView {
+final class SearchPane: NSView, ResultsPane {
 	var onOpenResult: ((URL, Int, SearchMatch, ResultChecklist.Intent) -> Void)?
+	/// Asked to move to one of the four homes. Search goes wherever usages
+	/// goes: item 506's third decision, and the reason is in `ResultsPane`.
+	var onPlace: ((ResultPlacement) -> Void)?
 
 	private let search: ProjectSearch
 	private let projectRoot: URL
@@ -24,8 +27,22 @@ final class SearchPane: NSView {
 	private var wordButton: NSButton!
 	private var regexButton: NSButton!
 	private var hideDoneButton: NSButton!
+	private var placeControl: PlacementControl!
 	private let list = ResultChecklist()
 	private var debounce: DispatchWorkItem?
+
+	/// Where the pane is showing.
+	private(set) var placement: ResultPlacement = .panel
+
+	func setPlacement(_ placement: ResultPlacement) {
+		self.placement = placement
+		placeControl.setPlacement(placement)
+	}
+
+	/// What its tab and its window are called. Search has one name however many
+	/// questions have been asked in it, which is the difference from usages —
+	/// there the symbol is the subject and here the query is being refined.
+	var paneTitle: String { "Search" }
 
 	init(projectRoot: URL) {
 		self.projectRoot = projectRoot
@@ -58,14 +75,31 @@ final class SearchPane: NSView {
 		hideDoneButton = makeToggle("✓", "Hide the rows marked done (␣ marks the selection)")
 		hideDoneButton.action = #selector(hideDoneChanged)
 
-		let controls = NSStackView(
-			views: [field, caseButton, wordButton, regexButton, hideDoneButton, statusLabel]
-		)
-		controls.orientation = .horizontal
-		controls.spacing = 6
-		controls.alignment = .centerY
-		controls.edgeInsets = NSEdgeInsets(top: 0, left: 10, bottom: 0, right: 10)
+		placeControl = PlacementControl()
+		placeControl.onChoose = { [weak self] home in self?.onPlace?(home) }
+
+		queryRow = NSStackView(views: [field])
+		queryRow.orientation = .horizontal
+		queryRow.spacing = 6
+		queryRow.alignment = .centerY
+		queryRow.edgeInsets = NSEdgeInsets(top: 0, left: 10, bottom: 0, right: 10)
+
+		optionRow = NSStackView(views: [])
+		optionRow.orientation = .horizontal
+		optionRow.spacing = 6
+		optionRow.alignment = .centerY
+		optionRow.edgeInsets = NSEdgeInsets(top: 0, left: 10, bottom: 0, right: 10)
+
+		let controls = NSStackView(views: [queryRow, optionRow])
+		controls.orientation = .vertical
+		controls.spacing = 4
+		controls.alignment = .leading
+		controls.distribution = .fillEqually
 		field.setContentHuggingPriority(.defaultLow, for: .horizontal)
+		// The rows are as wide as the pane, whichever of them is showing.
+		for row in [queryRow!, optionRow!] {
+			row.widthAnchor.constraint(equalTo: controls.widthAnchor).isActive = true
+		}
 
 		// Search shows a result when it is asked to — ⏎ or a click — and not as
 		// the selection moves. Walking a project-wide search with ↓ crosses files
@@ -102,6 +136,47 @@ final class SearchPane: NSView {
 	}
 
 	private var controlsHeight: NSLayoutConstraint!
+	private var queryRow: NSStackView!
+	private var optionRow: NSStackView!
+	/// Whether the controls are on two rows because one will not fit.
+	private var isNarrow: Bool?
+
+	/// Where the query field, the three options, the `✓`, the status line and
+	/// the Place control go.
+	///
+	/// One row while there is room, which is what the panel and a window have,
+	/// and two when there is not — which is what the sidebar has. Item 506 found
+	/// this the hard way: the very first search list put under the project view
+	/// had its query field squeezed to the width of the magnifying glass, with
+	/// the toggles sitting on top of it. A results list that cannot be re-asked
+	/// is not the same list somewhere else.
+	///
+	/// The threshold is a width rather than a home. The sidebar is the narrow
+	/// one today, but a panel dragged down to a third of the window is the same
+	/// shape, and asking "which home am I in" would be right about the sidebar
+	/// and wrong about that.
+	private func arrangeControls(narrow: Bool) {
+		guard narrow != isNarrow else { return }
+		isNarrow = narrow
+
+		let options: [NSView] = [
+			caseButton, wordButton, regexButton, hideDoneButton, statusLabel, placeControl,
+		]
+		let wanted = narrow ? optionRow! : queryRow!
+		for view in options {
+			guard view.superview !== wanted else { continue }
+			(view.superview as? NSStackView)?.removeArrangedSubview(view)
+			view.removeFromSuperview()
+			wanted.addArrangedSubview(view)
+		}
+		optionRow.isHidden = !narrow
+		controlsHeight.constant = Theme.current.scaled(narrow ? 62 : 34)
+	}
+
+	override func layout() {
+		super.layout()
+		arrangeControls(narrow: bounds.width < Theme.current.scaled(460))
+	}
 
 	private func makeToggle(_ title: String, _ tooltip: String) -> NSButton {
 		let button = NSButton(title: title, target: self, action: #selector(optionsChanged))
@@ -141,15 +216,24 @@ final class SearchPane: NSView {
 		field.currentEditor()?.selectAll(nil)
 	}
 
+	/// The keyboard, in the list rather than in the field.
+	///
+	/// A move puts it here rather than in the field: the pane has just been
+	/// picked up and put down with rows already in it, and the rows are what
+	/// somebody is looking at. Asking for search in the first place still lands
+	/// in the field, which is where a question is typed.
+	func focusList() { list.focusList() }
+
 	func setQuery(_ text: String) {
 		field.stringValue = text
 		scheduleSearch()
 	}
 
 	func applySettings() {
-		controlsHeight.constant = Theme.current.scaled(34)
+		controlsHeight.constant = Theme.current.scaled(isNarrow == true ? 62 : 34)
 		field.font = Theme.current.uiFont(12)
 		statusLabel.font = Theme.current.uiFont(11)
+		placeControl.applySettings()
 		list.applySettings()
 	}
 
@@ -243,11 +327,30 @@ final class SearchPane: NSView {
 				window?.sendEvent(event)
 			}
 		case "rerun": runSearch()
+		case "list": focusList()
 		case "status":
 			print("SEARCH status: \(statusLabel.stringValue) "
+				+ "where=\(placement.rawValue) "
 				+ list.undoStateForTesting
 				+ " opened=[\(list.openedForTesting.joined(separator: " "))]")
+			fflush(stdout)
 		default:
+			if step.hasPrefix("place:"),
+			   let home = ResultPlacement(rawValue: String(step.dropFirst("place:".count))) {
+				onPlace?(home)
+				return
+			}
+			// The control itself rather than the callback under it.
+			if step.hasPrefix("menu:"),
+			   let home = ResultPlacement(rawValue: String(step.dropFirst("menu:".count))) {
+				print("SEARCH menu: \(placeControl.chooseForTesting(home))")
+				fflush(stdout)
+				return
+			}
+			if step.hasPrefix("window-key:") {
+				pressAtWindowForTesting(String(step.dropFirst("window-key:".count)))
+				return
+			}
 			// A different term is a different question, and the marks under the
 			// old one must not follow: `query:return` over a list ticked under
 			// `needle` is the check that they do not.

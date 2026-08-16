@@ -161,6 +161,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	private var primaryToolView: NSView?
 	private var primaryToolTop: NSLayoutConstraint?
 	private var primaryContainer: NSView!
+	/// The sidebar, split horizontally: the tool above, a results list below
+	/// when one has been put there. One arranged subview and no divider until
+	/// then — see where it is built.
+	private var sidebarSplit: ThinDividerSplitView!
+	/// The lower half, while a list is living in it.
+	private var sidebarDock: ColoredView?
+	/// How much of the sidebar's height the tool keeps, remembered so a list
+	/// coming back finds the divider where it was left rather than halfway.
+	private var sidebarToolFraction: CGFloat = 0.55
 	private(set) var currentSidebarTool: SidebarToolKind = .project
 	/// Height the titlebar covers, applied to sidebar panes that do not inset
 	/// themselves.
@@ -246,30 +255,42 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		pane.onOpen = { [weak self] url, line, intent in
 			self?.openFromChecklist(url, line: line, intent: intent)
 		}
-		pane.onExpand = { [weak self] in self?.expandUsages() }
-		pane.onDock = { [weak self] in self?.dockUsages() }
+		pane.onPlace = { [weak self] home in self?.placeUsages(at: home) }
 		return pane
 	}()
 
-	/// The window a usages list has been expanded into, while there is one.
-	private var usagesWindow: UsagesWindow?
+	/// The window a results list has been expanded into, one per list, while
+	/// there is one.
+	private var usagesWindow: ResultsWindow?
+	private var searchWindow: ResultsWindow?
 
-	/// Whether the next Find Usages arrives in a window rather than in the panel.
+	/// Where the next answer to each question appears.
 	///
-	/// **Per window, in memory, and not written to disk.** Coming back docked
-	/// when somebody has just asked for a window is an answer nobody believes, so
-	/// the choice has to be remembered somewhere; the question is how long for.
-	/// A usage list is transient and so is the reason for wanting it big — this
-	/// symbol has two hundred usages and the panel is forty rows tall. That is
-	/// the shape of the current job rather than a preference about the program,
-	/// which is why it is not in `Settings`: one Expand would otherwise decide
-	/// how Find Usages behaved for months. Per project was the other candidate
-	/// and was ruled out for the same reason plus a worse one — it would be the
-	/// only thing in `ProjectSession` that is about a list nothing restores.
+	/// **Per window, per list, in memory, and not written to disk.** Coming back
+	/// docked when somebody has just asked for a window is an answer nobody
+	/// believes, so the choice has to be remembered somewhere; the question is
+	/// how long for. A results list is transient and so is the reason for
+	/// putting it where it is — this symbol has two hundred usages and the panel
+	/// is forty rows tall, or this search wants to sit under the tree while the
+	/// terminal keeps the panel. That is the shape of the current job rather
+	/// than a preference about the program, which is why it is not in
+	/// `Settings`: one move would otherwise decide how Find Usages behaved for
+	/// months. Per project was the other candidate and was ruled out for the
+	/// same reason plus a worse one — it would be the only thing in
+	/// `ProjectSession` that is about a list nothing restores.
 	///
-	/// It survives the window being closed, which is the case the item names:
+	/// It survives the window being closed, which is the case item 470 named:
 	/// expand, read it, close it, ask again, and the answer is a window.
-	private var usagesOpenInWindow = false
+	///
+	/// **One each rather than one between them**, which item 506 had to decide.
+	/// They are the same widget and the spec says so, but they are reached by
+	/// different actions with different rhythms: a search is a question being
+	/// refined, so it wants to stay where it can be typed at, and a usage list
+	/// is a job being walked, so it wants to be wherever there is room. Somebody
+	/// who sends a two-hundred-row usage list to a window has said nothing about
+	/// where ⇧⌘F should answer, and a shared placement would make them say it.
+	private var usagesPlacement: ResultPlacement = .panel
+	private var searchPlacement: ResultPlacement = .panel
 
 	/// Where news the user did not ask for goes.
 	private lazy var toasts = ToastPresenter(window: window)
@@ -532,21 +553,36 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		navigatorContainer = ColoredView(color: Theme.current.sidebarBackground)
 		navigatorContainer.colourSource = { Theme.current.sidebarBackground }
 
-		// The sidebar holds the tool and nothing else. It used to be a split with a
-		// second pane underneath for a docked view, and the only thing ever docked
-		// there was the usages list — which item 470 moved into the bottom panel
-		// beside search, where the checklist it shares already lives. A split with
-		// one pane in it and a divider nobody can reach is not worth keeping for a
-		// route nothing takes.
+		// The sidebar holds the tool, and a results list under it when one has
+		// been put there.
+		//
+		// It used to be a split with a second pane underneath for a docked view,
+		// and the only thing ever docked there was the usages list — which item
+		// 470 moved into the bottom panel beside search, where the checklist it
+		// shares already lives. It was made one view again because "a split with
+		// one pane in it and a divider nobody can reach is not worth keeping for
+		// a route nothing takes".
+		//
+		// **That reason was about the route, not about the split, and item 506 is
+		// the route.** So the split is back, with the objection answered rather
+		// than repeated: `sidebarSplit` holds exactly one arranged subview
+		// whenever nothing is docked below, and an `NSSplitView` with one subview
+		// draws no divider at all. There is nothing to reach until there is
+		// something to reach for.
 		let toolContainer = ColoredView(color: Theme.current.sidebarBackground)
 		toolContainer.colourSource = { Theme.current.sidebarBackground }
-		toolContainer.translatesAutoresizingMaskIntoConstraints = false
-		navigatorContainer.addSubview(toolContainer)
+
+		sidebarSplit = ThinDividerSplitView()
+		sidebarSplit.isVertical = false
+		sidebarSplit.dividerStyle = .thin
+		sidebarSplit.addArrangedSubview(toolContainer)
+		sidebarSplit.translatesAutoresizingMaskIntoConstraints = false
+		navigatorContainer.addSubview(sidebarSplit)
 		NSLayoutConstraint.activate([
-			toolContainer.topAnchor.constraint(equalTo: navigatorContainer.topAnchor),
-			toolContainer.bottomAnchor.constraint(equalTo: navigatorContainer.bottomAnchor),
-			toolContainer.leadingAnchor.constraint(equalTo: navigatorContainer.leadingAnchor),
-			toolContainer.trailingAnchor.constraint(equalTo: navigatorContainer.trailingAnchor),
+			sidebarSplit.topAnchor.constraint(equalTo: navigatorContainer.topAnchor),
+			sidebarSplit.bottomAnchor.constraint(equalTo: navigatorContainer.bottomAnchor),
+			sidebarSplit.leadingAnchor.constraint(equalTo: navigatorContainer.leadingAnchor),
+			sidebarSplit.trailingAnchor.constraint(equalTo: navigatorContainer.trailingAnchor),
 		])
 
 		primaryContainer = toolContainer
@@ -2276,8 +2312,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	func setFindQuery(_ query: String) { editor.setFindQuery(query) }
 
 	func setProjectSearchQuery(_ query: String) {
-		setPanelVisible(true)
-		bottomPanel.showSearch(query: query)
+		showProjectSearch(query: query)
+	}
+
+	/// ⇧⌘F, wherever the last answer to it was.
+	///
+	/// The placement is honoured before the query is typed, because the field
+	/// has to be in a window to take the keyboard and the move is what puts it
+	/// in one.
+	private func showProjectSearch(query: String?) {
+		guard let pane = bottomPanel.makeSearchPaneIfNeeded() else { return }
+		pane.onPlace = { [weak self] home in self?.placeSearch(at: home) }
+		placeSearch(at: searchPlacement, focusList: false)
+		if let query { pane.setQuery(query) }
+		// The field rather than the list: asking for search is asking a question,
+		// and the question is typed. A *move* puts the keyboard in the rows —
+		// that pane already has an answer in it.
+		pane.focusField()
 	}
 
 	/// Works the search results the way somebody working through them does, and
@@ -2325,6 +2376,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				}
 				continue
 			}
+			// ⇧⌘F again, which is the only way to ask where the *next* search
+			// answers. The claim item 506 has to make about remembering is about
+			// the next question and not about this pane, so a step that moved the
+			// pane would be checking something else.
+			if step == "again" {
+				findInProject(nil)
+				continue
+			}
 			pane.stepForTesting(step)
 		}
 	}
@@ -2333,9 +2392,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	@objc func findPrevious(_ sender: Any?) { editor.findPrevious() }
 
 	@objc func findInProject(_ sender: Any?) {
-		setPanelVisible(true)
+		// No `setPanelVisible(true)` here since item 506: the panel is one of
+		// four homes now, and showing it for a search that is about to appear
+		// under the project view is a panel opening for nothing.
+		//
 		// Seed from the selection, which is what you usually want to search for.
-		bottomPanel.showSearch(query: editor.selectedTextForSearch())
+		showProjectSearch(query: editor.selectedTextForSearch())
 	}
 
 	// MARK: - Go
@@ -4724,8 +4786,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		findUsages(in: url, line: line, character: character)
 		DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
 			guard let self else { return }
-			print("USAGES: in window=\(self.usagesInWindowForTesting) "
-				+ "panel=\(self.bottomPanel.existingUsagesPane != nil)")
+			print("USAGES: where=\(self.usagesPlacement.rawValue) "
+				+ "window=\(self.usagesInWindowForTesting) "
+				+ "panel=\(self.bottomPanel.existingUsagesPane != nil) "
+				+ "sidebar=\(self.sidebarDock?.subviews.first === self.usagesPane) "
+				+ "columns=\(self.bottomPanel.columnCountForTesting)")
+			fflush(stdout)
 			self.usagesPane.stepForTesting("heading")
 			self.usagesPane.stepForTesting("who")
 		}
@@ -4739,8 +4805,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// pressed on regardless would be asking about rows that had not been built.
 	func usagesStepsForTesting(_ steps: String) {
 		let script = steps.split(separator: ",").map(String.init)
-		guard bottomPanel.existingUsagesPane != nil || usagesInWindowForTesting else {
+		guard bottomPanel.existingUsagesPane != nil
+			|| usagesInWindowForTesting
+			|| usagesPane.superview != nil
+		else {
 			print("USAGES: no list")
+			fflush(stdout)
 			return
 		}
 		runUsagesSteps(script)
@@ -4856,6 +4926,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	/// Whether the usages list is showing in a window rather than in the panel.
 	var usagesInWindowForTesting: Bool { usagesWindow != nil }
+
 
 	/// Everywhere the symbol at a position is used.
 	///
@@ -5151,39 +5222,173 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		usagesPane.show(
 			locations: locations, of: symbol, at: origin, root: project?.scopeRoot
 		)
-		if usagesOpenInWindow {
-			expandUsages()
-		} else {
-			dockUsages()
+		placeUsages(at: usagesPlacement)
+	}
+
+	private func placeUsages(at home: ResultPlacement) {
+		usagesPlacement = home
+		place(usagesPane, at: home, window: &usagesWindow, release: { [weak self] in
+			self?.bottomPanel.releaseUsages()
+		}, dock: { [weak self] beside, focusList in
+			guard let self else { return }
+			self.setPanelVisible(true)
+			self.bottomPanel.dockUsages(
+				self.usagesPane, title: self.usagesPane.paneTitle,
+				beside: beside, focusList: focusList
+			)
+		})
+	}
+
+	/// `focusList` is false for the ⇧⌘F that *makes* the pane: the keyboard goes
+	/// to the field there, and a move that grabbed it back would put the caret
+	/// in the rows of a search nobody has typed yet.
+	private func placeSearch(at home: ResultPlacement, focusList: Bool = true) {
+		guard let pane = bottomPanel.existingSearchPane else { return }
+		searchPlacement = home
+		place(pane, at: home, window: &searchWindow, focusList: focusList, release: { [weak self] in
+			self?.bottomPanel.releaseSearch()
+		}, dock: { [weak self] beside, focus in
+			guard let self else { return }
+			self.setPanelVisible(true)
+			self.bottomPanel.dockSearch(pane, beside: beside, focusList: focus)
+		})
+	}
+
+	/// Moves a results list to one of its four homes.
+	///
+	/// One route for both lists and all four destinations, because the property
+	/// that has to hold is about the *move* rather than about any one home: the
+	/// same view is taken out of wherever it is and put into the next one, so the
+	/// rows, the ticks, the scroll position and the selection come with it. A
+	/// pane rebuilt per home would arrive with the work undone, which is the
+	/// mistake item 470 already avoided between two hosts and there are now four.
+	///
+	/// Every branch ends the same way — the keyboard, in the list. That is not
+	/// tidiness: `spec/usages.md` is the reason the list exists in the shape it
+	/// does, and a home that arrives without the keyboard is a home where ↓
+	/// scrolls something else.
+	private func place(
+		_ pane: any ResultsPane,
+		at home: ResultPlacement,
+		window slot: inout ResultsWindow?,
+		focusList: Bool = true,
+		release: () -> Void,
+		dock: (Bool, Bool) -> Void
+	) {
+		// Out of whatever it is in now, in every case. Taking it out of the panel
+		// is the panel's own call because the tab has to go with it; the other
+		// two are a superview and a content view.
+		release()
+		undockFromSidebar(pane)
+		// The sidebar slot takes one guest, like the window and unlike the strip:
+		// there is one lower half and splitting it again would be a sidebar of
+		// three things, which is a tool window layout and not what was asked for.
+		// Whoever is there goes back to the panel, and *its* placement is
+		// updated, so the control on it says where it now is.
+		if home == .sidebar { evictFromSidebar(unless: pane) }
+		if let existing = slot, home != .window {
+			existing.onClose = nil
+			existing.contentView = nil
+			existing.close()
+			slot = nil
+		}
+		pane.removeFromSuperview()
+		pane.setPlacement(home)
+
+		switch home {
+		case .panel: dock(false, focusList)
+		case .beside: dock(true, focusList)
+		case .sidebar: dockInSidebar(pane, focusList: focusList)
+		case .window: expand(pane, into: &slot, focusList: focusList)
 		}
 	}
 
-	/// The list in the bottom panel, beside search.
-	private func dockUsages() {
-		usagesOpenInWindow = false
-		if let usagesWindow {
-			usagesWindow.onClose = nil
-			usagesWindow.contentView = nil
-			usagesWindow.close()
-			self.usagesWindow = nil
+	// MARK: - Under the project view
+
+	/// Sends whichever list is under the project view back to the panel, so the
+	/// one arriving finds the slot empty.
+	private func evictFromSidebar(unless pane: any ResultsPane) {
+		if usagesPlacement == .sidebar, usagesPane !== pane { placeUsages(at: .panel) }
+		if searchPlacement == .sidebar, bottomPanel.existingSearchPane !== pane {
+			placeSearch(at: .panel)
 		}
-		usagesPane.isInWindow = false
-		usagesPane.removeFromSuperview()
-		setPanelVisible(true)
-		bottomPanel.dockUsages(usagesPane, title: usagesPane.title)
 	}
+
+	/// Puts a list in the lower half of the sidebar, splitting it for the
+	/// occasion.
+	private func dockInSidebar(_ pane: any ResultsPane, focusList: Bool) {
+		let dock: ColoredView
+		if let existing = sidebarDock {
+			dock = existing
+		} else {
+			dock = ColoredView(color: Theme.current.sidebarBackground)
+			dock.colourSource = { Theme.current.sidebarBackground }
+			sidebarDock = dock
+			// `translatesAutoresizingMaskIntoConstraints` stays on for a split
+			// view's own subviews: the split view sets their frames, and a
+			// subview that refuses to be framed is one the divider cannot move.
+			sidebarSplit.addArrangedSubview(dock)
+		}
+		dock.subviews.forEach { $0.removeFromSuperview() }
+
+		pane.translatesAutoresizingMaskIntoConstraints = false
+		dock.addSubview(pane)
+		NSLayoutConstraint.activate([
+			pane.topAnchor.constraint(equalTo: dock.topAnchor),
+			pane.bottomAnchor.constraint(equalTo: dock.bottomAnchor),
+			pane.leadingAnchor.constraint(equalTo: dock.leadingAnchor),
+			pane.trailingAnchor.constraint(equalTo: dock.trailingAnchor),
+		])
+
+		// A list put under a sidebar that is shut is a list nobody can see, and
+		// the move was somebody asking to see it. Same reason the panel route
+		// calls `setPanelVisible(true)`.
+		//
+		// A maximised terminal is the same problem one layer out: it hides the
+		// whole of `splitView`, sidebar and editor together, so the list arrives
+		// in a view that is not on screen. It was arriving there in silence —
+		// the first run of this said `where=sidebar` over a window with nothing
+		// but a terminal in it. The window comes back, which is what asking for
+		// a list beside the tree meant.
+		if isPanelMaximized { togglePanelMaximized(nil) }
+		if navigatorContainer.isHidden
+			|| splitView.isSubviewCollapsed(navigatorContainer)
+			|| navigatorContainer.frame.width < 2 {
+			openNavigator()
+		}
+
+		let height = sidebarSplit.bounds.height
+		if height > 80 {
+			sidebarSplit.setPosition(height * sidebarToolFraction, ofDividerAt: 0)
+		}
+		sidebarSplit.adjustSubviews()
+		if focusList { DispatchQueue.main.async { pane.focusList() } }
+	}
+
+	/// Takes a list out of the sidebar and puts the sidebar back to one view.
+	private func undockFromSidebar(_ pane: any ResultsPane) {
+		guard let dock = sidebarDock, pane.superview === dock else { return }
+		// The fraction the divider was left at, so coming back finds it there.
+		let height = sidebarSplit.bounds.height
+		if height > 80 {
+			sidebarToolFraction = min(0.9, max(0.1, (height - dock.frame.height) / height))
+		}
+		pane.removeFromSuperview()
+		dock.removeFromSuperview()
+		sidebarDock = nil
+		sidebarSplit.adjustSubviews()
+	}
+
+	// MARK: - A window of its own
 
 	/// The same view, in a window big enough to read two hundred rows in.
-	private func expandUsages() {
-		usagesOpenInWindow = true
-		bottomPanel.releaseUsages()
-		usagesPane.removeFromSuperview()
-		usagesPane.isInWindow = true
-
-		let window = usagesWindow ?? makeUsagesWindow()
-		usagesWindow = window
-		window.title = usagesPane.title
-		window.contentView = usagesPane
+	private func expand(
+		_ pane: any ResultsPane, into slot: inout ResultsWindow?, focusList: Bool
+	) {
+		let window = slot ?? makeResultsWindow(for: pane)
+		slot = window
+		window.title = pane.paneTitle
+		window.contentView = pane
 
 		if let parent = self.window {
 			let frame = parent.frame
@@ -5203,15 +5408,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		} else {
 			window.orderFront(nil)
 		}
-		// The same call the docked route needs, for the same reason: a list nobody
-		// gave the keyboard to is one ↓ cannot walk.
-		DispatchQueue.main.async { [weak self] in self?.usagesPane.focusList() }
+		// The same call every other home needs, for the same reason: a list
+		// nobody gave the keyboard to is one ↓ cannot walk.
+		if focusList { DispatchQueue.main.async { pane.focusList() } }
 	}
 
-	private func makeUsagesWindow() -> UsagesWindow {
+	private func makeResultsWindow(for pane: any ResultsPane) -> ResultsWindow {
 		// No full-size content: the heading would be drawn under the titlebar, on
 		// top of the title and the traffic lights.
-		let window = UsagesWindow(
+		let window = ResultsWindow(
 			contentRect: NSRect(x: 0, y: 0, width: 760, height: 520),
 			styleMask: [.titled, .closable, .resizable],
 			backing: .buffered,
@@ -5219,13 +5424,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		)
 		window.backgroundColor = Theme.current.editorBackground
 		// Closing is being finished with the list, not asking for it back in the
-		// panel: the choice of a window stands, so the next Find Usages opens one.
-		window.onClose = { [weak self] in
-			guard let self, let window = self.usagesWindow else { return }
+		// panel: the choice of a window stands, so the next answer opens one.
+		window.onClose = { [weak self, weak window, weak pane] in
+			guard let window, let pane else { return }
 			window.parent?.removeChildWindow(window)
-			self.usagesPane.removeFromSuperview()
+			pane.removeFromSuperview()
 			window.contentView = nil
-			self.usagesWindow = nil
+			if self?.usagesWindow === window { self?.usagesWindow = nil }
+			if self?.searchWindow === window { self?.searchWindow = nil }
 			window.orderOut(nil)
 		}
 		return window
