@@ -48,6 +48,15 @@ public final class LSPClient: @unchecked Sendable {
 	/// deliberate.
 	public var onStandardError: ((String) -> Void)?
 	public var onExit: (() -> Void)?
+	/// The server began, or finished, the first stretch of work it reported.
+	///
+	/// Called once with `true` and once with `false` per server, and not at all
+	/// for a server that reports no progress. `WorkDoneProgress` is the rule and
+	/// says why the *first* stretch is the only one that counts; what it is for
+	/// is 0501 — a Swift package whose dependencies are not built publishes
+	/// `No such module` for the minute the server spends building them, and this
+	/// is the only thing on the wire that knows the minute is not over.
+	public var onPreparing: ((Bool) -> Void)?
 
 	public var callbackQueue: DispatchQueue = .main
 
@@ -64,6 +73,22 @@ public final class LSPClient: @unchecked Sendable {
 	private var buffer = Data()
 	private var nextID = 1
 	private var pending: [Int: (Result<Any?, Error>) -> Void] = [:]
+
+	/// What the server has said it is busy with. Behind the lock like everything
+	/// else the reader thread touches.
+	private var progress = WorkDoneProgress()
+
+	/// Whether the server is still getting ready to answer.
+	public var isPreparing: Bool { locked { progress.isPreparing } }
+
+	/// How long the work has to have stopped before preparation is called over.
+	///
+	/// An order of magnitude clear of the gaps a server leaves *inside* its own
+	/// startup — the longest measured was `rust-analyzer`'s 0.1 seconds between
+	/// closing `Fetching` and opening `Building CrateGraph` — and far shorter
+	/// than the pause before somebody saves a file, which starts the work that
+	/// must not count.
+	static let preparationGrace: TimeInterval = 1
 
 	/// How many times a reader callback has run.
 	///
@@ -309,6 +334,20 @@ public final class LSPClient: @unchecked Sendable {
 	/// makes servers send things nobody reads, and some of them are expensive
 	/// to produce.
 	static let clientCapabilities: [String: Any] = [
+		// **The one place the editor can find out that a server is not ready
+		// yet**, and measured before it was claimed: driven against a Swift
+		// package whose dependencies were not built, `sourcekit-lsp` sends no
+		// `$/progress` at all to a client that does not ask for it — the whole of
+		// what it says about a minute of building is `Preparing <target>` in the
+		// log, which never says a target finished. Asked for, it opens a token
+		// 13.8 seconds before the false `No such module` appears and closes it
+		// 0.1 seconds after it clears. 0501.
+		//
+		// The cost is about five hundred notifications over that minute, each a
+		// dictionary lookup on the reader thread, and `WorkDoneProgress` answers
+		// two of them rather than five hundred — so nothing above this is woken
+		// for a percentage nobody draws.
+		"window": ["workDoneProgress": true],
 		"textDocument": [
 			"synchronization": ["didSave": true, "dynamicRegistration": false],
 			"publishDiagnostics": ["relatedInformation": false],
@@ -373,7 +412,12 @@ public final class LSPClient: @unchecked Sendable {
 		self.errorPipe = nil
 		isInitialized = false
 		queuedNotifications = []
+		// A server killed while it was still preparing would otherwise leave the
+		// word up over a process that is gone.
+		let wasPreparing = progress.stopped()
 		lock.unlock()
+
+		if wasPreparing { callbackQueue.async { self.onPreparing?(false) } }
 
 		// Before the process is asked to go: once it has, these fire on a
 		// closed descriptor and are called back immediately, for ever.
@@ -792,6 +836,48 @@ public final class LSPClient: @unchecked Sendable {
 				.joined(separator: " ")
 			guard !said.isEmpty else { return }
 			callbackQueue.async { self.onStatus?(said) }
+
+		case "$/progress":
+			// Where a server says it is not ready yet. The token is a string or a
+			// number in the protocol and both are flattened to a string here:
+			// what is done with it is set membership, and a server that numbers
+			// its tokens is saying the same thing as one that names them.
+			//
+			// `create` is not handled and does not need to be — it is a request,
+			// the `default` below replies null to it, and null is consent. What
+			// matters is the begin and the end, which arrive here.
+			guard let value = parameters["value"] as? [String: Any],
+			      let kind = value["kind"] as? String
+			else { return }
+			let token = (parameters["token"] as? String)
+				?? (parameters["token"] as? NSNumber).map { "\($0)" }
+			guard let token else { return }
+			lock.lock()
+			let change = progress.received(kind: kind, token: token)
+			lock.unlock()
+			// Only on the ones that change the answer. The measured cold start
+			// sent about five hundred of these, and hopping to the main queue for
+			// each would be five hundred redraws of a bar the caret is in.
+			switch change {
+			case .nothing:
+				break
+			case .startedPreparing:
+				callbackQueue.async { self.onPreparing?(true) }
+			case .mayHaveFinished:
+				// **Asked again rather than believed**, and `WorkDoneProgress` has
+				// the measurement: `rust-analyzer` closes each step before opening
+				// the next, so its set of open tokens emptied eight times during a
+				// startup that ran to 8.7 seconds. Taking the first of those as
+				// the end put the word up for one eighth of the wait.
+				callbackQueue.asyncAfter(deadline: .now() + Self.preparationGrace) {
+					[weak self] in
+					guard let self else { return }
+					self.lock.lock()
+					let finished = self.progress.settleIfStillIdle()
+					self.lock.unlock()
+					if finished { self.onPreparing?(false) }
+				}
+			}
 
 		case "workspace/configuration":
 			// One answer per section asked about, and the answer is "nothing

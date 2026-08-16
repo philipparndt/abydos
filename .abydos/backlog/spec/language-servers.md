@@ -427,6 +427,32 @@ machine's compiler for a couple of minutes, and the project's container coming
 up. The words agree with the strip above the file because both are written in one
 place.
 
+**A fourth word, for a server that is here and not ready: preparing.** The other
+three are a server that has not arrived; this is one that arrived, answered the
+handshake, and is building what the project depends on before it can answer
+anything true about it. Measured on a Swift package with C++ in its dependencies
+and nothing built, the server publishes `No such module` thirteen seconds after
+the file is opened and withdraws it a minute later, and for that minute the chip
+said the same word it says when every answer is right. Nothing is hidden while it
+says this — the errors stay exactly where they are — and the tool tip says the
+part the word cannot: that an error here saying something does not exist may be
+about the build rather than about the code.
+
+It is in the footer and nowhere else, and the number that decided that is 1.2
+seconds — what preparing costs on a *second* open with everything already built.
+A banner appearing and vanishing inside a second and a half on every project open
+would push the file down and let it back for nothing, while the chip is already
+drawn during preparation and only changes its word.
+
+**What counts as preparing is the work the server says it is doing**, over
+work-done progress, which is the protocol's own and not any one language's:
+`sourcekit-lsp` opens a token before the false error appears and closes it after
+it clears, `gopls` opens one numbered `Setting up workspace`, `rust-analyzer`
+opens seven named ones. Only the *first* stretch of work counts — servers report
+progress for as long as they run, and a chip that said preparing after every save
+is a chip people stop reading — and a stretch is not over the moment nothing is
+open, because several servers close each step before opening the next.
+
 **And it is quiet when there is nothing to name.** A language with no server
 running and none coming gets no chip at all, which is most files in most
 projects; a footer that talks about every one of them is a footer people stop
@@ -485,6 +511,30 @@ starts, stops, is refused or is reconsidered, which the app already announces.
 - **Then** no chip is drawn at all, and the language and the caret's position
   keep their place
 
+### Scenario: a server building what the project depends on
+
+- **Given** a Swift package whose dependencies have not been built
+- **When** a file in it is opened and the server reports the work it is doing
+- **Then** the footer reads `sourcekit-lsp — preparing`
+- **And** the diagnostics on the file are shown exactly as the server sent them,
+  including the one about a module that does not exist yet
+- **And** nothing is said above the file
+
+### Scenario: the same package opened a second time
+
+- **Given** the same package with everything already built
+- **When** a file in it is opened
+- **Then** the chip says preparing for the second or so the server takes, and
+  then names the server and no more
+
+### Scenario: a server that goes on working after it is ready
+
+- **Given** a server that has finished preparing and reports progress again —
+  a reindex after a save, a check of the file
+- **When** that work begins
+- **Then** the chip does not say preparing again: the wait it names happens once
+  per server
+
 ### Scenario: a file whose language has no server
 
 - **Given** a file of a language nothing is running for and nothing is coming
@@ -530,6 +580,21 @@ never arrived. **None of them reads as a crash**: two say the server is running,
 all three name the project rather than the server, and the next project this
 server is asked about may be perfectly readable.
 
+**Nothing a server says while it is preparing counts at all.** A server that has
+to build the project before it can answer reports the failures of its own build
+at error level — `sourcekit-lsp` runs a compiler per target and an indexing
+process per file, and says `Finished with exit code 1` about the ones that do not
+come back cleanly — and it answers hover and completion with nothing for the same
+minute. Those are both halves of the rule below, and both of them false: measured
+on a package with nothing built, twenty seconds into an ordinary first open the
+strip said the server could not read the project and a toast said it again, about
+a server that answered thirty seconds later. So while a server is preparing its
+error-level messages are logged and no more, and an empty answer is not counted
+against it — an answer *with* content still is, because that is what withdraws a
+sentence and there is no case for holding good news back. Nothing is lost: the
+state is untouched, and a server that really cannot read the project says so
+again once it is ready and is believed then.
+
 **An error message on its own is not enough to call a server broken.** Servers
 log errors that are not fatal, and measured on the `rust-analyzer` image this
 repository builds, the levels do not sort them: a project it could not load is
@@ -564,6 +629,14 @@ of the server trying.
 - **When** a file in it is opened
 - **Then** the strip says what could read the project, rather than quoting the
   server's complaint about it
+
+### Scenario: a server complaining about its own build while it prepares
+
+- **Given** a Swift package whose dependencies are not built, whose server
+  reports the non-zero exits of its own index build at error level
+- **When** a file in it is opened and hover and completion come back empty
+- **Then** nothing is said above the file and no toast is shown
+- **And** the footer says the server is preparing, which is what is true
 
 ### Scenario: a server that complains and goes on working
 

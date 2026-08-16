@@ -202,6 +202,18 @@ final class LanguageService {
 	/// file in the next one — a Rust project that fails leaves every other Rust
 	/// project on the machine looking broken for the rest of the session.
 	private var health: [String: ServerHealth] = [:]
+	/// Servers that are running and are not ready to be believed yet.
+	///
+	/// Keyed like `servers` and `health`, and for the same reason: a Swift
+	/// package building its dependencies is a fact about *that* project, and a
+	/// table keyed by the language would say "preparing" over a file in the next
+	/// one.
+	///
+	/// **A set rather than something asked of the client**, because `footer` is
+	/// read beside every caret move and must stay a handful of lookups — the same
+	/// shape as `fetching` and `buildingHere`, which are the other waits. It is
+	/// written twice per server, from `LSPClient.onPreparing`. 0501.
+	private var preparing: Set<String> = []
 	/// Failures already said out loud, so a server that repeats itself on every
 	/// file does not repeat the toast on every file.
 	private var announced: Set<String> = []
@@ -721,7 +733,12 @@ final class LanguageService {
 				command: server.definition.command,
 				languageName: languageName,
 				origin: server.origin,
-				state: .answering
+				// Running is not the same as ready, which is what this used to
+				// say. A Swift package whose dependencies are not built answers
+				// `No such module` for the minute it spends building them, and
+				// the chip said `sourcekit-lsp` throughout — the same word it
+				// says when every answer is right. 0501.
+				state: preparing.contains(key) ? .preparing : .answering
 			)
 		}
 
@@ -1123,6 +1140,18 @@ final class LanguageService {
 	/// could not answer confirms it.
 	private func answered(withContent: Bool, for key: String) {
 		guard let current = health[key], !current.isWorking else { return }
+		// An empty answer from a server that is still preparing is not evidence
+		// of anything: it is what preparing *looks like*. Hover and completion
+		// over a module that has not been built yet come back with nothing for
+		// the whole of that minute, and reading those as the failed question
+		// that turns a report into "cannot read this project" would put the
+		// strongest sentence this app has over the most ordinary thing a Swift
+		// project does. 0501.
+		//
+		// An answer *with* content is still taken, and taken gladly: it is the
+		// evidence that withdraws a sentence, and there is no case for holding
+		// good news back.
+		guard withContent || !preparing.contains(key) else { return }
 		changeHealth(of: key) { $0.answered(withContent: withContent) }
 	}
 
@@ -1726,6 +1755,7 @@ final class LanguageService {
 			// for. Left behind, the strip would go on reporting a refusal from a
 			// server that has since been replaced.
 			health.removeValue(forKey: key)
+			preparing.remove(key)
 			// An image still on its way, for an answer that has been replaced. The
 			// fetch itself is left to finish — the image is worth having on the
 			// machine either way — but taking the key out is what makes it stop at
@@ -2404,6 +2434,10 @@ final class LanguageService {
 			// it showed as the list going empty and staying empty after a Stop.
 			guard let held = self.servers[key]?.client, held === client else { return }
 			self.servers.removeValue(forKey: key)
+			// A server that died in the middle of preparing. The chip goes with
+			// the entry, but the set is what `footer` reads and a key left in it
+			// would say "preparing" from the first frame of whatever starts next.
+			self.preparing.remove(key)
 			self.runningNames.removeAll { $0 == resolved.definition.command }
 			self.log("\(resolved.definition.command) exited")
 			NotificationCenter.default.post(name: .ideaiLanguageServersChanged, object: nil)
@@ -2412,6 +2446,21 @@ final class LanguageService {
 		// of it that means "I cannot work" is said out loud once.
 		client.onMessage = { [weak self] level, text in
 			self?.serverSaid(level: level, text: text, definition: resolved.definition, key: key)
+		}
+		// Twice per server and no more: once when it starts building what the
+		// project depends on, once when it has finished. The chip beside the
+		// caret is the only thing that reads it, and `.ideaiLanguageServersChanged`
+		// is what pushes it there — the same notification every start, stop and
+		// refusal already posts, so nothing new has to be listened for.
+		client.onPreparing = { [weak self] isPreparing in
+			guard let self else { return }
+			// By key rather than by client: a server stopped by hand and started
+			// again under the same key is a different client, and the one that
+			// is filed now is the one the chip is drawn from.
+			if isPreparing { self.preparing.insert(key) } else { self.preparing.remove(key) }
+			self.log("\(resolved.definition.command) "
+				+ (isPreparing ? "is preparing this project" : "has finished preparing"))
+			NotificationCenter.default.post(name: .ideaiLanguageServersChanged, object: nil)
 		}
 		client.onStandardError = { [weak self] text in
 			guard let self else { return }
@@ -2474,6 +2523,10 @@ final class LanguageService {
 		// any more, and leaving it here would put a strip over a server that has
 		// not been given the chance to say anything.
 		health.removeValue(forKey: key)
+		// And it has not started preparing yet. A key left in this set from the
+		// server before would have the chip saying "preparing" from the first
+		// frame of a server that may never say a word about progress.
+		preparing.remove(key)
 
 		Task { @MainActor in
 			// The handshake has to finish before anything else is sent, but
@@ -2739,6 +2792,26 @@ final class LanguageService {
 		// costs nothing, at level 1. That is why an error here is a report and
 		// not a verdict; `ServerHealth` is where the difference is written down.
 		guard level == 1 else { return }
+
+		// **Not while it is preparing**, and this is the second half of 0501
+		// rather than a nicety. Watched in the real app on a cold open of a
+		// package with eighteen C++ targets: `sourcekit-lsp` reports the
+		// subprocesses of its own index build at error level — `Finished with
+		// signal 2`, `Finished with exit code 1` — and every one of them landed
+		// here, so twenty seconds into a perfectly ordinary first open the strip
+		// said the server *cannot read this project* and a red toast said it
+		// again. That sentence is 0461's, it is about a server that will never
+		// answer, and it was being said about one that answered thirty seconds
+		// later.
+		//
+		// `ServerHealth` already says the level is a poorer signal than it looks
+		// and that a message is a report rather than a verdict. This is the same
+		// argument with a fact the app now has: the server has said it is not
+		// ready, so what it says about failures while it gets ready is about the
+		// build. Nothing is lost for good — `said` keeps the *first* diagnosis
+		// and the state is still `.working`, so a server that really cannot read
+		// the project says so again on the next file and is believed then.
+		guard !preparing.contains(key) else { return }
 		changeHealth(of: key) { $0.said(line) }
 
 		// Once per server, not once per message. A server that cannot load a
@@ -2909,6 +2982,7 @@ final class LanguageService {
 		// What it said about this project went with it: the next server started
 		// under this key is a new process and a new question.
 		health.removeValue(forKey: key)
+		preparing.remove(key)
 		log("\(server.definition.command) was stopped \(reason) for "
 			+ "\(server.project.lastPathComponent)")
 		NotificationCenter.default.post(name: .ideaiLanguageServersChanged, object: nil)
@@ -2980,6 +3054,7 @@ final class LanguageService {
 		staleDevcontainerChoices.remove(path)
 		devcontainerFailures.remove(path)
 		health = health.filter { !$0.key.hasPrefix(prefix) }
+		preparing = preparing.filter { !$0.hasPrefix(prefix) }
 		announced.removeAll()
 		emptied.removeAll()
 		NotificationCenter.default.post(name: .ideaiLanguageServersChanged, object: nil)
@@ -2999,6 +3074,7 @@ final class LanguageService {
 		servers.removeAll()
 		runningNames.removeAll()
 		health.removeAll()
+		preparing.removeAll()
 		fetching.removeAll()
 		buildingHere.removeAll()
 		deferredOpens.removeAll()
