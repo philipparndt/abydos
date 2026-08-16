@@ -117,6 +117,20 @@ final class CadovaPreviewView: DelayedPaneView {
 		failureText.isSelectable = true
 		failureText.drawsBackground = false
 		failureText.textContainerInset = NSSize(width: 14, height: 12)
+		// **The four lines 0507 was.** An `NSTextView()` is built with a zero frame
+		// and a zero text container, and putting it in a scroll view does not give
+		// it either: the clip view positions its document view, it does not size
+		// one. Measured in the app, on the unfixed pane: the text view was
+		// `0 × 640` — full height and **no width at all** — so it laid out its
+		// glyphs 1689 points wide, outside itself, and painted none of them. A
+		// Cadova run that produced no model showed a pane with nothing whatsoever
+		// in it, no model and no message, which is exactly what was reported. These
+		// are the same four lines the Markdown preview beside it sets, for the same
+		// reason.
+		failureText.autoresizingMask = [.width]
+		failureText.isVerticallyResizable = true
+		failureText.isHorizontallyResizable = false
+		failureText.textContainer?.widthTracksTextView = true
 		failureScroll.documentView = failureText
 		failureScroll.drawsBackground = false
 		failureScroll.hasVerticalScroller = true
@@ -442,6 +456,48 @@ final class CadovaPreviewView: DelayedPaneView {
 			: (failureText.string.split(whereSeparator: \.isNewline).first.map(String.init) ?? "")
 		return "CADOVA: state=\(state) runs=\(runsForTesting) "
 			+ "product=\(model.product) model=\(showing?.lastPathComponent ?? "none") "
-			+ "said=\(said)"
+			+ "drawn=\(Int(drawnArea.width))x\(Int(drawnArea.height)) said=\(said)"
+	}
+
+	/// How big what this pane is saying actually comes out on screen, in points.
+	///
+	/// **The number 0507 needed and did not have.** A report that reads a `String`
+	/// out of a text view says what the pane *holds*, and the fault was a pane that
+	/// held four lines of compiler and showed none of them: `state=failed
+	/// said=…error: …` was printed for something nobody could see. What a pane
+	/// says and whether it is on screen are two questions, and only the second one
+	/// is the promise.
+	///
+	/// **Two numbers and not one, and the layout manager is the wrong thing to
+	/// ask** — both of which took measuring rather than reasoning. The obvious
+	/// instrument was `usedRect(for:)`, and against the unfixed pane it answered
+	/// `1689 × 39`: a layout manager will lay glyphs out happily in a container
+	/// nobody sized and report how big they came out, while the view that would
+	/// paint them is not there. Measured on the unfixed pane, in the app:
+	///
+	///     frame 0 × 640, container -28 × 10000000, used 1689 × 39, scroll 548 × 640
+	///
+	/// The text view was **zero points wide** and full height — so any height
+	/// anybody measured, from the frame or from the layout manager, was a number
+	/// that looked healthy for a pane showing nothing at all. The width is the one
+	/// that was zero, which is why this is a size.
+	private var drawnArea: CGSize {
+		if viewer != nil { return bounds.size }
+		if !failureScroll.isHidden {
+			// Clipped to the scroll view: a pane showing 40 points of a 900-point
+			// document is showing 40 points.
+			return CGSize(
+				width: min(failureText.frame.width, failureScroll.frame.width),
+				height: min(failureText.frame.height, failureScroll.frame.height)
+			)
+		}
+		guard let notice, !notice.isEmpty else { return .zero }
+		let width = max(80, bounds.width - 64)
+		let height = NSAttributedString(string: notice, attributes: [.font: Theme.current.uiFont(12)])
+			.boundingRect(
+				with: NSSize(width: width, height: .greatestFiniteMagnitude),
+				options: [.usesLineFragmentOrigin]
+			).height
+		return CGSize(width: width, height: height)
 	}
 }

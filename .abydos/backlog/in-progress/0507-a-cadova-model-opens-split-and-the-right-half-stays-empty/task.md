@@ -201,12 +201,12 @@ beside its source, `runs=1 model=hex-key-holder.3mf`.
       given a file actually opens one
 - [x] A negative answer from the driver says what *is* in front, and looks in
       every group rather than only the active one
-- [ ] Find why nothing appears: whether `whenShown` fires, and what the pane is
+- [x] Find why nothing appears: whether `whenShown` fires, and what the pane is
       showing when it does not
-- [ ] Fix it, and say in here which of the two candidates it was
-- [ ] The pane says what it is doing while it does it, including the first cold
+- [x] Fix it, and say in here which of the two candidates it was
+- [x] The pane says what it is doing while it does it, including the first cold
       build
-- [ ] `drawn=` reports what the pane *paints*, not what its layout manager could
+- [x] `drawn=` reports what the pane *paints*, not what its layout manager could
       lay out — the first version of this number could not tell the fault from
       the fix and is corrected above
 - [ ] Watched against **this** fixture, not the spike, with a screenshot of the
