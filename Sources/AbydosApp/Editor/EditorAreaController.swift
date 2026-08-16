@@ -453,8 +453,8 @@ final class EditorAreaController: NSViewController {
 		(activeGroup ?? groups.first)?.openCommitDiff(commit: commit, file: file, root: root, text: text)
 	}
 
-	func simulateArrow(_ direction: String, modifiers: NSEvent.ModifierFlags) {
-		(activeGroup ?? groups.first)?.simulateArrow(direction, modifiers: modifiers)
+	func simulateKey(_ key: String, modifiers: NSEvent.ModifierFlags) {
+		(activeGroup ?? groups.first)?.simulateKey(key, modifiers: modifiers)
 	}
 
 	var completionReportForTesting: String {

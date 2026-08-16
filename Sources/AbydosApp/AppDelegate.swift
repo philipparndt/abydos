@@ -840,6 +840,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if options.emacsNavigation {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+				controller?.exerciseEmacsNavigationForTesting()
+			}
+		}
+
 		if options.fakeDiagnostics {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
 				controller?.injectDiagnosticsForTesting()

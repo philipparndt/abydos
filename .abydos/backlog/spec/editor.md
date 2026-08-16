@@ -305,3 +305,65 @@ the jump to the ends of the document is offsets and never asks about a row.
 - **When** ⌘↑ is pressed, and then, from offset 775 again, ⌘↓
 - **Then** the caret lands on offset 0 and then on offset 863, the same two
   places the shifted pair land on, and nothing is selected either time
+
+## Requirement: ⌃B and ⌃F move the caret a character, and so do ← and →
+
+The editor has one horizontal character motion and it is **logical**: a step
+forward is one character further into the document, a step back is one
+character towards its start. Four key bindings arrive at it. ← and → send
+`moveLeft:` and `moveRight:`, which name a visual direction; ⌃B and ⌃F send
+`moveBackward:` and `moveForward:`, which name a logical one. In a file of
+left-to-right text those are the same motion, and this editor treats them as
+the same motion everywhere.
+
+That is a decision and not an accident, and its limit is written down: in
+right-to-left text logical forward is leftward on the screen, so ⌃F would be
+correct and → would not. The editor does not lay text out bidirectionally —
+every offset it works in is logical, and reordering happens only when a line
+is drawn — so there is no second, visual motion for the arrows to answer to.
+An editor that gained right-to-left support would have to give them one; until
+then ⌃F and → agree, and ⌃B and ← agree.
+
+Shift decides only whether the text stepped over comes with the caret. ⇧⌃F
+extends the selection forward by the character it moves over and ⇧⌃B backward
+by one, exactly as ⇧→ and ⇧← do.
+
+A character is a composed character, so an emoji or a letter with a combining
+mark is one step and not two. At the start of a line the character before the
+caret is the newline that ended the line above, so ⌃B goes to the end of that
+line; at offset zero there is nothing to step over and the caret stays.
+
+The rest of the emacs family is not this requirement. ⌃P and ⌃N move up and
+down a line because macOS sends them as the same selectors the arrows send.
+
+### Scenario: ⌃F and ⌃B in the middle of a line
+
+- **Given** the caret at offset 50, which is column 6 of `third line of the file`
+- **When** ⌃F is pressed
+- **Then** the caret is at offset 51 and nothing is selected
+- **And** ⌃B from offset 50 puts it at 49, also with nothing selected
+
+### Scenario: ⇧⌃F and ⇧⌃B take the character with them
+
+- **Given** the caret at offset 50, with the `l` of `line` in front of it
+- **When** ⇧⌃F is pressed
+- **Then** the caret is at offset 51 and `l` is selected
+- **And** ⇧⌃B from offset 50 puts the caret at 49 with the space before `line` selected
+
+### Scenario: ⌃F over an emoji
+
+- **Given** the caret at offset 50, with `🙂` in front of it
+- **When** ⇧⌃F is pressed
+- **Then** the caret is at offset 52 and the whole `🙂` is selected, not half of it
+
+### Scenario: ⌃B at the start of a line
+
+- **Given** the caret at column 0 of the third line, which is offset 44
+- **When** ⌃B is pressed
+- **Then** the caret is at offset 43, the end of the line above
+
+### Scenario: ⌃B at the start of the file
+
+- **Given** the caret at offset 0
+- **When** ⌃B is pressed
+- **Then** the caret is still at offset 0 and nothing is selected

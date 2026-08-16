@@ -8930,15 +8930,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	func exerciseWordNavigationForTesting() {
 		defer { fflush(stdout) }
 		print("WORD: start \(editor.caretReportForTesting)")
-		editor.simulateArrow("right", modifiers: .option)
+		editor.simulateKey("right", modifiers: .option)
 		print("WORD: ⌥→ \(editor.caretReportForTesting)")
-		editor.simulateArrow("right", modifiers: .option)
+		editor.simulateKey("right", modifiers: .option)
 		print("WORD: ⌥→ \(editor.caretReportForTesting)")
-		editor.simulateArrow("right", modifiers: [.option, .shift])
+		editor.simulateKey("right", modifiers: [.option, .shift])
 		print("WORD: ⇧⌥→ \(editor.caretReportForTesting)")
-		editor.simulateArrow("left", modifiers: .option)
+		editor.simulateKey("left", modifiers: .option)
 		print("WORD: ⌥← \(editor.caretReportForTesting)")
-		editor.simulateArrow("left", modifiers: .option)
+		editor.simulateKey("left", modifiers: .option)
 		print("WORD: ⌥← \(editor.caretReportForTesting)")
 	}
 
@@ -8972,7 +8972,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			say(label)
 		}
 		func press(_ key: String, _ label: String, _ modifiers: NSEvent.ModifierFlags) {
-			editor.simulateArrow(key, modifiers: modifiers)
+			editor.simulateKey(key, modifiers: modifiers)
 			say(label)
 		}
 
@@ -9030,6 +9030,76 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		press("down", "⌘↓", .command)
 		place("at 3@4", line: 3, column: 4)
 		press("down", "⌘⇧↓", [.command, .shift])
+	}
+
+	/// Presses the emacs motions — ⌃B, ⌃F and their shifted twins, with ⌃P and
+	/// ⌃N as the control — and says where the caret and the selection landed.
+	///
+	/// A separate driver from `--vertical-nav` rather than four more lines in
+	/// it: these are letter keys with a modifier, they need a file with
+	/// ordinary short lines rather than one 723 characters long, and the run
+	/// people will want to read is the four keystrokes together.
+	///
+	/// The caret goes back to the same place before each press, so every line
+	/// is an independent keystroke and not a run — a ⌃B after a ⌃F would land
+	/// back where it started and say nothing about either.
+	func exerciseEmacsNavigationForTesting() {
+		func say(_ label: String) {
+			let padded = label.padding(toLength: 12, withPad: " ", startingAt: 0)
+			print("EMACS: \(padded)\(editor.caretReportForTesting)")
+			fflush(stdout)
+		}
+		func place(_ label: String, line: Int, column: Int) {
+			editor.setCaretForTesting(line: line, column: column)
+			say(label)
+		}
+		func press(_ key: String, _ label: String, _ modifiers: NSEvent.ModifierFlags) {
+			editor.simulateKey(key, modifiers: modifiers)
+			say(label)
+		}
+
+		// Said out loud because the setting persists between launches and has
+		// twice now made a run read as the wrong one of two. It makes no
+		// difference to anything below — every motion here is `caret ± 1` in
+		// document offsets, and none of them asks what row it is on.
+		print("EMACS: word wrap is \(Settings.shared.wordWrap ? "on" : "off")")
+		// Which document the offsets below are offsets into. The first run of
+		// this driver reported a caret in a file nobody had asked for — the
+		// app opens `--file` some time after launch, and until it lands the
+		// active tab is whatever the last session left. A report of caret=26
+		// is unfalsifiable without this line, and looks exactly like a motion
+		// gone wrong.
+		print("EMACS: the file ends \(editor.textTailForTesting)")
+		fflush(stdout)
+
+		// Mid-line, so both directions have somewhere to go and the shifted
+		// pair have something to select.
+		place("at 2@6", line: 2, column: 6)
+		press("f", "⌃F", .control)
+		place("at 2@6", line: 2, column: 6)
+		press("b", "⌃B", .control)
+		place("at 2@6", line: 2, column: 6)
+		press("f", "⇧⌃F", [.control, .shift])
+		place("at 2@6", line: 2, column: 6)
+		press("b", "⇧⌃B", [.control, .shift])
+
+		// The edges. At column 0 the character before the caret is the newline
+		// that ended the line above, so ⌃B goes to the end of that line rather
+		// than staying put — the same step, over a character that happens not
+		// to be printable. At offset 0 there is nothing behind the caret at
+		// all and the clamp keeps it there.
+		place("at 2@0", line: 2, column: 0)
+		press("b", "⌃B", .control)
+		place("at 0@0", line: 0, column: 0)
+		press("b", "⌃B", .control)
+
+		// The control the whole item is built on: the vertical half of the
+		// same family, which arrives as plain `moveUp:`/`moveDown:` and has
+		// always worked.
+		place("at 2@6", line: 2, column: 6)
+		press("p", "⌃P", .control)
+		place("at 2@6", line: 2, column: 6)
+		press("n", "⌃N", .control)
 	}
 
 	func openFirstScratchForTesting() {

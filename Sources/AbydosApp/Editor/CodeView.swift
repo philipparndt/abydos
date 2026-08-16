@@ -2083,10 +2083,33 @@ final class CodeView: NSView, NSTextInputClient {
 		if completionKeyHandler?(selector) == true { return }
 
 		switch selector {
-		case #selector(moveLeft(_:)):            moveHorizontally(-1, extending: false)
-		case #selector(moveRight(_:)):           moveHorizontally(1, extending: false)
-		case #selector(moveLeftAndModifySelection(_:)):  moveHorizontally(-1, extending: true)
-		case #selector(moveRightAndModifySelection(_:)): moveHorizontally(1, extending: true)
+		// ← and → arrive as `moveLeft:`/`moveRight:`; ⌃B and ⌃F arrive as
+		// `moveBackward:`/`moveForward:`, which are selectors of their own —
+		// visual order against logical order — and had no case here, so they
+		// fell through `default:`. The emacs motions worked vertically, where
+		// ⌃P and ⌃N are plain `moveUp:`/`moveDown:`, and did nothing at all
+		// horizontally.
+		//
+		// The pairing is not logical order bent into visual order, though it
+		// looks like it: `moveHorizontally` is `caret + delta` in document
+		// offsets, so the motion these four share is *already* the logical one
+		// and it is `moveRight:` that is misnamed. In right-to-left text ⌃F
+		// would be correct and → would be wrong, exactly as wrong as it was
+		// before this line. Nothing in this editor does bidi — layout is
+		// offsets and only `CTLine` reorders, at the moment it draws — so
+		// there is no second, visual order to route the arrows to, and
+		// building one is not this switch's job. The word motions below have
+		// paired the same two orders since they were written.
+		case #selector(moveLeft(_:)), #selector(moveBackward(_:)):
+			moveHorizontally(-1, extending: false)
+		case #selector(moveRight(_:)), #selector(moveForward(_:)):
+			moveHorizontally(1, extending: false)
+		case #selector(moveLeftAndModifySelection(_:)),
+		     #selector(moveBackwardAndModifySelection(_:)):
+			moveHorizontally(-1, extending: true)
+		case #selector(moveRightAndModifySelection(_:)),
+		     #selector(moveForwardAndModifySelection(_:)):
+			moveHorizontally(1, extending: true)
 		case #selector(moveUp(_:)):              moveVertically(-1, extending: false)
 		case #selector(moveDown(_:)):            moveVertically(1, extending: false)
 		case #selector(moveUpAndModifySelection(_:)):    moveVertically(-1, extending: true)

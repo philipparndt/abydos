@@ -121,6 +121,9 @@ struct LaunchOptions {
 	/// Exercise ↑ and ↓ at the top and bottom of the file, with and without
 	/// Shift, and report where the caret and the selection end up.
 	var verticalNavigation = false
+	/// Exercise the emacs motions — ⌃B, ⌃F, ⇧⌃B, ⇧⌃F, and ⌃P and ⌃N as the
+	/// control — and report where the caret and the selection end up.
+	var emacsNavigation = false
 	/// Type this at the end of the file and leave the completion list showing.
 	var completeText: String?
 	/// Ring the terminal bell this many seconds before the Metal capture.
@@ -745,6 +748,7 @@ struct LaunchOptions {
 			case "--fake-diagnostics": options.fakeDiagnostics = true
 			case "--word-nav":   options.wordNavigation = true
 			case "--vertical-nav": options.verticalNavigation = true
+			case "--emacs-nav":  options.emacsNavigation = true
 			case "--complete":   options.completeText = next()
 			case "--bell":       options.bellBefore = next().flatMap(Double.init) ?? 0.15
 			case "--undo-tree":  options.undoTree = true

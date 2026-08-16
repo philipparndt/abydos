@@ -2691,33 +2691,53 @@ final class EditorViewController: NSViewController {
 		while !tabs.isEmpty { closeTab(at: tabs.count - 1) }
 	}
 
-	/// Routes text through `NSTextInputClient.insertText`, the same entry point
-	/// a real keystroke takes.
-	/// Presses an arrow key with modifiers, the way a keyboard would.
+	/// Presses a key with modifiers, the way a keyboard would.
 	///
 	/// Through `keyDown` rather than by calling the command directly: what is
 	/// being checked is that the system's key bindings reach the editor, not
 	/// that the editor has a method with the right name.
 	///
-	/// Page Up and Page Down are in here too. They are the same kind of key to a
-	/// text view — a vertical motion with a screenful as its step, arriving at
-	/// the same method — and a second function differing only in a key code
-	/// would be the one somebody forgets to keep up with this one.
-	func simulateArrow(_ direction: String, modifiers: NSEvent.ModifierFlags) {
+	/// The arrows, Page Up and Page Down, and the letters the emacs bindings
+	/// use are all in here together. They are the same kind of key to a text
+	/// view — something AppKit turns into a selector — and a second function
+	/// differing only in a key code would be the one somebody forgets to keep
+	/// up with this one. It was called `simulateArrow` while it knew only the
+	/// six navigation keys, and ⌃B could not be pressed through it at all.
+	func simulateKey(_ key: String, modifiers: NSEvent.ModifierFlags) {
 		guard let tab = activeTab, let codeView = tab.codeView else { return }
 		view.window?.makeFirstResponder(codeView)
 
-		let keyCodes = [
-			"left": 123, "right": 124, "down": 125, "up": 126,
-			"pageup": 116, "pagedown": 121,
+		let navigationKeys: [String: (code: Int, character: Int)] = [
+			"left": (123, NSLeftArrowFunctionKey), "right": (124, NSRightArrowFunctionKey),
+			"down": (125, NSDownArrowFunctionKey), "up": (126, NSUpArrowFunctionKey),
+			"pageup": (116, NSPageUpFunctionKey), "pagedown": (121, NSPageDownFunctionKey),
 		]
-		let characters = [
-			"left": NSLeftArrowFunctionKey, "right": NSRightArrowFunctionKey,
-			"down": NSDownArrowFunctionKey, "up": NSUpArrowFunctionKey,
-			"pageup": NSPageUpFunctionKey, "pagedown": NSPageDownFunctionKey,
-		]
-		guard let code = keyCodes[direction], let character = characters[direction] else { return }
-		let text = String(UnicodeScalar(character)!)
+		// The emacs letters — ⌃A ⌃B ⌃D ⌃E ⌃F ⌃K ⌃N ⌃O ⌃P — whether or not
+		// anything presses all of them today, because looking a key code up
+		// again is the cost of leaving them out.
+		let letterKeys = ["a": 0, "b": 11, "d": 2, "e": 14, "f": 3, "k": 40, "n": 45, "o": 31, "p": 35]
+
+		let code: Int
+		let characters: String
+		let ignoringModifiers: String
+		if let navigation = navigationKeys[key.lowercased()] {
+			code = navigation.code
+			characters = String(UnicodeScalar(navigation.character)!)
+			ignoringModifiers = characters
+		} else if let letter = letterKeys[key.lowercased()], let scalar = key.lowercased().unicodeScalars.first {
+			code = letter
+			// A letter held with Control reports the control character in
+			// `characters` and the bare letter in `charactersIgnoringModifiers`
+			// — Shift reaching only the second of the two. AppKit matches the
+			// binding against the pair, so a key built with the same string in
+			// both fields arrives as nothing at all.
+			ignoringModifiers = modifiers.contains(.shift) ? key.uppercased() : key.lowercased()
+			characters = modifiers.contains(.control)
+				? String(UnicodeScalar(UInt8(scalar.value & 0x1F)))
+				: ignoringModifiers
+		} else {
+			return
+		}
 
 		guard let event = NSEvent.keyEvent(
 			with: .keyDown,
@@ -2726,8 +2746,8 @@ final class EditorViewController: NSViewController {
 			timestamp: ProcessInfo.processInfo.systemUptime,
 			windowNumber: view.window?.windowNumber ?? 0,
 			context: nil,
-			characters: text,
-			charactersIgnoringModifiers: text,
+			characters: characters,
+			charactersIgnoringModifiers: ignoringModifiers,
 			isARepeat: false,
 			keyCode: UInt16(code)
 		) else { return }
@@ -2833,6 +2853,8 @@ final class EditorViewController: NSViewController {
 		return codeView.clickBelowLastLineForTesting()
 	}
 
+	/// Routes text through `NSTextInputClient.insertText`, the same entry point
+	/// a real keystroke takes.
 	func simulateTyping(_ text: String) {
 		guard let tab = activeTab, let codeView = tab.codeView else { return }
 		view.window?.makeFirstResponder(codeView)
