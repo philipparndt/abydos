@@ -129,17 +129,56 @@ Said out loud in the spec as a requirement of its own, and asserted by
 accident: Cadova writes its `.3mf` beside the package, so the working directory
 is what decides where the file 0499 has to find will be.
 
+## What was watched
+
+`--run-config <name>` is new: `--run-configs` says what the list holds, and this
+says what one of them *does*, which is the question that catches a configuration
+that looks right and does not run.
+
+This repository's own manifest, copied beside its own Makefile so the driver run
+could not write into the worktree — the joke the item was filed on, resolved:
+
+    Make: build → make build
+    … thirty of them …
+    Swift Package: swift run Abydos → swift run Abydos
+    Swift Package: swift run abydos-backlog → swift run abydos-backlog
+    Swift Package: swift run abydos-hook → swift run abydos-hook
+    Swift Package: swift run firebench → swift run firebench
+    Swift Package: swift test → swift test
+
+A two-executable package, started from the app:
+
+    RUNCONFIG: starting swift run beta
+    RUNCONFIG: after 8s: Building for debugging... ⏎ [1 / 1] ⏎
+      Build complete! (0.28 sec) ⏎ [process exited with status 0] ⏎ beta ran
+
+And 0499's own spike, which is the run that matters:
+
+    RUNCONFIG: starting swift run spike
+    RUNCONFIG: after 8s: [1 / 45] Cadova ⏎ Build complete! (1.68 sec) ⏎
+      [INFO] Generating "hexholder"... ⏎
+      [INFO] Wrote model to …/cadova-spike/hexholder.3mf ⏎
+      [process exited with status 0]
+
+`hexholder.3mf` was deleted before the run and was there afterwards, beside the
+package — which is the working-directory decision, observed rather than argued.
+
+The package with a network dependency and no `.build` at all lists exactly the
+same `swift run spike`, and discovery left nothing behind in it. Reading the
+manifest does not care whether resolution has happened, which `dump-package`
+would have.
+
 ## Steps
 
 - [x] Measure both ways of enumerating, and decide between them in writing
 - [x] `RunConfiguration` finds executable targets in a `Package.swift` project
-- [ ] It runs one, with the package root as the working directory
+- [x] It runs one, with the package root as the working directory
 - [x] Decide about `swift test` as a kind, and do it or write down why not
 - [x] `Package.swift` in `definingFileNames`, so a package written after the
       project was opened gets its entries without reopening
 - [x] Tests for discovery against a manifest with more than one executable
-- [ ] A driver that starts one configuration by name, so a run can be watched
-- [ ] Watched in the app: a Swift package's executables in the run list, and
+- [x] A driver that starts one configuration by name, so a run can be watched
+- [x] Watched in the app: a Swift package's executables in the run list, and
       one of them actually running
 - [ ] Write down here what was ruled out on the way
 - [ ] `spec/run-configurations.md` says what the project now does
