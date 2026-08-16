@@ -178,6 +178,42 @@ nothing to reach until there is something to reach for.
   longer does: the panel is one of four homes now, and opening it for a search
   that is about to appear under the project tree is a panel opening for nothing.
 
+### How each claim was checked
+
+Nothing in the window layer has a test, so these are driver runs against the
+built app. `place:<home>` moves the list, `menu:<home>` goes through the
+pull-down's own item, `window-key:<key>` sends a key at the window, `again` asks
+the question a second time.
+
+Both lists, all four homes, one move after another, with two rows already
+selected and marked done:
+
+    40 in 6 files · 2 done  where=panel   undo=Mark as Done   firstResponder=ChecklistTable
+    40 in 6 files · 2 done  where=sidebar undo=Mark as Done   firstResponder=ChecklistTable
+    40 in 6 files · 2 done  where=beside  undo=Mark as Done   firstResponder=ChecklistTable
+    40 in 6 files · 2 done  where=window  undo=Mark as Done   firstResponder=ChecklistTable
+    40 in 6 files · 2 done  where=panel   undo=Mark as Done   firstResponder=ChecklistTable
+      *3 match 5229 beside: beside, focusList: focusList DONE
+      *4 match 5229 beside: beside, focusList: focusList DONE
+
+Beside a live `tmux` shell, keys sent at the window rather than at the table:
+two ↓ and a ␣ moved the selection two rows, struck the second one through, and
+`who` said `ChecklistTable` before and after. Nothing reached the prompt. The
+usages list in the same home also previewed its row —
+`opened=[…/ResultChecklist.swift:199]` — with the keyboard still in the list,
+which is `spec/usages.md`'s ↓ requirement holding in the new home.
+
+The control, rather than the callback under it:
+
+    SEARCH menu: title=Tree   ticked=Under the Project View
+    USAGES menu: title=Window ticked=In a Window of Its Own
+
+Remembered, which is a question about the *next* answer and not about the pane:
+
+    SEARCH  menu:sidebar → where=sidebar, then ⇧⌘F again → where=sidebar
+    USAGES  menu:window  → where=window, close the window, Find Usages again
+                         → where=window
+
 ## Steps
 
 - [x] Read the sidebar-split comment and say whether the reason it was
@@ -194,11 +230,11 @@ nothing to reach until there is something to reach for.
 - [x] A driver step that sends a key through the *window* rather than into the
       table, so "the terminal did not take it" is a claim that can fail
 - [x] Search moves the same four ways usages does
-- [ ] The placement is remembered, by whatever was decided
+- [x] The placement is remembered, by whatever was decided
 - [x] Watched in the app, in each home, with a screenshot of each
 - [x] Write down here what was ruled out on the way
 - [x] `spec/usages.md` and `spec/search.md` say what the project now does
 
 ## Estimate
 
-2026-08-16 17:50 — most of a day
+2026-08-16 18:26 — done
