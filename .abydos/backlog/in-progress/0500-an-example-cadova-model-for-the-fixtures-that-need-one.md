@@ -1,10 +1,16 @@
 # 500. An example Cadova model, for the fixtures that need one
 
 0424 made the examples repository the fixture for anything that cannot be
-tested by reasoning, and eighteen `*LiveTests` use it: `ExampleProjects.root`
-finds `../abydos-examples` beside this checkout — or three levels further up,
-when the caller is in a worktree — and every test using it skips cleanly when
-it is not there.
+tested by reasoning: `ExampleProjects.root` finds `../abydos-examples` beside
+this checkout — or three levels further up, when the caller is in a worktree —
+and every test using it skips cleanly when it is not there.
+
+*Corrected while doing the work:* this item was filed saying eighteen
+`*LiveTests` use it. Eighteen files are named `*LiveTests`, but
+`ExampleProjects.root` had exactly one caller —
+`DevContainerLifecycleLiveTests.swift:197`. The other suites that want the
+examples repository walk up from `#filePath` themselves. The claim is true of
+the fixture and was not true of the symbol.
 
 0498 and 0499 both want one of these. Discovering a Swift package's executables
 and previewing what one of them writes are exactly the claims that cannot be
@@ -43,7 +49,13 @@ something to disagree about.
 - [ ] It builds and writes a 3MF from a clean checkout
 - [ ] A live test that uses it and skips cleanly when the examples repository
       is not beside this one
+- [ ] Settle in writing which side of the ordinary suite the *building* is on,
+      since the fixture being present is the ordinary case on a working machine
 - [ ] Say in the item which commits are in which repository
 - [ ] Write down here what was ruled out on the way
 - [ ] The spec, if this changes what the project does — it may not, and saying
       so is the answer rather than skipping the step
+
+## Estimate
+
+2026-08-16 13:50 — about two hours left
