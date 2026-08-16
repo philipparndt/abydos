@@ -2712,10 +2712,10 @@ final class EditorViewController: NSViewController {
 			"down": (125, NSDownArrowFunctionKey), "up": (126, NSUpArrowFunctionKey),
 			"pageup": (116, NSPageUpFunctionKey), "pagedown": (121, NSPageDownFunctionKey),
 		]
-		// The emacs letters — ⌃A ⌃B ⌃D ⌃E ⌃F ⌃K ⌃N ⌃P — whether or not anything
-		// presses all of them today, because looking a key code up again is
-		// the cost of leaving them out.
-		let letterKeys = ["a": 0, "b": 11, "d": 2, "e": 14, "f": 3, "k": 40, "n": 45, "p": 35]
+		// The emacs letters — ⌃A ⌃B ⌃D ⌃E ⌃F ⌃K ⌃N ⌃O ⌃P — whether or not
+		// anything presses all of them today, because looking a key code up
+		// again is the cost of leaving them out.
+		let letterKeys = ["a": 0, "b": 11, "d": 2, "e": 14, "f": 3, "k": 40, "n": 45, "o": 31, "p": 35]
 
 		let code: Int
 		let characters: String

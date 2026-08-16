@@ -198,6 +198,126 @@ keystrokes stayed out of this item.
   no global shortcut, no menu item, nothing that could take ⌃B before a
   terminal sees it.
 
+## Found and ruled out on the way
+
+- **⌃O used to do nothing and now steps the caret back one character. Filed as
+  [0499](../open/0499-o-steps-the-caret-back-one-character-and-opens-no-line.md).**
+  This is the one thing in this item that had to be looked for rather than
+  found: `StandardKeyBinding.dict` binds `^o` to a *pair* of selectors,
+  `['insertNewlineIgnoringFieldEditor:', 'moveBackward:']`. The first has no
+  case here and the second now does, so a key that was inert became half of
+  open-line. Watched with a probe and the probe taken out again:
+
+      EMACS: at 2@6      caret=50 selection=50..<50 “”
+      EMACS: ⌃O          caret=49 selection=49..<49 “”
+      EMACS: PROBE after ⌃O third line of the file
+
+  Not fixed here. The obvious one-liner —
+  `insertNewlineIgnoringFieldEditor:` → `insertNewlineWithIndent()` — decides
+  by accident what open-line does about the indent it copies, and that is a
+  decision nobody has made.
+
+- **⌥↑ and ⌥↓ are the same story and are the reason to look for it.** ⌃O was
+  not found by pressing keys at random. `StandardKeyBinding.dict` has exactly
+  **three** bindings whose value is a *list* of selectors rather than one, and
+  all three begin with a selector this item just gave a case to:
+
+      plutil -convert json -o - …/AppKit.framework/Resources/StandardKeyBinding.dict
+
+      '^o'   -> ['insertNewlineIgnoringFieldEditor:', 'moveBackward:']
+      '~↑'   -> ['moveBackward:', 'moveToBeginningOfParagraph:']
+      '~↓'   -> ['moveForward:', 'moveToEndOfParagraph:']
+
+  A list is sent in order, and a selector nobody handles is skipped rather
+  than stopping the rest — so a binding whose halves are split between handled
+  and unhandled does half of itself. ⌥↑ and ⌥↓ were dead in both halves
+  yesterday and now do the first one:
+
+      EMACS: at 2@6      caret=50 selection=50..<50 “”
+      EMACS: ⌥↑          caret=49 selection=49..<49 “”
+      EMACS: at 2@6      caret=50 selection=50..<50 “”
+      EMACS: ⌥↓          caret=51 selection=51..<51 “”
+
+  Cocoa's ⌥↑ is "step back one, then go to the start of this paragraph" — the
+  step back is what makes it move to the *previous* paragraph when the caret
+  is already at the start of one. On its own it is a one-character motion on a
+  key that should make a paragraph-sized one, which is worse than the dead key
+  it replaced on a pair of keys people actually press.
+
+  **Not fixed here, and it does not want its own item.** The second half of
+  both is `moveToBeginningOfParagraph:`/`moveToEndOfParagraph:`, which is
+  exactly what **0498** is: give those two cases and ⌥↑ and ⌥↓ complete
+  themselves, with no line written for them specifically. Recorded in 0498 as
+  the reason to take it sooner rather than later.
+
+  This is also the general lesson, and it is worth more than the three keys:
+  **adding a case to `doCommand` can change a key that does not appear in the
+  diff**, because AppKit sends some bindings as sequences. The three above are
+  the whole set today, and the `plutil` line is how to ask again.
+
+- **No unit test, and there is nowhere honest to put one.** The same answer
+  0495 reached, for the same reason: this is a `switch` case sending a selector
+  to a function that already exists and is already exercised by ← and →.
+  `CodeView` lives in `AbydosApp` and needs a window; the one test target is
+  `AbydosKitTests`. A pure type mapping two selector names to a delta of ±1
+  would be a test of the test. The before-and-after driver runs are the check,
+  which is why the step asked for a watched one.
+
+- **The first driver run reported a caret in a file nobody had opened.** It
+  said `caret=26` in a document whose last line was `alias dc="docker
+  compose"` — a tab the previous session had left. `--file` is opened some
+  time after launch and the drivers fire 1.2 seconds in, and on a project
+  directory the app has never seen before the file has not arrived yet.
+  Reproduced on purpose against a second, fresh directory, so it is the
+  behaviour and not a one-off. **Not fixed by making the wait longer** — a
+  bigger number is the same race — but the driver now prints what document it
+  is on, which turns twenty minutes of reading correct-looking offsets into
+  one line. The second run of the same command line is fine, because by then
+  the project is one the app knows.
+
+- **A driver that presses a deleting key edits the file it was pointed at.**
+  The ⌃D in the family probe really did delete the `l` from `third line`, and
+  the app **autosaved it to disk**: the next run reported `⇧⌃F … “i”` and `⌃N
+  … caret=72`, one offset short all the way down, and read like a motion bug.
+  The scratch file was rewritten and the run repeated. Anything that presses
+  ⌃D, ⌃K or ⌃O through a driver should assume the file on disk changes.
+
+- **No menu item takes any of these four keystrokes, and that is the app's own
+  answer rather than a grep.** `--menu-keys` lists every key equivalent with
+  the layout applied; the ones with Control in them are ⌃R, ⌃D, ⌃⇧P, ⌃⌘R,
+  ⌃⌘T, ⌃⌘D, ⌃⌘F, ⌃⌘P, ⌃⌘Space and ⌃⌘1-4. **⌃B, ⇧⌃B, ⌃F and ⇧⌃F appear
+  nowhere**, so nothing is in front of the editor for them and the item's
+  ruled-out constraint holds without anything being added to keep it. Worth
+  doing this way round because the driver *cannot* answer it: it synthesises a
+  `keyDown` straight into the code view, which is the right way to prove a
+  binding reaches the editor and skips exactly the dispatch a menu item would
+  win. ⌃D is the proof that the difference is real — the driver sees
+  `deleteForward:`, the app has Run ▸ Debug on it.
+
+- **One `simulateKey`, not a second function beside `simulateArrow`.** Its own
+  comment already argued this when Page Up joined it — "a second function
+  differing only in a key code would be the one somebody forgets to keep up
+  with this one" — and a letter key differs by more than a key code, which
+  makes the argument stronger rather than weaker. The rename touches three
+  files and six call sites and no behaviour.
+
+- **The ⇧ in ⇧⌃F is not decoration in the synthesised event.** A letter held
+  with Control reports the control character in `characters` and the bare
+  letter in `charactersIgnoringModifiers`, with Shift reaching only the
+  second. An event built with the same string in both fields is not the event
+  a keyboard sends, and the binding it matches is not the one intended.
+
+- **`simulateTyping`'s doc comment had drifted onto the function below it**
+  and was two paragraphs above the function it describes, glued to
+  `simulateArrow`'s. Moved back, since this item rewrote the comment it was
+  stuck to.
+
+- **RTL was not built, and the decision above says why not.** What was
+  *checked* is that nothing in this repository's Swift mentions bidi at all,
+  so there is no half-built visual order this change contradicts. What is left
+  is a real gap — `CTLine` reorders when it draws and the motions do not — and
+  it is unchanged by this item, not created by it.
+
 ## Estimate
 
 2026-08-16 11:51 — half an hour left
@@ -234,6 +354,13 @@ keystrokes stayed out of this item.
       2610 tests in 365 suites passed. `make warnings` says no warnings in
       this repository's Swift, with the four vendored tree-sitter C warnings
       it always reports.
-- [ ] Write down here what was ruled out on the way
+- [x] Every binding that sends one of these selectors as part of a *sequence*,
+      because those keys change without appearing in the diff
+
+      Added while doing the work, and it found two keys nobody would have
+      looked at: ⌃O, and ⌥↑/⌥↓. See "Found and ruled out" — three bindings in
+      `StandardKeyBinding.dict` are lists, and all three begin with a selector
+      this item gave a case to.
+- [x] Write down here what was ruled out on the way
 - [ ] `spec/editor.md` says what the project now does, beside what 0494 and
       0495 put there about the arrows
