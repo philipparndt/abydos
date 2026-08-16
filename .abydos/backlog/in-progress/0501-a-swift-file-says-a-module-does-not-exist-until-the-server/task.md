@@ -257,6 +257,43 @@ into the same word was left alone — it is a second source for one sentence, an
 the shape of a Java import is a wait *before* the handshake as much as after it,
 which is a different problem from this one.
 
+## Ruled out
+
+- **Suppressing the diagnostic until preparation finishes.** The item's other
+  option, and the argument against it is above under the decision: it cannot tell
+  a missing dependency from an unbuilt one, which is the complaint rather than
+  the fix, and it is all-or-nothing at the wrong granularity — a misplaced brace
+  arrives in the same batch as the false `No such module`.
+- **Matching `No such module` and holding only that.** One compiler's wording, in
+  one language, and it would need a new one for every server the same shape.
+  Ruled out with the point above rather than separately, but it is the version
+  somebody will suggest, so: no.
+- **The strip above the file.** Measured out rather than argued out. A *warm*
+  start is 1.2 s of preparation, so the banner would appear and go inside a
+  second and a half on every project open, and it pushes the file down when it
+  appears — the text would jump twice for nothing. The chip is already drawn
+  while this is happening, so there it is one word changing and nothing moving.
+- **Reading `Preparing <target>` out of `window/logMessage`.** It is what the
+  server sends today and it was the obvious route. It says a target *started* and
+  never says one finished; the finish it does print — `Finished with exit code 0`
+  — is shared with hundreds of indexing subprocesses, so pairing them up means
+  counting strings; and `Preparing` is `sourcekit-lsp`'s own word, which would
+  have made this Swift-only for no reason. `$/progress` has an explicit end and
+  every server has it.
+- **Treating an empty set of open tokens as the end of preparation.** Written,
+  tested, and wrong — see above. It survives one server and fails the next, which
+  is the argument for measuring more than one.
+- **A progress bar, or a percentage.** `sourcekit-lsp` sends one — `n / 649`,
+  with a percentage — and it was not used. The count is of *index* units and it
+  reached 99% about five seconds before the diagnostics cleared, so as a
+  prediction of the wait it would have been confidently wrong at the moment
+  somebody was most likely to be looking at it. A word that is true beats a
+  number that is nearly right.
+- **A fifth state on `ServerHealth`.** Preparation is not a kind of ill health —
+  the server is fine, and 0461's three sentences are all about a server that will
+  not answer. What preparation needed from `ServerHealth` was the opposite: to be
+  kept *out* of it, which is what the guard does.
+
 ## Estimate
 
 2026-08-16 14:25 — about an hour left
@@ -278,5 +315,5 @@ which is a different problem from this one.
 - [x] An empty set of tokens is a question, not an answer — measured against
       rust-analyzer and gopls, not just sourcekit-lsp
 - [x] Say whether this is Swift-only, and why that is or is not right
-- [ ] Write down here what was ruled out on the way
+- [x] Write down here what was ruled out on the way
 - [ ] `spec/language-servers.md` says what the project now does
