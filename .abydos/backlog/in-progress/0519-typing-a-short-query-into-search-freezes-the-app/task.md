@@ -212,4 +212,4 @@ dictionary per match.
 - [x] Watched: type two characters into a project of real size and keep typing
 - [x] `make test` and `make warnings` are clean
 - [x] Write down here what was ruled out on the way
-- [ ] `spec/search.md` says what the project now does
+- [x] `spec/search.md` says what the project now does
