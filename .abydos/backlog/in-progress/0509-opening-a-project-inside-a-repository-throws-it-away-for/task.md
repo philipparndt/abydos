@@ -157,6 +157,52 @@ whole of what this item claimed; a switch somebody caused by walking their shell
 into another project restoring that project's tabs is the feature rather than
 the fault. Worth its own item, and it is not this one.
 
+## Ruled out, and other things found on the way
+
+- **The session, and the tabs it restores.** 0507 had already ruled it out by
+  moving `.abydos` away; the reproduction above rules it out again from the
+  other end, because the *same session* is restored on both lines and only the
+  screenshot flag differs. What the session holds was never wrong: the terminal
+  it names is in `cadova-models`, and that is where the shell was.
+- **The subproject chip.** It reads `subproject=cadova-models` on the broken
+  line, which looks like the narrowing surviving the switch. It is not that: the
+  window is on `abydos-examples`, whose *own* stored session names
+  `cadova-models` as its subproject, so the chip is right about a project nobody
+  asked for. A chip is not a defence against this and could not have been one.
+- **`ProjectRoot.find` itself.** It is correct and is left alone. It answers
+  "which repository is this directory in", every one of its seven existing tests
+  is about that question, and two callers — `Project.root(containing:)`, which
+  is what `ideai path/to/file.go` opens, and `Project.loadGit` — want exactly
+  that answer. The caller asking it the wrong question is the fault, so the new
+  rule sits beside it under a name that says which question it answers.
+- **Making it a rule about restoring, in the panel.** See above: it needs a flag
+  threaded through three objects, it is only true of a launch, and there is no
+  test target for `AbydosApp` to hold it. What is *not* ruled out is the case it
+  would have covered and this does not: a tmux session the app reattaches to
+  whose shell has been left in another checkout since yesterday really is in
+  another checkout, and the window follows it there on the next launch. Measured
+  by accident, when a `cd ..` from one of these runs stayed in the tmux server
+  and the next launch opened on `abydos-examples`. That is not this bug — the
+  shell genuinely moved, only earlier — but it is the closest thing to it left
+  standing, and somebody who finds it unbearable has the whole of the "restored"
+  candidate waiting above.
+- **Whether following is worth having at all.** Not reopened. The screenshot
+  guard is the one place the hazard had been seen, and 0451 turned following
+  *off* there rather than fixing it; the temptation was to generalise that. It
+  would have cost the feature its purpose, and the guard stays as it is for the
+  different reason it was written: a capture is of a named project and must not
+  follow a shell anywhere at all, including somewhere the new rule would rightly
+  follow it.
+- **Which spec file owns this.** `terminal.md`, not `sessions.md`, and the two
+  are close enough to be worth saying why. `sessions.md` is "what a project
+  remembers between one sitting and the next", and nothing about what is
+  remembered changes here: the same session file, restored into a window that no
+  longer misreads it, comes back correctly. `terminal.md` is what a pane in the
+  bottom panel is and what the app does with one, and its opening already lists
+  "following a terminal to its pane's directory" among them. The rule is about
+  what a pane's directory *means* to the window, so it goes where the pane is
+  described.
+
 ## Steps
 
 - [x] An instrument that says which project the window is on, second by second,
@@ -170,8 +216,8 @@ the fault. Worth its own item, and it is not this one.
 - [x] Watched: open `abydos-examples/cadova-models`, wait, and the window is
       still on it with its own tabs
 - [ ] `make test` and `make warnings` are clean
-- [ ] Write down here what was ruled out on the way
-- [ ] `spec/sessions.md` or `spec/terminal.md` says what the project now does —
+- [x] Write down here what was ruled out on the way
+- [x] `spec/sessions.md` or `spec/terminal.md` says what the project now does —
       whichever owns following the terminal
 
 ## Estimate
