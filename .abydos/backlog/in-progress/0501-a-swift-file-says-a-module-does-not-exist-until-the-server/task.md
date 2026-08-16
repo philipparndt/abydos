@@ -206,7 +206,11 @@ at `cfb5ecf`, `images/watch-after.png` the build with the change in.
 | footer, throughout | `sourcekit-lsp` | `sourcekit-lsp — preparing` |
 | tool tip | "sourcekit-lsp is answering for Swift in this project, from …" | "sourcekit-lsp is building what this project depends on … may be about the build rather than about the code" |
 | t+20 s | strip: *"sourcekit-lsp is running and says something is wrong with this project"*, and a red toast: *"sourcekit-lsp cannot read this project"* | nothing above the file, no toast |
-| t+70 s | error clears, footer unchanged | error clears, footer back to `sourcekit-lsp` |
+| t+70 s | error clears, footer unchanged | error clears, and a second later the footer is back to `sourcekit-lsp` — the grace, above |
+
+Both columns are the app built from this branch's own `build/Abydos.app`, driven
+by `watch501.sh` in the scratchpad, which kills only a path that exists nowhere
+but this worktree.
 
 The one thing deliberately identical in both columns is the red on line 1. That
 is the decision: nothing is hidden, and what changed is that the minute it lives
@@ -293,10 +297,6 @@ which is a different problem from this one.
   the server is fine, and 0461's three sentences are all about a server that will
   not answer. What preparation needed from `ServerHealth` was the opposite: to be
   kept *out* of it, which is what the guard does.
-
-## Estimate
-
-2026-08-16 14:25 — about an hour left
 
 ## Steps
 
