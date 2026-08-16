@@ -70,22 +70,92 @@ of this item: line 3 starts at 771, line 6 at 830, the file ends at 863.
                                                      seventh and last line of the file”
 
 The `…` in the ⌘⇧↑ line is 700-odd characters of `word004 word005 …` elided by
-hand; nothing else here is edited. Before this change all four of those lines
-read `caret=775 selection=775..<775 “”` for the two shifted presses — the
-report the driver prints when a keystroke does nothing at all, which is what
-the four lines at the top of this item are.
+hand; nothing else here is edited. The two ⌘ lines without Shift are what they
+always were. The two **with** Shift used to read `caret=775
+selection=775..<775 “”` — identical to the `at 3@4` line above each of them,
+which is what this driver prints when a keystroke does nothing at all, and
+which is exactly the shape of the four lines quoted at the top of this item.
 
 So: the caret lands on the same offset with Shift as without — 0 for up, 863
 for down — and Shift decides only whether the text between there and 775 comes
 with it. That is the same sentence 0494 wrote for ⇧↑ and ⇧⇟.
 
-**Run twice, and soft wrap makes no difference to these four.** The whole
-unwrapped run is above; the same run with wrap on prints byte-identical ⌘ lines
-(the earlier keystrokes differ, as 0494 documented: `↑` from `0@400` is 197
-wrapped and 0 unwrapped). It could not be otherwise — `moveToDocumentEdge` is
-offset 0 and `utf16Count` and never asks about a row — but the setting persists
-between launches and the run says which mode it is in, so it was cheap to
-confirm rather than argue.
+**Run twice, and soft wrap makes no difference to these four.** The unwrapped
+run is above; the wrapped one was `diff`ed against it from `at 3@4` to the end
+and the two are byte-identical. Earlier in the same run they are not — `↑` from
+`0@400` is 197 wrapped and 0 unwrapped, as 0494 documented — so the comparison
+is of two genuinely different runs and not of the same file twice. It could not
+have come out otherwise, since `moveToDocumentEdge` is offset 0 and
+`utf16Count` and never asks about a row, but the setting persists between
+launches and that is exactly how a run gets read as the wrong one of the two.
+
+## Is any other motion still missing its twin
+
+The claim at the top of this item — that these two were the last — was made by
+hand before it was filed, and an answer like that ages. It was redone
+mechanically, and here is how, so the next person can run it again rather than
+believe this paragraph.
+
+**Reading the switch is not enough.** The obvious check is to list the cases,
+strip `AndModifySelection`, and look for a base without a twin. Run against
+`doCommand` after this change, that reports **two** gaps —
+`scrollPageUpAndModifySelection:` and `scrollPageDownAndModifySelection:`. Both
+are false: neither selector exists. `scrollPageUp:` and `scrollPageDown:` are
+*scrolling* commands on `NSResponder`, which have no shifted form because
+scrolling has no caret to drag. A rule that invents selector names by gluing a
+suffix on will keep finding those two.
+
+So the list came from AppKit instead. `NSResponder.h` in the macOS SDK declares
+**22** `…AndModifySelection:` methods, and that is the whole family — a motion
+that has a shifted twin has it there and nowhere else:
+
+    H=$(xcrun --sdk macosx --show-sdk-path)/System/Library/Frameworks/AppKit.framework/Headers/NSResponder.h
+    grep -o '\- *(void)[a-zA-Z]*AndModifySelection:' "$H" | sed 's/.*)//;s/:$//' | sort -u
+
+Each of those 22 was then looked up in the `doCommand` switch
+(`CodeView.swift:2085`–`2148`, 46 `#selector` cases) together with its base:
+
+    twin                                          twin?  base?
+    moveBackwardAndModifySelection                no     no
+    moveDownAndModifySelection                    yes    yes
+    moveForwardAndModifySelection                 no     no
+    moveLeftAndModifySelection                    yes    yes
+    moveParagraphBackwardAndModifySelection       no     no
+    moveParagraphForwardAndModifySelection        no     no
+    moveRightAndModifySelection                   yes    yes
+    moveToBeginningOfDocumentAndModifySelection   yes    yes   ← this item
+    moveToBeginningOfLineAndModifySelection       yes    yes
+    moveToBeginningOfParagraphAndModifySelection  no     no
+    moveToEndOfDocumentAndModifySelection         yes    yes   ← this item
+    moveToEndOfLineAndModifySelection             yes    yes
+    moveToEndOfParagraphAndModifySelection        no     no
+    moveToLeftEndOfLineAndModifySelection         yes    yes
+    moveToRightEndOfLineAndModifySelection        yes    yes
+    moveUpAndModifySelection                      yes    yes
+    moveWordBackwardAndModifySelection            yes    yes
+    moveWordForwardAndModifySelection             yes    yes
+    moveWordLeftAndModifySelection                yes    yes
+    moveWordRightAndModifySelection               yes    yes
+    pageDownAndModifySelection                    yes    yes
+    pageUpAndModifySelection                      yes    yes
+
+**Every row is `yes yes` or `no no`, and that is the answer.** Sixteen twins
+are handled and all sixteen bases are handled with them. The other six are not
+handled — and neither is the base of any of them, so those keys are dead in
+both forms rather than half dead. A key that does nothing whether or not Shift
+is held is not this bug; this bug is a key that moves and then refuses to
+select, and after this change there is no such key left. The check also runs
+the other way — a twin handled whose base is missing — and finds nothing.
+
+The six with no case either way are the paragraph motions (⌃⌥↑ and the rest)
+and `moveBackward:`/`moveForward:`, which are what ⌃B and ⌃F send. Those two
+are worth a second look by somebody who wants them, because ⌃P and ⌃N *do*
+work — they arrive as `moveUp:`/`moveDown:`, which are handled — so the emacs
+bindings are half implemented. Not filed and not fixed: nobody has reported it,
+it is the same "a keystroke nobody has asked about is a decision nobody has
+made" that 0494 stopped at, and it is not a missing twin. Written down here
+because the audit found it and a finding nobody wrote down is a finding nobody
+made.
 
 ## Estimate
 
@@ -97,7 +167,7 @@ confirm rather than argue.
       `moveToEndOfDocumentAndModifySelection:` extend the selection to the edge
 - [x] Watched with `--vertical-nav`, or whatever it is called by then, from the
       middle of a file: ⌘⇧↑ selects back to offset 0, ⌘⇧↓ forward to the end
-- [ ] Check no other motion is missing its twin, and say in here how that was
+- [x] Check no other motion is missing its twin, and say in here how that was
       checked rather than that it was
 - [ ] Decide about the silent `default:`, and either do it or write down why not
 - [ ] Write down here what was ruled out on the way
