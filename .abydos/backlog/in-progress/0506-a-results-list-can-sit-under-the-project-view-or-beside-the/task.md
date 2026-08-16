@@ -52,12 +52,15 @@ simplified is likely to be the reason this is harder than it looks.
 
 ## What was decided, and what was found
 
+The pictures are `images/`: the two new homes for each list, the window, and
+the one that shows the state before any of this work.
+
 ### The item's second home already existed, as described
 
 **"Beside the terminals — the list as a tab in the bottom panel's own strip,
 next to the terminal tabs" is what the docked list has been since item 470.**
 `BottomPanel.Session.Kind` has `.usages` and `.search` beside `.terminal`, and
-they are all tabs on the same strip: `images/before-search-beside-tmux.png` is
+they are all tabs on the same strip: `images/before-search-was-already-beside-tmux.png` is
 the app before any of this work, with a `Search` tab sitting next to a `tmux`
 tab. Whoever filed this read the layout diagram and not the running program.
 
@@ -163,37 +166,37 @@ nothing to reach until there is something to reach for.
    and struck that row through, `who` said `ChecklistTable` before and after,
    and nothing was typed at the prompt.
 
-### Two things found on the way that nobody would have guessed
+### Two more places that assumed the panel
 
-- **A maximised terminal hides the sidebar, silently.** The first list sent
-  under the project view reported `where=sidebar` over a window containing
-  nothing but a terminal: `isPanelMaximized` hides the whole of `splitView`,
-  sidebar and editor together. The sidebar route now gives the window back,
-  which is the same courtesy `setPanelVisible(true)` does for the panel routes.
+- **A maximised terminal hides the sidebar.** The first list sent under the
+  project view reported `where=sidebar` over a window containing nothing but a
+  terminal: `isPanelMaximized` hides the whole of `splitView`, sidebar and
+  editor together. The sidebar route now gives the window back, which is the
+  same courtesy `setPanelVisible(true)` does for the panel routes.
 - **`findInProject` used to open the panel before deciding anything.** It no
   longer does: the panel is one of four homes now, and opening it for a search
   that is about to appear under the project tree is a panel opening for nothing.
 
 ## Steps
 
-- [ ] Read the sidebar-split comment and say whether the reason it was
+- [x] Read the sidebar-split comment and say whether the reason it was
       simplified still holds
 - [x] Decide what remembers a placement, and write the answer down
 - [x] Four homes named in one place, and one control that chooses between them
 - [x] A list can be put under the project view, and the sidebar splits for it
-- [ ] A list can be put beside the terminals, in a column of the panel rather
+- [x] A list can be put beside the terminals, in a column of the panel rather
       than a tab in its strip
-- [ ] Moving between all four homes — panel, sidebar, beside, window — keeps the
+- [x] Moving between all four homes — panel, sidebar, beside, window — keeps the
       rows, the ticks and the selection
-- [ ] The keyboard still works the list in every home, and a list beside a
+- [x] The keyboard still works the list in every home, and a list beside a
       terminal does not lose keys to it
 - [x] A driver step that sends a key through the *window* rather than into the
       table, so "the terminal did not take it" is a claim that can fail
-- [ ] Search moves the same four ways usages does
+- [x] Search moves the same four ways usages does
 - [ ] The placement is remembered, by whatever was decided
-- [ ] Watched in the app, in each home, with a screenshot of each
-- [ ] Write down here what was ruled out on the way
-- [ ] `spec/usages.md` and `spec/search.md` say what the project now does
+- [x] Watched in the app, in each home, with a screenshot of each
+- [x] Write down here what was ruled out on the way
+- [x] `spec/usages.md` and `spec/search.md` say what the project now does
 
 ## Estimate
 

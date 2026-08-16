@@ -194,6 +194,13 @@ final class UsagesPane: NSView, ResultsPane {
 				onPlace?(home)
 				return
 			}
+			// The control itself rather than the callback under it.
+			if step.hasPrefix("menu:"),
+			   let home = ResultPlacement(rawValue: String(step.dropFirst("menu:".count))) {
+				print("USAGES menu: \(placeControl.chooseForTesting(home))")
+				fflush(stdout)
+				return
+			}
 			// A key pressed at the *window*, so the responder chain decides who
 			// gets it. `space-key` and its neighbours go straight to the table,
 			// which is the right test of what the table does with a key and no

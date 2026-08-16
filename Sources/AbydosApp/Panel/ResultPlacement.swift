@@ -125,6 +125,25 @@ final class PlacementControl: NSPopUpButton {
 		toolTip = "Where these results show — now \(placement.menuTitle.lowercased())"
 	}
 
+	/// Picks from the menu the way a click on it does.
+	///
+	/// The `place:` steps call the pane's `onPlace` directly, which says nothing
+	/// about the control — a menu built with the wrong represented object, or an
+	/// item with no target, would leave every one of them passing. This goes
+	/// through the item's own target and action, and reports the state of the
+	/// ticks after, which is the other half of what the control has to get right.
+	func chooseForTesting(_ home: ResultPlacement) -> String {
+		guard let item = menu?.items.first(where: {
+			$0.representedObject as? String == home.rawValue
+		}) else { return "no item for \(home.rawValue)" }
+		guard let action = item.action, let target = item.target as? NSObject else {
+			return "item “\(item.title)” answers to nobody"
+		}
+		target.perform(action, with: item)
+		let ticked = menu?.items.filter { $0.state == .on }.map(\.title) ?? []
+		return "title=\(title) ticked=\(ticked.joined(separator: "|"))"
+	}
+
 	@objc private func chose(_ sender: NSMenuItem) {
 		guard let raw = sender.representedObject as? String,
 		      let home = ResultPlacement(rawValue: raw)

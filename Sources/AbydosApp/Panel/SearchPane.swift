@@ -340,6 +340,13 @@ final class SearchPane: NSView, ResultsPane {
 				onPlace?(home)
 				return
 			}
+			// The control itself rather than the callback under it.
+			if step.hasPrefix("menu:"),
+			   let home = ResultPlacement(rawValue: String(step.dropFirst("menu:".count))) {
+				print("SEARCH menu: \(placeControl.chooseForTesting(home))")
+				fflush(stdout)
+				return
+			}
 			if step.hasPrefix("window-key:") {
 				pressAtWindowForTesting(String(step.dropFirst("window-key:".count)))
 				return

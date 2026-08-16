@@ -2376,6 +2376,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				}
 				continue
 			}
+			// ⇧⌘F again, which is the only way to ask where the *next* search
+			// answers. The claim item 506 has to make about remembering is about
+			// the next question and not about this pane, so a step that moved the
+			// pane would be checking something else.
+			if step == "again" {
+				findInProject(nil)
+				continue
+			}
 			pane.stepForTesting(step)
 		}
 	}
