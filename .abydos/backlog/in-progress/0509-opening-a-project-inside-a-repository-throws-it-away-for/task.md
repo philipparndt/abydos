@@ -215,11 +215,14 @@ the fault. Worth its own item, and it is not this one.
       should resist widening at all — in here, whether or not it is acted on
 - [x] Watched: open `abydos-examples/cadova-models`, wait, and the window is
       still on it with its own tabs
-- [ ] `make test` and `make warnings` are clean
+- [x] `make test` and `make warnings` are clean — 2676 tests, and
+      `foldComputationIsReasonableOnHugeFile` failed the whole-suite run and
+      passed alone at 8.6 s against its 10 s bound, which is that test measuring
+      a machine with four other jobs on it rather than anything in this change
 - [x] Write down here what was ruled out on the way
 - [x] `spec/sessions.md` or `spec/terminal.md` says what the project now does —
       whichever owns following the terminal
 
 ## Estimate
 
-2026-08-16 19:36 — under an hour left
+2026-08-16 19:41 — done bar the fold
