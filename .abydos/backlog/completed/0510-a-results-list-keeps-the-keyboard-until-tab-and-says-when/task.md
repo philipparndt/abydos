@@ -224,10 +224,6 @@ window's key status as well.
   the report: six lines of Markdown selected, with the keyboard in the editor and
   then in the search field. Same selection, two colours.
 
-## Estimate
-
-2026-08-16 19:35 — about three hours left
-
 ## Steps
 
 - [x] A third intent, because two will not say it: `Intent` decides the
