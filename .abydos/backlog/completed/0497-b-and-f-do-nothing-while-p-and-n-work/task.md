@@ -83,7 +83,7 @@ exists to stop.
 **The rest of the emacs family stays out, and is now filed rather than
 guessed at.** See "The rest of the family" below: ⌃D already works, and ⌃A, ⌃E
 and ⌃K are dead for a different reason than this item's, which is why they are
-0498 and not more lines here.
+0502 and not more lines here.
 
 ## Watched in the app
 
@@ -181,7 +181,7 @@ mode it is in anyway, because the setting persists between launches and has
 already been read as the wrong one of the two twice. The run itself shows no
 line wrapped: ⌃P and ⌃N land on column 6 of the neighbouring *lines*.
 
-## The rest of the family — pressed once, then filed as 0498
+## The rest of the family — pressed once, then filed as 0502
 
 The item says ⌃A, ⌃E, ⌃D and ⌃K are their own decisions, and they are. What
 they are not is a guess: the driver was given a probe with all four in it, run
@@ -204,7 +204,7 @@ to the **paragraph** selectors, which have no case — the same six rows 0495's
 audit listed as handled in neither form.
 
 That is a different bug from this one with a real question inside it (what a
-paragraph is in a file of source), so it is **0498** in `open/`, and four
+paragraph is in a file of source), so it is **0502** in `open/`, and four
 keystrokes stayed out of this item.
 
 ## Ruled out
@@ -217,7 +217,7 @@ keystrokes stayed out of this item.
 ## Found and ruled out on the way
 
 - **⌃O used to do nothing and now steps the caret back one character. Filed as
-  [0499](../open/0499-o-steps-the-caret-back-one-character-and-opens-no-line.md).**
+  [0503](../open/0503-o-steps-the-caret-back-one-character-and-opens-no-line.md).**
   This is the one thing in this item that had to be looked for rather than
   found: `StandardKeyBinding.dict` binds `^o` to a *pair* of selectors,
   `['insertNewlineIgnoringFieldEditor:', 'moveBackward:']`. The first has no
@@ -262,8 +262,8 @@ keystrokes stayed out of this item.
 
   **Not fixed here, and it does not want its own item.** The second half of
   both is `moveToBeginningOfParagraph:`/`moveToEndOfParagraph:`, which is
-  exactly what **0498** is: give those two cases and ⌥↑ and ⌥↓ complete
-  themselves, with no line written for them specifically. Recorded in 0498 as
+  exactly what **0502** is: give those two cases and ⌥↑ and ⌥↓ complete
+  themselves, with no line written for them specifically. Recorded in 0502 as
   the reason to take it sooner rather than later.
 
   This is also the general lesson, and it is worth more than the three keys:
@@ -328,6 +328,20 @@ keystrokes stayed out of this item.
   `simulateArrow`'s. Moved back, since this item rewrote the comment it was
   stuck to.
 
+- **The two items filed here were 0498 and 0499 for about an hour, and are
+  0502 and 0503.** `abydos-backlog new` takes the next number from the backlog
+  *in this worktree*, which is the backlog as it stood when the branch was
+  cut. While this item was being worked, `main` filed 0498 to 0501 — the
+  Cadova spike and what came out of it — so both numbers were gone by the time
+  this branch was pushed. Renumbered rather than left alone: two different
+  items called 0498 would both have landed, because they are different
+  filenames and nothing would have conflicted to say so. **Five commits on
+  this branch say 0498 or 0499 in their messages and mean 0502 and 0503**, and
+  those are left as they are, since a commit message is what somebody wrote at
+  the time. The lesson for the next agent: anything filed from a worktree is
+  worth checking against `main` before the branch goes up, because nothing in
+  here can see the collision.
+
 - **RTL was not built, and the decision above says why not.** What was
   *checked* is that nothing in this repository's Swift mentions bidi at all,
   so there is no half-built visual order this change contradicts. What is left
@@ -347,7 +361,7 @@ keystrokes stayed out of this item.
       Added while doing the work. The item said the rest of the family was a
       separate decision and left it at that; it costs one driver run to make
       that decision on evidence instead. ⌃D works, ⌃A, ⌃E and ⌃K do not, and
-      **0498** says why — they are the paragraph selectors, not the line ones.
+      **0502** says why — they are the paragraph selectors, not the line ones.
 - [x] A driver that can press a letter key with a modifier at all —
       `simulateArrow` knew the four arrows and the two page keys and nothing
       else, so there was no way to press ⌃B through `keyDown`

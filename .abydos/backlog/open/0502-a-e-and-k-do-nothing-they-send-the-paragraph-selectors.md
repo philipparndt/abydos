@@ -1,4 +1,4 @@
-# 498. ⌃A, ⌃E and ⌃K do nothing: they send the paragraph selectors
+# 502. ⌃A, ⌃E and ⌃K do nothing: they send the paragraph selectors
 
 0497 gave ⌃B and ⌃F their cases and left the rest of the emacs family alone,
 because a keystroke nobody has asked about is a decision nobody has made. On

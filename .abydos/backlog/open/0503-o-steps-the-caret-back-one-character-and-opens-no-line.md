@@ -1,4 +1,4 @@
-# 499. ⌃O steps the caret back one character and opens no line
+# 503. ⌃O steps the caret back one character and opens no line
 
 ⌃O is emacs `open-line`: it puts a newline in and leaves the caret in front of
 it, so the line splits and you stay where you were. macOS binds it in
