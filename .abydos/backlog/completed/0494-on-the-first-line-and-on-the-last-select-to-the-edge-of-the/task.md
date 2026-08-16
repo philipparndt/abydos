@@ -212,10 +212,6 @@ below is shorter than the column being kept.
 - **Shift-only was not built.** Keeping the bare arrow dead needs a condition
   written specially to do nothing, and the decision above went the other way.
 
-## Estimate
-
-2026-08-16 09:21 — about twenty minutes left, the spec delta
-
 ## Steps
 
 - [x] `moveVertically` at the top or bottom goes to the edge of the file
