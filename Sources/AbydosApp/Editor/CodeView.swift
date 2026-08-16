@@ -324,6 +324,12 @@ final class CodeView: NSView, NSTextInputClient {
 		document.onLinesChanged = { [weak self] first, removed, inserted in
 			self?.onLinesChanged?(first, removed, inserted)
 		}
+		// A snippet's stops follow the text under them the same way, a span at
+		// a time rather than a line at a time.
+		document.onTextReplaced = { [weak self] range, inserted in
+			self?.snippetSessionSaw(edit: range, insertedLength: inserted)
+		}
+		snippetSession = nil
 		caret = 0
 		selectionAnchor = 0
 		folding = FoldingState()
@@ -2115,8 +2121,14 @@ final class CodeView: NSView, NSTextInputClient {
 		case #selector(deleteBackward(_:)):      deleteBackward()
 		case #selector(deleteForward(_:)):       deleteForward()
 		case #selector(insertNewline(_:)):       insertNewlineWithIndent()
-		case #selector(insertTab(_:)):           indentSelectionOrInsertTab()
-		case #selector(insertBacktab(_:)):       outdentSelection()
+		case #selector(insertTab(_:)):
+			if !moveToSnippetStop(1) { indentSelectionOrInsertTab() }
+		case #selector(insertBacktab(_:)):
+			if !moveToSnippetStop(-1) { outdentSelection() }
+		case #selector(cancelOperation(_:)):
+			// Escape is how somebody says they have finished with the stops and
+			// wants Tab back. Nothing else here answers to it.
+			snippetSession = nil
 		case #selector(selectAll(_:)):           selectAllText()
 		case #selector(insertLineBreak(_:)):     insertTextAtCaret("\n")
 		default:
@@ -2543,22 +2555,86 @@ final class CodeView: NSView, NSTextInputClient {
 	}
 
 	/// Replaces the word being typed with what was chosen.
-	/// - Parameter caretOffset: where in the inserted text the caret belongs,
-	///   which a snippet decides — the end, unless it said otherwise.
-	func applyCompletion(
-		_ text: String,
-		replacingPrefixOfLength length: Int,
-		caretOffset: Int? = nil
-	) {
+	///
+	/// A snippet with somewhere to go next — `cube(size = ${1:size}, center =
+	/// false);$0` has two places — starts a session on the first of them, with
+	/// the default selected so that typing replaces it. One with a single
+	/// place, and plain text, simply put the caret where the snippet said.
+	func applyCompletion(_ snippet: Snippet, replacingPrefixOfLength length: Int) {
 		guard let document else { return }
 		let start = max(0, caret - length)
-		let newCaret = document.replace(utf16Range: start..<caret, with: text, caretBefore: caret)
+		let newCaret = document.replace(
+			utf16Range: start..<caret, with: snippet.text, caretBefore: caret
+		)
 
-		guard let caretOffset, caretOffset < text.utf16.count else {
+		// `afterEdit` first, and the session after it: inserting the text is
+		// itself an edit, and a session started before it would be handed its
+		// own arrival as the first thing to follow.
+		if snippet.caret < snippet.text.utf16.count {
+			afterEdit(caret: start + snippet.caret)
+		} else {
 			afterEdit(caret: newCaret)
-			return
 		}
-		afterEdit(caret: start + caretOffset)
+
+		guard let session = SnippetSession(snippet, insertedAt: start) else { return }
+		snippetSession = session
+		select(session.current)
+	}
+
+	// MARK: - Snippet stops
+
+	/// Where the stops of the last completion are, while any are left to visit.
+	/// Nil the rest of the time, which is nearly all of it.
+	private var snippetSession: SnippetSession?
+
+	/// Selects a range, so that typing replaces it.
+	///
+	/// A stop's default text is text to type over, and a caret sitting at one
+	/// end of it would leave somebody to select the word themselves — which is
+	/// the work this is meant to save.
+	private func select(_ range: Range<Int>) {
+		guard let document else { return }
+		let upper = min(range.upperBound, document.rope.utf16Count)
+		selectionAnchor = min(range.lowerBound, upper)
+		caret = upper
+		restartCaretBlink()
+		scrollCaretToVisible()
+		needsDisplay = true
+		reportCaretPosition()
+	}
+
+	/// Keeps the stops on the text they mark, and lets the session go as soon
+	/// as an edit lands anywhere but the stop being typed into.
+	private func snippetSessionSaw(edit range: Range<Int>, insertedLength: Int) {
+		guard var session = snippetSession else { return }
+		snippetSession = session.edited(replacing: range, insertedLength: insertedLength)
+			? session
+			: nil
+	}
+
+	/// Tab and ⇧Tab while a snippet is being filled in. Says whether it took
+	/// the key; when it did not, Tab means what it always means.
+	private func moveToSnippetStop(_ direction: Int) -> Bool {
+		guard var session = snippetSession else { return false }
+
+		// Clicked somewhere else and pressed Tab: that is somebody indenting a
+		// line, not stepping through a snippet they have visibly left.
+		guard session.covers(caret: caret) else {
+			snippetSession = nil
+			return false
+		}
+
+		guard let range = session.advance(direction) else {
+			// Forwards off the end finishes the session; backwards at the
+			// first stop stays put. Both eat the key, because the alternative
+			// at either end is a tab character in the middle of a call
+			// somebody has just filled in.
+			if direction > 0 { snippetSession = nil }
+			return true
+		}
+		snippetSession = session
+		select(range)
+		return true
 	}
 
 	/// Where the caret is on screen, for putting the list under it.

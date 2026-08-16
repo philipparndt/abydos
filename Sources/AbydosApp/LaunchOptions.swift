@@ -179,6 +179,10 @@ struct LaunchOptions {
 	/// Say whether ⌘/ is wired up: the menu item, its key, and whether the
 	/// responder chain answers to its action.
 	var commentKey = false
+	/// A server's `insertText`, then what to do to it: `tab`, `backtab`, `esc`
+	/// or text to type, `|` between. Says where the caret and the selection
+	/// land after each one, which is the whole of what a tab stop is.
+	var snippet: String?
 	/// Every shortcut in the menu bar, and which press reaches it on the keyboard
 	/// layout this machine is set to. The only way to see what the system did to
 	/// a key equivalent after it was declared.
@@ -760,6 +764,7 @@ struct LaunchOptions {
 			case "--indent-block": options.indentBlock = next()
 			case "--comment": if let spec = next() { options.commentBlocks.append(spec) }
 			case "--comment-key": options.commentKey = true
+			case "--snippet": options.snippet = next()
 			case "--menu-keys": options.menuKeys = true
 			case "--print-text": options.printText = true
 			case "--theme": options.theme = next()

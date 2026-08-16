@@ -2186,6 +2186,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		fflush(stdout)
 	}
 
+	/// Takes a completion and steps through its stops with Tab, saying where
+	/// the caret and selection went. `--snippet 'cube(${1:size});$0|10|tab'`.
+	func exerciseSnippetForTesting(_ spec: String) {
+		editor.exerciseSnippetForTesting(spec)
+	}
+
 	/// Whether ⌘/ is wired up, which is a different question from whether the
 	/// toggle works and the only one the suite cannot answer.
 	///
