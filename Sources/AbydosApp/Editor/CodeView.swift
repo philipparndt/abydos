@@ -2113,9 +2113,17 @@ final class CodeView: NSView, NSTextInputClient {
 		case #selector(deleteWordForward(_:)):   deleteByWord(1)
 		case #selector(deleteToBeginningOfLine(_:)): deleteToLineEdge(start: true)
 		case #selector(deleteToEndOfLine(_:)):   deleteToLineEdge(start: false)
-		case #selector(moveToBeginningOfDocument(_:)):   setCaret(0, extendingSelection: false)
-		case #selector(moveToEndOfDocument(_:)):
-			setCaret(document?.rope.utf16Count ?? 0, extendingSelection: false)
+		case #selector(moveToBeginningOfDocument(_:)): moveToDocumentEdge(start: true, extending: false)
+		case #selector(moveToEndOfDocument(_:)):      moveToDocumentEdge(start: false, extending: false)
+		// ⌘⇧↑ and ⌘⇧↓ are selectors of their own, and arrived here as nothing at
+		// all: the plain pair moved and the shifted pair fell through `default:`
+		// and looked like two dead keys. The same sentence as ⇧⇞ and ⇧⇟ below,
+		// one item earlier, and these were the last two motions in this switch
+		// whose `AndModifySelection` twin was missing.
+		case #selector(moveToBeginningOfDocumentAndModifySelection(_:)):
+			moveToDocumentEdge(start: true, extending: true)
+		case #selector(moveToEndOfDocumentAndModifySelection(_:)):
+			moveToDocumentEdge(start: false, extending: true)
 		case #selector(scrollPageUp(_:)), #selector(pageUp(_:)):     movePage(-1, extending: false)
 		case #selector(scrollPageDown(_:)), #selector(pageDown(_:)): movePage(1, extending: false)
 		// ⇧⇞ and ⇧⇟ are selectors of their own and arrived here as nothing at
@@ -2298,6 +2306,17 @@ final class CodeView: NSView, NSTextInputClient {
 		} else {
 			setCaret(document.rope.utf16Offset(fromByte: range.upperBound), extendingSelection: extending)
 		}
+	}
+
+	/// ⌘↑ and ⌘↓, with Shift and without.
+	///
+	/// The remembered column is left alone rather than cleared, so a ↑ after
+	/// ⌘⇧↓ comes back to the column the run started at, the same as a ↑ after
+	/// ⇧↓ does. That is 0494's rule about the ends of a file, and the jump is
+	/// the longest version of the same motion.
+	private func moveToDocumentEdge(start: Bool, extending: Bool) {
+		guard let document else { return }
+		setCaret(start ? 0 : document.rope.utf16Count, extendingSelection: extending)
 	}
 
 	private func selectAllText() {
