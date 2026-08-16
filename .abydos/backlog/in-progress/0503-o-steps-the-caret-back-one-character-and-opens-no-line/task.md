@@ -243,7 +243,7 @@ ones in that item, but they are the same in both runs here.
 
 ## Estimate
 
-2026-08-16 09:05 — about two hours left
+2026-08-16 11:40 — done bar the fold and the push
 
 ## Steps
 
@@ -267,5 +267,18 @@ ones in that item, but they are the same in both runs here.
       2625 tests in 367 suites passed. `make warnings` says no warnings in
       this repository's Swift, with the four vendored tree-sitter C warnings
       it always reports.
-- [ ] Write down here what was ruled out on the way
-- [ ] `spec/editor.md` says what the project now does
+- [x] Write down here what was ruled out on the way
+
+      Including the two things that came out of the CR probe: a lone `\r`
+      cancels like everything else, and the reason it does is a bug in ⌃F,
+      filed as 0504.
+- [x] `spec/editor.md` says what the project now does
+
+      One `ADDED` and no `MODIFIED`. 0497's requirement ends by saying the
+      rest of the emacs family is not that requirement, which is still true
+      with ⌃O in the spec — and 0502 is adding the paragraph selectors to
+      that same family in another worktree this week, so a delta of mine
+      rewriting its closing paragraph would be a conflict bought for
+      nothing. The requirement carries the decision rather than only the
+      behaviour: what ⌃O does about the indent, and why copying it would
+      stop the two halves of the key cancelling.
