@@ -229,7 +229,11 @@ keystrokes stayed out of this item.
 
       Before as well as after, the before run made by stashing the `doCommand`
       change and rebuilding rather than by remembering what it used to do.
-- [ ] `make test` and `make warnings` are clean
+- [x] `make test` and `make warnings` are clean
+
+      2610 tests in 365 suites passed. `make warnings` says no warnings in
+      this repository's Swift, with the four vendored tree-sitter C warnings
+      it always reports.
 - [ ] Write down here what was ruled out on the way
 - [ ] `spec/editor.md` says what the project now does, beside what 0494 and
       0495 put there about the arrows
