@@ -123,6 +123,114 @@ struct ProjectRootTests {
 	}
 }
 
+/// What a window does about the directory its terminal is in.
+///
+/// The pair that matters is here: a shell sitting still inside a project that is
+/// a subdirectory of a checkout, and a shell that really walks out of it. 0509
+/// was the first of the two being read as the second.
+struct ProjectToFollowTests {
+	private func makeTree() -> URL {
+		let base = URL(fileURLWithPath: NSTemporaryDirectory())
+			.appendingPathComponent("follow-\(UUID().uuidString)")
+		try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+		return base
+	}
+
+	private func directory(_ url: URL) {
+		try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+	}
+
+	/// A repository with a package inside it, and the package opened as the
+	/// project — `abydos-examples/cadova-models`, which is where this was found.
+	private func makeCheckout(_ base: URL) -> (repo: URL, package: URL) {
+		let repo = base.appendingPathComponent("checkout")
+		directory(repo.appendingPathComponent(".git"))
+		let package = repo.appendingPathComponent("models")
+		directory(package.appendingPathComponent("Sources"))
+		return (repo, package)
+	}
+
+	@Test func aShellSittingInTheProjectIsNotAMove() {
+		let base = makeTree()
+		defer { try? FileManager.default.removeItem(at: base) }
+		let (_, package) = makeCheckout(base)
+
+		#expect(ProjectRoot.projectToFollow(from: package, current: package) == nil)
+	}
+
+	/// The same rule the whole-repository case has always had, which is the one
+	/// the subdirectory project was missing.
+	@Test func aShellDeeperInTheProjectIsNotAMove() {
+		let base = makeTree()
+		defer { try? FileManager.default.removeItem(at: base) }
+		let (repo, package) = makeCheckout(base)
+
+		#expect(ProjectRoot.projectToFollow(
+			from: package.appendingPathComponent("Sources"), current: package) == nil)
+		#expect(ProjectRoot.projectToFollow(
+			from: package.appendingPathComponent("Sources"), current: repo) == nil)
+	}
+
+	/// `cd ..` out of the package and into the checkout around it. A real move,
+	/// and still followed — the fix for 0509 must not cost this.
+	@Test func aShellThatStepsOutIntoTheRepositoryIsFollowed() {
+		let base = makeTree()
+		defer { try? FileManager.default.removeItem(at: base) }
+		let (repo, package) = makeCheckout(base)
+
+		#expect(ProjectRoot.projectToFollow(from: repo, current: package)?.path
+			== repo.standardizedFileURL.path)
+	}
+
+	@Test func aShellInAnotherCheckoutIsFollowed() {
+		let base = makeTree()
+		defer { try? FileManager.default.removeItem(at: base) }
+		let (_, package) = makeCheckout(base)
+		let other = base.appendingPathComponent("elsewhere")
+		directory(other.appendingPathComponent(".git"))
+		directory(other.appendingPathComponent("src"))
+
+		#expect(ProjectRoot.projectToFollow(
+			from: other.appendingPathComponent("src"), current: package)?.path
+			== other.standardizedFileURL.path)
+	}
+
+	/// A shell somewhere that is in no repository at all leaves the window where
+	/// it is, as it always has.
+	@Test func aShellOutsideAnyRepositoryChangesNothing() {
+		let base = makeTree()
+		defer { try? FileManager.default.removeItem(at: base) }
+		let (_, package) = makeCheckout(base)
+		let loose = base.appendingPathComponent("loose")
+		directory(loose)
+
+		#expect(ProjectRoot.projectToFollow(from: loose, current: package) == nil)
+	}
+
+	/// A window that is on nothing yet follows whatever the shell is in.
+	@Test func aWindowOnNoProjectFollowsTheRepository() {
+		let base = makeTree()
+		defer { try? FileManager.default.removeItem(at: base) }
+		let (repo, package) = makeCheckout(base)
+
+		#expect(ProjectRoot.projectToFollow(from: package, current: nil)?.path
+			== repo.standardizedFileURL.path)
+	}
+
+	/// A sibling directory in the same checkout is outside the project, so it is
+	/// a move — to the checkout, which is the project that contains it.
+	@Test func aSiblingPackageWidensToTheCheckout() {
+		let base = makeTree()
+		defer { try? FileManager.default.removeItem(at: base) }
+		let (repo, package) = makeCheckout(base)
+		let sibling = repo.appendingPathComponent("other")
+		directory(sibling)
+
+		#expect(ProjectRoot.projectToFollow(from: sibling, current: package)?.path
+			== repo.standardizedFileURL.path)
+	}
+}
+
 /// What `ideai <path>` opens.
 struct ProjectForAPathTests {
 	private func makeRepository() throws -> URL {

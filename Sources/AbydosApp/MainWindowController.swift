@@ -2002,15 +2002,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// The terminal moved. Follow it, if the window was asked to.
 	///
 	/// Only whole projects: moving between directories inside one changes
-	/// nothing, which is what makes this bearable to leave switched on.
+	/// nothing, which is what makes this bearable to leave switched on. Inside
+	/// *the project*, not inside the repository around it — `projectToFollow`
+	/// is where that distinction lives and why it has to be made.
 	func terminalDirectoryChanged(to directory: URL) {
 		// Never during a capture. A screenshot is of a project somebody named
 		// on the command line, and a restored tmux session whose shell sits in
 		// another checkout would quietly swap it for that one — which is a
 		// screenshot of the wrong program, taken without complaint.
+		//
+		// The sentence above was true when nobody was photographing anything
+		// too, and 0509 is what it cost. The guard stays: a capture is of a
+		// named project and must not follow a shell anywhere, including
+		// somewhere the rule below would rightly follow it.
 		guard !LaunchOptions.parse().isScreenshotRun else { return }
 		guard followsTerminal else { return }
-		guard let root = ProjectRoot.find(from: directory) else { return }
+		guard let root = ProjectRoot.projectToFollow(from: directory, current: project?.root)
+		else { return }
 		switchProject(to: root, followingTerminal: true)
 	}
 
@@ -6637,6 +6645,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// Where the terminal in front says it is — the answer the window follows.
 	func terminalDirectoryForTesting() -> URL? {
 		bottomPanel.activeTerminalDirectoryForTesting()
+	}
+
+	/// Which project the window is on, and what it has open.
+	///
+	/// Beside the terminal's directory rather than instead of it, because 0509 is
+	/// exactly the two disagreeing: a shell that never moved, and a window that
+	/// left the project anyway. One of the two numbers alone says nothing — the
+	/// directory is right in both builds, and a project name on its own cannot be
+	/// told from a window that was opened on that project to begin with. The tabs
+	/// are here because they are what the switch destroys.
+	func projectReportForTesting() -> String {
+		let root = project?.root.lastPathComponent ?? "none"
+		let scope = subprojectRoot?.lastPathComponent ?? "whole"
+		let titles = editor.activeGroup?.tabTitlesForTesting ?? []
+		return "project=\(root) subproject=\(scope) tabs=[\(titles.joined(separator: " "))]"
 	}
 
 	func showDebugConsoleForTesting() {

@@ -1391,10 +1391,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		}
 
 		if options.reportsTerminalDirectory {
-			for seconds in [3.0, 5.0, 7.0, 9.0] {
+			// From one second in, because the switch this catches happens about a
+			// second after launch: a first reading at three seconds is already the
+			// window on the other project, which reads as a window that opened
+			// there. Flushed, because a driver run ends in a kill.
+			for seconds in [1.0, 2.0, 3.0, 5.0, 7.0, 9.0] {
 				DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
 					let where_ = controller?.terminalDirectoryForTesting()
-					print("CWD \(Int(seconds))s: \(where_?.path ?? "unknown")")
+					print("CWD \(Int(seconds))s: \(where_?.path ?? "unknown")"
+						+ "  \(controller?.projectReportForTesting() ?? "no window")")
+					fflush(stdout)
 				}
 			}
 		}
