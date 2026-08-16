@@ -205,7 +205,14 @@ ones in that item, but they are the same in both runs here.
   the code gets right. **Not fixed here** — it is ←, →, ⌃B and ⌃F together
   and it is a change to `Rope.alignToBoundary` or to its caller, which is a
   different thing from giving ⌃O a case. Filed as
-  [0504](../open/0504-a-decomposed-accent-is-two-steps-of-and-the-spec-says-one.md).
+  [0504](../open/0504-a-decomposed-accent-is-two-steps-of-f-and-the-spec-says-one.md),
+  which also carries the spec sentence: the requirement 0497 wrote says an
+  emoji *or a letter with a combining mark* is one step, and half of that is
+  untrue today. Left for 0504 rather than corrected here as a `MODIFIED`,
+  because the sentence describes what the editor is meant to do and 0504 is
+  the item that makes it so — and because 0502 is editing the same file in
+  another worktree this week, and a delta that rewrites a requirement it may
+  also be touching is a conflict bought for nothing.
 
 - **The driver's first run reported a file nobody had opened, again.** 0497
   wrote this down and it still cost a run: the CR probe's first go printed
