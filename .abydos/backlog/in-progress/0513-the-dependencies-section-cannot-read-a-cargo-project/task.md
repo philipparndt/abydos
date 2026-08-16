@@ -104,6 +104,20 @@ complete on disk, and a Cargo one cannot be. So the claims here are made by
 lock files written into a temporary directory, and the app was watched against
 a real project with real crates fetched into a real cache.
 
+### One test in the suite fails, and it is not this branch — 0514–0516 will meet it
+
+`CadovaExampleLiveTests.runsAndWritesAThreeMF` builds
+`abydos-examples/cadova-models`, and that working tree has an uncommitted edit
+in it:
+
+    -        Circle(diameter: diameter)
+    +        C-ircle(diameter: diameter)
+
+A stray `-` typed into somebody's fixture, in the family of 0517 and 0518. The
+2712 tests are otherwise green and `make warnings` is clean. Left alone: it is
+another repository and not this item's, and reverting somebody's working tree
+to make a suite green is the wrong instinct twice over.
+
 ## For 0514, 0515 and 0516
 
 The doc comment on `ExternalDependencies.read(root:kind:)` is the list, kept
