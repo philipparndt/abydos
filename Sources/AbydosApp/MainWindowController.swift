@@ -8923,7 +8923,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	}
 
 	/// Walks the caret by word and says where it landed at each step.
+	///
+	/// The flush at the end is not decoration: a run ends by killing the app,
+	/// and six lines still in stdout's buffer when the signal lands make a
+	/// driver that works look like one that prints nothing at all.
 	func exerciseWordNavigationForTesting() {
+		defer { fflush(stdout) }
 		print("WORD: start \(editor.caretReportForTesting)")
 		editor.simulateArrow("right", modifiers: .option)
 		print("WORD: ⌥→ \(editor.caretReportForTesting)")
@@ -8935,6 +8940,81 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		print("WORD: ⌥← \(editor.caretReportForTesting)")
 		editor.simulateArrow("left", modifiers: .option)
 		print("WORD: ⌥← \(editor.caretReportForTesting)")
+	}
+
+	/// Presses ↑ on the first line and ↓ on the last, with Shift and without,
+	/// and says where the caret and the selection ended up each time.
+	///
+	/// Started from the middle of a line rather than from its edge, or the
+	/// selection ⇧↑ makes would be empty and the run would read the same
+	/// whether the caret had moved or not.
+	///
+	/// Worth running twice, the second time with `--wrap`: the rows a vertical
+	/// key moves by are then segments of a line rather than lines, and a caret
+	/// partway along a wrapped first line has a row above it to go to even
+	/// though it has no line above it. So the run says which mode it is in
+	/// rather than leaving it to be worked out from the offsets — and the
+	/// setting persists between launches, which is exactly how a run gets read
+	/// as the wrong one of the two.
+	func exerciseVerticalNavigationForTesting() {
+		// Flushed line by line: the app has to be killed to end a run, and a
+		// report still sitting in stdout's buffer when the signal arrives is a
+		// run that looks like it never happened. `--word-nav` reads as silent
+		// for that reason and not because it does nothing.
+		func say(_ label: String) {
+			let padded = label.padding(toLength: 12, withPad: " ", startingAt: 0)
+			print("VERT: \(padded)\(editor.caretReportForTesting)")
+			fflush(stdout)
+		}
+		func place(_ label: String, line: Int, column: Int) {
+			editor.setCaretForTesting(line: line, column: column)
+			say(label)
+		}
+		func press(_ key: String, _ label: String, _ modifiers: NSEvent.ModifierFlags) {
+			editor.simulateArrow(key, modifiers: modifiers)
+			say(label)
+		}
+
+		print("VERT: word wrap is \(Settings.shared.wordWrap ? "on" : "off")")
+		fflush(stdout)
+
+		place("at 0@8", line: 0, column: 8)
+		press("up", "⇧↑", .shift)
+		place("at 0@8", line: 0, column: 8)
+		press("up", "↑", [])
+
+		place("at last@4", line: -1, column: 4)
+		press("down", "⇧↓", .shift)
+		place("at last@4", line: -1, column: 4)
+		press("down", "↓", [])
+
+		// The column has to survive the jump: ⇧↓ to the end of the file and then
+		// ↑ belongs back at the column the run started from, and not at whatever
+		// column the last line happens to end at.
+		place("at last@4", line: -1, column: 4)
+		press("down", "⇧↓", .shift)
+		press("up", "then ↑", [])
+
+		// The page keys are the same motion with a screenful as the step, and a
+		// file shorter than the window is all edge: both of these overshoot.
+		place("at 0@8", line: 0, column: 8)
+		press("pageup", "⇞", [])
+		place("at last@4", line: -1, column: 4)
+		press("pagedown", "⇧⇟", .shift)
+
+		// Partway along the first line, which the file this is pointed at wants
+		// to make a long one. Wrapped, the first ↑ is the row above and still
+		// inside line 0, and only the second one runs out of rows and goes to
+		// the start of the file; unwrapped there is no row above at all and the
+		// first ↑ is already the start of the file. The column stops at the end
+		// of the line, so a short first line makes this its end rather than
+		// nothing.
+		place("at 0@400", line: 0, column: 400)
+		press("up", "↑", [])
+		press("up", "↑ again", [])
+		place("at 0@400", line: 0, column: 400)
+		press("down", "↓", [])
+		press("down", "↓ again", [])
 	}
 
 	func openFirstScratchForTesting() {

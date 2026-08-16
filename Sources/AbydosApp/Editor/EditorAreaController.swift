@@ -479,6 +479,10 @@ final class EditorAreaController: NSViewController {
 		(activeGroup ?? groups.first)?.moveCaretToEndForTesting()
 	}
 
+	func setCaretForTesting(line: Int, column: Int) {
+		(activeGroup ?? groups.first)?.setCaretForTesting(line: line, column: column)
+	}
+
 	var caretReportForTesting: String {
 		(activeGroup ?? groups.first)?.caretReportForTesting ?? "no editor"
 	}

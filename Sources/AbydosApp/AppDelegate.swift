@@ -834,6 +834,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if options.verticalNavigation {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+				controller?.exerciseVerticalNavigationForTesting()
+			}
+		}
+
 		if options.fakeDiagnostics {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
 				controller?.injectDiagnosticsForTesting()

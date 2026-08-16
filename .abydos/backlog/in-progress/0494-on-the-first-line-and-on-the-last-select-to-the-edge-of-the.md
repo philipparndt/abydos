@@ -65,7 +65,7 @@ is true. It is answered below, by running it.
 - [x] The remembered column survives the jump
 - [x] A test for the motion that does not need a window, if the arithmetic can
       be got at from `AbydosKit`
-- [ ] A driver so the keys can be watched from outside the app, as `--word-nav`
+- [x] A driver so the keys can be watched from outside the app, as `--word-nav`
       does for ⌥←/⌥→
 - [ ] Watched: ⇧↑ on the first line, ⇧↓ on the last, the bare ↑ and ↓ in the
       same two places, and all of it again in a wrapped file

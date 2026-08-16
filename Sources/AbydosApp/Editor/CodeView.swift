@@ -2754,6 +2754,31 @@ final class CodeView: NSView, NSTextInputClient {
 		setCaret(offset, extendingSelection: false)
 	}
 
+	/// Puts the caret at a line and column. A negative line counts back from the
+	/// end, so -1 is the last line — which is where a driver watching ↓ at the
+	/// bottom of the file has to start, and which it cannot work out from an
+	/// offset without knowing the file.
+	///
+	/// The column stops at the end of that line rather than running on into the
+	/// next one: a driver that asked for column 40 of a line of eight would
+	/// otherwise be watching the keys from a line it did not name.
+	///
+	/// It forgets the remembered column as a click does, so each thing a driver
+	/// tries is a run of its own. Without that, a ⇧↓ placed after an earlier
+	/// press returns to the column of that earlier press and the report reads
+	/// as a bug in the column memory rather than as the driver's own doing.
+	func setCaretForTesting(line: Int, column: Int) {
+		guard let document else { return }
+		desiredColumnX = nil
+		let rope = document.rope
+		let wanted = line < 0 ? document.lineCount + line : line
+		let resolved = min(max(0, wanted), document.lineCount - 1)
+		let range = rope.lineByteRange(resolved)
+		let start = rope.utf16Offset(fromByte: range.lowerBound)
+		let end = rope.utf16Offset(fromByte: range.upperBound)
+		setCaret(min(start + max(0, column), end), extendingSelection: false)
+	}
+
 	/// The document jumped to another state: everything measured from its text
 	/// has to be worked out again.
 	func reloadAfterHistoryTravel() {
