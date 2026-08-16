@@ -181,10 +181,6 @@ next three will meet in their own spelling:
   wants a graph later it is four more lines.
 - **Adding a Cargo example to `abydos-examples`.** Above.
 
-## Estimate
-
-2026-08-16 21:46 — about half an hour left
-
 ## Steps
 
 - [x] Read `Cargo.lock` into packages: name, version, origin
@@ -199,6 +195,6 @@ next three will meet in their own spelling:
 - [x] Decide whether a Cargo project belongs in `abydos-examples`, and say which
 - [x] Watched in the app on a real Rust project, with a screenshot
 - [x] Write down here what was ruled out on the way
-- [ ] The spec says Cargo is among the kinds that are read —
+- [x] The spec says Cargo is among the kinds that are read —
       `spec/project-view.md`, which is where 508 put the section (the item said
       `editor.md`, which was written before that capability existed)
