@@ -40,7 +40,8 @@ both.
   caught all three in one session, and would say nothing in release. Worth
   weighing against the noise before writing it.
 
-  **Weighed, and it is worth doing — as [0496](../open/0496-a-debug-build-says-which-move-and-select-selectors-nothing.md),
+  **Weighed, and it is worth doing — as
+  [0496](../../open/0496-a-debug-build-says-which-move-and-select-selectors-nothing.md),
   not as part of this.** The reasoning, in three parts:
 
   *The noise is not a worry, and that is a number and not an opinion.* The
@@ -190,6 +191,57 @@ made" that 0494 stopped at, and it is not a missing twin. Written down here
 because the audit found it and a finding nobody wrote down is a finding nobody
 made.
 
+## Found and ruled out on the way
+
+- **The two lines turned into four, and that was worth it.** The item says two
+  cases, and two cases is what it needs. But the plain pair were written inline
+  and differently from each other — one a literal `setCaret(0, …)`, the other
+  `setCaret(document?.rope.utf16Count ?? 0, …)` — and adding two shifted copies
+  beside them would have made four spellings of one motion in six lines. They
+  all go through one `moveToDocumentEdge(start:extending:)` now. Checked to be
+  behaviour-preserving for the unshifted pair and not merely tidier: the old
+  `?? 0` could only fire with no document, and `setCaret` already returns early
+  in that case, so the fallback was unreachable.
+
+- **The remembered column is deliberately *not* cleared, and that is not an
+  oversight.** `moveHorizontally` and `moveToLineEdge` both begin
+  `desiredColumnX = nil`; `moveToDocumentEdge` does not. Left that way because
+  the old inline cases did not clear it either, so the unshifted keys behave
+  exactly as before — and because 0494's rule is that a jump to the end of the
+  file is part of a run of ups and downs and the column survives it. Clearing
+  it here would have been an unasked-for change to ⌘↑, smuggled in under a fix
+  for ⌘⇧↑.
+
+- **No unit test, and there is nowhere honest to put one.** 0494 could write
+  `VerticalMotionTests` because it had arithmetic to test — `VerticalMotion` is
+  a pure type in `AbydosKit`. This item has no arithmetic: it is a `switch` case
+  routing a selector to offset 0 or to `utf16Count`. There is one test target,
+  `AbydosKitTests`, and `CodeView` is in `AbydosApp` and needs a window, so
+  there is no existing seam to test through. A new pure type whose only job is
+  to map two selector names to two booleans would be a test of the test. The
+  driver run above is the check, which is why the step asked for it.
+
+- **`scrollPageUp:` and `scrollPageDown:` are not motions missing a twin**,
+  though the obvious way of auditing says they are. See the audit section: they
+  are scrolling commands, AppKit declares no shifted form of either, and any
+  check that builds selector names by gluing `AndModifySelection` onto the ones
+  we handle will report them forever. This cost a few minutes and is the reason
+  the audit is written against `NSResponder.h` instead.
+
+- **⌃B and ⌃F do nothing, while ⌃P and ⌃N work.** Turned up by the audit, not
+  reported by anybody. It is not this bug — both halves are dead rather than
+  one — and it is not fixed here for the same reason 0494 did not fix these
+  two. Recorded at the bottom of 0496, which is where somebody looking at
+  unhandled selectors will be.
+
+- **The soft wrap setting persists between launches, and bit again.** The first
+  driver run came up `word wrap is on` without being asked, because 0494's
+  session left it that way. Harmless for this item — the ⌘ block is
+  byte-identical either way, `diff`ed rather than eyeballed — but it is the
+  second item in a row where the first run was not the mode the runner
+  expected. The driver printing which mode it is in is what made it a
+  non-event.
+
 ## Estimate
 
 2026-08-16 10:04 — about an hour left
@@ -213,6 +265,6 @@ made.
       is two selectors. Why worth doing at all: the noise ceiling is 14 lines for
       the life of a debug build, counted from `NSResponder.h` rather than
       guessed, and the drivers already press the keys that would print them.
-- [ ] Write down here what was ruled out on the way
+- [x] Write down here what was ruled out on the way
 - [ ] `spec/editor.md` says what the project now does — 0494 added two
       requirements about the edges of a file and this belongs beside them
