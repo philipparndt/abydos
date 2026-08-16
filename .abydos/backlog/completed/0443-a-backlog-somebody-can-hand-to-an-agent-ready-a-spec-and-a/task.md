@@ -78,9 +78,26 @@ silent and only shows up as an assistant that has never heard of the backlog.
       as a fraction and a bar
 - [x] Tests: 43 across the model, the spec, `init` and the runner
 - [x] This project's own backlog brought up to date, and `project.md` written
-- [ ] `spec/backlog.md` says what the project now does
+- [x] `spec/backlog.md` says what the project now does
 - [ ] Somebody other than the author runs `init` on a project that is not this
       one
+
+      **Closed with this one unticked, on 2026-08-16, at Philipp's word.** Half
+      of it was done and the half that was not is the half that matters. What
+      was checked: `init --assistant claude --yes` in a throwaway git
+      repository holding one Python file, from outside this project — twelve
+      files written, `new` numbering from `0001`, `status` reading the new
+      backlog, and a second `init` answering "12 already there and left alone",
+      which is this delta's own *running init twice* scenario exercised
+      somewhere that is not the repository it was written in.
+
+      What was **not** checked, and cannot be by anybody who has read this
+      code: whether a person who has never seen the backlog can follow
+      `AGENTS.md` and get anywhere. That is the whole point of the step and it
+      needs somebody else. It is a question about the writing rather than about
+      the program, so it does not hold the item open — but it has not been
+      answered, and a later item that finds `init` confusing should know that
+      nobody ever sat and watched a stranger use it.
 
 ## Not doing here
 
