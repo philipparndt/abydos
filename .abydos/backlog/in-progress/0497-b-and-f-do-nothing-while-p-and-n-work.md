@@ -136,12 +136,14 @@ keystrokes stayed out of this item.
       separate decision and left it at that; it costs one driver run to make
       that decision on evidence instead. ⌃D works, ⌃A, ⌃E and ⌃K do not, and
       **0498** says why — they are the paragraph selectors, not the line ones.
-- [ ] A driver that can press a letter key with a modifier at all —
+- [x] A driver that can press a letter key with a modifier at all —
       `simulateArrow` knew the four arrows and the two page keys and nothing
       else, so there was no way to press ⌃B through `keyDown`
 
       Added while doing the work: the item assumed 0494's driver could be
       extended, and it could not reach these keys without being widened first.
+      It is `simulateKey` now, and `--emacs-nav` is beside `--word-nav` and
+      `--vertical-nav`.
 - [ ] Watched from outside the app: ⌃B, ⌃F, ⇧⌃B and ⇧⌃F, with the caret
       mid-line, and ⌃B at the start of a line to see what it does at an edge
 - [ ] `make test` and `make warnings` are clean
