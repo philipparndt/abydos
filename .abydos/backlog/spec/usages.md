@@ -4,7 +4,9 @@ Find Usages, from the editor's context menu, asks the language server where a
 symbol is used and answers in the bottom panel beside search. It is the same list
 the search results are — a checklist somebody works through rather than something
 to read — and it is worked from the keyboard: ↓ shows each usage without giving
-the editor the keyboard, ␣ or ⌫ ticks one off, ⏎ is the way in.
+the editor the keyboard, ␣ or ⌫ ticks one off, and ⇥ is the way in. ⇥ is the
+*only* way in, so that a ⌫ aimed at what looks like a list is never an edit to a
+file.
 
 ## Requirement: Usages arrive in the bottom panel, beside search
 
@@ -105,14 +107,23 @@ reaches the next usage and ␣ ticks the one just looked at. Looking at each of 
 list of usages is a different intention from working on one of them, and only the
 second costs the keyboard.
 
-The deliberate way into the editor is **⏎** or **⇥**. Both open the selected usage
-and hand the keyboard over. A click and a double-click do the same, because
-somebody who clicked a line of code means to be in it.
+**⇥ is the only gesture that hands the keyboard to the editor.** ⏎, a click and a
+double-click all *show* the usage — in a tab of its own, not the provisional one
+— and all leave the keyboard in the list. A hand that has just clicked a row is
+over the list, and its next ⌫ has to tick that row off rather than delete a
+character of the file: ⌫ means "done" here, and that is only safe while the
+keyboard is provably still here. ⇧⇥ is not a way out either; it goes on walking
+the key view loop.
+
+An unfocused list says so. A selected row is drawn in the strong highlight only
+while the list has the keyboard, and in the same gray as an unfocused row in the
+project tree once it has not — so "the list looks live" and "the list is live"
+are never two different things.
 
 The file shown as the selection moves is the editor's **provisional tab** — the
 one the project tree's single click uses — replaced in place by the next one. So
-walking a list of any length leaves one tab behind, not one per usage, and the
-tab becomes a permanent one as soon as it is committed to or edited.
+walking a list of any length leaves one tab behind, not one per usage. ⏎, a click
+and ⇥ each settle what they open into a tab of its own.
 
 A key held down does not open a file per row. The first press of a held key shows
 its row at once; while the key is repeating nothing is shown, and the row it
@@ -136,8 +147,29 @@ row already showing is not opened again.
 
 - **Given** a usage selected and showing in the editor
 - **When** ⏎ is pressed
-- **Then** the keyboard is in the editor, on that line, and its tab is no longer
-  provisional
+- **Then** its tab is no longer provisional, and the keyboard is still in the
+  list — so the next ⌫ ticks the usage off rather than editing the file
+
+### Scenario: clicking a usage
+
+- **Given** a usages list with the keyboard in it
+- **When** a row is clicked
+- **Then** that usage is shown in a tab of its own and the keyboard is still in
+  the list
+
+### Scenario: ⇥ over a usage
+
+- **Given** a usage selected and showing in the editor
+- **When** ⇥ is pressed
+- **Then** the keyboard is in the editor, on that line, and the list draws its
+  selection gray
+
+### Scenario: a list that has not got the keyboard
+
+- **Given** a usages list whose selected row is highlighted
+- **When** ⇥ hands the keyboard to the editor
+- **Then** the row is still selected and is drawn in the unfocused gray, which is
+  the colour an unfocused row in the project tree is drawn in
 
 ### Scenario: a key held down through a long list
 
@@ -238,9 +270,22 @@ scrollback and ␣ to the prompt. So a list put beside a terminal takes the
 keyboard from it, and the terminal beside it gets nothing until somebody clicks
 it.
 
+⇥ hands the keyboard to the editor from every home, the window included. A list
+expanded into a window of its own is a second window and is the key one while
+somebody works the list, so ⇥ there makes the project window key as well as
+putting the caret in the editor — otherwise the file would open, the caret would
+blink in it, and every keystroke would go on reaching the list.
+
 ### Scenario: ↓ and ␣ at a list beside a live shell
 
 - **Given** a usages list beside a terminal with a shell running in it
 - **When** ↓ and ␣ are pressed
 - **Then** the selection moves down the list and that row is marked done, and
   nothing at all is typed at the shell
+
+### Scenario: ⇥ from a list in a window of its own
+
+- **Given** a usages list in a window of its own, with the keyboard in it
+- **When** ⇥ is pressed
+- **Then** the usage opens in the project window's editor, that window is the key
+  one, and the next keystroke reaches the editor rather than the list

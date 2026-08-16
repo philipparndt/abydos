@@ -468,6 +468,7 @@ press.
 - **Given** the caret at the end of `    fourth line, indented four spaces`
 - **When** ⌃K is pressed
 - **Then** nothing changes: that line and the one below it are still two lines
+
 ## Requirement: ⌃O opens a line under the caret and leaves the caret alone
 
 ⌃O is `open-line`: it splits the line at the caret and does not move the
@@ -514,3 +515,38 @@ same thing: the text before it is unchanged.
 - **When** ⌃O is pressed
 - **Then** there are two empty lines and `sixth lines` has moved down one
 - **And** the caret is still on the first of them, at the same offset
+
+## Requirement: A selection is drawn gray while the keyboard is somewhere else
+
+Selected text in an editor pane is drawn in the strong highlight only while that
+pane has the keyboard. With the keyboard anywhere else — the terminal below, a
+results list, another pane of a split — the same selection is still there and is
+drawn gray.
+
+A selection in the strong colour is a claim that the next key will act on it, and
+a claim a view makes whether or not it is true is worth nothing. The gray is one
+colour for the whole program: an editor's selected text, a row of a results list
+and a row of the project tree all go to the same one, so a window whose keyboard
+is in the terminal gives the same answer in every pane at once.
+
+The selection is not cleared and nothing else about it changes. It comes back to
+the strong colour the moment the pane has the keyboard again, and it is the same
+characters that were selected before.
+
+### Scenario: the keyboard goes to the terminal
+
+- **Given** several lines selected in an editor pane
+- **When** the keyboard moves to the terminal below it
+- **Then** the same lines are still selected, drawn gray
+
+### Scenario: and comes back
+
+- **Given** that gray selection
+- **When** the editor pane is clicked
+- **Then** the same lines are selected in the strong highlight again
+
+### Scenario: two panes of a split
+
+- **Given** two editor panes, each with a selection
+- **When** one of them has the keyboard
+- **Then** only that pane draws its selection in the strong highlight
