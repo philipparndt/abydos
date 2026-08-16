@@ -91,9 +91,65 @@ drew it.
   the notice is alone between builds and should not sit at an offset that only
   makes sense when something is spinning above it.
 
+## What it is now, and what it was watched doing
+
+One `NSStackView`, vertical, centred in the pane, spacing 8, the spinner first
+and the notice under it. Nothing is offset from the centre by hand any more, so
+there is no second number to keep in step with a first. The notice is an
+`NSTextField` label — one line, `.byTruncatingMiddle`, `width ≤ pane − 64`.
+
+Measured in the running app from the pane's own frames rather than from a sum
+that agrees with the drawing by hand. `notice=` and `spinner=` are those two
+rectangles in the pane's coordinates and are new in the driver line, because
+what this item is about is where the two are *relative to each other*, and a
+report naming only one of them cannot say:
+
+    548-point pane, mid-build, a real dependency line
+      notice=81,300 385x15   spinner=266,323 16x16
+      → 8 points of clear air; block 300…339, centred on the pane's 319.5
+
+    302-point pane, the same build, the same line
+      notice=30,215 238x15   spinner=141,238 16x16
+      → 8 points again, and the line truncates: `Working copy of ht…git
+        resolved at 0.1.4`
+
+    no spinner at all
+      notice=176,312 195x15  spinner=none
+      → 312…327, centred on 319.5 on its own, with no hole above it
+
+    a model up
+      drawn=548x640  notice=none  spinner=none
+
+Eight points at both widths because eight points is the stack's spacing, and
+that is the whole change: the separation is a property of the arrangement now
+rather than the difference between two constants that happened to be 6 apart.
+
+`0511-after-building.png` is a cold build in a 548-point pane on a real SwiftPM
+line, `0511-after-narrow.png` the same build in a 302-point one with the line
+truncated, `0511-after-waiting.png` the notice alone, `0511-after-model.png` the
+model with nothing over it. The `-crop` files are the pane itself out of each.
+
+**The lone notice had to be held still to be photographed, and that is worth
+knowing.** In the shipped app a notice with no spinner exists only as
+`Waiting to build …`, between the pane landing in a window and its run starting
+— and `--panel-height` un-maximises the terminal panel at 0.9 s, so the editor
+is not on screen until *after* that state is over. Captures at 0.3, 0.35, 0.4,
+0.5, 0.6, 0.8, 0.85 and 0.88 s got a window with no editor in it; captures at
+0.9, 0.92, 0.95, 1.0 and 1.2 s got a build already running. The picture here is
+from a build with `provisionalRenderDelay` temporarily at 6 s — a timing knob in
+`EditorViewController`, with the layout under test untouched — and the driver
+line beside it (`spinner=none`, the label centred on 319.5) is the measurement
+the photograph illustrates. The knob was reverted before anything was committed.
+
+So the item's second worry is real but hardly ever *seen*: the state it is about
+is over before the first frame. It still has to be right — the notice is the
+pane's whole answer for as long as there is nothing else to show, and one sitting
+12 points high with nothing above it would read as a mistake the one time
+somebody caught it.
+
 ## Estimate
 
-2026-08-16 19:39 — about two hours left
+2026-08-16 19:56 — about 40 minutes left
 
 ## Steps
 
@@ -101,12 +157,12 @@ drew it.
       `spinner.frame` and the rect `draw(_:)` actually passes to the text
 - [x] The spinner and the notice are laid out together, not against the centre
       separately
-- [ ] A long notice — a real build line, not a short string — does not collide
+- [x] A long notice — a real build line, not a short string — does not collide
       at any pane width
-- [ ] The notice sits sensibly when the spinner is not shown
+- [x] The notice sits sensibly when the spinner is not shown
 - [x] `drawn=` for a notice reports what is on screen rather than a second,
       differently-worded copy of the same arithmetic
-- [ ] Watched: a screenshot of a Cadova pane mid-build, and one between builds
+- [x] Watched: a screenshot of a Cadova pane mid-build, and one between builds
 - [ ] `make test` and `make warnings` are clean
 - [ ] `DiagramPaneView` has the identical construction — decide and say here
       whether it is fixed with this or left, rather than leaving it unmentioned
