@@ -52,14 +52,25 @@ simplified is likely to be the reason this is harder than it looks.
 
 ## Steps
 
+- [ ] Read the sidebar-split comment and say whether the reason it was
+      simplified still holds
 - [ ] Decide what remembers a placement, and write the answer down
+- [ ] Four homes named in one place, and one control that chooses between them
 - [ ] A list can be put under the project view, and the sidebar splits for it
-- [ ] A list can be put in the bottom strip beside the terminals
-- [ ] Moving between all four homes — panel, sidebar, strip, window — keeps the
+- [ ] A list can be put beside the terminals, in a column of the panel rather
+      than a tab in its strip
+- [ ] Moving between all four homes — panel, sidebar, beside, window — keeps the
       rows, the ticks and the selection
 - [ ] The keyboard still works the list in every home, and a list beside a
       terminal does not lose keys to it
+- [ ] A driver step that sends a key through the *window* rather than into the
+      table, so "the terminal did not take it" is a claim that can fail
+- [ ] Search moves the same four ways usages does
 - [ ] The placement is remembered, by whatever was decided
 - [ ] Watched in the app, in each home, with a screenshot of each
 - [ ] Write down here what was ruled out on the way
 - [ ] `spec/usages.md` and `spec/search.md` say what the project now does
+
+## Estimate
+
+2026-08-16 17:50 — most of a day
