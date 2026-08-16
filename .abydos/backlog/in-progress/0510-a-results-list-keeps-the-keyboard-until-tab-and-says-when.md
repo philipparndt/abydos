@@ -51,13 +51,14 @@ guess.
 The screenshot shows several lines of Markdown selected in the strong
 highlight, with the keyboard in the terminal below. Same fault, one view over,
 and it is older than any of today's work: **a selection is drawn as though its
-view has the keyboard whether or not it does.**  is where that one
-lives.
+view has the keyboard whether or not it does.** `CodeView` is where that one
+lives, and it is the same in every editor pane — a split, a diff, the commit
+message field — wherever a selection is drawn.
 
 So this item covers both, deliberately: the gray has to be *one* colour and
 *one* rule, and two agents inventing it separately in two files is how a
-program ends up with two grays that nearly match.  is where it belongs
-rather than either view.
+program ends up with two grays that nearly match. `Theme` is where the colour
+belongs rather than either view.
 
 ## What this changes in the spec
 
@@ -93,9 +94,9 @@ keeps the keyboard", survives and gets stronger.
 - [ ] ⏎ leaves the keyboard in the list
 - [ ] ⇥ is the one gesture that hands the keyboard to the editor
 - [ ] A list without the keyboard draws its selection gray
-- [ ] The **editor** does the same: a selection in a  that has not
+- [ ] The **editor** does the same: a selection in a `CodeView` that has not
       got the keyboard is gray too, which is the second half of the report
-- [ ] One colour and one rule for both, named once in  rather than
+- [ ] One colour and one rule for both, named once in `Theme` rather than
       decided twice
 - [ ] Watched from outside the app with `who` after each gesture, in both the
       search list and the usages list
