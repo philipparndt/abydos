@@ -78,6 +78,27 @@ final class CadovaPreviewView: DelayedPaneView {
 	private let failureText = NSTextView()
 	private let failureScroll = NSScrollView()
 	private let spinner = NSProgressIndicator()
+	/// The notice itself. See `noticeStack`.
+	private let noticeLabel = NSTextField(labelWithString: "")
+	/// The spinner above the notice, as one thing.
+	///
+	/// **0511 was these two placed separately against the same centre.** The
+	/// spinner sat at `centerY - 18` and the notice was drawn from an origin of
+	/// its own, `(bounds.height - height) / 2 + 12`, in `draw(_:)`. Measured in
+	/// the app, in a 548 × 640 pane: spinner `y 330…346`, notice `y 324.5…339.5`,
+	/// centre 320. Auto Layout's geometry is top-down whatever a view's own
+	/// flippedness, so `-18` is *above* the centre and the notice's centre is 12
+	/// above it — six points apart, both pushing the same way, and a 16-point
+	/// indicator over a 15-point line at six points' separation puts two thirds
+	/// of the spokes inside the text. That is what was reported.
+	///
+	/// A stack because the class comment above already says the arrangement is
+	/// one: "One line, in the middle, with the spinner over it". Two numbers
+	/// tuned against each other cannot say it, because they were tuned for one
+	/// string at one pane size and the notice here is **build output** — whatever
+	/// the last line of `swift build` happened to be, at whatever width the
+	/// divider is at.
+	private let noticeStack = NSStackView()
 
 	/// How many runs have finished, for the driver that watches this.
 	private(set) var runsForTesting = 0
@@ -104,12 +125,44 @@ final class CadovaPreviewView: DelayedPaneView {
 		spinner.style = .spinning
 		spinner.controlSize = .small
 		spinner.isDisplayedWhenStopped = false
-		spinner.translatesAutoresizingMaskIntoConstraints = false
-		addSubview(spinner)
+
+		noticeLabel.font = Theme.current.uiFont(12)
+		noticeLabel.textColor = Theme.current.sidebarText.withAlphaComponent(0.85)
+		noticeLabel.alignment = .center
+		// **One line, and truncated in the middle when it will not fit.** The
+		// notice is the last line the build printed, so it is as long as SwiftPM
+		// felt like being — and the middle is the part to drop, the same choice
+		// `FileNoticeView` makes for a path: what identifies
+		// `Creating working copy for https://github.com/tomasf/manifold-swift.git`
+		// is the verb at the front and the repository at the back. Wrapping was
+		// the alternative and it is worse here, because a notice that changes
+		// height as the build talks moves itself and everything stacked with it.
+		noticeLabel.maximumNumberOfLines = 1
+		noticeLabel.lineBreakMode = .byTruncatingMiddle
+		noticeLabel.cell?.truncatesLastVisibleLine = true
+		// So the width limit below wins over the label's own idea of how wide a
+		// build line ought to be, rather than the two of them being an ambiguity
+		// Auto Layout resolves by breaking one at random.
+		noticeLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+		noticeStack.orientation = .vertical
+		noticeStack.alignment = .centerX
+		noticeStack.spacing = 8
+		// The spinner first, so it is the one on top: a vertical stack fills from
+		// the top down, in the stack's own geometry, whatever the view under it
+		// thinks about which way y runs. That is the whole of what used to be a
+		// pair of constants with opposite signs and the same effect.
+		noticeStack.setViews([spinner, noticeLabel], in: .center)
+		noticeStack.translatesAutoresizingMaskIntoConstraints = false
+		addSubview(noticeStack)
 		NSLayoutConstraint.activate([
-			spinner.centerXAnchor.constraint(equalTo: centerXAnchor),
-			spinner.centerYAnchor.constraint(equalTo: centerYAnchor, constant: -18),
+			noticeStack.centerXAnchor.constraint(equalTo: centerXAnchor),
+			noticeStack.centerYAnchor.constraint(equalTo: centerYAnchor),
+			// The same 32 points a side the drawn notice kept, now stated once.
+			noticeLabel.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, constant: -64),
 		])
+		// Stopped, and therefore not in the stack at all. See `spin(_:)`.
+		spin(false)
 
 		failureText.isEditable = false
 		// Selectable, which is the point of showing the compiler rather than
@@ -138,7 +191,10 @@ final class CadovaPreviewView: DelayedPaneView {
 		failureScroll.isHidden = true
 		addSubview(failureScroll)
 
-		notice = "Waiting to build \(model.product)…"
+		// Through `show` rather than straight into the variable, so the label the
+		// notice now lives in says it too. This is the one state in which the
+		// notice is on screen with nothing spinning above it.
+		show(notice: "Waiting to build \(model.product)…")
 
 		// The lazy guard, inherited: nothing starts until this pane has been on
 		// screen for `startAfter`, and nothing starts at all if it leaves first.
@@ -244,7 +300,7 @@ final class CadovaPreviewView: DelayedPaneView {
 		}
 		running = process
 
-		spinner.startAnimation(nil)
+		spin(true)
 		show(notice: "Building \(model.product)…")
 
 		let started = Date()
@@ -255,7 +311,7 @@ final class CadovaPreviewView: DelayedPaneView {
 				if process.isRunning { kill(process.processIdentifier, SIGKILL) }
 			}
 			guard let self, self.running === process else { return }
-			self.spinner.stopAnimation(nil)
+			self.spin(false)
 			self.running = nil
 			self.show(failure: "\(self.model.command) did not finish within "
 				+ "\(Int(Self.deadline)) seconds.")
@@ -295,7 +351,7 @@ final class CadovaPreviewView: DelayedPaneView {
 				watchdog.cancel()
 				guard let self, self.running === process else { return }
 				self.running = nil
-				self.spinner.stopAnimation(nil)
+				self.spin(false)
 				self.finish(output: report, status: status, started: started)
 			}
 		}
@@ -370,11 +426,14 @@ final class CadovaPreviewView: DelayedPaneView {
 			return hosting
 		}
 		container.frame = bounds
-		// Under the spinner, and therefore under the failure text as well, since
-		// both were added before it: a rerun spins over the model that is still on
-		// screen from the last one.
-		addSubview(container, positioned: .below, relativeTo: spinner)
+		// Under the notice stack — which is what the spinner is inside now, and
+		// naming the spinner here would name something that is not a sibling — and
+		// therefore under the failure text as well, since both were added before
+		// it: a rerun spins over the model that is still on screen from the last
+		// one.
+		addSubview(container, positioned: .below, relativeTo: noticeStack)
 		viewer = container
+		refreshNotice()
 		needsLayout = true
 	}
 
@@ -383,12 +442,42 @@ final class CadovaPreviewView: DelayedPaneView {
 	private func show(notice said: String?) {
 		notice = said
 		if said != nil { failureScroll.isHidden = true }
+		refreshNotice()
 		needsDisplay = true
+	}
+
+	/// Whether the indicator is turning, and whether it is in the stack at all.
+	///
+	/// **`isDisplayedWhenStopped` is not enough on its own.** It stops the
+	/// indicator *drawing*; it does not hide the view, and `NSStackView` closes
+	/// up around a hidden arranged view rather than an invisible one. Left to it,
+	/// the one state where the notice is alone — `Waiting to build …`, before the
+	/// first run starts — would sit eight points plus sixteen of nothing below
+	/// the centre of the pane, which is precisely the offset this item says a
+	/// notice should not have when there is nothing spinning above it.
+	private func spin(_ turning: Bool) {
+		if turning { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
+		spinner.isHidden = !turning
+	}
+
+	/// Puts the notice in its label, and takes the label out when there is none.
+	///
+	/// Hidden rather than emptied, because an empty label is still a view with a
+	/// line's height in it, and the stack would keep the spinner off centre by
+	/// half of it.
+	private func refreshNotice() {
+		noticeLabel.stringValue = notice ?? ""
+		// A model covers the pane, so a notice drawn over it would be a line of
+		// text on a rendered shape with nothing behind it. The rule is the one
+		// `draw(_:)` had — `guard viewer == nil` — and a rerun still shows the
+		// spinner over the model it is replacing, which is what `mountViewer`
+		// puts the container underneath this stack for.
+		noticeLabel.isHidden = viewer != nil || (notice?.isEmpty ?? true)
 	}
 
 	private func show(failure said: String) {
 		notice = nil
-		spinner.stopAnimation(nil)
+		spin(false)
 		// The model goes with it. See `finish`.
 		viewer?.removeFromSuperview()
 		viewer = nil
@@ -401,6 +490,7 @@ final class CadovaPreviewView: DelayedPaneView {
 			]
 		))
 		failureScroll.isHidden = false
+		refreshNotice()
 		needsDisplay = true
 	}
 
@@ -410,29 +500,15 @@ final class CadovaPreviewView: DelayedPaneView {
 		failureScroll.frame = bounds
 	}
 
+	/// The background, and nothing else.
+	///
+	/// The notice used to be drawn here, from an origin worked out against the
+	/// pane's centre, and the spinner was placed against that same centre by a
+	/// constraint. Nothing measured the two together, so nothing could keep them
+	/// apart — see `noticeStack`, which is where they both are now.
 	override func draw(_ dirtyRect: NSRect) {
 		Theme.current.editorBackground.setFill()
 		dirtyRect.fill()
-
-		guard viewer == nil, let notice else { return }
-		let text = NSAttributedString(string: notice, attributes: [
-			.font: Theme.current.uiFont(12),
-			.foregroundColor: Theme.current.sidebarText.withAlphaComponent(0.85),
-			.paragraphStyle: {
-				let style = NSMutableParagraphStyle()
-				style.alignment = .center
-				style.lineBreakMode = .byTruncatingMiddle
-				return style
-			}(),
-		])
-		let width = max(80, bounds.width - 64)
-		let height = text.boundingRect(
-			with: NSSize(width: width, height: .greatestFiniteMagnitude),
-			options: [.usesLineFragmentOrigin]
-		).height
-		let top = (bounds.height - height) / 2 + 12
-		text.draw(with: NSRect(x: 32, y: top, width: width, height: height),
-		          options: [.usesLineFragmentOrigin])
 	}
 
 	// MARK: - Watched from outside
@@ -456,7 +532,21 @@ final class CadovaPreviewView: DelayedPaneView {
 			: (failureText.string.split(whereSeparator: \.isNewline).first.map(String.init) ?? "")
 		return "CADOVA: state=\(state) runs=\(runsForTesting) "
 			+ "product=\(model.product) model=\(showing?.lastPathComponent ?? "none") "
-			+ "drawn=\(Int(drawnArea.width))x\(Int(drawnArea.height)) said=\(said)"
+			+ "drawn=\(Int(drawnArea.width))x\(Int(drawnArea.height)) "
+			// What 0511 was about is where two things are *relative to each other*,
+			// and a report that mentions only one of them cannot say. `notice=` is
+			// the label's rectangle and `spinner=` the indicator's, both in the
+			// pane's own coordinates, so whether they overlap is arithmetic anybody
+			// can do on the line — or `spinner=none` when nothing is turning, which
+			// is the state the notice has to look right in on its own.
+			+ "notice=\(rectangle(noticeLabel)) spinner=\(rectangle(spinner)) "
+			+ "said=\(said)"
+	}
+
+	private func rectangle(_ view: NSView) -> String {
+		guard !view.isHidden else { return "none" }
+		let frame = view.convert(view.bounds, to: self)
+		return "\(Int(frame.minX)),\(Int(frame.minY)) \(Int(frame.width))x\(Int(frame.height))"
 	}
 
 	/// How big what this pane is saying actually comes out on screen, in points.
@@ -491,13 +581,15 @@ final class CadovaPreviewView: DelayedPaneView {
 				height: min(failureText.frame.height, failureScroll.frame.height)
 			)
 		}
-		guard let notice, !notice.isEmpty else { return .zero }
-		let width = max(80, bounds.width - 64)
-		let height = NSAttributedString(string: notice, attributes: [.font: Theme.current.uiFont(12)])
-			.boundingRect(
-				with: NSSize(width: width, height: .greatestFiniteMagnitude),
-				options: [.usesLineFragmentOrigin]
-			).height
-		return CGSize(width: width, height: height)
+		// **The label's own frame, not a second sum that agrees with the first by
+		// hand.** This used to re-derive the notice's size from the string — same
+		// width, same `boundingRect`, but *without* the paragraph style the pane
+		// drew it with, so the number reported and the text painted were two
+		// measurements of the same line that had nothing keeping them equal. That
+		// is the shape of fault 0507 was, one size smaller: a report about a pane
+		// rather than a reading from it. Asking the view is the only version that
+		// cannot drift.
+		guard !noticeLabel.isHidden else { return .zero }
+		return noticeLabel.frame.size
 	}
 }
