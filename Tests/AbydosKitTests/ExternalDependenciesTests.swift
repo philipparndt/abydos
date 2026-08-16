@@ -82,6 +82,44 @@ struct ExternalDependenciesTests {
 		#expect(set.packages.first { $0.name == "Apus" }?.localPath == nil)
 	}
 
+	/// **The copy the language server opens, and not the one `swift build`
+	/// makes.** sourcekit-lsp is started with `--scratch-path` under
+	/// `~/Library/Caches/abydos/index`, so following a symbol lands in *that*
+	/// checkout — a section that knew only about `.build/checkouts` gave the
+	/// file in the tab no home, which is the failure this item exists to fix,
+	/// and it looked correct against every fixture until the real gesture was
+	/// tried in the app.
+	@Test func theIndexersCheckoutIsPreferredToTheOneUnderBuild() throws {
+		let root = try makeRoot()
+		try write(resolvedVersion3, to: root.appendingPathComponent("Package.resolved"))
+		try write("// built\n", to: root.appendingPathComponent(
+			".build/checkouts/Cadova/Sources/Cadova/Extrusion.swift"
+		))
+		let indexed = LanguageServers.indexScratchPath(for: root)
+			.appendingPathComponent("checkouts/Cadova")
+		try write("// indexed\n", to: indexed.appendingPathComponent("Sources/Cadova/Extrusion.swift"))
+		defer { try? FileManager.default.removeItem(at: LanguageServers.indexScratchPath(for: root)) }
+
+		let set = ExternalDependencies.read(root: root, kind: .swiftPackage)
+		let cadova = try #require(set.packages.first { $0.name == "Cadova" })
+		#expect(cadova.localPath?.path == indexed.path)
+
+		// And the file the editor would be showing is found in it.
+		let tree = try #require(DependencyTree(sets: [set], project: root))
+		let opened = indexed.appendingPathComponent("Sources/Cadova/Extrusion.swift")
+		#expect(tree.package(containing: opened)?.name == "Cadova")
+
+		// The other copy is still recognised, and resolves to the row the
+		// section is drawing — otherwise a file opened from `.build` falls back
+		// to the ordinary tree, which opens `.build` and walks ten levels down
+		// to the same file. That duplicate is what the section replaces.
+		let built = root.appendingPathComponent(
+			".build/checkouts/Cadova/Sources/Cadova/Extrusion.swift"
+		)
+		let located = try #require(tree.locate(built))
+		#expect(located.node.url.path == opened.path)
+	}
+
 	/// A checkout resolved by an older Xcode writes `object.pins` with
 	/// `repositoryURL`. Refusing to read it would make the section empty itself
 	/// on an old checkout, which reads as "this project has no dependencies".

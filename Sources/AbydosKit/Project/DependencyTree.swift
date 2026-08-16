@@ -225,8 +225,17 @@ public struct DependencyTree {
 		func walk(_ node: DependencyNode, chain: [DependencyNode]) {
 			let chain = chain + [node]
 			if let fileRoot = node.fileRoot {
-				let base = FilePath.canonical(fileRoot.url)
-				if path == base || path.hasPrefix(base + "/"), base.count > bestLength {
+				// Every copy of this checkout, not only the one being shown: a
+				// Swift package has two, and the file in somebody's tab may have
+				// come from either. Matched against the other copy, resolved
+				// against the shown one — so the row that lights up is the row
+				// the section is drawing, and its siblings are the siblings.
+				var bases = [FilePath.canonical(fileRoot.url)]
+				if case let .package(package) = node.row {
+					bases += package.otherPaths.map(FilePath.canonical)
+				}
+				for base in bases where path == base || path.hasPrefix(base + "/") {
+					guard base.count > bestLength else { continue }
 					// Walked back through the *node's* own URL rather than the
 					// canonical one: the prefix test has to resolve symlinks —
 					// `/tmp` against `/private/tmp` is 508's whole reason for

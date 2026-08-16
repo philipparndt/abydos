@@ -113,9 +113,117 @@ reveal, arrow keys — works inside a dependency without a line written for it.
 The package row carries the name, the version and the origin; the rows under it
 are the files.
 
+## What was found on the way
+
+The pictures are in `images/`.
+
+### The file in the tab was never the file this item thought it was
+
+**This is the finding worth the whole day, and nothing but running the app
+would have produced it.** The report says `Extrusion.swift` opened "from
+Cadova's own sources, under `.build/checkouts`", and everything here was built
+against that: the reader looked in `<root>/.build/checkouts/<name>`, a fixture
+proved it, seventeen tests passed.
+
+Then `--definition` was pointed at `.extruded(…)` in a real model, and the
+editor opened
+
+    ~/Library/Caches/abydos/index/cadova-models-mn5raibyyd7h/checkouts/
+        Cadova/Sources/Cadova/…/ExtrudeWithEdgeProfiles.swift
+
+`LanguageServers.arguments(for:root:)` starts sourcekit-lsp with
+`--scratch-path` under the caches — deliberately, because an index inside the
+checkout is one more thing to ignore and one more thing to search by accident —
+and SwiftPM fetches its **own copy of every dependency** beneath it. So there
+are two checkouts of the same revision on this machine, and the one the editor
+opens is not the one in the project. A section that knew only about `.build`
+gave the file in the tab no home at all, which is precisely the failure being
+fixed, and it looked completely correct against every fixture.
+
+`ExternalDependency` therefore carries `localPath` — the copy the section
+*shows*, the indexer's when it exists — and `otherPaths`, the copies it will
+still recognise. A file opened from either resolves to the row the section is
+drawing, so its siblings are the siblings it shows.
+
+### And a third answer, which has no place in a tree at all
+
+Once sourcekit-lsp has finished indexing, the same `--definition` stops
+answering with a source file and answers with a **generated interface**:
+
+    /var/folders/…/T/sourcekit-lsp/GeneratedInterfaces/706881…/Cadova.swiftinterface
+
+That is a synthesised file in a temporary directory. It belongs to no checkout,
+has no siblings, and cannot be revealed anywhere. Left alone deliberately: the
+section is about packages on disk, and a generated interface is not one. Worth
+knowing that the same gesture produces two quite different kinds of destination
+depending on whether the index is warm.
+
+### `.build` stays an ordinary folder — decided
+
+The item asked whether it should stop being one. It does not, for three
+reasons, and the third is the one that settles it:
+
+1. **`.build` is not only checkouts.** It holds `debug`, `artifacts`,
+   `arm64-apple-macosx`, a build database. Hiding the folder to avoid showing
+   the checkouts twice would hide four things that are shown nowhere else.
+2. **It is somebody else's directory.** The tree is the directory; a file
+   manager that quietly omits a folder because a derived view happens to also
+   show part of it is a file manager nobody can trust. It is already marked —
+   `FileNode.defaultExcludedDirectoryNames` tints it, and Settings can change
+   that — and being marked is the honest treatment.
+3. **The duplicate never gets in the way, because reveal prefers the
+   section.** That is the rule that makes leaving `.build` alone free: a path
+   inside any known checkout is revealed in Dependencies, so `.build` is never
+   opened by the act of following a symbol. Written the other way round first,
+   and the difference is visible: the ordinary tree answered, and the pane
+   showed `.build ▸ checkouts ▸ Cadova ▸ Sources ▸ Cadova ▸ Abstract Layer ▸
+   Operations ▸ Extrude ▸ Extrusion.swift` — ten levels of a folder nobody
+   asked about, ending at the one row that cannot say which package it is.
+
+### The section is read before the first paint, not after it
+
+It was queued behind the first paint at first, on the argument that the rows
+somebody clicks matter more than a section nobody has scrolled to. That lost a
+race: `abydos --file …/checkouts/…/Extrusion.swift` opens the tab in the same
+turn of the run loop, the reveal finds no section to put the file in, and the
+ordinary tree answers instead. Reading it in `load(project:)` costs a
+two-deep directory walk and a JSON parse per subproject, which `LaunchClock`
+now reports beside the rest of the open.
+
+## Ruled out
+
+- **A section of its own, below the tree, in a second outline view.** The
+  sidebar has been a split and was made one view again (0506 has the history),
+  and a second view would need its own selection, its own keyboard, its own
+  reveal. A second *root* in the same outline view — which is where IntelliJ
+  puts External Libraries — costs one `numberOfChildrenOfItem(nil)` returning
+  two and nothing else.
+- **A list of packages with no files under it.** It would have answered "where
+  did this come from" and not "what is beside it", and the item asks for both.
+- **A tree of files with no package rows.** The mirror of the same mistake.
+- **Marking Go's indirect dependencies.** `// indirect` is right there in
+  `go.mod` and it was written and then taken out again: sorting direct-first
+  breaks the alphabetical order, and alphabetical order is what makes a list of
+  thirty modules browsable — which is the question being asked of it. One list,
+  sorted by name, the same shape as every other kind.
+- **Making a dependency's files read-only in the tree.** Rename and Move to
+  Trash are offered on a file inside a package, and they would act on somebody
+  else's checkout. Not done here: the same is already true of those files via
+  `.build`, so this item adds a route to a hazard rather than the hazard, and
+  a read-only notion in the tree is a feature of its own with its own edges
+  (a `.build` copy is regenerable, a `~/go/pkg/mod` one is shared between every
+  project on the machine). Left as a step below, unticked, so it is visible.
+- **Running any build tool to answer.** Nothing here does, for the reasons
+  `SwiftPackage`'s comment measures. It is what makes 0512 and 0513 hard and
+  they say so.
+- **Deleting the 1424 build artefacts sourcekit-lsp left in
+  `abydos-examples/cadova-models`.** Found while watching this work; filed as
+  0515 rather than swept up, since the cause is not understood and the
+  sweeping is somebody else's repository.
+
 ## Estimate
 
-2026-08-16 19:30 — most of a day left
+2026-08-16 21:05 — an hour left: the spec, and the suite
 
 ## Steps
 
@@ -126,11 +234,22 @@ are the files.
 - [x] A section in the project view for what the project depends on
 - [x] It says where each one came from, from what is already on disk
 - [x] A kind that is not read says so, rather than showing nothing
-- [ ] A file opened by following a symbol can be revealed in it
+- [x] A file opened by following a symbol can be revealed in it
 - [x] Its siblings can be browsed from there
 - [x] It says which subproject a dependency belongs to, where there is more than
       one
-- [ ] Decide what happens to `.build` in the ordinary tree, and say why
-- [ ] Watched in the app, with a screenshot of a dependency revealed
-- [ ] Write down here what was ruled out on the way
+- [x] Find where a symbol followed out of a model *actually* lands, rather than
+      where the report says it does
+- [x] Decide what happens to `.build` in the ordinary tree, and say why
+- [x] Watched in the app, with a screenshot of a dependency revealed
+- [ ] Make a dependency's files read-only in the tree
+
+      Not done, and not by oversight. Rename and Move to Trash are offered on a
+      file inside a package and would act on somebody else's checkout — but
+      that is already true of the same files through `.build`, so this item
+      adds a route to the hazard rather than the hazard, and read-only in the
+      tree is a feature with edges of its own. Left here rather than deleted so
+      that it is somebody's to pick up.
+
+- [x] Write down here what was ruled out on the way
 - [ ] The spec says what the project now does

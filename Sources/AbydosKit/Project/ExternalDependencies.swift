@@ -26,12 +26,27 @@ public struct ExternalDependency: Equatable, Sendable {
 	public let origin: String
 	/// The sources on disk, when they have been fetched.
 	public let localPath: URL?
+	/// Other copies of the same checkout on this machine.
+	///
+	/// A Swift package genuinely has two: `swift build` fetches into the
+	/// project's `.build/checkouts`, and sourcekit-lsp — started with a
+	/// `--scratch-path` under `~/Library/Caches/abydos/index`, because its index
+	/// is derived data and does not belong in the checkout — fetches its own.
+	/// Same revision, same files, two paths.
+	///
+	/// `localPath` is the one the section *shows*; these are the ones it will
+	/// still recognise. Without them a file opened from the other copy has no
+	/// row in the section and falls back to the ordinary tree, which for a
+	/// Swift package means opening `.build` and walking ten levels down to the
+	/// same file — the duplicate the section exists to replace.
+	public let otherPaths: [URL]
 
-	public init(name: String, version: String?, origin: String, localPath: URL?) {
+	public init(name: String, version: String?, origin: String, localPath: URL?, otherPaths: [URL] = []) {
 		self.name = name
 		self.version = version
 		self.origin = origin
 		self.localPath = localPath
+		self.otherPaths = otherPaths
 	}
 
 	/// The origin without the noise, for a row eleven characters wide.
@@ -255,7 +270,7 @@ public enum ExternalDependencies {
 			?? ((top["object"] as? [String: Any])?["pins"] as? [[String: Any]])
 			?? []
 
-		let checkouts = root.appendingPathComponent(".build/checkouts")
+		let checkouts = checkoutDirectories(for: root)
 		let manager = FileManager.default
 		let packages = pins.compactMap { pin -> ExternalDependency? in
 			let location = (pin["location"] as? String) ?? (pin["repositoryURL"] as? String) ?? ""
@@ -275,16 +290,46 @@ public enum ExternalDependencies {
 			// The checkout is named after the repository, except when SwiftPM has
 			// had to disambiguate — so the identity is tried too rather than
 			// assumed away.
-			let candidates = [name, identity].filter { !$0.isEmpty }
-			let local = candidates
-				.map { checkouts.appendingPathComponent($0) }
-				.first { manager.fileExists(atPath: $0.path) }
+			let names = [name, identity].filter { !$0.isEmpty }
+			let found = checkouts
+				.flatMap { directory in names.map(directory.appendingPathComponent) }
+				.filter { manager.fileExists(atPath: $0.path) }
 
 			return ExternalDependency(
-				name: name, version: version, origin: location, localPath: local
+				name: name, version: version, origin: location,
+				localPath: found.first, otherPaths: Array(found.dropFirst())
 			)
 		}
 		return .packages(packages.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending })
+	}
+
+	/// Where a Swift package's sources may have been checked out, best first.
+	///
+	/// **There are two copies and they are not interchangeable, which is the
+	/// thing this item found out the hard way.** `swift build` in the project
+	/// fetches into `.build/checkouts`. sourcekit-lsp is started with
+	/// `--scratch-path` pointing at `~/Library/Caches/abydos/index/<project>-<hash>`
+	/// — derived data, deliberately not in the checkout — and fetches its own
+	/// copy into `checkouts` beneath *that*. So following a symbol out of
+	/// somebody's model opens
+	///
+	///     ~/Library/Caches/abydos/index/cadova-models-mn5raibyyd7h/checkouts/
+	///         Cadova/Sources/Cadova/…/Extrusion.swift
+	///
+	/// and not the path under `.build` that the report and this item both
+	/// assumed. A section that knew only about `.build/checkouts` gave the file
+	/// in the tab no home at all — the exact failure being fixed — while
+	/// looking correct in every test written against a fixture.
+	///
+	/// The indexer's copy comes first for that reason: it is the copy *this
+	/// program* opens files from, so the row somebody is revealed into is the
+	/// row their tab is actually showing. A file under `.build/checkouts` is
+	/// inside the project and the ordinary tree already has a row for it.
+	static func checkoutDirectories(for root: URL) -> [URL] {
+		[
+			LanguageServers.indexScratchPath(for: root).appendingPathComponent("checkouts"),
+			root.appendingPathComponent(".build/checkouts"),
+		]
 	}
 
 	/// `https://github.com/tomasf/Cadova.git` → `Cadova`.
