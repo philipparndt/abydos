@@ -18,22 +18,57 @@ import Foundation
 /// `Preparing <target>` says a target started and never says one finished, the
 /// finish it does print is shared with hundreds of indexing subprocesses, and
 /// `Preparing` is one server's word. `$/progress` is the protocol's, it has an
-/// explicit end, and every server that makes a client wait uses it.
+/// explicit end, and every server that makes a client wait uses it — measured,
+/// `gopls` opens one numbered token titled `Setting up workspace` and
+/// `rust-analyzer` opens seven named ones, `Fetching` through `cachePriming`.
 ///
 /// **Preparation is the first stretch of work and only the first.** Once the
-/// server has been idle, this stays quiet for the rest of its life, and that is
+/// server has settled, this stays quiet for the rest of its life, and that is
 /// the difference between a word and a flicker: servers go on reporting progress
-/// for as long as they run — a reindex after a save, a flycheck — and a chip that
-/// said "preparing" every time somebody pressed ⌘S is a chip people stop reading.
-/// The first stretch is the one the item is about, it happens once per server,
-/// and it is over when the server first has nothing to do.
+/// for as long as they run — `rust-analyzer` runs `cargo check` after every save
+/// and reports it — and a chip that said "preparing" every time somebody pressed
+/// ⌘S is a chip people stop reading.
+///
+/// **Which is why "no tokens open" is not the same as "finished", and this is
+/// the part that had to be measured rather than reasoned about.** The obvious
+/// rule — preparation ends when the set of open tokens empties — is right for
+/// `sourcekit-lsp`, which holds one token across the whole minute, and quite
+/// wrong for `rust-analyzer`, which closes each step before opening the next: on
+/// a cold crate its set emptied **eight times** during a startup that ran to 8.7
+/// seconds, the first of them at 1.1 seconds. The obvious rule puts the word up
+/// for the first eighth of the wait and never again, and reporting each gap
+/// would flash the chip eight times.
+///
+/// So an empty set is a *question* rather than an answer — `mayHaveFinished` —
+/// and the caller asks again after a grace. The longest of those eight gaps was
+/// 0.1 seconds and the rest were too short to measure, so a grace of about a
+/// second is an order of magnitude clear of them, and still far shorter than the
+/// pause before somebody saves a file and starts the work that must *not* count.
 public struct WorkDoneProgress: Equatable, Sendable {
+	/// What the caller should do about a notification.
+	public enum Change: Equatable, Sendable {
+		/// Nothing anybody has to be told: a report, or work after the server
+		/// settled.
+		case nothing
+		/// The server has begun the work it has to do before it can answer. Say
+		/// so.
+		case startedPreparing
+		/// Nothing is open any more — but see the type's comment: several servers
+		/// close each step before opening the next, so this is a question. Ask
+		/// `settleIfStillIdle()` again after the grace.
+		case mayHaveFinished
+	}
+
 	/// Tokens the server has begun and not yet ended.
 	private var open: Set<String> = []
-	/// Whether the first stretch of work has finished. Never goes back.
+	/// Whether the first stretch of work is over. Never goes back.
 	private var settled = false
 
 	/// Whether the server is still in the first stretch of work it began.
+	///
+	/// True from the first begin until the work stops for longer than the grace,
+	/// *including* the gaps in between — which is the whole reason this is not
+	/// simply `!open.isEmpty`.
 	public private(set) var isPreparing = false
 
 	public init() {}
@@ -43,41 +78,48 @@ public struct WorkDoneProgress: Equatable, Sendable {
 	/// - Parameters:
 	///   - kind: `begin`, `report` or `end`, as the notification's value says.
 	///   - token: the notification's token, as a string. The protocol allows an
-	///     integer as well, and the caller is what flattens the two — a server
-	///     that numbers its tokens and one that names them are the same thing
-	///     here, and a `Set<String>` keyed on `"7"` behaves.
-	/// - Returns: whether `isPreparing` changed, so that a caller can tell the
-	///   screen on the two notifications that matter rather than on all five
-	///   hundred. The measured cold start sent about five hundred reports and
-	///   this returns true twice.
+	///     integer as well and `gopls` uses one, so the caller is what flattens
+	///     the two — a server that numbers its tokens and one that names them are
+	///     saying the same thing here.
 	@discardableResult
-	public mutating func received(kind: String, token: String) -> Bool {
-		let before = isPreparing
+	public mutating func received(kind: String, token: String) -> Change {
+		guard !settled else { return .nothing }
 		switch kind {
 		case "begin":
-			// Only before the server has ever settled: see the type's comment.
-			// A begin after that is ordinary background work and is not counted,
-			// which also keeps `open` from growing for a set nobody reads.
-			guard !settled else { return false }
 			open.insert(token)
+			guard !isPreparing else { return .nothing }
 			isPreparing = true
+			return .startedPreparing
 		case "end":
-			guard !settled else { return false }
 			open.remove(token)
-			if open.isEmpty && isPreparing {
-				isPreparing = false
-				settled = true
-			}
+			// Only worth asking about if something was up to finish. An `end` for
+			// a token this never saw begin closes nothing.
+			guard open.isEmpty, isPreparing else { return .nothing }
+			return .mayHaveFinished
 		default:
-			// `report` and anything a future protocol adds. Deliberately not
+			// `report`, and anything a future protocol adds. Deliberately not
 			// treated as an implicit begin: the specification requires a begin
 			// first, and inventing one from a report would mean an `end` this
 			// never saw the start of could not close the token it opened —
 			// leaving the word on screen for the rest of the session, which is
 			// the one failure that would be worse than saying nothing.
-			break
+			return .nothing
 		}
-		return isPreparing != before
+	}
+
+	/// Asked after the grace, when `mayHaveFinished` was returned.
+	///
+	/// - Returns: whether preparation really has finished, and the screen should
+	///   be told. False when the server opened something else in the meantime —
+	///   which is the ordinary case for a server that closes each step before
+	///   opening the next — and false for every later call, because settling
+	///   happens once.
+	@discardableResult
+	public mutating func settleIfStillIdle() -> Bool {
+		guard !settled, isPreparing, open.isEmpty else { return false }
+		isPreparing = false
+		settled = true
+		return true
 	}
 
 	/// The server stopped, so whatever it had open is over.
@@ -88,10 +130,10 @@ public struct WorkDoneProgress: Equatable, Sendable {
 	/// these.
 	@discardableResult
 	public mutating func stopped() -> Bool {
-		let before = isPreparing
+		let wasPreparing = isPreparing
 		open.removeAll()
 		isPreparing = false
 		settled = true
-		return isPreparing != before
+		return wasPreparing
 	}
 }

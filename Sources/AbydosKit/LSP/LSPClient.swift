@@ -81,6 +81,15 @@ public final class LSPClient: @unchecked Sendable {
 	/// Whether the server is still getting ready to answer.
 	public var isPreparing: Bool { locked { progress.isPreparing } }
 
+	/// How long the work has to have stopped before preparation is called over.
+	///
+	/// An order of magnitude clear of the gaps a server leaves *inside* its own
+	/// startup — the longest measured was `rust-analyzer`'s 0.1 seconds between
+	/// closing `Fetching` and opening `Building CrateGraph` — and far shorter
+	/// than the pause before somebody saves a file, which starts the work that
+	/// must not count.
+	static let preparationGrace: TimeInterval = 1
+
 	/// How many times a reader callback has run.
 	///
 	/// Kept for one test, and worth the two lines: the failure it guards
@@ -844,13 +853,31 @@ public final class LSPClient: @unchecked Sendable {
 				?? (parameters["token"] as? NSNumber).map { "\($0)" }
 			guard let token else { return }
 			lock.lock()
-			let changed = progress.received(kind: kind, token: token)
-			let preparing = progress.isPreparing
+			let change = progress.received(kind: kind, token: token)
 			lock.unlock()
-			// Only on the two that change the answer. The measured cold start
+			// Only on the ones that change the answer. The measured cold start
 			// sent about five hundred of these, and hopping to the main queue for
 			// each would be five hundred redraws of a bar the caret is in.
-			if changed { callbackQueue.async { self.onPreparing?(preparing) } }
+			switch change {
+			case .nothing:
+				break
+			case .startedPreparing:
+				callbackQueue.async { self.onPreparing?(true) }
+			case .mayHaveFinished:
+				// **Asked again rather than believed**, and `WorkDoneProgress` has
+				// the measurement: `rust-analyzer` closes each step before opening
+				// the next, so its set of open tokens emptied eight times during a
+				// startup that ran to 8.7 seconds. Taking the first of those as
+				// the end put the word up for one eighth of the wait.
+				callbackQueue.asyncAfter(deadline: .now() + Self.preparationGrace) {
+					[weak self] in
+					guard let self else { return }
+					self.lock.lock()
+					let finished = self.progress.settleIfStillIdle()
+					self.lock.unlock()
+					if finished { self.onPreparing?(false) }
+				}
+			}
 
 		case "workspace/configuration":
 			// One answer per section asked about, and the answer is "nothing

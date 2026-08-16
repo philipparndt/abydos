@@ -230,6 +230,8 @@ in now has a name.
       found by watching, not by reading
 - [x] Watched: open a Swift package with a clean `.build`, and see what the
       first thirty seconds look like now
+- [x] An empty set of tokens is a question, not an answer — measured against
+      rust-analyzer and gopls, not just sourcekit-lsp
 - [ ] Say whether this is Swift-only, and why that is or is not right
 - [ ] Write down here what was ruled out on the way
 - [ ] `spec/language-servers.md` says what the project now does
