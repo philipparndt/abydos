@@ -50,13 +50,15 @@ comes out.
 
 ## Steps
 
-- [ ] Read `Cargo.lock` into packages: name, version, origin
-- [ ] Find the sources in the registry cache, and say nothing rather than
+- [x] Read `Cargo.lock` into packages: name, version, origin
+- [x] Find the sources in the registry cache, and say nothing rather than
       guessing when they are not fetched
-- [ ] A git dependency's checkout is found too, under `~/.cargo/git/checkouts`
-- [ ] A path dependency is not an external dependency, and is left out
-- [ ] `DependencyKind.pendingItem` stops naming this item for Cargo
-- [ ] Say what a new kind has to implement, where 0514–0516 will look for it
+- [x] A git dependency's checkout is found too, under `~/.cargo/git/checkouts`
+- [x] A path dependency is not an external dependency, and is left out
+- [x] `DependencyKind.pendingItem` stops naming this item for Cargo
+- [x] Say what a new kind has to implement, where 0514–0516 will look for it
+- [x] A member of a workspace says where its lock file is, rather than that
+      there is none — found in the app, on the first real Rust project
 - [ ] Decide whether a Cargo project belongs in `abydos-examples`, and say which
 - [ ] Watched in the app on a real Rust project, with a screenshot
 - [ ] Write down here what was ruled out on the way
