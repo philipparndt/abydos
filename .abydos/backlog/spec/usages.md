@@ -4,7 +4,7 @@ Find Usages, from the editor's context menu, asks the language server where a
 symbol is used and answers in the bottom panel beside search. It is the same list
 the search results are — a checklist somebody works through rather than something
 to read — and it is worked from the keyboard: ↓ shows each usage without giving
-the editor the keyboard, ␣ ticks one off, ⏎ is the way in.
+the editor the keyboard, ␣ or ⌫ ticks one off, ⏎ is the way in.
 
 ## Requirement: Usages arrive in the bottom panel, beside search
 
@@ -45,17 +45,21 @@ has been opened yet.
 
 The usages list and the search results are one list with two different things
 above it. Everything the search results do, the usages list does, and for the
-same reasons: rows are selected several at a time and marked **done** with ␣,
-which strikes them through and leaves them where they are; a file heading takes
-every usage in the file with it and counts how many of its own are done; `✓`
-hides what is finished; ⌘Z in the list takes back the last marking and ⇧⌘Z puts
-it back.
+same reasons: rows are selected several at a time and marked **done** with ␣ or
+⌫, which strikes them through and leaves them where they are; a file heading
+takes every usage in the file with it and counts how many of its own are done;
+`✓` hides what is finished; ⌘Z in the list takes back the last marking and ⇧⌘Z
+puts it back.
 
-Marking is never a deletion, and ⌫ and ⌘⌫ do nothing at all in the usages list
-either. The words are **Mark as Done** and **Mark as Not Done**. A usage list is
-transient, which is an argument for rows that vanish and is answered by `✓`: it
-gives the shortening list without a gesture that reads as touching a file, and
-without moving every row under the pointer on every press.
+⌫ is the key that takes a usage off the list in the editor a lot of these hands
+arrive from, and it is one of the two here because it is the first thing they
+press. It is safe to be: bare ⌫ moves nothing to the trash anywhere in this
+program. **⌘⌫ is the one that does, one pane over, and it does nothing at all in
+the usages list.** Marking is never a deletion whichever key does it, and the
+words are **Mark as Done** and **Mark as Not Done**. A usage list is transient,
+which is an argument for rows that vanish and is answered by `✓`: it gives the
+shortening list without a gesture that reads as touching a file, and without
+moving every row under the pointer on every press.
 
 The ticks are kept per symbol — against the place the symbol was asked about —
 so asking about a second symbol arrives unticked, and asking about the *same*
@@ -67,6 +71,13 @@ do after fixing one of the usages.
 - **Given** a usages list with three usages in `Theme.swift`
 - **When** two of them are selected and ␣ is pressed
 - **Then** both are struck through and the heading reads `2/3`
+
+### Scenario: the same two with the other key
+
+- **Given** the same list, nothing yet marked
+- **When** the same two are selected and ⌫ is pressed
+- **Then** both are struck through and the heading reads `2/3`, and pressing ⌫
+  again brings them back
 
 ### Scenario: the key that trashes a file one pane over
 
