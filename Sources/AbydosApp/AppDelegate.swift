@@ -966,6 +966,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let name = options.runConfigNamed {
+			// Later than most of these: the list is filled in by a scan on a
+			// background queue, and asking for something before the scan has
+			// answered reports only that it was not found.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+				controller?.runNamedConfigurationForTesting(name)
+			}
+		}
+
 		if let goal = options.chooseMakeRun {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
 				controller?.chooseMakeRunForTesting(goal)

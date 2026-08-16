@@ -162,6 +162,9 @@ struct LaunchOptions {
 	/// Print what the project offers to run.
 	var listRunConfigurations = false
 
+	/// Start the discovered configuration with this name and print its console.
+	var runConfigNamed: String?
+
 	/// Keys to press in the palette's list, comma separated.
 	var switcherKeys: String?
 
@@ -765,6 +768,7 @@ struct LaunchOptions {
 			case "--tab-menu": options.tabMenu = true
 			case "--palette": options.paletteQuery = next() ?? ""
 			case "--run-configs": options.listRunConfigurations = true
+			case "--run-config": options.runConfigNamed = next()
 			case "--appearance-walk": options.appearanceWalk = next()
 			case "--copy-path": options.copyPath = next() ?? "down"
 			case "--burst": options.burstFrames = next().flatMap(Int.init)

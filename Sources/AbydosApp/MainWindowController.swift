@@ -3335,6 +3335,46 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			.joined(separator: "\n  ")
 	}
 
+	/// Starts one of the discovered configurations by name, as choosing it from
+	/// the run menu does, and reads its console back a few seconds later.
+	///
+	/// `--run-configs` says what the list holds; this says what one of them
+	/// does, which is a different question and the one that catches a
+	/// configuration that looks right and does not run. Every line is flushed:
+	/// a driver run ends in a kill, and a report still in stdout's buffer when
+	/// the signal arrives is a run that looks like it never happened.
+	func runNamedConfigurationForTesting(_ name: String) {
+		func say(_ text: String) {
+			print("RUNCONFIG: \(text)")
+			fflush(stdout)
+		}
+
+		for configuration in runConfigurations {
+			say("  \(title(for: configuration.source)) | \(configuration.name)"
+				+ " | \(configuration.commandLine) | in \(configuration.workingDirectory)")
+		}
+
+		guard let configuration = runConfigurations.first(where: { $0.name == name }) else {
+			say("nothing called \(name)")
+			return
+		}
+
+		say("starting \(configuration.name)")
+		run(configuration)
+
+		// Twice, because how long this takes is not knowable from here: a warm
+		// `swift run` is a second and a cold one compiles the world. The first
+		// reading says the run started, the second says how it ended.
+		for (index, delay) in [8.0, 40.0].enumerated() {
+			DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+				guard let self else { return }
+				say("after \(Int(delay))s, console \(self.bottomPanel.runConsolesForTesting)")
+				say("after \(Int(delay))s: "
+					+ self.bottomPanel.activeTerminalTailForTesting(lines: index == 0 ? 6 : 14))
+			}
+		}
+	}
+
 	/// Shows every configuration, for the Run menu.
 	@objc func showRunConfigurations(_ sender: Any?) {
 		guard !runConfigurations.isEmpty else {
@@ -3618,6 +3658,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		case .gradle:    return "Gradle"
 		case .javaMain:  return "Java"
 		case .xcodeScheme: return "Schemes"
+		case .swiftPackage: return "Swift Package"
 		case .bazel:     return "Bazel"
 		case .conan:     return "Conan"
 		}
