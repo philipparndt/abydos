@@ -37,6 +37,48 @@ half of something.
   from `moveBackward:` from ⌃B. It would need the key event rather than the
   selector, which is a worse trade than either of the two above.
 
+## Watched in the app
+
+`--emacs-nav`, 0497's driver, with a ⌃O section added to the end of it. The
+file is eight ordinary short lines, an indented one and an empty one among
+them:
+
+    0  first line of the file
+    1  second line of file
+    2  third line of the file
+    3  fourth line of the file
+    4  →indented fifth line of the file
+    5
+    6  sixth lines
+    7  seventh and last line of the file
+
+**Before**, with the app built from `main` plus the driver and nothing else —
+the `doCommand` case was written afterwards, so this is the program as the
+item found it:
+
+    $ build/Abydos.app/Contents/MacOS/Abydos --open …/emacs --file …/emacs.txt --emacs-nav
+
+    EMACS: at 5@0      caret=123 selection=123..<123 “”
+    EMACS:             line 5 “|” then 6 “sixth lines”
+    EMACS: ⌃O          caret=122 selection=122..<122 “”
+    EMACS:             line 4 “⇥indented fifth line of the file|” then 5 “”
+    EMACS: at 4@end    caret=122 selection=122..<122 “”
+    EMACS:             line 4 “⇥indented fifth line of the file|” then 5 “”
+    EMACS: ⌃O          caret=121 selection=121..<121 “”
+    EMACS:             line 4 “⇥indented fifth line of the fil|e” then 5 “”
+    EMACS: at 2@8      caret=51 selection=51..<51 “”
+    EMACS:             line 2 “third li|ne of the file” then 3 “fourth line of the file”
+    EMACS: ⌃O          caret=50 selection=50..<50 “”
+    EMACS:             line 2 “third l|ine of the file” then 3 “fourth line of the file”
+
+Every line is the same text one character to the left, and the file never
+gains a line: **⌃O is `moveBackward:` and nothing else**, which is the report
+at the top of this item watched rather than reasoned about. The empty-line
+press is the clearest of the three — the caret leaves the empty line
+altogether and ends up at the end of the line above, which is a key that
+should have *added* an empty line moving the caret off the one that was
+already there.
+
 ## Ruled out
 
 - **Doing it inside 0497.** 0497 is two motions and a decision about logical
@@ -44,10 +86,21 @@ half of something.
   which nobody has decided. Adding it there would have been a design choice
   smuggled in under a fix for ⌃B.
 
+## Estimate
+
+2026-08-16 09:05 — about two hours left
+
 ## Steps
 
 - [ ] Decide what ⌃O does about the indent of the line it splits
 - [ ] `insertNewlineIgnoringFieldEditor:` has a case, so ⌃O opens a line
+- [x] A driver that shows the *text* ⌃O leaves behind, not only the caret
+
+      Added before starting. `caretReportForTesting` prints the selected
+      text, which is empty for a collapsed caret, so open-line — whose whole
+      point is that the caret does not move — prints exactly what a dead key
+      prints. 0497 read this off a `PROBE` line it took out again; a key that
+      inserts text needs the text in the transcript.
 - [ ] Watched with `--emacs-nav`, which already knows ⌃O's key code, on an
       indented line as well as an unindented one
 - [ ] `make test` and `make warnings` are clean

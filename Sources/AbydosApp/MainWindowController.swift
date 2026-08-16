@@ -9141,6 +9141,36 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		press("p", "⌃P", .control)
 		place("at 2@6", line: 2, column: 6)
 		press("n", "⌃N", .control)
+
+		// ⌃O — open-line, and the one key here that edits the file. macOS
+		// sends it as a *pair* of selectors, `insertNewlineIgnoringFieldEditor:`
+		// and then `moveBackward:`, so the caret ends where it started with
+		// the line split under it — and the caret report alone cannot tell
+		// that apart from a key that did nothing, since both say the caret is
+		// where it was put. Each press prints the lines as well as the caret.
+		//
+		// Bottom of the file upwards, because unlike every motion above these
+		// presses do not undo themselves: each one adds a line, and going up
+		// leaves the line numbers underneath still the ones written here.
+		func open(_ label: String, line: Int, column: Int) {
+			editor.setCaretForTesting(line: line, column: column)
+			say(label)
+			print("EMACS:             \(editor.caretLinesForTesting)")
+			editor.simulateKey("o", modifiers: .control)
+			say("⌃O")
+			print("EMACS:             \(editor.caretLinesForTesting)")
+			fflush(stdout)
+		}
+		// An empty line: nothing on either side of the caret, so what ⌃O
+		// leaves behind is two empty lines with the caret still on the first.
+		open("at 5@0", line: 5, column: 0)
+		// The end of an indented line, which is where copying the indent and
+		// not copying it differ: the caret does not go to the new line, so a
+		// copied indent would be whitespace on a line nobody is on.
+		open("at 4@end", line: 4, column: 999)
+		// Mid-word, the ordinary case: the word is split and the caret stays
+		// in front of the newline, at the end of the first half.
+		open("at 2@8", line: 2, column: 8)
 	}
 
 	func openFirstScratchForTesting() {

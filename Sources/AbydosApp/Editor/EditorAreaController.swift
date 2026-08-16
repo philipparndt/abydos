@@ -487,6 +487,10 @@ final class EditorAreaController: NSViewController {
 		(activeGroup ?? groups.first)?.caretReportForTesting ?? "no editor"
 	}
 
+	var caretLinesForTesting: String {
+		(activeGroup ?? groups.first)?.caretLinesForTesting ?? "no file"
+	}
+
 	func toggleFileHistory() {
 		(activeGroup ?? groups.first)?.toggleFileHistory()
 	}
