@@ -528,6 +528,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let spec = options.selectLines {
+			// Late, so whatever else the run asked for — a terminal, a results list
+			// — has already taken the keyboard. The selection is made after it and
+			// takes nothing back, which is the state being photographed.
+			DispatchQueue.main.asyncAfter(deadline: .now() + max(2.5, options.screenshotDelay - 1.0)) {
+				let parts = spec.split(separator: ":").compactMap { Int($0) }
+				guard parts.count == 2 else { return }
+				controller?.selectLinesForTesting(from: parts[0], to: parts[1])
+			}
+		}
+
 		if let spec = options.indentBlock {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
 				let parts = spec.split(separator: ":").map(String.init)

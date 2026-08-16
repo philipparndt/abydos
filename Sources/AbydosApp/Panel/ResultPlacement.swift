@@ -183,11 +183,17 @@ extension ResultsPane {
 	/// keystroke it is given. A claim about that has to be able to fail, and one
 	/// made by calling the table directly cannot.
 	func pressAtWindowForTesting(_ name: String) {
+		// ⇥ is here for item 510, and it is the one that most needs sending this
+		// way: it is now the only gesture that hands the keyboard to the editor,
+		// and a ⇥ delivered straight to the table would show that the table
+		// answers it while saying nothing about the four homes — where ⇥ is also
+		// how the key view loop walks between controls.
 		let keys: [String: (UInt16, String)] = [
 			"space": (49, " "),
 			"down": (125, "\u{F701}"),
 			"up": (126, "\u{F700}"),
 			"return": (36, "\r"),
+			"tab": (48, "\t"),
 		]
 		guard let (code, characters) = keys[name], let window else { return }
 		guard let event = NSEvent.keyEvent(

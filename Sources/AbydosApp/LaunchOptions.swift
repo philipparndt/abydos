@@ -375,6 +375,13 @@ struct LaunchOptions {
 	var probeLAN: String?
 	/// Query for the in-file find bar.
 	var findQuery: String?
+	/// Select whole lines in the editor and leave them selected: `from:to`.
+	///
+	/// For photographing a selection that the view drawing it does not have the
+	/// keyboard for — the second half of item 510. Nothing else here makes a
+	/// selection without taking the keyboard with it, because everything else
+	/// that makes one is about to type into it.
+	var selectLines: String?
 	/// Query for project-wide search.
 	var searchQuery: String?
 	/// Steps to work the search results with, comma separated: `focus`, `down`,
@@ -843,6 +850,7 @@ struct LaunchOptions {
 			case "--breakpoint-off": options.disabledBreakpointLine = next().flatMap(Int.init)
 			case "--stop-after": options.stopAfter = next().flatMap(Double.init)
 			case "--find":       options.findQuery = next()
+			case "--select-lines": options.selectLines = next()
 			case "--search":     options.searchQuery = next()
 			case "--search-steps": options.searchSteps = next()
 			case "--wrap":       options.wordWrap = true

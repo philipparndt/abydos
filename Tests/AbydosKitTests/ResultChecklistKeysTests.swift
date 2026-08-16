@@ -53,3 +53,87 @@ struct ResultChecklistKeysTests {
 		}
 	}
 }
+
+/// Which gesture hands the keyboard to the editor, which is item 510's whole
+/// question.
+///
+/// It is the other half of the hazard `marksDone` exists for. ⌫ ticks a row
+/// off, and that is only safe while the keyboard is provably still in the list:
+/// a rule that lets one key too many hand the keyboard over is somebody
+/// pressing ⌫ at a list that looks live and deleting a character of their
+/// source, which is what was reported.
+struct ResultChecklistOpeningTests {
+	private func opening(
+		_ keyCode: UInt16,
+		_ modifiers: NSEvent.ModifierFlags = [],
+		previewing: Bool = false
+	) -> ResultIntent? {
+		ResultChecklistKeys.opening(
+			keyCode: keyCode, modifiers: modifiers, previewsOnSelectionChange: previewing
+		)
+	}
+
+	/// The sentence the reporter wrote: the keyboard stays in the list unless Tab
+	/// is pressed. So ⇥ commits in both lists, and nothing else commits at all.
+	@Test func tabIsTheOnlyWayOut() {
+		#expect(opening(ResultChecklistKeys.tab) == .commit)
+		#expect(opening(ResultChecklistKeys.tab, previewing: true) == .commit)
+		for keyCode: UInt16 in [
+			ResultChecklistKeys.enter, ResultChecklistKeys.space,
+			ResultChecklistKeys.backspace, 53, 125, 126,
+		] {
+			#expect(opening(keyCode) != .commit)
+			#expect(opening(keyCode, previewing: true) != .commit)
+		}
+	}
+
+	/// ⏎ shows the row and keeps the keyboard, which is the sentence in
+	/// `spec/usages.md` that item 510 reversed. Which *tab* it lands in is what
+	/// the two lists still disagree about: search has not shown the row yet, so
+	/// ⏎ shows it in the provisional tab; usages showed it as the selection
+	/// moved, so ⏎ settles it into one of its own.
+	@Test func returnNeverMovesTheKeyboard() {
+		#expect(opening(ResultChecklistKeys.enter) == .preview)
+		#expect(opening(ResultChecklistKeys.enter, previewing: true) == .permanent)
+	}
+
+	/// A click is a decision about which file and not about where the keys go —
+	/// and it still opens a tab of its own, which is what `spec/search.md` has
+	/// always promised and is not what a preview does.
+	@Test func aClickOpensPermanentlyAndKeepsTheKeyboard() {
+		#expect(ResultChecklistKeys.click == .permanent)
+	}
+
+	/// ⇧⇥ is not the way out. It goes on walking the key view loop backwards,
+	/// which in the search pane is the way back up to the query field — the one
+	/// thing ⇥ used to do there.
+	@Test func shiftTabIsNotAnswered() {
+		#expect(opening(ResultChecklistKeys.tab, .shift) == nil)
+		#expect(opening(ResultChecklistKeys.tab, .shift, previewing: true) == nil)
+	}
+
+	/// A modified press is nobody's here, exactly as with marking: ⌘⇥ is the
+	/// system's application switcher and ⌃⇥ walks a tab bar, and a list that
+	/// answered either would be taking a key out of a hand that meant something
+	/// else by it.
+	@Test func modifiedPressesFallThrough() {
+		for modifier: NSEvent.ModifierFlags in [.command, .option, .control] {
+			#expect(opening(ResultChecklistKeys.tab, modifier) == nil)
+			#expect(opening(ResultChecklistKeys.enter, modifier) == nil)
+			#expect(opening(ResultChecklistKeys.tab, modifier, previewing: true) == nil)
+			#expect(opening(ResultChecklistKeys.enter, modifier, previewing: true) == nil)
+		}
+	}
+
+	/// Everything else is the table's, the arrows included: moving the selection
+	/// is not opening anything, and where a move does show a row it is driven
+	/// from what the move did rather than from the key.
+	@Test func nothingElseOpens() {
+		for keyCode: UInt16 in [
+			ResultChecklistKeys.space, ResultChecklistKeys.backspace, 53, 125, 126,
+		] {
+			#expect(opening(keyCode) == nil)
+			#expect(opening(keyCode, previewing: true) == nil)
+		}
+	}
+}
