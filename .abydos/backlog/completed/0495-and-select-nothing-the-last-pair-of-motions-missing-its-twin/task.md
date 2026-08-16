@@ -154,8 +154,8 @@ Each of those 22 was then looked up in the `doCommand` switch
     moveDownAndModifySelection                    yes    yes
     moveForwardAndModifySelection                 no     no
     moveLeftAndModifySelection                    yes    yes
-    moveParagraphBackwardAndModifySelection       no     no
-    moveParagraphForwardAndModifySelection        no     no
+    moveParagraphBackwardAndModifySelection       no     n/a †
+    moveParagraphForwardAndModifySelection        no     n/a †
     moveRightAndModifySelection                   yes    yes
     moveToBeginningOfDocumentAndModifySelection   yes    yes   ← this item
     moveToBeginningOfLineAndModifySelection       yes    yes
@@ -172,6 +172,28 @@ Each of those 22 was then looked up in the `doCommand` switch
     moveWordRightAndModifySelection               yes    yes
     pageDownAndModifySelection                    yes    yes
     pageUpAndModifySelection                      yes    yes
+
+† **Corrected 2026-08-16, after this item was completed.** Those two rows read
+`no no` when this was written, which said that a base method existed and was
+unhandled. There is no base method. `NSResponder.h` declares
+`moveParagraphForwardAndModifySelection:` and
+`moveParagraphBackwardAndModifySelection:` at lines 185–186 and **no bare
+`moveParagraphForward:` or `moveParagraphBackward:` at all** — they are the one
+pair in the family that exists only in its shifted form. 0502 found it by
+trying to write the bare pair and having the compiler refuse; checked again
+against the SDK header before this note was written. So the sentence below,
+"every row is `yes yes` or `no no`", now has two rows reading `no n/a` — and it
+reaches the same place by a shorter route: a twin whose base does not exist is
+not a half-wired key either. The conclusion stands; the premise under those two
+rows did not, and a table is read for its rows.
+
+The rows are corrected rather than the paragraph left to mislead; nothing else
+here is rewritten, and what this item concluded on the day it was done stands
+as it was. Two later facts a reader should have: 0502 has since handled the
+paragraph family, so those six rows no longer describe the switch, and it also
+found that ⌥⇧↑/⌥⇧↓ are what send `moveParagraph…AndModifySelection:` — not
+⌃⌥↑/⌃⌥↓, which are bound to nothing and are named wrongly in the paragraph
+below.
 
 **Every row is `yes yes` or `no no`, and that is the answer.** Sixteen twins
 are handled and all sixteen bases are handled with them. The other six are not
