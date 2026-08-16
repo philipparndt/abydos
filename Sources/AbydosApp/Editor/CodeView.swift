@@ -2122,6 +2122,43 @@ final class CodeView: NSView, NSTextInputClient {
 			moveToLineEdge(start: true, extending: true)
 		case #selector(moveToEndOfLineAndModifySelection(_:)), #selector(moveToRightEndOfLineAndModifySelection(_:)):
 			moveToLineEdge(start: false, extending: true)
+		// The paragraph family, which is where ⌃A and ⌃E arrive: macOS binds
+		// them to `moveToBeginningOfParagraph:`/`moveToEndOfParagraph:` and
+		// not to the line selectors above, so reading this switch used to say
+		// those two keys worked while pressing them did nothing at all.
+		//
+		// A paragraph here is one line of the file — the text between two hard
+		// breaks, which is what Cocoa means by the word and, in source, a
+		// line. These therefore go to the *hard* edge of that line and share
+		// no code with `moveToLineEdge`, whose first press stops at the first
+		// non-blank. That stop is an affordance of the Home key and cannot be
+		// reused here: AppKit sends ⌥↑ as `moveBackward:` followed by
+		// `moveToBeginningOfParagraph:`, so the second selector runs one
+		// character to the left of where the caret was, and a stop that reads
+		// the caret to decide where to go sends it straight back. Measured:
+		// ⌥↑ dead at the first non-blank of an indented line, and correct on
+		// every unindented one. A selector used inside a sequence has to be a
+		// function of the position and not a toggle over it.
+		//
+		// `moveParagraph…AndModifySelection:` is the same family and the
+		// opposite half: ⌥⇧↓ and ⌥⇧↑ send one selector with no nudge in front,
+		// so those two are the ones that have to step to the next paragraph by
+		// themselves when the caret already sits on an edge. They have no bare
+		// twin to pair them with and it is not an omission here — AppKit
+		// declares no `moveParagraphForward:` or `moveParagraphBackward:` at
+		// all, and `StandardKeyBinding.dict` binds no key to one.
+		case #selector(moveToBeginningOfParagraph(_:)):
+			moveToParagraphEdge(start: true, extending: false)
+		case #selector(moveToEndOfParagraph(_:)):
+			moveToParagraphEdge(start: false, extending: false)
+		case #selector(moveToBeginningOfParagraphAndModifySelection(_:)):
+			moveToParagraphEdge(start: true, extending: true)
+		case #selector(moveToEndOfParagraphAndModifySelection(_:)):
+			moveToParagraphEdge(start: false, extending: true)
+		case #selector(moveParagraphBackwardAndModifySelection(_:)):
+			extendSelectionByParagraph(-1)
+		case #selector(moveParagraphForwardAndModifySelection(_:)):
+			extendSelectionByParagraph(1)
 		case #selector(moveWordLeft(_:)), #selector(moveWordBackward(_:)):
 			moveByWord(-1, extending: false)
 		case #selector(moveWordRight(_:)), #selector(moveWordForward(_:)):
@@ -2136,6 +2173,13 @@ final class CodeView: NSView, NSTextInputClient {
 		case #selector(deleteWordForward(_:)):   deleteByWord(1)
 		case #selector(deleteToBeginningOfLine(_:)): deleteToLineEdge(start: true)
 		case #selector(deleteToEndOfLine(_:)):   deleteToLineEdge(start: false)
+		// ⌃K, and the twin nothing presses. These two *can* share the line
+		// code, unlike the motions above: `deleteToLineEdge` already works to
+		// the hard edge of the line and has no toggle in it. The newline is
+		// the boundary of a paragraph rather than part of one, so ⌃K at the
+		// end of a line takes nothing and does not join it to the next.
+		case #selector(deleteToBeginningOfParagraph(_:)): deleteToLineEdge(start: true)
+		case #selector(deleteToEndOfParagraph(_:)):       deleteToLineEdge(start: false)
 		case #selector(moveToBeginningOfDocument(_:)): moveToDocumentEdge(start: true, extending: false)
 		case #selector(moveToEndOfDocument(_:)):      moveToDocumentEdge(start: false, extending: false)
 		// ⌘⇧↑ and ⌘⇧↓ are selectors of their own, and arrived here as nothing at
@@ -2329,6 +2373,58 @@ final class CodeView: NSView, NSTextInputClient {
 		} else {
 			setCaret(document.rope.utf16Offset(fromByte: range.upperBound), extendingSelection: extending)
 		}
+	}
+
+	/// ⌃A and ⌃E, and the second half of ⌥↑ and ⌥↓.
+	///
+	/// The hard edge of the line the caret is on, with no first-non-blank stop
+	/// and no soft-wrap row — a paragraph is bounded by hard breaks, so
+	/// neither question arises. `moveToLineEdge` answers both of them for the
+	/// Home key and this is deliberately not that function; the comment in
+	/// `doCommand` says what goes wrong when it is.
+	private func moveToParagraphEdge(start: Bool, extending: Bool) {
+		guard let document else { return }
+		desiredColumnX = nil
+		let rope = document.rope
+		let line = rope.line(atByteOffset: rope.byteOffset(fromUTF16: caret))
+		let range = rope.lineByteRange(line)
+		setCaret(
+			rope.utf16Offset(fromByte: start ? range.lowerBound : range.upperBound),
+			extendingSelection: extending
+		)
+	}
+
+	/// ⌥⇧↑ and ⌥⇧↓.
+	///
+	/// The edge of this paragraph, or the edge of the next one when the caret
+	/// is already on it. That extra step is what tells this apart from
+	/// `moveToParagraphEdge`, and it is not a preference: the keys that send
+	/// these selectors send them alone, while the keys that send the other two
+	/// put a one-character nudge in front to get the same effect. A run of ⌥⇧↑
+	/// therefore keeps taking one more line, rather than reaching the start of
+	/// the first one and stopping there.
+	///
+	/// No `extending:` parameter, unlike every other motion here, because
+	/// there is nothing to pass it: AppKit declares only the shifted form of
+	/// this selector, so the only caller extends.
+	private func extendSelectionByParagraph(_ direction: Int) {
+		guard let document else { return }
+		desiredColumnX = nil
+		let rope = document.rope
+		func edge(of line: Int) -> Int {
+			let range = rope.lineByteRange(line)
+			return rope.utf16Offset(fromByte: direction < 0 ? range.lowerBound : range.upperBound)
+		}
+
+		let line = rope.line(atByteOffset: rope.byteOffset(fromUTF16: caret))
+		var target = edge(of: line)
+		if target == caret {
+			let neighbour = line + direction
+			// At the first line going back, or the last going forward, there
+			// is no neighbour and the caret stays on the edge it is already on.
+			if neighbour >= 0, neighbour < rope.lineCount { target = edge(of: neighbour) }
+		}
+		setCaret(target, extendingSelection: true)
 	}
 
 	/// ⌘↑ and ⌘↓, with Shift and without.

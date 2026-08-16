@@ -9141,6 +9141,73 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		press("p", "⌃P", .control)
 		place("at 2@6", line: 2, column: 6)
 		press("n", "⌃N", .control)
+
+		// The paragraph family: ⌃A, ⌃E and their shifted twins, the two ⌥
+		// arrows whose second selector is one of them, and ⌥⇧↑/⌥⇧↓, which are
+		// `moveParagraph…AndModifySelection:` and not a pair at all.
+		place("at 2@6", line: 2, column: 6)
+		press("a", "⌃A", .control)
+		place("at 2@6", line: 2, column: 6)
+		press("e", "⌃E", .control)
+		place("at 2@6", line: 2, column: 6)
+		press("a", "⇧⌃A", [.control, .shift])
+		place("at 2@6", line: 2, column: 6)
+		press("e", "⇧⌃E", [.control, .shift])
+
+		// An indented line, because a paragraph motion that went to the first
+		// non-blank instead of to column zero would be right here and wrong
+		// below: 3@4 is the first non-blank of a line indented four spaces,
+		// and it is where the ⌥↑ two lines further on starts from.
+		place("at 3@11", line: 3, column: 11)
+		press("a", "⌃A", .control)
+		place("at 3@4", line: 3, column: 4)
+		press("a", "⌃A", .control)
+
+		// ⌥↑ and ⌥↓ are `['moveBackward:', 'moveToBeginningOfParagraph:']` and
+		// `['moveForward:', 'moveToEndOfParagraph:']` — two selectors sent in
+		// order. Mid-line the leading nudge makes no difference; at a boundary
+		// it is the whole point, and it is why the second selector must be a
+		// plain "go to the hard edge" rather than anything that reads where
+		// the caret already is.
+		place("at 2@6", line: 2, column: 6)
+		press("up", "⌥↑", .option)
+		place("at 2@6", line: 2, column: 6)
+		press("down", "⌥↓", .option)
+		place("at 2@0", line: 2, column: 0)
+		press("up", "⌥↑ at start", .option)
+		place("at 2@end", line: 2, column: 999)
+		press("down", "⌥↓ at end", .option)
+		place("at 3@4", line: 3, column: 4)
+		press("up", "⌥↑ indent", .option)
+
+		// The shifted pair are *not* the shifted version of the two above.
+		// `StandardKeyBinding.dict` sends ⌥⇧↑ as the single selector
+		// `moveParagraphBackwardAndModifySelection:`, with no nudge in front
+		// of it, so that one selector has to step to the previous paragraph
+		// by itself when the caret is already at a boundary.
+		place("at 2@6", line: 2, column: 6)
+		press("up", "⌥⇧↑", [.option, .shift])
+		place("at 2@6", line: 2, column: 6)
+		press("down", "⌥⇧↓", [.option, .shift])
+		place("at 2@0", line: 2, column: 0)
+		press("up", "⌥⇧↑ start", [.option, .shift])
+
+		// ⌃K last, and with the line printed either side of it, because a
+		// caret report cannot show a deletion — the caret does not move. It
+		// is last because it edits the document and the app autosaves, so
+		// everything above would be reading a file this run had changed.
+		// Regenerate the scratch file between runs.
+		place("at 2@6", line: 2, column: 6)
+		print("EMACS: line 2 is “\(editor.lineTextForTesting(2))”")
+		press("k", "⌃K", .control)
+		print("EMACS: line 2 is “\(editor.lineTextForTesting(2))”")
+		// At the end of a line there is nothing left of the paragraph to
+		// take, and the newline is the boundary rather than part of it, so
+		// this is a no-op and does not join the two lines.
+		place("at 3@end", line: 3, column: 999)
+		press("k", "⌃K", .control)
+		print("EMACS: lines 3-4 are “\(editor.lineTextForTesting(3))” / “\(editor.lineTextForTesting(4))”")
+		fflush(stdout)
 	}
 
 	func openFirstScratchForTesting() {

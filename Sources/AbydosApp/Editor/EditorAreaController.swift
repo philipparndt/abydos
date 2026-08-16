@@ -521,6 +521,10 @@ final class EditorAreaController: NSViewController {
 		(activeGroup ?? groups.first)?.textTailForTesting ?? "no file"
 	}
 
+	func lineTextForTesting(_ line: Int) -> String {
+		(activeGroup ?? groups.first)?.lineTextForTesting(line) ?? "no file"
+	}
+
 	var fileHistoryReportForTesting: String {
 		(activeGroup ?? groups.first)?.fileHistoryReportForTesting ?? "no file"
 	}
