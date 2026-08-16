@@ -255,6 +255,10 @@ ones in that item, but they are the same in both runs here.
       Before as well as after, the before run made by stashing the
       `doCommand` case and rebuilding. Mid-word, at the end of an indented
       line and on an empty line, with the lines printed as well as the caret.
-- [ ] `make test` and `make warnings` are clean
+- [x] `make test` and `make warnings` are clean
+
+      2625 tests in 367 suites passed. `make warnings` says no warnings in
+      this repository's Swift, with the four vendored tree-sitter C warnings
+      it always reports.
 - [ ] Write down here what was ruled out on the way
 - [ ] `spec/editor.md` says what the project now does
