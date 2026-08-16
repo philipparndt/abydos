@@ -90,6 +90,27 @@ The whole of it is recomputing the marks, the done flags and the row array for
 everything found so far, once per batch. `marks(for:)` alone is a `trimmingCharacters`
 and a dictionary of `String` keys per match, redone 25 times over.
 
+## What it measured, after the fix
+
+Same build, same repository, the same instrument. `--search e` and then the
+query changed three times while the walk was running, which is the "kept
+typing" the report describes:
+
+    SEARCH status: the first 20018 in  27 files · more not shown
+    SEARCH status: the first 20019 in 225 files · more not shown
+    SEARCH status: the first  4268 in 500 files · more not shown
+    SEARCH status: the first 20006 in 171 files · more not shown
+
+    stalls logged for that pid: none at all
+
+Not one late ping, against 7.0 s and 4.3 s before. The third line is the
+500-file bound rather than the match bound, and it is worth having in the
+record: that cap has been there all along, and until now the pane printed
+`4268 in 500 files` and looked complete.
+
+An ordinary search is unchanged and says nothing about caps —
+`rebuildRows` over this repository still reads `10 in 4 files`.
+
 ## Estimate
 
 2026-08-16 21:40 — about three hours left
@@ -102,7 +123,7 @@ and a dictionary of `String` keys per match, redone 25 times over.
 - [x] The list is bounded, by whatever was decided, and says so when it is
 - [x] The window keeps answering while a broad search runs — measured, not
       judged by eye
-- [ ] Watched: type two characters into a project of real size and keep typing
+- [x] Watched: type two characters into a project of real size and keep typing
 - [ ] `make test` and `make warnings` are clean
 - [ ] Write down here what was ruled out on the way
 - [ ] `spec/search.md` says what the project now does
