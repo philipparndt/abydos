@@ -44,10 +44,10 @@ something to disagree about.
 
 ## Steps
 
-- [ ] A Cadova package in `abydos-examples`, pinned, with `Package.resolved`
+- [x] A Cadova package in `abydos-examples`, pinned, with `Package.resolved`
       committed, and more than one executable target
-- [ ] It builds and writes a 3MF from a clean checkout
-- [ ] A live test that uses it and skips cleanly when the examples repository
+- [x] It builds and writes a 3MF from a clean checkout
+- [x] A live test that uses it and skips cleanly when the examples repository
       is not beside this one
 - [ ] Settle in writing which side of the ordinary suite the *building* is on,
       since the fixture being present is the ordinary case on a working machine
@@ -58,4 +58,4 @@ something to disagree about.
 
 ## Estimate
 
-2026-08-16 13:50 — about two hours left
+2026-08-16 13:57 — about an hour left
