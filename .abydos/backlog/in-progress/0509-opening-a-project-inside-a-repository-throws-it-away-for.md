@@ -40,6 +40,27 @@ photographing anything.
 It also gives the item its cheapest test: the same command with `--screenshot`
 keeps its Cadova pane and without it loses it.
 
+## Reproduced, out of the app, in one pair of lines
+
+`--report-cwd` printed only where the shell was, which is the half of this that
+is *correct* in both builds. It now prints the project beside it, and the tabs,
+because the tabs are what the switch destroys. Same build, same command, the
+only difference being the flag that turns 0451's guard on:
+
+    Abydos --open …/abydos-examples/cadova-models --report-cwd
+    CWD 1s: …/abydos-examples/cadova-models  project=abydos-examples subproject=cadova-models tabs=[Extrusion.swift main.swift]
+
+    …the same, plus --screenshot …/before.png --delay 11
+    CWD 1s: …/abydos-examples/cadova-models  project=cadova-models subproject=whole tabs=[main.swift]
+
+One second in, and already gone. The shell is in `cadova-models` on both lines
+and never moves off it for the whole run — so the directory the window is
+following is not a move at all, and `Extrusion.swift` on the first line is
+`abydos-examples`'s own session restored over the file that was asked for.
+The `subproject=cadova-models` on it is that stored session's subproject chip,
+which is how the titlebar goes on claiming the narrowing after the project
+underneath it has been swapped.
+
 ## Worth deciding
 
 - **What a terminal's directory should mean when it has not changed.** The
@@ -59,9 +80,9 @@ keeps its Cadova pane and without it loses it.
 
 ## Steps
 
-- [ ] An instrument that says which project the window is on, second by second,
+- [x] An instrument that says which project the window is on, second by second,
       beside where the terminal is — `--report-cwd` says only the second half
-- [ ] Reproduce it from outside the app, without a screenshot run to mask it
+- [x] Reproduce it from outside the app, without a screenshot run to mask it
 - [ ] Decide what a restored terminal's directory means, and write it down
 - [ ] Opening a project inside a repository keeps that project
 - [ ] A real `cd` somewhere else still follows, and there is a check for both

@@ -6639,6 +6639,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		bottomPanel.activeTerminalDirectoryForTesting()
 	}
 
+	/// Which project the window is on, and what it has open.
+	///
+	/// Beside the terminal's directory rather than instead of it, because 0509 is
+	/// exactly the two disagreeing: a shell that never moved, and a window that
+	/// left the project anyway. One of the two numbers alone says nothing — the
+	/// directory is right in both builds, and a project name on its own cannot be
+	/// told from a window that was opened on that project to begin with. The tabs
+	/// are here because they are what the switch destroys.
+	func projectReportForTesting() -> String {
+		let root = project?.root.lastPathComponent ?? "none"
+		let scope = subprojectRoot?.lastPathComponent ?? "whole"
+		let titles = editor.activeGroup?.tabTitlesForTesting ?? []
+		return "project=\(root) subproject=\(scope) tabs=[\(titles.joined(separator: " "))]"
+	}
+
 	func showDebugConsoleForTesting() {
 		bottomPanel.showDebugConsoleForTesting()
 	}
