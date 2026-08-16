@@ -40,11 +40,19 @@ need a design that hides it behind a progress sheet.
 
 ## Steps
 
+- [ ] Measure both ways of enumerating, and decide between them in writing
 - [ ] `RunConfiguration` finds executable targets in a `Package.swift` project
 - [ ] It runs one, with the package root as the working directory
 - [ ] Decide about `swift test` as a kind, and do it or write down why not
+- [ ] `Package.swift` in `definingFileNames`, so a package written after the
+      project was opened gets its entries without reopening
 - [ ] Tests for discovery against a manifest with more than one executable
+- [ ] A driver that starts one configuration by name, so a run can be watched
 - [ ] Watched in the app: a Swift package's executables in the run list, and
       one of them actually running
 - [ ] Write down here what was ruled out on the way
 - [ ] `spec/run-configurations.md` says what the project now does
+
+## Estimate
+
+2026-08-16 11:55 — about two hours left
