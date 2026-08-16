@@ -773,6 +773,9 @@ final class EditorAreaController: NSViewController {
 	func indentForTesting(fromLine: Int, toLine: Int, outdent: Bool) -> String? {
 		activeGroup.indentForTesting(fromLine: fromLine, toLine: toLine, outdent: outdent)
 	}
+	func selectLinesForTesting(fromLine: Int, toLine: Int) -> Bool {
+		activeGroup.selectLinesForTesting(fromLine: fromLine, toLine: toLine)
+	}
 	func toggleCommentForTesting(_ spec: String) -> (LineComment.Outcome, String)? {
 		activeGroup.toggleCommentForTesting(spec)
 	}

@@ -5457,18 +5457,33 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	/// A row in a checklist pane was activated.
 	///
-	/// The whole of item 470's keyboard answer is in the two branches. A preview
-	/// asks for the provisional tab and does not take first responder, so the
-	/// editor scrolls, shows the line and puts the caret there while the keyboard
-	/// stays in the list and ↓ reaches the next row. A commit is the deliberate
-	/// way in — ⏎ or ⇥ from the list, or a click, which is somebody who meant to
-	/// be in that line of code.
+	/// The whole of the keyboard answer is in the three branches, and the middle
+	/// one is item 510's correction to item 470's pair. A preview asks for the
+	/// provisional tab and does not take first responder, so the editor scrolls,
+	/// shows the line and puts the caret there while the keyboard stays in the
+	/// list and ↓ reaches the next row. A permanent open is a click, a double
+	/// click or ⏎: this is the file, and it gets a tab of its own — and the
+	/// keyboard *still* stays in the list, because the hand that did it is over
+	/// the list and its next ⌫ has to tick a row rather than edit a file. Only a
+	/// commit moves the keyboard, and only ⇥ is one.
 	private func openFromChecklist(_ url: URL, line: Int, intent: ResultChecklist.Intent) {
 		switch intent {
 		case .preview:
 			editor.open(fileURL: url, atLine: line, focusEditor: false, preview: true)
+		case .permanent:
+			editor.open(fileURL: url, atLine: line, focusEditor: false)
 		case .commit:
 			editor.open(fileURL: url, atLine: line)
+			// The one home where making the editor first responder is not enough.
+			// A list expanded into a window of its own is a second window, and it
+			// is the key one while somebody is working the list — so ⇥ left the
+			// editor holding this window's first responder while every keystroke
+			// went on reaching the panel. That is the fault this item is about,
+			// one window over: the caret blinking in a view the keys are not
+			// going to. `makeKey` rather than `makeKeyAndOrderFront`, because the
+			// panel is a child window and floats over this one either way; the
+			// list stays where it was and only the keys move.
+			if window?.isKeyWindow == false { window?.makeKey() }
 		}
 	}
 
@@ -9032,6 +9047,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	}
 
 	/// Indents or outdents a block, and prints what the file became.
+	/// Selects lines in the editor without going near the first responder, and
+	/// says where the keyboard actually is — which is the whole claim the
+	/// picture it is taken for makes.
+	func selectLinesForTesting(from: Int, to: Int) {
+		let done = editor.selectLinesForTesting(fromLine: from, toLine: to)
+		let responder = window?.firstResponder
+		print("SELECT lines \(from)-\(to) \(done ? "selected" : "no editor") "
+			+ "keyboard=\(responder.map { String(describing: type(of: $0)) } ?? "nothing")")
+		fflush(stdout)
+	}
+
 	func exerciseIndentForTesting(from: Int, to: Int, outdent: Bool) {
 		guard let text = editor.indentForTesting(fromLine: from, toLine: to, outdent: outdent) else {
 			print("INDENT: no editor")

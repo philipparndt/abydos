@@ -2929,6 +2929,16 @@ final class EditorViewController: NSViewController {
 		return codeView.toggleCommentForTesting(spec)
 	}
 
+	/// Selects whole lines and leaves the keyboard exactly where it was.
+	///
+	/// No `makeFirstResponder`, unlike every other verb here: the point of it is
+	/// a selection this view is drawing while the keyboard is in the terminal.
+	func selectLinesForTesting(fromLine: Int, toLine: Int) -> Bool {
+		guard let codeView = activeTab?.codeView else { return false }
+		codeView.selectLinesForTesting(fromLine: fromLine, toLine: toLine)
+		return true
+	}
+
 	/// Indents or outdents whole lines, the way Tab and ⇧Tab do.
 	func indentForTesting(fromLine: Int, toLine: Int, outdent: Bool) -> String? {
 		guard let tab = activeTab, let codeView = tab.codeView else { return nil }

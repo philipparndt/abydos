@@ -47,17 +47,11 @@ import AbydosKit
 /// controls hides everything already marked, and a file whose matches are all
 /// done goes with them, heading and all.
 final class ResultChecklist: NSView {
-	/// Whether showing a row takes the keyboard with it.
+	/// What showing a row costs: the tab it lands in, and who has the keyboard.
 	///
-	/// Two different intentions, and only the second should cost the keyboard:
-	/// "let me look at each of these" is a `preview`, "now I am going to work on
-	/// this one" is a `commit`. A checklist that handed the editor the keyboard
-	/// on the first row would end the pass before it started, and the next ␣
-	/// would type a space into the file.
-	enum Intent {
-		case preview
-		case commit
-	}
+	/// The rule and the three cases live in `AbydosKit`, with the rule for which
+	/// keys tick a row off, because that is where they can have a test.
+	typealias Intent = ResultIntent
 
 	/// Asked to show a row, and told whether the keyboard goes with it.
 	var onOpen: ((FileSearchResult, SearchMatch, Intent) -> Void)?
@@ -75,9 +69,10 @@ final class ResultChecklist: NSView {
 	/// asked for in item 470, and the reason `Intent` exists at all.
 	///
 	/// It also decides what ⏎ means, under one rule: **⏎ does the thing the
-	/// selection has not already done.** Where the selection previews, ⏎ is the
-	/// deliberate way into the editor; where it does not, ⏎ is the preview and
-	/// the keyboard stays here, which is what search has always done.
+	/// selection has not already done.** Where the selection previews, the row is
+	/// already on screen and ⏎ settles it into a tab of its own; where it does
+	/// not, ⏎ is the showing. The keyboard stays here either way — the way into
+	/// the editor is ⇥ and only ⇥.
 	var opensOnSelectionChange = false
 
 	/// Flattened for display: a file header row, then one row per match.
@@ -272,21 +267,30 @@ final class ResultChecklist: NSView {
 			}
 			rebuildRows()
 		case let .match(result, match, _, _):
-			// Somebody who clicked a line of code means to be in it.
-			open(result, match, intent: .commit)
+			// Somebody who clicked a line of code means to be in it — in a tab of
+			// its own, rather than the provisional one the walk uses. What a click
+			// no longer does is take the keyboard there: the hand that clicked a
+			// row is over the list, and the next ⌫ has to tick the row rather than
+			// delete a character of the file. Only ⇥ moves the keyboard.
+			open(result, match, intent: ResultChecklistKeys.click)
 		}
 	}
 
 	/// Counted so a script can tell "the click did not open anything" from "the
 	/// click opened something and the picture happens to look the same". The
 	/// intent is in the line because whether the keyboard moved is the claim
-	/// most of item 470 is about.
+	/// most of item 470 is about, and all of what item 510 changed: `!` is the
+	/// keyboard leaving, `+` is a tab of its own with the keyboard staying, and a
+	/// bare line is the provisional tab.
 	private(set) var openedForTesting: [String] = []
 
 	private func open(_ result: FileSearchResult, _ match: SearchMatch, intent: Intent) {
-		openedForTesting.append(
-			"\(result.relativePath):\(match.line + 1)\(intent == .commit ? "!" : "")"
-		)
+		let mark = switch intent {
+		case .preview: ""
+		case .permanent: "+"
+		case .commit: "!"
+		}
+		openedForTesting.append("\(result.relativePath):\(match.line + 1)\(mark)")
 		lastRevealed = "\(result.url.path):\(match.line)"
 		onOpen?(result, match, intent)
 	}
@@ -473,7 +477,6 @@ final class ResultChecklist: NSView {
 
 	/// Returns true when the event was consumed.
 	private func handleTableKey(_ event: NSEvent) -> Bool {
-		let bare = event.modifierFlags.intersection([.command, .option, .control]).isEmpty
 		// ␣ and ⌫ both tick the selection off, and the rule for which presses do
 		// that lives in `AbydosKit` because of the one that must not: ⌘⌫ is the
 		// key that moves a file to the trash in the pane next door, and it goes on
@@ -483,29 +486,16 @@ final class ResultChecklist: NSView {
 			setDone(nil, at: tableView.selectedRowIndexes)
 			return true
 		}
-		switch event.keyCode {
-		// ⏎ does the thing the selection has not already done.
-		//
-		// Where the selection does not preview — search — it shows what is
-		// selected and gives the keyboard straight back, so the whole pass can be
-		// done from the keyboard: ↓ into the list, ⏎ to look, ␣ to tick, ↓ to the
-		// next one. Opening a result normally takes the keyboard into the editor,
-		// which is right for a click and wrong for the key in the middle of a
-		// checklist: the next ␣ would type a space into the file. So the
-		// responder is put back by whoever opens it.
-		//
-		// Where the selection does preview — usages — looking is already free,
-		// and ⏎ is then the deliberate way in: "now I am going to work on this
-		// one". ⇥ is the same gesture for anybody whose hand is already there.
-		case 36 where bare:
-			return openSelection(intent: opensOnSelectionChange ? .commit : .preview)
-		// Only where there is a preview to graduate from. In search ⇥ still walks
-		// the key view loop to the query field, which is what it has always done.
-		case 48 where bare && opensOnSelectionChange:
-			return openSelection(intent: .commit)
-		default:
-			return false
-		}
+		// ⏎ and ⇥, and the whole of the difference between them: ⏎ shows the row,
+		// ⇥ shows it and goes there. The rule is next door to `marksDone` because
+		// it is the same kind of claim about the same list, and because ⌫ having a
+		// meaning here is only safe while the keyboard is provably still here.
+		guard let intent = ResultChecklistKeys.opening(
+			keyCode: event.keyCode,
+			modifiers: event.modifierFlags,
+			previewsOnSelectionChange: opensOnSelectionChange
+		) else { return false }
+		return openSelection(intent: intent)
 	}
 
 	private func openSelection(intent: Intent) -> Bool {
@@ -808,19 +798,47 @@ private final class ChecklistTable: NSTableView {
 	}
 
 	override func becomeFirstResponder() -> Bool {
-		needsDisplay = true
+		redrawSelection()
 		return super.becomeFirstResponder()
 	}
 
 	override func resignFirstResponder() -> Bool {
-		needsDisplay = true
+		redrawSelection()
 		return super.resignFirstResponder()
+	}
+
+	/// The rows, because the selection changes colour with the keyboard.
+	///
+	/// The table's own `needsDisplay` is not enough and never was: a row view is
+	/// a subview and invalidates itself, and the *cell* inside it is a subview
+	/// again. The cell is the half that would go wrong quietly — its text turns
+	/// near-white over a selected row, and near-white on the unfocused gray is
+	/// unreadable in a light scheme. Same reason `redrawVisibleRows` exists in
+	/// the project tree.
+	private func redrawSelection() {
+		needsDisplay = true
+		enumerateAvailableRowViews { rowView, _ in
+			rowView.needsDisplay = true
+			for cell in rowView.subviews { cell.needsDisplay = true }
+		}
 	}
 }
 
 private final class ChecklistRowView: NSTableRowView {
+	/// True when the table this row is drawn in holds the keyboard.
+	///
+	/// Asked of the window rather than kept as a flag, exactly as
+	/// `NavigatorRowView` asks it: a row view is made and thrown away on every
+	/// reload, and a flag would have to be pushed into each of them by whoever
+	/// noticed the keyboard move.
+	var hasKeyboard: Bool {
+		guard let table = superview, let responder = window?.firstResponder as? NSView
+		else { return false }
+		return responder === table || responder.isDescendant(of: table)
+	}
+
 	override func drawSelection(in dirtyRect: NSRect) {
-		Theme.current.selectionActive.setFill()
+		Theme.current.selection(.row, hasKeyboard: hasKeyboard).setFill()
 		bounds.fill()
 	}
 }
@@ -926,7 +944,11 @@ private final class ChecklistMatchCell: NSView {
 	override var isFlipped: Bool { true }
 
 	override func draw(_ dirtyRect: NSRect) {
-		let isSelected = (superview as? NSTableRowView)?.isSelected ?? false
+		// Selected *and* the list has the keyboard: the light-on-dark text goes
+		// with the strong highlight, and putting it on the unfocused gray would
+		// be near-white on a pale band in a light scheme.
+		let row = superview as? ChecklistRowView
+		let isSelected = (row?.isSelected ?? false) && (row?.hasKeyboard ?? false)
 		let x = Theme.current.scaled(34)
 
 		let number = NSAttributedString(string: "\(match.line + 1)", attributes: [

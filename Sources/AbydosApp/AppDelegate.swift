@@ -528,6 +528,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let spec = options.selectLines {
+			// Late, so whatever else the run asked for — a terminal, a results list
+			// — has already taken the keyboard. The selection is made after it and
+			// takes nothing back, which is the state being photographed.
+			DispatchQueue.main.asyncAfter(deadline: .now() + max(2.5, options.screenshotDelay - 1.0)) {
+				let parts = spec.split(separator: ":").compactMap { Int($0) }
+				guard parts.count == 2 else { return }
+				controller?.selectLinesForTesting(from: parts[0], to: parts[1])
+			}
+		}
+
 		if let spec = options.indentBlock {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
 				let parts = spec.split(separator: ":").map(String.init)
@@ -1584,10 +1595,19 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		// what the next keystroke would reach, which is the thing being claimed.
 		for at in options.focusReportsAt {
 			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
-				let window = NSApp.keyWindow ?? controller?.window
+				// Which window, as well as which view. A results list expanded into
+				// a window of its own puts a second window on screen, and "the
+				// first responder is a ChecklistTable" is then two different
+				// answers depending on whose responder it is — the panel
+				// remembering where its own focus was, or the keys actually going
+				// there. Item 510 could not tell those apart without this.
+				let key = NSApp.keyWindow
+				let window = key ?? controller?.window
 				let responder = window?.firstResponder
 				let name = responder.map { String(describing: type(of: $0)) } ?? "nothing"
-				print("FOCUS \(String(format: "%.1f", at))s \(name)")
+				let whose = window.map { String(describing: type(of: $0)) } ?? "no window"
+				print("FOCUS \(String(format: "%.1f", at))s \(name) "
+					+ "in \(whose)\(key == nil ? " (none key)" : "")")
 			}
 		}
 

@@ -153,9 +153,22 @@ selected match in the editor and gives the keyboard straight back to the list,
 so looking at a result and ticking it off is one hand and no clicks. What it
 shows it in is the editor's provisional tab — the one the project tree's single
 click uses, replaced in place by the next one — so working down a long result
-list with ⏎ leaves one tab behind rather than one per match. A click and a
-double-click still hand the keyboard to the editor, and the tab they open is a
-permanent one, because somebody who clicked a line of code means to be in it.
+list with ⏎ leaves one tab behind rather than one per match.
+
+A click and a double-click open a tab of its own, because somebody who clicked a
+line of code means to be in that file. **They do not take the keyboard there.**
+⌫ ticks a row off in this list, and a person who has just clicked a result and
+presses it is aiming at the list: a click that had quietly moved the keyboard
+would delete a character of their source instead, which is what it used to do.
+
+**⇥ is the only gesture that hands the keyboard to the editor**, and it does it
+from the results as well as from the usages list — it no longer walks to the
+query field. ⇧⇥ still walks the key view loop, which is the way back up to the
+field.
+
+A list that has not got the keyboard says so: a selected row is drawn in the
+strong highlight only while the list has it, and in the unfocused gray once it
+has not.
 
 A click that is building a selection — ⇧-click or ⌘-click — extends the
 selection and opens nothing.
@@ -166,6 +179,20 @@ selection and opens nothing.
 - **When** ↓, ↓, ⏎ and ␣ are pressed in turn
 - **Then** the second row is shown in the editor, the keyboard is still in the
   list, and that row is marked done
+
+### Scenario: clicking a result and then ticking it off
+
+- **Given** a search with results
+- **When** a match is clicked and then ⌫ is pressed
+- **Then** the match is showing in a tab of its own, that row is struck through,
+  and nothing in the file has changed
+
+### Scenario: the deliberate way into the editor
+
+- **Given** a match selected with the keyboard in the results
+- **When** ⇥ is pressed
+- **Then** the match is open in the editor with the keyboard in it, and the row
+  stays selected in the unfocused gray
 
 ### Scenario: extending a selection with the pointer
 
