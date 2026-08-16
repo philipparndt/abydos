@@ -116,7 +116,7 @@ struct ProjectSearchTests {
 				query: query,
 				options: options,
 				onResults: { collected.append(contentsOf: $0) },
-				onFinished: { _, _ in continuation.resume(returning: collected) }
+				onFinished: { _ in continuation.resume(returning: collected) }
 			)
 		}
 	}
@@ -176,5 +176,68 @@ struct ProjectSearchTests {
 			options: SearchOptions(isRegex: true)
 		)
 		#expect(results.contains { $0.relativePath == "src/a.swift" })
+	}
+
+	// MARK: - The bounds
+
+	/// The walk is stopped by the number of *matches* and not only by the number
+	/// of files.
+	///
+	/// Item 519: `maximumResults` bounds files and `TextSearch.matchLimit` bounds
+	/// one file's hits, so between them they permitted 500 × 5 000 rows, and a
+	/// one-character query over a real project measured 440 854. The bound that
+	/// the row list is linear in was the one nobody had.
+	@Test func theWalkStopsAtItsMatchCeiling() async throws {
+		let root = try manyMatchesProject()
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		let search = ProjectSearch(root: root)
+		search.maximumMatches = 25
+		let outcome = await finish(search, query: "needle")
+
+		#expect(outcome.results.reduce(0) { $0 + $1.matches.count } >= 25)
+		// Stopped, rather than having read all twenty files.
+		#expect(outcome.results.count < 20)
+		#expect(outcome.end.capped)
+	}
+
+	/// A search that fits says nothing about caps, which is the other half of the
+	/// claim: `capped` has to be false for the ordinary case or the status line
+	/// would tell everybody their list was a prefix.
+	@Test func aSearchThatFitsIsNotReportedAsCapped() async throws {
+		let root = try makeProject()
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		let outcome = await finish(ProjectSearch(root: root), query: "needle")
+		#expect(!outcome.end.capped)
+		#expect(outcome.end.completed)
+	}
+
+	/// Twenty files with five matches each.
+	private func manyMatchesProject() throws -> URL {
+		let fm = FileManager.default
+		let root = fm.temporaryDirectory.appendingPathComponent("abydos-search-cap-\(UUID().uuidString)")
+		try fm.createDirectory(at: root, withIntermediateDirectories: true)
+		let body = (0..<5).map { "line \($0) needle\n" }.joined()
+		for index in 0..<20 {
+			try body.write(
+				to: root.appendingPathComponent("file\(index).swift"), atomically: true, encoding: .utf8
+			)
+		}
+		return root
+	}
+
+	private func finish(
+		_ search: ProjectSearch, query: String
+	) async -> (results: [FileSearchResult], end: SearchOutcome) {
+		await withCheckedContinuation { continuation in
+			var collected: [FileSearchResult] = []
+			search.search(
+				query: query,
+				options: SearchOptions(),
+				onResults: { collected.append(contentsOf: $0) },
+				onFinished: { continuation.resume(returning: (collected, $0)) }
+			)
+		}
 	}
 }

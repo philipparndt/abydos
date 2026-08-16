@@ -232,9 +232,9 @@ struct ScaleLiveTests {
 				search.search(query: query, options: SearchOptions()) { results in
 					files += results.count
 					if first == nil { first = since() }
-				} onFinished: { _, scanned in
+				} onFinished: { outcome in
 					let all = since()
-					continuation.resume(returning: (first ?? all, all, files, scanned))
+					continuation.resume(returning: (first ?? all, all, files, outcome.scanned))
 				}
 			}
 			Self.report(name, "search \"\(query)\"", String(format:

@@ -301,6 +301,103 @@ struct PerformanceTests {
 		#expect(elapsed < 10.0, "fold computation took \(elapsed)s of processor time")
 	}
 
+	// MARK: - Streaming search results
+
+	/// One file's worth of matches, with the line texts all different, so that
+	/// building a mark does the string work it does in a real project.
+	static func makeSearchResults(files: Int, matchesEach: Int) -> [FileSearchResult] {
+		(0..<files).map { file in
+			FileSearchResult(
+				url: URL(fileURLWithPath: "/tmp/project/src/module\(file)/file\(file).swift"),
+				relativePath: "src/module\(file)/file\(file).swift",
+				matches: (0..<matchesEach).map { index in
+					SearchMatch(
+						utf16Range: 4..<10,
+						line: index * 3,
+						lineText: "\t\tlet value\(index) = needle(argument: \(file * 1000 + index))"
+					)
+				}
+			)
+		}
+	}
+
+	/// What a batch of search results costs the thread that draws the window.
+	///
+	/// This is the number item 519 is about, and it is a ratio *and* an absolute
+	/// because the two say different things. The absolute is the claim: no single
+	/// batch may cost more than a frame, because a batch runs on the main queue
+	/// and a main queue busy for longer than that is a window not answering. The
+	/// ratio is the regression tripwire: the old shape handed the whole
+	/// accumulated array back on every batch, so the work was quadratic in the
+	/// result count, and a change that quietly reintroduced it would still clear
+	/// a loose absolute on a fast machine.
+	///
+	/// Measured before the fix, in the app rather than here: 440 854 matches over
+	/// a one-character query, and the main thread dead for 7.0 s at a stretch —
+	/// `sample` put 74% of a twelve-second sample inside `setResults`.
+	@Test func streamingResultsCostsWhatArrivedAndNotWhatIsAlreadyThere() {
+		// Twenty files a batch, which is what `ProjectSearch` flushes at.
+		let all = Self.makeSearchResults(files: 500, matchesEach: 40)
+		let batches = stride(from: 0, to: all.count, by: 20).map { start in
+			Array(all[start..<min(start + 20, all.count)])
+		}
+		let checklist = SearchChecklist()
+		let question = SearchChecklist.Question(query: "needle", options: SearchOptions())
+		let total = batches.reduce(0) { $0 + $1.reduce(0) { $0 + $1.matches.count } }
+		Self.report("streamed matches", "\(total) in 500 files, 25 batches")
+
+		// The shape that froze the window: everything found so far, rebuilt on
+		// every batch. `setResults` is still that call — it is what the usages
+		// list uses, which is handed its whole answer once — so this is the old
+		// path and not an imitation of it.
+		var rebuilt = ResultRows()
+		rebuilt.question = question
+		rebuilt.maximumMatches = .max
+		let rebuilding = Self.cpuTime("25 batches, whole list rebuilt each time") {
+			var accumulated: [FileSearchResult] = []
+			for batch in batches {
+				accumulated.append(contentsOf: batch)
+				rebuilt.setResults(accumulated, marking: checklist)
+			}
+		}
+
+		var streamed = ResultRows()
+		streamed.question = question
+		streamed.maximumMatches = .max
+		var worstBatch: TimeInterval = 0
+		let appending = Self.cpuTime("25 batches, appended") {
+			for batch in batches {
+				var start = timespec()
+				var end = timespec()
+				clock_gettime(CLOCK_THREAD_CPUTIME_ID, &start)
+				streamed.append(batch, marking: checklist)
+				clock_gettime(CLOCK_THREAD_CPUTIME_ID, &end)
+				worstBatch = max(worstBatch, Double(end.tv_sec - start.tv_sec)
+					+ Double(end.tv_nsec - start.tv_nsec) / 1_000_000_000)
+			}
+		}
+
+		// The two paths must agree about what is in the list, or the cheaper one
+		// is cheaper for the wrong reason.
+		#expect(streamed.rows.count == rebuilt.rows.count)
+		#expect(streamed.matchCount == total)
+
+		Self.report("worst single batch", String(format: "%.2f ms cpu", worstBatch * 1000))
+		let ratio = rebuilding / max(appending, 0.000_001)
+		// ASCII, because `report` pads with `%-38s` over the bytes of the label
+		// and a multi-byte character comes out of the column crooked.
+		Self.report("rebuild over append", String(format: "%.1fx", ratio))
+
+		// A batch lands on the main queue. A frame at 60 Hz is 16 ms, and a batch
+		// that fits inside one is a window that goes on answering while the walk
+		// runs. Loose by a factor of several on the measured figure, because this
+		// is a tripwire and not a benchmark.
+		#expect(worstBatch < 0.016, "one batch cost \(worstBatch * 1000)ms of processor time")
+		// Twenty-five batches: rebuilding each time is ~13x the work, which is the
+		// quadratic. Anything under 3 would mean it had come back.
+		#expect(ratio > 3, "appending saved only \(ratio)x over rebuilding")
+	}
+
 	@Test func foldingStateMapsLinesQuickly() {
 		// Collapsing every region then scrolling must stay cheap.
 		var state = FoldingState()

@@ -14,6 +14,33 @@ public struct FileSearchResult: Equatable, Sendable {
 	}
 }
 
+/// How a search ended.
+///
+/// One value rather than a pair of positional arguments, because item 519 had to
+/// add a third thing to it and `(true, 1462)` at a call site had already stopped
+/// saying which was which. `capped` is the one that was missing and the one that
+/// matters: the walk has stopped at a bound and there is more out there, and the
+/// pane above has to be able to *say* so. Before it existed, `completed` was true
+/// whether the tree had been walked or the 500-file limit had been hit, and the
+/// status line printed a bare count either way — a truncated list that looked
+/// complete, which is the failure this program refuses everywhere else.
+public struct SearchOutcome: Equatable, Sendable {
+	/// False when a newer search superseded this one, in which case nothing else
+	/// here is worth reading.
+	public let completed: Bool
+	/// How many files were opened and looked at.
+	public let scanned: Int
+	/// True when the walk stopped at `maximumResults` or `maximumMatches`, so
+	/// what was reported is a prefix of what is there.
+	public let capped: Bool
+
+	public init(completed: Bool, scanned: Int, capped: Bool) {
+		self.completed = completed
+		self.scanned = scanned
+		self.capped = capped
+	}
+}
+
 /// Searches every file in a project.
 ///
 /// Results are streamed rather than returned in one batch, so the first hits
@@ -31,6 +58,19 @@ public final class ProjectSearch {
 	public var maximumFileSize = 4 * 1024 * 1024
 	/// Cap on files reported, so a huge tree cannot flood the UI.
 	public var maximumResults = 500
+	/// Cap on *matches* reported, across every file.
+	///
+	/// The bound that was missing, and the one the row list is actually linear
+	/// in. `maximumResults` counts files and `TextSearch.matchLimit` counts one
+	/// file's hits, so between them they permitted 500 × 5 000 = 2.5 million
+	/// rows; a one-character query over this repository measured 440 854, and
+	/// building rows for them left the main thread dead for seven seconds at a
+	/// stretch. Item 519.
+	///
+	/// It stops the *walk*, not just the display: past this point the remaining
+	/// files are not read, not decoded and not searched, which is the difference
+	/// between a bound and a truncation.
+	public var maximumMatches = 20_000
 
 	public init(root: URL) {
 		self.root = root
@@ -44,7 +84,7 @@ public final class ProjectSearch {
 		query: String,
 		options: SearchOptions,
 		onResults: @escaping ([FileSearchResult]) -> Void,
-		onFinished: @escaping (_ completed: Bool, _ fileCount: Int) -> Void
+		onFinished: @escaping (SearchOutcome) -> Void
 	) {
 		lock.lock()
 		generation += 1
@@ -52,7 +92,9 @@ public final class ProjectSearch {
 		lock.unlock()
 
 		guard !query.isEmpty, TextSearch.isValid(query: query, options: options) else {
-			DispatchQueue.main.async { onFinished(true, 0) }
+			DispatchQueue.main.async {
+				onFinished(SearchOutcome(completed: true, scanned: 0, capped: false))
+			}
 			return
 		}
 
@@ -62,12 +104,16 @@ public final class ProjectSearch {
 
 			var batch: [FileSearchResult] = []
 			var reported = 0
+			var matched = 0
 			var scanned = 0
+			var capped = false
 
 			for url in files {
 				// Abandon promptly when a newer search has started.
 				guard self.isCurrent(currentGeneration) else {
-					DispatchQueue.main.async { onFinished(false, scanned) }
+					DispatchQueue.main.async {
+						onFinished(SearchOutcome(completed: false, scanned: scanned, capped: false))
+					}
 					return
 				}
 				scanned += 1
@@ -75,6 +121,7 @@ public final class ProjectSearch {
 				guard let result = self.search(file: url, query: query, options: options) else { continue }
 				batch.append(result)
 				reported += 1
+				matched += result.matches.count
 
 				// Flush periodically so results appear while the walk continues.
 				if batch.count >= 20 {
@@ -85,17 +132,25 @@ public final class ProjectSearch {
 						onResults(flush)
 					}
 				}
-				if reported >= self.maximumResults { break }
+				// Both bounds end the walk rather than the reporting, and both are
+				// taken after the file that crossed them: a file arrives whole or
+				// not at all, because a heading that reads `12` over eight rows is
+				// a worse answer than a list that stops one file early.
+				if reported >= self.maximumResults || matched >= self.maximumMatches {
+					capped = true
+					break
+				}
 			}
 
 			let remaining = batch
+			let outcome = SearchOutcome(completed: true, scanned: scanned, capped: capped)
 			DispatchQueue.main.async {
 				guard self.isCurrent(currentGeneration) else {
-					onFinished(false, scanned)
+					onFinished(SearchOutcome(completed: false, scanned: scanned, capped: false))
 					return
 				}
 				if !remaining.isEmpty { onResults(remaining) }
-				onFinished(true, scanned)
+				onFinished(outcome)
 			}
 		}
 	}
