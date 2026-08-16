@@ -287,11 +287,16 @@ deeper.
       only after something has stopped — found by the line above, and new here
 - [x] Watched, with a screenshot of a diagram pane mid-render
 - [ ] `make test` and `make warnings` are clean
+
+      `make warnings` is: no warnings in this repository's Swift, and the four
+      vendored C ones are upstream's as always. `make test` is 2701 tests with
+      one red, and it is **not ticked** rather than ticked with an excuse:
+      `CadovaExampleLiveTests.runsAndWritesAThreeMF` fails on a stray `-` typed
+      into `abydos-examples/cadova-models/Sources/coaster/main.swift` at 21:22,
+      before this item's first launch, in a checkout this branch does not
+      touch. Reverting it is not this item's to do — see "Ruled out". Everything
+      else in the suite passes, including on a second run.
 - [x] Write down here what was ruled out on the way
 - [x] The spec, if this changes what the project does — `spec/diagrams.md`, an
       ADDED requirement: the capability had two requirements about what a
       drawing *is* and nothing about what the pane says when there is not one
-
-## Estimate
-
-2026-08-16 22:06 — about half an hour left
