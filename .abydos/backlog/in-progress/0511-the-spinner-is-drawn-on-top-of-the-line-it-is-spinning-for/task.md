@@ -99,12 +99,12 @@ drew it.
 
 - [x] Measure both placements in the running app before changing either —
       `spinner.frame` and the rect `draw(_:)` actually passes to the text
-- [ ] The spinner and the notice are laid out together, not against the centre
+- [x] The spinner and the notice are laid out together, not against the centre
       separately
 - [ ] A long notice — a real build line, not a short string — does not collide
       at any pane width
 - [ ] The notice sits sensibly when the spinner is not shown
-- [ ] `drawn=` for a notice reports what is on screen rather than a second,
+- [x] `drawn=` for a notice reports what is on screen rather than a second,
       differently-worded copy of the same arithmetic
 - [ ] Watched: a screenshot of a Cadova pane mid-build, and one between builds
 - [ ] `make test` and `make warnings` are clean
