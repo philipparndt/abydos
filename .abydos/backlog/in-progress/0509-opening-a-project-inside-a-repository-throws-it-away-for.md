@@ -59,13 +59,21 @@ keeps its Cadova pane and without it loses it.
 
 ## Steps
 
+- [ ] An instrument that says which project the window is on, second by second,
+      beside where the terminal is — `--report-cwd` says only the second half
 - [ ] Reproduce it from outside the app, without a screenshot run to mask it
 - [ ] Decide what a restored terminal's directory means, and write it down
 - [ ] Opening a project inside a repository keeps that project
 - [ ] A real `cd` somewhere else still follows, and there is a check for both
+- [ ] Answer the second question — whether a project opened at a subdirectory
+      should resist widening at all — in here, whether or not it is acted on
 - [ ] Watched: open `abydos-examples/cadova-models`, wait, and the window is
       still on it with its own tabs
 - [ ] `make test` and `make warnings` are clean
 - [ ] Write down here what was ruled out on the way
 - [ ] `spec/sessions.md` or `spec/terminal.md` says what the project now does —
       whichever owns following the terminal
+
+## Estimate
+
+2026-08-16 19:05 — about two hours left
