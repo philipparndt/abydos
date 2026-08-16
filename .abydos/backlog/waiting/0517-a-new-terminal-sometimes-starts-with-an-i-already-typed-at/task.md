@@ -131,6 +131,27 @@ emulator generates were all read and none of them can produce it.
 Which is where this stops. The byte is real, it is not the focus report, and it
 is not anything this app was found to write.
 
+## One loose thread, unconfirmed
+
+Two other stray characters turned up the same day and are written down here only
+because a third instance would change where to look — none of them is evidence
+on its own, and each has an innocent reading:
+
+- `mak einstall` in the history at 17:23, corrected to `make install` two
+  seconds later. Reads like an ordinary typo.
+- `C-ircle(diameter: diameter)` in
+  `~/dev/abydos-examples/cadova-models/Sources/coaster/main.swift`, uncommitted,
+  modified 21:22 — minutes after this item was filed. A `-` inserted after the
+  first character of an identifier, in the *editor* rather than a terminal.
+  Almost certainly a file broken on purpose to look at diagnostics, which is
+  what that fixture is for. (It also makes `CadovaExampleLiveTests` fail for
+  anybody running the suite with the examples checked out beside them.)
+
+If a stray character ever turns up in the editor with nobody having typed it,
+this stops being a terminal item: it would mean a keystroke path, not a pty, and
+the search would start at `TerminalView.keyDown`'s two routes — the input method
+for a key with no character of its own, and the encoder for everything else.
+
 ## Worth deciding — answered
 
 - *Whether the report should be suppressed until the child has enabled 1004
