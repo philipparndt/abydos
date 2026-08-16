@@ -36,6 +36,49 @@ line)` is fed the last line the build printed — so it is arbitrary text of
 arbitrary length, not a fixed string, and it truncates in the middle rather
 than wrapping only by luck.
 
+## Measured before anything was changed
+
+Printed from the running app, cold build of a Cadova package in a split, with a
+temporary probe in `reportForTesting` reading `spinner.frame` and the very rect
+`draw(_:)` hands to the text:
+
+    bounds=(0, 0, 548, 640)
+    spinner=(266, 330, 16, 16)          → y 330…346, centre 338
+    noticeRect=(32, 324.5, 484, 15)     → y 324.5…339.5, centre 332
+
+The pane's centre is y = 320. So:
+
+- **`constant: -18` puts the spinner 18 points *above* the centre**, not below.
+  Auto Layout's geometry runs top-down whatever the view's own flippedness —
+  `topAnchor + 20` is 20 points down in an unflipped view too — so a negative
+  constant on `centerYAnchor` is upward in this view's y-up coordinates.
+- **The notice's centre is 12 points above the centre**, so the two centres are
+  **6 points apart, both pushing the same way**, and a 16-point indicator over a
+  15-point line at 6 points' separation overlaps on **y 330…339.5 — 9.5 points**.
+
+That is the reported picture and it is not a near miss: two thirds of the
+spinner's height is inside the line of text. `0511-before.png` is that run, and
+`0511-before-crop.png` is the pane itself, spokes between the `7` and the `/` of
+`[537/628]`.
+
+**The arithmetic in the "Why" above is wrong and is left there rather than
+edited**, because the wrong reading is the tempting one. The notice's rect is
+`y = (H - h)/2 + 12` with height `h`, so it spans `[(H-h)/2 + 12, (H+h)/2 + 12]`
+and its **centre is `H/2 + 12` whatever `h` is** — the `-h/2` in the origin and
+the `+h/2` of the rect's own extent cancel. The notice does not drift with its
+own length. What a taller notice does is grow *into* the spinner from both
+directions, which is worse rather than different: the fault is there at one line
+already, and every extra line makes it deeper.
+
+Two more things the numbers settle. The view is **unflipped** — nothing in
+`CadovaPreviewView`, `DelayedPaneView` or `ColoredView` overrides `isFlipped` —
+so the local called `top` is the rect's *bottom* edge, which is why the
+arithmetic is so hard to check by reading. And `drawn=484x15` came out of a
+*second* copy of the measurement in `drawnArea`, which uses the same width and
+the same `boundingRect` but **without the paragraph style**, so the number
+feeding the driver was measuring the string differently from the way the pane
+drew it.
+
 ## Worth deciding
 
 - **Whether the notice stays drawn in `draw(_:)` at all.** A label in a stack
@@ -54,7 +97,7 @@ than wrapping only by luck.
 
 ## Steps
 
-- [ ] Measure both placements in the running app before changing either —
+- [x] Measure both placements in the running app before changing either —
       `spinner.frame` and the rect `draw(_:)` actually passes to the text
 - [ ] The spinner and the notice are laid out together, not against the centre
       separately
