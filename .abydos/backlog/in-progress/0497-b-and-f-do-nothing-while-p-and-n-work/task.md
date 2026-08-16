@@ -150,6 +150,22 @@ One character each way, and Shift decides only whether the character comes with
 it: ⇧⌃F takes the `l` at 50, ⇧⌃B the space at 49. ⌃P and ⌃N are unchanged from
 the before run, which is the point of having them in it.
 
+**A character is a composed character, and that was watched rather than read
+off the code.** The spec says an emoji is one step and not two, so the same
+driver was pointed at the same file with `third 🙂 line of the file` as its
+third line and nothing else changed:
+
+    EMACS: at 2@6      caret=50 selection=50..<50 “”
+    EMACS: ⌃F          caret=52 selection=52..<52 “”
+    EMACS: at 2@6      caret=50 selection=50..<50 “”
+    EMACS: ⇧⌃F         caret=52 selection=50..<52 “🙂”
+
+50 → 52 rather than 50 → 51, and the selection is the whole emoji rather than
+half a surrogate pair. It comes for free — `moveHorizontally` already aligns
+to a character boundary, for ← and → as much as for these — but "it comes for
+free" is a claim about code, and it was worth one run to make it a claim about
+the program.
+
 **The two edges.** At `2@0` — offset 44, the very start of line 2 — ⌃B lands on
 43, which is the newline that ended line 1, so the caret is at the end of the
 line above. That is a step over a character that happens not to be printable
@@ -320,7 +336,7 @@ keystrokes stayed out of this item.
 
 ## Estimate
 
-2026-08-16 11:51 — half an hour left
+2026-08-16 12:07 — about ten minutes left
 
 ## Steps
 
@@ -362,5 +378,23 @@ keystrokes stayed out of this item.
       `StandardKeyBinding.dict` are lists, and all three begin with a selector
       this item gave a case to.
 - [x] Write down here what was ruled out on the way
-- [ ] `spec/editor.md` says what the project now does, beside what 0494 and
+- [x] `spec/editor.md` says what the project now does, beside what 0494 and
       0495 put there about the arrows
+
+      One `ADDED` and no `MODIFIED`, which is the opposite of what 0495
+      decided and for the same reason. 0494's and 0495's two requirements are
+      both about the **edges of the file** — a key that ran out of rows, and
+      the jump whose whole purpose is the end of the document. Neither
+      mentions ← or → or a single character, and nothing in the spec did
+      before this. Putting ⇧⌃F under "Shift takes the selection to the edge
+      with it" would have made one heading carry two rules, which is the drift
+      a `MODIFIED` exists to prevent rather than to cause. The one sentence
+      they share — Shift decides only whether the selection comes along — is
+      stated again here about this motion, and that is the repetition worth
+      having, because it is the rule these four keys obey.
+
+      What the requirement is really for is the decision: it says the editor
+      has **one** horizontal motion, that it is the logical one, and where
+      that stops being true. Somebody adding right-to-left support later needs
+      to find that written down, and a spec that only said "⌃F moves the caret
+      right" would be the sentence they would have to disbelieve.
