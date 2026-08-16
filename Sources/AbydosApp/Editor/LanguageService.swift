@@ -2494,7 +2494,20 @@ final class LanguageService {
 				// which it does not mind: where the server starts is `-w`, and
 				// that is in the command line already. The environment is the
 				// same story — the runtime needs it to find its socket.
-				workingDirectory: canonical(resolved.root),
+				//
+				// Out here it is asked for, because for one server it is not the
+				// project: sourcekit-lsp builds the package to index it, and 0518
+				// found a build of it writing 1424 files into somebody's checkout,
+				// because a relative path is written where the process stands.
+				// `LanguageServers.workingDirectory` says why the answer for that
+				// one is the index's own directory. Only on this route: the
+				// directory a container's runtime is started in is not the
+				// directory the server runs in, and a cache path from this machine
+				// would say nothing about either.
+				workingDirectory: resolved.launch.paths == nil
+					? LanguageServers.workingDirectory(
+						for: resolved.definition, root: resolved.root)
+					: canonical(resolved.root),
 				environment: LanguageServers.serverEnvironment
 			)
 			log("\(resolved.definition.command) started for \(languageId) "

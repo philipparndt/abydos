@@ -199,12 +199,12 @@ item was written from, and deleting them is not this item's call. Nothing in
   argument on it to give. What this app owns is where the server stands, which
   is the step below.
 - [x] Say where the `-2` in the names comes from, and what writes each extension
-- [ ] Start the Swift server in its index scratch path, not in the project
+- [x] Start the Swift server in its index scratch path, not in the project
 - [ ] Clean up the 1424 files already in `abydos-examples/cadova-models`
 
   Not done deliberately. Somebody else's repository; the command is above for
   whoever owns it.
-- [ ] A test, if the invocation can be asked about without a language server
+- [x] A test, if the invocation can be asked about without a language server
 - [x] Write down here what was ruled out on the way
 - [ ] `spec/language-servers.md` says where the Swift indexer writes
 

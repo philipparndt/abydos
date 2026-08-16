@@ -665,6 +665,62 @@ public enum LanguageServers {
 			.appendingPathComponent("\(root.lastPathComponent)-\(shortHash(path))", isDirectory: true)
 	}
 
+	/// Where to *start* the Swift indexer, which is not where its project is.
+	///
+	/// A working directory looks like a detail until something writes a relative
+	/// path, and 0518 is the day something did: following a symbol into
+	/// `.build/checkouts/Cadova` left 1424 files —
+	/// `AddingExclusive-2.swiftmodule`, `Angle-2.dia`, one set of four per source
+	/// file of the package — loose in the project's own root directory, in the
+	/// user's git status, in every search.
+	///
+	/// The chain is three links long and only the last one is ours:
+	///
+	/// 1.  Opening a file under `.build/checkouts/<Package>` makes sourcekit-lsp
+	///     treat that checkout as a **second** SwiftPM package, beside the
+	///     project's own, and prepare it:
+	///     `swift-build --package-path <root>/.build/checkouts/Cadova
+	///     --scratch-path <the index scratch> --target Cadova
+	///     --experimental-prepare-for-indexing`. That is the invocation the
+	///     leaked `.d` files name — their prerequisites are the 356 sources of
+	///     *that* copy, not of the one under the scratch path.
+	/// 2.  A prepare run emits a module per file rather than an object, and when
+	///     a supplementary output has no entry in the output file map, swift-driver
+	///     falls back to a *temporary* path — `Angle-2.swiftmodule`, the `-2`
+	///     being the driver's own uniquing suffix. `swiftc -driver-print-jobs`
+	///     shows the same shape for ordinary temporaries: `Alpha-1.o`.
+	/// 3.  A temporary that resolves relative is written **where the process
+	///     stands**. That is the link this program owns, and it stood in
+	///     somebody's checkout.
+	///
+	/// So the indexer is started in the directory its index already lives in.
+	/// Nothing about *finding* the project depends on this: `rootUri` and
+	/// `workspaceFolders` are absolute file URLs in the initialize request,
+	/// `--scratch-path` is absolute, and every `--package-path` the server passes
+	/// on is absolute too. What changes is only where a stray relative write
+	/// lands — derived data, in the directory whose whole point is that it can be
+	/// thrown away.
+	///
+	/// Everything else is started in its project, which is the answer that has
+	/// always been right for it: a server with no build of its own writes nothing
+	/// relative, and jdtls is already given `-data`.
+	public static func workingDirectory(for definition: LanguageServerDefinition, root: URL) -> URL {
+		switch definition.setup {
+		case .swift:
+			// `prepare` makes this directory a moment before the server starts,
+			// and a `Process` whose working directory does not exist refuses to
+			// run at all. So a cache that could not be created leaves the project
+			// as the answer: a server that works with the old fault is better than
+			// a server that will not start.
+			let scratch = indexScratchPath(for: root)
+			var isDirectory: ObjCBool = false
+			let there = FileManager.default.fileExists(atPath: scratch.path, isDirectory: &isDirectory)
+			return there && isDirectory.boolValue ? scratch : root
+		case .java, .plain:
+			return root
+		}
+	}
+
 	/// Enough of a hash to keep two projects of the same name apart.
 	static func shortHash(_ text: String) -> String {
 		var hash: UInt64 = 0xCBF2_9CE4_8422_2325
