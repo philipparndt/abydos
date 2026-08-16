@@ -40,6 +40,10 @@ both.
   caught all three in one session, and would say nothing in release. Worth
   weighing against the noise before writing it.
 
+## Estimate
+
+2026-08-16 09:58 — about two hours left
+
 ## Steps
 
 - [ ] `moveToBeginningOfDocumentAndModifySelection:` and
