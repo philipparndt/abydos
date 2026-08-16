@@ -38,16 +38,20 @@ back with the new match under it.
 - **When** they are marked
 - **Then** all three are done, rather than the one being turned back
 
-## Requirement: Marking done is never a deletion, and never wears ⌫
+## Requirement: Marking done is never a deletion, and ⌘⌫ is never the key for it
 
 One pane away, in the project tree, ⌘⌫ moves a file to the trash, and the two
 panes are the same list-shaped thing full of file names. So the interface never
 says "delete", "remove" or "dismiss" of a search result: the words are **Mark as
 Done** and **Mark as Not Done**, and the status line counts what is `done`.
 
-The key is ␣, which ticks a checkbox everywhere in the system and destroys
-nothing anywhere. ⌫ and ⌘⌫ are not bound in the results list and do nothing at
-all there.
+Two keys tick a row off, and neither of them is the destructive one. ␣ ticks a
+checkbox everywhere in the system and destroys nothing anywhere. ⌫ is what takes
+a result off the list in the editor a lot of these hands arrive from, and it is
+safe to mean the same thing here because bare ⌫ moves nothing to the trash
+anywhere in this program: the tree's key is ⌘⌫ and only ⌘⌫. Which is the other
+half of this — **⌘⌫ is not bound in the results list and does nothing at all
+there**: nothing is marked, nothing is unmarked, and no file is touched.
 
 ### Scenario: the key that trashes a file one pane over
 
@@ -60,6 +64,13 @@ all there.
 - **Given** the keyboard in the search results, with rows selected
 - **When** ␣ is pressed
 - **Then** they are marked done, and pressing it again marks them back
+
+### Scenario: the delete key
+
+- **Given** the keyboard in the search results, with rows selected
+- **When** ⌫ is pressed
+- **Then** they are marked done, and pressing it again marks them back, exactly
+  as ␣ does
 
 ## Requirement: A mark survives the search being run again
 

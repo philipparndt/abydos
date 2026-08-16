@@ -121,10 +121,6 @@ back into its place by hand afterwards, which changes its position and not a
 word of it. `usages.md`'s opening paragraph — the prose above the requirements,
 which no delta can reach — was edited by hand for the same reason.
 
-## Estimate
-
-2026-08-16 17:55 — about half an hour left
-
 ## Steps
 
 - [x] ⌫ marks the selection done, in usages and in search, and ␣ still does
@@ -137,5 +133,6 @@ which no delta can reach — was edited by hand for the same reason.
 - [x] `make test` and `make warnings` are clean — 2667 tests, and the only
       warnings are the four vendored C ones this repository does not own
 - [x] Write down here what was ruled out on the way
-- [ ] `spec/search.md` and `spec/usages.md` say what the project now does —
-      the ␣ sentences name a second key, and the trash scenario stays as it is
+- [x] `spec/search.md` and `spec/usages.md` say what the project now does —
+      the ␣ sentences name a second key, and the trash scenario stays word for
+      word in both files
