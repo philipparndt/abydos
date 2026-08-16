@@ -192,6 +192,39 @@ struct Theme {
 		.systemFont(ofSize: size * scale, weight: weight)
 	}
 
+	/// The two shapes a selection comes in: a band across a row, or a run
+	/// behind text. They differ in the colour they are drawn in when the view
+	/// *has* the keyboard, and in nothing else.
+	enum SelectionKind {
+		/// A row in a list: the project tree, a results checklist.
+		case row
+		/// A run of characters in an editor.
+		case text
+	}
+
+	/// What a selection is drawn in, from whether the view drawing it has the
+	/// keyboard.
+	///
+	/// One function because there is one rule, and one gray because a program
+	/// with two grays that nearly match got that way by deciding this twice.
+	/// The unfocused colour is `selectionInactive` for every selection there is
+	/// — a tree row, a result row, a run of code — so a window whose keyboard is
+	/// in the terminal shows the same answer in every pane at once: *this is
+	/// where you were, and it is not where your keys are going.*
+	///
+	/// It is the scheme's own colour rather than the system's inactive
+	/// selection, for the reason every other colour here is: a themed panel
+	/// beside a system gray is two programs in one window. The tree has drawn
+	/// its unfocused rows in it since long before this rule had a name, which is
+	/// also the evidence that it reads as gray in all three schemes.
+	func selection(_ kind: SelectionKind, hasKeyboard: Bool) -> NSColor {
+		guard hasKeyboard else { return selectionInactive }
+		switch kind {
+		case .row: return selectionActive
+		case .text: return selectionBackground
+		}
+	}
+
 	/// A system control's size at this zoom, given the size it was designed at.
 	///
 	/// A bezel is drawn from `controlSize`, never from the font inside it.

@@ -601,7 +601,7 @@ final class CodeView: NSView, NSTextInputClient {
 
 		drawGutter(rows: rows, caretLine: caretLine, scrollX: scrollX, context: context)
 
-		if caretVisible, window?.firstResponder === self, selection.isEmpty {
+		if caretVisible, hasKeyboard, selection.isEmpty {
 			drawCaret(context: context)
 		}
 	}
@@ -1041,9 +1041,20 @@ final class CodeView: NSView, NSTextInputClient {
 			endX += charWidth * 0.6
 		}
 
-		Theme.current.selectionBackground.setFill()
+		// Gray while the keyboard is somewhere else — the terminal below, a
+		// results list, another pane of a split. A selection drawn in the strong
+		// highlight is a claim that the next key will act on it, and this view
+		// used to make that claim whether or not it was true.
+		Theme.current.selection(.text, hasKeyboard: hasKeyboard).setFill()
 		NSRect(x: startX, y: rect.minY, width: max(1, endX - startX), height: rect.height).fill()
 	}
+
+	/// True when this view is the one keys are going to.
+	///
+	/// Asked of the window on each draw rather than kept, so it cannot go stale:
+	/// AppKit posts nothing when the first responder changes, and a flag would
+	/// need every route out of this view to remember to clear it.
+	private var hasKeyboard: Bool { window?.firstResponder === self }
 
 	private func drawFoldPlaceholder(at origin: NSPoint, hiddenLines: Int) {
 		let label = hiddenLines > 0 ? "⋯ \(hiddenLines) lines" : "⋯"
@@ -1411,6 +1422,11 @@ final class CodeView: NSView, NSTextInputClient {
 	}
 
 	override func becomeFirstResponder() -> Bool {
+		// The whole view, not the caret's rect: `restartCaretBlink` ends in
+		// `needsDisplay = true`, which is also what puts the selection back into
+		// the strong colour. Said here because it is now load-bearing for
+		// something other than the caret — a redraw narrowed to the caret would
+		// leave the selection gray with the keyboard in this view.
 		restartCaretBlink()
 		announceKeyboardFocusChange()
 		return true
@@ -2846,6 +2862,23 @@ final class CodeView: NSView, NSTextInputClient {
 		}
 
 		return (toggleLineComment(), caretReportForTesting)
+	}
+
+	/// Selects whole lines and leaves them selected, taking nothing else.
+	///
+	/// For the half of item 510 that can only be judged by eye: a selection in
+	/// this view drawn while the keyboard is somewhere else. Every other verb
+	/// that makes a selection here — indenting, commenting — makes the editor
+	/// the first responder first, because it is about to type into it, and one
+	/// that did that would put the keyboard back in the very view whose
+	/// unfocused colour is the thing being photographed.
+	func selectLinesForTesting(fromLine: Int, toLine: Int) {
+		guard let document else { return }
+		let rope = document.rope
+		let start = rope.utf16Offset(fromByte: rope.byteOffset(ofLine: fromLine))
+		let end = rope.utf16Offset(fromByte: rope.lineByteRange(toLine).upperBound)
+		selectionAnchor = start
+		setCaret(end, extendingSelection: true)
 	}
 
 	func indentForTesting(fromLine: Int, toLine: Int, outdent: Bool) {

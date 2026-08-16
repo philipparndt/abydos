@@ -2817,7 +2817,11 @@ private final class NavigatorRowView: NSTableRowView {
 		// A rounded, inset pill rather than a full-bleed band — the shape IDEA
 		// uses. Focused selection is blue; unfocused grey, so the tree still
 		// shows where you are while the editor has keyboard focus.
-		let color = isTreeFocused ? Theme.current.selectionActive : Theme.current.selectionInactive
+		//
+		// Through `Theme.selection` rather than the two colours by name: the
+		// results list and the editor answer the same question now, and this is
+		// where the answer was first worked out.
+		let color = Theme.current.selection(.row, hasKeyboard: isTreeFocused)
 		let rect = bounds.insetBy(dx: Theme.current.scaled(5), dy: 1)
 		let radius = Theme.current.scaled(6)
 		let path = NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)
