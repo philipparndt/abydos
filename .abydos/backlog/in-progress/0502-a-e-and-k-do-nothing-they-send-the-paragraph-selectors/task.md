@@ -376,9 +376,88 @@ Reading it as keys rather than numbers:
   which nothing in 0497 did. Bundling them would have made one item nobody
   could review.
 
+## Found and ruled out on the way
+
+- **The alias this item recommends, built and measured before it was
+  rejected.** The item says the paragraph selectors "can honestly go to the
+  same code as `moveToBeginningOfLine:`", and that is the one thing in here
+  that is wrong in a way a reader cannot catch: `moveToLineEdge(start: true)`
+  is a smart-home toggle, not a go-to-line-start, and a toggle inside a
+  two-selector sequence makes ⌥↑ dead on indented lines and correct on flat
+  ones. Written, built and run rather than argued away, because "this would be
+  wrong" is a claim about a program. See "Watched with the naive answer" — one
+  number, 74 → 74, against nine that look right.
+
+- **A paragraph as a blank-line-delimited block.** Defensible in prose and
+  wrong here, and it is ⌥↑ that says so rather than taste. ⌥↑ has to be
+  `moveBackward:` then "the start of this block" and come out at the start of
+  the *previous* block; with blocks, a caret anywhere in a five-line block goes
+  to the top of it and the next press to the top of the block above — which is
+  a fine key and is not the key macOS binds, because ⌥↓ paired with it would
+  jump five lines where every other Cocoa app moves one. It would also make ⌃E
+  and ⌃K wildly destructive in source: ⌃K would take the rest of a function.
+
+- **⌃⌥↑ and ⌃⌥↓, which the item asks about, are not keys.** Neither is bound
+  in `StandardKeyBinding.dict` to anything at all. The keys the item means are
+  ⌥⇧↑ and ⌥⇧↓, and the methods it names — bare `moveParagraphForward:` and
+  `moveParagraphBackward:` — are not declared by AppKit in the first place.
+  Found by writing the two cases and being told `cannot find
+  'moveParagraphBackward' in scope`, then confirmed in `NSResponder.h`.
+  **0495's audit lists both of them as unhandled**, which is true and
+  unfixable: two rows for methods that do not exist.
+
+- **`deleteToBeginningOfParagraph:` is in, and nothing presses it.** The one
+  paragraph selector AppKit declares that has no key in the standard dict. It
+  is a case label pointing at `deleteToLineEdge(start: true)`, the function
+  ⌘⌫ already uses, and leaving it out would have left the only half-handled
+  pair in the family after this item. A user's own
+  `~/Library/KeyBindings/DefaultKeyBinding.dict` can bind it.
+
+- **No unit test, and it is 0495's and 0497's answer for the same structural
+  reason.** `CodeView` lives in `AbydosApp`; the only test target is
+  `AbydosKitTests`, and there is no `AbydosAppTests` to put one in. What could
+  be tested without a window is a pure function from an offset and a rope to
+  another offset — which is `Rope.lineByteRange`, already covered, plus two
+  lines of arithmetic. What this item got wrong twice over is *what AppKit
+  sends and in what order*, and no unit test in this repository can observe
+  that. The before/naive/after driver runs are the check, and the naive run is
+  the one that earned its keep.
+
+- **⌃A does not agree with ⌘←, on purpose.** They are one key apart in the
+  fingers and they now do different things on an indented line: ⌘← stops at
+  the first non-blank, ⌃A goes to column zero. Not an oversight to tidy up
+  later — ⌘← is the Home key and the two-press toggle is an affordance of
+  being pressed twice by somebody watching, while ⌃A is emacs's
+  `move-beginning-of-line`, which is column zero, and `back-to-indentation` is
+  a separate binding in emacs too. The deciding argument is still ⌥↑ rather
+  than either tradition: ⌃A and ⌥↑ share a selector, and only one behaviour
+  makes both keys work.
+
+- **⌥↑ was not merely small before this; at one boundary it was actively
+  wrong.** From the first non-blank of `    fourth line` it left the caret at
+  73 — *inside the indentation*, between two spaces. A key that moves one
+  character is a key doing the wrong size of thing; a key that parks the caret
+  in the middle of a run of indent looks broken. Worth recording because it is
+  the strongest form of the "0497 half-completed these two keys" claim, and
+  the item as filed had only the mid-line case.
+
+- **The driver now edits the file it is pointed at, twice.** 0497 warned about
+  this after ⌃D; ⌃K makes it permanent, since a run cannot show a deletion
+  without doing one. The runs above go through a script that rewrites the
+  scratch file first, and the second ⌃K's `at 3@end caret=91` is 107 − 16 —
+  the first ⌃K's sixteen characters — rather than anything about ⌃K.
+
+- **`--menu-keys` lists `Run ▸ Run…` on ⌃R and no second item on it**, though
+  `AppDelegate.swift:2183-2196` adds two items with that key equivalent, `Run…`
+  and `Run`. Only one reaches the report, and `MenuKeyReport.collect` filters
+  nothing that would explain it. Not chased and not filed: it is a question
+  about the Run menu, this item needed only to know which Control-only
+  equivalents exist, and either reading of the ⌃R oddity leaves that answer
+  the same two — ⌃R and ⌃D.
+
 ## Estimate
 
-2026-08-16 13:47 — about two hours left
+2026-08-16 14:07 — about twenty minutes left
 
 ## Steps
 
@@ -427,5 +506,13 @@ Reading it as keys rather than numbers:
       run on its own with `FILTER`. `make warnings` reports no warnings in
       this repository's Swift, with the four vendored tree-sitter C ones it
       always reports.
-- [ ] Write down here what was ruled out on the way
-- [ ] `spec/editor.md` says what the project now does
+- [x] Write down here what was ruled out on the way
+- [x] `spec/editor.md` says what the project now does, beside what 0494, 0495
+      and 0497 put there about the arrows
+
+      Two `ADDED` and no `MODIFIED`, and the delta says why at length. The
+      short of it: 0497's requirement is about a *character* and about which
+      of two orders the editor has, which a line does not raise; 0494's and
+      0495's are about the *edges of the file*, which nothing in this family
+      reaches. The two new ones are separate from each other because one
+      moves and one deletes, and the newline gets decided in the second.
