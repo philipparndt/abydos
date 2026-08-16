@@ -241,10 +241,6 @@ ones in that item, but they are the same in both runs here.
   which nobody has decided. Adding it there would have been a design choice
   smuggled in under a fix for ⌃B.
 
-## Estimate
-
-2026-08-16 11:40 — done bar the fold and the push
-
 ## Steps
 
 - [x] Decide what ⌃O does about the indent of the line it splits
