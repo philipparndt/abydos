@@ -287,6 +287,51 @@ struct CadovaModelTests {
 		#expect(FilePreview.kind(for: notes, facts: PreviewFacts(isCadovaModel: true)) == .markdown)
 	}
 
+	// MARK: - Whether an event was an edit
+
+	/// **The loop this stops.** FSEvents with file events on reports a file's
+	/// inode metadata changing, and compiling a file changes its access time — so
+	/// a pane that reran on every event rebuilt because it had just built, which
+	/// is what the app did before this existed. The fingerprint turns "something
+	/// happened under the sources" into "somebody edited the sources": reading a
+	/// file does not change it, writing one does.
+	@Test func theFingerprintChangesForAWriteAndNotForARead() throws {
+		let root = scratch()
+		defer { try? FileManager.default.removeItem(at: root) }
+		_ = try makePackage(
+			manifest: """
+			let package = Package(
+				name: "parts",
+				targets: [.executableTarget(name: "parts", dependencies: ["Cadova"])]
+			)
+			""",
+			files: ["Sources/parts/main.swift", "Sources/parts/holder.swift"],
+			in: root
+		)
+		let file = root.appendingPathComponent("Sources/parts/main.swift")
+		let model = CadovaModel.find(for: file)!
+
+		let before = model.sourceFingerprint()
+		#expect(!before.isEmpty)
+
+		// What a compiler does: the access time moves and nothing else.
+		_ = try Data(contentsOf: file)
+		#expect(model.sourceFingerprint() == before)
+
+		// What somebody does.
+		try "import Cadova\n// a change\n".write(to: file, atomically: true, encoding: .utf8)
+		let afterEdit = model.sourceFingerprint()
+		#expect(afterEdit != before)
+
+		// And a file added beside it, because a target is all of its sources and
+		// any of them changes the shape.
+		try "import Cadova\n".write(
+			to: root.appendingPathComponent("Sources/parts/lid.swift"),
+			atomically: true, encoding: .utf8
+		)
+		#expect(model.sourceFingerprint() != afterEdit)
+	}
+
 	// MARK: - Reading what a run said
 
 	/// The line Cadova prints, exactly as the spike printed it.
@@ -323,12 +368,17 @@ struct CadovaModelTests {
 		#expect(CadovaRun.stripped(coloured) == " 5 |     let spacing = 8.0 +")
 	}
 
-	/// The complaint is the diagnostics, and the box-drawn source lines under
-	/// each one are left out — they are indented, and a narrow pane cannot lay
-	/// them out.
-	@Test func theComplaintIsTheDiagnosticsAndNotTheWholeBuild() {
+	/// The complaint leads with the diagnostic that names a place in a file.
+	///
+	/// Watched in the app before this ordering existed, and the first line the
+	/// pane showed was the build system's `error: SwiftCompile normal arm64
+	/// failed with a nonzero exit code. Command line: cd …` — the wrapper around
+	/// the real message rather than the message.
+	@Test func theComplaintLeadsWithTheDiagnosticAndNotTheWrapper() {
 		let said = """
 		Building for debugging...
+		error: SwiftCompile normal arm64 failed with a nonzero exit code. Command line:     cd /tmp
+		    builtin-SwiftPerFileCompile main.swift
 		/tmp/spike/Sources/spike/main.swift:5:23: \u{1B}[0;31merror: \u{1B}[0;0mbinary operator '+' cannot be applied
 		 \u{1B}[0;36m5 |\u{1B}[0;0m     let spacing = 8.0 +
 		   \u{1B}[0;36m|\u{1B}[0;0m                       `- error: binary operator '+' cannot be applied
@@ -337,10 +387,35 @@ struct CadovaModelTests {
 		error: Build failed
 		"""
 		let complaint = CadovaRun.complaint(in: said)
-		#expect(complaint.contains("main.swift:5:23"))
-		#expect(complaint.contains("error: Build failed"))
+		#expect(complaint.hasPrefix("/tmp/spike/Sources/spike/main.swift:5:23: error:"))
+		// The wrapper, the box drawing and the frontend command line are all gone,
+		// and so is `error: Build failed` — it names no place, and there is a line
+		// above it that does.
+		#expect(!complaint.contains("nonzero exit code"))
 		#expect(!complaint.contains("swift-frontend"))
 		#expect(!complaint.contains("`-"))
+		#expect(!complaint.contains("Build failed"))
+	}
+
+	/// A failure with no source diagnostic in it still shows the `error:` lines
+	/// rather than falling all the way through to the tail.
+	@Test func aFailureWithNoDiagnosticShowsWhateverSaidError() {
+		let said = """
+		Fetching https://github.com/tomasf/Cadova.git
+		error: 'spike': package 'spike' is using Swift tools version 6.3.0 but the installed version is 6.1.2
+		"""
+		#expect(CadovaRun.complaint(in: said).hasPrefix("error: 'spike':"))
+	}
+
+	/// The rule for "names a place in a file", against the lines that have to be
+	/// told apart. A Windows-style path is not a case this ever sees; a URL in a
+	/// message is.
+	@Test func tellsADiagnosticFromASentenceWithAColonInIt() {
+		#expect(CadovaRun.namesAPlaceInAFile("/a/b.swift:5:23: error: no"))
+		#expect(!CadovaRun.namesAPlaceInAFile("error: Build failed"))
+		#expect(!CadovaRun.namesAPlaceInAFile(
+			"error: could not fetch https://github.com/x/y.git: not found"
+		))
 	}
 
 	/// Nothing that looks like a diagnostic — a shell that could not find

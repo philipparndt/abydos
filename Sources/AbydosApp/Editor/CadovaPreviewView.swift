@@ -50,13 +50,19 @@ import SwiftUI
 final class CadovaPreviewView: DelayedPaneView {
 	private let model: CadovaModel
 
-	/// The run in flight, so a newer one can stop it.
+	/// The run in flight.
 	private var running: Process?
+	/// A change that arrived while a run was going, to be honoured when it ends.
+	/// See `sourcesChanged()` for why this is a queue rather than a kill.
+	private var wantsRerun = false
 	/// The debounce between a file changing and a run starting.
 	private var pending: DispatchWorkItem?
-	/// Watching the target's sources. Nil until the pane has been shown, so a
+	/// Watching the target's sources. Empty until the pane has been shown, so a
 	/// tab nobody stopped at starts no stream.
 	private var watchers: [FileSystemWatcher] = []
+	/// What the sources were when the last run started, so an event that is not
+	/// an edit does not start another. See `CadovaModel.sourceFingerprint()`.
+	private var fingerprint: String?
 
 	/// The model on screen, so a rerun writing the same path can leave the viewer
 	/// alone and let GoSTL's own file watcher reload it.
@@ -132,10 +138,12 @@ final class CadovaPreviewView: DelayedPaneView {
 
 	deinit {
 		pending?.cancel()
-		// Whether or not this view is still here to be told about it — the fault
-		// PlantUML's watchdog records, one process size larger. A `swift build`
-		// orphaned because its pane closed holds SwiftPM's lock on `.build` and
-		// keeps a dozen `swift-frontend` processes going with it.
+		// The one place a build *is* killed, and it is killed knowing what that
+		// costs: a half-stopped `swift build` leaves `.build` inconsistent and the
+		// next build of that package is cold. The alternative is worse — a build
+		// nobody is waiting for, holding SwiftPM's lock and a dozen
+		// `swift-frontend` processes, started by a tab that has been closed. That
+		// is the fault PlantUML's watchdog records, one process size larger.
 		running?.terminate()
 	}
 
@@ -156,20 +164,49 @@ final class CadovaPreviewView: DelayedPaneView {
 		}
 	}
 
+	/// Something under the target's sources happened. Whether it was an edit is a
+	/// separate question, asked after the debounce.
 	private func sourcesChanged() {
 		pending?.cancel()
-		let work = DispatchWorkItem { [weak self] in self?.run() }
+		let work = DispatchWorkItem { [weak self] in self?.runIfSourcesChanged() }
 		pending = work
 		DispatchQueue.main.asyncAfter(deadline: .now() + Self.debounce, execute: work)
+	}
+
+	private func runIfSourcesChanged() {
+		// **The event is not the question.** FSEvents reports a file's inode
+		// metadata changing, and compiling a file changes its access time — so
+		// this fires while the build that is running reads the very sources it is
+		// building. Watched in the app: the pane rebuilt itself in a loop, and the
+		// two builds then broke `.build` between them.
+		guard model.sourceFingerprint() != fingerprint else { return }
+
+		// **A run in flight is left alone.** The obvious thing — kill it, start the
+		// newer one — is what produced
+		// `module file 'std_errno_h-….pcm' not found: module file not found`
+		// in the app, twice: terminating the shell does not stop `swift-build` and
+		// its frontends, so the killed build carried on writing `.build` while its
+		// replacement wrote it too, and the *next* five builds after that were cold
+		// while SwiftPM rebuilt what had been half-written. A package build is not
+		// a render: it has a build directory to keep consistent, and there is no
+		// signal that makes stopping one safe. So a change during a build is
+		// remembered and honoured when it ends, which coalesces a burst of saves
+		// into exactly one extra run — the same outcome cancelling was for, by a
+		// means that does not corrupt anything.
+		guard running == nil else {
+			wantsRerun = true
+			return
+		}
+		run()
 	}
 
 	// MARK: - The run
 
 	private func run() {
-		// Only one at a time. A package build started 0.4 s ago is a package build
-		// describing code that has since changed, and leaving it going would mean
-		// two of them fighting over SwiftPM's lock on the same `.build`.
-		running?.terminate()
+		wantsRerun = false
+		// Taken before the build starts, not after: everything the build touches
+		// from here on is the build's own doing.
+		fingerprint = model.sourceFingerprint()
 
 		let invocation = UserShell.invocation(for: model.command)
 		let process = Process()
@@ -252,6 +289,18 @@ final class CadovaPreviewView: DelayedPaneView {
 
 	private func finish(output: String, status: Int32, started: Date) {
 		runsForTesting += 1
+
+		// A save that arrived while this was building. Honoured now rather than
+		// dropped: what is on screen after this is the shape of code that has
+		// since changed, and nothing else is going to notice.
+		defer {
+			if wantsRerun {
+				wantsRerun = false
+				// Through the fingerprint check again rather than straight into
+				// `run()`: what the watcher saw during a build is usually the build.
+				runIfSourcesChanged()
+			}
+		}
 
 		guard let written = CadovaRun.wroteModel(in: output)
 			?? CadovaRun.newestModel(in: model.packageDirectory, since: started),

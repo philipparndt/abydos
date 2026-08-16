@@ -47,6 +47,38 @@ public struct CadovaModel: Equatable, Sendable {
 	/// The command line, as somebody would type it in the package root.
 	public var command: String { "swift run \(product)" }
 
+	/// What the target's sources are, right now, as one comparable string.
+	///
+	/// **This exists because a build triggers a rebuild otherwise.** FSEvents with
+	/// `kFSEventStreamCreateFlagFileEvents` reports `ItemInodeMetaMod`, and
+	/// compiling a file updates its access time — so watching the source directory
+	/// and rerunning on every event put the pane in a loop: build, the compiler
+	/// reads `main.swift`, the watcher fires, build again. Watched in the app, and
+	/// the two builds then fought over `.build` and broke it (see 0499).
+	///
+	/// So the watcher says *look*, and this says *whether anything changed*. Size
+	/// and modification date rather than contents: a `swift run` costs seconds and
+	/// this costs one `stat` per file of one target, so being wrong in the
+	/// direction of building once too often is affordable and reading every file
+	/// is not.
+	public func sourceFingerprint() -> String {
+		var parts: [String] = []
+		for directory in sources {
+			guard let walk = FileManager.default.enumerator(
+				at: directory,
+				includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
+				options: [.skipsHiddenFiles]
+			) else { continue }
+			for case let url as URL in walk where url.pathExtension.lowercased() == "swift" {
+				let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+				let when = values?.contentModificationDate?.timeIntervalSince1970 ?? 0
+				let size = values?.fileSize ?? 0
+				parts.append("\(url.path)|\(when)|\(size)")
+			}
+		}
+		return parts.sorted().joined(separator: "\n")
+	}
+
 	/// The model this file is part of, or nil.
 	///
 	/// - Parameter stoppingAt: the project root, so the walk up does not climb
@@ -159,20 +191,69 @@ public enum CadovaRun {
 
 	/// What to show when a run produced no model.
 	///
-	/// The diagnostics, when the compiler gave any: every line with `error:` in
-	/// it, and the source line SwiftPM prints under each one is left out because
-	/// it arrives wrapped in colour codes and box drawing that a pane this narrow
-	/// cannot lay out. When there are none — a run that crashed, a toolchain that
-	/// refused the manifest, a shell that could not find `swift` — the tail of
-	/// what was said, because that is the only clue there is.
+	/// Three kinds of line, in the order somebody wants them, because a build that
+	/// fails says a hundred and thirty lines and four of them are the answer:
+	///
+	///  1. **Source diagnostics** — `…/main.swift:5:23: error: binary operator '+'
+	///     cannot be applied`. The file and the line, which is what somebody is
+	///     going to do something about.
+	///  2. **Any other `error:`** when there are none of those — a toolchain that
+	///     refused the manifest, a package that would not resolve.
+	///  3. **The tail**, when nothing said `error:` at all: a shell that could not
+	///     find `swift`, a program that crashed.
+	///
+	/// The order is not a nicety. Watched in the app before it existed, the pane's
+	/// first line was `error: SwiftCompile normal arm64 failed with a nonzero exit
+	/// code. Command line: cd …`, which is the build system announcing that a
+	/// compile failed — true, and no use to anybody, with the diagnostic that
+	/// matters four lines below it.
+	///
+	/// Left out either way: the source line SwiftPM prints under each diagnostic,
+	/// which arrives as box drawing a pane this narrow cannot lay out, and the
+	/// `swift-frontend` command line, which on this machine is a single line of
+	/// four thousand characters.
 	public static func complaint(in output: String) -> String {
-		let text = stripped(output)
-		let lines = text.split(whereSeparator: \.isNewline).map(String.init)
-		let errors = lines.filter { $0.contains("error:") && !$0.hasPrefix(" ") }
-		let chosen = errors.isEmpty ? Array(lines.suffix(tailLines)) : Array(errors.prefix(shownErrors))
+		let lines = stripped(output).split(whereSeparator: \.isNewline).map(String.init)
+		// Not indented: the box-drawn context under a diagnostic is, and the
+		// diagnostic itself is not.
+		let errors = lines.filter {
+			$0.contains("error:") && !$0.hasPrefix(" ") && !$0.contains(buildSystemNoise)
+		}
+		let diagnostics = errors.filter(namesAPlaceInAFile)
+
+		let chosen: [String]
+		if !diagnostics.isEmpty {
+			chosen = Array(diagnostics.prefix(shownErrors))
+		} else if !errors.isEmpty {
+			chosen = Array(errors.prefix(shownErrors))
+		} else {
+			chosen = Array(lines.suffix(tailLines))
+		}
 		let said = chosen.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
 		return said.isEmpty ? "The run said nothing and wrote no model." : said
 	}
+
+	/// Whether a line names a file, a line and a column before saying `error:`.
+	///
+	/// Character by character rather than by regular expression, for the reason
+	/// `SwiftPackage` gives about manifests: the thing being matched is full of
+	/// colons and slashes, and this has to be certain about which ones.
+	static func namesAPlaceInAFile(_ line: String) -> Bool {
+		guard let error = line.range(of: "error:") else { return false }
+		let before = line[line.startIndex..<error.lowerBound]
+		// `…:5:23: ` — two numbers between colons, immediately before `error:`.
+		let parts = before.split(separator: ":", omittingEmptySubsequences: false)
+		guard parts.count >= 3 else { return false }
+		let column = parts[parts.count - 2].trimmingCharacters(in: .whitespaces)
+		let row = parts[parts.count - 3].trimmingCharacters(in: .whitespaces)
+		return !row.isEmpty && !column.isEmpty
+			&& row.allSatisfy(\.isNumber) && column.allSatisfy(\.isNumber)
+	}
+
+	/// The build system saying that a compile failed, which is not news beside
+	/// the compile's own message, and which drags a four-thousand-character
+	/// command line along behind it.
+	static let buildSystemNoise = "failed with a nonzero exit code"
 
 	/// How many diagnostics are worth showing before somebody should be reading
 	/// the compiler's own output instead.

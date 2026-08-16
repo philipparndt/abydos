@@ -68,10 +68,10 @@ the spike had it the other way round.
       belong to, and does that target use Cadova"
 - [x] `FilePreview` takes the facts a name cannot give as one value rather than
       as a growing list of booleans
-- [ ] Running the target produces a 3MF the viewer opens
-- [ ] Saving re-runs it, debounced, and the previous run is cancelled
+- [x] Running the target produces a 3MF the viewer opens
+- [x] Saving re-runs it, debounced, and the previous run is cancelled
 - [ ] A build or run that fails says so where somebody will see it
-- [ ] A driver that reports what a Cadova pane is doing, so it can be watched
+- [x] A driver that reports what a Cadova pane is doing, so it can be watched
 - [ ] Watched in the app: open a Cadova model, see geometry, change a constant,
       save, watch it change
 - [ ] Write down here what was ruled out on the way
