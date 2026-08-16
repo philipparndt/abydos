@@ -34,8 +34,11 @@ assert, because it is the whole of what the old scenario protects.
 
 ## Steps
 
-- [ ] ⌫ marks the selection done, in usages and in search, and ␣ still does
-- [ ] ⌘⌫ still does nothing at all in either list, with a test that says so
+- [x] ⌫ marks the selection done, in usages and in search, and ␣ still does
+- [x] The rule for which presses tick lives in `AbydosKit`, where the suite can
+      reach it — the window layer has no tests, and which modifiers are let
+      through is the whole of the hazard
+- [x] ⌘⌫ still does nothing at all in either list, with a test that says so
 - [ ] Watched from outside the app: ⌫ ticks a row, ⌫ again unticks it, ⌘⌫ does
       nothing — `--usages-steps` is the existing verb for driving this list
 - [ ] `make test` and `make warnings` are clean

@@ -474,10 +474,16 @@ final class ResultChecklist: NSView {
 	/// Returns true when the event was consumed.
 	private func handleTableKey(_ event: NSEvent) -> Bool {
 		let bare = event.modifierFlags.intersection([.command, .option, .control]).isEmpty
-		switch event.keyCode {
-		case 49 where bare:
+		// ␣ and ⌫ both tick the selection off, and the rule for which presses do
+		// that lives in `AbydosKit` because of the one that must not: ⌘⌫ is the
+		// key that moves a file to the trash in the pane next door, and it goes on
+		// doing nothing here. Bare ⌫ moves nothing to the trash anywhere in this
+		// program, so it is free to mean this.
+		if ResultChecklistKeys.marksDone(keyCode: event.keyCode, modifiers: event.modifierFlags) {
 			setDone(nil, at: tableView.selectedRowIndexes)
 			return true
+		}
+		switch event.keyCode {
 		// ⏎ does the thing the selection has not already done.
 		//
 		// Where the selection does not preview — search — it shows what is
@@ -566,10 +572,10 @@ final class ResultChecklist: NSView {
 		case _ where step.hasPrefix("hold-down:"):
 			holdForTesting(Int(step.dropFirst("hold-down:".count)) ?? 0, keyCode: 125)
 		// The key itself rather than the method under it, because the claim is
-		// about `handleTableKey`: ␣ has to reach the table at all, and ⌫ and ⌘⌫
-		// have to reach it and be ignored. The second is the whole hazard — the
-		// same key one pane over moves a file to the trash — and it can only be
-		// checked by pressing it.
+		// about `handleTableKey`: ␣ and ⌫ have to reach the table and tick a row,
+		// and ⌘⌫ has to reach it and be ignored. The last is the whole hazard —
+		// the same key one pane over moves a file to the trash — and it can only
+		// be checked by pressing it.
 		case "space-key": pressForTesting(49)
 		case "delete-key": pressForTesting(51)
 		case "cmd-delete-key": pressForTesting(51, modifiers: .command)
