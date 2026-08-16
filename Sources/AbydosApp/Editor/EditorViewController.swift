@@ -1436,6 +1436,19 @@ final class EditorViewController: NSViewController {
 		return Array(lines.suffix(count))
 	}
 
+	/// One line of the file, for watching a key that deletes.
+	///
+	/// The caret report says nothing about ⌃K: a forward delete leaves the
+	/// caret where it was, so the only difference between the key working and
+	/// the key doing nothing is in the text. `textTailForTesting` answers the
+	/// same question for the *end* of a file, and a driver pressing a deleting
+	/// key in the middle of one has to name the line.
+	func lineTextForTesting(_ line: Int) -> String {
+		guard let document = activeTab?.document else { return "no file" }
+		guard line >= 0, line < document.rope.lineCount else { return "no line \(line)" }
+		return document.rope.lineText(line)
+	}
+
 	func goToDefinitionForTesting(line: Int, character: Int) {
 		guard let tab = activeTab else { return }
 		goToDefinition(from: tab, line: line, character: character)

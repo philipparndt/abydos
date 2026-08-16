@@ -84,6 +84,52 @@ is not a mistake in Cocoa's binding, either: it is what makes ⌥↑ go to the
 *previous* paragraph when the caret is already at the start of one, so
 whatever this item decides has to leave that working.
 
+## Which keys these really are — the item above is wrong about two of them
+
+Asked rather than believed, because the whole item turns on it:
+
+    plutil -convert json -o - \
+      /System/Library/Frameworks/AppKit.framework/Resources/StandardKeyBinding.dict
+
+Every binding whose value mentions a paragraph, all nine of them:
+
+    ^a     moveToBeginningOfParagraph:
+    ^e     moveToEndOfParagraph:
+    ^A     moveToBeginningOfParagraphAndModifySelection:      (⇧⌃A)
+    ^E     moveToEndOfParagraphAndModifySelection:            (⇧⌃E)
+    ^k     deleteToEndOfParagraph:
+    ~↑     ['moveBackward:', 'moveToBeginningOfParagraph:']
+    ~↓     ['moveForward:',  'moveToEndOfParagraph:']
+    ~$↑    moveParagraphBackwardAndModifySelection:           (⌥⇧↑)
+    ~$↓    moveParagraphForwardAndModifySelection:            (⌥⇧↓)
+
+Two corrections to the item as filed:
+
+- **`moveParagraphBackward:`/`moveParagraphForward:` are ⌥⇧↑ and ⌥⇧↓, not
+  ⌃⌥↑ and ⌃⌥↓.** There is no `^~` binding in the dict except the word motions
+  (`~^b`, `~^f` and their shifted twins) and the three writing-direction
+  commands. ⌃⌥↑ and ⌃⌥↓ send nothing at all and are not a key this change can
+  reach.
+- **The bare `moveParagraphBackward:`/`moveParagraphForward:` are bound to no
+  key whatsoever.** Only the `AndModifySelection:` twins have one — which is
+  the reverse of the usual shape, where a base selector has a key and its twin
+  is the same key with Shift.
+
+And the third thing, which is the argument for how the whole family has to
+behave. ⌥⇧↑ is **not** ⌥↑ with Shift added. ⌥↑ is two selectors with a nudge
+in front; ⌥⇧↑ is one selector and no nudge. The same key, one modifier apart,
+composed two different ways — so `moveParagraphBackwardAndModifySelection:`
+has to step to the previous paragraph *by itself* when the caret is already at
+a boundary, because nothing is in front of it to do that, while
+`moveToBeginningOfParagraph:` must *not*, because the nudge would then skip a
+paragraph. Two selectors that sound like synonyms and are a deliberate pair.
+
+That also settles the last of the item's three questions before any code is
+written: **⌥⇧↑ and ⌥⇧↓ come along.** Leaving them out would give ⌥↑ and ⌥↓ a
+shifted twin that does nothing, which is precisely the half-a-motion shape
+0495 exists to stop, and this time the two halves are not even the same
+selector.
+
 ## Ruled out
 
 - **Doing it inside 0497.** Its reported pair is `moveForward:`/`moveBackward:`
@@ -92,8 +138,19 @@ whatever this item decides has to leave that working.
   which nothing in 0497 did. Bundling them would have made one item nobody
   could review.
 
+## Estimate
+
+2026-08-16 13:47 — about two hours left
+
 ## Steps
 
+- [x] Ask `StandardKeyBinding.dict` which keys actually send the paragraph
+      selectors, rather than taking this item's word for it
+
+      Added while doing the work: the item says ⌃⌥↑/⌃⌥↓ and it is wrong, which
+      changes what the fifth step below is about. See "Which keys these really
+      are" — they are ⌥⇧↑ and ⌥⇧↓, and the way they are composed is the
+      argument for how the rest of the family has to behave.
 - [ ] Decide what a paragraph is in this editor, and write the answer down
 - [ ] Decide who owns ⌃D — Run ▸ Debug has it, and `deleteForward:` only gets
       it when no menu is in the way
@@ -104,6 +161,12 @@ whatever this item decides has to leave that working.
       are the same family and unhandled, and either belong here or are said not to
 - [ ] Watched from outside the app with `--emacs-nav`, which already knows the
       key codes for all of these letters
+- [ ] Watched with the naive answer in place too, because the reason to reject
+      it is a claim about the running program and not about the code
+
+      Added while doing the work. See "What a paragraph is": aliasing the
+      paragraph selectors onto `moveToLineEdge` kills ⌥↑ on an indented line
+      and works everywhere else, so reading the diff would not have caught it.
 - [ ] `make test` and `make warnings` are clean
 - [ ] Write down here what was ruled out on the way
 - [ ] `spec/editor.md` says what the project now does
