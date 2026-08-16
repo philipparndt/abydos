@@ -234,10 +234,6 @@ settling deliberately rather than by whichever pane somebody is editing.
   without being rebuilt, and a notice that followed one while the background
   under it did not was the half-right version.
 
-## Estimate
-
-2026-08-16 19:56 — about 40 minutes left
-
 ## Steps
 
 - [x] Measure both placements in the running app before changing either —

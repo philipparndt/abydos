@@ -113,6 +113,14 @@ the pane says what it is doing while it does it, and a build that produces no
 model shows what the compiler said in place of the model rather than a shape
 that is not the one the code describes.
 
+What the pane says while it builds is the build's own last line, so it is text
+of no known length: it is shown **on one line, truncated in the middle**, with
+the turning indicator **above** it rather than through it. The two are one
+arrangement centred in the pane, so no length of line and no width of pane can
+put them on top of each other — and when nothing is turning the line is centred
+on its own, rather than held at an offset that only makes sense with something
+above it.
+
 Any of the target's sources counts, not only the file with the model in it:
 running the target is what makes the shape, so a helper file changes it just as
 much. Which means the pane rebuilds when any of them changes **on disk** — the
@@ -133,6 +141,13 @@ the work, and a viewer rebuilt from nothing would put the camera back.
 - **Then** the pane says it is building, naming the product, and shows what the
   build is saying while it runs
 - **And** when the build finishes the model it wrote is shown beside the source
+
+### Scenario: a build line longer than the pane is wide
+
+- **Given** a Cadova model building in a narrow pane
+- **When** the build prints a line too long to fit
+- **Then** the line is shown on one line with its middle elided, and the turning
+  indicator is clear above it rather than drawn over the letters
 
 ### Scenario: changing a constant
 
