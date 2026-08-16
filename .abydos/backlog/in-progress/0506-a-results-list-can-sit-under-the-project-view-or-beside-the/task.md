@@ -60,9 +60,10 @@ the one that shows the state before any of this work.
 **"Beside the terminals — the list as a tab in the bottom panel's own strip,
 next to the terminal tabs" is what the docked list has been since item 470.**
 `BottomPanel.Session.Kind` has `.usages` and `.search` beside `.terminal`, and
-they are all tabs on the same strip: `images/before-search-was-already-beside-tmux.png` is
-the app before any of this work, with a `Search` tab sitting next to a `tmux`
-tab. Whoever filed this read the layout diagram and not the running program.
+they are all tabs on the same strip.
+`images/before-search-was-already-beside-tmux.png` is the app before any of
+this work, with a `Search` tab sitting next to a `tmux` tab. Whoever filed this
+read the layout diagram and not the running program.
 
 So the item as written asked for a home the program had. Two readings were
 open and the second was taken:
