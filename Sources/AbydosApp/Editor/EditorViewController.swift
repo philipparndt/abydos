@@ -2698,14 +2698,23 @@ final class EditorViewController: NSViewController {
 	/// Through `keyDown` rather than by calling the command directly: what is
 	/// being checked is that the system's key bindings reach the editor, not
 	/// that the editor has a method with the right name.
+	///
+	/// Page Up and Page Down are in here too. They are the same kind of key to a
+	/// text view — a vertical motion with a screenful as its step, arriving at
+	/// the same method — and a second function differing only in a key code
+	/// would be the one somebody forgets to keep up with this one.
 	func simulateArrow(_ direction: String, modifiers: NSEvent.ModifierFlags) {
 		guard let tab = activeTab, let codeView = tab.codeView else { return }
 		view.window?.makeFirstResponder(codeView)
 
-		let keyCodes = ["left": 123, "right": 124, "down": 125, "up": 126]
+		let keyCodes = [
+			"left": 123, "right": 124, "down": 125, "up": 126,
+			"pageup": 116, "pagedown": 121,
+		]
 		let characters = [
 			"left": NSLeftArrowFunctionKey, "right": NSRightArrowFunctionKey,
 			"down": NSDownArrowFunctionKey, "up": NSUpArrowFunctionKey,
+			"pageup": NSPageUpFunctionKey, "pagedown": NSPageDownFunctionKey,
 		]
 		guard let code = keyCodes[direction], let character = characters[direction] else { return }
 		let text = String(UnicodeScalar(character)!)
@@ -2754,6 +2763,13 @@ final class EditorViewController: NSViewController {
 		guard let codeView = activeTab?.codeView, let document = activeTab?.document else { return }
 		view.window?.makeFirstResponder(codeView)
 		codeView.setCaretForTesting(document.rope.utf16Count)
+	}
+
+	/// A negative line counts back from the end, so -1 is the last line.
+	func setCaretForTesting(line: Int, column: Int) {
+		guard let codeView = activeTab?.codeView else { return }
+		view.window?.makeFirstResponder(codeView)
+		codeView.setCaretForTesting(line: line, column: column)
 	}
 
 	/// Where the caret is and what is selected, for checking a motion landed.

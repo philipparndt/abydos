@@ -2118,6 +2118,12 @@ final class CodeView: NSView, NSTextInputClient {
 			setCaret(document?.rope.utf16Count ?? 0, extendingSelection: false)
 		case #selector(scrollPageUp(_:)), #selector(pageUp(_:)):     movePage(-1, extending: false)
 		case #selector(scrollPageDown(_:)), #selector(pageDown(_:)): movePage(1, extending: false)
+		// ⇧⇞ and ⇧⇟ are selectors of their own and arrived here as nothing at
+		// all, so the page keys moved the caret and left the selection behind.
+		// Found by pressing them from outside the app while watching ⇧↓ at the
+		// end of a file, which is the same sentence one key bigger.
+		case #selector(pageUpAndModifySelection(_:)):   movePage(-1, extending: true)
+		case #selector(pageDownAndModifySelection(_:)): movePage(1, extending: true)
 		case #selector(deleteBackward(_:)):      deleteBackward()
 		case #selector(deleteForward(_:)):       deleteForward()
 		case #selector(insertNewline(_:)):       insertNewlineWithIndent()
@@ -2236,21 +2242,36 @@ final class CodeView: NSView, NSTextInputClient {
 
 		let byteOffset = document.rope.byteOffset(fromUTF16: caret)
 		let docLine = document.rope.line(atByteOffset: byteOffset)
-		let visual = folding.visualLine(forDocumentLine: docLine)
+		// The row the caret is *on*, not the first row of its line. With soft
+		// wrap a long line is several rows, and asking folding alone put the
+		// caret on the line's first row: ↓ from the middle of a wrapped line
+		// then landed on the row it was already on and looked like a dead key.
+		let visual = firstVisualRow(forDocumentLine: docLine)
+			+ (isWordWrapEnabled ? wrapSegmentForOffset(caret, line: docLine) : 0)
 
-		let targetVisual = max(0, min(visibleLineCount - 1, visual + delta))
-		guard targetVisual != visual else { return }
+		let motion = VerticalMotion.outcome(from: visual, by: delta, rows: visibleLineCount)
+		guard motion != .stay else { return }
 
 		// Remember the x the caret started from so a run of ups and downs keeps
-		// returning to the same column.
+		// returning to the same column — the jumps to either end of the file
+		// included, or ⇧↓ to the end of the file and then ↑ would come back to
+		// whatever column the last line happened to end at.
 		if desiredColumnX == nil {
 			desiredColumnX = caretPoint().map { $0.x } ?? textOriginX
 		}
-		let x = desiredColumnX ?? textOriginX
+		let column = desiredColumnX ?? textOriginX
 
-		let point = NSPoint(x: x, y: yPosition(forVisualLine: targetVisual) + lineHeight / 2)
-		let column = desiredColumnX
-		setCaret(offset(at: point), extendingSelection: extending)
+		let target: Int
+		switch motion {
+		case .stay:            return
+		case .startOfDocument: target = 0
+		case .endOfDocument:   target = document.rope.utf16Count
+		case .row(let row):
+			let point = NSPoint(x: column, y: yPosition(forVisualLine: row) + lineHeight / 2)
+			target = offset(at: point)
+		}
+
+		setCaret(target, extendingSelection: extending)
 		desiredColumnX = column
 	}
 
@@ -2737,6 +2758,31 @@ final class CodeView: NSView, NSTextInputClient {
 
 	func setCaretForTesting(_ offset: Int) {
 		setCaret(offset, extendingSelection: false)
+	}
+
+	/// Puts the caret at a line and column. A negative line counts back from the
+	/// end, so -1 is the last line — which is where a driver watching ↓ at the
+	/// bottom of the file has to start, and which it cannot work out from an
+	/// offset without knowing the file.
+	///
+	/// The column stops at the end of that line rather than running on into the
+	/// next one: a driver that asked for column 40 of a line of eight would
+	/// otherwise be watching the keys from a line it did not name.
+	///
+	/// It forgets the remembered column as a click does, so each thing a driver
+	/// tries is a run of its own. Without that, a ⇧↓ placed after an earlier
+	/// press returns to the column of that earlier press and the report reads
+	/// as a bug in the column memory rather than as the driver's own doing.
+	func setCaretForTesting(line: Int, column: Int) {
+		guard let document else { return }
+		desiredColumnX = nil
+		let rope = document.rope
+		let wanted = line < 0 ? document.lineCount + line : line
+		let resolved = min(max(0, wanted), document.lineCount - 1)
+		let range = rope.lineByteRange(resolved)
+		let start = rope.utf16Offset(fromByte: range.lowerBound)
+		let end = rope.utf16Offset(fromByte: range.upperBound)
+		setCaret(min(start + max(0, column), end), extendingSelection: false)
 	}
 
 	/// The document jumped to another state: everything measured from its text
