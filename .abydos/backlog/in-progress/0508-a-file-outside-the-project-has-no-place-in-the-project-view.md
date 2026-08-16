@@ -122,7 +122,7 @@ are the files.
 - [x] Decide how far the first version goes — which project kinds, and package
       list against file tree — and write the answer down
 - [x] File the kinds that are not in this item: 0510, 0511, 0512, 0513
-- [ ] Read a project's dependencies, from what is already on disk
+- [x] Read a project's dependencies, from what is already on disk
 - [ ] A section in the project view for what the project depends on
 - [ ] It says where each one came from, from what is already on disk
 - [ ] A kind that is not read says so, rather than showing nothing
