@@ -22,7 +22,8 @@ public struct ExternalDependency: Equatable, Sendable {
 	/// Nil when nothing names one.
 	public let version: String?
 	/// Where it came from, as the manifest or lock file writes it — a URL for a
-	/// Swift package, a module path for a Go module.
+	/// Swift package, a module path for a Go module, the registry or the git URL
+	/// for a Cargo crate.
 	public let origin: String
 	/// The sources on disk, when they have been fetched.
 	public let localPath: URL?
@@ -126,8 +127,7 @@ public enum DependencyKind: String, Sendable, CaseIterable {
 	/// backlog. Nil for a kind that is read.
 	public var pendingItem: Int? {
 		switch self {
-		case .swiftPackage, .goModule: return nil
-		case .cargo: return 513
+		case .swiftPackage, .goModule, .cargo: return nil
 		case .npm: return 514
 		case .maven, .gradle: return 515
 		case .bazel, .conan: return 516
@@ -237,14 +237,51 @@ public enum ExternalDependencies {
 		}
 	}
 
+	/// One kind, from one directory.
+	///
+	/// **Teaching this a new kind is five edits and they are all in this file.**
+	/// 0514 (npm), 0515 (Maven and Gradle) and 0516 (Bazel and Conan) each do the
+	/// same five, and doing them in this order means the section never claims
+	/// something that is not there:
+	///
+	/// 1. A `readX(at:) -> DependencySet.Contents` under a `MARK` of its own, at
+	///    the bottom, beside the two here. It reads files and nothing else — see
+	///    the rule on this type — and returns `.unresolved(…)` **in the words of
+	///    the tool that would fix it** when there is nothing resolved to read,
+	///    because `.packages([])` renders as "no dependencies" and would be a
+	///    lie. Sort what comes out with `byName`.
+	/// 2. If the sources live in a cache outside the project, a locator beside
+	///    the reader — `goModuleCache()` and `cargoHome()` are the two shapes:
+	///    the tool's own environment variable first, then the default under the
+	///    home directory, and never `go env` or `cargo --help` to ask.
+	/// 3. The `case` here, moved out of the `.notRead` line.
+	/// 4. `DependencyKind.pendingItem`, which must stop naming the item — the row
+	///    goes on saying "not read yet" otherwise, over a list it is now reading.
+	/// 5. Any lock file the kind resolves into, in `definingFileNames`, so
+	///    writing it reloads the section.
+	///
+	/// Then `everyKindEitherIsReadOrNamesTheItemThatWillReadIt` in the tests
+	/// names the kind as read, and a fixture lock file written into a temporary
+	/// directory says what comes out of it.
 	public static func read(root: URL, kind: DependencyKind) -> DependencySet {
 		let contents: DependencySet.Contents
 		switch kind {
 		case .swiftPackage: contents = readSwiftPackages(at: root)
 		case .goModule: contents = readGoModules(at: root)
-		case .cargo, .npm, .maven, .gradle, .bazel, .conan: contents = .notRead
+		case .cargo: contents = readCargoPackages(at: root)
+		case .npm, .maven, .gradle, .bazel, .conan: contents = .notRead
 		}
 		return DependencySet(root: root, kind: kind, contents: contents)
+	}
+
+	/// The order every kind's list comes out in: by name, case-insensitively.
+	///
+	/// One rule for all of them, and not a per-kind decision, because the
+	/// question the section is asked is "what is beside this file" and that is
+	/// only answerable by scanning. 508 wrote and then removed a direct-first
+	/// ordering for Go for the same reason.
+	static func byName(_ packages: [ExternalDependency]) -> DependencySet.Contents {
+		.packages(packages.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending })
 	}
 
 	// MARK: - Swift packages
@@ -300,7 +337,7 @@ public enum ExternalDependencies {
 				localPath: found.first, otherPaths: Array(found.dropFirst())
 			)
 		}
-		return .packages(packages.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending })
+		return byName(packages)
 	}
 
 	/// Where a Swift package's sources may have been checked out, best first.
@@ -399,7 +436,7 @@ public enum ExternalDependencies {
 				localPath: local
 			)
 		}
-		return .packages(packages.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending })
+		return byName(packages)
 	}
 
 	/// Where the module cache is, without asking `go env`.
@@ -442,5 +479,272 @@ public enum ExternalDependencies {
 			}
 		}
 		return escaped
+	}
+
+	// MARK: - Cargo
+
+	/// One `[[package]]` out of `Cargo.lock`, as the file writes it.
+	struct CargoLockPackage: Equatable {
+		let name: String
+		let version: String?
+		/// Absent for a package that is not fetched from anywhere: a workspace
+		/// member — the project's own crate is in its own lock file — or a `path`
+		/// dependency, which is a directory the tree already shows.
+		let source: String?
+	}
+
+	/// `Cargo.lock`, which is the resolved graph and is TOML.
+	///
+	/// The lock file rather than `Cargo.toml`, for the same reason
+	/// `Package.resolved` is read rather than `Package.swift`: the manifest says
+	/// `serde = "1"` and the lock says `1.0.229`, and the row has to name the
+	/// version on disk. `cargo metadata` would answer both at once and is a
+	/// subprocess — see the rule on this type; it is `swift package
+	/// dump-package` wearing a different name, and it writes a lock file as a
+	/// side effect of being asked.
+	///
+	/// A lock file whose every package is a workspace member or a `path`
+	/// dependency reads as `.packages([])` — "no dependencies" — which is right:
+	/// those are directories inside the project and the tree already has rows
+	/// for them. An *external* section listing them would show the project's own
+	/// source twice.
+	static func readCargoPackages(at root: URL) -> DependencySet.Contents {
+		let lock = root.appendingPathComponent("Cargo.lock")
+		guard let text = try? String(contentsOf: lock, encoding: .utf8) else {
+			if let workspace = cargoWorkspaceAbove(root) {
+				return .unresolved("resolved in the workspace at \(workspace.lastPathComponent)")
+			}
+			// In cargo's own words: `cargo fetch` writes the lock file and fills
+			// the registry cache, which is both halves of what this row needs.
+			return .unresolved("no Cargo.lock — run cargo fetch")
+		}
+
+		let registries = cargoRegistryDirectories()
+		let packages = parseCargoLock(text).compactMap { entry -> ExternalDependency? in
+			guard let source = entry.source else { return nil }
+			return ExternalDependency(
+				name: entry.name,
+				version: entry.version,
+				origin: cargoOrigin(of: source),
+				localPath: cargoSources(
+					name: entry.name, version: entry.version, source: source, registries: registries
+				)
+			)
+		}
+		return byName(packages)
+	}
+
+	/// The `[[package]]` tables of a lock file, line by line.
+	///
+	/// **Thirty lines instead of a TOML dependency**, which is the same call
+	/// `SwiftPackage` made about `Package.swift` and `readGoModules` about
+	/// `go.mod`. `Cargo.lock` is generated, never hand-written, and is a flat
+	/// sequence of tables of quoted strings — no nesting, no dates, no
+	/// multi-line strings, nothing a parser would earn its keep on. `project.md`
+	/// asks for an argument before a dependency is added and "one file, four
+	/// keys" is not one.
+	///
+	/// Only the four keys are taken, and only where the key is a bare word: the
+	/// `dependencies = [ … ]` array under most packages holds bare strings, and
+	/// in the version 1 and 2 layouts those strings are whole package ids with
+	/// `git+…?branch=main#sha` inside them. A parser splitting every line on its
+	/// first `=` would read that fragment as a table key.
+	static func parseCargoLock(_ text: String) -> [CargoLockPackage] {
+		var packages: [CargoLockPackage] = []
+		var name: String?
+		var version: String?
+		var source: String?
+		var inPackage = false
+
+		func finish() {
+			if inPackage, let name, !name.isEmpty {
+				packages.append(CargoLockPackage(name: name, version: version, source: source))
+			}
+			name = nil; version = nil; source = nil
+		}
+
+		for rawLine in text.split(separator: "\n", omittingEmptySubsequences: false) {
+			let line = rawLine.trimmingCharacters(in: .whitespaces)
+			if line.hasPrefix("[") {
+				// Any other table ends this one: `[metadata]` in the version 1
+				// layout, and `[[patch.unused]]` at the end of many real files.
+				finish()
+				inPackage = line == "[[package]]"
+				continue
+			}
+			guard inPackage, let equals = line.firstIndex(of: "=") else { continue }
+			let key = line[..<equals].trimmingCharacters(in: .whitespaces)
+			let value = line[line.index(after: equals)...].trimmingCharacters(in: .whitespaces)
+			guard value.hasPrefix("\""), value.count >= 2, value.hasSuffix("\"") else { continue }
+			let unquoted = String(value.dropFirst().dropLast())
+			switch key {
+			case "name": name = unquoted
+			case "version": version = unquoted
+			case "source": source = unquoted
+			default: continue
+			}
+		}
+		finish()
+		return packages
+	}
+
+	/// The workspace that resolves for this crate, if it is a member of one.
+	///
+	/// **Found in the app, on the first Rust project it was pointed at.** A
+	/// workspace has one `Cargo.lock`, at its root, and none beside its members
+	/// — and a Rust repository of any size is a workspace, so every member crate
+	/// is a subproject the section has a row for. Telling somebody to run `cargo
+	/// fetch` in a member is telling them to run a command that will write
+	/// nothing there: the resolving already happened, one directory up. So the
+	/// row says where instead.
+	///
+	/// The list itself is not borrowed from the workspace. It is the *whole*
+	/// workspace's resolved set, not this member's, and copying it under every
+	/// member would print two hundred rows five times over and claim each crate
+	/// depends on all of it.
+	///
+	/// Walked up rather than asked of cargo, and bounded: a member two or three
+	/// directories down (`crates/foo`) is the usual layout and the intervening
+	/// directories have no manifest of their own, so there is nothing nearer to
+	/// stop at.
+	static func cargoWorkspaceAbove(_ root: URL) -> URL? {
+		let manager = FileManager.default
+		var directory = root.deletingLastPathComponent()
+		for _ in 0..<6 {
+			guard directory.path != "/", directory.path != root.path else { return nil }
+			let lock = directory.appendingPathComponent("Cargo.lock")
+			let manifest = directory.appendingPathComponent("Cargo.toml")
+			if manager.fileExists(atPath: lock.path), manager.fileExists(atPath: manifest.path) {
+				return directory
+			}
+			directory = directory.deletingLastPathComponent()
+		}
+		return nil
+	}
+
+	/// Where a crate came from, from the `source` the lock file writes.
+	///
+	///     registry+https://github.com/rust-lang/crates.io-index   → crates.io
+	///     sparse+https://index.crates.io/                         → crates.io
+	///     git+https://github.com/dtolnay/anyhow#bf3ed914…         → the URL, whole
+	///
+	/// The default registry is named `crates.io` rather than by its index URL,
+	/// which is the one place this departs from "as the lock file writes it".
+	/// `github.com/rust-lang` — which is what `shortOrigin` makes of the index
+	/// URL — reads as *the crate came from that repository*, and it would say it
+	/// on every row of a list of two hundred, which is a column of noise saying
+	/// nothing. Another registry keeps its URL, because there the host is the
+	/// answer.
+	///
+	/// A git source keeps its query and fragment: `?branch=main` and the commit
+	/// after `#` are what say *which* one of it, `shortOrigin` cuts back to
+	/// `github.com/dtolnay` for the row, and the tooltip shows the whole of it.
+	static func cargoOrigin(of source: String) -> String {
+		guard let plus = source.firstIndex(of: "+") else { return source }
+		let kind = String(source[..<plus])
+		let location = String(source[source.index(after: plus)...])
+		switch kind {
+		case "registry", "sparse":
+			return isCratesIoIndex(location) ? "crates.io" : location
+		default:
+			return location
+		}
+	}
+
+	/// The two spellings of the one registry every Rust project uses: the git
+	/// index it had until 1.68, and the sparse index it has had since.
+	static func isCratesIoIndex(_ location: String) -> Bool {
+		location.contains("rust-lang/crates.io-index") || location.contains("index.crates.io")
+	}
+
+	/// `$CARGO_HOME`, or `~/.cargo`.
+	///
+	/// The variable first, because a machine that has moved it has moved all of
+	/// it, and then the documented default. No `cargo --version` and no
+	/// `cargo config get`: a subprocess per project on open, for an answer that
+	/// is wrong on no machine this is likely to meet, and a crate whose
+	/// directory is not found simply has no sources to browse — a state the row
+	/// already knows how to show.
+	static func cargoHome() -> URL {
+		let environment = ProcessInfo.processInfo.environment
+		if let path = environment["CARGO_HOME"], !path.isEmpty {
+			return URL(fileURLWithPath: path)
+		}
+		return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".cargo")
+	}
+
+	/// The unpacked registry caches, **listed rather than computed**.
+	///
+	/// `~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f`: the last part is
+	/// a hash of the registry URL, made by a function inside cargo that is not
+	/// specified anywhere and has changed at least once — it was
+	/// `github.com-1ecc6299db9ec823` for the git index. Nothing outside cargo
+	/// can compute it, so this reads the directory and takes whatever is in it.
+	/// A machine with a vendored registry as well as crates.io has two, both are
+	/// tried, and the order is fixed so that two reads of the same project agree.
+	static func cargoRegistryDirectories() -> [URL] {
+		let source = cargoHome().appendingPathComponent("registry/src")
+		let entries = (try? FileManager.default.contentsOfDirectory(
+			at: source, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
+		)) ?? []
+		return entries.sorted { $0.lastPathComponent < $1.lastPathComponent }
+	}
+
+	/// The crate's own sources on this machine, or nil when nothing fetched them.
+	///
+	/// Two caches with two layouts, and neither is inside the project — the same
+	/// shape as a Go module and not at all the shape of a Swift package:
+	///
+	///     registry:  <cargo home>/registry/src/<index-hash>/<name>-<version>
+	///     git:       <cargo home>/git/checkouts/<repo>-<hash>/<short revision>
+	static func cargoSources(
+		name: String, version: String?, source: String, registries: [URL]
+	) -> URL? {
+		let manager = FileManager.default
+		guard let plus = source.firstIndex(of: "+") else { return nil }
+		let kind = String(source[..<plus])
+		let location = String(source[source.index(after: plus)...])
+
+		guard kind == "git" else {
+			guard let version else { return nil }
+			let directory = "\(name)-\(version)"
+			return registries
+				.map { $0.appendingPathComponent(directory) }
+				.first { manager.fileExists(atPath: $0.path) }
+		}
+
+		// `git+https://github.com/dtolnay/anyhow?branch=main#bf3ed914…`: the
+		// checkout is named after the *repository* and the directory inside it
+		// after the revision, abbreviated by cargo to a length it does not
+		// promise — so the revision is matched by prefix rather than cut to
+		// seven characters and compared.
+		let revision = location.firstIndex(of: "#").map { String(location[location.index(after: $0)...]) }
+		var repository = location
+		if let hash = repository.firstIndex(of: "#") { repository = String(repository[..<hash]) }
+		if let query = repository.firstIndex(of: "?") { repository = String(repository[..<query]) }
+		guard let repositoryName = repositoryName(from: repository), let revision else { return nil }
+
+		let checkouts = cargoHome().appendingPathComponent("git/checkouts")
+		let candidates = ((try? manager.contentsOfDirectory(
+			at: checkouts, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
+		)) ?? [])
+			.filter { $0.lastPathComponent.hasPrefix(repositoryName + "-") }
+			.sorted { $0.lastPathComponent < $1.lastPathComponent }
+
+		for checkout in candidates {
+			let revisions = ((try? manager.contentsOfDirectory(
+				at: checkout, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
+			)) ?? [])
+			guard let worktree = revisions.first(where: {
+				revision.hasPrefix($0.lastPathComponent) || $0.lastPathComponent.hasPrefix(revision)
+			}) else { continue }
+			// One repository can hold several crates, and the lock file does not
+			// say which directory this one is in. Its own name is the convention
+			// and is worth a `stat`; the checkout root is the honest fallback,
+			// since it is where the crate is when the repository is one crate.
+			let inside = worktree.appendingPathComponent(name)
+			return manager.fileExists(atPath: inside.path) ? inside : worktree
+		}
+		return nil
 	}
 }
