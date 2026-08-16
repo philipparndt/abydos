@@ -5329,6 +5329,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	/// Sends whichever list is under the project view back to the panel, so the
 	/// one arriving finds the slot empty.
+	///
 	/// Neither of them takes the keyboard on the way out. Every other move ends
 	/// with the keyboard in the rows, and that is right for a move somebody
 	/// asked for — this one is a consequence of asking for the *other* list, and

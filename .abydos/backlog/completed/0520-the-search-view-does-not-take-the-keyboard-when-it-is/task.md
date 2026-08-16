@@ -146,6 +146,12 @@ moves, gopls over a five-usage symbol. And with search under the project view an
 usages then sent there too, the evicted search does not take the keyboard from
 the usages list arriving: `mine=true`, before and after.
 
+**Three ⇧⌘F in a row, beside a live shell**, with ⏎ and a click between them —
+the two gestures 0510 made keep the keyboard in the rows:
+
+    ⇧⌘F → NSTextView   ⏎ → ChecklistTable   ⇧⌘F → NSTextView
+    click → ChecklistTable   ⇧⌘F → NSTextView
+
 **The window home reads oddly and is not a fault.** `FOCUS … CodeView in
 NSWindow (none key)` after the second activation, while `who` says `NSTextView`.
 The results window only becomes key when `NSApp.isActive`, and no run of this
@@ -201,10 +207,25 @@ has the field as its first responder, which is what the app makes key.
 - [x] A list evicted from the sidebar does not take the keyboard from the list
       arriving in its place
 - [x] Watched in each of 0506's four homes
-- [ ] `make test` and `make warnings` are clean
+- [x] `make test` and `make warnings` are clean — 2701 tests, no warning in
+      this repository's Swift. Two failures in the full run, neither this
+      item's and both proved so by re-running them alone: `runsAndWritesAThreeMF`
+      builds `~/dev/abydos-examples/cadova-models`, whose `coaster/main.swift`
+      currently reads `C-ircle(diameter:)` — a stray character typed into a
+      shared checkout from outside this worktree, and it is left alone rather
+      than fixed from here; `measuresThisVeryProcessOutOfPs` reads `ps` for
+      this very process and passes on its own, so it is a loaded machine
+      rather than a fault
 - [x] Write down here what was ruled out on the way
-- [ ] `spec/search.md` and `spec/usages.md` say what the project now does
+- [x] `spec/search.md` and `spec/usages.md` say what the project now does.
+      `search.md` was not *wrong* — it already said ⇧⌘F puts the keyboard in
+      the query field — but it was silent about that holding in every home and
+      handed the keyboard question wholesale to `usages.md`, which says the
+      rows; that silence is where the exception went missing, so the rule now
+      says it. `usages.md` *was* wrong once the eviction was fixed: "every move
+      ends with the keyboard back in the rows" is no longer true of the one
+      move nobody asks for
 
 ## Estimate
 
-2026-08-16 22:40 — the spec delta and the suite left, half an hour
+2026-08-16 — done

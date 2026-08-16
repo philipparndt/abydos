@@ -2390,6 +2390,7 @@ final class BottomPanel: NSView {
 	/// showing — which is the tab somebody naturally reaches for. What goes
 	/// beside it is whatever else is showing, or the pane used before this one,
 	/// or a new terminal when the panel holds nothing else.
+	///
 	/// `focus` is what the caller asked for, and only one caller ever says no:
 	/// ⇧⌘F, which wants the query field rather than the rows. A drag says
 	/// nothing and gets the old answer.
