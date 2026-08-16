@@ -48,9 +48,55 @@ build a row for a large fraction of the lines in the project.
   keyed on the question and the matched text, so they are stable while results
   stream in — caching them per result is available if the profile says so.
 
+## What it measured, before the fix
+
+Debug build, this repository open (~1500 files under the walk), the app driven
+with `--search` and `--search-steps`. The instrument is the one already in the
+program: `StallWatch` pings the main queue ten times a second from a thread of
+its own and writes every late ping to `~/Library/Logs/Abydos/stalls.log` with
+the pid. A stall in that log *is* the window not answering.
+
+| query | matches found | worst single stall | main thread blocked, in total |
+|---|---|---|---|
+| `in` | 88 578 in 500 files | 577 ms | 1.31 s over 4 stalls |
+| `e` | 440 854 in 500 files | **7 032 ms** | **9.38 s over 4 stalls** |
+| `e`, second run | 440 854 in 500 files | **4 292 ms** | **5.94 s over 4 stalls** |
+
+Four stalls and not forty, because the batches arrive faster than the main
+thread eats them: the watchdog's own ping queues *behind* twenty pending
+rebuilds and comes back once, seven seconds late. That is the shape of the
+force quit — not a stutter per batch, one dead window.
+
+Every one of those lines says `idle`, which is `StallWatch` saying nobody had
+named the work. Seven seconds at `cpu 100%` and no name is exactly the case its
+own comment says the field exists to find.
+
+### What the stack said
+
+`sample` over the frozen process, 12 s at 1 ms:
+
+    6866 samples on the main thread
+    └ 5075  ResultChecklist.setResults(_:)            ← 74% of the whole sample
+      └ 2790  rebuildRows, line 220  SearchChecklist.marks(for:)
+        557  rebuildRows, line 221  checklist.isDone
+        264  rebuildRows, line 222  flags.filter
+        762  rebuildRows, line 218  the rows array growing
+        234 + 107 + …                rows.append
+           7  -[NSTableView reloadData]
+
+So the item's mechanism is confirmed and one guess in it is wrong: **the table
+is not the cost.** `reloadData` is 7 samples in 6866 — a tenth of a percent.
+The whole of it is recomputing the marks, the done flags and the row array for
+everything found so far, once per batch. `marks(for:)` alone is a `trimmingCharacters`
+and a dictionary of `String` keys per match, redone 25 times over.
+
+## Estimate
+
+2026-08-16 21:40 — about three hours left
+
 ## Steps
 
-- [ ] Reproduce it from outside the app, with a query short enough to hurt, and
+- [x] Reproduce it from outside the app, with a query short enough to hurt, and
       say how long it takes before the fix
 - [ ] Streaming results does not rebuild what has already been built
 - [ ] The list is bounded, by whatever was decided, and says so when it is
