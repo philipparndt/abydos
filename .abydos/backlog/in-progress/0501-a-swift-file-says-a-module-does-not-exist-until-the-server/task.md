@@ -212,6 +212,51 @@ The one thing deliberately identical in both columns is the red on line 1. That
 is the decision: nothing is hidden, and what changed is that the minute it lives
 in now has a name.
 
+## Not Swift-only, and nothing in it names Swift
+
+The item asks whether fixing this for one language and calling it done would be
+honest. It would not have been, and it turned out not to be necessary: **there is
+no Swift in any of this.** The client asks for `window.workDoneProgress`, reads
+`$/progress`, and the chip says the word for whichever server reported the work.
+`sourcekit-lsp` is not mentioned in `WorkDoneProgress`, in `LSPClient`, or in
+`LanguageServerFooter` except in a comment saying where the measurement came
+from.
+
+That was checked against the other two servers on this machine, cold, with the
+same probe (`probe-others.py`, `probe-ra.log`, `probe-gopls.log`):
+
+| server | tokens | titles | the wait |
+| --- | --- | --- | --- |
+| `sourcekit-lsp` | `indexing.<uuid>`, `package-reloading.<uuid>` | `Indexing`, `SourceKit-LSP: Reloading Package` | 1.7 → 75.4 s cold, 1.7 → 2.9 s warm |
+| `rust-analyzer` | `rustAnalyzer/Fetching`, `…/Roots Scanned`, `…/Building CrateGraph`, `…/Loading proc-macros`, `…/cachePriming`, `rust-analyzer/flycheck/0` | `Fetching`, `Roots Scanned`, `Building CrateGraph`, `Loading proc-macros`, `Indexing`, `cargo check` | 0.2 → 8.7 s cold |
+| `gopls` | `8906325497762287244` — a *number* | `Setting up workspace` | 0.1 → 0.8 s |
+
+Three things came out of that table that reading one server would not have given:
+
+- **`gopls` numbers its token.** The protocol allows a string or an integer and
+  this is the first thing in the app to read a token at all, so the client
+  flattens the two.
+- **`rust-analyzer` closes each step before opening the next**, which is what
+  broke the first rule and is written up above.
+- **`rust-analyzer` reports `cargo check` after every save**, on
+  `rust-analyzer/flycheck/0`. That is the flicker the once-per-server rule exists
+  to prevent, and it is not hypothetical.
+
+Whether the word is *useful* does vary by language, and that is a fact about the
+languages rather than about the code: `gopls` prepares for 0.8 seconds and
+nobody will ever read the chip, `rust-analyzer` for 8.7, and `sourcekit-lsp` for
+over a minute on a package with C++ in it. A rule that fired only where it were
+worth reading would need a threshold nobody can defend, and the honest version of
+it — say what the server is doing, for as long as it is doing it — costs nothing
+where the wait is short.
+
+**jdtls is the one that is not covered**, and deliberately: it says how far it has
+got over `language/status`, its own notification rather than the protocol's, which
+`LSPClient.onStatus` already reads for the debugger's sake (0452). Routing that
+into the same word was left alone — it is a second source for one sentence, and
+the shape of a Java import is a wait *before* the handshake as much as after it,
+which is a different problem from this one.
+
 ## Estimate
 
 2026-08-16 14:25 — about an hour left
@@ -232,6 +277,6 @@ in now has a name.
       first thirty seconds look like now
 - [x] An empty set of tokens is a question, not an answer — measured against
       rust-analyzer and gopls, not just sourcekit-lsp
-- [ ] Say whether this is Swift-only, and why that is or is not right
+- [x] Say whether this is Swift-only, and why that is or is not right
 - [ ] Write down here what was ruled out on the way
 - [ ] `spec/language-servers.md` says what the project now does
