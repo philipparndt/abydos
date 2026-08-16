@@ -85,6 +85,86 @@ guessed at.** See "The rest of the family" below: ⌃D already works, and ⌃A, 
 and ⌃K are dead for a different reason than this item's, which is why they are
 0498 and not more lines here.
 
+## Watched in the app
+
+`--emacs-nav`, a driver of its own beside `--word-nav` and `--vertical-nav`,
+against a seven-line scratch file of ordinary short lines — 0494's file has a
+723-character first line, which is what a *vertical* driver needs and is in the
+way here. Line 2 is `third line of the file` and starts at offset 44, so `2@6`
+is offset 50 and the character there is the `l` of `line`. The caret is put
+back before every press, so each line is an independent keystroke and not a
+run.
+
+**Before**, with the same driver and the `doCommand` change stashed out of the
+working tree and the app rebuilt — not remembered, and not read off the
+diff:
+
+    $ build/Abydos.app/Contents/MacOS/Abydos --open …/emacs --file …/emacs.txt --emacs-nav
+
+    EMACS: word wrap is on
+    EMACS: the file ends sixth lines / seventh and last line of the file
+    EMACS: at 2@6      caret=50 selection=50..<50 “”
+    EMACS: ⌃F          caret=50 selection=50..<50 “”
+    EMACS: at 2@6      caret=50 selection=50..<50 “”
+    EMACS: ⌃B          caret=50 selection=50..<50 “”
+    EMACS: at 2@6      caret=50 selection=50..<50 “”
+    EMACS: ⇧⌃F         caret=50 selection=50..<50 “”
+    EMACS: at 2@6      caret=50 selection=50..<50 “”
+    EMACS: ⇧⌃B         caret=50 selection=50..<50 “”
+    EMACS: at 2@0      caret=44 selection=44..<44 “”
+    EMACS: ⌃B          caret=44 selection=44..<44 “”
+    EMACS: at 0@0      caret=0 selection=0..<0 “”
+    EMACS: ⌃B          caret=0 selection=0..<0 “”
+    EMACS: at 2@6      caret=50 selection=50..<50 “”
+    EMACS: ⌃P          caret=26 selection=26..<26 “”
+    EMACS: at 2@6      caret=50 selection=50..<50 “”
+    EMACS: ⌃N          caret=73 selection=73..<73 “”
+
+Every press of the four is the line above it, character for character, which
+is what this driver prints when a keystroke does nothing at all. ⌃P and ⌃N are
+the control and they work: 50 → 26 is column 6 of the line above, 50 → 73
+column 6 of the line below. The report at the top of this item, watched.
+
+**After:**
+
+    EMACS: word wrap is on
+    EMACS: the file ends sixth lines / seventh and last line of the file
+    EMACS: at 2@6      caret=50 selection=50..<50 “”
+    EMACS: ⌃F          caret=51 selection=51..<51 “”
+    EMACS: at 2@6      caret=50 selection=50..<50 “”
+    EMACS: ⌃B          caret=49 selection=49..<49 “”
+    EMACS: at 2@6      caret=50 selection=50..<50 “”
+    EMACS: ⇧⌃F         caret=51 selection=50..<51 “l”
+    EMACS: at 2@6      caret=50 selection=50..<50 “”
+    EMACS: ⇧⌃B         caret=49 selection=49..<50 “ ”
+    EMACS: at 2@0      caret=44 selection=44..<44 “”
+    EMACS: ⌃B          caret=43 selection=43..<43 “”
+    EMACS: at 0@0      caret=0 selection=0..<0 “”
+    EMACS: ⌃B          caret=0 selection=0..<0 “”
+    EMACS: at 2@6      caret=50 selection=50..<50 “”
+    EMACS: ⌃P          caret=26 selection=26..<26 “”
+    EMACS: at 2@6      caret=50 selection=50..<50 “”
+    EMACS: ⌃N          caret=73 selection=73..<73 “”
+
+One character each way, and Shift decides only whether the character comes with
+it: ⇧⌃F takes the `l` at 50, ⇧⌃B the space at 49. ⌃P and ⌃N are unchanged from
+the before run, which is the point of having them in it.
+
+**The two edges.** At `2@0` — offset 44, the very start of line 2 — ⌃B lands on
+43, which is the newline that ended line 1, so the caret is at the end of the
+line above. That is a step over a character that happens not to be printable
+and not a case in the code, and it is what every other text view on this
+machine does. At offset 0 there is nothing behind the caret and the clamp in
+`moveHorizontally` keeps it there: 0 → 0, the one place where these keys still
+look dead and are not.
+
+**Soft wrap was on and it does not matter.** `moveHorizontally` is `caret ±
+1` and never asks what row it is on, so there is nothing for wrapping to
+change — unlike the vertical keys 0494 had to run twice. The run says which
+mode it is in anyway, because the setting persists between launches and has
+already been read as the wrong one of the two twice. The run itself shows no
+line wrapped: ⌃P and ⌃N land on column 6 of the neighbouring *lines*.
+
 ## The rest of the family — pressed once, then filed as 0498
 
 The item says ⌃A, ⌃E, ⌃D and ⌃K are their own decisions, and they are. What
@@ -120,7 +200,7 @@ keystrokes stayed out of this item.
 
 ## Estimate
 
-2026-08-16 11:50 — about an hour left
+2026-08-16 11:51 — half an hour left
 
 ## Steps
 
@@ -144,8 +224,11 @@ keystrokes stayed out of this item.
       extended, and it could not reach these keys without being widened first.
       It is `simulateKey` now, and `--emacs-nav` is beside `--word-nav` and
       `--vertical-nav`.
-- [ ] Watched from outside the app: ⌃B, ⌃F, ⇧⌃B and ⇧⌃F, with the caret
+- [x] Watched from outside the app: ⌃B, ⌃F, ⇧⌃B and ⇧⌃F, with the caret
       mid-line, and ⌃B at the start of a line to see what it does at an edge
+
+      Before as well as after, the before run made by stashing the `doCommand`
+      change and rebuilding rather than by remembering what it used to do.
 - [ ] `make test` and `make warnings` are clean
 - [ ] Write down here what was ruled out on the way
 - [ ] `spec/editor.md` says what the project now does, beside what 0494 and
