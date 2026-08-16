@@ -75,7 +75,9 @@ and finish one character to the left of where ⌃O started. It does not,
 because `moveHorizontally`'s alignment is not grapheme alignment —
 `Rope.alignToBoundary` walks back over UTF-8 **continuation bytes** and
 nothing else, and `\n` is not a continuation byte. Watched, with a probe that
-was taken out again, on a file whose first line is `abc\rdef ghi`:
+was taken out again, on a file whose first line is `abc\rdef ghi` — the raw
+`\r` the driver printed is written `␍` here, since a real one moves a
+terminal's cursor to the start of the line:
 
     EMACS: PROBE cr    caret=4 selection=4..<4 “”
     EMACS:             line 0 “abc␍|def ghi” then 1 “xéy and more text” — 12 lines
@@ -127,21 +129,22 @@ item found it:
     $ build/Abydos.app/Contents/MacOS/Abydos --open …/emacs --file …/emacs.txt --emacs-nav
 
     EMACS: at 5@0      caret=123 selection=123..<123 “”
-    EMACS:             line 5 “|” then 6 “sixth lines”
+    EMACS:             line 5 “|” then 6 “sixth lines” — 9 lines
     EMACS: ⌃O          caret=122 selection=122..<122 “”
-    EMACS:             line 4 “⇥indented fifth line of the file|” then 5 “”
+    EMACS:             line 4 “⇥indented fifth line of the file|” then 5 “” — 9 lines
     EMACS: at 4@end    caret=122 selection=122..<122 “”
-    EMACS:             line 4 “⇥indented fifth line of the file|” then 5 “”
+    EMACS:             line 4 “⇥indented fifth line of the file|” then 5 “” — 9 lines
     EMACS: ⌃O          caret=121 selection=121..<121 “”
-    EMACS:             line 4 “⇥indented fifth line of the fil|e” then 5 “”
+    EMACS:             line 4 “⇥indented fifth line of the fil|e” then 5 “” — 9 lines
     EMACS: at 2@8      caret=51 selection=51..<51 “”
-    EMACS:             line 2 “third li|ne of the file” then 3 “fourth line of the file”
+    EMACS:             line 2 “third li|ne of the file” then 3 “fourth line of the file” — 9 lines
     EMACS: ⌃O          caret=50 selection=50..<50 “”
-    EMACS:             line 2 “third l|ine of the file” then 3 “fourth line of the file”
+    EMACS:             line 2 “third l|ine of the file” then 3 “fourth line of the file” — 9 lines
 
-Every line is the same text one character to the left, and the file never
-gains a line: **⌃O is `moveBackward:` and nothing else**, which is the report
-at the top of this item watched rather than reasoned about. The empty-line
+Every line is the same text one character to the left, and the count stays at
+nine: **the file never gains a line**, and **⌃O is `moveBackward:` and
+nothing else**, which is the report at the top of this item watched rather
+than reasoned about. The empty-line
 press is the clearest of the three — the caret leaves the empty line
 altogether and ends up at the end of the line above, which is a key that
 should have *added* an empty line moving the caret off the one that was
