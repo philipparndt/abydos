@@ -3409,8 +3409,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		for second in 0...Int(seconds) {
 			DispatchQueue.main.asyncAfter(deadline: .now() + Double(second)) { [weak self] in
 				guard let self else { return }
-				guard let pane = self.editorForTesting.activeGroup?.cadovaPreview else {
-					print("CADOVA: \(second)s no cadova pane in the tab in front")
+				guard let pane = self.editorForTesting.cadovaPreview else {
+					// **Never a bare "not found".** 0499 was watched green and shipped
+					// broken because this line said only `no cadova pane in the tab in
+					// front`, which is consistent with the pane being missing, with the
+					// tab in front being some other file, and with there being no tab at
+					// all — and the first of those was assumed. What the tab in front
+					// *is* costs one line and tells the three apart.
+					let groups = self.editorForTesting.groups
+					let described = groups.isEmpty
+						? "no editor group"
+						: groups.map(\.activeTabDescriptionForTesting).joined(separator: " | ")
+					print("CADOVA: \(second)s no cadova pane — \(described)")
 					fflush(stdout)
 					return
 				}

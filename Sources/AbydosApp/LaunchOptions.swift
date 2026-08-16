@@ -780,7 +780,19 @@ struct LaunchOptions {
 			case "--palette": options.paletteQuery = next() ?? ""
 			case "--run-configs": options.listRunConfigurations = true
 			case "--run-config": options.runConfigNamed = next()
-			case "--cadova-watch": options.cadovaWatchSeconds = next().flatMap(Double.init) ?? 30
+			case "--cadova-watch":
+				// The number is optional, so peek rather than consume: without one
+				// the next argument is the next flag. Written the consuming way it
+				// ate the `--file` after it, so `--cadova-watch --file model.swift`
+				// opened no file and then reported, truthfully and uselessly, that
+				// there was no Cadova pane in the tab in front — for the whole run.
+				// 0507 spent a while believing that report.
+				if index + 1 < arguments.count, let seconds = Double(arguments[index + 1]) {
+					options.cadovaWatchSeconds = seconds
+					index += 1
+				} else {
+					options.cadovaWatchSeconds = 30
+				}
 			case "--appearance-walk": options.appearanceWalk = next()
 			case "--copy-path": options.copyPath = next() ?? "down"
 			case "--burst": options.burstFrames = next().flatMap(Int.init)
