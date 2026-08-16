@@ -81,7 +81,8 @@ copy of the same two files in a fresh directory answered in fourteen seconds.
 - [x] ⌘⌫ still does nothing at all in either list, with a test that says so
 - [x] Watched from outside the app: ⌫ ticks a row, ⌫ again unticks it, ⌘⌫ does
       nothing — `--usages-steps` is the existing verb for driving this list
-- [ ] `make test` and `make warnings` are clean
+- [x] `make test` and `make warnings` are clean — 2667 tests, and the only
+      warnings are the four vendored C ones this repository does not own
 - [ ] Write down here what was ruled out on the way
 - [ ] `spec/search.md` and `spec/usages.md` say what the project now does —
       the ␣ sentences name a second key, and the trash scenario stays as it is
