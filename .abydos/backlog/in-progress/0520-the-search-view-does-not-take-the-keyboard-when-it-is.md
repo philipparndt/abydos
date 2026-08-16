@@ -123,6 +123,8 @@ door a keypress comes through.
     beside   ChecklistTable  CodeView  ChecklistTable  ✗
     window   ChecklistTable  —         NSTextView      ✓
 
+**After** — `NSTextView` in the last column in all four.
+
 The mechanism itself, from a build with a line in `focusField`, `focusList`,
 `giveKeyboard` and `place`, on the `beside` run:
 
@@ -135,6 +137,20 @@ and on the `panel` run, which is why the panel home never failed:
 
     panelPlace beside=false focusList=false
     focusField
+
+**The usages list**, the same widget under the other heading. Its rule is the
+opposite one — a usages list is walked with ↓, so it arrives with the keyboard in
+the rows in every home, and `beside` is the home that rule was written for. It is
+unchanged by the fix: `mine=true` at the arrival and after each of the four
+moves, gopls over a five-usage symbol. And with search under the project view and
+usages then sent there too, the evicted search does not take the keyboard from
+the usages list arriving: `mine=true`, before and after.
+
+**The window home reads oddly and is not a fault.** `FOCUS … CodeView in
+NSWindow (none key)` after the second activation, while `who` says `NSTextView`.
+The results window only becomes key when `NSApp.isActive`, and no run of this
+toolkit is ever active — 0510 wrote the same caveat down. The pane's own window
+has the field as its first responder, which is what the app makes key.
 
 ## Ruled out on the way
 
@@ -177,19 +193,18 @@ and on the `panel` run, which is why the panel home never failed:
       and print the first responder each time — `who` and `--report-focus`
       already exist for this
 - [x] Find why the second activation differs from the first, and say so here
-- [ ] `who` says *which* list holds the keyboard, since search and usages are
+- [x] `who` says *which* list holds the keyboard, since search and usages are
       the same class and the type alone cannot tell two `ChecklistTable`s apart
-- [ ] Activating search puts the keyboard in it, every time
-- [ ] The same for the usages list, which shares the widget — its rule is the
+- [x] Activating search puts the keyboard in it, every time
+- [x] The same for the usages list, which shares the widget — its rule is the
       other one, the rows, and it still holds
-- [ ] A list evicted from the sidebar does not take the keyboard from the list
+- [x] A list evicted from the sidebar does not take the keyboard from the list
       arriving in its place
-- [ ] Watched in each of 0506's four homes
+- [x] Watched in each of 0506's four homes
 - [ ] `make test` and `make warnings` are clean
 - [x] Write down here what was ruled out on the way
 - [ ] `spec/search.md` and `spec/usages.md` say what the project now does
 
 ## Estimate
 
-2026-08-16 22:10 — the fault is found; about an hour left for the fix, the
-four homes and the spec
+2026-08-16 22:40 — the spec delta and the suite left, half an hour

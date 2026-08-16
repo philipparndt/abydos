@@ -1884,7 +1884,14 @@ final class BottomPanel: NSView {
 	/// "in the terminal area" turns out to mean once the tab is already there.
 	private func place(_ session: Session, beside: Bool, focusList: Bool) {
 		if beside {
-			putBeside(session, on: .right)
+			// `focusList` reaches here too, and until item 520 it did not. ⇧⌘F
+			// asks for the pane *without* the keyboard because it is about to put
+			// it in the query field itself — and this branch threw that away and
+			// handed the rows the keyboard one turn later. So every ⇧⌘F at a
+			// list living beside the terminals landed in the results of the last
+			// search: the caret was in the field, and what was typed went to the
+			// table.
+			putBeside(session, on: .right, focus: focusList)
 			return
 		}
 		// Back into the one strip. Nothing has to unsplit this by hand: a column
@@ -2383,9 +2390,14 @@ final class BottomPanel: NSView {
 	/// showing — which is the tab somebody naturally reaches for. What goes
 	/// beside it is whatever else is showing, or the pane used before this one,
 	/// or a new terminal when the panel holds nothing else.
-	private func putBeside(_ session: Session, on zone: TerminalTabDrag.Zone) {
+	/// `focus` is what the caller asked for, and only one caller ever says no:
+	/// ⇧⌘F, which wants the query field rather than the rows. A drag says
+	/// nothing and gets the old answer.
+	private func putBeside(
+		_ session: Session, on zone: TerminalTabDrag.Zone, focus: Bool = true
+	) {
 		guard zone != .center else {
-			activate(session, focus: true)
+			activate(session, focus: focus)
 			return
 		}
 		let side = zone.insertsBefore ? 0 : 1
@@ -2412,7 +2424,12 @@ final class BottomPanel: NSView {
 		// keyboard by whatever put it there. A list put beside a terminal
 		// therefore arrived with every key going to the shell: ↓ scrolled its
 		// scrollback and ␣ typed a space at a prompt.
-		giveKeyboard(to: session)
+		//
+		// Unless the caller said not to. Nothing else on this path takes the
+		// keyboard, so a `false` leaves it where it was — which is what ⇧⌘F
+		// needs, since it puts it in the query field a moment later and this
+		// call, deferred by a turn, would otherwise take it straight back.
+		if focus { giveKeyboard(to: session) }
 		activeTerminalChanged()
 	}
 

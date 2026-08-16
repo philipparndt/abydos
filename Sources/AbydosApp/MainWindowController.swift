@@ -5243,18 +5243,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		placeUsages(at: usagesPlacement)
 	}
 
-	private func placeUsages(at home: ResultPlacement) {
+	/// `focusList` is false for the one move nobody asked for: a list pushed out
+	/// of the sidebar to make room for the other one.
+	private func placeUsages(at home: ResultPlacement, focusList: Bool = true) {
 		usagesPlacement = home
-		place(usagesPane, at: home, window: &usagesWindow, release: { [weak self] in
-			self?.bottomPanel.releaseUsages()
-		}, dock: { [weak self] beside, focusList in
-			guard let self else { return }
-			self.setPanelVisible(true)
-			self.bottomPanel.dockUsages(
-				self.usagesPane, title: self.usagesPane.paneTitle,
-				beside: beside, focusList: focusList
-			)
-		})
+		place(
+			usagesPane, at: home, window: &usagesWindow, focusList: focusList,
+			release: { [weak self] in
+				self?.bottomPanel.releaseUsages()
+			}, dock: { [weak self] beside, focus in
+				guard let self else { return }
+				self.setPanelVisible(true)
+				self.bottomPanel.dockUsages(
+					self.usagesPane, title: self.usagesPane.paneTitle,
+					beside: beside, focusList: focus
+				)
+			})
 	}
 
 	/// `focusList` is false for the ⇧⌘F that *makes* the pane: the keyboard goes
@@ -5325,10 +5329,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	/// Sends whichever list is under the project view back to the panel, so the
 	/// one arriving finds the slot empty.
+	/// Neither of them takes the keyboard on the way out. Every other move ends
+	/// with the keyboard in the rows, and that is right for a move somebody
+	/// asked for — this one is a consequence of asking for the *other* list, and
+	/// the list arriving is the one being looked at. Nothing could see it go
+	/// wrong today, because both moves defer the keyboard by a turn and the
+	/// arriving one is queued second; saying it here is what stops that being
+	/// the reason.
 	private func evictFromSidebar(unless pane: any ResultsPane) {
-		if usagesPlacement == .sidebar, usagesPane !== pane { placeUsages(at: .panel) }
+		if usagesPlacement == .sidebar, usagesPane !== pane {
+			placeUsages(at: .panel, focusList: false)
+		}
 		if searchPlacement == .sidebar, bottomPanel.existingSearchPane !== pane {
-			placeSearch(at: .panel)
+			placeSearch(at: .panel, focusList: false)
 		}
 	}
 
