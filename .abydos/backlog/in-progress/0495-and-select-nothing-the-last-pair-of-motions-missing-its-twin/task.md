@@ -242,10 +242,6 @@ made.
   expected. The driver printing which mode it is in is what made it a
   non-event.
 
-## Estimate
-
-2026-08-16 10:04 — about an hour left
-
 ## Steps
 
 - [x] `moveToBeginningOfDocumentAndModifySelection:` and
@@ -265,6 +261,21 @@ made.
       is two selectors. Why worth doing at all: the noise ceiling is 14 lines for
       the life of a debug build, counted from `NSResponder.h` rather than
       guessed, and the drivers already press the keys that would print them.
+- [x] `make test` and `make warnings` both clean
+
+      Added while doing the work rather than written down at the start: every
+      item does it and this one did not say so. 2610 tests in 365 suites
+      passed; `make warnings` says no warnings in this repository's Swift, with
+      only the four vendored tree-sitter C warnings it always reports.
 - [x] Write down here what was ruled out on the way
-- [ ] `spec/editor.md` says what the project now does — 0494 added two
+- [x] `spec/editor.md` says what the project now does — 0494 added two
       requirements about the edges of a file and this belongs beside them
+
+      One `MODIFIED` of "Shift takes the selection to the edge with it", and no
+      third `ADDED`. 0494's other requirement is about a vertical key *running
+      out of rows*, which is not what ⌘↑ does — it jumps from wherever the
+      caret is and never asks about a row — so ⌘⇧↑ does not belong under it.
+      The requirement it does go under states this item's rule word for word:
+      Shift decides only whether the selection comes along. A third requirement
+      would be that sentence again with two more keys in it, and two copies of
+      one rule are two things that eventually disagree.
