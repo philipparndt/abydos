@@ -5466,6 +5466,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			editor.open(fileURL: url, atLine: line, focusEditor: false)
 		case .commit:
 			editor.open(fileURL: url, atLine: line)
+			// The one home where making the editor first responder is not enough.
+			// A list expanded into a window of its own is a second window, and it
+			// is the key one while somebody is working the list — so ⇥ left the
+			// editor holding this window's first responder while every keystroke
+			// went on reaching the panel. That is the fault this item is about,
+			// one window over: the caret blinking in a view the keys are not
+			// going to. `makeKey` rather than `makeKeyAndOrderFront`, because the
+			// panel is a child window and floats over this one either way; the
+			// list stays where it was and only the keys move.
+			if window?.isKeyWindow == false { window?.makeKey() }
 		}
 	}
 
