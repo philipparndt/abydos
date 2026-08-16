@@ -48,15 +48,25 @@ than wrapping only by luck.
   the notice is alone between builds and should not sit at an offset that only
   makes sense when something is spinning above it.
 
+## Estimate
+
+2026-08-16 19:39 — about two hours left
+
 ## Steps
 
+- [ ] Measure both placements in the running app before changing either —
+      `spinner.frame` and the rect `draw(_:)` actually passes to the text
 - [ ] The spinner and the notice are laid out together, not against the centre
       separately
 - [ ] A long notice — a real build line, not a short string — does not collide
       at any pane width
 - [ ] The notice sits sensibly when the spinner is not shown
+- [ ] `drawn=` for a notice reports what is on screen rather than a second,
+      differently-worded copy of the same arithmetic
 - [ ] Watched: a screenshot of a Cadova pane mid-build, and one between builds
 - [ ] `make test` and `make warnings` are clean
+- [ ] `DiagramPaneView` has the identical construction — decide and say here
+      whether it is fixed with this or left, rather than leaving it unmentioned
 - [ ] Write down here what was ruled out on the way
 - [ ] The spec, if this changes what the project does — it may not, and saying
       so is the answer rather than skipping the step
