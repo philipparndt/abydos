@@ -42,6 +42,21 @@ final class ProjectNavigatorViewController: NSViewController {
 
 	private var project: Project?
 	private var rootNode: FileNode?
+	/// What the project depends on, as a second root beside the tree.
+	///
+	/// Nil for a project of no recognised kind, and then there is no section at
+	/// all — an empty *Dependencies* row is exactly the "this project has none"
+	/// that item 508 was filed to avoid, and a project with no build system in
+	/// it genuinely has nothing to say.
+	private var dependencies: DependencyTree?
+	/// When the section was last read.
+	///
+	/// A burst too large for FSEvents to name file by file — a build, a
+	/// checkout — arrives as "scan this subtree", and reading the section on
+	/// every one of those would walk the project's subprojects four times a
+	/// second for as long as the build ran. A named write to a manifest or a
+	/// lock file is always honoured; an unnamed burst waits.
+	private var lastDependencyRead = Date.distantPast
 	/// The folder being worked on, marked in the tree so it is obvious which
 	/// part of a repository the run button belongs to.
 	private(set) var subprojectRoot: URL?
@@ -202,6 +217,10 @@ final class ProjectNavigatorViewController: NSViewController {
 		self.project = project
 		let root = FileNode(url: project.root, isDirectory: true)
 		rootNode = root
+		// The previous project's, which must not be shown against this one even
+		// for the moment before the read below lands.
+		dependencies = nil
+		lastDependencyRead = .distantPast
 		// The stack belongs to the project that was open, not to the window. A
 		// ⌘Z after switching projects that put a file back somewhere in the
 		// previous one would be an undo happening off screen.
@@ -216,6 +235,56 @@ final class ProjectNavigatorViewController: NSViewController {
 		LaunchClock.mark("tree listed")
 
 		startWatching(root: project.root)
+
+		// **Before anything can ask to reveal a file, and not after the first
+		// paint.** It was written the other way first — queued to the main
+		// queue, so the rows somebody clicks are drawn before eight
+		// subprojects' manifests are read — and that lost a race that matters:
+		// `abydos --file …/​.build/checkouts/Cadova/…/Extrusion.swift` opens the
+		// tab in the same turn, the reveal finds no section to put it in, and
+		// the ordinary tree answers instead — which for a Swift package means
+		// opening `.build` and walking down to the checkout. The file was
+		// shown, in the one place that cannot say which package it is.
+		//
+		// The cost is a directory walk two deep and a JSON parse per
+		// subproject, which `LaunchClock` reports beside the rest of the open.
+		refreshDependencies()
+		LaunchClock.mark("dependencies read")
+	}
+
+	// MARK: - Dependencies
+
+	/// Reads the Dependencies section, and redraws only if it came out different.
+	///
+	/// Compared rather than reloaded blindly because this is called from the
+	/// filesystem watcher: `reloadData` throws away every row's identity, so a
+	/// section that rebuilt itself on each event would collapse whatever
+	/// somebody had open while they were reading it.
+	private func refreshDependencies() {
+		guard let project else { return }
+		lastDependencyRead = Date()
+		let sets = ExternalDependencies.read(project: project.root)
+		guard sets != dependencies?.sets else { return }
+
+		let expanded = expandedPaths()
+		let selected = selectedPaths()
+		dependencies = DependencyTree(sets: sets, project: project.root)
+		outlineView.reloadData()
+		restore(expandedPaths: expanded)
+		restoreSelection(paths: selected)
+	}
+
+	/// Whether this batch of filesystem events could have changed the section.
+	private func changeTouchesDependencies(_ change: FileSystemChange) -> Bool {
+		guard change.namesEveryPath else {
+			// Unnamed: it could be anything, including a `swift package resolve`
+			// in the middle of it. Honoured, but not more than once every few
+			// seconds — see `lastDependencyRead`.
+			return Date().timeIntervalSince(lastDependencyRead) > 5
+		}
+		return change.paths.contains {
+			ExternalDependencies.definingFileNames.contains($0.lastPathComponent)
+		}
 	}
 
 	func windowWillClose() {
@@ -428,6 +497,13 @@ final class ProjectNavigatorViewController: NSViewController {
 		// the project being reopened. Counted again when a menu next asks.
 		fileKinds = nil
 
+		// A lock file being written is the one event that changes the
+		// Dependencies section, and it is exactly what `swift package resolve`
+		// and `go get` produce. Before the early return below, because the
+		// section is not a directory anybody has expanded and would otherwise
+		// only be re-read when something else in the tree happened to move.
+		if changeTouchesDependencies(change) { refreshDependencies() }
+
 		guard let rootNode else { return }
 		guard !holdRebuildForRename() else { return }
 
@@ -595,12 +671,22 @@ final class ProjectNavigatorViewController: NSViewController {
 
 	// MARK: - Expansion state
 
+	/// What is open, by name rather than by object, so it survives a reload.
+	///
+	/// Two kinds of name in one set: an absolute path for a file row, and
+	/// `dep:` plus an identity for one of the Dependencies section's own rows.
+	/// One set and not two, because every caller captures this before a reload
+	/// and puts it back afterwards, and a second set would be one more thing for
+	/// the next call site to forget — there are six of them already.
 	private func expandedPaths() -> Set<String> {
 		var paths = Set<String>()
 		for row in 0..<outlineView.numberOfRows {
-			guard let node = outlineView.item(atRow: row) as? FileNode,
-			      outlineView.isItemExpanded(node) else { continue }
-			paths.insert(node.url.path)
+			let item = outlineView.item(atRow: row)
+			if let node = item as? FileNode, outlineView.isItemExpanded(node) {
+				paths.insert(node.url.path)
+			} else if let node = item as? DependencyNode, outlineView.isItemExpanded(node) {
+				paths.insert("dep:" + node.identity)
+			}
 		}
 		return paths
 	}
@@ -611,9 +697,12 @@ final class ProjectNavigatorViewController: NSViewController {
 	}
 
 	private func restore(expandedPaths paths: Set<String>) {
-		guard let rootNode else { return }
-		outlineView.expandItem(rootNode)
-		expand(node: rootNode, matching: paths)
+		if let rootNode {
+			outlineView.expandItem(rootNode)
+			expand(node: rootNode, matching: paths)
+		}
+		guard let dependencies else { return }
+		expand(dependency: dependencies.root, matching: paths)
 	}
 
 	private func expand(node: FileNode, matching paths: Set<String>) {
@@ -624,10 +713,36 @@ final class ProjectNavigatorViewController: NSViewController {
 		}
 	}
 
+	/// The same for the section's own rows, which are not files and have no
+	/// paths — and then on into the package's directory, where they are files
+	/// again and the rule above takes over.
+	private func expand(dependency node: DependencyNode, matching paths: Set<String>) {
+		guard paths.contains("dep:" + node.identity) else { return }
+		outlineView.expandItem(node)
+		for child in node.childNodes { expand(dependency: child, matching: paths) }
+		if let fileRoot = node.fileRoot { expand(node: fileRoot, matching: paths) }
+	}
+
 	// MARK: - Selection
 
+	/// Opens a row, or closes it. The one gesture the Dependencies section's own
+	/// rows have — a package is not a file, so there is nothing to show for it
+	/// but what is inside it.
+	private func toggle(_ item: Any) {
+		if outlineView.isItemExpanded(item) {
+			outlineView.collapseItem(item)
+		} else {
+			outlineView.expandItem(item)
+		}
+	}
+
 	@objc private func rowDoubleClicked() {
-		guard let node = outlineView.item(atRow: outlineView.clickedRow) as? FileNode else { return }
+		let clicked = outlineView.item(atRow: outlineView.clickedRow)
+		if let dependency = clicked as? DependencyNode {
+			toggle(dependency)
+			return
+		}
+		guard let node = clicked as? FileNode else { return }
 		if node.isDirectory {
 			if outlineView.isItemExpanded(node) {
 				outlineView.collapseItem(node)
@@ -2030,7 +2145,12 @@ final class ProjectNavigatorViewController: NSViewController {
 		// tree happened to order last.
 		guard outlineView.numberOfSelectedRows == 1 else { return }
 		let row = outlineView.selectedRow
-		guard row >= 0, let node = outlineView.item(atRow: row) as? FileNode else { return }
+		guard row >= 0 else { return }
+		if let dependency = outlineView.item(atRow: row) as? DependencyNode {
+			toggle(dependency)
+			return
+		}
+		guard let node = outlineView.item(atRow: row) as? FileNode else { return }
 
 		if node.isDirectory {
 			// Return on a directory toggles it, which is what IDEA does.
@@ -2063,7 +2183,14 @@ final class ProjectNavigatorViewController: NSViewController {
 		// Backwards, because collapsing a row removes the rows under it and the
 		// indices of everything after them.
 		for row in stride(from: outlineView.numberOfRows - 1, through: 0, by: -1) {
-			guard let node = outlineView.item(atRow: row) as? FileNode, node !== rootNode else { continue }
+			let item = outlineView.item(atRow: row)
+			// The Dependencies section folds away with everything else, section
+			// row included: it is a second root and "collapse all" means all.
+			if let dependency = item as? DependencyNode {
+				outlineView.collapseItem(dependency)
+				continue
+			}
+			guard let node = item as? FileNode, node !== rootNode else { continue }
 			outlineView.collapseItem(node)
 		}
 		outlineView.expandItem(rootNode)
@@ -2201,10 +2328,72 @@ final class ProjectNavigatorViewController: NSViewController {
 		let selected = outlineView.selectedRowIndexes.sorted()
 		guard !selected.isEmpty else { return ("nothing@-1", outlineView.numberOfRows) }
 		let names = selected.map { row -> String in
-			let node = outlineView.item(atRow: row) as? FileNode
-			return "\(node?.name ?? "nothing")@\(row)"
+			let item = outlineView.item(atRow: row)
+			// A dependency row is named too, since 508: the selection landing on
+			// a package or on the section is a thing a script has to be able to
+			// tell from the selection landing on nothing at all.
+			if let node = item as? FileNode { return "\(node.name)@\(row)" }
+			if let node = item as? DependencyNode { return "\(node.title)@\(row)" }
+			return "nothing@\(row)"
 		}
 		return (names.joined(separator: "+"), outlineView.numberOfRows)
+	}
+
+	/// Every row the tree is showing, with its depth.
+	///
+	/// The Dependencies section cannot be checked any other way: it is not on
+	/// disk, so `ls:` says nothing about it, and a screenshot proves it is drawn
+	/// without saying what it says. Each row is `depth·name — subtitle`, which
+	/// is exactly what somebody reads off the pane.
+	func rowsForTesting() -> [String] {
+		(0..<outlineView.numberOfRows).map { row in
+			let item = outlineView.item(atRow: row)
+			let indent = String(repeating: "  ", count: outlineView.level(forRow: row))
+			if let node = item as? DependencyNode {
+				return indent + node.title + (node.subtitle.map { " — " + $0 } ?? "")
+			}
+			return indent + ((item as? FileNode)?.name ?? "?")
+		}
+	}
+
+	/// The section as the model has it, whether or not anything is expanded —
+	/// the half `rowsForTesting` cannot answer, since a folded row has no rows
+	/// under it to print.
+	func dependencyReportForTesting() -> [String] {
+		dependencies?.report() ?? ["no dependencies section"]
+	}
+
+	/// Opens the Dependencies section and scrolls to it.
+	///
+	/// The section sits below the whole project tree, which on a repository of
+	/// eight subprojects is several screens down — so a script that wants to
+	/// photograph it has to be able to ask for it rather than arrow there.
+	func openDependenciesForTesting(groups: Bool) {
+		guard let dependencies else { return }
+		outlineView.expandItem(dependencies.root)
+		if groups {
+			for child in dependencies.root.childNodes { outlineView.expandItem(child) }
+		}
+		let row = outlineView.row(forItem: dependencies.root)
+		guard row >= 0 else { return }
+		// The last row first, so the section ends up at the top of the pane
+		// rather than at its bottom edge: `scrollRowToVisible` does the least it
+		// can, and a row already on screen moves nothing.
+		outlineView.scrollRowToVisible(outlineView.numberOfRows - 1)
+		outlineView.scrollRowToVisible(row)
+		outlineView.selectRowIndexes([row], byExtendingSelection: false)
+	}
+
+	/// Opens the section down to a file and selects it, the way activating a tab
+	/// on a file outside the project does.
+	func revealForTesting(_ path: String) {
+		let url = URL(fileURLWithPath: path)
+		selectWithoutOpening(url: url)
+		let package = dependency(containing: url)
+		print("TREE reveal: \(url.lastPathComponent) "
+			+ "package=\(package?.name ?? "none") "
+			+ "origin=\(package?.origin ?? "none") "
+			+ "selection=\(selectionForTesting.name)")
 	}
 
 	/// Selects and scrolls to a file, expanding ancestors as needed.
@@ -2219,27 +2408,58 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// indices collected as they went would name the wrong files by the time the
 	/// last folder opened. The topmost is what gets scrolled to.
 	func reveal(urls: [URL]) {
-		guard let rootNode, !urls.isEmpty else { return }
+		guard !urls.isEmpty else { return }
 
-		let nodes = urls.compactMap { rootNode.node(for: $0) }
-		guard !nodes.isEmpty else { return }
-
-		for node in nodes {
-			var ancestors: [FileNode] = []
-			var current: FileNode? = node
-			while let parent = current?.parentNode(in: rootNode) {
-				ancestors.append(parent)
-				current = parent
+		var found: [FileNode] = []
+		for url in urls {
+			// **The Dependencies section wins.** A file under
+			// `.build/checkouts/Cadova` is reachable both ways — the section, and
+			// the `.build` folder in the ordinary tree — and only one of the two
+			// can say which package it is and where that package came from. That
+			// is the whole of what item 508 was filed for, so a reveal that
+			// landed in `.build` would answer the question with the one row that
+			// does not.
+			if let located = dependencies?.locate(url) {
+				for node in located.chain { outlineView.expandItem(node) }
+				if let package = located.chain.last, let fileRoot = package.fileRoot {
+					expandAncestors(of: located.node, under: fileRoot)
+				}
+				found.append(located.node)
+				continue
 			}
-			for ancestor in ancestors.reversed() {
-				outlineView.expandItem(ancestor)
-			}
+			guard let rootNode, let node = rootNode.node(for: url) else { continue }
+			expandAncestors(of: node, under: rootNode)
+			found.append(node)
 		}
+		guard !found.isEmpty else { return }
 
-		let rows = nodes.map { outlineView.row(forItem: $0) }.filter { $0 >= 0 }.sorted()
+		let rows = found.map { outlineView.row(forItem: $0) }.filter { $0 >= 0 }.sorted()
 		guard let first = rows.first else { return }
 		outlineView.selectRowIndexes(IndexSet(rows), byExtendingSelection: false)
 		outlineView.scrollRowToVisible(first)
+	}
+
+	/// Opens every folder between a node and the root it was found under.
+	///
+	/// Outermost first, and the rows are asked for only once everything is open
+	/// — expanding renumbers the rows beneath it, so an index collected on the
+	/// way would name the wrong file by the time the last folder opened.
+	private func expandAncestors(of node: FileNode, under root: FileNode) {
+		var ancestors: [FileNode] = []
+		var current: FileNode? = node
+		while let parent = current?.parentNode(in: root) {
+			ancestors.append(parent)
+			current = parent
+		}
+		for ancestor in ancestors.reversed() {
+			outlineView.expandItem(ancestor)
+		}
+	}
+
+	/// Which package a file belongs to, for anything outside the tree that wants
+	/// to say where it came from.
+	func dependency(containing url: URL) -> ExternalDependency? {
+		dependencies?.package(containing: url)
 	}
 }
 
@@ -2293,7 +2513,20 @@ extension ProjectNavigatorViewController: NSTextFieldDelegate {
 extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineViewDelegate,
 	NSMenuDelegate, NSMenuItemValidation {
 	func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
-		guard let item else { return rootNode == nil ? 0 : 1 }
+		// Two roots when there is a Dependencies section: the project's own
+		// directory, and everything that is not it. IntelliJ's *External
+		// Libraries* sits in the same place, below the tree rather than inside
+		// it, because a dependency is not in the project — that is what it means.
+		guard let item else {
+			guard rootNode != nil else { return 0 }
+			return dependencies == nil ? 1 : 2
+		}
+		if let node = item as? DependencyNode {
+			// A package row *is* a directory: from here down the rows are
+			// ordinary files and everything the tree does works on them.
+			if let fileRoot = node.fileRoot { return fileRoot.children.count }
+			return node.childNodes.count
+		}
 		guard let node = item as? FileNode, node.isDirectory else { return 0 }
 
 		// Children are read the first time the outline view asks for them,
@@ -2325,7 +2558,14 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 	}
 
 	func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
-		guard let item else { return rootNode! }
+		guard let item else {
+			guard index > 0, let dependencies else { return rootNode! }
+			return dependencies.root
+		}
+		if let node = item as? DependencyNode {
+			if let fileRoot = node.fileRoot { return fileRoot.children[index] }
+			return node.childNodes[index]
+		}
 		let node = item as! FileNode
 		let children = node.children
 		if index == children.count, let placeholder, placeholder.parent === node {
@@ -2335,6 +2575,7 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 	}
 
 	func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
+		if let node = item as? DependencyNode { return node.isExpandable }
 		guard let node = item as? FileNode else { return false }
 		// A new folder has nothing in it and does not exist yet, so it gets no
 		// disclosure triangle: opening it would list a directory that is not
@@ -2346,6 +2587,16 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 	}
 
 	func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
+		if let node = item as? DependencyNode {
+			let cell = NavigatorCellView()
+			cell.configure(dependency: node)
+			// The whole origin, which the row itself has to cut down to fit. A
+			// package's tooltip is the URL, the version and where the sources
+			// are — the three things somebody following a symbol out of their
+			// own code wants and cannot otherwise find out.
+			cell.toolTip = node.detail
+			return cell
+		}
 		guard let node = item as? FileNode else { return nil }
 		let isRoot = (node === rootNode)
 		let cell = NavigatorCellView()
@@ -2884,6 +3135,16 @@ private final class NavigatorCellView: NSTableCellView {
 	private var isRoot = false
 	private var subtitle: String?
 	private var isExpanded = false
+	/// Set instead of `node` for one of the Dependencies section's own rows.
+	/// A package is not a file and has no `FileNode` behind it — the files
+	/// start one level below it.
+	private var dependency: DependencyNode?
+
+	func configure(dependency: DependencyNode) {
+		self.dependency = dependency
+		self.subtitle = dependency.subtitle
+		needsDisplay = true
+	}
 
 	func configure(
 		node: FileNode,
@@ -2919,41 +3180,75 @@ private final class NavigatorCellView: NSTableCellView {
 	override var isFlipped: Bool { true }
 
 	override func draw(_ dirtyRect: NSRect) {
-		guard let node else { return }
-
-		var x = Theme.current.scaled(2)
-		let iconSize = Theme.current.scaled(16)
-
-		// The folder being worked on is tinted rather than decorated: a mark
-		// beside the name reads as a status — modified, added — and this is not
-		// a status. It is which folder everything is pointed at.
-		let icon = isSubproject
-			? FileIcon.subprojectFolder()
-			: FileIcon.image(for: node, isExpanded: isExpanded)
-		if let icon {
-			icon.drawFitted(
-				in: NSRect(x: x, y: bounds.midY - iconSize / 2, width: iconSize, height: iconSize)
-			)
-		}
-		x += iconSize + Theme.current.scaled(6)
-
 		// On a selected row the VCS colour would fight the pill behind it, so the
 		// label goes to whichever plain ink the palette reads with — the
 		// treatment IDEA uses. Near-white was written for the dark theme's blue
 		// and disappeared entirely on the light theme's pale one, which the
 		// presentation mode ships by default.
 		let isSelected = (superview as? NSTableRowView)?.isSelected ?? false
-		// The subproject is written the way the project above it is — bold and
-		// bright — because that is what it is here: the project everything is
-		// pointed at. The blue folder says which of the two.
-		let nameColor: NSColor = isSelected
-			? (Theme.current.isLight ? Theme.current.sidebarHeaderText : .hex(0xE8EAED))
-			: (isRoot || isSubproject
-				? Theme.current.sidebarHeaderText
-				: Theme.current.color(for: node.gitStatus))
-		let nameFont = isRoot || isSubproject
-			? Theme.current.uiFont(13, weight: .bold)
-			: Theme.current.uiFont(13)
+		let selectedInk: NSColor = Theme.current.isLight
+			? Theme.current.sidebarHeaderText
+			: .hex(0xE8EAED)
+
+		let icon: NSImage?
+		let text: String
+		let nameColor: NSColor
+		let nameFont: NSFont
+
+		if let dependency {
+			text = dependency.title
+			switch dependency.row {
+			case .section:
+				icon = FileIcon.dependencySection()
+				// Written the way the project root above it is: this is the other
+				// root of the tree, not a folder inside anything.
+				nameColor = isSelected ? selectedInk : Theme.current.sidebarHeaderText
+				nameFont = Theme.current.uiFont(13, weight: .bold)
+			case .group:
+				icon = FileIcon.subprojectFolder()
+				nameColor = isSelected ? selectedInk : Theme.current.sidebarHeaderText
+				nameFont = Theme.current.uiFont(13, weight: .bold)
+			case let .package(package):
+				icon = FileIcon.dependencyPackage(fetched: package.localPath != nil)
+				nameColor = isSelected ? selectedInk : Theme.current.sidebarHeaderText
+				nameFont = Theme.current.uiFont(13)
+			case .note:
+				icon = FileIcon.dependencyNote()
+				// The grey the subtitle uses, because a note *is* a subtitle
+				// wearing the name's place: nothing is wrong with the project.
+				nameColor = isSelected ? selectedInk : Theme.current.gitIgnored
+				nameFont = Theme.current.uiFont(13)
+			}
+		} else {
+			guard let node else { return }
+			text = node.name
+			// The folder being worked on is tinted rather than decorated: a mark
+			// beside the name reads as a status — modified, added — and this is
+			// not a status. It is which folder everything is pointed at.
+			icon = isSubproject
+				? FileIcon.subprojectFolder()
+				: FileIcon.image(for: node, isExpanded: isExpanded)
+			// The subproject is written the way the project above it is — bold
+			// and bright — because that is what it is here: the project
+			// everything is pointed at. The blue folder says which of the two.
+			nameColor = isSelected
+				? selectedInk
+				: (isRoot || isSubproject
+					? Theme.current.sidebarHeaderText
+					: Theme.current.color(for: node.gitStatus))
+			nameFont = isRoot || isSubproject
+				? Theme.current.uiFont(13, weight: .bold)
+				: Theme.current.uiFont(13)
+		}
+
+		var x = Theme.current.scaled(2)
+		let iconSize = Theme.current.scaled(16)
+		if let icon {
+			icon.drawFitted(
+				in: NSRect(x: x, y: bounds.midY - iconSize / 2, width: iconSize, height: iconSize)
+			)
+		}
+		x += iconSize + Theme.current.scaled(6)
 
 		// The icon stays while the name is being edited — it says what kind of
 		// thing this is, and the field does not cover it — but the name itself
@@ -2964,7 +3259,7 @@ private final class NavigatorCellView: NSTableCellView {
 		// draw straight over the row's rounded selection and out of the pane.
 		let paragraph = NSMutableParagraphStyle()
 		paragraph.lineBreakMode = .byTruncatingTail
-		let name = NSAttributedString(string: node.name, attributes: [
+		let name = NSAttributedString(string: text, attributes: [
 			.font: nameFont,
 			.foregroundColor: nameColor,
 			.paragraphStyle: paragraph,
