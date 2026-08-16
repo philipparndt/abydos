@@ -77,6 +77,45 @@ struct LanguageServerFooterTests {
 		}
 	}
 
+	/// 0501. A server that is running is not the same as one that is ready: a
+	/// Swift package whose dependencies are not built is told `No such module`
+	/// for the minute the server spends building them, and the chip said the
+	/// same word throughout as it says when every answer is right.
+	@Test func aServerThatIsHereAndNotReadyHasItsOwnWord() {
+		let swift = footer(
+			.installed(executable: "/usr/bin/sourcekit-lsp"),
+			state: .preparing, command: "sourcekit-lsp", language: "Swift"
+		)
+		#expect(swift.text(containerMark: mark) == "sourcekit-lsp — preparing")
+		// The origin is dropped, as it is for the three waits above — a chip
+		// saying the image as well would be twice the room for the half of it
+		// that is not the news.
+		#expect(footer(.image("swift:6.3"), state: .preparing).text(containerMark: mark)
+			== "rust-analyzer — preparing")
+	}
+
+	/// The word alone cannot say the thing somebody actually needs to be told,
+	/// which is that the red on the file may be about the build. The tool tip
+	/// says it.
+	@Test func theToolTipSaysTheRedMayBeTheBuildRatherThanTheCode() {
+		let said = footer(
+			.installed(executable: nil), state: .preparing,
+			command: "sourcekit-lsp", language: "Swift"
+		).detail
+		#expect(said.contains("sourcekit-lsp is building what this project depends on"))
+		#expect(said.contains("may be about the build rather than about the code"))
+	}
+
+	/// Preparation is not an arrival — the server is here — and the strip above
+	/// the file deliberately says nothing about it: measured, a *warm* start is
+	/// 1.2 seconds of preparing, and a banner that comes and goes inside a second
+	/// and a half on every project open would make the text jump twice for
+	/// nothing.
+	@Test func theStripIsGivenNothingToSayAboutAServerThatIsPreparing() {
+		#expect(LanguageServerFooter.arrivalSentence(languageName: "Swift", state: .preparing)
+			.isEmpty)
+	}
+
 	/// A control that does not say what pressing it does is a control nobody
 	/// presses.
 	@Test func theToolTipSaysWhereTheClickGoes() {
@@ -90,7 +129,9 @@ struct LanguageServerFooterTests {
 		let origins: [LanguageServerFooter.Origin] = [
 			.installed(executable: "/usr/bin/gopls"), .image("go:1"), .devcontainer(name: "dev"),
 		]
-		let states: [LanguageServerFooter.State] = [.answering, .fetching, .building, .starting]
+		let states: [LanguageServerFooter.State] = [
+			.answering, .fetching, .building, .starting, .preparing,
+		]
 		for origin in origins {
 			for state in states {
 				let said = footer(origin, state: state, command: "gopls", language: "Go")

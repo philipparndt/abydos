@@ -58,6 +58,25 @@ public struct LanguageServerFooter: Equatable, Sendable {
 		case building
 		/// The project's devcontainer coming up with the server inside it.
 		case starting
+		/// Here, running, answering — and answering *wrongly*, because it has not
+		/// finished building what the project depends on.
+		///
+		/// The odd one out among these, and deliberately in the same enum. The
+		/// three above are a server that has not arrived; this is a server that
+		/// arrived and is not ready, which used to be indistinguishable from
+		/// `.answering` and is the whole of 0501: a Swift package whose
+		/// dependencies are not built is told `No such module 'Cadova'` for the
+		/// minute the server spends building them, and nothing on screen said a
+		/// build was happening.
+		///
+		/// It is in the footer and not in the strip above the file, and the
+		/// number that decided that is 1.2 seconds — what preparation costs on a
+		/// *second* open, with everything built. A banner appearing and vanishing
+		/// inside a second and a half on every project open, pushing the text
+		/// down and letting it back, is worse than the thing it explains. The
+		/// chip is already drawn while this is happening, because the server is
+		/// running, so here it is one word changing and nothing moving.
+		case preparing
 	}
 
 	/// The server's own name — `rust-analyzer`, not the path it was found at,
@@ -114,6 +133,17 @@ public struct LanguageServerFooter: Equatable, Sendable {
 		case .fetching: return "\(command) — fetching"
 		case .building: return "\(command) — building"
 		case .starting: return "\(command) — starting"
+		// The fourth word, in the same shape as the three above it even though
+		// what it describes is different — a server that is here rather than one
+		// that is coming. The shape is the point: whatever the wait is, the chip
+		// says the server and then one word for what it is doing, and somebody
+		// who has read one of them can read all four.
+		//
+		// The origin is dropped, as it is for the other three. A server that is
+		// preparing has one, and `sourcekit-lsp ⬢ swift:6.3 — preparing` is
+		// twice the width of the chip's room for the half of the sentence that
+		// is not the news.
+		case .preparing: return "\(command) — preparing"
 		}
 	}
 
@@ -154,7 +184,23 @@ public struct LanguageServerFooter: Equatable, Sendable {
 		case .fetching, .building, .starting:
 			return Self.arrivalSentence(languageName: languageName, state: state)
 				+ "\n\nClick for everything this app is running."
+		case .preparing:
+			return preparing + "\n\nClick for everything this app is running."
 		}
+	}
+
+	/// The sentence for a server that is here and not ready.
+	///
+	/// It says what the chip's one word cannot: that the errors on the file right
+	/// now are about the build and not about the code. That is the sentence
+	/// somebody needs — the whole failure 0501 describes is looking at
+	/// `No such module 'Cadova'` and going to find a mistake that is not there —
+	/// and it is the reason the word alone was not judged enough.
+	private var preparing: String {
+		"\(command) is building what this project depends on before it can answer "
+			+ "for \(languageName). Until it has finished, an error here saying "
+			+ "something does not exist may be about the build rather than about "
+			+ "the code."
 	}
 
 	private var answering: String {
@@ -181,9 +227,14 @@ public struct LanguageServerFooter: Equatable, Sendable {
 	///
 	/// `.answering` has nothing to arrive and returns an empty string; callers
 	/// that can be handed one — the strip cannot — have their own sentence.
+	///
+	/// `.preparing` returns an empty string for the same reason and a different
+	/// one: it is not an arrival either — the server is here — and the strip
+	/// deliberately says nothing about it, so there is no second reader for a
+	/// sentence to agree with. Its words are `detail`'s, above.
 	public static func arrivalSentence(languageName: String, state: State) -> String {
 		switch state {
-		case .answering: return ""
+		case .answering, .preparing: return ""
 		case .fetching: return "\(languageName)'s language server is being fetched."
 		case .building:
 			return "\(languageName)'s language server is being built on this machine. "

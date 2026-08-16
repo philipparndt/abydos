@@ -165,9 +165,9 @@ running, and it will answer.
 - [x] Decide between suppressing and explaining, and write down which and why
 - [x] A value in the engine that reads `$/progress` and says whether the server
       is still preparing, with a test
-- [ ] Ask for `window.workDoneProgress`, and read `$/progress` in `LSPClient`
-- [ ] The footer's chip says it, and the tool tip says the sentence
-- [ ] Do it, for a file whose dependencies have not been built yet
+- [x] Ask for `window.workDoneProgress`, and read `$/progress` in `LSPClient`
+- [x] The footer's chip says it, and the tool tip says the sentence
+- [x] Do it, for a file whose dependencies have not been built yet
 - [ ] Watched: open a Swift package with a clean `.build`, and see what the
       first thirty seconds look like now
 - [ ] Say whether this is Swift-only, and why that is or is not right
