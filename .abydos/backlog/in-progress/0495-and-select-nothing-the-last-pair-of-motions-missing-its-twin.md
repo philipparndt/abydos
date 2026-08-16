@@ -29,7 +29,7 @@ both.
   the item's own scope was the arrows. Filing it is the price of that, and this
   is the file.
 
-## Worth deciding
+## Worth deciding — decided, and not here
 
 - **Whether `default:` should be as quiet as it is.** Every one of these three
   was invisible for the same reason: an unhandled selector falls through a
@@ -39,6 +39,39 @@ both.
   build that logged unhandled `move*`/`select*` selectors once each would have
   caught all three in one session, and would say nothing in release. Worth
   weighing against the noise before writing it.
+
+  **Weighed, and it is worth doing — as [0496](../open/0496-a-debug-build-says-which-move-and-select-selectors-nothing.md),
+  not as part of this.** The reasoning, in three parts:
+
+  *The noise is not a worry, and that is a number and not an opinion.* The
+  macOS 27.0 SDK's `NSResponder.h` declares 43 methods beginning `move` or
+  `select`; `doCommand` handles 29. So a once-each log has a **ceiling of 14
+  lines for the entire life of a debug build**, and only for keys somebody
+  actually pressed. The ceiling is the size of a family AppKit fixes at compile
+  time — it does not grow with how long the app runs or how much is typed,
+  which is exactly what makes it different from logging `default:` whole, where
+  `noop:` alone would drown it.
+
+  *The claim in the paragraph above is slightly too strong, and it is worth
+  saying so.* Nothing prints until the key is pressed, so this does not find a
+  bug nobody triggers. What it does is collapse the second half of the hunt:
+  "this key does nothing, why?" becomes "this key does nothing, and here is the
+  selector nobody handled". On 0494 that second half was a person reading the
+  switch, and it was not quick.
+
+  *What makes it worth more than that sounds: the drivers press keys.*
+  `--vertical-nav` and `--word-nav` already sweep a corner of the keyboard on
+  purpose, so a debug driver run would print the unhandled selectors beside its
+  own report — turning a diagnosis aid into something closer to a detector, for
+  free, in a run that an editor item does anyway. 0494's session pressed ⇧⇞,
+  ⇧⇟, ⌘⇧↑ and ⌘⇧↓ through the driver, so all four would have named themselves
+  in that one run.
+
+  **Not implemented here.** It is a change to how the editor reports on itself,
+  not to what a keystroke does, and it wants deciding on its own terms — where
+  it logs, whether the project has a debug channel to use, how it is shown to
+  be silent in release. Bundling it into a two-selector fix would be exactly
+  the widening this item was filed to avoid.
 
 ## Watched in the app
 
@@ -169,7 +202,17 @@ made.
       middle of a file: ⌘⇧↑ selects back to offset 0, ⌘⇧↓ forward to the end
 - [x] Check no other motion is missing its twin, and say in here how that was
       checked rather than that it was
-- [ ] Decide about the silent `default:`, and either do it or write down why not
+- [x] Decide about the silent `default:`, and either do it or write down why not
+
+      Ticked for the second of those two, not the first: **the `default:` in
+      `CodeView.swift` is unchanged by this item.** The deciding is the step and
+      it is finished — the weighing is under "Worth deciding" above, and it
+      concluded the logging *is* worth having, so it is filed as **0496** and
+      left in `open/` for somebody to agree to. Why not here: it changes how the
+      editor reports on itself rather than what a keystroke does, and this item
+      is two selectors. Why worth doing at all: the noise ceiling is 14 lines for
+      the life of a debug build, counted from `NSResponder.h` rather than
+      guessed, and the drivers already press the keys that would print them.
 - [ ] Write down here what was ruled out on the way
 - [ ] `spec/editor.md` says what the project now does — 0494 added two
       requirements about the edges of a file and this belongs beside them
