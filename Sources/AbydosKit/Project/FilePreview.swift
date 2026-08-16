@@ -40,6 +40,41 @@ public enum PreviewMode: String, Sendable, CaseIterable {
 	public var splitsSideBySide: Bool { self == .splitRight }
 }
 
+/// What a look somewhere other than the file's name said about it.
+///
+/// Every question in `FilePreview` is a pure function over a URL, and twice now
+/// that has not been enough: a `.yaml` is a 3D model when it is a go3mf recipe,
+/// and a `.swift` is a 3D model when it is a source of a Cadova executable
+/// target. Neither can be answered from a name — the first needs the head of the
+/// file, the second needs the package manifest — and neither may be answered
+/// *here*, because these functions are asked on every tab-bar refresh and a
+/// refresh follows a keystroke.
+///
+/// So the fact is worked out once, where the file is being opened anyway, and
+/// carried in. This is that value rather than a second boolean parameter,
+/// deliberately: with one fact there were six call sites passing
+/// `looksLikeRecipe:`, and the shape of a second one is a seventh argument at
+/// every one of them and at every test — which is how the fifth call site ends
+/// up being the one that forgets. A value grows without touching a caller that
+/// does not care.
+public struct PreviewFacts: Equatable, Sendable {
+	/// A `.yaml` whose head says it is a go3mf recipe. `Go3mfRecipe.looksLikeRecipe(_:)`
+	/// answers it, and the rule about who may call that is written there.
+	public var looksLikeRecipe: Bool
+	/// A `.swift` that is a source of a Cadova executable target.
+	/// `CadovaModel.find(for:stoppingAt:)` answers it.
+	public var isCadovaModel: Bool
+
+	public init(looksLikeRecipe: Bool = false, isCadovaModel: Bool = false) {
+		self.looksLikeRecipe = looksLikeRecipe
+		self.isCadovaModel = isCadovaModel
+	}
+
+	/// What everything running over a tree passes: nothing was looked at, and
+	/// nothing is going to be.
+	public static let unknown = PreviewFacts()
+}
+
 /// What a file's rendered form is, when it has one.
 ///
 /// One place deciding this, rather than each feature testing extensions of its
@@ -82,14 +117,16 @@ public enum FilePreview {
 
 	/// What a file's rendered form is.
 	///
-	/// - Parameter looksLikeRecipe: what a look *inside* the file said, for the one
-	///   case a name cannot decide — a `.yaml` is a 3D model when it is a go3mf
-	///   recipe and text when it is a workflow, and only its contents say which.
-	///   Defaults to `false`, so everything that runs over a tree keeps asking the
-	///   question that costs nothing. `Go3mfRecipe.looksLikeRecipe(_:)` is what
-	///   answers it, and the rule about who may call that is written there.
-	public static func kind(for url: URL, looksLikeRecipe: Bool = false) -> Kind? {
-		if looksLikeRecipe, Go3mfRecipe.hasRecipeExtension(url) { return .model }
+	/// - Parameter facts: what a look somewhere other than the name said, for the
+	///   cases a name cannot decide. Defaults to `.unknown`, so everything that
+	///   runs over a tree keeps asking the question that costs nothing.
+	public static func kind(for url: URL, facts: PreviewFacts = .unknown) -> Kind? {
+		if facts.looksLikeRecipe, Go3mfRecipe.hasRecipeExtension(url) { return .model }
+		// A Cadova model is source that makes a shape, so it is the `.scad` case
+		// with a different way of getting the mesh — which is what 0499 is. The
+		// name it comes under is `.swift` and says nothing, so the fact has to
+		// have been worked out already; see `CadovaModel`.
+		if facts.isCadovaModel, url.pathExtension.lowercased() == "swift" { return .model }
 		switch url.pathExtension.lowercased() {
 		case "md", "markdown", "mdx":
 			return .markdown
@@ -121,8 +158,8 @@ public enum FilePreview {
 		}
 	}
 
-	public static func hasPreview(_ url: URL, looksLikeRecipe: Bool = false) -> Bool {
-		kind(for: url, looksLikeRecipe: looksLikeRecipe) != nil
+	public static func hasPreview(_ url: URL, facts: PreviewFacts = .unknown) -> Bool {
+		kind(for: url, facts: facts) != nil
 	}
 
 	/// The mode a file opens in.
@@ -139,8 +176,8 @@ public enum FilePreview {
 	/// recipe was decided by reading the head of it, and a default that starts a
 	/// build off a guess about contents is a default that makes opening a `.yaml`
 	/// feel dangerous. So it stays asked for — see 0482.
-	public static func defaultMode(for url: URL, looksLikeRecipe: Bool = false) -> PreviewMode {
-		switch kind(for: url, looksLikeRecipe: looksLikeRecipe) {
+	public static func defaultMode(for url: URL, facts: PreviewFacts = .unknown) -> PreviewMode {
+		switch kind(for: url, facts: facts) {
 		case .image:
 			// Opening a picture shows the picture. An SVG has text worth
 			// reading and the control offers it, but nobody clicks a diagram
@@ -161,7 +198,7 @@ public enum FilePreview {
 			// A PDF is the finished document and nothing else. Its bytes are a
 			// compressed object graph, so there is no source half to offer.
 			return .preview
-		case .model where looksLikeRecipe && Go3mfRecipe.hasRecipeExtension(url):
+		case .model where facts.looksLikeRecipe && Go3mfRecipe.hasRecipeExtension(url):
 			// A go3mf recipe opens as its text, and the model is *asked for*. Not
 			// the same answer a `.scad` gets, and the difference is deliberate
 			// rather than inherited (0482 beside 0483):
@@ -201,6 +238,15 @@ public enum FilePreview {
 			// one. What made it safe anyway is that the pane's viewer is built
 			// lazily, so a walk down a directory of models renders none of them:
 			// `ModelContainerView` is where that is, and why.
+			//
+			// A Cadova model — a `.swift`, so it can only be here because
+			// `facts.isCadovaModel` said so — opens the same way, and 0499 is the
+			// argument. It is *more* affordable than the `.scad` rather than less,
+			// which was the surprise: OpenSCAD renders on the main actor, so those
+			// 200 ms are 200 ms of window that does not draw, where `swift run` is
+			// a subprocess and costs no frames however long it takes. What it does
+			// cost instead is SwiftPM's lock on `.build`, which is somebody else's
+			// terminal waiting — see `CadovaPreviewView`.
 			return .splitRight
 		case .markdown, .none:
 			return .source
@@ -218,12 +264,12 @@ public enum FilePreview {
 	/// note about a file that has since changed its name or its kind, so it is
 	/// dropped rather than obeyed.
 	public static func restoredMode(
-		_ remembered: PreviewMode?, for url: URL, looksLikeRecipe: Bool = false
+		_ remembered: PreviewMode?, for url: URL, facts: PreviewFacts = .unknown
 	) -> PreviewMode {
 		guard let remembered,
-		      availableModes(for: url, looksLikeRecipe: looksLikeRecipe).contains(remembered)
+		      availableModes(for: url, facts: facts).contains(remembered)
 		else {
-			return defaultMode(for: url, looksLikeRecipe: looksLikeRecipe)
+			return defaultMode(for: url, facts: facts)
 		}
 		return remembered
 	}
@@ -248,8 +294,8 @@ public enum FilePreview {
 	}
 
 	/// Modes worth offering for a file.
-	public static func availableModes(for url: URL, looksLikeRecipe: Bool = false) -> [PreviewMode] {
-		guard hasPreview(url, looksLikeRecipe: looksLikeRecipe) else { return [] }
+	public static func availableModes(for url: URL, facts: PreviewFacts = .unknown) -> [PreviewMode] {
+		guard hasPreview(url, facts: facts) else { return [] }
 		return hasReadableSource(url) ? PreviewMode.allCases : [.preview]
 	}
 }

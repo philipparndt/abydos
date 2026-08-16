@@ -62,6 +62,24 @@ final class EditorViewController: NSViewController {
 		/// alternative re-reads a file on every redraw to catch an edit somebody
 		/// makes once — and closing and reopening the tab settles it.
 		var looksLikeRecipe = false
+		/// The Cadova model this file is a source of, when it is one — which its
+		/// name cannot say either, and for a harder reason than a recipe's: what
+		/// makes a `.swift` a model is the *package manifest*, two or three
+		/// directories above it.
+		///
+		/// **Decided once, when the tab opens, and kept**, for the reason above.
+		/// It carries the answer as well as the fact — which product to run and
+		/// where that target's sources are is exactly what the pane needs, and
+		/// working it out a second time would mean reading the manifest again.
+		///
+		/// The cost of keeping it is `looksLikeRecipe`'s, one size larger: a
+		/// package that *gains* a Cadova dependency while a file of it is open
+		/// stays text until the tab is reopened.
+		var cadova: CadovaModel?
+		/// The two things about this file that its name could not say.
+		var previewFacts: PreviewFacts {
+			PreviewFacts(looksLikeRecipe: looksLikeRecipe, isCadovaModel: cadova != nil)
+		}
 		/// Where this tab's divider is, when it is split, as a fraction of the
 		/// pane. Asked of the split view itself rather than kept in step with it:
 		/// a divider is dragged, and nothing tells us when.
@@ -1150,10 +1168,13 @@ final class EditorViewController: NSViewController {
 		}
 
 		let tab = Tab(url: fileURL, document: document, codeView: codeView, contentView: scrollView, isPreview: preview)
-		// The one place a file is looked *inside* to decide what previews it has.
-		// Costs nothing unless the name is a `.yaml`, and then the head of it, once
-		// per tab — see `Tab.looksLikeRecipe` for why it is not asked again.
+		// The one place a file is looked at from *outside its name* to decide what
+		// previews it has. Costs nothing unless the name is a `.yaml`, and then the
+		// head of it; nothing unless the name is a `.swift`, and then a walk up to
+		// `Package.swift` and a read of it. Once per tab — see `Tab.looksLikeRecipe`
+		// and `Tab.cadova` for why neither is asked again.
 		tab.looksLikeRecipe = Go3mfRecipe.looksLikeRecipe(fileURL)
+		tab.cadova = CadovaModel.find(for: fileURL, stoppingAt: project?.root)
 
 		// Clicking a name in the blame column says what that commit was.
 		codeView.onShowBlameDetail = { entry in
@@ -1265,8 +1286,8 @@ final class EditorViewController: NSViewController {
 		// as. Decided here rather than by putting the tab right afterwards, so a
 		// `.scad` coming back as its source does not build a model view first and
 		// throw it away — a restore opens every tab the project had at once.
-		let opening = FilePreview.restoredMode(mode, for: fileURL, looksLikeRecipe: tab.looksLikeRecipe)
-		if opening != .source, FilePreview.hasPreview(fileURL, looksLikeRecipe: tab.looksLikeRecipe) {
+		let opening = FilePreview.restoredMode(mode, for: fileURL, facts: tab.previewFacts)
+		if opening != .source, FilePreview.hasPreview(fileURL, facts: tab.previewFacts) {
 			tab.previewMode = opening
 			tab.contentView = makeContentView(for: tab, mode: opening, dividerFraction: dividerFraction)
 		}
@@ -1828,7 +1849,7 @@ final class EditorViewController: NSViewController {
 	/// its name: a `.yaml` has a rendered form when it is a go3mf recipe, and the tab
 	/// is where that was decided, once, when it opened.
 	func availableModes(for tab: Tab) -> [PreviewMode] {
-		FilePreview.availableModes(for: tab.url, looksLikeRecipe: tab.looksLikeRecipe)
+		FilePreview.availableModes(for: tab.url, facts: tab.previewFacts)
 	}
 
 	/// The view for a tab in a given mode, with the divider a session remembered
@@ -1872,7 +1893,7 @@ final class EditorViewController: NSViewController {
 
 	/// The rendered form of a file, whichever kind it has.
 	private func makePreview(for tab: Tab) -> NSView {
-		switch FilePreview.kind(for: tab.url, looksLikeRecipe: tab.looksLikeRecipe) {
+		switch FilePreview.kind(for: tab.url, facts: tab.previewFacts) {
 		case .model:
 			// A provisional tab waits before rendering; one somebody committed to
 			// does not. `makeModelView` says why the wait exists at all.
@@ -1881,9 +1902,17 @@ final class EditorViewController: NSViewController {
 			// `go3mf build` on it into a temporary directory of its own, watches the
 			// recipe, and rebuilds when it changes. None of that is here, and since
 			// 0.22.0 none of it writes into the project either.
-			return makeModelView(
-				for: tab.url, startAfter: tab.isPreview ? Self.provisionalRenderDelay : 0
-			)
+			//
+			// A Cadova model does not, and cannot: there is no file for the viewer
+			// to open until a program has been built and run. Its pane does that
+			// first and hosts the same viewer afterwards — see `CadovaPreviewView`.
+			let waiting = tab.isPreview ? Self.provisionalRenderDelay : 0
+			if let cadova = tab.cadova {
+				let view = CadovaPreviewView(model: cadova)
+				view.startAfter = waiting
+				return view
+			}
+			return makeModelView(for: tab.url, startAfter: waiting)
 		case .image:
 			return ImageFileViewer(url: tab.url).scrollView
 		case .plantuml:
@@ -2034,6 +2063,22 @@ final class EditorViewController: NSViewController {
 		if let pane = view as? DiagramPaneView { return pane }
 		for subview in view.subviews {
 			if let found = diagramPane(in: subview) { return found }
+		}
+		return nil
+	}
+
+	/// The Cadova pane the file in front is showing, when it is showing one.
+	///
+	/// Found the same way and for the same reason as `diagramPreview`: it is half
+	/// of a split or the whole of a tab, depending on the preview mode.
+	var cadovaPreview: CadovaPreviewView? {
+		activeTab.flatMap { Self.cadovaPane(in: $0.contentView) }
+	}
+
+	private static func cadovaPane(in view: NSView) -> CadovaPreviewView? {
+		if let pane = view as? CadovaPreviewView { return pane }
+		for subview in view.subviews {
+			if let found = cadovaPane(in: subview) { return found }
 		}
 		return nil
 	}
@@ -2606,7 +2651,7 @@ final class EditorViewController: NSViewController {
 					// `.source` and always will be, and writing that down for each
 					// of them says nothing.
 					previewMode: FilePreview.hasPreview(
-						tab.url, looksLikeRecipe: tab.looksLikeRecipe
+						tab.url, facts: tab.previewFacts
 					) ? tab.previewMode : nil,
 					dividerFraction: tab.dividerFraction
 				)
@@ -3262,64 +3307,4 @@ final class EditorStatusView: NSView {
 			? "no server"
 			: "\(serverText) [\(Int(serverRect.width))×\(Int(serverRect.height))]"
 	}
-}
-
-/// Holds the 3D preview, sized by hand.
-///
-/// The preview is a SwiftUI view, and letting it size itself through Auto
-/// Layout puts it in the window's constraint pass — where re-parenting it, as
-/// splitting the editor does, raises.
-private final class ModelContainerView: ColoredView, SnapshotDrawable {
-	/// GoSTL's way of rendering the current scene into an image.
-	///
-	/// The viewer draws through Metal, and a window capture walks the view
-	/// tree — where a Metal layer's contents are not. Without this the model
-	/// photographs as an empty rectangle.
-	var snapshot: ContentView.EmbeddingOptions.SnapshotProvider?
-
-	/// Builds the viewer, and is thrown away once it has.
-	var makeViewer: (() -> NSView)?
-
-	/// How long this pane must have been on screen before that happens.
-	var startAfter: TimeInterval = 0
-
-	private var pending: DispatchWorkItem?
-
-	/// Built on being *shown*, not on being made.
-	///
-	/// Which is the whole guard. A provisional tab is created, activated and then
-	/// replaced in place by the next row of the tree, so a pane that leaves the
-	/// window before its delay is up has its work cancelled and renders nothing;
-	/// and a session restored with twenty model tabs lays out only the one in
-	/// front, so the other nineteen cost nothing at all until somebody clicks
-	/// them. Keying off creation instead would have paid for all twenty at once,
-	/// on the main actor, before the window was even up.
-	override func viewDidMoveToWindow() {
-		super.viewDidMoveToWindow()
-		guard window != nil else {
-			pending?.cancel()
-			pending = nil
-			return
-		}
-		guard makeViewer != nil, pending == nil else { return }
-		let work = DispatchWorkItem { [weak self] in
-			guard let self, let make = self.makeViewer else { return }
-			// Cleared first: the viewer is built once, and this pane may be shown
-			// and hidden many times.
-			self.makeViewer = nil
-			self.pending = nil
-			let viewer = make()
-			viewer.frame = self.bounds
-			self.addSubview(viewer)
-		}
-		pending = work
-		DispatchQueue.main.asyncAfter(deadline: .now() + startAfter, execute: work)
-	}
-
-	override func layout() {
-		super.layout()
-		for subview in subviews { subview.frame = bounds }
-	}
-
-	func snapshotImage(size: CGSize) -> CGImage? { snapshot?(size) }
 }

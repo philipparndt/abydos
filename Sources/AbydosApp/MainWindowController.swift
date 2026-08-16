@@ -3335,6 +3335,29 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			.joined(separator: "\n  ")
 	}
 
+	/// Says what the Cadova pane in the tab in front is doing, once a second.
+	///
+	/// Over time rather than once, because what 0499 claims is a *sequence*: a
+	/// pane that says `building`, then `model` with a file beside it, and then —
+	/// when somebody changes a constant and saves — `building` and `model` again
+	/// with the run count one higher. A single reading cannot tell any of that
+	/// from a pane that was showing a model all along. Flushed for the reason
+	/// below.
+	func watchCadovaForTesting(seconds: Double) {
+		for second in 0...Int(seconds) {
+			DispatchQueue.main.asyncAfter(deadline: .now() + Double(second)) { [weak self] in
+				guard let self else { return }
+				guard let pane = self.editorForTesting.activeGroup?.cadovaPreview else {
+					print("CADOVA: \(second)s no cadova pane in the tab in front")
+					fflush(stdout)
+					return
+				}
+				print("\(second)s \(pane.reportForTesting)")
+				fflush(stdout)
+			}
+		}
+	}
+
 	/// Starts one of the discovered configurations by name, as choosing it from
 	/// the run menu does, and reads its console back a few seconds later.
 	///

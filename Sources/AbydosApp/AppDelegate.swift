@@ -975,6 +975,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let seconds = options.cadovaWatchSeconds {
+			// A second in: a file opened with `--file` is not in a window at all for
+			// the first moment, and the pane starts nothing until it has been.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+				controller?.watchCadovaForTesting(seconds: seconds)
+			}
+		}
+
 		if let goal = options.chooseMakeRun {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
 				controller?.chooseMakeRunForTesting(goal)

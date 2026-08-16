@@ -165,6 +165,17 @@ struct LaunchOptions {
 	/// Start the discovered configuration with this name and print its console.
 	var runConfigNamed: String?
 
+	/// Report what the Cadova pane in the active tab is doing, once a second,
+	/// for this many seconds.
+	///
+	/// `--run-config` from 0498 watches a *run*; this watches a *pane*, which is
+	/// the thing 0499 changes. A model cannot be read off a screenshot and a
+	/// build cannot be photographed halfway through, so what is worth printing is
+	/// the state, the file the viewer has and how many runs have finished — over
+	/// time, because the whole claim is that it goes building → model, and then
+	/// building → model again when somebody saves.
+	var cadovaWatchSeconds: Double?
+
 	/// Keys to press in the palette's list, comma separated.
 	var switcherKeys: String?
 
@@ -769,6 +780,7 @@ struct LaunchOptions {
 			case "--palette": options.paletteQuery = next() ?? ""
 			case "--run-configs": options.listRunConfigurations = true
 			case "--run-config": options.runConfigNamed = next()
+			case "--cadova-watch": options.cadovaWatchSeconds = next().flatMap(Double.init) ?? 30
 			case "--appearance-walk": options.appearanceWalk = next()
 			case "--copy-path": options.copyPath = next() ?? "down"
 			case "--burst": options.burstFrames = next().flatMap(Int.init)

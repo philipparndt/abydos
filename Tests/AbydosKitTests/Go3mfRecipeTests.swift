@@ -203,12 +203,13 @@ struct Go3mfRecipeTests {
 	/// still answers no, and that is what keeps a tree walk from reading anything.
 	@Test func isAModelOnlyWhenTheContentsSayIt() {
 		let recipe = URL(fileURLWithPath: "/tmp/adapter-set.yaml")
+		let looked = PreviewFacts(looksLikeRecipe: true)
 		#expect(FilePreview.kind(for: recipe) == nil)
 		#expect(!FilePreview.hasPreview(recipe))
 		#expect(FilePreview.availableModes(for: recipe).isEmpty)
 
-		#expect(FilePreview.kind(for: recipe, looksLikeRecipe: true) == .model)
-		#expect(FilePreview.hasPreview(recipe, looksLikeRecipe: true))
+		#expect(FilePreview.kind(for: recipe, facts: looked) == .model)
+		#expect(FilePreview.hasPreview(recipe, facts: looked))
 	}
 
 	/// **An option, not a default.** A recipe opens as its text, and the preview
@@ -217,17 +218,19 @@ struct Go3mfRecipeTests {
 	/// is every part's render plus a `go3mf build` on top.
 	@Test func opensAsTextAndOffersTheViewer() {
 		let recipe = URL(fileURLWithPath: "/tmp/adapter-set.yaml")
-		#expect(FilePreview.defaultMode(for: recipe, looksLikeRecipe: true) == .source)
+		let looked = PreviewFacts(looksLikeRecipe: true)
+		#expect(FilePreview.defaultMode(for: recipe, facts: looked) == .source)
 		#expect(FilePreview.hasReadableSource(recipe))
-		#expect(FilePreview.availableModes(for: recipe, looksLikeRecipe: true) == PreviewMode.allCases)
+		#expect(FilePreview.availableModes(for: recipe, facts: looked) == PreviewMode.allCases)
 	}
 
 	/// A session that remembered the split gets the split back; one that remembered
 	/// nothing gets the text.
 	@Test func comesBackInTheModeItWasLeftIn() {
 		let recipe = URL(fileURLWithPath: "/tmp/adapter-set.yaml")
-		#expect(FilePreview.restoredMode(.splitRight, for: recipe, looksLikeRecipe: true) == .splitRight)
-		#expect(FilePreview.restoredMode(nil, for: recipe, looksLikeRecipe: true) == .source)
+		let looked = PreviewFacts(looksLikeRecipe: true)
+		#expect(FilePreview.restoredMode(.splitRight, for: recipe, facts: looked) == .splitRight)
+		#expect(FilePreview.restoredMode(nil, for: recipe, facts: looked) == .source)
 		// And a mode remembered against a `.yaml` that is no longer a recipe — or
 		// never was — is dropped rather than obeyed.
 		#expect(FilePreview.restoredMode(.splitRight, for: recipe) == .source)
@@ -237,8 +240,9 @@ struct Go3mfRecipeTests {
 	/// is still a mesh's: it opens rendered, because it has no source.
 	@Test func doesNotChangeWhatAMeshDoes() {
 		let mesh = URL(fileURLWithPath: "/tmp/part.stl")
-		#expect(FilePreview.kind(for: mesh, looksLikeRecipe: true) == .model)
-		#expect(FilePreview.defaultMode(for: mesh, looksLikeRecipe: true) == .preview)
+		let looked = PreviewFacts(looksLikeRecipe: true)
+		#expect(FilePreview.kind(for: mesh, facts: looked) == .model)
+		#expect(FilePreview.defaultMode(for: mesh, facts: looked) == .preview)
 	}
 
 	// MARK: - The other door: the navigator's Preview in GoSTL

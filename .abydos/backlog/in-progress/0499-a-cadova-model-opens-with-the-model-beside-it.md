@@ -61,12 +61,12 @@ the spike had it the other way round.
 
 ## Steps
 
-- [ ] Decide which tabs get a model beside them, and write the answer down
-- [ ] `SwiftPackage` reads targets, not only runnable names: what each one
+- [x] Decide which tabs get a model beside them, and write the answer down
+- [x] `SwiftPackage` reads targets, not only runnable names: what each one
       depends on and where its sources are
-- [ ] `CadovaModel` answers "which package, product and target does this file
+- [x] `CadovaModel` answers "which package, product and target does this file
       belong to, and does that target use Cadova"
-- [ ] `FilePreview` takes the facts a name cannot give as one value rather than
+- [x] `FilePreview` takes the facts a name cannot give as one value rather than
       as a growing list of booleans
 - [ ] Running the target produces a 3MF the viewer opens
 - [ ] Saving re-runs it, debounced, and the previous run is cancelled
