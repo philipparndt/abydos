@@ -163,7 +163,7 @@ running, and it will answer.
 - [x] Find out what the server sends while preparing — log messages, progress,
       or nothing — and write the answer here
 - [x] Decide between suppressing and explaining, and write down which and why
-- [ ] A value in the engine that reads `$/progress` and says whether the server
+- [x] A value in the engine that reads `$/progress` and says whether the server
       is still preparing, with a test
 - [ ] Ask for `window.workDoneProgress`, and read `$/progress` in `LSPClient`
 - [ ] The footer's chip says it, and the tool tip says the sentence
