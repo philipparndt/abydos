@@ -117,6 +117,43 @@ The probe is
 `scratchpad/lspprobe501.py`; the runs are `probe501-cold.log` (advertised),
 `probe501-cold-nowdp.log` (as the app asks today) and `probe501-warm.log`.
 
+## The decision: explain, and suppress nothing
+
+**Explain.** The chip beside the caret says `sourcekit-lsp — preparing` while the
+server is preparing, and its tool tip says the sentence. Nothing is held back:
+the false error is still on screen, and what changes is that the window it lives
+in has a name.
+
+Three reasons, in the order they decided it.
+
+- **Suppression cannot tell the two cases apart, and that is the whole
+  complaint.** A dependency that genuinely is not there and one that has not been
+  built yet publish the identical diagnostic; the only thing that separates them
+  is time, and holding the message back for as long as preparation takes means
+  the honest case is silent for a minute and then shouts. Worse, suppression is
+  all-or-nothing at the wrong granularity: the diagnostics arriving at 13 s are
+  not all false. A misplaced brace in the file being edited is real, useful, and
+  reported in the same batch. Holding the batch throws the true ones away with
+  the false ones, and holding only the false ones means matching
+  `No such module` — one compiler's wording, in one language.
+- **The chip is already on screen, so explaining moves nothing.** During
+  preparation the server is running, so `LanguageService.footer` already returns
+  `.answering` and the bar already draws `sourcekit-lsp`. Saying preparation is
+  happening is one word changing in a chip that is there either way: no new
+  furniture, nothing appearing, no layout shift, and nothing to dismiss.
+- **The seam exists and the alternative's does not.** `LanguageServerFooter.State`
+  is an enum of waits whose doc comment already reserves room for another case,
+  and `arrivalSentence` is written in one place and read in two. Suppression has
+  no seam at all — `client.onDiagnostics` writes straight into the table — so it
+  would be new machinery for the weaker answer.
+
+**Not the strip above the file.** It was the other candidate and it is measured
+out: a warm start is 1.2 s of preparation, so a banner would appear and vanish
+inside a second and a half on *every* project open, and the strip pushes the file
+down when it appears — the text would jump twice for nothing. The strip is also
+for what is wrong or missing, and a server that is preparing is neither; it is
+running, and it will answer.
+
 ## Estimate
 
 2026-08-16 13:46 — about two hours left
@@ -125,7 +162,7 @@ The probe is
 
 - [x] Find out what the server sends while preparing — log messages, progress,
       or nothing — and write the answer here
-- [ ] Decide between suppressing and explaining, and write down which and why
+- [x] Decide between suppressing and explaining, and write down which and why
 - [ ] A value in the engine that reads `$/progress` and says whether the server
       is still preparing, with a test
 - [ ] Ask for `window.workDoneProgress`, and read `$/progress` in `LSPClient`
