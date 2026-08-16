@@ -15,7 +15,12 @@ import Foundation
 public final class DependencyNode {
 	public enum Row {
 		/// The one root row: "Dependencies".
-		case section
+		///
+		/// It carries the kind when there is only one root, because then there
+		/// are no group rows and nothing else would say what these are read
+		/// from — "Swift packages" beside the heading is the difference between
+		/// a list of names and a list somebody can act on.
+		case section(subtitle: String?)
 		/// One root's worth, when there is more than one root to tell apart.
 		///
 		/// The name is carried rather than taken from the root's last component:
@@ -48,7 +53,27 @@ public final class DependencyNode {
 		case .section: return "Dependencies"
 		case let .group(_, name): return name
 		case let .package(package): return package.name
-		case let .note(set): return set.kind.title
+		case let .note(set): return DependencyNode.message(for: set)
+		}
+	}
+
+	/// What a note says, which is the whole of that row — it has no subtitle.
+	///
+	/// The kind is deliberately not repeated: the row above a note always names
+	/// it, either as a group's subtitle or as the section's own heading, and
+	/// `Maven — Maven not read yet` was what writing it the other way produced.
+	private static func message(for set: DependencySet) -> String {
+		switch set.contents {
+		case .notRead:
+			// The item number is on the row on purpose. Somebody looking at a
+			// Maven project can see both that its dependencies are not read and
+			// where that is written down, without going to the backlog.
+			guard let item = set.kind.pendingItem else { return "not read yet" }
+			return String(format: "not read yet (%04d)", item)
+		case let .unresolved(reason):
+			return reason
+		case .packages:
+			return ""
 		}
 	}
 
@@ -56,27 +81,16 @@ public final class DependencyNode {
 	/// project a group is, or why a note is there.
 	public var subtitle: String? {
 		switch row {
-		case .section:
-			return nil
+		case let .section(subtitle):
+			return subtitle
 		case let .group(set, _):
 			return set.kind.title
 		case let .package(package):
 			let origin = package.shortOrigin
 			guard let version = package.version else { return origin.isEmpty ? nil : origin }
 			return origin.isEmpty ? version : version + "  ·  " + origin
-		case let .note(set):
-			switch set.contents {
-			case .notRead:
-				// The item number is on the row on purpose. Somebody looking at a
-				// Maven project can see both that its dependencies are not read
-				// and where that is written down, without going to the backlog.
-				guard let item = set.kind.pendingItem else { return "not read yet" }
-				return String(format: "not read yet (%04d)", item)
-			case let .unresolved(reason):
-				return reason
-			case .packages:
-				return nil
-			}
+		case .note:
+			return nil
 		}
 	}
 
@@ -84,8 +98,8 @@ public final class DependencyNode {
 	/// unabbreviated, which is the one thing `subtitle` has to cut.
 	public var detail: String? {
 		switch row {
-		case .section:
-			return nil
+		case let .section(subtitle):
+			return subtitle
 		case let .group(set, _):
 			return set.kind.title + " in " + set.root.path
 		case let .package(package):
@@ -135,8 +149,10 @@ public struct DependencyTree {
 		// more than one", and a lone `cadova-models` heading between the section
 		// and its seven packages is a row that answers a question nobody asked.
 		let children: [DependencyNode]
+		var heading: String?
 		if sets.count == 1, let only = sets.first {
 			children = DependencyTree.rows(for: only)
+			heading = only.kind.title
 		} else {
 			children = sets.map { set in
 				DependencyNode(
@@ -145,7 +161,7 @@ public struct DependencyTree {
 				)
 			}
 		}
-		root = DependencyNode(row: .section, childNodes: children)
+		root = DependencyNode(row: .section(subtitle: heading), childNodes: children)
 	}
 
 	private static func rows(for set: DependencySet) -> [DependencyNode] {

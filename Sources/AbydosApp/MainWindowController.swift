@@ -6235,6 +6235,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			case "alt-cmd-v": navigator.pressKeyForTesting(9, modifiers: [.command, .option])
 			case "collapse": navigator.collapseAll()
 			case "locate": navigator.selectFileInEditor()
+			// The Dependencies section, which is not on disk and so is the one
+			// part of the tree `ls:` can say nothing about. `deps` is what the
+			// section holds whether or not anything is open; `rows` is what the
+			// pane is actually showing, which is the half that proves the rows
+			// arrived rather than only the model.
+			case "deps":
+				print("TREE deps: \(navigator.dependencyReportForTesting().joined(separator: " | "))")
+				continue
+			case "rows":
+				print("TREE rows: \(navigator.rowsForTesting().joined(separator: " | "))")
+				continue
+			// The section sits below the whole tree, which on a repository of
+			// eight subprojects is several screens down.
+			case "deps-open": navigator.openDependenciesForTesting(groups: false)
+			case "deps-open-all": navigator.openDependenciesForTesting(groups: true)
 			// The field on the row, left standing: where its text sits and how
 			// far it reaches are the whole of what is wrong with it, and
 			// `rename:` commits too quickly to photograph.
@@ -6246,6 +6261,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				// behind" is answered by the file system rather than by the tree
 				// agreeing with itself. `ls:.` for the root, `ls:Sources` for a
 				// folder inside it.
+				// A file by absolute path, revealed the way activating its tab
+				// does — the gesture item 508 is about, driven without a symbol
+				// to follow. It prints which package the file turned out to be
+				// in and where that package came from, which is what a
+				// screenshot cannot say.
+				if step.hasPrefix("reveal:") {
+					navigator.revealForTesting(String(step.dropFirst("reveal:".count)))
+					continue
+				}
 				if step.hasPrefix("ls:") {
 					let folder = String(step.dropFirst("ls:".count))
 					guard let root = project?.root else { continue }

@@ -123,12 +123,12 @@ are the files.
       list against file tree — and write the answer down
 - [x] File the kinds that are not in this item: 0510, 0511, 0512, 0513
 - [x] Read a project's dependencies, from what is already on disk
-- [ ] A section in the project view for what the project depends on
-- [ ] It says where each one came from, from what is already on disk
-- [ ] A kind that is not read says so, rather than showing nothing
+- [x] A section in the project view for what the project depends on
+- [x] It says where each one came from, from what is already on disk
+- [x] A kind that is not read says so, rather than showing nothing
 - [ ] A file opened by following a symbol can be revealed in it
-- [ ] Its siblings can be browsed from there
-- [ ] It says which subproject a dependency belongs to, where there is more than
+- [x] Its siblings can be browsed from there
+- [x] It says which subproject a dependency belongs to, where there is more than
       one
 - [ ] Decide what happens to `.build` in the ordinary tree, and say why
 - [ ] Watched in the app, with a screenshot of a dependency revealed

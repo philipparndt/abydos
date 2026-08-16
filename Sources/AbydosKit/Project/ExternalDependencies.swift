@@ -182,6 +182,23 @@ public enum ExternalDependencies {
 		[project] + Subprojects.find(in: project)
 	}
 
+	/// The files whose writing can change the answer, by name.
+	///
+	/// Kept beside the readers so the two cannot drift — the same rule
+	/// `RunConfigurationDiscovery.definingFileNames` follows, and for the same
+	/// reason: a name added to a reader and not to this list is a section that
+	/// goes stale until the project is reopened. The lock files are here as well
+	/// as the manifests, because `swift package resolve` and `go get` write the
+	/// lock and leave the manifest alone.
+	public static let definingFileNames: Set<String> = {
+		var names = Set(DependencyKind.allCases.flatMap(\.markers))
+		names.formUnion([
+			"Package.resolved", "go.sum", "Cargo.lock", "package-lock.json",
+			"pnpm-lock.yaml", "yarn.lock", "MODULE.bazel.lock", "conan.lock",
+		])
+		return names
+	}()
+
 	/// The kinds of project a directory is, by the files in it.
 	///
 	/// Plural: a repository with a `Package.swift` and a `Makefile` is one

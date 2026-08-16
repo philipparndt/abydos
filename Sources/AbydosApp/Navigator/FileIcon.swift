@@ -30,6 +30,30 @@ enum FileIcon {
 		render(key: "dir", spec: Spec(symbol: "folder.fill", color: .hex(0x8A9099)))
 	}
 
+	/// The Dependencies section itself. IntelliJ's *External Libraries* uses a
+	/// shelf of books for the same row, and it reads as "not your files" in a
+	/// way no variation on a folder does.
+	static func dependencySection() -> NSImage? {
+		render(key: "dep.section", spec: Spec(symbol: "books.vertical.fill", color: .hex(0x8A9099)))
+	}
+
+	/// One package. Dimmed when its sources were never fetched — the row is
+	/// still worth having, because "resolved and not downloaded" is a real
+	/// state and a package missing from the list would read as one nothing
+	/// depends on.
+	static func dependencyPackage(fetched: Bool) -> NSImage? {
+		render(
+			key: fetched ? "dep.package" : "dep.package.absent",
+			spec: Spec(symbol: "shippingbox.fill", color: .hex(fetched ? 0x9B8FD0 : 0x6A6E75))
+		)
+	}
+
+	/// A kind nothing reads yet. A question rather than a warning: nothing is
+	/// wrong with the project, there is something missing from this program.
+	static func dependencyNote() -> NSImage? {
+		render(key: "dep.note", spec: Spec(symbol: "questionmark.circle", color: .hex(0xC7A03B)))
+	}
+
 	static func image(for node: FileNode, isExpanded: Bool) -> NSImage? {
 		let key: String
 		let spec: Spec

@@ -237,7 +237,12 @@ struct ExternalDependenciesTests {
 		#expect(set.contents == .notRead)
 
 		let tree = try #require(DependencyTree(sets: [set], project: root))
-		#expect(tree.report() == ["Dependencies", "  Maven — not read yet (0512)"])
+		// The heading names the kind, because with one root there are no group
+		// rows and nothing else would say what is not being read.
+		// The kind is named once, by the heading. The note under it is the
+		// message and nothing else — `Maven — Maven not read yet` is what
+		// repeating it produced.
+		#expect(tree.report() == ["Dependencies — Maven", "  not read yet (0512)"])
 	}
 
 	/// Every kind this program can open is in the list, whether or not it is
@@ -277,7 +282,7 @@ struct ExternalDependenciesTests {
 			ExternalDependencies.read(root: root, kind: .swiftPackage),
 		], project: root))
 		#expect(tree.report() == [
-			"Dependencies",
+			"Dependencies — Swift packages",
 			"  Apus — 0.1.4  ·  github.com/tomasf",
 			"  Cadova — 0.9.1  ·  github.com/tomasf",
 		])
