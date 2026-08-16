@@ -46,7 +46,7 @@ both.
 
 ## Steps
 
-- [ ] `moveToBeginningOfDocumentAndModifySelection:` and
+- [x] `moveToBeginningOfDocumentAndModifySelection:` and
       `moveToEndOfDocumentAndModifySelection:` extend the selection to the edge
 - [ ] Watched with `--vertical-nav`, or whatever it is called by then, from the
       middle of a file: ⌘⇧↑ selects back to offset 0, ⌘⇧↓ forward to the end
