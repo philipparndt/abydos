@@ -8942,8 +8942,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		print("WORD: ⌥← \(editor.caretReportForTesting)")
 	}
 
-	/// Presses ↑ on the first line and ↓ on the last, with Shift and without,
-	/// and says where the caret and the selection ended up each time.
+	/// Presses ↑ on the first line and ↓ on the last, the page keys, and ⌘↑ and
+	/// ⌘↓ from the middle — each with Shift and without — and says where the
+	/// caret and the selection ended up every time.
 	///
 	/// Started from the middle of a line rather than from its edge, or the
 	/// selection ⇧↑ makes would be empty and the run would read the same
@@ -9015,6 +9016,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		place("at 0@400", line: 0, column: 400)
 		press("down", "↓", [])
 		press("down", "↓ again", [])
+
+		// ⌘↑ and ⌘↓ and their shifted twins, from the middle of the file so that
+		// both directions have something to select — from either edge one of the
+		// four would select nothing and read the same as the dead key it used to
+		// be. Before 0495 the shifted pair were selectors `doCommand` had no case
+		// for, so they printed the line placing the caret, unchanged.
+		place("at 3@4", line: 3, column: 4)
+		press("up", "⌘↑", .command)
+		place("at 3@4", line: 3, column: 4)
+		press("up", "⌘⇧↑", [.command, .shift])
+		place("at 3@4", line: 3, column: 4)
+		press("down", "⌘↓", .command)
+		place("at 3@4", line: 3, column: 4)
+		press("down", "⌘⇧↓", [.command, .shift])
 	}
 
 	func openFirstScratchForTesting() {

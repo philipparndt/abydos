@@ -40,15 +40,62 @@ both.
   caught all three in one session, and would say nothing in release. Worth
   weighing against the noise before writing it.
 
+## Watched in the app
+
+0494's `--vertical-nav` driver, extended with the four ⌘ keystrokes. They are
+pressed from **line 3 of 7** rather than from an edge: from the top ⌘⇧↑ would
+select nothing and read exactly like the dead key it used to be, and from the
+bottom so would ⌘⇧↓. The caret is put back to the same place before each one,
+so the four lines are four independent presses and not a run.
+
+The scratch file is 0494's again — seven lines, the first 723 characters, **no
+trailing newline** — so the offsets line up with the report quoted at the top
+of this item: line 3 starts at 771, line 6 at 830, the file ends at 863.
+
+    $ build/Abydos.app/Contents/MacOS/Abydos --open …/vert --file …/vertical.txt --vertical-nav
+
+    VERT: word wrap is off
+    VERT: at 3@4      caret=775 selection=775..<775 “”
+    VERT: ⌘↑          caret=0   selection=0..<0 “”
+    VERT: at 3@4      caret=775 selection=775..<775 “”
+    VERT: ⌘⇧↑         caret=0   selection=0..<775 “one word001 word002 …
+                                                   third line of the file
+                                                   four”
+    VERT: at 3@4      caret=775 selection=775..<775 “”
+    VERT: ⌘↓          caret=863 selection=863..<863 “”
+    VERT: at 3@4      caret=775 selection=775..<775 “”
+    VERT: ⌘⇧↓         caret=863 selection=775..<863 “th line of the file
+                                                     fifth line of the file
+                                                     sixth lines
+                                                     seventh and last line of the file”
+
+The `…` in the ⌘⇧↑ line is 700-odd characters of `word004 word005 …` elided by
+hand; nothing else here is edited. Before this change all four of those lines
+read `caret=775 selection=775..<775 “”` for the two shifted presses — the
+report the driver prints when a keystroke does nothing at all, which is what
+the four lines at the top of this item are.
+
+So: the caret lands on the same offset with Shift as without — 0 for up, 863
+for down — and Shift decides only whether the text between there and 775 comes
+with it. That is the same sentence 0494 wrote for ⇧↑ and ⇧⇟.
+
+**Run twice, and soft wrap makes no difference to these four.** The whole
+unwrapped run is above; the same run with wrap on prints byte-identical ⌘ lines
+(the earlier keystrokes differ, as 0494 documented: `↑` from `0@400` is 197
+wrapped and 0 unwrapped). It could not be otherwise — `moveToDocumentEdge` is
+offset 0 and `utf16Count` and never asks about a row — but the setting persists
+between launches and the run says which mode it is in, so it was cheap to
+confirm rather than argue.
+
 ## Estimate
 
-2026-08-16 09:58 — about two hours left
+2026-08-16 10:04 — about an hour left
 
 ## Steps
 
 - [x] `moveToBeginningOfDocumentAndModifySelection:` and
       `moveToEndOfDocumentAndModifySelection:` extend the selection to the edge
-- [ ] Watched with `--vertical-nav`, or whatever it is called by then, from the
+- [x] Watched with `--vertical-nav`, or whatever it is called by then, from the
       middle of a file: ⌘⇧↑ selects back to offset 0, ⌘⇧↓ forward to the end
 - [ ] Check no other motion is missing its twin, and say in here how that was
       checked rather than that it was
