@@ -2810,6 +2810,11 @@ final class EditorViewController: NSViewController {
 	/// Tabs come out as `⇥`, because the question a driver asks about an
 	/// inserted line is usually whether it is empty or full of whitespace, and
 	/// a real tab in a terminal transcript answers that invisibly.
+	///
+	/// The line count comes with them. A newline inserted at the end of a line
+	/// leaves an empty line after it, and the line after *that* one was
+	/// already there — so two lines of text are the same either side of the
+	/// press and only the count says the file grew.
 	var caretLinesForTesting: String {
 		guard let codeView = activeTab?.codeView, let document = activeTab?.document else {
 			return "no file"
@@ -2826,6 +2831,7 @@ final class EditorViewController: NSViewController {
 		let next = index + 1 < document.lineCount ? rope.lineText(index + 1) : nil
 		return "line \(index) “\(shown(marked))”"
 			+ (next.map { " then \(index + 1) “\(shown($0))”" } ?? " (last line)")
+			+ " — \(document.lineCount) lines"
 	}
 
 	/// Presses ⌘/ over a caret or a selection the spec names.

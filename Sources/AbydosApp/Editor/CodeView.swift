@@ -2168,6 +2168,17 @@ final class CodeView: NSView, NSTextInputClient {
 			snippetSession = nil
 		case #selector(selectAll(_:)):           selectAllText()
 		case #selector(insertLineBreak(_:)):     insertTextAtCaret("\n")
+		// ⌃O, which macOS sends as this selector and then `moveBackward:` —
+		// two selectors from one key, in that order. A **bare** newline and
+		// not `insertNewlineWithIndent()`: the newline goes in, the caret ends
+		// up after it, and the `moveBackward:` that follows steps back over
+		// it, so the caret finishes where it started with the line split
+		// beneath it. That is open-line, and it only composes because the
+		// insertion moves the caret exactly one character. Copying the indent
+		// would move it by one plus the indent, and `moveBackward:` would land
+		// the caret inside the whitespace it had just written — on a line the
+		// caret is not supposed to be on at all.
+		case #selector(insertNewlineIgnoringFieldEditor(_:)): insertTextAtCaret("\n")
 		default:
 			// Unhandled selectors are common (e.g. noop:); staying silent is right.
 			break
