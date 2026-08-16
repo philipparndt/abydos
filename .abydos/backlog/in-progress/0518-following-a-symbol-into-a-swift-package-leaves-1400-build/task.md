@@ -206,7 +206,7 @@ item was written from, and deleting them is not this item's call. Nothing in
   whoever owns it.
 - [x] A test, if the invocation can be asked about without a language server
 - [x] Write down here what was ruled out on the way
-- [ ] `spec/language-servers.md` says where the Swift indexer writes
+- [x] `spec/language-servers.md` says where the Swift indexer writes
 
 ## Estimate
 
