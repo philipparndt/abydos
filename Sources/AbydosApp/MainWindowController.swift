@@ -3618,6 +3618,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		case .gradle:    return "Gradle"
 		case .javaMain:  return "Java"
 		case .xcodeScheme: return "Schemes"
+		case .swiftPackage: return "Swift Package"
 		case .bazel:     return "Bazel"
 		case .conan:     return "Conan"
 		}

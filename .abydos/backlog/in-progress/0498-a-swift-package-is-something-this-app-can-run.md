@@ -99,15 +99,45 @@ running `dump-package` in the background and folding the answer in later, which
 would need `discover(in:)` to become async and every caller with it, for a list
 that would still be a subprocess per package per scan.
 
+### 2. `swift test` is a kind, and it costs nothing to have made it one
+
+Yes. It is the same file read the same way, and the objection that would have
+stopped it does not apply. `isTest(_:)` matches `arguments.contains("test")`, so
+a `swift test` configuration is a test run the moment it exists — which is what
+the rule in that function's comment demands: "Tests are run constantly and from
+anywhere in a file, so they must never become saved configurations." That rule
+was written against *per-test-function* entries, hundreds of them; `swift test`
+is one entry for a whole package, offered and never saved, and it needed no code
+of its own to be classified. There is a test asserting exactly that, because it
+is the whole reason adding the kind was safe.
+
+Offered only when the manifest declares a `.testTarget`. A `swift test` on a
+package with no tests is a menu entry that builds and then reports nothing, and
+a run list that offers work with no result in it is how a list stops being read.
+
+### 3. The working directory is the package root, and 0499 should rely on it
+
+The directory holding `Package.swift`. It is where `swift run` has to be invoked
+from to find the package at all, it is what somebody typing the command would be
+standing in, and it is the house default besides — every per-directory finder in
+`RunConfigurationDiscovery` passes the directory it searched, and only Bazel
+(the workspace root, where labels resolve) and Gradle (the wrapper's directory)
+differ, each because its own tool insists.
+
+Said out loud in the spec as a requirement of its own, and asserted by
+`itRunsInThePackageRoot`, because 0499 needs it to be a promise rather than an
+accident: Cadova writes its `.3mf` beside the package, so the working directory
+is what decides where the file 0499 has to find will be.
+
 ## Steps
 
 - [x] Measure both ways of enumerating, and decide between them in writing
-- [ ] `RunConfiguration` finds executable targets in a `Package.swift` project
+- [x] `RunConfiguration` finds executable targets in a `Package.swift` project
 - [ ] It runs one, with the package root as the working directory
-- [ ] Decide about `swift test` as a kind, and do it or write down why not
-- [ ] `Package.swift` in `definingFileNames`, so a package written after the
+- [x] Decide about `swift test` as a kind, and do it or write down why not
+- [x] `Package.swift` in `definingFileNames`, so a package written after the
       project was opened gets its entries without reopening
-- [ ] Tests for discovery against a manifest with more than one executable
+- [x] Tests for discovery against a manifest with more than one executable
 - [ ] A driver that starts one configuration by name, so a run can be watched
 - [ ] Watched in the app: a Swift package's executables in the run list, and
       one of them actually running

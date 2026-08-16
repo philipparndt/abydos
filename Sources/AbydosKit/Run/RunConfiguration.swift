@@ -22,6 +22,8 @@ public struct RunConfiguration: Equatable, Sendable, Identifiable {
 		/// A scheme of an Xcode project or workspace, run on a destination
 		/// chosen beside it.
 		case xcodeScheme
+		/// An executable product of a `Package.swift`, or that package's tests.
+		case swiftPackage
 		/// A `*_binary` or `*_test` rule in a Bazel `BUILD` file.
 		case bazel
 		/// What a Conan package can be asked to do: install, build, create.
@@ -134,6 +136,10 @@ public enum RunConfigurationDiscovery {
 		"build.gradle", "build.gradle.kts",
 		"BUILD", "BUILD.bazel", "MODULE.bazel", "WORKSPACE", "WORKSPACE.bazel", "WORKSPACE.bzlmod",
 		"conanfile.py", "conanfile.txt",
+		// By this exact name, and deliberately not by the `swift` extension:
+		// an extension here would put every save in every Swift project
+		// through the whole search, which is the fault 0446 measured.
+		"Package.swift",
 		"launch.json",
 		"workspace.xml",
 	]
@@ -215,6 +221,7 @@ public enum RunConfigurationDiscovery {
 			result += mavenGoals(in: directory, root: root)
 			result += gradleTasks(in: directory, root: root)
 			result += xcodeSchemes(in: directory)
+			result += swiftPackageRuns(in: directory, root: root)
 			result += bazelTargets(in: directory)
 			result += conanActions(in: directory)
 		}
@@ -620,6 +627,63 @@ public enum RunConfigurationDiscovery {
 				xcode: XcodeTarget(project: project, scheme: scheme)
 			)
 		}
+	}
+
+	// MARK: - SwiftPM
+
+	/// What the Swift package in this directory can run.
+	///
+	/// One entry per executable product — the name `swift run` takes, which is
+	/// the product's and not the target's — and one `swift test` when the
+	/// package declares a test target. See `SwiftPackage` for why the manifest
+	/// is read rather than handed to `swift package dump-package`.
+	///
+	/// **The working directory is the package root**, which is the directory
+	/// holding `Package.swift`. Not a choice so much as the only answer: it is
+	/// where `swift run` has to be invoked from to find the package at all, and
+	/// it is what somebody typing the command would be standing in. It is also
+	/// the house default — every per-directory finder here passes the directory
+	/// it searched, and only Bazel and Gradle differ, each because its tool
+	/// insists on being run somewhere else. Written down because item 0499
+	/// depends on it: Cadova writes its output beside the package, so the
+	/// working directory is what decides where the file lands.
+	static func swiftPackageRuns(in directory: URL, root: URL) -> [RunConfiguration] {
+		guard let package = SwiftPackage.find(in: directory) else { return [] }
+
+		let manifest = canonicalPath(package.manifest)
+		let workingDirectory = canonicalPath(directory)
+		let suffix = moduleSuffix(for: directory, root: root)
+
+		var result = package.executables.map { executable in
+			RunConfiguration(
+				name: "swift run \(executable.name)\(suffix)",
+				source: .swiftPackage,
+				executable: "swift",
+				arguments: ["run", executable.name],
+				workingDirectory: workingDirectory,
+				file: manifest,
+				line: executable.line
+			)
+		}
+
+		// `swift test` is a kind, because it is the same discovery and one
+		// entry for the whole package. `isTest` already recognises it by the
+		// `test` in its arguments, so it is offered and never saved — which is
+		// the rule about test runs this list has always had, and the reason a
+		// per-function entry would have been wrong where this is not.
+		if let line = package.testLine {
+			result.append(RunConfiguration(
+				name: "swift test\(suffix)",
+				source: .swiftPackage,
+				executable: "swift",
+				arguments: ["test"],
+				workingDirectory: workingDirectory,
+				file: manifest,
+				line: line
+			))
+		}
+
+		return result
 	}
 
 	// MARK: - Java
