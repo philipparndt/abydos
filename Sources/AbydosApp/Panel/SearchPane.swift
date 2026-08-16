@@ -247,11 +247,22 @@ final class SearchPane: NSView, ResultsPane {
 		DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
 	}
 
-	private var results: [FileSearchResult] = []
+	/// Whether the *walk* stopped at a bound. Held here rather than asked of the
+	/// search, because the status line is redrawn — a row ticked, the `✓`
+	/// toggled — long after the walk has finished and the outcome has gone.
+	private var wasCapped = false
+
+	/// Whether what is in the list is a prefix of what is there.
+	///
+	/// Either end can cap: the walk stops at `maximumResults` or
+	/// `maximumMatches`, and the list itself refuses to grow past its own
+	/// ceiling whatever it is handed. Neither is the whole answer on its own —
+	/// a usages list is handed its results in one go and never walks anything.
+	private var capped: Bool { wasCapped || list.isCapped }
 
 	private func runSearch() {
 		let query = field.stringValue
-		results = []
+		wasCapped = false
 		searchFinished = false
 		list.question = question
 		list.setResults([])
@@ -273,14 +284,19 @@ final class SearchPane: NSView, ResultsPane {
 		search.search(
 			query: query,
 			options: options,
+			// What arrived, and not everything found so far. The pane used to keep
+			// its own growing array and hand the whole of it back on every batch,
+			// so batch *n* rebuilt batches 1…*n*: item 519 measured 440 854
+			// matches over a one-character query and seven seconds in which the
+			// window did not answer at all. Named for the stall log, which had
+			// nothing but `idle` against those seven seconds.
 			onResults: { [weak self] batch in
-				guard let self else { return }
-				self.results.append(contentsOf: batch)
-				self.list.setResults(self.results)
+				StallWatch.mark("search results") { self?.list.appendResults(batch) }
 			},
-			onFinished: { [weak self] completed, _ in
-				guard let self, completed else { return }
+			onFinished: { [weak self] outcome in
+				guard let self, outcome.completed else { return }
 				self.searchFinished = true
+				self.wasCapped = outcome.capped
 				self.updateStatus()
 			}
 		)
@@ -288,13 +304,24 @@ final class SearchPane: NSView, ResultsPane {
 
 	private func updateStatus() {
 		let matchCount = list.matchCount
-		let fileCount = list.results.count
+		let fileCount = list.fileCount
 		let prefix = searchFinished ? "" : "Searching… "
 		guard matchCount > 0 else {
 			statusLabel.stringValue = searchFinished ? "No results" : "Searching…"
 			return
 		}
-		var text = "\(prefix)\(matchCount) in \(fileCount) file\(fileCount == 1 ? "" : "s")"
+		// A capped list says it is capped, in the same breath as the count.
+		//
+		// This is the half of item 519 that is not about speed. The 500-file
+		// bound has been there all along and `onFinished` reported `completed`
+		// whether the tree had been walked or the bound had been hit, so a
+		// truncated list printed a bare count and looked complete — which is the
+		// one failure this program refuses everywhere else. "the first" in front
+		// of the number is what stops it being read as all of them.
+		var text = capped
+			? "\(prefix)the first \(matchCount) in \(fileCount) file\(fileCount == 1 ? "" : "s")"
+				+ " · more not shown"
+			: "\(prefix)\(matchCount) in \(fileCount) file\(fileCount == 1 ? "" : "s")"
 		// The progress, which is the reason the pane keeps marks at all: after an
 		// hour the list looked the same as it did at the start, and this is where
 		// that stops being true.

@@ -75,19 +75,15 @@ final class ResultChecklist: NSView {
 	/// the editor is ⇥ and only ⇥.
 	var opensOnSelectionChange = false
 
-	/// Flattened for display: a file header row, then one row per match.
+	/// What is in the list, flattened into rows: a file heading, then one row per
+	/// match under it.
 	///
-	/// The done state is carried on the row rather than looked up while drawing:
-	/// a cell is made per visible row on every reload, and asking the checklist
-	/// from inside `viewFor` would recompute a file's marks once per row of it.
-	private enum Row {
-		case file(FileSearchResult, done: Int, isDone: Bool)
-		case match(FileSearchResult, SearchMatch, SearchChecklist.Mark, isDone: Bool)
-	}
-
-	private(set) var results: [FileSearchResult] = []
-	private var rows: [Row] = []
-	private var collapsedFiles: Set<String> = []
+	/// The rows, the marks, the counts and the cap are all in `AbydosKit` and not
+	/// here, because none of them needs a window and all of them needed a test:
+	/// item 519 is the item about this list being O(everything found so far) on
+	/// every batch that streamed in, and a claim about that is arithmetic over
+	/// arrays. What is left in this file is the table.
+	private var model = ResultRows()
 
 	/// What has been ticked off, per question.
 	///
@@ -102,7 +98,10 @@ final class ResultChecklist: NSView {
 	/// are handed over: two searches over the same file, or the usages of two
 	/// different symbols, are different questions and having answered one is not
 	/// having answered the other.
-	var question = SearchChecklist.Question(query: "", options: SearchOptions())
+	var question: SearchChecklist.Question {
+		get { model.question }
+		set { model.question = newValue }
+	}
 
 	private var tableView: ChecklistTable!
 	/// What the driver's printed lines are labelled with, so one script can tell
@@ -164,24 +163,47 @@ final class ResultChecklist: NSView {
 
 	/// Replaces the rows. The ticks are untouched: they are keyed on the
 	/// question and the matched text, not on a position in this array.
+	///
+	/// What the usages list uses, which is handed its whole answer at once. A
+	/// list that *streams* must use `appendResults` — see there.
 	func setResults(_ results: [FileSearchResult]) {
-		self.results = results
-		rebuildRows()
+		model.setResults(results, marking: checklist)
+		reloadRows()
+	}
+
+	/// Takes in a batch that has just arrived, and builds rows for that batch
+	/// alone.
+	///
+	/// The whole of item 519. The search pane used to accumulate the batches
+	/// itself and hand the growing array back to `setResults` every time, so
+	/// batch *n* rebuilt everything found so far: 440 000 matches over a
+	/// one-character query, and seven seconds in which the window did not answer
+	/// at all. Appending costs what arrived.
+	func appendResults(_ batch: [FileSearchResult]) {
+		guard !batch.isEmpty else { return }
+		model.append(batch, marking: checklist)
+		reloadRows()
 	}
 
 	/// How many of the matches now showing are marked done.
-	var doneCount: Int { checklist.doneCount(in: results, for: question) }
+	var doneCount: Int { model.doneCount }
 
-	var matchCount: Int { results.reduce(0) { $0 + $1.matches.count } }
+	var matchCount: Int { model.matchCount }
 
-	var rowCount: Int { rows.count }
+	var fileCount: Int { model.results.count }
 
-	private(set) var hidesDone = false
+	var rowCount: Int { model.count }
+
+	/// True when the list holds a prefix of what is there rather than all of it,
+	/// so the pane above can say so.
+	var isCapped: Bool { model.isCapped }
+
+	var hidesDone: Bool { model.hidesDone }
 
 	func setHidesDone(_ hiding: Bool) {
-		guard hidesDone != hiding else { return }
-		hidesDone = hiding
-		rebuildRows()
+		guard model.hidesDone != hiding else { return }
+		model.setHidesDone(hiding, marking: checklist)
+		reloadRows()
 	}
 
 	func applySettings() { tableView.reloadData() }
@@ -197,7 +219,7 @@ final class ResultChecklist: NSView {
 		// A list that opened a file the moment it appeared would have moved the
 		// editor before anybody asked; landing on the heading means the first ↓ is
 		// the first usage, rather than the first ↓ skipping it.
-		if tableView.selectedRow < 0, !rows.isEmpty { select(0) }
+		if tableView.selectedRow < 0, model.count > 0 { select(0) }
 	}
 
 	var hasKeyboard: Bool {
@@ -212,28 +234,15 @@ final class ResultChecklist: NSView {
 		restoringSelection = false
 	}
 
+	/// Everything again, for a reason that is not new results: a row ticked, a
+	/// ⌘Z, a file folded shut, the hide-done toggle.
 	private func rebuildRows() {
-		let question = self.question
-		let hiding = hidesDone
-		rows = []
-		for result in results {
-			let marks = SearchChecklist.marks(for: result)
-			let flags = marks.map { checklist.isDone($0, for: question) }
-			let doneCount = flags.filter { $0 }.count
-			// A heading is done when everything under it is, rather than being
-			// marked in its own right: a re-run that turns up one new match in a
-			// finished file must bring that file back with the new match under
-			// it, and a file marked as a whole could not do that.
-			let allDone = doneCount == marks.count && !marks.isEmpty
-			if hiding && allDone { continue }
+		model.rebuild(marking: checklist)
+		reloadRows()
+	}
 
-			rows.append(.file(result, done: doneCount, isDone: allDone))
-			guard !collapsedFiles.contains(result.relativePath) else { continue }
-			for (index, match) in result.matches.enumerated() {
-				if hiding && flags[index] { continue }
-				rows.append(.match(result, match, marks[index], isDone: flags[index]))
-			}
-		}
+	/// The table, told that the rows it is drawing have changed.
+	private func reloadRows() {
 		// Rebuilding is not somebody moving the selection, and a reload that
 		// previewed whatever landed under the cursor would open a file every
 		// time a search batch streamed in.
@@ -245,7 +254,7 @@ final class ResultChecklist: NSView {
 
 	@objc private func rowClicked() {
 		let index = tableView.clickedRow >= 0 ? tableView.clickedRow : tableView.selectedRow
-		guard rows.indices.contains(index) else { return }
+		guard let row = model[index] else { return }
 
 		// A click that is building a selection is not a click that opens. ⇧- and
 		// ⌘-clicking still send the table's action, so without this every row
@@ -256,16 +265,12 @@ final class ResultChecklist: NSView {
 		   !event.modifierFlags.intersection([.shift, .command]).isEmpty { return }
 		if tableView.selectedRowIndexes.count > 1 { return }
 
-		switch rows[index] {
-		case let .file(result, _, _):
+		switch row {
+		case let .file(result, _, _, _):
 			// Clicking a file header folds it away, which matters once a list
 			// returns hundreds of hits.
-			if collapsedFiles.contains(result.relativePath) {
-				collapsedFiles.remove(result.relativePath)
-			} else {
-				collapsedFiles.insert(result.relativePath)
-			}
-			rebuildRows()
+			model.toggleCollapsed(result.relativePath, marking: checklist)
+			reloadRows()
 		case let .match(result, match, _, _):
 			// Somebody who clicked a line of code means to be in it — in a tab of
 			// its own, rather than the provisional one the walk uses. What a click
@@ -328,8 +333,7 @@ final class ResultChecklist: NSView {
 		pendingReveal = nil
 		guard tableView.selectedRowIndexes.count == 1,
 		      let index = tableView.selectedRowIndexes.first,
-		      rows.indices.contains(index),
-		      case let .match(result, match, _, _) = rows[index]
+		      case let .match(result, match, _, _)? = model[index]
 		else { return }
 
 		guard isARepeat else {
@@ -355,21 +359,10 @@ final class ResultChecklist: NSView {
 	///
 	/// A file heading brings every match in the file with it, collapsed or not:
 	/// the heading *is* the file, and a selection that took only the rows on
-	/// screen would quietly leave a folded file half-ticked.
+	/// screen would quietly leave a folded file half-ticked. The rule is in
+	/// `ResultRows` with the rows it reads.
 	private func marks(under indexes: IndexSet) -> [SearchChecklist.Mark] {
-		var seen: Set<SearchChecklist.Mark> = []
-		var collected: [SearchChecklist.Mark] = []
-		for index in indexes where rows.indices.contains(index) {
-			switch rows[index] {
-			case let .file(result, _, _):
-				for mark in SearchChecklist.marks(for: result) where seen.insert(mark).inserted {
-					collected.append(mark)
-				}
-			case let .match(_, _, mark, _):
-				if seen.insert(mark).inserted { collected.append(mark) }
-			}
-		}
-		return collected
+		model.marks(under: indexes)
 	}
 
 	/// ␣, and the two menu items. `done` nil means toggle.
@@ -401,10 +394,11 @@ final class ResultChecklist: NSView {
 	private func reload(keeping indexes: IndexSet) {
 		let anchor = indexes.first ?? 0
 		rebuildRows()
-		guard !rows.isEmpty else { return }
-		let restored = hidesDone
-			? IndexSet(integer: min(anchor, rows.count - 1))
-			: indexes.filteredIndexSet { $0 < rows.count }
+		let count = model.count
+		guard count > 0 else { return }
+		let restored = model.hidesDone
+			? IndexSet(integer: min(anchor, count - 1))
+			: indexes.filteredIndexSet { $0 < count }
 		restoringSelection = true
 		tableView.selectRowIndexes(restored, byExtendingSelection: false)
 		if let first = restored.first { tableView.scrollRowToVisible(first) }
@@ -499,8 +493,8 @@ final class ResultChecklist: NSView {
 	}
 
 	private func openSelection(intent: Intent) -> Bool {
-		for index in tableView.selectedRowIndexes where rows.indices.contains(index) {
-			if case let .match(result, match, _, _) = rows[index] {
+		for index in tableView.selectedRowIndexes {
+			if case let .match(result, match, _, _)? = model[index] {
 				// A commit is going to the file that is already on screen from the
 				// preview, so the reveal is not repeated — but the intent has to
 				// reach the editor either way, because it is the intent that
@@ -576,11 +570,11 @@ final class ResultChecklist: NSView {
 		case "undo": markUndo.undo()
 		case "redo": markUndo.redo()
 		case "rows":
-			print("\(logPrefix) rows: \(rows.count)")
-			for (index, row) in rows.enumerated() {
+			print("\(logPrefix) rows: \(model.count)\(model.isCapped ? " CAPPED" : "")")
+			for (index, row) in model.rows.enumerated() {
 				let selected = tableView.selectedRowIndexes.contains(index) ? "*" : " "
 				switch row {
-				case let .file(result, done, isDone):
+				case let .file(result, _, done, isDone):
 					print("  \(selected)\(index) file \(result.relativePath) "
 						+ "\(done)/\(result.matches.count)\(isDone ? " DONE" : "")")
 				case let .match(_, match, _, isDone):
@@ -621,7 +615,7 @@ final class ResultChecklist: NSView {
 	/// below it. Posted, they arrive the way the window server delivers them,
 	/// which is also what sets `NSApp.currentEvent` for the action that follows.
 	private func clickForTesting(_ row: Int, modifiers: NSEvent.ModifierFlags) {
-		guard rows.indices.contains(row), let window else { return }
+		guard model[row] != nil, let window else { return }
 		let rect = tableView.rect(ofRow: row)
 		let inWindow = tableView.convert(NSPoint(x: rect.midX, y: rect.midY), to: nil)
 		for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
@@ -662,11 +656,12 @@ final class ResultChecklist: NSView {
 	}
 
 	func moveSelection(by delta: Int, extending: Bool) {
-		guard !rows.isEmpty else { return }
+		let count = model.count
+		guard count > 0 else { return }
 		let from = delta > 0
 			? (tableView.selectedRowIndexes.last ?? -1)
-			: (tableView.selectedRowIndexes.first ?? rows.count)
-		let next = max(0, min(rows.count - 1, from + delta))
+			: (tableView.selectedRowIndexes.first ?? count)
+		let next = max(0, min(count - 1, from + delta))
 		tableView.selectRowIndexes(IndexSet(integer: next), byExtendingSelection: extending)
 		tableView.scrollRowToVisible(next)
 		selectionMoved(isARepeat: false)
@@ -674,7 +669,7 @@ final class ResultChecklist: NSView {
 
 	/// ↓ from a field above the list, moving the keyboard into it.
 	func takeKeyboardFromAbove() -> Bool {
-		guard !rows.isEmpty else { return false }
+		guard model.count > 0 else { return false }
 		window?.makeFirstResponder(tableView)
 		if tableView.selectedRow < 0 {
 			restoringSelection = true
@@ -700,7 +695,7 @@ extension ResultChecklist: NSMenuItemValidation {
 		case #selector(markSelectionNotDone):
 			return selected.contains { checklist.isDone($0, for: question) }
 		case #selector(toggleHideDone):
-			item.state = hidesDone ? .on : .off
+			item.state = model.hidesDone ? .on : .off
 			return true
 		default:
 			return true
@@ -709,7 +704,7 @@ extension ResultChecklist: NSMenuItemValidation {
 }
 
 extension ResultChecklist: NSTableViewDataSource, NSTableViewDelegate {
-	func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
+	func numberOfRows(in tableView: NSTableView) -> Int { model.count }
 
 	func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
 		Theme.current.scaled(22)
@@ -720,12 +715,12 @@ extension ResultChecklist: NSTableViewDataSource, NSTableViewDelegate {
 	}
 
 	func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-		guard rows.indices.contains(row) else { return nil }
-		switch rows[row] {
-		case let .file(result, done, isDone):
+		guard let entry = model[row] else { return nil }
+		switch entry {
+		case let .file(result, _, done, isDone):
 			return ChecklistFileCell(
 				result: result,
-				isCollapsed: collapsedFiles.contains(result.relativePath),
+				isCollapsed: model.isCollapsed(result.relativePath),
 				done: done,
 				isDone: isDone
 			)

@@ -98,8 +98,8 @@ and a dictionary of `String` keys per match, redone 25 times over.
 
 - [x] Reproduce it from outside the app, with a query short enough to hurt, and
       say how long it takes before the fix
-- [ ] Streaming results does not rebuild what has already been built
-- [ ] The list is bounded, by whatever was decided, and says so when it is
+- [x] Streaming results does not rebuild what has already been built
+- [x] The list is bounded, by whatever was decided, and says so when it is
 - [ ] The window keeps answering while a broad search runs — measured, not
       judged by eye
 - [ ] Watched: type two characters into a project of real size and keep typing
