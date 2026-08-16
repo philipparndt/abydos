@@ -88,19 +88,36 @@ keeps the keyboard", survives and gets stronger.
 - **Whether the gray is the system's inactive selection or a colour of this
   program's own.** `NSTableView` has an answer; the panel is themed.
 
+## Estimate
+
+2026-08-16 19:35 — about three hours left
+
 ## Steps
 
+- [ ] A third intent, because two will not say it: `Intent` decides the
+      keyboard **and** whether the tab is provisional, and "a click keeps the
+      keyboard but still opens a permanent tab" is a case neither of the two has
 - [ ] A click and a double click leave the keyboard in the list
 - [ ] ⏎ leaves the keyboard in the list
 - [ ] ⇥ is the one gesture that hands the keyboard to the editor
+- [ ] The rule is one function in `AbydosKit` with a test, since nothing in the
+      window layer has one
+- [ ] `window-key:tab`, so the ⇥ claim can be made where it can fail — the
+      existing `tab-key` calls the table directly and proves nothing about
+      whether ⇥ ever reached it
 - [ ] A list without the keyboard draws its selection gray
 - [ ] The **editor** does the same: a selection in a `CodeView` that has not
       got the keyboard is gray too, which is the second half of the report
+- [ ] `CodeView.becomeFirstResponder` marks itself for redraw — today only
+      `resign` does, so a focus-dependent colour would gray on the way out and
+      stay gray on the way back in
 - [ ] One colour and one rule for both, named once in `Theme` rather than
-      decided twice
+      decided twice — and the project tree, which has been doing this by hand
+      since long before today, asks the same function
 - [ ] Watched from outside the app with `who` after each gesture, in both the
       search list and the usages list
 - [ ] Watched in each of 0506's four homes, since ⇥ has other meanings there
+- [ ] Screenshots of the gray, in both views, since this is judged by eye
 - [ ] `make test` and `make warnings` are clean
 - [ ] Write down here what was ruled out on the way
 - [ ] `spec/usages.md` and `spec/search.md` say what the project now does
