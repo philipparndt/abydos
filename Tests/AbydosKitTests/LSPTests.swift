@@ -1144,4 +1144,47 @@ struct IndexScratchPathTests {
 				== LanguageServers.indexScratchPath(for: project)
 		)
 	}
+
+	/// And the indexer is *started* there too, which is 0518.
+	///
+	/// Telling it where to build is not enough: the builds it starts write some
+	/// of their outputs to paths with no directory in them, and a relative path
+	/// is written where the process stands. Started in the project, that is 1424
+	/// files — four per source file of the package being prepared — loose in
+	/// somebody's checkout, in their `git status` and in every search.
+	@Test func theIndexerIsStartedWhereItBuilds() throws {
+		let definition = try #require(LanguageServers.definition(forLanguage: "swift", choosing: .none))
+		let scratch = LanguageServers.indexScratchPath(for: project)
+		try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+		defer { try? FileManager.default.removeItem(at: scratch) }
+
+		let directory = LanguageServers.workingDirectory(for: definition, root: project)
+		#expect(directory == scratch)
+		#expect(
+			!directory.path.hasPrefix(project.path),
+			"a relative write by the indexer must not land in the project"
+		)
+	}
+
+	/// A cache that could not be made leaves the project as the answer. A
+	/// `Process` whose working directory does not exist refuses to run, and a
+	/// server that will not start is worse than one that litters.
+	@Test func aMissingCacheDirectoryLeavesTheProject() throws {
+		let definition = try #require(LanguageServers.definition(forLanguage: "swift", choosing: .none))
+		let absent = URL(fileURLWithPath: "/Users/me/dev/no-such-project-0518")
+		#expect(LanguageServers.workingDirectory(for: definition, root: absent) == absent)
+	}
+
+	/// Everything else is started in its project, which is what has always been
+	/// right for it: nothing else here builds the package to answer a question.
+	@Test func everyOtherServerIsStartedInItsProject() throws {
+		for language in ["go", "python", "java"] {
+			guard let definition = LanguageServers.definition(forLanguage: language, choosing: .none)
+			else { continue }
+			#expect(
+				LanguageServers.workingDirectory(for: definition, root: project) == project,
+				"\(definition.command) should start in the project"
+			)
+		}
+	}
 }
