@@ -157,6 +157,31 @@ struct ResultRowsTests {
 		])
 	}
 
+	/// The running count and the count taken from scratch agree.
+	///
+	/// `doneCount` used to be `SearchChecklist.doneCount(in:for:)`, a walk over
+	/// every result asking for every mark again — which is a large part of what
+	/// froze the window, because the status line was redrawn on every batch. It
+	/// is kept as batches arrive now, and a number maintained incrementally is a
+	/// number that can drift. So it is checked against the one that cannot.
+	@Test func theRunningDoneCountAgreesWithCountingFromScratch() {
+		let files = manyResults(files: 6, matches: 4)
+		var checklist = SearchChecklist()
+		for file in files.prefix(3) {
+			checklist.set(Array(SearchChecklist.marks(for: file).prefix(2)), done: true, for: question)
+		}
+
+		var model = ResultRows()
+		model.question = question
+		for file in files { model.append([file], marking: checklist) }
+		#expect(model.doneCount == checklist.doneCount(in: files, for: question))
+		#expect(model.doneCount == 6)
+
+		// And again after a rebuild, which is the other way the number is made.
+		model.setHidesDone(true, marking: checklist)
+		#expect(model.doneCount == checklist.doneCount(in: files, for: question))
+	}
+
 	/// The count is over everything held, not over what is on screen: the status
 	/// line says how much of the work is done, and hiding the finished rows is
 	/// not finishing them.
