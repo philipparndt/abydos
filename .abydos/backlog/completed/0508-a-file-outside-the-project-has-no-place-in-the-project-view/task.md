@@ -221,10 +221,6 @@ now reports beside the rest of the open.
   0515 rather than swept up, since the cause is not understood and the
   sweeping is somebody else's repository.
 
-## Estimate
-
-2026-08-16 21:05 — an hour left: the spec, and the suite
-
 ## Steps
 
 - [x] Decide how far the first version goes — which project kinds, and package
@@ -252,4 +248,5 @@ now reports beside the rest of the open.
       that it is somebody's to pick up.
 
 - [x] Write down here what was ruled out on the way
-- [ ] The spec says what the project now does
+- [x] The spec says what the project now does — `spec/project-view.md`, a
+      capability nothing had yet
