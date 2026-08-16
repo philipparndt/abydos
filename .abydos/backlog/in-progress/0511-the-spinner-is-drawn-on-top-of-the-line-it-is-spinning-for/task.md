@@ -147,6 +147,93 @@ pane's whole answer for as long as there is nothing else to show, and one sittin
 12 points high with nothing above it would read as a mistake the one time
 somebody caught it.
 
+## The same construction is in `DiagramPaneView`, and it is left there
+
+`constant: -18` at `DiagramPaneView.swift:127` and
+`let top = (bounds.height - height) / 2 + 12` at `:516`, with comments at
+`:124` and `:513` asserting a separation the arithmetic does not deliver — the
+same two lines and the same two numbers. It is worse there in one way: that
+pane's message sets no `lineBreakMode`, so it wraps, and since the notice's
+centre is pinned at `H/2 + 12` whatever its height, every extra line adds half
+a line at the top and reaches further into the spinner.
+
+**Not fixed here.** This item's remit is the Cadova pane, and 0510 was changing
+drawing in the same window while this was being done, so widening into a third
+pane on the way past is how two branches end up disagreeing about one file. It
+is not left unsaid either: **0512** is filed in `open/`, with the measurements
+above, the two traps that cost time here — `isDisplayedWhenStopped` not setting
+`isHidden`, and `positioned: .below, relativeTo:` naming a view that stops being
+a sibling — and the one decision that genuinely goes the other way there. The
+comment at `:513` argues *for* a message that stays put whether or not something
+is turning, which is the opposite of what this item concluded, and that is worth
+settling deliberately rather than by whichever pane somebody is editing.
+
+## Ruled out, and other things found on the way
+
+- **Changing the two numbers.** The obvious fix, and it is the fault rather than
+  a fix of it: whatever pair of constants keeps a 15-point line clear of a
+  16-point indicator was going to be tuned against one string at one width, in a
+  pane whose notice is the build's own output and whose width the user drags.
+  The measured overlap is 9.5 points, so `-18` and `+12` would have to become
+  something like `-26` and `+12` — and the next two-line notice puts it back.
+- **`.usesLineFragmentOrigin` being the culprit.** It is a real trap and it is
+  not this one. The view is unflipped — nothing in `CadovaPreviewView`,
+  `DelayedPaneView` or `ColoredView` overrides `isFlipped` — so the local called
+  `top` is the rect's *bottom* edge, which is why reading the code does not
+  settle anything. But the drawn block came out where the arithmetic says
+  (`324.5…339.5` for a rect asked for at `y = 324.5, h = 15`), so the flag was
+  not moving the text by a line. What it cost was that nobody could check the
+  sums by eye, which is an argument for taking the sums out.
+- **The notice drifting with its own length.** The item's own explanation, and
+  it is wrong; the correction is under "Measured" above, left beside the
+  original rather than replacing it.
+- **0507 as an argument against a label.** It was raised in this item as a
+  reason to be wary of "a third way of putting text in this pane", and it does
+  not apply. 0507 was an `NSTextView()` with a zero frame and a zero text
+  container, put in a scroll view — which *positions* a document view and never
+  *sizes* one. An `NSTextField` label publishes an intrinsic content size and
+  sizes itself, and it is not a third way in any case: `PdfFileView`, two files
+  away, already has exactly this — a centred `NSTextField` notice beside a
+  spinner, with `widthAnchor ≤ view − 64`. The drawn notice was the odd one out
+  and the label is the house's own first answer.
+- **Wrapping the notice instead of truncating it.** Rejected on what the notice
+  *is*. A build line that wraps changes the block's height as the build talks,
+  which moves the notice and the spinner above it several times a second; and
+  the interesting parts of `Working copy of https://github.com/tomasf/Apus.git
+  resolved at 0.1.4` are both ends. `.byTruncatingMiddle` is what
+  `FileNoticeView` uses for a path for the same reason.
+- **Keeping the notice in the same place whether or not something spins**, which
+  is what `DiagramPaneView`'s comment argues for. Rejected here because the two
+  states this pane alternates between are "notice with spinner" and "no notice
+  at all" — a model or the compiler's message takes the whole pane — so the only
+  jump is at the instant the first build starts, when the text changes from
+  `Waiting to build hex-key-holder…` to `Building hex-key-holder…` anyway. A
+  reserved sixteen-point gap above a lone notice would be visible in every frame
+  of the state it is reserved for.
+- **`isDisplayedWhenStopped` doing the hiding.** It does not: it stops the
+  indicator *drawing* without setting `isHidden`, and `NSStackView` closes up
+  around a hidden arranged view rather than an invisible one. Left to it, the
+  lone notice would have sat low with a hole above it — the item's own second
+  worry, arriving as a new defect by way of the fix for the first. `spin(_:)`
+  sets `isHidden` alongside `start/stopAnimation` and is the only place either
+  is touched.
+- **`mountViewer` naming the spinner.** `addSubview(container, positioned:
+  .below, relativeTo: spinner)` is correct only while the spinner is a sibling.
+  It is inside the stack now, so it names the stack; naming a non-sibling would
+  have put the model over the notice, or under nothing.
+- **A unit test.** There is still no test target for `AbydosApp` — 0507 records
+  why, and view code is deliberately not in `AbydosKit` — so the regression
+  instrument is the driver line, as it was there. `notice=` and `spinner=` are
+  the two rectangles in the pane's own coordinates, which is what makes the
+  claim checkable without a window: the unfixed pane would have printed
+  `notice=32,324 484x15 spinner=266,330 16x16`, and those two overlap.
+- **The theme.** The notice's colour is now read once, when the label is built,
+  where `draw(_:)` used to read `Theme.current` on every repaint. That is not a
+  regression this pane can have: its background is handed to `ColoredView` at
+  `init` and copied into a layer, so the pane has never followed a theme change
+  without being rebuilt, and a notice that followed one while the background
+  under it did not was the half-right version.
+
 ## Estimate
 
 2026-08-16 19:56 — about 40 minutes left
@@ -163,9 +250,9 @@ somebody caught it.
 - [x] `drawn=` for a notice reports what is on screen rather than a second,
       differently-worded copy of the same arithmetic
 - [x] Watched: a screenshot of a Cadova pane mid-build, and one between builds
-- [ ] `make test` and `make warnings` are clean
-- [ ] `DiagramPaneView` has the identical construction — decide and say here
+- [x] `make test` and `make warnings` are clean
+- [x] `DiagramPaneView` has the identical construction — decide and say here
       whether it is fixed with this or left, rather than leaving it unmentioned
-- [ ] Write down here what was ruled out on the way
-- [ ] The spec, if this changes what the project does — it may not, and saying
+- [x] Write down here what was ruled out on the way
+- [x] The spec, if this changes what the project does — it may not, and saying
       so is the answer rather than skipping the step
