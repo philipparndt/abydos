@@ -38,9 +38,70 @@ need a design that hides it behind a progress sheet.
   package, so `swift run` in the package root is what a person would type. Say
   it out loud, because 0499 depends on where the file lands.
 
+## What was decided
+
+### 1. The manifest is read, not run — and the item's framing above was wrong
+
+The paragraph under "Worth deciding" calls `swift package dump-package` "the
+honest source" and parsing "guessing". Having measured it, that is the wrong way
+round for this job, and the file being changed had already said so three times:
+
+- `XcodeProject.swift:3` reads `xcshareddata/xcschemes` off disk rather than
+  running `xcodebuild -list`, because the subprocess takes seconds and this is
+  asked on every scan — and adds that the on-disk answer is also *better*.
+- `RunConfiguration.swift:541` rules out `bazel query` in nearly the same words.
+- `ConanProject.swift:11` refuses to execute `conanfile.py` and reads the `name =`
+  line instead: "Running it to ask would mean running somebody's build script to
+  populate a menu."
+
+`Package.swift` is a program in exactly the way `conanfile.py` is, and
+`dump-package` compiles and runs it. Four things measured on this machine,
+Swift 6.4 via `xcrun`:
+
+| | |
+|---|---|
+| `dump-package`, this repository, warm | **0.92 s** |
+| `dump-package`, this repository, `--manifest-cache none` | **0.74 s** |
+| `dump-package`, cadova spike, no `.build`, dependency unresolved | **0.76 s** |
+| reading `Package.swift` and parsing it | under a millisecond |
+
+Discovery is synchronous — `discover(in:)` returns `[RunConfiguration]`, there is
+no async path to hide a slow call in — and it is called once per directory of a
+tree three deep, and again on every write that could change the answer. A
+monorepo with ten packages would pay six to nine seconds of subprocess per
+rescan, and a checkout produces several rescans.
+
+Two things the timings do not show and which mattered more:
+
+- **`dump-package` writes a `.build/` directory into the project**, measured on a
+  copy of the spike that had none. Merely *looking* at what a project can run
+  would leave a build directory behind in it.
+- **It answers with whichever `swift` is first on the PATH.** On this machine
+  that is swiftly's, and against the very package 0499 needs it answers
+  `error: 'cold-spike': package is using Swift tools version 6.3.0 but the
+  installed version is 6.1.2` and lists nothing at all. The Makefile pins
+  `xcrun swift` for this exact reason and says so at length; an app cannot pin
+  anything, because it does not get to choose the user's toolchain. A run list
+  that goes empty because somebody installed a version manager is worse than one
+  read off the text.
+
+What reading the text cannot see is an executable whose name is not a string
+literal — a manifest that computes its target list. This repository's own
+manifest does that, for the five vendored grammars, and they are library targets;
+the four executable products are all literals. The failure mode is a missing
+entry rather than a wrong one, which is the right way round.
+
+Ruled out along the way: `swift package describe --type json` (same subprocess,
+same manifest compile, no cheaper); using `xcrun swift` from the app to dodge the
+PATH problem (`xcrun` needs a selected Xcode, which a machine with only the
+command-line tools does not have, so it trades one blank list for another); and
+running `dump-package` in the background and folding the answer in later, which
+would need `discover(in:)` to become async and every caller with it, for a list
+that would still be a subprocess per package per scan.
+
 ## Steps
 
-- [ ] Measure both ways of enumerating, and decide between them in writing
+- [x] Measure both ways of enumerating, and decide between them in writing
 - [ ] `RunConfiguration` finds executable targets in a `Package.swift` project
 - [ ] It runs one, with the package root as the working directory
 - [ ] Decide about `swift test` as a kind, and do it or write down why not
