@@ -288,7 +288,9 @@ deeper.
 - [x] Watched, with a screenshot of a diagram pane mid-render
 - [ ] `make test` and `make warnings` are clean
 - [x] Write down here what was ruled out on the way
-- [ ] The spec, if this changes what the project does
+- [x] The spec, if this changes what the project does — `spec/diagrams.md`, an
+      ADDED requirement: the capability had two requirements about what a
+      drawing *is* and nothing about what the pane says when there is not one
 
 ## Estimate
 
