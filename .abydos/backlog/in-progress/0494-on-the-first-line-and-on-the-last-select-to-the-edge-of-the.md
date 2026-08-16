@@ -58,12 +58,12 @@ is true. It is answered below, by running it.
 
 ## Steps
 
-- [ ] `moveVertically` at the top or bottom goes to the edge of the file
+- [x] `moveVertically` at the top or bottom goes to the edge of the file
       instead of returning
-- [ ] It extends the selection when Shift is held, and moves the caret when it
+- [x] It extends the selection when Shift is held, and moves the caret when it
       is not
-- [ ] The remembered column survives the jump
-- [ ] A test for the motion that does not need a window, if the arithmetic can
+- [x] The remembered column survives the jump
+- [x] A test for the motion that does not need a window, if the arithmetic can
       be got at from `AbydosKit`
 - [ ] A driver so the keys can be watched from outside the app, as `--word-nav`
       does for ⌥←/⌥→

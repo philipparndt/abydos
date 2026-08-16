@@ -2236,21 +2236,36 @@ final class CodeView: NSView, NSTextInputClient {
 
 		let byteOffset = document.rope.byteOffset(fromUTF16: caret)
 		let docLine = document.rope.line(atByteOffset: byteOffset)
-		let visual = folding.visualLine(forDocumentLine: docLine)
+		// The row the caret is *on*, not the first row of its line. With soft
+		// wrap a long line is several rows, and asking folding alone put the
+		// caret on the line's first row: ↓ from the middle of a wrapped line
+		// then landed on the row it was already on and looked like a dead key.
+		let visual = firstVisualRow(forDocumentLine: docLine)
+			+ (isWordWrapEnabled ? wrapSegmentForOffset(caret, line: docLine) : 0)
 
-		let targetVisual = max(0, min(visibleLineCount - 1, visual + delta))
-		guard targetVisual != visual else { return }
+		let motion = VerticalMotion.outcome(from: visual, by: delta, rows: visibleLineCount)
+		guard motion != .stay else { return }
 
 		// Remember the x the caret started from so a run of ups and downs keeps
-		// returning to the same column.
+		// returning to the same column — the jumps to either end of the file
+		// included, or ⇧↓ to the end of the file and then ↑ would come back to
+		// whatever column the last line happened to end at.
 		if desiredColumnX == nil {
 			desiredColumnX = caretPoint().map { $0.x } ?? textOriginX
 		}
-		let x = desiredColumnX ?? textOriginX
+		let column = desiredColumnX ?? textOriginX
 
-		let point = NSPoint(x: x, y: yPosition(forVisualLine: targetVisual) + lineHeight / 2)
-		let column = desiredColumnX
-		setCaret(offset(at: point), extendingSelection: extending)
+		let target: Int
+		switch motion {
+		case .stay:            return
+		case .startOfDocument: target = 0
+		case .endOfDocument:   target = document.rope.utf16Count
+		case .row(let row):
+			let point = NSPoint(x: column, y: yPosition(forVisualLine: row) + lineHeight / 2)
+			target = offset(at: point)
+		}
+
+		setCaret(target, extendingSelection: extending)
 		desiredColumnX = column
 	}
 
