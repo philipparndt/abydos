@@ -543,9 +543,14 @@ final class ResultChecklist: NSView {
 	func stepForTesting(_ step: String) -> Bool {
 		switch step {
 		case "focus": window?.makeFirstResponder(tableView)
+		// `mine` because the two lists are the same class: with search under the
+		// project view and usages arriving beside it, both answers to `who` are
+		// a `ChecklistTable` and the type alone cannot say which of them the
+		// next keystroke reaches.
 		case "who":
 			print("\(logPrefix) who: "
-				+ "\(String(describing: window?.firstResponder.map { type(of: $0) }))")
+				+ "\(String(describing: window?.firstResponder.map { type(of: $0) })) "
+				+ "mine=\(hasKeyboard)")
 		case "down": moveSelection(by: 1, extending: false)
 		case "up": moveSelection(by: -1, extending: false)
 		case "shift-down": moveSelection(by: 1, extending: true)
