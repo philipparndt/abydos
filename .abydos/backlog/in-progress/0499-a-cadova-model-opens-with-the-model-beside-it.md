@@ -62,10 +62,29 @@ the spike had it the other way round.
 ## Steps
 
 - [ ] Decide which tabs get a model beside them, and write the answer down
+- [ ] `SwiftPackage` reads targets, not only runnable names: what each one
+      depends on and where its sources are
+- [ ] `CadovaModel` answers "which package, product and target does this file
+      belong to, and does that target use Cadova"
+- [ ] `FilePreview` takes the facts a name cannot give as one value rather than
+      as a growing list of booleans
 - [ ] Running the target produces a 3MF the viewer opens
 - [ ] Saving re-runs it, debounced, and the previous run is cancelled
 - [ ] A build or run that fails says so where somebody will see it
+- [ ] A driver that reports what a Cadova pane is doing, so it can be watched
 - [ ] Watched in the app: open a Cadova model, see geometry, change a constant,
       save, watch it change
 - [ ] Write down here what was ruled out on the way
 - [ ] `spec/previews.md` says what the project now does
+
+The four new steps are found work, not a bigger plan: the first two are
+`SwiftPackage` not yet being able to map a *file* to a target (it holds
+`(name, line)` per runnable product and nothing about sources or
+dependencies), the third is `FilePreview.kind(for:looksLikeRecipe:)` needing a
+second fact of the same shape at six call sites, and the fourth is that
+`--run-config` from 0498 watches a *run*, and what has to be watched here is a
+*pane*.
+
+## Estimate
+
+2026-08-16 13:55 — most of the afternoon
