@@ -129,6 +129,29 @@ Said out loud in the spec as a requirement of its own, and asserted by
 accident: Cadova writes its `.3mf` beside the package, so the working directory
 is what decides where the file 0499 has to find will be.
 
+### 4. Why the delta is two MODIFIED and one ADDED
+
+Not a choice about wording. "What a project can run is found rather than
+configured" *enumerates the kinds*, and a spec listing ten of them against a
+program with eleven is false in the one sentence somebody would read to find
+out. So it is a MODIFIED, with the Swift package named where it belongs in that
+list and nothing else touched.
+
+"The list is refreshed by writes that could change it" was already true of this
+change — `Package.swift` is a build file — so leaving it alone would have been
+defensible. It is a MODIFIED anyway, for one paragraph and one scenario: the
+obvious way to implement this is to add `swift` to the extensions that trigger a
+rescan, and that would put every save in every Swift project through the whole
+search, which is 0446's 668 seconds again over a much larger population of
+projects. The spec is where a trap like that is kept, and keeping it against the
+requirement that owns the rule beats repeating the rule somewhere else.
+
+The two ADDED are what the program now does that no existing requirement covers:
+what a package offers and where it runs, and that the manifest is read rather
+than run. Two rather than one because they answer different questions — the
+first is behaviour anybody can see, the second is a cost that was measured — and
+folding the second into the first would bury it.
+
 ## What was watched
 
 `--run-config <name>` is new: `--run-configs` says what the list holds, and this
@@ -168,6 +191,62 @@ same `swift run spike`, and discovery left nothing behind in it. Reading the
 manifest does not care whether resolution has happened, which `dump-package`
 would have.
 
+## Ruled out, and other things found on the way
+
+- **`swift package describe --type json`.** Same subprocess, same manifest
+  compile, no cheaper. Nothing to choose between it and `dump-package`.
+- **Reaching for `xcrun swift` from the app** to dodge the PATH problem.
+  `xcrun` needs a selected Xcode, which a machine with only the command-line
+  tools does not have. It trades one blank list for another. The Makefile can
+  pin `xcrun swift` because it is this project's build; the app cannot, because
+  it is somebody else's toolchain.
+- **Making discovery asynchronous** so a subprocess could hide in it.
+  `discover(in:)` returns `[RunConfiguration]` and every caller expects that;
+  making it async would spread through the window controller for a list that
+  would still be a subprocess per package per scan.
+- **Adding `swift` to `definingExtensions`.** The one-line way to make a new
+  package appear, and it would rescan the whole project on every save of every
+  Swift file — 0446's fault, reintroduced for a much bigger population of
+  projects than Eclipse reactors. `Package.swift` is in `definingFileNames` by
+  name instead.
+- **Listing executable *targets*, which is what this item asked for.** Measured
+  rather than assumed: `swift run AlphaTarget` against a package whose product
+  is `alpha-tool` answers `error: no executable product named 'AlphaTarget'`.
+  What `swift run` takes is the product, so that is what the list holds. A
+  target no product claims gets an implicit product of its own name and is
+  offered under it, which is why the cadova spike — one `.executableTarget` and
+  no `products:` at all — works.
+- **A regular expression over the manifest.** Every dependency line contains
+  `//`, and this repository's own manifest has prose above the targets that
+  mentions `.unsafeFlags`. It is a scanner that walks past strings and comments,
+  and there are tests for both, because a commented-out target in somebody's run
+  list is reading the one line of the file that says "not this".
+
+### For 0499
+
+- The working directory is the package root and there is a requirement and a
+  test saying so, so where Cadova's `.3mf` lands is a promise now. Observed:
+  `swift run spike` from the app wrote `hexholder.3mf` beside the package.
+- `--run-config <name>` starts a discovered configuration by name and prints its
+  console; that is how the above was watched, and it is the tool for watching a
+  preview appear too.
+- Warm timings from the app rather than from a shell: the Cadova spike's console
+  read `Build complete! (1.68 sec)` and then the model, so the whole run is a
+  few seconds. The item's own measurements hold.
+- **A run's console is a terminal pane keyed `run:<configuration id>`**, and a
+  second run of the same configuration takes over the same tab
+  (`BottomPanel.runCommand(reusing:)`). A preview that wants to notice a rerun
+  has that key to hang off.
+- The pane runs through the user's **login interactive shell**, so `swift` is
+  whichever the user's PATH says. On a machine where a version manager is in
+  front and is behind the manifest's tools version, the run will fail with a
+  tools-version error even though the list is right. Nothing to fix here — it is
+  the user's toolchain — but 0499 should not read "the executable produced no
+  model" as anything but "read the console".
+- `SwiftPackage.find(in:)` is public and cheap, so 0499 can ask whether a
+  directory is a package and what it can run without going through
+  `RunConfiguration` at all.
+
 ## Steps
 
 - [x] Measure both ways of enumerating, and decide between them in writing
@@ -180,9 +259,9 @@ would have.
 - [x] A driver that starts one configuration by name, so a run can be watched
 - [x] Watched in the app: a Swift package's executables in the run list, and
       one of them actually running
-- [ ] Write down here what was ruled out on the way
-- [ ] `spec/run-configurations.md` says what the project now does
+- [x] Write down here what was ruled out on the way
+- [x] `spec/run-configurations.md` says what the project now does
 
 ## Estimate
 
-2026-08-16 11:55 — about two hours left
+2026-08-16 12:35 — done
