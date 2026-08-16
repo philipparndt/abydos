@@ -211,7 +211,7 @@ beside its source, `runs=1 model=hex-key-holder.3mf`.
       the fix and is corrected above
 - [ ] Watched against **this** fixture, not the spike, with a screenshot of the
       model in the split
-- [ ] A regression test that would have caught this — 0499's watching passed
+- [x] A regression test that would have caught this — 0499's watching passed
       because it used a package with one target and no product rename
 - [ ] `make test` and `make warnings` are clean
 - [ ] Write down here what was ruled out on the way

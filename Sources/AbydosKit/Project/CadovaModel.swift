@@ -163,18 +163,41 @@ public enum CadovaRun {
 		return found
 	}
 
-	/// The newest `.3mf` written into a directory since a moment.
+	/// The newest `.3mf` written into a package since a moment.
 	///
 	/// The fallback for a Cadova that words its line differently, and the reason
 	/// there is no directory watcher: this is one listing at the end of a run
 	/// that has already finished, rather than a stream of events to filter for
-	/// the whole time a pane is open. Not recursive, because the working
-	/// directory of the run is the package root and that is where a model lands.
+	/// the whole time a pane is open.
+	///
+	/// **The package root and one level under it**, which is a correction rather
+	/// than a widening. 0499 wrote "not recursive, because the working directory
+	/// of the run is the package root and that is where a model lands" — and this
+	/// project's own example package disproves it in one line:
+	/// `Project(packageRelative: "Models")` puts `hex-key-holder.3mf` in
+	/// `Models/`, so the fallback would have found nothing at all for the very
+	/// fixture 0500 committed for this. One level, and never into `.build`: that
+	/// is where `swift build` writes thousands of files, and walking it would
+	/// cost a listing of the whole build directory on every failed parse.
+	/// `.skipsHiddenFiles` already keeps `.build` out, being a dotted name — the
+	/// check below is named anyway, because "we never walk the build directory"
+	/// is a promise and not a side effect of a listing option somebody may change.
 	public static func newestModel(in directory: URL, since start: Date) -> URL? {
-		let keys: [URLResourceKey] = [.contentModificationDateKey]
-		guard let entries = try? FileManager.default.contentsOfDirectory(
+		let keys: [URLResourceKey] = [.contentModificationDateKey, .isDirectoryKey]
+		guard let top = try? FileManager.default.contentsOfDirectory(
 			at: directory, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles]
 		) else { return nil }
+
+		var entries = top
+		for entry in top {
+			guard (try? entry.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true,
+			      entry.lastPathComponent != ".build",
+			      let inside = try? FileManager.default.contentsOfDirectory(
+			      	at: entry, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles]
+			      )
+			else { continue }
+			entries.append(contentsOf: inside)
+		}
 
 		var best: (url: URL, when: Date)?
 		for entry in entries where entry.pathExtension.lowercased() == "3mf" {

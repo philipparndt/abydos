@@ -448,4 +448,81 @@ struct CadovaModelTests {
 		try Data().write(to: fresh)
 		#expect(CadovaRun.newestModel(in: root, since: started)?.lastPathComponent == "fresh.3mf")
 	}
+
+	/// And into a directory the package chose, which is what this project's own
+	/// example does.
+	///
+	/// 0499 wrote the fallback against a spike that wrote its `.3mf` beside the
+	/// package, and said in a comment that the package root "is where a model
+	/// lands". `cadova-models` says `Project(packageRelative: "Models")` and puts
+	/// it in `Models/`, so for the fixture 0500 committed for exactly this the
+	/// fallback would have found nothing. One level down, and never into `.build`
+	/// — which holds thousands of files and, on a package that vendors a model,
+	/// copies of the one being looked for.
+	@Test func theFallbackLooksOneLevelDownButNeverIntoTheBuildDirectory() throws {
+		let root = scratch()
+		defer { try? FileManager.default.removeItem(at: root) }
+		let models = root.appendingPathComponent("Models")
+		let build = root.appendingPathComponent(".build/debug")
+		for directory in [models, build] {
+			try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+		}
+
+		let started = Date()
+		try Data().write(to: models.appendingPathComponent("hex-key-holder.3mf"))
+		try Data().write(to: build.appendingPathComponent("copied.3mf"))
+
+		let found = CadovaRun.newestModel(in: root, since: started)
+		#expect(found?.lastPathComponent == "hex-key-holder.3mf")
+		// Not merely "the other one is older" — `.build` is not looked in at all,
+		// so a copy in there cannot win however new it is.
+		#expect(found?.path.contains("/.build/") == false)
+	}
+
+	// MARK: - The shape of this project's own fixture
+
+	/// Two executable targets, one of them renamed by a product — which is the
+	/// `cadova-models` manifest, and which 0499 never ran against.
+	///
+	/// It was watched against a one-target package with no product, so nothing
+	/// exercised the two things that can go wrong when there is more than one:
+	/// a file being attributed to the wrong target, and a run being offered the
+	/// *target's* name where `swift run` only answers to the product's.
+	@Test func aPackageWithTwoTargetsAndARenamedProductAnswersForEachFile() throws {
+		let root = scratch()
+		defer { try? FileManager.default.removeItem(at: root) }
+		_ = try makePackage(
+			manifest: """
+			// swift-tools-version: 6.3
+			let package = Package(
+				name: "cadova-models",
+				products: [
+					.executable(name: "hex-key-holder", targets: ["HexKeyHolder"]),
+				],
+				targets: [
+					.executableTarget(name: "HexKeyHolder", dependencies: ["Cadova"]),
+					.executableTarget(name: "coaster", dependencies: ["Cadova"]),
+				]
+			)
+			""",
+			files: [
+				"Sources/HexKeyHolder/main.swift",
+				"Sources/HexKeyHolder/hex.swift",
+				"Sources/coaster/main.swift",
+			],
+			in: root
+		)
+
+		let holder = CadovaModel.find(for: root.appendingPathComponent("Sources/HexKeyHolder/hex.swift"))
+		// The product's name and not the target's: `swift run HexKeyHolder`
+		// is what SwiftPM refuses.
+		#expect(holder?.product == "hex-key-holder")
+		#expect(holder?.command == "swift run hex-key-holder")
+		#expect(holder?.sources.map(\.lastPathComponent) == ["HexKeyHolder"])
+
+		// The target beside it is its own model, and not the first one declared.
+		let coaster = CadovaModel.find(for: root.appendingPathComponent("Sources/coaster/main.swift"))
+		#expect(coaster?.product == "coaster")
+		#expect(coaster?.sources.map(\.lastPathComponent) == ["coaster"])
+	}
 }
