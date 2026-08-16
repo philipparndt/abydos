@@ -235,5 +235,5 @@ below is shorter than the column being kept.
       this change, or only nearly
 - [x] `make test` and `make warnings` both clean
 - [x] Write down here what was ruled out on the way
-- [ ] `spec/editor.md` says what the project now does, for the bare arrow as
+- [x] `spec/editor.md` says what the project now does, for the bare arrow as
       well as for the shifted one
