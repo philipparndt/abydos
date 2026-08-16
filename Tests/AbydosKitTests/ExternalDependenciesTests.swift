@@ -280,7 +280,7 @@ struct ExternalDependenciesTests {
 		// The kind is named once, by the heading. The note under it is the
 		// message and nothing else — `Maven — Maven not read yet` is what
 		// repeating it produced.
-		#expect(tree.report() == ["Dependencies — Maven", "  not read yet (0512)"])
+		#expect(tree.report() == ["Dependencies — Maven", "  not read yet (0515)"])
 	}
 
 	/// Every kind this program can open is in the list, whether or not it is

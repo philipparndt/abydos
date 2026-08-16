@@ -1,4 +1,4 @@
-# 514. A new terminal sometimes starts with an I already typed at the prompt
+# 517. A new terminal sometimes starts with an I already typed at the prompt
 
 > something seems to randomely insert an "i" when you start a terminal
 

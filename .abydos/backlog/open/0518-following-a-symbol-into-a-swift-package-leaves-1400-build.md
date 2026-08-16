@@ -1,4 +1,4 @@
-# 515. Following a symbol into a Swift package leaves 1400 build files in the project root
+# 518. Following a symbol into a Swift package leaves 1400 build files in the project root
 
 Found on 2026-08-16 while item 508 was being watched in the app. Opening
 `abydos-examples/cadova-models`, waiting for sourcekit-lsp and asking for the

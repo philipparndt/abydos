@@ -1,4 +1,4 @@
-# 511. The dependencies section cannot read an npm project
+# 514. The dependencies section cannot read an npm project
 
 Item 508 gave the project view a **Dependencies** section: the packages a
 project depends on, named rather than pathed, each with where it came from and

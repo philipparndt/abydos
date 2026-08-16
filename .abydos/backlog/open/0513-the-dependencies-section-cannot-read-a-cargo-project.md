@@ -1,4 +1,4 @@
-# 510. The dependencies section cannot read a Cargo project
+# 513. The dependencies section cannot read a Cargo project
 
 Item 508 gave the project view a **Dependencies** section: the packages a
 project depends on, named rather than pathed, each with where it came from and

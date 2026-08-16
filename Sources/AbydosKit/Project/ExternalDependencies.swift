@@ -127,10 +127,10 @@ public enum DependencyKind: String, Sendable, CaseIterable {
 	public var pendingItem: Int? {
 		switch self {
 		case .swiftPackage, .goModule: return nil
-		case .cargo: return 510
-		case .npm: return 511
-		case .maven, .gradle: return 512
-		case .bazel, .conan: return 513
+		case .cargo: return 513
+		case .npm: return 514
+		case .maven, .gradle: return 515
+		case .bazel, .conan: return 516
 		}
 	}
 }
@@ -181,7 +181,7 @@ public struct DependencySet: Equatable, Sendable {
 /// and again whenever a lock file is written, so anything expensive is paid
 /// over and over while somebody is trying to read a file.
 ///
-/// The cost of the rule is that two kinds (0513) may turn out not to be
+/// The cost of the rule is that two kinds (0516) may turn out not to be
 /// readable at all without running their tool. That is a decision for that
 /// item; the note on the row is what keeps it visible until somebody makes it.
 public enum ExternalDependencies {

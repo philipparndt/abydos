@@ -71,7 +71,7 @@ a row, in the section**. That is the whole of what makes a split legitimate: a
 Maven project does not show an empty Dependencies section that reads as "this
 project has none". It shows
 
-    Maven — not read yet (0512)
+    Maven — not read yet (0515)
 
 with the number of the item that will do it. Somebody looking at the app knows
 what is missing and where it is written down; nobody has to go and read the
@@ -99,10 +99,10 @@ backlog to find out that the section is lying to them.
 
 | Kind | Item | Why it is not here |
 | --- | --- | --- |
-| Cargo | 0510 | `Cargo.lock` is TOML and there is no TOML reader here; the registry directory has a hash in its name and has to be listed |
-| npm, pnpm, yarn | 0511 | Three lock files and three layouts, and `node_modules` is the one cache that is *inside* the project |
-| Maven, Gradle | 0512 | One item, not two: the JVM resolves to **jars**, not sources, and what a package row shows when there is nothing to browse is one decision made once for both |
-| Bazel, Conan | 0513 | One item, not two: neither resolves out of a file that is already on disk, so both need the same answer to "may this section run the build tool?" — which so far nothing in this program does |
+| Cargo | 0513 | `Cargo.lock` is TOML and there is no TOML reader here; the registry directory has a hash in its name and has to be listed |
+| npm, pnpm, yarn | 0514 | Three lock files and three layouts, and `node_modules` is the one cache that is *inside* the project |
+| Maven, Gradle | 0515 | One item, not two: the JVM resolves to **jars**, not sources, and what a package row shows when there is nothing to browse is one decision made once for both |
+| Bazel, Conan | 0516 | One item, not two: neither resolves out of a file that is already on disk, so both need the same answer to "may this section run the build tool?" — which so far nothing in this program does |
 
 ### A list of packages, and a tree of files, and not a choice between them
 
@@ -214,18 +214,18 @@ now reports beside the rest of the open.
   (a `.build` copy is regenerable, a `~/go/pkg/mod` one is shared between every
   project on the machine). Left as a step below, unticked, so it is visible.
 - **Running any build tool to answer.** Nothing here does, for the reasons
-  `SwiftPackage`'s comment measures. It is what makes 0512 and 0513 hard and
+  `SwiftPackage`'s comment measures. It is what makes 0515 and 0516 hard and
   they say so.
 - **Deleting the 1424 build artefacts sourcekit-lsp left in
   `abydos-examples/cadova-models`.** Found while watching this work; filed as
-  0515 rather than swept up, since the cause is not understood and the
+  0518 rather than swept up, since the cause is not understood and the
   sweeping is somebody else's repository.
 
 ## Steps
 
 - [x] Decide how far the first version goes — which project kinds, and package
       list against file tree — and write the answer down
-- [x] File the kinds that are not in this item: 0510, 0511, 0512, 0513
+- [x] File the kinds that are not in this item: 0513, 0514, 0515, 0516
 - [x] Read a project's dependencies, from what is already on disk
 - [x] A section in the project view for what the project depends on
 - [x] It says where each one came from, from what is already on disk
