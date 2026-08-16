@@ -316,4 +316,4 @@ which is a different problem from this one.
       rust-analyzer and gopls, not just sourcekit-lsp
 - [x] Say whether this is Swift-only, and why that is or is not right
 - [x] Write down here what was ruled out on the way
-- [ ] `spec/language-servers.md` says what the project now does
+- [x] `spec/language-servers.md` says what the project now does
