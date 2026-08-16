@@ -54,16 +54,16 @@ simplified is likely to be the reason this is harder than it looks.
 
 - [ ] Read the sidebar-split comment and say whether the reason it was
       simplified still holds
-- [ ] Decide what remembers a placement, and write the answer down
-- [ ] Four homes named in one place, and one control that chooses between them
-- [ ] A list can be put under the project view, and the sidebar splits for it
+- [x] Decide what remembers a placement, and write the answer down
+- [x] Four homes named in one place, and one control that chooses between them
+- [x] A list can be put under the project view, and the sidebar splits for it
 - [ ] A list can be put beside the terminals, in a column of the panel rather
       than a tab in its strip
 - [ ] Moving between all four homes — panel, sidebar, beside, window — keeps the
       rows, the ticks and the selection
 - [ ] The keyboard still works the list in every home, and a list beside a
       terminal does not lose keys to it
-- [ ] A driver step that sends a key through the *window* rather than into the
+- [x] A driver step that sends a key through the *window* rather than into the
       table, so "the terminal did not take it" is a claim that can fail
 - [ ] Search moves the same four ways usages does
 - [ ] The placement is remembered, by whatever was decided
