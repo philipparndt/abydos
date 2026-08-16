@@ -334,10 +334,6 @@ keystrokes stayed out of this item.
   is a real gap — `CTLine` reorders when it draws and the motions do not — and
   it is unchanged by this item, not created by it.
 
-## Estimate
-
-2026-08-16 12:07 — about ten minutes left
-
 ## Steps
 
 - [x] `moveForward:` and `moveBackward:` move the caret one character
