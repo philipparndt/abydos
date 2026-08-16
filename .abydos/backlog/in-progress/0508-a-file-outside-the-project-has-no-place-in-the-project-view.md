@@ -42,11 +42,13 @@ and its origin read off.
 
 ## Worth deciding, and there is a lot of it
 
-- **How far this goes.** Swift packages have `Package.resolved`; Maven, Gradle,
-  Go, Cargo and npm each have their own answer, and this repository opens all of
-  them. One language's dependencies is a small item and a section that lies for
-  every other language; all of them at once is a large one. Where the first
-  version stops is the main decision.
+- **How far this goes — decided: all of them.** Asked directly, Philipp answered
+  "it shall support all external dependencies", on 2026-08-16. So this is the
+  large version: Swift packages have `Package.resolved`, and Maven, Gradle, Go,
+  Cargo and npm each have their own answer, and this program opens all of them.
+  What is still open is the *order* and what an unsupported kind does — a
+  section that silently omits a project's dependencies is the failure to avoid,
+  so a kind not yet read should say it is not read rather than show nothing.
 - **Whether it is a tree of files or a list of packages.** Browsing siblings
   needs the files; seeing where something came from needs the package. They are
   different views of the same thing and the item asks for both.
