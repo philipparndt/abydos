@@ -172,6 +172,11 @@ public extension Scheme {
 				roles[role] = grey(0xD8D8D8, 0x3A3A3A)
 			case .selectionActive, .selectionBackground:
 				roles[role] = grey(0xC8C8C8, 0x4A4A4A)
+			// Between the two above it, which is what a scheme that leaves this
+			// out is given — written out here rather than derived, since the
+			// fallback states every colour it draws with.
+			case .selectionBackgroundInactive:
+				roles[role] = grey(0xD0D0D0, 0x424242)
 			default:
 				roles[role] = grey(0x202020, 0xD0D0D0)
 			}

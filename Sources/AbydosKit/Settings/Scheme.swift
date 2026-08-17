@@ -67,6 +67,28 @@ public struct SchemePair: Equatable, Sendable {
 	}
 
 	public func value(isLight: Bool) -> UInt32 { isLight ? light : dark }
+
+	/// Halfway between two colours, channel by channel, at each lightness.
+	///
+	/// What a scheme that leaves `selectionBackgroundInactive` out gets, and the
+	/// only derivation in this file. Halfway is bounded by construction — it can
+	/// never be louder than the louder of the two it sits between — which is the
+	/// property that makes it safe to apply to a scheme nobody has looked at.
+	public static func midway(_ first: SchemePair, _ second: SchemePair) -> SchemePair {
+		func blend(_ first: UInt32, _ second: UInt32) -> UInt32 {
+			var made: UInt32 = 0
+			for shift: UInt32 in [16, 8, 0] {
+				let left = (first >> shift) & 0xFF
+				let right = (second >> shift) & 0xFF
+				made |= ((left + right) / 2) << shift
+			}
+			return made
+		}
+		return SchemePair(
+			light: blend(first.light, second.light),
+			dark: blend(first.dark, second.dark)
+		)
+	}
 }
 
 /// The roles the app's chrome is painted in.
@@ -75,7 +97,21 @@ public enum SchemeRole: String, CaseIterable, Sendable {
 	case sidebarText, sidebarHeaderText, selectionActive, selectionInactive, excludedDirectoryTint
 	case gitAdded, gitModified, gitUnversioned, gitIgnored, gitConflict
 	case editorText, gutterText, gutterCurrentLineText, currentLineBackground, caret
-	case selectionBackground, foldPlaceholderBackground, foldPlaceholderText, indentGuide
+	case selectionBackground, selectionBackgroundInactive
+	case foldPlaceholderBackground, foldPlaceholderText, indentGuide
+
+	/// The one role a file may leave out, and the reason there is one.
+	///
+	/// Every other colour missing refuses the file, which is the rule this
+	/// module argues for at `Scheme.read`. This role arrived after schemes were
+	/// already files somebody keeps in a dotfiles repository, and requiring it
+	/// would refuse every one of them for having been written before it existed.
+	/// So it is optional, with a stated derivation — `SchemePair.midway` of
+	/// `selectionInactive` and `selectionBackground` — rather than a silent
+	/// default: a scheme that says nothing gets halfway between the gray band
+	/// and the real selection, which is visible without ever shouting over the
+	/// focused one.
+	public static let optional: SchemeRole = .selectionBackgroundInactive
 }
 
 /// ANSI 0–15, named. Named rather than a list of sixteen so a file missing one
@@ -212,6 +248,9 @@ public extension Scheme {
 	/// and wondering, where a file that is refused says which key, in which
 	/// file, on the first line of a log. Inheriting a default silently makes a
 	/// forgotten key and an unread file look exactly the same.
+	///
+	/// One role is exempt, and only because it was added after schemes became
+	/// files people keep: `SchemeRole.optional`, which has the argument.
 	static func read(_ data: Data, isPersonal: Bool, origin: String) throws -> Scheme {
 		let parsed: Any
 		do {
@@ -256,8 +295,17 @@ public extension Scheme {
 
 	private static func readApp(_ section: [String: Any], id: String, stored: Any?) throws -> SchemeApp {
 		var roles: [SchemeRole: SchemePair] = [:]
-		for role in SchemeRole.allCases {
+		for role in SchemeRole.allCases where role != .optional {
 			roles[role] = try pair(section[role.rawValue], at: "app.\(role.rawValue)")
+		}
+		// The one role that may be left out — see `SchemeRole.optional`. Stated,
+		// it is read like any other and a broken value is still refused; absent,
+		// it is derived from the two roles it sits between, both of which are
+		// required and so are already in hand.
+		if let stated = section[SchemeRole.optional.rawValue] {
+			roles[.optional] = try pair(stated, at: "app.\(SchemeRole.optional.rawValue)")
+		} else if let band = roles[.selectionInactive], let strong = roles[.selectionBackground] {
+			roles[.optional] = .midway(band, strong)
 		}
 
 		guard let syntaxSection = section["syntax"] else { throw SchemeProblem.missing("app.syntax") }
