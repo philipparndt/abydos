@@ -84,11 +84,13 @@ public enum DrivenRun {
 		defaults = VolatileDefaults(copying: real)
 	}
 
-	/// Puts it back, for a test that has just pretended to be a driven run.
-	public static func endForTesting() {
-		isActive = false
-		defaults = .standard
-	}
+	// There is deliberately no `endForTesting` beside `begin`. The suite runs in
+	// one process and in parallel, so a test that switched this on would be
+	// switching it on for every test running beside it. Everything here that a
+	// test needs to ask is asked as a function instead — `isDriven(arguments:)`,
+	// `mayType`, and the `driven:` argument on `SessionStore` and
+	// `RecentProjects` — which is why those take the answer rather than reading
+	// the global themselves.
 
 	/// Whether a run that named `given` may drive the keyboard at `path`.
 	///
