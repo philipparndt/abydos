@@ -118,10 +118,6 @@ lesson exactly: list and match, do not build the path and hope.
 uses `.maven` as its example of an unread kind, so it has to take another kind
 when Maven starts being read.
 
-## Estimate
-
-2026-08-17 09:13 — about an hour left
-
 ## What was decided, and why
 
 ### The row names the jar, and cannot be opened
@@ -288,12 +284,20 @@ were outside it because until now no note had been longer than four words.
   watched against a copy under `/tmp` with dependencies whose jars are really
   in this machine's caches.
 
-### One test in the suite is flaky and it is not this branch
+### What fails in a full run and passes alone, with three worktrees at once
 
-`ToolContainerLiveTests.theSweepTakesWhatAnEarlierRunLeft` failed once in a
-full parallel run and passed on its own with `FILTER`. It starts real
-containers under the Apple runtime; nothing here touches it. 2764 tests
-otherwise green, `make warnings` clean.
+Two rounds of this, and neither is this branch. First
+`ToolContainerLiveTests.theSweepTakesWhatAnEarlierRunLeft`, which starts real
+containers. Then, on the second full run, eighteen issues across
+`PseudoTerminalWriteTests`, `TerminalTests`, `AbydosIcatTests`,
+`AbydosOpenTests`, `BrokenPipesTests` and `ClaudeHookLiveTests` — every one of
+them a `terminal.start(...)` or `pty.start(...)` returning false, which is a
+machine that has run out of pseudo-terminals rather than a program that has
+stopped working. Three sibling items were building and testing the same
+repository in three worktrees at the time.
+
+Every one of them passes on its own with `FILTER`, which is the only way to
+tell the two apart. 2765 tests, `make warnings` clean.
 
 ## Steps
 
@@ -313,6 +317,6 @@ otherwise green, `make warnings` clean.
 - [x] A note's tooltip carries its own message, since the caveat is a sentence
       and the pane cuts it — found in the app
 - [x] Write down here what was ruled out on the way
-- [ ] `spec/project-view.md` says Maven and Gradle are among the kinds that
+- [x] `spec/project-view.md` says Maven and Gradle are among the kinds that
       are read — not `spec/editor.md`, which predates the section; 0513 hit
       the same thing and corrected it in its own last step
