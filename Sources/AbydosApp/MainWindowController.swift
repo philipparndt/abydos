@@ -3857,6 +3857,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		bottomPanel.showBacklog()?.showList(list)
 	}
 
+	/// Which record the pane shows, for `--backlog openspec`.
+	func showBacklogSource(openSpec: Bool) {
+		bottomPanel.showBacklog()?.showOpenSpec(openSpec)
+	}
+
+	/// What is on the board and what the archive holds, for `--backlog openspec`.
+	func backlogBoardReportForTesting() -> String {
+		bottomPanel.showBacklog()?.boardReportForTesting ?? "no project"
+	}
+
+	/// Whether the first card of a column can be dragged.
+	func backlogDragReportForTesting(state: String) -> String {
+		guard let pane = bottomPanel.showBacklog() else { return "no project" }
+		guard let state = BacklogState(rawValue: state) else { return "no such column" }
+		return pane.dragReportForTesting(state: state)
+	}
+
 	/// What a card's context menu offers, for `--backlog-menu`.
 	func backlogMenuForTesting(number: Int) -> String {
 		guard let pane = bottomPanel.showBacklog() else { return "no project" }

@@ -1587,7 +1587,38 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if let mode = options.backlogMode {
 			controller?.showBacklog(nil)
-			controller?.showBacklogMode(list: mode == "list")
+			// `--backlog openspec` and `--backlog openspec-list`: which record,
+			// then how it is drawn. Two questions, and neither answers the
+			// other — which is the same reason the pane has two controls.
+			controller?.showBacklogMode(list: mode.hasSuffix("list"))
+			controller?.showBacklogSource(openSpec: mode.hasPrefix("openspec"))
+
+			// After the walk that reads both folders, which happens off the main
+			// thread: a report asked for before the cards arrive is a report of
+			// an empty board.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+				controller?.showBacklogSource(openSpec: mode.hasPrefix("openspec"))
+				print("BACKLOG project: \(controller?.project?.root.path ?? "none")")
+				print(controller?.backlogBoardReportForTesting() ?? "no project")
+				for column in ["ready", "in-progress"] {
+					print("drag \(column): "
+						+ (controller?.backlogDragReportForTesting(state: column) ?? "none"))
+				}
+				fflush(stdout)
+			}
+
+			// `--backlog openspec-watch`: the same report again, ten seconds
+			// later, with nothing touched in between. The point of a dashboard
+			// over files is that the files are the truth, and the only way to
+			// show that a box ticked in a terminal moves a card is to tick one
+			// while the board is up and look again.
+			if mode.hasSuffix("watch") {
+				DispatchQueue.main.asyncAfter(deadline: .now() + 12.0) {
+					print("BACKLOG again:")
+					print(controller?.backlogBoardReportForTesting() ?? "no project")
+					fflush(stdout)
+				}
+			}
 		}
 
 		// After a wait, because the board reads the folder off the main thread

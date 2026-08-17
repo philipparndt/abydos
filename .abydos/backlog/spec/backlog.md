@@ -12,12 +12,123 @@ The strip down the left edge of the window carries a button that shows the
 backlog, first in the group at the bottom where the panes that dock below the
 editor live. It is the same thing ⇧⌘B and Agent ▸ Backlog do.
 
+**One button, and behind it whichever records of the work the project keeps.**
+A project with `.abydos/backlog` shows that; one with `openspec/changes` shows
+those; one with both offers a switch between them, and only then — a switch to
+something that is not there does nothing twice. Two buttons on the rail both
+meaning "what is left to do" is the confusion this avoids.
+
+The switch is independent of list-or-board: which record is being looked at and
+how it is drawn are different questions, and neither answers the other. Neither
+is remembered between launches — a pane that opens on whatever was last looked
+at opens differently for two people looking at the same project — and where
+there is a backlog it opens on that, because that is the record somebody picks
+work up from.
+
 ### Scenario: a window on a project
 
 - **Given** a window with no backlog pane open
 - **When** the checklist button at the bottom of the left rail is pressed
 - **Then** the panel opens showing the backlog, board or list, whichever was
   last chosen
+
+### Scenario: a project that keeps both
+
+- **Given** a project with `.abydos/backlog` and `openspec/changes`
+- **When** the pane is shown
+- **Then** a control offers both, and choosing one redraws the same list or
+  board for it
+
+### Scenario: a project that keeps one
+
+- **Given** a project with a backlog and no `openspec/` directory
+- **When** the pane is shown
+- **Then** there is no switch, and the pane is exactly what it was
+
+## Requirement: A change's state is derived, and therefore not draggable
+
+An OpenSpec change is a directory of markdown under `openspec/changes/<name>/`:
+`proposal.md`, `design.md`, `specs/<capability>/spec.md` and `tasks.md`, with a
+two-key `.openspec.yaml` beside them. **It has a name and no number, and nothing
+in it records a state** — so where an item's state is the folder it sits in, a
+change's is worked out from what is on the disk:
+
+| column | when |
+| --- | --- |
+| Open | no `tasks.md` yet — still being written |
+| Ready | `tasks.md` with nothing ticked |
+| In progress | some ticked, some not |
+| Completed | every task ticked |
+
+Waiting is never answered for a change. Nothing in one says it is stuck on
+something, and a marker invented here would be a format this project made up and
+then had to keep.
+
+Its fraction is the `- [x]` against the `- [ ]` in `tasks.md`, counted by the
+same function that counts an item's `## Steps` — one parser, so a fraction means
+the same thing on either card. A change with no `tasks.md` has no fraction at
+all rather than `0/4`, and its card says which documents are written instead.
+
+**A card for a change does not drag, and says why rather than merely not
+moving.** An item drags between columns because moving its file *is* the change
+of state; a change's column is read out of its files, so a drag could only mean
+ticking or unticking checkboxes in a file nobody opened.
+
+Archived changes — those under `changes/archive/` — are not a column. That is
+`history`'s argument exactly: a long column beside four short ones is a wall
+with the work hidden behind it, so they are in the list instead.
+
+### Scenario: a change part-way through
+
+- **Given** a change whose `tasks.md` has 4 of 30 ticked
+- **When** the board is shown
+- **Then** its card is in In progress and says 4/30
+
+### Scenario: a box ticked somewhere else
+
+- **Given** that board on screen
+- **When** a task is ticked in a worktree or a terminal
+- **Then** the card moves without the pane being clicked
+
+### Scenario: dragging a change
+
+- **Given** a change's card in Ready
+- **When** it is dragged towards In progress
+- **Then** it does not move, and the pane says a change's state comes from its
+  tasks
+
+## Requirement: A change is read from its files, not from a command
+
+The board reads `openspec/changes/` directly and **never runs the `openspec`
+CLI**. Measured on this machine, `openspec list --json` costs 0.60 s and
+`openspec status --change` another 0.60 s each — Node start-up, not work — and
+the pane re-reads whenever anything under the directory changes, including an
+agent ticking a box. A change is committed markdown, so a teammate with no Node
+still has all of it.
+
+Where the tool *is* wanted — archiving, which moves a change and folds its specs
+into the project's — it is found through the same search that finds any tool a
+version manager owns, and its absence is a sentence rather than a menu entry
+that does nothing. On the machine this was written on it lives at
+`~/.local/state/fnm_multishells/91100_…/bin/openspec`, an fnm directory with a
+shell's PID in its name, and a Dock-launched app's `PATH` is four system
+directories.
+
+Archiving is handed over rather than run: it rewrites the project's specs, which
+is the larger half of somebody's review.
+
+### Scenario: no CLI on the machine
+
+- **Given** a project with `openspec/changes/` and no `openspec` anywhere
+- **When** the pane is shown
+- **Then** every change is there, with its progress
+
+### Scenario: a finished change
+
+- **Given** a change with every task ticked
+- **When** its menu is opened
+- **Then** it offers the `openspec archive <name>` command to copy, or says the
+  tool is not installed
 
 ## Requirement: A card offers the worktree its item is being worked on in
 
