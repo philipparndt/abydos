@@ -15,7 +15,11 @@ project whose directory holds no recognised build system has no second root at
 all, rather than an empty one.
 
 The list is read from what is already on disk. Nothing runs a build tool to
-answer it.
+answer it. That holds even where the build tool is the obvious way to ask:
+Conan's recipe is a Python program and evaluating it would be running somebody's
+code to fill in a tree row, and `bazel query` starts a server that takes a lock
+on the output base, which would leave this section and somebody's build waiting
+on each other.
 
 What it lists is what came from outside. A dependency that is a directory
 inside the project — a Cargo `path` dependency, the project's own crate — has a
@@ -40,6 +44,28 @@ from elsewhere would show the same source twice.
 - **Given** a `Cargo.lock` naming a crate with no source — a `path` dependency
   or a workspace member
 - **Then** that crate has no row in `Dependencies`
+
+### Scenario: a Bazel workspace
+
+- **Given** a project with a `MODULE.bazel.lock`
+- **When** the `Dependencies` row is opened
+- **Then** it holds one row per module the lock file selected
+- **And** a module the lock merely *considered* — an older version whose
+  `MODULE.bazel` was fetched to compare it and whose `source.json` was not — has
+  no row, so one module never shows as three
+
+### Scenario: a Bazel workspace nobody has built
+
+- **Given** a project with a `MODULE.bazel` and no lock file
+- **When** the `Dependencies` row is opened
+- **Then** it holds one row per `bazel_dep` the manifest declares
+
+### Scenario: a Conan project
+
+- **Given** a project with a `conan.lock`
+- **When** the `Dependencies` row is opened
+- **Then** it holds one row per package the lock file resolved
+- **And** the recipe is not executed to find them
 
 ### Scenario: a directory with no build system in it
 
@@ -103,6 +129,14 @@ instead, and says it in the words of the tool that would resolve it. A project
 that has resolved nothing because something *above it* did the resolving says
 where that was, rather than naming a command that would write nothing here.
 
+Where no command would resolve it, the row says why instead of naming one. A
+suggestion that cannot be followed is worse than none: the row's whole job is to
+be believable about what is missing.
+
+Every one of these sentences is longer than the pane is wide, so the whole of
+one is on the row's tooltip — the same place a package's unabbreviated origin
+goes.
+
 ### Scenario: a Maven project
 
 - **Given** a project with a `pom.xml`
@@ -125,6 +159,33 @@ where that was, rather than naming a command that would write nothing here.
   workspace above it that has one
 - **Then** the row says the crate is resolved in that workspace, and names it
 - **And** the workspace's own list is not repeated under the member
+
+### Scenario: a Conan project that has never been resolved
+
+- **Given** a project with a `conanfile.py` or a `conanfile.txt` and no
+  `conan.lock`
+- **Then** the row names the command that writes one, which is
+  `conan lock create .` and not `conan install`
+
+### Scenario: a lock file from an older version of the tool
+
+- **Given** a `conan.lock` written by Conan 1, which is valid JSON and says none
+  of what Conan 2's says
+- **Then** the row says so
+- **And** it does not read as a project with no dependencies
+
+### Scenario: a Bazel workspace declared in Starlark
+
+- **Given** a project with a `WORKSPACE` and no `MODULE.bazel`
+- **Then** the row says its dependencies are Starlark and that nothing on disk
+  lists them
+- **And** it names no command, because none of them would produce such a file
+
+### Scenario: a note too long for the pane
+
+- **Given** any row of this kind
+- **When** it is cut off at the edge of the pane
+- **Then** its tooltip has the whole sentence
 
 ### Scenario: a Go module that requires nothing
 
