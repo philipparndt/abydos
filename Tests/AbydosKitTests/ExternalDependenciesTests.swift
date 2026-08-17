@@ -566,6 +566,24 @@ struct ExternalDependenciesTests {
 	}
 	"""
 
+	// MARK: - Bazel
+
+	/// The 7.2-and-later lock: `registryFileHashes`, whose keys are every
+	/// registry file consulted.
+	private let bazelLockRegistryHashes = """
+	{
+	  "lockFileVersion": 11,
+	  "registryFileHashes": {
+	    "https://bcr.bazel.build/bazel_registry.json": "0000",
+	    "https://bcr.bazel.build/modules/gazelle/0.38.0/source.json": "1111",
+	    "https://bcr.bazel.build/modules/rules_go/0.46.0/MODULE.bazel": "2222",
+	    "https://bcr.bazel.build/modules/rules_go/0.49.0/MODULE.bazel": "3333",
+	    "https://bcr.bazel.build/modules/rules_go/0.50.1/MODULE.bazel": "4444",
+	    "https://bcr.bazel.build/modules/rules_go/0.50.1/source.json": "5555"
+	  }
+	}
+	"""
+
 	/// The resolved tree is the lock file, and the row names the version on disk
 	/// — `package.json` says `^4.17.21`, which is not an answer.
 	@Test func aPackageLockNamesEveryPackageAndTheVersionItResolvedTo() throws {
@@ -878,6 +896,286 @@ struct ExternalDependenciesTests {
 		])
 	}
 
+	/// **The trap in the newer lock, and the reason this reader is not two
+	/// lines.** Minimal version selection fetches the `MODULE.bazel` of every
+	/// candidate version to compare them and only fetches `source.json` for the
+	/// one it settles on. So three versions of `rules_go` are named in the file
+	/// and exactly one of them is a dependency — a reader taking every key would
+	/// draw three rows for one module, each claiming to be what the project uses.
+	@Test func aBazelLockNamesTheVersionSelectedAndNotTheOnesConsidered() throws {
+		let root = try makeRoot()
+		try write(bazelLockRegistryHashes, to: root.appendingPathComponent("MODULE.bazel.lock"))
+
+		let set = ExternalDependencies.read(root: root, kind: .bazel)
+		guard case let .packages(packages) = set.contents else {
+			Issue.record("expected packages, got \(set.contents)")
+			return
+		}
+		#expect(packages.map(\.name) == ["gazelle", "rules_go"])
+		#expect(packages.map(\.version) == ["0.38.0", "0.50.1"])
+		// Where it came from is the registry, which this layout does write down.
+		#expect(packages.allSatisfy { $0.origin == "https://bcr.bazel.build" })
+	}
+
+	/// The 7.0/7.1 lock, which said it outright and which projects on disk still
+	/// have. Reading only the newer layout would empty the section for them.
+	@Test func theOlderBazelLockLayoutIsReadToo() throws {
+		let root = try makeRoot()
+		try write("""
+		{
+		  "lockFileVersion": 3,
+		  "moduleDepGraph": {
+		    "": { "name": "my_project", "version": "" },
+		    "rules_cc@0.0.9": {
+		      "name": "rules_cc", "version": "0.0.9", "registry": "https://bcr.bazel.build"
+		    },
+		    "bazel_tools@_": { "name": "bazel_tools", "version": "" }
+		  }
+		}
+		""", to: root.appendingPathComponent("MODULE.bazel.lock"))
+
+		let set = ExternalDependencies.read(root: root, kind: .bazel)
+		guard case let .packages(packages) = set.contents else {
+			Issue.record("expected packages, got \(set.contents)")
+			return
+		}
+		// The root module is keyed by the empty string and is the project itself —
+		// every file of it already has a row in the first tree.
+		#expect(packages.map(\.name) == ["bazel_tools", "rules_cc"])
+		#expect(packages.map(\.version) == [nil, "0.0.9"])
+	}
+
+	/// No lock: the manifest, which names the direct dependencies exactly.
+	///
+	/// Less than the lock and not nothing, which is the right way round for a
+	/// workspace nobody has built yet.
+	@Test func aBazelWorkspaceWithNoLockReadsItsDirectDependencies() throws {
+		let root = try makeRoot()
+		try write("""
+		module(name = "my_project", version = "1.0")
+
+		bazel_dep(name = "rules_go", version = "0.50.1")
+
+		# buildifier breaks a long one across lines, so name and version are not
+		# on the same one.
+		bazel_dep(
+		    name = "gazelle",
+		    version = "0.38.0",
+		)
+
+		bazel_dep(repo_name = "gtest", name = "googletest", version = "1.15.2")
+		""", to: root.appendingPathComponent("MODULE.bazel"))
+
+		let set = ExternalDependencies.read(root: root, kind: .bazel)
+		guard case let .packages(packages) = set.contents else {
+			Issue.record("expected packages, got \(set.contents)")
+			return
+		}
+		#expect(packages.map(\.name) == ["gazelle", "googletest", "rules_go"])
+		#expect(packages.map(\.version) == ["0.38.0", "1.15.2", "0.50.1"])
+	}
+
+	/// **`repo_name` written before `name`, which is what made `attribute` scan
+	/// every occurrence.** The old reader found `name` inside `repo_name`, saw
+	/// the underscore in front of it, and gave the whole line up — so the module
+	/// vanished from the list rather than being read wrongly, which is the kind
+	/// of failure a test has to name because nothing on screen would.
+	@Test func anAttributeIsFoundPastAnEarlierWordThatContainsIt() {
+		#expect(BazelBuild.attribute(
+			"name", in: "bazel_dep(repo_name = \"gtest\", name = \"googletest\")"
+		) == "googletest")
+		#expect(BazelBuild.attribute(
+			"version", in: "bazel_dep(name = \"a version of it\", version = \"2.0\")"
+		) == "2.0")
+	}
+
+	/// The sources, found by following the convenience symlink Bazel leaves and
+	/// **listing** what is under the output base.
+	///
+	/// The output base itself is named by an md5 of the workspace path, so it is
+	/// not computed. And the separator between a module and its version has been
+	/// `~`, `+`, `+` with nothing after it and nothing at all across releases, so
+	/// the directory is matched rather than spelled.
+	@Test func aBazelRepositoryIsFoundWhateverSeparatorTheReleaseUsed() throws {
+		let root = try makeRoot()
+		let outputBase = try makeRoot()
+		try FileManager.default.createDirectory(
+			at: outputBase.appendingPathComponent("execroot/_main/bazel-out"),
+			withIntermediateDirectories: true
+		)
+		try FileManager.default.createSymbolicLink(
+			at: root.appendingPathComponent("bazel-out"),
+			withDestinationURL: outputBase.appendingPathComponent("execroot/_main/bazel-out")
+		)
+		for repository in ["rules_go+0.50.1", "gazelle~0.38.0", "googletest+", "rules_google+9.9"] {
+			try write("x\n", to: outputBase.appendingPathComponent("external/\(repository)/BUILD"))
+		}
+
+		let repositories = ExternalDependencies.bazelRepositoryDirectories(for: root)
+		#expect(repositories.count == 4)
+		#expect(ExternalDependencies.bazelSources(named: "rules_go", in: repositories)?
+			.lastPathComponent == "rules_go+0.50.1")
+		#expect(ExternalDependencies.bazelSources(named: "gazelle", in: repositories)?
+			.lastPathComponent == "gazelle~0.38.0")
+		#expect(ExternalDependencies.bazelSources(named: "googletest", in: repositories)?
+			.lastPathComponent == "googletest+")
+		// The near miss the strictness is for: `rules_google+9.9` starts with
+		// `rules_go` and belongs to another module entirely.
+		#expect(ExternalDependencies.bazelSources(named: "rules_g", in: repositories) == nil)
+	}
+
+	/// **What is honestly not read, and what it says instead.** A `WORKSPACE`
+	/// workspace declares its repositories in Starlark macros, so there is no
+	/// file to read — and unlike every other unresolved row in this section there
+	/// is no command that would make one, so the row does not invent one.
+	@Test func aWorkspaceOnlyBazelProjectSaysWhyRatherThanNamingACommand() throws {
+		let root = try makeRoot()
+		try write("workspace(name = \"my_project\")\n", to: root.appendingPathComponent("WORKSPACE"))
+
+		let set = ExternalDependencies.read(root: root, kind: .bazel)
+		#expect(set.contents == .unresolved(
+			"WORKSPACE dependencies are Starlark — nothing on disk lists them"
+		))
+	}
+
+	/// **Found by looking at it.** Every one of these sentences is longer than
+	/// the pane is wide, so the row shows `WORKSPACE dependencies are…` and the
+	/// rest of it has to be somewhere. The tooltip is where everything too long
+	/// for the pane goes, and a note's was saying only which kind it was.
+	@Test func aNotesTooltipCarriesTheWholeSentenceThePaneCuts() throws {
+		let root = try makeRoot()
+		try write("workspace(name = \"my_project\")\n", to: root.appendingPathComponent("WORKSPACE"))
+
+		let tree = try #require(DependencyTree(sets: [
+			ExternalDependencies.read(root: root, kind: .bazel),
+		], project: root))
+		let note = try #require(tree.root.childNodes.first)
+		#expect(note.detail?.hasPrefix(
+			"WORKSPACE dependencies are Starlark — nothing on disk lists them"
+		) == true)
+	}
+
+	/// The row as the section draws it.
+	@Test func aBazelProjectsSectionReadsAsNameVersionAndRegistry() throws {
+		let root = try makeRoot()
+		try write(bazelLockRegistryHashes, to: root.appendingPathComponent("MODULE.bazel.lock"))
+
+		let tree = try #require(DependencyTree(sets: [
+			ExternalDependencies.read(root: root, kind: .bazel),
+		], project: root))
+		#expect(tree.report() == [
+			"Dependencies — Bazel",
+			"  gazelle — 0.38.0  ·  bcr.bazel.build",
+			"  rules_go — 0.50.1  ·  bcr.bazel.build",
+		])
+	}
+
+	// MARK: - Conan
+
+	private let conanLock = """
+	{
+	  "version": "0.5",
+	  "requires": [
+	    "zlib/1.3.1#b8bc2603263cf7eccbd6e17e66b0ed76%1720557532.108",
+	    "fmt/10.2.1#a1b2c3d4%1720557532.108",
+	    "mylib/2.0@acme/stable#f00d%1720557532.108"
+	  ],
+	  "build_requires": [
+	    "cmake/3.29.3#deadbeef%1720557532.108"
+	  ],
+	  "python_requires": []
+	}
+	"""
+
+	/// A Conan 2 lock is JSON and is the resolved graph, so the recipe never has
+	/// to run.
+	@Test func aConanLockIsReadIntoPackages() throws {
+		let root = try makeRoot()
+		try write(conanLock, to: root.appendingPathComponent("conan.lock"))
+
+		let set = ExternalDependencies.read(root: root, kind: .conan)
+		guard case let .packages(packages) = set.contents else {
+			Issue.record("expected packages, got \(set.contents)")
+			return
+		}
+		#expect(packages.map(\.name) == ["cmake", "fmt", "mylib", "zlib"])
+		#expect(packages.map(\.version) == ["3.29.3", "10.2.1", "2.0", "1.3.1"])
+		// The recipe revision and the timestamp are not the version, and neither
+		// is the user and channel — which is the only provenance a lock records.
+		#expect(packages.first { $0.name == "mylib" }?.origin == "acme/stable")
+		#expect(packages.first { $0.name == "zlib" }?.origin == "")
+	}
+
+	/// **A Conan 1 lock parses perfectly and says none of this.** It keys
+	/// everything under `graph_lock`, so a reader that took "parsed, no
+	/// `requires`" for an answer would draw `no dependencies` over a project with
+	/// forty of them — the exact lie this section was built to stop.
+	@Test func aConan1LockIsRefusedRatherThanReadAsEmpty() throws {
+		let root = try makeRoot()
+		try write("""
+		{
+		  "graph_lock": {
+		    "nodes": { "0": { "ref": "zlib/1.2.11", "options": "shared=False" } }
+		  },
+		  "version": "0.4",
+		  "profile_host": "[settings]\\narch=x86_64\\n"
+		}
+		""", to: root.appendingPathComponent("conan.lock"))
+
+		let set = ExternalDependencies.read(root: root, kind: .conan)
+		#expect(set.contents == .unresolved("conan.lock is a Conan 1 lock — run conan lock create ."))
+	}
+
+	/// A recipe with no lock is the honest unresolved case, and the row names the
+	/// command — `conan install` does not write one in Conan 2, which is the
+	/// mistake the message is worded around.
+	@Test func aConanRecipeWithNoLockNamesTheCommandThatWritesOne() throws {
+		let root = try makeRoot()
+		try write("class Pkg(ConanFile):\n    name = \"mine\"\n",
+		          to: root.appendingPathComponent("conanfile.py"))
+
+		let set = ExternalDependencies.read(root: root, kind: .conan)
+		#expect(set.contents == .unresolved("no conan.lock — run conan lock create ."))
+	}
+
+	/// The cache folder is named for a hash of the whole resolved package, so it
+	/// is listed and matched. **Strictly**: a prefix alone would give `fmt` the
+	/// folder belonging to `fmtlog` and open another package's headers under a
+	/// row saying `fmt`.
+	@Test func aConanPackageFolderIsMatchedByItsHashAndNotItsPrefix() throws {
+		let cache = try makeRoot()
+		for folder in ["fmtlogb1c2d3", "fmt9a8b7c6d", "zlibnothex"] {
+			try write("x\n", to: cache.appendingPathComponent("\(folder)/p/include/x.h"))
+		}
+		let directories = try FileManager.default.contentsOfDirectory(
+			at: cache, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
+		).sorted { $0.lastPathComponent < $1.lastPathComponent }
+
+		let found = ExternalDependencies.conanSources(named: "fmt", in: directories)
+		#expect(found?.path == cache.appendingPathComponent("fmt9a8b7c6d/p").path)
+		// `nothex` is not a hash, so this is some other folder that happens to
+		// start with the name.
+		#expect(ExternalDependencies.conanSources(named: "zlib", in: directories) == nil)
+	}
+
+	/// The row as the section draws it. A Conan lock records no remote, so most
+	/// rows carry a version and nothing else rather than a guessed registry.
+	@Test func aConanProjectsSectionReadsAsNameAndVersion() throws {
+		let root = try makeRoot()
+		try write(conanLock, to: root.appendingPathComponent("conan.lock"))
+
+		let tree = try #require(DependencyTree(sets: [
+			ExternalDependencies.read(root: root, kind: .conan),
+		], project: root))
+		#expect(tree.report() == [
+			"Dependencies — Conan",
+			"  cmake — 3.29.3",
+			"  fmt — 10.2.1",
+			"  mylib — 2.0  ·  acme",
+			"  zlib — 1.3.1",
+		])
+	}
+
 	// MARK: - Kinds nothing reads yet
 
 	/// **The claim that makes shipping two kinds honest.** A Maven project does
@@ -905,7 +1203,7 @@ struct ExternalDependenciesTests {
 	@Test func everyKindEitherIsReadOrNamesTheItemThatWillReadIt() {
 		for kind in DependencyKind.allCases {
 			switch kind {
-			case .swiftPackage, .goModule, .cargo, .npm:
+			case .swiftPackage, .goModule, .cargo, .npm, .bazel, .conan:
 				#expect(kind.pendingItem == nil)
 			default:
 				#expect(kind.pendingItem != nil, "\(kind) says nothing about itself")

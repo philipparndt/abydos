@@ -129,7 +129,7 @@ public enum DependencyKind: String, Sendable, CaseIterable {
 		switch self {
 		case .swiftPackage, .goModule, .cargo, .npm: return nil
 		case .maven, .gradle: return 515
-		case .bazel, .conan: return 516
+		case .bazel, .conan: return nil
 		}
 	}
 }
@@ -180,9 +180,14 @@ public struct DependencySet: Equatable, Sendable {
 /// and again whenever a lock file is written, so anything expensive is paid
 /// over and over while somebody is trying to read a file.
 ///
-/// The cost of the rule is that two kinds (0516) may turn out not to be
-/// readable at all without running their tool. That is a decision for that
-/// item; the note on the row is what keeps it visible until somebody makes it.
+/// 0516 asked whether Bazel and Conan could be an exception, since neither has
+/// a lock file this obviously reads, and the answer came back a firmer no than
+/// the cost argument above. `conan graph info` *evaluates* `conanfile.py`, which
+/// is a Python program out of somebody's repository. `bazel query` starts a
+/// server that takes a lock on the output base, so this section would block
+/// behind somebody's build or make their next `bazel` command block behind this
+/// section. Both are read from text instead, and what text cannot answer — a
+/// `WORKSPACE` workspace — says so on its row.
 public enum ExternalDependencies {
 	/// Every root worth asking, nearest first: the project itself, then its
 	/// subprojects.
@@ -273,7 +278,9 @@ public enum ExternalDependencies {
 		case .goModule: contents = readGoModules(at: root)
 		case .cargo: contents = readCargoPackages(at: root)
 		case .npm: contents = readNpm(at: root)
-		case .maven, .gradle, .bazel, .conan: contents = .notRead
+		case .bazel: contents = readBazelModules(at: root)
+		case .conan: contents = readConanPackages(at: root)
+		case .maven, .gradle: contents = .notRead
 		}
 		return DependencySet(root: root, kind: kind, contents: contents)
 	}
@@ -1024,5 +1031,394 @@ public enum ExternalDependencies {
 			let top = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
 		else { return false }
 		return top["workspaces"] != nil
+	}
+
+	// MARK: - Bazel
+
+	/// One module a Bazel workspace depends on, as the lock or the manifest
+	/// writes it.
+	struct BazelModule: Equatable {
+		let name: String
+		let version: String?
+		/// The registry it was resolved from, where the file says. Empty where
+		/// nothing on disk says — which is most of the layouts, and is why this is
+		/// a string to be shown rather than a guess to be made.
+		let origin: String
+	}
+
+	/// A Bazel workspace's external modules, from `MODULE.bazel.lock` when there
+	/// is one and `MODULE.bazel` when there is not.
+	///
+	/// **No `bazel query` and no `bazel mod graph`, and the reason is stronger
+	/// here than the cost argument on this type.** Those commands start a Bazel
+	/// server, and a server takes a lock on the output base. So the section would
+	/// either block behind somebody's build or make their next `bazel` command
+	/// block behind the section — on a path that runs when a project opens and
+	/// again whenever a file is written. Slow would be a trade; taking somebody's
+	/// build lock is not. Bazel also need not be installed, and bazelisk's first
+	/// run downloads a release, so opening a project would trigger a package
+	/// fetch.
+	///
+	/// What is left is plenty. The lock is the resolved set, the manifest is the
+	/// direct set, and both are text.
+	static func readBazelModules(at root: URL) -> DependencySet.Contents {
+		let repositories = bazelRepositoryDirectories(for: root)
+
+		func packages(_ modules: [BazelModule]) -> DependencySet.Contents {
+			byName(modules.map { module in
+				ExternalDependency(
+					name: module.name, version: module.version, origin: module.origin,
+					localPath: bazelSources(named: module.name, in: repositories)
+				)
+			})
+		}
+
+		if let data = try? Data(contentsOf: root.appendingPathComponent("MODULE.bazel.lock")),
+		   let top = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+			let modules = bazelSelectedModules(inLock: top)
+			if !modules.isEmpty { return packages(modules) }
+		}
+
+		// The lock's shape is not promised and changes between releases, so an
+		// unreadable one falls through to the manifest rather than erroring. The
+		// manifest lists less — direct dependencies only — and listing less is a
+		// better failure than listing nothing.
+		if let text = try? String(
+			contentsOf: root.appendingPathComponent("MODULE.bazel"), encoding: .utf8
+		) {
+			return packages(bazelDeclaredModules(in: text))
+		}
+
+		// A `WORKSPACE`-only workspace, and the honest end of this reader. Its
+		// repositories are declared by Starlark macros — `http_archive` inside a
+		// `.bzl` somebody wrote — and there is no file on disk that lists them.
+		// Listing `<output base>/external` does not rescue it either: after a
+		// build that directory is mostly Bazel's own autoconfiguration repos and
+		// nothing there tells those from the declared ones. Unlike every other
+		// unresolved row in this section, no command fixes this one, so it does
+		// not name one.
+		return .unresolved("WORKSPACE dependencies are Starlark — nothing on disk lists them")
+	}
+
+	/// The modules a `MODULE.bazel.lock` says were **selected**, across the two
+	/// layouts that are still written.
+	///
+	/// Bazel 7.0 and 7.1 wrote `moduleDepGraph`, keyed `name@version`, which is
+	/// the resolved set outright. 7.2 dropped it for `registryFileHashes`, whose
+	/// keys are the registry files consulted — and the trap is that *most of them
+	/// are versions merely considered*. Minimal version selection fetches every
+	/// candidate's `MODULE.bazel` to compare them and only fetches `source.json`
+	/// for the one it settles on, so the keys ending `/source.json` are the
+	/// selected set and the keys ending `/MODULE.bazel` are not. Reading the
+	/// latter lists three versions of one module and calls them all dependencies.
+	static func bazelSelectedModules(inLock top: [String: Any]) -> [BazelModule] {
+		if let hashes = top["registryFileHashes"] as? [String: Any] {
+			var found: [BazelModule] = []
+			var seen: Set<String> = []
+			for key in hashes.keys.sorted() where key.hasSuffix("/source.json") {
+				guard let module = bazelModule(fromRegistryFile: key) else { continue }
+				guard seen.insert(module.name).inserted else { continue }
+				found.append(module)
+			}
+			if !found.isEmpty { return found }
+		}
+
+		if let graph = top["moduleDepGraph"] as? [String: Any] {
+			var found: [BazelModule] = []
+			for (key, value) in graph.sorted(by: { $0.key < $1.key }) {
+				// The root module is keyed by the empty string: it is the project
+				// itself, and the tree already has every file of it.
+				guard !key.isEmpty else { continue }
+				let entry = value as? [String: Any]
+				let parts = key.split(separator: "@", maxSplits: 1)
+				let name = (entry?["name"] as? String) ?? String(parts.first ?? "")
+				guard !name.isEmpty else { continue }
+				var version = (entry?["version"] as? String)
+					?? (parts.count > 1 ? String(parts[1]) : nil)
+				// `bazel_tools@_`: the underscore is how this layout writes "no
+				// version", for a module that came from an override or from Bazel
+				// itself rather than from a registry.
+				if version == "_" || version?.isEmpty == true { version = nil }
+				found.append(BazelModule(
+					name: name, version: version,
+					origin: (entry?["registry"] as? String) ?? ""
+				))
+			}
+			return found
+		}
+		return []
+	}
+
+	/// `https://bcr.bazel.build/modules/rules_go/0.50.1/source.json` →
+	/// `rules_go`, `0.50.1`, from `https://bcr.bazel.build`.
+	///
+	/// Split on the `modules` component rather than counted from either end: a
+	/// registry can be a `file://` URL into somebody's repository, with any depth
+	/// of path in front of it.
+	static func bazelModule(fromRegistryFile key: String) -> BazelModule? {
+		let parts = key.split(separator: "/", omittingEmptySubsequences: false)
+		guard let modules = parts.firstIndex(of: "modules"), parts.count > modules + 2 else {
+			return nil
+		}
+		let name = String(parts[modules + 1])
+		let version = String(parts[modules + 2])
+		guard !name.isEmpty else { return nil }
+		return BazelModule(
+			name: name, version: version.isEmpty ? nil : version,
+			origin: parts[..<modules].joined(separator: "/")
+		)
+	}
+
+	/// The `bazel_dep`s a `MODULE.bazel` declares, which are the direct ones.
+	///
+	/// A call at a time rather than a line at a time, because `buildifier` breaks
+	/// a long one across lines and `name` and `version` then sit on different
+	/// ones. `BazelBuild` already knows what starts a rule call and where the
+	/// comments are; only `attribute` had to grow, to read a second key and to
+	/// try every occurrence of it on the line rather than the first.
+	static func bazelDeclaredModules(in text: String) -> [BazelModule] {
+		var found: [BazelModule] = []
+		let lines = text.components(separatedBy: "\n")
+
+		var index = 0
+		while index < lines.count {
+			guard BazelBuild.ruleName(startingAt: lines[index]) == "bazel_dep" else {
+				index += 1
+				continue
+			}
+
+			var call = ""
+			var depth = 0
+			var cursor = index
+			while cursor < lines.count, cursor - index < 40 {
+				let current = BazelBuild.stripComment(lines[cursor])
+				call += current + " "
+				depth += current.filter { $0 == "(" }.count
+				depth -= current.filter { $0 == ")" }.count
+				if depth <= 0 { break }
+				cursor += 1
+			}
+
+			// Keyword arguments only. `bazel_dep("rules_go", "0.50.1")` is legal
+			// Starlark and is written by nobody — buildifier names both — and a
+			// positional call read wrongly would put a version in the name column.
+			if let name = BazelBuild.attribute("name", in: call) {
+				found.append(BazelModule(
+					name: name, version: BazelBuild.attribute("version", in: call), origin: ""
+				))
+			}
+			index = max(index + 1, cursor + 1)
+		}
+		return found
+	}
+
+	/// The external repositories on disk, **listed rather than computed**.
+	///
+	/// The output base is a directory under `/var/tmp/_bazel_<user>` named by an
+	/// md5 of the workspace path — cargo's registry hash again, and not something
+	/// to reproduce. What can be followed instead is the convenience symlink
+	/// Bazel leaves in the workspace after a build: `bazel-<workspace>` points at
+	/// `<output base>/execroot/<name>`, and `bazel-out` and `bazel-bin` point
+	/// deeper into the same tree. So any of them will do — resolve one, walk up to
+	/// the component named `execroot`, and its parent is the output base.
+	///
+	/// Empty before the first build, which is correct: the repositories have not
+	/// been fetched, so the rows name their modules and offer nothing to open.
+	static func bazelRepositoryDirectories(for root: URL) -> [URL] {
+		let manager = FileManager.default
+		let entries = (try? manager.contentsOfDirectory(
+			at: root, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
+		)) ?? []
+
+		for entry in entries.sorted(by: { $0.lastPathComponent < $1.lastPathComponent })
+		where entry.lastPathComponent.hasPrefix("bazel-") {
+			let resolved = entry.resolvingSymlinksInPath()
+			let components = resolved.pathComponents
+			guard let execroot = components.firstIndex(of: "execroot") else { continue }
+
+			var base = URL(fileURLWithPath: "/")
+			for component in components[1..<execroot] { base.appendPathComponent(component) }
+			let external = base.appendingPathComponent("external")
+			let repositories = (try? manager.contentsOfDirectory(
+				at: external, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
+			)) ?? []
+			guard !repositories.isEmpty else { continue }
+			return repositories.sorted { $0.lastPathComponent < $1.lastPathComponent }
+		}
+		return []
+	}
+
+	/// A module's repository directory, matched rather than named.
+	///
+	/// **The separator between the module and its version changed between Bazel
+	/// releases and is not one character to hard-code.** The same module has been
+	/// `rules_go~0.50.1`, `rules_go+0.50.1`, `rules_go+` and plain `rules_go`
+	/// across 6, 7.0, 7.2 and the `WORKSPACE` world, and a repository fetched by
+	/// a module extension has yet another shape. So the directory is found by
+	/// listing and matching a prefix, and the character after the name has to be
+	/// one of the separators — otherwise `rules_go` would match `rules_google`'s
+	/// directory and open a stranger's sources on the row.
+	static func bazelSources(named name: String, in repositories: [URL]) -> URL? {
+		for repository in repositories {
+			let directory = repository.lastPathComponent
+			if directory == name { return repository }
+			guard directory.hasPrefix(name), directory.count > name.count else { continue }
+			let separator = directory[directory.index(directory.startIndex, offsetBy: name.count)]
+			if separator == "~" || separator == "+" { return repository }
+		}
+		return nil
+	}
+
+	// MARK: - Conan
+
+	/// A Conan reference, taken apart: `fmt/10.2.1@user/channel#revision%stamp`.
+	struct ConanReference: Equatable {
+		let name: String
+		let version: String?
+		/// `user/channel` where the reference has one. Empty otherwise, and that
+		/// is deliberate — a lock file does not record which remote a package came
+		/// from, and printing `conancenter` on every row would be a guess dressed
+		/// as provenance.
+		let origin: String
+	}
+
+	/// A Conan project's packages, from `conan.lock`.
+	///
+	/// **The recipe is never executed, and that is the whole decision.**
+	/// `conanfile.py` is a Python program out of somebody's repository and
+	/// `conan graph info` evaluates it; `ConanProject` already refuses to run it
+	/// to fill in a menu, and filling in a tree row is not a better reason than
+	/// that was. Nor is the recipe *scraped* for `self.requires(…)`: requirements
+	/// are routinely conditional on options and settings, so a scraped list would
+	/// be complete for some projects and quietly short for others, with nothing on
+	/// the row able to say which — the failure this section exists to prevent,
+	/// wearing a list of packages as a disguise.
+	static func readConanPackages(at root: URL) -> DependencySet.Contents {
+		let lock = root.appendingPathComponent("conan.lock")
+		guard let data = try? Data(contentsOf: lock) else {
+			// `conan install` does not write a lock in Conan 2; this is the command
+			// that does.
+			return .unresolved("no conan.lock — run conan lock create .")
+		}
+		guard let top = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+			return .unresolved("conan.lock could not be read")
+		}
+
+		// **Guarded on the keys, not on the file parsing.** A Conan 1 lock is also
+		// JSON and has none of these — it keys everything under `graph_lock` — so a
+		// reader that took "parsed, no requires" for an answer would draw `no
+		// dependencies` over a project with forty of them. That is the exact lie
+		// this section was built to stop, so the two are told apart explicitly and
+		// anything that is neither says it could not be read.
+		let lists = ["requires", "build_requires", "python_requires", "test_requires", "config_requires"]
+			.compactMap { top[$0] as? [Any] }
+		guard !lists.isEmpty else {
+			if top["graph_lock"] != nil || top["profile_host"] != nil {
+				return .unresolved("conan.lock is a Conan 1 lock — run conan lock create .")
+			}
+			return .unresolved("conan.lock could not be read")
+		}
+
+		let cache = conanPackageDirectories()
+		var seen: Set<String> = []
+		let packages = lists.flatMap { $0 }.compactMap { entry -> ExternalDependency? in
+			guard let reference = entry as? String,
+			      let parsed = parseConanReference(reference)
+			else { return nil }
+			// The same package can be a `requires` and a `build_requires`, and the
+			// section is a list of what is depended on rather than of how.
+			guard seen.insert(parsed.name).inserted else { return nil }
+			return ExternalDependency(
+				name: parsed.name, version: parsed.version, origin: parsed.origin,
+				localPath: conanSources(named: parsed.name, in: cache)
+			)
+		}
+		return byName(packages)
+	}
+
+	/// `fmt/10.2.1@user/channel#recipe-revision%timestamp` → the three parts a
+	/// row shows.
+	///
+	/// Peeled from the right, because each piece is optional and only the
+	/// `name/version` at the front is always there.
+	static func parseConanReference(_ reference: String) -> ConanReference? {
+		var text = Substring(reference)
+		if let stamp = text.firstIndex(of: "%") { text = text[..<stamp] }
+		if let revision = text.firstIndex(of: "#") { text = text[..<revision] }
+
+		var origin = ""
+		if let at = text.firstIndex(of: "@") {
+			origin = String(text[text.index(after: at)...])
+			text = text[..<at]
+		}
+
+		let parts = text.split(separator: "/", maxSplits: 1, omittingEmptySubsequences: false)
+		let name = String(parts.first ?? "").trimmingCharacters(in: .whitespaces)
+		guard !name.isEmpty else { return nil }
+		let version = parts.count > 1 ? String(parts[1]) : ""
+		return ConanReference(name: name, version: version.isEmpty ? nil : version, origin: origin)
+	}
+
+	/// `$CONAN_HOME`, or `~/.conan2`.
+	///
+	/// The same shape as `cargoHome()` and for the same reasons: the tool's own
+	/// variable first, then the documented default, and never `conan config home`
+	/// to ask — a subprocess per project on open, for an answer that is wrong on
+	/// no machine this is likely to meet.
+	static func conanHome() -> URL {
+		let environment = ProcessInfo.processInfo.environment
+		if let path = environment["CONAN_HOME"], !path.isEmpty {
+			return URL(fileURLWithPath: path)
+		}
+		return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".conan2")
+	}
+
+	/// The cache folders a package's files could be in, **listed rather than
+	/// computed**.
+	///
+	/// The folder is named for a hash of the whole resolved package — recipe
+	/// revision, settings, options, the lot — so nothing outside Conan can build
+	/// the path from a name and a version. Both halves of the cache are listed:
+	/// `p/b/<name><hash>` holds what was built here, `p/<name><hash>` what was
+	/// downloaded and the recipe. Built first, because that is the copy whose
+	/// headers a local build compiled against.
+	static func conanPackageDirectories() -> [URL] {
+		let home = conanHome()
+		let manager = FileManager.default
+		return [home.appendingPathComponent("p/b"), home.appendingPathComponent("p")]
+			.flatMap { directory in
+				((try? manager.contentsOfDirectory(
+					at: directory, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
+				)) ?? [])
+					.sorted { $0.lastPathComponent < $1.lastPathComponent }
+			}
+	}
+
+	/// A package's own files in the cache, or nil when nothing fetched it.
+	///
+	/// **The match is strict about what follows the name**, because a prefix alone
+	/// would give `fmt` the folder belonging to `fmtlog` and open another
+	/// package's headers under a row saying `fmt`. What follows a name in these
+	/// folders is a hash and nothing else, so the remainder has to be non-empty
+	/// and entirely hexadecimal.
+	///
+	/// `p` inside the folder is the package — the `include` and `lib` a build
+	/// consumes. `e` is the exported recipe, which is the honest fallback when
+	/// only the recipe was cached: it is not the library, but it is this package's
+	/// files rather than a guess at somebody else's.
+	static func conanSources(named name: String, in directories: [URL]) -> URL? {
+		let manager = FileManager.default
+		for directory in directories {
+			let folder = directory.lastPathComponent
+			guard folder.hasPrefix(name) else { continue }
+			let remainder = folder.dropFirst(name.count)
+			guard !remainder.isEmpty, remainder.allSatisfy(\.isHexDigit) else { continue }
+
+			for part in ["p", "e"] {
+				let inside = directory.appendingPathComponent(part)
+				if manager.fileExists(atPath: inside.path) { return inside }
+			}
+		}
+		return nil
 	}
 }

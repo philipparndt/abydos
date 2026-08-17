@@ -166,28 +166,42 @@ public enum BazelBuild {
 	}
 
 	/// The value of a `name = "…"` attribute on a line.
-	static func nameAttribute(in line: String) -> String? {
-		guard let range = line.range(of: "name") else { return nil }
-		let after = line[range.upperBound...].drop { $0 == " " || $0 == "\t" }
-		guard after.first == "=" else { return nil }
+	static func nameAttribute(in line: String) -> String? { attribute("name", in: line) }
 
-		let value = after.dropFirst().drop { $0 == " " || $0 == "\t" }
-		guard let quote = value.first, quote == "\"" || quote == "'" else { return nil }
-		let rest = value.dropFirst()
-		guard let end = rest.firstIndex(of: quote) else { return nil }
-
-		// What comes immediately before decides whether this is the attribute or
-		// part of another word: `filename = "x"` is not it, and `srcs = [":name"]`
-		// is not it, while both `name = "x"` on its own line and the same inside
-		// `go_binary(name = "x")` are.
-		if let previous = line[line.startIndex..<range.lowerBound].last {
-			guard previous == " " || previous == "\t" || previous == "," || previous == "(" else {
-				return nil
+	/// The value of a `<key> = "…"` attribute on a line, for any key.
+	///
+	/// **Every occurrence of the key is tried, not the first.** The first one can
+	/// be inside a quoted string — `bazel_dep(name = "my_version_of_foo", version
+	/// = "1.2")` has `version` inside the name before it has it as an attribute —
+	/// and a search that stopped at the first would find `_of_foo"` where it
+	/// wanted `=` and give the line up entirely. Reading `name` alone never met
+	/// this, which is why it was written the other way; 0516 wanted `version` off
+	/// the same line and met it immediately.
+	static func attribute(_ key: String, in line: String) -> String? {
+		var searchFrom = line.startIndex
+		while let range = line.range(of: key, range: searchFrom..<line.endIndex) {
+			searchFrom = range.upperBound
+			// What comes immediately before decides whether this is the attribute
+			// or part of another word: `filename = "x"` is not `name`, and
+			// `srcs = [":name"]` is not it, while both `name = "x"` on its own line
+			// and the same inside `go_binary(name = "x")` are.
+			if let previous = line[line.startIndex..<range.lowerBound].last {
+				guard previous == " " || previous == "\t" || previous == "," || previous == "(" else {
+					continue
+				}
 			}
-		}
 
-		let name = String(rest[rest.startIndex..<end])
-		return name.isEmpty ? nil : name
+			let after = line[range.upperBound...].drop { $0 == " " || $0 == "\t" }
+			guard after.first == "=" else { continue }
+			let value = after.dropFirst().drop { $0 == " " || $0 == "\t" }
+			guard let quote = value.first, quote == "\"" || quote == "'" else { continue }
+			let rest = value.dropFirst()
+			guard let end = rest.firstIndex(of: quote) else { continue }
+
+			let found = String(rest[rest.startIndex..<end])
+			if !found.isEmpty { return found }
+		}
+		return nil
 	}
 
 	/// Everything before an unquoted `#`.
