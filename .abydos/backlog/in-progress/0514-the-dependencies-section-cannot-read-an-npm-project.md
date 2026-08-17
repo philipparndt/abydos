@@ -44,7 +44,7 @@ built and kind-agnostic.
 
 ## Estimate
 
-2026-08-17 09:40 — about three hours left
+2026-08-17 08:49 — about an hour and a half left
 
 ## What was read before anybody started, and not verified
 
@@ -131,20 +131,20 @@ kind *is* read, and it is this one root that it cannot answer for.
 
 ## Steps
 
-- [ ] Read `package-lock.json` into packages: name, version, origin
-- [ ] The sources are `node_modules/<name>`, and a package not installed says
+- [x] Read `package-lock.json` into packages: name, version, origin
+- [x] The sources are `node_modules/<name>`, and a package not installed says
       nothing rather than pointing at a directory that is not there
 - [x] Decide whether pnpm and yarn are in this item or their own, and write the
       answer down
 - [x] File the item that will read the lock files this one does not
-- [ ] A pnpm or a yarn project says which tool resolved it, rather than being
+- [x] A pnpm or a yarn project says which tool resolved it, rather than being
       told to run `npm install`
 - [ ] Decide which root a hoisted workspace dependency is filed under
-- [ ] A workspace member says where its lock file is, rather than that there is
+- [x] A workspace member says where its lock file is, rather than that there is
       none
-- [ ] The version 1 lock layout is still read, the way both layouts of
+- [x] The version 1 lock layout is still read, the way both layouts of
       `Package.resolved` are
-- [ ] `DependencyKind.pendingItem` stops naming this item for npm
+- [x] `DependencyKind.pendingItem` stops naming this item for npm
 - [ ] Watched in the app on a real project, with a screenshot
 - [ ] Write down here what was ruled out on the way
 - [ ] `spec/project-view.md` says npm is among the kinds that are read
