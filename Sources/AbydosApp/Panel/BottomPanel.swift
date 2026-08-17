@@ -1836,8 +1836,8 @@ final class BottomPanel: NSView {
 		if let existingSearchPane { return existingSearchPane }
 		guard let root = workingDirectory else { return nil }
 		let pane = SearchPane(projectRoot: root)
-		pane.onOpenResult = { [weak self] url, line, _, intent in
-			self?.onOpenResult?(url, line, intent)
+		pane.onOpenResult = { [weak self] url, line, match, intent in
+			self?.onOpenResult?(url, line, match.column + 1, intent)
 		}
 		existingSearchPane = pane
 		return pane
@@ -1910,7 +1910,11 @@ final class BottomPanel: NSView {
 	/// Separate from `onOpenFinding`, which a review's findings and a backlog card
 	/// use and which always means "take me there": a checklist row can also mean
 	/// "show me this one, and leave the keyboard where it is".
-	var onOpenResult: ((URL, Int, ResultChecklist.Intent) -> Void)?
+	///
+	/// The file, the 1-based line, the 1-based column, and what showing it costs.
+	/// The column is carried since item 533: a match far along a long line is off
+	/// the side of the editor's pane, and a line on its own cannot say so.
+	var onOpenResult: ((URL, Int, Int, ResultChecklist.Intent) -> Void)?
 
 	/// The usages pane if there is one, without making one or moving the
 	/// keyboard.

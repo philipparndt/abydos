@@ -1830,7 +1830,32 @@ final class EditorViewController: NSViewController {
 	/// and leaves the keyboard in the list, so 263 usages cost one tab rather than
 	/// 263, and the next ↓ still reaches the next row. Both keep the defaults the
 	/// call has always had, so a click and a review finding are unchanged.
-	func open(fileURL: URL, atLine line: Int, focusEditor: Bool = true, preview: Bool = false) {
+	///
+	/// The column is where a search match starts on its line, and it is here
+	/// because a line is not a place: a match two hundred characters along a long
+	/// line is off the side of the pane and the editor cannot know that from the
+	/// line alone. One is the start of the line, which is what a review finding
+	/// and a `file:150` mean.
+	///
+	/// The reveal happens **now**, not on the next turn of the main loop. It used
+	/// to be a `DispatchQueue.main.async`, whose comment had the diagnosis right —
+	/// a freshly opened document has not laid out, so scrolling would measure
+	/// against a zero-height view — and answered it with a bet: one turn is not
+	/// "layout has finished", it is one turn. Where the sizing took two, or was
+	/// itself scheduled, the reveal ran against a pane that was still wrong and
+	/// scrolled somewhere that was not the line. `CodeView.reveal` now forces the
+	/// layout pass it depends on and, where there is still nothing to measure,
+	/// waits for the pane to be given a size rather than for time to pass — so
+	/// this is a plain call, on the tab this call opened, and `abydos deep.txt:150
+	/// main.go` cannot reveal line 150 on the wrong file because there is no
+	/// interval in which the active tab can change.
+	func open(
+		fileURL: URL,
+		atLine line: Int,
+		column: Int = 1,
+		focusEditor: Bool = true,
+		preview: Bool = false
+	) {
 		let departure = currentPlace
 		isReportingSuppressed += 1
 		open(fileURL: fileURL, focusEditor: focusEditor, preview: preview)
@@ -1839,19 +1864,7 @@ final class EditorViewController: NSViewController {
 			from: departure,
 			to: (fileURL, line)
 		)
-		// Deferred: a freshly opened document has not laid out yet, so scrolling
-		// now would compute against a zero-height view.
-		//
-		// The tab this call opened, rather than whichever is active by the time
-		// the block runs. `abydos deep.txt:150 main.go` opens both in one turn,
-		// and reading it late revealed line 150 on `main.go` — a two-line file
-		// scrolled to a line it does not have, while the file that asked for
-		// line 150 sat at the top. Weakly, since a tab closed in between is one
-		// with nothing left to reveal.
-		let opened = activeTab
-		DispatchQueue.main.async { [weak opened] in
-			opened?.codeView?.reveal(line: line)
-		}
+		activeTab?.codeView?.reveal(line: line, column: column)
 	}
 
 	/// Puts the caret on a 1-based line of the file being edited.
@@ -2941,6 +2954,12 @@ final class EditorViewController: NSViewController {
 	var caretReportForTesting: String {
 		guard let codeView = activeTab?.codeView else { return "no editor" }
 		return codeView.caretReportForTesting
+	}
+
+	/// Whether what was last revealed is on screen, with the file it is in.
+	var revealReportForTesting: String {
+		guard let codeView = activeTab?.codeView, let tab = activeTab else { return "no editor" }
+		return "\(tab.url.lastPathComponent) \(codeView.revealReportForTesting)"
 	}
 
 	/// The caret's line and the one after it, with `|` where the caret is.

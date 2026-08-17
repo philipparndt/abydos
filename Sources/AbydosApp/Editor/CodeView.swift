@@ -332,6 +332,8 @@ final class CodeView: NSView, NSTextInputClient {
 		snippetSession = nil
 		caret = 0
 		selectionAnchor = 0
+		// An offset in the file being replaced is not a place in the new one.
+		pendingReveal = nil
 		folding = FoldingState()
 		folding.setAvailable(document.folds)
 
@@ -458,6 +460,12 @@ final class CodeView: NSView, NSTextInputClient {
 	/// the old width, and rows it allocated for a wider line have nothing left
 	/// to show.
 	func viewportChanged() {
+		// A pane that has just been given its size is a pane a waiting reveal can
+		// finally be measured against. Deferred to the end so it is decided
+		// against the layout this call is about to fix rather than the one it
+		// found.
+		defer { drainPendingReveal() }
+
 		if isWordWrapEnabled, availableColumns != wrapLayout.columns {
 			updateFrameSize()
 			needsDisplay = true
@@ -1541,24 +1549,30 @@ final class CodeView: NSView, NSTextInputClient {
 		let line = document.rope.line(atByteOffset: byte)
 
 		folding.reveal(line: line)
+		widenForTheLongestLine(upTo: line)
 		updateFrameSize()
-
-		guard let point = caretPoint(), let scrollView = enclosingScrollView else { return }
-		let height = scrollView.contentSize.height
-		// Only scroll when the match is off screen, so stepping through nearby
-		// matches does not make the view jump on every step.
-		let visible = scrollView.contentView.bounds
-		if point.y < visible.minY + lineHeight || point.y > visible.maxY - lineHeight * 2 {
-			scrollView.contentView.scroll(to: NSPoint(x: 0, y: max(0, point.y - height / 2)))
-			scrollView.reflectScrolledClipView(scrollView.contentView)
-		}
+		// The match's start rather than the caret, which `setSearchMatches` has
+		// left at its end: what somebody wants to read is the match, and on a long
+		// line the two are not the same place.
+		bringOnScreen(utf16: match.utf16Range.lowerBound)
 		needsDisplay = true
 	}
 
-	/// Moves the caret to a 1-based line and scrolls it into view.
+	/// Moves the caret to a 1-based line and column and brings it on screen.
 	/// Used when jumping to a review finding or a search result.
+	///
+	/// The scrolling half of this is `bringOnScreen`, which needs a pane that has
+	/// been laid out. So layout is *made* to have happened here rather than waited
+	/// for: a reveal on a tab that has just been installed runs before the layout
+	/// pass that gives its scroll view a size, and everything below — the wrap
+	/// layout the point is measured in, the viewport it is centred against — is
+	/// measured against that size. This used to be a `DispatchQueue.main.async` in
+	/// `EditorViewController.open`, which is a bet on the work taking one turn of
+	/// the main loop rather than two (item 533).
 	func reveal(line: Int, column: Int = 1) {
 		guard let document else { return }
+		window?.contentView?.layoutSubtreeIfNeeded()
+
 		let target = max(0, min(line - 1, document.lineCount - 1))
 		folding.reveal(line: target)
 
@@ -1567,18 +1581,92 @@ final class CodeView: NSView, NSTextInputClient {
 		let end = document.rope.utf16Offset(fromByte: lineRange.upperBound)
 		let offset = min(end, start + max(0, column - 1))
 
+		widenForTheLongestLine(upTo: target)
 		updateFrameSize()
 		setCaret(offset, extendingSelection: false)
+		bringOnScreen(utf16: offset)
+	}
 
-		// Centre the line rather than merely making it visible, so there is
-		// context around what was jumped to.
-		if let point = caretPoint(), let scrollView = enclosingScrollView {
-			let height = scrollView.contentSize.height
-			let y = max(0, point.y - height / 2)
-			scrollView.contentView.scroll(to: NSPoint(x: 0, y: y))
+	/// Makes sure the view is wide enough to scroll to the end of one line.
+	///
+	/// `measureLongestLine` runs off the main thread and leaves 120 columns
+	/// standing in until it answers, so the view can be narrower than the line
+	/// being revealed — and then the scroll to a match far along it is clamped
+	/// short of the match. Measuring the one line is a line's worth of work, and
+	/// the real answer is never smaller.
+	private func widenForTheLongestLine(upTo line: Int) {
+		longestLineColumns = max(longestLineColumns, displayColumns(ofLine: line) + 2)
+	}
+
+	/// A place that should be on screen and could not be worked out yet.
+	///
+	/// The other half of not betting on a turn count: where the pane has no size
+	/// even after layout has been forced — a tab whose window is not on screen
+	/// yet, a pane the layout pass has not reached — the request waits here, and
+	/// `viewportChanged` brings it on screen the moment the pane is given one.
+	/// Nothing retries on a timer and nothing scrolls to a number measured
+	/// against a viewport of zero.
+	private var pendingReveal: Int?
+
+	/// Scrolls so a document offset is on screen, leaving the view alone when it
+	/// already is.
+	///
+	/// The arithmetic is `RevealScroll` in AbydosKit, where it can be asked
+	/// without a window: which axes have to move, how far, and — the answer that
+	/// matters here — whether the pane is in a state to be measured at all.
+	private func bringOnScreen(utf16 offset: Int) {
+		guard let scrollView = enclosingScrollView, window != nil else {
+			pendingReveal = offset
+			return
+		}
+		// Nil is an offset inside a collapsed fold, which is nothing to show
+		// rather than something to wait for: every caller unfolds first.
+		guard let point = point(forUTF16: offset) else { return }
+
+		let answer = RevealScroll.answer(
+			bringing: point,
+			onScreenIn: RevealScroll.Pane(
+				size: scrollView.contentSize,
+				offset: scrollView.contentView.bounds.origin,
+				documentSize: frame.size,
+				gutterWidth: gutterWidth,
+				lineHeight: lineHeight,
+				characterWidth: charWidth,
+				wraps: isWordWrapEnabled
+			)
+		)
+		switch answer {
+		case .notLaidOut:
+			pendingReveal = offset
+		case .stay:
+			pendingReveal = nil
+		case let .scroll(to):
+			pendingReveal = nil
+			scrollView.contentView.scroll(to: to)
 			scrollView.reflectScrolledClipView(scrollView.contentView)
 		}
 	}
+
+	/// Brings a reveal that had nothing to measure against on screen, now that
+	/// the pane has been given a size.
+	///
+	/// Called from `viewportChanged`, which is the clip view saying its frame
+	/// changed — the event the reveal was waiting for, rather than a turn of the
+	/// main loop it was hoping for.
+	private func drainPendingReveal() {
+		guard let offset = pendingReveal, !isDrainingReveal else { return }
+		isDrainingReveal = true
+		pendingReveal = nil
+		// The rows are laid out for the size the pane has now, which is what the
+		// answer is measured in.
+		updateFrameSize()
+		bringOnScreen(utf16: offset)
+		isDrainingReveal = false
+	}
+
+	/// Guards the drain against itself: the scroll below can change the frame,
+	/// and a frame change is what called it.
+	private var isDrainingReveal = false
 
 	// MARK: - Selection helpers
 
@@ -2083,6 +2171,34 @@ final class CodeView: NSView, NSTextInputClient {
 			return document.rope.string(in: lower..<upper)
 		} ?? ""
 		return "caret=\(caret) selection=\(selection.lowerBound)..<\(selection.upperBound) “\(text)”"
+	}
+
+	/// Whether the caret is on the screen, and where the pane is looking.
+	///
+	/// The claim of item 533 is about a *place being visible*, which the caret
+	/// line and the scroll offset only jointly answer, so it is one line with both
+	/// in it and the verdict spelled out: a driver that had to compare two numbers
+	/// itself would be reimplementing the thing under test. `on=no` is the report,
+	/// on any file and at any window size.
+	var revealReportForTesting: String {
+		guard let document, let scrollView = enclosingScrollView else { return "no pane" }
+		let line = document.rope.line(atByteOffset: document.rope.byteOffset(fromUTF16: caret)) + 1
+		let visible = scrollView.contentView.bounds
+		guard let point = caretPoint() else {
+			return "line=\(line) point=none pending=\(pendingReveal != nil)"
+		}
+		// The gutter is drawn over the viewport's left edge, so text under it is
+		// text nobody can read — the same boundary `RevealScroll` answers with.
+		let onScreen = point.y >= visible.minY
+			&& point.y + lineHeight <= visible.maxY
+			&& point.x >= visible.minX + gutterWidth
+			&& point.x <= visible.maxX
+		return "line=\(line) on=\(onScreen ? "yes" : "no")"
+			+ " point=\(Int(point.x)),\(Int(point.y))"
+			+ " visible=\(Int(visible.minX)),\(Int(visible.minY))"
+			+ "+\(Int(visible.width))x\(Int(visible.height))"
+			+ " frame=\(Int(frame.width))x\(Int(frame.height))"
+			+ " pending=\(pendingReveal != nil)"
 	}
 
 	override func keyDown(with event: NSEvent) {

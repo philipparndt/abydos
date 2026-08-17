@@ -60,7 +60,8 @@ public enum UsageResults {
 					? start + min(location.range.end.character, text.utf16.count)
 					: from
 				matches.append(SearchMatch(
-					utf16Range: from..<max(from, to), line: index, lineText: text
+					utf16Range: from..<max(from, to), line: index, lineText: text,
+					column: from - start
 				))
 			}
 			results.append(FileSearchResult(
