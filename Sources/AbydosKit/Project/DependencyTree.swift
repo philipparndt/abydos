@@ -72,7 +72,9 @@ public final class DependencyNode {
 			return String(format: "not read yet (%04d)", item)
 		case let .unresolved(reason):
 			return reason
-		case .packages:
+		// Neither is ever a note: a partial list is drawn as its packages and a
+		// note carrying the caveat, which arrives here as `.unresolved`.
+		case .packages, .partial:
 			return ""
 		}
 	}
@@ -105,7 +107,11 @@ public final class DependencyNode {
 		case let .package(package):
 			var lines = [package.origin]
 			if let version = package.version { lines.append("version " + version) }
-			lines.append(package.localPath?.path ?? "not fetched")
+			// The artefact when there is no directory: a Maven or Gradle
+			// dependency resolves to a jar, and `not fetched` said over a jar
+			// sitting in `~/.m2` is the tooltip telling somebody the opposite of
+			// what is true.
+			lines.append(package.localPath?.path ?? package.artefact?.path ?? "not fetched")
 			return lines.joined(separator: "\n")
 		case let .note(set):
 			return set.kind.title + " in " + set.root.path
@@ -166,6 +172,21 @@ public struct DependencyTree {
 
 	private static func rows(for set: DependencySet) -> [DependencyNode] {
 		switch set.contents {
+		case let .partial(packages, caveat):
+			// The rows *and* a note saying what is not among them. Under the
+			// packages rather than over them, because the packages are the answer
+			// and the caveat is the footnote — and drawn the same way "no
+			// dependencies" is, so a project view has one shape of note and not two.
+			//
+			// A partial list with nothing in it is the caveat alone: "no
+			// dependencies" would be the one claim this contents type exists to
+			// avoid making.
+			let note = DependencyNode(row: .note(DependencySet(
+				root: set.root, kind: set.kind, contents: .unresolved(caveat)
+			)))
+			guard !packages.isEmpty else { return [note] }
+			return rows(for: DependencySet(root: set.root, kind: set.kind, contents: .packages(packages)))
+				+ [note]
 		case let .packages(packages):
 			guard !packages.isEmpty else {
 				// Read, and there is genuinely nothing — a `go.mod` with no

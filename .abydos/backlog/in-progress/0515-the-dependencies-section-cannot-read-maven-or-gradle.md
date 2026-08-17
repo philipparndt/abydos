@@ -118,15 +118,73 @@ lesson exactly: list and match, do not build the path and hope.
 uses `.maven` as its example of an unread kind, so it has to take another kind
 when Maven starts being read.
 
+## Estimate
+
+2026-08-17 08:41 — about three hours left
+
+## What was decided, and why
+
+### The row names the jar, and cannot be opened
+
+The first of the three answers the item offered: **list the coordinates and let
+a package row have no sources.** `localPath` stays nil for every Maven and
+Gradle dependency, so the row does not expand and the tree never draws a
+"package" whose files are a jar and a checksum.
+
+Unpacking `-sources.jar` was not done: it is a cache of our own, in a section
+that has never written anything to disk. Browsing inside an archive was not
+done either: it is a feature that would serve every jar in a project rather
+than only these rows, and it is not this item's to invent.
+
+What *was* built is the second field the pre-read asked for.
+`ExternalDependency` now has an `artefact: URL?` — the one file a dependency
+resolved to, when it resolved to a file rather than to sources — and
+`DependencyNode.detail` renders `localPath ?? artefact ?? "not fetched"`. The
+tooltip over `commons-lang3` now reads
+
+    org.apache.commons
+    version 3.14.0
+    ~/.m2/repository/org/apache/commons/commons-lang3/3.14.0/commons-lang3-3.14.0.jar
+
+where it would otherwise have said `not fetched` over a jar sitting right
+there.
+
+### A fourth reading: real, and also incomplete
+
+`.unresolved` cannot carry it and `.packages` claims the opposite, so
+`DependencySet.Contents` has a fourth case:
+
+    case partial([ExternalDependency], caveat: String)
+
+drawn as the package rows *and* one note under them, in the same shape as the
+`no dependencies` note the section already synthesised. The caveat is built
+from what is actually missing rather than written once, so it never claims a
+gap this project does not have:
+
+    direct dependencies only — Maven resolves the transitive ones
+    direct dependencies only — Maven resolves the transitive ones and one of
+      these versions
+    direct dependencies only — Maven resolves the transitive ones, one of these
+      versions and a parent POM this checkout does not hold
+
+A Gradle build with a `gradle.lockfile` is `.packages` with no caveat at all,
+because nothing is missing from it.
+
 ## Steps
 
-- [ ] Decide what a JVM dependency's row shows when the sources are a jar, and
+- [x] Decide what a JVM dependency's row shows when the sources are a jar, and
       write the answer down
-- [ ] Read a `pom.xml` project's dependencies, and say what is not resolved
+- [x] A fourth reading — a list that is real and *also* incomplete — since
+      `.unresolved` cannot carry one and `.packages` claims the opposite
+- [x] Read a `pom.xml` project's dependencies, and say what is not resolved
       rather than showing a partial list as though it were whole
-- [ ] Read a Gradle project's dependencies, or write down why running Gradle is
+- [x] Read a Gradle project's dependencies, or write down why running Gradle is
       the only way and what that costs
-- [ ] Watched in the app on `abydos-examples/java`, with a screenshot
+- [x] `DependencyKind.pendingItem` stops naming this item for Maven and Gradle
+- [x] The kind standing for "nobody has taught this one" in the tests moves off
+      Maven, now that Maven is read
+- [ ] Watched in the app on a Maven project and a Gradle project, with a
+      screenshot
 - [ ] Write down here what was ruled out on the way
 - [ ] `spec/project-view.md` says Maven and Gradle are among the kinds that
       are read — not `spec/editor.md`, which predates the section; 0513 hit
