@@ -53,6 +53,11 @@ takes every usage in the file with it and counts how many of its own are done;
 `✓` hides what is finished; ⌘Z in the list takes back the last marking and ⇧⌘Z
 puts it back.
 
+It runs the other way as well. **↓ shows the row it lands on in both lists**,
+which was for a while the one thing the usages list did and the search results
+did not — see `search.md`. There is no gesture left that means two different
+things in the two of them.
+
 ⌫ is the key that takes a usage off the list in the editor a lot of these hands
 arrive from, and it is one of the two here because it is the first thing they
 press. It is safe to be: bare ⌫ moves nothing to the trash anywhere in this
@@ -98,6 +103,14 @@ do after fixing one of the usages.
 - **Given** the same twelve marked done
 - **When** Find Usages is asked about another symbol
 - **Then** nothing in the new list is marked
+
+### Scenario: the same walk in both lists
+
+- **Given** a usages list and a set of search results, each with the keyboard
+  in it
+- **When** ↓ is pressed in each
+- **Then** both show the row it lands on, in the provisional tab, with the
+  keyboard still in the list
 
 ## Requirement: ↓ through a usages list shows each one and keeps the keyboard
 

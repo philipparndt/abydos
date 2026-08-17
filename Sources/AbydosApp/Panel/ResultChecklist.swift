@@ -64,15 +64,22 @@ final class ResultChecklist: NSView {
 
 	/// Whether moving the selection shows the row under it.
 	///
-	/// Off for search, where a result is shown by ⏎ or a click. On for usages,
-	/// which is a list somebody walks with ↓ looking at each one — the feature
-	/// asked for in item 470, and the reason `Intent` exists at all.
+	/// On in both lists since item 529. It was the feature item 470 asked for in
+	/// usages, and search was left out of it deliberately — walking a
+	/// project-wide search with ↓ crosses files nobody asked about. That was a
+	/// judgement rather than a fact, and the person using both lists made the
+	/// other one: what ↓ crosses is bounded to the rows it stops on either way,
+	/// and two lists that are one widget answering ↓ differently is the surprise.
 	///
 	/// It also decides what ⏎ means, under one rule: **⏎ does the thing the
 	/// selection has not already done.** Where the selection previews, the row is
 	/// already on screen and ⏎ settles it into a tab of its own; where it does
 	/// not, ⏎ is the showing. The keyboard stays here either way — the way into
 	/// the editor is ⇥ and only ⇥.
+	///
+	/// It is still a flag rather than a constant, because it is what the rule in
+	/// `ResultChecklistKeys` is asked about and a list that shows nothing until
+	/// asked is a thing this widget still knows how to be.
 	var opensOnSelectionChange = false
 
 	/// What is in the list, flattened into rows: a file heading, then one row per
@@ -166,7 +173,15 @@ final class ResultChecklist: NSView {
 	///
 	/// What the usages list uses, which is handed its whole answer at once. A
 	/// list that *streams* must use `appendResults` — see there.
+	///
+	/// A reveal a held key had lined up goes with the old rows. This is the one
+	/// place it does: a search rerun clears the list through here, and a preview
+	/// that arrives afterwards would be showing a row out of an answer nobody is
+	/// looking at any more. `appendResults` deliberately does not cancel — the
+	/// row the key stopped on is still there, with the same index, and a batch
+	/// landing under it is not a reason to stop showing it.
 	func setResults(_ results: [FileSearchResult]) {
+		cancelPendingReveal()
 		model.setResults(results, marking: checklist)
 		reloadRows()
 	}
@@ -349,25 +364,51 @@ final class ResultChecklist: NSView {
 	/// row at once, because a preview that arrives 120ms late feels broken; a
 	/// repeat schedules the reveal and each further repeat cancels the one
 	/// before, so holding the key shows exactly one file — the row it stopped on.
+	///
+	/// **A batch of results is not a selection change.** Since item 529 this runs
+	/// for search too, whose rows arrive while the list is being worked, and
+	/// `restoringSelection` is what says so: it is held across the `reloadData`
+	/// every batch causes, as it is across every other time this view puts the
+	/// selection somewhere itself. Which of the four things to do is decided in
+	/// `AbydosKit`, where it has a test — see `ResultChecklistKeys.revealing`.
 	private func selectionMoved(isARepeat: Bool) {
-		guard opensOnSelectionChange, !restoringSelection else { return }
+		let selected = tableView.selectedRowIndexes
+		var landed: (FileSearchResult, SearchMatch)?
+		if selected.count == 1, let index = selected.first,
+		   case let .match(result, match, _, _)? = model[index] {
+			landed = (result, match)
+		}
+
+		switch ResultChecklistKeys.revealing(
+			previewsOnSelectionChange: opensOnSelectionChange,
+			restoringSelection: restoringSelection,
+			isARepeat: isARepeat,
+			selectedRowCount: selected.count,
+			landsOnAMatch: landed != nil
+		) {
+		case .notThisList:
+			return
+		case .nothing:
+			cancelPendingReveal()
+		case .now:
+			cancelPendingReveal()
+			guard let landed else { return }
+			reveal(landed.0, landed.1)
+		case .whenTheKeyStops:
+			cancelPendingReveal()
+			guard let landed else { return }
+			let work = DispatchWorkItem { [weak self] in
+				self?.pendingReveal = nil
+				self?.reveal(landed.0, landed.1)
+			}
+			pendingReveal = work
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: work)
+		}
+	}
+
+	private func cancelPendingReveal() {
 		pendingReveal?.cancel()
 		pendingReveal = nil
-		guard tableView.selectedRowIndexes.count == 1,
-		      let index = tableView.selectedRowIndexes.first,
-		      case let .match(result, match, _, _)? = model[index]
-		else { return }
-
-		guard isARepeat else {
-			reveal(result, match)
-			return
-		}
-		let work = DispatchWorkItem { [weak self] in
-			self?.pendingReveal = nil
-			self?.reveal(result, match)
-		}
-		pendingReveal = work
-		DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: work)
 	}
 
 	private func reveal(_ result: FileSearchResult, _ match: SearchMatch) {

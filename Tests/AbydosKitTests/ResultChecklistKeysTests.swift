@@ -88,10 +88,12 @@ struct ResultChecklistOpeningTests {
 	}
 
 	/// ⏎ shows the row and keeps the keyboard, which is the sentence in
-	/// `spec/usages.md` that item 510 reversed. Which *tab* it lands in is what
-	/// the two lists still disagree about: search has not shown the row yet, so
-	/// ⏎ shows it in the provisional tab; usages showed it as the selection
-	/// moved, so ⏎ settles it into one of its own.
+	/// `spec/usages.md` that item 510 reversed. Which *tab* it lands in follows
+	/// from whether the row is already on screen: a list that has not shown it
+	/// shows it in the provisional tab, and a list that showed it as the
+	/// selection moved settles it into one of its own. Since item 529 both lists
+	/// are the second, so ⏎ over a search result opens a tab of its own — which
+	/// is what `spec/search.md` has always promised a result gets.
 	@Test func returnNeverMovesTheKeyboard() {
 		#expect(opening(ResultChecklistKeys.enter) == .preview)
 		#expect(opening(ResultChecklistKeys.enter, previewing: true) == .permanent)
@@ -135,5 +137,82 @@ struct ResultChecklistOpeningTests {
 			#expect(opening(keyCode) == nil)
 			#expect(opening(keyCode, previewing: true) == nil)
 		}
+	}
+}
+
+/// What a selection landing somewhere new does about showing it — item 529.
+///
+/// The rule was one line of guards inside the view until search started using
+/// it, and search is the list whose rows *arrive while somebody is working it*.
+/// A usages list is handed its whole answer at once, so "the selection moved"
+/// and "somebody moved the selection" were never two different things there; a
+/// batch of search results reloads the table under a selection nobody touched,
+/// and a reveal fired from that would open a file the person is not looking at
+/// and take their editor with it. That is the case worth a test, and it could
+/// not have one while it lived in `AbydosApp`.
+struct ResultRevealTests {
+	private func revealing(
+		previewing: Bool = true,
+		restoring: Bool = false,
+		isARepeat: Bool = false,
+		selected: Int = 1,
+		onAMatch: Bool = true
+	) -> ResultReveal {
+		ResultChecklistKeys.revealing(
+			previewsOnSelectionChange: previewing,
+			restoringSelection: restoring,
+			isARepeat: isARepeat,
+			selectedRowCount: selected,
+			landsOnAMatch: onAMatch
+		)
+	}
+
+	/// The feature, in one line: a press that lands on a match shows it, at once.
+	@Test func amoveOntoAMatchShowsIt() {
+		#expect(revealing() == .now)
+	}
+
+	/// A held key shows the row it stops on and not one file per row. Each
+	/// repeat says `whenTheKeyStops`, and the view keeps only the last of them.
+	@Test func aheldKeyWaitsUntilItStops() {
+		#expect(revealing(isARepeat: true) == .whenTheKeyStops)
+	}
+
+	/// **The live-append case.** The list put the selection where it is —
+	/// a batch of results reloading the table, a rebuild after a row was ticked,
+	/// ↓ out of the query field landing on the first heading — so nothing is
+	/// shown, whether the key was held or not.
+	///
+	/// `notThisList` and not `nothing`, and the difference is the reason there
+	/// are four answers rather than three: a batch landing at the end of the rows
+	/// leaves the row a held key stopped on exactly where it was, so a reveal
+	/// already lined up for it is still the right one. "Nobody asked me anything"
+	/// must not read as "forget what was asked".
+	@Test func alistRestoringItsOwnSelectionRevealsNothingAndForgetsNothing() {
+		#expect(revealing(restoring: true) == .notThisList)
+		#expect(revealing(restoring: true, isARepeat: true) == .notThisList)
+	}
+
+	/// A list that shows a row only when asked answers nothing at all, and takes
+	/// nothing back either.
+	@Test func alistThatDoesNotPreviewIsNotAsked() {
+		#expect(revealing(previewing: false) == .notThisList)
+		#expect(revealing(previewing: false, isARepeat: true) == .notThisList)
+		#expect(revealing(previewing: false, onAMatch: false) == .notThisList)
+	}
+
+	/// A file heading is not a place in a file. Nothing is shown — and anything
+	/// a held key had scheduled *is* dropped, because the key has moved off the
+	/// row it was going to show.
+	@Test func amoveOntoAFileHeadingShowsNothingAndDropsWhatWasScheduled() {
+		#expect(revealing(onAMatch: false) == .nothing)
+		#expect(revealing(isARepeat: true, onAMatch: false) == .nothing)
+	}
+
+	/// ⇧↓ builds a selection, which is a gesture about ticking rows off rather
+	/// than about looking at one of them.
+	@Test func aselectionOfSeveralRowsShowsNothing() {
+		#expect(revealing(selected: 2) == .nothing)
+		#expect(revealing(selected: 0) == .nothing)
 	}
 }
