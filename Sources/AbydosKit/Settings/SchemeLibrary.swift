@@ -177,6 +177,13 @@ public extension Scheme {
 			// fallback states every colour it draws with.
 			case .selectionBackgroundInactive:
 				roles[role] = grey(0xD0D0D0, 0x424242)
+			// The find highlights, which have to separate from each other as well
+			// as from the ground — so the current one is the only thing in this
+			// palette with a hue, and the rest of the matches are a plain band.
+			case .searchMatchCurrentBackground:
+				roles[role] = SchemePair(light: 0xE8901F, dark: 0xB0722A)
+			case .searchMatchBackground:
+				roles[role] = grey(0xE0E0E0, 0x4E4E4E)
 			default:
 				roles[role] = grey(0x202020, 0xD0D0D0)
 			}

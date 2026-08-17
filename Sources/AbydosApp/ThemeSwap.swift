@@ -39,6 +39,8 @@ enum ThemeSwap {
 			theme.caret,
 			theme.selectionBackground,
 			theme.selectionBackgroundInactive,
+			theme.searchMatchBackground,
+			theme.searchMatchCurrentBackground,
 			theme.foldPlaceholderBackground,
 			theme.foldPlaceholderText,
 			theme.indentGuide,

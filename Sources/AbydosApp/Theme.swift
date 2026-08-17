@@ -126,6 +126,13 @@ struct Theme {
 	let caret: NSColor
 	let selectionBackground: NSColor
 	let selectionBackgroundInactive: NSColor
+	/// Every find-in-file match on screen except the one being looked at.
+	let searchMatchBackground: NSColor
+	/// The one being looked at, which is the point of having a current match at
+	/// all: it has to be the loudest of them from across the file. See
+	/// `CodeView.drawLine`, which paints it *after* the selection for that
+	/// reason.
+	let searchMatchCurrentBackground: NSColor
 	let foldPlaceholderBackground: NSColor
 	let foldPlaceholderText: NSColor
 	let indentGuide: NSColor
@@ -167,6 +174,8 @@ struct Theme {
 		caret = colour(.caret)
 		selectionBackground = colour(.selectionBackground)
 		selectionBackgroundInactive = colour(.selectionBackgroundInactive)
+		searchMatchBackground = colour(.searchMatchBackground)
+		searchMatchCurrentBackground = colour(.searchMatchCurrentBackground)
 		foldPlaceholderBackground = colour(.foldPlaceholderBackground)
 		foldPlaceholderText = colour(.foldPlaceholderText)
 		indentGuide = colour(.indentGuide)

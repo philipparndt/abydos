@@ -82,12 +82,12 @@ current match is still the one being dimmed by being current.
 
 - [x] A verb that photographs the keyboard-in-the-editor state, since nothing
       could reach it
-- [ ] The current match is the most prominent of the matches on screen, with the
+- [x] The current match is the most prominent of the matches on screen, with the
       keyboard in the find field *and* with it in the editor
-- [ ] A selection larger than the current match still draws as a selection
-- [ ] The two match colours are either moved into the schemes or deliberately
+- [x] A selection larger than the current match still draws as a selection
+- [x] The two match colours are either moved into the schemes or deliberately
       left hardcoded with a written reason
-- [ ] Checked in all three schemes, light and dark, since the match colours were
+- [x] Checked in all three schemes, light and dark, since the match colours were
       chosen against one background
 - [ ] Screenshots before and after, on a case with several matches on adjacent
       lines like the reported one

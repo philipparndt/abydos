@@ -92,10 +92,10 @@ struct SchemeFileTests {
 		}
 	}
 
-	/// The one exception, and the whole of its argument: a scheme written before
-	/// this role existed still loads, and gets a colour that is visible without
-	/// being louder than the focused selection.
-	@Test func derivesTheOneRoleAFileMayLeaveOut() throws {
+	/// The exceptions, and the whole of their argument: a scheme written before
+	/// these roles existed still loads, and gets colours that are visible without
+	/// being louder than the thing they sit under.
+	@Test func derivesTheRolesAFileMayLeaveOut() throws {
 		let stated = try read(Self.wholeScheme())
 		#expect(stated.app?.colour(.selectionBackgroundInactive, isLight: false) == 0xEEEEEE)
 
@@ -126,6 +126,45 @@ struct SchemeFileTests {
 		)
 		#expect(midway.dark == 0x3A2613)
 		#expect(midway.light == 0xEFE1C5)
+	}
+
+	/// The find highlights, which are derived from the selection and the caret —
+	/// the caret being the one colour a scheme guarantees can be seen against its
+	/// own editor, which is what the current match has to be.
+	///
+	/// The other matches are derived halfway back towards the selection, so a
+	/// scheme nobody has looked at cannot end up with the matches somebody is
+	/// *not* reading louder than the one they are. That inversion is 0536, and it
+	/// is not something a derivation should be able to reintroduce.
+	@Test func derivesTheFindHighlightsFromTheSelectionAndTheCaret() throws {
+		let stated = try read(Self.wholeScheme())
+		#expect(stated.app?.colour(.searchMatchCurrentBackground, isLight: false) == 0xEEEEEE)
+
+		let file = Data("""
+		{
+		  "id": "older", "title": "Older",
+		  "app": {
+		    "windowBackground": { "light": "#FFFFFF", "dark": "#151210" },
+		    "selectionBackground": { "light": "#F6E3BC", "dark": "#4A2C0E" },
+		    "caret": { "light": "#B07407", "dark": "#F7B44E" }
+		  }
+		}
+		""".utf8)
+		// Not a whole file, so it is refused — but never for one of these.
+		#expect(throws: SchemeProblem.missing("app.sidebarBackground")) { try read(file) }
+
+		let whole = try read(Self.wholeScheme(
+			omitting: "searchMatchCurrentBackground"
+		))
+		#expect(whole.app?.colour(.searchMatchCurrentBackground, isLight: false) == 0xEEEEEE)
+
+		// The two derivations, on values that are not all the same colour.
+		let selection = SchemePair(light: 0xF6E3BC, dark: 0x4A2C0E)
+		let caret = SchemePair(light: 0xB07407, dark: 0xF7B44E)
+		let current = SchemePair.midway(selection, caret)
+		let others = SchemePair.midway(selection, current)
+		#expect(current.dark == 0xA0702E)
+		#expect(others.dark == 0x754E1E)
 	}
 
 	/// Half a pair is as bad as none: a scheme that only says what it looks like
@@ -347,24 +386,66 @@ struct BundledSchemeTests {
 		#expect(blue.colour(.variable, isLight: false) == blue.colour(.editorText, isLight: false))
 	}
 
-	/// Every shipped scheme states the one role it is allowed to leave out.
+	/// Every shipped scheme states every role it is allowed to leave out.
 	///
-	/// The derivation is for schemes nobody has looked at. Ours have been looked
-	/// at, in both lightnesses, against a real file — so a shipped scheme falling
-	/// back to it would mean somebody added a palette and never saw an unfocused
-	/// selection in it.
-	@Test func everyBundledSchemeChoosesItsUnfocusedSelection() throws {
+	/// The derivations are for schemes nobody has looked at. Ours have been
+	/// looked at, in both lightnesses, against a real file — so a shipped scheme
+	/// falling back to one would mean somebody added a palette and never saw an
+	/// unfocused selection or a find highlight in it.
+	@Test func everyBundledSchemeChoosesTheRolesItCouldLeaveOut() throws {
 		for scheme in library.appSchemes {
 			let data = try Data(contentsOf: URL(fileURLWithPath: scheme.origin))
 			let document = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
 			let app = try #require(document["app"] as? [String: Any])
-			#expect(app[SchemeRole.optional.rawValue] != nil,
-			        "\(scheme.id) leaves \(SchemeRole.optional.rawValue) to the derivation")
+			for role in SchemeRole.optional {
+				#expect(app[role.rawValue] != nil, "\(scheme.id) leaves \(role.rawValue) to the derivation")
+			}
 		}
 
 		let abydos = try #require(library.appScheme(id: "abydos")?.app)
 		#expect(abydos.colour(.selectionBackgroundInactive, isLight: false) == 0x3A2E24)
 		#expect(abydos.colour(.selectionBackgroundInactive, isLight: true) == 0xE5D9C2)
+		#expect(abydos.colour(.searchMatchCurrentBackground, isLight: false) == 0xC77B3B)
+		#expect(abydos.colour(.searchMatchBackground, isLight: false) == 0x5A4A2A)
+	}
+
+	/// The current find match is the loudest thing on the row, in every scheme
+	/// and at both lightnesses.
+	///
+	/// **0536 in one claim.** Three matches of `publish` on adjacent lines, and
+	/// the current one was the darkest of the three: it is painted in the strong
+	/// colour, then the selection — the match *is* the selection, since revealing
+	/// one selects it — was painted over the top of it in the quiet colour. The
+	/// paint order is what was fixed and cannot be tested without a window, but
+	/// the colours can, and the ordering they have to be in is this one. Two of
+	/// the three shipped palettes had never been asked the question at all: the
+	/// two values were hardcoded in the view, chosen against a dark amber ground,
+	/// and every light scheme got them.
+	///
+	/// Contrast against the scheme's own editor background, which is the only
+	/// ground any of these are seen on.
+	@Test func theCurrentFindMatchOutshoutsEverythingItSitsAmong() throws {
+		for scheme in library.appSchemes {
+			let app = try #require(scheme.app)
+			for isLight in [true, false] {
+				let ground = app.colour(.editorBackground, isLight: isLight)
+				func lift(_ role: SchemeRole) -> Double {
+					Contrast.ratio(app.colour(role, isLight: isLight), ground)
+				}
+				let where_ = "\(scheme.id), \(isLight ? "light" : "dark")"
+
+				// Louder than the matches it is meant to be found among, which is
+				// the whole point of there being a current one.
+				#expect(lift(.searchMatchCurrentBackground) > lift(.searchMatchBackground), "\(where_)")
+				// And louder than either selection colour, so nothing that lands
+				// on the same characters can take the eye off it.
+				#expect(lift(.searchMatchCurrentBackground) > lift(.selectionBackground), "\(where_)")
+				#expect(lift(.searchMatchCurrentBackground) > lift(.selectionBackgroundInactive), "\(where_)")
+				// The others still have to be seen. Below this a match on the next
+				// line reads as an artefact of the ground rather than a match.
+				#expect(lift(.searchMatchBackground) > 1.15, "\(where_)")
+			}
+		}
 	}
 
 	/// Ghostty's sixteen, which is what somebody arriving from Ghostty expects.
@@ -386,5 +467,28 @@ struct BundledSchemeTests {
 		for scheme in library.schemes {
 			#expect(!scheme.about.isEmpty, "\(scheme.id) says nothing about itself")
 		}
+	}
+}
+
+/// WCAG's contrast ratio, for making a claim about two colours that would
+/// otherwise be a matter of taste.
+///
+/// Here rather than in the app because nothing in the app draws from it — the
+/// colours are chosen by eye and checked here, which is the right way round: a
+/// number is what stops "it looked fine to me" from being the only account of
+/// why one highlight is stronger than another.
+enum Contrast {
+	static func ratio(_ first: UInt32, _ second: UInt32) -> Double {
+		let bright = max(luminance(first), luminance(second))
+		let dim = min(luminance(first), luminance(second))
+		return (bright + 0.05) / (dim + 0.05)
+	}
+
+	private static func luminance(_ colour: UInt32) -> Double {
+		func channel(_ shift: UInt32) -> Double {
+			let value = Double((colour >> shift) & 0xFF) / 255
+			return value <= 0.03928 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
+		}
+		return 0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0)
 	}
 }
