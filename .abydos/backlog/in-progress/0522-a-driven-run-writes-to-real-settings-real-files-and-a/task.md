@@ -122,7 +122,7 @@ domain is a dictionary in memory that dies with the process and was never a file
 - [ ] Audit the verbs that write, and list them in here
 - [x] Watched: the exact sequence that produced `C-ircle`, replayed, leaving the
       file untouched
-- [ ] 0517 and 0521 get a line saying where the stray `i` came from
+- [x] 0517 and 0521 get a line saying where the stray `i` came from
 - [ ] `make test` and `make warnings` are clean
 - [ ] Write down here what was ruled out on the way
 - [ ] The spec says what the project now does
