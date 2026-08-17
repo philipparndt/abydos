@@ -78,10 +78,66 @@ Listed as places to rule out, not as a diagnosis. One report, no reproduction.
   project root would have turned this from an anomaly somebody noticed into
   something a harness can assert on. Cheap, and it makes the whole class visible.
 
+## Reproduced from 0533, and it is not session restore
+
+Hit five times running on this machine while item 0533 was being watched in the
+app. It is none of the candidates above: `--open` *is* honoured, the window does
+open on the scratch project, and then **the window follows its terminal somewhere
+else**.
+
+The chain, every link of it code doing what it was asked:
+
+1. `followsTerminalProject` is `true` in the real preferences.
+2. A driven run copies the real preference domain into its volatile one — 0522's
+   line is about *writing*, and the reading is deliberate — so the follow is on.
+3. The panel opens a terminal. Its shell inherited a working directory that no
+   longer exists (a scratch directory some earlier agent deleted); zsh said
+   `getcwd: cannot access parent directories` and fell back to
+   `~/.config/zshutil`, which is where this machine's zsh configuration lives.
+4. The pane reports that directory, `onPaneNeedsProject` fires,
+   `switchProject(to:, followingTerminal: true)` runs, and the project is swapped
+   out from under the run — discarding the tab `--file` had opened.
+
+From outside it looks like this: `--print-text` prints `no editor`,
+`--search-steps` prints `SEARCH: no results pane` or searches the wrong project,
+and `--close-window` reports "a window showing zshutil". Nothing was typed and
+nothing was written, exactly as the report says.
+
+So the missing branch is not among the four at `AppDelegate.swift:244`. It is that
+a driven run given `--open` can have its project **changed later**, by a mechanism
+meant for somebody working in a window. Two things follow for the deciding above:
+
+- The rule wants to be "a driven run opens what it was given **and stays there**",
+  not only "opens what it was given". Following a terminal is a gesture, and a
+  driven run has nobody making gestures.
+- It is worse than one odd capture, because the switch lands *seconds after*
+  launch: a verb that types could run before it and be aimed at the right file, or
+  after it and be aimed into whatever the terminal wandered into.
+
+Worth checking on the way: whether tmux makes it likelier. Every pane on this
+machine reported `~/.config/zshutil` — nine sessions' worth — because tmux
+sessions outlive the directories agents make and delete.
+
+**The way past it until this is fixed**: build with a bundle identifier of your
+own, `make build BUNDLE_ID=…`, and seed that domain with one key first
+(`defaults write <id> appearance abydos-system`) so `Settings.migrate` finds it
+non-empty and does not copy the real domain in. Then `followsTerminalProject` is
+its registered default of `false` and the run stays where it was pointed. A dozen
+runs' worth of evidence from 0533.
+
+Separately, and worth a line because it wastes the same hour: **the app hangs on
+launch with no output at all** if an earlier driven run was killed. macOS puts up
+its "reopen windows?" alert from `promptToIgnorePersistentState` *before*
+`applicationDidFinishLaunching`, so even `--version` prints nothing and waits for
+a click nobody is there to give. `-ApplePersistenceIgnoreState YES` gets past it,
+and `sample` on the hung process is what identifies it.
+
 ## Steps
 
-- [ ] Reproduce it, or establish that it cannot be reproduced and say what the
+- [x] Reproduce it, or establish that it cannot be reproduced and say what the
       run actually did — the recent-projects list is the first thing to check
+      *(done from 0533, above: the window follows its terminal, and the
+      recent-projects list has nothing to do with it)*
 - [ ] A driven run opens the project it was given, or fails in a way a harness
       can see — never a different project
 - [ ] A driven run says which project root it opened
