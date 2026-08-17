@@ -180,6 +180,72 @@ rather than at the table. Item 505 gave that key its meaning and item 510 made a
 click keep the keyboard so it would be safe; this item is what makes it true
 after a click that started somewhere else.
 
+## The decision in "Worth deciding" was not taken
+
+**A first click still opens.** The keyboard question turned out not to be
+tangled with opening at all — the open is innocent, and the fix is one line in
+the click and one in the tab swap. Making the first click focus-and-select, with
+opening following from the selection the way it does for ↓, would have been a
+change to what a click *means* in aid of a fault that was never about meaning.
+Left where it is, undecided, for whoever wants it on its own merits.
+
+## Ruled out on the way
+
+- **The open taking the keyboard despite `focusEditor: false`.** The item's own
+  prime suspect, and it is innocent. `.permanent` carries `focusEditor: false`
+  from `openFromChecklist` through `EditorAreaController.open` to
+  `EditorViewController.open` to `activate`, and `activate` only calls
+  `makeFirstResponder` inside `if focusEditor`. Traced through with a line at
+  every hop: on the runs that fail, the first responder entering `activate` is
+  already wrong, so there was never anything for the open to steal.
+- **`makeRoomForTheEditor`, which is deferred and looked exactly like the
+  "in flight" shape.** It is a `DispatchQueue.main.async` around a divider
+  move, so the suspicion was reasonable. It is not it: with a panel taller than
+  half the window, so the deferred `setPosition` really runs, the transcript is
+  identical. And the usages pane does not call it at all — its wiring goes
+  straight to `openFromChecklist` — yet fails in exactly the same way, which
+  rules it out from the other side.
+- **A terminal beside the list grabbing the keyboard back.** `TerminalView`
+  takes first responder in several places, and `makeRoomForTheEditor` ends in
+  `tellTerminalsTheySizeChanged()`, so a terminal reacting to a resize was worth
+  reading. None of its `makeFirstResponder` calls is on a resize path: they are
+  a drop, a right-press, `mouseDown` and the testing hooks. Measured too — the
+  `beside` home with a live shell fails and passes with the rest.
+- **`CodeView` refusing to resign.** A first responder that answers
+  `resignFirstResponder` with `false` makes `makeFirstResponder` fail silently,
+  which would have explained "the keys keep reaching whatever had it" perfectly.
+  Both `CodeView.resignFirstResponder` and `TerminalView`'s return `true`.
+- **An event monitor or a `sendEvent` override intercepting the mouse-down.**
+  There is none: no `NSEvent.addLocalMonitorForEvents` and no `sendEvent`
+  override anywhere in the program.
+- **A test in `AbydosKit`, the way item 510 extracted one.** There is no rule
+  here to extract. Item 510 had a decision — which gesture means which intent —
+  and this is a `makeFirstResponder` that was never called. A test of it would
+  need a window, which is the layer the suite cannot reach, so the claim is made
+  where it can fail: the transcripts above, and `window-key:delete`, which is
+  the ⌫ half of it and is new.
+
+## What the harness cost, and what it hid
+
+- **A `--screenshot` run cannot see this fault.** `AppDelegate` sets
+  `NSApp.setActivationPolicy(.accessory)` for a capture run, quite deliberately
+  — "a capture run never takes the keyboard" — and under that policy AppKit's
+  mouse-down responder assignment behaves differently and the driven click
+  passes. Item 510's own transcript has `click:4 → who: ChecklistTable` for
+  exactly that reason, from a build where a click *did* work. Anything measured
+  about focus and the pointer has to be run without `--screenshot`.
+- **`print` from a step is block-buffered when stdout is a pipe.** `who` and
+  `rows` do not `fflush`; `status` and `heading` do. A script that ends on
+  `rows` and is then killed by PID prints nothing at all, which reads exactly
+  like the steps never running. End a driven script with `status` or `heading`.
+- **The flag is `--usages`, not `--usages-at`.** An unknown `--flag` is skipped
+  in silence, so the run looks like a language server that never answered.
+- **`shift-click:` does not extend the selection under this harness**, whatever
+  the fix. A posted ⇧-click reaches `rowClicked`, which correctly opens nothing,
+  but the table's own selection extension does not happen in a run with no key
+  window. Unchanged by this item — the claim made above is about the keyboard,
+  which `who` answers, and not about the selection.
+
 ## Steps
 
 - [x] Reproduce from outside the app: click a row with the keyboard in the
@@ -201,9 +267,16 @@ after a click that started somewhere else.
       whose stray character somebody has since fixed, and
       `foldComputationIsReasonableOnHugeFile` measures the machine and had a
       quiet one
-- [ ] Write down here what was ruled out on the way
-- [ ] `spec/search.md` and `spec/usages.md` say what the project now does
+- [x] Write down here what was ruled out on the way, and what the harness
+      itself hid — a `--screenshot` run cannot reproduce this at all
+- [x] `spec/search.md` and `spec/usages.md` say what the project now does.
+      Both were *wrong by omission* in the same way, and it is the omission
+      the fault lived in: each said a click does not take the keyboard to
+      the editor and neither said a click puts it in the list. Half a rule
+      is what a click had implemented. Both requirements now say both
+      halves and carry a scenario that starts with the keyboard somewhere
+      else — which is the only shape of this that could ever fail
 
 ## Estimate
 
-2026-08-17 — about an hour left: the suite, the spec deltas and the writing up
+2026-08-17 — done
