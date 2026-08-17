@@ -74,3 +74,21 @@ Restoring the file. `git -C ~/dev/abydos-examples checkout --
 cadova-models/Sources/coaster/main.swift` puts it back, and that is the
 reporter's call in their own repository — three agents have now reported it and
 none of them touched it, which is right.
+
+## Answered by 0522
+
+The suspicion at the end of the description was right, and it was the drivers.
+
+A run given a launch verb used to fall through to the most recently opened
+project when none was named, and then restore that project's session. So a
+typing verb ran against a window full of the reporter's own tabs, and the
+character landed in the file that happened to be in front — which is how
+`C-ircle(diameter: diameter)` came to be in `abydos-examples`, in a file nobody
+was editing, a minute after a driven launch.
+
+Nothing is wrong with the editor. Nothing writes a character into a file the
+caret is not in: the caret really was in that file, because the window had put
+it there on somebody else's behalf.
+
+0522 fixes it three ways over — a driven run opens only what it was given,
+restores no session, and refuses by name to type into a file it did not name.

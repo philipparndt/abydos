@@ -218,3 +218,21 @@ questions that would settle it:
 ## Estimate
 
 2026-08-16 22:02 — waiting on the screenshot or another occurrence; nothing to fix until then
+
+## Where the `i` came from — 0522
+
+**Not the terminal.** Everything ruled out above stands, and the afternoon spent
+ruling it out was the afternoon that made the answer findable: the stand-in
+shell wrote nothing, the focus report is not it, and no sequence this app emits
+leaves an `i` at a prompt.
+
+The `i` was a *driven run typing into the user's own tmux session*. A run given
+a launch verb used to fall through to the most recently opened project, restore
+that project's session — its terminals included — and attach to the tmux session
+that project keeps. A verb that then sent keystrokes sent them into a session the
+reporter was attached to elsewhere, so they arrived at their prompt: `icd ..`,
+`mak einstall`. That is also why they saw it during harness runs and never in
+their own use, which is the observation that settles it.
+
+0522 closes it: a driven run does not restore a session, does not attach to a
+project's tmux, and does not open a project it was not given.

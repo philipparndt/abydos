@@ -20,7 +20,7 @@ Two things follow from that, and they are what this is for:
   breakpoint *in the pod*, in your own sources, because the binary was compiled
   on this machine. Go, Java, Rust, C, C++, Zig and Odin.
 
-[The website](https://philipparndt.github.io/Abydos-docs/) ·
+[The website](https://philipparndt.github.io/abydos-docs/) ·
 [Releases](https://github.com/philipparndt/abydos/releases) ·
 [What is supported](#what-is-supported)
 
