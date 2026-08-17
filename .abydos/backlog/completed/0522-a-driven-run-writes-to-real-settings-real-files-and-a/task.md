@@ -323,13 +323,21 @@ machine is running.
 
 ### The whole session, key by key
 
-`de.rnd7.ideai` held 210 keys before any of this and 211 after every run above.
-The one addition is `openScratches.9fe884126e2fad13`, and it was already there in
-the snapshot taken *before the first build* — the reporter's own app, or the
-neighbour, opening a scratch while this was being written. No run here added a
-key, and `appearance` is still absent, which it would not be if
-`--switch-appearance dracula` had reached the domain any of the four times it was
-run.
+`de.rnd7.ideai` held 210 keys before any of this and 212 at the end, and both
+additions are accounted for. `openScratches.9fe884126e2fad13` was already in the
+snapshot taken *before the first build*. `openScratches.d88e187f27dc9835` is
+absent from every snapshot taken during the runs — including the one taken
+immediately after the last of them — and appeared only afterwards, during a
+stretch in which nothing here did anything but build, test and commit. Both are
+the reporter's own app, or the neighbour, opening a scratch.
+
+`appearance` is still absent, which it would not be if `--switch-appearance
+dracula` had reached the domain any of the four times it was run.
+
+Anybody repeating this should keep every intermediate snapshot rather than only
+a before and an after. Two of the three keys that moved on this machine belong
+to other programs, and the only way to say which change was whose was to line
+the snapshots up against what was running at the time.
 
 ## Not part of this item
 
