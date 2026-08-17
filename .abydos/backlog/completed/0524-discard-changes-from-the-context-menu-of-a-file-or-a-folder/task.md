@@ -168,7 +168,7 @@ about.
       file, and a folder holding both
 - [x] `make test` and `make warnings` are clean
 - [x] Write down here what was ruled out on the way
-- [ ] `spec/version-control.md` says what the project now does
+- [x] `spec/version-control.md` says what the project now does
 
 Not done, and not being done:
 
