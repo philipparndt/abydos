@@ -72,25 +72,52 @@ nine-tenths of the way is diagnosed by staring at a window and wondering. A
 forgotten key and an unread file look exactly the same when the app inherits
 silently; they look nothing alike when it refuses.
 
-### One exception: `app.selectionBackgroundInactive`
+### The exceptions
 
-Selected text in an editor that has not got the keyboard. It is the one key a
-file may leave out, and if it does it becomes **halfway between
-`selectionInactive` and `selectionBackground`** — halfway between the gray a
-tree row goes when the keyboard is elsewhere and the colour selected code is
-drawn in when it is not.
+Three keys may be left out, and each has a *stated* derivation rather than a
+silent default: it says what you get, and what you get is deliberately mild —
+`midway` is never louder than the louder of the two colours it sits between.
 
-It is exempt because it arrived late. Schemes were already files people keep in
-a dotfiles repository, and requiring it would have refused every one of them for
-having been written before it existed. So it is a *stated* derivation rather
-than a silent default: it says what you get, and what you get is deliberately
-mild — never louder than the louder of the two it sits between.
+They are exempt because they arrived late. Schemes were already files people
+keep in a dotfiles repository, and requiring one would have refused every one of
+them for having been written before it existed. State them anyway if you can:
+the derivation is a floor for a file nobody has looked at, not a
+recommendation. They are listed in `SchemeRole.optional`.
 
-State it anyway if you can. It exists because a row and a run of text want
-different amounts of lift from the same background: a row is a band the width of
-the pane with an edge above and below, and code is a ragged shape mostly covered
-by the glyphs on top of it. `selectionInactive` was used for both until somebody
-selected a line of `Package.swift`, put the keyboard in the terminal, and could
-not see it. Judge it the same way — a real file, both lightnesses — and keep it
-below `selectionBackground`, or an unfocused selection will shout over a focused
-one.
+#### `app.selectionBackgroundInactive`
+
+Selected text in an editor that has not got the keyboard. Absent, it is
+**halfway between `selectionInactive` and `selectionBackground`** — halfway
+between the gray a tree row goes when the keyboard is elsewhere and the colour
+selected code is drawn in when it is not.
+
+It exists because a row and a run of text want different amounts of lift from
+the same background: a row is a band the width of the pane with an edge above
+and below, and code is a ragged shape mostly covered by the glyphs on top of it.
+`selectionInactive` was used for both until somebody selected a line of
+`Package.swift`, put the keyboard in the terminal, and could not see it. Judge
+it the same way — a real file, both lightnesses — and keep it below
+`selectionBackground`, or an unfocused selection will shout over a focused one.
+
+#### `app.searchMatchCurrentBackground` and `app.searchMatchBackground`
+
+The find-in-file highlights: the match ⌘G is on, and every other match on the
+screen. Absent, the current one is **halfway between `selectionBackground` and
+`caret`** — the caret being the one colour a scheme guarantees can be seen
+against its own editor at a glance, which is what a current match has to be —
+and the others are halfway again back towards `selectionBackground`, so a
+derived scheme cannot end up with the matches nobody is reading louder than the
+one they are.
+
+**Judge the pair together, and in that order.** These two were hardcoded in the
+view until 0536 — one amber, one brown, both chosen against a dark warm ground —
+so every light scheme drew its find highlights in somebody else's dark colours.
+The rule the shipped schemes are checked against, in `SchemeTests`, is that the
+current match has more contrast against `editorBackground` than the other
+matches *and* than either selection colour, because the current match is also
+the selection and anything that can land on the same characters must not be able
+to take the eye off it.
+
+Both are backgrounds under live code, so check the text on them too: a current
+match dark enough to be loud in a dark scheme will have light glyphs on it, and
+one light enough to be loud in a light scheme will have dark ones.

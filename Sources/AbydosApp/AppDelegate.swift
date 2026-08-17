@@ -431,6 +431,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 				controller?.setFindQuery(query)
 			}
 		}
+		if let steps = options.findNextSteps {
+			// After the query has been typed and the debounced search has run;
+			// stepping before there are any matches is a no-op that looks like the
+			// verb being broken.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
+				controller?.findNextFromEditorForTesting(steps)
+			}
+		}
 		if let query = options.searchQuery {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
 				controller?.findInProject(nil)

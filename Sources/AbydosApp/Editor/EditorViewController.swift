@@ -1822,6 +1822,19 @@ final class EditorViewController: NSViewController {
 	func findNext() { stepMatch(by: 1) }
 	func findPrevious() { stepMatch(by: -1) }
 
+	/// ⌘G with the keyboard in the text rather than in the find field.
+	///
+	/// Every verb that opens the find bar leaves the keyboard in it, so a capture
+	/// taken after one can only ever show an *unfocused* selection over the
+	/// current match. The other state is real and is reached by the ordinary
+	/// gesture — the bar is open, the keyboard is back in the code, ⌘G steps on —
+	/// and 0536 had to be looked at in both, because the selection that lands on
+	/// the current match is a different colour in each.
+	func findNextFromEditor(_ times: Int) {
+		focusActiveEditor()
+		for _ in 0..<max(1, times) { findNext() }
+	}
+
 	/// Opens a file and jumps to a line — the target of review findings and
 	/// search results.
 	///

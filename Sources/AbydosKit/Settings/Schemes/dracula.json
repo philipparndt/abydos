@@ -26,6 +26,8 @@
 		"caret": { "light": "#644AC9", "dark": "#F8F8F2" },
 		"selectionBackground": { "light": "#CFCFDE", "dark": "#44475A" },
 		"selectionBackgroundInactive": { "light": "#DAD8C8", "dark": "#404149" },
+		"searchMatchBackground": { "light": "#F5E2A8", "dark": "#5A5140" },
+		"searchMatchCurrentBackground": { "light": "#F0A63A", "dark": "#B0722A" },
 		"foldPlaceholderBackground": { "light": "#EAE7D8", "dark": "#343746" },
 		"foldPlaceholderText": { "light": "#644AC9", "dark": "#BD93F9" },
 		"indentGuide": { "light": "#E4E1D2", "dark": "#3B3E4F" },

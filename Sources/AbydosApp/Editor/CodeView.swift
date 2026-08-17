@@ -594,7 +594,14 @@ final class CodeView: NSView, NSTextInputClient {
 				NSRect(x: scrollX + gutterWidth, y: y, width: bounds.width, height: lineHeight).fill()
 			}
 
-			drawSearchHighlights(docLine: docLine, rect: rowRect)
+			// The matches on this row, at the two depths they are painted at. The
+			// others go on here, under the selection; the current one goes to
+			// `drawLine`, which puts it on *over* the selection — see there.
+			let matches = searchHighlights(docLine: docLine, rect: rowRect)
+			if !matches.others.isEmpty {
+				Theme.current.searchMatchBackground.setFill()
+				for band in matches.others { band.fill() }
+			}
 
 			drawLine(
 				docLine: docLine,
@@ -602,6 +609,7 @@ final class CodeView: NSView, NSTextInputClient {
 				rect: rowRect,
 				tokenIndex: tokenIndex,
 				selection: selection,
+				currentMatch: matches.current,
 				context: context
 			)
 		}
@@ -621,6 +629,7 @@ final class CodeView: NSView, NSTextInputClient {
 		rect: NSRect,
 		tokenIndex: TokenIndex,
 		selection: Range<Int>,
+		currentMatch: NSRect? = nil,
 		context: CGContext
 	) {
 		guard let document else { return }
@@ -666,6 +675,29 @@ final class CodeView: NSView, NSTextInputClient {
 				selection: selection,
 				rect: rect
 			)
+		}
+
+		// **The current match goes on after the selection, and that ordering is
+		// the whole of 0536.** Revealing a match selects it, so the two cover the
+		// same pixels — and the selection, painted second, turned the one match
+		// meant to be findable at a glance into the dimmest thing on the screen:
+		// in dark `abydos` the current match is 5.6 against the editor ground and
+		// the unfocused selection that covered it is 1.4, below the 2.2 of every
+		// *other* match on the page. The strongest became the weakest, which is
+		// what was reported.
+		//
+		// Painting it last states which of the two claims wins where they
+		// coincide rather than leaving it to the order two functions happen to be
+		// called in. It is not a case of skipping the selection: a selection
+		// somebody has extended past the match still draws in full, and only the
+		// match's own rectangle is covered — which is also why "coincide" needs
+		// no definition here. Nothing depends on the unfocused selection's
+		// colour, so this holds with the keyboard in the editor too, where the
+		// covering colour was 1.5 rather than 1.4 and the inversion was milder
+		// but the same shape.
+		if let currentMatch {
+			Theme.current.searchMatchCurrentBackground.setFill()
+			currentMatch.fill()
 		}
 
 		// This view is flipped, which inverts the context's y-axis. CoreText would
@@ -958,9 +990,15 @@ final class CodeView: NSView, NSTextInputClient {
 		updateNavigableWord(at: nil, commandHeld: false)
 	}
 
-	/// Paints match backgrounds for one line.
-	private func drawSearchHighlights(docLine: Int, rect: NSRect) {
-		guard !searchMatches.isEmpty, let document else { return }
+	/// Where the matches on one line fall, split by the depth each is painted at.
+	///
+	/// Measured here and painted by the caller, because the current match and the
+	/// rest do not go on at the same moment: the others belong under the
+	/// selection and the current one over it. Measured *once* for both, since the
+	/// CTLine this asks for offsets from is not free and a row is redrawn on
+	/// every caret blink.
+	private func searchHighlights(docLine: Int, rect: NSRect) -> (others: [NSRect], current: NSRect?) {
+		guard !searchMatches.isEmpty, let document else { return ([], nil) }
 
 		let lineRange = document.rope.lineByteRange(docLine)
 		let lineStart = document.rope.utf16Offset(fromByte: lineRange.lowerBound)
@@ -973,6 +1011,9 @@ final class CodeView: NSView, NSTextInputClient {
 			tokenIndex: TokenIndex(tokens: [])
 		))
 
+		var others: [NSRect] = []
+		var current: NSRect?
+
 		for (index, match) in searchMatches.enumerated() {
 			// Matches are ordered, so stop once past this line.
 			guard match.utf16Range.lowerBound <= lineEnd else { break }
@@ -984,13 +1025,20 @@ final class CodeView: NSView, NSTextInputClient {
 
 			let startX = textOriginX + CTLineGetOffsetForStringIndex(ctLine, from, nil)
 			let endX = textOriginX + CTLineGetOffsetForStringIndex(ctLine, to, nil)
+			let band = NSRect(
+				x: startX,
+				y: rect.minY,
+				width: max(2, endX - startX),
+				height: rect.height
+			)
 
-			// The current match is stronger, so it is findable at a glance among
-			// the others.
-			let isCurrent = index == currentMatchIndex
-			(isCurrent ? NSColor.hex(0xC77B3B) : NSColor.hex(0x5A4A2A)).setFill()
-			NSRect(x: startX, y: rect.minY, width: max(2, endX - startX), height: rect.height).fill()
+			if index == currentMatchIndex {
+				current = band
+			} else {
+				others.append(band)
+			}
 		}
+		return (others, current)
 	}
 
 	private func attributedLine(

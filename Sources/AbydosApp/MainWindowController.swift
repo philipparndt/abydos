@@ -2340,6 +2340,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	func setFindQuery(_ query: String) { editor.setFindQuery(query) }
 
+	/// `--find-next`: ⌘G with the keyboard back in the code. Says where the
+	/// keyboard ended up, since that is the whole claim the picture it is taken
+	/// for makes — the same reason `selectLinesForTesting` reports it.
+	func findNextFromEditorForTesting(_ times: Int) {
+		editor.findNextFromEditor(times)
+		let responder = window?.firstResponder
+		print("FIND NEXT \(times) keyboard=\(responder.map { String(describing: type(of: $0)) } ?? "nothing")")
+		fflush(stdout)
+	}
+
 	func setProjectSearchQuery(_ query: String) {
 		showProjectSearch(query: query)
 	}
