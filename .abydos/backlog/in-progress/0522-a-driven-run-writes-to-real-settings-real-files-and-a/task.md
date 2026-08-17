@@ -107,7 +107,7 @@ domain is a dictionary in memory that dies with the process and was never a file
 
 ## Estimate
 
-2026-08-17 07:57 — about four hours left
+2026-08-17 08:22 — about an hour left
 
 ## Steps
 
@@ -124,8 +124,105 @@ domain is a dictionary in memory that dies with the process and was never a file
       file untouched
 - [x] 0517 and 0521 get a line saying where the stray `i` came from
 - [ ] `make test` and `make warnings` are clean
-- [ ] Write down here what was ruled out on the way
-- [ ] The spec says what the project now does
+- [x] Write down here what was ruled out on the way
+- [x] The spec says what the project now does
+
+## What a driven run touches now
+
+| | before | now |
+|---|---|---|
+| preferences | `UserDefaults.standard`, `de.rnd7.ideai` | a dictionary in memory, seeded from that domain, gone with the process |
+| the window frame and split positions | AppKit autosaved them into that domain | frame read once by name, nothing saved |
+| the session beside a project | restored, and written back on switch and on quit | neither |
+| the project, when none was named | the most recently opened one | none |
+| the recent-projects list | written | held in memory, not written |
+| which scratches were open | an `openScratches.<project>` key per project | in memory |
+| the file a typing verb reaches | whatever was in front | a file the run named, or a refusal by name on stderr |
+| the tmux session | the project's own, which the user may be attached to | only a project the run was given, so only a session of its own |
+
+Unchanged on purpose, because these are what the verbs are *for*: a run still
+reads the real preferences, still opens a real checkout when it is given one,
+still writes the PNG or the SVG it was asked for, still creates the file or the
+folder a verb exists to create in a project it was given, and still runs
+programs. The line is writing to things nobody asked it to write to.
+
+## Found on the way, and ruled out
+
+- **`UserDefaults(suiteName:)` cannot do this, and the item's suggestion of a
+  "volatile suite" would have failed quietly.** A suite is *added to* the
+  standard search list rather than replacing it, and the app's own domain sits
+  in front of it: a driven run would write `appearance` into the suite, read it
+  back from the user's domain, and so both fail to change the setting it was
+  asked to change and go on answering with the real one. `VolatileDefaults` is
+  an `NSUserDefaults` subclass instead, which is what the subclassing notes
+  describe. Its typed accessors are overridden as well as the primitives —
+  `bool`, `double`, `stringArray` and the rest are *documented* as built on
+  `object(forKey:)`, and a single one that was not would be a silent hole in
+  exactly the thing this is for.
+
+- **The recents fallback, not the session, is what pointed the run at
+  `abydos-examples`.** The item and 0521 both had the session as the whole
+  cause. It is half: `AppDelegate` fell through to `RecentProjects.shared
+  .entries.first` when no project was named, so a verb run with no `--open`
+  opened whatever the reporter had last worked in — and *then* restored its
+  session over that. Either one alone would still have put a stranger's file in
+  front of a typing verb.
+
+- **The stray `i` reached the shell through tmux, and that is why 0517 could
+  not find it.** 0517 looked for something the terminal *emitted*. Nothing did.
+  A driven run restored the project's terminals, which attach to the tmux
+  session that project keeps — the same session the reporter was attached to in
+  their own terminal — so a keystroke sent to the app's pane arrived at their
+  prompt. `icd ..` and `mak einstall` are a keystroke landing between two
+  characters of something being typed somewhere else entirely.
+
+- **AppKit writes preferences that no injected store can intercept, and the
+  replay is what found it.** With the source file byte-identical, the session
+  untouched and `appearance` still absent, `defaults read de.rnd7.ideai` had
+  still moved: `NSSplitView Subview Frames IdeaiSplit`, `… IdeaiPanelSplit` and
+  `NSWindow Frame IdeaiMainWindow` are written by the framework itself, under
+  the autosave name the view is given. A driven run is given none. This is the
+  answer to "leaves nothing behind" that reading the code would never have
+  produced.
+
+- **Not done: `TmuxSettings.migrateAwayFromConfigEdit()` still edits
+  `~/.tmux.conf` on a driven run.** It is a one-time migration that removes a
+  line an old version added, it is idempotent, and it is the same thing the
+  installed app does on its next launch anyway — so isolating it would mean a
+  driven run leaving a repair undone rather than avoiding a change. Written down
+  because it is the one write to a file of the user's that a driven run still
+  makes.
+
+- **Not done: no test for `LaunchOptions`.** There is no test target for
+  `AbydosApp` — that is the reason the 191 verbs exist at all — so the parsing
+  and `givenPaths` are checked only by running the app. What could be moved was
+  moved: the rule about which file a typing verb may reach is
+  `DrivenRun.mayType` in `AbydosKit`, where the suite asks it the two questions
+  that matter, including the exact shape of the run that produced `C-ircle`.
+
+- **A neighbour made the `defaults` proof harder than it should have been.**
+  Two before/after pairs came back with the split frames moved, and it was not
+  this build: another agent was driving an *unfixed* build from the 0523
+  worktree at the same time (`ps` named it), and the values oscillated between
+  its shape and the user's own window's with no run of mine in between. A third
+  pair, with `--type`, `--switch-appearance dracula` and `--sidebar-width 320`,
+  came back `IDENTICAL`. Anybody repeating this should check `ps` first.
+
+## The replay
+
+A copy of `cadova-models` under `/private/tmp`, with `Circle(diameter:
+diameter)` in `Sources/coaster/main.swift` and an `.abydos/session.json` naming
+that file as the one that was open — the exact shape of the run that produced
+`C-ircle`: a typing verb against a project with a session to restore.
+
+    Abydos --open <copy> --type "C" --switch-appearance dracula \
+           --sidebar-width 320 --screenshot <png> --delay 5
+
+Afterwards: `main.swift` byte-identical (`d78c3c12…` before and after),
+`session.json` byte-identical, no file added to the project, and
+`de.rnd7.ideai` identical across the run — with `appearance` still absent, which
+is the sharpest probe available because the key is missing and `--switch-appearance`
+would have created it.
 
 ## Not part of this item
 

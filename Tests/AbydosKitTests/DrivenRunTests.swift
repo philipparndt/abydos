@@ -82,30 +82,35 @@ struct DrivenRunTests {
 	/// `object(forKey:)`, and this is what says so: every one of them reads and
 	/// writes the dictionary in memory.
 	@Test func everyTypedAccessorStaysInMemory() {
+		// Keys nothing else can have written. The suite runs in one process and
+		// in parallel, so a plain name like `appearance` is a claim about what
+		// every other test in the run happens to be doing.
+		let run = UUID().uuidString
+		func key(_ name: String) -> String { "abydos.0522.\(run).\(name)" }
 		let volatileDefaults = VolatileDefaults(copying: [:])
 
-		volatileDefaults.set(true, forKey: "flag")
-		volatileDefaults.set(7, forKey: "count")
-		volatileDefaults.set(1.25, forKey: "scale")
-		volatileDefaults.set("abydos-light", forKey: "palette")
-		volatileDefaults.set(["a", "b"], forKey: "list")
-		volatileDefaults.set(["k": "v"], forKey: "map")
-		volatileDefaults.set(Data([1, 2, 3]), forKey: "bytes")
-		volatileDefaults.set(URL(fileURLWithPath: "/tmp/x"), forKey: "place")
+		volatileDefaults.set(true, forKey: key("flag"))
+		volatileDefaults.set(7, forKey: key("count"))
+		volatileDefaults.set(1.25, forKey: key("scale"))
+		volatileDefaults.set("abydos-light", forKey: key("palette"))
+		volatileDefaults.set(["a", "b"], forKey: key("list"))
+		volatileDefaults.set(["k": "v"], forKey: key("map"))
+		volatileDefaults.set(Data([1, 2, 3]), forKey: key("bytes"))
+		volatileDefaults.set(URL(fileURLWithPath: "/tmp/x"), forKey: key("place"))
 
-		#expect(volatileDefaults.bool(forKey: "flag"))
-		#expect(volatileDefaults.integer(forKey: "count") == 7)
-		#expect(volatileDefaults.double(forKey: "scale") == 1.25)
-		#expect(volatileDefaults.string(forKey: "palette") == "abydos-light")
-		#expect(volatileDefaults.stringArray(forKey: "list") == ["a", "b"])
-		#expect(volatileDefaults.dictionary(forKey: "map")?["k"] as? String == "v")
-		#expect(volatileDefaults.data(forKey: "bytes") == Data([1, 2, 3]))
-		#expect(volatileDefaults.url(forKey: "place")?.path == "/tmp/x")
+		#expect(volatileDefaults.bool(forKey: key("flag")))
+		#expect(volatileDefaults.integer(forKey: key("count")) == 7)
+		#expect(volatileDefaults.double(forKey: key("scale")) == 1.25)
+		#expect(volatileDefaults.string(forKey: key("palette")) == "abydos-light")
+		#expect(volatileDefaults.stringArray(forKey: key("list")) == ["a", "b"])
+		#expect(volatileDefaults.dictionary(forKey: key("map"))?["k"] as? String == "v")
+		#expect(volatileDefaults.data(forKey: key("bytes")) == Data([1, 2, 3]))
+		#expect(volatileDefaults.url(forKey: key("place"))?.path == "/tmp/x")
 
 		// And none of it is in the real store, which is the claim under all of
 		// the above.
-		for key in ["flag", "count", "scale", "palette", "list", "map", "bytes", "place"] {
-			#expect(UserDefaults.standard.object(forKey: key) == nil, "\(key) escaped")
+		for name in ["flag", "count", "scale", "palette", "list", "map", "bytes", "place"] {
+			#expect(UserDefaults.standard.object(forKey: key(name)) == nil, "\(name) escaped")
 		}
 	}
 
@@ -228,7 +233,12 @@ struct DrivenRunTests {
 		#expect(settings.appearance == "dracula")
 		#expect(volatileDefaults.string(forKey: "appearance") == "dracula")
 
-		// The real domain of the app under test was never opened for writing.
-		#expect(UserDefaults.standard.object(forKey: "appearance") == nil)
+		// No claim here about what the process's own store holds under
+		// `appearance`. `SettingsTests` runs in this process too and in
+		// parallel, so an assertion on a key they share is an assertion about
+		// what the rest of the suite happens to be doing — which is how this
+		// test failed the first time the whole suite ran it. The claim it was
+		// trying to make is made properly, on a key nothing else can touch, by
+		// `adrivenRunWritesNothingIntoTheRealDomain` above.
 	}
 }
