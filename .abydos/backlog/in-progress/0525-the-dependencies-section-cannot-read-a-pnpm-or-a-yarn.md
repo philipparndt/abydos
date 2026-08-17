@@ -55,18 +55,23 @@ separate item rather than the rest of that one.
 
 ## Estimate
 
-No estimate — nobody has started.
+2026-08-17 10:05 — about three hours left
 
 ## Steps
 
-- [ ] Decide whether YAML is a dependency, a hand-written reader, or neither,
+- [x] Decide whether YAML is a dependency, a hand-written reader, or neither,
       and write the argument down the way 513 did for TOML
-- [ ] Read `pnpm-lock.yaml` into packages: name, version, origin
-- [ ] Read `yarn.lock`, both formats — v1's own syntax and berry's YAML
-- [ ] The sources: pnpm's symlink into `.pnpm`, and whatever berry with PnP
-      can offer
-- [ ] Decide whether a pnpm project's section still says `npm`
-- [ ] `readNpm`'s branch for these two stops naming this item
+- [x] Read `pnpm-lock.yaml` into packages: name, version, origin — every
+      layout still on this machine, which is 5.4's `/name/version` and 9.0's
+      `name@version`
+- [x] `snapshots:` is not read, or every package is drawn twice
+- [x] Read `yarn.lock`, both syntaxes — v1's own and berry's YAML
+- [x] Decide what a yarn entry that is not a package from a registry does:
+      `workspace:`, `link:`, `portal:`, `patch:`
+- [x] The sources: pnpm's `.pnpm/<name>@<version>/node_modules/<name>`, and
+      whatever berry with PnP can offer
+- [x] Decide whether a pnpm project's section still says `npm`
+- [x] `readNpm`'s branch for these two stops naming this item
 - [ ] Watched in the app on a real pnpm project and a real yarn project, with
       a screenshot
 - [ ] Write down here what was ruled out on the way
