@@ -236,3 +236,12 @@ their own use, which is the observation that settles it.
 
 0522 closes it: a driven run does not restore a session, does not attach to a
 project's tmux, and does not open a project it was not given.
+
+## Closed without being done, 2026-08-17
+
+Closed at the reporter's word, because 0522 found the cause and fixed it: the
+harness. Every step below is left unticked, because none of them was carried
+out — the answer did not come from this item's line of enquiry at all.
+
+What is written above about what the fault is *not* stands, and cost the
+afternoon it took to establish. That is the value left here.

@@ -92,3 +92,12 @@ it there on somebody else's behalf.
 
 0522 fixes it three ways over — a driven run opens only what it was given,
 restores no session, and refuses by name to type into a file it did not name.
+
+## Closed without being done, 2026-08-17
+
+Closed at the reporter's word, because 0522 found the cause and fixed it: the
+harness. Every step below is left unticked, because none of them was carried
+out — the answer did not come from this item's line of enquiry at all.
+
+What is written above about what the fault is *not* stands, and cost the
+afternoon it took to establish. That is the value left here.
