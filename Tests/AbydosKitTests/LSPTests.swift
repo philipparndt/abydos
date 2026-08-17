@@ -163,7 +163,15 @@ struct LSPFramingTests {
 
 	@Test func readsAMessageArrivingInPieces() async {
 		let client = LSPClient()
-		client.callbackQueue = .main
+		// **A queue of this test's own, and that is the other half of 0530.**
+		// The client delivers on `.main` by default, and in a parallel run the
+		// main thread is the harness's — nothing drains that queue while a test
+		// waits on it. The old sleep passed when the harness happened to service
+		// it and failed when it did not, which is the coin toss; waiting made the
+		// dependency deterministic instead of intermittent, which is how it was
+		// found. What is under test here is the framing, not which queue somebody
+		// hands the answer back on.
+		client.callbackQueue = DispatchQueue(label: "lsp-framing-tests")
 
 		let received = Received()
 		client.onDiagnostics = { uri, diagnostics in
@@ -201,6 +209,8 @@ struct LSPFramingTests {
 
 	@Test func readsTwoMessagesFromOneRead() async {
 		let client = LSPClient()
+		// Off the main queue, for the reason above.
+		client.callbackQueue = DispatchQueue(label: "lsp-framing-tests")
 		let received = Received()
 		client.onMessage = { _, text in received.record(uri: text, count: received.count + 1) }
 
@@ -216,6 +226,8 @@ struct LSPFramingTests {
 	/// Rubbish in the stream must not wedge the reader for ever.
 	@Test func survivesAMessageItCannotParse() async {
 		let client = LSPClient()
+		// Off the main queue, for the reason above.
+		client.callbackQueue = DispatchQueue(label: "lsp-framing-tests")
 		let received = Received()
 		client.onMessage = { _, text in received.record(uri: text, count: 1) }
 

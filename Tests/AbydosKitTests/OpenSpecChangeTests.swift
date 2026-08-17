@@ -215,11 +215,17 @@ struct OpenSpecChangeTests {
 		let openSpec = OpenSpec(projectRoot: root)
 		guard openSpec.exists else { return }
 
+		// **Not "there is at least one change".** That was written while there
+		// were eight, and it went red the afternoon the last of them was
+		// archived — a test asserting a fact about the repository on the day it
+		// was written, which is the same mistake as a timing bound chosen alone.
+		// What is durable is that whatever is there reads correctly.
 		let changes = openSpec.changes()
-		#expect(!changes.isEmpty)
-		// Every one of them has a proposal; that is what a change starts as.
 		#expect(changes.allSatisfy { $0.artifacts.contains(.proposal) })
 		#expect(changes.allSatisfy { !$0.isArchived })
+		// The archive is where this repository's changes end up, and there is no
+		// path by which one is un-archived, so this only ever grows.
+		#expect(openSpec.archived().allSatisfy { $0.isArchived })
 		// And the archive, which is a directory beside them rather than one of
 		// them.
 		#expect(!changes.contains { $0.name == "archive" })
