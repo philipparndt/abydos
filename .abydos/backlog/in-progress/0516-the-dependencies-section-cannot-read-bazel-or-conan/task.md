@@ -272,6 +272,18 @@ its own item rather than a line in this one. Filed as 0525.
   written into temporary directories, and the app was watched against projects
   under `/private/tmp` with a hand-built output base and cache.
 
+### The suite went red in three places, and none of them was this
+
+`make test` was green at 2760 and then failed in `PseudoTerminalWriteTests`,
+`BrokenPipesTests` and `TmuxPasteTests` — all on `terminal.start(…) → false`
+with `master → -1`, and each passing when run alone. `kern.tty.ptmx_max` is 511
+and `lsof /dev/ptmx` showed 443 orphaned `/bin/cat` holding ptys, the oldest
+started five days ago: `PseudoTerminalWriteTests` leaks its children and the
+machine had finally crossed the limit. Clearing them took the suite to 2761
+passed with nothing else changed. Filed as 0526 — it is not this branch's, and
+0513 met the same shape of thing when a suite failure turned out to be somebody
+else's uncommitted edit.
+
 ### What no run here could confirm
 
 Neither `bazel` nor `conan` is installed on this machine. The lock parsing is
