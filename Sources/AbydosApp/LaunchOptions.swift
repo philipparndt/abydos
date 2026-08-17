@@ -1,4 +1,5 @@
 import AppKit
+import AbydosKit
 
 /// Command-line options.
 ///
@@ -922,6 +923,53 @@ struct LaunchOptions {
 	}
 
 	var isScreenshotRun: Bool { screenshotPath != nil }
+
+	/// Whether the app is being driven rather than used.
+	///
+	/// `DrivenRun` in `AbydosKit` is where this is decided and argued, because
+	/// `Settings` and `SessionStore` have to ask the same question and neither
+	/// can see this file. Stated here as well so that a reader of the options
+	/// finds it: any verb but `--open` and `--file` makes a run a driven one.
+	var isDrivenRun: Bool { DrivenRun.isActive }
+
+	/// Every file this run named, as the paths they resolve to.
+	///
+	/// The set a driven run is allowed to put keystrokes into. `--open` is not
+	/// among them: naming a project says what to show, not what to type in, and
+	/// the whole of 0522's second incident was a verb typing into a file that
+	/// was merely *inside* the project it was pointed at.
+	var givenPaths: Set<String> {
+		var paths = filePaths
+		if let previewPath { paths.append(previewPath) }
+		if let tearOffFile { paths.append(tearOffFile) }
+		// Made by this run, in the project this run was given, so its own.
+		if let newFile, let projectPath {
+			paths.append((projectPath as NSString).appendingPathComponent(newFile))
+		}
+		return Set(paths.map { URL(fileURLWithPath: $0).standardizedFileURL.path })
+	}
+
+	/// Whether a driven run may drive the keyboard at this file.
+	///
+	/// A run that is not driven may do as it likes — it is somebody at a
+	/// keyboard. A driven run may reach a file it named and nothing else, and a
+	/// tab with no file behind it is one this run made: a scratch, an untitled
+	/// buffer. `nil` for "there is no file", which is allowed for the same
+	/// reason.
+	func mayType(into url: URL?) -> Bool {
+		guard isDrivenRun else { return true }
+		guard let url else { return true }
+		// A note this run asked for, in the scratch folder, which is where
+		// `--scratch` puts one. Its own, and the only file it makes that has a
+		// path it could not have said in advance.
+		if newScratch, url.standardizedFileURL.path.hasPrefix(ScratchFiles.defaultRoot.path) {
+			return true
+		}
+		// Nothing named at all: a run that says `--type` and nothing else has
+		// no file of its own, so whatever is in front belongs to somebody else.
+		guard !givenPaths.isEmpty else { return false }
+		return givenPaths.contains(url.standardizedFileURL.path)
+	}
 }
 
 /// A view holding something AppKit's own capture cannot see.

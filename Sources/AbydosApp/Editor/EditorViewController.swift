@@ -220,6 +220,35 @@ final class EditorViewController: NSViewController {
 	var tabCount: Int { tabs.count }
 	var activeTabIndex: Int? { activeIndex }
 	var activeTabURL: URL? { activeTab?.url }
+
+	/// The editor a driven run is allowed to put keystrokes into.
+	///
+	/// Every verb below that *changes* a file asks for the view this way rather
+	/// than reaching for `activeTab?.codeView`, and this is why: on the evening
+	/// of item 0522 a typing verb landed in a tab the window had restored from
+	/// somebody's own session and left `C-ircle(diameter: diameter)` in a source
+	/// file nobody was editing, which then failed to compile for everybody.
+	///
+	/// A driven run does not restore a session any more, so in practice there is
+	/// nothing in front that the run did not open. This is the check that says
+	/// so out loud instead of relying on it: a file the run did not name is
+	/// refused, on standard error, by name — and a refusal that prints is a
+	/// finding, where a keystroke that lands in the wrong file is a mystery
+	/// three items were filed about.
+	///
+	/// Nothing here restricts a person. `mayType(into:)` is true for every run
+	/// that was not given a launch verb at all.
+	func codeViewToDrive(_ verb: String) -> CodeView? {
+		guard let tab = activeTab, let codeView = tab.codeView else { return nil }
+		guard LaunchOptions.parse().mayType(into: tab.url) else {
+			let refusal = "\(verb): refused — this run was not given \(tab.url.path),"
+				+ " so it does not type into it\n"
+			FileHandle.standardError.write(Data(refusal.utf8))
+			return nil
+		}
+		return codeView
+	}
+
 	/// Which of source, preview or a split the file in front is being shown in.
 	var currentPreviewMode: PreviewMode { activeTab?.previewMode ?? .source }
 	/// Which modes the file in front can be shown in, from the tab rather than from
@@ -1421,7 +1450,7 @@ final class EditorViewController: NSViewController {
 	/// is whether Tab reaches the stops, and a driver that called the stepping
 	/// method directly would prove nothing about that.
 	func exerciseSnippetForTesting(_ spec: String) {
-		guard let codeView = activeTab?.codeView else {
+		guard let codeView = codeViewToDrive("--snippet") else {
 			print("SNIPPET: no editor")
 			return
 		}
@@ -1480,7 +1509,7 @@ final class EditorViewController: NSViewController {
 	}
 
 	func undoForTesting() {
-		activeTab?.codeView?.undo(nil)
+		codeViewToDrive("--undo-tree")?.undo(nil)
 	}
 
 	/// The last line or two of the file, for checking what a jump produced.
@@ -2792,7 +2821,10 @@ final class EditorViewController: NSViewController {
 	/// up with this one. It was called `simulateArrow` while it knew only the
 	/// six navigation keys, and ⌃B could not be pressed through it at all.
 	func simulateKey(_ key: String, modifiers: NSEvent.ModifierFlags) {
-		guard let tab = activeTab, let codeView = tab.codeView else { return }
+		// Guarded like the typing verbs, and for the same reason: `--emacs-nav`
+		// is mostly motion, but ⌃O opens a line and ⌃K takes one away. A verb
+		// that reads as navigation still changes a file.
+		guard let codeView = codeViewToDrive("--emacs-nav") else { return }
 		view.window?.makeFirstResponder(codeView)
 
 		let navigationKeys: [String: (code: Int, character: Int)] = [
@@ -2924,7 +2956,7 @@ final class EditorViewController: NSViewController {
 
 	/// Presses ⌘/ over a caret or a selection the spec names.
 	func toggleCommentForTesting(_ spec: String) -> (LineComment.Outcome, String)? {
-		guard let codeView = activeTab?.codeView else { return nil }
+		guard let codeView = codeViewToDrive("--comment") else { return nil }
 		view.window?.makeFirstResponder(codeView)
 		return codeView.toggleCommentForTesting(spec)
 	}
@@ -2941,7 +2973,7 @@ final class EditorViewController: NSViewController {
 
 	/// Indents or outdents whole lines, the way Tab and ⇧Tab do.
 	func indentForTesting(fromLine: Int, toLine: Int, outdent: Bool) -> String? {
-		guard let tab = activeTab, let codeView = tab.codeView else { return nil }
+		guard let codeView = codeViewToDrive("--indent-block") else { return nil }
 		view.window?.makeFirstResponder(codeView)
 		codeView.indentForTesting(fromLine: fromLine, toLine: toLine, outdent: outdent)
 		return codeView.textForTesting
@@ -2990,7 +3022,7 @@ final class EditorViewController: NSViewController {
 	/// Routes text through `NSTextInputClient.insertText`, the same entry point
 	/// a real keystroke takes.
 	func simulateTyping(_ text: String) {
-		guard let tab = activeTab, let codeView = tab.codeView else { return }
+		guard let codeView = codeViewToDrive("--type") else { return }
 		view.window?.makeFirstResponder(codeView)
 		for character in text {
 			// A newline is the return key, not a character. Inserted directly
@@ -3020,7 +3052,7 @@ final class EditorViewController: NSViewController {
 	/// time is what changes when the code does, which is 0416's distinction and
 	/// is why a run under load is still worth taking.
 	func measureTypingForTesting(presses: Int) -> [(wall: TimeInterval, cpu: TimeInterval)] {
-		guard let tab = activeTab, let codeView = tab.codeView else { return [] }
+		guard let codeView = codeViewToDrive("--type-latency") else { return [] }
 		view.window?.makeFirstResponder(codeView)
 		let letters = Array("abcdefghijklmnopqrstuvwxyz")
 		var costs: [(TimeInterval, TimeInterval)] = []
