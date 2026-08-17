@@ -187,7 +187,7 @@ after a click that started somewhere else.
       `--report-focus` and `window-key:` already exist
 - [x] Find what takes the keyboard back, and say so here rather than describing
       the symptom
-- [ ] ⌫ can be sent at the *window* from a script, so "the click kept the
+- [x] ⌫ can be sent at the *window* from a script, so "the click kept the
       keyboard" and "⌫ still ticks a row" are one claim and can fail
 - [ ] A click on a row puts the keyboard in the list, in all four homes
 - [ ] Clicking the tab first still works, and the two paths agree

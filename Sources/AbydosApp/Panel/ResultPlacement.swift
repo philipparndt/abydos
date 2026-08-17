@@ -188,12 +188,18 @@ extension ResultsPane {
 		// and a ⇥ delivered straight to the table would show that the table
 		// answers it while saying nothing about the four homes — where ⇥ is also
 		// how the key view loop walks between controls.
+		// ⌫ is here for item 523, and it is the claim that item's fix has to be
+		// able to fail: a click that did not put the keyboard in the list leaves
+		// ⌫ reaching whatever still has it, and since item 505 that key ticks a
+		// row. Sent to the window rather than to the table, because "the table
+		// answers ⌫" was never in doubt — whether the key gets there is.
 		let keys: [String: (UInt16, String)] = [
 			"space": (49, " "),
 			"down": (125, "\u{F701}"),
 			"up": (126, "\u{F700}"),
 			"return": (36, "\r"),
 			"tab": (48, "\t"),
+			"delete": (51, "\u{7F}"),
 		]
 		guard let (code, characters) = keys[name], let window else { return }
 		guard let event = NSEvent.keyEvent(
