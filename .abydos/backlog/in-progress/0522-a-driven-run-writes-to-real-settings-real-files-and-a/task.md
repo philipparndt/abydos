@@ -107,7 +107,7 @@ domain is a dictionary in memory that dies with the process and was never a file
 
 ## Estimate
 
-2026-08-17 08:22 — about an hour left
+2026-08-17 08:31 — done, bar the push
 
 ## Steps
 
@@ -119,13 +119,89 @@ domain is a dictionary in memory that dies with the process and was never a file
 - [x] A typing verb can only reach a file the run was given
 - [x] A driven run leaves nothing behind: no session file, no recents entry, no
       remembered scratches
-- [ ] Audit the verbs that write, and list them in here
+- [x] Audit the verbs that write, and list them in here
 - [x] Watched: the exact sequence that produced `C-ircle`, replayed, leaving the
       file untouched
 - [x] 0517 and 0521 get a line saying where the stray `i` came from
 - [x] `make test` and `make warnings` are clean
 - [x] Write down here what was ruled out on the way
 - [x] The spec says what the project now does
+
+## The audit: which of the 191 verbs write
+
+All 191 `case "--…"` in `LaunchOptions.parse`, read against what acts on them.
+The count is 25 + 9 + 9 + 9 + 32 + 107 = 191, which is the number in the title of
+this item and the number `grep -c 'case "--'` gives.
+
+The item guessed the typing family, `--switch-appearance` and "anything driving
+a run configuration". It was right about all three and it was a small fraction
+of the answer.
+
+**Write a source file or the project (25).** `--type`, `--type-block`,
+`--indent-block`, `--comment`, `--comment-key`, `--snippet`, `--complete`,
+`--undo-tree`, `--emacs-nav` (⌃K kills a line, ⌃O opens three),
+`--report-typing` (types real keystrokes into the open file), `--rename`
+(commits the LSP workspace edit — *every affected file on disk*),
+`--external-edit` (rewrites the open file from outside), `--new-file`,
+`--new-folder`, `--tree` (its script has `new:`, `rename:`, `cmd-delete`,
+`paste`, `drop:`, `export:` and `type:` in it), `--changes-tree` (`stage:` and
+`unstage:` rewrite `.git`'s index), `--backlog-new`, `--backlog-init`,
+`--make-run`, `--make-goal`, `--make-debug`, `--save-config` (all four write a
+configuration into `.abydos/run/`), `--export` (writes the picture *beside the
+diagram source*, one per fence for markdown), and `--open`/`--file` — which are
+the two that are *not* driving, and therefore the two that still write the
+recents list and the project's session on quit, which is the point of them.
+
+**Write a preference (9).** `--zoom`, `--theme`, `--switch-appearance`,
+`--appearance-walk`, `--wrap`, `--zoom-cycle`, `--untmux`, `--choose-setting`,
+and `--lsp-banner ignore`. Every one now lands in the throwaway store.
+
+**Write elsewhere on disk (9).** `--screenshot` (and the `-sheet` and `-childN`
+files beside it), `--sidebar-shot`, `--metal-shot`, `--toolbar-image`,
+`--toolbar-location`, `--tab-close-hover`, `--stall` and `--probe-lan` (both to
+`~/Library/Logs/Abydos/`), and `--scratch` — which creates a note under
+`~/.config/ideai/scratch/`.
+
+**Type into a terminal, and so possibly into a shell somebody is in (9).**
+`--run`, `--send-bytes`, `--dead-key`, `--option-key`, `--type-latency`,
+`--tmux-add`, `--tmux-close`, `--tmux-drag`, `--tmux-menu`. This is the family
+behind the `icd ..` in the reporter's history, and what closes it is not a guard
+on any of them: a driven run opens only a project it was given, so the tmux
+session it attaches to is that project's and not the one somebody is standing in.
+
+**Run a program, and so write whatever that program writes (32).**
+`--terminal`, `--tab-add`, `--terminal-tab-key`, `--bell`, `--bench-render` and
+the five `--split*`/`--tearoff-terminal`/`--terminal-drop-preview` verbs all fork
+a login shell. `--review` and `--review-uncommitted` start a Claude Code agent,
+which may edit anything in the tree. `--push` and `--push-branch` push to a
+remote. `--run-line`, `--debug-line`, `--run-config`, `--rerun`, `--launch-run`,
+`--launch-debug`, `--launch-profile`, `--launch-menu`, `--debug-steps`,
+`--debug-inspect` and `--debug-binary` build, run or debug. `--devcontainer`,
+`--press-devcontainer-menu` and `--answer-toast` can bring a container up and
+store the consent. `--stop-running` signals a language server and removes its
+container. `--pods` and `--pod-profile` reach a cluster.
+
+**Read only (107).** The remainder, listed in the audit and not repeated here.
+Four groups of them are read-only only *because* of this item, which is worth
+saying: `--breakpoint*`, `--bp-*` and `--launch-config` would have gone into the
+project's `session.json`; and `--window-size`, `--resize`, `--zoom-window`,
+`--panel-height`, `--sidebar-width`, `--settings-divider` and `--editor-divider`
+would have moved the autosaved window and split frames in the reporter's own
+preferences. Both are inert now, and neither was inert on the evening this item
+describes.
+
+### Two the guard does not cover, written down rather than fixed
+
+- **`--comment-key`** reaches the document through
+  `NSApp.mainMenu?.performKeyEquivalent` rather than through a driving helper,
+  so `codeViewToDrive` never sees it. It cannot be guarded there without
+  guarding ⌘/ for the person using the app. What protects it is the structural
+  half: there is no tab in front that the run did not open.
+- **`--scratch`** leaves a note in `~/.config/ideai/scratch/`. It is the one
+  thing a driven run still leaves behind, it is the verb's whole purpose, and
+  sending it somewhere else would break `--scratches` and `--open-scratch`,
+  which exist to look at what is there. Worth an item of its own if the notes
+  folder starts filling up with them.
 
 ## What a driven run touches now
 
