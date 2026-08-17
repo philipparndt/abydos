@@ -1956,7 +1956,7 @@ final class EditorViewController: NSViewController {
 			}
 			return makeModelView(for: tab.url, startAfter: waiting)
 		case .image:
-			return ImageFileViewer(url: tab.url).scrollView
+			return ImageFileView(url: tab.url)
 		case .plantuml:
 			return makeDiagramView(for: tab)
 		case .mermaid:
@@ -2097,30 +2097,30 @@ final class EditorViewController: NSViewController {
 	/// half of a split, and which of those it is changes with the preview mode.
 	/// Either kind of diagram, because everything asking this — the Export
 	/// command, the menu it offers — wants the pane rather than the tool.
-	var diagramPreview: DiagramPaneView? {
-		activeTab.flatMap { Self.diagramPane(in: $0.contentView) }
-	}
-
-	private static func diagramPane(in view: NSView) -> DiagramPaneView? {
-		if let pane = view as? DiagramPaneView { return pane }
-		for subview in view.subviews {
-			if let found = diagramPane(in: subview) { return found }
-		}
-		return nil
-	}
+	var diagramPreview: DiagramPaneView? { activeTab.flatMap { Self.pane(in: $0.contentView) } }
 
 	/// The Cadova pane the file in front is showing, when it is showing one.
 	///
 	/// Found the same way and for the same reason as `diagramPreview`: it is half
 	/// of a split or the whole of a tab, depending on the preview mode.
-	var cadovaPreview: CadovaPreviewView? {
-		activeTab.flatMap { Self.cadovaPane(in: $0.contentView) }
-	}
+	var cadovaPreview: CadovaPreviewView? { activeTab.flatMap { Self.pane(in: $0.contentView) } }
 
-	private static func cadovaPane(in view: NSView) -> CadovaPreviewView? {
-		if let pane = view as? CadovaPreviewView { return pane }
+	/// The picture pane the file in front is showing, when it is showing one.
+	///
+	/// A PNG is a tab's whole content and an SVG is half a split — the same two
+	/// shapes a diagram comes in, and the same reason this is a search rather
+	/// than something kept.
+	var imagePreview: ImageFileView? { activeTab.flatMap { Self.pane(in: $0.contentView) } }
+
+	/// The first pane of a kind anywhere under a view.
+	///
+	/// One walk rather than one per kind: the three above differ only in the type
+	/// they are looking for, and a fourth copy of the same six lines is how the
+	/// three of them come to disagree about what "under" means.
+	private static func pane<Found: NSView>(in view: NSView) -> Found? {
+		if let pane = view as? Found { return pane }
 		for subview in view.subviews {
-			if let found = cadovaPane(in: subview) { return found }
+			if let found: Found = pane(in: subview) { return found }
 		}
 		return nil
 	}
@@ -2307,7 +2307,7 @@ final class EditorViewController: NSViewController {
 			url: fileURL,
 			document: nil,
 			codeView: nil,
-			contentView: ImageFileViewer(url: fileURL).scrollView,
+			contentView: ImageFileView(url: fileURL),
 			isPreview: preview
 		)
 		tab.previewMode = .preview
@@ -2631,7 +2631,7 @@ final class EditorViewController: NSViewController {
 		// still holding the shape they dragged — so the editor is asked what it
 		// has before the file is written. Every other tab writes straight away,
 		// exactly as it always did.
-		if let pane = Self.diagramPane(in: tab.contentView) as? DrawioPreviewView {
+		if let pane: DrawioPreviewView = Self.pane(in: tab.contentView) {
 			Task { @MainActor in
 				await pane.flush()
 				self.write(tab)
@@ -3030,6 +3030,7 @@ final class EditorViewController: NSViewController {
 			+ " onTopOfStrip=\(onTop.map { String(describing: type(of: $0)) } ?? "nothing")"
 			+ " content=\(content.map { String(describing: type(of: $0)) } ?? "none")"
 			+ " area=\(NSStringFromRect(contentArea.frame))"
+
 	}
 
 	/// What the tab strip's menu offers over a tab and over its empty part.

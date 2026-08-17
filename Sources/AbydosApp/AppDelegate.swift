@@ -473,6 +473,25 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		// The same moment for a picture, and sooner: a picture is a file read
+		// off the disk rather than a drawing something else has to make, so
+		// there is nothing to wait for but the window.
+		if let raw = options.imageFit {
+			let at = options.isScreenshotRun ? max(1.2, options.screenshotDelay - 1.0) : 2.0
+			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+				controller?.setImageFitForTesting(raw)
+			}
+		}
+
+		// After the size, because where a picture can be scrolled to depends on
+		// how large it is being drawn.
+		if let raw = options.imagePan {
+			let at = options.isScreenshotRun ? max(1.4, options.screenshotDelay - 0.8) : 2.4
+			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+				controller?.panImageForTesting(raw)
+			}
+		}
+
 		if let name = options.newFolder {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
 				controller?.createFolderForTesting(named: name)
