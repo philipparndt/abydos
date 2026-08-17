@@ -189,8 +189,8 @@ after a click that started somewhere else.
       the symptom
 - [x] ⌫ can be sent at the *window* from a script, so "the click kept the
       keyboard" and "⌫ still ticks a row" are one claim and can fail
-- [ ] A click on a row puts the keyboard in the list, in all four homes
-- [ ] Clicking the tab first still works, and the two paths agree
+- [x] A click on a row puts the keyboard in the list, in all four homes
+- [x] Clicking the tab first still works, and the two paths agree
 - [ ] Swapping the editor's content view does not drop the window's first
       responder — the hole under this item, found on the way
 - [ ] The usages list too, which shares the widget
