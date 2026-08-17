@@ -245,6 +245,16 @@ sidebar and their 258pt panel. A run whose window was 903×707 wrote no window
 frame and no split position, and that conclusion does not care what else on the
 machine is running.
 
+### The whole session, key by key
+
+`de.rnd7.ideai` held 210 keys before any of this and 211 after every run above.
+The one addition is `openScratches.9fe884126e2fad13`, and it was already there in
+the snapshot taken *before the first build* — the reporter's own app, or the
+neighbour, opening a scratch while this was being written. No run here added a
+key, and `appearance` is still absent, which it would not be if
+`--switch-appearance dracula` had reached the domain any of the four times it was
+run.
+
 ## Not part of this item
 
 Restoring what was already damaged: the `appearance` key, the `C-ircle` line,
