@@ -248,6 +248,62 @@ struct SubprojectTests {
 		#expect(found == ["app"])
 	}
 
+	/// 0516 could read both kinds and could not photograph them side by side,
+	/// because neither folder counted as a project of its own.
+	@Test func aNestedBazelWorkspaceOrConanRecipeIsAProject() throws {
+		let root = try make([
+			"services/build-farm": ["MODULE.bazel", "MODULE.bazel.lock"],
+			"tools/legacy-farm": ["WORKSPACE"],
+			"native/fmt": ["conanfile.py", "conan.lock"],
+		])
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		let found = Subprojects.find(in: root).map { Subprojects.relativePath($0, to: root) }
+		#expect(found == ["native/fmt", "services/build-farm", "tools/legacy-farm"])
+	}
+
+	/// `conanfile.txt` says what a directory *consumes*, which is not the same
+	/// claim as being a project. Conan's own layout puts one in the `examples/`
+	/// beside a recipe, and a scope pill over somebody's samples folder is the
+	/// failure this list is careful about.
+	@Test func aConanfileTxtOnItsOwnIsNotAProject() throws {
+		let root = try make([
+			"fmt": ["conanfile.py"],
+			"fmt/examples": ["conanfile.txt"],
+			"samples": ["conanfile.txt"],
+		])
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		let found = Subprojects.find(in: root).map { Subprojects.relativePath($0, to: root) }
+		#expect(found == ["fmt"])
+	}
+
+	/// And the other half of that argument: a directory that consumes packages
+	/// *and* is a project says so with a build file, and is found by that one.
+	@Test func aConanfileTxtBesideABuildFileIsFoundByTheBuildFile() throws {
+		let root = try make(["app": ["conanfile.txt", "CMakeLists.txt"]])
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		let found = Subprojects.find(in: root).map { Subprojects.relativePath($0, to: root) }
+		#expect(found == ["app"])
+	}
+
+	/// A marker is a name on disk and not a question for the file system: a Mac
+	/// is formatted case-insensitively, so `fileExists(…/WORKSPACE)` is true for
+	/// every folder with a `workspace/` in it. Every one of those would have got
+	/// a scope pill, a language-server root and a Bazel row.
+	@Test func aFolderCalledWorkspaceIsNotABazelWorkspace() throws {
+		let root = try make([
+			"eclipse-thing/workspace": ["notes.txt"],
+			"real": ["WORKSPACE"],
+		])
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		let found = Subprojects.find(in: root).map { Subprojects.relativePath($0, to: root) }
+		#expect(found == ["real"])
+		#expect(ExternalDependencies.kinds(at: root.appendingPathComponent("eclipse-thing")).isEmpty)
+	}
+
 	/// A session file is on disk and can say anything; a subproject outside the
 	/// project would scope the window to somewhere the tree does not show.
 	@Test func aPathOutsideTheProjectIsRefused() throws {

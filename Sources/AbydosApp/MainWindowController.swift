@@ -6247,6 +6247,37 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		print("FIT: \(pane.scaleReadoutForTesting)")
 	}
 
+	/// The same for the picture in front, and it prints more than a percentage.
+	///
+	/// What 0532 was about is a document view pinned to the pane, and no capture
+	/// of a picture can show whether the thing under it is larger than the hole
+	/// it is seen through. The numbers can: the report names the picture, the
+	/// document it sits in and the part of it on screen, so "pannable rather
+	/// than cropped" is arithmetic anybody can check.
+	func setImageFitForTesting(_ raw: String) {
+		guard let pane = editor.activeGroup?.imagePreview else {
+			print("IMAGE: nothing showing a picture")
+			return
+		}
+		pane.setFit(raw.lowercased() == "actual" ? .actual : .pane)
+		print("IMAGE: \(pane.reportForTesting)")
+	}
+
+	/// Scrolls the picture in front to a corner of itself, `x,y` as fractions.
+	func panImageForTesting(_ raw: String) {
+		guard let pane = editor.activeGroup?.imagePreview else {
+			print("IMAGE: nothing showing a picture")
+			return
+		}
+		let parts = raw.split(separator: ",").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+		guard parts.count == 2 else {
+			print("IMAGE: --image-pan wants x,y as fractions, got \(raw)")
+			return
+		}
+		pane.panForTesting(CGPoint(x: parts[0], y: parts[1]))
+		print("IMAGE: \(pane.reportForTesting)")
+	}
+
 	func treeStepsForTesting(_ steps: String) {
 		let script = steps.split(separator: ",").map(String.init)
 		for (index, step) in script.enumerated() {

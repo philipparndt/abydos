@@ -1,12 +1,20 @@
-# Project view
+<!-- What this item changes about `project-view`. Folded into
+     .abydos/backlog/spec/project-view.md by `abydos-backlog done`.
 
-The tree down the left of the window: what the project is made of, and what it
-is made *from*. Its first root is the project's own directory, read lazily and
-followed as it changes on disk. Its second is the dependencies — resolved
-packages rather than paths — which is how a file belonging to no directory in
-this project still has somewhere to be shown.
+     ADDED, MODIFIED and REMOVED. A rename is a REMOVED and an ADDED.
+     Write each requirement as it will read in the spec, in the present
+     tense — not as a description of the edit.
+     The requirements already there, to name exactly:
+       A project shows what it depends on, beside its own files
+       A dependency says which version it is and where it came from
+       A kind of project this cannot read says so, on a row
+       A dependency says which subproject resolved it
+       A file with no place in the tree is revealed in the section
+       `.build` is an ordinary folder
+       A list that is read and incomplete says what is missing
+-->
 
-## Requirement: A project shows what it depends on, beside its own files
+## MODIFIED Requirement: A project shows what it depends on, beside its own files
 
 The tree has two roots. The first is the project's directory. The second is
 **Dependencies** — the packages the project depends on, named as packages
@@ -148,7 +156,7 @@ inside the project, under `node_modules`, and it is still a dependency.
 - **When** the project is opened
 - **Then** there is no `Dependencies` row
 
-## Requirement: A dependency says which version it is and where it came from
+## MODIFIED Requirement: A dependency says which version it is and where it came from
 
 Each package row carries the version the project resolved and an abbreviation
 of its origin — the host and owner of a Swift package's repository, the module
@@ -271,7 +279,7 @@ fetched, and the tooltip says which of the two it is.
 - **Then** the package still has a row
 - **And** the row cannot be opened
 
-## Requirement: A kind of project this cannot read says so, on a row
+## MODIFIED Requirement: A kind of project this cannot read says so, on a row
 
 The section covers every build system this program opens, whether or not it can
 read that system's dependencies yet. A kind it cannot read shows a row saying
@@ -384,195 +392,3 @@ goes.
 
 - **Given** a `go.mod` with no `require`
 - **Then** the row reads `no dependencies`
-
-## Requirement: A dependency says which subproject resolved it
-
-Dependencies are read for the whole project and for every subproject in it, not
-only for the part in scope — two subprojects may resolve different versions of
-the same package, and a row that did not say whose it was could not tell them
-apart.
-
-Where more than one root has dependencies, each gets a row of its own naming it
-by its path relative to the project, with the kind of build system beside it.
-Where only one has, the packages hang straight off `Dependencies` and the kind
-is named on that row instead.
-
-### Scenario: a repository of eight subprojects
-
-- **Given** a project holding `cadova-models`, `go-service` and
-  `java/maven-service`
-- **When** the `Dependencies` row is opened
-- **Then** there is a row for each, named `cadova-models`, `go-service` and
-  `java/maven-service`
-- **And** each names its build system
-
-### Scenario: a project that is one package
-
-- **Given** a project whose only dependencies are its own
-- **Then** the packages are directly under `Dependencies`
-- **And** `Dependencies` names the build system
-
-## Requirement: A file with no place in the tree is revealed in the section
-
-A package row is a directory, so the rows beneath it are the package's own
-files and everything the tree does with a file it does with them: they list
-lazily, they open, and the arrow keys walk them.
-
-A file opened from inside a package — by following a symbol out of the
-project's own code, or by being named on the command line — is revealed there,
-with the section and every folder above it opened and the file selected. That
-holds for every copy of a checkout this machine has: `swift build` fetches into
-the project's `.build/checkouts` and the Swift indexer fetches its own copy
-beside its index, and a file opened from either lands on the row the section is
-showing.
-
-The section wins over the ordinary tree for such a file. A checkout under
-`.build` is inside the project and has a row there too, but only the section's
-row can say which package the file belongs to and where that package came from.
-
-### Scenario: following a symbol into a package
-
-- **Given** a Swift file in the project that uses a type from a package
-- **When** the definition of that type is asked for
-- **Then** the file opens
-- **And** the tree selects it under that package in `Dependencies`
-- **And** the folder it is in shows the rest of the package's files beside it
-
-### Scenario: the same file, from the other checkout
-
-- **Given** a file under the project's own `.build/checkouts`
-- **When** it is opened
-- **Then** it is revealed in `Dependencies` rather than under `.build`
-
-## Requirement: `.build` is an ordinary folder
-
-A directory of fetched or built dependencies inside the project — `.build` for
-a Swift package, `node_modules` for an npm project — is shown as what it is: a
-folder, in the tree, marked as build output the way any excluded directory is.
-It is not hidden because the section also shows part of it — it holds build
-products as well as checkouts, and a tree that quietly omits a directory is one
-nobody can trust. Nothing opens it on somebody's behalf, because a reveal that
-would land inside it goes to the section instead.
-
-### Scenario: a project that has been built
-
-- **Given** a project with a `.build` directory
-- **When** the project is opened
-- **Then** `.build` is a row in the tree, tinted as excluded output
-
-### Scenario: a file revealed inside a checkout
-
-- **Given** the same project
-- **When** a file inside `.build/checkouts` is opened
-- **Then** `.build` stays folded
-
-### Scenario: a file revealed inside `node_modules`
-
-- **Given** an npm project with its packages installed
-- **When** a file inside `node_modules` is opened
-- **Then** it is revealed on that package's row in the section, with the rest of
-  the package's files beside it
-- **And** `node_modules` stays folded
-
-## Requirement: A list that is read and incomplete says what is missing
-
-Some build systems keep the resolved graph on disk and some keep only the
-question. A `Package.resolved`, a `go.mod`, a `Cargo.lock` and a
-`gradle.lockfile` are answers; a `pom.xml` and a `dependencies { }` block are
-inputs to an answer, holding the direct dependencies and nothing transitive.
-
-A list read from one of those is shown — the rows in it are true, and dropping
-them would hide dependencies the project really has — with a note under the
-packages saying what is not in it. The note names what is actually missing from
-*this* project rather than a fixed sentence: the transitive dependencies
-always, the versions this project leaves to something it cannot see, and a
-parent it does not contain. A list with nothing missing gets no note, so a
-Gradle build that has locked its dependencies reads exactly as a Cargo project
-does.
-
-A note is a whole sentence and the pane is narrow, so a note's tooltip leads
-with its own message.
-
-### Scenario: a Maven project
-
-- **Given** a `pom.xml` with three dependencies, one of whose versions a BOM
-  outside the project manages
-- **When** the `Dependencies` row is opened
-- **Then** all three have a row
-- **And** under them a note says the list is the direct dependencies only, and
-  that Maven resolves the transitive ones and one of these versions
-
-### Scenario: a Gradle build that has locked its dependencies
-
-- **Given** a project with a `gradle.lockfile`
-- **Then** its packages have no note under them
-
-### Scenario: a note too long for the pane
-
-- **Given** a note the sidebar cuts short
-- **Then** the whole of it is on that row's tooltip
-
-## Requirement: A folder a build system marks is a project of its own
-
-A repository is often not one thing, so the folders inside it that a build
-system has marked are projects in their own right: the tree stays whole,
-because that is how somebody navigates, and one of them at a time can be the
-part being worked on. Which folders those are is decided by the files in them —
-`.git` and `.ideai`, `go.mod`, `Cargo.toml`, `package.json`, `build.zig`,
-`pyproject.toml`, `CMakeLists.txt`, `Package.swift`, `pom.xml`, the Gradle
-build files, `Chart.yaml`, a makefile under any of its three names, a Conan
-recipe, and a Bazel workspace under any of the four names Bazel accepts. They
-are looked for two directories deep, and nothing inside one of them is looked
-at, because what is inside a module belongs to that module.
-
-**One list decides five things at once**, which is what sets the bar a name has
-to clear. A folder on it is offered in the menu the scope pill opens; it is
-where the run configurations are read from and written to; it is the root a
-language server is started on; it is the work tree git is asked about and the
-directory a terminal opens in; and it is a root the **Dependencies** section
-reads and gives a group row to. So a name that is right nine times out of ten
-is not good enough — the tenth is an ordinary folder given a scope nobody asked
-it to have, and that is a worse failure than the folder that should be a
-project and is not.
-
-Which is why a name has to *declare* a project rather than mention one. A Conan
-recipe is the package: it names it, and it is what `conan create` builds, so a
-folder holding one is a project with nothing else in it. A `conanfile.txt` only
-says what a directory consumes — it is what sits in the `examples/` beside a
-recipe — and a directory that is a project as well as a consumer has the build
-file that says so and is found by that instead.
-
-And the names are compared as names. A Mac formats a disk case-insensitively,
-so asking the file system whether a `WORKSPACE` is present answers yes for any
-folder with an ordinary `workspace/` directory in it; the names a folder holds
-are read and matched exactly instead. A symbolic link is neither followed nor
-counted, which is what keeps a built Bazel workspace from offering its own
-execroot — reached through the `bazel-<workspace>` link beside `MODULE.bazel` —
-as a project inside itself.
-
-### Scenario: a Bazel workspace inside a repository
-
-- **Given** a repository holding `services/build-farm/MODULE.bazel`
-- **When** the project is opened
-- **Then** `services/build-farm` is one of the projects inside it, and the
-  **Dependencies** section gives it a group row of its own
-
-### Scenario: a Conan recipe inside a repository
-
-- **Given** a repository holding `native/fmt/conanfile.py`
-- **Then** `native/fmt` is one of the projects inside it
-
-### Scenario: a folder that only lists what it consumes
-
-- **Given** a `samples/` folder whose only build-system file is a
-  `conanfile.txt`
-- **Then** it is not a project of its own
-- **And** a folder holding a `conanfile.txt` beside a `CMakeLists.txt` is one,
-  by the `CMakeLists.txt`
-
-### Scenario: a folder called `workspace`
-
-- **Given** a folder holding an ordinary directory called `workspace` and no
-  build-system file
-- **Then** it is not a Bazel workspace: it is not a project of its own, and it
-  gets no Bazel row in the **Dependencies** section

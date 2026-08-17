@@ -86,7 +86,7 @@ public final class DependencyNode {
 		case let .section(subtitle):
 			return subtitle
 		case let .group(set, _):
-			return set.kind.title
+			return set.title
 		case let .package(package):
 			let origin = package.shortOrigin
 			guard let version = package.version else { return origin.isEmpty ? nil : origin }
@@ -103,7 +103,7 @@ public final class DependencyNode {
 		case let .section(subtitle):
 			return subtitle
 		case let .group(set, _):
-			return set.kind.title + " in " + set.root.path
+			return set.title + " in " + set.root.path
 		case let .package(package):
 			var lines = [package.origin]
 			if let version = package.version { lines.append("version " + version) }
@@ -123,7 +123,7 @@ public final class DependencyNode {
 			// of these is longer than the column, so this is not one row's
 			// problem: everything too long for the pane goes on the tooltip, which
 			// is the rule the package rows already follow.
-			return DependencyNode.message(for: set) + "\n" + set.kind.title + " in " + set.root.path
+			return DependencyNode.message(for: set) + "\n" + set.title + " in " + set.root.path
 		}
 	}
 
@@ -167,7 +167,7 @@ public struct DependencyTree {
 		var heading: String?
 		if sets.count == 1, let only = sets.first {
 			children = DependencyTree.rows(for: only)
-			heading = only.kind.title
+			heading = only.title
 		} else {
 			children = sets.map { set in
 				DependencyNode(
@@ -191,18 +191,20 @@ public struct DependencyTree {
 			// dependencies" would be the one claim this contents type exists to
 			// avoid making.
 			let note = DependencyNode(row: .note(DependencySet(
-				root: set.root, kind: set.kind, contents: .unresolved(caveat)
+				root: set.root, kind: set.kind, tool: set.tool, contents: .unresolved(caveat)
 			)))
 			guard !packages.isEmpty else { return [note] }
-			return rows(for: DependencySet(root: set.root, kind: set.kind, contents: .packages(packages)))
-				+ [note]
+			return rows(for: DependencySet(
+				root: set.root, kind: set.kind, tool: set.tool, contents: .packages(packages)
+			)) + [note]
 		case let .packages(packages):
 			guard !packages.isEmpty else {
 				// Read, and there is genuinely nothing — a `go.mod` with no
 				// `require`. Said in words, because a group with no rows under it
 				// is indistinguishable from one nobody has expanded.
 				return [DependencyNode(row: .note(DependencySet(
-					root: set.root, kind: set.kind, contents: .unresolved("no dependencies")
+					root: set.root, kind: set.kind, tool: set.tool,
+					contents: .unresolved("no dependencies")
 				)))]
 			}
 			return packages.map { package in

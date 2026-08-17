@@ -381,6 +381,17 @@ struct LaunchOptions {
 	var exportDiagram: String?
 	/// How large the diagram pane draws: `width` or `actual`.
 	var diagramFit: String?
+	/// How large the picture pane draws: `fit` or `actual`.
+	var imageFit: String?
+	/// Where the picture pane is scrolled to, as fractions of the picture:
+	/// `0,0` is its top left corner and `1,1` its bottom right.
+	///
+	/// The one thing a still capture cannot show on its own is that a picture
+	/// *moves*: the scrollers are overlay ones and are invisible unless
+	/// something is scrolling. A capture taken at the far corner of a picture
+	/// larger than the pane is the evidence that it is pannable rather than
+	/// cropped.
+	var imagePan: String?
 	/// Ask whether this app can reach the local network: `host:port`.
 	///
 	/// The permission belongs to the app and everything it launches inherits
@@ -859,6 +870,8 @@ struct LaunchOptions {
 			case "--preview-mode": options.previewMode = next()
 			case "--export":     options.exportDiagram = next()
 			case "--diagram-fit": options.diagramFit = next()
+			case "--image-fit":  options.imageFit = next()
+			case "--image-pan":  options.imagePan = next()
 			case "--probe-lan":  options.probeLAN = next()
 			case "--sidebar-cycle": options.sidebarCycle = true
 			case "--zoom-cycle":  options.zoomCycle = true

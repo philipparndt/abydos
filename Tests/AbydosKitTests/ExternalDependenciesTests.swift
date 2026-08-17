@@ -765,31 +765,24 @@ struct ExternalDependenciesTests {
 		#expect(tree.report() == ["Dependencies — npm", "  no package-lock.json — run npm install"])
 	}
 
-	/// **A pnpm or a yarn project is not a project that has installed nothing.**
-	/// `package.json` is the marker for all three tools, so both reach this
-	/// reader — and `run npm install` would be an instruction to install a
-	/// second, conflicting tree over a project that is already installed. The row
-	/// names the tool that did resolve it, and the item that will read its lock
-	/// file.
-	@Test func aPnpmOrAYarnProjectSaysWhichToolResolvedIt() throws {
-		let pnpm = try makeRoot()
-		try write("{ \"name\": \"probe\" }\n", to: pnpm.appendingPathComponent("package.json"))
-		try write("lockfileVersion: '9.0'\n", to: pnpm.appendingPathComponent("pnpm-lock.yaml"))
-		#expect(ExternalDependencies.read(root: pnpm, kind: .npm).contents
-			== .unresolved("resolved by pnpm — pnpm-lock.yaml not read yet (0525)"))
+	/// **One kind, three tools, and the row says which of them answered.**
+	/// `package.json` is the marker for all three, so a repository installed
+	/// twice — a `package-lock.json` somebody committed and a `yarn.lock`
+	/// somebody else did — has two answers on disk and must give the same one
+	/// twice running. npm's own order of preference is the one borrowed.
+	///
+	/// 514 wrote this test to check the sentence naming 0525; the sentence is
+	/// gone and what it protects now is the order.
+	@Test func aProjectWithMoreThanOneLockFileIsAnsweredByNpmsOwn() throws {
+		let root = try makeRoot()
+		try write("{ \"name\": \"probe\" }\n", to: root.appendingPathComponent("package.json"))
+		try write(yarnLockVersion1, to: root.appendingPathComponent("yarn.lock"))
+		#expect(ExternalDependencies.read(root: root, kind: .npm).tool == "yarn")
 
-		let yarn = try makeRoot()
-		try write("{ \"name\": \"probe\" }\n", to: yarn.appendingPathComponent("package.json"))
-		try write("# yarn lockfile v1\n", to: yarn.appendingPathComponent("yarn.lock"))
-		#expect(ExternalDependencies.read(root: yarn, kind: .npm).contents
-			== .unresolved("resolved by yarn — yarn.lock not read yet (0525)"))
-
-		// And a project with both a `yarn.lock` and npm's own lock file is read:
-		// npm's is the one this can answer for.
-		try write(packageLock, to: yarn.appendingPathComponent("package-lock.json"))
-		#expect(ExternalDependencies.read(root: yarn, kind: .npm).packages.contains {
-			$0.name == "lodash"
-		})
+		try write(packageLock, to: root.appendingPathComponent("package-lock.json"))
+		let set = ExternalDependencies.read(root: root, kind: .npm)
+		#expect(set.tool == "npm")
+		#expect(set.packages.contains { $0.name == "bundled-thing" })
 	}
 
 	/// **A workspace member is not a project that has installed nothing.** An npm
@@ -894,6 +887,431 @@ struct ExternalDependenciesTests {
 			"  chalk — 2.4.2  ·  npmjs.com",
 			"  lodash — 4.17.21  ·  npmjs.com",
 		])
+	}
+
+	// MARK: - pnpm
+
+	/// A 9.x lock cut down to one of every shape the reader has to tell apart: a
+	/// scoped package, one whose store directory carries the peer it was built
+	/// against, a plain one, a `file:` dependency inside the project, a tarball
+	/// from another registry and a package fetched straight out of a repository.
+	///
+	/// `snapshots:` is at the bottom and is the whole point of the fixture: it
+	/// names three of the same packages again, and a reader that walked every
+	/// indented key would draw them twice.
+	private let pnpmLockVersion9 = """
+	lockfileVersion: '9.0'
+
+	settings:
+	  autoInstallPeers: true
+
+	importers:
+
+	  .:
+	    dependencies:
+	      lodash:
+	        specifier: ^4.17.21
+	        version: 4.17.21
+
+	packages:
+
+	  '@babel/core@7.25.2':
+	    resolution: {integrity: sha512-aaa==}
+	    engines: {node: '>=6.9.0'}
+
+	  '@babel/helper-module-transforms@7.25.2':
+	    resolution: {integrity: sha512-bbb==}
+	    peerDependencies:
+	      '@babel/core': ^7.0.0
+
+	  lodash@4.17.21:
+	    resolution: {integrity: sha512-ccc==}
+
+	  shared@file:../shared:
+	    resolution: {directory: ../shared, type: directory}
+
+	  private-thing@2.0.0:
+	    resolution: {tarball: https://npm.example.com/private-thing/-/private-thing-2.0.0.tgz}
+
+	  anyhow@https://codeload.github.com/dtolnay/anyhow/tar.gz/bf3ed914:
+	    resolution: {tarball: https://codeload.github.com/dtolnay/anyhow/tar.gz/bf3ed914}
+
+	snapshots:
+
+	  '@babel/core@7.25.2': {}
+
+	  '@babel/helper-module-transforms@7.25.2(@babel/core@7.25.2)':
+	    dependencies:
+	      '@babel/core': 7.25.2
+
+	  lodash@4.17.21: {}
+	"""
+
+	/// The 5.x layout, which is a *path* — `/name/version`, the scope in front of
+	/// it and a registry in front of that. Still on this machine, which is the
+	/// only argument that matters for reading it.
+	private let pnpmLockVersion5 = """
+	lockfileVersion: 5.4
+
+	specifiers:
+	  csv-parser: ^3.0.0
+
+	dependencies:
+	  csv-parser: 3.0.0
+
+	packages:
+
+	  /@abandonware/bleno/0.6.1:
+	    resolution: {integrity: sha512-ddd==}
+	    dev: false
+
+	  /csv-parser/3.0.0:
+	    resolution: {integrity: sha512-eee==}
+	    dependencies:
+	      minimist: 1.2.8
+	    dev: false
+
+	  registry.example.com/private-thing/2.0.0:
+	    resolution: {integrity: sha512-fff==}
+	"""
+
+	/// The resolved set is the `packages:` block, and the row names the version on
+	/// disk — the `importers:` block above it holds `^4.17.21`, which is what
+	/// somebody asked for rather than what they got.
+	@Test func aPnpmLockNamesEveryPackageAndTheVersionItResolvedTo() throws {
+		let root = try makeRoot()
+		try write(pnpmLockVersion9, to: root.appendingPathComponent("pnpm-lock.yaml"))
+
+		let set = ExternalDependencies.read(root: root, kind: .npm)
+		#expect(set.packages.map(\.name) == [
+			"@babel/core", "@babel/helper-module-transforms", "anyhow", "lodash", "private-thing",
+		])
+		#expect(set.packages.first { $0.name == "lodash" }?.version == "4.17.21")
+		// A `file:` dependency is a directory inside the project, which the tree
+		// already has rows for. 513's Cargo `path` dependency in pnpm's spelling.
+		#expect(!set.packages.contains { $0.name == "shared" })
+	}
+
+	/// **`snapshots:` names every package a second time**, with the peers it was
+	/// built against in parentheses. A reader that took every indented key ending
+	/// in a colon would draw a project of two thousand packages as four thousand
+	/// rows, half of them named after a peer set — so the top-level block is
+	/// tracked and only `packages:` is read.
+	@Test func theSnapshotsBlockIsNotReadOrEveryPackageWouldAppearTwice() throws {
+		let entries = ExternalDependencies.parsePnpmLock(pnpmLockVersion9)
+		#expect(entries.count == 5)
+		#expect(!entries.contains { $0.name.contains("(") })
+	}
+
+	/// The path layout is still read, the way both layouts of `Package.resolved`
+	/// and both of `package-lock.json` are — and the registry in front of a 5.x
+	/// path is the one thing any pnpm layout says about where a package came from.
+	@Test func theOlderPnpmLockLayoutIsStillRead() throws {
+		let root = try makeRoot()
+		try write(pnpmLockVersion5, to: root.appendingPathComponent("pnpm-lock.yaml"))
+
+		let set = ExternalDependencies.read(root: root, kind: .npm)
+		#expect(set.packages.map(\.name) == ["@abandonware/bleno", "csv-parser", "private-thing"])
+		#expect(set.packages.first { $0.name == "@abandonware/bleno" }?.version == "0.6.1")
+		#expect(set.packages.first { $0.name == "private-thing" }?.origin == "registry.example.com")
+	}
+
+	/// **A pnpm lock records no registry for an ordinary package**, so the row has
+	/// a version and no origin rather than one claiming `npmjs.com`, which nobody
+	/// wrote down. 514 answered the same question for a `package-lock.json` with
+	/// no `resolved` the same way. What the file *does* write — a tarball, a
+	/// repository — is the origin.
+	@Test func aPnpmPackageClaimsNoRegistryUnlessTheLockWroteOne() throws {
+		let root = try makeRoot()
+		try write(pnpmLockVersion9, to: root.appendingPathComponent("pnpm-lock.yaml"))
+
+		let packages = ExternalDependencies.read(root: root, kind: .npm).packages
+		#expect(packages.first { $0.name == "lodash" }?.origin == "")
+		#expect(packages.first { $0.name == "private-thing" }?.origin == "npm.example.com")
+		#expect(packages.first { $0.name == "anyhow" }?.origin == "codeload.github.com")
+		// A key that is a URL is not a version anybody could type.
+		#expect(packages.first { $0.name == "anyhow" }?.version == nil)
+	}
+
+	/// **The sources are the store's own copy, not the symlink at the top of
+	/// `node_modules`.** pnpm puts a real directory at
+	/// `.pnpm/<name>@<version>/node_modules/<name>` and links to it, so a package
+	/// row is rooted at something the tree can list without following anything —
+	/// and the peer suffix on the store directory is matched rather than
+	/// reproduced, because pnpm's escaping of it has moved between releases.
+	@Test func aPnpmPackagesSourcesAreTheStoresCopyBesideItsPeers() throws {
+		let root = try makeRoot()
+		try write(pnpmLockVersion9, to: root.appendingPathComponent("pnpm-lock.yaml"))
+		let store = root.appendingPathComponent("node_modules/.pnpm")
+		try write("", to: store
+			.appendingPathComponent("lodash@4.17.21/node_modules/lodash/index.js"))
+		try write("", to: store
+			.appendingPathComponent("@babel+helper-module-transforms@7.25.2_@babel+core@7.25.2")
+			.appendingPathComponent("node_modules/@babel/helper-module-transforms/index.js"))
+
+		let packages = ExternalDependencies.read(root: root, kind: .npm).packages
+		#expect(packages.first { $0.name == "lodash" }?.localPath?.path
+			== store.appendingPathComponent("lodash@4.17.21/node_modules/lodash").path)
+		#expect(packages.first { $0.name == "@babel/helper-module-transforms" }?.localPath?.path
+			== store
+				.appendingPathComponent("@babel+helper-module-transforms@7.25.2_@babel+core@7.25.2")
+				.appendingPathComponent("node_modules/@babel/helper-module-transforms").path)
+		// Nothing put this one in the store, and a row pointing at a directory
+		// that is not there would draw a package with no files in it.
+		#expect(packages.first { $0.name == "@babel/core" }?.localPath == nil)
+	}
+
+	/// **The last `@` is inside the peer, not in front of the version.**
+	/// `@babel+helper-module-transforms@7.25.2_@babel+core@7.25.2` split there
+	/// names a package after the peer it was built against.
+	@Test func aStoreDirectorysPeerSuffixIsCutAfterTheVersionAndNotAtTheLastAt() {
+		#expect(ExternalDependencies.pnpmStoreName(
+			withoutPeers: "@babel+helper-module-transforms@7.25.2_@babel+core@7.25.2"
+		) == "@babel+helper-module-transforms@7.25.2")
+		#expect(ExternalDependencies.pnpmStoreName(withoutPeers: "vue@3.4.0_typescript@5.3.3")
+			== "vue@3.4.0")
+		// A package name may hold an underscore of its own, and semver may not —
+		// so the cut is made after the version and never before it.
+		#expect(ExternalDependencies.pnpmStoreName(withoutPeers: "some_pkg@1.0.0")
+			== "some_pkg@1.0.0")
+	}
+
+	/// **Guarded on the key, not on the parse** — `readConanPackages`' move in
+	/// pnpm's spelling. A hand-written reader's one real risk is a file it does
+	/// not understand coming out as a project that depends on nothing, so a lock
+	/// with no `lockfileVersion` says it could not be read instead.
+	@Test func aPnpmLockThisReaderDoesNotUnderstandIsRefusedRatherThanReadAsEmpty() throws {
+		let root = try makeRoot()
+		try write("something: else\n", to: root.appendingPathComponent("pnpm-lock.yaml"))
+		#expect(ExternalDependencies.read(root: root, kind: .npm).contents
+			== .unresolved("pnpm-lock.yaml could not be read"))
+
+		// And a lock that is understood and holds nothing is a project with no
+		// dependencies, which is a different answer and is said in words.
+		let empty = try makeRoot()
+		try write("lockfileVersion: '9.0'\n\nimporters:\n\n  .: {}\n",
+			to: empty.appendingPathComponent("pnpm-lock.yaml"))
+		#expect(ExternalDependencies.read(root: empty, kind: .npm).contents == .packages([]))
+	}
+
+	// MARK: - yarn
+
+	/// yarn 1's own syntax: a header naming one or more ranges, then fields
+	/// indented under it, with `version` and `resolved` unquoted by a space
+	/// rather than by a colon.
+	private let yarnLockVersion1 = """
+	# THIS IS AN AUTOGENERATED FILE. DO NOT EDIT THIS FILE DIRECTLY.
+	# yarn lockfile v1
+
+
+	"@babel/code-frame@^7.0.0", "@babel/code-frame@^7.16.7":
+	  version "7.16.7"
+	  resolved "https://registry.yarnpkg.com/@babel/code-frame/-/code-frame-7.16.7.tgz#4441"
+	  integrity sha512-aaa==
+	  dependencies:
+	    "@babel/highlight" "^7.16.7"
+
+	lodash@^4.17.21:
+	  version "4.17.21"
+	  resolved "https://registry.npmjs.org/lodash/-/lodash-4.17.21.tgz#6795"
+	  integrity sha512-bbb==
+
+	lodash@^3.0.0:
+	  version "3.10.1"
+	  resolved "https://registry.npmjs.org/lodash/-/lodash-3.10.1.tgz#5bf4"
+
+	"anyhow@git+https://github.com/dtolnay/anyhow.git#bf3ed914":
+	  version "1.0.104"
+	  resolved "git+https://github.com/dtolnay/anyhow.git#bf3ed914"
+
+	"shared@file:../shared":
+	  version "0.1.0"
+	"""
+
+	/// berry's, which is YAML — and where a header naming several ranges is one
+	/// quoted string with the commas inside it rather than a list of quoted
+	/// strings.
+	private let yarnLockBerry = """
+	# This file is generated by running "yarn install" inside your project.
+	# Manual changes might be lost - proceed with caution!
+
+	__metadata:
+	  version: 8
+	  cacheKey: 10c0
+
+	"@babel/core@npm:^7.0.0, @babel/core@npm:^7.1.0":
+	  version: 7.23.0
+	  resolution: "@babel/core@npm:7.23.0"
+	  checksum: 10c0/aaa
+	  languageName: node
+	  linkType: hard
+
+	"anyhow@https://github.com/dtolnay/anyhow.git#commit=bf3ed914":
+	  version: 1.0.104
+	  resolution: "anyhow@https://github.com/dtolnay/anyhow.git#commit=bf3ed914"
+	  languageName: node
+	  linkType: hard
+
+	"app@workspace:packages/app":
+	  version: 0.0.0-use.local
+	  resolution: "app@workspace:packages/app"
+	  languageName: unknown
+	  linkType: soft
+
+	"fsevents@npm:2.3.2":
+	  version: 2.3.2
+	  resolution: "fsevents@npm:2.3.2"
+	  languageName: node
+	  linkType: hard
+
+	"fsevents@patch:fsevents@npm%3A2.3.2#optional!builtin<compat/fsevents>":
+	  version: 2.3.2
+	  resolution: "fsevents@patch:fsevents@npm%3A2.3.2#optional!builtin<compat/fsevents>::version=2.3.2"
+	  languageName: node
+	  linkType: hard
+
+	"probe@workspace:.":
+	  version: 0.0.0-use.local
+	  resolution: "probe@workspace:."
+	  languageName: unknown
+	  linkType: soft
+	"""
+
+	/// yarn 1's lock is read, `resolved` and all — and a package resolved twice
+	/// at two versions keeps a row for each, the way an npm project's nested
+	/// copies do.
+	@Test func aYarn1LockIsReadIntoPackages() throws {
+		let root = try makeRoot()
+		try write(yarnLockVersion1, to: root.appendingPathComponent("yarn.lock"))
+
+		let set = ExternalDependencies.read(root: root, kind: .npm)
+		#expect(set.packages.map(\.name) == ["@babel/code-frame", "anyhow", "lodash", "lodash"])
+		#expect(set.packages.filter { $0.name == "lodash" }.compactMap(\.version).sorted()
+			== ["3.10.1", "4.17.21"])
+		// **yarn 1 hangs the tarball's sha1 off the end of `resolved` and npm
+		// never does**, so the fragment has to come off before the URL is read —
+		// otherwise every row of every yarn 1 project claims a whole tarball URL
+		// as its origin.
+		#expect(set.packages.first { $0.name == "@babel/code-frame" }?.origin == "npmjs.com")
+		#expect(set.packages.first { $0.name == "anyhow" }?.shortOrigin == "github.com/dtolnay")
+		// `file:` is a directory in the repository, which the tree already shows.
+		#expect(!set.packages.contains { $0.name == "shared" })
+	}
+
+	/// berry's YAML is the same *shape* as yarn 1's file — a header, then indented
+	/// fields — so one reader covers both, and the four `__metadata.version`
+	/// numbers berry has written change neither of the two fields this reads.
+	@Test func aYarnBerryLockIsReadTheSameWay() throws {
+		let root = try makeRoot()
+		try write(yarnLockBerry, to: root.appendingPathComponent("yarn.lock"))
+
+		let set = ExternalDependencies.read(root: root, kind: .npm)
+		#expect(set.packages.map(\.name) == ["@babel/core", "anyhow", "fsevents"])
+		#expect(set.packages.first { $0.name == "@babel/core" }?.version == "7.23.0")
+		// `npm:` is a statement about where a package came from, unlike pnpm's
+		// silence, so it reads as the registry it names.
+		#expect(set.packages.first { $0.name == "@babel/core" }?.origin == "npmjs.com")
+		#expect(set.packages.first { $0.name == "anyhow" }?.shortOrigin == "github.com/dtolnay")
+	}
+
+	/// **A `workspace:` is this repository and a `patch:` is a package already
+	/// listed.** The first is dropped for 508's rule; the second is collapsed
+	/// rather than dropped by its protocol, because a package reachable *only*
+	/// through its patch would otherwise have no row at all.
+	@Test func aWorkspaceEntryIsDroppedAndAPatchedOneIsNotDrawnTwice() throws {
+		let entries = ExternalDependencies.parseYarnLock(yarnLockBerry)
+		#expect(!entries.contains { $0.name == "probe" || $0.name == "app" })
+		#expect(entries.filter { $0.name == "fsevents" }.count == 1)
+		#expect(entries.first { $0.name == "fsevents" }?.origin == "npmjs.com")
+	}
+
+	/// **A `yarn.lock` does not say where anything was installed.** npm's keys are
+	/// paths; this file has none. So a name resolved once is the copy hoisted to
+	/// `node_modules/<name>`, and a name resolved twice has one copy there and the
+	/// rest nested under whoever needed them — which only the root copy's own
+	/// manifest can settle. A row claiming the wrong version's sources is the
+	/// failure this avoids; a row claiming none is the honest half of it.
+	@Test func aYarnPackageResolvedTwiceOnlyClaimsTheCopyAtTheRoot() throws {
+		let root = try makeRoot()
+		try write(yarnLockVersion1, to: root.appendingPathComponent("yarn.lock"))
+		let modules = root.appendingPathComponent("node_modules")
+		try write("{ \"name\": \"lodash\", \"version\": \"3.10.1\" }\n",
+			to: modules.appendingPathComponent("lodash/package.json"))
+		try write("{ \"name\": \"@babel/code-frame\", \"version\": \"7.16.7\" }\n",
+			to: modules.appendingPathComponent("@babel/code-frame/package.json"))
+
+		let packages = ExternalDependencies.read(root: root, kind: .npm).packages
+		#expect(packages.first { $0.version == "3.10.1" }?.localPath?.path
+			== modules.appendingPathComponent("lodash").path)
+		#expect(packages.first { $0.version == "4.17.21" }?.localPath == nil)
+		// A name the lock resolves once needs nothing read: the copy at the root
+		// is the only one there is.
+		#expect(packages.first { $0.name == "@babel/code-frame" }?.localPath?.path
+			== modules.appendingPathComponent("@babel/code-frame").path)
+	}
+
+	/// **Plug'n'Play has no `node_modules` at all**: the packages are zip files
+	/// under `.yarn/cache`, and a zip is not a directory any more than a jar is.
+	/// So the row names the archive and cannot be opened — 0515's `artefact`,
+	/// which is why this item wrote no new state for it. The archive is found by
+	/// listing, because the hash in its name is of its own contents.
+	@Test func aPlugnPlayPackageNamesItsArchiveRatherThanSayingItIsNotFetched() throws {
+		let root = try makeRoot()
+		try write(yarnLockBerry, to: root.appendingPathComponent("yarn.lock"))
+		let cache = root.appendingPathComponent(".yarn/cache")
+		try write("", to: cache.appendingPathComponent("@babel-core-npm-7.23.0-abcdef0123-10c0.zip"))
+		// Older berry wrote no cache key, and a lookup that guessed which of the
+		// two layouts a project used would silently find nothing.
+		try write("", to: cache.appendingPathComponent("fsevents-npm-2.3.2-6382451519.zip"))
+
+		let packages = ExternalDependencies.read(root: root, kind: .npm).packages
+		let babel = try #require(packages.first { $0.name == "@babel/core" })
+		#expect(babel.localPath == nil)
+		#expect(babel.artefact?.lastPathComponent == "@babel-core-npm-7.23.0-abcdef0123-10c0.zip")
+		#expect(packages.first { $0.name == "fsevents" }?.artefact?.lastPathComponent
+			== "fsevents-npm-2.3.2-6382451519.zip")
+	}
+
+	/// **The section says the tool that resolved the project, not the kind.**
+	/// `DependencyKind` is keyed off `package.json`, which is npm's, pnpm's and
+	/// yarn's alike — so the kind is one and its name is wrong for two of the
+	/// three. Three kinds would be worse: `kinds(at:)` filters on markers, so
+	/// every JavaScript project would grow three sets and two of them would say
+	/// nothing.
+	@Test func aPnpmProjectsSectionSaysPnpmAndAYarnOneSaysYarn() throws {
+		let pnpm = try makeRoot()
+		try write(pnpmLockVersion5, to: pnpm.appendingPathComponent("pnpm-lock.yaml"))
+		let pnpmTree = try #require(DependencyTree(sets: [
+			ExternalDependencies.read(root: pnpm, kind: .npm),
+		], project: pnpm))
+		#expect(pnpmTree.report() == [
+			"Dependencies — pnpm",
+			// No registry is recorded for either of the two under the default one.
+			"  @abandonware/bleno — 0.6.1",
+			"  csv-parser — 3.0.0",
+			"  private-thing — 2.0.0  ·  registry.example.com",
+		])
+
+		let yarn = try makeRoot()
+		try write(yarnLockVersion1, to: yarn.appendingPathComponent("yarn.lock"))
+		let yarnTree = try #require(DependencyTree(sets: [
+			ExternalDependencies.read(root: yarn, kind: .npm),
+		], project: yarn))
+		#expect(yarnTree.report().first == "Dependencies — yarn")
+	}
+
+	/// The same guard `readPnpm` and `readConanPackages` make: a lock file for a
+	/// project depending on nothing is a header and no entries, and so is a file
+	/// this reader does not understand.
+	@Test func aYarnLockThisReaderDoesNotUnderstandIsRefusedRatherThanReadAsEmpty() throws {
+		let root = try makeRoot()
+		try write("something: else\n", to: root.appendingPathComponent("yarn.lock"))
+		#expect(ExternalDependencies.read(root: root, kind: .npm).contents
+			== .unresolved("yarn.lock could not be read"))
+
+		let empty = try makeRoot()
+		try write("# yarn lockfile v1\n\n", to: empty.appendingPathComponent("yarn.lock"))
+		#expect(ExternalDependencies.read(root: empty, kind: .npm).contents == .packages([]))
 	}
 
 	/// **The trap in the newer lock, and the reason this reader is not two
@@ -1736,6 +2154,36 @@ struct ExternalDependenciesTests {
 			// subprojects called `service` are exactly what this row tells apart.
 			"  services/go-service — Go modules",
 			"    golang.org/x/net — v0.30.0  ·  golang.org/x",
+		])
+	}
+
+	/// **0527's own case, end to end.** 0516 taught the section to read both of
+	/// these and could not photograph them side by side, because
+	/// `Subprojects.markers` named neither — so `read(project:)`, which asks
+	/// `Subprojects` for its roots, found nothing under the repository at all.
+	@Test func aNestedBazelWorkspaceAndConanProjectEachGetAGroupRow() throws {
+		let project = try makeRoot()
+		try write("""
+		module(name = "build_farm", version = "1.0")
+
+		bazel_dep(name = "rules_go", version = "0.50.1")
+		""", to: project.appendingPathComponent("services/build-farm/MODULE.bazel"))
+		try write(conanLock, to: project.appendingPathComponent("native/fmt/conan.lock"))
+		try write("class Fmt(ConanFile):\n    name = \"fmt\"\n",
+		          to: project.appendingPathComponent("native/fmt/conanfile.py"))
+
+		let tree = try #require(DependencyTree(
+			sets: ExternalDependencies.read(project: project), project: project
+		))
+		#expect(tree.report() == [
+			"Dependencies",
+			"  native/fmt — Conan",
+			"    cmake — 3.29.3",
+			"    fmt — 10.2.1",
+			"    mylib — 2.0  ·  acme",
+			"    zlib — 1.3.1",
+			"  services/build-farm — Bazel",
+			"    rules_go — 0.50.1",
 		])
 	}
 

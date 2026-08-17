@@ -16,20 +16,47 @@ public enum Subprojects {
 	/// Deliberately the marks a build system leaves rather than a guess from
 	/// the contents: a folder with a `go.mod` in it is a Go module whatever
 	/// else it holds, and a folder with none is a folder.
+	///
+	/// **The bar a name has to clear is that it declares a project, not that it
+	/// mentions one.** Every entry here moves the scope pill, the language
+	/// server's root, the run configurations and the tree git acts on, all at
+	/// once, so a name that is right nine times in ten is not good enough: the
+	/// tenth is somebody's ordinary folder claiming a scope nobody asked it to
+	/// have, which is a worse failure than the folder that ought to be a
+	/// subproject and is not.
+	///
+	/// That is why `conanfile.txt` is not here and `conanfile.py` is. A recipe
+	/// *is* the package — it names it, and it is what `conan create` builds, so
+	/// a folder holding one is a project even with nothing else in it.
+	/// `conanfile.txt` only says what a directory consumes; it is what Conan's
+	/// own documentation puts in an `examples/` folder beside a recipe, and a
+	/// directory that is genuinely a project as well as a consumer has the
+	/// `CMakeLists.txt` or the `Makefile` that says so, and is found by that.
+	/// See 0527 for the whole argument.
 	public static let markers: [String] = [
 		".ideai", ".git",
 		"go.mod", "Cargo.toml", "package.json", "build.zig", "pyproject.toml",
 		"CMakeLists.txt", "Package.swift", "pom.xml", "build.gradle", "build.gradle.kts",
-		"Chart.yaml", "Makefile",
-	]
+		"Chart.yaml",
+		// All three names make reads, and all three are named in
+		// `RunConfigurationDiscovery.definingFileNames`. Written out rather than
+		// left to the file system to fold: on a case-insensitive disk `Makefile`
+		// used to match `makefile` by accident, and an accident is not a rule
+		// that holds on somebody's case-sensitive volume.
+		"Makefile", "makefile", "GNUmakefile",
+		"conanfile.py",
+	] + BazelBuild.workspaceMarkers
+
+	/// The same, as a set, because every folder walked is asked.
+	private static let markerNames = Set(markers)
 
 	/// Whether this folder is one.
+	///
+	/// Names compared exactly — see `FilePath.entryNames(in:)` for why asking
+	/// the file system whether `WORKSPACE` exists is not the same question.
 	public static func isSubproject(_ url: URL) -> Bool {
-		let manager = FileManager.default
-		var directory: ObjCBool = false
-		guard manager.fileExists(atPath: url.path, isDirectory: &directory), directory.boolValue
-		else { return false }
-		return markers.contains { manager.fileExists(atPath: url.appendingPathComponent($0).path) }
+		guard let names = FilePath.entryNames(in: url) else { return false }
+		return !markerNames.isDisjoint(with: names)
 	}
 
 	/// The subprojects under a root, nearest first.
@@ -56,6 +83,13 @@ public enum Subprojects {
 		)) ?? []
 
 		for entry in contents {
+			// `.isDirectoryKey` is false for a symbolic link, whatever it points
+			// at, so a link is never walked and never counted. That is what keeps
+			// Bazel out of its own way: a built workspace has `bazel-out`,
+			// `bazel-bin` and `bazel-<workspace>` beside its `MODULE.bazel`, and
+			// the last of those is the execroot, whose top level mirrors the
+			// source tree — `MODULE.bazel` included. Followed, it would be a
+			// second copy of the workspace offered as a subproject of it.
 			guard (try? entry.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
 			else { continue }
 			guard !skipped.contains(entry.lastPathComponent) else { continue }

@@ -80,13 +80,6 @@ broken, and a project reopening with twenty of them must not render twenty.
 - **When** the window comes up and is left alone
 - **Then** no build is started and no model is written
 
-Nothing is claimed here about what a `.scad` pane shows when the render *fails*
-— because what it shows is a test cube and no message, which is 0484 and is not
-a requirement anybody would write down. It is left out rather than described so
-that the spec does not read as though somebody chose it. A Cadova pane is a
-different matter and does have a requirement for it, above: that pane is this
-program's own, where the `.scad` one belongs to the viewer it embeds.
-
 ## Requirement: A Cadova model is built and run to be seen
 
 A Cadova model is not a file the viewer can open. It is an executable target in
@@ -187,3 +180,123 @@ rather than rendered somewhere it was not asked to go.
 - **When** the model is asked for
 - **Then** nothing is written and the viewer says why, rather than writing where
   the recipe pointed
+
+## Requirement: A model that would not render shows no model
+
+A render can fail: a `.scad` with an unclosed bracket, a recipe that names a part
+that is not there, or a machine with no OpenSCAD on it at all. When one does,
+**the pane draws nothing** — and says what went wrong, which for OpenSCAD not
+being installed is the command that installs it.
+
+Nothing is a deliberate answer rather than an absence of one. The alternative was
+a lit cube on the build plate, which is what this pane used to fall back to, and
+it is worse than an empty pane in the one way that matters: somebody who did not
+write the file cannot tell that the shape on screen is not the shape their code
+describes. A message alone does not settle it either. This pane is captured
+through the viewer's Metal snapshot, which sees the scene and not the layer above
+it, so in a screenshot — the docs, a bug report, an agent checking its own work —
+the shape is the *only* thing that says whether the load worked. A shape that is
+not the model is a lie a picture cannot correct.
+
+The file is watched even though it never loaded, so the message is a promise the
+program keeps: repair the source and the model appears where the message was.
+
+This is the embedded viewer's own behaviour, which this project pins rather than
+writes. The Cadova pane reaches the same answer from this project's own code —
+the model goes and the compiler's message takes its place — and the two agree on
+purpose: which half of the program draws a pane is not a thing anybody looking at
+one should be able to tell from how a failure reads.
+
+### Scenario: a `.scad` that does not compile
+
+- **Given** a `.scad` with a syntax error in it
+- **When** it is opened
+- **Then** the model half shows no shape at all, and says the render failed and
+  what OpenSCAD said about it
+
+### Scenario: a machine with no OpenSCAD
+
+- **Given** a `.scad` on a machine where OpenSCAD cannot be found
+- **When** it is opened
+- **Then** the model half shows no shape, and says OpenSCAD is not installed and
+  how to install it
+
+### Scenario: the source is repaired
+
+- **Given** that pane, showing nothing and saying why
+- **When** the file is corrected and saved
+- **Then** it is rendered again, the model appears, and the message goes
+
+## Requirement: A picture opens whole and can be looked at closely
+
+A picture opens fitted to the pane, the whole of it, and never blown up past the
+size the file says it is: a sixteen-pixel icon filling the window would be a
+blurry lie about what is in it. Under it the pane says what the file holds in
+pixels, how large it is being drawn, and which of the two ways it got there —
+`Fit · 83%` while it is following the pane, and `200%` when somebody has chosen
+a size.
+
+Fitted is where a picture *starts*. **⌘+ and ⌘- make it larger and smaller**, the
+window's own zoom and not a second one belonging to this pane, and a right-click
+says so: `Zoom In`, `Zoom Out`, `Actual Size` and `Fit to Window`, the same four
+the diagram pane offers. There is no pinch: this app has one zoom, every pane
+follows it, and a gesture that moved only the picture would be the one place in
+the window where how large things are means something else. A double-click swaps
+between the fit and the picture's own size, which is the question a scaled-down
+screenshot always raises.
+
+**Anything larger than the pane is scrolled, not cropped.** That is what makes
+zooming in mean anything: past the fit there is somewhere to go, both scrollers
+reach the picture's own edges, and the zoom is bounded only where the arithmetic
+stops being sensible — a tenth, and eight times over. A zoom keeps the middle of
+the pane on the same part of the picture, because a zoom that puts somebody back
+at the top left of what they were reading is a zoom they have to undo by hand.
+
+**100% is the size the file says it is**, which is the size in points a picture
+declares — so 100% of a Retina screenshot puts one of its pixels on one pixel of
+the screen, and the pixel count is said beside the percentage because the
+percentage alone cannot tell anybody how much detail is in the file. Above its
+own pixels a picture is drawn **without smoothing**: the reason to zoom a
+screenshot to 400% is to see the pixels, and interpolation hides exactly what is
+being looked for. Below them it is smoothed, because dropping every other row of
+a shrinking screenshot makes text unreadable. A drawing — an SVG — is not pixels
+at all: it is rendered afresh at whatever size it is asked for, and zooming one
+costs it no sharpness.
+
+A window somebody resizes re-fits a picture that is fitted, and leaves a picture
+at a size somebody chose exactly as large as they chose it.
+
+### Scenario: a screenshot larger than the pane
+
+- **Given** a 2560 × 1600 screenshot from a Retina screen
+- **When** it is opened
+- **Then** the whole of it is on screen, fitted, and the pane says `2560 × 1600
+  · Fit · 83%`
+
+### Scenario: its own size
+
+- **Given** that screenshot fitted
+- **When** it is double-clicked, or `Actual Size` is chosen
+- **Then** it is drawn at the size the file says it is, one of its pixels to one
+  pixel of the screen, and the part of it that does not fit is reached by
+  scrolling to the picture's own edges rather than cut off at the pane's
+
+### Scenario: zooming in on the pixels
+
+- **Given** a screenshot at its own size
+- **When** ⌘+ is pressed until the pane says 400%
+- **Then** each pixel of the file is a square of sixteen rather than a smudge,
+  and the part of the picture that was in the middle of the pane is still there
+
+### Scenario: a sixteen-pixel icon
+
+- **Given** a 16 × 16 icon
+- **When** it is opened
+- **Then** it is drawn at sixteen points on a checkerboard rather than blown up
+  to fill the window, and ⌘+ enlarges it from there
+
+### Scenario: an SVG
+
+- **Given** an SVG, which opens as its text beside the drawing
+- **When** the drawing is zoomed
+- **Then** it is redrawn at that size with no blur at all
