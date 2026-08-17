@@ -13,7 +13,12 @@ import Foundation
 public struct OpenScratches {
 	private let defaults: UserDefaults
 
-	public init(defaults: UserDefaults = .standard) {
+	/// `DrivenRun.defaults` rather than `.standard`, for the reason `Settings`
+	/// gives: this writes an `openScratches.<project>` key every time a tab
+	/// opens or closes, and a run somebody was driving used to write it into
+	/// their preferences. There are dozens of those keys in the reporter's
+	/// domain in 0522, one for every project a capture has ever been taken in.
+	public init(defaults: UserDefaults = DrivenRun.defaults) {
 		self.defaults = defaults
 	}
 

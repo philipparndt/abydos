@@ -180,10 +180,13 @@ let package = Package(
 			resources: [.copy("Resources/devpod-chart")],
 			swiftSettings: [.swiftLanguageMode(.v5)]
 		),
-		// Four lines: make an application, give it the delegate, run it.
+		// Five lines: decide whether this run is being driven, make an
+		// application, give it the delegate, run it. `AbydosKit` is named here
+		// for the first of those, which has to happen before anything reads a
+		// preference — and so before the delegate exists.
 		.executableTarget(
 			name: "Abydos",
-			dependencies: ["AbydosApp"],
+			dependencies: ["AbydosApp", "AbydosKit"],
 			path: "Sources/AbydosMain",
 			swiftSettings: [.swiftLanguageMode(.v5)]
 		),

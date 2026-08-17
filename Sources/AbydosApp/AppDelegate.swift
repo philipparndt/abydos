@@ -243,6 +243,25 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		let controller: MainWindowController?
 		if let path = options.projectPath {
 			controller = open(projectAt: URL(fileURLWithPath: path, isDirectory: true))
+		} else if let file = options.filePaths.first {
+			// Files but no project, which used to mean "the project the file is
+			// in" only by accident — the fallback below opened whatever was last
+			// worked in, and the file went into a window full of somebody else's
+			// tabs. The file's own project is what was meant.
+			let directory = URL(fileURLWithPath: file).deletingLastPathComponent()
+			controller = open(projectAt: ProjectRoot.find(from: directory) ?? directory)
+		} else if DrivenRun.isActive {
+			// **A driven run opens what it was given and nothing else.**
+			//
+			// This line used to fall through to the most recently opened
+			// project, and that is how `--type` came to put `C-ircle` into a
+			// file in `abydos-examples` that nobody was editing: a verb was run
+			// with no project named, the window came up on whatever the reporter
+			// had last been working in, and the keyboard went there. Falling
+			// back is right for somebody double-clicking the app — it is where
+			// they left off — and wrong for every one of the 191 verbs, which
+			// are about a project somebody named. See 0522.
+			controller = nil
 		} else if let last = RecentProjects.shared.entries.first {
 			controller = open(projectAt: last.url)
 		} else if options.isScreenshotRun {
