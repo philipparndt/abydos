@@ -255,4 +255,4 @@ that becomes three kinds.
 - [x] `DependencyKind.pendingItem` stops naming this item for npm
 - [x] Watched in the app on a real project, with a screenshot
 - [x] Write down here what was ruled out on the way
-- [ ] `spec/project-view.md` says npm is among the kinds that are read
+- [x] `spec/project-view.md` says npm is among the kinds that are read
