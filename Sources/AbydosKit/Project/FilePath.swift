@@ -84,10 +84,4 @@ public enum FilePath {
 		else { return nil }
 		return Set(names)
 	}
-
-	/// Whether a directory holds a file of exactly one of these names.
-	public static func directory(_ directory: URL, holdsAnyOf names: [String]) -> Bool {
-		guard let held = entryNames(in: directory) else { return false }
-		return names.contains { held.contains($0) }
-	}
 }
