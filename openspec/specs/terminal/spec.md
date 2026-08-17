@@ -13,9 +13,7 @@ draws a prompt.
 
 One requirement so far rather than an account of everything a pane does. The rest
 arrives as items touch it.
-
 ## Requirements
-
 ### Requirement: A pane does not inherit a tmux socket path that could not exist
 
 A pane SHALL NOT inherit a tmux socket path that could not exist.
@@ -534,10 +532,20 @@ it always was, because that is a person navigating rather than the app reading
 its own restore back to itself. A directory belonging to no repository at all
 leaves the window where it is.
 
-A capture is the one exception and keeps its own rule: while a screenshot is
-being taken the window never follows its terminal anywhere, because the picture
-is of a project somebody named on the command line and a pane restored into a
-different checkout would swap it without complaint.
+**A driven run is the one exception and keeps its own rule: a run given any
+launch verb never follows its terminal anywhere.** The window is showing a
+project somebody named on the command line, and a pane whose shell sits in a
+different checkout would swap it without complaint. Following a terminal is a
+gesture, and a driven run has nobody making gestures.
+
+The exception used to be written as "while a screenshot is being taken", and
+guarded with `isScreenshotRun` — which is `screenshotPath != nil`. That is
+narrower than the sentence it was standing for, and 0534 is what it cost: a run
+given `--open`, `--file` and `--print-text` but no `--screenshot` was not a
+capture by that test, so the guard let it through, and the window followed a
+shell whose working directory had been deleted underneath it into
+`~/.config/zshutil`, discarding the tab `--file` had opened. The rule is about a
+project somebody named, and every driven run has one.
 
 #### Scenario: a project opened at a subdirectory of a checkout
 
@@ -563,6 +571,22 @@ different checkout would swap it without complaint.
 - **Given** that window, on `checkout/models`
 - **When** the shell changes directory to a folder with no repository above it
 - **Then** the window is still on `checkout/models`
+
+#### Scenario: a driven run that takes no picture
+
+- **Given** a run with `--open <a project> --file main.swift --print-text`, and
+  no `--screenshot`
+- **And** `followsTerminalProject` is true in the preferences the run copied
+- **When** a pane reports a working directory outside the project — because its
+  shell inherited a deleted directory and zsh fell back
+- **Then** the window is still on the project it was given
+- **And** the tab `--file` opened is still open
+
+#### Scenario: a capture, as before
+
+- **Given** a run with `--screenshot`
+- **When** a pane reports a working directory in another checkout
+- **Then** the window does not follow it
 
 ### Requirement: A program started in a pane begins with a signal state of its own
 
@@ -624,3 +648,4 @@ copies.
 - **When** the first is closed
 - **Then** its pseudo-terminal is freed rather than held open by the second
   pane's program
+
