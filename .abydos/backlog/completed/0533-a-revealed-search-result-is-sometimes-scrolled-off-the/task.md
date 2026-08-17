@@ -183,10 +183,6 @@ And `point=2040` inside `visible=1129+1084` is the **horizontal** answer: the ol
 code forced that offset to 0, which put the match 950 points off the right edge
 by construction.
 
-## Estimate
-
-2026-08-17 16:34 — the write-up and the fold are left
-
 ## Steps
 
 - [x] A match is on screen after being revealed, in a file large enough to

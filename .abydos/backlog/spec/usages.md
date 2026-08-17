@@ -114,11 +114,14 @@ do after fixing one of the usages.
 
 ## Requirement: ↓ through a usages list shows each one and keeps the keyboard
 
-Moving the selection in a usages list shows that usage: the editor scrolls to it,
-unfolds it and puts the caret on the line. The keyboard stays in the list, so ↓
-reaches the next usage and ␣ ticks the one just looked at. Looking at each of a
-list of usages is a different intention from working on one of them, and only the
-second costs the keyboard.
+Moving the selection in a usages list shows that usage: the editor unfolds it,
+puts the caret on it and brings it on screen — down the page and, on a long line,
+across it, and without moving the view for a usage that is already showing. The
+rule is `editor.md`'s and it is the same one a search result gets, because the two
+lists are one widget and a place in a file is a place in a file. The keyboard
+stays in the list, so ↓ reaches the next usage and ␣ ticks the one just looked
+at. Looking at each of a list of usages is a different intention from working on
+one of them, and only the second costs the keyboard.
 
 **⇥ is the only gesture that hands the keyboard to the editor.** ⏎, a click and a
 double-click all *show* the usage — in a tab of its own, not the provisional one
