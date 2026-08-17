@@ -101,11 +101,11 @@ final class SearchPane: NSView, ResultsPane {
 			row.widthAnchor.constraint(equalTo: controls.widthAnchor).isActive = true
 		}
 
-		// Search shows a result when it is asked to — ⏎ or a click — and not as
-		// the selection moves. Walking a project-wide search with ↓ crosses files
-		// nobody asked about, and the query is usually being refined rather than
-		// worked through row by row.
-		list.opensOnSelectionChange = false
+		// The same as the usages list, since item 529: ↓ through the results shows
+		// each one. The two are one widget and answering ↓ differently in them was
+		// the surprise — what a walk crosses is bounded to the rows it stops on
+		// here exactly as it is there, and a held key opens the row it stops on.
+		list.opensOnSelectionChange = true
 		list.logPrefix = "SEARCH"
 		list.onOpen = { [weak self] result, match, intent in
 			self?.onOpenResult?(result.url, match.line + 1, match, intent)

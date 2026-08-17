@@ -86,6 +86,29 @@ struct ResultRowsTests {
 		#expect(streamed.matchCount == made(all).matchCount)
 	}
 
+	/// The other half of item 529's live-append question, and the half that is
+	/// about the rows rather than about the rule.
+	///
+	/// Search now shows the row the selection lands on, and search is the list
+	/// whose rows arrive while somebody is walking it. The selection is an index
+	/// into these rows, so "a row appeared under the selection" would be a batch
+	/// changing what an index names — and it cannot, because every batch is
+	/// appended past the end. The row at index *n* before a batch is the same row
+	/// at the same index after it, whichever end of the list *n* is at.
+	@Test func abatchDoesNotMoveTheRowUnderAnIndex() {
+		var model = ResultRows()
+		model.question = question
+		let checklist = SearchChecklist()
+		model.append(manyResults(files: 3, matches: 3), marking: checklist)
+
+		let before = rows(model)
+		for index in before.indices {
+			model.append(manyResults(files: 1, matches: 2, from: 90 + index), marking: checklist)
+			#expect(rows(model)[index] == before[index])
+		}
+		#expect(Array(rows(model).prefix(before.count)) == before)
+	}
+
 	// MARK: - The bound
 
 	@Test func theListStopsAtItsCeilingAndSaysSo() {

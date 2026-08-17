@@ -47,11 +47,13 @@ public enum ResultChecklistKeys {
 	/// one key too many hand the keyboard over is a person pressing ⌫ at what
 	/// looks like a list and deleting a character of their source.
 	///
-	/// - `previewsOnSelectionChange` is what tells the two lists apart: the
-	///   usages list shows each row as the selection moves, search does not.
-	///   ⏎ does the thing the selection has not already done, so in search it
-	///   shows the row in the provisional tab and in usages it settles the tab
-	///   that is already showing. **Neither of them moves the keyboard.**
+	/// - `previewsOnSelectionChange` says whether the row is already on screen.
+	///   ⏎ does the thing the selection has not already done: where the list
+	///   previews, the row is showing and ⏎ settles it into a tab of its own;
+	///   where it does not, ⏎ is the showing. **Neither of them moves the
+	///   keyboard.** Both lists pass true since item 529, which is what makes ⏎
+	///   mean the same thing in search as it does in usages; the false case is
+	///   the rule, not a list nobody has.
 	/// - ⇥ is the one that does, in both lists. ⇧⇥ is deliberately not it:
 	///   it goes on walking the key view loop backwards, which in the search
 	///   pane is the way back up to the query field.
@@ -71,6 +73,41 @@ public enum ResultChecklistKeys {
 		}
 	}
 
+	/// What a selection landing somewhere new does about showing it.
+	///
+	/// Out here for the reason `opening` is out here, and for one more: item 529
+	/// turned this on for search, where results *arrive while the list is live*.
+	/// A usages list is handed its whole answer at once, so "the selection moved"
+	/// and "somebody moved the selection" were the same sentence; a streaming
+	/// list rebuilds its table under a selection that nobody touched, and the
+	/// difference between the two is the whole of what must not fire a reveal.
+	/// It is a rule with four answers and it can be wrong on its own, so it has
+	/// a test rather than a transcript.
+	///
+	/// - `previewsOnSelectionChange` — off for a list that shows a row only when
+	///   asked. Nothing is scheduled and nothing is cancelled.
+	/// - `restoringSelection` — the list put the selection there itself: a batch
+	///   of results reloading the table, a rebuild after a row was ticked, ↓ out
+	///   of the query field landing on the first heading. Not somebody moving it,
+	///   so not a reveal — and not a reason to drop a reveal already scheduled
+	///   either, since the row the key stopped on is still the row it stopped on.
+	/// - `selectedRowCount` and `landsOnAMatch` — a move onto a file heading, or
+	///   one that built a selection of several rows, shows nothing. It *does*
+	///   drop anything scheduled: the key has moved on from the row it was going
+	///   to show.
+	/// - `isARepeat` — a held key. See `ResultReveal.whenTheKeyStops`.
+	public static func revealing(
+		previewsOnSelectionChange: Bool,
+		restoringSelection: Bool,
+		isARepeat: Bool,
+		selectedRowCount: Int,
+		landsOnAMatch: Bool
+	) -> ResultReveal {
+		guard previewsOnSelectionChange, !restoringSelection else { return .notThisList }
+		guard selectedRowCount == 1, landsOnAMatch else { return .nothing }
+		return isARepeat ? .whenTheKeyStops : .now
+	}
+
 	/// What a click on a row does: shows it in a tab of its own and leaves the
 	/// keyboard where the hand is, which is the list.
 	///
@@ -79,6 +116,31 @@ public enum ResultChecklistKeys {
 	/// item 510: a click is a decision about which file, and only ⇥ is a
 	/// decision about where the keys go.
 	public static let click: ResultIntent = .permanent
+}
+
+/// What a selection change asks of the editor.
+///
+/// Four answers and not two, because "show nothing" splits: a list that does not
+/// preview at all has nothing to take back, while a move onto a file heading has
+/// to cancel a reveal that a held key had already lined up.
+public enum ResultReveal: Sendable, Equatable {
+	/// Not this list's business. Either it does not show rows as the selection
+	/// moves, or the list moved the selection itself and nobody asked for
+	/// anything — a batch of search results reloading the table under a
+	/// selection that has not moved is this one, and it is the answer item 529
+	/// turned on for search to get right.
+	case notThisList
+	/// Somebody moved the selection, and it landed on nothing worth showing: a
+	/// file heading, or several rows at once. Anything already scheduled is
+	/// dropped, because the key has left the row it was going to show.
+	case nothing
+	/// Show it at once. A single press: a preview that arrived 120ms late would
+	/// feel broken.
+	case now
+	/// Schedule it, cancelling whatever was scheduled before. A key held down
+	/// through 263 rows sends 263 of these, and only the last of them survives —
+	/// so a held ↓ opens the row it stops on and not one file per row.
+	case whenTheKeyStops
 }
 
 /// What showing a row costs — the tab it lands in, and who has the keyboard
