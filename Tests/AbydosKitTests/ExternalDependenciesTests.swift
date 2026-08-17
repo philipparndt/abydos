@@ -1739,6 +1739,36 @@ struct ExternalDependenciesTests {
 		])
 	}
 
+	/// **0527's own case, end to end.** 0516 taught the section to read both of
+	/// these and could not photograph them side by side, because
+	/// `Subprojects.markers` named neither — so `read(project:)`, which asks
+	/// `Subprojects` for its roots, found nothing under the repository at all.
+	@Test func aNestedBazelWorkspaceAndConanProjectEachGetAGroupRow() throws {
+		let project = try makeRoot()
+		try write("""
+		module(name = "build_farm", version = "1.0")
+
+		bazel_dep(name = "rules_go", version = "0.50.1")
+		""", to: project.appendingPathComponent("services/build-farm/MODULE.bazel"))
+		try write(conanLock, to: project.appendingPathComponent("native/fmt/conan.lock"))
+		try write("class Fmt(ConanFile):\n    name = \"fmt\"\n",
+		          to: project.appendingPathComponent("native/fmt/conanfile.py"))
+
+		let tree = try #require(DependencyTree(
+			sets: ExternalDependencies.read(project: project), project: project
+		))
+		#expect(tree.report() == [
+			"Dependencies",
+			"  native/fmt — Conan",
+			"    cmake — 3.29.3",
+			"    fmt — 10.2.1",
+			"    mylib — 2.0  ·  acme",
+			"    zlib — 1.3.1",
+			"  services/build-farm — Bazel",
+			"    rules_go — 0.50.1",
+		])
+	}
+
 	/// A project of no recognised kind gets no section rather than an empty one.
 	@Test func aProjectWithNoBuildSystemHasNoSection() throws {
 		let root = try makeRoot()
