@@ -431,7 +431,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// moves everybody's window and panes back to the defaults the first time
 		// they open the app after the rename — a rename should not rearrange
 		// somebody's desk.
-		window.setFrameAutosaveName("IdeaiMainWindow")
+		//
+		// A driven run reads the remembered frame and does not register to save
+		// one. AppKit's autosave is a write to `UserDefaults.standard` that no
+		// injected store can intercept — it happens inside the framework, under
+		// `NSWindow Frame IdeaiMainWindow` — so the only way a driven run leaves
+		// somebody's window where they left it is not to take the name. 0522
+		// caught this by driving a run and diffing `defaults` either side of it:
+		// nothing this program writes had moved, and the split frames had.
+		if DrivenRun.isActive {
+			window.setFrameUsingName("IdeaiMainWindow")
+		} else {
+			window.setFrameAutosaveName("IdeaiMainWindow")
+		}
 
 		// A second window must not sit exactly on top of the first, so AppKit
 		// steps it down and across from whatever is already open.
@@ -602,7 +614,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		splitView.dividerStyle = .thin
 		splitView.addArrangedSubview(navigatorContainer)
 		splitView.addArrangedSubview(editor.view)
-		splitView.autosaveName = "IdeaiSplit"
+		// No name in a driven run, for the reason the window frame gives: an
+		// autosaved split writes `UserDefaults.standard` from inside AppKit. A
+		// capture that wants a particular sidebar says so with `--sidebar-width`,
+		// which is what `Scripts/screenshots.sh` has always done and why.
+		splitView.autosaveName = DrivenRun.isActive ? "" : "IdeaiSplit"
 		// The tree keeps the width it was given; the editor takes the rest.
 		// Without this the split view re-divides whenever what is in the editor
 		// changes shape — and opening a page of controls made the tree jump
@@ -636,7 +652,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		verticalSplitView.dividerStyle = .thin
 		verticalSplitView.addArrangedSubview(splitView)
 		verticalSplitView.addArrangedSubview(bottomPanel)
-		verticalSplitView.autosaveName = "IdeaiPanelSplit"
+		verticalSplitView.autosaveName = DrivenRun.isActive ? "" : "IdeaiPanelSplit"
 		// For `splitViewDidResizeSubviews`, which rounds the panel down to
 		// whole terminal rows.
 		verticalSplitView.delegate = self
