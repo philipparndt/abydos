@@ -1,0 +1,49 @@
+schema: spec-driven
+
+context: |
+  Abydos is a terminal-first IDE for AI and cloud development, on macOS.
+  Native AppKit — no web view, no Electron.
+
+  Layout: Sources/AbydosKit is the engine (text storage, syntax, project model,
+  git, LSP, DAP, run configurations, backlog) and holds NO view code, so all of
+  it is testable without a window. Sources/AbydosApp is the AppKit shell.
+  Sources/AbydosMain is four lines. Sources/AbydosHook and Sources/AbydosBacklog
+  are small binaries of their own. Tests/AbydosKitTests is one suite per subject.
+
+  Build and test through the Makefile, never `swift run` — the app is a bundle:
+  `make build`, `make run`, `make dev`, `make test` (FILTER=name), `make warnings`.
+  `make warnings` is a separate verb on purpose and is run before an item is
+  finished. Use `xcrun swift`, never plain `swift`.
+
+  House style, which matters here more than in most repositories:
+  - Comments say why, not what. Naming the failure that motivated the code is
+    the point: "Unstandardised, a project under /tmp matched none of its own
+    worktrees and the chip that names the branch never appeared."
+  - British spelling (colour, behaviour), tabs for indentation, sentences
+    rather than abbreviations in prose.
+  - A test is a claim somebody can check, named as a sentence:
+    aWorktreeCanFindTheCheckoutItWasMadeFrom. swift-testing (@Test, #expect),
+    never XCTest.
+  - Cost is a design constraint. Anything running per frame, per keystroke or
+    per row of a table is written knowing it.
+
+  Not to be done: adding a dependency without a written reason (grammars are
+  vendored on purpose); putting view code in AbydosKit; renumbering the backlog.
+
+  The prior backlog lives in .abydos/backlog with its own spec/ describing what
+  the project does today. Changes here cite the backlog item number they came
+  from; those numbers appear in commit messages and must not be renumbered.
+
+rules:
+  proposal:
+    - Name the failure that motivated the change, concretely, with the evidence
+      that exists — a measurement, a screenshot, a crash report, a reproduction.
+    - Cite the originating .abydos/backlog item number.
+    - British spelling.
+  design:
+    - Record what was ruled out and why, not only what was chosen. A design that
+      lists alternatives without saying what killed them is half-written.
+    - Say where a decision is still open rather than inventing a resolution.
+  tasks:
+    - Every change ends with `make test` and `make warnings` clean.
+    - Say which .abydos/backlog/spec/*.md file the change makes untrue, if any.
