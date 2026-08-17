@@ -126,13 +126,71 @@ struct ImagePreviewTests {
 		#expect(ImageFit.widthScale(width: 400, paneWidth: 0, zoom: 1) == 1)
 	}
 
-	/// The drawing's own size follows the zoom too, so ⌘+ from 100% is 110%
-	/// rather than nothing.
+	/// The *diagram* pane's own size follows the window's zoom, so ⌘+ from 100%
+	/// is 110% rather than nothing.
+	///
+	/// The picture pane used to be the other caller of this and is not any more:
+	/// item 0537 gave it a scale of its own, so a size somebody named there is
+	/// the size drawn and the clamp is only the bound on it.
 	@Test func clampsAScaleArrivedAtAnotherWay() {
 		#expect(ImageFit.clamp(1) == 1)
 		#expect(ImageFit.clamp(1.1) == 1.1)
 		#expect(ImageFit.clamp(0) == 0.1)
 		#expect(ImageFit.clamp(40) == 8)
+	}
+
+	/// A picture's own zoom stops at sizes somebody would name.
+	///
+	/// Item 0537: the picture pane has a scale of its own now, so it needs a
+	/// ladder of its own. The rungs are the scale actually *drawn*, which is what
+	/// makes "press ⌘+ until it says 400%" the same number of presses in any
+	/// window — rungs relative to the fit would have made ⌘+ mean a different
+	/// amount in every window shape.
+	@Test func stepsThroughSizesSomebodyWouldName() {
+		// From the picture's own size, up and back down again.
+		#expect(ImageFit.zoomIn(from: 1) == 1.5)
+		#expect(ImageFit.zoomIn(from: 1.5) == 2)
+		#expect(ImageFit.zoomIn(from: 2) == 3)
+		#expect(ImageFit.zoomOut(from: 1) == 0.75)
+		#expect(ImageFit.zoomOut(from: 0.75) == 0.5)
+
+		// From a fit, which is any number at all: the next rung above and below
+		// it, so a fitted screenshot at 41% goes to 50% rather than to some
+		// remembered number nobody can see.
+		#expect(ImageFit.zoomIn(from: 0.41) == 0.5)
+		#expect(ImageFit.zoomOut(from: 0.41) == 0.25)
+		// And from where a pinch happened to stop.
+		#expect(ImageFit.zoomIn(from: 1.37) == 1.5)
+		#expect(ImageFit.zoomOut(from: 1.37) == 1)
+
+		// The ends are `clamp`'s own bounds, so there is no rung the clamp would
+		// move and no bound the ladder cannot reach.
+		#expect(ImageFit.zoomSteps.first == 0.1)
+		#expect(ImageFit.zoomSteps.last == 8)
+		#expect(ImageFit.zoomIn(from: 8) == 8)
+		#expect(ImageFit.zoomIn(from: 40) == 8)
+		#expect(ImageFit.zoomOut(from: 0.1) == 0.1)
+		#expect(ImageFit.zoomOut(from: 0) == 0.1)
+		for step in ImageFit.zoomSteps { #expect(ImageFit.clamp(step) == step) }
+
+		// Every rung is reachable from the one below it and back again, which is
+		// the property that stops ⌘+ ⌘- landing somewhere it did not start.
+		for (below, above) in zip(ImageFit.zoomSteps, ImageFit.zoomSteps.dropFirst()) {
+			#expect(ImageFit.zoomIn(from: below) == above)
+			#expect(ImageFit.zoomOut(from: above) == below)
+		}
+	}
+
+	/// The picture's ladder is not the interface's, and that is the point of 0537.
+	///
+	/// `Settings.zoomSteps` runs 0.75 to 2 because that is the useful range for
+	/// type and rows. A picture wants a tenth and eight times over, and the
+	/// reason those are different numbers is the reason they are now different
+	/// zooms.
+	@Test func thePictureAndTheInterfaceZoomDifferently() {
+		#expect(ImageFit.zoomSteps.map(Double.init) != Settings.zoomSteps)
+		#expect(ImageFit.zoomSteps.first! < CGFloat(Settings.zoomSteps.first!))
+		#expect(ImageFit.zoomSteps.last! > CGFloat(Settings.zoomSteps.last!))
 	}
 
 	/// One rule, two callers. A second copy of it is how ⌘+ comes to mean two

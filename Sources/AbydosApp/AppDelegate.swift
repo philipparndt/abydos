@@ -483,6 +483,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		// After the size and before the pan, for the same reason the pan is last:
+		// each of the three depends on the one above it.
+		if let raw = options.imageZoom {
+			let at = options.isScreenshotRun ? max(1.3, options.screenshotDelay - 0.9) : 2.2
+			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+				controller?.zoomImageForTesting(raw)
+			}
+		}
+
 		// After the size, because where a picture can be scrolled to depends on
 		// how large it is being drawn.
 		if let raw = options.imagePan {

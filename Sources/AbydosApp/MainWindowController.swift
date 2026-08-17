@@ -6277,6 +6277,76 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		print("IMAGE: \(pane.reportForTesting)")
 	}
 
+	/// Drives the picture in front through the View menu's **own** zoom actions,
+	/// one step per word: `in`, `out`, `actual`, `fit`, `pinch:0.25`.
+	///
+	/// **Down the responder chain rather than by calling the pane**, and that is
+	/// the whole reason this verb exists rather than `--image-fit` growing a
+	/// number. What item 0537 changes is not arithmetic — `ImageFit` is tested
+	/// without a window — it is *where ⌘+ arrives*: the picture pane takes the
+	/// keyboard and answers `zoomIn(_:)` before the window controller does. A
+	/// driver that called `pane.zoomIn(nil)` would pass with that routing removed,
+	/// which makes it a test of nothing. So the report says **who took it**, and
+	/// `took=ImageFileView` against `took=MainWindowController` is the whole of
+	/// this item in one word.
+	///
+	/// It also prints the interface's zoom beside the picture's, because the
+	/// claim being checked is about two numbers: one moves and the other does not.
+	func zoomImageForTesting(_ raw: String) {
+		guard let pane = editor.activeGroup?.imagePreview else {
+			print("IMAGE: nothing showing a picture")
+			return
+		}
+		window?.makeFirstResponder(pane)
+		var took: [String] = []
+		for step in raw.split(separator: ",").map({
+			$0.trimmingCharacters(in: .whitespaces).lowercased()
+		}) {
+			switch step {
+			case "in":  took.append(sendToKeyboard(#selector(MainWindowController.zoomIn(_:))))
+			case "out": took.append(sendToKeyboard(#selector(MainWindowController.zoomOut(_:))))
+			case "actual":
+				took.append(sendToKeyboard(#selector(MainWindowController.resetZoom(_:))))
+			// The two that are not keys and so have no chain to walk: `Fit to
+			// Window` lives only in the pane's own menu, and a pinch goes to the
+			// view under the pointer. Said as `direct` rather than dressed up as a
+			// class that answered, since nothing was asked.
+			case "fit":
+				pane.setFit(.pane)
+				took.append("direct")
+			case let pinch where pinch.hasPrefix("pinch:"):
+				pane.magnify(by: CGFloat(Double(pinch.dropFirst("pinch:".count)) ?? 0))
+				took.append("direct")
+			default:
+				print("IMAGE: --image-zoom does not know \(step)")
+			}
+		}
+		let holder = (window?.firstResponder).map { String(describing: type(of: $0)) } ?? "nobody"
+		print("IMAGE zoom: keyboard=\(holder) took=\(took.joined(separator: ",")) \(pane.reportForTesting)")
+	}
+
+	/// The first responder from the keyboard outwards that answers a selector,
+	/// having answered it — and its class, for the report.
+	///
+	/// The chain is walked here rather than handed to `NSApp.sendAction(_:to:
+	/// from:)`, which is what a menu item with no target uses, because that one
+	/// starts at the **key** window and a driven run has none: every step came
+	/// back `reached nobody` while the pane plainly held the keyboard. This walks
+	/// the same links AppKit would — first responder, then `nextResponder` out
+	/// through the view tree, the window and this controller — so it still
+	/// answers the question the item asks, which is who is in front of whom.
+	private func sendToKeyboard(_ selector: Selector) -> String {
+		var responder: NSResponder? = window?.firstResponder
+		while let current = responder {
+			if current.responds(to: selector) {
+				current.perform(selector, with: nil)
+				return String(describing: type(of: current))
+			}
+			responder = current.nextResponder
+		}
+		return "nobody"
+	}
+
 	/// Scrolls the picture in front to a corner of itself, `x,y` as fractions.
 	func panImageForTesting(_ raw: String) {
 		guard let pane = editor.activeGroup?.imagePreview else {
