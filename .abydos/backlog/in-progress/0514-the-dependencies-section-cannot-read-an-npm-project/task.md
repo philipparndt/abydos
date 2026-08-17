@@ -44,7 +44,7 @@ built and kind-agnostic.
 
 ## Estimate
 
-2026-08-17 08:49 — about an hour and a half left
+2026-08-17 09:02 — about half an hour left
 
 ## What was read before anybody started, and not verified
 
@@ -129,6 +129,114 @@ say which tool resolved the project and name 0525, which is the same sentence a
 kind nothing reads yet says, in a place `DependencyKind` cannot reach — the
 kind *is* read, and it is this one root that it cannot answer for.
 
+## What was found on the way
+
+The pictures are in `images/`. An npm project's section reads
+
+    Dependencies — npm
+      @electron/get   1.12.4  ·  npmjs.com
+      fs-extra        9.1.0   ·  npmjs.com
+      fs-extra        7.0.1   ·  npmjs.com
+      fs-extra        4.0.3   ·  npmjs.com
+      …
+
+— 207 packages out of a real `package-lock.json`, and `fs-extra` three times
+because three packages in that project want three different versions of it.
+Opening `node_modules/@electron/get/node_modules/fs-extra/lib/index.js` reveals
+on the *middle* of those three rows, with `CHANGELOG.md`, `LICENSE`,
+`package.json` and `README.md` beside it. Nothing was written for that: 508's
+rule that a package row is a directory did all of it, and the key in the lock
+file was the directory.
+
+### Every finding in "what was read before anybody started" held
+
+It had not been near a compiler, and it turned out to be right about all of it:
+the `packages` keys are paths and are the `localPath`; the name is everything
+after the last `node_modules/`; `link: true` and the keys with no
+`node_modules` in them are exactly the entries to drop; `node_modules` needed no
+code in the navigator, the reveal or `Subprojects`. Two things it did not have:
+
+- **`resolved` is missing far more often than "bundled".** The plan expected an
+  absent `resolved` only for a bundled dependency. One of the npm projects on
+  this machine has **990 entries of 992** without one — a whole tree installed
+  through something that did not write the field. Those rows are version-only,
+  which the row already draws, and a reader that had assumed `resolved` would be
+  there would have dropped that project's entire list.
+- **A git dependency and a registry tarball are both `https://` once `git+` is
+  gone**, and the host is the right answer for exactly one of them.
+  `github.com` alone, on a row, says a package came from GitHub and not which
+  repository — so the `git+` prefix, a `git://` scheme or a `#revision` is what
+  keeps the whole URL. Found by a test, not by reading.
+
+### The cost, measured
+
+992 entries, 7.4 ms warm, on a real project — `fileExists` per package, paid on
+open and on every write of the lock file. Small enough that the alternative
+(walking `node_modules`, which is where npm's reputation comes from) was never
+worth considering.
+
+### The pnpm and yarn rows are the item's real product
+
+A pnpm project and a yarn project both reach this reader, because
+`package.json` is the marker for all three tools. They now read
+
+    resolved by pnpm — pnpm-lock.yaml not read yet (0525)
+    resolved by yarn — yarn.lock not read yet (0525)
+
+rather than `no package-lock.json — run npm install`, which is an instruction
+that would have installed a second, conflicting tree over a working project.
+The section heading over those rows still says `npm`, because the kind is keyed
+off `package.json` and all three tools use it; 0525 has the question of whether
+that becomes three kinds.
+
+## Ruled out
+
+- **`npm ls --json`, and any other subprocess.** It answers everything at once
+  and it is `cargo metadata` and `swift package dump-package` in a third
+  spelling: a node launch per project on open and again on every write of the
+  lock file, on a synchronous path, answering with whichever npm is first on the
+  PATH — which on this machine is `fnm`'s, so the answer depends on which shell
+  last ran. The lock file is the resolved tree and is already on disk.
+- **Reading `node_modules` instead of the lock file.** It is the one kind where
+  the sources are *inside* the project, so listing the directory looks tempting
+  and is wrong twice: a directory listing has no version, no origin and no way
+  to tell a package from a leftover, and walking ~1500 directories on open
+  costs orders of magnitude more than 992 stats.
+- **Reading `package.json` for the dependency names.** It says `^4.17.21`, which
+  is not a version anybody has on disk, and it does not know the transitive
+  ones. 513 ruled the same thing out for `Cargo.toml` and it is the same
+  argument.
+- **Marking a package `dev`, or direct against transitive.** The lock file has
+  `dev: true` and the root's own `dependencies` map, so both could be computed.
+  Not done, for 508's reason: one list sorted by name is what makes eight
+  hundred rows browsable, and "what is beside this file" is not answered by how
+  the package was reached. The fields are parsed by nothing, so it is a few
+  lines if somebody wants it.
+- **De-duplicating the nested copies.** `fs-extra` appears three times in the
+  picture, at three versions, from three keys. That is what the project has, and
+  collapsing them to one row would name a version the file in somebody's tab is
+  not from. The one cost is that `DependencyNode.identity` is
+  `package:<origin>:<name>`, so the three share an identity and the tree's
+  expansion state cannot tell them apart — cosmetic, and in `DependencyTree`,
+  which 0515 and 0516 are also editing around, so it is left where it is.
+- **Naming the origin after the tarball host as written.**
+  `registry.npmjs.org/lodash/-` is what `shortOrigin` makes of a `resolved` URL
+  — three quarters noise, repeated on every row. `npmjs.com` on 513's
+  `crates.io` precedent, and `registry.yarnpkg.com` reads as the same registry,
+  which it is.
+- **Treating any ancestor with a lock file as a workspace.** The first version
+  did, and it would have told a `docs` folder with a `package.json` of its own —
+  inside a repository that is not a workspace — that it was "resolved in the
+  workspace at …", which is false. The ancestor has to declare `workspaces` (or
+  have a `pnpm-workspace.yaml`); a project that genuinely has not been installed
+  is still told to install.
+- **Adding an npm fixture to `abydos-examples`.** 513's argument, unchanged and
+  stronger: `node_modules` is per-machine, cannot be committed, and is 30 MB for
+  the small project photographed here. The examples repository is built to
+  compile offline. The claims are made by lock files written into temporary
+  directories, and the app was watched against a copy of a real project with its
+  real `node_modules`.
+
 ## Steps
 
 - [x] Read `package-lock.json` into packages: name, version, origin
@@ -145,6 +253,6 @@ kind *is* read, and it is this one root that it cannot answer for.
 - [x] The version 1 lock layout is still read, the way both layouts of
       `Package.resolved` are
 - [x] `DependencyKind.pendingItem` stops naming this item for npm
-- [ ] Watched in the app on a real project, with a screenshot
-- [ ] Write down here what was ruled out on the way
+- [x] Watched in the app on a real project, with a screenshot
+- [x] Write down here what was ruled out on the way
 - [ ] `spec/project-view.md` says npm is among the kinds that are read
