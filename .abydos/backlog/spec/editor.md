@@ -328,10 +328,24 @@ Shift decides only whether the text stepped over comes with the caret. ⇧⌃F
 extends the selection forward by the character it moves over and ⇧⌃B backward
 by one, exactly as ⇧→ and ⇧← do.
 
-A character is a composed character, so an emoji or a letter with a combining
-mark is one step and not two. At the start of a line the character before the
-caret is the newline that ended the line above, so ⌃B goes to the end of that
-line; at offset zero there is nothing to step over and the caret stays.
+A character is what a reader would point at as one — an extended grapheme
+cluster — so an emoji, a letter with a combining mark, a ZWJ sequence, an emoji
+with a skin-tone modifier and a flag are each one step and not two. **Not a
+UTF-8 sequence**, which is what this used to step by and is the difference 0504
+turned on: an emoji is one four-byte sequence and moved as one, while `e`
+followed by a combining acute is two sequences with two valid starts, so the
+caret came to rest between the letter and its mark. The emoji working is what
+let that hide for as long as it did.
+
+Deleting asks the same question. ⌫ and ⌦ each remove one whole character, so no
+keystroke can leave a combining mark without its base letter — before this they
+had two more copies of the byte walk between them, and ⌫ after a decomposed `é`
+took the accent and left the `e`.
+
+At the start of a line the character before the caret is the newline that ended
+the line above, so ⌃B goes to the end of that line; at offset zero there is
+nothing to step over and the caret stays. A `\r\n` pair is one character, so
+nothing can land between the two halves of it.
 
 The rest of the emacs family is not this requirement. ⌃P and ⌃N move up and
 down a line because macOS sends them as the same selectors the arrows send.
@@ -355,6 +369,26 @@ down a line because macOS sends them as the same selectors the arrows send.
 - **Given** the caret at offset 50, with `🙂` in front of it
 - **When** ⇧⌃F is pressed
 - **Then** the caret is at offset 52 and the whole `🙂` is selected, not half of it
+
+### Scenario: ⇧⌃F over a decomposed accent
+
+- **Given** the caret at offset 14, with `e` followed by U+0301 in front of it
+- **When** ⇧⌃F is pressed
+- **Then** the caret is at offset 16 and the whole `é` is selected
+- **And** ⌃F alone from 14 puts the caret at 16, not at 15
+
+### Scenario: ⌃F over a ZWJ sequence
+
+- **Given** the caret at offset 14, with `👨‍👩‍👧` in front of it
+- **When** ⇧⌃F is pressed
+- **Then** the caret is at offset 22 and the whole sequence is selected, not the
+  first person in it
+
+### Scenario: ⌫ after a decomposed accent
+
+- **Given** the caret immediately after `e` + U+0301
+- **When** ⌫ is pressed
+- **Then** both the letter and its mark are removed, leaving no orphaned mark
 
 ### Scenario: ⌃B at the start of a line
 

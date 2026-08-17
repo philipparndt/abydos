@@ -2473,14 +2473,18 @@ final class CodeView: NSView, NSTextInputClient {
 			return
 		}
 
-		// Step by composed character so emoji and combining marks move as one.
-		let target = document.rope.utf16Count
-		var offset = caret + delta
-		offset = max(0, min(offset, target))
-		if delta != 0 {
-			let byte = document.rope.alignToBoundary(document.rope.byteOffset(fromUTF16: offset))
-			offset = document.rope.utf16Offset(fromByte: byte)
-		}
+		// A whole character, as a reader means it.
+		//
+		// **This used to step by UTF-8 sequence and the difference is 0504.**
+		// Aligning `caret + delta` to a sequence start is right for "do not land
+		// inside an encoded code point" and says nothing about characters: an
+		// emoji is one four-byte sequence and moved as one, while `e` followed
+		// by a combining acute is two sequences with two valid starts, so →
+		// stopped between the letter and its mark. The emoji working is what let
+		// it hide.
+		let offset = delta == 0
+			? caret
+			: document.rope.graphemeStep(fromUTF16: caret, by: delta)
 		setCaret(offset, extendingSelection: extending)
 	}
 
@@ -3258,11 +3262,13 @@ final class CodeView: NSView, NSTextInputClient {
 		}
 		guard caret > 0 else { return }
 
-		// Delete a whole composed character, not one UTF-16 unit.
-		let byteEnd = document.rope.byteOffset(fromUTF16: caret)
-		let byteStart = document.rope.alignToBoundary(byteEnd - 1)
-		let start = document.rope.utf16Offset(fromByte: byteStart)
-
+		// A whole character, and the same one the caret steps over.
+		//
+		// This said "composed character" and stepped by UTF-8 sequence, so ⌫
+		// after `é` written as `e` + U+0301 took the accent and left the letter.
+		// Deleting and moving now ask the same question, which is what stops
+		// them drifting apart later — 0504 is exactly the shape of that drift.
+		let start = document.rope.graphemeStep(fromUTF16: caret, by: -1)
 		let newCaret = document.replace(utf16Range: start..<caret, with: "", caretBefore: caret)
 		afterEdit(caret: newCaret)
 	}
@@ -3278,14 +3284,10 @@ final class CodeView: NSView, NSTextInputClient {
 		}
 		guard caret < document.rope.utf16Count else { return }
 
-		let byteStart = document.rope.byteOffset(fromUTF16: caret)
-		var byteEnd = min(document.rope.byteCount, byteStart + 1)
-		while byteEnd < document.rope.byteCount,
-		      Rope.isContinuation(document.rope.bytes(in: byteEnd..<(byteEnd + 1)).first ?? 0) {
-			byteEnd += 1
-		}
-		let end = document.rope.utf16Offset(fromByte: byteEnd)
-
+		// ⌦ had its own copy of the byte walk — forwards over continuation
+		// bytes — with the same fault and one more implementation of it. All
+		// four of these now ask the rope the one question.
+		let end = document.rope.graphemeStep(fromUTF16: caret, by: 1)
 		let newCaret = document.replace(utf16Range: caret..<end, with: "", caretBefore: caret)
 		afterEdit(caret: newCaret)
 	}
