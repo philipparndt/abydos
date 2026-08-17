@@ -30,6 +30,30 @@ public final class DependencyNode {
 		case group(DependencySet, name: String)
 		/// A package, which is where the origin is read off.
 		case package(ExternalDependency)
+		/// A compiler's or an SDK's own sources, which nothing declared.
+		///
+		/// **Under this section, and not beside it.** IntelliJ's *External
+		/// Libraries* — which this section is modelled on, down to the shelf of
+		/// books it is drawn with — holds the JDK, so the precedent is for
+		/// putting it here; but precedent is not the argument, and the argument
+		/// against is real: a heading that reads "what this project depends on"
+		/// is being stretched by a compiler nobody wrote down.
+		///
+		/// Three things settle it. The reveal that this whole item is about
+		/// goes through `DependencyTree.locate`, and the section is the one
+		/// place that is allowed to win over the ordinary tree for a file — a
+		/// third root would need its own copy of both, and two rules about
+		/// which root claims a file is how a tree stops being predictable. The
+		/// section already says it is "what the project is made *from*", and a
+		/// compiler is that as much as a package is. And a root of its own
+		/// would have to exist before anything had been found to put in it,
+		/// which is a permanent empty row on every project — the exact failure
+		/// 508 was filed to prevent.
+		///
+		/// What the heading might be taken to claim, the row denies on its own
+		/// face: its grey half reads `go1.26.6  ·  toolchain` rather than a
+		/// version and a registry, and its tooltip says no manifest declares it.
+		case toolchain(Toolchain)
 		/// A kind that was not read, or a project that has resolved nothing.
 		/// The row that stops an empty section reading as "no dependencies".
 		case note(DependencySet)
@@ -53,6 +77,7 @@ public final class DependencyNode {
 		case .section: return "Dependencies"
 		case let .group(_, name): return name
 		case let .package(package): return package.name
+		case let .toolchain(toolchain): return toolchain.name
 		case let .note(set): return DependencyNode.message(for: set)
 		}
 	}
@@ -91,6 +116,13 @@ public final class DependencyNode {
 			let origin = package.shortOrigin
 			guard let version = package.version else { return origin.isEmpty ? nil : origin }
 			return origin.isEmpty ? version : version + "  ·  " + origin
+		case let .toolchain(toolchain):
+			// Never the version alone. A row reading `go1.26.6` and nothing
+			// else looks like a package whose origin this program failed to
+			// read; `go1.26.6  ·  toolchain` says what it actually is, which is
+			// the question the origin half of a package row answers.
+			guard let version = toolchain.version else { return toolchain.provenance }
+			return version + "  ·  " + toolchain.provenance
 		case .note:
 			return nil
 		}
@@ -113,6 +145,11 @@ public final class DependencyNode {
 			// what is true.
 			lines.append(package.localPath?.path ?? package.artefact?.path ?? "not fetched")
 			return lines.joined(separator: "\n")
+		case let .toolchain(toolchain):
+			var lines = [toolchain.summary]
+			if let version = toolchain.version { lines.append("version " + version) }
+			lines.append(toolchain.home.path)
+			return lines.joined(separator: "\n")
 		case let .note(set):
 			// The message first, because a note *is* its message and the pane cuts
 			// it: `WORKSPACE dependencies are Starlark — nothing on disk lists
@@ -131,7 +168,7 @@ public final class DependencyNode {
 	public var isExpandable: Bool {
 		switch row {
 		case .section, .group: return !childNodes.isEmpty
-		case .package: return fileRoot != nil
+		case .package, .toolchain: return fileRoot != nil
 		case .note: return false
 		}
 	}
@@ -143,6 +180,7 @@ public final class DependencyNode {
 		case .section: return "section"
 		case let .group(set, _): return "group:" + set.kind.rawValue + ":" + set.root.path
 		case let .package(package): return "package:" + package.origin + ":" + package.name
+		case let .toolchain(toolchain): return "toolchain:" + toolchain.home.path
 		case let .note(set): return "note:" + set.kind.rawValue + ":" + set.root.path
 		}
 	}
@@ -151,19 +189,29 @@ public final class DependencyNode {
 /// The Dependencies section, built from what the readers found.
 public struct DependencyTree {
 	public let sets: [DependencySet]
+	/// The toolchains somebody has actually been into, in the order they were
+	/// found. Empty until a file from one is opened — see `ToolchainSources`.
+	public let toolchains: [Toolchain]
 	public let root: DependencyNode
 
 	/// Nil when there is nothing to show at all — a project of no recognised
-	/// kind, which gets no section rather than an empty one.
-	public init?(sets: [DependencySet], project: URL) {
-		guard !sets.isEmpty else { return nil }
+	/// kind and no toolchain reached from it, which gets no section rather than
+	/// an empty one.
+	///
+	/// A project of no recognised kind that somebody has followed a symbol out
+	/// of does get one, holding the toolchain alone. The rule was never "only
+	/// projects with manifests have a second root": it was that an *empty*
+	/// section is worse than none, and this one is not empty.
+	public init?(sets: [DependencySet], toolchains: [Toolchain] = [], project: URL) {
+		guard !sets.isEmpty || !toolchains.isEmpty else { return nil }
 		self.sets = sets
+		self.toolchains = toolchains
 
 		// One root's worth needs no grouping: the packages hang straight off the
 		// section. The item asked for the subproject to be named "where there is
 		// more than one", and a lone `cadova-models` heading between the section
 		// and its seven packages is a row that answers a question nobody asked.
-		let children: [DependencyNode]
+		var children: [DependencyNode]
 		var heading: String?
 		if sets.count == 1, let only = sets.first {
 			children = DependencyTree.rows(for: only)
@@ -175,6 +223,31 @@ public struct DependencyTree {
 					childNodes: DependencyTree.rows(for: set)
 				)
 			}
+		}
+
+		// Last, and at the section's own level. A toolchain belongs to no root
+		// and to no kind, so there is no group row it could go under; putting
+		// it under one would say `go-service` declared it, which is the one
+		// thing that is certainly false.
+		//
+		// It sits beside the packages when a project has a single root, which
+		// is the one place this reads slightly oddly — the section's heading
+		// then names that root's build system, and the row below it is not of
+		// that kind. Reshaping the section into groups the moment a toolchain
+		// is found was the alternative and is worse: the rows would change
+		// identity, so whatever somebody had open would fold up underneath
+		// them, in the middle of the navigation that found the toolchain.
+		children += toolchains.map { toolchain in
+			DependencyNode(
+				row: .toolchain(toolchain),
+				// The same shape as a package row, which is what makes a
+				// standard library affordable: `FileNode` lists a directory
+				// when it is expanded and not before, so this costs one row
+				// until somebody opens it, and then one `readdir`. An SDK's
+				// headers are tens of thousands of files and none of them is
+				// touched.
+				fileRoot: FileNode(url: toolchain.sources, isDirectory: true)
+			)
 		}
 		root = DependencyNode(row: .section(subtitle: heading), childNodes: children)
 	}
