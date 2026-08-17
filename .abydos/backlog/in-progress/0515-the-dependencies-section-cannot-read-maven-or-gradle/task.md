@@ -216,6 +216,85 @@ leads with its own message. Every other row in the section already followed
 that rule — anything too long for the pane goes on the tooltip — and the notes
 were outside it because until now no note had been longer than four words.
 
+## Ruled out
+
+- **`mvn dependency:list`, and Gradle's tooling API or `gradle dependencies`.**
+  The rule on `ExternalDependencies` in `SwiftPackage`'s words, and the item
+  expected Gradle to be where it finally bent. It did not have to: the lock
+  file answers, and the builds that have no lock file are exactly the ones a
+  daemon would take the longest on. Both cost a JVM on a synchronous path run
+  once per root when a project opens and again on every write to a manifest,
+  answer with whichever toolchain is on the PATH, and have side effects —
+  Gradle starts a daemon that outlives the question and Maven writes into
+  `~/.m2`. 0513 watched rust-analyzer do the equivalent and take seconds over
+  it; nothing here needed to repeat that measurement.
+- **Reading the parent POM out of `~/.m2`.** This is the tempting one, and it
+  is the difference between `slf4j-api` having a version and not: the parent
+  and the imported BOM are both sitting in the local repository as `.pom`
+  files, and following them would fill in most of the missing versions. Not
+  done, because it is resolution rather than reading — `<dependencyManagement>`
+  with `<scope>import</scope>` is recursive, a POM in the repository has its
+  own parent, and the chain can be missing links on a machine that has never
+  built this project. It would still yield no transitives, so the caveat would
+  stay; what it would buy is fewer version-less rows, and it is a whole item's
+  worth of care to buy them. Somebody wanting it should start at
+  `readMavenPackages`, where the chain currently stops.
+- **Pointing `localPath` at the directory the jar is in.** It is a directory
+  and the tree would happily list it, which is exactly the problem: the row
+  would open onto `commons-lang3-3.14.0.jar`, `.jar.sha1`, `.pom` and
+  `_remote.repositories`, and a package whose "sources" are four checksums
+  reads as a package this program cannot open properly. The artefact is named
+  on the tooltip instead and the row does not expand.
+- **Unpacking `-sources.jar`, and browsing inside an archive.** Above, under
+  what was decided.
+- **A TOML library for `gradle/libs.versions.toml`.** Two tables of quoted
+  strings, which is 0513's argument about `Cargo.lock` in a second spelling.
+  `project.md` asks for an argument before a dependency is added and this is
+  not one.
+- **`dependencies { }` inside `subprojects { }` or `allprojects { }`.** Read at
+  brace depth 0 only, which is what keeps `buildscript { }`'s plugin classpath
+  out — and the same rule drops a root build that declares its modules'
+  dependencies for them. That is a real Gradle layout and it will show those
+  modules as having none. Reading it properly means knowing which module the
+  block applies to, which is evaluating the build; the honest half was
+  preferred to a list attributed to the wrong project.
+- **`buildscript-gradle.lockfile`.** The locked form of the same plugin
+  classpath, and left alone for the same reason.
+- **A version catalog somewhere other than `gradle/libs.versions.toml`.**
+  `versionCatalogs { create("x") { from(files("gradle/other.toml")) } }` is
+  legal. The accessor name is read from `settings.gradle`; the file name is
+  not, and a build that moves it gets no rows from its catalog.
+- **Marking a dependency direct or transitive.** `gradle.lockfile` says which
+  configurations resolved each one, so `runtimeClasspath` alone is a fair
+  hint. Not done, for 508's reason: one list sorted by name is what makes
+  thirty rows browsable, and "what is beside this file" is not answered by
+  resolution order.
+- **Reusing `MavenProject` for the reading.** It parses the same file, and its
+  `dependencies` are bare artifactIds — no group, no version, no
+  `dependencyManagement`, no parent chain. What *was* shared is the four-line
+  `XMLElement` extension at the bottom of `MavenProject.swift`, made internal
+  rather than copied, so the two readings of a POM cannot drift.
+- **An environment variable for Maven's local repository.** There is none.
+  `M2_HOME` is where Maven is installed. `settings.xml` is the only override,
+  so `mavenLocalRepository(home:)` takes the home directory as a parameter and
+  the test hands it a fake one — which also avoids `CARGO_HOME`'s trap, where a
+  process-wide variable makes two parallel tests read each other's cache.
+- **A Maven or Gradle example with real dependencies in `abydos-examples`.**
+  0513's argument exactly, and it applies harder here: `~/.m2` and
+  `~/.gradle/caches` are per-machine and cannot be committed, so a fixture with
+  `jackson-databind` in it says nothing until somebody with a network runs the
+  build. The examples are built to compile offline. The claims here are made by
+  POMs and lock files written into temporary directories, and the app was
+  watched against a copy under `/tmp` with dependencies whose jars are really
+  in this machine's caches.
+
+### One test in the suite is flaky and it is not this branch
+
+`ToolContainerLiveTests.theSweepTakesWhatAnEarlierRunLeft` failed once in a
+full parallel run and passed on its own with `FILTER`. It starts real
+containers under the Apple runtime; nothing here touches it. 2764 tests
+otherwise green, `make warnings` clean.
+
 ## Steps
 
 - [x] Decide what a JVM dependency's row shows when the sources are a jar, and
@@ -233,7 +312,7 @@ were outside it because until now no note had been longer than four words.
       screenshot
 - [x] A note's tooltip carries its own message, since the caveat is a sentence
       and the pane cuts it — found in the app
-- [ ] Write down here what was ruled out on the way
+- [x] Write down here what was ruled out on the way
 - [ ] `spec/project-view.md` says Maven and Gradle are among the kinds that
       are read — not `spec/editor.md`, which predates the section; 0513 hit
       the same thing and corrected it in its own last step
