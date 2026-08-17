@@ -130,7 +130,27 @@ public enum LaunchStore {
 
 /// This machine's view of a project: what was open in it.
 public enum SessionStore {
-	public static func read(in root: URL) -> ProjectSession? {
+	/// What the project had open, or nothing at all when the app is being
+	/// driven.
+	///
+	/// A driven run shows what it was given and nothing else. This is the half
+	/// of item 0522 that would have prevented every one of its three incidents
+	/// on its own: a typing verb goes to whatever the window is showing, and
+	/// what the window was showing was the tabs and the terminals somebody had
+	/// left open in a project of their own — so `--type` landed in a source file
+	/// nobody was editing, and characters meant for a shell of the run's own
+	/// reached a tmux session the user was attached to elsewhere.
+	///
+	/// Refused here rather than at each of the eight places that ask, because a
+	/// rule about what a run may see is not a rule any single caller can keep.
+	///
+	/// - Parameter driven: whether this run is one. An argument with the global
+	///   as its default rather than a bare read of the global, so the rule can
+	///   be put a question without a test having to make the whole process
+	///   pretend to be a driven run — which the rest of the suite, running
+	///   beside it, would then also be.
+	public static func read(in root: URL, driven: Bool = DrivenRun.isActive) -> ProjectSession? {
+		guard !driven else { return nil }
 		guard let data = try? Data(contentsOf: AbydosFolder.sessionFile(in: root)),
 		      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
 		else { return nil }
@@ -215,7 +235,20 @@ public enum SessionStore {
 	}
 
 	/// Writes what is open, or removes the file when nothing is.
-	public static func write(_ session: ProjectSession, in root: URL) throws {
+	/// Writes what a project has open — unless the app is being driven, in which
+	/// case there is nothing here that belongs to the project.
+	///
+	/// The other half of the rule above, and the one that answers "leaves
+	/// nothing behind": a driven run that wrote its session would put its own
+	/// tabs into the project it was pointed at and, for a project that has no
+	/// `.abydos` yet, create the folder to do it in — which for somebody's own
+	/// checkout is a file appearing in `git status` after a capture.
+	public static func write(
+		_ session: ProjectSession,
+		in root: URL,
+		driven: Bool = DrivenRun.isActive
+	) throws {
+		guard !driven else { return }
 		let file = AbydosFolder.sessionFile(in: root)
 		guard !session.isEmpty else {
 			try? FileManager.default.removeItem(at: file)
