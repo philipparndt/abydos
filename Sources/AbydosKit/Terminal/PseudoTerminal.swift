@@ -308,6 +308,11 @@ public final class PseudoTerminal {
 		let argumentArray = Self.cStrings([executable] + arguments)
 		let executablePath = strdup(executable)
 		let directoryPath = workingDirectory.map { strdup($0.path) } ?? nil
+		// An empty signal mask, built here for the same reason as everything else
+		// on this side of the fork: the child only gets to make C calls on memory
+		// that already existed. What it is for is where it is used, below.
+		var noSignalsBlocked = sigset_t()
+		sigemptyset(&noSignalsBlocked)
 		defer {
 			Self.free(environmentArray)
 			Self.free(argumentArray)
@@ -340,6 +345,30 @@ public final class PseudoTerminal {
 		var master: Int32 = -1
 		var slave: Int32 = -1
 		guard openpty(&master, &slave, nil, nil, &size) == 0 else { return false }
+
+		// Close-on-exec on both, which is about *other* people's children rather
+		// than this one's.
+		//
+		// A pty is freed when the last descriptor on either end goes, and until
+		// then it counts against `kern.tty.ptmx_max` — 511 for the whole machine,
+		// shared with every terminal, every tmux and every ssh on it. `openpty`
+		// hands back two ordinary inheritable descriptors, so every program
+		// started after this one — another pane, a `git`, a language server —
+		// gets a copy of both, and goes on holding this terminal open for as long
+		// as it runs. Closing the pane then frees nothing.
+		//
+		// That was measured rather than reasoned about: a leaked `/bin/cat` from
+		// the test suite had `187u  CHR  16,1  /dev/ttys001` — a descriptor on a
+		// *different* test's terminal, which it had no idea it was holding and
+		// which could not be freed while it lived. Six such children pinned one
+		// pty between them (item 0526).
+		//
+		// The child below is unaffected: it closes the master itself, and
+		// `login_tty` puts the slave onto 0, 1 and 2 with `dup2`, which clears the
+		// flag on the copies. It is the exec of something else entirely that this
+		// stops.
+		_ = fcntl(master, F_SETFD, FD_CLOEXEC)
+		_ = fcntl(slave, F_SETFD, FD_CLOEXEC)
 
 		// Named before the fork too, for the same reason and one more: `ptsname_r`
 		// rather than `ptsname`, which answers into a static buffer shared by the
@@ -383,6 +412,41 @@ public final class PseudoTerminal {
 			// to the wrong end of the machine.
 			close(master)
 			if login_tty(slave) != 0 { _exit(127) }
+			// A signal state of the child's own, which is the whole of item 0526.
+			//
+			// Both halves of it survive `execve`: a thread's *blocked* mask is
+			// inherited by the child of a fork and kept across the exec, and a
+			// disposition of `SIG_IGN` is kept across the exec too. So a program
+			// started here does not begin life with the signals a program expects
+			// — it begins with whatever this process happened to be holding.
+			//
+			// Neither of those is hypothetical here, and the first one cost days.
+			// This fork runs on whichever thread called `start`, and under the
+			// test runner that is a Swift concurrency worker, whose mask is
+			// `0b11111011111111101110000000100111` — SIGHUP, SIGINT and SIGTERM
+			// all blocked. `terminate()` sends SIGHUP; the child cannot receive
+			// it; the signal sits pending for the rest of the process's life. A
+			// `/bin/cat` on a pty then survives being terminated, is re-parented
+			// to launchd when the test run ends, and holds its pty for as long as
+			// the machine is up. 443 of them had accumulated before anything
+			// noticed, and what noticed was three unrelated terminal suites
+			// failing at once because the machine was out of ptys.
+			//
+			// The second half is smaller and older: this package ignores SIGPIPE
+			// process-wide (`BrokenPipes`, and it must), and without this every
+			// shell in every pane inherited that — so `yes | head` in a pane left
+			// `yes` running rather than killing it, which is not what a terminal
+			// is for.
+			//
+			// `signal` and `sigprocmask` are both async-signal-safe, which is the
+			// bar for anything between the fork and the exec.
+			var signalNumber: Int32 = 1
+			while signalNumber < NSIG {
+				// SIGKILL and SIGSTOP refuse, harmlessly.
+				signal(signalNumber, SIG_DFL)
+				signalNumber += 1
+			}
+			sigprocmask(SIG_SETMASK, &noSignalsBlocked, nil)
 			if let directoryPath { chdir(directoryPath) }
 			execve(executablePath, argumentArray, environmentArray)
 			// Only reached if exec failed; _exit avoids running atexit handlers
