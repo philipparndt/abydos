@@ -18,9 +18,12 @@ The list is read from what is already on disk. Nothing runs a build tool to
 answer it.
 
 What it lists is what came from outside. A dependency that is a directory
-inside the project — a Cargo `path` dependency, the project's own crate — has a
-row in the tree already, and listing it again under a heading that says it came
-from elsewhere would show the same source twice.
+inside the project — a Cargo `path` dependency, an npm workspace member, the
+project's own crate — has a row in the tree already, and listing it again under
+a heading that says it came from elsewhere would show the same source twice.
+Where a package came from is a question about the lock file and not about where
+its files sit: an npm package's sources are inside the project, under
+`node_modules`, and it is still a dependency.
 
 ### Scenario: a Swift package with its dependencies resolved
 
@@ -35,11 +38,25 @@ from elsewhere would show the same source twice.
 - **When** the `Dependencies` row is opened
 - **Then** it holds one row per crate the lock file resolved
 
+### Scenario: an npm project
+
+- **Given** a project with a `package-lock.json`
+- **When** the `Dependencies` row is opened
+- **Then** it holds one row per package the lock file resolved
+- **And** a package installed twice at two versions, because two packages
+  needed different ones, has a row for each
+
 ### Scenario: a crate that is a directory in the project
 
 - **Given** a `Cargo.lock` naming a crate with no source — a `path` dependency
   or a workspace member
 - **Then** that crate has no row in `Dependencies`
+
+### Scenario: an npm workspace member
+
+- **Given** a `package-lock.json` naming a member of the workspace, both by its
+  path and as a link under `node_modules`
+- **Then** that member has no row in `Dependencies`
 
 ### Scenario: a directory with no build system in it
 
@@ -51,12 +68,15 @@ from elsewhere would show the same source twice.
 
 Each package row carries the version the project resolved and an abbreviation
 of its origin — the host and owner of a Swift package's repository, the module
-path of a Go module, the registry a crate was published to. The whole origin,
-the version and the directory the sources are in are on the row's tooltip,
-which is where anything too long for the pane goes.
+path of a Go module, the registry a crate or an npm package was published to.
+The whole origin, the version and the directory the sources are in are on the
+row's tooltip, which is where anything too long for the pane goes.
 
 A package that has been resolved and never fetched is still a row. It has no
 sources to open, which is a different thing from not being depended on.
+
+A package whose lock file records no origin at all is a row with a version and
+nothing else, rather than one claiming an origin nobody wrote down.
 
 ### Scenario: a package resolved to a released version
 
@@ -85,6 +105,26 @@ sources to open, which is a different thing from not being depended on.
 - **Then** the row reads `github.com/dtolnay`
 - **And** the tooltip has the whole source, revision included
 
+### Scenario: an npm package from the registry
+
+- **Given** a `package-lock.json` resolving `lodash` at `4.17.21` from
+  `https://registry.npmjs.org/lodash/-/lodash-4.17.21.tgz`
+- **Then** the row reads `lodash`, `4.17.21`, `npmjs.com`
+- **And** a package served from `registry.yarnpkg.com` reads the same, because
+  it is the same registry
+- **And** a package from any other registry reads that registry's host
+
+### Scenario: an npm package from a git repository
+
+- **Given** a `package-lock.json` resolving a package from
+  `git+https://github.com/dtolnay/anyhow.git#bf3ed914`
+- **Then** the row reads `github.com/dtolnay`, and not the host alone
+
+### Scenario: a package whose lock file records no origin
+
+- **Given** an entry in a `package-lock.json` with no `resolved`
+- **Then** the row shows the version and no origin
+
 ### Scenario: a package nobody has fetched
 
 - **Given** a pin whose sources are in no checkout on this machine
@@ -103,6 +143,12 @@ instead, and says it in the words of the tool that would resolve it. A project
 that has resolved nothing because something *above it* did the resolving says
 where that was, rather than naming a command that would write nothing here.
 
+Where one marker file belongs to several tools, the row names the tool that did
+the resolving. `package.json` is npm's, pnpm's and yarn's alike, and only npm's
+lock file is read — so a project resolved by one of the others says which, with
+the number of the item that will read it, rather than being told to run a
+command that would install a second tree over the one it has.
+
 ### Scenario: a Maven project
 
 - **Given** a project with a `pom.xml`
@@ -119,11 +165,30 @@ where that was, rather than naming a command that would write nothing here.
 - **Given** a project with a `Cargo.toml` and no `Cargo.lock`
 - **Then** the row reads `no Cargo.lock — run cargo fetch`
 
+### Scenario: an npm project that has never been installed
+
+- **Given** a project with a `package.json` and no lock file of any kind
+- **Then** the row reads `no package-lock.json — run npm install`
+
+### Scenario: a project resolved by pnpm or by yarn
+
+- **Given** a project with a `package.json` and a `pnpm-lock.yaml`
+- **Then** the row reads `resolved by pnpm — pnpm-lock.yaml not read yet (0525)`
+- **And** a project with a `yarn.lock` says the same of yarn and its lock file
+
 ### Scenario: a crate that is a member of a workspace
 
 - **Given** a crate with a `Cargo.toml`, no `Cargo.lock` of its own, and a
   workspace above it that has one
 - **Then** the row says the crate is resolved in that workspace, and names it
+- **And** the workspace's own list is not repeated under the member
+
+### Scenario: a member of an npm workspace
+
+- **Given** a package with a `package.json`, no lock file of its own, and a
+  directory above it whose `package.json` declares `workspaces` and which has
+  one
+- **Then** the row says the package is resolved in that workspace, and names it
 - **And** the workspace's own list is not repeated under the member
 
 ### Scenario: a Go module that requires nothing
@@ -192,12 +257,13 @@ row can say which package the file belongs to and where that package came from.
 
 ## Requirement: `.build` is an ordinary folder
 
-A checkout directory inside the project is shown as what it is: a folder, in
-the tree, marked as build output the way any excluded directory is. It is not
-hidden because the section also shows part of it — it holds build products as
-well as checkouts, and a tree that quietly omits a directory is one nobody can
-trust. Nothing opens it on somebody's behalf, because a reveal that would land
-inside it goes to the section instead.
+A directory of fetched or built dependencies inside the project — `.build` for
+a Swift package, `node_modules` for an npm project — is shown as what it is: a
+folder, in the tree, marked as build output the way any excluded directory is.
+It is not hidden because the section also shows part of it — it holds build
+products as well as checkouts, and a tree that quietly omits a directory is one
+nobody can trust. Nothing opens it on somebody's behalf, because a reveal that
+would land inside it goes to the section instead.
 
 ### Scenario: a project that has been built
 
@@ -210,3 +276,11 @@ inside it goes to the section instead.
 - **Given** the same project
 - **When** a file inside `.build/checkouts` is opened
 - **Then** `.build` stays folded
+
+### Scenario: a file revealed inside `node_modules`
+
+- **Given** an npm project with its packages installed
+- **When** a file inside `node_modules` is opened
+- **Then** it is revealed on that package's row in the section, with the rest of
+  the package's files beside it
+- **And** `node_modules` stays folded
