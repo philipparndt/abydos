@@ -1236,7 +1236,22 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 			DispatchQueue.main.asyncAfter(deadline: .now() + 3.0 + Double(count) * 0.25 + 1.5) {
 				print("TABS: \(controller?.paneCountForTesting ?? 0) panes")
+				// A number rather than a picture: whether a tab can be reached
+				// is a fact, and a screenshot of a full strip is a thing
+				// somebody has to squint at.
+				print("OVERFLOW: \(controller?.panelOverflowReportForTesting ?? "none")")
 				fflush(stdout)
+
+				// And what choosing a hidden one does, which is the half of this
+				// that a still picture cannot show: the run moves the least that
+				// brings it into view.
+				DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+					print("CHOSE: \(controller?.selectHiddenPanelTabForTesting(0) ?? "none")")
+					DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+						print("AFTER: \(controller?.panelOverflowReportForTesting ?? "none")")
+						fflush(stdout)
+					}
+				}
 			}
 		}
 

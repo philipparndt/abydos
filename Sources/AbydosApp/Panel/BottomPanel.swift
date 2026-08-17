@@ -80,6 +80,13 @@ final class BottomPanel: NSView {
 		var displayTitle: String
 		let kind: Kind
 		var hasExited = false
+		/// A name for this session that nothing else has and that outlives its
+		/// position in the list.
+		///
+		/// The tab strip needs one: it remembers which tab its run starts at,
+		/// and every tab is called `Local` until somebody renames it. Made once
+		/// per session and never shown.
+		let identity = UUID().uuidString
 		/// Where the shell was started, so the same terminal can be opened
 		/// again next time.
 		var directory: URL?
@@ -2540,8 +2547,8 @@ final class BottomPanel: NSView {
 				// No ✕ on a tmux window: killing one can take a build or an
 				// ssh session with it, and that should not be one stray click
 				// away. The right-click menu still offers it.
-				let windows = tmuxWindows.map { window in
-					PanelTabItem(
+				let windows = tmuxWindows.map { window -> PanelTabItem in
+					var item = PanelTabItem(
 						title: window.name,
 						hasExited: false,
 						isTerminal: true,
@@ -2551,9 +2558,13 @@ final class BottomPanel: NSView {
 						aiStatus: window.shownStatus,
 						tmuxIndex: splitStrips ? window.index : nil
 					)
+					// tmux's own number for the window, which is the name it
+					// keeps while other clients move things around it.
+					item.identity = "tmux:\(window.index)"
+					return item
 				}
-				let rest = others.map { session in
-					PanelTabItem(
+				let rest = others.map { session -> PanelTabItem in
+					var item = PanelTabItem(
 						title: session.displayTitle,
 						hasExited: session.hasExited,
 						isTerminal: { if case .terminal = session.kind { return true } else { return false } }(),
@@ -2562,6 +2573,8 @@ final class BottomPanel: NSView {
 						isRun: session.isRun,
 						isRunning: session.isStillRunning
 					)
+					item.identity = session.identity
+					return item
 				}
 
 				if splitStrips {
@@ -2929,6 +2942,16 @@ final class BottomPanel: NSView {
 		activeSession?.terminal?.showsOutputOnly ?? false
 	}
 
+	/// What the strip is showing and what its overflow menu holds.
+	var overflowReportForTesting: String {
+		tabStripForTesting?.overflowReportForTesting ?? "no strip"
+	}
+
+	/// Chooses one of the hidden tabs, the way its menu entry would.
+	func selectHiddenTabForTesting(_ position: Int) -> String {
+		tabStripForTesting?.selectHiddenForTesting(position) ?? "no strip"
+	}
+
 	/// What the + and the chevron beside it answer to, for the harness.
 	var addControlsForTesting: String {
 		tabStripForTesting?.addControlsForTesting ?? "no strip"
@@ -3194,6 +3217,14 @@ struct PanelTabItem {
 	/// saying the same thing, and the one in the corner of the eye is the tab.
 	var isRun = false
 	var isRunning = false
+	/// What this tab is called by something more durable than its position.
+	///
+	/// The strip remembers which tab its run of drawn tabs starts at, and an
+	/// index is worthless for that: the list is rebuilt whenever tmux's windows
+	/// are re-read, and a window closed in another client shifts every number
+	/// after it. Empty where nothing has said — a strip that cannot name its
+	/// tabs simply starts at the first, which is what it did before.
+	var identity: String = ""
 }
 
 /// The panel's content area, which a dragged terminal tab can be dropped on.
@@ -3398,6 +3429,29 @@ final class PanelTabStrip: NSView, TabCloseHovering {
 	private var addButtonFrame: NSRect = .zero
 	/// The chevron on the +, narrow and part of the same shape.
 	private var addMenuFrame: NSRect = .zero
+	/// The chevron at the trailing end offering the tabs that do not fit.
+	private var overflowButtonFrame: NSRect = .zero
+	/// Which tabs are drawn, and which are only in the menu.
+	private var visibleRun: Range<Int> = 0..<0
+	private var hiddenTabs: [Int] = []
+
+	/// Which tab the run of drawn tabs starts at.
+	///
+	/// **Not a scroll position.** It changes for one reason — the active tab
+	/// does not fit — and by the least that makes it fit; the wheel does not
+	/// touch it and it is not remembered anywhere. That is the smallest thing
+	/// that keeps the promise that the tab somebody just chose is a tab they can
+	/// see, and a wheel can be hung off it later by whoever wants one.
+	private var runStart = 0
+	/// And which tab that is, by name rather than by number.
+	///
+	/// **An index survives nothing here.** This strip mirrors tmux's window
+	/// list and is rebuilt whenever that is re-read, several times a second
+	/// while a session is watched: a window closed in another client shifts
+	/// every index after it, and a window moved keeps none. A tab that has gone
+	/// puts the run back at the start, which is where it is when nothing has
+	/// moved.
+	private var runStartIdentity: String?
 	private var hideButtonFrame: NSRect = .zero
 	private var maximizeButtonFrame: NSRect = .zero
 	private var followButtonFrame: NSRect = .zero
@@ -3567,9 +3621,36 @@ final class PanelTabStrip: NSView, TabCloseHovering {
 	func setItems(_ items: [PanelTabItem], activeIndex: Int?) {
 		self.items = items
 		self.activeIndex = activeIndex
+		// Where the run was, by the name of the tab it started at rather than by
+		// its number — see `runStartIdentity`. A tab that has gone puts it back
+		// at the beginning.
+		runStart = runStartIdentity.flatMap { identity in
+			items.firstIndex { $0.identity == identity }
+		} ?? 0
 		recomputeLayout()
+		showActiveTab()
 		syncSpinner()
 		needsDisplay = true
+	}
+
+	/// Moves the run, if it has to, so the active tab is one somebody can see.
+	///
+	/// Selecting a tab from the overflow menu and having it stay hidden is the
+	/// same fault with a click in front of it.
+	private func showActiveTab() {
+		guard let active = activeIndex, items.indices.contains(active) else { return }
+		let widths = items.map(width(for:))
+		let moved = TabOverflow.start(
+			showing: active,
+			widths: widths,
+			from: runStart,
+			available: tabRoom(overflowing: true),
+			spacing: isMirroringTmux ? 0 : Theme.current.scaled(2)
+		)
+		guard moved != runStart else { return }
+		runStart = moved
+		runStartIdentity = items[safe: moved]?.identity
+		recomputeLayout()
 	}
 
 	// MARK: - The spinner on a working tab
@@ -3647,34 +3728,66 @@ final class PanelTabStrip: NSView, TabCloseHovering {
 
 	private func recomputeLayout() {
 		frames.removeAll()
+
+		// **The trailing controls are placed before the tabs now, not after.**
+		// They used to be laid out from `bounds.width` backwards once the tabs
+		// had already been given every point they asked for, which is how the
+		// two came to be drawn through each other. What they leave is what the
+		// tabs get, and a tab that does not fit in it is one the overflow
+		// chevron offers rather than one nobody can reach.
+		layoutTrailingControls()
+
+		let widths = items.map(width(for:))
+		let gap = isMirroringTmux ? 0 : Theme.current.scaled(2)
+
+		// Measured twice, deliberately. Whether the chevron is there at all
+		// depends on whether anything is hidden, and the chevron itself takes
+		// room that can hide one more — so the first pass asks without it and
+		// the second asks again with its width taken off. It cannot oscillate:
+		// reserving room can only ever hide more, never fewer.
+		let plain = TabOverflow.measure(
+			widths: widths, start: runStart, available: tabRoom(overflowing: false), spacing: gap
+		)
+		let overflow = plain.isOverflowing
+			? TabOverflow.measure(
+				widths: widths, start: runStart, available: tabRoom(overflowing: true), spacing: gap
+			)
+			: plain
+		visibleRun = overflow.visible
+		hiddenTabs = overflow.hidden
+		overflowButtonFrame = overflow.isOverflowing
+			? NSRect(
+				x: trailingControlsLeadingEdge - overflowButtonWidth,
+				y: 0,
+				width: overflowButtonWidth,
+				height: bounds.height
+			)
+			: .zero
+
 		// Hard against the left, as tmux's strip already was — there for a
 		// reason of its own, since the active tab is a hole cut in the green
 		// and green down its outer edge frames that one tab. The rest of the
 		// panel starts at the edge too: the terminal below has no margin, and a
 		// strip that begins eight points in sits on nothing.
 		var x: CGFloat = 0
-		for item in items {
-			// The editor's own measurement: room for the icon, the name, and
-			// the cross, and never so narrow that a name is all ellipsis.
-			let text = (item.title as NSString).size(withAttributes: [.font: font]).width
-			// Room for the badge whether or not there is one to draw, on the
-			// strip where badges come and go: a tab that widens the moment its
-			// session starts working shoves every tab after it sideways, and
-			// the one somebody was aiming at moves out from under the pointer.
-			let badge = isMirroringTmux || item.aiStatus != nil
-				? statusSize + Theme.current.scaled(5)
-				: 0
-			let width = max(
-				Theme.current.scaled(96),
-				padding * 2 + Theme.current.scaled(14) + Theme.current.scaled(6)
-					+ ceil(text) + Theme.current.scaled(8) + closeSize + badge
-			)
-			frames.append(NSRect(x: x, y: 0, width: ceil(width), height: bounds.height))
+		for index in items.indices {
+			// **A hidden tab keeps its place in `frames` and gets no rectangle.**
+			// Everything that finds a tab — the click, the hover, the drop
+			// caret, the rename field — asks `frames` by index, so shortening it
+			// would renumber every tab after the first hidden one. An empty rect
+			// contains no point, so those all say "not this one" without being
+			// told about the run.
+			guard visibleRun.contains(index) else {
+				frames.append(.zero)
+				continue
+			}
+			let width = widths[index]
+			frames.append(NSRect(x: x, y: 0, width: width, height: bounds.height))
 			// Tabs meet on tmux's strip. Anywhere else the gap between them is
 			// the panel's background and reads as a gap; there it is the green
 			// bar, and a sliver of it down the side of the tab you are in looks
 			// like a frame around it.
-			x += ceil(width) + (isMirroringTmux ? 0 : Theme.current.scaled(2))
+			x += width + gap
 		}
 		addButtonFrame = showsAddButton
 			? NSRect(x: x + Theme.current.scaled(4), y: 0, width: Theme.current.scaled(24), height: bounds.height)
@@ -3689,11 +3802,55 @@ final class PanelTabStrip: NSView, TabCloseHovering {
 				height: bounds.height
 			)
 			: .zero
+	}
 
+	/// What one tab wants to be, which is the same question wherever it is asked.
+	private func width(for item: PanelTabItem) -> CGFloat {
+		// The editor's own measurement: room for the icon, the name, and
+		// the cross, and never so narrow that a name is all ellipsis.
+		let text = (item.title as NSString).size(withAttributes: [.font: font]).width
+		// Room for the badge whether or not there is one to draw, on the
+		// strip where badges come and go: a tab that widens the moment its
+		// session starts working shoves every tab after it sideways, and
+		// the one somebody was aiming at moves out from under the pointer.
+		let badge = isMirroringTmux || item.aiStatus != nil
+			? statusSize + Theme.current.scaled(5)
+			: 0
+		return ceil(max(
+			Theme.current.scaled(96),
+			padding * 2 + Theme.current.scaled(14) + Theme.current.scaled(6)
+				+ ceil(text) + Theme.current.scaled(8) + closeSize + badge
+		))
+	}
+
+	/// How much room the tabs have: everything up to the controls, less the +
+	/// that follows them and the chevron that offers what does not fit.
+	private func tabRoom(overflowing: Bool) -> CGFloat {
+		var room = trailingControlsLeadingEdge
+		if showsAddButton { room -= Theme.current.scaled(28) }
+		if offersAddMenu { room -= Theme.current.scaled(14) }
+		if overflowing { room -= overflowButtonWidth }
+		return max(0, room)
+	}
+
+	/// Where the panel's own controls begin, which is where the tabs must stop.
+	private var trailingControlsLeadingEdge: CGFloat {
+		let leading = [mirrorTagFrame, followButtonFrame, maximizeButtonFrame, hideButtonFrame]
+			.filter { $0.width > 0 }
+			.map(\.minX)
+			.min()
+		return (leading ?? bounds.width) - Theme.current.scaled(8)
+	}
+
+	/// Wide enough for a chevron and a count of two digits.
+	private var overflowButtonWidth: CGFloat { Theme.current.scaled(34) }
+
+	private func layoutTrailingControls() {
 		guard showsPanelControls else {
 			hideButtonFrame = .zero
 			maximizeButtonFrame = .zero
 			followButtonFrame = .zero
+			mirrorTagFrame = .zero
 			return
 		}
 
@@ -3836,6 +3993,10 @@ final class PanelTabStrip: NSView, TabCloseHovering {
 		case .plus?: onAdd?(); return
 		case .chevron?: onAddMenu?(NSPoint(x: addButtonFrame.minX, y: bounds.maxY)); return
 		case nil: break
+		}
+		if overflowButtonFrame.width > 0, overflowButtonFrame.contains(point) {
+			showOverflowMenu()
+			return
 		}
 		if hideButtonFrame.contains(point) { onHide?(); return }
 		if maximizeButtonFrame.contains(point) { onToggleMaximize?(); return }
@@ -4051,6 +4212,7 @@ final class PanelTabStrip: NSView, TabCloseHovering {
 		// characters matter less than the controls staying readable and
 		// reachable.
 		drawControlsBackground()
+		drawOverflowButton()
 
 		drawGlyph(in: hideButtonFrame, symbol: "chevron.down")
 		drawGlyph(
@@ -4068,6 +4230,107 @@ final class PanelTabStrip: NSView, TabCloseHovering {
 		)
 
 		drawMirrorTag()
+	}
+
+	/// What the strip is showing and what it is holding back.
+	///
+	/// The entries are the menu's own titles, built the same way, so a driven
+	/// run asserts on what somebody would read rather than on a picture of it.
+	var overflowReportForTesting: String {
+		let shown = visibleRun.count
+		guard !hiddenTabs.isEmpty else { return "\(items.count) tabs, all \(shown) shown" }
+		let entries = hiddenTabs.compactMap { index in
+			items[safe: index].map { overflowTitle(for: $0, at: index) }
+		}
+		return "\(items.count) tabs, \(shown) shown, \(hiddenTabs.count) hidden: "
+			+ entries.joined(separator: " | ")
+	}
+
+	/// Chooses a hidden tab the way its menu entry would, so what happens next
+	/// — the run moving to show it — can be looked at.
+	func selectHiddenForTesting(_ position: Int) -> String {
+		guard hiddenTabs.indices.contains(position) else { return "no hidden tab \(position)" }
+		let index = hiddenTabs[position]
+		onSelect?(index)
+		return "chose tab \(index)"
+	}
+
+	/// The tabs there was no room for, offered as a menu.
+	///
+	/// Only the hidden ones. A list of everything is a tab switcher, which is a
+	/// different feature with a different gesture — and it would put the tab
+	/// somebody is already looking at into a menu of things they cannot see.
+	private func showOverflowMenu() {
+		guard !hiddenTabs.isEmpty else { return }
+		let menu = NSMenu()
+		for index in hiddenTabs {
+			guard let item = items[safe: index] else { continue }
+			let entry = NSMenuItem(
+				title: overflowTitle(for: item, at: index),
+				action: #selector(selectFromOverflow(_:)),
+				keyEquivalent: ""
+			)
+			entry.target = self
+			entry.representedObject = index
+			entry.state = index == activeIndex ? .on : .off
+			menu.addItem(entry)
+		}
+		menu.popUp(
+			positioning: nil,
+			at: NSPoint(x: overflowButtonFrame.minX, y: bounds.maxY),
+			in: self
+		)
+	}
+
+	/// What a hidden tab is called in the menu.
+	///
+	/// **Not just its name**, and this is the part of the change that answers
+	/// the report rather than the fault: sixteen terminals are sixteen tabs
+	/// called `Local`, and a menu of sixteen identical lines is no more use than
+	/// no menu. tmux's own number where there is one, and the position otherwise
+	/// — which is what `C-b 2` selects and what somebody counting along the
+	/// strip already has.
+	private func overflowTitle(for item: PanelTabItem, at index: Int) -> String {
+		let number = item.tmuxIndex ?? index + 1
+		return "\(number)  \(item.title)"
+	}
+
+	@objc private func selectFromOverflow(_ sender: NSMenuItem) {
+		guard let index = sender.representedObject as? Int else { return }
+		onSelect?(index)
+	}
+
+	/// The chevron that offers the tabs there was no room for, with how many.
+	///
+	/// **The count is not decoration.** Three hidden and eleven hidden are
+	/// different situations, and the number is the only thing that says which
+	/// without opening the menu — it is also what makes this discoverable at
+	/// all, since a bare chevron beside four other glyphs is one more glyph.
+	private func drawOverflowButton() {
+		guard overflowButtonFrame.width > 0 else { return }
+
+		let colour = isMirroringTmux ? Self.onTmuxGreen : Theme.current.sidebarHeaderText
+		let count = NSAttributedString(string: String(hiddenTabs.count), attributes: [
+			.font: Theme.current.uiFont(10, weight: .medium),
+			.foregroundColor: colour,
+		])
+		let size = count.size()
+		let chevron = Theme.current.scaled(9)
+		let content = size.width + Theme.current.scaled(3) + chevron
+		let left = overflowButtonFrame.midX - content / 2
+
+		count.draw(at: NSPoint(x: left, y: overflowButtonFrame.midY - size.height / 2))
+		drawGlyph(
+			in: NSRect(
+				x: left + size.width + Theme.current.scaled(3),
+				y: 0,
+				width: chevron,
+				height: overflowButtonFrame.height
+			),
+			symbol: "chevron.down",
+			points: 9,
+			tint: colour
+		)
 	}
 
 	/// The ground the trailing controls are drawn on.

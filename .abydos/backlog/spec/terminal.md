@@ -537,6 +537,60 @@ own requirement.
 - **THEN** the controls are legible against their own ground
 - **AND** no tab name is drawn through them
 
+## Requirement: A tab that does not fit is still reachable
+
+A strip SHALL offer every tab it holds however narrow the window is. Both strips
+laid their tabs out from the leading edge with no bound and neither takes a
+scroll wheel, so a tab past the trailing edge could be reached by widening the
+window or by closing the ones in front of it — and for the panel's strip that was
+the whole list, since ⌘] and ⌘[ are `editor.selectNextTab`.
+
+Where tabs do not fit, a chevron at the trailing end SHALL say how many are
+hidden and list them. **The count is not decoration**: three hidden and eleven
+hidden are different situations, and it is what makes the control visible among
+four other glyphs. Where they all fit there SHALL be no chevron.
+
+Only the hidden ones are listed. A list of everything is a tab switcher, which is
+a different feature with a different gesture, and it would put the tab somebody
+is looking at into a menu of things they cannot see. Each entry carries what the
+tab itself cannot: tmux's number for a window, or the position along the strip,
+because sixteen terminals are sixteen tabs called `Local`.
+
+**A tab is visible only if the whole of it is**, in front of the ground the
+controls are drawn on. Half a tab under the session tag is not a target.
+
+**The active tab is always wholly visible.** The run of drawn tabs moves for that
+reason and no other — not on a wheel, not on a drag, not remembered between
+launches — and by the least that brings it into view. Where the run has moved,
+tabs are hidden before it as well as after it, and both are counted and listed,
+in tab order.
+
+Which tab the run starts at is remembered by name and not by number. This strip
+mirrors tmux's window list and is rebuilt whenever that is re-read: a window
+closed in another client shifts every index after it. A tab that has gone puts
+the run back at the first.
+
+### Scenario: twenty-seven terminals in one window
+
+- **GIVEN** a strip holding twenty-seven tabs with room for sixteen
+- **WHEN** it is drawn
+- **THEN** the chevron says eleven are hidden
+- **AND** its menu lists those eleven, numbered, in tab order
+
+### Scenario: choosing one that could not be seen
+
+- **GIVEN** that menu, with the run scrolled to the end
+- **WHEN** the first hidden tab is chosen
+- **THEN** it is active and wholly visible
+- **AND** the tabs now hidden are the ones past the other end
+
+### Scenario: a strip with room to spare
+
+- **GIVEN** a strip whose tabs all fit
+- **WHEN** it is drawn
+- **THEN** there is no chevron at all
+
+
 ## Requirement: A window follows its terminal out of the project, and nowhere else
 
 A window can be asked to follow its terminal: when the shell in the pane in

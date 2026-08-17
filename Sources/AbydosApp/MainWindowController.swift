@@ -342,6 +342,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// Panes in the panel, for proving the tmux + added none.
 	var paneCountForTesting: Int { bottomPanel.paneCountForTesting }
 
+	/// What the panel's tab strip is showing and what it is holding back.
+	var panelOverflowReportForTesting: String { bottomPanel.overflowReportForTesting }
+
+	/// Chooses one of the tabs the strip had no room for, as its menu entry
+	/// would — so that the run moving to bring it into view can be looked at.
+	func selectHiddenPanelTabForTesting(_ position: Int) -> String {
+		bottomPanel.selectHiddenTabForTesting(position)
+	}
+
 	func addTerminalTabForTesting() {
 		bottomPanel.addTabForTesting()
 	}
