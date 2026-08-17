@@ -74,6 +74,14 @@ struct GitDiscardWordingTests {
 		#expect(explanation.contains("The other 28"))
 	}
 
+	/// A folder holding two files, one of them new, is the commonest mixed shape
+	/// there is, and the plural sentence read "The other 1 go back" over it.
+	@Test func oneRemainingFileIsSpokenOfInTheSingular() {
+		let explanation = GitDiscard.explanation(files: 2, untracked: 1)
+		#expect(explanation.contains("1 of them is untracked and is deleted from the disk"))
+		#expect(explanation.contains("The other one goes back to the version in the index"))
+	}
+
 	@Test func aFolderOfNothingButNewFilesIsADeletion() {
 		#expect(GitDiscard.menuTitle(subject: .folder("Generated"), files: 3, untracked: 3)
 			== "Delete “Generated” (3 files)\u{2026}")

@@ -112,8 +112,14 @@ public enum GitDiscard {
 			sentences.append("\(untracked) of them \(untracked == 1 ? "is" : "are") untracked and "
 				+ "\(untracked == 1 ? "is" : "are") deleted from the disk — git has no version of "
 				+ "\(untracked == 1 ? "it" : "them") to put back.")
-			sentences.append("The other \(files - untracked) go back to the version in the index: "
-				+ "what was last staged for them, or last committed.")
+			// "The other 1 go back" is what the plural form reads as on a folder
+			// holding two files, one of them new, which is not a rare shape.
+			let others = files - untracked
+			sentences.append(others == 1
+				? "The other one goes back to the version in the index: what was last staged "
+					+ "for it, or last committed."
+				: "The other \(others) go back to the version in the index: "
+					+ "what was last staged for them, or last committed.")
 		} else {
 			sentences.append(files == 1
 				? "The file goes back to the version in the index: what was last staged for it, "
