@@ -2396,6 +2396,22 @@ final class EditorViewController: NSViewController {
 	private func activate(index: Int, focusEditor: Bool) {
 		guard tabs.indices.contains(index) else { return }
 
+		// Whether the keyboard is in the tab about to be taken off screen.
+		//
+		// Item 523, and the half of it that is not about the results list.
+		// `removeFromSuperview` on a view that holds the window's first responder
+		// does not move the responder along — it resets it to the **window**,
+		// which is nobody at all, and every keystroke after that reaches nothing.
+		// It is invisible whenever `focusEditor` is true, because the branch at
+		// the bottom puts a responder back; it is exactly visible when it is
+		// false, which is every open that is deliberately not meant to move the
+		// keyboard. Measured with the caret in the editor and a result row
+		// clicked: `who` said `NSWindow`.
+		//
+		// Asked before the removal, because after it the answer is gone.
+		let keyboardWasInTheTabLeaving = (view.window?.firstResponder as? NSView)
+			.map { $0.isDescendant(of: contentArea) } ?? false
+
 		// Swap the installed content view; the outgoing one keeps its state.
 		contentArea.subviews.forEach { $0.removeFromSuperview() }
 
@@ -2428,6 +2444,15 @@ final class EditorViewController: NSViewController {
 
 		if focusEditor {
 			// A notice tab has no code view to focus.
+			view.window?.makeFirstResponder(tab.codeView ?? tab.contentView)
+		} else if keyboardWasInTheTabLeaving {
+			// Nobody asked for the keyboard to move, and the removal above took it
+			// from the view that had it. Putting it in the tab now showing is what
+			// "do not move the keyboard" meant: it was in this editor before and it
+			// is in this editor after. This can only ever *keep* the keyboard in
+			// the editor — a responder outside `contentArea` never reaches here —
+			// so a results row clicked with the keyboard in the list is untouched,
+			// which is item 510's rule and must stay true.
 			view.window?.makeFirstResponder(tab.codeView ?? tab.contentView)
 		}
 		onActiveFileChanged?(tab.url)

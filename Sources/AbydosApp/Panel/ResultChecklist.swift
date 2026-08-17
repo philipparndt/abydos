@@ -253,6 +253,28 @@ final class ResultChecklist: NSView {
 	}
 
 	@objc private func rowClicked() {
+		// The keyboard, in the list, before anything is opened.
+		//
+		// Item 523, and the one thing on this path nobody was doing. AppKit is
+		// *supposed* to have done it already: the table is what the mouse-down hit
+		// and `acceptsFirstResponder` is true, so the window ordinarily hands the
+		// responder over before the action is ever sent. Ordinarily. When it does
+		// not — measured, with the caret in the editor — nothing else here asks
+		// for it, because every step of the open is quite correctly saying
+		// `focusEditor: false` the whole way down. **Refusing to move the keyboard
+		// to the editor is not the same as putting it in the list**, and the
+		// difference is invisible until the one time AppKit does not do it for you.
+		//
+		// This is not item 510 undone. `.permanent` still means the keyboard does
+		// not follow the file into the editor; it means the keyboard belongs to
+		// *the list*, which is where the hand is, so the next ⌫ ticks the row
+		// rather than deleting a character of somebody's source.
+		//
+		// Before the guards below, not after: a ⇧- or ⌘-click opens nothing and is
+		// still a click in this list, and picking rows out with the mouse and then
+		// pressing ␣ has to work without a detour through the pane's tab.
+		if window?.firstResponder !== tableView { window?.makeFirstResponder(tableView) }
+
 		let index = tableView.clickedRow >= 0 ? tableView.clickedRow : tableView.selectedRow
 		guard let row = model[index] else { return }
 
