@@ -108,6 +108,15 @@ sandbox, no network, and neither `bazel` nor `conan` installed. If that holds,
 this item cannot be compiled, tested or watched against a real project from
 there — worth establishing before planning the work rather than after.
 
+*Checked first thing, and it does not hold here.* `make build JOBS=4` compiles
+and assembles `build/Abydos.app`, and `make test` runs. Neither `bazel` nor
+`conan` is installed on this machine, though, so the two **cache layouts are the
+one part of this that no run here can confirm** — every claim about
+`<output base>/external` and `~/.conan2/p` is made against a directory tree
+written by hand to match the documented shape. Both readers are built so that a
+wrong guess costs a row its sources and nothing else: the package still appears,
+with its name, version and origin, and simply cannot be opened.
+
 **Two smaller things.** `MODULE.bazel.lock` and `conan.lock` are already in
 `ExternalDependencies.definingFileNames`. And `spec/project-view.md`'s
 requirement "A kind of project this cannot read says so, on a row" promises an
@@ -115,13 +124,30 @@ unresolved note *in the words of the tool that would resolve it* — the
 `WORKSPACE` case has no such command, so that requirement wants modifying
 rather than joining.
 
+## Estimate
+
+2026-08-17 09:10 — about three hours left
+
 ## Steps
 
+- [x] Establish whether this can be built and tested here at all, before
+      planning work nobody can check
 - [ ] Decide whether this section may run a build tool, and write the answer
       down — it is the decision both kinds need and neither can start without
 - [ ] Read a Bazel workspace's externals, or say exactly why a build is needed
       first
+  - [ ] `MODULE.bazel.lock`, both layouts, taking the *selected* set rather
+        than every version considered
+  - [ ] `MODULE.bazel` as the fallback, the direct `bazel_dep`s
+  - [ ] The sources under the output base, found by listing the repository
+        directories rather than computing their names
 - [ ] Read a Conan project's packages, or say exactly why the recipe has to run
+  - [ ] `conan.lock`, guarded on its keys so a Conan 1 lock is not read as
+        "no dependencies"
+  - [ ] The package's files in the Conan 2 cache, matched strictly enough that
+        `fmt` does not open `fmtlog`'s folder
+- [ ] `DependencyKind.pendingItem` stops naming this item for Bazel and Conan
+- [ ] Say what stays honestly unread, and what its row says instead
 - [ ] Watched in the app, with a screenshot
 - [ ] Write down here what was ruled out on the way
 - [ ] `spec/project-view.md` says what Bazel and Conan projects show
