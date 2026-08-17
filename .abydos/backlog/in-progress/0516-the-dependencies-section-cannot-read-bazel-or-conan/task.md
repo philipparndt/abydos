@@ -132,22 +132,22 @@ rather than joining.
 
 - [x] Establish whether this can be built and tested here at all, before
       planning work nobody can check
-- [ ] Decide whether this section may run a build tool, and write the answer
+- [x] Decide whether this section may run a build tool, and write the answer
       down — it is the decision both kinds need and neither can start without
-- [ ] Read a Bazel workspace's externals, or say exactly why a build is needed
+- [x] Read a Bazel workspace's externals, or say exactly why a build is needed
       first
-  - [ ] `MODULE.bazel.lock`, both layouts, taking the *selected* set rather
+  - [x] `MODULE.bazel.lock`, both layouts, taking the *selected* set rather
         than every version considered
-  - [ ] `MODULE.bazel` as the fallback, the direct `bazel_dep`s
-  - [ ] The sources under the output base, found by listing the repository
+  - [x] `MODULE.bazel` as the fallback, the direct `bazel_dep`s
+  - [x] The sources under the output base, found by listing the repository
         directories rather than computing their names
-- [ ] Read a Conan project's packages, or say exactly why the recipe has to run
-  - [ ] `conan.lock`, guarded on its keys so a Conan 1 lock is not read as
+- [x] Read a Conan project's packages, or say exactly why the recipe has to run
+  - [x] `conan.lock`, guarded on its keys so a Conan 1 lock is not read as
         "no dependencies"
-  - [ ] The package's files in the Conan 2 cache, matched strictly enough that
+  - [x] The package's files in the Conan 2 cache, matched strictly enough that
         `fmt` does not open `fmtlog`'s folder
-- [ ] `DependencyKind.pendingItem` stops naming this item for Bazel and Conan
-- [ ] Say what stays honestly unread, and what its row says instead
+- [x] `DependencyKind.pendingItem` stops naming this item for Bazel and Conan
+- [x] Say what stays honestly unread, and what its row says instead
 - [ ] Watched in the app, with a screenshot
 - [ ] Write down here what was ruled out on the way
 - [ ] `spec/project-view.md` says what Bazel and Conan projects show
