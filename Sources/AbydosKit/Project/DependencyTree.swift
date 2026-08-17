@@ -108,7 +108,12 @@ public final class DependencyNode {
 			lines.append(package.localPath?.path ?? "not fetched")
 			return lines.joined(separator: "\n")
 		case let .note(set):
-			return set.kind.title + " in " + set.root.path
+			// The message first, because a note *is* its message and the pane is
+			// eleven characters wide: `WORKSPACE dependencies are Starlark —
+			// nothing on disk lists them` came out as `WORKSPACE dependencies
+			// are…` with nowhere to read the rest. Every one of these sentences is
+			// longer than the column, so this is not one row's problem.
+			return DependencyNode.message(for: set) + "\n" + set.kind.title + " in " + set.root.path
 		}
 	}
 

@@ -81,6 +81,10 @@ Where no command would resolve it, the row says why instead of naming one. A
 suggestion that cannot be followed is worse than none: the row's whole job is to
 be believable about what is missing.
 
+Every one of these sentences is longer than the pane is wide, so the whole of
+one is on the row's tooltip — the same place a package's unabbreviated origin
+goes.
+
 ### Scenario: a Maven project
 
 - **Given** a project with a `pom.xml`
@@ -124,6 +128,12 @@ be believable about what is missing.
 - **Then** the row says its dependencies are Starlark and that nothing on disk
   lists them
 - **And** it names no command, because none of them would produce such a file
+
+### Scenario: a note too long for the pane
+
+- **Given** any row of this kind
+- **When** it is cut off at the edge of the pane
+- **Then** its tooltip has the whole sentence
 
 ### Scenario: a Go module that requires nothing
 

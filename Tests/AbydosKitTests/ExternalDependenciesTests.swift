@@ -681,6 +681,23 @@ struct ExternalDependenciesTests {
 		))
 	}
 
+	/// **Found by looking at it.** Every one of these sentences is longer than
+	/// the pane is wide, so the row shows `WORKSPACE dependencies are…` and the
+	/// rest of it has to be somewhere. The tooltip is where everything too long
+	/// for the pane goes, and a note's was saying only which kind it was.
+	@Test func aNotesTooltipCarriesTheWholeSentenceThePaneCuts() throws {
+		let root = try makeRoot()
+		try write("workspace(name = \"my_project\")\n", to: root.appendingPathComponent("WORKSPACE"))
+
+		let tree = try #require(DependencyTree(sets: [
+			ExternalDependencies.read(root: root, kind: .bazel),
+		], project: root))
+		let note = try #require(tree.root.childNodes.first)
+		#expect(note.detail?.hasPrefix(
+			"WORKSPACE dependencies are Starlark — nothing on disk lists them"
+		) == true)
+	}
+
 	/// The row as the section draws it.
 	@Test func aBazelProjectsSectionReadsAsNameVersionAndRegistry() throws {
 		let root = try makeRoot()
