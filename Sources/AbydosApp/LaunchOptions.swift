@@ -514,6 +514,14 @@ struct LaunchOptions {
 	/// own means three; a number after it says when, for the sequences where
 	/// something has to happen first.
 	var addTerminalTabAt: Double?
+	/// Open this many terminal tabs, so the strip has to deal with more of them
+	/// than it has room for.
+	///
+	/// **The only way to reach the fault from a driver.** A strip that overflows
+	/// needs a dozen tabs in it, and one `--tab-add` opens one — so what a full
+	/// strip looks like was a thing somebody had to make by hand, twelve clicks
+	/// at a time, and therefore a thing screenshots never showed.
+	var fillTerminalTabs: Int?
 	/// Which button on the missing-server bar to press, if any: `report`,
 	/// `details`, `ignore` or `dismiss`.
 	var serverBanner: String?
@@ -710,6 +718,7 @@ struct LaunchOptions {
 				} else {
 					options.addTerminalTabAt = 3.0
 				}
+			case "--tab-fill":   options.fillTerminalTabs = next().flatMap(Int.init) ?? 12
 			case "--lsp-banner":  options.serverBanner = next() ?? "report"
 			case "--rerun":      options.rerun = next() ?? "selected"
 			case "--tmux-close": options.closeTmuxTab = next().flatMap(Int.init)

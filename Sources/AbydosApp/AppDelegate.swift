@@ -1225,6 +1225,21 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let count = options.fillTerminalTabs {
+			// Spread out rather than in a loop: each one starts a shell, and
+			// twelve started in the same turn of the run loop is a burst the
+			// panel never sees in use.
+			for step in 0..<count {
+				DispatchQueue.main.asyncAfter(deadline: .now() + 3.0 + Double(step) * 0.25) {
+					controller?.addTerminalTabForTesting()
+				}
+			}
+			DispatchQueue.main.asyncAfter(deadline: .now() + 3.0 + Double(count) * 0.25 + 1.5) {
+				print("TABS: \(controller?.paneCountForTesting ?? 0) panes")
+				fflush(stdout)
+			}
+		}
+
 		if let spec = options.clickPanelTab {
 			let parts = spec.split(separator: "@")
 			let index = Int(parts.first ?? "0") ?? 0

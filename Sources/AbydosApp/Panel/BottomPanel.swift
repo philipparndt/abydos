@@ -3852,25 +3852,38 @@ final class PanelTabStrip: NSView, TabCloseHovering {
 			return
 		}
 
+		guard let index = frames.firstIndex(where: { $0.contains(point) }) else { return }
+		let closable = items.indices.contains(index) ? items[index].isClosable : true
+
+		// **The cross is asked about before the click count is.** Closing four
+		// terminals means four clicks in the same corner of the screen, and the
+		// tabs shuffle left under the pointer as they go — so the second, third
+		// and fourth arrive inside the double-click interval and AppKit reports
+		// them as a double click. Renaming came first here, so the second press
+		// on a close button opened a rename field on whichever tab had just slid
+		// into that place, and the terminal somebody meant to close was still
+		// there with its name selected.
+		//
+		// A press on a cross is a close whatever the click count. Nobody has
+		// ever meant to rename a tab by hitting the one control on it that is
+		// not its name.
+		if closable, closeRect(for: frames[index]).contains(point) {
+			onClose?(index)
+			return
+		}
+
 		// Double-clicking a tab renames it, in place: the name is a label on a
 		// tab, and typing it anywhere else means finding the tab again after.
-		if event.clickCount == 2, let index = frames.firstIndex(where: { $0.contains(point) }),
-		   items.indices.contains(index), items[index].isTerminal {
+		if event.clickCount == 2, items.indices.contains(index), items[index].isTerminal {
 			beginRenaming(index)
 			return
 		}
 
-		guard let index = frames.firstIndex(where: { $0.contains(point) }) else { return }
-		let closable = items.indices.contains(index) ? items[index].isClosable : true
-		if closable, closeRect(for: frames[index]).contains(point) {
-			onClose?(index)
-		} else {
-			onSelect?(index)
-			// Remembered rather than acted on: a press becomes a drag only if
-			// the pointer travels, so selecting a tab stays a click.
-			pressedIndex = index
-			pressOrigin = point
-		}
+		onSelect?(index)
+		// Remembered rather than acted on: a press becomes a drag only if
+		// the pointer travels, so selecting a tab stays a click.
+		pressedIndex = index
+		pressOrigin = point
 	}
 
 	override func rightMouseDown(with event: NSEvent) {
@@ -4028,6 +4041,17 @@ final class PanelTabStrip: NSView, TabCloseHovering {
 		}
 		guard showsPanelControls else { return }
 
+		// **Opaque, because tabs are allowed to run underneath.** The frames are
+		// laid out left to right at whatever width each name needs and nothing
+		// stops them reaching the trailing edge, while these controls are placed
+		// backwards from it — so with a dozen terminals open the session tag and
+		// the three buttons were drawn over tab names with both still legible
+		// through each other. The editor's tab bar settled this for itself
+		// (`drawPreviewControl`) and the answer is the same one: a tab's last few
+		// characters matter less than the controls staying readable and
+		// reachable.
+		drawControlsBackground()
+
 		drawGlyph(in: hideButtonFrame, symbol: "chevron.down")
 		drawGlyph(
 			in: maximizeButtonFrame,
@@ -4044,6 +4068,41 @@ final class PanelTabStrip: NSView, TabCloseHovering {
 		)
 
 		drawMirrorTag()
+	}
+
+	/// The ground the trailing controls are drawn on.
+	///
+	/// One rectangle covering the tag and all three buttons, from a little way
+	/// in front of the leftmost of them to the edge — the strip's own colour, so
+	/// a tab that has run this far simply stops being drawn there rather than
+	/// showing through. Faded in over its first few points, or the tab it cuts
+	/// off ends against a hard vertical edge that reads as a tab of its own.
+	private func drawControlsBackground() {
+		let leftmost = [mirrorTagFrame, followButtonFrame, maximizeButtonFrame, hideButtonFrame]
+			.filter { $0.width > 0 }
+			.map(\.minX)
+			.min()
+		guard let leftmost else { return }
+
+		let colour = isMirroringTmux ? Self.tmuxGreenBar : Theme.current.sidebarBackground
+		let fade = Theme.current.scaled(16)
+		let solid = NSRect(
+			x: leftmost - Theme.current.scaled(6),
+			y: 0,
+			width: bounds.maxX - leftmost + Theme.current.scaled(6),
+			height: bounds.height
+		)
+		colour.setFill()
+		solid.fill()
+
+		let gradient = NSGradient(
+			starting: colour.withAlphaComponent(0),
+			ending: colour
+		)
+		gradient?.draw(
+			in: NSRect(x: solid.minX - fade, y: 0, width: fade, height: bounds.height),
+			angle: 0
+		)
 	}
 
 	/// Room for the chevron and the gap in front of it.
