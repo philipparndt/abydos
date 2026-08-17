@@ -60,4 +60,28 @@ public enum FilePath {
 	public static func canonicalEvenIfMissing(_ url: URL) -> String {
 		canonicalEvenIfMissing(url.path)
 	}
+
+	/// Every name a directory holds, or nil when it is not one.
+	///
+	/// For the question "is there a `WORKSPACE` in here", which
+	/// `fileExists(atPath:)` does not answer on a Mac. A disk is formatted
+	/// case-insensitively by default, so `fileExists` on `…/WORKSPACE` returns
+	/// true for an ordinary `workspace/` directory — and a marker checked that
+	/// way turns every folder with an Eclipse or Gradle workspace in it into a
+	/// Bazel one. It is not hypothetical and it is not only `WORKSPACE`:
+	/// `Makefile` matches `makefile` the same way, and did, silently, on every
+	/// Mac and on no Linux.
+	///
+	/// So the names are read once and compared exactly. One `readdir` in place
+	/// of a dozen `stat`s, which for the two callers — deciding whether a folder
+	/// is a subproject, and which build systems a root has — is the same order
+	/// of cost on a directory of any ordinary size, and is the difference
+	/// between a right answer and a plausible one.
+	///
+	/// Hidden names are included: `.git` is a marker.
+	public static func entryNames(in directory: URL) -> Set<String>? {
+		guard let names = try? FileManager.default.contentsOfDirectory(atPath: directory.path)
+		else { return nil }
+		return Set(names)
+	}
 }

@@ -264,10 +264,16 @@ public enum ExternalDependencies {
 	/// Plural: a repository with a `Package.swift` and a `Makefile` is one
 	/// thing, but a repository with a `pom.xml` and a `package.json` genuinely
 	/// has two dependency graphs and hiding one of them would be a guess.
+	///
+	/// Names read once and compared exactly rather than asked of `fileExists`,
+	/// which on a case-insensitive disk answers yes to `WORKSPACE` for any
+	/// project with an ordinary `workspace/` folder in it — and every one of
+	/// those was given a Bazel group saying its dependencies were Starlark.
+	/// `FilePath.entryNames(in:)` has the rest of the argument.
 	public static func kinds(at root: URL) -> [DependencyKind] {
-		let manager = FileManager.default
+		guard let names = FilePath.entryNames(in: root) else { return [] }
 		return DependencyKind.allCases.filter { kind in
-			kind.markers.contains { manager.fileExists(atPath: root.appendingPathComponent($0).path) }
+			kind.markers.contains { names.contains($0) }
 		}
 	}
 
