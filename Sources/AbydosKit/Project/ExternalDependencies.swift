@@ -127,8 +127,7 @@ public enum DependencyKind: String, Sendable, CaseIterable {
 	/// backlog. Nil for a kind that is read.
 	public var pendingItem: Int? {
 		switch self {
-		case .swiftPackage, .goModule, .cargo: return nil
-		case .npm: return 514
+		case .swiftPackage, .goModule, .cargo, .npm: return nil
 		case .maven, .gradle: return 515
 		case .bazel, .conan: return 516
 		}
@@ -209,6 +208,10 @@ public enum ExternalDependencies {
 		var names = Set(DependencyKind.allCases.flatMap(\.markers))
 		names.formUnion([
 			"Package.resolved", "go.sum", "Cargo.lock", "package-lock.json",
+			// npm prefers `npm-shrinkwrap.json` to `package-lock.json` and it is
+			// the same format byte for byte, so a project that publishes one
+			// resolves through it — and writing one has to reload the section.
+			"npm-shrinkwrap.json",
 			"pnpm-lock.yaml", "yarn.lock", "MODULE.bazel.lock", "conan.lock",
 		])
 		return names
@@ -269,7 +272,8 @@ public enum ExternalDependencies {
 		case .swiftPackage: contents = readSwiftPackages(at: root)
 		case .goModule: contents = readGoModules(at: root)
 		case .cargo: contents = readCargoPackages(at: root)
-		case .npm, .maven, .gradle, .bazel, .conan: contents = .notRead
+		case .npm: contents = readNpm(at: root)
+		case .maven, .gradle, .bazel, .conan: contents = .notRead
 		}
 		return DependencySet(root: root, kind: kind, contents: contents)
 	}
@@ -746,5 +750,279 @@ public enum ExternalDependencies {
 			return manager.fileExists(atPath: inside.path) ? inside : worktree
 		}
 		return nil
+	}
+
+	// MARK: - npm
+
+	/// One row of a lock file, as the file writes it — path and all.
+	struct NpmLockEntry: Equatable {
+		/// The lock file's own key: the path **relative to the project root**,
+		/// `node_modules/lodash`. This is the whole of why npm needs no cache
+		/// locator: the sources are already named.
+		let path: String
+		/// Everything after the last `node_modules/`, which is the name somebody
+		/// wrote in an `import`.
+		let name: String
+		let version: String?
+		/// The tarball or repository it was fetched from. Absent in a lock file
+		/// written without one — see `npmOrigin`.
+		let resolved: String?
+	}
+
+	/// The four lock files a `package.json` project can be resolved by, in the
+	/// order npm itself prefers them, each with the tool that writes it.
+	///
+	/// All four are named here and only npm's two are read, which is item 514's
+	/// decision and 0525's inheritance. `package.json` is the marker for all
+	/// three tools, so a pnpm or a yarn project reaches this reader whatever it
+	/// does — and the row it would otherwise draw says `run npm install`, which
+	/// is an instruction to install a second, conflicting tree over a project
+	/// that is already installed. Naming the file that *did* resolve it costs one
+	/// `fileExists` and says something true.
+	static let npmLockFiles: [(name: String, tool: String)] = [
+		("npm-shrinkwrap.json", "npm"),
+		("package-lock.json", "npm"),
+		("pnpm-lock.yaml", "pnpm"),
+		("yarn.lock", "yarn"),
+	]
+
+	/// `package-lock.json`, which is JSON and is the resolved tree.
+	///
+	/// **The easiest kind so far, because the lock file's keys are the paths.**
+	/// The `packages` object of a version 2 or 3 lock file is keyed by path
+	/// relative to the project root — `node_modules/lodash`,
+	/// `node_modules/@types/node`, `node_modules/jest/node_modules/chalk` for a
+	/// nested conflicting copy — so `localPath` is the key appended to the root
+	/// and there is no cache to locate at all. Every other kind here has one.
+	///
+	/// `npm ls --json` is the subprocess this does not run: it is `cargo
+	/// metadata` wearing a different name, it costs a node launch per project on
+	/// open and again on every write of the lock file, and it answers with
+	/// whichever npm is first on the PATH — which on a machine with `fnm` or
+	/// `nvm` is whichever shell last set it. See the rule on this type.
+	///
+	/// The sources being *inside* the project is the case no other kind has, and
+	/// it needs no code: `node_modules` is already in
+	/// `FileNode.defaultExcludedDirectoryNames` and in `Subprojects.skipped`, and
+	/// a reveal already asks the section before the ordinary tree.
+	static func readNpm(at root: URL) -> DependencySet.Contents {
+		let manager = FileManager.default
+		guard let lock = npmLockFiles.first(where: {
+			manager.fileExists(atPath: root.appendingPathComponent($0.name).path)
+		}) else {
+			if let workspace = npmWorkspaceAbove(root) {
+				return .unresolved("resolved in the workspace at \(workspace.lastPathComponent)")
+			}
+			return .unresolved("no package-lock.json — run npm install")
+		}
+		guard lock.tool == "npm" else {
+			// The kind is read; this one root is resolved by a tool 0525 will
+			// teach. Said as a sentence rather than as `.notRead`, because
+			// `.notRead` reads the item number off `DependencyKind`, and the kind
+			// — which is keyed off `package.json` — is the same one being read
+			// three lines up.
+			return .unresolved("resolved by \(lock.tool) — \(lock.name) not read yet (0525)")
+		}
+
+		let file = root.appendingPathComponent(lock.name)
+		guard let data = try? Data(contentsOf: file),
+			let top = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+		else {
+			return .unresolved("\(lock.name) could not be read")
+		}
+
+		// `fileExists` per entry, and a real `node_modules` has hundreds to a few
+		// thousand of them — the same shape as the per-pin stat in
+		// `readSwiftPackages`, paid on open and again whenever the lock file is
+		// written. Measured on a real project on this machine: 992 entries, 7.4 ms
+		// warm. That is what makes a `stat` per package affordable and a directory
+		// walk of `node_modules` — which is where the "npm is slow" reputation
+		// comes from — not worth considering.
+		let packages = npmEntries(in: top).map { entry -> ExternalDependency in
+			let directory = root.appendingPathComponent(entry.path)
+			var isDirectory: ObjCBool = false
+			let installed = manager.fileExists(atPath: directory.path, isDirectory: &isDirectory)
+				&& isDirectory.boolValue
+			return ExternalDependency(
+				name: entry.name,
+				version: entry.version,
+				origin: npmOrigin(of: entry.resolved),
+				// A package in the lock file and not on disk is resolved and not
+				// installed — a fresh checkout with no `npm install` run — and
+				// pointing at the directory anyway would draw a package with no
+				// files in it.
+				localPath: installed ? directory : nil
+			)
+		}
+		return byName(packages)
+	}
+
+	/// The external packages a lock file names, whichever layout it is in.
+	///
+	/// Version 2 and 3 key `packages` by path; version 1 has no `packages` at all
+	/// and instead a `dependencies` tree keyed by name, nested where two
+	/// packages need different versions of a third. Version 2 carries both, for
+	/// tools that only understand version 1, and `packages` wins — it is the one
+	/// with the paths in it. Reading only the newer layout would empty the
+	/// section on any project last installed by npm 6, which is the same failure
+	/// `readSwiftPackages` refuses for `Package.resolved`'s two layouts.
+	static func npmEntries(in top: [String: Any]) -> [NpmLockEntry] {
+		if let packages = top["packages"] as? [String: Any] {
+			return packages.compactMap { path, value in
+				guard let entry = value as? [String: Any] else { return nil }
+				return npmEntry(path: path, entry: entry)
+			}
+		}
+		var entries: [NpmLockEntry] = []
+		func walk(_ tree: [String: Any], under prefix: String) {
+			for (name, value) in tree {
+				guard let entry = value as? [String: Any] else { continue }
+				let path = prefix + "node_modules/" + name
+				if let found = npmEntry(path: path, entry: entry) { entries.append(found) }
+				if let nested = entry["dependencies"] as? [String: Any] {
+					walk(nested, under: path + "/")
+				}
+			}
+		}
+		walk(top["dependencies"] as? [String: Any] ?? [:], under: "")
+		return entries
+	}
+
+	/// One entry, or nil for one that is not an external dependency.
+	///
+	/// Two kinds are dropped, both for 508's rule that what the section lists is
+	/// what came from outside:
+	///
+	/// - a key with no `node_modules` in it — `""` is the project itself, and
+	///   `packages/app` is a workspace member, which is a directory the tree
+	///   already has a row for;
+	/// - `"link": true`, which is that same member *symlinked* into
+	///   `node_modules` so an import can find it. Its `resolved` is a path
+	///   inside the project, so listing it would show the project's own source
+	///   twice under a heading saying it came from elsewhere.
+	static func npmEntry(path: String, entry: [String: Any]) -> NpmLockEntry? {
+		guard entry["link"] as? Bool != true else { return nil }
+		guard let name = npmPackageName(inPath: path) else { return nil }
+		return NpmLockEntry(
+			path: path, name: name,
+			version: entry["version"] as? String,
+			resolved: entry["resolved"] as? String
+		)
+	}
+
+	/// `node_modules/jest/node_modules/@types/node` → `@types/node`.
+	///
+	/// Everything after the **last** `node_modules/`, which is one rule that gets
+	/// both hard cases right: a scoped name keeps its `@scope/`, and a nested
+	/// copy — the second version of a package, installed under whichever package
+	/// needs it — is named after itself rather than after the package it is
+	/// buried in. Nil when there is no `node_modules` in the key at all, which is
+	/// how the project and its workspace members are left out.
+	static func npmPackageName(inPath path: String) -> String? {
+		guard let marker = path.range(of: "node_modules/", options: .backwards) else { return nil }
+		let name = String(path[marker.upperBound...])
+		return name.isEmpty ? nil : name
+	}
+
+	/// Where a package came from, from the `resolved` URL the lock file writes.
+	///
+	///     https://registry.npmjs.org/lodash/-/lodash-4.17.21.tgz  → npmjs.com
+	///     https://npm.pkg.github.com/@acme/thing/-/thing-1.0.tgz  → npm.pkg.github.com
+	///     git+https://github.com/tomasf/thing.git#5aa45a1        → the URL, whole
+	///
+	/// The host and not the tarball. `shortOrigin` cuts a URL back to everything
+	/// but its last component, which for a registry tarball is
+	/// `registry.npmjs.org/lodash/-` — three quarters of it noise, on eight
+	/// hundred rows. So the registry is named instead, and named `npmjs.com` on
+	/// 513's `crates.io` precedent: the default registry is what almost every row
+	/// says, and saying it as a host somebody could paste into a browser is the
+	/// version of it that carries information. `registry.yarnpkg.com` is a mirror
+	/// of that same registry and reads the same — 513's "two spellings of one
+	/// registry" again, and here it is in a lock file npm itself wrote.
+	///
+	/// A git dependency keeps the whole URL, revision included, because that is
+	/// what says *which* one of it; `shortOrigin` cuts it to the owner for the
+	/// row and the tooltip has all of it. The `git+` prefix is dropped so that
+	/// `shortOrigin` can recognise the scheme underneath — and it is what tells a
+	/// git dependency from a tarball, since both are `https://` once it is gone
+	/// and the host is the wrong answer for one of them: `github.com` on its own
+	/// says a package came from GitHub and not which repository.
+	///
+	/// **A lock file with no `resolved` anywhere is real**, and not only the
+	/// bundled-dependency case the format documents: one of the projects on this
+	/// machine has 990 entries of 992 without one, from an install through a
+	/// registry proxy. Those rows are version-only, which `DependencyNode`
+	/// already draws, rather than rows claiming an origin nothing wrote down.
+	static func npmOrigin(of resolved: String?) -> String {
+		guard var location = resolved, !location.isEmpty else { return "" }
+		let isRepository = location.hasPrefix("git+") || location.hasPrefix("git://")
+			|| location.contains("#")
+		if location.hasPrefix("git+") { location = String(location.dropFirst(4)) }
+		guard !isRepository else { return location }
+		guard location.hasPrefix("https://") || location.hasPrefix("http://"),
+			let host = URL(string: location)?.host
+		else { return location }
+		return isNpmRegistry(host) ? "npmjs.com" : host
+	}
+
+	/// The registry every npm project uses, by either of the two hosts that
+	/// serve it: npm's own, and yarn's mirror of it.
+	static func isNpmRegistry(_ host: String) -> Bool {
+		host == "registry.npmjs.org" || host == "registry.yarnpkg.com"
+	}
+
+	/// The workspace that resolves for this package, if it is a member of one.
+	///
+	/// 513's finding in npm's spelling, and the commoner half of it: an npm
+	/// workspace has **one** lock file, at its root, and hoists every dependency
+	/// into the root's `node_modules`. Each member has a `package.json`, so each
+	/// member is a subproject with a row of its own — and `run npm install` in a
+	/// member is worse advice than cargo's was, because npm will do it: it
+	/// installs a second `node_modules` inside the member and the workspace's
+	/// hoisting stops meaning anything.
+	///
+	/// The ancestor has to *declare* the workspace — `workspaces` in its
+	/// `package.json`, or a `pnpm-workspace.yaml` beside it — and not merely
+	/// have a lock file. A `docs` folder with a `package.json` of its own inside
+	/// a repository that is not a workspace is a project that genuinely has not
+	/// been installed, and `run npm install` is the right thing to tell it.
+	///
+	/// The workspace's own list is deliberately not borrowed down into the
+	/// member, for 513's reason: it is the whole workspace's resolved set, and
+	/// copying it under five members would print it five times and claim each
+	/// member depends on all of it.
+	static func npmWorkspaceAbove(_ root: URL) -> URL? {
+		let manager = FileManager.default
+		var directory = root.deletingLastPathComponent()
+		for _ in 0..<6 {
+			guard directory.path != "/", directory.path != root.path else { return nil }
+			let manifest = directory.appendingPathComponent("package.json")
+			let hasLock = npmLockFiles.contains {
+				manager.fileExists(atPath: directory.appendingPathComponent($0.name).path)
+			}
+			if hasLock, manager.fileExists(atPath: manifest.path), declaresNpmWorkspaces(manifest) {
+				return directory
+			}
+			directory = directory.deletingLastPathComponent()
+		}
+		return nil
+	}
+
+	/// Whether a `package.json` says it is the root of a workspace.
+	///
+	/// `workspaces` is an array of globs in npm's and yarn's spelling and an
+	/// object with a `packages` array in yarn v1's, so its presence is what is
+	/// asked rather than its shape. pnpm keeps the same list in a
+	/// `pnpm-workspace.yaml` beside the manifest, which is YAML and is therefore
+	/// tested for by existing rather than by being read.
+	static func declaresNpmWorkspaces(_ manifest: URL) -> Bool {
+		if FileManager.default.fileExists(
+			atPath: manifest.deletingLastPathComponent()
+				.appendingPathComponent("pnpm-workspace.yaml").path
+		) { return true }
+		guard let data = try? Data(contentsOf: manifest),
+			let top = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+		else { return false }
+		return top["workspaces"] != nil
 	}
 }

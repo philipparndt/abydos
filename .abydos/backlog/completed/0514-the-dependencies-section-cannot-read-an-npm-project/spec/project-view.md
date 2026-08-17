@@ -1,12 +1,13 @@
-# Project view
+<!-- What this item changes about `project-view`. Folded into
+     .abydos/backlog/spec/project-view.md by `abydos-backlog done`.
 
-The tree down the left of the window: what the project is made of, and what it
-is made *from*. Its first root is the project's own directory, read lazily and
-followed as it changes on disk. Its second is the dependencies — resolved
-packages rather than paths — which is how a file belonging to no directory in
-this project still has somewhere to be shown.
+     npm is now read, so three requirements gain the cases that answer
+     for it: a package whose sources are inside the project, a registry
+     rather than a tarball, and the two other tools that share npm's
+     marker file and are not read.
+-->
 
-## Requirement: A project shows what it depends on, beside its own files
+## MODIFIED Requirement: A project shows what it depends on, beside its own files
 
 The tree has two roots. The first is the project's directory. The second is
 **Dependencies** — the packages the project depends on, named as packages
@@ -64,7 +65,7 @@ its files sit: an npm package's sources are inside the project, under
 - **When** the project is opened
 - **Then** there is no `Dependencies` row
 
-## Requirement: A dependency says which version it is and where it came from
+## MODIFIED Requirement: A dependency says which version it is and where it came from
 
 Each package row carries the version the project resolved and an abbreviation
 of its origin — the host and owner of a Swift package's repository, the module
@@ -131,7 +132,7 @@ nothing else, rather than one claiming an origin nobody wrote down.
 - **Then** the package still has a row
 - **And** the row cannot be opened
 
-## Requirement: A kind of project this cannot read says so, on a row
+## MODIFIED Requirement: A kind of project this cannot read says so, on a row
 
 The section covers every build system this program opens, whether or not it can
 read that system's dependencies yet. A kind it cannot read shows a row saying
@@ -196,66 +197,7 @@ command that would install a second tree over the one it has.
 - **Given** a `go.mod` with no `require`
 - **Then** the row reads `no dependencies`
 
-## Requirement: A dependency says which subproject resolved it
-
-Dependencies are read for the whole project and for every subproject in it, not
-only for the part in scope — two subprojects may resolve different versions of
-the same package, and a row that did not say whose it was could not tell them
-apart.
-
-Where more than one root has dependencies, each gets a row of its own naming it
-by its path relative to the project, with the kind of build system beside it.
-Where only one has, the packages hang straight off `Dependencies` and the kind
-is named on that row instead.
-
-### Scenario: a repository of eight subprojects
-
-- **Given** a project holding `cadova-models`, `go-service` and
-  `java/maven-service`
-- **When** the `Dependencies` row is opened
-- **Then** there is a row for each, named `cadova-models`, `go-service` and
-  `java/maven-service`
-- **And** each names its build system
-
-### Scenario: a project that is one package
-
-- **Given** a project whose only dependencies are its own
-- **Then** the packages are directly under `Dependencies`
-- **And** `Dependencies` names the build system
-
-## Requirement: A file with no place in the tree is revealed in the section
-
-A package row is a directory, so the rows beneath it are the package's own
-files and everything the tree does with a file it does with them: they list
-lazily, they open, and the arrow keys walk them.
-
-A file opened from inside a package — by following a symbol out of the
-project's own code, or by being named on the command line — is revealed there,
-with the section and every folder above it opened and the file selected. That
-holds for every copy of a checkout this machine has: `swift build` fetches into
-the project's `.build/checkouts` and the Swift indexer fetches its own copy
-beside its index, and a file opened from either lands on the row the section is
-showing.
-
-The section wins over the ordinary tree for such a file. A checkout under
-`.build` is inside the project and has a row there too, but only the section's
-row can say which package the file belongs to and where that package came from.
-
-### Scenario: following a symbol into a package
-
-- **Given** a Swift file in the project that uses a type from a package
-- **When** the definition of that type is asked for
-- **Then** the file opens
-- **And** the tree selects it under that package in `Dependencies`
-- **And** the folder it is in shows the rest of the package's files beside it
-
-### Scenario: the same file, from the other checkout
-
-- **Given** a file under the project's own `.build/checkouts`
-- **When** it is opened
-- **Then** it is revealed in `Dependencies` rather than under `.build`
-
-## Requirement: `.build` is an ordinary folder
+## MODIFIED Requirement: `.build` is an ordinary folder
 
 A directory of fetched or built dependencies inside the project — `.build` for
 a Swift package, `node_modules` for an npm project — is shown as what it is: a

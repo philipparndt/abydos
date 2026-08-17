@@ -521,6 +521,363 @@ struct ExternalDependenciesTests {
 		])
 	}
 
+	// MARK: - npm
+
+	/// A version 3 lock file cut from a real one, keeping one of every shape the
+	/// reader has to tell apart: a plain package, a scoped one, a nested copy of
+	/// a package that is already at the top level, a workspace member (which
+	/// appears twice — once by its path and once symlinked into `node_modules`
+	/// with `link: true`), a git dependency and a package with no `resolved`.
+	private let packageLock = """
+	{
+	  "name": "probe",
+	  "version": "1.0.0",
+	  "lockfileVersion": 3,
+	  "requires": true,
+	  "packages": {
+	    "": {
+	      "name": "probe",
+	      "version": "1.0.0",
+	      "workspaces": ["packages/*"],
+	      "dependencies": { "lodash": "^4.17.21" }
+	    },
+	    "packages/app": { "name": "@probe/app", "version": "0.1.0" },
+	    "node_modules/@probe/app": { "resolved": "packages/app", "link": true },
+	    "node_modules/lodash": {
+	      "version": "4.17.21",
+	      "resolved": "https://registry.npmjs.org/lodash/-/lodash-4.17.21.tgz",
+	      "integrity": "sha512-v2kDEe57lecTulaDIuNTPy3Ry4gLGJ6Z1O3vE1krgXZNrsQ+LFTGHVxVjcXPs17LhbZVGedAJv8XZ1tvj5FvSg=="
+	    },
+	    "node_modules/@types/node": {
+	      "version": "22.10.1",
+	      "dev": true,
+	      "resolved": "https://registry.npmjs.org/@types/node/-/node-22.10.1.tgz"
+	    },
+	    "node_modules/jest/node_modules/chalk": {
+	      "version": "2.4.2",
+	      "resolved": "https://registry.yarnpkg.com/chalk/-/chalk-2.4.2.tgz"
+	    },
+	    "node_modules/anyhow": {
+	      "version": "1.0.104",
+	      "resolved": "git+https://github.com/dtolnay/anyhow.git#bf3ed914"
+	    },
+	    "node_modules/bundled-thing": { "version": "0.3.0" }
+	  }
+	}
+	"""
+
+	/// The resolved tree is the lock file, and the row names the version on disk
+	/// — `package.json` says `^4.17.21`, which is not an answer.
+	@Test func aPackageLockNamesEveryPackageAndTheVersionItResolvedTo() throws {
+		let root = try makeRoot()
+		try write(packageLock, to: root.appendingPathComponent("package-lock.json"))
+
+		let set = ExternalDependencies.read(root: root, kind: .npm)
+		#expect(set.packages.map(\.name) == [
+			"@types/node", "anyhow", "bundled-thing", "chalk", "lodash",
+		])
+		#expect(set.packages.first { $0.name == "lodash" }?.version == "4.17.21")
+	}
+
+	/// **The name is everything after the *last* `node_modules/`.** One rule for
+	/// both hard cases: a scoped package keeps its `@scope/`, and a nested copy —
+	/// npm's answer to two packages needing different versions of a third — is
+	/// named after itself rather than after whatever it is buried under.
+	@Test func aPackagesNameIsWhateverFollowsTheLastNodeModules() {
+		#expect(ExternalDependencies.npmPackageName(inPath: "node_modules/lodash") == "lodash")
+		#expect(ExternalDependencies.npmPackageName(inPath: "node_modules/@types/node")
+			== "@types/node")
+		#expect(ExternalDependencies.npmPackageName(
+			inPath: "node_modules/jest/node_modules/@babel/core") == "@babel/core")
+		// The project itself, and a workspace member by its own path: neither is
+		// something that came from outside.
+		#expect(ExternalDependencies.npmPackageName(inPath: "") == nil)
+		#expect(ExternalDependencies.npmPackageName(inPath: "packages/app") == nil)
+	}
+
+	/// **The project and its workspace members are not external.** A member is in
+	/// the lock file twice — once by its path, once symlinked into `node_modules`
+	/// with `link: true` and a `resolved` pointing back inside the project — and
+	/// both are directories the tree already has rows for.
+	@Test func theProjectAndItsWorkspaceMembersAreLeftOut() throws {
+		let root = try makeRoot()
+		try write(packageLock, to: root.appendingPathComponent("package-lock.json"))
+
+		let set = ExternalDependencies.read(root: root, kind: .npm)
+		#expect(!set.packages.contains { $0.name == "@probe/app" })
+		#expect(!set.packages.contains { $0.name == "probe" })
+	}
+
+	/// **The lock file's own keys are the paths**, which is why npm is the one
+	/// kind here with no cache to locate: `node_modules/lodash` appended to the
+	/// project root *is* the sources. A package that was resolved and never
+	/// installed has nothing to open instead of a path to a directory that is not
+	/// there, and the nested copy answers for its own directory rather than the
+	/// top-level one of the same name.
+	@Test func aPackagesSourcesAreTheLockFilesOwnKeyUnderTheProject() throws {
+		let root = try makeRoot()
+		try write(packageLock, to: root.appendingPathComponent("package-lock.json"))
+		try write("module.exports = {}\n",
+			to: root.appendingPathComponent("node_modules/lodash/index.js"))
+		try write("module.exports = {}\n",
+			to: root.appendingPathComponent("node_modules/jest/node_modules/chalk/index.js"))
+
+		let set = ExternalDependencies.read(root: root, kind: .npm)
+		let lodash = try #require(set.packages.first { $0.name == "lodash" })
+		#expect(lodash.localPath?.path == root.appendingPathComponent("node_modules/lodash").path)
+		let chalk = try #require(set.packages.first { $0.name == "chalk" })
+		#expect(chalk.localPath?.path
+			== root.appendingPathComponent("node_modules/jest/node_modules/chalk").path)
+		// Resolved, never installed: no `npm install` has been run for these.
+		#expect(set.packages.first { $0.name == "@types/node" }?.localPath == nil)
+
+		// And the files under a package are browsable from its row, which is the
+		// whole of what the section is for.
+		let tree = try #require(DependencyTree(sets: [set], project: root))
+		let opened = root.appendingPathComponent("node_modules/lodash/index.js")
+		#expect(tree.package(containing: opened)?.name == "lodash")
+	}
+
+	/// The registry and not the tarball. `registry.npmjs.org/lodash/-` is what
+	/// `shortOrigin` makes of a tarball URL, and it would say it on eight hundred
+	/// rows; yarn's mirror is the same registry under another host, which is 513's
+	/// two-spellings finding turning up in a file npm itself wrote.
+	@Test func aRegistryPackageSaysTheRegistryAndAGitOneSaysWhereItWasCloned() throws {
+		let root = try makeRoot()
+		try write(packageLock, to: root.appendingPathComponent("package-lock.json"))
+
+		let set = ExternalDependencies.read(root: root, kind: .npm)
+		#expect(set.packages.first { $0.name == "lodash" }?.origin == "npmjs.com")
+		#expect(set.packages.first { $0.name == "chalk" }?.origin == "npmjs.com")
+
+		let anyhow = try #require(set.packages.first { $0.name == "anyhow" })
+		#expect(anyhow.origin == "https://github.com/dtolnay/anyhow.git#bf3ed914")
+		#expect(anyhow.shortOrigin == "github.com/dtolnay")
+
+		// A registry of somebody's own is the host, because there the host is the
+		// answer. A package with no `resolved` claims no origin at all, which the
+		// row draws as a version and nothing else.
+		#expect(ExternalDependencies.npmOrigin(
+			of: "https://npm.pkg.github.com/@acme/thing/-/thing-1.0.0.tgz")
+			== "npm.pkg.github.com")
+		#expect(set.packages.first { $0.name == "bundled-thing" }?.origin == "")
+	}
+
+	/// npm 6 wrote a `dependencies` tree keyed by name and nested where two
+	/// packages needed different versions of a third, and those lock files are
+	/// still in projects nobody has reinstalled. Refusing to read one would empty
+	/// the section on an old checkout — the same refusal `Package.resolved`'s two
+	/// layouts are both read to avoid.
+	@Test func theFirstLayoutOfPackageLockIsStillRead() throws {
+		let root = try makeRoot()
+		try write("""
+		{
+		  "name": "probe",
+		  "lockfileVersion": 1,
+		  "dependencies": {
+		    "@babel/highlight": {
+		      "version": "7.10.4",
+		      "resolved": "https://registry.npmjs.org/@babel/highlight/-/highlight-7.10.4.tgz",
+		      "dependencies": {
+		        "chalk": {
+		          "version": "2.4.2",
+		          "resolved": "https://registry.npmjs.org/chalk/-/chalk-2.4.2.tgz"
+		        }
+		      }
+		    }
+		  }
+		}
+		""", to: root.appendingPathComponent("package-lock.json"))
+		try write("x\n", to: root.appendingPathComponent(
+			"node_modules/@babel/highlight/node_modules/chalk/index.js"
+		))
+
+		let set = ExternalDependencies.read(root: root, kind: .npm)
+		#expect(set.packages.map(\.name) == ["@babel/highlight", "chalk"])
+		// The path is built by descending, because the version 1 layout has no
+		// paths in it — the nested copy is under the package that needed it.
+		#expect(set.packages.first { $0.name == "chalk" }?.localPath?.path
+			== root.appendingPathComponent(
+				"node_modules/@babel/highlight/node_modules/chalk").path)
+	}
+
+	/// A version 2 lock file carries both layouts, for tools that only understand
+	/// the older one. `packages` wins: it is the one with the paths in it, and the
+	/// `dependencies` half of the same file leaves out anything hoisted.
+	@Test func theNewerLayoutWinsInALockFileThatCarriesBoth() throws {
+		let root = try makeRoot()
+		try write("""
+		{
+		  "lockfileVersion": 2,
+		  "packages": {
+		    "": { "name": "probe" },
+		    "node_modules/lodash": { "version": "4.17.21" }
+		  },
+		  "dependencies": {
+		    "an-older-answer": { "version": "0.0.1" }
+		  }
+		}
+		""", to: root.appendingPathComponent("package-lock.json"))
+
+		let set = ExternalDependencies.read(root: root, kind: .npm)
+		#expect(set.packages.map(\.name) == ["lodash"])
+	}
+
+	/// `npm-shrinkwrap.json` is `package-lock.json` byte for byte and npm prefers
+	/// it where a project publishes one, so a project with one is not a project
+	/// that has resolved nothing.
+	@Test func aShrinkwrapIsReadTheSameWayAndIsPreferred() throws {
+		let root = try makeRoot()
+		try write(packageLock, to: root.appendingPathComponent("npm-shrinkwrap.json"))
+
+		let set = ExternalDependencies.read(root: root, kind: .npm)
+		#expect(set.packages.contains { $0.name == "lodash" })
+		// And writing one reloads the section, which is the other half of it.
+		#expect(ExternalDependencies.definingFileNames.contains("npm-shrinkwrap.json"))
+	}
+
+	/// **An npm project that has installed nothing says so in npm's words**, and
+	/// an empty list would read as a project depending on nothing.
+	@Test func anNpmProjectWithNoLockFileSaysWhatWouldMakeOne() throws {
+		let root = try makeRoot()
+		try write("{ \"name\": \"probe\" }\n", to: root.appendingPathComponent("package.json"))
+
+		let set = ExternalDependencies.read(root: root, kind: .npm)
+		let tree = try #require(DependencyTree(sets: [set], project: root))
+		#expect(tree.report() == ["Dependencies — npm", "  no package-lock.json — run npm install"])
+	}
+
+	/// **A pnpm or a yarn project is not a project that has installed nothing.**
+	/// `package.json` is the marker for all three tools, so both reach this
+	/// reader — and `run npm install` would be an instruction to install a
+	/// second, conflicting tree over a project that is already installed. The row
+	/// names the tool that did resolve it, and the item that will read its lock
+	/// file.
+	@Test func aPnpmOrAYarnProjectSaysWhichToolResolvedIt() throws {
+		let pnpm = try makeRoot()
+		try write("{ \"name\": \"probe\" }\n", to: pnpm.appendingPathComponent("package.json"))
+		try write("lockfileVersion: '9.0'\n", to: pnpm.appendingPathComponent("pnpm-lock.yaml"))
+		#expect(ExternalDependencies.read(root: pnpm, kind: .npm).contents
+			== .unresolved("resolved by pnpm — pnpm-lock.yaml not read yet (0525)"))
+
+		let yarn = try makeRoot()
+		try write("{ \"name\": \"probe\" }\n", to: yarn.appendingPathComponent("package.json"))
+		try write("# yarn lockfile v1\n", to: yarn.appendingPathComponent("yarn.lock"))
+		#expect(ExternalDependencies.read(root: yarn, kind: .npm).contents
+			== .unresolved("resolved by yarn — yarn.lock not read yet (0525)"))
+
+		// And a project with both a `yarn.lock` and npm's own lock file is read:
+		// npm's is the one this can answer for.
+		try write(packageLock, to: yarn.appendingPathComponent("package-lock.json"))
+		#expect(ExternalDependencies.read(root: yarn, kind: .npm).packages.contains {
+			$0.name == "lodash"
+		})
+	}
+
+	/// **A workspace member is not a project that has installed nothing.** An npm
+	/// workspace has one lock file, at its root, and hoists every dependency into
+	/// the root's `node_modules` — so `run npm install` in a member is worse
+	/// advice than cargo's was, because npm will do it and leave a second
+	/// `node_modules` inside the member. 513's finding, in npm's spelling.
+	@Test func aWorkspaceMemberSaysWhereTheLockFileIsRatherThanThatThereIsNone() throws {
+		let workspace = try makeRoot()
+		try write("{ \"name\": \"probe\", \"workspaces\": [\"packages/*\"] }\n",
+			to: workspace.appendingPathComponent("package.json"))
+		try write(packageLock, to: workspace.appendingPathComponent("package-lock.json"))
+		let member = workspace.appendingPathComponent("packages/app")
+		try write("{ \"name\": \"@probe/app\" }\n", to: member.appendingPathComponent("package.json"))
+
+		let set = ExternalDependencies.read(root: member, kind: .npm)
+		#expect(set.contents == .unresolved(
+			"resolved in the workspace at \(workspace.lastPathComponent)"
+		))
+		// The workspace's own list is not copied under the member: it is the whole
+		// workspace's resolved set, not this package's.
+		#expect(set.packages.isEmpty)
+	}
+
+	/// **Which root a hoisted dependency is filed under: the one that owns the
+	/// lock file.** A workspace hoists its members' dependencies into the root's
+	/// `node_modules`, and the lock file that records them is the root's — so
+	/// that is the only root with anything to read, and a member's row says where
+	/// its lock file is instead. A dependency npm could *not* hoist, because two
+	/// members want different versions of it, is written at
+	/// `packages/app/node_modules/<name>` in the same lock file and is filed the
+	/// same way, under the root, with its own path.
+	@Test func aWorkspacesDependenciesAreAllFiledUnderTheRootThatOwnsTheLockFile() throws {
+		let workspace = try makeRoot()
+		try write("{ \"name\": \"probe\", \"workspaces\": [\"packages/*\"] }\n",
+			to: workspace.appendingPathComponent("package.json"))
+		try write("""
+		{
+		  "lockfileVersion": 3,
+		  "packages": {
+		    "": { "name": "probe", "workspaces": ["packages/*"] },
+		    "packages/app": { "name": "@probe/app", "version": "0.1.0" },
+		    "node_modules/@probe/app": { "resolved": "packages/app", "link": true },
+		    "node_modules/lodash": { "version": "4.17.21" },
+		    "packages/app/node_modules/lodash": { "version": "3.10.1" }
+		  }
+		}
+		""", to: workspace.appendingPathComponent("package-lock.json"))
+
+		let set = ExternalDependencies.read(root: workspace, kind: .npm)
+		#expect(set.packages.map(\.name) == ["lodash", "lodash"])
+		// Two versions of one package, told apart by where they are — which is
+		// what the un-hoisted copy exists to be.
+		#expect(Set(set.packages.compactMap(\.version)) == ["4.17.21", "3.10.1"])
+	}
+
+	/// A `package.json` inside a repository that is *not* a workspace has
+	/// genuinely not been installed, and `npm install` is the right thing to tell
+	/// it. The ancestor has to declare the workspace, not merely have a lock file.
+	@Test func aNestedProjectUnderANonWorkspaceRootIsToldToInstall() throws {
+		let root = try makeRoot()
+		try write("{ \"name\": \"probe\" }\n", to: root.appendingPathComponent("package.json"))
+		try write(packageLock, to: root.appendingPathComponent("package-lock.json"))
+		let docs = root.appendingPathComponent("docs")
+		try write("{ \"name\": \"docs\" }\n", to: docs.appendingPathComponent("package.json"))
+
+		#expect(ExternalDependencies.read(root: docs, kind: .npm).contents
+			== .unresolved("no package-lock.json — run npm install"))
+	}
+
+	/// A lock file naming nothing but the project itself is a project with no
+	/// external dependencies, and that is a reading rather than a failure to read
+	/// — the same claim a `go.mod` with no `require` makes.
+	@Test func aLockFileOfNothingButTheProjectIsReadAsHavingNoDependencies() throws {
+		let root = try makeRoot()
+		try write("{ \"lockfileVersion\": 3, \"packages\": { \"\": { \"name\": \"probe\" } } }\n",
+			to: root.appendingPathComponent("package-lock.json"))
+
+		let set = ExternalDependencies.read(root: root, kind: .npm)
+		guard case let .packages(packages) = set.contents else {
+			Issue.record("expected packages, got \(set.contents)")
+			return
+		}
+		#expect(packages.isEmpty)
+	}
+
+	/// The row as the section draws it, which is the claim somebody can check by
+	/// looking at the app.
+	@Test func anNpmProjectsSectionReadsAsNameVersionAndOrigin() throws {
+		let root = try makeRoot()
+		try write(packageLock, to: root.appendingPathComponent("package-lock.json"))
+
+		let tree = try #require(DependencyTree(sets: [
+			ExternalDependencies.read(root: root, kind: .npm),
+		], project: root))
+		#expect(tree.report() == [
+			"Dependencies — npm",
+			"  @types/node — 22.10.1  ·  npmjs.com",
+			"  anyhow — 1.0.104  ·  github.com/dtolnay",
+			// No `resolved` in the lock file, so no origin is claimed.
+			"  bundled-thing — 0.3.0",
+			"  chalk — 2.4.2  ·  npmjs.com",
+			"  lodash — 4.17.21  ·  npmjs.com",
+		])
+	}
+
 	// MARK: - Kinds nothing reads yet
 
 	/// **The claim that makes shipping two kinds honest.** A Maven project does
@@ -548,7 +905,7 @@ struct ExternalDependenciesTests {
 	@Test func everyKindEitherIsReadOrNamesTheItemThatWillReadIt() {
 		for kind in DependencyKind.allCases {
 			switch kind {
-			case .swiftPackage, .goModule, .cargo:
+			case .swiftPackage, .goModule, .cargo, .npm:
 				#expect(kind.pendingItem == nil)
 			default:
 				#expect(kind.pendingItem != nil, "\(kind) says nothing about itself")
