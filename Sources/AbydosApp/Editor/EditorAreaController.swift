@@ -811,6 +811,7 @@ final class EditorAreaController: NSViewController {
 	func showFind() { activeGroup.showFind() }
 	func setFindQuery(_ query: String) { activeGroup.setFindQuery(query) }
 	func findNext() { activeGroup.findNext() }
+	func findNextFromEditor(_ times: Int) { activeGroup.findNextFromEditor(times) }
 	func findPrevious() { activeGroup.findPrevious() }
 	func selectedTextForSearch() -> String? { activeGroup.selectedTextForSearch() }
 

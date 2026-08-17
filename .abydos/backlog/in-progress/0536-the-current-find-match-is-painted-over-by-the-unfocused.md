@@ -80,6 +80,8 @@ current match is still the one being dimmed by being current.
 
 ## Steps
 
+- [x] A verb that photographs the keyboard-in-the-editor state, since nothing
+      could reach it
 - [ ] The current match is the most prominent of the matches on screen, with the
       keyboard in the find field *and* with it in the editor
 - [ ] A selection larger than the current match still draws as a selection

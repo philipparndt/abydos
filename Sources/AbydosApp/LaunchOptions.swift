@@ -400,6 +400,14 @@ struct LaunchOptions {
 	var probeLAN: String?
 	/// Query for the in-file find bar.
 	var findQuery: String?
+	/// How many times to press ⌘G, with the keyboard put back in the code first.
+	///
+	/// `--find` on its own leaves the keyboard in the find field, which is the
+	/// state the report behind 0536 was in. This is the other one, and there was
+	/// no way to photograph it: everything that opens the find bar focuses it,
+	/// and everything that focuses the editor closes the bar and throws the
+	/// matches away.
+	var findNextSteps: Int?
 	/// Select whole lines in the editor and leave them selected: `from:to`.
 	///
 	/// For photographing a selection that the view drawing it does not have the
@@ -886,6 +894,7 @@ struct LaunchOptions {
 			case "--breakpoint-off": options.disabledBreakpointLine = next().flatMap(Int.init)
 			case "--stop-after": options.stopAfter = next().flatMap(Double.init)
 			case "--find":       options.findQuery = next()
+			case "--find-next":  options.findNextSteps = next().flatMap(Int.init) ?? 1
 			case "--select-lines": options.selectLines = next()
 			case "--search":     options.searchQuery = next()
 			case "--search-steps": options.searchSteps = next()
