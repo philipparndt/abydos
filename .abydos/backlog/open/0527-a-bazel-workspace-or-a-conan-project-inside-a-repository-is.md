@@ -1,4 +1,4 @@
-# 525. A Bazel workspace or a Conan project inside a repository is not a subproject
+# 527. A Bazel workspace or a Conan project inside a repository is not a subproject
 
 `Subprojects.markers` is the list of files that make a folder inside a project
 a project of its own. It has thirteen entries — `.git`, `go.mod`, `Cargo.toml`,

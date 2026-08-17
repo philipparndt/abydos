@@ -225,7 +225,7 @@ is what the pictures show.
 Not fixed here on purpose: `Subprojects` decides the scope pill, which root the
 language server is given, which module a run configuration builds in and which
 tree git acts on. Adding two markers to it is a change to all of those and wants
-its own item rather than a line in this one. Filed as 0525.
+its own item rather than a line in this one. Filed as 0527.
 
 ## What was ruled out
 
@@ -324,7 +324,7 @@ cannot be opened, which is a state the row already knows how to show.
 - [x] A note's tooltip carries the whole sentence the pane cuts — found by
       looking at the WORKSPACE row in the app
 - [ ] Teach `Subprojects` about Bazel and Conan, so a nested one has a row
-      — **not done here**, and filed as 0525: `Subprojects.markers` also
+      — **not done here**, and filed as 0527: `Subprojects.markers` also
       decides the scope pill, the language-server root, run configurations and
       the git tree, so two more markers is a change to all of those and wants
       its own item
