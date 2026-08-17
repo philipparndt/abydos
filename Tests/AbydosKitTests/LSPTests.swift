@@ -11,6 +11,26 @@ struct LSPMessageTests {
 		#expect(LSPPosition(json: "nonsense") == nil)
 	}
 
+	/// How wide a place is, for *showing* it rather than only scrolling to it: a
+	/// symbol's name where the range stays on one line, and nothing at all where
+	/// the server pointed at more than one (item 533).
+	@Test func measuresARangeOnOneLine() {
+		#expect(LSPRange(
+			start: LSPPosition(line: 12, character: 8),
+			end: LSPPosition(line: 12, character: 20)
+		).widthOnOneLine == 12)
+		#expect(LSPRange(
+			start: LSPPosition(line: 12, character: 8),
+			end: LSPPosition(line: 19, character: 3)
+		).widthOnOneLine == 0)
+		// A server that hands its ends back the wrong way round says nothing
+		// rather than a negative width.
+		#expect(LSPRange(
+			start: LSPPosition(line: 4, character: 9),
+			end: LSPPosition(line: 4, character: 2)
+		).widthOnOneLine == 0)
+	}
+
 	@Test func readsADiagnostic() {
 		let diagnostic = LSPDiagnostic(json: [
 			"range": ["start": ["line": 2, "character": 0], "end": ["line": 2, "character": 5]],

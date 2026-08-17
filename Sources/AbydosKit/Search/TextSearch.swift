@@ -23,11 +23,20 @@ public struct SearchMatch: Equatable, Sendable {
 	public var line: Int
 	/// The whole line, for previewing results.
 	public var lineText: String
+	/// 0-based UTF-16 column the match starts at on its line.
+	///
+	/// Carried because a line is not a place. A match two hundred characters along
+	/// a long line is off the side of the editor's pane, and something handed only
+	/// the line has no way to know it — which is half of item 533. Worked out
+	/// where the line's own start offset is already in hand, rather than by going
+	/// looking for it again later.
+	public var column: Int
 
-	public init(utf16Range: Range<Int>, line: Int, lineText: String) {
+	public init(utf16Range: Range<Int>, line: Int, lineText: String, column: Int = 0) {
 		self.utf16Range = utf16Range
 		self.line = line
 		self.lineText = lineText
+		self.column = column
 	}
 }
 
@@ -62,7 +71,8 @@ public enum TextSearch {
 			results.append(SearchMatch(
 				utf16Range: match.range.location..<(match.range.location + match.range.length),
 				line: line,
-				lineText: lineText.trimmingCharacters(in: .newlines)
+				lineText: lineText.trimmingCharacters(in: .newlines),
+				column: match.range.location - lineStart
 			))
 			if results.count >= matchLimit { stop.pointee = true }
 		}

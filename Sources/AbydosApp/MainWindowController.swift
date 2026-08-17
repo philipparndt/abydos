@@ -240,7 +240,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 		palette.onOpen = { [weak self] location in
 			guard let url = location.url else { return }
-			self?.editor.open(fileURL: url, atLine: location.range.start.line + 1)
+			self?.editor.open(
+				fileURL: url,
+				atLine: location.range.start.line + 1,
+				column: location.range.start.character + 1,
+				length: location.range.widthOnOneLine
+			)
 		}
 		return palette
 	}()
@@ -252,8 +257,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// pane rebuilt on the way to a window would arrive with the work undone.
 	private lazy var usagesPane: UsagesPane = {
 		let pane = UsagesPane()
-		pane.onOpen = { [weak self] url, line, intent in
-			self?.openFromChecklist(url, line: line, intent: intent)
+		pane.onOpen = { [weak self] url, match, intent in
+			self?.openFromChecklist(url, match: match, intent: intent)
 		}
 		pane.onPlace = { [weak self] home in self?.placeUsages(at: home) }
 		return pane
@@ -714,10 +719,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// A checklist row, which also says whether the keyboard goes with it. Room
 		// is made for the editor either way — a preview nobody can see is not one
 		// — but a preview leaves the keyboard in the list.
-		bottomPanel.onOpenResult = { [weak self] url, line, intent in
+		bottomPanel.onOpenResult = { [weak self] url, match, intent in
 			guard let self else { return }
 			self.makeRoomForTheEditor()
-			self.openFromChecklist(url, line: line, intent: intent)
+			self.openFromChecklist(url, match: match, intent: intent)
 		}
 		bottomPanel.onOpenFileFromTerminal = { [weak self] request in
 			self?.openFromTerminal(request)
@@ -2406,6 +2411,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			// pane would be checking something else.
 			if step == "again" {
 				findInProject(nil)
+				continue
+			}
+			// What the *editor* is showing after the row the walk has landed on,
+			// which is the whole of item 533 and is a question about the other half
+			// of the window. Between two `down`s it says whether the match the
+			// selection moved onto is on the screen, and whether the view moved to
+			// put it there.
+			if step == "shown" {
+				print("SEARCH shown: \(editor.revealReportForTesting)")
+				fflush(stdout)
 				continue
 			}
 			pane.stepForTesting(step)
@@ -5246,7 +5261,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			}
 			// One result is not a list; it is the place to go.
 			if locations.count == 1, let only = locations.first, let target = only.url {
-				editor.open(fileURL: target, atLine: only.range.start.line + 1)
+				editor.open(
+					fileURL: target,
+					atLine: only.range.start.line + 1,
+					column: only.range.start.character + 1,
+					length: only.range.widthOnOneLine
+				)
 				return
 			}
 			showUsages(
@@ -5528,14 +5548,28 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// keyboard *still* stays in the list, because the hand that did it is over
 	/// the list and its next ⌫ has to tick a row rather than edit a file. Only a
 	/// commit moves the keyboard, and only ⇥ is one.
-	private func openFromChecklist(_ url: URL, line: Int, intent: ResultChecklist.Intent) {
+	private func openFromChecklist(
+		_ url: URL, match: SearchMatch, intent: ResultChecklist.Intent
+	) {
+		// Where the row's match becomes a place in the editor: its line, the column
+		// it starts at, and how wide it is — the three the editor needs to put it
+		// on screen rather than merely to scroll near it (item 533).
+		let line = match.line + 1
+		let column = match.column + 1
+		let length = match.utf16Range.count
 		switch intent {
 		case .preview:
-			editor.open(fileURL: url, atLine: line, focusEditor: false, preview: true)
+			editor.open(
+				fileURL: url, atLine: line, column: column, length: length,
+				focusEditor: false, preview: true
+			)
 		case .permanent:
-			editor.open(fileURL: url, atLine: line, focusEditor: false)
+			editor.open(
+				fileURL: url, atLine: line, column: column, length: length,
+				focusEditor: false
+			)
 		case .commit:
-			editor.open(fileURL: url, atLine: line)
+			editor.open(fileURL: url, atLine: line, column: column, length: length)
 			// The one home where making the editor first responder is not enough.
 			// A list expanded into a window of its own is a second window, and it
 			// is the key one while somebody is working the list — so ⇥ left the

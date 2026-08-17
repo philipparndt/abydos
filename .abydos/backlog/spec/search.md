@@ -152,12 +152,16 @@ to take back.
 heading — so the first ↓ after that is the first match rather than the second.
 
 **Moving the selection onto a match shows it**, exactly as it does in the usages
-list: the editor scrolls to the line and the keyboard stays here, so ↓ reaches
-the next match and ␣ ticks off the one just looked at. It used to take ⏎, on the
-argument that walking a project-wide search with ↓ crosses files nobody asked
-about. What a walk crosses is bounded to the rows it stops on, which is what the
-usages list crosses over just as many files; and the two lists are one widget, so
-answering ↓ differently in them was the surprise rather than the safeguard.
+list: the editor brings that match on screen and the keyboard stays here, so ↓
+reaches the next match and ␣ ticks off the one just looked at. The match rather
+than the line, and on screen rather than scrolled towards — including sideways on
+a long line, and without moving the view at all for a match that is already
+showing. What that amounts to is `editor.md`'s to say, because every other way
+into a place in a file obeys the same rule. It used to take ⏎, on the argument
+that walking a project-wide search with ↓ crosses files nobody asked about. What
+a walk crosses is bounded to the rows it stops on, which is what the usages list
+crosses over just as many files; and the two lists are one widget, so answering ↓
+differently in them was the surprise rather than the safeguard.
 
 What a walk shows it in is the editor's **provisional tab** — the one the project
 tree's single click uses, replaced in place by the next one — so a list of any

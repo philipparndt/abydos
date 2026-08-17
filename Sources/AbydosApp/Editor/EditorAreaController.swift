@@ -487,6 +487,10 @@ final class EditorAreaController: NSViewController {
 		(activeGroup ?? groups.first)?.caretReportForTesting ?? "no editor"
 	}
 
+	var revealReportForTesting: String {
+		(activeGroup ?? groups.first)?.revealReportForTesting ?? "no editor"
+	}
+
 	var caretLinesForTesting: String {
 		(activeGroup ?? groups.first)?.caretLinesForTesting ?? "no file"
 	}
@@ -738,8 +742,18 @@ final class EditorAreaController: NSViewController {
 		activeGroup.openDiff(for: change, root: root, text: text)
 	}
 
-	func open(fileURL: URL, atLine line: Int, focusEditor: Bool = true, preview: Bool = false) {
-		activeGroup.open(fileURL: fileURL, atLine: line, focusEditor: focusEditor, preview: preview)
+	func open(
+		fileURL: URL,
+		atLine line: Int,
+		column: Int = 1,
+		length: Int = 0,
+		focusEditor: Bool = true,
+		preview: Bool = false
+	) {
+		activeGroup.open(
+			fileURL: fileURL, atLine: line, column: column, length: length,
+			focusEditor: focusEditor, preview: preview
+		)
 	}
 
 	/// Puts the caret on a 1-based line of whatever is open, for `:` in the
