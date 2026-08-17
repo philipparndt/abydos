@@ -195,12 +195,44 @@ public enum GitWorkingCopy {
 	}
 
 	/// Throws away work-tree changes to `paths`. Untracked files are removed.
+	///
+	/// Ignored files are not: `clean` is given `-fd` and not `-x`, so throwing
+	/// away a folder's changes does not also take the build output somebody's
+	/// `.gitignore` keeps out of the way.
 	@discardableResult
 	public static func discard(paths: [String], in root: URL) async -> GitRepository.ProcessResult {
-		// Untracked files are removed first; its result is not the one to
-		// report, since a tree with nothing untracked makes it a no-op.
-		_ = await GitRepository.run(["clean", "-fd", "--"] + paths, in: root)
-		return await GitRepository.run(["checkout", "--"] + paths, in: root)
+		// Untracked files are removed first. Its result is only the one to report
+		// when there is nothing tracked to restore afterwards, which is where
+		// `clean` was the whole operation; anywhere else a tree with nothing
+		// untracked makes it a no-op, and a no-op's exit code says nothing.
+		let cleaned = await GitRepository.run(["clean", "-fd", "--"] + paths, in: root)
+
+		// `checkout` is only handed the paths git has something tracked under.
+		// A path with nothing — an untracked file, or a folder holding only
+		// untracked files — is already dealt with by `clean`, and giving it to
+		// `checkout` fails the *whole* command with "pathspec did not match any
+		// file(s) known to git": git validates every pathspec before it restores
+		// anything, so one untracked file in a selection left the tracked ones
+		// untouched and put git's error on screen after the work was gone.
+		let known = await trackedFiles(under: paths, in: root)
+		let restorable = GitDiscard.paths(paths, coveringAnyOf: known)
+		guard !restorable.isEmpty else { return cleaned }
+		return await GitRepository.run(["checkout", "--"] + restorable, in: root)
+	}
+
+	/// The tracked files under `paths`, as git lists them.
+	///
+	/// One question for the lot rather than one per path. It is asked for the
+	/// paths given rather than for the whole work tree, and only when somebody
+	/// has asked to throw something away — a gesture that happens once and is
+	/// about to run two more git commands anyway.
+	private static func trackedFiles(under paths: [String], in root: URL) async -> [String] {
+		// `-z` for the same reason `status` asks for it: anything non-ASCII
+		// comes back octal-escaped otherwise, and the escaped form matches no
+		// path this is about to compare it with.
+		let result = await GitRepository.run(["ls-files", "-z", "--"] + paths, in: root)
+		guard result.exitCode == 0 else { return paths }
+		return result.stdout.split(separator: "\0", omittingEmptySubsequences: true).map(String.init)
 	}
 
 	// MARK: - Committing

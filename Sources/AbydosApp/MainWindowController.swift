@@ -5764,8 +5764,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	func pushChangesForTesting() { changesPane?.pushForTesting() }
 
 	/// Drives the changes tree from the command line: `report`, `stage:<path>`,
-	/// `unstage:<path>`, `shut:<path>`, `open:<path>`, `refresh`,
-	/// `settle[:seconds]`.
+	/// `unstage:<path>`, `shut:<path>`, `open:<path>`, `offer:<path>`,
+	/// `offer-staged:<path>`, `discard:<path>`, `refresh`, `settle[:seconds]`.
 	///
 	/// The pane lives in the app target, where the suite cannot reach it, and
 	/// the questions this pane turns on — does staging a folder take everything
@@ -5810,6 +5810,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				pane.setExpandedForTesting(path: argument, expanded: false, staged: false)
 			case "open":
 				pane.setExpandedForTesting(path: argument, expanded: true, staged: false)
+			// What the context menu offers over a row, and what it would ask
+			// before throwing the work away. `offer-staged` is how the other
+			// half of that decision is checked: a staged row offers nothing.
+			case "offer":
+				print(pane.discardWordingForTesting(path: argument, staged: false))
+			case "offer-staged":
+				print(pane.discardWordingForTesting(path: argument, staged: true))
+			case "discard":
+				pane.discardForTesting(path: argument)
 			// What a file being written does to the pane, on demand: what is
 			// still open and still selected afterwards is the whole question.
 			case "refresh":

@@ -683,6 +683,114 @@ final class ChangesPane: NSView {
 		}
 	}
 
+	// MARK: - Discarding
+
+	/// What a discard from the menu would take: the paths git is given, the
+	/// unstaged changes they cover, and the row it is named after.
+	///
+	/// Nil for a staged row, which is the decision this entry turned on.
+	/// `checkout --` restores the work tree *from the index*, so over a staged
+	/// change it would throw away nothing that is staged: the change would
+	/// survive, the row would not go away, and the menu would have offered to
+	/// destroy something and then not done it. `restore --staged --worktree` was
+	/// the other answer and is deliberately not this one — a file staged and
+	/// then edited again is a row in each list, and discarding it from the
+	/// staged row would also take the later edit, which is only shown in the
+	/// other list. Unstage first: that is recoverable, it is one item up the
+	/// same menu, and it puts the row where discard already is. The diff view
+	/// hides Discard Selected Lines over a staged hunk for the same reason, and
+	/// the two should not disagree about what the word means.
+	///
+	/// The selection when the click landed inside it and the clicked row
+	/// otherwise — the rule stash and every other list here follows.
+	private func discardable() -> (paths: [String], changes: [GitChange], subject: GitDiscard.Subject)? {
+		guard let clicked = clickedNode, !clicked.isStaged else { return nil }
+		return discardable(node: clicked.node)
+	}
+
+	/// The same question asked about a row by name, so that what the menu would
+	/// say can be printed without a right-click. `clickedRow` is set by the
+	/// event and by nothing else, which is what makes the split worth having.
+	private func discardable(
+		node: GitChangeNode
+	) -> (paths: [String], changes: [GitChange], subject: GitDiscard.Subject)? {
+		guard let table = unstagedTable else { return nil }
+		let selected = selectedPaths(in: table)
+		let paths = GitChangeTree.reduce(
+			selected.contains(node.path) ? selected : [node.path]
+		)
+		let changes = GitDiscard.changes(status.unstaged, under: paths)
+		guard !changes.isEmpty else { return nil }
+
+		// Never over a conflict. `git checkout -- <unmerged path>` refuses with
+		// "path is unmerged", so the entry would be one that always fails; and
+		// throwing away a half-resolved merge is a different question, with
+		// more than one right answer, that this item did not decide.
+		guard !changes.contains(where: { $0.kind == .conflicted }) else { return nil }
+
+		// One path may still be a folder standing for forty files, and it is not
+		// necessarily the row that was clicked: `reduce` drops a file whose
+		// folder is selected too, and the folder is what git is handed.
+		let subject: GitDiscard.Subject
+		if paths.count == 1, let only = unstagedSide.byPath[paths[0]] {
+			subject = only.isFolder ? .folder(only.name) : .file(only.name)
+		} else {
+			subject = .rows
+		}
+		return (paths, changes, subject)
+	}
+
+	/// How many files a discard covers, and how many of those git has never seen.
+	private func discardCounts(
+		_ target: (paths: [String], changes: [GitChange], subject: GitDiscard.Subject)
+	) -> (files: Int, untracked: Int) {
+		(target.changes.count, target.changes.filter { $0.kind == .untracked }.count)
+	}
+
+	/// Asks, and only then throws the work away.
+	///
+	/// Everything else in this menu is recoverable — a stash can be popped,
+	/// staging can be unstaged, a `.gitignore` line can be deleted. This is the
+	/// one entry with no way back, and for an untracked file there is not even a
+	/// git object left afterwards, so it is the one entry that asks.
+	@objc private func discardClicked() {
+		guard let target = discardable() else { return }
+		let counts = discardCounts(target)
+
+		let alert = NSAlert()
+		alert.messageText = GitDiscard.question(
+			subject: target.subject, files: counts.files, untracked: counts.untracked
+		)
+		alert.informativeText = GitDiscard.explanation(
+			files: counts.files, untracked: counts.untracked
+		)
+		alert.addButton(withTitle: GitDiscard.buttonTitle(
+			files: counts.files, untracked: counts.untracked
+		))
+		alert.addButton(withTitle: "Cancel")
+		alert.buttons.first?.hasDestructiveAction = true
+
+		let act: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+			guard response == .alertFirstButtonReturn else { return }
+			self?.performDiscard(target)
+		}
+		if let window {
+			alert.beginSheetModal(for: window, completionHandler: act)
+		} else {
+			act(alert.runModal())
+		}
+	}
+
+	/// What pressing the confirmation's button does.
+	private func performDiscard(
+		_ target: (paths: [String], changes: [GitChange], subject: GitDiscard.Subject)
+	) {
+		// Discarding empties rows out of the tree exactly as staging does, so
+		// the selection is given somewhere to land first.
+		rememberWhereTheSelectionGoes(in: unstagedTable, staged: false)
+		run { await GitWorkingCopy.discard(paths: target.paths, in: self.root) }
+	}
+
 	/// Return, or a double-click.
 	///
 	/// A double-click on a folder opens it, as it does in the project tree, and
@@ -866,6 +974,42 @@ final class ChangesPane: NSView {
 		if staged { unstageSelected() } else { stageSelected() }
 	}
 
+	/// What the menu would offer over a row and what the confirmation would say,
+	/// as lines.
+	///
+	/// The whole of what this entry had to decide is wording and counting, and a
+	/// screenshot of a menu cannot be asked whether the number in it is right. A
+	/// staged row answers "not offered", which is the claim that is hardest of
+	/// all to see in a picture.
+	func discardWordingForTesting(path: String, staged: Bool) -> String {
+		let side = staged ? stagedSide : unstagedSide
+		guard let node = side.byPath[path] else { return "DISCARD \(path): no such row" }
+		guard !staged, let target = discardable(node: node) else {
+			return "DISCARD \(path): not offered"
+		}
+		let (files, untracked) = discardCounts(target)
+		let subject = target.subject
+		return [
+			"DISCARD \(path)",
+			"  menu: " + GitDiscard.menuTitle(subject: subject, files: files, untracked: untracked),
+			"  asks: " + GitDiscard.question(subject: subject, files: files, untracked: untracked),
+			"  says: " + GitDiscard.explanation(files: files, untracked: untracked),
+			"  button: " + GitDiscard.buttonTitle(files: files, untracked: untracked),
+			"  git: " + target.paths.joined(separator: " "),
+		].joined(separator: "\n")
+	}
+
+	/// Goes through with a discard over a row, as pressing the confirmation's
+	/// button does. The sheet is what is skipped, and nothing else.
+	func discardForTesting(path: String) {
+		guard let node = unstagedSide.byPath[path], let target = discardable(node: node) else {
+			print("DISCARD \(path): not offered")
+			return
+		}
+		print("DISCARD \(path): " + target.paths.joined(separator: " "))
+		performDiscard(target)
+	}
+
 	/// Folds a folder shut or open, so a refresh can be asked what it did with
 	/// it — and so that reopening one by hand can be asked whether what is
 	/// inside it came back open too.
@@ -934,6 +1078,19 @@ extension ChangesPane: NSMenuDelegate {
 			#selector(stashSelected)
 		))
 		menu.addItem(item("Stash All Changes…", #selector(stashEverything)))
+		// Under stash rather than beside stage, and fenced off on its own: the
+		// recoverable version of the same wish is the line above it, which is
+		// what the confirmation goes on to name.
+		if let target = discardable() {
+			let counts = discardCounts(target)
+			menu.addItem(.separator())
+			menu.addItem(item(
+				GitDiscard.menuTitle(
+					subject: target.subject, files: counts.files, untracked: counts.untracked
+				),
+				#selector(discardClicked)
+			))
+		}
 		menu.addItem(.separator())
 		menu.addItem(item("Reveal in Finder", #selector(revealClicked)))
 		menu.addItem(item("Copy Path", #selector(copyClickedPath)))
