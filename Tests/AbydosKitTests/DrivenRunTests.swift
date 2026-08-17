@@ -146,6 +146,50 @@ struct DrivenRunTests {
 		#expect(UserDefaults.standard.persistentDomain(forName: name) == nil)
 	}
 
+	// MARK: - The session
+
+	/// The half of 0522 that would have prevented all three incidents on its
+	/// own: what a driven run shows is what it was given, so there is nothing on
+	/// screen for a typing verb to land in that somebody else put there.
+	@Test func adrivenRunRestoresNoSession() throws {
+		let root = try scratchProject()
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		let left = ProjectSession(
+			files: [ProjectSession.OpenFile(path: root.appendingPathComponent("main.swift").path)],
+			activePath: root.appendingPathComponent("main.swift").path
+		)
+		try SessionStore.write(left, in: root, driven: false)
+
+		#expect(SessionStore.read(in: root, driven: false)?.files.count == 1)
+		#expect(SessionStore.read(in: root, driven: true) == nil)
+	}
+
+	/// And it leaves nothing where it was pointed — not a session file, and for
+	/// a project that has none, not an `.abydos` folder to put one in.
+	@Test func adrivenRunWritesNoSessionAndMakesNoFolder() throws {
+		let root = try scratchProject()
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		let session = ProjectSession(
+			files: [ProjectSession.OpenFile(path: root.appendingPathComponent("main.swift").path)]
+		)
+		try SessionStore.write(session, in: root, driven: true)
+
+		#expect(!FileManager.default.fileExists(atPath: AbydosFolder.url(in: root).path))
+		#expect(SessionStore.read(in: root, driven: false) == nil)
+	}
+
+	private func scratchProject() throws -> URL {
+		let root = URL(fileURLWithPath: NSTemporaryDirectory())
+			.appendingPathComponent("abydos-0522-\(UUID().uuidString)", isDirectory: true)
+		try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+		try "print(1)\n".write(
+			to: root.appendingPathComponent("main.swift"), atomically: true, encoding: .utf8
+		)
+		return root
+	}
+
 	/// And `Settings` handed one writes into it rather than into the machine.
 	@Test func settingsOnAVolatileStoreLeavesTheMachineAlone() {
 		let volatileDefaults = VolatileDefaults(copying: ["appearance": "abydos-light"])

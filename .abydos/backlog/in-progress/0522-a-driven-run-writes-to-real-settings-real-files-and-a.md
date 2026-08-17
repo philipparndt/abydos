@@ -114,7 +114,7 @@ domain is a dictionary in memory that dies with the process and was never a file
 - [x] Decide opt-in against automatic, and write the answer down
 - [ ] A driven run's settings go to a throwaway domain, and the real one is
       untouched — proved by reading `defaults` before and after
-- [ ] A driven run does not restore a session
+- [x] A driven run does not restore a session
 - [ ] A driven run does not open a project it was not given
 - [ ] A typing verb can only reach a file the run was given
 - [ ] A driven run leaves nothing behind: no session file, no recents entry, no
