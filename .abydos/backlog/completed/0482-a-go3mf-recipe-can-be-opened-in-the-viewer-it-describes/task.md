@@ -141,7 +141,12 @@ provider (`snapshotHandle` in `makeModelView`), so every SwiftUI overlay in that
 from a capture. The cube in the attached image is the whole of what a capture can see.
 The overlay's presence is read from the code, not from a picture.
 
-### So it waits
+### So it waited — and this section is what was believed at the time
+
+**Superseded by *How the wait actually ended*, below.** Left standing rather than
+edited, for the reason the top of this item gives: being wrong in a readable way is
+how the next person avoids checking it a third time. The prediction in it is close and
+still not right.
 
 **On a GoSTL that can load a recipe.** Either it stops passing `-o` and parses the
 `output:` the recipe declares (relative to the working directory it already sets), or
@@ -218,7 +223,7 @@ to a wrong cube is worse than no door.
 - [x] A content test for a go3mf recipe, bounded — say what it reads and how much —
       or a decided, written reason for not testing at all
 - [x] Nothing that walks a tree reads a file to answer this
-- [ ] A `.yaml` that passes reaches the embedded viewer, and GoSTL does the rest
+- [x] A `.yaml` that passes reaches the embedded viewer, and GoSTL does the rest
 - [x] The option is in the two places a model's already is — the tab's preview
       control and the navigator's *Preview in GoSTL* — and nowhere else
 - [x] A recipe opens as its text and not as a model, and the difference from 0483's
@@ -226,12 +231,52 @@ to a wrong cube is worse than no door.
 - [x] What GoSTL's failure looks like from inside Abydos, including `go3mf` absent
 - [x] Watched on `~/dev/3d/other/hubelino/adapter-set.yaml` — read-only, on a copy
 - [x] Write down here what was ruled out on the way
-- [ ] A GoSTL whose `go3mf` invocation survives a recipe that names its own `output:`
-      — one commit on `abydos/openscad-command` in `~/dev/3d/gostl`, then the tag and
-      the repin that 0481 is also waiting on. Not Abydos's to write; see *So it waits*.
-- [ ] `spec/<capability>.md` says what the project now does
+- [x] A GoSTL whose `go3mf` invocation survives a recipe that names its own `output:`
+      — GoSTL 0.22.0, pinned by `60611c09`. Not the commit this step predicted; see
+      *How the wait actually ended*.
+- [x] `spec/<capability>.md` says what the project now does
 
-The third step is unticked because it does not work, not because it was not tried: the
-`.yaml` reaches the viewer and the viewer shows a test cube. The last step is unticked
-on purpose — the spec says what the project *does*, and "a recipe can be opened in the
-viewer" is not true yet. It gets written when the wait is over.
+## How the wait actually ended
+
+**Not the way this item said it would, and the difference is worth reading.** The last
+step above expected one commit on `abydos/openscad-command`, a tag and a repin — and
+guessed at the two shapes it might take: *"either it stops passing `-o` and parses the
+`output:` the recipe declares, or it builds in a temporary directory so the recipe's
+own name lands somewhere harmless — and the second is the one that also stops the
+preview from writing into the project."*
+
+GoSTL 0.22.0 did **both**, which neither branch of that guess allowed for.
+`go3mfRecipeBuildArguments` carries no `-o` at all, and `buildRecipe` sets a fresh
+temporary directory as the working directory, so the recipe's relative `output:` lands
+inside it. It then went further than this item asked: `go3mfRecipeOutputURL` returns
+nil for an `output:` that is absolute or climbs out with `..`, and `buildRecipe` throws
+a `Go3mfError.buildFailed` naming the recipe and saying nothing was written. That is a
+case this item never raised — a recipe whose `output:` points into the project from
+inside a build directory — and it is the case that would have written into the project
+anyway.
+
+The pin moved 0.20.2 → 0.21.0 → 0.22.0 while this sat in `waiting/`, and `d593dbe6`
+merged the branch on 2026-08-12. Only the bookkeeping was left: the item was never
+moved out of `waiting/` and its spec delta was never written.
+
+**The `-o` bug itself is fixed too, and it made no difference here.** `go3mf` 0.16.6
+honours `-o` for a YAML recipe; the cause was `CreatePlan` threading the flag into
+every branch except the YAML one, and `CombineCmd.Run` defaulting `""` to
+`combined.3mf` before the branch so that "no `-o`" and "`-o combined.3mf`" could not be
+told apart. GoSTL does not pass `-o` for a recipe, so it neither needed the fix nor
+notices it.
+
+What the fix *does* open is the case GoSTL currently refuses: with a working `-o`,
+a recipe whose `output:` is absolute or escapes could be built into a temporary
+directory anyway instead of being declined. That is GoSTL's call and not this item's —
+see 0531.
+
+### Verified after the fact, on 2026-08-17
+
+- `go3mf` 0.16.6 installed; `go3mf build <recipe> -o <path>` writes `<path>`, and with
+  no `-o` still writes the recipe's own `output:`.
+- GoSTL's own invocation replicated by hand on a **copy** of `adapter-set.yaml` in a
+  scratch directory: `go3mf build <recipe>` with a temporary build directory as the
+  working directory puts `adapter-set.3mf` in that directory, and the directory holding
+  the recipe is untouched afterwards. The real `~/dev/3d/other/hubelino` was read and
+  never written.

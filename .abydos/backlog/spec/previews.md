@@ -18,42 +18,31 @@ when the package above it declares an executable target that depends on Cadova
 and the file is one of that target's sources — the manifest is the only place
 that says so, and neither the extension nor the contents of the file can.
 
+**A go3mf recipe opens as its text, with the model offered rather than shown**,
+which is the one place a 3D model does not follow the rule above. Two things
+make it different from a `.scad`, and both are about cost rather than taste. A
+recipe is an *assembly*: it names a `.scad` per part, so its model is every
+part's render and then a `go3mf build` on top of them, which is the slowest
+preview this program has. And whether the file is a recipe at all was decided by
+reading the head of it — a default that starts that work off the back of a guess
+is a default that makes opening YAML feel dangerous.
+
 One place decides this for every feature that needs the answer, so the tab bar's
 control, the View menu and the editor cannot disagree about what a file is.
 
-### Scenario: an OpenSCAD file
+### Scenario: a go3mf recipe
 
-- **Given** a project containing `adapter.scad`
+- **Given** a `.yaml` whose head has a top-level `output:` and a top-level
+  `objects:`
 - **When** it is opened
-- **Then** the source is on the left and the model is beside it, and the tab
-  bar's control reads `Split Right`
+- **Then** it opens as text, and the tab bar's control offers the model beside
+  the source rather than showing it
 
-### Scenario: a Swift file that is a Cadova model
+### Scenario: the rest of a repository's YAML
 
-- **Given** a package whose manifest declares
-  `.executableTarget(name: "spike", dependencies: ["Cadova"])`
-- **When** `Sources/spike/main.swift` is opened
-- **Then** the source is on the left and the model is beside it
-
-### Scenario: a Swift file that is not
-
-- **Given** the same package
-- **When** its `Package.swift` is opened, or a file of a target that does not
-  depend on Cadova, or any `.swift` in a project with no Cadova in it
-- **Then** it opens as text, with no model half and no build
-
-### Scenario: a mesh, which has no source half
-
-- **Given** `part.stl`
+- **Given** a `.yaml` that is a CI definition, a compose file or a Helm chart
 - **When** it is opened
-- **Then** the tab is the model and nothing else, and `Source` and the two
-  splits are not offered
-
-### Scenario: markdown, which is read as well as rendered
-
-- **Given** `notes.md`
-- **When** it is opened
-- **Then** it opens as text, and the preview is there to be asked for
+- **Then** it opens as text and no model is offered at all
 
 ## Requirement: A preview nobody has looked at yet costs nothing
 
@@ -170,3 +159,31 @@ the work, and a viewer rebuilt from nothing would put the camera back.
 - **When** the model is opened
 - **Then** the pane shows what the run actually said, rather than reporting that
   no model appeared
+
+## Requirement: Rendering a recipe does not write into the project
+
+A recipe names the file it produces — `output:` is not optional, and a recipe
+without one is refused by the tool that reads it. So rendering one has somewhere
+it wants to put a `.3mf`, and that somewhere is beside the source unless
+something decides otherwise.
+
+**Showing a file never modifies what it is showing.** The render happens in a
+build directory of the viewer's own, so a recipe's `output:` lands there and the
+`.3mf` sitting next to the recipe — quite possibly one made by hand — is left
+as it is. A recipe whose `output:` names an absolute path, or climbs out with
+`..`, has no such directory that can contain it; that recipe is not rendered
+rather than rendered somewhere it was not asked to go.
+
+### Scenario: a recipe that names a file beside itself
+
+- **Given** a recipe with `output: adapter-set.3mf`, and an `adapter-set.3mf`
+  already beside it
+- **When** the model is asked for
+- **Then** the model is shown, and the file beside the recipe is untouched
+
+### Scenario: a recipe that names somewhere outside
+
+- **Given** a recipe whose `output:` is an absolute path or begins `../`
+- **When** the model is asked for
+- **Then** nothing is written and the viewer says why, rather than writing where
+  the recipe pointed
