@@ -1,50 +1,57 @@
 ## ADDED Requirements
 
-### Requirement: A reader of the palette sees one palette
+### Requirement: The palette is read and written on the main thread only
 
-Code reading the current theme SHALL observe a complete palette. It SHALL NOT be
-possible to observe a mixture of two palettes, whatever the timing of a theme change
-relative to a read.
+`Theme.current` SHALL be read and written on the main thread and nowhere else.
+Assigning one is not a single store — it is a struct of some thirty-five
+`NSColor`s and two further fields — so a reader that caught it mid-assignment
+would get a palette belonging to neither, which is the shape of the abort in
+0400: rare, unreproducible by probing the values, and invisible in the source at
+the crash site.
 
-#### Scenario: A theme changes while a view is drawing
+The audit that established this is recorded with the change. **An audit is true
+on the day it is done**, and this one is a claim about 1580 reads across 99
+files, so it SHALL be kept true by a check that runs rather than by anybody
+remembering it: a debug build SHALL record a read or a write from any other
+thread, and SHALL say so once rather than once per read.
 
-- **WHEN** the palette is replaced while drawing code is reading colours from it
-- **THEN** every colour that drawing code reads belongs to the same palette
-- **AND** no colour read is nil
+The check SHALL cost nothing in a release build.
 
-#### Scenario: A row draws during a theme switch
+#### Scenario: the app running normally
 
-- **GIVEN** the history pane is redrawing its file rows, as it does on a resize
-- **WHEN** the theme is switched at the same moment
-- **THEN** the rows draw with the old palette or the new one
-- **AND** the process does not abort in `NSAttributedString.size()`
+- **GIVEN** a debug build with a project, a terminal and the panel open
+- **WHEN** it is driven and then asked what it saw
+- **THEN** it reports that the palette was touched on the main thread only
 
-### Requirement: Who may change the palette is stated and enforced
+#### Scenario: the palette changing under everything that draws
 
-The thread on which the current theme may be assigned SHALL be defined, and an
-assignment from anywhere else SHALL be prevented — by the type system where
-possible, rather than by convention.
+- **GIVEN** the same build
+- **WHEN** the appearance is switched five times while the window redraws
+- **THEN** it still reports the main thread only
 
-#### Scenario: An assignment from the wrong thread
+#### Scenario: something reads it from elsewhere
 
-- **WHEN** code attempts to change the palette from a thread that is not permitted to
-- **THEN** it does not compile, or it fails loudly in a debug build
-- **AND** it does not silently leave a partially assigned palette behind
+- **GIVEN** a debug build in which some code reads the palette off the main
+  thread
+- **WHEN** that code runs
+- **THEN** one line naming the thread and the stack is written to standard error
+- **AND** the run's report says how many such reads and writes there were
 
-#### Scenario: A reader off the permitted thread
+### Requirement: A crash log carries what its addresses need to be read
 
-- **WHEN** code reads the palette from a thread other than the one that may write it
-- **THEN** it still observes one complete palette
+The crash log SHALL carry, beside the frames, the build it came from, the address
+the image was loaded at and the image's UUID. `callStackSymbols` resolves through
+`dladdr`, which sees exported symbols only — for an optimised Swift binary that
+is frequently a function nowhere near the crash. 0400's report named
+`showConfigurationMenu` and `stopDevPodForwards` and both were wrong; what named
+the real site was the breadcrumb the app writes before it measures text, not the
+stack. Without those the
+addresses in an old log cannot be turned into anything: ASLR puts the image
+somewhere different every launch, and the UUID is what says which dSYM answers
+for it.
 
-### Requirement: A crash in drawing names its own site
+#### Scenario: an uncaught exception
 
-A crash caught by the app's own handler SHALL record a symbolicated stack, so that
-the frame that crashed is identified rather than approximated by the nearest
-exported symbol.
-
-#### Scenario: A caught abort is symbolicated
-
-- **WHEN** the app's handler catches an abort in drawing code
-- **THEN** `~/Library/Logs/Abydos/crash.log` names the function that crashed
-- **AND** it is not necessary to guess from a nearest exported symbol, as it was for
-  `showConfigurationMenu` and `stopDevPodForwards`, which were both wrong
+- **WHEN** one is raised and the handler writes the log
+- **THEN** the log names the build, the load address, the slide and the UUID
+- **AND** it names what was last being drawn, before the frames

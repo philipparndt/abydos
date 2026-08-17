@@ -45,6 +45,22 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 				// and the row being drawn plus the font it was drawn with is
 				// what nobody has been able to read off a report yet.
 				"    \(LastDrawn.description)",
+				// **The frames below are approximate and this line is what
+				// makes them exact later.** `callStackSymbols` resolves through
+				// `dladdr`, which sees exported symbols only — for an optimised
+				// Swift binary that is frequently a function fifty lines from
+				// the crash, which is how 0400's report came to name
+				// `showConfigurationMenu` and `stopDevPodForwards`, both wrong.
+				// The real site came from the breadcrumb above, not from the
+				// stack.
+				//
+				// Every address below is `load + offset`; with the build's UUID
+				// and its load address written down, a dSYM kept beside the
+				// build turns them into file and line with `atos`. Without these
+				// two numbers the addresses in an old log are unusable, because
+				// the load address is different every run.
+				"    \(AppDelegate.buildDescription)",
+				"    \(AppDelegate.imageLocation())",
 			] + exception.callStackSymbols.map { "    \($0)" }
 			DiagnosticLog.write(lines.joined(separator: "\n"), to: "crash")
 			// And take the tools with it. This is the exit that runs no
@@ -58,6 +74,43 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			ToolProcesses.shared.terminateAll()
 			ToolContainers.shared.removeAll()
 		}
+	}
+
+	/// Where this binary was loaded and which build it is, in the form `atos`
+	/// wants.
+	///
+	/// Both numbers are needed and neither is guessable after the fact: ASLR
+	/// puts the image somewhere different every launch, so an address in
+	/// yesterday's log means nothing without the load address that went with it,
+	/// and the UUID is what says which dSYM answers for it.
+	///
+	/// Asked of dyld by image index rather than by taking the address of one of
+	/// our own functions: image 0 is the main executable by definition, where a
+	/// Swift function value is a pair and its first word is not reliably
+	/// something `dladdr` will answer about.
+	static func imageLocation() -> String {
+		guard let header = _dyld_get_image_header(0) else { return "image: unknown" }
+		let slide = _dyld_get_image_vmaddr_slide(0)
+		let uuid = imageUUID(at: UnsafeRawPointer(header)) ?? "unknown"
+		return String(
+			format: "image: loaded at 0x%llx (slide 0x%llx), uuid %@",
+			UInt(bitPattern: header), UInt(bitPattern: slide), uuid
+		)
+	}
+
+	/// The Mach-O UUID of the loaded image, read out of its own load commands.
+	private static func imageUUID(at base: UnsafeRawPointer) -> String? {
+		let header = base.assumingMemoryBound(to: mach_header_64.self)
+		var command = base.advanced(by: MemoryLayout<mach_header_64>.size)
+		for _ in 0..<header.pointee.ncmds {
+			let load = command.assumingMemoryBound(to: load_command.self)
+			if load.pointee.cmd == LC_UUID {
+				let entry = command.assumingMemoryBound(to: uuid_command.self)
+				return UUID(uuid: entry.pointee.uuid).uuidString
+			}
+			command = command.advanced(by: Int(load.pointee.cmdsize))
+		}
+		return nil
 	}
 
 	/// Whatever ends this process on purpose takes the tools with it.
@@ -1222,6 +1275,22 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 				DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
 					print("PANELADD: panes \(before) -> \(controller?.paneCountForTesting ?? 0)")
 				}
+			}
+		}
+
+		// **What the run saw of the palette.** 0400's surviving candidate was a
+		// torn read of `Theme.current`, and the audit that killed it is a claim
+		// about 1580 reads in 99 files — so every driven run says whether
+		// anything touched the palette off the main thread while it was up. A
+		// line saying it did is the hypothesis coming back to life.
+		if options.screenshotPath != nil {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
+				print("THEME: \(ThemeAccess.reportForTesting)")
+				// The two numbers a crash log needs for its addresses to mean
+				// anything a dSYM can answer about, printed here so that they
+				// are known to be right without waiting for a crash.
+				print("IMAGE: \(AppDelegate.imageLocation())")
+				fflush(stdout)
 			}
 		}
 

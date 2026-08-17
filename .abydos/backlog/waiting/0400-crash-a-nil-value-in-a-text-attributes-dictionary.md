@@ -69,3 +69,51 @@ whether anything writes it there.
 ---
 
 Previously numbered 42, 389.
+
+---
+
+## The torn palette read is ruled out (2026-08-17)
+
+The candidate list is one shorter. `Theme.current` is read on the main thread and
+written on the main thread, and nothing was found or observed doing either
+anywhere else:
+
+- **Every writer is on the main thread.** Five sites: `applicationDidFinishLaunching`,
+  the `AppleInterfaceThemeChangedNotification` observer (queue `.main`, and its
+  work deferred through `DispatchQueue.main.asyncAfter`), the launch option that
+  sets a theme, the settings-changed handler in `MainWindowController`, and the
+  appearance-walk driver verb.
+- **No view draws concurrently.** `canDrawConcurrently` appears nowhere, so every
+  `draw(_:)` is on the main thread by AppKit's own rule.
+- **The one clock that drives drawing is the main one.** The terminal's
+  `CADisplayLink` is added with `link.add(to: .main, forMode: .common)`.
+- **Every background block in the app target calls only into `AbydosKit`** —
+  discovery, `PdfPreview.open`, `ProcessPipes`, rope measurement — and hops back
+  through `DispatchQueue.main.async` before touching a view. `AbydosKit` cannot
+  see `Theme` at all; it is in `AbydosApp`.
+- **The `Task` closures that are not `@MainActor`** — the diagram renderers —
+  were read through: they render, they cache, and none of them reads the palette.
+
+Then observed rather than only argued. A debug build now records any read or
+write of the palette from another thread, and two driven runs against a
+scratchpad project — one with the terminal, the panel and the backlog open, one
+switching the appearance five times over while the whole window redrew — both
+reported *"palette touched on the main thread only"*.
+
+That check stays in the tree. The audit above is a claim about 1580 reads across
+99 files and it is true on the day it was made; the next person to write one of
+those will not have read this.
+
+**So the crash is still unexplained, and this is a result rather than a
+failure.** What is left of the list: whatever `TAttributes::ApplyFont` resolved
+our font to, which is where the nil actually is. `Theme.uiFont` hands AppKit
+`.systemFont(ofSize: size * scale, weight:)` and nothing else, and sizes are
+clamped to 7.5–23, so the next place to look is what happens to that font
+between our call and CoreText — a cascade resolved against a font that has gone
+away is the obvious next candidate, and `FontRegistry.registerBundledFonts`
+runs before any of this.
+
+Also done while here, so the next report costs less: the crash log now carries
+the build, the image's load address, its slide and its UUID. Without those the
+addresses in an old log cannot be turned into file and line by any dSYM, because
+ASLR moves the image every launch.
