@@ -32,8 +32,10 @@ The file is watched even though it never loaded, so the message is a promise the
 program keeps: repair the source and the model appears where the message was.
 
 This is the embedded viewer's own behaviour, which this project pins rather than
-writes; the Cadova pane below reaches the same answer from this project's own
-code, and they agree on purpose.
+writes. The Cadova pane reaches the same answer from this project's own code —
+the model goes and the compiler's message takes its place — and the two agree on
+purpose: which half of the program draws a pane is not a thing anybody looking at
+one should be able to tell from how a failure reads.
 
 ### Scenario: a `.scad` that does not compile
 
