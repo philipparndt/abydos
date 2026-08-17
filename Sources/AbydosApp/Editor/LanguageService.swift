@@ -919,6 +919,68 @@ final class LanguageService {
 		}
 	}
 
+	/// The characters this project's server for a language wants to be asked on.
+	///
+	/// Nothing where no server is running, which is the same as "ask on words
+	/// only" and is what a `.scad` gets: openscad-lsp names none. Cheap on
+	/// purpose — this is read on the keystroke, before anything is scheduled, so
+	/// it is two dictionary lookups and a set that was built at the handshake.
+	func completionTriggers(languageId: String, project: URL) -> Set<String> {
+		guard let server = servers[key(project: project, languageId: languageId)] else { return [] }
+		return server.client.completionTriggerCharacters
+	}
+
+	/// Whether this project's server for a language answers signature help.
+	func offersSignatureHelp(languageId: String, project: URL) -> Bool {
+		guard let server = servers[key(project: project, languageId: languageId)] else { return false }
+		return server.client.offersSignatureHelp
+	}
+
+	/// The characters that mean "ask about this call again".
+	///
+	/// Empty for a server with no signature help, which is what keeps
+	/// openscad-lsp from ever being sent a request it does not answer.
+	func signatureTriggers(languageId: String, project: URL) -> Set<String> {
+		guard let server = servers[key(project: project, languageId: languageId)] else { return [] }
+		return server.client.signatureHelpTriggerCharacters
+	}
+
+	/// Whether the server that would answer for this file is still getting ready.
+	///
+	/// The difference between "this language has nothing to offer here" and "ask
+	/// again in a minute", which the completion list had no way of telling apart:
+	/// measured against a Cadova package, sourcekit-lsp answered 0 items with no
+	/// error at 1, 11, 32 and 62 seconds after the file was opened, and the
+	/// enum cases somebody was waiting for at 123 — after an index build of 651
+	/// files. What the list showed in that window was the words already in the
+	/// file, which looks like an answer.
+	func isPreparing(languageId: String, project: URL) -> Bool {
+		preparing.contains(key(project: project, languageId: languageId))
+	}
+
+	func signatureHelp(
+		url: URL,
+		position: LSPPosition,
+		languageId: String,
+		project: URL
+	) async -> LSPSignatureHelp? {
+		guard let (key, server) = ready(languageId, project: project, for: "signatureHelp") else { return nil }
+		// **Never sent to a server that did not claim it.** openscad-lsp
+		// advertises no `signatureHelpProvider`, and driven anyway it sends no
+		// reply of any kind — not an error, nothing — so the request sits until
+		// its timeout. A capability nobody claimed is a question nobody asks.
+		guard server.client.offersSignatureHelp else { return nil }
+		do {
+			let help = try await server.client.signatureHelp(uri: uri(for: url), position: position)
+			if help != nil { answered(withContent: true, for: key) }
+			return help
+		} catch {
+			note(error, asked: "signatureHelp", of: server, about: url)
+			answered(withContent: false, for: key)
+			return nil
+		}
+	}
+
 	/// Symbols anywhere in the project, from whichever servers are running.
 	///
 	/// Every language at once, because "where is that thing called X" does not
@@ -2460,6 +2522,10 @@ final class LanguageService {
 			if isPreparing { self.preparing.insert(key) } else { self.preparing.remove(key) }
 			self.log("\(resolved.definition.command) "
 				+ (isPreparing ? "is preparing this project" : "has finished preparing"))
+			// The same notification the footer's chip is drawn from, and now also
+			// what makes a completion list saying "still preparing" ask again:
+			// it is posted the moment preparing stops, so nothing polls and
+			// nothing sets a timer.
 			NotificationCenter.default.post(name: .ideaiLanguageServersChanged, object: nil)
 		}
 		client.onStandardError = { [weak self] text in

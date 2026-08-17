@@ -9479,15 +9479,28 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		editor.simulateTyping(text)
 		DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
 			guard let self else { return }
+			defer { fflush(stdout) }
 			print("COMPLETE: \(self.editor.completionReportForTesting)")
+			// What the server said about the item that is highlighted, which is
+			// the half that used to be parsed and thrown away.
+			print("COMPLETE doc: \(self.editor.completionDocumentationForTesting)")
 
 			self.editor.writeCompletionImageForTesting(to: "build/completion-list.png")
 
 			// Down once, then take it, so what lands in the document is the
 			// second suggestion rather than whatever was highlighted first.
 			self.editor.moveCompletionSelectionForTesting(by: 1)
+			print("COMPLETE doc after ↓: \(self.editor.completionDocumentationForTesting)")
 			let committed = self.editor.commitCompletionForTesting()
 			print("COMMIT: \(committed) → \(self.editor.caretReportForTesting)")
+
+			// **The moment the change is about.** The list has gone and the
+			// first stop is selected: this is where somebody asks what it takes.
+			print("HINT: \(self.editor.parameterHintForTesting)")
+			self.editor.simulateTab()
+			print("HINT after tab: \(self.editor.parameterHintForTesting)")
+			self.editor.simulateEscape()
+			print("HINT after escape: \(self.editor.parameterHintForTesting)")
 		}
 	}
 

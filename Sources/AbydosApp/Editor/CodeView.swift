@@ -62,8 +62,33 @@ final class CodeView: NSView, NSTextInputClient {
 	var onFixWithAI: ((_ line: Int, _ diagnostic: LSPDiagnostic) -> Void)?
 	/// Asked to watch what is selected while debugging.
 	var onWatch: ((_ expression: String) -> Void)?
-	/// The text changed and the caret is in a word: offer completions for it.
-	var onRequestCompletions: ((_ prefix: String, _ caret: NSPoint) -> Void)?
+	/// The text changed and the caret is in a word — or on a character the
+	/// server asked to be woken by: offer completions for it.
+	var onRequestCompletions: ((_ prefix: String, _ wasTriggered: Bool, _ caret: NSPoint) -> Void)?
+	/// The characters this file's server wants to be asked on, over and above a
+	/// word being typed.
+	///
+	/// Held here rather than asked for, because this is decided on the keystroke
+	/// and `LanguageService` is a lookup away from a view that should not be
+	/// reaching for it. Empty until a server is running, which is the same as
+	/// "ask on words only".
+	var completionTriggerCharacters: Set<Character> = []
+	/// And the ones it wants to be asked about the *call* on — `(` and `[` to
+	/// begin with, `,` and `:` to ask again as the arguments go in.
+	///
+	/// Empty for a server with no signature help, which is how openscad-lsp is
+	/// never sent a request it does not answer.
+	var signatureTriggerCharacters: Set<Character> = []
+	/// One of those was typed: ask what call the caret is in now.
+	var onRequestSignatureHelp: (() -> Void)?
+	/// The stop being filled in changed — its default text, or nothing when the
+	/// session has ended.
+	///
+	/// The name is what the snippet called it: `${1:size}` is `size`, which is
+	/// the heading a server's prose has for that parameter. Captured when the
+	/// text goes in, because by the time somebody has typed over it the default
+	/// is gone and the name with it.
+	var onSnippetStopChanged: ((_ name: String?) -> Void)?
 	/// A key the completion list wants first. Returns true if it took it.
 	var completionKeyHandler: ((Selector) -> Bool)?
 	/// Nothing to complete any more.
@@ -2415,6 +2440,7 @@ final class CodeView: NSView, NSTextInputClient {
 			// Escape is how somebody says they have finished with the stops and
 			// wants Tab back. Nothing else here answers to it.
 			snippetSession = nil
+			reportSnippetStop()
 		case #selector(selectAll(_:)):           selectAllText()
 		case #selector(insertLineBreak(_:)):     insertTextAtCaret("\n")
 		// ⌃O, which macOS sends as this selector and then `moveBackward:` —
@@ -2893,20 +2919,37 @@ final class CodeView: NSView, NSTextInputClient {
 
 	/// Offers completions for whatever word the caret is now in.
 	///
-	/// Only after typing something a word can be made of. A newline, a bracket
+	/// Only after typing something a word can be made of — a newline, a bracket
 	/// or a space ends the word rather than continuing it, and a list that
-	/// stayed up through those would be in the way of the next thing typed.
+	/// stayed up through those would be in the way of the next thing typed — or
+	/// after one of the characters the server asked to be woken by.
+	///
+	/// **The second half is why an enum case could never be offered.** The
+	/// caret after a `.` is in no word at all, so what a word-shaped rule can
+	/// say about it is nothing, and `.` is exactly where every Swift enum case
+	/// belongs. sourcekit-lsp names `.` and `(` at the handshake; openscad-lsp
+	/// names none, so a `.scad` is unchanged by this.
 	private func requestCompletionsIfTyping(_ typed: String) {
 		guard let document else { return }
-		guard typed.count == 1, let character = typed.first,
-		      character.isLetter || character.isNumber || character == "_" || character == "."
-		else {
+		guard typed.count == 1, let character = typed.first else {
+			onDismissCompletions?()
+			return
+		}
+
+		// `(`, `[`, `,` and `:` are how a server says "ask me about this call
+		// again". Independent of the completion list — the two questions are
+		// asked at different moments and one is not the other's fallback.
+		if signatureTriggerCharacters.contains(character) { onRequestSignatureHelp?() }
+
+		let isTrigger = completionTriggerCharacters.contains(character)
+		let continuesAWord = character.isLetter || character.isNumber || character == "_"
+		guard isTrigger || continuesAWord else {
 			onDismissCompletions?()
 			return
 		}
 
 		let prefix = currentWordPrefix()
-		guard !prefix.isEmpty || character == "." else {
+		guard isTrigger || !prefix.isEmpty else {
 			onDismissCompletions?()
 			return
 		}
@@ -2915,7 +2958,7 @@ final class CodeView: NSView, NSTextInputClient {
 			onDismissCompletions?()
 			return
 		}
-		onRequestCompletions?(prefix, point)
+		onRequestCompletions?(prefix, isTrigger, point)
 		_ = document
 	}
 
@@ -2951,9 +2994,34 @@ final class CodeView: NSView, NSTextInputClient {
 			afterEdit(caret: newCaret)
 		}
 
-		guard let session = SnippetSession(snippet, insertedAt: start) else { return }
+		guard let session = SnippetSession(snippet, insertedAt: start) else {
+			snippetStopNames = []
+			reportSnippetStop()
+			return
+		}
+		// The defaults, in the order Tab visits them, read out of the text that
+		// was just inserted rather than out of the document — which is the same
+		// string now and will not be in a moment.
+		let units = Array(snippet.text.utf16)
+		snippetStopNames = snippet.stops.map { stop in
+			let range = stop.range.clamped(to: 0..<units.count)
+			return String(decoding: units[range], as: UTF16.self)
+		}
 		snippetSession = session
 		select(session.current)
+		reportSnippetStop()
+	}
+
+	/// The default text of each stop, in the order Tab visits them.
+	private var snippetStopNames: [String] = []
+
+	/// Says which stop is being filled in now, or that none is.
+	private func reportSnippetStop() {
+		guard let session = snippetSession, snippetStopNames.indices.contains(session.index) else {
+			onSnippetStopChanged?(nil)
+			return
+		}
+		onSnippetStopChanged?(snippetStopNames[session.index])
 	}
 
 	// MARK: - Snippet stops
@@ -2985,6 +3053,10 @@ final class CodeView: NSView, NSTextInputClient {
 		snippetSession = session.edited(replacing: range, insertedLength: insertedLength)
 			? session
 			: nil
+		// The hint goes with the session: an edit away from the stops ends it,
+		// and a strip still naming a parameter nobody is filling in any more is
+		// worse than no strip.
+		if snippetSession == nil { reportSnippetStop() }
 	}
 
 	/// Tab and ⇧Tab while a snippet is being filled in. Says whether it took
@@ -2996,6 +3068,7 @@ final class CodeView: NSView, NSTextInputClient {
 		// line, not stepping through a snippet they have visibly left.
 		guard session.covers(caret: caret) else {
 			snippetSession = nil
+			reportSnippetStop()
 			return false
 		}
 
@@ -3004,11 +3077,15 @@ final class CodeView: NSView, NSTextInputClient {
 			// first stop stays put. Both eat the key, because the alternative
 			// at either end is a tab character in the middle of a call
 			// somebody has just filled in.
-			if direction > 0 { snippetSession = nil }
+			if direction > 0 {
+				snippetSession = nil
+				reportSnippetStop()
+			}
 			return true
 		}
 		snippetSession = session
 		select(range)
+		reportSnippetStop()
 		return true
 	}
 

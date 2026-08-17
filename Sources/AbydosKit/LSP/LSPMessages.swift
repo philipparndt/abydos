@@ -298,11 +298,152 @@ public struct LSPSymbol: Equatable, Sendable {
 	}
 }
 
+/// What a server says about the call the caret is inside.
+///
+/// The answer to "what goes here" for a language whose server has it — driven
+/// against sourcekit-lsp, `extruded(height: Double, topEdge: EdgeProfile) -> any
+/// Geometry3D` with `activeParameter: 1` and the parameter at characters 25 to 45
+/// of that label. Nothing here reformats the signature: the server wrote it, and
+/// the offsets it sends index the string it sent.
+public struct LSPSignatureHelp: Equatable, Sendable {
+	public struct Parameter: Equatable, Sendable {
+		/// Where this parameter is in the signature's label.
+		///
+		/// The protocol allows a parameter to name itself with a *string*
+		/// instead, which then has to be found in the label — and finding it
+		/// means matching the first occurrence, which for `f(a: Int, b: Int)`
+		/// picks the wrong `Int`. Both shapes are read; where the server sent a
+		/// string this is the first range that matches it, and nothing at all
+		/// if it does not appear.
+		public var range: Range<Int>?
+		public var documentation: String?
+
+		public init(range: Range<Int>?, documentation: String? = nil) {
+			self.range = range
+			self.documentation = documentation
+		}
+	}
+
+	public struct Signature: Equatable, Sendable {
+		public var label: String
+		public var documentation: String?
+		public var parameters: [Parameter]
+		/// Which parameter of *this* signature is being filled in, where the
+		/// server said so per-signature rather than once for the whole reply.
+		public var activeParameter: Int?
+
+		public init(
+			label: String,
+			documentation: String? = nil,
+			parameters: [Parameter] = [],
+			activeParameter: Int? = nil
+		) {
+			self.label = label
+			self.documentation = documentation
+			self.parameters = parameters
+			self.activeParameter = activeParameter
+		}
+	}
+
+	public var signatures: [Signature]
+	public var activeSignature: Int
+	public var activeParameter: Int?
+
+	public init(signatures: [Signature], activeSignature: Int = 0, activeParameter: Int? = nil) {
+		self.signatures = signatures
+		self.activeSignature = activeSignature
+		self.activeParameter = activeParameter
+	}
+
+	/// The one signature worth drawing, and which of its parameters is being
+	/// typed into.
+	///
+	/// The per-signature `activeParameter` wins over the reply's, which is what
+	/// the protocol says and what sourcekit-lsp relies on — it sends several
+	/// overloads at once, each with its own active parameter, and nothing at the
+	/// top level.
+	public var active: (signature: Signature, parameter: Parameter?)? {
+		guard signatures.indices.contains(activeSignature) else { return nil }
+		let signature = signatures[activeSignature]
+		guard let index = signature.activeParameter ?? activeParameter,
+		      signature.parameters.indices.contains(index)
+		else { return (signature, nil) }
+		return (signature, signature.parameters[index])
+	}
+
+	public init?(json: Any?) {
+		guard let dictionary = json as? [String: Any],
+		      let array = dictionary["signatures"] as? [Any]
+		else { return nil }
+
+		let signatures: [Signature] = array.compactMap { entry in
+			guard let item = entry as? [String: Any],
+			      let label = item["label"] as? String
+			else { return nil }
+
+			let parameters = (item["parameters"] as? [Any] ?? []).map { parameter -> Parameter in
+				let fields = parameter as? [String: Any]
+				let documentation = LSPHover.text(from: fields?["documentation"])
+				return Parameter(
+					range: Self.range(of: fields?["label"], in: label),
+					documentation: documentation.isEmpty ? nil : documentation
+				)
+			}
+
+			let documentation = LSPHover.text(from: item["documentation"])
+			return Signature(
+				label: label,
+				documentation: documentation.isEmpty ? nil : documentation,
+				parameters: parameters,
+				activeParameter: item["activeParameter"] as? Int
+			)
+		}
+
+		guard !signatures.isEmpty else { return nil }
+		self.init(
+			signatures: signatures,
+			activeSignature: dictionary["activeSignature"] as? Int ?? 0,
+			activeParameter: dictionary["activeParameter"] as? Int
+		)
+	}
+
+	/// Where a parameter is in the signature, from either shape the protocol
+	/// allows.
+	static func range(of label: Any?, in signature: String) -> Range<Int>? {
+		if let offsets = label as? [Any], offsets.count == 2,
+		   let start = offsets[0] as? Int, let end = offsets[1] as? Int, start <= end {
+			let length = signature.utf16.count
+			guard start <= length else { return nil }
+			return start..<min(end, length)
+		}
+		guard let text = label as? String, !text.isEmpty else { return nil }
+		let units = Array(signature.utf16)
+		let needle = Array(text.utf16)
+		guard needle.count <= units.count else { return nil }
+		for start in 0...(units.count - needle.count) where Array(units[start..<(start + needle.count)]) == needle {
+			return start..<(start + needle.count)
+		}
+		return nil
+	}
+}
+
 /// A completion a server offers.
 public struct LSPCompletion: Equatable, Sendable {
 	public var label: String
 	/// What to insert, which is not always what is shown.
 	public var insertText: String
+	/// What the typed word should be matched against, which is a third thing
+	/// again.
+	///
+	/// **Neither server driven here labels an item with its name.** openscad-lsp
+	/// sends `label: "cube(size, center=false)"` with `filterText: "cube"`, and
+	/// sourcekit-lsp sends whole signatures — `withUnsafeCurrentTask(body:
+	/// (UnsafeCurrentTask?) throws -> T) rethrows` with `filterText:
+	/// "withUnsafeCurrentTask(body:)"`. Matching on the label keeps the items
+	/// whose signature happens to start with the typed word and silently drops
+	/// the rest, which is why a Swift completion list was so much shorter than
+	/// the server's answer.
+	public var filterText: String?
 	public var detail: String?
 	public var documentation: String?
 	public var kind: Int?
@@ -318,6 +459,7 @@ public struct LSPCompletion: Equatable, Sendable {
 	public init(
 		label: String,
 		insertText: String? = nil,
+		filterText: String? = nil,
 		detail: String? = nil,
 		documentation: String? = nil,
 		kind: Int? = nil,
@@ -327,11 +469,16 @@ public struct LSPCompletion: Equatable, Sendable {
 		self.isSnippet = isSnippet
 		self.label = label
 		self.insertText = insertText ?? label
+		self.filterText = filterText
 		self.detail = detail
 		self.documentation = documentation
 		self.kind = kind
 		self.sortText = sortText
 	}
+
+	/// What the typed word is matched against: what the server asked for, or
+	/// the label when it asked for nothing.
+	public var matchText: String { filterText ?? label }
 
 	public init?(json: Any?) {
 		guard let dictionary = json as? [String: Any],
@@ -341,11 +488,17 @@ public struct LSPCompletion: Equatable, Sendable {
 		// A textEdit says exactly what to put in and wins over insertText,
 		// which is a hint the server may not have thought hard about.
 		let edit = (dictionary["textEdit"] as? [String: Any])?["newText"] as? String
+		// Empty is nothing, not an empty document: the panel beside the list is
+		// drawn only where there is something to put in it, and an empty string
+		// would open a blank one — which reads as "there is nothing to know
+		// about this" rather than as "the server said nothing".
+		let documentation = LSPHover.text(from: dictionary["documentation"])
 		self.init(
 			label: label,
 			insertText: edit ?? dictionary["insertText"] as? String ?? label,
+			filterText: dictionary["filterText"] as? String,
 			detail: dictionary["detail"] as? String,
-			documentation: LSPHover.text(from: dictionary["documentation"]),
+			documentation: documentation.isEmpty ? nil : documentation,
 			kind: dictionary["kind"] as? Int,
 			sortText: dictionary["sortText"] as? String,
 			isSnippet: (dictionary["insertTextFormat"] as? Int) == 2

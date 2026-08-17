@@ -121,6 +121,10 @@ final class EditorViewController: NSViewController {
 	/// be typing at a time.
 	private let completions = CompletionPopup()
 	private var completionWork: DispatchWorkItem?
+	/// What the parameter under the caret takes, said above the line. Shared by
+	/// every tab for the same reason the list is.
+	private let parameterHint = ParameterHintStrip()
+	private var signatureWork: DispatchWorkItem?
 	/// How much of the word the visible list was built for, so committing one
 	/// replaces exactly what was typed.
 	private var completionPrefixLength = 0
@@ -732,6 +736,14 @@ final class EditorViewController: NSViewController {
 
 	@objc private func languageServersChanged() {
 		refreshServerState()
+		// A server that has only just finished the handshake is the usual case
+		// here: the first keystrokes in a file are typed before it is up, and a
+		// trigger set read at that point is empty for the life of the tab.
+		for tab in tabs { refreshCompletionTriggers(for: tab) }
+		// And a list that said "still preparing" now has something to ask for.
+		// This notification is posted the moment preparing stops — 0501's chip
+		// is drawn from the same one — so nothing here polls or waits.
+		reaskIfWaitingOnAServer()
 	}
 
 	/// What the strip above the file and the chip beside the caret should both
@@ -1281,12 +1293,20 @@ final class EditorViewController: NSViewController {
 		codeView.onFixWithAI = { [weak self] line, diagnostic in
 			self?.onFixWithAI?(tab.url, line, diagnostic)
 		}
-		codeView.onRequestCompletions = { [weak self] prefix, _ in
-			self?.scheduleCompletions(for: tab, prefix: prefix)
+		codeView.onRequestCompletions = { [weak self] prefix, wasTriggered, _ in
+			self?.scheduleCompletions(for: tab, prefix: prefix, wasTriggered: wasTriggered)
 		}
 		codeView.onDismissCompletions = { [weak self] in
 			self?.completionWork?.cancel()
 			self?.completions.hide()
+		}
+		codeView.onSnippetStopChanged = { [weak self, weak tab] name in
+			guard let self, let tab else { return }
+			self.hintForSnippetStop(name, in: tab)
+		}
+		codeView.onRequestSignatureHelp = { [weak self, weak tab] in
+			guard let self, let tab else { return }
+			self.askForSignatureHelp(in: tab)
 		}
 		codeView.completionKeyHandler = { [weak self] selector in
 			self?.handleCompletionKey(selector) ?? false
@@ -1304,6 +1324,7 @@ final class EditorViewController: NSViewController {
 				url: fileURL, languageId: languageId, text: text(of: document), project: project.scopeRoot
 			)
 			codeView.setDiagnostics(LanguageService.shared.diagnostics(for: fileURL))
+			refreshCompletionTriggers(for: tab)
 		}
 
 		// A file whose rendered form is the point of it does not open as text:
@@ -1394,6 +1415,9 @@ final class EditorViewController: NSViewController {
 			guard let self, let tab, let document = tab.document,
 			      let project = self.project, let languageId = document.languageId
 			else { return }
+			// Nothing is waiting to be sent once this has run, which is what
+			// `showCompletions` reads to decide whether it has to send it first.
+			self.languageSyncWork = nil
 			let url = tab.url
 			let root = project.scopeRoot
 			withText(of: document) { text in
@@ -1404,6 +1428,44 @@ final class EditorViewController: NSViewController {
 		}
 		languageSyncWork = work
 		DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+	}
+
+	/// Sends what is waiting, now, and does not come back until it has gone.
+	///
+	/// **A question about text the server has not been told about is answered
+	/// about different text.** The sync is debounced at 0.4 s and a completion
+	/// at 0.15 s, so every list was asked for against a document one or two
+	/// keystrokes stale. With a word prefix that mostly went unnoticed — the
+	/// server answered about the same identifier a moment earlier and the
+	/// answer looked right. Driven against a Swift package it was unmissable:
+	/// `Corner.` typed at the end of a file asked about a position past the end
+	/// of the file the server held, and sourcekit-lsp answered with a *global*
+	/// list — `LazyMapCollection`, `LazyFilterSequence` — where the four cases
+	/// of the enum were what had been asked for.
+	///
+	/// The decode still happens off the main thread; what is new is waiting for
+	/// it. That costs one decode per list rather than one per 0.4 s of typing,
+	/// which is the price of the answer being about the right text.
+	private func syncTextNow(for tab: Tab) async {
+		guard languageSyncWork != nil else { return }
+		languageSyncWork?.cancel()
+		languageSyncWork = nil
+
+		guard let document = tab.document, let project, let languageId = document.languageId
+		else { return }
+		let url = tab.url
+		let root = project.scopeRoot
+		let snapshot = document.rope
+
+		let text = await withCheckedContinuation { continuation in
+			EditorViewController.languageTextQueue.async {
+				continuation.resume(returning: snapshot.string(in: 0..<snapshot.byteCount))
+			}
+		}
+		// Ordering is the whole point and it is the wire that provides it: this
+		// notification and the request that follows go down the same pipe, so
+		// the server has read the change before it reads the question.
+		LanguageService.shared.changed(url: url, languageId: languageId, text: text, project: root)
 	}
 
 	// MARK: - History
@@ -1431,6 +1493,21 @@ final class EditorViewController: NSViewController {
 		guard let codeView = activeTab?.codeView else { return }
 		view.window?.makeFirstResponder(codeView)
 		codeView.doCommand(by: #selector(NSResponder.insertNewline(_:)))
+	}
+
+	/// Tab, which steps to the next snippet stop while a session is live and
+	/// indents the rest of the time.
+	func simulateTab() {
+		guard let codeView = activeTab?.codeView else { return }
+		view.window?.makeFirstResponder(codeView)
+		codeView.doCommand(by: #selector(NSResponder.insertTab(_:)))
+	}
+
+	/// Escape, which is how somebody says they have finished with the stops.
+	func simulateEscape() {
+		guard let codeView = activeTab?.codeView else { return }
+		view.window?.makeFirstResponder(codeView)
+		codeView.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
 	}
 
 	/// Takes a completion the way the list does, then works the keys, saying
@@ -1543,9 +1620,15 @@ final class EditorViewController: NSViewController {
 	/// Debounced, and never on the first character of a word: a list offered
 	/// after one letter is mostly noise, and asking a language server on every
 	/// keystroke is asking it to answer about text nobody has finished writing.
-	private func scheduleCompletions(for tab: Tab, prefix: String) {
+	///
+	/// **A trigger character skips the two-letter rule and nothing else.** The
+	/// caret after a `.` is in no word, so waiting for a second letter means
+	/// waiting for something that will never come — but the debounce still
+	/// applies, so `.centerX` typed at speed is one request for where the
+	/// typing stopped rather than seven.
+	private func scheduleCompletions(for tab: Tab, prefix: String, wasTriggered: Bool = false) {
 		completionWork?.cancel()
-		guard prefix.count >= 2 else {
+		guard wasTriggered || prefix.count >= 2 else {
 			completions.hide()
 			return
 		}
@@ -1558,6 +1641,138 @@ final class EditorViewController: NSViewController {
 		DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
 	}
 
+	/// Asks again for a list that was told to wait.
+	///
+	/// Only where the popup is showing the sentence: every other list on screen
+	/// is already an answer, and re-asking for one on every server notification
+	/// would be a request per start, stop and reconsideration in the window.
+	private func reaskIfWaitingOnAServer() {
+		guard completions.isWaitingOnAServer, let tab = activeTab, let codeView = tab.codeView
+		else { return }
+		let prefix = codeView.currentWordPrefix()
+		Task { @MainActor in await self.showCompletions(for: tab, prefix: prefix) }
+	}
+
+	/// Tells a tab's view what its server wants to be woken by.
+	///
+	/// Asked again when a server finishes starting, because the first keystrokes
+	/// in a file are usually typed before it has finished the handshake — and a
+	/// trigger set read once, too early, is empty for the life of the tab.
+	private func refreshCompletionTriggers(for tab: Tab) {
+		guard let codeView = tab.codeView, let project, let languageId = tab.document?.languageId
+		else { return }
+		let root = project.scopeRoot
+		let completion = LanguageService.shared.completionTriggers(languageId: languageId, project: root)
+		codeView.completionTriggerCharacters = Set(completion.compactMap { $0.first })
+		let signature = LanguageService.shared.signatureTriggers(languageId: languageId, project: root)
+		codeView.signatureTriggerCharacters = Set(signature.compactMap { $0.first })
+	}
+
+	// MARK: - What is being filled in
+
+	/// The prose of the completion that was last taken, for as long as its stops
+	/// are being stepped through.
+	///
+	/// Kept because it is the only thing that knows what the parameters are for
+	/// a server with no signature help. openscad-lsp advertises none, and the
+	/// 1530 characters it sends with `cube` are where "a single value, or a
+	/// three-value array" is written down.
+	private var takenDocumentation: String?
+
+	/// Says what the stop now being filled in takes, or takes the strip away.
+	private func hintForSnippetStop(_ name: String?, in tab: Tab) {
+		guard let name, let codeView = tab.codeView else {
+			parameterHint.hide()
+			takenDocumentation = nil
+			return
+		}
+
+		// Where the server has signature help, that is the better answer — it
+		// knows the whole call rather than one paragraph — and asking is worth
+		// a round trip because the stop has only just been arrived at.
+		if let project, let languageId = tab.document?.languageId,
+		   LanguageService.shared.offersSignatureHelp(languageId: languageId, project: project.scopeRoot) {
+			askForSignatureHelp(in: tab)
+			return
+		}
+
+		// **Exact, or nothing.** A near match would put a neighbouring
+		// parameter's type under the caret, and a wrong answer here is worse
+		// than none because it will be believed.
+		guard let prose = takenDocumentation,
+		      let description = ServerDocumentation.description(ofParameter: name, in: prose),
+		      let point = codeView.caretScreenPoint()
+		else {
+			parameterHint.hide()
+			return
+		}
+
+		let text = "\(name) — \(description)"
+		let name16 = name.utf16.count
+		parameterHint.show(text, emphasising: 0..<name16, above: point, parent: view.window)
+	}
+
+	/// Asks the server what call the caret is in, and says so above the line.
+	///
+	/// **Debounced like the completion list, and for a stronger reason.** The
+	/// characters this fires on are `(`, `[`, `,` and `:` — sourcekit-lsp's own
+	/// retrigger set — so an argument list typed at speed would otherwise be one
+	/// request per comma. One request for where the typing stopped instead.
+	///
+	/// What one costs, measured against sourcekit-lsp on a warm file: 104 ms for
+	/// the first and 1 ms for the five after it. So the debounce is not there to
+	/// protect the server — it is cheap once it has answered about a file — but
+	/// to stop a request going out for a call nobody has finished typing, whose
+	/// answer would arrive and be replaced.
+	///
+	/// Nothing is sent at all to a server that did not claim the capability;
+	/// openscad-lsp is never asked, which is what keeps a `.scad` from waiting
+	/// on a reply that never comes.
+	private func askForSignatureHelp(in tab: Tab) {
+		signatureWork?.cancel()
+		let work = DispatchWorkItem { [weak self, weak tab] in
+			guard let self, let tab else { return }
+			Task { @MainActor in await self.showSignatureHelp(for: tab) }
+		}
+		signatureWork = work
+		DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
+	}
+
+	@MainActor
+	private func showSignatureHelp(for tab: Tab) async {
+		guard activeTab === tab, let codeView = tab.codeView, let document = tab.document,
+		      let project, let languageId = document.languageId
+		else { return }
+
+		// The same reason as the completion list: a call the server has not been
+		// told about is a call it answers about the version before it.
+		await syncTextNow(for: tab)
+		guard activeTab === tab else { return }
+
+		let line = document.rope.line(atByteOffset: document.rope.byteOffset(fromUTF16: codeView.caretOffset))
+		let lineStart = document.rope.utf16Offset(fromByte: document.rope.byteOffset(ofLine: line))
+		let character = codeView.caretOffset - lineStart
+
+		let help = await LanguageService.shared.signatureHelp(
+			url: tab.url,
+			position: LSPPosition(line: line, character: character),
+			languageId: languageId,
+			project: project.scopeRoot
+		)
+
+		guard activeTab === tab, let active = help?.active, let point = codeView.caretScreenPoint()
+		else {
+			parameterHint.hide()
+			return
+		}
+		parameterHint.show(
+			active.signature.label,
+			emphasising: active.parameter?.range,
+			above: point,
+			parent: view.window
+		)
+	}
+
 	@MainActor
 	private func showCompletions(for tab: Tab, prefix: String) async {
 		guard activeTab === tab, let codeView = tab.codeView, let document = tab.document else { return }
@@ -1567,6 +1782,10 @@ final class EditorViewController: NSViewController {
 
 		var items: [CompletionItem] = []
 		if let project, let languageId = document.languageId {
+			// Before the question, so it is asked about the text on screen.
+			await syncTextNow(for: tab)
+			guard activeTab === tab, codeView.currentWordPrefix() == prefix else { return }
+
 			let line = document.rope.line(atByteOffset: document.rope.byteOffset(fromUTF16: codeView.caretOffset))
 			let lineStart = document.rope.utf16Offset(fromByte: document.rope.byteOffset(ofLine: line))
 			let character = codeView.caretOffset - lineStart
@@ -1579,10 +1798,37 @@ final class EditorViewController: NSViewController {
 			)
 			// A server answers about types and scope; the words in the file
 			// cannot, so anything it says is worth more than anything they do.
+			//
+			// Matched on `matchText` — the server's own `filterText` where it
+			// sent one — rather than on the label. Neither server driven here
+			// labels an item with its name: openscad-lsp's `cube` is labelled
+			// `cube(size, center=false)`, which starts with the word by luck,
+			// and sourcekit-lsp labels a function with its whole signature, so
+			// the label filter threw away most of a Swift answer.
+			let typed = prefix.lowercased()
 			items = fromServer
-				.filter { $0.label.lowercased().hasPrefix(prefix.lowercased()) }
+				.filter { $0.matchText.lowercased().hasPrefix(typed) }
 				.prefix(20)
 				.map(CompletionItem.init)
+		}
+
+		// **A server that has not finished starting has not said no.** It is the
+		// words in the file that used to be shown here, and they look like an
+		// answer: measured against a Cadova package, sourcekit-lsp answered
+		// nothing at 1, 11, 32 and 62 seconds after the file was opened, and the
+		// enum cases somebody was waiting for at 123, once it had built 651
+		// files. Four empty answers and a right one, indistinguishable from
+		// "this language has nothing to offer" for the whole two minutes.
+		if items.isEmpty, let project, let languageId = document.languageId,
+		   LanguageService.shared.isPreparing(languageId: languageId, project: project.scopeRoot) {
+			guard let point = codeView.caretScreenPoint() else { return }
+			completions.show(
+				notice: "\(languageId) server is still preparing…",
+				below: point,
+				lineHeight: codeView.lineHeightForTesting,
+				parent: view.window
+			)
+			return
 		}
 
 		if items.isEmpty {
@@ -1600,6 +1846,10 @@ final class EditorViewController: NSViewController {
 		completionPrefixLength = prefix.utf16.count
 		completions.onCommit = { [weak codeView, weak self] item in
 			guard let self else { return }
+			// Kept for the life of the session the insertion is about to start:
+			// for a server with no signature help this is the only thing that
+			// knows what the stops mean.
+			self.takenDocumentation = item.documentationSource
 			// A snippet is not text to paste: `union() $0` means "put the caret
 			// between the braces", and inserted as written it is a syntax
 			// error somebody has to go back and delete. Where it has more than
@@ -2931,12 +3181,35 @@ final class EditorViewController: NSViewController {
 	/// What the completion list is showing.
 	var completionReportForTesting: String {
 		guard completions.isVisible else { return "no list" }
+		if let notice = completions.noticeForTesting { return "waiting: \(notice)" }
 		let frame = completions.frameForTesting
 		let caret = activeTab?.codeView?.caretScreenPoint() ?? .zero
 		return "\(completions.labelsForTesting.count) items: "
 			+ completions.labelsForTesting.prefix(6).joined(separator: ", ")
 			+ String(format: " | list at (%.0f, %.0f) %.0fx%.0f, caret at (%.0f, %.0f)",
 				frame.minX, frame.minY, frame.width, frame.height, caret.x, caret.y)
+	}
+
+	/// The first line of what the panel beside the list is showing, and how much
+	/// of it there is.
+	///
+	/// A line rather than the page: a driver's output is read in a terminal, and
+	/// `cube`'s documentation is a wiki page. The length is what says the rest
+	/// arrived.
+	var completionDocumentationForTesting: String {
+		guard let prose = completions.documentationForTesting else { return "no documentation" }
+		let first = prose.components(separatedBy: .newlines).first ?? ""
+		return "\(prose.count) characters, first line: \(first)"
+	}
+
+	/// What the strip above the line says, which is the answer to "what goes
+	/// here" once the list has closed.
+	var parameterHintForTesting: String {
+		guard let text = parameterHint.textForTesting else { return "no hint" }
+		guard let range = parameterHint.emphasisForTesting else { return text }
+		let units = Array(text.utf16)
+		let clamped = range.clamped(to: 0..<units.count)
+		return "\(text) | filling in: \(String(decoding: units[clamped], as: UTF16.self))"
 	}
 
 	@discardableResult
