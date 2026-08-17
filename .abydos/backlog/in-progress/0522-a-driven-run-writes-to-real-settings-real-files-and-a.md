@@ -64,16 +64,65 @@ restores the previous session, so what it is showing is the user's own work.
   (`--type`, `--snippet`, `--comment`, `--emacs-nav`), `--switch-appearance`
   and anything driving a run configuration.
 
+## Decided: automatic, and the line is writing
+
+**Automatic.** A run is driven when it was given any `--verb` at all beyond the
+two that say what to open — `--open` and `--file` — and nothing has to be
+remembered by anybody. The counter-proposal is not hypothetical: the opt-in
+already exists and is written down in `Scripts/bundle.sh`, which says that "an
+agent building a copy to drive should use" `BUNDLE_ID=` to get a throwaway
+preferences domain. Every one of the three incidents happened with that
+sentence sitting in the repository. A flag that has to be remembered is a flag
+that records, after the fact, who remembered it.
+
+Deriving it from the arguments is safe in the direction it can be wrong. The
+predicate only ever *adds* isolation, so a false positive costs a driven run its
+ability to write to somebody's preferences — which is the whole point — while a
+false negative is impossible for any verb that exists, because the rule is
+"anything not on the two-item list" rather than a list of verbs to keep up to
+date. A verb added tomorrow is isolated on the day it is written, without its
+author knowing this file exists. `isScreenshotRun` could not have been extended
+to do this: `--type`, `--emacs-nav`, `--switch-appearance` and `--run-config`
+set no screenshot path, and all three incidents came from runs that took no
+picture at all.
+
+Nothing a person types can trip it. `abydos` — the command line people actually
+use — passes paths and never a flag, and a launch from the Dock or from
+LaunchServices passes none either. The single-dash arguments the system adds
+(`-psn_…`, `-NSDocumentRevisionsDebugMode`) are not `--` and are not counted.
+
+**The line is writing, not reading.** Some verbs exist precisely to photograph
+the app against a real checkout, so a driven run still opens what it is given,
+reads the real preferences, and reads the project on disk. What it may not do is
+write any of it back. So the throwaway settings domain is *seeded* from the
+user's own rather than started empty: a driven run should be a run of the app
+somebody actually has, and one that began at factory settings would be
+photographing a program nobody uses.
+
+**Per run, not one throwaway domain.** Agents run these side by side — three
+were working other items in their own worktrees while this was written — and one
+shared domain makes two concurrent runs each other's problem. Per run also
+answers the "leaves nothing behind" requirement without a sweep, because the
+domain is a dictionary in memory that dies with the process and was never a file.
+
+## Estimate
+
+2026-08-17 07:57 — about four hours left
+
 ## Steps
 
-- [ ] Decide opt-in against automatic, and write the answer down
+- [x] Decide opt-in against automatic, and write the answer down
 - [ ] A driven run's settings go to a throwaway domain, and the real one is
       untouched — proved by reading `defaults` before and after
 - [ ] A driven run does not restore a session
+- [ ] A driven run does not open a project it was not given
 - [ ] A typing verb can only reach a file the run was given
+- [ ] A driven run leaves nothing behind: no session file, no recents entry, no
+      remembered scratches
 - [ ] Audit the verbs that write, and list them in here
 - [ ] Watched: the exact sequence that produced `C-ircle`, replayed, leaving the
       file untouched
+- [ ] 0517 and 0521 get a line saying where the stray `i` came from
 - [ ] `make test` and `make warnings` are clean
 - [ ] Write down here what was ruled out on the way
 - [ ] The spec says what the project now does
