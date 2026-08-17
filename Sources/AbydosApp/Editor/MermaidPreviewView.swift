@@ -107,14 +107,14 @@ final class MermaidPreviewView: DiagramPaneView {
 
 		generation += 1
 		let mine = generation
-		spinner.startAnimation(nil)
+		spin(true)
 
 		Task { [weak self] in
 			let drawn = await MermaidRenderer.shared.draw(
 				source, format: Mermaid.previewFormat, theme: theme
 			)
 			guard let self, self.generation == mine else { return }
-			self.spinner.stopAnimation(nil)
+			self.spin(false)
 			switch drawn {
 			case let .success(data):
 				self.show(picture: data, otherwise: "Mermaid drew nothing.")

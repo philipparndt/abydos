@@ -994,6 +994,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let seconds = options.diagramWatchSeconds {
+			// From half a second, not one: a diagram pane says something from the
+			// moment it exists — "Nothing to draw yet.", or what to install — and
+			// that state is the one this watches for, so starting a whole second in
+			// would miss it on a file that draws quickly.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+				controller?.watchDiagramForTesting(seconds: seconds)
+			}
+		}
+
 		if let goal = options.chooseMakeRun {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
 				controller?.chooseMakeRunForTesting(goal)

@@ -3438,6 +3438,38 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 	}
 
+	/// Says where the diagram pane in the tab in front puts its message and its
+	/// indicator, once a second.
+	///
+	/// 0512's instrument. A diagram pane goes through its states in the seconds
+	/// after a file opens — a message with nothing turning, then the indicator
+	/// over it while a tool runs, then a picture — and the claim the item makes
+	/// is about the two rectangles at every one of them, so this prints them all
+	/// rather than whichever moment a screenshot happened to catch. Flushed for
+	/// the reason `--cadova-watch` is: a driver run ends in a kill, and a report
+	/// still in stdout's buffer when the signal arrives never happened.
+	func watchDiagramForTesting(seconds: Double) {
+		for second in 0...Int(seconds) {
+			DispatchQueue.main.asyncAfter(deadline: .now() + Double(second)) { [weak self] in
+				guard let self else { return }
+				guard let pane = self.editorForTesting.activeGroup?.diagramPreview else {
+					// Never a bare "not found", for the reason above it: what the tab
+					// in front *is* costs one line and tells three different failures
+					// apart.
+					let groups = self.editorForTesting.groups
+					let described = groups.isEmpty
+						? "no editor group"
+						: groups.map(\.activeTabDescriptionForTesting).joined(separator: " | ")
+					print("DIAGRAM: \(second)s no diagram pane — \(described)")
+					fflush(stdout)
+					return
+				}
+				print("\(second)s \(pane.reportForTesting)")
+				fflush(stdout)
+			}
+		}
+	}
+
 	/// Starts one of the discovered configurations by name, as choosing it from
 	/// the run menu does, and reads its console back a few seconds later.
 	///
