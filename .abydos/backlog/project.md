@@ -5,6 +5,21 @@ web view, no Electron. The terminal is where the work happens — shells, tmux
 windows, agents, a program running in a pod — and the editor, the debugger and
 the cluster arrange themselves around it.
 
+## Before you touch anything
+
+**Read `CLAUDE.md` at the root of this repository.** It is the house rules for
+working here — what not to do to the machine you are running on, and what each of
+those cost when somebody found out. Every one was learnt from an agent doing the
+wrong thing.
+
+This line does not repeat any of them, deliberately: a second copy drifts, and
+the drift is invisible because nobody diffs two documents that agreed when they
+were written.
+
+`.abydos/today.md` is beside it and holds what is true *today* — which sessions
+are somebody's, what is running, what is known to be noisy. It is expected to be
+wrong tomorrow, which is why it is not in with the rules.
+
 ## How it is built and run
 
     make build      # the .app bundle (CONFIG=debug|release)
@@ -12,7 +27,7 @@ the cluster arrange themselves around it.
     make dev        # build debug and run in the foreground, logs on the terminal
     make test       # the suite (FILTER=name, TEST_TIMEOUT=seconds)
     make warnings   # every warning in this repository's own code
-    make install    # copy into /Applications
+    make install    # copy into /Applications — see CLAUDE.md before running it
 
 Swift Package Manager underneath; `make` exists because the app is a bundle and
 `swift run` cannot make one. Xcode 16 or newer, macOS 14 or newer. `make help`

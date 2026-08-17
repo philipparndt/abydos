@@ -345,6 +345,55 @@ number, the same checklist.
 - **When** another file called `Screenshot.png` is attached
 - **Then** both are kept, the second as `Screenshot-2.png`
 
+## Requirement: An agent the backlog starts can find the house rules
+
+`start` launches an agent, and until it did every agent was handed its item by a
+person who also told it how to behave on this machine. The prompt it builds does
+not carry those rules and SHALL NOT: it names `AGENTS.md`, `project.md` and the
+item, and its own comment gives the reason — a second copy drifts, and the drift
+is invisible because nobody reads the prompt a button builds.
+
+The rules SHALL exist in exactly one place, reachable both by an agent the tool
+started and by one nobody started. `CLAUDE.md` at the repository root is that
+place: it is read without being pointed at, which covers most agents, and
+`project.md` names it for the rest. Nothing else states a rule — a document that
+mentions one may point at the file, never repeat it.
+
+**Each rule SHALL carry the failure that motivated it.** "Never push" is obeyed;
+"never push, because an agent once created five public Docker Hub repositories
+nobody asked for" is understood, and an understood rule generalises to the case
+the list does not mention.
+
+**What is true today lives elsewhere.** `.abydos/today.md` holds which sessions
+are somebody's, what is running and what is known to be noisy — separate so that
+the rules can be trusted, since a document mixing "never push" with a fact about
+a Tuesday teaches an agent to distrust all of it, and so that correcting it is
+not a commit that reads like a policy change.
+
+A rule a program already keeps SHALL say so, because that is a rule an agent can
+stop worrying about and the rest are where the attention belongs.
+
+### Scenario: an item picked up by the tool
+
+- **GIVEN** an item started with `abydos-backlog start`
+- **WHEN** the agent reads what the prompt names
+- **THEN** `project.md` points it at `CLAUDE.md`
+- **AND** the prompt itself states none of the rules
+
+### Scenario: an agent nobody started through the backlog
+
+- **GIVEN** an assistant opened on this repository directly
+- **WHEN** it reads what it reads by default
+- **THEN** `CLAUDE.md` is the house rules, in full
+
+### Scenario: no agent to launch
+
+- **GIVEN** a project with no assistant configured
+- **WHEN** an item is started
+- **THEN** the worktree is made, the item is moved, and the `cd` and the prompt
+  are printed for a person to hand over — which is now a path somebody may take
+  deliberately rather than a workaround for rules the prompt was missing
+
 ## Requirement: Ready is the only folder an agent picks from
 
 `ready` means the deciding is done. Nothing moves an item into it
