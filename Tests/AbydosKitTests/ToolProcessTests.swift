@@ -26,7 +26,7 @@ struct ToolProcessTests {
 		for _ in 0..<3 {
 			let process = sleeper()
 			try process.run()
-			processes.adopt(process)
+			processes.adopt(process, as: "diagram render")
 			started.append(process)
 		}
 		#expect(processes.count == 3)
@@ -34,6 +34,38 @@ struct ToolProcessTests {
 		processes.terminateAll()
 		// Ended, and let go of: what is dead is not still being counted.
 		for process in started {
+			#expect(!process.isRunning)
+		}
+		#expect(processes.count == 0)
+	}
+
+	/// The other half of the same promise, and the one 0538 could have broken:
+	/// the long-lived processes live in a list of their own now so that they do
+	/// not spend the cap, and a list of their own is exactly how something comes
+	/// to be forgotten at the end. So: a full cap, servers as well, and after
+	/// the app has gone nothing of either kind is left running.
+	@Test func bothKindsAreEndedWhenTheAppEnds() throws {
+		let processes = ToolProcesses()
+		defer { processes.terminateAll() }
+
+		var tools: [Process] = []
+		for _ in 0..<ToolProcesses.limit {
+			let process = sleeper()
+			try process.run()
+			#expect(processes.adopt(process, as: "diagram render"))
+			tools.append(process)
+		}
+		var servers: [Process] = []
+		for _ in 0..<4 {
+			let server = sleeper()
+			try server.run()
+			processes.track(server)
+			servers.append(server)
+		}
+		#expect(processes.count == ToolProcesses.limit + 4)
+
+		processes.terminateAll()
+		for process in tools + servers {
 			#expect(!process.isRunning)
 		}
 		#expect(processes.count == 0)
@@ -50,7 +82,7 @@ struct ToolProcessTests {
 		for _ in 0..<(ToolProcesses.limit + 3) {
 			let process = sleeper()
 			try process.run()
-			if !processes.adopt(process) {
+			if !processes.adopt(process, as: "diagram render") {
 				refusals += 1
 				process.terminate()
 			}
@@ -69,7 +101,7 @@ struct ToolProcessTests {
 		for _ in 0..<ToolProcesses.limit {
 			let process = sleeper()
 			try process.run()
-			processes.adopt(process)
+			processes.adopt(process, as: "diagram render")
 		}
 		let server = sleeper()
 		try server.run()
@@ -80,15 +112,120 @@ struct ToolProcessTests {
 		#expect(!server.isRunning)
 	}
 
+	/// 0538 itself: a session's servers went into the array the cap counted, so
+	/// a project of a few languages spent the whole budget before any tool ran,
+	/// and the first Cadova build of the day was refused with a sentence about
+	/// container images. Twice the cap in servers, and a build still starts.
+	@Test func aDozenServersDoNotRefuseARender() throws {
+		let processes = ToolProcesses()
+		defer { processes.terminateAll() }
+
+		for _ in 0..<(ToolProcesses.limit * 2) {
+			let server = sleeper()
+			try server.run()
+			processes.track(server)
+		}
+		#expect(processes.capped == 0)
+
+		let build = sleeper()
+		try build.run()
+		#expect(processes.adopt(build, as: "Cadova build"))
+	}
+
 	/// One that ended on its own is not still counted against the cap.
 	@Test func whatHasFinishedIsNotHeldAgainstTheLimit() throws {
 		let processes = ToolProcesses()
 		let quick = Process()
 		quick.executableURL = URL(fileURLWithPath: "/usr/bin/true")
 		try quick.run()
-		processes.adopt(quick)
+		processes.adopt(quick, as: "diagram render")
 		quick.waitUntilExit()
 		#expect(processes.count == 0)
+	}
+}
+
+/// What a refusal says, which 0538 is as much about as the refusal itself.
+///
+/// The old sentence was written once and claimed three things — that the tools
+/// came from images, that a container runtime was in the path, and that it had
+/// stopped answering. For a Cadova preview's `swift run` all three are false,
+/// and somebody read it and went to restart a runtime that could not have
+/// helped.
+struct TooManyMessageTests {
+	private func sleeper() -> Process {
+		let process = Process()
+		process.executableURL = URL(fileURLWithPath: "/bin/sh")
+		process.arguments = ["-c", "sleep 120"]
+		process.standardOutput = FileHandle.nullDevice
+		process.standardError = FileHandle.nullDevice
+		process.standardInput = FileHandle.nullDevice
+		return process
+	}
+
+	private func fill(
+		_ processes: ToolProcesses, _ counts: [(what: String, fromImage: Bool, many: Int)]
+	) throws {
+		for kind in counts {
+			for _ in 0..<kind.many {
+				let process = sleeper()
+				try process.run()
+				processes.adopt(process, as: kind.what, fromImage: kind.fromImage)
+			}
+		}
+	}
+
+	@Test func itNamesWhatIsHoldingTheSlots() throws {
+		let processes = ToolProcesses()
+		defer { processes.terminateAll() }
+		try fill(processes, [
+			("Cadova build", false, 2),
+			("diagram render", true, 9),
+			("diagram export", true, 1),
+		])
+
+		let said = processes.tooManyMessage
+		// Biggest group first: the thing to go and look at is the thing read
+		// first, and the plural is only put on when there is more than one.
+		#expect(said.contains("12 tools are already running"))
+		#expect(said.contains("9 diagram renders, 2 Cadova builds and 1 diagram export"))
+	}
+
+	/// The claim the item is named for. Nothing here came from an image, so
+	/// nothing in the sentence may say one did.
+	@Test func aToolThatCameFromNoImageIsNotDescribedAsOne() throws {
+		let processes = ToolProcesses()
+		defer { processes.terminateAll() }
+		try fill(processes, [("Cadova build", false, ToolProcesses.limit)])
+
+		let said = processes.tooManyMessage
+		#expect(said.contains("\(ToolProcesses.limit) Cadova builds"))
+		#expect(!said.lowercased().contains("image"))
+		#expect(!said.lowercased().contains("container"))
+		#expect(!said.lowercased().contains("runtime"))
+	}
+
+	/// And where it *is* every one of them, the runtime is worth naming: that
+	/// advice was right for the case it was written for, and is kept for it.
+	@Test func whereEveryOneIsFromAnImageTheRuntimeIsNamed() throws {
+		let processes = ToolProcesses()
+		defer { processes.terminateAll() }
+		try fill(processes, [("diagram render", true, ToolProcesses.limit)])
+
+		let said = processes.tooManyMessage
+		#expect(said.contains("container runtime has stopped answering"))
+	}
+
+	/// A mixture is not every one of them, and the runtime is not blamed for a
+	/// cap a local build is holding a slot in.
+	@Test func oneLocalToolIsEnoughToLeaveTheRuntimeOutOfIt() throws {
+		let processes = ToolProcesses()
+		defer { processes.terminateAll() }
+		try fill(processes, [
+			("diagram render", true, ToolProcesses.limit - 1),
+			("Cadova build", false, 1),
+		])
+
+		#expect(!processes.tooManyMessage.lowercased().contains("runtime"))
 	}
 }
 

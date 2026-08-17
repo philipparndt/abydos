@@ -970,8 +970,10 @@ public enum DiagramExport {
 		process.standardOutput = output
 		process.standardError = errors
 
-		guard ToolProcesses.shared.adopt(process) else {
-			return .failure(.trouble(ToolProcesses.tooManyMessage))
+		guard ToolProcesses.shared.adopt(
+			process, as: "diagram export", fromImage: containerName != nil
+		) else {
+			return .failure(.trouble(ToolProcesses.shared.tooManyMessage))
 		}
 
 		// A deadline, because a runtime whose service is not up accepts the
