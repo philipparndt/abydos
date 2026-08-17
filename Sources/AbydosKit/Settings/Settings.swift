@@ -7,7 +7,16 @@ import Foundation
 /// `.abydosSettingsChanged` so open windows can apply them live rather than
 /// requiring a restart.
 public final class Settings {
-	public static let shared = Settings()
+	/// The app's settings.
+	///
+	/// `DrivenRun.defaults` rather than `.standard`: this is the one object in
+	/// the program that every preference goes through, and until 0522 it went
+	/// through it into whichever preferences the machine happened to have —
+	/// which for a run somebody was driving from the command line meant theirs.
+	/// A driven run gets a throwaway domain, seeded from the real one and
+	/// written back to nothing. See `DrivenRun`, which is also why this is read
+	/// on first use rather than at load: `begin` runs first, in `main`.
+	public static let shared = Settings(defaults: DrivenRun.defaults)
 
 	private let defaults: UserDefaults
 
@@ -20,7 +29,7 @@ public final class Settings {
 	/// already set in the new one wins.
 	public static func migrate(
 		from oldIdentifier: String,
-		into defaults: UserDefaults = .standard
+		into defaults: UserDefaults = DrivenRun.defaults
 	) {
 		guard defaults.object(forKey: Key.appearance) == nil,
 		      defaults.object(forKey: Key.terminalScheme) == nil,
@@ -33,7 +42,7 @@ public final class Settings {
 		}
 	}
 
-	public init(defaults: UserDefaults = .standard) {
+	public init(defaults: UserDefaults = DrivenRun.defaults) {
 		self.defaults = defaults
 
 		// Before the defaults are registered, which is the only moment the

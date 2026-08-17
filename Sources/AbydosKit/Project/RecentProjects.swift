@@ -27,16 +27,26 @@ public final class RecentProjects {
 
 	private let storeURL: URL
 	private let limit = 60
+	/// Whether what happens here outlives the process.
+	///
+	/// A driven run still reads the list — the switcher is a thing worth
+	/// photographing — and still keeps one in memory, so a run that opens two
+	/// projects behaves as it always did. It simply never writes the file back.
+	/// The list is a record of what somebody has been working on, and a capture
+	/// run putting a temporary directory at the top of it is that record being
+	/// wrong (0522).
+	private let persists: Bool
 
 	/// Most-recently-opened first.
 	public private(set) var entries: [RecentProject] = []
 
-	public init(storeURL: URL? = nil) {
+	public init(storeURL: URL? = nil, driven: Bool = DrivenRun.isActive) {
 		let support = FileManager.default
 			.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
 			.appendingPathComponent("Abydos", isDirectory: true)
 		try? FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
 		self.storeURL = storeURL ?? support.appendingPathComponent("recents.json")
+		self.persists = !driven
 		load()
 	}
 
@@ -50,6 +60,7 @@ public final class RecentProjects {
 	}
 
 	private func save() {
+		guard persists else { return }
 		guard let data = try? JSONEncoder().encode(entries) else { return }
 		try? data.write(to: storeURL, options: .atomic)
 	}

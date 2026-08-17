@@ -1,4 +1,5 @@
 import AppKit
+import AbydosKit
 
 /// Command-line options.
 ///
@@ -922,6 +923,45 @@ struct LaunchOptions {
 	}
 
 	var isScreenshotRun: Bool { screenshotPath != nil }
+
+	/// Whether the app is being driven rather than used.
+	///
+	/// `DrivenRun` in `AbydosKit` is where this is decided and argued, because
+	/// `Settings` and `SessionStore` have to ask the same question and neither
+	/// can see this file. Stated here as well so that a reader of the options
+	/// finds it: any verb but `--open` and `--file` makes a run a driven one.
+	var isDrivenRun: Bool { DrivenRun.isActive }
+
+	/// Every file this run named, as the paths they resolve to.
+	///
+	/// The set a driven run is allowed to put keystrokes into. `--open` is not
+	/// among them: naming a project says what to show, not what to type in, and
+	/// the whole of 0522's second incident was a verb typing into a file that
+	/// was merely *inside* the project it was pointed at.
+	var givenPaths: Set<String> {
+		var paths = filePaths
+		if let previewPath { paths.append(previewPath) }
+		if let tearOffFile { paths.append(tearOffFile) }
+		// Made by this run, in the project this run was given, so its own.
+		if let newFile, let projectPath {
+			paths.append((projectPath as NSString).appendingPathComponent(newFile))
+		}
+		return Set(paths.map { URL(fileURLWithPath: $0).standardizedFileURL.path })
+	}
+
+	/// Whether a driven run may drive the keyboard at this file.
+	///
+	/// The rule itself is `DrivenRun.mayType`, in `AbydosKit`, where the suite
+	/// can ask it questions — there is no test target for this layer. What is
+	/// here is the one thing the rule cannot know: a scratch this run asked for
+	/// has a path nobody could have said in advance.
+	func mayType(into url: URL?) -> Bool {
+		if newScratch, let url,
+		   url.standardizedFileURL.path.hasPrefix(ScratchFiles.defaultRoot.path) {
+			return true
+		}
+		return DrivenRun.mayType(into: url?.path, given: givenPaths, driven: isDrivenRun)
+	}
 }
 
 /// A view holding something AppKit's own capture cannot see.
