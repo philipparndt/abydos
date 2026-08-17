@@ -78,6 +78,73 @@ current match is still the one being dimmed by being current.
   painted before the highlights and so is safe, but it is the same class of
   question and cheap to check while in there.
 
+## What was done, and what was ruled out
+
+**The paint order, and only the paint order.** The row's matches are measured
+once — `searchHighlights(docLine:rect:)`, which returns the bands rather than
+painting them — and painted at two depths: the other matches before `drawLine`
+as before, the current one inside it *after* `drawSelection` and before the
+glyphs. Painting it last decides which of the two claims wins where they
+coincide, instead of leaving it to the order two functions happen to be called
+in.
+
+**"Coincides" needed no definition after all**, which is the pleasant part.
+Only the match's own rectangle is covered, so a selection larger than the match
+is drawn in full and still reads as a selection either side of the band sitting
+on it. `images/sheet-editor-and-wide-selection.png` has lines 14–16 selected with
+the current match on 14: the selection is all three lines, the match is on top of
+its own characters. Skipping the selection paint where the two overlap — the
+other candidate in the item — would have needed that geometry stated, and would
+have had to subtract one rectangle from another with the `max(1, …)` minimum
+widths both draws apply. It was not needed.
+
+**Nothing about the fix depends on which selection colour was chosen**, so it
+holds in both keyboard states by construction rather than by two fixes. Getting
+a picture of the second state took a driver verb: `--find` leaves the keyboard in
+the find field, and everything that puts it back in the code either closes the
+bar (`closeFind` throws the matches away) or replaces the selection (a click).
+`--find-next <n>` is the ordinary gesture — the bar open, the keyboard in the
+text, ⌘G — and it also lands the current match in the *middle* of the cluster,
+which is the reported screenshot exactly.
+
+**The colours moved into the schemes**, which turned out to be the larger of the
+two defects to look at. `images/sheet-light.png` is what "a light scheme gets
+colours chosen against a dark one" looked like: the current match a grey almost
+invisible on paper, the other two near-black bands with the code unreadable
+inside them. All three schemes now state both keys at both lightnesses.
+
+**`SchemeRole.optional` had to become a set.** It was a single role, and two more
+optional roles could not be expressed. A rule with one member spelt as a special
+case is a rule that has to be rewritten the moment there are two, so it is now a
+`Set<SchemeRole>` with a derivation each: the current match midway between
+`selectionBackground` and `caret` — the caret being the one colour a scheme
+guarantees is visible against its own editor — and the other matches midway again
+back towards the selection, which is what stops a *derived* scheme inverting them
+too.
+
+### Ruled out, and checked in passing
+
+- **0528 is not the cause and was not touched.** The item had already
+  established it; the fix confirms it from the other end, since nothing here
+  reads `selectionBackgroundInactive` at all.
+- **The other overlays are safe.** `currentLineBackground` and the execution-line
+  band are painted first, before the highlights, so they cannot cover anything.
+  Everything after the glyphs — the diagnostic squiggles, the inline diagnostic,
+  the ⌘-hover underline, the fold chip — is a mark rather than a filled
+  background and does not hide a band.
+- **Not fixed here, and worth knowing:** the match bands are measured against the
+  *whole* line even when soft wrap is on, so on a wrapped line they are painted
+  at the wrong place on every row of it. `images/wrapped-line-defect.png` shows
+  the current match landing on the word `word` with neither `publish` marked. The
+  arithmetic is the same expressions this item moved, untouched, so this is older
+  than 0536 — but it is more conspicuous now that the current match is not being
+  covered up, and it wants an item of its own.
+- **The execution-line band is still hardcoded** — `0x3A4A2A` in `draw` — and is
+  the same class of thing as the two colours this item moved. Left alone
+  deliberately: it was not in the three lines the report was about, and moving a
+  colour into the schemes means choosing it in three palettes at two lightnesses,
+  which is work rather than a rename.
+
 ## Steps
 
 - [x] A verb that photographs the keyboard-in-the-editor state, since nothing
@@ -89,8 +156,8 @@ current match is still the one being dimmed by being current.
       left hardcoded with a written reason
 - [x] Checked in all three schemes, light and dark, since the match colours were
       chosen against one background
-- [ ] Screenshots before and after, on a case with several matches on adjacent
+- [x] Screenshots before and after, on a case with several matches on adjacent
       lines like the reported one
-- [ ] `make test` and `make warnings` are clean
-- [ ] Write down here what was ruled out on the way
-- [ ] `spec/editor.md` says what the project now does
+- [x] `make test` and `make warnings` are clean
+- [x] Write down here what was ruled out on the way
+- [x] `spec/editor.md` says what the project now does
