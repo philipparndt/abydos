@@ -49,6 +49,15 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// that item 508 was filed to avoid, and a project with no build system in
 	/// it genuinely has nothing to say.
 	private var dependencies: DependencyTree?
+	/// The toolchains somebody has been into from this window.
+	///
+	/// Not read on open and deliberately so: a toolchain is not declared by
+	/// anything, so the only honest way to know *which* one this project uses
+	/// is to be told, and what tells us is the path a language server answers a
+	/// definition with. So the list starts empty, grows the first time a symbol
+	/// is followed into a compiler's own sources, and is thrown away with the
+	/// window. See `ToolchainSources`.
+	private var toolchains: [Toolchain] = []
 	/// When the section was last read.
 	///
 	/// A burst too large for FSEvents to name file by file — a build, a
@@ -266,12 +275,56 @@ final class ProjectNavigatorViewController: NSViewController {
 		let sets = ExternalDependencies.read(project: project.root)
 		guard sets != dependencies?.sets else { return }
 
+		rebuildDependencies(sets: sets)
+	}
+
+	/// Redraws the section, keeping what was open and what was selected.
+	///
+	/// The toolchains are carried across every rebuild. They are not read from
+	/// disk like the sets are — they are learned from paths that arrived one at
+	/// a time — so a rebuild that dropped them would take the row away again
+	/// the next time somebody saved a `go.mod`, with the tab that needs it
+	/// still open.
+	private func rebuildDependencies(sets: [DependencySet]) {
+		guard let project else { return }
 		let expanded = expandedPaths()
 		let selected = selectedPaths()
-		dependencies = DependencyTree(sets: sets, project: project.root)
+		dependencies = DependencyTree(sets: sets, toolchains: toolchains, project: project.root)
 		outlineView.reloadData()
 		restore(expandedPaths: expanded)
 		restoreSelection(paths: selected)
+	}
+
+	/// Learns a toolchain from a path something is about to be revealed at.
+	///
+	/// **This is where the toolchain root comes from**, and it comes from the
+	/// answer rather than from a question — see `ToolchainSources` for why that
+	/// is not an exception to the section's no-build-tool rule but a stricter
+	/// version of it. gopls has just answered `textDocument/definition` with
+	/// `…/go/libexec/src/time/time.go`; `$GOROOT` is the part of that path
+	/// above `src`, and no `go env` is run to find out.
+	///
+	/// Cheap on the ordinary case, which is every tab switch: a file inside the
+	/// project is skipped on a string comparison, and a file already inside a
+	/// known package or a known toolchain never reaches the disk either.
+	private func noteToolchains(for urls: [URL]) {
+		guard let project else { return }
+		let inside = FilePath.canonical(project.root) + "/"
+		var found: [Toolchain] = []
+		for url in urls {
+			let path = FilePath.canonical(url)
+			guard !path.hasPrefix(inside) else { continue }
+			guard dependencies?.locate(url) == nil else { continue }
+			let known = toolchains + found
+			guard !known.contains(where: { path.hasPrefix(FilePath.canonical($0.sources) + "/") }),
+			      let toolchain = ToolchainSources.identify(url),
+			      !known.contains(toolchain)
+			else { continue }
+			found.append(toolchain)
+		}
+		guard !found.isEmpty else { return }
+		toolchains += found
+		rebuildDependencies(sets: dependencies?.sets ?? [])
 	}
 
 	/// Whether this batch of filesystem events could have changed the section.
@@ -2214,7 +2267,43 @@ final class ProjectNavigatorViewController: NSViewController {
 	func selectFileInEditor() {
 		guard let url = currentEditorFile?() else { return }
 		selectWithoutOpening(url: url)
+		// **Asked, and unanswerable — so it says so.** This gesture used to do
+		// nothing at all for a file the tree has no row for: the selection
+		// stayed where it was, and the only way to tell a reveal that landed
+		// somewhere from one that could not was to look at the pane and notice
+		// nothing had moved. That is the failure item 539 was actually reported
+		// as. Only on this gesture, and never on a tab switch, which calls the
+		// same reveal a hundred times an hour and must stay silent.
+		if let reason = placementProblem(for: url) {
+			Toast.post(
+				"\(url.lastPathComponent) is not in the tree",
+				detail: reason + "\n" + url.path,
+				kind: .information
+			)
+		}
 		view.window?.makeFirstResponder(outlineView)
+	}
+
+	/// Why a file has no row, or nil when it has one.
+	///
+	/// The sentence names what is true of *this* file rather than a fixed
+	/// apology — the same rule the section's own notes follow. A file inside no
+	/// project and no package is a different situation from one whose project
+	/// is a different window's.
+	func placementProblem(for url: URL) -> String? {
+		if dependencies?.locate(url) != nil { return nil }
+		if rootNode?.node(for: url) != nil { return nil }
+		guard let project else { return "no project is open in this window." }
+		let path = FilePath.canonical(url)
+		guard !path.hasPrefix(FilePath.canonical(project.root) + "/") else {
+			// Inside the project and still unfound: a filter is hiding it, or
+			// the folder above it has not been listed. Worth telling apart from
+			// the case below, because the answer is different — one is a
+			// setting, the other is nothing anybody can do.
+			return "it is inside the project but hidden by a filter."
+		}
+		return "it is outside the project, and no package or toolchain in "
+			+ "Dependencies holds it."
 	}
 
 	/// Expands the root's immediate children, matching how IDEA shows a freshly
@@ -2393,7 +2482,8 @@ final class ProjectNavigatorViewController: NSViewController {
 		print("TREE reveal: \(url.lastPathComponent) "
 			+ "package=\(package?.name ?? "none") "
 			+ "origin=\(package?.origin ?? "none") "
-			+ "selection=\(selectionForTesting.name)")
+			+ "selection=\(selectionForTesting.name) "
+			+ "unplaceable=\(placementProblem(for: url) ?? "no")")
 	}
 
 	/// Selects and scrolls to a file, expanding ancestors as needed.
@@ -2409,6 +2499,12 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// last folder opened. The topmost is what gets scrolled to.
 	func reveal(urls: [URL]) {
 		guard !urls.isEmpty else { return }
+
+		// Before anything is looked up: a file from a toolchain has no row yet,
+		// and this is the moment its path is in hand. Gives the section a row
+		// for the toolchain if one of these came out of it, so the lookup below
+		// finds it like any other.
+		noteToolchains(for: urls)
 
 		var found: [FileNode] = []
 		for url in urls {
@@ -3210,6 +3306,10 @@ private final class NavigatorCellView: NSTableCellView {
 				nameFont = Theme.current.uiFont(13, weight: .bold)
 			case let .package(package):
 				icon = FileIcon.dependencyPackage(fetched: package.localPath != nil)
+				nameColor = isSelected ? selectedInk : Theme.current.sidebarHeaderText
+				nameFont = Theme.current.uiFont(13)
+			case .toolchain:
+				icon = FileIcon.dependencyToolchain()
 				nameColor = isSelected ? selectedInk : Theme.current.sidebarHeaderText
 				nameFont = Theme.current.uiFont(13)
 			case .note:

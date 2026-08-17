@@ -48,6 +48,13 @@ enum FileIcon {
 		)
 	}
 
+	/// A compiler's or an SDK's own sources. Deliberately not the package box:
+	/// the row sits among packages and is not one, and that difference is the
+	/// whole reason it exists — nothing in this project declared these.
+	static func dependencyToolchain() -> NSImage? {
+		render(key: "dep.toolchain", spec: Spec(symbol: "hammer.fill", color: .hex(0x5FA8A0)))
+	}
+
 	/// A kind nothing reads yet. A question rather than a warning: nothing is
 	/// wrong with the project, there is something missing from this program.
 	static func dependencyNote() -> NSImage? {
