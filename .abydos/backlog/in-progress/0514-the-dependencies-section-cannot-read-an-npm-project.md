@@ -139,7 +139,7 @@ kind *is* read, and it is this one root that it cannot answer for.
 - [x] File the item that will read the lock files this one does not
 - [x] A pnpm or a yarn project says which tool resolved it, rather than being
       told to run `npm install`
-- [ ] Decide which root a hoisted workspace dependency is filed under
+- [x] Decide which root a hoisted workspace dependency is filed under
 - [x] A workspace member says where its lock file is, rather than that there is
       none
 - [x] The version 1 lock layout is still read, the way both layouts of

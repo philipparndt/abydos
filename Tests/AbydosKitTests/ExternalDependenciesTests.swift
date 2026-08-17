@@ -796,6 +796,38 @@ struct ExternalDependenciesTests {
 		#expect(set.packages.isEmpty)
 	}
 
+	/// **Which root a hoisted dependency is filed under: the one that owns the
+	/// lock file.** A workspace hoists its members' dependencies into the root's
+	/// `node_modules`, and the lock file that records them is the root's — so
+	/// that is the only root with anything to read, and a member's row says where
+	/// its lock file is instead. A dependency npm could *not* hoist, because two
+	/// members want different versions of it, is written at
+	/// `packages/app/node_modules/<name>` in the same lock file and is filed the
+	/// same way, under the root, with its own path.
+	@Test func aWorkspacesDependenciesAreAllFiledUnderTheRootThatOwnsTheLockFile() throws {
+		let workspace = try makeRoot()
+		try write("{ \"name\": \"probe\", \"workspaces\": [\"packages/*\"] }\n",
+			to: workspace.appendingPathComponent("package.json"))
+		try write("""
+		{
+		  "lockfileVersion": 3,
+		  "packages": {
+		    "": { "name": "probe", "workspaces": ["packages/*"] },
+		    "packages/app": { "name": "@probe/app", "version": "0.1.0" },
+		    "node_modules/@probe/app": { "resolved": "packages/app", "link": true },
+		    "node_modules/lodash": { "version": "4.17.21" },
+		    "packages/app/node_modules/lodash": { "version": "3.10.1" }
+		  }
+		}
+		""", to: workspace.appendingPathComponent("package-lock.json"))
+
+		let set = ExternalDependencies.read(root: workspace, kind: .npm)
+		#expect(set.packages.map(\.name) == ["lodash", "lodash"])
+		// Two versions of one package, told apart by where they are — which is
+		// what the un-hoisted copy exists to be.
+		#expect(Set(set.packages.compactMap(\.version)) == ["4.17.21", "3.10.1"])
+	}
+
 	/// A `package.json` inside a repository that is *not* a workspace has
 	/// genuinely not been installed, and `npm install` is the right thing to tell
 	/// it. The ancestor has to declare the workspace, not merely have a lock file.
