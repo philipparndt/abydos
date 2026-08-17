@@ -180,6 +180,34 @@ struct DrivenRunTests {
 		#expect(SessionStore.read(in: root, driven: false) == nil)
 	}
 
+	// MARK: - What a driven run may type into
+
+	/// The run that caused the second incident, as a question: a typing verb,
+	/// no file named, and a file in front that came from somebody's session.
+	@Test func averbThatNamedNoFileMayTypeIntoNothing() {
+		let file = "/Users/somebody/dev/abydos-examples/cadova-models/Sources/coaster/main.swift"
+		#expect(!DrivenRun.mayType(into: file, given: [], driven: true))
+	}
+
+	/// Being in the right project is not the same as being the right file.
+	@Test func adifferentFileInTheSameProjectIsStillNotThisRunsFile() {
+		let given: Set<String> = ["/p/Sources/coaster/shape.swift"]
+		#expect(DrivenRun.mayType(into: "/p/Sources/coaster/shape.swift", given: given, driven: true))
+		#expect(!DrivenRun.mayType(into: "/p/Sources/coaster/main.swift", given: given, driven: true))
+	}
+
+	/// The same file said another way is the same file.
+	@Test func apathIsCheckedAsItResolves() {
+		let given: Set<String> = ["/p/Sources/main.swift"]
+		#expect(DrivenRun.mayType(into: "/p/Sources/../Sources/main.swift", given: given, driven: true))
+	}
+
+	/// And a run nobody is driving is somebody at a keyboard, who may type
+	/// wherever they like.
+	@Test func arunNobodyIsDrivingIsNotRestricted() {
+		#expect(DrivenRun.mayType(into: "/anywhere/at/all.swift", given: [], driven: false))
+	}
+
 	private func scratchProject() throws -> URL {
 		let root = URL(fileURLWithPath: NSTemporaryDirectory())
 			.appendingPathComponent("abydos-0522-\(UUID().uuidString)", isDirectory: true)

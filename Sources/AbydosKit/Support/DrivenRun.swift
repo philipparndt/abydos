@@ -89,6 +89,28 @@ public enum DrivenRun {
 		isActive = false
 		defaults = .standard
 	}
+
+	/// Whether a run that named `given` may drive the keyboard at `path`.
+	///
+	/// The rule the editor's typing verbs are held to, kept here rather than
+	/// beside them because there is no test target for the window layer and a
+	/// rule nothing can ask a question of is a rule nobody can check. The
+	/// caller's own additions — a scratch this run made, which has a path it
+	/// could not have said in advance — go around it.
+	///
+	/// - `driven` false: somebody is at a keyboard, and may type anywhere.
+	/// - nothing named: a run that says `--type` and no file has no file of its
+	///   own, so whatever is in front belongs to somebody else. This is exactly
+	///   the shape of the run that left `C-ircle` in a stranger's source file.
+	/// - otherwise: the file has to be one this run asked for. Being *inside*
+	///   the project the run was given is not enough — the second incident was a
+	///   file in the right project and the wrong tab.
+	public static func mayType(into path: String?, given: Set<String>, driven: Bool) -> Bool {
+		guard driven else { return true }
+		guard let path else { return true }
+		guard !given.isEmpty else { return false }
+		return given.contains(URL(fileURLWithPath: path).standardizedFileURL.path)
+	}
 }
 
 /// A `UserDefaults` that keeps everything in memory and writes nothing.

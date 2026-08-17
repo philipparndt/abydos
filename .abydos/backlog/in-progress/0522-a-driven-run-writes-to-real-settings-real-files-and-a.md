@@ -112,15 +112,15 @@ domain is a dictionary in memory that dies with the process and was never a file
 ## Steps
 
 - [x] Decide opt-in against automatic, and write the answer down
-- [ ] A driven run's settings go to a throwaway domain, and the real one is
+- [x] A driven run's settings go to a throwaway domain, and the real one is
       untouched — proved by reading `defaults` before and after
 - [x] A driven run does not restore a session
 - [x] A driven run does not open a project it was not given
 - [x] A typing verb can only reach a file the run was given
-- [ ] A driven run leaves nothing behind: no session file, no recents entry, no
+- [x] A driven run leaves nothing behind: no session file, no recents entry, no
       remembered scratches
 - [ ] Audit the verbs that write, and list them in here
-- [ ] Watched: the exact sequence that produced `C-ircle`, replayed, leaving the
+- [x] Watched: the exact sequence that produced `C-ircle`, replayed, leaving the
       file untouched
 - [ ] 0517 and 0521 get a line saying where the stray `i` came from
 - [ ] `make test` and `make warnings` are clean

@@ -951,24 +951,16 @@ struct LaunchOptions {
 
 	/// Whether a driven run may drive the keyboard at this file.
 	///
-	/// A run that is not driven may do as it likes — it is somebody at a
-	/// keyboard. A driven run may reach a file it named and nothing else, and a
-	/// tab with no file behind it is one this run made: a scratch, an untitled
-	/// buffer. `nil` for "there is no file", which is allowed for the same
-	/// reason.
+	/// The rule itself is `DrivenRun.mayType`, in `AbydosKit`, where the suite
+	/// can ask it questions — there is no test target for this layer. What is
+	/// here is the one thing the rule cannot know: a scratch this run asked for
+	/// has a path nobody could have said in advance.
 	func mayType(into url: URL?) -> Bool {
-		guard isDrivenRun else { return true }
-		guard let url else { return true }
-		// A note this run asked for, in the scratch folder, which is where
-		// `--scratch` puts one. Its own, and the only file it makes that has a
-		// path it could not have said in advance.
-		if newScratch, url.standardizedFileURL.path.hasPrefix(ScratchFiles.defaultRoot.path) {
+		if newScratch, let url,
+		   url.standardizedFileURL.path.hasPrefix(ScratchFiles.defaultRoot.path) {
 			return true
 		}
-		// Nothing named at all: a run that says `--type` and nothing else has
-		// no file of its own, so whatever is in front belongs to somebody else.
-		guard !givenPaths.isEmpty else { return false }
-		return givenPaths.contains(url.standardizedFileURL.path)
+		return DrivenRun.mayType(into: url?.path, given: givenPaths, driven: isDrivenRun)
 	}
 }
 
