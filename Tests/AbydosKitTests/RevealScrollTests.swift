@@ -172,6 +172,55 @@ final class RevealScrollTests: XCTestCase {
 		)
 	}
 
+	// MARK: - A match is a span, not a point
+
+	/// A match that *starts* inside the right edge and runs past it.
+	///
+	/// Asked about its start alone this is "already visible", and twelve of its
+	/// sixteen characters are off the screen. The width is what tells the two
+	/// apart, and passing it is why the answer takes one.
+	func testBringsInAMatchThatStartsInsideTheEdgeAndRunsPastIt() {
+		let start = CGPoint(x: 960, y: 200)
+		XCTAssertEqual(
+			RevealScroll.answer(bringing: start, onScreenIn: pane()), .stay,
+			"the start on its own is inside the pane, which is the trap"
+		)
+		switch RevealScroll.answer(bringing: start, width: 160, onScreenIn: pane()) {
+		case let .scroll(to):
+			// The end brought in with sixteen columns after it.
+			XCTAssertEqual(to.x, 290)
+			XCTAssertGreaterThan(start.x, to.x + 60)
+			XCTAssertLessThan(start.x + 160, to.x + 1000)
+		default:
+			XCTFail("a match running past the right edge is not visible")
+		}
+	}
+
+	/// A match longer than the pane is wide cannot be shown whole, so it is shown
+	/// from its start: what is read is read from the beginning.
+	func testShowsTheStartOfAMatchWiderThanThePane() {
+		switch RevealScroll.answer(
+			bringing: CGPoint(x: 2000, y: 200), width: 4000, onScreenIn: pane()
+		) {
+		case let .scroll(to):
+			XCTAssertEqual(to.x, 1780)
+			// The start is inside the text column; the end cannot be and is not
+			// what the offset was chosen for.
+			XCTAssertGreaterThan(2000, to.x + 60)
+			XCTAssertLessThan(2000, to.x + 1000)
+		default:
+			XCTFail("a very long match should still show its start")
+		}
+	}
+
+	/// A whole match already inside the pane still moves nothing.
+	func testLeavesAWholeMatchAlreadyOnScreenAlone() {
+		XCTAssertEqual(
+			RevealScroll.answer(bringing: CGPoint(x: 300, y: 200), width: 160, onScreenIn: pane()),
+			.stay
+		)
+	}
+
 	/// Scrolled right, then sent to a match at the start of a line: the offset
 	/// has to come back or the match is off the left edge — and under the gutter
 	/// counts as off it, because the gutter is drawn over the viewport's left

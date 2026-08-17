@@ -34,6 +34,22 @@ struct TextSearchTests {
 		#expect(matches.first?.lineText == "func beta() {}")
 	}
 
+	/// The column as well as the line, because a line is not a place: nothing
+	/// handed only a line number can tell that a match is off the side of the
+	/// editor's pane (item 533). Counted from the start of its own line rather
+	/// than of the file.
+	@Test func reportsTheColumnOnTheLine() {
+		let matches = TextSearch.matches(in: sample, query: "beta", options: SearchOptions())
+		#expect(matches.first?.column == 5)
+
+		// A long line, which is the case the column exists for.
+		let long = "let padding = \"" + String(repeating: "x", count: 300) + "\" // needle"
+		let far = TextSearch.matches(in: long, query: "needle", options: SearchOptions())
+		#expect(far.first?.line == 0)
+		// `let padding = "` is fifteen, then three hundred x's, then `" // `.
+		#expect(far.first?.column == 320)
+	}
+
 	@Test func rangesAreUTF16AndSelectTheMatch() {
 		let text = "héllo world"
 		let matches = TextSearch.matches(in: text, query: "world", options: SearchOptions())

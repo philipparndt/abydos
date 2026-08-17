@@ -99,8 +99,20 @@ public enum RevealScroll {
 	/// and still not readable.
 	public static let columnsOfContext: CGFloat = 16
 
-	/// Where the clip view belongs so `point` is on screen.
-	public static func answer(bringing point: CGPoint, onScreenIn pane: Pane) -> Answer {
+	/// Where the clip view belongs so what is being revealed is on screen.
+	///
+	/// - Parameters:
+	///   - point: the top left of it, in the document view's coordinates.
+	///   - width: how wide it is. A caret is nothing wide and takes the default;
+	///     a search match is as wide as the match, and passing it is what stops a
+	///     twenty-character match that *starts* one column inside the right edge
+	///     from counting as visible with nineteen of those columns off screen.
+	///   - pane: the pane as it is now.
+	public static func answer(
+		bringing point: CGPoint,
+		width: CGFloat = 0,
+		onScreenIn pane: Pane
+	) -> Answer {
 		// A row height of zero is a view that has not measured its font, and a
 		// pane narrower than its own gutter has no text column at all. Both are
 		// states a fresh pane passes through.
@@ -134,10 +146,19 @@ public enum RevealScroll {
 			// nobody can read.
 			let left = pane.offset.x + pane.gutterWidth
 			let right = pane.offset.x + pane.size.width
+			let end = point.x + max(0, width)
+			// The start comes first even when both ends are outside: what is read
+			// is read from the beginning, so a match wider than the pane shows its
+			// first columns rather than its last.
 			if point.x < left {
 				wanted.x = point.x - pane.gutterWidth - context
-			} else if point.x > right - pane.characterWidth {
-				wanted.x = point.x + context + pane.characterWidth - pane.size.width
+			} else if end > right - pane.characterWidth {
+				let forTheEnd = end + context + pane.characterWidth - pane.size.width
+				// Which is no good if it takes the start off the left edge — a
+				// match longer than the pane is wide. Then anchor the start.
+				wanted.x = point.x < forTheEnd + pane.gutterWidth + pane.characterWidth
+					? point.x - pane.gutterWidth - context
+					: forTheEnd
 			}
 		}
 

@@ -1836,8 +1836,8 @@ final class BottomPanel: NSView {
 		if let existingSearchPane { return existingSearchPane }
 		guard let root = workingDirectory else { return nil }
 		let pane = SearchPane(projectRoot: root)
-		pane.onOpenResult = { [weak self] url, line, match, intent in
-			self?.onOpenResult?(url, line, match.column + 1, intent)
+		pane.onOpenResult = { [weak self] url, _, match, intent in
+			self?.onOpenResult?(url, match, intent)
 		}
 		existingSearchPane = pane
 		return pane
@@ -1911,10 +1911,16 @@ final class BottomPanel: NSView {
 	/// use and which always means "take me there": a checklist row can also mean
 	/// "show me this one, and leave the keyboard where it is".
 	///
-	/// The file, the 1-based line, the 1-based column, and what showing it costs.
-	/// The column is carried since item 533: a match far along a long line is off
-	/// the side of the editor's pane, and a line on its own cannot say so.
-	var onOpenResult: ((URL, Int, Int, ResultChecklist.Intent) -> Void)?
+	/// The file, the row's match, and what showing it costs.
+	///
+	/// The whole match rather than the line it is on, since item 533: a match far
+	/// along a long line is off the side of the editor's pane, and one forty
+	/// characters wide that starts a column inside the edge is mostly off it. A
+	/// line number says neither. It is a value type out of `AbydosKit` that the
+	/// list is holding anyway, so carrying it costs nothing and spares the four
+	/// hops between the row and the editor from agreeing about an order of loose
+	/// integers.
+	var onOpenResult: ((URL, SearchMatch, ResultChecklist.Intent) -> Void)?
 
 	/// The usages pane if there is one, without making one or moving the
 	/// keyboard.

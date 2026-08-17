@@ -30,10 +30,11 @@ import AbydosKit
 /// the scroll position survive every move because the view moves rather than
 /// being rebuilt.
 final class UsagesPane: NSView, ResultsPane {
-	/// A row was activated: the file, the 1-based line and column, and whether the
-	/// keyboard goes with it. The column since item 533 — a usage far along a long
-	/// line is off the side of the editor's pane, which a line alone cannot say.
-	var onOpen: ((URL, Int, Int, ResultChecklist.Intent) -> Void)?
+	/// A row was activated: the file, the row's usage, and whether the keyboard
+	/// goes with it. The whole usage rather than its line since item 533 — one far
+	/// along a long line is off the side of the editor's pane, which a line number
+	/// cannot say.
+	var onOpen: ((URL, SearchMatch, ResultChecklist.Intent) -> Void)?
 	/// Asked to move to one of the four homes.
 	var onPlace: ((ResultPlacement) -> Void)?
 
@@ -95,7 +96,7 @@ final class UsagesPane: NSView, ResultsPane {
 		list.opensOnSelectionChange = true
 		list.logPrefix = "USAGES"
 		list.onOpen = { [weak self] result, match, intent in
-			self?.onOpen?(result.url, match.line + 1, match.column + 1, intent)
+			self?.onOpen?(result.url, match, intent)
 		}
 		list.onProgressChanged = { [weak self] in self?.updateHeading() }
 		list.onHideDoneChanged = { [weak self] in

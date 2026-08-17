@@ -1553,8 +1553,10 @@ final class CodeView: NSView, NSTextInputClient {
 		updateFrameSize()
 		// The match's start rather than the caret, which `setSearchMatches` has
 		// left at its end: what somebody wants to read is the match, and on a long
-		// line the two are not the same place.
-		bringOnScreen(utf16: match.utf16Range.lowerBound)
+		// line the two are not the same place. The whole match rather than its
+		// start, so a long one is not called visible on the strength of its first
+		// character.
+		bringOnScreen(utf16: match.utf16Range.lowerBound, extendingTo: match.utf16Range.upperBound)
 		needsDisplay = true
 	}
 
@@ -1569,7 +1571,13 @@ final class CodeView: NSView, NSTextInputClient {
 	/// measured against that size. This used to be a `DispatchQueue.main.async` in
 	/// `EditorViewController.open`, which is a bet on the work taking one turn of
 	/// the main loop rather than two (item 533).
-	func reveal(line: Int, column: Int = 1) {
+	///
+	/// `length` is how much of the line is being pointed at — a search match's own
+	/// length, in UTF-16 units, and zero for a place rather than a span. It only
+	/// affects the sideways answer, where the difference between a caret and a
+	/// forty-character match is the difference between visible and mostly off
+	/// screen.
+	func reveal(line: Int, column: Int = 1, length: Int = 0) {
 		guard let document else { return }
 		window?.contentView?.layoutSubtreeIfNeeded()
 
@@ -1584,7 +1592,9 @@ final class CodeView: NSView, NSTextInputClient {
 		widenForTheLongestLine(upTo: target)
 		updateFrameSize()
 		setCaret(offset, extendingSelection: false)
-		bringOnScreen(utf16: offset)
+		// Clamped to the line: a length that ran past its end would measure a
+		// point on the next one and read as a span of negative width.
+		bringOnScreen(utf16: offset, extendingTo: length > 0 ? min(end, offset + length) : nil)
 	}
 
 	/// Makes sure the view is wide enough to scroll to the end of one line.
@@ -1606,25 +1616,40 @@ final class CodeView: NSView, NSTextInputClient {
 	/// `viewportChanged` brings it on screen the moment the pane is given one.
 	/// Nothing retries on a timer and nothing scrolls to a number measured
 	/// against a viewport of zero.
-	private var pendingReveal: Int?
+	private var pendingReveal: (offset: Int, end: Int?)?
 
-	/// Scrolls so a document offset is on screen, leaving the view alone when it
-	/// already is.
+	/// Scrolls so a document offset — or a span starting at it — is on screen,
+	/// leaving the view alone when it already is.
 	///
 	/// The arithmetic is `RevealScroll` in AbydosKit, where it can be asked
 	/// without a window: which axes have to move, how far, and — the answer that
 	/// matters here — whether the pane is in a state to be measured at all.
-	private func bringOnScreen(utf16 offset: Int) {
+	///
+	/// `extendingTo` is the far end of what is being shown, when there is one. It
+	/// is measured here rather than counted in characters because a column is not
+	/// a distance: a tab, a wide glyph or a ligature all make the same number of
+	/// UTF-16 units a different number of points, and this view already has the
+	/// one function that knows — `point(forUTF16:)`, the same one the caret uses.
+	private func bringOnScreen(utf16 offset: Int, extendingTo end: Int? = nil) {
 		guard let scrollView = enclosingScrollView, window != nil else {
-			pendingReveal = offset
+			pendingReveal = (offset, end)
 			return
 		}
 		// Nil is an offset inside a collapsed fold, which is nothing to show
 		// rather than something to wait for: every caller unfolds first.
 		guard let point = point(forUTF16: offset) else { return }
 
+		// Only when both ends are on the same visual row. A match that wraps, or
+		// that a server reported as running onto the next line, has no width on
+		// this one — and a difference taken across rows would be a nonsense.
+		var width: CGFloat = 0
+		if let end, end > offset, let far = self.point(forUTF16: end), far.y == point.y {
+			width = max(0, far.x - point.x)
+		}
+
 		let answer = RevealScroll.answer(
 			bringing: point,
+			width: width,
 			onScreenIn: RevealScroll.Pane(
 				size: scrollView.contentSize,
 				offset: scrollView.contentView.bounds.origin,
@@ -1637,7 +1662,7 @@ final class CodeView: NSView, NSTextInputClient {
 		)
 		switch answer {
 		case .notLaidOut:
-			pendingReveal = offset
+			pendingReveal = (offset, end)
 		case .stay:
 			pendingReveal = nil
 		case let .scroll(to):
@@ -1654,13 +1679,13 @@ final class CodeView: NSView, NSTextInputClient {
 	/// changed — the event the reveal was waiting for, rather than a turn of the
 	/// main loop it was hoping for.
 	private func drainPendingReveal() {
-		guard let offset = pendingReveal, !isDrainingReveal else { return }
+		guard let waiting = pendingReveal, !isDrainingReveal else { return }
 		isDrainingReveal = true
 		pendingReveal = nil
 		// The rows are laid out for the size the pane has now, which is what the
 		// answer is measured in.
 		updateFrameSize()
-		bringOnScreen(utf16: offset)
+		bringOnScreen(utf16: waiting.offset, extendingTo: waiting.end)
 		isDrainingReveal = false
 	}
 

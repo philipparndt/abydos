@@ -84,6 +84,10 @@ struct UsageResultsTests {
 			)
 			// "abc\n" is four UTF-16 units, so line 1 starts at 4.
 			#expect(results[0].matches[0].utf16Range == 5..<7)
+			// And the column is the other half of the same answer: where the usage
+			// is on its own line, which is what the editor needs to bring it on
+			// screen sideways (item 533).
+			#expect(results[0].matches[0].column == 1)
 		}
 	}
 

@@ -1831,11 +1831,13 @@ final class EditorViewController: NSViewController {
 	/// 263, and the next ↓ still reaches the next row. Both keep the defaults the
 	/// call has always had, so a click and a review finding are unchanged.
 	///
-	/// The column is where a search match starts on its line, and it is here
-	/// because a line is not a place: a match two hundred characters along a long
-	/// line is off the side of the pane and the editor cannot know that from the
-	/// line alone. One is the start of the line, which is what a review finding
-	/// and a `file:150` mean.
+	/// The column is where a search match starts on its line and the length is how
+	/// wide it is, and they are here because a line is not a place: a match two
+	/// hundred characters along a long line is off the side of the pane, and a
+	/// forty-character one starting a column inside the edge is mostly off it. The
+	/// editor can know neither from the line alone. Column one and length nothing
+	/// are the start of the line, which is what a review finding and a `file:150`
+	/// mean.
 	///
 	/// The reveal happens **now**, not on the next turn of the main loop. It used
 	/// to be a `DispatchQueue.main.async`, whose comment had the diagnosis right —
@@ -1853,6 +1855,7 @@ final class EditorViewController: NSViewController {
 		fileURL: URL,
 		atLine line: Int,
 		column: Int = 1,
+		length: Int = 0,
 		focusEditor: Bool = true,
 		preview: Bool = false
 	) {
@@ -1864,7 +1867,7 @@ final class EditorViewController: NSViewController {
 			from: departure,
 			to: (fileURL, line)
 		)
-		activeTab?.codeView?.reveal(line: line, column: column)
+		activeTab?.codeView?.reveal(line: line, column: column, length: length)
 	}
 
 	/// Puts the caret on a 1-based line of the file being edited.

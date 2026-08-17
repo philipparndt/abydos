@@ -34,6 +34,19 @@ public struct LSPRange: Equatable, Sendable, Codable {
 		self.end = end
 	}
 
+	/// How many characters of one line this covers, or nothing when it covers
+	/// more than one.
+	///
+	/// For jumping to a place and *showing* it: a symbol is only as wide as its
+	/// name where the range stays on a line, and a range that spans lines is a
+	/// server being generous about what it points at — the same judgement
+	/// `UsageResults` already makes about a selection. Nothing wide is the honest
+	/// answer there, and it reads as "a place" rather than as a span (item 533).
+	public var widthOnOneLine: Int {
+		guard end.line == start.line else { return 0 }
+		return max(0, end.character - start.character)
+	}
+
 	public var json: [String: Any] { ["start": start.json, "end": end.json] }
 
 	public init?(json: Any?) {

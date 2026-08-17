@@ -746,11 +746,12 @@ final class EditorAreaController: NSViewController {
 		fileURL: URL,
 		atLine line: Int,
 		column: Int = 1,
+		length: Int = 0,
 		focusEditor: Bool = true,
 		preview: Bool = false
 	) {
 		activeGroup.open(
-			fileURL: fileURL, atLine: line, column: column,
+			fileURL: fileURL, atLine: line, column: column, length: length,
 			focusEditor: focusEditor, preview: preview
 		)
 	}
