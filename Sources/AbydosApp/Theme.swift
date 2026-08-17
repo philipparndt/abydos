@@ -125,6 +125,7 @@ struct Theme {
 	let currentLineBackground: NSColor
 	let caret: NSColor
 	let selectionBackground: NSColor
+	let selectionBackgroundInactive: NSColor
 	let foldPlaceholderBackground: NSColor
 	let foldPlaceholderText: NSColor
 	let indentGuide: NSColor
@@ -165,6 +166,7 @@ struct Theme {
 		currentLineBackground = colour(.currentLineBackground)
 		caret = colour(.caret)
 		selectionBackground = colour(.selectionBackground)
+		selectionBackgroundInactive = colour(.selectionBackgroundInactive)
 		foldPlaceholderBackground = colour(.foldPlaceholderBackground)
 		foldPlaceholderText = colour(.foldPlaceholderText)
 		indentGuide = colour(.indentGuide)
@@ -193,8 +195,8 @@ struct Theme {
 	}
 
 	/// The two shapes a selection comes in: a band across a row, or a run
-	/// behind text. They differ in the colour they are drawn in when the view
-	/// *has* the keyboard, and in nothing else.
+	/// behind text. Each has a colour of its own at each end of the rule, and
+	/// the reason is the shape rather than the state — see `selection`.
 	enum SelectionKind {
 		/// A row in a list: the project tree, a results checklist.
 		case row
@@ -205,23 +207,29 @@ struct Theme {
 	/// What a selection is drawn in, from whether the view drawing it has the
 	/// keyboard.
 	///
-	/// One function because there is one rule, and one gray because a program
-	/// with two grays that nearly match got that way by deciding this twice.
-	/// The unfocused colour is `selectionInactive` for every selection there is
-	/// — a tree row, a result row, a run of code — so a window whose keyboard is
-	/// in the terminal shows the same answer in every pane at once: *this is
-	/// where you were, and it is not where your keys are going.*
+	/// One function because there is one rule: with the keyboard, the strong
+	/// colour; without it, a quiet one, so a window whose keyboard is in the
+	/// terminal gives the same answer in every pane at once — *this is where you
+	/// were, and it is not where your keys are going.*
 	///
-	/// It is the scheme's own colour rather than the system's inactive
+	/// **Four colours and not three, because a row and a run of text need
+	/// different amounts of lift from the same ground.** A row is a band the
+	/// width of the pane with an edge above and below it; a run of code is a
+	/// ragged shape mostly covered by the glyphs sitting on it. 0510 gave both
+	/// the tree's `selectionInactive`, and the reporter saw the difference
+	/// within the day: on `#151210` that band is a handful of points of lift,
+	/// which reads on a row and does not read behind code. So the editor has
+	/// `selectionBackgroundInactive`, a scheme's own answer to the same question
+	/// one shape further on — chosen by eye in each palette, and derived for a
+	/// scheme that does not state one.
+	///
+	/// They are the scheme's own colours rather than the system's inactive
 	/// selection, for the reason every other colour here is: a themed panel
-	/// beside a system gray is two programs in one window. The tree has drawn
-	/// its unfocused rows in it since long before this rule had a name, which is
-	/// also the evidence that it reads as gray in all three schemes.
+	/// beside a system gray is two programs in one window.
 	func selection(_ kind: SelectionKind, hasKeyboard: Bool) -> NSColor {
-		guard hasKeyboard else { return selectionInactive }
 		switch kind {
-		case .row: return selectionActive
-		case .text: return selectionBackground
+		case .row:  return hasKeyboard ? selectionActive : selectionInactive
+		case .text: return hasKeyboard ? selectionBackground : selectionBackgroundInactive
 		}
 	}
 

@@ -71,3 +71,26 @@ The alternative was to fill the gap in from somewhere, and a theme applied
 nine-tenths of the way is diagnosed by staring at a window and wondering. A
 forgotten key and an unread file look exactly the same when the app inherits
 silently; they look nothing alike when it refuses.
+
+### One exception: `app.selectionBackgroundInactive`
+
+Selected text in an editor that has not got the keyboard. It is the one key a
+file may leave out, and if it does it becomes **halfway between
+`selectionInactive` and `selectionBackground`** — halfway between the gray a
+tree row goes when the keyboard is elsewhere and the colour selected code is
+drawn in when it is not.
+
+It is exempt because it arrived late. Schemes were already files people keep in
+a dotfiles repository, and requiring it would have refused every one of them for
+having been written before it existed. So it is a *stated* derivation rather
+than a silent default: it says what you get, and what you get is deliberately
+mild — never louder than the louder of the two it sits between.
+
+State it anyway if you can. It exists because a row and a run of text want
+different amounts of lift from the same background: a row is a band the width of
+the pane with an edge above and below, and code is a ragged shape mostly covered
+by the glyphs on top of it. `selectionInactive` was used for both until somebody
+selected a line of `Package.swift`, put the keyboard in the terminal, and could
+not see it. Judge it the same way — a real file, both lightnesses — and keep it
+below `selectionBackground`, or an unfocused selection will shout over a focused
+one.

@@ -38,6 +38,7 @@ enum ThemeSwap {
 			theme.currentLineBackground,
 			theme.caret,
 			theme.selectionBackground,
+			theme.selectionBackgroundInactive,
 			theme.foldPlaceholderBackground,
 			theme.foldPlaceholderText,
 			theme.indentGuide,

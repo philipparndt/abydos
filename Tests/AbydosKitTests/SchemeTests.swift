@@ -92,6 +92,42 @@ struct SchemeFileTests {
 		}
 	}
 
+	/// The one exception, and the whole of its argument: a scheme written before
+	/// this role existed still loads, and gets a colour that is visible without
+	/// being louder than the focused selection.
+	@Test func derivesTheOneRoleAFileMayLeaveOut() throws {
+		let stated = try read(Self.wholeScheme())
+		#expect(stated.app?.colour(.selectionBackgroundInactive, isLight: false) == 0xEEEEEE)
+
+		// The generated file gives every role the same pair, so a derivation has
+		// to be looked at on values that differ.
+		let older = Data("""
+		{
+		  "id": "older", "title": "Older",
+		  "app": {
+		    "selectionInactive": { "light": "#E9E0CF", "dark": "#2A2018" },
+		    "selectionBackground": { "light": "#F6E3BC", "dark": "#4A2C0E" }
+		  }
+		}
+		""".utf8)
+		// Not a whole file, so it is refused — but on the *first* missing role,
+		// which proves this one is not among them.
+		#expect(throws: SchemeProblem.missing("app.windowBackground")) { try read(older) }
+
+		let whole = try read(Self.wholeScheme(omitting: "selectionBackgroundInactive"))
+		let app = try #require(whole.app)
+		#expect(app.colour(.selectionBackgroundInactive, isLight: false) == 0xEEEEEE)
+		#expect(app.colour(.selectionBackgroundInactive, isLight: true) == 0x111111)
+
+		// And the derivation itself, on two colours that are not the same.
+		let midway = SchemePair.midway(
+			SchemePair(light: 0xE9E0CF, dark: 0x2A2018),
+			SchemePair(light: 0xF6E3BC, dark: 0x4A2C0E)
+		)
+		#expect(midway.dark == 0x3A2613)
+		#expect(midway.light == 0xEFE1C5)
+	}
+
 	/// Half a pair is as bad as none: a scheme that only says what it looks like
 	/// in the dark goes wrong the first morning somebody opens the curtains.
 	@Test func refusesHalfAColour() {
@@ -309,6 +345,26 @@ struct BundledSchemeTests {
 		// A kind that used to return `editorText` from the Swift switch, and is
 		// written out here rather than left to be inherited.
 		#expect(blue.colour(.variable, isLight: false) == blue.colour(.editorText, isLight: false))
+	}
+
+	/// Every shipped scheme states the one role it is allowed to leave out.
+	///
+	/// The derivation is for schemes nobody has looked at. Ours have been looked
+	/// at, in both lightnesses, against a real file — so a shipped scheme falling
+	/// back to it would mean somebody added a palette and never saw an unfocused
+	/// selection in it.
+	@Test func everyBundledSchemeChoosesItsUnfocusedSelection() throws {
+		for scheme in library.appSchemes {
+			let data = try Data(contentsOf: URL(fileURLWithPath: scheme.origin))
+			let document = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+			let app = try #require(document["app"] as? [String: Any])
+			#expect(app[SchemeRole.optional.rawValue] != nil,
+			        "\(scheme.id) leaves \(SchemeRole.optional.rawValue) to the derivation")
+		}
+
+		let abydos = try #require(library.appScheme(id: "abydos")?.app)
+		#expect(abydos.colour(.selectionBackgroundInactive, isLight: false) == 0x3A2E24)
+		#expect(abydos.colour(.selectionBackgroundInactive, isLight: true) == 0xE5D9C2)
 	}
 
 	/// Ghostty's sixteen, which is what somebody arriving from Ghostty expects.

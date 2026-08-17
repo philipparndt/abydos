@@ -2,7 +2,7 @@
 	"id": "dracula",
 	"title": "Dracula",
 	"order": 3,
-	"about": "The one palette here that is not ours. People arrive with it — from a terminal, an editor, a whole desktop — and the point of offering it is that it is the same Dracula they already have, so the six accent hues and the two greys are upstream's values rather than something adjusted to taste, and upstream's mapping is followed to the letter: pink for keywords, green for strings, purple for constants and numbers, cyan for types, orange for parameters. Only the roles this app has and Dracula does not — a git status, a fold placeholder — are placed, each given the accent that already means it elsewhere. Daylight is Alucard, which upstream publishes precisely because inverting the dark one gives neon on white. The terminal's bright half is each of Alucard's eight hues lifted by the same amount, since Dracula names hues rather than a table of sixteen.",
+	"about": "The one palette here that is not ours. People arrive with it — from a terminal, an editor, a whole desktop — and the point of offering it is that it is the same Dracula they already have, so the six accent hues and the two greys are upstream's values rather than something adjusted to taste, and upstream's mapping is followed to the letter: pink for keywords, green for strings, purple for constants and numbers, cyan for types, orange for parameters. Only the roles this app has and Dracula does not — a git status, a fold placeholder, the selection an editor draws when the keyboard is somewhere else — are placed, each given the accent that already means it elsewhere; the last of those has no accent to take, and is upstream's own selection with the blue drained out of it, so the two selections separate by colour rather than by weight. Daylight is Alucard, which upstream publishes precisely because inverting the dark one gives neon on white. The terminal's bright half is each of Alucard's eight hues lifted by the same amount, since Dracula names hues rather than a table of sixteen.",
 	"app": {
 		"windowBackground": { "light": "#FFFBEB", "dark": "#282A36" },
 		"sidebarBackground": { "light": "#F5F1E1", "dark": "#21222C" },
@@ -25,6 +25,7 @@
 		"currentLineBackground": { "light": "#F7F3E3", "dark": "#2E3040" },
 		"caret": { "light": "#644AC9", "dark": "#F8F8F2" },
 		"selectionBackground": { "light": "#CFCFDE", "dark": "#44475A" },
+		"selectionBackgroundInactive": { "light": "#DAD8C8", "dark": "#404149" },
 		"foldPlaceholderBackground": { "light": "#EAE7D8", "dark": "#343746" },
 		"foldPlaceholderText": { "light": "#644AC9", "dark": "#BD93F9" },
 		"indentGuide": { "light": "#E4E1D2", "dark": "#3B3E4F" },
