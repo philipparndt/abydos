@@ -1925,6 +1925,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let path = options.editorShotPath {
+			DispatchQueue.main.asyncAfter(deadline: .now() + options.screenshotDelay) {
+				let ok = controller?.writeEditorImageForTesting(to: path) ?? false
+				FileHandle.standardError.write(Data("editor shot \(ok ? "written" : "failed"): \(path)\n".utf8))
+				if options.screenshotPath == nil { exit(ok ? 0 : 2) }
+			}
+		}
+
 		if let path = options.screenshotPath {
 			scheduleScreenshot(
 				path: path,

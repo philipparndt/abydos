@@ -12,6 +12,7 @@ struct LaunchOptions {
 	/// Files to open, in the order given: `--file` may be repeated.
 	var filePaths: [String] = []
 	var screenshotPath: String?
+	var editorShotPath: String?
 	/// Seconds to wait before capturing, so async parse/git work settles.
 	var screenshotDelay: TimeInterval = 1.5
 	var expandNavigator = false
@@ -669,6 +670,13 @@ struct LaunchOptions {
 			case "--open":       options.projectPath = next()
 			case "--file":       if let path = next() { options.filePaths.append(path) }
 			case "--screenshot": options.screenshotPath = next()
+			// The editor view alone, at whatever size it has.
+			//
+			// **A window capture is not evidence about the editor.** How much of
+			// the window the editor gets is decided by the bottom panel, and a
+			// run whose panel happens to be large photographs a terminal —
+			// which is what 0540's own "after" picture came out as.
+			case "--editor-shot": options.editorShotPath = next()
 			case "--delay":      options.screenshotDelay = next().flatMap(Double.init) ?? 1.5
 			case "--expand":     options.expandNavigator = true
 			case "--type":       options.typeText = next()

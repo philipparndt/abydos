@@ -262,6 +262,48 @@ picking rows out with the pointer and then pressing ␣ is one gesture.
 - **When** a match three rows down is ⇧-clicked
 - **Then** the four rows are selected and no other file is opened
 
+## Requirement: A band covers the characters it matched, on every row they are drawn on
+
+The highlight behind a find match SHALL be measured along the visual row it is
+painted on. With soft wrap on, a document line is drawn as several rows, and the
+bands were measured along a `CTLine` built for the *whole line* while being
+painted on one row of it — so every match past the first row was placed at the x
+it would have had if the line had never wrapped, and drawn at that x on every row
+the line occupies. Photographed, a line of four hundred characters with ten
+matches showed four tall blocks standing over words that matched nothing.
+
+The caret has always known better: `point(forUTF16:)` slices the line into
+segments and measures along the one the offset falls in. **Two answers to "where
+is this offset on screen" is the fault**, and they now ask the same question of
+the same layout.
+
+**A match is a list of rectangles, not a rectangle.** One per match per visual row
+it touches: a match crossing a wrap boundary is banded on both rows, each piece
+bounded by its row, and a row in the middle of a long match is banded right
+across.
+
+Folding composes with this and needed nothing: which document line a row belongs
+to, and which segment of it, are both answered by the fold-aware mapping the
+caller already uses.
+
+### Scenario: a match on the second visual row
+
+- **GIVEN** soft wrap on, and a match on the second row of a wrapped line
+- **WHEN** the row is painted
+- **THEN** the band is over the matched characters, at the x they are drawn at
+
+### Scenario: a match across a wrap boundary
+
+- **GIVEN** a match whose characters end on one row and continue on the next
+- **WHEN** both rows are painted
+- **THEN** each row carries the piece of the match that is on it, and nothing more
+
+### Scenario: a fold above the matched line
+
+- **GIVEN** thirteen lines folded away above a wrapped line with matches in it
+- **WHEN** the rows are painted
+- **THEN** the bands are still over the matched characters
+
 ## Requirement: Search results go wherever a usages list goes
 
 The search results are the same checklist the usages list is, so they have the

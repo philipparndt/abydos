@@ -3212,6 +3212,12 @@ final class EditorViewController: NSViewController {
 		return "\(text) | filling in: \(String(decoding: units[clamped], as: UTF16.self))"
 	}
 
+	/// The text of the active tab, drawn to a PNG.
+	@discardableResult
+	func writeEditorImageForTesting(to path: String) -> Bool {
+		activeTab?.codeView?.writeImageForTesting(to: path) ?? false
+	}
+
 	@discardableResult
 	func writeCompletionImageForTesting(to path: String) -> Bool {
 		completions.writeImageForTesting(to: path)

@@ -342,6 +342,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// Panes in the panel, for proving the tmux + added none.
 	var paneCountForTesting: Int { bottomPanel.paneCountForTesting }
 
+	/// The editor's own text, drawn to a PNG.
+	@discardableResult
+	func writeEditorImageForTesting(to path: String) -> Bool {
+		editor.writeEditorImageForTesting(to: path)
+	}
+
 	/// What the panel's tab strip is showing and what it is holding back.
 	var panelOverflowReportForTesting: String { bottomPanel.overflowReportForTesting }
 

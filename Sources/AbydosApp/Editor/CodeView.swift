@@ -622,7 +622,7 @@ final class CodeView: NSView, NSTextInputClient {
 			// The matches on this row, at the two depths they are painted at. The
 			// others go on here, under the selection; the current one goes to
 			// `drawLine`, which puts it on *over* the selection — see there.
-			let matches = searchHighlights(docLine: docLine, rect: rowRect)
+			let matches = searchHighlights(docLine: docLine, segment: segment, rect: rowRect)
 			if !matches.others.isEmpty {
 				Theme.current.searchMatchBackground.setFill()
 				for band in matches.others { band.fill() }
@@ -1022,17 +1022,37 @@ final class CodeView: NSView, NSTextInputClient {
 	/// selection and the current one over it. Measured *once* for both, since the
 	/// CTLine this asks for offsets from is not free and a row is redrawn on
 	/// every caret blink.
-	private func searchHighlights(docLine: Int, rect: NSRect) -> (others: [NSRect], current: NSRect?) {
+	private func searchHighlights(
+		docLine: Int, segment: Int, rect: NSRect
+	) -> (others: [NSRect], current: NSRect?) {
 		guard !searchMatches.isEmpty, let document else { return ([], nil) }
 
 		let lineRange = document.rope.lineByteRange(docLine)
 		let lineStart = document.rope.utf16Offset(fromByte: lineRange.lowerBound)
 		let lineEnd = document.rope.utf16Offset(fromByte: lineRange.upperBound)
-
 		let text = document.rope.string(in: lineRange)
+
+		// **Measured along the row being painted, not along the whole line.**
+		// This is 0540: the `CTLine` was built for the document line while
+		// `rect` was one visual row of it, so every match past the first row was
+		// placed at the x it would have had unwrapped. The caret's answer —
+		// `point(forUTF16:)` — has always sliced the line into segments first,
+		// and the two disagreeing is the fault. They now ask `WrapLayout` the
+		// same question with the same arguments.
+		var rowRangeInLine = 0..<(text as NSString).length
+		var rowText = text
+		if isWordWrapEnabled, let columns = wrapColumns {
+			rowRangeInLine = WrapLayout.segmentRange(
+				in: text, segment: segment, columns: columns, tabWidth: Theme.current.tabWidth
+			)
+			rowText = (text as NSString).substring(
+				with: NSRange(location: rowRangeInLine.lowerBound, length: rowRangeInLine.count)
+			)
+		}
+
 		let ctLine = CTLineCreateWithAttributedString(attributedLine(
-			text: text,
-			lineStartUTF16: lineStart,
+			text: rowText,
+			lineStartUTF16: lineStart + rowRangeInLine.lowerBound,
 			tokenIndex: TokenIndex(tokens: [])
 		))
 
@@ -1044,13 +1064,17 @@ final class CodeView: NSView, NSTextInputClient {
 			guard match.utf16Range.lowerBound <= lineEnd else { break }
 			guard match.utf16Range.upperBound >= lineStart else { continue }
 
-			let from = max(match.utf16Range.lowerBound, lineStart) - lineStart
-			let to = min(match.utf16Range.upperBound, lineEnd) - lineStart
-			guard to > from else { continue }
+			// What of it falls on *this* row, in the row's own offsets. A match
+			// crossing a wrap boundary is asked once per row and answers a piece
+			// each time, which is the shape the old code could not express: it
+			// returned one rectangle per match and had nowhere to put the rest.
+			guard let band = WrapLayout.bandRange(
+				for: match.utf16Range, lineStart: lineStart, segment: rowRangeInLine
+			) else { continue }
 
-			let startX = textOriginX + CTLineGetOffsetForStringIndex(ctLine, from, nil)
-			let endX = textOriginX + CTLineGetOffsetForStringIndex(ctLine, to, nil)
-			let band = NSRect(
+			let startX = textOriginX + CTLineGetOffsetForStringIndex(ctLine, band.lowerBound, nil)
+			let endX = textOriginX + CTLineGetOffsetForStringIndex(ctLine, band.upperBound, nil)
+			let rect = NSRect(
 				x: startX,
 				y: rect.minY,
 				width: max(2, endX - startX),
@@ -1058,9 +1082,9 @@ final class CodeView: NSView, NSTextInputClient {
 			)
 
 			if index == currentMatchIndex {
-				current = band
+				current = rect
 			} else {
-				others.append(band)
+				others.append(rect)
 			}
 		}
 		return (others, current)
@@ -3091,6 +3115,23 @@ final class CodeView: NSView, NSTextInputClient {
 		select(range)
 		reportSnippetStop()
 		return true
+	}
+
+	/// Draws the visible text to a PNG.
+	///
+	/// **Because a window capture is not evidence about the editor.** What the
+	/// bottom panel is doing decides how much of the window the editor gets, and
+	/// a run whose panel happens to be large photographs a terminal — which is
+	/// how 0540's own "after" picture came out showing no code at all. This
+	/// captures the view, at whatever size it has, and nothing else.
+	@discardableResult
+	func writeImageForTesting(to path: String) -> Bool {
+		let visible = enclosingScrollView?.documentVisibleRect ?? bounds
+		guard visible.width > 1, visible.height > 1 else { return false }
+		guard let rep = bitmapImageRepForCachingDisplay(in: visible) else { return false }
+		cacheDisplay(in: visible, to: rep)
+		guard let data = rep.representation(using: .png, properties: [:]) else { return false }
+		return (try? data.write(to: URL(fileURLWithPath: path))) != nil
 	}
 
 	/// Where the caret is on screen, for putting the list under it.

@@ -470,6 +470,11 @@ final class EditorAreaController: NSViewController {
 	}
 
 	@discardableResult
+	func writeEditorImageForTesting(to path: String) -> Bool {
+		(activeGroup ?? groups.first)?.writeEditorImageForTesting(to: path) ?? false
+	}
+
+	@discardableResult
 	func writeCompletionImageForTesting(to path: String) -> Bool {
 		(activeGroup ?? groups.first)?.writeCompletionImageForTesting(to: path) ?? false
 	}
