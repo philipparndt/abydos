@@ -122,7 +122,15 @@ struct PerformanceTests {
 			rope = Rope(source)
 		}
 		#expect(rope.lineCount == 200_001)
-		#expect(elapsed < 5.0, "rope construction took \(elapsed)s of processor time")
+		// **The bound belongs to a run that asked for it.** 0472 moved these to
+		// processor time, which removed the scheduling and left the contention:
+		// the same arithmetic costs more cycles when thirty-odd threads compete
+		// for cache and memory bandwidth, so a number chosen alone is a number
+		// nothing is ever measured against. `make timing` is where a bound is
+		// asserted, serialised, on a machine somebody has decided to lend it —
+		// the shape the warm-render suites already use.
+		guard Stopwatch.maySay("PERF", "rope construction") else { return }
+		#expect(elapsed < 5.0, "rope construction took \(elapsed)s of processor time — \(MachineLoad.said)")
 	}
 
 	// MARK: - Random access
@@ -274,8 +282,11 @@ struct PerformanceTests {
 			}
 		}
 		print(String(format: "PERF per background reparse: %.2f ms", elapsed / 20 * 1000))
-		// Loose: this is a background cost. It only needs to stay sane.
-		#expect(elapsed / 20 < 0.2)
+		// Loose: this is a background cost. It only needs to stay sane — and
+		// like the two above, the number is measured every run and asserted only
+		// by the run that asked to assert it.
+		guard Stopwatch.maySay("PERF", "background reparse") else { return }
+		#expect(elapsed / 20 < 0.2, "a background reparse took \(elapsed / 20)s — \(MachineLoad.said)")
 	}
 
 	// MARK: - Folding
@@ -290,15 +301,26 @@ struct PerformanceTests {
 		// Processor time, not wall clock. This failed in four full runs out of
 		// six while passing every time it was run alone: 7.1 seconds by itself,
 		// 10.2 in the suite, 12 to 32 with agents building beside it — the same
-		// code each time, so what it was measuring was the machine. The bound
-		// is unchanged, and now means what it says.
+		// code each time, so what it was measuring was the machine.
+		//
+		// **Processor time was right and was not enough**, which is 0530's half
+		// of this. Measured again, all three conditions: six runs alone gave
+		// 5.81, 5.83, 5.83, 6.02, 6.97 and 7.15 s — green with a margin of
+		// 1.4–1.7× — while one run inside `make test` on an *idle* machine gave
+		// 10.10 s, red by one per cent, and with fourteen spinners 10.44, 10.78
+		// and 11.09, red by four to eleven. Neither a slow fold nor a busy
+		// machine: the suite's own parallelism is enough on its own.
+		//
+		// Widening the bound and shrinking the input were both considered and
+		// refused — each keeps the bet and only moves where it is lost.
 		let elapsed = Self.cpuTime("fold ranges (100k lines)") {
 			folds = engine.foldRanges(rope: rope)
 		}
 		#expect(!folds.isEmpty)
 		print("PERF fold regions found: \(folds.count)")
 		// Runs on a background queue and is debounced, so the bar is looser.
-		#expect(elapsed < 10.0, "fold computation took \(elapsed)s of processor time")
+		guard Stopwatch.maySay("PERF", "fold computation") else { return }
+		#expect(elapsed < 10.0, "fold computation took \(elapsed)s of processor time — \(MachineLoad.said)")
 	}
 
 	// MARK: - Streaming search results

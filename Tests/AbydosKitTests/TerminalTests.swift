@@ -639,6 +639,11 @@ struct PseudoTerminalTests {
 		pty.onOutput = { chunk, _ in collected.append(chunk) }
 
 		#expect(pty.start(executable: "/bin/echo", arguments: ["survived"]))
+		// **Two seconds of elapsed time is the test**, not a wait for something:
+		// the claim is that output written while reading is suspended is still
+		// there when it resumes, and there is nothing to wait *for* — the whole
+		// point is that nothing is being read. Shortening it weakens the claim
+		// and waiting cannot express it.
 		pty.setReadingSuspended(true)
 		try? await Task.sleep(nanoseconds: 2_000_000_000)
 		pty.setReadingSuspended(false)
@@ -765,6 +770,11 @@ struct PseudoTerminalTests {
 		let collected = Collector()
 		pty.onOutput = { chunk, _ in collected.append(chunk) }
 
+		// Stands in for `/bin/cat` having reached its read loop. There is no
+		// signal for that — a shell that has not printed anything is
+		// indistinguishable from one that has not started — so this is a bet,
+		// and a generous one: what follows waits properly for the echo, so the
+		// cost of being wrong here is a retry rather than a failure.
 		#expect(pty.start(executable: "/bin/cat"))
 		try? await Task.sleep(nanoseconds: 200_000_000)
 		pty.write("round-trip\n")

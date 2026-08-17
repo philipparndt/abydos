@@ -35,13 +35,25 @@ struct TmuxPasteTests {
 		// A pane that writes whatever it is given to a file.
 		_ = tmux(["new-session", "-d", "-s", session, "-x", "80", "-y", "24",
 		          "/bin/cat > \(sink.path)"])
-		try await Task.sleep(nanoseconds: 700_000_000)
+		// Waited for rather than slept through: tmux answers `has-session` the
+		// moment the server is up, and 700 ms was a guess at how long that takes
+		// on a machine that is not busy.
+		await waitUntil("tmux started the session") {
+			// `list-sessions` and not `has-session`: this helper hands back
+			// stdout without looking at the exit status, so a "no such session"
+			// would come back as an empty string rather than as nil and the
+			// wait would return before tmux had done anything.
+			tmux(["list-sessions", "-F", "#{session_name}"])?.contains(session) == true
+		}
 
 		let sent = "hello from the buffer\n"
 		let accepted = await TmuxMirror.paste(sent, intoSession: session)
 		#expect(accepted, "tmux refused the paste")
 
-		try await Task.sleep(nanoseconds: 700_000_000)
+		// And the pane writing it to the file is a thing that can be looked for.
+		await waitUntil("the pane wrote what it was pasted") {
+			((try? String(contentsOf: sink, encoding: .utf8)) ?? "").contains("hello from the buffer")
+		}
 		let landed = (try? String(contentsOf: sink, encoding: .utf8)) ?? ""
 		#expect(landed.contains("hello from the buffer"), "the pane never saw it: \(landed.debugDescription)")
 		// The markers are tmux's business, and it did not hand them over as text.
