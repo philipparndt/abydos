@@ -191,7 +191,7 @@ after a click that started somewhere else.
       keyboard" and "⌫ still ticks a row" are one claim and can fail
 - [x] A click on a row puts the keyboard in the list, in all four homes
 - [x] Clicking the tab first still works, and the two paths agree
-- [ ] Swapping the editor's content view does not drop the window's first
+- [x] Swapping the editor's content view does not drop the window's first
       responder — the hole under this item, found on the way
 - [ ] The usages list too, which shares the widget
 - [ ] `make test` and `make warnings` are clean
