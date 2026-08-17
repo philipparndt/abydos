@@ -3,9 +3,7 @@
 ## Purpose
 
 The text editor: what the keys do, where the caret comes to rest, how a selection is drawn when the keyboard is elsewhere, and how find marks the page. Every offset the editor works in is logical, and reordering happens only when a line is drawn.
-
 ## Requirements
-
 ### Requirement: ⌘/ comments out the lines a selection touches
 
 ⌘/ SHALL comment out the lines a selection touches.
@@ -332,7 +330,8 @@ the jump to the ends of the document is offsets and never asks about a row.
 
 ### Requirement: ⌃B and ⌃F move the caret a character, and so do ← and →
 
-⌃B and ⌃F SHALL move the caret a character, and so SHALL ← and →.
+⌃B and ⌃F SHALL move the caret a character, and so SHALL ← and →. A character SHALL
+be a grapheme cluster, so the caret SHALL NOT come to rest inside one.
 
 The editor has one horizontal character motion and it is **logical**: a step
 forward is one character further into the document, a step back is one
@@ -359,6 +358,18 @@ mark is one step and not two. At the start of a line the character before the
 caret is the newline that ended the line above, so ⌃B goes to the end of that
 line; at offset zero there is nothing to step over and the caret stays.
 
+**That sentence was half true for as long as it stood here, and 0504 is what it
+cost.** The alignment the four keys went through was `Rope.alignToBoundary`, which
+walks back over UTF-8 continuation bytes — code-point alignment, not grapheme
+alignment. An emoji is a single code point, so the emoji scenario below passed and
+the claim looked kept. `e` + U+0301 is two code points and neither begins with a
+continuation byte, so the caret stopped between the letter and its accent: where no
+caret should ever be, and where the next keystroke edits half a character. The step
+is now a grapheme step, and the sentence is true rather than aspirational.
+
+`\r\n` is one grapheme and two code points. The caret does not stop between them,
+which is the same fact that makes ⌃O's two halves cancel after a lone `\r`.
+
 The rest of the emacs family is not this requirement. ⌃P and ⌃N move up and
 down a line because macOS sends them as the same selectors the arrows send.
 
@@ -382,6 +393,21 @@ down a line because macOS sends them as the same selectors the arrows send.
 - **When** ⇧⌃F is pressed
 - **Then** the caret is at offset 52 and the whole `🙂` is selected, not half of it
 
+#### Scenario: ⌃F over a decomposed accent
+
+- **Given** a line whose second character is `e` followed by U+0301, beginning at
+  offset 13
+- **When** ⌃F is pressed with the caret at offset 13
+- **Then** the caret is at offset 15, not 14
+- **And** ⌃B from offset 15 puts it back at 13
+
+#### Scenario: ⇧→ over a ZWJ sequence
+
+- **Given** the caret immediately before a ZWJ sequence — a family emoji, or a
+  skin-tone modifier
+- **When** ⇧→ is pressed
+- **Then** the whole sequence is selected, not the first code point of it
+
 #### Scenario: ⌃B at the start of a line
 
 - **Given** the caret at column 0 of the third line, which is offset 44
@@ -393,6 +419,12 @@ down a line because macOS sends them as the same selectors the arrows send.
 - **Given** the caret at offset 0
 - **When** ⌃B is pressed
 - **Then** the caret is still at offset 0 and nothing is selected
+
+#### Scenario: a line ending of two code points
+
+- **Given** a document using `\r\n` line endings
+- **When** the caret steps over a line ending
+- **Then** it does not stop between the `\r` and the `\n`
 
 ### Requirement: ⌃A and ⌃E go to the ends of the line, and so do ⌥↑ and ⌥↓
 
@@ -768,3 +800,33 @@ it.
 - **Given** a personal scheme written before these keys existed
 - **Then** it loads, and its current match is halfway between its selection and
   its caret, with the other matches halfway between its selection and that
+
+### Requirement: Deleting crosses the same boundary as moving
+
+⌫ and ⌦ SHALL remove a whole grapheme cluster, so that no keystroke leaves a
+combining mark without its base letter or a base letter without its mark. What counts
+as one character SHALL be the same for deleting as for moving.
+
+Two answers to "where is the next character boundary" is how the two come to
+disagree later, which is the fault this pair of requirements exists to close. One
+test holds the motion and the deletion to the same boundary.
+
+#### Scenario: ⌫ after a decomposed accent
+
+- **Given** the caret immediately after `e` + U+0301
+- **When** ⌫ is pressed
+- **Then** both the letter and its combining mark are removed, and no orphaned mark
+  is left in the document
+
+#### Scenario: ⌦ before a decomposed accent
+
+- **Given** the caret immediately before `e` + U+0301
+- **When** ⌦ is pressed
+- **Then** both code points are removed together
+
+#### Scenario: the two agree
+
+- **Given** any character the horizontal keys step over in one press
+- **When** ⌫ is pressed with the caret after it
+- **Then** exactly that character is removed
+
