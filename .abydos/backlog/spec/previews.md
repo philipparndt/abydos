@@ -80,13 +80,6 @@ broken, and a project reopening with twenty of them must not render twenty.
 - **When** the window comes up and is left alone
 - **Then** no build is started and no model is written
 
-Nothing is claimed here about what a `.scad` pane shows when the render *fails*
-— because what it shows is a test cube and no message, which is 0484 and is not
-a requirement anybody would write down. It is left out rather than described so
-that the spec does not read as though somebody chose it. A Cadova pane is a
-different matter and does have a requirement for it, above: that pane is this
-program's own, where the `.scad` one belongs to the viewer it embeds.
-
 ## Requirement: A Cadova model is built and run to be seen
 
 A Cadova model is not a file the viewer can open. It is an executable target in
@@ -187,3 +180,49 @@ rather than rendered somewhere it was not asked to go.
 - **When** the model is asked for
 - **Then** nothing is written and the viewer says why, rather than writing where
   the recipe pointed
+
+## Requirement: A model that would not render shows no model
+
+A render can fail: a `.scad` with an unclosed bracket, a recipe that names a part
+that is not there, or a machine with no OpenSCAD on it at all. When one does,
+**the pane draws nothing** — and says what went wrong, which for OpenSCAD not
+being installed is the command that installs it.
+
+Nothing is a deliberate answer rather than an absence of one. The alternative was
+a lit cube on the build plate, which is what this pane used to fall back to, and
+it is worse than an empty pane in the one way that matters: somebody who did not
+write the file cannot tell that the shape on screen is not the shape their code
+describes. A message alone does not settle it either. This pane is captured
+through the viewer's Metal snapshot, which sees the scene and not the layer above
+it, so in a screenshot — the docs, a bug report, an agent checking its own work —
+the shape is the *only* thing that says whether the load worked. A shape that is
+not the model is a lie a picture cannot correct.
+
+The file is watched even though it never loaded, so the message is a promise the
+program keeps: repair the source and the model appears where the message was.
+
+This is the embedded viewer's own behaviour, which this project pins rather than
+writes. The Cadova pane reaches the same answer from this project's own code —
+the model goes and the compiler's message takes its place — and the two agree on
+purpose: which half of the program draws a pane is not a thing anybody looking at
+one should be able to tell from how a failure reads.
+
+### Scenario: a `.scad` that does not compile
+
+- **Given** a `.scad` with a syntax error in it
+- **When** it is opened
+- **Then** the model half shows no shape at all, and says the render failed and
+  what OpenSCAD said about it
+
+### Scenario: a machine with no OpenSCAD
+
+- **Given** a `.scad` on a machine where OpenSCAD cannot be found
+- **When** it is opened
+- **Then** the model half shows no shape, and says OpenSCAD is not installed and
+  how to install it
+
+### Scenario: the source is repaired
+
+- **Given** that pane, showing nothing and saying why
+- **When** the file is corrected and saved
+- **Then** it is rendered again, the model appears, and the message goes
