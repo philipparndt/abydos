@@ -224,6 +224,27 @@ Afterwards: `main.swift` byte-identical (`d78c3c12…` before and after),
 is the sharpest probe available because the key is missing and `--switch-appearance`
 would have created it.
 
+And the control, so that the fix is not simply the harness being broken: the
+same project with the file *named* —
+`--open <copy> --file a.swift --type "ZZ" --print-text` — prints `| ZZlet a = 1`.
+A run that says which file it means still types into it.
+
+### Proving the geometry, with a neighbour running
+
+Diffing the whole domain either side of a run is unreliable on a machine where
+the reporter's own app and other agents' unfixed builds are writing the same
+three keys. The way round it is to give the run a shape nothing else has:
+
+    Abydos --open <copy> --file a.swift \
+           --window-size 903x707 --sidebar-width 333 --panel-height 211 \
+           --screenshot <png> --delay 6
+
+Afterwards `903`, `707`, `333` and `211` appear nowhere in the geometry keys of
+`de.rnd7.ideai`, which still hold the reporter's 1880-wide window, their 260pt
+sidebar and their 258pt panel. A run whose window was 903×707 wrote no window
+frame and no split position, and that conclusion does not care what else on the
+machine is running.
+
 ## Not part of this item
 
 Restoring what was already damaged: the `appearance` key, the `C-ircle` line,
