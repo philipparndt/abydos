@@ -106,14 +106,37 @@ others say `pnpm-lock.yaml — not read yet (NNNN)`.
 open and again on every write of the lock file — the same shape as the per-pin
 stat in `readSwiftPackages`, and worth a comment either way.
 
+## The decision: npm here, pnpm and yarn in 0525
+
+Only npm is read here. pnpm and yarn are **0525**, filed by this item, and the
+argument is the stood-down agent's:
+
+- `package.json` is the marker for all three tools, so a pnpm or a yarn project
+  reaches this reader whatever it does. Saying nothing is not an option — the
+  row would read `no package-lock.json — run npm install`, which tells somebody
+  to install a second, conflicting tree over a project that is already
+  installed. That is 513's workspace-member lie in a new spelling, and it is
+  worse, because the suggestion here writes hundreds of megabytes.
+- Reading them is a different job rather than a longer one. `pnpm-lock.yaml` is
+  nested YAML and yarn berry's is YAML too, and there is no YAML reader in this
+  repository — 513's "there is no TOML reader" again, but without 513's answer,
+  since neither file is flat enough for thirty lines. yarn v1 is a third,
+  bespoke format. pnpm's `node_modules` is symlinks into `.pnpm`, and yarn
+  berry with PnP has no `node_modules` at all, only zips.
+
+So this item knows all four lock file names and reads npm's two. The other two
+say which tool resolved the project and name 0525, which is the same sentence a
+kind nothing reads yet says, in a place `DependencyKind` cannot reach — the
+kind *is* read, and it is this one root that it cannot answer for.
+
 ## Steps
 
 - [ ] Read `package-lock.json` into packages: name, version, origin
 - [ ] The sources are `node_modules/<name>`, and a package not installed says
       nothing rather than pointing at a directory that is not there
-- [ ] Decide whether pnpm and yarn are in this item or their own, and write the
+- [x] Decide whether pnpm and yarn are in this item or their own, and write the
       answer down
-- [ ] File the item that will read the lock files this one does not
+- [x] File the item that will read the lock files this one does not
 - [ ] A pnpm or a yarn project says which tool resolved it, rather than being
       told to run `npm install`
 - [ ] Decide which root a hoisted workspace dependency is filed under
