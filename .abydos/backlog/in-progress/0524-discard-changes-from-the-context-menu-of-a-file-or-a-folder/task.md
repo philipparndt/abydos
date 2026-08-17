@@ -103,22 +103,52 @@ does in that pane that it cannot do.
   git would be given (`offer:`, `offer-staged:`, `discard:` steps), and the
   wording itself is in `AbydosKit` where a test can check the numbers.
 
-## What is not done, and why
+## Written in one session, built and watched in the next
 
-The Bash tool in the session that did this work was allowed to read files and
+The Bash tool in the session that wrote this was allowed to read files and
 almost nothing else: `make`, `swift`, `git` writes and `abydos-backlog` all came
-back *"This command requires approval"*, in a session with nobody to ask. So:
+back *"This command requires approval"*, in a session with nobody to ask. So it
+went as far as it could — the code, the tests and the decisions — and stopped
+without ever compiling any of it. The second session merged `origin/main` for
+0522 first, so that driving the app could not write the user's preferences,
+built it, and did the rest.
 
-- **Nothing here has been compiled or run.** The two steps below are unticked
-  because they are genuinely not done, not because they were forgotten. The
-  tests in `Tests/AbydosKitTests/GitDiscardTests.swift` are written and have
-  never been executed.
-- **The item has not been through `abydos-backlog done 524`.** It is still in
-  `in-progress/`, now as a folder, with the delta in `spec/version-control.md`
-  beside this file, unfolded. Nothing has been committed either.
+Everything written blind compiled and passed on the first run except one
+sentence, which is the entry below.
 
-The next person picks this up by running `make test`, `make warnings`, then the
-watch below, then `abydos-backlog done 524`.
+## What the watch found
+
+Driven against a throwaway repository holding a modified file, an untracked
+file, a folder with one of each, a folder of nothing but new files, an ignored
+`build/out.o`, and a file staged and then edited again:
+
+- **"The other 1 go back to the version in the index."** The mixed sentence is
+  written for a folder like `Sources` with forty files and twelve new ones, and
+  the tests were written for that shape too. The shape people actually have is
+  two files, one of them new — one untracked, one to restore — and the plural
+  branch read *"The other 1 go back"*. It now says *"The other one goes back"*,
+  with a test for the singular.
+- **Everything else did what it says.** `Notes/notes.txt` came back to `alpha`;
+  `Sources` reverted `tracked.swift` and deleted `new.swift` in one gesture;
+  `Generated` stopped existing; the ignored `build/out.o` was still there
+  afterwards; `staged.swift` answered *not offered* on its staged row and kept
+  both its staged blob and its later edit throughout.
+- **Naming stash is honest for an untracked file too.** Worth checking, because
+  a plain `git stash push` leaves new files where they are and the sentence
+  would then be pointing somebody at a way back that is not one.
+  `GitStash.push` passes `--include-untracked` by default
+  (`GitStash.swift:117`), for its own reasons, so it is.
+
+## What could not be watched, and why
+
+**The confirmation sheet itself.** `NSTableView.clickedRow` is set by the event
+and by nothing else, so no script can pop this menu on a chosen row, and
+`discardClicked` — the only thing that builds the `NSAlert` — starts from that
+row. `discard:` therefore runs the half after the button, and `offer:` prints
+the four strings the sheet is built from: its title, its body, its button, and
+the paths git is handed. What is unproven by a run is that `NSAlert` draws those
+four strings, which is the part of this nothing in the repository is worried
+about.
 
 ## Steps
 
@@ -134,14 +164,20 @@ watch below, then `abydos-backlog done 524`.
       offer and the loss can be read from the command line
 - [x] Tests for the counting, the wording, and the git side against a real
       repository
-- [ ] Watched in the app on a real working copy: a modified file, an untracked
+- [x] Watched in the app on a real working copy: a modified file, an untracked
       file, and a folder holding both
-- [ ] `make test` and `make warnings` are clean
+- [x] `make test` and `make warnings` are clean
 - [x] Write down here what was ruled out on the way
-- [ ] `spec/version-control.md` says what the project now does — the delta is
-      written; folding it is `abydos-backlog done 524`, which could not be run
+- [ ] `spec/version-control.md` says what the project now does
+
+Not done, and not being done:
+
+- **A picture of the confirmation.** There is no way to open this menu from a
+  script — see *What could not be watched* above — so there is no shot to
+  attach. The strings it is built from are printed by `offer:` and checked in
+  `GitDiscardTests`.
 
 ## Estimate
 
-2026-08-17 08:13 — the work is written; half an hour of building, running the
-suite and watching it in the app, in a session that is allowed to do those
+2026-08-17 09:41 — done: built, suite and warnings clean, watched, one sentence
+fixed by watching it
