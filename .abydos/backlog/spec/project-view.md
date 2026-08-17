@@ -15,19 +15,21 @@ project whose directory holds no recognised build system has no second root at
 all, rather than an empty one.
 
 The list is read from what is already on disk. Nothing runs a build tool to
-answer it. That holds even where the build tool is the obvious way to ask:
-Conan's recipe is a Python program and evaluating it would be running somebody's
-code to fill in a tree row, and `bazel query` starts a server that takes a lock
-on the output base, which would leave this section and somebody's build waiting
-on each other.
+answer it — not `swift package dump-package`, not `cargo metadata`, not `mvn
+dependency:list`, and not Gradle, which was expected to be the kind that forced
+the rule and turned out to be the kind that needs it least. That holds even
+where the build tool is the obvious way to ask: Conan's recipe is a Python
+program and evaluating it would be running somebody's code to fill in a tree
+row, and `bazel query` starts a server that takes a lock on the output base,
+which would leave this section and somebody's build waiting on each other.
 
 What it lists is what came from outside. A dependency that is a directory
-inside the project — a Cargo `path` dependency, an npm workspace member, the
-project's own crate — has a row in the tree already, and listing it again under
-a heading that says it came from elsewhere would show the same source twice.
-Where a package came from is a question about the lock file and not about where
-its files sit: an npm package's sources are inside the project, under
-`node_modules`, and it is still a dependency.
+inside the project — a Cargo `path` dependency, an npm workspace member, a
+Gradle `project(":common")`, the project's own crate — has a row in the tree
+already, and listing it again under a heading that says it came from elsewhere
+would show the same source twice. Where a package came from is a question about
+the lock file and not about where its files sit: an npm package's sources are
+inside the project, under `node_modules`, and it is still a dependency.
 
 ### Scenario: a Swift package with its dependencies resolved
 
@@ -50,6 +52,26 @@ its files sit: an npm package's sources are inside the project, under
 - **And** a package installed twice at two versions, because two packages
   needed different ones, has a row for each
 
+### Scenario: a Maven project
+
+- **Given** a project with a `pom.xml` declaring three dependencies
+- **When** the `Dependencies` row is opened
+- **Then** it holds one row per dependency the POM declares
+
+### Scenario: a Gradle build with its dependencies locked
+
+- **Given** a project with a `gradle.lockfile`
+- **When** the `Dependencies` row is opened
+- **Then** it holds one row per coordinate the lock file resolved, transitive
+  ones included
+
+### Scenario: a Gradle build with no lock file
+
+- **Given** a build file whose `dependencies { }` block names two coordinates
+- **Then** both have a row
+- **And** a coordinate named inside `buildscript { }` has none, because that is
+  the plugin classpath rather than what the project is built from
+
 ### Scenario: a crate that is a directory in the project
 
 - **Given** a `Cargo.lock` naming a crate with no source — a `path` dependency
@@ -61,6 +83,7 @@ its files sit: an npm package's sources are inside the project, under
 - **Given** a `package-lock.json` naming a member of the workspace, both by its
   path and as a link under `node_modules`
 - **Then** that member has no row in `Dependencies`
+
 ### Scenario: a Bazel workspace
 
 - **Given** a project with a `MODULE.bazel.lock`
@@ -93,15 +116,23 @@ its files sit: an npm package's sources are inside the project, under
 
 Each package row carries the version the project resolved and an abbreviation
 of its origin — the host and owner of a Swift package's repository, the module
-path of a Go module, the registry a crate or an npm package was published to.
-The whole origin, the version and the directory the sources are in are on the
-row's tooltip, which is where anything too long for the pane goes.
+path of a Go module, the registry a crate or an npm package was published to,
+the group a Maven or Gradle coordinate names. The whole origin, the version and
+the directory the sources are in are on the row's tooltip, which is where
+anything too long for the pane goes.
 
 A package that has been resolved and never fetched is still a row. It has no
 sources to open, which is a different thing from not being depended on.
 
 A package whose lock file records no origin at all is a row with a version and
 nothing else, rather than one claiming an origin nobody wrote down.
+
+A dependency that resolves to a **file** rather than to sources is a row with
+nothing under it, and its tooltip names the file. The JVM is where this
+happens: Maven and Gradle fetch a jar, and a row pointed at the directory that
+jar sits in would open onto a jar and a checksum rather than onto a package. It
+is a different state from never having been fetched, and the tooltip says which
+of the two it is.
 
 ### Scenario: a package resolved to a released version
 
@@ -150,6 +181,22 @@ nothing else, rather than one claiming an origin nobody wrote down.
 - **Given** an entry in a `package-lock.json` with no `resolved`
 - **Then** the row shows the version and no origin
 
+### Scenario: a Maven dependency whose jar has been downloaded
+
+- **Given** a `pom.xml` naming `commons-lang3` at `3.14.0`, whose jar is in the
+  local repository
+- **Then** the row reads `commons-lang3`, `3.14.0`, `org.apache.commons`
+- **And** the row cannot be opened
+- **And** its tooltip names the jar rather than saying the dependency was not
+  fetched
+
+### Scenario: a version the project does not state
+
+- **Given** a `pom.xml` dependency with no `<version>`, managed by a BOM that
+  is not in the project
+- **Then** the row has the name and the group and no version, rather than the
+  `${…}` or the blank the file holds
+
 ### Scenario: a package nobody has fetched
 
 - **Given** a pin whose sources are in no checkout on this machine
@@ -163,10 +210,17 @@ read that system's dependencies yet. A kind it cannot read shows a row saying
 so, with the number of the backlog item that will teach it — never an empty
 list, which would read as a project that depends on nothing.
 
+**Every kind is read as of 0515**, so this half of the requirement has no
+subject: Maven and Gradle were the last two, and the scenario that stood here
+named whichever kind was still waiting. The rule stays written down because it
+is for the kind added next, which is the only one that can need it.
+
 A kind it *can* read, in a project that has resolved nothing yet, says that
 instead, and says it in the words of the tool that would resolve it. A project
 that has resolved nothing because something *above it* did the resolving says
-where that was, rather than naming a command that would write nothing here.
+where that was, rather than naming a command that would write nothing here; and
+a project whose own job is to hold other projects says that its modules are
+where the dependencies are.
 
 Where one marker file belongs to several tools, the row names the tool that did
 the resolving. `package.json` is npm's, pnpm's and yarn's alike, and only npm's
@@ -180,12 +234,6 @@ be believable about what is missing.
 Every one of these sentences is longer than the pane is wide, so the whole of
 one is on the row's tooltip — the same place a package's unabbreviated origin
 goes.
-
-### Scenario: a Maven project
-
-- **Given** a project with a `pom.xml`
-- **When** the `Dependencies` row is opened
-- **Then** it holds one row reading `not read yet (0515)`
 
 ### Scenario: a Swift package that has never been resolved
 
@@ -248,6 +296,17 @@ goes.
 - **Given** any row of this kind
 - **When** it is cut off at the edge of the pane
 - **Then** its tooltip has the whole sentence
+
+### Scenario: a Maven POM that only aggregates modules
+
+- **Given** a `pom.xml` with `<packaging>pom</packaging>`, a list of modules and
+  no dependencies of its own
+- **Then** the row says its modules have the dependencies
+
+### Scenario: a Gradle settings file with no build file beside it
+
+- **Given** a directory with a `settings.gradle` and no `build.gradle`
+- **Then** the row says its projects have the dependencies
 
 ### Scenario: a Go module that requires nothing
 
@@ -342,3 +401,41 @@ would land inside it goes to the section instead.
 - **Then** it is revealed on that package's row in the section, with the rest of
   the package's files beside it
 - **And** `node_modules` stays folded
+
+## Requirement: A list that is read and incomplete says what is missing
+
+Some build systems keep the resolved graph on disk and some keep only the
+question. A `Package.resolved`, a `go.mod`, a `Cargo.lock` and a
+`gradle.lockfile` are answers; a `pom.xml` and a `dependencies { }` block are
+inputs to an answer, holding the direct dependencies and nothing transitive.
+
+A list read from one of those is shown — the rows in it are true, and dropping
+them would hide dependencies the project really has — with a note under the
+packages saying what is not in it. The note names what is actually missing from
+*this* project rather than a fixed sentence: the transitive dependencies
+always, the versions this project leaves to something it cannot see, and a
+parent it does not contain. A list with nothing missing gets no note, so a
+Gradle build that has locked its dependencies reads exactly as a Cargo project
+does.
+
+A note is a whole sentence and the pane is narrow, so a note's tooltip leads
+with its own message.
+
+### Scenario: a Maven project
+
+- **Given** a `pom.xml` with three dependencies, one of whose versions a BOM
+  outside the project manages
+- **When** the `Dependencies` row is opened
+- **Then** all three have a row
+- **And** under them a note says the list is the direct dependencies only, and
+  that Maven resolves the transitive ones and one of these versions
+
+### Scenario: a Gradle build that has locked its dependencies
+
+- **Given** a project with a `gradle.lockfile`
+- **Then** its packages have no note under them
+
+### Scenario: a note too long for the pane
+
+- **Given** a note the sidebar cuts short
+- **Then** the whole of it is on that row's tooltip

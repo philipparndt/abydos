@@ -41,13 +41,27 @@ public struct ExternalDependency: Equatable, Sendable {
 	/// Swift package means opening `.build` and walking ten levels down to the
 	/// same file — the duplicate the section exists to replace.
 	public let otherPaths: [URL]
+	/// The one file this dependency resolved to, when it resolved to a file
+	/// rather than to sources.
+	///
+	/// The JVM is why this exists. Maven and Gradle both fetch a **jar**, and a
+	/// jar is not a directory — `localPath` has to stay nil for one, because a
+	/// package row *is* a directory and pointing it at the folder the jar sits in
+	/// draws a package whose files are a jar and a checksum. But `not fetched` is
+	/// false about a dependency whose jar is right there on disk, so the tooltip
+	/// names the artefact instead, and the row stays unexpandable.
+	public let artefact: URL?
 
-	public init(name: String, version: String?, origin: String, localPath: URL?, otherPaths: [URL] = []) {
+	public init(
+		name: String, version: String?, origin: String, localPath: URL?,
+		otherPaths: [URL] = [], artefact: URL? = nil
+	) {
 		self.name = name
 		self.version = version
 		self.origin = origin
 		self.localPath = localPath
 		self.otherPaths = otherPaths
+		self.artefact = artefact
 	}
 
 	/// The origin without the noise, for a row eleven characters wide.
@@ -127,16 +141,18 @@ public enum DependencyKind: String, Sendable, CaseIterable {
 	/// backlog. Nil for a kind that is read.
 	public var pendingItem: Int? {
 		switch self {
-		case .swiftPackage, .goModule, .cargo, .npm: return nil
-		case .maven, .gradle: return 515
-		case .bazel, .conan: return nil
+		// Every kind is read as of 0515, so nothing names an item. The switch
+		// stays exhaustive rather than becoming `return nil`: a kind added later
+		// has to answer this, and answering it is how its rows say "not read yet
+		// (0NNN)" instead of quietly rendering as no dependencies at all.
+		case .swiftPackage, .goModule, .cargo, .npm, .maven, .gradle, .bazel, .conan: return nil
 		}
 	}
 }
 
 /// What one root's dependencies came out as.
 ///
-/// Three answers and not two, because "nothing to show" has two quite different
+/// Four answers and not two, because "nothing to show" has two quite different
 /// causes and a row that conflated them would be the failure this whole item is
 /// about: a kind nothing here can read, and a project of a kind that *is* read
 /// which has resolved nothing yet.
@@ -145,6 +161,19 @@ public struct DependencySet: Equatable, Sendable {
 		/// Read, and this is what it says. Possibly empty — a `go.mod` with no
 		/// `require` is a module with no dependencies, and saying so is right.
 		case packages([ExternalDependency])
+		/// Read, real, and known to be **incomplete** — with the caveat that says
+		/// in what way, in the words of the tool that holds the rest.
+		///
+		/// The fourth answer, added by 0515, and the JVM is why. Every kind read
+		/// before it resolves whole from disk: a `Package.resolved`, a `go.mod`, a
+		/// `Cargo.lock` are all the finished graph. A `pom.xml` is the *input* to
+		/// resolution — no transitives, and a version that may be managed by a BOM
+		/// in `~/.m2` — and a Gradle build with no lock file is the same. That
+		/// list is not `.unresolved`: the rows in it are true, and dropping them
+		/// would hide dependencies a project really has. Nor is it `.packages`,
+		/// which reads as the whole of what a project depends on. So it is its own
+		/// answer, drawn as the rows *and* a note that says what is missing.
+		case partial([ExternalDependency], caveat: String)
 		/// The kind is recognised and nothing here reads it yet.
 		case notRead
 		/// The kind is read, and there is nothing resolved to read. The string
@@ -164,8 +193,11 @@ public struct DependencySet: Equatable, Sendable {
 	}
 
 	public var packages: [ExternalDependency] {
-		if case let .packages(packages) = contents { return packages }
-		return []
+		switch contents {
+		case let .packages(packages): return packages
+		case let .partial(packages, _): return packages
+		case .notRead, .unresolved: return []
+		}
 	}
 }
 
@@ -219,6 +251,11 @@ public enum ExternalDependencies {
 			"npm-shrinkwrap.json",
 			"pnpm-lock.yaml", "yarn.lock", "MODULE.bazel.lock", "conan.lock",
 		])
+		// Gradle: the lock file `dependencyLocking` writes, and the version
+		// catalog, which is where a modern build keeps the coordinates the build
+		// file only refers to. Maven adds nothing — it has no lock file at all,
+		// and its `pom.xml` is already here as a marker.
+		names.formUnion(["gradle.lockfile", "libs.versions.toml"])
 		return names
 	}()
 
@@ -280,7 +317,8 @@ public enum ExternalDependencies {
 		case .npm: contents = readNpm(at: root)
 		case .bazel: contents = readBazelModules(at: root)
 		case .conan: contents = readConanPackages(at: root)
-		case .maven, .gradle: contents = .notRead
+		case .maven: contents = readMavenPackages(at: root)
+		case .gradle: contents = readGradlePackages(at: root)
 		}
 		return DependencySet(root: root, kind: kind, contents: contents)
 	}
@@ -1015,6 +1053,285 @@ public enum ExternalDependencies {
 		return nil
 	}
 
+	// MARK: - Maven and Gradle: what a partial list says about itself
+
+	/// `byName`, with the caveat that says what this list is missing.
+	///
+	/// The JVM's two kinds are the only ones that need it, and they need it for
+	/// the same reason: what is on disk is the *input* to resolution rather than
+	/// its result. Nil means the list is whole — a Gradle build with a
+	/// `gradle.lockfile` is as complete as a `Cargo.lock`, and putting a caveat
+	/// on it would be an apology for an answer that has nothing wrong with it.
+	static func byName(_ packages: [ExternalDependency], caveat: String?) -> DependencySet.Contents {
+		let sorted = byName(packages)
+		guard let caveat, case let .packages(list) = sorted else { return sorted }
+		return .partial(list, caveat: caveat)
+	}
+
+	/// The caveat itself, built from what is actually missing rather than fixed.
+	///
+	/// A sentence and not a list, because it is drawn as one row under the
+	/// packages and read as prose. "the transitive ones" is always in it — no
+	/// `pom.xml` and no `dependencies { }` block has ever held them — and the
+	/// rest is counted from this project: the versions a BOM or a parent holds,
+	/// and a parent POM the checkout does not contain.
+	static func jvmCaveat(tool: String, missingVersions: Int, alsoMissing: [String] = []) -> String {
+		var missing = ["the transitive ones"]
+		switch missingVersions {
+		case 0: break
+		case 1: missing.append("one of these versions")
+		default: missing.append("\(missingVersions) of these versions")
+		}
+		missing += alsoMissing
+		let last = missing.removeLast()
+		let listed = missing.isEmpty ? last : missing.joined(separator: ", ") + " and " + last
+		return "direct dependencies only — \(tool) resolves \(listed)"
+	}
+
+	/// The artefact a JVM coordinate resolved to, **by listing the directory it
+	/// would be in** rather than by predicting the file inside it.
+	///
+	/// 0513's lesson in its JVM spelling. The directory is computable in both
+	/// caches once the sha1 level is walked, but the file in it is not: the
+	/// packaging may be `war` or `aar`, and `-sources.jar` and `-javadoc.jar` sit
+	/// beside the artefact when somebody asked for them. So the plain
+	/// `<artifact>-<version>.jar` is preferred and anything else with the same
+	/// stem is the fallback — and the classified jars are excluded by having
+	/// something other than a dot after that stem.
+	static func jvmArtefact(named stem: String, in directory: URL) -> URL? {
+		let entries = (try? FileManager.default.contentsOfDirectory(
+			at: directory, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
+		)) ?? []
+		if let jar = entries.first(where: { $0.lastPathComponent == stem + ".jar" }) { return jar }
+		return entries
+			.filter {
+				$0.lastPathComponent.hasPrefix(stem + ".")
+					&& ["jar", "war", "aar", "ear"].contains($0.pathExtension)
+			}
+			.sorted { $0.lastPathComponent < $1.lastPathComponent }
+			.first
+	}
+
+	// MARK: - Maven
+
+	/// One `<dependency>` as a POM writes it, before anything has resolved it.
+	struct PomDependency: Equatable {
+		let group: String
+		let artifact: String
+		/// Nil when the POM leaves the version to `<dependencyManagement>` — which
+		/// is commonly a BOM imported from `~/.m2` and not in the project at all.
+		let version: String?
+
+		var coordinate: String { group + ":" + artifact }
+	}
+
+	/// A `pom.xml`, read for the four things a dependency list needs from it.
+	struct PomFile: Equatable {
+		let groupId: String?
+		let artifactId: String?
+		let version: String?
+		let packaging: String
+		let modules: [String]
+		let properties: [String: String]
+		/// Written as the file writes them: `${jackson.version}` is still a
+		/// `${jackson.version}` here, because it may be resolved by a property
+		/// from a POM further up.
+		let dependencies: [PomDependency]
+		/// `<dependencyManagement>`, keyed `group:artifact`.
+		let managed: [String: String]
+		/// Where the parent is, when there is one: the path as `<relativePath>`
+		/// gives it, or `../pom.xml` when it says nothing. Nil when there is no
+		/// parent, or when `<relativePath/>` is written empty — which means "not
+		/// beside me, look in the repository" and is *not* the same as absent.
+		let parentPath: String?
+		/// A `<parent>` this project does not hold, which is a reason the list
+		/// below may be short.
+		let hasParent: Bool
+	}
+
+	/// **`pom.xml` is the input to resolution, not its result.**
+	///
+	/// There is no lock file anywhere in a Maven project — not in the checkout,
+	/// not in `target/`. `mvn dependency:list` is the only thing that answers
+	/// properly and it is a subprocess and a JVM, which is the rule on this type
+	/// and not a preference: it costs seconds, and this runs when a project opens
+	/// and again on every write to a `pom.xml`.
+	///
+	/// So this reads what the POM says and is honest about the rest. Three things
+	/// are genuinely missing and the caveat names all three:
+	///
+	/// - **transitives**, which no POM has ever held;
+	/// - a **version** that `<dependencyManagement>` supplies from an imported
+	///   BOM, which lives in `~/.m2` rather than here;
+	/// - the **parent chain** beyond this checkout, whose `<properties>` and
+	///   `<dependencyManagement>` are what `${jackson.version}` needs.
+	///
+	/// What it does resolve it resolves properly: properties merged down the
+	/// parent chain *inside the project*, `<dependencyManagement>` from the same
+	/// chain, and the parent's own `<dependencies>`, which a child inherits.
+	static func readMavenPackages(at root: URL, repository: URL? = nil) -> DependencySet.Contents {
+		let manager = FileManager.default
+		let path = root.appendingPathComponent("pom.xml")
+		guard let first = readPom(at: path) else {
+			return .unresolved("pom.xml could not be read")
+		}
+
+		// The chain, nearest first, and only as far as the checkout goes. A
+		// `<relativePath>` pointing outside is followed — a sibling `../parent`
+		// is a normal layout — but a parent that is not on disk stops it, and
+		// that is a thing the caveat has to say.
+		var chain = [first]
+		var directory = path.deletingLastPathComponent()
+		var incomplete = first.hasParent && first.parentPath == nil
+		while let relative = chain[chain.count - 1].parentPath, chain.count < 8 {
+			var candidate = directory.appendingPathComponent(relative).standardizedFileURL
+			var isDirectory: ObjCBool = false
+			if manager.fileExists(atPath: candidate.path, isDirectory: &isDirectory), isDirectory.boolValue {
+				candidate = candidate.appendingPathComponent("pom.xml")
+			}
+			guard let parent = readPom(at: candidate) else { incomplete = true; break }
+			chain.append(parent)
+			directory = candidate.deletingLastPathComponent()
+			if parent.hasParent, parent.parentPath == nil { incomplete = true }
+		}
+
+		var properties: [String: String] = [:]
+		// Nearest wins, so the chain is merged from the far end inwards.
+		for pom in chain.reversed() { properties.merge(pom.properties) { _, new in new } }
+		// The three a POM may write about itself. Maven has more of these;
+		// these are the ones that turn up in a `<version>`.
+		properties["project.groupId"] = first.groupId ?? properties["project.groupId"]
+		properties["project.artifactId"] = first.artifactId ?? properties["project.artifactId"]
+		properties["project.version"] = first.version ?? properties["project.version"]
+
+		var managed: [String: String] = [:]
+		for pom in chain.reversed() { managed.merge(pom.managed) { _, new in new } }
+
+		// A parent's own `<dependencies>` are inherited by the child, so the whole
+		// chain contributes — nearest first, and a coordinate is taken once.
+		var seen = Set<String>()
+		var declared: [PomDependency] = []
+		for pom in chain {
+			for dependency in pom.dependencies where seen.insert(dependency.coordinate).inserted {
+				declared.append(dependency)
+			}
+		}
+
+		if declared.isEmpty, first.packaging == "pom", !first.modules.isEmpty {
+			// The Maven spelling of 0513's workspace member, the other way up: an
+			// aggregator declares nothing itself and its modules are subprojects
+			// with rows of their own. "no dependencies" would be true of the POM
+			// and false about the build.
+			return .unresolved("an aggregator POM — its modules have the dependencies")
+		}
+
+		let repository = repository ?? mavenLocalRepository()
+		var missingVersions = 0
+		let packages = declared.map { dependency -> ExternalDependency in
+			let written = dependency.version ?? managed[dependency.coordinate]
+			let version = written.flatMap { resolveMavenProperties($0, with: properties) }
+			if version == nil { missingVersions += 1 }
+			let group = resolveMavenProperties(dependency.group, with: properties) ?? dependency.group
+			return ExternalDependency(
+				name: dependency.artifact,
+				version: version,
+				// The groupId is where it came from, the way a module path is for
+				// Go: the POM does not say which repository served it, and the
+				// group is what tells one row from another.
+				origin: group,
+				// Nil, and deliberately. What is on disk is a jar.
+				localPath: nil,
+				artefact: mavenArtefact(
+					group: group, artifact: dependency.artifact,
+					version: version, repository: repository
+				)
+			)
+		}
+
+		let caveat = jvmCaveat(
+			tool: "Maven", missingVersions: missingVersions,
+			alsoMissing: incomplete ? ["a parent POM this checkout does not hold"] : []
+		)
+		return byName(packages, caveat: packages.isEmpty && !incomplete ? nil : caveat)
+	}
+
+	/// The four parts of a POM this needs, read with `XMLDocument`.
+	///
+	/// The same call `MavenProject` made and for the same reason: XML has a
+	/// parser in the standard library, and half-parsing it with string matching
+	/// is how a commented-out `<dependency>` becomes a row.
+	static func readPom(at url: URL) -> PomFile? {
+		guard let data = try? Data(contentsOf: url),
+		      let document = try? XMLDocument(data: data),
+		      let root = document.rootElement(),
+		      root.localName == "project"
+		else { return nil }
+
+		var properties: [String: String] = [:]
+		for element in root.child("properties")?.elements() ?? [] {
+			guard let name = element.localName else { continue }
+			properties[name] = element.stringValue?
+				.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+		}
+
+		func dependencies(of element: XMLElement?) -> [PomDependency] {
+			(element?.children(named: "dependency") ?? []).compactMap { entry in
+				guard let group = entry.child("groupId")?.text,
+				      let artifact = entry.child("artifactId")?.text
+				else { return nil }
+				return PomDependency(
+					group: group, artifact: artifact, version: entry.child("version")?.text
+				)
+			}
+		}
+
+		let parent = root.child("parent")
+		let relative = parent?.child("relativePath")
+		// `<relativePath/>` written empty is a POM saying "my parent is not beside
+		// me" — the one shape that must not be read as absent, or the chain
+		// climbs out of the project into whatever `pom.xml` sits one level up.
+		let parentPath: String? = parent == nil
+			? nil
+			: (relative == nil ? "../pom.xml" : relative?.text)
+
+		return PomFile(
+			groupId: root.child("groupId")?.text ?? parent?.child("groupId")?.text,
+			artifactId: root.child("artifactId")?.text,
+			version: root.child("version")?.text ?? parent?.child("version")?.text,
+			packaging: root.child("packaging")?.text ?? "jar",
+			modules: (root.child("modules")?.children(named: "module") ?? []).compactMap(\.text),
+			properties: properties,
+			dependencies: dependencies(of: root.child("dependencies")),
+			managed: Dictionary(
+				dependencies(of: root.child("dependencyManagement")?.child("dependencies"))
+					.compactMap { entry in entry.version.map { (entry.coordinate, $0) } },
+				uniquingKeysWith: { first, _ in first }
+			),
+			parentPath: parentPath,
+			hasParent: parent != nil
+		)
+	}
+
+	/// `${jackson.version}` against the merged properties, or nil.
+	///
+	/// Nil rather than the literal: a row reading `${jackson.version}` where a
+	/// version belongs is worse than a row with no version, which is a state the
+	/// section already draws and the caveat already counts. Wound round a few
+	/// times because a property may name another.
+	static func resolveMavenProperties(_ text: String, with properties: [String: String]) -> String? {
+		var value = text
+		for _ in 0..<8 {
+			guard let open = value.range(of: "${"),
+			      let close = value.range(of: "}", range: open.upperBound..<value.endIndex)
+			else { return value }
+			guard let replacement = properties[String(value[open.upperBound..<close.lowerBound])] else {
+				return nil
+			}
+			value.replaceSubrange(open.lowerBound..<close.upperBound, with: replacement)
+		}
+		return nil
+	}
+
 	/// Whether a `package.json` says it is the root of a workspace.
 	///
 	/// `workspaces` is an array of globs in npm's and yarn's spelling and an
@@ -1212,6 +1529,162 @@ public enum ExternalDependencies {
 		return found
 	}
 
+	/// Where Maven keeps what it has downloaded.
+	///
+	/// `~/.m2/repository`, or whatever `<localRepository>` in `~/.m2/settings.xml`
+	/// says. There is **no environment variable** for it — `M2_HOME` is where
+	/// Maven is installed, not where it puts things — and `mvn help:evaluate` is
+	/// the subprocess this type does not run. So the default and the one file
+	/// that overrides it, and a dependency whose jar is not found simply has none
+	/// to name.
+	///
+	/// The home directory is a parameter because it is the only way to test this.
+	/// With no environment variable to move, the alternative is a test that reads
+	/// whatever machine it runs on — and 0513 found the other half of that
+	/// argument in `CARGO_HOME`, which is process-wide and therefore two parallel
+	/// tests reading each other's cache.
+	static func mavenLocalRepository(
+		home: URL = FileManager.default.homeDirectoryForCurrentUser
+	) -> URL {
+		let settings = home.appendingPathComponent(".m2/settings.xml")
+		if let data = try? Data(contentsOf: settings),
+		   let document = try? XMLDocument(data: data),
+		   let path = document.rootElement()?.child("localRepository")?.text
+		{
+			// `${user.home}` is the placeholder Maven's own default settings file
+			// ships with, so it is the one worth expanding.
+			return URL(fileURLWithPath: path
+				.replacingOccurrences(of: "${user.home}", with: home.path)
+				.replacingOccurrences(of: "${env.HOME}", with: home.path))
+		}
+		return home.appendingPathComponent(".m2/repository")
+	}
+
+	/// `~/.m2/repository/com/fasterxml/jackson/core/jackson-databind/2.17.1/`.
+	///
+	/// The one part of the JVM that *is* computable: Maven's layout is specified,
+	/// the group is the path with its dots as slashes, and there is no hash
+	/// anywhere in it. The file inside is still listed rather than guessed.
+	static func mavenArtefact(
+		group: String, artifact: String, version: String?, repository: URL
+	) -> URL? {
+		guard let version, !version.isEmpty else { return nil }
+		let directory = repository
+			.appendingPathComponent(group.replacingOccurrences(of: ".", with: "/"))
+			.appendingPathComponent(artifact)
+			.appendingPathComponent(version)
+		return jvmArtefact(named: "\(artifact)-\(version)", in: directory)
+	}
+
+	// MARK: - Gradle
+
+	/// **Gradle is the better case, not the worse one.**
+	///
+	/// The item that filed this expected Gradle to be the kind where the rule
+	/// against subprocesses finally bent — `build.gradle` is a program and
+	/// `gradle dependencies` needs a daemon. It is the opposite. A build that has
+	/// opted into `dependencyLocking` writes `gradle.lockfile`, and that file
+	/// **is** the resolved graph, transitives included: as complete as a
+	/// `Cargo.lock`, and read with no caveat at all.
+	///
+	/// Without one, `dependencies { }` is read as text, and that list is direct
+	/// dependencies only — the same partial answer Maven gives, said the same
+	/// way. The trap is that the *same block* appears inside `buildscript { }`,
+	/// where it is the plugin classpath and not the project's dependencies at
+	/// all, so the block only counts at brace depth 0.
+	static func readGradlePackages(at root: URL, gradleHome: URL? = nil) -> DependencySet.Contents {
+		let home = gradleHome ?? gradleUserHome()
+		if let locked = readGradleLockfile(at: root), !locked.isEmpty {
+			return byName(locked.map { gradlePackage($0, home: home) }, caveat: nil)
+		}
+
+		guard let text = gradleBuildText(at: root) else {
+			if GradleBuild.settingsFile(in: root) != nil {
+				// A settings file and no build file: the root of a multi-project
+				// build, whose projects are subprojects with rows of their own.
+				return .unresolved("a settings file only — its projects have the dependencies")
+			}
+			return .unresolved("no build.gradle — nothing to read")
+		}
+
+		let catalog = readGradleVersionCatalog(near: root)
+		let accessors = gradleCatalogAccessors(in: root)
+		var missingVersions = 0
+		let packages = gradleDeclaredDependencies(
+			in: text, catalog: catalog, accessors: accessors
+		).map { coordinate -> ExternalDependency in
+			if coordinate.version == nil { missingVersions += 1 }
+			return gradlePackage(coordinate, home: home)
+		}
+		guard !packages.isEmpty else { return .packages([]) }
+		return byName(packages, caveat: jvmCaveat(tool: "Gradle", missingVersions: missingVersions))
+	}
+
+	/// One `group:name:version` as Gradle writes it, wherever it was written.
+	struct GradleCoordinate: Equatable {
+		let group: String
+		let name: String
+		/// Nil when the build interpolates it — `"g:a:$version"` — or leaves it to
+		/// a platform, which is a version this cannot know rather than one it can
+		/// print.
+		let version: String?
+	}
+
+	static func gradlePackage(_ coordinate: GradleCoordinate, home: URL) -> ExternalDependency {
+		ExternalDependency(
+			name: coordinate.name,
+			version: coordinate.version,
+			origin: coordinate.group,
+			// A jar, like Maven's. Same reason, same answer.
+			localPath: nil,
+			artefact: gradleArtefact(coordinate, home: home)
+		)
+	}
+
+	/// `gradle.lockfile`, which is the resolved graph and needs no caveat.
+	///
+	/// Both layouts: Gradle 6 and later write one file at the project root, one
+	/// `group:name:version=configuration,configuration` per line; Gradle 5 wrote
+	/// one file per configuration under `gradle/dependency-locks`. `empty=…`
+	/// names configurations that resolved to nothing and is not a coordinate.
+	///
+	/// `buildscript-gradle.lockfile` is deliberately not read: it is the plugin
+	/// classpath, which is what builds the project rather than what the project
+	/// depends on.
+	static func readGradleLockfile(at root: URL) -> [GradleCoordinate]? {
+		var texts: [String] = []
+		if let text = try? String(
+			contentsOf: root.appendingPathComponent("gradle.lockfile"), encoding: .utf8
+		) {
+			texts.append(text)
+		}
+		let locks = root.appendingPathComponent("gradle/dependency-locks")
+		for file in ((try? FileManager.default.contentsOfDirectory(
+			at: locks, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
+		)) ?? []).sorted(by: { $0.lastPathComponent < $1.lastPathComponent })
+		where file.pathExtension == "lockfile" {
+			if let text = try? String(contentsOf: file, encoding: .utf8) { texts.append(text) }
+		}
+		guard !texts.isEmpty else { return nil }
+
+		var seen = Set<String>()
+		var found: [GradleCoordinate] = []
+		for text in texts {
+			for rawLine in text.split(separator: "\n", omittingEmptySubsequences: false) {
+				var line = rawLine.trimmingCharacters(in: .whitespaces)
+				guard !line.isEmpty, !line.hasPrefix("#") else { continue }
+				if let equals = line.firstIndex(of: "=") { line = String(line[..<equals]) }
+				let parts = line.split(separator: ":", omittingEmptySubsequences: false)
+				guard parts.count == 3, parts.allSatisfy({ !$0.isEmpty }) else { continue }
+				guard seen.insert(line).inserted else { continue }
+				found.append(GradleCoordinate(
+					group: String(parts[0]), name: String(parts[1]), version: String(parts[2])
+				))
+			}
+		}
+		return found
+	}
+
 	/// The external repositories on disk, **listed rather than computed**.
 	///
 	/// The output base is a directory under `/var/tmp/_bazel_<user>` named by an
@@ -1265,6 +1738,15 @@ public enum ExternalDependencies {
 			guard directory.hasPrefix(name), directory.count > name.count else { continue }
 			let separator = directory[directory.index(directory.startIndex, offsetBy: name.count)]
 			if separator == "~" || separator == "+" { return repository }
+		}
+		return nil
+	}
+
+	static func gradleBuildText(at root: URL) -> String? {
+		for name in ["build.gradle.kts", "build.gradle"] {
+			if let text = try? String(
+				contentsOf: root.appendingPathComponent(name), encoding: .utf8
+			) { return text }
 		}
 		return nil
 	}
@@ -1417,6 +1899,291 @@ public enum ExternalDependencies {
 			for part in ["p", "e"] {
 				let inside = directory.appendingPathComponent(part)
 				if manager.fileExists(atPath: inside.path) { return inside }
+			}
+		}
+		return nil
+	}
+
+	/// Every coordinate a `dependencies { }` block declares, at brace depth 0.
+	///
+	/// **The depth is the whole of the correctness here.** `buildscript { }` and
+	/// `subprojects { }` both contain a `dependencies { }` of their own, and the
+	/// first of them is the plugin classpath — Spring Boot's own plugin would
+	/// otherwise appear as something the project depends on.
+	///
+	/// The forms are the ones builds are written in: a quoted `g:a:v` with or
+	/// without parentheses, `platform(…)` and `enforcedPlatform(…)` around one,
+	/// the `group:`/`name:`/`version:` map, and `libs.something` out of the
+	/// version catalog. `project(":common")` is dropped the way 0513 drops a
+	/// Cargo `path` dependency: it is a directory the tree already shows.
+	static func gradleDeclaredDependencies(
+		in text: String, catalog: [String: GradleCoordinate], accessors: [String]
+	) -> [GradleCoordinate] {
+		var found: [GradleCoordinate] = []
+		var seen = Set<String>()
+		var depth = 0
+		var blockDepth: Int?
+
+		for rawLine in text.split(separator: "\n", omittingEmptySubsequences: false) {
+			var line = String(rawLine)
+			if let comment = line.range(of: "//") { line = String(line[..<comment.lowerBound]) }
+			line = line.trimmingCharacters(in: .whitespaces)
+
+			let opensBlock = blockDepth == nil && depth == 0 && isGradleDependenciesBlock(line)
+			if blockDepth != nil, let coordinate = gradleCoordinate(
+				in: line, catalog: catalog, accessors: accessors
+			), seen.insert(coordinate.group + ":" + coordinate.name).inserted {
+				found.append(coordinate)
+			}
+
+			depth += gradleBraceBalance(line)
+			if opensBlock {
+				blockDepth = depth - 1
+			} else if let open = blockDepth, depth <= open {
+				blockDepth = nil
+			}
+		}
+		return found
+	}
+
+	/// `dependencies {`, and not `dependencies` inside anything else on the line.
+	static func isGradleDependenciesBlock(_ line: String) -> Bool {
+		guard line.hasPrefix("dependencies") else { return false }
+		let rest = line.dropFirst("dependencies".count).trimmingCharacters(in: .whitespaces)
+		return rest.hasPrefix("{")
+	}
+
+	/// Braces on a line, ignoring the ones inside quotes — `"${a}"` would
+	/// otherwise open a block that never closes.
+	static func gradleBraceBalance(_ line: String) -> Int {
+		var balance = 0
+		var quote: Character?
+		var previous: Character?
+		for character in line {
+			if let active = quote {
+				if character == active, previous != "\\" { quote = nil }
+			} else if character == "\"" || character == "'" {
+				quote = character
+			} else if character == "{" {
+				balance += 1
+			} else if character == "}" {
+				balance -= 1
+			}
+			previous = character
+		}
+		return balance
+	}
+
+	/// One line of a `dependencies { }` block, or nil when it declares nothing
+	/// external.
+	static func gradleCoordinate(
+		in line: String, catalog: [String: GradleCoordinate], accessors: [String]
+	) -> GradleCoordinate? {
+		// A configuration name comes first in every form: `implementation`,
+		// `testRuntimeOnly`, `annotationProcessor`, `ksp`, anything a plugin adds.
+		let name = line.prefix { $0.isLetter || $0.isNumber || $0 == "_" }
+		guard !name.isEmpty else { return nil }
+		let rest = line.dropFirst(name.count).trimmingCharacters(in: .whitespaces)
+		guard let opener = rest.first, opener == "(" || opener == "'" || opener == "\"" || opener.isLetter
+		else { return nil }
+
+		// A project, a file or a jar tree is not something from outside.
+		for local in ["project(", "project (", "files(", "fileTree(", "gradleApi(", "localGroovy("]
+		where rest.contains(local) {
+			return nil
+		}
+
+		if let alias = gradleCatalogAlias(in: rest, accessors: accessors) {
+			return catalog[alias]
+		}
+
+		// `implementation group: 'g', name: 'a', version: 'v'`
+		if rest.contains("group:"), rest.contains("name:") {
+			guard let group = GradleBuild.quoted(after: "group:", in: rest),
+			      let artifact = GradleBuild.quoted(after: "name:", in: rest)
+			else { return nil }
+			return GradleCoordinate(
+				group: group, name: artifact,
+				version: GradleBuild.quoted(after: "version:", in: rest)
+					.flatMap { $0.contains("$") ? nil : $0 }
+			)
+		}
+
+		guard let notation = GradleBuild.firstQuoted(in: rest) else { return nil }
+		let parts = notation.split(separator: ":", omittingEmptySubsequences: false)
+		guard parts.count >= 2, !parts[0].isEmpty, !parts[1].isEmpty else { return nil }
+		// `"org.slf4j:slf4j-api:$slf4jVersion"` interpolates, and the literal is
+		// not a version anybody has on disk.
+		let version = parts.count > 2 && !parts[2].isEmpty && !parts[2].contains("$")
+			? String(parts[2])
+			: nil
+		return GradleCoordinate(group: String(parts[0]), name: String(parts[1]), version: version)
+	}
+
+	/// `libs.commons.lang3` out of `implementation(libs.commons.lang3)`.
+	static func gradleCatalogAlias(in text: String, accessors: [String]) -> String? {
+		for accessor in accessors {
+			// `libs` has to start the reference or follow a bracket: `sublibs.x`
+			// is somebody else's identifier, not this catalog's.
+			let opening = text.hasPrefix(accessor + ".")
+				? text.range(of: accessor + ".")
+				: ["(" + accessor + ".", " " + accessor + "."].lazy
+					.compactMap { text.range(of: $0) }
+					.first
+					.map { text.index(after: $0.lowerBound)..<$0.upperBound }
+			guard let opening else { continue }
+			let alias = text[opening.upperBound...].prefix {
+				$0.isLetter || $0.isNumber || $0 == "." || $0 == "_"
+			}
+			guard !alias.isEmpty else { continue }
+			return normalisedCatalogAlias(String(alias))
+		}
+		return nil
+	}
+
+	/// `commons-lang3`, `commons_lang3` and `commons.lang3` are one alias.
+	///
+	/// Gradle generates the accessor by turning every separator into a dot, so
+	/// the two sides only meet if both are normalised the same way.
+	static func normalisedCatalogAlias(_ alias: String) -> String {
+		alias.replacingOccurrences(of: "-", with: ".").replacingOccurrences(of: "_", with: ".")
+	}
+
+	/// `gradle/libs.versions.toml`, which is where a modern build keeps the
+	/// coordinates its build file only refers to.
+	///
+	/// Worth reading because without it such a build yields **no rows at all** —
+	/// every line in `dependencies { }` is `libs.something` and resolves to
+	/// nothing. Looked for beside the project and then upwards, because the
+	/// catalog belongs to the build root and a module is a directory below it.
+	static func readGradleVersionCatalog(near root: URL) -> [String: GradleCoordinate] {
+		var directory = root
+		for _ in 0..<4 {
+			let file = directory.appendingPathComponent("gradle/libs.versions.toml")
+			if let text = try? String(contentsOf: file, encoding: .utf8) {
+				return parseGradleVersionCatalog(text)
+			}
+			let parent = directory.deletingLastPathComponent()
+			guard parent.path != directory.path else { break }
+			directory = parent
+		}
+		return [:]
+	}
+
+	/// The catalog's two tables, line by line — the same call 0513 made about
+	/// `Cargo.lock`, and for the same reason: two tables of quoted strings is not
+	/// an argument for a TOML dependency.
+	///
+	///     [versions]
+	///     jackson = "2.17.1"
+	///     [libraries]
+	///     jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", version.ref = "jackson" }
+	///     guava = { group = "com.google.guava", name = "guava", version = "33.2.1-jre" }
+	///     commons = "org.apache.commons:commons-lang3:3.14.0"
+	static func parseGradleVersionCatalog(_ text: String) -> [String: GradleCoordinate] {
+		var versions: [String: String] = [:]
+		var libraries: [String: GradleCoordinate] = [:]
+		var table = ""
+
+		for rawLine in text.split(separator: "\n", omittingEmptySubsequences: false) {
+			var line = String(rawLine)
+			if let comment = line.range(of: "#") { line = String(line[..<comment.lowerBound]) }
+			line = line.trimmingCharacters(in: .whitespaces)
+			if line.hasPrefix("[") {
+				table = line.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+				continue
+			}
+			guard let equals = line.firstIndex(of: "=") else { continue }
+			let key = line[..<equals].trimmingCharacters(in: .whitespaces)
+			let value = line[line.index(after: equals)...].trimmingCharacters(in: .whitespaces)
+			guard !key.isEmpty else { continue }
+
+			if table == "versions" {
+				versions[key] = GradleBuild.firstQuoted(in: value)
+				continue
+			}
+			guard table == "libraries" else { continue }
+
+			var coordinate: GradleCoordinate?
+			if value.hasPrefix("{") {
+				let reference = GradleBuild.quoted(after: "version.ref", in: value)
+				let literal = value.range(of: "version.ref") == nil
+					? GradleBuild.quoted(after: "version", in: value)
+					: nil
+				let version = reference.flatMap { versions[$0] } ?? literal
+				if let module = GradleBuild.quoted(after: "module", in: value) {
+					let parts = module.split(separator: ":")
+					if parts.count == 2 {
+						coordinate = GradleCoordinate(
+							group: String(parts[0]), name: String(parts[1]), version: version
+						)
+					}
+				} else if let group = GradleBuild.quoted(after: "group", in: value),
+				          let name = GradleBuild.quoted(after: "name", in: value)
+				{
+					coordinate = GradleCoordinate(group: group, name: name, version: version)
+				}
+			} else if let notation = GradleBuild.firstQuoted(in: value) {
+				let parts = notation.split(separator: ":")
+				if parts.count >= 2 {
+					coordinate = GradleCoordinate(
+						group: String(parts[0]), name: String(parts[1]),
+						version: parts.count > 2 ? String(parts[2]) : nil
+					)
+				}
+			}
+			if let coordinate { libraries[normalisedCatalogAlias(key)] = coordinate }
+		}
+		return libraries
+	}
+
+	/// What the catalog is called in the build file: `libs` unless the settings
+	/// file renamed it, which `versionCatalogs { create("…") }` does.
+	static func gradleCatalogAccessors(in root: URL) -> [String] {
+		var accessors = ["libs"]
+		guard let settings = GradleBuild.settingsFile(in: root),
+		      let text = try? String(contentsOf: settings, encoding: .utf8),
+		      text.contains("versionCatalogs")
+		else { return accessors }
+		for rawLine in text.split(separator: "\n") where rawLine.contains("create(") {
+			if let name = GradleBuild.quoted(after: "create(", in: String(rawLine)) {
+				accessors.append(name)
+			}
+		}
+		return accessors
+	}
+
+	/// `$GRADLE_USER_HOME`, or `~/.gradle`.
+	static func gradleUserHome() -> URL {
+		let environment = ProcessInfo.processInfo.environment
+		if let path = environment["GRADLE_USER_HOME"], !path.isEmpty {
+			return URL(fileURLWithPath: path)
+		}
+		return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".gradle")
+	}
+
+	/// The jar in Gradle's cache, found by **listing** the level Maven does not
+	/// have.
+	///
+	///     ~/.gradle/caches/modules-2/files-2.1/<group>/<name>/<version>/<sha1>/<name>-<version>.jar
+	///
+	/// The `<sha1>` is a checksum of the file itself, so nothing outside Gradle
+	/// can compute it — 0513's lesson exactly, in a second spelling. Every sha1
+	/// directory under the version is tried, in a fixed order so that two reads
+	/// of one project agree.
+	static func gradleArtefact(_ coordinate: GradleCoordinate, home: URL) -> URL? {
+		guard let version = coordinate.version, !version.isEmpty else { return nil }
+		let directory = home
+			.appendingPathComponent("caches/modules-2/files-2.1")
+			.appendingPathComponent(coordinate.group)
+			.appendingPathComponent(coordinate.name)
+			.appendingPathComponent(version)
+		let checksums = ((try? FileManager.default.contentsOfDirectory(
+			at: directory, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
+		)) ?? []).sorted { $0.lastPathComponent < $1.lastPathComponent }
+		for checksum in checksums {
+			if let jar = jvmArtefact(named: "\(coordinate.name)-\(version)", in: checksum) {
+				return jar
 			}
 		}
 		return nil

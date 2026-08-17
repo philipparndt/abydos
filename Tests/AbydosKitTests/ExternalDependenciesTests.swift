@@ -1176,37 +1176,510 @@ struct ExternalDependenciesTests {
 		])
 	}
 
-	// MARK: - Kinds nothing reads yet
+	// MARK: - Maven
 
-	/// **The claim that makes shipping two kinds honest.** A Maven project does
-	/// not show an empty section; it shows a row saying its dependencies are not
-	/// read, with the number of the item that will read them.
-	@Test func aKindNobodyHasTaughtSaysSoRatherThanShowingNothing() throws {
+	/// A POM with everything in it that moves a version: a plain one, one from a
+	/// `<properties>` entry, and one with no `<version>` at all because a BOM in
+	/// `~/.m2` manages it.
+	private let pom = """
+	<project xmlns="http://maven.apache.org/POM/4.0.0">
+		<modelVersion>4.0.0</modelVersion>
+		<groupId>com.example</groupId>
+		<artifactId>service</artifactId>
+		<version>1.0.0</version>
+		<properties>
+			<jackson.version>2.17.1</jackson.version>
+		</properties>
+		<dependencies>
+			<dependency>
+				<groupId>org.apache.commons</groupId>
+				<artifactId>commons-lang3</artifactId>
+				<version>3.14.0</version>
+			</dependency>
+			<dependency>
+				<groupId>com.fasterxml.jackson.core</groupId>
+				<artifactId>jackson-databind</artifactId>
+				<version>${jackson.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>org.junit.jupiter</groupId>
+				<artifactId>junit-jupiter</artifactId>
+				<scope>test</scope>
+			</dependency>
+		</dependencies>
+	</project>
+	"""
+
+	/// **The list is real and it is also incomplete, and the section says both.**
+	/// `pom.xml` is the input to resolution — no transitives anywhere in it — so
+	/// the rows are the direct dependencies and a note under them says what is
+	/// not there. A `.packages` list would claim to be the whole graph, and
+	/// `.unresolved` would throw away rows that are true.
+	@Test func aPomsDirectDependenciesAreReadAndTheListSaysItIsOnlyThose() throws {
 		let root = try makeRoot()
-		try write("<project/>\n", to: root.appendingPathComponent("pom.xml"))
+		try write(pom, to: root.appendingPathComponent("pom.xml"))
 
 		let set = ExternalDependencies.read(root: root, kind: .maven)
-		#expect(set.contents == .notRead)
-
-		let tree = try #require(DependencyTree(sets: [set], project: root))
-		// The heading names the kind, because with one root there are no group
-		// rows and nothing else would say what is not being read.
-		// The kind is named once, by the heading. The note under it is the
-		// message and nothing else — `Maven — Maven not read yet` is what
-		// repeating it produced.
-		#expect(tree.report() == ["Dependencies — Maven", "  not read yet (0515)"])
+		guard case let .partial(packages, caveat) = set.contents else {
+			Issue.record("expected partial, got \(set.contents)")
+			return
+		}
+		#expect(packages.map(\.name) == ["commons-lang3", "jackson-databind", "junit-jupiter"])
+		// The groupId is where it came from, the way a module path is for Go.
+		#expect(packages.first?.origin == "org.apache.commons")
+		#expect(caveat == "direct dependencies only — Maven resolves the transitive ones "
+			+ "and one of these versions")
 	}
+
+	/// `${jackson.version}` is resolved from `<properties>`; a dependency whose
+	/// version a BOM manages has none here, and reads as absent rather than as
+	/// the literal `${…}`, which is not a version anybody has on disk.
+	@Test func aVersionFromAPropertyIsResolvedAndOneFromABomIsNot() throws {
+		let root = try makeRoot()
+		try write(pom, to: root.appendingPathComponent("pom.xml"))
+
+		let set = ExternalDependencies.read(root: root, kind: .maven)
+		#expect(set.packages.first { $0.name == "jackson-databind" }?.version == "2.17.1")
+		#expect(set.packages.first { $0.name == "junit-jupiter" }?.version == nil)
+	}
+
+	/// **A parent in the checkout is merged; one that is not stops the chain and
+	/// is said out loud.** The properties and the `<dependencyManagement>` that
+	/// resolve a child's versions live up there, and so do dependencies the child
+	/// inherits without naming.
+	@Test func aParentInTheCheckoutIsMergedIntoTheChild() throws {
+		let root = try makeRoot()
+		try write("""
+		<project>
+			<groupId>com.example</groupId>
+			<artifactId>parent</artifactId>
+			<version>1.0.0</version>
+			<packaging>pom</packaging>
+			<properties><slf4j.version>2.0.13</slf4j.version></properties>
+			<dependencies>
+				<dependency>
+					<groupId>org.slf4j</groupId>
+					<artifactId>slf4j-api</artifactId>
+					<version>${slf4j.version}</version>
+				</dependency>
+			</dependencies>
+			<dependencyManagement>
+				<dependencies>
+					<dependency>
+						<groupId>com.google.guava</groupId>
+						<artifactId>guava</artifactId>
+						<version>33.2.1-jre</version>
+					</dependency>
+				</dependencies>
+			</dependencyManagement>
+		</project>
+		""", to: root.appendingPathComponent("pom.xml"))
+		let module = root.appendingPathComponent("service")
+		try write("""
+		<project>
+			<parent>
+				<groupId>com.example</groupId>
+				<artifactId>parent</artifactId>
+				<version>1.0.0</version>
+			</parent>
+			<artifactId>service</artifactId>
+			<dependencies>
+				<dependency>
+					<groupId>com.google.guava</groupId>
+					<artifactId>guava</artifactId>
+				</dependency>
+			</dependencies>
+		</project>
+		""", to: module.appendingPathComponent("pom.xml"))
+
+		let set = ExternalDependencies.read(root: module, kind: .maven)
+		// Guava's version comes from the parent's dependencyManagement, and
+		// slf4j is a dependency the child never names but has.
+		#expect(set.packages.map(\.name) == ["guava", "slf4j-api"])
+		#expect(set.packages.first { $0.name == "guava" }?.version == "33.2.1-jre")
+		#expect(set.packages.first { $0.name == "slf4j-api" }?.version == "2.0.13")
+		// Nothing is missing but the transitives, so that is all the caveat says.
+		guard case let .partial(_, caveat) = set.contents else {
+			Issue.record("expected partial, got \(set.contents)")
+			return
+		}
+		#expect(caveat == "direct dependencies only — Maven resolves the transitive ones")
+	}
+
+	/// **`<relativePath/>` written empty means "not beside me".** Read as absent
+	/// it would default to `../pom.xml`, and the chain would climb out of the
+	/// project into whatever POM happens to sit one directory up — here, a
+	/// parent that has nothing to do with this module. The row says instead that
+	/// there is a parent this checkout does not hold.
+	@Test func anEmptyRelativePathIsNotAParentBesideTheModule() throws {
+		let root = try makeRoot()
+		try write("""
+		<project>
+			<artifactId>somebody-elses-parent</artifactId>
+			<properties><spring.version>6.1.0</spring.version></properties>
+		</project>
+		""", to: root.appendingPathComponent("pom.xml"))
+		let module = root.appendingPathComponent("service")
+		try write("""
+		<project>
+			<parent>
+				<groupId>org.springframework.boot</groupId>
+				<artifactId>spring-boot-starter-parent</artifactId>
+				<version>3.3.0</version>
+				<relativePath/>
+			</parent>
+			<artifactId>service</artifactId>
+			<dependencies>
+				<dependency>
+					<groupId>org.springframework</groupId>
+					<artifactId>spring-core</artifactId>
+					<version>${spring.version}</version>
+				</dependency>
+			</dependencies>
+		</project>
+		""", to: module.appendingPathComponent("pom.xml"))
+
+		let set = ExternalDependencies.read(root: module, kind: .maven)
+		// The property is up in a POM this checkout does not hold, so there is no
+		// version — and emphatically not `6.1.0`, which is the wrong project's.
+		#expect(set.packages.map(\.version) == [nil])
+		guard case let .partial(_, caveat) = set.contents else {
+			Issue.record("expected partial, got \(set.contents)")
+			return
+		}
+		#expect(caveat == "direct dependencies only — Maven resolves the transitive ones, "
+			+ "one of these versions and a parent POM this checkout does not hold")
+	}
+
+	/// **The jar, and the tooltip that used to lie about it.** The JVM resolves
+	/// to a jar rather than to sources, so `localPath` stays nil — a package row
+	/// *is* a directory, and pointing it at the folder the jar sits in draws a
+	/// package whose files are a jar and a checksum. But `not fetched` is false
+	/// about a jar that is right there, so the row names the artefact instead.
+	@Test func aMavenDependencyNamesItsJarRatherThanSayingItIsNotFetched() throws {
+		let root = try makeRoot()
+		let repository = try makeRoot()
+		try write(pom, to: root.appendingPathComponent("pom.xml"))
+		try write("not really a jar\n", to: repository.appendingPathComponent(
+			"org/apache/commons/commons-lang3/3.14.0/commons-lang3-3.14.0.jar"
+		))
+		// The sources jar sits beside it when somebody asked for one, and is not
+		// the artefact.
+		try write("nor this\n", to: repository.appendingPathComponent(
+			"org/apache/commons/commons-lang3/3.14.0/commons-lang3-3.14.0-sources.jar"
+		))
+
+		guard case let .partial(packages, _) = ExternalDependencies.readMavenPackages(
+			at: root, repository: repository
+		) else {
+			Issue.record("expected partial")
+			return
+		}
+		let lang3 = try #require(packages.first { $0.name == "commons-lang3" })
+		#expect(lang3.localPath == nil)
+		#expect(lang3.artefact?.lastPathComponent == "commons-lang3-3.14.0.jar")
+
+		// And the tooltip says where it is rather than that it is not there.
+		let node = DependencyNode(row: .package(lang3))
+		#expect(node.detail?.contains("commons-lang3-3.14.0.jar") == true)
+		#expect(node.detail?.contains("not fetched") == false)
+		#expect(node.isExpandable == false)
+
+		// A dependency whose version nothing here knows has no jar to name.
+		#expect(packages.first { $0.name == "junit-jupiter" }?.artefact == nil)
+	}
+
+	/// An aggregator declares no dependencies and its modules are subprojects
+	/// with rows of their own — 0513's workspace member the other way up. "no
+	/// dependencies" would be true of the POM and false about the build.
+	@Test func anAggregatorPomSaysItsModulesHaveTheDependencies() throws {
+		let root = try makeRoot()
+		try write("""
+		<project>
+			<artifactId>everything</artifactId>
+			<packaging>pom</packaging>
+			<modules><module>service</module></modules>
+		</project>
+		""", to: root.appendingPathComponent("pom.xml"))
+
+		let set = ExternalDependencies.read(root: root, kind: .maven)
+		#expect(set.contents == .unresolved("an aggregator POM — its modules have the dependencies"))
+	}
+
+	/// `~/.m2/repository`, unless `settings.xml` moves it — which is the only
+	/// thing that can, since Maven has no environment variable for it.
+	@Test func theLocalRepositoryIsWhateverSettingsXmlSays() throws {
+		let home = try makeRoot()
+		#expect(ExternalDependencies.mavenLocalRepository(home: home).path
+			== home.appendingPathComponent(".m2/repository").path)
+
+		try write("""
+		<settings>
+			<localRepository>${user.home}/somewhere/else</localRepository>
+		</settings>
+		""", to: home.appendingPathComponent(".m2/settings.xml"))
+		#expect(ExternalDependencies.mavenLocalRepository(home: home).path
+			== home.appendingPathComponent("somewhere/else").path)
+	}
+
+	// MARK: - Gradle
+
+	/// **Gradle turned out to be the better case, not the worse one.** A build
+	/// that opted into `dependencyLocking` has the resolved graph on disk,
+	/// transitives and all — as complete as a `Cargo.lock`, and read with no
+	/// caveat at all.
+	@Test func aGradleLockfileIsTheWholeGraphAndNeedsNoCaveat() throws {
+		let root = try makeRoot()
+		try write("build.gradle\n", to: root.appendingPathComponent("build.gradle"))
+		try write("""
+		# This is a Gradle generated file for dependency locking.
+		# Manual edits can break the build and are not advised.
+		com.google.guava:guava:33.2.1-jre=compileClasspath,runtimeClasspath
+		org.slf4j:slf4j-api:2.0.13=compileClasspath,runtimeClasspath
+		# A transitive one, which is the whole point of the file.
+		com.google.guava:failureaccess:1.0.2=runtimeClasspath
+		empty=annotationProcessor,testAnnotationProcessor
+		""", to: root.appendingPathComponent("gradle.lockfile"))
+
+		let set = ExternalDependencies.read(root: root, kind: .gradle)
+		guard case let .packages(packages) = set.contents else {
+			Issue.record("expected packages with no caveat, got \(set.contents)")
+			return
+		}
+		#expect(packages.map(\.name) == ["failureaccess", "guava", "slf4j-api"])
+		#expect(packages.first { $0.name == "guava" }?.version == "33.2.1-jre")
+		#expect(packages.first { $0.name == "guava" }?.origin == "com.google.guava")
+	}
+
+	/// Gradle 5 wrote one file per configuration under `gradle/dependency-locks`,
+	/// and plenty of builds still have that layout.
+	@Test func theOlderPerConfigurationLockFilesAreReadToo() throws {
+		let root = try makeRoot()
+		try write("build.gradle\n", to: root.appendingPathComponent("build.gradle"))
+		try write("# locked\ncom.google.guava:guava:31.1-jre\n",
+			to: root.appendingPathComponent("gradle/dependency-locks/compileClasspath.lockfile"))
+		try write("com.google.guava:guava:31.1-jre\norg.slf4j:slf4j-api:1.7.36\n",
+			to: root.appendingPathComponent("gradle/dependency-locks/runtimeClasspath.lockfile"))
+
+		let set = ExternalDependencies.read(root: root, kind: .gradle)
+		#expect(set.contents == .packages([
+			ExternalDependency(
+				name: "guava", version: "31.1-jre", origin: "com.google.guava", localPath: nil
+			),
+			ExternalDependency(
+				name: "slf4j-api", version: "1.7.36", origin: "org.slf4j", localPath: nil
+			),
+		]))
+	}
+
+	/// **The trap the pre-read named: `dependencies { }` is also what
+	/// `buildscript { }` calls its plugin classpath.** Read without counting
+	/// braces, a Spring Boot build claims to depend on the Spring Boot Gradle
+	/// plugin, which is what builds it rather than what it is built from.
+	@Test func aBuildscriptBlockIsNotTheProjectsDependencies() throws {
+		let root = try makeRoot()
+		try write("""
+		buildscript {
+			repositories { mavenCentral() }
+			dependencies {
+				classpath 'org.springframework.boot:spring-boot-gradle-plugin:3.3.0'
+			}
+		}
+
+		apply plugin: 'java'
+
+		dependencies {
+			implementation 'com.google.guava:guava:33.2.1-jre'
+		}
+		""", to: root.appendingPathComponent("build.gradle"))
+
+		let set = ExternalDependencies.read(root: root, kind: .gradle)
+		#expect(set.packages.map(\.name) == ["guava"])
+	}
+
+	/// Every spelling a build file uses, in one file — the Kotlin DSL's
+	/// parentheses, Groovy's bare quotes, `platform(…)`, the map form, an
+	/// interpolated version and a `project(":…")` that is not external at all.
+	@Test func aBuildFileWithoutALockfileGivesTheDirectDependenciesOnly() throws {
+		let root = try makeRoot()
+		try write("""
+		plugins { id("java") }
+
+		val slf4jVersion = "2.0.13"
+
+		dependencies {
+			implementation("com.google.guava:guava:33.2.1-jre")
+			implementation 'org.apache.commons:commons-lang3:3.14.0'
+			testImplementation(platform("org.junit:junit-bom:5.10.2"))
+			implementation group: 'com.squareup.okhttp3', name: 'okhttp', version: '4.12.0'
+			implementation("org.slf4j:slf4j-api:$slf4jVersion")
+			implementation(project(":common"))
+			implementation(files("libs/local.jar"))
+		}
+		""", to: root.appendingPathComponent("build.gradle.kts"))
+
+		let set = ExternalDependencies.read(root: root, kind: .gradle)
+		guard case let .partial(packages, caveat) = set.contents else {
+			Issue.record("expected partial, got \(set.contents)")
+			return
+		}
+		// `project(":common")` is a directory the tree already shows, the way a
+		// Cargo `path` dependency is; `files(…)` is not a package at all.
+		#expect(packages.map(\.name) == [
+			"commons-lang3", "guava", "junit-bom", "okhttp", "slf4j-api",
+		])
+		// `"$slf4jVersion"` interpolates, and the literal is not a version.
+		#expect(packages.first { $0.name == "slf4j-api" }?.version == nil)
+		#expect(packages.first { $0.name == "okhttp" }?.version == "4.12.0")
+		#expect(caveat == "direct dependencies only — Gradle resolves the transitive ones "
+			+ "and one of these versions")
+	}
+
+	/// **Without the version catalog a modern build yields no rows at all.**
+	/// Every line in its `dependencies { }` is `libs.something`, and the
+	/// coordinates are in `gradle/libs.versions.toml` — which belongs to the
+	/// build root, so a module one directory down still finds it.
+	@Test func aVersionCatalogSuppliesTheCoordinatesTheBuildFileOnlyRefersTo() throws {
+		let root = try makeRoot()
+		try write("""
+		[versions]
+		jackson = "2.17.1"
+
+		[libraries]
+		jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", version.ref = "jackson" }
+		guava = { group = "com.google.guava", name = "guava", version = "33.2.1-jre" }
+		commons-lang3 = "org.apache.commons:commons-lang3:3.14.0"
+		""", to: root.appendingPathComponent("gradle/libs.versions.toml"))
+		let module = root.appendingPathComponent("service")
+		try write("""
+		dependencies {
+			implementation(libs.jackson.databind)
+			implementation(libs.guava)
+			// The accessor turns every separator into a dot, so both sides have
+			// to be normalised or `commons-lang3` and `commons.lang3` never meet.
+			implementation(libs.commons.lang3)
+		}
+		""", to: module.appendingPathComponent("build.gradle.kts"))
+
+		let set = ExternalDependencies.read(root: module, kind: .gradle)
+		#expect(set.packages.map(\.name) == ["commons-lang3", "guava", "jackson-databind"])
+		#expect(set.packages.first { $0.name == "jackson-databind" }?.version == "2.17.1")
+		#expect(set.packages.first { $0.name == "commons-lang3" }?.version == "3.14.0")
+	}
+
+	/// Gradle's cache puts a **checksum directory** between the version and the
+	/// jar, and nothing outside Gradle can compute it — 0513's registry hash in a
+	/// second spelling. So the level is listed rather than built.
+	@Test func aGradleDependencyNamesTheJarUnderItsChecksumDirectory() throws {
+		let root = try makeRoot()
+		let home = try makeRoot()
+		try write("build.gradle\n", to: root.appendingPathComponent("build.gradle"))
+		try write("com.google.guava:guava:33.2.1-jre=runtimeClasspath\n",
+			to: root.appendingPathComponent("gradle.lockfile"))
+		try write("not really a jar\n", to: home.appendingPathComponent(
+			"caches/modules-2/files-2.1/com.google.guava/guava/33.2.1-jre/"
+				+ "4ee0a0dbcbd0b1ee0a0dbcbd0b1ee0a0dbcbd0b1/guava-33.2.1-jre.jar"
+		))
+
+		guard case let .packages(packages) = ExternalDependencies.readGradlePackages(
+			at: root, gradleHome: home
+		) else {
+			Issue.record("expected packages")
+			return
+		}
+		let guava = try #require(packages.first)
+		#expect(guava.localPath == nil)
+		#expect(guava.artefact?.lastPathComponent == "guava-33.2.1-jre.jar")
+	}
+
+	/// A settings file and no build file is the root of a multi-project build,
+	/// whose projects are subprojects with rows of their own — the Gradle
+	/// spelling of what a Cargo workspace member says.
+	@Test func aSettingsOnlyRootSaysItsProjectsHaveTheDependencies() throws {
+		let root = try makeRoot()
+		try write("rootProject.name = \"everything\"\ninclude(\":service\")\n",
+			to: root.appendingPathComponent("settings.gradle.kts"))
+
+		let set = ExternalDependencies.read(root: root, kind: .gradle)
+		#expect(set.contents == .unresolved(
+			"a settings file only — its projects have the dependencies"
+		))
+	}
+
+	/// A build file with no `dependencies { }` at all depends on nothing, and
+	/// that is a reading rather than a failure to read — the same claim `go.mod`
+	/// with no `require` makes. `abydos-examples/java/gradle-service` is exactly
+	/// this build.
+	@Test func aGradleBuildThatDeclaresNoDependenciesIsReadAsHavingNone() throws {
+		let root = try makeRoot()
+		try write("plugins { application }\n", to: root.appendingPathComponent("build.gradle.kts"))
+
+		#expect(ExternalDependencies.read(root: root, kind: .gradle).contents == .packages([]))
+	}
+
+	/// **How a partial list says it is partial, as the section draws it**: the
+	/// rows, and under them one note in the same shape as "no dependencies".
+	@Test func aPartialListDrawsItsCaveatAsANoteUnderTheRows() throws {
+		let root = try makeRoot()
+		try write(pom, to: root.appendingPathComponent("pom.xml"))
+
+		let tree = try #require(DependencyTree(sets: [
+			ExternalDependencies.readMavenPackages(at: root, repository: try makeRoot()),
+		].map { DependencySet(root: root, kind: .maven, contents: $0) }, project: root))
+		#expect(tree.report() == [
+			"Dependencies — Maven",
+			"  commons-lang3 — 3.14.0  ·  org.apache.commons",
+			"  jackson-databind — 2.17.1  ·  com.fasterxml.jackson.core",
+			// No version: the row is the name and where it came from, and the
+			// note underneath is what says why the version is missing.
+			"  junit-jupiter — org.junit.jupiter",
+			"  direct dependencies only — Maven resolves the transitive ones "
+				+ "and one of these versions",
+		])
+	}
+
+	/// **The caveat is a sentence and the pane is not that wide.** Found by
+	/// looking at it: a sidebar four hundred points across drew `direct
+	/// dependencies only — Maven resolv.` and the tooltip said only which kind
+	/// this was, so the half that mattered was reachable from nowhere.
+	@Test func aNotesTooltipCarriesTheWholeOfWhatTheRowCannotShow() throws {
+		let root = try makeRoot()
+		try write(pom, to: root.appendingPathComponent("pom.xml"))
+
+		let tree = try #require(DependencyTree(sets: [
+			ExternalDependencies.read(root: root, kind: .maven),
+		], project: root))
+		let note = try #require(tree.root.childNodes.last)
+		#expect(note.title.hasPrefix("direct dependencies only"))
+		#expect(note.detail?.hasPrefix(note.title) == true)
+		#expect(note.detail?.contains("Maven in " + root.path) == true)
+	}
+
+	// MARK: - Every kind is read, and what still holds the next one to it
 
 	/// Every kind this program can open is in the list, whether or not it is
 	/// read — that is what stops a project's dependencies being silently
 	/// omitted, which is the failure the item named in advance.
-	@Test func everyKindEitherIsReadOrNamesTheItemThatWillReadIt() {
+	///
+	/// **This is now the whole of that claim.** Its companion —
+	/// `aKindNobodyHasTaughtSaysSoRatherThanShowingNothing`, which checked the
+	/// row a project of an unread kind draws — said in its own words that the
+	/// day it had no subject left was the day every kind was read, and that this
+	/// was when it went. 0515 was that day: Maven and Gradle were the last two,
+	/// so `pendingItem` is nil throughout and there is no kind left to draw that
+	/// row for. `DependencyNode.message(for:)` still knows how, and this is what
+	/// says when it is needed again.
+	///
+	/// Asked of behaviour rather than of a list, so the next kind added is held
+	/// to it without anybody remembering to edit a `case`: if it reads nothing
+	/// it must name the item that will.
+	@Test func everyKindEitherIsReadOrNamesTheItemThatWillReadIt() throws {
 		for kind in DependencyKind.allCases {
-			switch kind {
-			case .swiftPackage, .goModule, .cargo, .npm, .bazel, .conan:
-				#expect(kind.pendingItem == nil)
-			default:
-				#expect(kind.pendingItem != nil, "\(kind) says nothing about itself")
+			let root = try makeRoot()
+			if ExternalDependencies.read(root: root, kind: kind).contents == .notRead {
+				#expect(kind.pendingItem != nil, "\(kind) reads nothing and says nothing about itself")
+			} else {
+				#expect(kind.pendingItem == nil, "\(kind) is read and still names an item")
 			}
 		}
 	}

@@ -309,7 +309,11 @@ public struct MavenProject: Equatable, Sendable {
 /// `elements(forName:)` matches the qualified name, so a document that uses a
 /// namespace prefix — rare in a POM but legal — would answer nothing. Matching
 /// on the local name is what was meant every time.
-private extension XMLElement {
+///
+/// Internal rather than private since 0515: the dependencies section reads a POM
+/// too, for its `<dependencies>` and its parent chain, and a second copy of
+/// these four lines is how the two readings start to disagree.
+extension XMLElement {
 	func child(_ name: String) -> XMLElement? {
 		children(named: name).first
 	}
