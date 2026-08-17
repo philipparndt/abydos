@@ -194,7 +194,13 @@ after a click that started somewhere else.
 - [x] Swapping the editor's content view does not drop the window's first
       responder — the hole under this item, found on the way
 - [x] The usages list too, which shares the widget
-- [ ] `make test` and `make warnings` are clean
+- [x] `make test` and `make warnings` are clean — 2731 tests in 375 suites,
+      no failures at all, and no warning in this repository's Swift. The two
+      failures items 519 and 520 had to explain away both passed in this run:
+      `runsAndWritesAThreeMF` builds the shared `abydos-examples` checkout,
+      whose stray character somebody has since fixed, and
+      `foldComputationIsReasonableOnHugeFile` measures the machine and had a
+      quiet one
 - [ ] Write down here what was ruled out on the way
 - [ ] `spec/search.md` and `spec/usages.md` say what the project now does
 
