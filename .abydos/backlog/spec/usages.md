@@ -115,6 +115,12 @@ character of the file: ⌫ means "done" here, and that is only safe while the
 keyboard is provably still here. ⇧⇥ is not a way out either; it goes on walking
 the key view loop.
 
+**A click brings the keyboard to the list, and does not merely leave it alone.**
+Where it was before the click makes no difference — the editor, a terminal, or
+nowhere. "The click does not take the keyboard to the editor" and "the click puts
+the keyboard in the list" are one rule, and a list that only kept the first half
+answered ⌫ with whatever the hand had been typing into a moment earlier.
+
 An unfocused list says so. A selected row is drawn in the strong highlight only
 while the list has the keyboard, and in the same gray as an unfocused row in the
 project tree once it has not — so "the list looks live" and "the list is live"
@@ -156,6 +162,13 @@ row already showing is not opened again.
 - **When** a row is clicked
 - **Then** that usage is shown in a tab of its own and the keyboard is still in
   the list
+
+### Scenario: clicking a usage after ⇥ has gone to the editor
+
+- **Given** a usages list whose ⇥ has put the keyboard in the editor
+- **When** a row is clicked and then ⌫ is pressed
+- **Then** the keyboard is in the list, that row is struck through, and nothing
+  has been deleted from the file the editor is showing
 
 ### Scenario: ⇥ over a usage
 
