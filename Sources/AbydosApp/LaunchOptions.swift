@@ -383,6 +383,16 @@ struct LaunchOptions {
 	var diagramFit: String?
 	/// How large the picture pane draws: `fit` or `actual`.
 	var imageFit: String?
+	/// Steps to drive the picture pane's own zoom through, comma separated:
+	/// `in`, `out`, `actual`, `fit`, `pinch:0.25`.
+	///
+	/// Separate from `--image-fit` because it goes a different way. `--image-fit`
+	/// calls the pane; this sends the View menu's own action into the responder
+	/// chain, which is what item 0537 actually changed — the picture pane answers
+	/// `Zoom In` while it has the keyboard, and the window answers it everywhere
+	/// else. The interface's own zoom is `--zoom`, and a run that passes both is
+	/// the run that shows the two are no longer one number.
+	var imageZoom: String?
 	/// Where the picture pane is scrolled to, as fractions of the picture:
 	/// `0,0` is its top left corner and `1,1` its bottom right.
 	///
@@ -871,6 +881,7 @@ struct LaunchOptions {
 			case "--export":     options.exportDiagram = next()
 			case "--diagram-fit": options.diagramFit = next()
 			case "--image-fit":  options.imageFit = next()
+			case "--image-zoom": options.imageZoom = next()
 			case "--image-pan":  options.imagePan = next()
 			case "--probe-lan":  options.probeLAN = next()
 			case "--sidebar-cycle": options.sidebarCycle = true

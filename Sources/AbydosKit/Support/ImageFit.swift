@@ -13,6 +13,12 @@ import Foundation
 /// one gesture that left the fit drew it at its own size inside a document
 /// pinned to the pane, so the picture was cropped instead of pannable. What the
 /// zoom is bounded by is `clamp`, and where it is applied is `zoomed`.
+///
+/// Since item 0537 there are two different zooms in play and this file holds
+/// both ends of the difference. `paneScale` and `widthScale` multiply the
+/// *interface's* zoom into a fit, which is what every pane does with it.
+/// `zoomSteps` is the ladder a **picture's own** scale climbs, which no other
+/// pane has — see `ImageFileView` for why the picture is the exception.
 public enum ImageFit {
 	/// The rectangle a picture of `image` size occupies in a pane of `pane`
 	/// size, centred, with its proportions kept.
@@ -122,6 +128,39 @@ public enum ImageFit {
 	/// The same bounds, for a scale that was arrived at some other way — the
 	/// drawing's own size, times the zoom.
 	public static func clamp(_ scale: CGFloat) -> CGFloat { min(max(scale, 0.1), 8) }
+
+	/// The sizes a picture's own zoom stops at.
+	///
+	/// Item 0537 is why there is a second ladder in this program at all.
+	/// `Settings.zoomSteps` is the *interface's*, and it runs 0.75 to 2 because
+	/// that is the useful range for type and rows; a picture wants a tenth for a
+	/// wall-sized render and eight times over for a few pixels of a screenshot,
+	/// which is the range `clamp` already allows. So the ends of this ladder are
+	/// exactly `clamp`'s bounds — there is no rung the clamp would move, and no
+	/// bound the ladder cannot reach.
+	///
+	/// **The rungs are the scale actually drawn, not a multiplier on the fit.**
+	/// A screenshot fitted at 41% therefore goes 50%, 75%, 100% under ⌘+, which
+	/// is what every picture viewer does and what the caption can be read
+	/// against. Rungs relative to the fit would have made ⌘+ mean a different
+	/// amount in every window shape, and made "press ⌘+ until it says 400%" —
+	/// which is how this pane is checked — a different number of presses each
+	/// time.
+	public static let zoomSteps: [CGFloat] = [0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8]
+
+	/// The next rung above where the picture is now, or the top of the ladder.
+	///
+	/// Against the scale being *drawn* rather than against the last rung asked
+	/// for, so ⌘+ from a fit picks up where the fit left it, and so a pinch that
+	/// stopped at 1.37× is followed by a ⌘+ to 1.5 rather than back to 1.
+	public static func zoomIn(from scale: CGFloat) -> CGFloat {
+		zoomSteps.first { $0 > scale + 0.001 } ?? zoomSteps.last!
+	}
+
+	/// The next rung below, or the foot of the ladder.
+	public static func zoomOut(from scale: CGFloat) -> CGFloat {
+		zoomSteps.last { $0 < scale - 0.001 } ?? zoomSteps.first!
+	}
 
 	/// What to say a picture is: its size in pixels, how large it is being drawn,
 	/// and whether that size was chosen or arrived at by fitting the pane.

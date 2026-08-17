@@ -10,34 +10,57 @@ import AppKit
 /// whatever colour happens to be behind it — which is exactly the question
 /// anybody opening an icon has.
 ///
-/// Fitted is where it *starts*. ⌘+ and ⌘- make it larger and smaller, a
-/// double-click swaps between the fit and the picture's own size, and anything
-/// larger than the pane is scrolled to its edges rather than cropped at them.
-/// Item 0532 is the three ways that was not true before: the document view was
-/// resized to the pane on every frame change so the scrollers had nothing to
-/// scroll, "1:1" therefore cropped a screenshot instead of letting it be panned,
-/// and the only sizes reachable at all were the fit and 1:1.
+/// Fitted is where it *starts*. ⌘+ and ⌘- make it larger and smaller, a pinch
+/// does the same continuously, a double-click swaps between the fit and the
+/// picture's own size, and anything larger than the pane is scrolled to its
+/// edges rather than cropped at them. Item 0532 is the three ways that was not
+/// true before: the document view was resized to the pane on every frame change
+/// so the scrollers had nothing to scroll, "1:1" therefore cropped a screenshot
+/// instead of letting it be panned, and the only sizes reachable at all were the
+/// fit and 1:1.
 ///
 /// The pane is built like the diagram pane, which worked all of this out first:
 /// the picture is in a scroll view whose document is exactly as large as the
-/// picture is being drawn, the caption sits at the foot *outside* that scroll
+/// picture is being drawn, and the caption sits at the foot *outside* that scroll
 /// view — it used to be a subview of the document, so it would have scrolled
-/// away with the picture — and the sizes are the window's own zoom rather than a
-/// second one belonging to this pane.
+/// away with the picture.
+///
+/// **The one place it now differs from the diagram pane is the zoom, and item
+/// 0537 is why.** 0532 gave this pane no scale of its own, on the diagram pane's
+/// argument that the app has one zoom; everything between the fit and the
+/// picture's own size therefore came from `Settings.activeScale`, so looking
+/// closely at a screenshot enlarged the editor's font and the sidebar's rows
+/// along with it. That was reported as the thing it is. A picture is not
+/// furniture around the content — it *is* the content, and enlarging it is the
+/// same act as the editor's own text zoom rather than a different one. So the
+/// picture keeps its own scale, ⌘+ / ⌘- / ⌘0 drive it **while this pane has the
+/// keyboard**, and the interface's zoom is left to the rest of the window.
 final class ImageFileView: NSView, ScalingPage {
-	/// What 1× means here, which is the one question a zoom cannot answer.
+	/// How large the picture is drawn, which is the one question a zoom cannot
+	/// answer on its own.
 	///
-	/// Two states rather than a number of its own, for the reason the diagram
-	/// pane gives at length: the app has one zoom, it is ⌘+ / ⌘- / ⌘0, and a
-	/// pane that kept a second would be a pane where those keys did something
-	/// different from everywhere else.
-	enum Fit {
+	/// Either the pane decides — the whole picture, as large as the pane can show
+	/// it — or somebody has named a scale, and `.actual` is the one they name
+	/// most: the size the file says it is, which is `.scale(1)` under a name
+	/// worth having.
+	///
+	/// **A named scale is the scale actually drawn, and is not multiplied by the
+	/// interface's zoom.** That is what makes `Actual Size` mean 100% rather than
+	/// 100% of whatever the window is at — which is the fault 0532 papered over by
+	/// having `Actual Size` reset the window's zoom as well.
+	enum Fit: Equatable {
 		/// The whole picture, as large as the pane can show it, or its own size
-		/// when that is smaller. What a picture opens at.
+		/// when that is smaller. What a picture opens at, and the one state that
+		/// follows the interface's zoom the way every other pane's contents do.
 		case pane
-		/// The picture's own size — the size the file says it is. What `Actual
-		/// Size` puts it at, and what a double-click asks for.
-		case actual
+		/// A size somebody asked for, as a factor of the size the file says it
+		/// is. Left exactly where it was put by a window resize or by ⌘+
+		/// elsewhere in the window.
+		case scale(CGFloat)
+
+		/// The picture's own size. What `Actual Size` puts it at, and what a
+		/// double-click asks for.
+		static let actual = Fit.scale(1)
 	}
 
 	private let url: URL
@@ -148,12 +171,19 @@ final class ImageFileView: NSView, ScalingPage {
 
 	// MARK: - How large
 
-	/// Changes what 1× means here, and does not write it down anywhere.
+	/// Changes how large the picture is drawn, and does not write it down
+	/// anywhere.
 	///
 	/// **Not remembered per file, on purpose**, for the reasons the diagram pane
-	/// sets out: the zoom itself is remembered, because that is the part somebody
-	/// sets once for their eyesight or their screen, and this is the other part —
-	/// a way of looking at *this* picture for a moment.
+	/// sets out and one this pane adds. A picture opens fitted, which is the
+	/// answer to "what is in this file"; a scale is a way of looking at *this*
+	/// picture for a moment, so it lives for as long as the tab does and no
+	/// longer. Remembering it would need a store, would have to be forgotten on
+	/// a rename and a delete, and would open a picture at a size chosen last week
+	/// in a differently shaped window. The interface's zoom is the part that *is*
+	/// remembered, because that is the part somebody sets once for their eyesight
+	/// or their screen — and item 0537 is the whole argument that these are two
+	/// different things.
 	func setFit(_ wanted: Fit) {
 		guard fit != wanted else { return }
 		fit = wanted
@@ -167,31 +197,96 @@ final class ImageFileView: NSView, ScalingPage {
 	/// the picture does, and what a test presses.
 	func toggleFit() { setFit(fit == .pane ? .actual : .pane) }
 
-	/// ⌘+ and ⌘-, said out loud over the picture: the window's zoom, because the
-	/// window has one and a pane with a second would make the same key mean two
-	/// things.
-	@objc private func zoomImageIn(_ sender: Any?) { Settings.shared.zoomIn() }
-
-	@objc private func zoomImageOut(_ sender: Any?) { Settings.shared.zoomOut() }
-
-	/// The picture at exactly 100%, which takes both halves: the basis alone
-	/// would be its own size *times* whatever the window is zoomed to, which is a
-	/// menu item lying about the number in its own name.
-	@objc private func showImageActualSize(_ sender: Any?) {
-		Settings.shared.resetZoom()
-		setFit(.actual)
+	/// Where the next ⌘+ or the next pinch counts from.
+	///
+	/// The scale being *drawn*, so a zoom out of a fitted picture is a step down
+	/// from the fit rather than a step down from some remembered number nobody
+	/// can see. `shownScale` is what the caption says, which makes this the only
+	/// reading that agrees with what is on screen.
+	private var scaleToZoomFrom: CGFloat {
+		if case .scale(let asked) = fit { return ImageFit.clamp(asked) }
+		return shownScale
 	}
 
+	/// ⌘+ and ⌘- over the picture: **the picture's own scale, not the window's.**
+	///
+	/// These are the View menu's own `Zoom In` and `Zoom Out` arriving down the
+	/// responder chain, which is what `acceptsFirstResponder` below is for: while
+	/// this pane has the keyboard the keys mean the picture, and everywhere else
+	/// in the window they still mean the window. The context menu names the same
+	/// two selectors so the menu and the keys cannot drift apart.
+	@objc func zoomIn(_ sender: Any?) {
+		setFit(.scale(ImageFit.zoomIn(from: scaleToZoomFrom)))
+	}
+
+	@objc func zoomOut(_ sender: Any?) {
+		setFit(.scale(ImageFit.zoomOut(from: scaleToZoomFrom)))
+	}
+
+	/// ⌘0 and `Actual Size`: the picture at exactly 100%, and **the window's zoom
+	/// left alone**.
+	///
+	/// It used to call `Settings.shared.resetZoom()` as well, and that was
+	/// correct only while the picture's size and the interface's were the same
+	/// number: with no scale of its own, "the picture's own size" could only be
+	/// reached by putting the window back to 1×. Now that a named scale is the
+	/// scale drawn, 100% is 100% at any interface zoom, and resetting the window
+	/// would be this pane reaching out and resizing the rest of the editor —
+	/// which is the whole of what was complained about.
+	@objc func resetZoom(_ sender: Any?) { setFit(.actual) }
+
 	@objc private func fitImageToPane(_ sender: Any?) { setFit(.pane) }
+
+	/// Pinch, which item 0532 ruled out and this item puts back.
+	///
+	/// **The objection was true and it is gone.** 0532's reason was not taste: a
+	/// pinch would have had to drive `Settings.activeScale`, and "a two-finger
+	/// pinch over a picture that resized the editor's font and the sidebar's rows
+	/// would be a bug report by lunchtime". With a scale of its own there is
+	/// nothing for a pinch to reach except the picture, and pinch is the gesture
+	/// people already make at a picture — a trackpad has had it since before this
+	/// program existed. `NSEvent.magnification` still appears nowhere else in
+	/// `Sources/AbydosApp`, and that stays true: this is the pane where a picture
+	/// *is* the content, which is the same reason it is the pane that got a scale.
+	///
+	/// Continuous rather than stepped, because that is what a pinch is; ⌘+ from
+	/// wherever it stops takes the next rung above, which is `scaleToZoomFrom`.
+	/// A gesture goes to the view under the pointer, so this works whether or not
+	/// the pane has the keyboard — which is right, since nothing about it is
+	/// ambiguous the way a key is.
+	///
+	/// Anchored on the middle of the pane, like every other size change here,
+	/// rather than on the fingers. Zooming towards the pointer is nicer and it is
+	/// a second anchoring rule: ⌘+ and a pinch would then leave the picture in
+	/// two different places, and `rememberAnchor` is read from where the pane is
+	/// looking precisely so there is only one answer.
+	func magnify(by amount: CGFloat) {
+		guard image != nil, amount != 0 else { return }
+		setFit(.scale(ImageFit.clamp(scaleToZoomFrom * (1 + amount))))
+	}
+
+	/// The pane takes the keyboard, so that ⌘+ over a picture is the picture.
+	///
+	/// Nothing else here needs a key, and this is not a claim that it does: it is
+	/// how the responder chain is asked the question "which pane is being looked
+	/// at". Without it, activating a picture tab left the keyboard wherever it
+	/// was — often a code view for a file no longer on screen — and the View
+	/// menu's zoom went to the window controller as it does everywhere else.
+	override var acceptsFirstResponder: Bool { image != nil }
 
 	/// Right-clicking the picture offers the four sizes.
 	///
 	/// The same four the diagram pane offers, and deliberately the same words for
-	/// the three that mean the same thing — `Zoom In` and `Zoom Out` are ⌘+ and
-	/// ⌘- and do what they do everywhere else, and `Actual Size` is the View
-	/// menu's own item. The fourth is `Fit to Window` rather than `Fit to Width`,
-	/// and the different word is the whole difference between the two panes: a
-	/// diagram is read down its length, and a picture is looked at whole.
+	/// the three that mean the same thing — `Zoom In`, `Zoom Out` and `Actual
+	/// Size` are the View menu's own items, and over a picture they are the
+	/// picture. The fourth is `Fit to Window` rather than `Fit to Width`, and the
+	/// different word is the whole difference between the two panes: a diagram is
+	/// read down its length, and a picture is looked at whole.
+	///
+	/// The three that are also keys point at **the same selectors the keys
+	/// arrive on**, rather than at wrappers of their own. That is the part worth
+	/// keeping: a right-click item and a key equivalent that did the same thing
+	/// by two routes is how the two come to disagree.
 	///
 	/// A menu rather than buttons in a corner, because the pane is drawn by hand
 	/// and a button would sit over the picture — and because ⌘+ over a picture is
@@ -200,9 +295,9 @@ final class ImageFileView: NSView, ScalingPage {
 		let menu = NSMenu()
 		menu.autoenablesItems = false
 		for (title, action) in [
-			("Zoom In", #selector(zoomImageIn(_:))),
-			("Zoom Out", #selector(zoomImageOut(_:))),
-			("Actual Size", #selector(showImageActualSize(_:))),
+			("Zoom In", #selector(zoomIn(_:))),
+			("Zoom Out", #selector(zoomOut(_:))),
+			("Actual Size", #selector(resetZoom(_:))),
 			("Fit to Window", #selector(fitImageToPane(_:))),
 		] {
 			let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
@@ -263,22 +358,30 @@ final class ImageFileView: NSView, ScalingPage {
 		rememberAnchor()
 
 		let margin = Self.margin
-		let zoom = Theme.current.scale
 		let factor: CGFloat
 		switch fit {
 		case .pane:
 			// The room inside the margin, so a fitted picture is not flush against
 			// the sides of the pane and so fitting cannot itself produce a scroller.
+			//
+			// **Times the interface's zoom, which is the half of 0532 that stays.**
+			// A fitted picture is this pane's contents at rest, and every other
+			// pane's contents grow with ⌘+ elsewhere in the window; a picture that
+			// alone ignored it would be a picture that shrank, relatively, every
+			// time somebody made the editor larger.
 			factor = ImageFit.paneScale(
 				image: naturalSize,
 				in: CGSize(width: max(1, visible.width - margin * 2),
 				           height: max(1, visible.height - margin * 2)),
-				zoom: zoom
+				zoom: Theme.current.scale
 			)
-		// The picture's own size, still following the window's zoom — so ⌘+ from
-		// 100% is 110% rather than nothing, which is what a ceiling would make it.
-		case .actual:
-			factor = ImageFit.clamp(zoom)
+		// A size somebody asked for is that size. **Not times the interface's
+		// zoom**: `Actual Size` at a 1.5× interface would otherwise draw 150% and
+		// say so, which is a menu item lying about the number in its own name —
+		// and 0532's answer to that was to reset the interface's zoom, which is
+		// exactly what item 0537 is about.
+		case .scale(let asked):
+			factor = ImageFit.clamp(asked)
 		}
 		shownScale = factor
 
@@ -412,6 +515,10 @@ final class ImageFileView: NSView, ScalingPage {
 	/// can show whether the thing under it is larger than the pane. These numbers
 	/// can, and they are the views' own rather than a second sum that agrees with
 	/// the drawing by hand.
+	///
+	/// The interface's zoom is on the line too, for item 0537: what that item
+	/// asks for is that one of these two numbers moves and the other does not,
+	/// and a claim about two numbers wants both of them printed together.
 	var reportForTesting: String {
 		layoutSubtreeIfNeeded()
 		let document = canvas.frame.size
@@ -419,6 +526,7 @@ final class ImageFileView: NSView, ScalingPage {
 		let seen = scrollView.documentVisibleRect.origin
 		let smoothing = canvas.interpolation == NSImageInterpolation.none ? "none" : "high"
 		return "said=\(caption.stringValue) scale=\(Int((shownScale * 100).rounded()))% "
+			+ "ui=\(Int((Settings.shared.activeScale * 100).rounded()))% "
 			+ "picture=\(Int(canvas.picture.width))x\(Int(canvas.picture.height)) "
 			+ "document=\(Int(document.width))x\(Int(document.height)) "
 			+ "visible=\(Int(visible.width))x\(Int(visible.height)) "
@@ -487,9 +595,24 @@ private final class ImageCanvas: NSView {
 	/// Kept from before 0532, and it means something different now: the picture's
 	/// own size used to be a crop of it, and is now the whole of it with somewhere
 	/// to scroll.
+	///
+	/// A click of any count also hands the keyboard to the pane, which is what
+	/// makes ⌘+ afterwards mean the picture. AppKit does that by itself only for
+	/// the view it hits, and the view it hits is this one — which deliberately
+	/// takes no keys at all: the pane owns the state, so the pane takes the
+	/// keyboard. It matters most for an SVG, where the pane is half a split and
+	/// the other half is a code view that took the keyboard when the tab opened.
 	override func mouseDown(with event: NSEvent) {
+		if let pane, pane.acceptsFirstResponder { window?.makeFirstResponder(pane) }
 		guard event.clickCount == 2, image != nil else { return super.mouseDown(with: event) }
 		pane?.toggleFit()
+	}
+
+	/// Pinch over the picture. See `ImageFileView.magnify(by:)` for why there is
+	/// one at all now, and why there was not one before.
+	override func magnify(with event: NSEvent) {
+		guard let pane else { return super.magnify(with: event) }
+		pane.magnify(by: event.magnification)
 	}
 
 	// The menu belongs to the pane, and this view is over all of it. Both halves
