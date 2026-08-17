@@ -193,7 +193,7 @@ after a click that started somewhere else.
 - [x] Clicking the tab first still works, and the two paths agree
 - [x] Swapping the editor's content view does not drop the window's first
       responder — the hole under this item, found on the way
-- [ ] The usages list too, which shares the widget
+- [x] The usages list too, which shares the widget
 - [ ] `make test` and `make warnings` are clean
 - [ ] Write down here what was ruled out on the way
 - [ ] `spec/search.md` and `spec/usages.md` say what the project now does
