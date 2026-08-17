@@ -120,7 +120,7 @@ when Maven starts being read.
 
 ## Estimate
 
-2026-08-17 08:41 — about three hours left
+2026-08-17 09:13 — about an hour left
 
 ## What was decided, and why
 
@@ -170,6 +170,52 @@ gap this project does not have:
 A Gradle build with a `gradle.lockfile` is `.packages` with no caveat at all,
 because nothing is missing from it.
 
+## What the app showed
+
+The pictures are in `images/`. A Maven project, a Gradle build with no lock
+file and a Gradle build with one, side by side in the same section:
+
+    Dependencies
+      gradle-locked — Gradle
+        commons-io    2.11.0  ·  commons-io
+        gson          2.8.9   ·  com.google.code.gson
+        log4j-api     2.17.1  ·  org.apache.logging.log4j
+      gradle-service — Gradle
+        commons-io    2.11.0  ·  commons-io
+        gson          2.8.9   ·  com.google.code.gson
+        direct dependencies only — Gradle resolves the transitive ones
+      maven-service — Maven
+        commons-lang3     3.14.0  ·  org.apache.commons
+        jackson-databind  2.15.2  ·  com.fasterxml.jackson.core
+        slf4j-api                    org.slf4j
+        direct dependencies only — Maven resolves the transitive ones and one
+        of these versions
+
+`gradle-locked` has no note under it, and that is the point: its
+`gradle.lockfile` holds `log4j-api`, which nothing in the build file mentions
+— a transitive one — so there is nothing to caveat. `commons-lang3`'s version
+came out of a `${commons.version}` property; `slf4j-api` has none because the
+POM leaves it to a BOM, and that is the row the note is counting.
+
+`abydos-examples/java` itself is in the second picture and reads **no
+dependencies** for both of its projects, which is true: neither declares any.
+That is another of the section's answers and worth having, but it is not a
+picture of this item working, which is why there is a second project — a copy
+of those two under /tmp with dependencies added, plus a third with a lock file.
+
+### The caveat did not fit, and its tooltip said nothing about it
+
+Found by looking rather than by testing, which is 0513's lesson again. The
+sidebar drew
+
+    ? direct dependencies only — Maven resolv.
+
+and `DependencyNode.detail` for a note was `kind.title + " in " + root.path`,
+so the half that was cut off was reachable from nowhere. A note's tooltip now
+leads with its own message. Every other row in the section already followed
+that rule — anything too long for the pane goes on the tooltip — and the notes
+were outside it because until now no note had been longer than four words.
+
 ## Steps
 
 - [x] Decide what a JVM dependency's row shows when the sources are a jar, and
@@ -183,8 +229,10 @@ because nothing is missing from it.
 - [x] `DependencyKind.pendingItem` stops naming this item for Maven and Gradle
 - [x] The kind standing for "nobody has taught this one" in the tests moves off
       Maven, now that Maven is read
-- [ ] Watched in the app on a Maven project and a Gradle project, with a
+- [x] Watched in the app on a Maven project and a Gradle project, with a
       screenshot
+- [x] A note's tooltip carries its own message, since the caveat is a sentence
+      and the pane cuts it — found in the app
 - [ ] Write down here what was ruled out on the way
 - [ ] `spec/project-view.md` says Maven and Gradle are among the kinds that
       are read — not `spec/editor.md`, which predates the section; 0513 hit

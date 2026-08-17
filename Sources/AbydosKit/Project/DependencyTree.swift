@@ -114,7 +114,13 @@ public final class DependencyNode {
 			lines.append(package.localPath?.path ?? package.artefact?.path ?? "not fetched")
 			return lines.joined(separator: "\n")
 		case let .note(set):
-			return set.kind.title + " in " + set.root.path
+			// The message first, because a note *is* its message and the pane cuts
+			// it: `direct dependencies only — Maven resolves the transitive ones
+			// and one of these versions` is a sentence, and a sidebar four hundred
+			// points wide shows the first half of it. Everything too long for the
+			// pane goes on the tooltip — the rule the package rows already follow.
+			return DependencyNode.message(for: set) + "\n"
+				+ set.kind.title + " in " + set.root.path
 		}
 	}
 

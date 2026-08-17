@@ -983,6 +983,23 @@ struct ExternalDependenciesTests {
 		])
 	}
 
+	/// **The caveat is a sentence and the pane is not that wide.** Found by
+	/// looking at it: a sidebar four hundred points across drew `direct
+	/// dependencies only — Maven resolv.` and the tooltip said only which kind
+	/// this was, so the half that mattered was reachable from nowhere.
+	@Test func aNotesTooltipCarriesTheWholeOfWhatTheRowCannotShow() throws {
+		let root = try makeRoot()
+		try write(pom, to: root.appendingPathComponent("pom.xml"))
+
+		let tree = try #require(DependencyTree(sets: [
+			ExternalDependencies.read(root: root, kind: .maven),
+		], project: root))
+		let note = try #require(tree.root.childNodes.last)
+		#expect(note.title.hasPrefix("direct dependencies only"))
+		#expect(note.detail?.hasPrefix(note.title) == true)
+		#expect(note.detail?.contains("Maven in " + root.path) == true)
+	}
+
 	// MARK: - Kinds nothing reads yet
 
 	/// **The claim that makes shipping some kinds honest.** A project of a kind
