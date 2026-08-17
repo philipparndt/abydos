@@ -972,7 +972,36 @@ struct LaunchOptions {
 		return options
 	}
 
+	/// Whether `--screenshot` was given, which is only ever the right question
+	/// about the window capture itself and its delay.
+	///
+	/// **It used to be asked as though it meant three different things**, and
+	/// 0534 and 0535 are two of them arriving as bug reports. Use
+	/// `writesACapture` for "will this run produce a picture at all" and
+	/// `isDrivenRun` for "is this being driven rather than used".
 	var isScreenshotRun: Bool { screenshotPath != nil }
+
+	/// Whether this run is going to write a picture of something, by any flag.
+	///
+	/// **A list rather than one flag, and that is the whole of 0535.** While
+	/// `--screenshot` was the only capture flag, "a picture is coming" and
+	/// "`--screenshot` was given" were the same sentence. They stopped being so
+	/// and nothing noticed: `--sidebar-shot` on its own hit an `exit(0)` guarded
+	/// by `isScreenshotRun`, so the process ended *before* the capture ran and
+	/// wrote a blank panel — while exiting zero, which is why it was believed
+	/// once already.
+	///
+	/// Every flag that writes an image belongs here. The next one added will
+	/// belong here too, and leaving it out is the same fault again — which is
+	/// the argument against widening `isScreenshotRun` in place: it would have
+	/// kept the trap and only moved it.
+	var writesACapture: Bool {
+		screenshotPath != nil
+			|| editorShotPath != nil
+			|| sidebarShot != nil
+			|| metalShot != nil
+			|| toolbarImage != nil
+	}
 
 	/// Whether the app is being driven rather than used.
 	///

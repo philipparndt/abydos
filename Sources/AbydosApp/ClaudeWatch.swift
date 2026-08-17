@@ -51,7 +51,12 @@ final class ClaudeWatch {
 	/// question. A run that is *not* taking a picture is precisely where this
 	/// path would be checked — fire the hook, then read `--toasts` — and a rule
 	/// about headless runs in general would leave no way to check it at all.
-	private static var listensOnThisRun: Bool { !LaunchOptions.parse().isScreenshotRun }
+	/// Whether to listen at all on this run.
+	///
+	/// Asks about the driving rather than about the picture: a driven run has no
+	/// business subscribing to somebody's agent activity, whether or not it ends
+	/// in a screenshot.
+	private static var listensOnThisRun: Bool { !LaunchOptions.parse().isDrivenRun }
 
 	func start() {
 		guard Self.listensOnThisRun else { return }
