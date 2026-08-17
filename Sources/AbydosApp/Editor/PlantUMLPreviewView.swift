@@ -262,12 +262,16 @@ final class PlantUMLPreviewView: DiagramPaneView {
 		// Registered before it is started, so it is ended with the app however
 		// the app ends — including the way that runs no `deinit` at all. The
 		// refusal is worth showing: a dozen tools running and none finishing is
-		// a runtime that has stopped answering, not a diagram that is hard.
-		guard ToolProcesses.shared.adopt(process) else {
+		// a runtime that has stopped answering, not a diagram that is hard —
+		// which is true of this one exactly when it came from an image, and is
+		// why the refusal is told whether it did.
+		guard ToolProcesses.shared.adopt(
+			process, as: "diagram render", fromImage: containerName != nil
+		) else {
 			running = nil
 			if let containerName { ToolContainers.shared.releaseInBackground(containerName) }
 			spin(false)
-			notice = ToolProcesses.tooManyMessage
+			notice = ToolProcesses.shared.tooManyMessage
 			needsDisplay = true
 			return
 		}

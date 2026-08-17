@@ -294,8 +294,11 @@ final class CadovaPreviewView: DelayedPaneView {
 		// Nothing is going to answer a question a startup file asks.
 		process.standardInput = FileHandle.nullDevice
 
-		guard ToolProcesses.shared.adopt(process) else {
-			show(failure: ToolProcesses.tooManyMessage)
+		// Not from an image, and the refusal must not say it was: this is the
+		// user's own shell running the user's own toolchain, and 0538 is the
+		// report of somebody being told to restart a container runtime for it.
+		guard ToolProcesses.shared.adopt(process, as: "Cadova build") else {
+			show(failure: ToolProcesses.shared.tooManyMessage)
 			return
 		}
 		running = process
