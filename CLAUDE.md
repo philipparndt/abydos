@@ -98,3 +98,10 @@ asserted at all, and `make timing` is the run that asks for one.
 on purpose and is not part of `make build`: an incremental build only reports the
 files it recompiled, so a warning is seen once by whoever happens to be watching
 and then never again.
+
+**Their exit codes mean what they say.** `make test` used to exit 0 over a suite
+with failures in it — the run was backgrounded as a pipeline and the status
+reported was `tee`'s — so anything that checked the code rather than reading the
+output had been told the suite was green for as long as the script existed. It
+was found by grepping a log. Trust the code now, and if a run leaves no status
+behind at all, that counts as a failure.
