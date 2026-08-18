@@ -1312,11 +1312,25 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 				// And what choosing a hidden one does, which is the half of this
 				// that a still picture cannot show: the run moves the least that
 				// brings it into view.
-				DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-					print("CHOSE: \(controller?.selectHiddenPanelTabForTesting(0) ?? "none")")
-					DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-						print("AFTER: \(controller?.panelOverflowReportForTesting ?? "none")")
-						fflush(stdout)
+				// The two are exclusive on purpose. Choosing a hidden tab pulls
+				// the run back to show it, which is the very state the closing
+				// case needs *not* to be in: what was reported is a strip whose
+				// run is still pushed forward when tabs go away.
+				if let closing = options.closeTerminalTabs {
+					DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+						print("CLOSING: \(controller?.closeTerminalTabsForTesting(count: closing) ?? "none")")
+						DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+							print("CLOSED: \(controller?.panelOverflowReportForTesting ?? "none")")
+							fflush(stdout)
+						}
+					}
+				} else {
+					DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+						print("CHOSE: \(controller?.selectHiddenPanelTabForTesting(0) ?? "none")")
+						DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+							print("AFTER: \(controller?.panelOverflowReportForTesting ?? "none")")
+							fflush(stdout)
+						}
 					}
 				}
 			}

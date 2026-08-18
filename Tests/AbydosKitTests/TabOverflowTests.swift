@@ -120,6 +120,57 @@ struct TabOverflowTests {
 		#expect(TabOverflow.start(showing: 99, widths: widths, from: 3, available: 500) == 3)
 	}
 
+	// MARK: - Room that appears again
+
+	/// **Reported: tabs close and the strip does not lay out again.** Eight tabs
+	/// left, room for all of them, an empty half of the strip — and the chevron
+	/// still offering five. The run moves forward when the active tab does not
+	/// fit and nothing ever moved it back, so the space that appeared when tabs
+	/// closed stayed unused and the tabs before the run stayed hidden.
+	@Test func closingTabsBringsTheHiddenOnesBack() {
+		// Thirteen tabs with room for eight: the run has been pushed forward.
+		let many: [CGFloat] = Array(repeating: 100, count: 13)
+		let pushed = TabOverflow.start(showing: 12, widths: many, from: 0, available: 800)
+		#expect(TabOverflow.measure(widths: many, start: pushed, available: 800).hiddenBefore.count == 5)
+
+		// Five of them close. Everything left fits, so nothing should be hidden.
+		let fewer: [CGFloat] = Array(repeating: 100, count: 8)
+		let settled = TabOverflow.settled(start: pushed, widths: fewer, available: 800)
+		let after = TabOverflow.measure(widths: fewer, start: settled, available: 800)
+		#expect(settled == 0)
+		#expect(after.isOverflowing == false, "\(after.hiddenCount) still hidden with room for all of them")
+	}
+
+	/// The window gets wider, which is the same thing happening for a different
+	/// reason.
+	@Test func aWiderStripBringsThemBackToo() {
+		let widths: [CGFloat] = Array(repeating: 100, count: 13)
+		let pushed = TabOverflow.start(showing: 12, widths: widths, from: 0, available: 800)
+		#expect(pushed > 0)
+
+		let settled = TabOverflow.settled(start: pushed, widths: widths, available: 1400)
+		#expect(TabOverflow.measure(widths: widths, start: settled, available: 1400).hiddenBefore.isEmpty)
+	}
+
+	/// **It only ever fills trailing space**, so it cannot move tabs under the
+	/// pointer while somebody is using them: a run with tabs hidden after it has
+	/// no space to fill, and settling leaves it exactly where it was.
+	@Test func aRunWithMoreToComeIsLeftAlone() {
+		let widths: [CGFloat] = Array(repeating: 100, count: 20)
+		#expect(TabOverflow.settled(start: 5, widths: widths, available: 800) == 5)
+		#expect(TabOverflow.settled(start: 0, widths: widths, available: 800) == 0)
+	}
+
+	/// And it pulls back only as far as the last tab allows, rather than all the
+	/// way to the start — otherwise the tab somebody is on would go off the end.
+	@Test func settlingStopsWhereTheLastTabWouldFallOff() {
+		let widths: [CGFloat] = Array(repeating: 100, count: 13)
+		let settled = TabOverflow.settled(start: 12, widths: widths, available: 800)
+		let after = TabOverflow.measure(widths: widths, start: settled, available: 800)
+		#expect(after.hiddenAfter.isEmpty, "the last tab must stay visible")
+		#expect(settled == 5, "eight fit, so the run ends at the last tab")
+	}
+
 	/// Tabs are not all the same width — a shell in a deep directory takes a
 	/// third of the strip on its own, since a panel tab has no ceiling.
 	@Test func tabsOfDifferentWidths() {

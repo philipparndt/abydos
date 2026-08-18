@@ -1063,6 +1063,20 @@ final class BottomPanel: NSView {
 		}
 	}
 
+	/// Closes the last few, which is the gesture that was reported: somebody
+	/// closing tabs one after another and the strip not laying out again.
+	/// Closing *all* of them cannot show it — there is nothing left to lay out.
+	@discardableResult
+	func closeTerminalTabsForTesting(count: Int) -> String {
+		var closed = 0
+		for index in sessions.indices.reversed() where closed < count {
+			guard case .terminal = sessions[index].kind else { continue }
+			close(index: index, hidingWhenEmpty: false)
+			closed += 1
+		}
+		return "closed \(closed)"
+	}
+
 	/// Presses the + on the first strip, for testing what it does.
 	func addTabForTesting() {
 		columnViews.first?.strip.pressAddForTesting()
@@ -3640,12 +3654,18 @@ final class PanelTabStrip: NSView, TabCloseHovering {
 	private func showActiveTab() {
 		guard let active = activeIndex, items.indices.contains(active) else { return }
 		let widths = items.map(width(for:))
-		let moved = TabOverflow.start(
-			showing: active,
+		let room = tabRoom(overflowing: true)
+		let gap = isMirroringTmux ? 0 : Theme.current.scaled(2)
+		// Forward if the active tab does not fit, then back into any room going
+		// spare at the trailing end. Closing tabs is the reported case: eight
+		// left, room for all of them, and five still behind the chevron.
+		let moved = TabOverflow.settled(
+			start: TabOverflow.start(
+				showing: active, widths: widths, from: runStart, available: room, spacing: gap
+			),
 			widths: widths,
-			from: runStart,
-			available: tabRoom(overflowing: true),
-			spacing: isMirroringTmux ? 0 : Theme.current.scaled(2)
+			available: room,
+			spacing: gap
 		)
 		guard moved != runStart else { return }
 		runStart = moved
@@ -4186,7 +4206,13 @@ final class PanelTabStrip: NSView, TabCloseHovering {
 			).fill()
 		}
 
-		for (index, item) in items.enumerated() where index < frames.count {
+		// **A hidden tab has no rectangle, and must not be drawn into it.** An
+		// empty frame is `.zero`, whose origin is the top-left corner of the
+		// strip — so every tab scrolled out of the run painted its icon there,
+		// stacked behind the first visible one. That is the clutter reported at
+		// the start of the strip.
+		for (index, item) in items.enumerated()
+		where index < frames.count && !frames[index].isEmpty {
 			draw(item: item, in: frames[index], isActive: index == activeIndex, isHovered: index == hoveredIndex)
 		}
 

@@ -85,6 +85,39 @@ public struct TabOverflow: Equatable, Sendable {
 		)
 	}
 
+	/// Where the run must start so that no room is wasted at the trailing end.
+	///
+	/// **Reported: tabs are closed and the strip does not lay out again.** Eight
+	/// tabs left, room for all of them, half the strip empty — and the chevron
+	/// still offering five. `start(showing:)` moves the run *forward* when the
+	/// active tab does not fit and there was nothing to move it back, so space
+	/// that appeared later went unused and the tabs before the run stayed
+	/// hidden. Closing a tab, closing several, widening the window: all the same
+	/// fault.
+	///
+	/// **It only ever fills trailing space**, and that is what keeps it from
+	/// being a second thing that moves tabs about. A run with tabs still hidden
+	/// after it has no space to fill, so this leaves it exactly where it is —
+	/// which is every moment somebody is working in the middle of a long strip.
+	/// It pulls back only while the last tab stays visible, so the run cannot
+	/// slide off the end it was showing.
+	public static func settled(
+		start: Int,
+		widths: [CGFloat],
+		available: CGFloat,
+		spacing: CGFloat = 0
+	) -> Int {
+		var candidate = max(0, min(start, max(0, widths.count - 1)))
+		while candidate > 0 {
+			let earlier = measure(
+				widths: widths, start: candidate - 1, available: available, spacing: spacing
+			)
+			guard earlier.hiddenAfter.isEmpty else { break }
+			candidate -= 1
+		}
+		return candidate
+	}
+
 	/// Where the run must start for one tab to be wholly visible, moving as
 	/// little as possible.
 	///

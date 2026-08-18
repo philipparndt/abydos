@@ -559,11 +559,37 @@ because sixteen terminals are sixteen tabs called `Local`.
 **A tab is visible only if the whole of it is**, in front of the ground the
 controls are drawn on. Half a tab under the session tag is not a target.
 
-**The active tab is always wholly visible.** The run of drawn tabs moves for that
-reason and no other — not on a wheel, not on a drag, not remembered between
-launches — and by the least that brings it into view. Where the run has moved,
-tabs are hidden before it as well as after it, and both are counted and listed,
-in tab order.
+**The active tab is always wholly visible.** The run of drawn tabs moves forward
+for that reason and no other — not on a wheel, not on a drag, not remembered
+between launches — and by the least that brings it into view. Where the run has
+moved, tabs are hidden before it as well as after it, and both are counted and
+listed, in tab order.
+
+**And it moves back whenever there is room going spare at the trailing end.**
+Reported: eight tabs left after closing several, room for all of them, half the
+strip empty, and the chevron still offering five. The run only ever moved forward
+and nothing brought it back, so space that appeared later went unused — the same
+fault whether tabs are closed or the window is widened. It settles only into
+trailing space, so a run with tabs still hidden after it is left exactly where it
+is, which is every moment somebody is working in the middle of a long strip.
+
+**A hidden tab is not drawn at all.** It has no rectangle, and an empty rectangle
+is the origin — the top-left corner of the strip — so every tab scrolled out of
+the run painted its icon there, stacked behind the first visible one. That is the
+clutter that appeared above the first tab.
+
+### Scenario: closing tabs until they all fit
+
+- **GIVEN** a strip whose run has been pushed forward, with tabs hidden before it
+- **WHEN** enough tabs are closed that the rest would fit
+- **THEN** the run returns to the start, every tab is shown, and there is no
+  chevron
+
+### Scenario: the leading edge of a strip with hidden tabs
+
+- **GIVEN** a run with tabs hidden before it
+- **WHEN** the strip is drawn
+- **THEN** nothing of those tabs appears at the leading edge
 
 Which tab the run starts at is remembered by name and not by number. This strip
 mirrors tmux's window list and is rebuilt whenever that is re-read: a window

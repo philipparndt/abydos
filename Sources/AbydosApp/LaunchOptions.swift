@@ -523,6 +523,12 @@ struct LaunchOptions {
 	/// strip looks like was a thing somebody had to make by hand, twelve clicks
 	/// at a time, and therefore a thing screenshots never showed.
 	var fillTerminalTabs: Int?
+	/// Close this many terminal tabs and say what the strip does next.
+	///
+	/// The reported gesture, and it needed a count: `--close-terminals` closes
+	/// every one of them, which cannot show a strip that fails to lay out again
+	/// because there is nothing left in it.
+	var closeTerminalTabs: Int?
 	/// Which button on the missing-server bar to press, if any: `report`,
 	/// `details`, `ignore` or `dismiss`.
 	var serverBanner: String?
@@ -727,6 +733,7 @@ struct LaunchOptions {
 					options.addTerminalTabAt = 3.0
 				}
 			case "--tab-fill":   options.fillTerminalTabs = next().flatMap(Int.init) ?? 12
+			case "--tab-close":  options.closeTerminalTabs = next().flatMap(Int.init) ?? 5
 			case "--lsp-banner":  options.serverBanner = next() ?? "report"
 			case "--rerun":      options.rerun = next() ?? "selected"
 			case "--tmux-close": options.closeTmuxTab = next().flatMap(Int.init)

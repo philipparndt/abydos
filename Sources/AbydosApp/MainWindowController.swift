@@ -365,6 +365,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		bottomPanel.closeTerminalTabsForTesting()
 	}
 
+	@discardableResult
+	func closeTerminalTabsForTesting(count: Int) -> String {
+		bottomPanel.closeTerminalTabsForTesting(count: count)
+	}
+
 	func clickPanelTabForTesting(_ index: Int) -> String {
 		bottomPanel.clickPanelTabForTesting(index)
 	}

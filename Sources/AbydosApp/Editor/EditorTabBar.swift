@@ -244,11 +244,16 @@ final class EditorTabBar: NSView {
 	/// Moves the run, if it has to, so the active tab is one somebody can see.
 	private func showActiveTab() {
 		guard let active = activeIndex, items.indices.contains(active) else { return }
-		let moved = TabOverflow.start(
-			showing: active,
-			widths: items.map(measuredWidth(for:)),
-			from: runStart,
-			available: tabRoom(overflowing: true)
+		let widths = items.map(measuredWidth(for:))
+		let room = tabRoom(overflowing: true)
+		// Forward if the active tab does not fit, then back into any room going
+		// spare at the trailing end — see `TabOverflow.settled`. Without the
+		// second half, tabs closed while the run was forward left the strip half
+		// empty with the chevron still offering the ones before it.
+		let moved = TabOverflow.settled(
+			start: TabOverflow.start(showing: active, widths: widths, from: runStart, available: room),
+			widths: widths,
+			available: room
 		)
 		guard moved != runStart else { return }
 		runStart = moved
@@ -590,7 +595,13 @@ final class EditorTabBar: NSView {
 		Theme.current.sidebarBackground.setFill()
 		bounds.fill()
 
-		for (index, item) in items.enumerated() where index < frames.count {
+		// **A hidden tab has no rectangle, and must not be drawn into it.** An
+		// empty frame is `.zero`, whose origin is the top-left corner of the
+		// strip — so every tab scrolled out of the run painted its icon and the
+		// first few pixels of its name there, one on top of another, behind the
+		// first visible tab. That is the clutter above the first tab.
+		for (index, item) in items.enumerated()
+		where index < frames.count && !frames[index].isEmpty {
 			draw(item: item, in: frames[index], isActive: index == activeIndex, index: index)
 		}
 
@@ -598,7 +609,7 @@ final class EditorTabBar: NSView {
 		// continuous with the editor beneath it.
 		Theme.current.separator.setFill()
 		NSRect(x: 0, y: bounds.maxY - 1, width: bounds.width, height: 1).fill()
-		if let activeIndex, activeIndex < frames.count {
+		if let activeIndex, activeIndex < frames.count, !frames[activeIndex].isEmpty {
 			let rect = frames[activeIndex]
 			Theme.current.editorBackground.setFill()
 			NSRect(x: rect.minX, y: bounds.maxY - 1, width: rect.width, height: 1).fill()
