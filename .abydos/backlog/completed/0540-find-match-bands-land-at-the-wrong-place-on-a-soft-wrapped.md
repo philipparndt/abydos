@@ -66,3 +66,9 @@ two answers to "where is this offset on screen", one of which knows about wrap.
 - [ ] Screenshots on a wrapped line with several matches, before and after
 - [ ] `make test` and `make warnings` are clean
 - [ ] Write down here what was ruled out on the way
+
+## Done as an OpenSpec change
+
+The work is in `openspec/changes/archive/2026-08-17-find-bands-follow-soft-wrap/`, and that change's `tasks.md` is
+the record of what was done. The checklist above is left as it was written: the
+work did not go through it, so nothing here was ticked from memory.

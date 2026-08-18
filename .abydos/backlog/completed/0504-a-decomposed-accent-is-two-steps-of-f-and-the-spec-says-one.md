@@ -81,3 +81,9 @@ thing that made ⌃O correct are the same fact.
 - [ ] Write down here what was ruled out on the way
 - [ ] `spec/editor.md` says what the project now does — the sentence about a
       combining mark is already there and will become true rather than change
+
+## Done as an OpenSpec change
+
+The work is in `openspec/changes/archive/2026-08-17-grapheme-aware-caret-motion/`, and that change's `tasks.md` is
+the record of what was done. The checklist above is left as it was written: the
+work did not go through it, so nothing here was ticked from memory.

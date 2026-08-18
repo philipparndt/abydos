@@ -56,3 +56,9 @@ for this. Then the assertion cannot run early and the test takes microseconds.
 - [ ] Any shared helper is in one place, and its timeout is a failure bound
 - [ ] `make test` and `make warnings` are clean
 - [ ] Write down here what was ruled out on the way
+
+## Done as an OpenSpec change
+
+The work is in `openspec/changes/archive/2026-08-17-tests-wait-rather-than-sleep/`, and that change's `tasks.md` is
+the record of what was done. The checklist above is left as it was written: the
+work did not go through it, so nothing here was ticked from memory.

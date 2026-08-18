@@ -89,3 +89,9 @@ somewhere an agent reads, that stops being a workaround and becomes a choice.
       was not given in its prompt
 - [ ] Write down here what was ruled out on the way
 - [ ] `spec/backlog.md` says what the project now does
+
+## Done as an OpenSpec change
+
+The work is in `openspec/changes/archive/2026-08-17-house-rules-an-agent-reads/`, and that change's `tasks.md` is
+the record of what was done. The checklist above is left as it was written: the
+work did not go through it, so nothing here was ticked from memory.

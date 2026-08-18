@@ -117,3 +117,9 @@ Also done while here, so the next report costs less: the crash log now carries
 the build, the image's load address, its slide and its UUID. Without those the
 addresses in an old log cannot be turned into file and line by any dSYM, because
 ASLR moves the image every launch.
+
+## Done as an OpenSpec change
+
+The work is in `openspec/changes/archive/2026-08-17-theme-reads-are-safe-off-the-main-thread/`, and that change's `tasks.md` is
+the record of what was done. The checklist above is left as it was written: the
+work did not go through it, so nothing here was ticked from memory.

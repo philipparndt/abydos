@@ -51,3 +51,9 @@ named flag to make it work is a coupling nobody can guess and nothing states.
 - [ ] Any other flag with the same hole is found and named here
 - [ ] `make test` and `make warnings` are clean
 - [ ] Write down here what was ruled out on the way
+
+## Done as an OpenSpec change
+
+The work is in `openspec/changes/archive/2026-08-17-driven-runs-are-not-screenshot-runs/`, and that change's `tasks.md` is
+the record of what was done. The checklist above is left as it was written: the
+work did not go through it, so nothing here was ticked from memory.
