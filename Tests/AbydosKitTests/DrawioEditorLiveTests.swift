@@ -33,6 +33,12 @@ struct DrawioEditorLiveTests {
 		return editor
 	}
 
+	/// Elapsed time with nothing to wait for.
+	///
+	/// The editor is a web view running somebody else's JavaScript, and what is
+	/// being given time to happen is a render this side has no signal for — the
+	/// `onReady` above is the last thing it says. Every wait in this file that
+	/// *can* watch for something does; this is what is left.
 	private func settle(_ times: Int = 8) async {
 		for _ in 0..<times { try? await Task.sleep(nanoseconds: 250_000_000) }
 	}

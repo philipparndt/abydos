@@ -179,6 +179,10 @@ struct ContainerImageStoreTests {
 		let store = ContainerImageStore()
 		let outcome = await withTaskGroup(of: ContainerImageStore.Outcome?.self) { group in
 			group.addTask { await store.ensure("a/b", using: .docker(script.path)) }
+			// The losing arm of a race, which is what a timeout is: whichever
+			// finishes first wins, so this sleeps for the whole ten seconds only
+			// when the thing under test has hung. It is a bound on a hang and
+			// not a wait for anything.
 			group.addTask {
 				try? await Task.sleep(nanoseconds: 10_000_000_000)
 				return nil

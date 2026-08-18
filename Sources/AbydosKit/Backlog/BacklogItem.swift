@@ -225,6 +225,13 @@ public struct BacklogItem: Identifiable, Sendable, Equatable {
 		}
 	}
 
+	/// The counting itself, over any markdown.
+	///
+	/// Shared with `OpenSpecChange.progress()`, which counts the same
+	/// checkboxes under `## 1. Reading a change` that this counts under
+	/// `## Steps`. One function on purpose: two that agree today are two that
+	/// can disagree later, and a fraction on a card would then mean one thing
+	/// for an item and another for a change.
 	static func progress(in markdown: String) -> Progress? {
 		var done = 0
 		var total = 0

@@ -342,6 +342,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// Panes in the panel, for proving the tmux + added none.
 	var paneCountForTesting: Int { bottomPanel.paneCountForTesting }
 
+	/// The editor's own text, drawn to a PNG.
+	@discardableResult
+	func writeEditorImageForTesting(to path: String) -> Bool {
+		editor.writeEditorImageForTesting(to: path)
+	}
+
+	/// What the panel's tab strip is showing and what it is holding back.
+	var panelOverflowReportForTesting: String { bottomPanel.overflowReportForTesting }
+
+	/// Chooses one of the tabs the strip had no room for, as its menu entry
+	/// would — so that the run moving to bring it into view can be looked at.
+	func selectHiddenPanelTabForTesting(_ position: Int) -> String {
+		bottomPanel.selectHiddenTabForTesting(position)
+	}
+
 	func addTerminalTabForTesting() {
 		bottomPanel.addTabForTesting()
 	}
@@ -699,6 +714,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// which is the only time it is anywhere else.
 		bottomPanel.onPaneNeedsProject = { [weak self] root in
 			guard let self, self.followsTerminal else { return }
+			// The other place a pane's report moves the window, and reachable in
+			// a driven run: `--debug-steps` and `--run-line` both bring a pane
+			// forward. Guarded where the report is acted on rather than by
+			// filtering what a driven run is allowed to read, so the rule is in
+			// the two places that could move the window and nowhere else.
+			guard !LaunchOptions.parse().isDrivenRun else { return }
 			// Following, so the same rule as a shell that moved: the panel is
 			// where the change came from and is not to be moved by it.
 			self.switchProject(to: root, followingTerminal: true)
@@ -1511,12 +1532,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	///
 	/// The window capture goes through the compositor and a pane that has just
 	/// been built is not always in it yet; this asks the view itself.
-	func snapshotSidebarForTesting(to path: String) {
-		guard let view = primaryToolView, view.bounds.width > 1 else { return }
-		guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+	/// Says whether it wrote one, so a run that could not can exit non-zero
+	/// rather than leaving a stale file and a zero status behind it.
+	@discardableResult
+	func snapshotSidebarForTesting(to path: String) -> Bool {
+		guard let view = primaryToolView, view.bounds.width > 1 else { return false }
+		guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return false }
 		view.cacheDisplay(in: view.bounds, to: rep)
-		guard let data = rep.representation(using: .png, properties: [:]) else { return }
-		try? data.write(to: URL(fileURLWithPath: path))
+		guard let data = rep.representation(using: .png, properties: [:]) else { return false }
+		return (try? data.write(to: URL(fileURLWithPath: path))) != nil
 	}
 
 	/// Opens the sidebar to a width, for looking at a pane in a screenshot.
@@ -2033,10 +2057,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// screenshot of the wrong program, taken without complaint.
 		//
 		// The sentence above was true when nobody was photographing anything
-		// too, and 0509 is what it cost. The guard stays: a capture is of a
-		// named project and must not follow a shell anywhere, including
+		// too, and 0509 is what it cost. The guard stays: a driven run is about
+		// a named project and must not follow a shell anywhere, including
 		// somewhere the rule below would rightly follow it.
-		guard !LaunchOptions.parse().isScreenshotRun else { return }
+		//
+		// **It asked about the picture and it meant the driving**, which is
+		// 0534. A run with a verb and no `--screenshot` was not guarded at all,
+		// so a terminal whose working directory had been deleted underneath it
+		// took the window somewhere nobody named — reproduced five times out of
+		// five, and the driver then did its work to whatever that window had
+		// open. 0509 had already found this rule broader than photography once;
+		// the comment was widened then and the test was not.
+		guard !LaunchOptions.parse().isDrivenRun else { return }
 		guard followsTerminal else { return }
 		guard let root = ProjectRoot.projectToFollow(from: directory, current: project?.root)
 		else { return }
@@ -3855,6 +3887,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// without a click. The segmented control is how anybody else gets there.
 	func showBacklogMode(list: Bool) {
 		bottomPanel.showBacklog()?.showList(list)
+	}
+
+	/// Which record the pane shows, for `--backlog openspec`.
+	func showBacklogSource(openSpec: Bool) {
+		bottomPanel.showBacklog()?.showOpenSpec(openSpec)
+	}
+
+	/// What is on the board and what the archive holds, for `--backlog openspec`.
+	func backlogBoardReportForTesting() -> String {
+		bottomPanel.showBacklog()?.boardReportForTesting ?? "no project"
+	}
+
+	/// Whether the first card of a column can be dragged.
+	func backlogDragReportForTesting(state: String) -> String {
+		guard let pane = bottomPanel.showBacklog() else { return "no project" }
+		guard let state = BacklogState(rawValue: state) else { return "no such column" }
+		return pane.dragReportForTesting(state: state)
 	}
 
 	/// What a card's context menu offers, for `--backlog-menu`.
@@ -9479,15 +9528,28 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		editor.simulateTyping(text)
 		DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
 			guard let self else { return }
+			defer { fflush(stdout) }
 			print("COMPLETE: \(self.editor.completionReportForTesting)")
+			// What the server said about the item that is highlighted, which is
+			// the half that used to be parsed and thrown away.
+			print("COMPLETE doc: \(self.editor.completionDocumentationForTesting)")
 
 			self.editor.writeCompletionImageForTesting(to: "build/completion-list.png")
 
 			// Down once, then take it, so what lands in the document is the
 			// second suggestion rather than whatever was highlighted first.
 			self.editor.moveCompletionSelectionForTesting(by: 1)
+			print("COMPLETE doc after ↓: \(self.editor.completionDocumentationForTesting)")
 			let committed = self.editor.commitCompletionForTesting()
 			print("COMMIT: \(committed) → \(self.editor.caretReportForTesting)")
+
+			// **The moment the change is about.** The list has gone and the
+			// first stop is selected: this is where somebody asks what it takes.
+			print("HINT: \(self.editor.parameterHintForTesting)")
+			self.editor.simulateTab()
+			print("HINT after tab: \(self.editor.parameterHintForTesting)")
+			self.editor.simulateEscape()
+			print("HINT after escape: \(self.editor.parameterHintForTesting)")
 		}
 	}
 

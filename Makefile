@@ -136,6 +136,7 @@ timing: ## Assert the warm-render bounds, serialised, on a quiet machine
 		--filter 'MermaidLiveTests|DrawioLiveTests|PlantUMLServerLiveTests'
 	@TIMING=1 ABYDOS_BENCH=1 $(SWIFT) test $(SWIFT_JOBS) -c release --no-parallel \
 		--filter 'TerminalThroughputTests/drawPathCost'
+	@TIMING=1 $(SWIFT) test $(SWIFT_JOBS) --no-parallel --filter 'PerformanceTests'
 
 .PHONY: perf
 perf: ## Run the performance suite in release and print timings

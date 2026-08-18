@@ -142,3 +142,68 @@ file that was asked for.
 
 - **Given** `--open <a project> --file main.swift --type "C"`
 - **Then** the `C` arrives in `main.swift`
+
+### Scenario: a project that is not there
+
+- **Given** `--open /nowhere --sidebar-shot out.png`
+- **Then** nothing opens, the path is named on standard error, and the run exits
+  non-zero
+
+### Scenario: which directory it actually opened
+
+- **Given** any driven run that opens a project
+- **Then** it says on standard error which root that resolved to, so that `/tmp`
+  and `/private/tmp` — two names for one directory — cannot be confused for two
+
+## Requirement: A driven run does not follow its terminal anywhere
+
+**The window follows its terminal for somebody working in it, and never for a
+run being driven.** A driven run is about a named project; a shell whose working
+directory has been deleted underneath it reports somewhere else, and the window
+went there — reproduced five times out of five. Everything the run then did, it
+did to whatever that window had open.
+
+The guard is on the driving and not on the picture. Asked as "was `--screenshot`
+given", it did not cover a run with a verb and no capture at all, which is how
+this arrived as two separate reports: a project switch nobody asked for, and a
+sidebar capture that photographed a blank pane because the window had gone
+somewhere with nothing loaded. **They are one fault** — established by reverting
+the one line and watching the blank picture come back.
+
+It is guarded at both places a pane's report can move the window, rather than by
+filtering what a driven run is allowed to read.
+
+### Scenario: a terminal whose directory has gone
+
+- **Given** a driven run on a named project, and a shell reporting somewhere else
+- **Then** the window stays on the project the run was given
+
+### Scenario: somebody working in a window
+
+- **Given** no driven verb, and the follow setting on
+- **Then** the window follows the terminal, exactly as before
+
+## Requirement: Every capture flag is a capture
+
+The question "is this run going to write a picture" SHALL be asked of every flag
+that writes one, not of `--screenshot` alone. While that was the only capture
+flag the two were the same sentence; they stopped being so and nothing noticed,
+and a run given only `--sidebar-shot` reached an `exit(0)` written for "no
+picture is coming" — ending the process before the capture, and reporting
+success.
+
+A capture that cannot be produced says so on standard error and exits non-zero.
+A capture that can be produced ends the run: `--sidebar-shot` used to write its
+file and then sit there, so every use of it needed a `timeout`, and a run killed
+by one reports 124 whether or not the picture was written.
+
+### Scenario: a capture flag on its own
+
+- **Given** `--open <project> --sidebar-shot out.png`, with no `--screenshot`
+- **Then** the picture is of the sidebar as it is on screen
+- **And** the run exits zero when it wrote one
+
+### Scenario: a capture that cannot be produced
+
+- **Given** a capture flag and nothing to capture
+- **Then** nothing is written, the failure is named, and the status is non-zero

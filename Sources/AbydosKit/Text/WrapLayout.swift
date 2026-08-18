@@ -101,6 +101,46 @@ public struct WrapLayout: Sendable {
 		return currentSegment == segment ? start..<units.count : units.count..<units.count
 	}
 
+	/// What part of a match falls on one visual row, in that row's own offsets.
+	///
+	/// **A match is a list of rectangles, not a rectangle**, and this is the
+	/// arithmetic that says which. 0540: the bands behind search matches were
+	/// measured along a `CTLine` built for the whole document line while being
+	/// painted on one visual row of it, so every match past the first row landed
+	/// at the x it would have had if the line had never wrapped. The caret's own
+	/// answer knew about wrapping and this one did not, which is two answers to
+	/// "where is this offset on screen" — the shape of fault that keeps coming
+	/// back here.
+	///
+	/// Nil where the match does not touch this row at all. A match that crosses
+	/// a wrap boundary is asked once per row it touches and answers a piece each
+	/// time; a row in the middle of a long match answers the whole row.
+	///
+	/// Pure offsets, so it can be asserted without a window — which is what 0536
+	/// did for the *order* the bands are painted in, and why that part has tests
+	/// while this part did not.
+	///
+	/// - Parameters:
+	///   - match: the match, in document UTF-16 offsets.
+	///   - lineStart: the document UTF-16 offset of the line's first unit.
+	///   - segment: the row's range within the line, as `segmentRange` gives it.
+	/// - Returns: the range to band, in offsets from the start of the row.
+	public static func bandRange(
+		for match: Range<Int>,
+		lineStart: Int,
+		segment: Range<Int>
+	) -> Range<Int>? {
+		// The row, in document offsets.
+		let rowStart = lineStart + segment.lowerBound
+		let rowEnd = lineStart + segment.upperBound
+
+		let from = max(match.lowerBound, rowStart)
+		let to = min(match.upperBound, rowEnd)
+		guard to > from else { return nil }
+
+		return (from - rowStart)..<(to - rowStart)
+	}
+
 	/// Which segment of a line a UTF-16 offset falls in.
 	///
 	/// Walks the same display widths `segmentRange` does, so the caret lands on

@@ -97,6 +97,21 @@ final class EditorTabBar: NSView {
 	private var previewMode: PreviewMode = .source
 	private var previewButtonFrame: NSRect = .zero
 	private var isPreviewHovered = false
+	/// The chevron offering the tabs there was no room for.
+	private var overflowButtonFrame: NSRect = .zero
+	private var visibleRun: Range<Int> = 0..<0
+	private var hiddenTabs: [Int] = []
+	/// Which tab the run starts at, and which that is by name.
+	///
+	/// Milder here than on the panel's strip — ⌘] and ⌘[ move between these
+	/// tabs, so a hidden one was always reachable from the keyboard — but the
+	/// same fault: an editor tab past the trailing edge cannot be clicked, and
+	/// this bar caps a tab at 260 points and floors it at 90, so thirty open
+	/// files overflow any window.
+	private var runStart = 0
+	private var runStartURL: URL?
+	/// Wide enough for a chevron and a count of two digits.
+	private static var overflowWidth: CGFloat { Theme.current.scaled(34) }
 
 	// Design-time dimensions; every use goes through Theme.scaled so the strip
 	// zooms with the rest of the window.
@@ -153,7 +168,11 @@ final class EditorTabBar: NSView {
 	func setItems(_ items: [EditorTabItem], activeIndex: Int?) {
 		self.items = items
 		self.activeIndex = activeIndex
+		// By the file it starts at rather than by its number: closing a tab
+		// before the run shifts every index after it, and the run would jump.
+		runStart = runStartURL.flatMap { url in items.firstIndex { $0.url == url } } ?? 0
 		recomputeFrames()
+		showActiveTab()
 		needsDisplay = true
 	}
 
@@ -161,28 +180,80 @@ final class EditorTabBar: NSView {
 
 	private func recomputeFrames() {
 		frames.removeAll()
+
+		// The trailing control first, because what it leaves is what the tabs
+		// get. This used to be placed after them, from `bounds.width` backwards,
+		// which is how tabs came to run underneath it — the comment there said
+		// so and called it a trade. It was the right trade for the drawing and
+		// the wrong one for reaching a tab, which is what the chevron below is.
+		if previewModes.isEmpty {
+			previewButtonFrame = .zero
+		} else {
+			let width = previewControlWidth()
+			let height = Theme.current.scaled(20)
+			previewButtonFrame = NSRect(
+				x: max(0, bounds.width - width - Theme.current.scaled(8)),
+				y: (bounds.height - height) / 2,
+				width: width,
+				height: height
+			)
+		}
+
+		let widths = items.map(measuredWidth(for:))
+		let plain = TabOverflow.measure(
+			widths: widths, start: runStart, available: tabRoom(overflowing: false)
+		)
+		let overflow = plain.isOverflowing
+			? TabOverflow.measure(widths: widths, start: runStart, available: tabRoom(overflowing: true))
+			: plain
+		visibleRun = overflow.visible
+		hiddenTabs = overflow.hidden
+		overflowButtonFrame = overflow.isOverflowing
+			? NSRect(
+				x: tabRoom(overflowing: false) - Self.overflowWidth,
+				y: 0,
+				width: Self.overflowWidth,
+				height: bounds.height
+			)
+			: .zero
+
 		var x: CGFloat = 0
-		for item in items {
-			let width = measuredWidth(for: item)
+		for (index, width) in widths.enumerated() {
+			// Hidden tabs keep their place and get no rectangle: everything that
+			// finds a tab asks `frames` by index, and an empty rect contains no
+			// point.
+			guard visibleRun.contains(index) else {
+				frames.append(.zero)
+				continue
+			}
 			frames.append(NSRect(x: x, y: 0, width: width, height: bounds.height))
 			x += width
 		}
+	}
 
-		guard !previewModes.isEmpty else {
-			previewButtonFrame = .zero
-			return
-		}
-		// Pinned to the trailing edge. Tabs are free to run underneath when
-		// there are too many of them; the control stays on top and reachable,
-		// which matters more than a tab's last few characters.
-		let width = previewControlWidth()
-		let height = Theme.current.scaled(20)
-		previewButtonFrame = NSRect(
-			x: max(0, bounds.width - width - Theme.current.scaled(8)),
-			y: (bounds.height - height) / 2,
-			width: width,
-			height: height
+	/// How much room the tabs have: up to the preview control, less the chevron
+	/// where there is one.
+	private func tabRoom(overflowing: Bool) -> CGFloat {
+		var room = previewButtonFrame.width > 0
+			? previewButtonFrame.minX - Theme.current.scaled(8)
+			: bounds.width
+		if overflowing { room -= Self.overflowWidth }
+		return max(0, room)
+	}
+
+	/// Moves the run, if it has to, so the active tab is one somebody can see.
+	private func showActiveTab() {
+		guard let active = activeIndex, items.indices.contains(active) else { return }
+		let moved = TabOverflow.start(
+			showing: active,
+			widths: items.map(measuredWidth(for:)),
+			from: runStart,
+			available: tabRoom(overflowing: true)
 		)
+		guard moved != runStart else { return }
+		runStart = moved
+		runStartURL = items[safe: moved]?.url
+		recomputeFrames()
 	}
 
 	// Metrics for the preview control, shared by its measurement and its
@@ -395,6 +466,10 @@ final class EditorTabBar: NSView {
 
 		// Checked before the tabs: the control sits over them when the strip is
 		// full, and a click there means the control.
+		if overflowButtonFrame.width > 0, overflowButtonFrame.contains(point) {
+			showOverflowMenu()
+			return
+		}
 		if !previewModes.isEmpty, previewButtonFrame.contains(point) {
 			showPreviewMenu()
 			return
@@ -538,8 +613,72 @@ final class EditorTabBar: NSView {
 			TabSelectionLine.rect(in: rect, alongTop: false).fill()
 		}
 
+		drawOverflowControl()
 		drawPreviewControl()
 		drawDropCaret()
+	}
+
+	/// The tabs there was no room for.
+	///
+	/// The count comes with the chevron here too. The editor's case is milder
+	/// than the panel's — ⌘] and ⌘[ reach a hidden tab from the keyboard — but
+	/// two strips that answer the same question two ways is the thing this
+	/// change exists to stop, and "how many am I not seeing" is worth the same
+	/// four points in both.
+	private func drawOverflowControl() {
+		guard overflowButtonFrame.width > 0 else { return }
+
+		Theme.current.sidebarBackground.setFill()
+		overflowButtonFrame.fill()
+
+		let colour = Theme.current.sidebarHeaderText
+		let count = NSAttributedString(string: String(hiddenTabs.count), attributes: [
+			.font: Theme.current.uiFont(10, weight: .medium),
+			.foregroundColor: colour,
+		])
+		let size = count.size()
+		let chevron = Theme.current.scaled(9)
+		let content = size.width + Theme.current.scaled(3) + chevron
+		let left = overflowButtonFrame.midX - content / 2
+
+		count.draw(at: NSPoint(x: left, y: overflowButtonFrame.midY - size.height / 2))
+		if let icon = Theme.symbol("chevron.down", size: 9 * Theme.current.scale, color: colour) {
+			icon.drawFitted(in: NSRect(
+				x: left + size.width + Theme.current.scaled(3),
+				y: overflowButtonFrame.midY - chevron / 2,
+				width: chevron,
+				height: chevron
+			))
+		}
+	}
+
+	/// Only the hidden ones — a list of everything is a tab switcher, which is a
+	/// different feature with a different gesture.
+	private func showOverflowMenu() {
+		guard !hiddenTabs.isEmpty else { return }
+		let menu = NSMenu()
+		for index in hiddenTabs {
+			guard let item = items[safe: index] else { continue }
+			// The subtitle is the directory, which is what tells two files of
+			// the same name apart — and files of the same name are exactly what
+			// fills a tab bar.
+			let title = item.subtitle.isEmpty ? item.title : "\(item.title)  —  \(item.subtitle)"
+			let entry = NSMenuItem(title: title, action: #selector(selectFromOverflow(_:)), keyEquivalent: "")
+			entry.target = self
+			entry.representedObject = index
+			entry.state = index == activeIndex ? .on : .off
+			menu.addItem(entry)
+		}
+		menu.popUp(
+			positioning: nil,
+			at: NSPoint(x: overflowButtonFrame.minX, y: overflowButtonFrame.maxY),
+			in: self
+		)
+	}
+
+	@objc private func selectFromOverflow(_ sender: NSMenuItem) {
+		guard let index = sender.representedObject as? Int else { return }
+		onSelect?(index)
 	}
 
 	/// The mode control at the trailing edge.

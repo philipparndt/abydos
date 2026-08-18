@@ -122,6 +122,66 @@ struct LSPIntegrationTests {
 		}
 	}
 
+	/// Signature help, which is where "what does this parameter take" comes from
+	/// for a language whose server has it.
+	///
+	/// **Only against the stdlib, and deliberately.** A signature from this
+	/// package's own code would need the whole package indexed first — measured
+	/// against a Cadova model, that is an index build of 651 files and about two
+	/// minutes before the first useful answer — and a test that waits two
+	/// minutes is a test somebody turns off. `String.hasPrefix` is answered from
+	/// the fallback arguments, straight away.
+	@Test func saysWhichParameterIsBeingFilledIn() async throws {
+		guard let server = swiftServer else { return }
+
+		let client = LSPClient()
+		defer { client.stop() }
+
+		try client.start(
+			executable: server.executable,
+			arguments: server.definition.arguments,
+			workingDirectory: packageRoot
+		)
+		_ = try await client.initialize(rootURL: packageRoot)
+
+		// The capability decides whether the request is ever sent: openscad-lsp
+		// advertises none and answers nothing at all, so a client that asks
+		// anyway waits for its timeout.
+		#expect(client.offersSignatureHelp)
+		#expect(client.signatureHelpTriggerCharacters.contains("("))
+
+		let file = packageRoot.appendingPathComponent(".lsp-signature-probe.swift")
+		let source = """
+		func probe(_ text: String) -> Bool {
+		    text.hasPrefix()
+		}
+		"""
+		try source.write(to: file, atomically: true, encoding: .utf8)
+		defer { try? FileManager.default.removeItem(at: file) }
+
+		client.didOpen(uri: file.absoluteString, languageId: "swift", version: 1, text: source)
+
+		// **Between the brackets, and the difference is one character.** Asked
+		// at 20 — just past the `)` — this same server answers null; asked at
+		// 19, it answers. Which is also where the caret is when somebody has
+		// just typed the `(` that woke the request, so the editor asks at the
+		// right place by construction rather than by luck.
+		let help = try await client.signatureHelp(
+			uri: file.absoluteString,
+			position: LSPPosition(line: 1, character: 19)
+		)
+
+		let active = try #require(help?.active)
+		#expect(active.signature.label.contains("hasPrefix"))
+		let range = try #require(active.parameter?.range)
+		let label = Array(active.signature.label.utf16)
+		#expect(range.upperBound <= label.count)
+		#expect(String(decoding: label[range], as: UTF16.self) == "_ prefix: String")
+
+		client.didClose(uri: file.absoluteString)
+		await client.shutdown()
+	}
+
 	/// A request made to a server that has gone away fails rather than hanging.
 	@Test func failsWhenTheServerDies() async throws {
 		guard let server = swiftServer else { return }

@@ -45,6 +45,22 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 				// and the row being drawn plus the font it was drawn with is
 				// what nobody has been able to read off a report yet.
 				"    \(LastDrawn.description)",
+				// **The frames below are approximate and this line is what
+				// makes them exact later.** `callStackSymbols` resolves through
+				// `dladdr`, which sees exported symbols only — for an optimised
+				// Swift binary that is frequently a function fifty lines from
+				// the crash, which is how 0400's report came to name
+				// `showConfigurationMenu` and `stopDevPodForwards`, both wrong.
+				// The real site came from the breadcrumb above, not from the
+				// stack.
+				//
+				// Every address below is `load + offset`; with the build's UUID
+				// and its load address written down, a dSYM kept beside the
+				// build turns them into file and line with `atos`. Without these
+				// two numbers the addresses in an old log are unusable, because
+				// the load address is different every run.
+				"    \(AppDelegate.buildDescription)",
+				"    \(AppDelegate.imageLocation())",
 			] + exception.callStackSymbols.map { "    \($0)" }
 			DiagnosticLog.write(lines.joined(separator: "\n"), to: "crash")
 			// And take the tools with it. This is the exit that runs no
@@ -58,6 +74,43 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			ToolProcesses.shared.terminateAll()
 			ToolContainers.shared.removeAll()
 		}
+	}
+
+	/// Where this binary was loaded and which build it is, in the form `atos`
+	/// wants.
+	///
+	/// Both numbers are needed and neither is guessable after the fact: ASLR
+	/// puts the image somewhere different every launch, so an address in
+	/// yesterday's log means nothing without the load address that went with it,
+	/// and the UUID is what says which dSYM answers for it.
+	///
+	/// Asked of dyld by image index rather than by taking the address of one of
+	/// our own functions: image 0 is the main executable by definition, where a
+	/// Swift function value is a pair and its first word is not reliably
+	/// something `dladdr` will answer about.
+	static func imageLocation() -> String {
+		guard let header = _dyld_get_image_header(0) else { return "image: unknown" }
+		let slide = _dyld_get_image_vmaddr_slide(0)
+		let uuid = imageUUID(at: UnsafeRawPointer(header)) ?? "unknown"
+		return String(
+			format: "image: loaded at 0x%llx (slide 0x%llx), uuid %@",
+			UInt(bitPattern: header), UInt(bitPattern: slide), uuid
+		)
+	}
+
+	/// The Mach-O UUID of the loaded image, read out of its own load commands.
+	private static func imageUUID(at base: UnsafeRawPointer) -> String? {
+		let header = base.assumingMemoryBound(to: mach_header_64.self)
+		var command = base.advanced(by: MemoryLayout<mach_header_64>.size)
+		for _ in 0..<header.pointee.ncmds {
+			let load = command.assumingMemoryBound(to: load_command.self)
+			if load.pointee.cmd == LC_UUID {
+				let entry = command.assumingMemoryBound(to: uuid_command.self)
+				return UUID(uuid: entry.pointee.uuid).uuidString
+			}
+			command = command.advanced(by: Int(load.pointee.cmdsize))
+		}
+		return nil
 	}
 
 	/// Whatever ends this process on purpose takes the tools with it.
@@ -240,8 +293,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		MetalProbe.start()
 		if let zoom = options.zoom { Settings.shared.uiScale = zoom }
 
+		// **What a driven run opens is decided here, before any of the
+		// arrangements written for somebody double-clicking the app.**
+		//
+		// It used to be the third branch of six, which is why "it opens what it
+		// was given, or it fails" could not be read anywhere: the fallbacks came
+		// first in the source and the rule was an exception among them. 0522 and
+		// 0534 are both what that cost.
 		let controller: MainWindowController?
-		if let path = options.projectPath {
+		if DrivenRun.isActive {
+			controller = openForDrivenRun(options)
+		} else if let path = options.projectPath {
 			controller = open(projectAt: URL(fileURLWithPath: path, isDirectory: true))
 		} else if let file = options.filePaths.first {
 			// Files but no project, which used to mean "the project the file is
@@ -250,23 +312,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			// tabs. The file's own project is what was meant.
 			let directory = URL(fileURLWithPath: file).deletingLastPathComponent()
 			controller = open(projectAt: ProjectRoot.find(from: directory) ?? directory)
-		} else if DrivenRun.isActive {
-			// **A driven run opens what it was given and nothing else.**
-			//
-			// This line used to fall through to the most recently opened
-			// project, and that is how `--type` came to put `C-ircle` into a
-			// file in `abydos-examples` that nobody was editing: a verb was run
-			// with no project named, the window came up on whatever the reporter
-			// had last been working in, and the keyboard went there. Falling
-			// back is right for somebody double-clicking the app — it is where
-			// they left off — and wrong for every one of the 191 verbs, which
-			// are about a project somebody named. See 0522.
-			controller = nil
 		} else if let last = RecentProjects.shared.entries.first {
 			controller = open(projectAt: last.url)
-		} else if options.isScreenshotRun {
-			// A capture run must never block on a modal panel.
-			controller = nil
 		} else {
 			openProjectPanel(nil)
 			controller = windowControllers.first
@@ -288,7 +335,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		// no focus at all — and an app that steals it while somebody is typing
 		// somewhere else does not merely interrupt them: their next keystrokes
 		// arrive in whatever this window has open, and get saved there.
-		if options.isScreenshotRun || options.metalShot != nil {
+		// `writesACapture` rather than the two flags that used to be named here:
+		// a picture is drawn from the view hierarchy whichever flag asked for
+		// it, and the pair was a list that went out of date the moment a third
+		// capture flag was added.
+		if options.writesACapture {
 			NSApp.setActivationPolicy(.accessory)
 		} else {
 			NSApp.activate(ignoringOtherApps: true)
@@ -380,7 +431,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 							print("SWITCHER \(key): \(ProjectSwitcherPopover.pressForTesting(String(key)))")
 						}
 						fflush(stdout)
-						if options.isScreenshotRun { return }
+						if options.writesACapture { return }
 						exit(0)
 					}
 				}
@@ -579,7 +630,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			// literal from the source rather than the one somebody will press.
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
 				MenuKeyReport.print()
-				if !options.isScreenshotRun { exit(0) }
+				if !options.writesACapture { exit(0) }
 			}
 		}
 
@@ -618,7 +669,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
 				print("COMMITBODY \(controller?.typeInCommitBodyForTesting(text) ?? "no window")")
 				fflush(stdout)
-				if options.isScreenshotRun { return }
+				if options.writesACapture { return }
 				exit(0)
 			}
 		}
@@ -631,7 +682,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 				DispatchQueue.main.asyncAfter(deadline: .now() + 8.0) {
 					print("BURST frames=\(sent) draws=\(TerminalView.drawCountForTesting)")
 					fflush(stdout)
-					if options.isScreenshotRun { return }
+					if options.writesACapture { return }
 					exit(0)
 				}
 			}
@@ -641,7 +692,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
 				print("COPYPATH \(controller?.copyPathForTesting(steps: steps) ?? "no window")")
 				fflush(stdout)
-				if options.isScreenshotRun { return }
+				if options.writesACapture { return }
 				exit(0)
 			}
 		}
@@ -650,7 +701,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
 				print("APPEARANCE \(controller?.appearanceWalkForTesting(steps) ?? "no window")")
 				fflush(stdout)
-				if options.isScreenshotRun { return }
+				if options.writesACapture { return }
 				exit(0)
 			}
 		}
@@ -659,7 +710,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
 				print("RUNCONFIGS\n  \(controller?.runConfigurationsForTesting() ?? "no window")")
 				fflush(stdout)
-				if options.isScreenshotRun { return }
+				if options.writesACapture { return }
 				exit(0)
 			}
 		}
@@ -668,7 +719,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
 				print("PALETTE \(controller?.paletteCommandsForTesting(query: query) ?? "no window")")
 				fflush(stdout)
-				if options.isScreenshotRun { return }
+				if options.writesACapture { return }
 				exit(0)
 			}
 		}
@@ -682,7 +733,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 				print("LAYOUT \(controller?.layoutReportForTesting() ?? "no window")")
 				print("GLOBALSCRATCH \(controller?.globalScratchDirectoryForTesting() ?? "no window")")
 				fflush(stdout)
-				if options.isScreenshotRun { return }
+				if options.writesACapture { return }
 				exit(0)
 			}
 		}
@@ -691,7 +742,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
 				print("CLICKBELOW \(controller?.clickBelowLastLineForTesting() ?? "no window")")
 				fflush(stdout)
-				if options.isScreenshotRun { return }
+				if options.writesACapture { return }
 				exit(0)
 			}
 		}
@@ -709,7 +760,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 				// is killed on a timeout takes the answer with it.
 				fflush(stdout)
 				// Unless a picture is being taken of what it left on screen.
-				if options.isScreenshotRun { return }
+				if options.writesACapture { return }
 				exit(0)
 			}
 		}
@@ -1225,6 +1276,52 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		// **What the run saw of the palette.** 0400's surviving candidate was a
+		// torn read of `Theme.current`, and the audit that killed it is a claim
+		// about 1580 reads in 99 files — so every driven run says whether
+		// anything touched the palette off the main thread while it was up. A
+		// line saying it did is the hypothesis coming back to life.
+		if options.screenshotPath != nil {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
+				print("THEME: \(ThemeAccess.reportForTesting)")
+				// The two numbers a crash log needs for its addresses to mean
+				// anything a dSYM can answer about, printed here so that they
+				// are known to be right without waiting for a crash.
+				print("IMAGE: \(AppDelegate.imageLocation())")
+				fflush(stdout)
+			}
+		}
+
+		if let count = options.fillTerminalTabs {
+			// Spread out rather than in a loop: each one starts a shell, and
+			// twelve started in the same turn of the run loop is a burst the
+			// panel never sees in use.
+			for step in 0..<count {
+				DispatchQueue.main.asyncAfter(deadline: .now() + 3.0 + Double(step) * 0.25) {
+					controller?.addTerminalTabForTesting()
+				}
+			}
+			DispatchQueue.main.asyncAfter(deadline: .now() + 3.0 + Double(count) * 0.25 + 1.5) {
+				print("TABS: \(controller?.paneCountForTesting ?? 0) panes")
+				// A number rather than a picture: whether a tab can be reached
+				// is a fact, and a screenshot of a full strip is a thing
+				// somebody has to squint at.
+				print("OVERFLOW: \(controller?.panelOverflowReportForTesting ?? "none")")
+				fflush(stdout)
+
+				// And what choosing a hidden one does, which is the half of this
+				// that a still picture cannot show: the run moves the least that
+				// brings it into view.
+				DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+					print("CHOSE: \(controller?.selectHiddenPanelTabForTesting(0) ?? "none")")
+					DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+						print("AFTER: \(controller?.panelOverflowReportForTesting ?? "none")")
+						fflush(stdout)
+					}
+				}
+			}
+		}
+
 		if let spec = options.clickPanelTab {
 			let parts = spec.split(separator: "@")
 			let index = Int(parts.first ?? "0") ?? 0
@@ -1307,7 +1404,19 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if let path = options.sidebarShot {
 			DispatchQueue.main.asyncAfter(deadline: .now() + max(2, options.screenshotDelay - 1)) {
-				controller?.snapshotSidebarForTesting(to: path)
+				// **A capture that cannot be produced says so and exits
+				// non-zero**, and one that can still ends the run. This wrote
+				// its file and then sat there: `--sidebar-shot` on its own never
+				// exited, so every driven use of it was a `timeout` away from
+				// looking like a hang — and a run killed by `timeout` reports
+				// 124 whether or not the picture was written.
+				let ok = controller?.snapshotSidebarForTesting(to: path) ?? false
+				if !ok {
+					FileHandle.standardError.write(Data("sidebar capture failed: \(path)\n".utf8))
+				}
+				// Only when nothing else is going to end the run: a
+				// `--screenshot` in the same command owns the exit.
+				if options.screenshotPath == nil { exit(ok ? 0 : 2) }
 			}
 		}
 
@@ -1460,7 +1569,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 					print("TABADD areas: \(controller?.terminalAddControlsForTesting ?? "no window")")
 					print("TABADD menu: \(controller?.newTerminalMenuForTesting() ?? "no window")")
 					fflush(stdout)
-					if options.isScreenshotRun { return }
+					if options.writesACapture { return }
 					exit(0)
 				}
 			}
@@ -1587,7 +1696,38 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		if let mode = options.backlogMode {
 			controller?.showBacklog(nil)
-			controller?.showBacklogMode(list: mode == "list")
+			// `--backlog openspec` and `--backlog openspec-list`: which record,
+			// then how it is drawn. Two questions, and neither answers the
+			// other — which is the same reason the pane has two controls.
+			controller?.showBacklogMode(list: mode.hasSuffix("list"))
+			controller?.showBacklogSource(openSpec: mode.hasPrefix("openspec"))
+
+			// After the walk that reads both folders, which happens off the main
+			// thread: a report asked for before the cards arrive is a report of
+			// an empty board.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+				controller?.showBacklogSource(openSpec: mode.hasPrefix("openspec"))
+				print("BACKLOG project: \(controller?.project?.root.path ?? "none")")
+				print(controller?.backlogBoardReportForTesting() ?? "no project")
+				for column in ["ready", "in-progress"] {
+					print("drag \(column): "
+						+ (controller?.backlogDragReportForTesting(state: column) ?? "none"))
+				}
+				fflush(stdout)
+			}
+
+			// `--backlog openspec-watch`: the same report again, ten seconds
+			// later, with nothing touched in between. The point of a dashboard
+			// over files is that the files are the truth, and the only way to
+			// show that a box ticked in a terminal moves a card is to tick one
+			// while the board is up and look again.
+			if mode.hasSuffix("watch") {
+				DispatchQueue.main.asyncAfter(deadline: .now() + 12.0) {
+					print("BACKLOG again:")
+					print(controller?.backlogBoardReportForTesting() ?? "no project")
+					fflush(stdout)
+				}
+			}
 		}
 
 		// After a wait, because the board reads the folder off the main thread
@@ -1614,7 +1754,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 						+ (controller?.newBacklogItemForTesting(titled: title) ?? "no window"))
 				}
 				fflush(stdout)
-				if options.isScreenshotRun { return }
+				if options.writesACapture { return }
 				exit(0)
 			}
 		}
@@ -1795,6 +1935,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let path = options.editorShotPath {
+			DispatchQueue.main.asyncAfter(deadline: .now() + options.screenshotDelay) {
+				let ok = controller?.writeEditorImageForTesting(to: path) ?? false
+				FileHandle.standardError.write(Data("editor shot \(ok ? "written" : "failed"): \(path)\n".utf8))
+				if options.screenshotPath == nil { exit(ok ? 0 : 2) }
+			}
+		}
+
 		if let path = options.screenshotPath {
 			scheduleScreenshot(
 				path: path,
@@ -1956,6 +2104,62 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 	private var frontmostController: MainWindowController? {
 		if let key = NSApp.keyWindow?.windowController as? MainWindowController { return key }
 		return windowControllers.first { !$0.isTornOff }
+	}
+
+	/// What a driven run opens: what it was given, or nothing, saying which.
+	///
+	/// Three sentences, in one place, and every one of them is a report that was
+	/// filed:
+	///
+	/// - **No project named opens nothing.** This used to fall through to the
+	///   most recently opened project, which is how `--type` came to put
+	///   `C-ircle` into a file in `abydos-examples` that nobody was editing: a
+	///   verb was run with no project, the window came up on whatever the
+	///   reporter had last been working in, and the keyboard went there. Falling
+	///   back is right for somebody double-clicking the app — it is where they
+	///   left off — and wrong for every one of the verbs, which are about a
+	///   project somebody named. 0522.
+	/// - **A project that cannot be opened fails**, on standard error and with a
+	///   non-zero status, rather than opening a window on a directory that is not
+	///   there and driving it.
+	/// - **The root it resolved is printed**, standardised, because `/tmp/x` and
+	///   `/private/tmp/x` are the same directory and a run that photographed the
+	///   wrong one of them was silent about it for an afternoon. On standard
+	///   error, so that no driver verb's parser is fed a line it did not expect.
+	///
+	///   Resolved rather than standardised, and what that resolves *to* is worth
+	///   knowing: `/tmp` is a link to `/private/tmp`, and Foundation's
+	///   `resolvingSymlinksInPath` deliberately drops a leading `/private` where
+	///   the result still exists. So both spellings converge on `/tmp/…` —
+	///   checked, both ways round — which is the whole point of printing it. Two
+	///   names for one directory is how a run came to photograph the wrong copy
+	///   and be silent about it for an afternoon.
+	private func openForDrivenRun(_ options: LaunchOptions) -> MainWindowController? {
+		let wanted: URL?
+		if let path = options.projectPath {
+			wanted = URL(fileURLWithPath: path, isDirectory: true)
+		} else if let file = options.filePaths.first {
+			let directory = URL(fileURLWithPath: file).deletingLastPathComponent()
+			wanted = ProjectRoot.find(from: directory) ?? directory
+		} else {
+			wanted = nil
+		}
+
+		guard let wanted else { return nil }
+
+		var isDirectory: ObjCBool = false
+		let exists = FileManager.default.fileExists(atPath: wanted.path, isDirectory: &isDirectory)
+		guard exists, isDirectory.boolValue else {
+			FileHandle.standardError.write(Data(
+				"cannot open \(wanted.resolvingSymlinksInPath().path): no such directory\n".utf8
+			))
+			exit(2)
+		}
+
+		let controller = open(projectAt: wanted)
+		let opened = (controller.project?.root ?? wanted).resolvingSymlinksInPath().path
+		FileHandle.standardError.write(Data("project \(opened)\n".utf8))
+		return controller
 	}
 
 	@discardableResult

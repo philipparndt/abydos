@@ -62,8 +62,33 @@ final class CodeView: NSView, NSTextInputClient {
 	var onFixWithAI: ((_ line: Int, _ diagnostic: LSPDiagnostic) -> Void)?
 	/// Asked to watch what is selected while debugging.
 	var onWatch: ((_ expression: String) -> Void)?
-	/// The text changed and the caret is in a word: offer completions for it.
-	var onRequestCompletions: ((_ prefix: String, _ caret: NSPoint) -> Void)?
+	/// The text changed and the caret is in a word — or on a character the
+	/// server asked to be woken by: offer completions for it.
+	var onRequestCompletions: ((_ prefix: String, _ wasTriggered: Bool, _ caret: NSPoint) -> Void)?
+	/// The characters this file's server wants to be asked on, over and above a
+	/// word being typed.
+	///
+	/// Held here rather than asked for, because this is decided on the keystroke
+	/// and `LanguageService` is a lookup away from a view that should not be
+	/// reaching for it. Empty until a server is running, which is the same as
+	/// "ask on words only".
+	var completionTriggerCharacters: Set<Character> = []
+	/// And the ones it wants to be asked about the *call* on — `(` and `[` to
+	/// begin with, `,` and `:` to ask again as the arguments go in.
+	///
+	/// Empty for a server with no signature help, which is how openscad-lsp is
+	/// never sent a request it does not answer.
+	var signatureTriggerCharacters: Set<Character> = []
+	/// One of those was typed: ask what call the caret is in now.
+	var onRequestSignatureHelp: (() -> Void)?
+	/// The stop being filled in changed — its default text, or nothing when the
+	/// session has ended.
+	///
+	/// The name is what the snippet called it: `${1:size}` is `size`, which is
+	/// the heading a server's prose has for that parameter. Captured when the
+	/// text goes in, because by the time somebody has typed over it the default
+	/// is gone and the name with it.
+	var onSnippetStopChanged: ((_ name: String?) -> Void)?
 	/// A key the completion list wants first. Returns true if it took it.
 	var completionKeyHandler: ((Selector) -> Bool)?
 	/// Nothing to complete any more.
@@ -597,7 +622,7 @@ final class CodeView: NSView, NSTextInputClient {
 			// The matches on this row, at the two depths they are painted at. The
 			// others go on here, under the selection; the current one goes to
 			// `drawLine`, which puts it on *over* the selection — see there.
-			let matches = searchHighlights(docLine: docLine, rect: rowRect)
+			let matches = searchHighlights(docLine: docLine, segment: segment, rect: rowRect)
 			if !matches.others.isEmpty {
 				Theme.current.searchMatchBackground.setFill()
 				for band in matches.others { band.fill() }
@@ -997,17 +1022,37 @@ final class CodeView: NSView, NSTextInputClient {
 	/// selection and the current one over it. Measured *once* for both, since the
 	/// CTLine this asks for offsets from is not free and a row is redrawn on
 	/// every caret blink.
-	private func searchHighlights(docLine: Int, rect: NSRect) -> (others: [NSRect], current: NSRect?) {
+	private func searchHighlights(
+		docLine: Int, segment: Int, rect: NSRect
+	) -> (others: [NSRect], current: NSRect?) {
 		guard !searchMatches.isEmpty, let document else { return ([], nil) }
 
 		let lineRange = document.rope.lineByteRange(docLine)
 		let lineStart = document.rope.utf16Offset(fromByte: lineRange.lowerBound)
 		let lineEnd = document.rope.utf16Offset(fromByte: lineRange.upperBound)
-
 		let text = document.rope.string(in: lineRange)
+
+		// **Measured along the row being painted, not along the whole line.**
+		// This is 0540: the `CTLine` was built for the document line while
+		// `rect` was one visual row of it, so every match past the first row was
+		// placed at the x it would have had unwrapped. The caret's answer —
+		// `point(forUTF16:)` — has always sliced the line into segments first,
+		// and the two disagreeing is the fault. They now ask `WrapLayout` the
+		// same question with the same arguments.
+		var rowRangeInLine = 0..<(text as NSString).length
+		var rowText = text
+		if isWordWrapEnabled, let columns = wrapColumns {
+			rowRangeInLine = WrapLayout.segmentRange(
+				in: text, segment: segment, columns: columns, tabWidth: Theme.current.tabWidth
+			)
+			rowText = (text as NSString).substring(
+				with: NSRange(location: rowRangeInLine.lowerBound, length: rowRangeInLine.count)
+			)
+		}
+
 		let ctLine = CTLineCreateWithAttributedString(attributedLine(
-			text: text,
-			lineStartUTF16: lineStart,
+			text: rowText,
+			lineStartUTF16: lineStart + rowRangeInLine.lowerBound,
 			tokenIndex: TokenIndex(tokens: [])
 		))
 
@@ -1019,13 +1064,17 @@ final class CodeView: NSView, NSTextInputClient {
 			guard match.utf16Range.lowerBound <= lineEnd else { break }
 			guard match.utf16Range.upperBound >= lineStart else { continue }
 
-			let from = max(match.utf16Range.lowerBound, lineStart) - lineStart
-			let to = min(match.utf16Range.upperBound, lineEnd) - lineStart
-			guard to > from else { continue }
+			// What of it falls on *this* row, in the row's own offsets. A match
+			// crossing a wrap boundary is asked once per row and answers a piece
+			// each time, which is the shape the old code could not express: it
+			// returned one rectangle per match and had nowhere to put the rest.
+			guard let band = WrapLayout.bandRange(
+				for: match.utf16Range, lineStart: lineStart, segment: rowRangeInLine
+			) else { continue }
 
-			let startX = textOriginX + CTLineGetOffsetForStringIndex(ctLine, from, nil)
-			let endX = textOriginX + CTLineGetOffsetForStringIndex(ctLine, to, nil)
-			let band = NSRect(
+			let startX = textOriginX + CTLineGetOffsetForStringIndex(ctLine, band.lowerBound, nil)
+			let endX = textOriginX + CTLineGetOffsetForStringIndex(ctLine, band.upperBound, nil)
+			let rect = NSRect(
 				x: startX,
 				y: rect.minY,
 				width: max(2, endX - startX),
@@ -1033,9 +1082,9 @@ final class CodeView: NSView, NSTextInputClient {
 			)
 
 			if index == currentMatchIndex {
-				current = band
+				current = rect
 			} else {
-				others.append(band)
+				others.append(rect)
 			}
 		}
 		return (others, current)
@@ -2415,6 +2464,7 @@ final class CodeView: NSView, NSTextInputClient {
 			// Escape is how somebody says they have finished with the stops and
 			// wants Tab back. Nothing else here answers to it.
 			snippetSession = nil
+			reportSnippetStop()
 		case #selector(selectAll(_:)):           selectAllText()
 		case #selector(insertLineBreak(_:)):     insertTextAtCaret("\n")
 		// ⌃O, which macOS sends as this selector and then `moveBackward:` —
@@ -2447,14 +2497,18 @@ final class CodeView: NSView, NSTextInputClient {
 			return
 		}
 
-		// Step by composed character so emoji and combining marks move as one.
-		let target = document.rope.utf16Count
-		var offset = caret + delta
-		offset = max(0, min(offset, target))
-		if delta != 0 {
-			let byte = document.rope.alignToBoundary(document.rope.byteOffset(fromUTF16: offset))
-			offset = document.rope.utf16Offset(fromByte: byte)
-		}
+		// A whole character, as a reader means it.
+		//
+		// **This used to step by UTF-8 sequence and the difference is 0504.**
+		// Aligning `caret + delta` to a sequence start is right for "do not land
+		// inside an encoded code point" and says nothing about characters: an
+		// emoji is one four-byte sequence and moved as one, while `e` followed
+		// by a combining acute is two sequences with two valid starts, so →
+		// stopped between the letter and its mark. The emoji working is what let
+		// it hide.
+		let offset = delta == 0
+			? caret
+			: document.rope.graphemeStep(fromUTF16: caret, by: delta)
 		setCaret(offset, extendingSelection: extending)
 	}
 
@@ -2893,20 +2947,37 @@ final class CodeView: NSView, NSTextInputClient {
 
 	/// Offers completions for whatever word the caret is now in.
 	///
-	/// Only after typing something a word can be made of. A newline, a bracket
+	/// Only after typing something a word can be made of — a newline, a bracket
 	/// or a space ends the word rather than continuing it, and a list that
-	/// stayed up through those would be in the way of the next thing typed.
+	/// stayed up through those would be in the way of the next thing typed — or
+	/// after one of the characters the server asked to be woken by.
+	///
+	/// **The second half is why an enum case could never be offered.** The
+	/// caret after a `.` is in no word at all, so what a word-shaped rule can
+	/// say about it is nothing, and `.` is exactly where every Swift enum case
+	/// belongs. sourcekit-lsp names `.` and `(` at the handshake; openscad-lsp
+	/// names none, so a `.scad` is unchanged by this.
 	private func requestCompletionsIfTyping(_ typed: String) {
 		guard let document else { return }
-		guard typed.count == 1, let character = typed.first,
-		      character.isLetter || character.isNumber || character == "_" || character == "."
-		else {
+		guard typed.count == 1, let character = typed.first else {
+			onDismissCompletions?()
+			return
+		}
+
+		// `(`, `[`, `,` and `:` are how a server says "ask me about this call
+		// again". Independent of the completion list — the two questions are
+		// asked at different moments and one is not the other's fallback.
+		if signatureTriggerCharacters.contains(character) { onRequestSignatureHelp?() }
+
+		let isTrigger = completionTriggerCharacters.contains(character)
+		let continuesAWord = character.isLetter || character.isNumber || character == "_"
+		guard isTrigger || continuesAWord else {
 			onDismissCompletions?()
 			return
 		}
 
 		let prefix = currentWordPrefix()
-		guard !prefix.isEmpty || character == "." else {
+		guard isTrigger || !prefix.isEmpty else {
 			onDismissCompletions?()
 			return
 		}
@@ -2915,7 +2986,7 @@ final class CodeView: NSView, NSTextInputClient {
 			onDismissCompletions?()
 			return
 		}
-		onRequestCompletions?(prefix, point)
+		onRequestCompletions?(prefix, isTrigger, point)
 		_ = document
 	}
 
@@ -2951,9 +3022,34 @@ final class CodeView: NSView, NSTextInputClient {
 			afterEdit(caret: newCaret)
 		}
 
-		guard let session = SnippetSession(snippet, insertedAt: start) else { return }
+		guard let session = SnippetSession(snippet, insertedAt: start) else {
+			snippetStopNames = []
+			reportSnippetStop()
+			return
+		}
+		// The defaults, in the order Tab visits them, read out of the text that
+		// was just inserted rather than out of the document — which is the same
+		// string now and will not be in a moment.
+		let units = Array(snippet.text.utf16)
+		snippetStopNames = snippet.stops.map { stop in
+			let range = stop.range.clamped(to: 0..<units.count)
+			return String(decoding: units[range], as: UTF16.self)
+		}
 		snippetSession = session
 		select(session.current)
+		reportSnippetStop()
+	}
+
+	/// The default text of each stop, in the order Tab visits them.
+	private var snippetStopNames: [String] = []
+
+	/// Says which stop is being filled in now, or that none is.
+	private func reportSnippetStop() {
+		guard let session = snippetSession, snippetStopNames.indices.contains(session.index) else {
+			onSnippetStopChanged?(nil)
+			return
+		}
+		onSnippetStopChanged?(snippetStopNames[session.index])
 	}
 
 	// MARK: - Snippet stops
@@ -2985,6 +3081,10 @@ final class CodeView: NSView, NSTextInputClient {
 		snippetSession = session.edited(replacing: range, insertedLength: insertedLength)
 			? session
 			: nil
+		// The hint goes with the session: an edit away from the stops ends it,
+		// and a strip still naming a parameter nobody is filling in any more is
+		// worse than no strip.
+		if snippetSession == nil { reportSnippetStop() }
 	}
 
 	/// Tab and ⇧Tab while a snippet is being filled in. Says whether it took
@@ -2996,6 +3096,7 @@ final class CodeView: NSView, NSTextInputClient {
 		// line, not stepping through a snippet they have visibly left.
 		guard session.covers(caret: caret) else {
 			snippetSession = nil
+			reportSnippetStop()
 			return false
 		}
 
@@ -3004,12 +3105,33 @@ final class CodeView: NSView, NSTextInputClient {
 			// first stop stays put. Both eat the key, because the alternative
 			// at either end is a tab character in the middle of a call
 			// somebody has just filled in.
-			if direction > 0 { snippetSession = nil }
+			if direction > 0 {
+				snippetSession = nil
+				reportSnippetStop()
+			}
 			return true
 		}
 		snippetSession = session
 		select(range)
+		reportSnippetStop()
 		return true
+	}
+
+	/// Draws the visible text to a PNG.
+	///
+	/// **Because a window capture is not evidence about the editor.** What the
+	/// bottom panel is doing decides how much of the window the editor gets, and
+	/// a run whose panel happens to be large photographs a terminal — which is
+	/// how 0540's own "after" picture came out showing no code at all. This
+	/// captures the view, at whatever size it has, and nothing else.
+	@discardableResult
+	func writeImageForTesting(to path: String) -> Bool {
+		let visible = enclosingScrollView?.documentVisibleRect ?? bounds
+		guard visible.width > 1, visible.height > 1 else { return false }
+		guard let rep = bitmapImageRepForCachingDisplay(in: visible) else { return false }
+		cacheDisplay(in: visible, to: rep)
+		guard let data = rep.representation(using: .png, properties: [:]) else { return false }
+		return (try? data.write(to: URL(fileURLWithPath: path))) != nil
 	}
 
 	/// Where the caret is on screen, for putting the list under it.
@@ -3181,11 +3303,13 @@ final class CodeView: NSView, NSTextInputClient {
 		}
 		guard caret > 0 else { return }
 
-		// Delete a whole composed character, not one UTF-16 unit.
-		let byteEnd = document.rope.byteOffset(fromUTF16: caret)
-		let byteStart = document.rope.alignToBoundary(byteEnd - 1)
-		let start = document.rope.utf16Offset(fromByte: byteStart)
-
+		// A whole character, and the same one the caret steps over.
+		//
+		// This said "composed character" and stepped by UTF-8 sequence, so ⌫
+		// after `é` written as `e` + U+0301 took the accent and left the letter.
+		// Deleting and moving now ask the same question, which is what stops
+		// them drifting apart later — 0504 is exactly the shape of that drift.
+		let start = document.rope.graphemeStep(fromUTF16: caret, by: -1)
 		let newCaret = document.replace(utf16Range: start..<caret, with: "", caretBefore: caret)
 		afterEdit(caret: newCaret)
 	}
@@ -3201,14 +3325,10 @@ final class CodeView: NSView, NSTextInputClient {
 		}
 		guard caret < document.rope.utf16Count else { return }
 
-		let byteStart = document.rope.byteOffset(fromUTF16: caret)
-		var byteEnd = min(document.rope.byteCount, byteStart + 1)
-		while byteEnd < document.rope.byteCount,
-		      Rope.isContinuation(document.rope.bytes(in: byteEnd..<(byteEnd + 1)).first ?? 0) {
-			byteEnd += 1
-		}
-		let end = document.rope.utf16Offset(fromByte: byteEnd)
-
+		// ⌦ had its own copy of the byte walk — forwards over continuation
+		// bytes — with the same fault and one more implementation of it. All
+		// four of these now ask the rope the one question.
+		let end = document.rope.graphemeStep(fromUTF16: caret, by: 1)
 		let newCaret = document.replace(utf16Range: caret..<end, with: "", caretBefore: caret)
 		afterEdit(caret: newCaret)
 	}

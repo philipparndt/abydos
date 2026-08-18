@@ -461,6 +461,19 @@ final class EditorAreaController: NSViewController {
 		(activeGroup ?? groups.first)?.completionReportForTesting ?? "none"
 	}
 
+	var completionDocumentationForTesting: String {
+		(activeGroup ?? groups.first)?.completionDocumentationForTesting ?? "none"
+	}
+
+	var parameterHintForTesting: String {
+		(activeGroup ?? groups.first)?.parameterHintForTesting ?? "none"
+	}
+
+	@discardableResult
+	func writeEditorImageForTesting(to path: String) -> Bool {
+		(activeGroup ?? groups.first)?.writeEditorImageForTesting(to: path) ?? false
+	}
+
 	@discardableResult
 	func writeCompletionImageForTesting(to path: String) -> Bool {
 		(activeGroup ?? groups.first)?.writeCompletionImageForTesting(to: path) ?? false
@@ -507,6 +520,14 @@ final class EditorAreaController: NSViewController {
 
 	func simulateReturn() {
 		(activeGroup ?? groups.first)?.simulateReturn()
+	}
+
+	func simulateTab() {
+		(activeGroup ?? groups.first)?.simulateTab()
+	}
+
+	func simulateEscape() {
+		(activeGroup ?? groups.first)?.simulateEscape()
 	}
 
 	func textTailLinesForTesting(_ count: Int) -> [String] {

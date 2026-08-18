@@ -354,8 +354,50 @@ public final class LSPClient: @unchecked Sendable {
 			"hover": ["contentFormat": ["plaintext", "markdown"]],
 			"definition": ["linkSupport": true],
 			"documentSymbol": ["hierarchicalDocumentSymbolSupport": true],
+			// `documentationFormat` names markdown first because that is what
+			// both servers send whatever is claimed — openscad-lsp answers
+			// `cube` with 1530 characters of `kind: "markdown"` to a client
+			// asking for plaintext — and the editor reduces it before drawing
+			// it either way. Claiming what is actually wanted is the difference
+			// between a server that *could* have sent plain prose doing so and
+			// one that never had the chance.
+			// **`snippetSupport` was `false` while the editor expanded snippets
+			// anyway, and the cost of the lie was measured before it was fixed.**
+			// sourcekit-lsp, asked for `withTaskCanc` in the same file twice:
+			//
+			//   claiming false → `withTaskCancellationHandler(handler: ,
+			//                     operation: )`, format 1, caret at the front,
+			//                     two holes and nothing to Tab between them
+			//   claiming true  → `withTaskCancellationHandler(handler: ${1:{
+			//                     ${2:Void} \}}, operation: ${3:{ ${4:T} \}})`,
+			//                     format 2
+			//
+			// So the claim was not cosmetic: it was the difference between an
+			// argument list with the types named in it, steppable since 0536,
+			// and one with the arguments simply missing. The nested stop stays
+			// text — a stop inside another stop's default is not a stop, which
+			// the spec already says and `Snippet` already does.
 			"completion": [
-				"completionItem": ["snippetSupport": false, "documentationFormat": ["plaintext"]],
+				"completionItem": [
+					"snippetSupport": true,
+					"documentationFormat": ["markdown", "plaintext"],
+				],
+			],
+			// **Claimed because the editor draws all of it.** `labelOffsetSupport`
+			// is what makes a server send the parameter's position in the
+			// signature as a pair of offsets rather than as a string that then
+			// has to be found in the label — and finding it means matching the
+			// first occurrence, which for `f(a: Int, b: Int)` picks the wrong
+			// `Int`. `activeParameterSupport` is how a server that sends several
+			// overloads at once says which parameter of each is being filled in;
+			// sourcekit-lsp puts it there and nowhere else.
+			"signatureHelp": [
+				"dynamicRegistration": false,
+				"signatureInformation": [
+					"documentationFormat": ["markdown", "plaintext"],
+					"parameterInformation": ["labelOffsetSupport": true],
+					"activeParameterSupport": true,
+				],
 			],
 			// `prepareSupport`, because asking first is how the offer to rename is
 			// only made where there is something to rename. Without it a server
@@ -493,6 +535,70 @@ public final class LSPClient: @unchecked Sendable {
 			"position": position.json,
 		])
 		return LSPCompletion.list(from: result)
+	}
+
+	/// The characters this server wants to be asked on, over and above a word
+	/// being typed.
+	///
+	/// Read from the handshake rather than kept as a list in the editor, because
+	/// it is a fact about the server and differs between them: sourcekit-lsp
+	/// names `.` and `(`, and openscad-lsp names none at all. Without this the
+	/// editor only ever asked on the second letter of a word, so a `.` — where
+	/// every enum case in Swift belongs — was never a question anybody asked.
+	public var completionTriggerCharacters: Set<String> {
+		Self.completionTriggerCharacters(in: locked { capabilities })
+	}
+
+	/// Read from a handshake's answer rather than from a running server, so what
+	/// a real `initialize` result means can be held to in a test without one.
+	static func completionTriggerCharacters(in capabilities: [String: Any]) -> Set<String> {
+		let provider = capabilities["completionProvider"] as? [String: Any]
+		return characters(provider?["triggerCharacters"])
+	}
+
+	static func characters(_ value: Any?) -> Set<String> {
+		Set((value as? [Any] ?? []).compactMap { $0 as? String }.filter { !$0.isEmpty })
+	}
+
+	/// Whether this server answers `textDocument/signatureHelp` at all.
+	///
+	/// **Asked before the request is sent, and that is not tidiness.** Driven
+	/// against openscad-lsp — which advertises no `signatureHelpProvider` — the
+	/// request produced no reply of any kind, not even an error, so a client
+	/// that sends it anyway is left holding a continuation until its timeout
+	/// fires. A capability nobody claimed is a question nobody should ask.
+	public var offersSignatureHelp: Bool {
+		locked { capabilities["signatureHelpProvider"] } != nil
+	}
+
+	static func offersSignatureHelp(in capabilities: [String: Any]) -> Bool {
+		capabilities["signatureHelpProvider"] != nil
+	}
+
+	/// The characters this server wants to be asked about a call on.
+	///
+	/// Both lists together: `triggerCharacters` opens the question — `(` and
+	/// `[` for sourcekit-lsp — and `retriggerCharacters` asks it again as the
+	/// arguments go in, which is `,` and `:`. From the editor's side they are
+	/// one thing, "ask now", and nothing is remembered between them that would
+	/// make the distinction worth keeping.
+	public var signatureHelpTriggerCharacters: Set<String> {
+		Self.signatureHelpTriggerCharacters(in: locked { capabilities })
+	}
+
+	static func signatureHelpTriggerCharacters(in capabilities: [String: Any]) -> Set<String> {
+		guard let provider = capabilities["signatureHelpProvider"] as? [String: Any] else { return [] }
+		return characters(provider["triggerCharacters"])
+			.union(characters(provider["retriggerCharacters"]))
+	}
+
+	/// What the server says about the call the caret is inside.
+	public func signatureHelp(uri: String, position: LSPPosition) async throws -> LSPSignatureHelp? {
+		let result = try await request("textDocument/signatureHelp", [
+			"textDocument": ["uri": uri],
+			"position": position.json,
+		])
+		return LSPSignatureHelp(json: result)
 	}
 
 	/// Symbols anywhere in the project, matching a query.

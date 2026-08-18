@@ -35,6 +35,12 @@ struct BrokenPipesTests {
 		#expect(pty.start(
 			executable: "/bin/cat", arguments: [], rows: 24, columns: 80
 		))
+		// Elapsed time on purpose, three times over in this test: what is being
+		// shown is that a signal *never* arrives — that writing to a terminal
+		// whose child has gone does not kill this process — and "nothing
+		// happened" cannot be waited for. A soak is the only shape that claim
+		// has. Long enough that a SIGPIPE would have landed, short enough that
+		// three of them are a second.
 		try await Task.sleep(nanoseconds: 300_000_000)
 
 		pty.terminate()

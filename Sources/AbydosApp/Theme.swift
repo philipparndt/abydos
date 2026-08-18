@@ -9,7 +9,34 @@ import AbydosKit
 /// draws with, plus the metrics, which are read from Settings rather than
 /// stored.
 struct Theme {
-	static var current = Theme(scheme: SchemeLibrary.shared.defaultAppScheme, isLight: false)
+	/// The palette in force.
+	///
+	/// **Read and written on the main thread, and that is a rule rather than a
+	/// habit.** Assigning one of these is not one store — it is a struct of some
+	/// thirty-five `NSColor`s and two more fields — so a reader that caught it
+	/// mid-assignment would get a palette belonging to neither, which is exactly
+	/// the shape of the abort in 0400: rare, unreproducible by probing the
+	/// values, and invisible in the source at the crash site.
+	///
+	/// The audit that went with that item found no such reader — every writer is
+	/// on the main thread, no view sets `canDrawConcurrently`, the terminal's
+	/// display link is added to the main run loop, and every background block in
+	/// the app target calls only into `AbydosKit`, which cannot see this type at
+	/// all. **An audit is true on the day it is done**, and there are 1580 reads
+	/// across 99 files, so the finding is kept true by the check below rather
+	/// than by anybody remembering it.
+	static var current: Theme {
+		get {
+			ThemeAccess.noteRead()
+			return stored
+		}
+		set {
+			ThemeAccess.noteWrite()
+			stored = newValue
+		}
+	}
+
+	private static var stored = Theme(scheme: SchemeLibrary.shared.defaultAppScheme, isLight: false)
 
 	/// Chooses the palette from the setting, and from the system when the
 	/// setting defers to it.

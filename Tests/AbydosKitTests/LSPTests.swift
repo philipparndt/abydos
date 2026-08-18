@@ -163,7 +163,15 @@ struct LSPFramingTests {
 
 	@Test func readsAMessageArrivingInPieces() async {
 		let client = LSPClient()
-		client.callbackQueue = .main
+		// **A queue of this test's own, and that is the other half of 0530.**
+		// The client delivers on `.main` by default, and in a parallel run the
+		// main thread is the harness's — nothing drains that queue while a test
+		// waits on it. The old sleep passed when the harness happened to service
+		// it and failed when it did not, which is the coin toss; waiting made the
+		// dependency deterministic instead of intermittent, which is how it was
+		// found. What is under test here is the framing, not which queue somebody
+		// hands the answer back on.
+		client.callbackQueue = DispatchQueue(label: "lsp-framing-tests")
 
 		let received = Received()
 		client.onDiagnostics = { uri, diagnostics in
@@ -189,13 +197,20 @@ struct LSPFramingTests {
 			client.consume(message.subdata(in: index..<end))
 		}
 
-		try? await Task.sleep(nanoseconds: 200_000_000)
+		// **Waited for, not slept through.** This is 0530: the sleep here was a
+		// bet that 200 ms is always enough, and under the suite's own
+		// parallelism it is not — the test then failed by reporting
+		// `received.uri` as the wrong string, which reads as a framing bug and
+		// sent two people to the wrong code.
+		await waitUntil("the diagnostics callback fired") { received.count == 1 }
 		#expect(received.uri == "file:///a.swift")
 		#expect(received.count == 1)
 	}
 
 	@Test func readsTwoMessagesFromOneRead() async {
 		let client = LSPClient()
+		// Off the main queue, for the reason above.
+		client.callbackQueue = DispatchQueue(label: "lsp-framing-tests")
 		let received = Received()
 		client.onMessage = { _, text in received.record(uri: text, count: received.count + 1) }
 
@@ -203,7 +218,7 @@ struct LSPFramingTests {
 		data.append(framed(["jsonrpc": "2.0", "method": "window/logMessage", "params": ["message": "two", "type": 3]]))
 		client.consume(data)
 
-		try? await Task.sleep(nanoseconds: 200_000_000)
+		await waitUntil("both messages arrived") { received.count == 2 }
 		#expect(received.count == 2)
 		#expect(received.uri == "two")
 	}
@@ -211,6 +226,8 @@ struct LSPFramingTests {
 	/// Rubbish in the stream must not wedge the reader for ever.
 	@Test func survivesAMessageItCannotParse() async {
 		let client = LSPClient()
+		// Off the main queue, for the reason above.
+		client.callbackQueue = DispatchQueue(label: "lsp-framing-tests")
 		let received = Received()
 		client.onMessage = { _, text in received.record(uri: text, count: 1) }
 
@@ -218,7 +235,9 @@ struct LSPFramingTests {
 		data.append(framed(["jsonrpc": "2.0", "method": "window/logMessage", "params": ["message": "after", "type": 3]]))
 		client.consume(data)
 
-		try? await Task.sleep(nanoseconds: 200_000_000)
+		// The claim is that the reader carries on past rubbish, so what is
+		// waited for is the message *after* it.
+		await waitUntil("the message after the unparsable one arrived") { received.uri == "after" }
 		#expect(received.uri == "after")
 	}
 

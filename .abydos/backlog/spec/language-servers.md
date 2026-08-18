@@ -1092,6 +1092,16 @@ A completion with a single place for the caret — `union() $0`, or a plain word
 is not a session. The caret goes where it said, and Tab means what Tab always
 means.
 
+**And the editor says it takes snippets, having expanded them all along.** The
+claim was `snippetSupport: false` while this was being done, and what that cost was
+measured rather than argued: asked for `withTaskCanc` in the same file twice,
+sourcekit-lsp answers a client claiming false with
+`withTaskCancellationHandler(handler: , operation: )` — the arguments simply
+missing — and one claiming true with
+`withTaskCancellationHandler(handler: ${1:{ ${2:Void} \}}, operation: ${3:{ ${4:T} \}})`,
+which is an argument list with the types named in it and stops to Tab between. The
+nested stop stays as text, as it already must.
+
 ### Scenario: taking a completion that names an argument
 
 - **Given** a `.scad` and a server that answers `cube` with
@@ -1119,6 +1129,140 @@ means.
 - **Given** a completion taken and its first stop selected
 - **When** something is typed at the other end of the line
 - **Then** Tab indents rather than jumping into text that has moved
+
+## Requirement: The list says what goes in a completion, and so does the line after it
+
+A server answers with more than a word and more than a snippet. `cube` comes back
+from openscad-lsp labelled `cube(size, center=false)`, to be matched on `cube`, and
+with 1530 characters of documentation in which the sentence that matters is
+*"size — single value, cube with all sides this length; 3 value array [x,y,z]"*.
+All of it was parsed and then dropped one assignment short of the screen, so what
+went in was `cube(size = size, center = false);` with `size` selected and nothing
+anywhere saying what a `size` is.
+
+**The documentation is drawn beside the list**, for the item the list has selected
+and following it as the selection moves, reduced from markdown to text first: this
+prose carries fenced code, bold runs, HTML tables and `<img>` tags pointing at
+Wikimedia, and none of that is drawn as markup or fetched.
+
+**And the parameter being filled in is named above the line**, because the moment
+somebody asks what `size` takes is the moment the list closes. Two sources, one
+strip:
+
+- `textDocument/signatureHelp` where the server has it — sourcekit-lsp answers
+  `extruded(height: Double, topEdge: EdgeProfile) -> any Geometry3D` and says which
+  parameter is being filled in and where it is in that label.
+- The taken completion's own documentation where it does not. openscad-lsp
+  advertises no `signatureHelpProvider` **and does not answer the request at all**,
+  so it is never sent one; the active snippet stop names the parameter — `${1:size}`
+  is `size` — and the prose is looked up under that name. The match is exact or
+  nothing is shown: a neighbouring parameter's type under the caret would be
+  believed.
+
+Above the line rather than after the end of it, which is where the inline
+diagnostic goes, and a half-typed call is exactly when there is a diagnostic on
+that line.
+
+### Scenario: taking `cube` in a `.scad`
+
+- **Given** a running `openscad-lsp` and `cub` typed in a `.scad`
+- **When** the list appears
+- **Then** the server's prose for `cube` is shown beside it, naming `size` as
+  either a single value or a three-value `[x, y, z]`
+- **And** taking the completion leaves the strip saying
+  `size — single value, cube with all sides this length …`
+
+### Scenario: stepping to the next parameter
+
+- **Given** `cylinder` taken, whose stops are `h` and `r`
+- **When** Tab moves from the first stop to the second
+- **Then** the strip says what `r` takes rather than what `h` takes
+- **And** Escape ends the session and takes the strip with it
+
+### Scenario: a stop the prose does not describe
+
+- **Given** a completion whose last stop is `$0`, which names nothing
+- **When** Tab reaches it
+- **Then** no hint is shown, rather than the previous parameter's
+
+## Requirement: A question is asked about the text on screen
+
+The editor tells a server what changed 0.4 seconds after typing stops and asks for
+a completion after 0.15, so every list used to be asked for against a document one
+or two keystrokes older than the file. **What is waiting is sent first, and the
+question follows it down the same pipe.**
+
+Unnoticed for as long as questions were only ever asked in the middle of a word —
+the answer was about the same identifier a moment earlier and looked right. Asking
+after a `.` made it plain: `Corner.` typed at the end of a Swift file asked about a
+position past the end of the file the server held, and sourcekit-lsp answered with
+a list of everything in the standard library instead of the four cases of the enum.
+
+### Scenario: completing at the end of a file
+
+- **Given** `Corner.` just typed at the end of a Swift file
+- **When** the list is asked for
+- **Then** the server has been told about that line first
+- **And** the list is `topLeft`, `topRight`, `bottomLeft`, `bottomRight`
+
+## Requirement: A server is asked where it says it wants to be asked
+
+Which characters wake a completion list is a fact about the server, read from what
+it said at the handshake rather than kept as a list in the editor. sourcekit-lsp
+names `.` and `(`; openscad-lsp names none, and a `.scad` is unchanged by this.
+
+A word still has to be two characters long before it is worth asking about — a
+list after one letter is mostly noise — but a trigger character skips that rule,
+because the caret after a `.` is in no word and waiting for a second letter means
+waiting for something that will never come. **This is why an enum case could never
+be offered.** The debounce still applies: `.centerX` typed at speed is one request
+for where the typing stopped.
+
+Items are matched against the server's `filterText` where it sends one. Neither
+server labels an item with its name — `cube(size, center=false)` filters as `cube`,
+and a Swift function's label is its whole signature — so matching on the label kept
+the items whose signature happened to start with the typed word and threw the rest
+away.
+
+### Scenario: a dot where an enum case belongs
+
+- **Given** a Swift file and a server naming `.` as a trigger
+- **When** `.` is typed
+- **Then** the list is asked for straight away, with no second character
+
+### Scenario: a server that names none
+
+- **Given** `openscad-lsp`, whose `completionProvider` is empty
+- **When** `.` is typed in a `.scad`
+- **Then** nothing is asked, exactly as before
+
+## Requirement: A server that is not ready says so instead of being replaced
+
+An empty answer from a server that is still preparing is not evidence, and it must
+not be dressed up as one. Measured against a Cadova package, sourcekit-lsp answered
+0 items with no error at 1, 11, 32 and 62 seconds after the file was opened, and
+the enum cases somebody was waiting for at 123 — after it had built 651 files to
+index them. What the editor showed for those two minutes was the words already in
+the file, which reads as an answer.
+
+While the server is preparing the list says so, and is asked again when it stops —
+on the notification 0501 already posts, not on a poll and not on a timer. A
+language with no server at all still gets the words in the file, which is all there
+is.
+
+### Scenario: completing in a cold package
+
+- **Given** a Swift package whose server is preparing
+- **When** the list would be shown
+- **Then** it says the server is still preparing
+- **And** the words already in the file are not offered as though they were the
+  answer
+
+### Scenario: the answer arrives
+
+- **Given** that list, and the caret still in the same word
+- **When** the server finishes preparing
+- **Then** the list is asked again and shows what the server says
 
 ## Requirement: The Swift indexer builds outside the project, and stands outside it too
 

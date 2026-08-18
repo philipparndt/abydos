@@ -483,6 +483,114 @@ drawing a frame. Nothing on the parse path takes one.
   selection can follow them
 - **And** no copy of the screen is made for it
 
+## Requirement: A press on a tab's cross closes it, whatever the click count
+
+A click on the close button SHALL close that tab, however quickly it follows the
+last one. Closing four terminals is four clicks in the same corner of the screen,
+and the tabs shuffle left under the pointer as they go — so the second, third and
+fourth land inside the double-click interval and arrive reported as double
+clicks.
+
+The strip read the click count first and renamed, so the second press on a cross
+opened a rename field on whichever tab had just slid into that place, and the
+terminal somebody meant to close was still there with its name selected. Nobody
+has ever meant to rename a tab by hitting the one control on it that is not its
+name.
+
+Double-clicking a tab anywhere else still renames it in place, and
+double-clicking the empty part of the strip still gives the panel the window.
+
+### Scenario: closing four terminals in a row
+
+- **GIVEN** five terminal tabs
+- **WHEN** the close button is clicked four times in quick succession, without
+  the pointer moving
+- **THEN** four tabs are closed
+- **AND** no rename field opens
+
+### Scenario: renaming still works
+
+- **GIVEN** a terminal tab
+- **WHEN** it is double-clicked away from its cross
+- **THEN** its name becomes editable in place
+
+## Requirement: The panel's own controls are drawn on a ground of their own
+
+The tabs of a strip are laid out from its leading edge at whatever width each
+name needs, and the panel's controls — the session tag, follow, maximise, hide —
+are placed backwards from its trailing edge. With enough tabs open the two meet.
+
+The controls SHALL be drawn on an opaque ground so that a tab running under them
+is hidden rather than showing through: with a dozen terminals open the session
+tag was a translucent pill with a tab's name legible underneath it and the glyphs
+overlapping the names either side. This is the editor tab bar's own settled
+answer for the same collision — a tab's last few characters matter less than the
+controls staying readable and reachable.
+
+**A tab hidden this way is still reachable**, which is the other half and has its
+own requirement.
+
+### Scenario: a strip with more tabs than room
+
+- **GIVEN** a panel strip whose tabs reach the trailing edge
+- **WHEN** it is drawn
+- **THEN** the controls are legible against their own ground
+- **AND** no tab name is drawn through them
+
+## Requirement: A tab that does not fit is still reachable
+
+A strip SHALL offer every tab it holds however narrow the window is. Both strips
+laid their tabs out from the leading edge with no bound and neither takes a
+scroll wheel, so a tab past the trailing edge could be reached by widening the
+window or by closing the ones in front of it — and for the panel's strip that was
+the whole list, since ⌘] and ⌘[ are `editor.selectNextTab`.
+
+Where tabs do not fit, a chevron at the trailing end SHALL say how many are
+hidden and list them. **The count is not decoration**: three hidden and eleven
+hidden are different situations, and it is what makes the control visible among
+four other glyphs. Where they all fit there SHALL be no chevron.
+
+Only the hidden ones are listed. A list of everything is a tab switcher, which is
+a different feature with a different gesture, and it would put the tab somebody
+is looking at into a menu of things they cannot see. Each entry carries what the
+tab itself cannot: tmux's number for a window, or the position along the strip,
+because sixteen terminals are sixteen tabs called `Local`.
+
+**A tab is visible only if the whole of it is**, in front of the ground the
+controls are drawn on. Half a tab under the session tag is not a target.
+
+**The active tab is always wholly visible.** The run of drawn tabs moves for that
+reason and no other — not on a wheel, not on a drag, not remembered between
+launches — and by the least that brings it into view. Where the run has moved,
+tabs are hidden before it as well as after it, and both are counted and listed,
+in tab order.
+
+Which tab the run starts at is remembered by name and not by number. This strip
+mirrors tmux's window list and is rebuilt whenever that is re-read: a window
+closed in another client shifts every index after it. A tab that has gone puts
+the run back at the first.
+
+### Scenario: twenty-seven terminals in one window
+
+- **GIVEN** a strip holding twenty-seven tabs with room for sixteen
+- **WHEN** it is drawn
+- **THEN** the chevron says eleven are hidden
+- **AND** its menu lists those eleven, numbered, in tab order
+
+### Scenario: choosing one that could not be seen
+
+- **GIVEN** that menu, with the run scrolled to the end
+- **WHEN** the first hidden tab is chosen
+- **THEN** it is active and wholly visible
+- **AND** the tabs now hidden are the ones past the other end
+
+### Scenario: a strip with room to spare
+
+- **GIVEN** a strip whose tabs all fit
+- **WHEN** it is drawn
+- **THEN** there is no chevron at all
+
+
 ## Requirement: A window follows its terminal out of the project, and nowhere else
 
 A window can be asked to follow its terminal: when the shell in the pane in
