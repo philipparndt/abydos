@@ -153,6 +153,56 @@ the work, and a viewer rebuilt from nothing would put the camera back.
 - **Then** the pane shows what the run actually said, rather than reporting that
   no model appeared
 
+## Requirement: A preview run is told not to reveal what it writes
+
+Cadova reveals what it wrote when a build finishes, which is friendly from a
+terminal and hostile from a pane that runs the same build again on every save of
+any of the target's sources: each rebuild raised Finder over the window being
+typed into. So the run this app starts sets `CADOVA_REVEAL_FILES=0` — Cadova
+accepts `0`, `false`, `no` or `off` — and `Platform.revealFiles` returns
+without doing anything.
+
+**Said by whoever starts the run, not by the model.** It used to have to be the
+model: `isFileRevealingEnabled` was a static var inside the process being built,
+and an editor showing the file only ever *launches* that process. Upstream reads
+the environment for it now, which puts the fact where it is true — a model from
+somebody else's repository has no reason to know this app exists, and previews
+the same way whether or not its author thought about it. The examples that used
+to carry the workaround have dropped it, and the same commit that added the
+variable deleted the type they set, so keeping the line was not an option
+either.
+
+The variable is spelled once, beside the command the run is, and the run's
+environment is this process's own with that one key added. Handing `swift` a
+dictionary of its own would leave it without the `PATH` that finds a toolchain a
+version manager owns — the same reason the command goes through the login shell.
+
+**Ruled out, and measured before that:** blocking the reveal from outside the
+process. Denying it its Launch Services connection does not stop the reveal at
+all, and denying Apple Events stops it at the cost of a 30-second wait for a
+Finder port that never answers, against 0.06 s unhindered. Also ruled out:
+`setenv` in the app, which would reach every language server, build, container
+and shell it ever starts.
+
+### Scenario: a model rebuilt on save
+
+- **Given** a Cadova model in the preview
+- **When** one of its target's sources is saved and the pane rebuilds
+- **Then** the model is redrawn and no Finder window is opened
+
+### Scenario: a model that never heard of this app
+
+- **Given** a model whose own code says nothing about revealing
+- **When** it is previewed
+- **Then** it is as quiet as one that does
+
+### Scenario: the run still finds its toolchain
+
+- **Given** a `swift` a version manager owns rather than the system one
+- **When** the preview builds
+- **Then** the run has the environment it had before with only that variable
+  added, `PATH` and `HOME` included
+
 ## Requirement: Rendering a recipe does not write into the project
 
 A recipe names the file it produces — `output:` is not optional, and a recipe

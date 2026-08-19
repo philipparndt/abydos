@@ -6,9 +6,7 @@ Searching the whole project (⇧⌘F) answers in the bottom panel: a heading per
 file with its matching lines under it, streamed in as the tree is walked so the
 first hits are usable before the walk has finished. The list is worked through
 rather than read — rows are opened, decided on, and ticked off.
-
 ## Requirements
-
 ### Requirement: Search results can be marked done, several at a time
 
 Search results SHALL be able to be marked done, several at a time.
@@ -421,3 +419,37 @@ rest is to narrow it.
 - **Given** a query matching ten times in four files
 - **When** the search is run
 - **Then** the status line reads `10 in 4 files` and says nothing about caps
+
+### Requirement: The search pane searches the project the window is showing
+
+The search pane SHALL search whichever project the window is on, and SHALL follow
+a switch without being closed and reopened. It is made once and cached for the
+life of the window — under the panel, under the project view, or in a window of
+its own — and it holds the root it was made with.
+
+**This matters more than a stale board does, because this pane opens files.** A
+result list from a tree the window has left is a list of paths that still open,
+in a project nobody is looking at.
+
+Results from the project that was left SHALL be cleared, since a result is a
+path and those paths are not answers about the project now showing. The query
+SHALL survive: it is what somebody typed, and it costs nothing to ask again.
+
+#### Scenario: searching after a switch
+
+- **GIVEN** a search pane with results from one project
+- **WHEN** the window switches to another project and the same query is run
+- **THEN** every result is in the second project
+
+#### Scenario: the results that were on screen
+
+- **GIVEN** those results showing
+- **WHEN** the project is switched
+- **THEN** they are gone rather than left to be clicked
+
+#### Scenario: what was typed
+
+- **GIVEN** a query in the field
+- **WHEN** the project is switched
+- **THEN** the query is still there
+

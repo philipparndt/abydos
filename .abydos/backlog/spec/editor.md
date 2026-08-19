@@ -683,6 +683,174 @@ is wide is shown from its start, because what is read is read from the beginning
 - **Then** the place asked for is brought on screen at that moment, and nothing
   was scrolled in the meantime
 
+## Requirement: A file dropped on the editor opens in it
+
+A file dragged onto an editor group — from the Finder, from another application,
+from the project tree — opens in that group, in a tab, exactly as opening it any
+other way does. The whole group is the target, not only the tab strip: the text
+is where somebody is looking when they decide to drop something.
+
+The editor registered one dragged type, `EditorTabDrag.pasteboardType`, so a drag
+carrying a file was never offered to the window at all. It was not refused; it
+was not seen.
+
+**The operation offered is one the drag permits.** An external file drag offers
+copy, and the drop view answered `.move` to everything — right for a tab moving
+between panes, and exactly what the Finder does not offer. The project tree
+already carries the lesson: an operation the source never permitted is a drop
+that quietly does nothing, indistinguishable from not accepting the drag.
+
+Only file URLs are taken. A browser will put a web address on the drag board and
+`NSURL` reads it perfectly well; a tab named after a website is worse than a drag
+that springs back.
+
+Several files open several tabs, in the order dropped, last in front, none of
+them provisional — a preview tab is the answer to a single click, and a drag is
+deliberate.
+
+**The window's project does not change.** The tree, git, the run configurations,
+the language servers and the remembered session all belong to it, so re-pointing
+them because somebody dragged a file in is a very large answer to a very small
+gesture. A file dropped on the *Dock icon* is a different case and does switch:
+that one is addressed to the application, which has no window in mind and must
+find one.
+
+**A folder is a project**, which is what a folder means everywhere else here, so
+it goes through the same opening as `abydos <dir>` and the switcher — the same
+setting about taking this window or another, and the same raising of a window
+already on it.
+
+A drag holding both opens the folders first and the files into the window that
+results. The other order was measured and lost the file: opened into the project
+being left, it was discarded when switching restored the arriving project's
+session.
+
+The zone overlay stays a tab's business. It answers "where does this pane go", and
+a file is a tab rather than a pane, so a file over the group highlights nothing —
+what is shown is what will happen.
+
+### Scenario: a file from another checkout
+
+- **Given** a window open on one project
+- **When** a file belonging to a different checkout is dropped on the editor
+- **Then** it opens in a tab, and the window is still on the project it was on
+
+### Scenario: several at once
+
+- **When** three files are dropped together
+- **Then** three tabs open, in that order, with the last in front
+
+### Scenario: a folder
+
+- **When** a folder is dropped
+- **Then** it opens as a project
+
+### Scenario: a folder and a file together
+
+- **When** both are dropped in one drag
+- **Then** the folder opens as a project and the file is open in that window
+
+### Scenario: something that is not a file
+
+- **When** a web address is dragged onto the editor
+- **Then** nothing opens
+
+### Scenario: a tab is still a tab
+
+- **When** a tab is dragged onto a group's right-hand zone
+- **Then** the group splits, as it did before the editor took files
+
+## Requirement: Find belongs to the tab it searched
+
+The find bar's state belongs to the tab it was opened in — whether it is
+showing, what is being looked for, which switches are set, the matches, and which
+one is current. One bar serves the whole group; what it shows is the tab in
+front's.
+
+This is what the rest of the editor already does and says it does: each tab owns
+its own `CodeView`, so caret, selection, scroll offset and folds survive a tab
+switch because they were never shared. Find was the exception — one flag and one
+list of matches for every tab in the group. So opening find in one file opened it
+in all of them, and **the matches were a different file's**: they are UTF-16
+offsets into one document, and stepping after a tab switch handed them to another
+document's view, which sets a caret from them.
+
+Measured, with the fix in: a 199-match search in a 4071-unit file, then the
+5-unit file selected — stepping moves nothing, and coming back to the first tab
+restores its query, its 199 matches, its current index and its caret at 13.
+
+Closing a tab takes its find state with it, and a tab moved to another group
+takes it along, because the state is on the tab.
+
+### Scenario: find open in one tab
+
+- **Given** two files open in one group
+- **When** find is opened in the first and the second is selected
+- **Then** the second shows no find bar
+
+### Scenario: stepping after a tab switch
+
+- **Given** a tab searched for a word the tab beside it does not contain
+- **When** the other tab is selected and Next is pressed
+- **Then** nothing moves in the file that was not searched
+
+### Scenario: coming back
+
+- **When** the searched tab is selected again
+- **Then** the bar is showing, with the same query, matches and current match
+
+## Requirement: A search that found nothing says so in red, and so does a pattern that did not run
+
+A search that found nothing says `No results` in red, and a pattern that will not
+compile says something else.
+
+The bar already had a red: the query goes `gitConflict` when a regex does not
+compile, with a comment saying an unfinished pattern is marked invalid "rather
+than reported as 'no results', which would read as a wrong answer". **That was
+not true.** An invalid pattern still reached the search, the search found nothing
+in a regex that never compiled, and the label a few pixels away said `No results`
+anyway. Once red means both "found nothing" and "did not run", the words are the
+only thing left to separate them:
+
+| query | label |
+| --- | --- |
+| empty | *nothing* |
+| matches | `3 of 17` |
+| no matches | `No results`, red |
+| will not compile | `Incomplete pattern`, red |
+
+**The label carries it, not the query text.** Colouring the text was implemented
+and measured not to reach the screen: with the field's colour, its field editor's
+colour and its attributed string all holding the scheme's red, a capture has the
+query white — `(236, 235, 235)` over 1007 glyph pixels — beside a `No results` at
+`(212, 114, 112)`. `NSSearchField` paints its text in a colour of its own, and
+owning that means replacing the control and drawing its magnifier and clear
+button by hand.
+
+The red is the scheme's own `gitConflict` and not a role of its own: a required
+`SchemeRole` that a file lacks refuses the whole file, and schemes are files
+people keep in dotfiles repositories.
+
+A pattern that does not compile is not searched for, so the matches of the last
+query that did compile stay on screen rather than being cleared by a keystroke
+that was half of a bracket.
+
+### Scenario: nothing found
+
+- **When** a query matches nothing
+- **Then** `No results` is shown in red
+
+### Scenario: half a pattern
+
+- **Given** find in regex mode
+- **When** `(` is typed and no more
+- **Then** the bar says the pattern is incomplete, and does not say `No results`
+
+### Scenario: an empty query
+
+- **When** the query is cleared
+- **Then** nothing is red and nothing is said
+
 ## Requirement: The current find match is the loudest thing on the page
 
 Find in a file highlights every match on screen, and the one being looked at —
@@ -762,3 +930,54 @@ it.
 - **Given** a personal scheme written before these keys existed
 - **Then** it loads, and its current match is halfway between its selection and
   its caret, with the other matches halfway between its selection and that
+
+## Requirement: The side buttons go back and forward
+
+A mouse's side buttons move through the navigation history — button 3 back,
+button 4 forward — and it is the history ⌘[ and ⌘] move through, not a second
+one. The same rules about when a step is possible, and the same handling of a
+file deleted since, because it is the same two functions the menu items call.
+
+**They were never wired.** `navigateBack` and `navigateForward` worked and every
+caller of them was a menu item; nothing read a mouse button. Reported as having
+worked before, which it may well have — a driver that maps side buttons to ⌘[
+and ⌘] makes it work without this app knowing, and stops the day the mapping
+changes.
+
+They work wherever the pointer is: over the editor, the tree, the panes and the
+terminal. **The window handles them**, so no view has to opt in, and a view that
+wants a side button for something of its own can still take it first, which is
+what the responder chain is for.
+
+**Acted on the release, not the press.** A navigation changes what is on screen,
+and a button held while the hand is still deciding should not have moved
+anything — the same reason a click is a press and a release in one place. The
+press is consumed so that nothing else sees a stray one.
+
+Where there is nowhere to go the button does nothing, which is the answer the
+menu items already give by being disabled.
+
+### Scenario: back over the editor
+
+- **Given** two files opened one after the other
+- **When** the back side button is pressed and released over the editor
+- **Then** the editor returns to the first, as ⌘[ would
+
+### Scenario: forward again
+
+- **Given** that step back just taken
+- **When** the forward side button is used
+- **Then** the editor returns to the second
+
+### Scenario: over the terminal
+
+- **When** the back side button is used with the pointer over a terminal
+- **Then** the editor goes back, and nothing is sent to the program in the
+  terminal
+
+### Scenario: nowhere to go
+
+- **Given** a window with nothing earlier in its history
+- **When** the back side button is used
+- **Then** nothing happens
+

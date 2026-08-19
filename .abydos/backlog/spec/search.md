@@ -5,6 +5,39 @@ file with its matching lines under it, streamed in as the tree is walked so the
 first hits are usable before the walk has finished. The list is worked through
 rather than read — rows are opened, decided on, and ticked off.
 
+## Requirement: The pane searches the project the window is showing
+
+The search pane searches whichever project the window is on, and follows a switch
+without being closed and reopened. It is made once and cached for the life of the
+window — under the panel, under the project view, or in a window of its own — and
+it held the root it was made with, so a window that had moved on went on
+searching the tree it left.
+
+**This matters more than a stale board does, because this pane opens files.** A
+result from a tree the window has left is a path that still opens, in a project
+nobody is looking at — and opening files in a checkout somebody is not in is the
+fault this project already has a house rule about.
+
+Results from the project that was left are cleared, since a result is a path and
+those paths are not answers about the project now showing. The query survives: it
+is what somebody typed, and it costs nothing to ask again.
+
+### Scenario: searching after a switch
+
+- **Given** a search pane with results from one project
+- **When** the window switches and the same query is run
+- **Then** every result is in the second project
+
+### Scenario: the results that were on screen
+
+- **When** the project is switched
+- **Then** they are gone rather than left to be clicked
+
+### Scenario: what was typed
+
+- **When** the project is switched
+- **Then** the query is still in the field
+
 ## Requirement: Search results can be marked done, several at a time
 
 The results pane is a checklist rather than a list to read. Rows are selected

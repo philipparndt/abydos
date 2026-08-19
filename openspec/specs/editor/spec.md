@@ -918,3 +918,278 @@ so whatever is built is either the caret's answer reused or held to it by a test
 - **Then** the band's left edge is where the caret is
 - **And** this holds on every visual row of the line
 
+### Requirement: Find belongs to the tab it searched
+
+The find bar's state SHALL belong to the tab it was opened in — whether it is
+showing, what is in it, which options are set, the matches and which one is
+current. A group holds many tabs and one bar; the bar shows the state of the tab
+in front, and shows the previous one again when that tab is.
+
+This is the pattern the rest of the editor already follows and says it follows:
+each tab owns its own `CodeView`, so caret, selection, scroll offset and folds
+survive a tab switch because they were never shared. Find was the exception.
+
+**The matches SHALL NOT outlive the tab that produced them.** They are UTF-16
+offsets into one document, and the view they are handed to sets a caret from
+them. Offsets from one file reaching another file's view is the fault this
+prevents, and it is not merely untidy: a match band is drawn at an offset the
+text does not have, and the caret is set past an end that may not exist.
+
+One bar, not one per tab. The bar is chrome for the group; only its contents
+belong to the tab.
+
+#### Scenario: find open in one tab
+
+- **GIVEN** two files open in one group
+- **WHEN** find is opened in the first and the second is selected
+- **THEN** the second shows no find bar
+
+#### Scenario: coming back to a tab that was searching
+
+- **GIVEN** a tab with find open, a query typed and a match current
+- **WHEN** another tab is selected and then that one again
+- **THEN** the bar is showing, with the same query and options
+- **AND** the same match is current
+
+#### Scenario: stepping after a tab switch
+
+- **GIVEN** a tab searched for a word that its file contains
+- **WHEN** another tab is selected and the next match is asked for
+- **THEN** nothing is stepped in the file that was not searched
+
+#### Scenario: closing find
+
+- **GIVEN** two tabs, both with find open
+- **WHEN** find is closed in one
+- **THEN** the other still has it open when it is selected
+
+#### Scenario: a tab that is closed
+
+- **GIVEN** a tab with find open and matches found
+- **WHEN** the tab is closed
+- **THEN** its find state goes with it
+
+### Requirement: A search that found nothing says so in red
+
+A search that found nothing SHALL say `No results` in red. The two states of the
+bar that a person acts on differently — there are matches, there are none —
+differed by one grey word in the corner, in the colour used for everything else
+that is merely informational.
+
+The red SHALL be the scheme's own, `gitConflict`, which is the red the bar
+already reaches for. A colour of its own would need a scheme role of its own, and
+a required role that a file lacks refuses the whole file — which would refuse
+every scheme written before it existed.
+
+**The query text itself is not the signal, and that is a finding rather than a
+choice.** Colouring it was implemented and measured not to reach the screen: with
+`field.textColor`, the field editor's `textColor` and the attributed string all
+holding that red, a capture has the query at `(236, 235, 235)` over 1007 glyph
+pixels with none of them reddish, beside a `No results` at `(212, 114, 112)`.
+`NSSearchField` paints its text in a colour of its own. Owning it would mean
+replacing the control and drawing the magnifier and the clear button by hand,
+which is a larger change than this.
+
+An empty query SHALL stay plain and say nothing. It has not found nothing; it has
+not been asked.
+
+#### Scenario: a query with no matches
+
+- **WHEN** a query matches nothing in the file
+- **THEN** `No results` is shown in red
+
+#### Scenario: a query with matches
+
+- **WHEN** a query matches
+- **THEN** the count is shown, and nothing is red
+
+#### Scenario: the query is cleared
+
+- **GIVEN** a query that matched nothing
+- **WHEN** it is deleted
+- **THEN** nothing is red and nothing is said
+
+### Requirement: A pattern that did not compile says so rather than reporting no results
+
+A regex query that does not compile SHALL say that it is incomplete rather than
+say `No results`. Nothing was searched, so "no results" is an answer to a
+question that was never asked — and it is indistinguishable from a search that
+ran and found nothing, which is a different thing to act on.
+
+This is already the intent where the field is coloured: an unfinished regex is
+marked invalid there "rather than reported as 'no results', which would read as a
+wrong answer". The label a few pixels away then said `No results` anyway, because
+an invalid pattern still reached the search and the search still returned
+nothing. **Once red means both "found nothing" and "did not run", the words are
+what tell them apart**, so they have to differ.
+
+A query that does not compile SHALL NOT run a search, and SHALL NOT discard the
+matches of the last query that did.
+
+#### Scenario: half a pattern typed
+
+- **GIVEN** find in regex mode
+- **WHEN** `(` is typed and no more
+- **THEN** the query is red and the bar says the pattern is incomplete
+- **AND** it does not say `No results`
+
+#### Scenario: the pattern is finished
+
+- **GIVEN** an incomplete pattern in the bar
+- **WHEN** the rest of it is typed and it matches
+- **THEN** the query is plain and the count is shown
+
+#### Scenario: the same words are not used for two situations
+
+- **WHEN** the bar says `No results`
+- **THEN** a search ran and returned nothing
+
+### Requirement: A file dropped on an editor group opens in it
+
+A file dragged onto an editor group SHALL open in that group, in a tab, exactly
+as opening it any other way does — dragged from the Finder, from another
+application, or from the project tree.
+
+The whole group SHALL be the target, not only the tab strip: the text is where
+somebody is looking when they decide to drop something, and the group is already
+the drop target for a tab being dragged between panes.
+
+**Only file URLs SHALL be accepted.** A drag carrying a web address or anything
+else SHALL be declined so it springs back, rather than opening a tab named after
+something that is not a file.
+
+**The operation offered SHALL be one the drag permits.** An external file drag
+offers copy; answering with move is a drop that silently does nothing and is
+indistinguishable from not accepting the drag at all.
+
+Several files SHALL open several tabs, in the order they were dropped, with the
+last in front, and none of them provisional — a preview tab is the answer to a
+single click, and a drag is deliberate.
+
+#### Scenario: a file from the Finder
+
+- **GIVEN** a window open on a project
+- **WHEN** a file is dragged from the Finder onto the editor
+- **THEN** it opens in a tab in that group
+
+#### Scenario: a file from outside the project
+
+- **WHEN** a file that lies outside the project is dropped
+- **THEN** it opens and is readable, as it does when opened from a terminal
+
+#### Scenario: several at once
+
+- **WHEN** three files are dropped together
+- **THEN** three tabs open, and the last is in front
+
+#### Scenario: something that is not a file
+
+- **WHEN** a web address is dragged onto the editor
+- **THEN** nothing opens and the drag springs back
+
+#### Scenario: a tab is still a tab
+
+- **GIVEN** a tab dragged from another group
+- **WHEN** it is dropped on a zone of this group
+- **THEN** it splits the group as it does today
+
+### Requirement: Dropping a file does not change the window's project
+
+A dropped file SHALL open in the window it was dropped on, and that window's
+project SHALL NOT change because of it. The tree, the git state, the run
+configurations, the language servers and the remembered session all belong to the
+project; re-pointing them is a large answer to a small gesture.
+
+This is deliberately unlike a file dropped on the **Dock icon**, which is
+addressed to the application rather than to a window and so has to find one, and
+opens the project enclosing the file. A file dropped on a window is addressed to
+that window.
+
+#### Scenario: a file from another repository
+
+- **GIVEN** a window open on one project
+- **WHEN** a file belonging to a different checkout is dropped on the editor
+- **THEN** it opens in a tab
+- **AND** the window is still on the project it was on
+
+#### Scenario: a file already inside the project
+
+- **WHEN** a file from the open project is dropped
+- **THEN** it opens, the same as double-clicking it in the tree
+
+### Requirement: A dropped folder opens as a project
+
+A folder dropped on an editor group SHALL be opened as a project, not as a set of
+tabs and not refused. A folder means a project everywhere else here — `abydos
+<dir>`, the Dock icon, the project switcher — and this SHALL add no further
+variant: it goes through the same opening as those, so it honours the setting for
+whether a project takes this window or a new one, and raises the existing window
+where that project is already open.
+
+A drag holding both files and folders SHALL open the folders first and then the
+files, **into the window the folder opened**. The other order loses the file: it
+is opened into the project being left, and switching restores the arriving
+project's session over the top of it — measured, and it discarded the file
+entirely. With several folders the first takes the files, being the one the drop
+was aimed at.
+
+#### Scenario: a folder from the Finder
+
+- **WHEN** a folder is dropped on the editor
+- **THEN** it opens as a project, the way opening it from the switcher does
+
+#### Scenario: a folder already open
+
+- **GIVEN** a window already showing that project
+- **WHEN** the folder is dropped
+- **THEN** that window is raised rather than a second one appearing
+
+#### Scenario: a folder and a file together
+
+- **WHEN** both are dropped in one drag
+- **THEN** the folder opens as a project
+- **AND** the file is open in that project's window, not lost with the one that
+  was left
+
+### Requirement: The side buttons go back and forward
+
+A mouse's side buttons SHALL move through the navigation history — button 3 back,
+button 4 forward — the same history ⌘[ and ⌘] move through, with the same rules
+about when a step is possible and the same handling of a file deleted since.
+
+They SHALL work wherever the pointer is in the window: over the editor, the tree,
+the panes and the terminal. The window handles them, so no view has to opt in,
+and a view that wants a side button for something of its own can still take it.
+
+**They SHALL act on release rather than on press.** A navigation changes what is
+on screen, and a button held while the hand is still deciding should not have
+moved anything. The press SHALL be consumed so that nothing else sees a stray
+one.
+
+Where there is nowhere to go — no earlier place in the history, or no later one —
+the button SHALL do nothing, which is the answer the menu items already give by
+being disabled.
+
+#### Scenario: back over the editor
+
+- **GIVEN** somewhere visited earlier in this window
+- **WHEN** the back side button is pressed and released over the editor
+- **THEN** the editor returns to it, as ⌘[ would
+
+#### Scenario: forward again
+
+- **GIVEN** a step back just taken
+- **WHEN** the forward side button is used
+- **THEN** the editor returns to where it was
+
+#### Scenario: over the terminal
+
+- **WHEN** the back side button is used with the pointer over a terminal
+- **THEN** the editor goes back, and nothing is sent to the terminal program
+
+#### Scenario: nowhere to go
+
+- **GIVEN** a window with nothing earlier in its history
+- **WHEN** the back side button is used
+- **THEN** nothing happens
+

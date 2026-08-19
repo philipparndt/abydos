@@ -728,3 +728,55 @@ copies.
 - **When** the first is closed
 - **Then** its pseudo-terminal is freed rather than held open by the second
   pane's program
+
+## Requirement: Only the middle button is forwarded, and a button that is not travels up
+
+A pane reads which button an `otherMouse` event carries and forwards only the
+middle one to the program.
+
+macOS raises those events for button 2 — the middle — and for 3 and 4, the side
+buttons. All three used to be forwarded as `.middle`, which is button 1 on the
+wire, and middle click in a terminal is commonly paste: a side button pressed
+over a pane could put the selection into somebody's shell. `MouseButtons` says
+which number means what, once, because the window reads the same numbers to
+navigate on and two answers to "is this the middle button" is how this happened.
+
+**A button the pane does not act on travels up rather than being consumed.**
+Both branches used to return without calling `super` — the one for a program
+that is not tracking the mouse, and the one where the forward is declined,
+whether for a held shift or because the emulator had nothing to encode — so
+these events stopped at the pane and nothing above it could ever see them. That
+is what made the side buttons do nothing over the pane people have open most,
+and it is worth stating apart from the middle-click bug: fixing either alone
+leaves the gesture half-working.
+
+The middle button's own behaviour is unchanged, including that a program which
+is not tracking the mouse is sent nothing.
+
+**Side buttons are not forwarded to the program at all**, in any branch, and
+that is a decision rather than an omission: `TerminalEmulator.MouseButton` is
+left, middle, right, none and the two scroll codes. There is no code for a side
+button, and inventing one to send to programs that mostly do not read it is a
+larger change with no report behind it. A program that genuinely wants those
+buttons cannot be told about them today.
+
+### Scenario: a side button over a program that tracks the mouse
+
+- **Given** a pane running a program that has asked for mouse events
+- **When** a side button is pressed and released
+- **Then** the program receives nothing
+- **And** the event reaches the window, which navigates on it
+
+### Scenario: the middle button, forwarded as it was
+
+- **Given** the same program
+- **When** the middle button is pressed and released
+- **Then** it is encoded as button 1 and written to the program, exactly as
+  before
+- **And** the window never sees it
+
+### Scenario: a program that is not tracking the mouse
+
+- **When** the middle button is pressed
+- **Then** nothing is sent to it, as before
+

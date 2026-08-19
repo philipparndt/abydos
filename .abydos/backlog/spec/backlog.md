@@ -45,6 +45,67 @@ work up from.
 - **When** the pane is shown
 - **Then** there is no switch, and the pane is exactly what it was
 
+## Requirement: The pane follows the project the window is showing
+
+The pane shows whichever project the window is on, and follows a switch without
+being closed and reopened. It is one pane per window, made once and kept — and
+keeping it must not mean keeping the project it was made for.
+
+`BacklogPane` was built with its `Backlog` and its `OpenSpec` bound at birth, so
+`reload()` after a switch re-read the folders of the project that was *left*.
+Nothing in `switchProject` said otherwise: it captures and restores the editor
+session, the terminals, the tmux window, the subproject path, the run
+configuration, the Xcode destinations and the breakpoints, and mentions the
+backlog nowhere. Panel sessions survive a switch — they are cleared when the
+*window* closes — so the pane sat there showing another project's work.
+
+Everything the pane worked out from the project is worked out again: whether
+there is a backlog, whether there is an `openspec/`, and therefore which record
+is shown and whether the switch between them is offered at all.
+
+**The pane stops watching the project it left.** A watcher is started only where
+there is none, so one kept across a switch is a pane woken by a folder it no
+longer shows and never by the one it does — right when it is opened and stale a
+moment later, which is harder to notice than being stale throughout.
+
+It is told when the *project* changes, not when the working directory does. Those
+are different: the working directory is also set to a subproject scope, and a
+backlog is the repository's — one `.abydos/backlog`, one `openspec/`, both at the
+top — so a pane told that way would empty itself the moment somebody stepped into
+a subproject.
+
+A pane nobody has opened is not opened by a switch.
+
+### Scenario: navigating to another repository
+
+- **Given** the pane open on one project
+- **When** the window follows a terminal into another repository
+- **Then** the pane shows the second project's work, without being reopened
+
+### Scenario: a project that keeps its work only in openspec
+
+- **Given** the pane showing a backlog
+- **When** the window switches to a project with `openspec/` and no backlog
+- **Then** the pane shows the changes, and offers no switch to a record that is
+  not there
+
+### Scenario: a file touched in the project that was left
+
+- **When** an item is written into the first project's folder after the switch
+- **Then** the board does not move
+
+### Scenario: no pane open
+
+- **Given** a window with no backlog pane
+- **When** the project is switched
+- **Then** no pane is opened
+
+### Scenario: entering a subproject
+
+- **When** a subproject is entered
+- **Then** the pane still shows the repository's records, because that is where
+  they are
+
 ## Requirement: A change's state is derived, and therefore not draggable
 
 An OpenSpec change is a directory of markdown under `openspec/changes/<name>/`:
@@ -53,36 +114,95 @@ two-key `.openspec.yaml` beside them. **It has a name and no number, and nothing
 in it records a state** — so where an item's state is the folder it sits in, a
 change's is worked out from what is on the disk:
 
+**The columns are OpenSpec's own, not the backlog's folders**, and each source
+brings its own set. Measured against the installed CLI, OpenSpec answers in three
+vocabularies at three levels: `openspec list` says `no-tasks`/`in-progress`/
+`complete`, `openspec status` says `done`/`ready`/`blocked` per artifact, and
+`openspec instructions apply` says `blocked`/`ready`/`all_done`. The board takes
+the last, because "can this be picked up" is the question a board answers and is
+what `ready` means on the backlog's board too:
+
 | column | when |
 | --- | --- |
-| Open | no `tasks.md` yet — still being written |
-| Ready | `tasks.md` with nothing ticked |
-| In progress | some ticked, some not |
-| Completed | every task ticked |
+| Writing | an artifact `apply` requires is missing |
+| Ready | every required artifact is there and no task is ticked |
+| In progress | some tasks ticked, some not |
+| Complete | every task ticked, and not yet archived |
+| Archived | under `changes/archive/` |
 
 Waiting is never answered for a change. Nothing in one says it is stuck on
 something, and a marker invented here would be a format this project made up and
 then had to keep.
 
+**Ready and In progress are one state to `openspec list`**, which calls both
+`in-progress` because it only counts tasks. The board separates them on purpose
+— "nobody has started" against "somebody is in the middle of this" is most of
+what a board is for — and nothing reports a different answer to anything but the
+eye. **`isComplete` from the CLI is not read as finished**: it means every
+artifact needed to *start* exists, so a change with a full set of documents and
+nothing ticked has it.
+
+A change written in a schema this reader does not know is **named rather than
+placed**: it goes to Writing with the schema on its card. The states above are
+readable from a directory listing because `spec-driven`'s `apply.requires` is
+`[tasks]` and `tasks` requires `specs` and `design`, which require `proposal` —
+so `tasks.md` implies the chain. That is true of exactly one schema.
+
 Its fraction is the `- [x]` against the `- [ ]` in `tasks.md`, counted by the
 same function that counts an item's `## Steps` — one parser, so a fraction means
 the same thing on either card. A change with no `tasks.md` has no fraction at
-all rather than `0/4`, and its card says which documents are written instead.
+all rather than `0/4`, and its card says which documents are written and which
+one is wanted next.
 
 **A card for a change does not drag, and says why rather than merely not
 moving.** An item drags between columns because moving its file *is* the change
 of state; a change's column is read out of its files, so a drag could only mean
 ticking or unticking checkboxes in a file nobody opened.
 
-Archived changes — those under `changes/archive/` — are not a column. That is
-`history`'s argument exactly: a long column beside four short ones is a wall
-with the work hidden behind it, so they are in the list instead.
+**Archived changes are a column, and it is the last one.** That was written the
+other way round — "not a column, which is `history`'s argument exactly" — and
+the argument does not carry across. The backlog keeps `history` off its board
+because it is 390 records from before the backlog existed *while `completed/` is
+on the board beside it*; OpenSpec has no `completed/` at all, so a change moves
+to `changes/archive/` the moment it is done. Borrowing the argument put every
+finished change out of sight: a project that had just archived nine of them
+showed five empty columns.
+
+It only grows. When the column is longer than the board is tall it wants
+collapsing or a date cut, and that is a separate item with a real number behind
+it rather than a guess made now.
+
+**A card offers the command that starts work on it**, where there is work to
+start: `/opsx:apply <name>`, on a change in Ready or In progress. Not `openspec
+apply` — there is no such verb; applying is `openspec instructions apply
+--change <name>` printing what to do and an agent then doing it. Unlike the
+archive command below it needs no CLI found, because it is typed into an
+assistant rather than a terminal.
 
 ### Scenario: a change part-way through
 
 - **Given** a change whose `tasks.md` has 4 of 30 ticked
 - **When** the board is shown
 - **Then** its card is in In progress and says 4/30
+
+### Scenario: a change nobody has started
+
+- **Given** a change with every required artifact and nothing ticked
+- **When** the board is shown
+- **Then** its card is in Ready, not in In progress
+
+### Scenario: a project whose changes are all archived
+
+- **Given** a project with nine archived changes and no active ones
+- **When** the board is shown
+- **Then** the nine are in the Archived column rather than the board being empty
+
+### Scenario: a change waiting to be picked up
+
+- **Given** a card in Ready
+- **When** its menu is opened
+- **Then** it offers `/opsx:apply <name>` to copy, whether or not the CLI is
+  installed
 
 ### Scenario: a box ticked somewhere else
 
@@ -153,26 +273,90 @@ neither the branch on the card nor the three menu entries appear for it.
 - **When** its menu is opened
 - **Then** none of the three is offered, and the card does not draw the branch
 
-## Requirement: A project with no backlog is offered one
+## Requirement: A project with no record of work is offered both kinds
 
-Where there is no `.abydos/backlog`, the pane says so rather than drawing an
-empty board, and offers to make one — through the same code `abydos-backlog
-init` runs, for the assistants installed on this machine. Once it is made the
-pane shows the board without being reopened, and opens the workflow document,
-which is what `init` on the command line says to read next.
+Where there is neither `.abydos/backlog` nor `openspec/`, the pane says so
+rather than drawing an empty board, and offers both records it can read. It
+offered a backlog and only a backlog for as long as that was the only one there
+was; the source switch made `openspec/` the other half of this pane and left the
+empty state telling a project with nothing that it had one option.
 
-### Scenario: opening the backlog in a project that has none
+**Making a backlog** is the same code `abydos-backlog init` runs, for the
+assistants installed on this machine, behind a sheet that says so first — which
+is the only chance to say what is about to be written. Once it is made the pane
+shows the board without being reopened, and opens the workflow document, which
+is what `init` on the command line says to read next.
 
-- **Given** a project with no `.abydos/backlog`
+**Setting up OpenSpec** opens a terminal in the project and runs `openspec init`
+there, with no sheet in front of it. That command asks which assistants to write
+slash commands and skills for, and the answers write files into somebody's
+repository: `--tools all` writes two dozen tools' worth of them, `--tools none`
+leaves a directory no assistant can drive, and a sheet of ours would be a worse
+copy of a question the command asks well. So it is asked where it can be
+answered. Nothing is claimed until the directory exists, and the pane does not
+wait to be asked: while it is showing this offer it looks again every couple of
+seconds, so a record made in the terminal beside it — or by anybody else —
+replaces the offer with a board on its own.
+
+**That is a poll, and it is one on purpose.** A watcher cannot be started on a
+directory that does not exist, which is exactly the state this offer is shown
+in; watching the project root instead means watching a whole source tree to
+notice one folder, and it would not even work, because `openspec init` makes
+`openspec/` before `openspec/changes` and the event would arrive while there is
+still nothing to read. Two `fileExists` calls every two seconds, only while
+there is nothing at all to show, stopped for good the moment there is
+something.
+
+Coming back to the pane re-reads it too, which is the case the poll does not
+cover: a project that keeps one record and gains the other, where nothing under
+the folder being watched has changed at all.
+
+Each offer names the command it is, so it can be typed instead. Where the
+`openspec` CLI is not on the machine, its offer says so and how to get it rather
+than being a button that runs nothing — found through the same login-shell
+search everything else uses, because on this machine the tool lives under an fnm
+directory with a shell's PID in its name.
+
+The offer is drawn the way the editor draws a file it cannot show: an icon, a
+name, one line of reason, and a row of buttons. The button itself has one
+implementation, shared between the two, which is the half of the resemblance
+that cannot drift.
+
+### Scenario: opening the pane in a project that keeps neither
+
+- **Given** a project with no `.abydos/backlog` and no `openspec/`
 - **When** the backlog is shown
-- **Then** it says the project has no backlog and offers to make one, and names
-  `abydos-backlog init` as the same thing from a terminal
+- **Then** it names the project, says there is neither, and offers both — naming
+  `abydos-backlog init` and `openspec init` as the same things from a terminal
 
-### Scenario: making one
+### Scenario: making a backlog
 
 - **Given** that offer, agreed to
 - **Then** the state folders, the workflow, `project.md`, the spec and the
   instruction files are written, and the pane shows the board over them
+
+### Scenario: setting up OpenSpec
+
+- **Given** the same offer, and `openspec` installed
+- **When** the OpenSpec button is used
+- **Then** a terminal opens in the project running `openspec init`, waiting on
+  its own first question
+- **And** when that finishes, the pane replaces the offer with a board by
+  itself, without being closed and opened again
+
+### Scenario: a record made while the offer is up
+
+- **Given** the offer showing, and nobody touching the pane
+- **When** an `openspec/changes` or a `.abydos/backlog` appears — from the
+  terminal beside it, from another window, or from somebody else's checkout
+- **Then** the pane shows the board within a couple of seconds
+
+### Scenario: a machine without the tool
+
+- **Given** no `openspec` anywhere the login shell can see
+- **Then** the OpenSpec offer cannot be pressed, says how to install it, and the
+  terminal line drops the command nothing here could run
+- **And** the backlog offer is unaffected
 
 ## Requirement: An item filed from the pane lands in open
 

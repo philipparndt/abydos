@@ -139,6 +139,74 @@ refusal is not remembered about the server that was never chosen.
 - **Then** the two are held apart, and the second does not find the first's
   entry
 
+## Requirement: A file is answered by the server whose root owns it
+
+Which server answers about a file is decided by **the file**, not by the scope.
+The root is the nearest directory at or above the file that holds that language's
+root markers, searched upward and stopping at the project; a file with no such
+ancestor is filed under the project, which is what every file was filed under
+before.
+
+The scope is not that answer and never was. `scopeRoot` says which launch
+configurations there are, which module a build runs in, which tree git acts on —
+questions about what somebody is *working on*. Handing it in as the root to
+search from produced two faults from one line:
+
+- **Silence.** The marker search runs *downward*, two levels. With the scope on
+  `go-service`, the hunt for `Package.swift` began at `go-service` and went down,
+  found none, and started no Swift server at all — so a Swift file open in front
+  of somebody got no completion, no hover, no diagnostics and no navigation, and
+  nothing was logged as wrong. It reads as "it only works when the right
+  subproject is activated".
+- **The wrong module, answered confidently.** With nothing scoped, the downward
+  search is breadth-first and takes the first markers it meets. Three `go.mod`s
+  side by side means a file in one module can be answered by a server rooted in
+  another. That one does not go silent.
+
+The root is worked out once, when a file is opened, and carried with it. Every
+later question must use the same one: a file opened at one server and asked about
+through another reaches a server that has never heard of it, which answers
+nothing and is indistinguishable from the fault above.
+
+Servers are started on demand, so a subproject nobody has opened a file from
+starts nothing.
+
+**What still belongs to the scope**: runs, git, launch configurations, the module
+a build uses, the list of servers a project has or is missing, and a workspace
+symbol search — that last one because "the workspace" is what somebody is working
+on, which is what the scope means.
+
+### Scenario: a Swift file while a Go module is scoped
+
+- **Given** a checkout holding a Swift package and a Go module side by side
+- **And** the scope set to the Go module
+- **When** a symbol is followed from a file in the Swift package
+- **Then** it is answered by the Swift package's own server
+
+### Scenario: one of several modules
+
+- **Given** three Go modules side by side
+- **When** a file in the third is asked about
+- **Then** the server rooted at the third answers, not the first found
+
+### Scenario: a file in no subproject
+
+- **Given** a file with no package or module above it inside the project
+- **When** it is asked about
+- **Then** it is filed under the project root
+
+### Scenario: the scope changes while a file is open
+
+- **Given** a file open and answered
+- **When** another subproject is scoped
+- **Then** the same server goes on answering about that file
+
+### Scenario: a package inside a package
+
+- **Given** an example package inside a larger one
+- **When** a file in the inner package is asked about
+- **Then** the inner package's root answers, being the nearer
+
 ## Requirement: What is running can be seen and stopped
 
 View ▸ Running Servers and Containers lists the language servers and containers
