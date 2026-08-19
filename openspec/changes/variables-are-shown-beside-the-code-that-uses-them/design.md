@@ -20,6 +20,11 @@ and the blame column is `ceil(18 * charWidth)`. So the x of the end of a line is
 arithmetic, not layout — which is what makes an end-of-line annotation cheap.
 Blame is drawn as a column *left* of the gutter and is not the mechanism here.
 
+**And there is already an annotation at the end of a line**, which this design
+originally said there was not: `drawInlineDiagnostic` draws a language server's
+message past the glyphs, dimmed, truncating rather than wrapping, and gives up
+when fewer than eight characters of room are left. Everything below follows it.
+
 The cost rule this sits under is the house one: anything on a drawing path is
 written knowing it, and there is a timed test asserting the editor draws fast
 enough to do while somebody types.
@@ -72,6 +77,20 @@ over a line of text and the variables in scope, answering what to draw and where
 substring of a longer identifier, a name appearing twice) and the part a suite
 can hold. The view then draws the strings it is handed. Putting the matching in
 the view would make every one of those cases a screenshot.
+
+**And not after a dot** — decided while implementing, and stricter than the
+spec's word-boundary rule rather than in tension with it. `self.count` and
+`shape.width` are members of something else, and drawing the local `count`'s
+value beside an expression about a field that happens to share its name is
+exactly the failure this feature must not have. The receiver is still matched:
+`count.description` is a hint about `count`.
+
+**`onVariablesChanged` had to become a list.** It is a single closure and
+`DebugPane` sets it to rebuild its tree; the editor wants the same moment. A
+second `=` would have left whichever ran last as the only one told — silently,
+and looking exactly like a feature that does not work. `observeVariables`
+follows `observeState` and `observeStopped`, which are lists for the same
+reason.
 
 **Word boundaries, not `contains`.** `count` must not match `counter`,
 `account`, or `count` inside `"count"` in a string literal. The tokens on a line

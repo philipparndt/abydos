@@ -12,7 +12,9 @@ languages evaluating runs the debuggee's own code, and drawing a hint must not
 be able to change the program being debugged.
 
 A name SHALL match only as a whole token, so that `count` is not found inside
-`counter` or `account`.
+`counter` or `account`, and a name SHALL NOT match where it follows a dot: in
+`self.count` and `shape.width` the name belongs to something else, and the local
+of that name is a different thing.
 
 Values SHALL be drawn only for lines at or above the line execution stopped at.
 Below it a value is either left over from a previous pass or not yet assigned,
@@ -44,6 +46,12 @@ Nothing SHALL be drawn, and nothing computed, while no session is stopped.
 - **GIVEN** a frame with a variable named `count`
 - **WHEN** a line reads `accountTotal = counter + 1`
 - **THEN** nothing is drawn for it
+
+#### Scenario: a name that belongs to something else
+
+- **GIVEN** the same frame
+- **WHEN** a line reads `self.count`
+- **THEN** nothing is drawn for it, the local of that name not being that field
 
 #### Scenario: nothing is running
 

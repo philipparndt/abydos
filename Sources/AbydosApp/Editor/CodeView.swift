@@ -37,6 +37,15 @@ final class CodeView: NSView, NSTextInputClient {
 	/// Debugger state for this file: breakpoint lines and where execution stopped.
 	private var breakpointLines: [Int: BreakpointMark] = [:]
 	private var executionLine: Int?
+
+	/// The variables of the frame execution stopped in, by name, or nil while
+	/// nothing is stopped.
+	///
+	/// A dictionary rather than text per line: it is built once per stop, and a
+	/// row's drawing is then a scan of that row's tokens against it. Nothing is
+	/// worked out for a file this frame is not in — the editor does not hand it
+	/// one — and nothing at all while this is nil, which is the ordinary state.
+	private var inlineValues: [String: String]?
 	/// 1-based lines that have something runnable on them, and the click that
 	/// runs it.
 	private var runnableLines: Set<Int> = []
@@ -735,6 +744,7 @@ final class CodeView: NSView, NSTextInputClient {
 
 		drawDiagnostics(docLine: docLine, ctLine: ctLine, lineStartUTF16: lineStartUTF16, rect: rect)
 		drawInlineDiagnostic(docLine: docLine, ctLine: ctLine, rect: rect)
+		drawInlineValues(docLine: docLine, text: text, ctLine: ctLine, rect: rect)
 		drawNavigableWord(docLine: docLine, ctLine: ctLine, lineStartUTF16: lineStartUTF16, rect: rect)
 
 		// A collapsed region gets a "{…}" chip after its first line.
@@ -883,6 +893,67 @@ final class CodeView: NSView, NSTextInputClient {
 			width: available,
 			height: text.size().height
 		))
+	}
+
+	/// What the variables on this line are, while execution is stopped above it.
+	///
+	/// **The same shape as the inline diagnostic above**, deliberately: an
+	/// annotation at the end of a line already had a way of being drawn here —
+	/// placed past the glyphs, truncating rather than wrapping, dimmed, and
+	/// given up on when there is no room left. A second way of doing it would
+	/// have been a second set of decisions about all of that.
+	///
+	/// **Only at or above the line execution stopped on.** Below it a value is
+	/// either left over from a previous pass or has not been assigned at all,
+	/// and it would be drawn in the same grey as one that is true.
+	///
+	/// One `guard` when nothing is stopped, which is nearly always.
+	private func drawInlineValues(docLine: Int, text: String, ctLine: CTLine, rect: NSRect) {
+		guard let inlineValues, let executionLine, docLine <= executionLine else { return }
+
+		let hints = InlineValues.hints(in: text, from: inlineValues)
+		guard !hints.isEmpty else { return }
+
+		let lineWidth = CGFloat(CTLineGetTypographicBounds(ctLine, nil, nil, nil))
+		let x = textOriginX + lineWidth + charWidth * 3
+		let available = bounds.maxX - x - Theme.current.scaled(12)
+		guard available > charWidth * 8 else { return }
+
+		let paragraph = NSMutableParagraphStyle()
+		paragraph.lineBreakMode = .byTruncatingTail
+		let drawn = NSAttributedString(
+			string: hints.map(\.text).joined(separator: "   "),
+			attributes: [
+				.font: Theme.current.editorFont,
+				.foregroundColor: Theme.current.gitIgnored,
+				.paragraphStyle: paragraph,
+			]
+		)
+		drawn.draw(in: NSRect(
+			x: x,
+			y: rect.maxY - baselineOffset - drawn.size().height * 0.78,
+			width: available,
+			height: drawn.size().height
+		))
+	}
+
+	/// Every line of this file that has values beside it, for a driver to print.
+	///
+	/// A photograph shows that *something* is drawn at the end of a line; it
+	/// cannot be diffed, and at the width a value gets it cannot always be read.
+	/// This is the same answer the drawing uses, from the same function.
+	func inlineValueReportForTesting() -> String {
+		guard let inlineValues, let executionLine, let document else {
+			return "nothing is stopped here"
+		}
+		var lines: [String] = []
+		for docLine in 0...min(executionLine, max(document.lineCount - 1, 0)) {
+			let text = document.rope.string(in: document.rope.lineByteRange(docLine))
+			let hints = InlineValues.hints(in: text, from: inlineValues)
+			guard !hints.isEmpty else { continue }
+			lines.append("  \(docLine + 1): \(hints.map(\.text).joined(separator: "   "))")
+		}
+		return lines.isEmpty ? "no line names a variable in this frame" : lines.joined(separator: "\n")
 	}
 
 	/// Underlines what a language server objects to on this line.
@@ -1606,6 +1677,18 @@ final class CodeView: NSView, NSTextInputClient {
 	}
 
 	/// The line execution is stopped on, or nil when not stopped here.
+	/// The values to draw beside the code, or nil while nothing is stopped.
+	///
+	/// Beside `setExecutionLine` and `setBreakpoints` because it is the same
+	/// kind of thing — per-file debug state the editor pushes in — and it
+	/// arrives by the same route, `EditorViewController.applyDebugState`.
+	func setInlineValues(_ values: [String: String]?) {
+		let wanted = (values?.isEmpty ?? true) ? nil : values
+		guard wanted != inlineValues else { return }
+		inlineValues = wanted
+		needsDisplay = true
+	}
+
 	func setExecutionLine(_ line: Int?) {
 		guard line != executionLine else { return }
 		executionLine = line

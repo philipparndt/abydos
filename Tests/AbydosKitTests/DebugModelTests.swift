@@ -228,6 +228,36 @@ struct EndOfSessionTests {
 		)
 	}
 
+	/// **A value drawn over running code is the worst thing this can do.** The
+	/// editor draws what was true at the last stop in the same grey as what is
+	/// true now, so the moment the program is let go the values have to be gone
+	/// — and they are cleared where the state changes rather than in `resume`,
+	/// `stepOver`, `stepInto` and `stepOut`, which is four places to forget.
+	@Test func lettingTheProgramGoTakesTheValuesOffTheCode() {
+		let session = makeSession()
+		running(session)
+		session.setStateForTesting(.stopped(reason: "breakpoint"))
+		#expect(session.inlineValues?.values["n"] == nil)
+		#expect(session.inlineValues?.file == "/p/main.go")
+		#expect(session.inlineValues?.line == 40)
+
+		session.setStateForTesting(.running)
+
+		#expect(session.inlineValues == nil)
+	}
+
+	/// And the other ending: a program that has gone leaves nothing beside the
+	/// code either.
+	@Test func aSessionThatEndedLeavesNoValuesOnTheCode() {
+		let session = makeSession()
+		running(session)
+		#expect(session.inlineValues != nil)
+
+		session.stop()
+
+		#expect(session.inlineValues == nil)
+	}
+
 	/// **`threads` was cleared by nothing anywhere in the file.** The frames and
 	/// the scopes were emptied on both paths and the goroutines were left, so
 	/// the list belonged to a process that had ended.

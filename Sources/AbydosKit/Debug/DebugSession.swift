@@ -169,6 +169,13 @@ public final class DebugSession {
 	public private(set) var state: State = .idle {
 		didSet {
 			guard state != oldValue else { return }
+			// **Nothing is drawn beside the code while nothing is stopped.**
+			// A value that was true at the last breakpoint is not true a
+			// microsecond after `continue`, and the editor draws it in the same
+			// grey either way. Cleared here rather than in `resume`, `stepOver`,
+			// `stepInto` and `stepOut` separately, which is four places to
+			// forget.
+			if case .stopped = state {} else { inlineValues = nil }
 			let current = state
 			onMain { [weak self] in
 				guard let self else { return }
@@ -190,6 +197,14 @@ public final class DebugSession {
 
 	public private(set) var stackFrames: [StackFrame] = []
 	public private(set) var scopes: [Scope] = []
+	/// What the editor should draw beside the code, or nil while nothing is
+	/// stopped.
+	///
+	/// Built once per stop and per frame change rather than asked for per line:
+	/// the names of a frame's variables are a dictionary, and a row's drawing is
+	/// then a scan of that row's tokens against it. See `InlineValues`.
+	public private(set) var inlineValues: InlineValueSet?
+
 	/// Frame whose variables are shown.
 	public private(set) var selectedFrameID: Int?
 
@@ -218,6 +233,27 @@ public final class DebugSession {
 
 	public func observeStopped(_ observer: @escaping (String, Int) -> Void) {
 		stoppedObservers.append(observer)
+	}
+
+	/// Told when the frame's variables have been read again. **A list, and it
+	/// had to become one**: `onVariablesChanged` is a single closure and the
+	/// debug pane sets it to rebuild its tree. The editor wants the same moment
+	/// to draw the values beside the code, and a second `=` would have left
+	/// whichever ran last as the only one told — silently, and looking exactly
+	/// like a feature that does not work.
+	private var variablesObservers: [() -> Void] = []
+
+	public func observeVariables(_ observer: @escaping () -> Void) {
+		variablesObservers.append(observer)
+	}
+
+	/// Everything that wants to know the variables changed, told at once.
+	private func sayVariablesChanged() {
+		onMain { [weak self] in
+			guard let self else { return }
+			self.onVariablesChanged?()
+			for observer in self.variablesObservers { observer() }
+		}
 	}
 
 	private let client: DAPClient
@@ -856,13 +892,16 @@ public final class DebugSession {
 	private func clearWhatTheProgramLeftBehind() {
 		stackFrames = []
 		scopes = []
+		inlineValues = nil
 		threads = []
 		selectedThreadID = nil
 		onMain { [weak self] in
 			self?.onStackChanged?()
-			self?.onVariablesChanged?()
 			self?.onThreadsChanged?()
 		}
+		// Through the one function that tells everybody, so that a pane emptied
+		// in silence cannot happen to the observers either.
+		sayVariablesChanged()
 	}
 
 	// MARK: - Execution control
@@ -1016,6 +1055,18 @@ public final class DebugSession {
 		self.selectedThreadID = threads.first?.id
 		self.stackFrames = frames
 		self.scopes = scopes
+		if let frame = frames.first, let file = frame.file {
+			self.inlineValues = InlineValueSet(
+				file: file, line: frame.line, values: InlineValues.byName(scopes)
+			)
+		}
+	}
+
+	/// The state an adapter would have left, without an adapter. Internal, like
+	/// `fillForTesting`, and for the same reason: what a session throws away
+	/// when a program starts running again cannot be asserted otherwise.
+	func setStateForTesting(_ wanted: State) {
+		state = wanted
 	}
 
 	/// Re-reads the list of goroutines.
@@ -1215,7 +1266,18 @@ public final class DebugSession {
 		}
 
 		scopes = loaded
-		onMain { [weak self] in self?.onVariablesChanged?() }
+		// The frame's own file and line: a variable is in scope in the frame it
+		// belongs to, so every other file gets nothing — the same rule the
+		// execution marker follows.
+		let frame = stackFrames.first { $0.id == id }
+		if let file = frame?.file, let line = frame?.line {
+			inlineValues = InlineValueSet(
+				file: file, line: line, values: InlineValues.byName(loaded)
+			)
+		} else {
+			inlineValues = nil
+		}
+		sayVariablesChanged()
 	}
 
 	/// Children of a variable container.
@@ -1240,7 +1302,7 @@ public final class DebugSession {
 		var scope = scopes[scopeIndex]
 		scope.variables = await toggle(in: scope.variables, path: path)
 		scopes[scopeIndex] = scope
-		onMain { [weak self] in self?.onVariablesChanged?() }
+		sayVariablesChanged()
 	}
 
 	private func toggle(in variables: [Variable], path: [Int]) async -> [Variable] {

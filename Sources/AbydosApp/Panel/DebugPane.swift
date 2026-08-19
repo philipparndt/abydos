@@ -403,7 +403,7 @@ final class DebugPane: NSView {
 				self.stackTable.selectRowIndexes([0], byExtendingSelection: false)
 			}
 		}
-		session.onVariablesChanged = { [weak self] in
+		session.observeVariables { [weak self] in
 			self?.rebuildVariableTree()
 		}
 		session.onWatchesChanged = { [weak self] in

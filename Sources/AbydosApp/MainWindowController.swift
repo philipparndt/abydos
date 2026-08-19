@@ -1877,6 +1877,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		let stoppedAt = executionMarker.map { "\(($0.file as NSString).lastPathComponent):\($0.line)" }
 			?? "not stopped"
 		print("INSPECT: stopped at \(stoppedAt)")
+		// What the editor is drawing beside the code, which is the half of a
+		// stop that used to be readable only in the panel.
+		print("VALUES:\n\(editor.inlineValueReportForTesting())")
 		bottomPanel.exerciseDebugExtrasForTesting()
 
 		// And the editor's way in, which is the one somebody actually uses:
@@ -1907,6 +1910,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		let where_ = executionMarker.map { "\(($0.file as NSString).lastPathComponent):\($0.line)" }
 			?? "not stopped"
 		print("DEBUG: step \(step) state=\(session.isActive ? "active" : "inactive") at \(where_)")
+		// What is beside the code at this step, which is the claim that the
+		// values follow execution rather than being drawn once and left.
+		print("VALUES:\n\(editor.inlineValueReportForTesting())")
 
 		if step == 0 {
 			bottomPanel.writeDebugToolbarImageForTesting(to: "build/debug-toolbar.png")
@@ -3223,6 +3229,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			guard let self, let session else { return }
 			self.syncBreakpointsToEditor(from: session)
 		}
+		// The values, on every stop and every frame change — the pane rebuilds
+		// its tree from the same callback, and the editor draws the same numbers
+		// at the ends of the lines that name them.
+		session.observeVariables { [weak self, weak session] in
+			self?.editor.setInlineValues(session?.inlineValues)
+		}
 		session.observeStopped { [weak self] file, line in
 			guard let self else { return }
 			// Room to see it, before opening it. Stopping somewhere is the one
@@ -3242,6 +3254,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			case .running, .terminated, .idle:
 				self?.executionMarker = nil
 				self?.editor.setExecutionLocation(file: nil, line: nil)
+				// A value that was true at the last breakpoint is not true a
+				// microsecond after `continue`, and it is drawn in the same grey
+				// either way.
+				self?.editor.setInlineValues(nil)
 			default:
 				break
 			}

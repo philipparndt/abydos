@@ -19,9 +19,15 @@ holds `executionLocation` and pushes per-file debug state into every
 function, `applyDebugState`. The values would ride the same channel, and no new
 route between the debugger and the editor is needed.
 
-What is missing is the third piece: nothing in the editor draws anything at the
-end of a line. Blame is a *column* to the left of the gutter, so it is not the
-mechanism this wants, and there is no inlay-hint machinery in the app at all.
+What is missing is the third piece — the drawing. Blame is a *column* to the
+left of the gutter, so it is not the mechanism this wants.
+
+**Correction, found while implementing this**: the editor does already draw at
+the end of a line. `drawInlineDiagnostic` puts a language server's message
+there, dimmed, truncating rather than wrapping, and gives up when there is no
+room left. So this follows it rather than inventing a second way of placing an
+annotation, and the paragraph above was written from a search for "inlay" that
+found nothing.
 
 Reported as "during debug it would be nice to see the variables directly in the
 source editor". No `.abydos/backlog` item was filed for it.

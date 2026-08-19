@@ -122,3 +122,58 @@ travelled for one session: a stopped program often produces the event as well.
 
 - **When** a stop is followed by the adapter's own `terminated`
 - **Then** the console says so once
+
+## Requirement: A stopped frame shows its variables beside the code that names them
+
+While a session is stopped, the editor draws the value of a variable at the end
+of each line that names it, in the file the selected frame belongs to. The
+values are the ones the adapter has already answered for that frame — its
+scopes and their variables — and **nothing further is asked of the adapter to
+draw them**. No `evaluate`, and no request per line: in several languages
+evaluating runs the debuggee's own code, and drawing a hint must not be able to
+change the program being debugged.
+
+A name matches only as a whole token, and not where it follows a dot. `count` is
+not found inside `counter`, `account` or `discount`, and `self.count` is a field
+of something else rather than the local of that name. Both rules exist because a
+value pinned to the wrong name is drawn in the same grey as one that is right,
+and is read as fact.
+
+Values are drawn only for lines at or above the line execution stopped at. Below
+it a value is either left over from a previous pass or not yet assigned. Each
+hint is one line, truncated where the value is long, drawn after the last
+character so that no code moves, and where a line names several variables they
+appear in the order they occur on it.
+
+Nothing is drawn, and nothing worked out, while no session is stopped: the map
+is thrown away where the state stops being `stopped`, which is one place rather
+than one per stepping verb.
+
+**The same shape as the inline diagnostic**, which was already drawing a
+language server's message at the end of a line — dimmed, truncating rather than
+wrapping, giving up when there is no room. A second way of placing an
+annotation would have been a second set of decisions about all of that.
+
+### Scenario: stopped at a breakpoint
+
+- **Given** a Go program stopped on `fmt.Println(name, count, total, counter)`
+- **Then** the lines above it read `count = 12`, `total = 480   count = 12`,
+  `name = "holder"` and `counter = 13   count = 12`
+- **And** `counter` is not given `count`'s value, nor the other way about
+
+### Scenario: stepping
+
+- **Given** that session stepped a line at a time
+- **Then** the values follow it: a line's value appears once it has been
+  assigned, and the stopped line moves with the stepping
+
+### Scenario: another file open at the same time
+
+- **Given** a second file of the same package open beside it
+- **Then** nothing is drawn beside its code, the frame not being in it
+
+### Scenario: nothing is running
+
+- **Given** a session that has resumed, ended, or never started
+- **Then** no values are drawn, and none are worked out
+

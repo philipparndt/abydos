@@ -755,6 +755,17 @@ final class EditorAreaController: NSViewController {
 		for group in groups { group.setExecutionLocation(file: file, line: line) }
 	}
 
+	/// The stopped frame's variables, for the lines that name them. Every group,
+	/// like the marker: the same file can be open in two of them.
+	func setInlineValues(_ values: InlineValueSet?) {
+		for group in groups { group.setInlineValues(values) }
+	}
+
+	/// What the file in front has beside its code, for a driver to print.
+	func inlineValueReportForTesting() -> String {
+		activeGroup.inlineValueReportForTesting()
+	}
+
 	var hasOpenFiles: Bool { groups.contains { !$0.isEmpty } }
 
 	var currentPlace: (url: URL, line: Int)? { activeGroup.currentPlace }

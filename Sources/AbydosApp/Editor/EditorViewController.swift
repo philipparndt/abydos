@@ -376,6 +376,9 @@ final class EditorViewController: NSViewController {
 	private var runnableLinesByFile: [String: Set<Int>] = [:]
 	/// Where execution is currently stopped.
 	private var executionLocation: (file: String, line: Int)?
+	/// The values of the frame execution is stopped in, and the file they
+	/// belong to. Nil while nothing is stopped, which is when nothing is drawn.
+	private var inlineValues: InlineValueSet?
 
 	// MARK: - View
 
@@ -2060,6 +2063,17 @@ final class EditorViewController: NSViewController {
 		for tab in tabs { applyDebugState(to: tab) }
 	}
 
+	/// The variables of the frame execution is stopped in, to be drawn beside
+	/// the code that names them.
+	///
+	/// The same route the marker, the breakpoints and the runnable lines take:
+	/// one function pushes per-file debug state into every tab, so a second way
+	/// in would be a second place for a tab to be missed.
+	func setInlineValues(_ values: InlineValueSet?) {
+		inlineValues = values
+		for tab in tabs { applyDebugState(to: tab) }
+	}
+
 	/// Marks where execution stopped, clearing it elsewhere.
 	func setExecutionLocation(file: String?, line: Int?) {
 		if let file, let line {
@@ -2093,6 +2107,30 @@ final class EditorViewController: NSViewController {
 		} else {
 			codeView.setExecutionLine(nil)
 		}
+
+		// And so do the values: a variable is in scope in the frame it belongs
+		// to, so every other file gets none. Canonicalised here for the same
+		// reason the breakpoints are — /tmp is a symlink to /private/tmp, and a
+		// frame reached through a symlinked directory would match nothing.
+		if let values = inlineValues, FilePath.canonical(URL(fileURLWithPath: values.file)) == path {
+			codeView.setInlineValues(values.values)
+		} else {
+			codeView.setInlineValues(nil)
+		}
+	}
+
+	/// What each open file has beside its code, for `--debug-inspect`.
+	///
+	/// **Every tab, not the one in front**, because the claim has two halves:
+	/// the frame's file shows its variables, and every other file shows none. A
+	/// report of the front tab alone can only ever say the first.
+	func inlineValueReportForTesting() -> String {
+		guard !tabs.isEmpty else { return "no file is open" }
+		return tabs.map { tab in
+			let name = tab.url.lastPathComponent
+			guard let codeView = tab.codeView else { return "\(name): not a code view" }
+			return "\(name):\n\(codeView.inlineValueReportForTesting())"
+		}.joined(separator: "\n")
 	}
 
 	/// A short selection, suitable for seeding a search field.
