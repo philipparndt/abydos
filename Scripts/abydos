@@ -303,15 +303,67 @@ if [ "$#" -eq 0 ]; then
 	set -- .
 fi
 
+# Where a name is a file that is not there yet.
+#
+# `abydos ~/.config/cuttr/config.yaml` on a path that does not exist used to
+# print "does not exist" and stop, which is not what anybody typing that means:
+# they mean to write it. Every editor started from a shell opens the name and
+# leaves the writing to you, and this now does the same.
+#
+# **The directory has to be there, and that is the whole of the typo check.**
+# `abydos ~/.confgi/x.yaml` still refuses, because the mistake in a mistyped
+# path is nearly always in a directory name — the file is the part you know you
+# have not written yet. Creating the directories too would make every typo a new
+# tree of empty folders, so it is refused and the directory is named.
+#
+# Created empty rather than opened as an unsaved buffer: the app opens files,
+# and a name with nothing behind it is not one. An empty file left by a typo is
+# one `rm` away, and the line on stderr says which.
+would_create=""
+new_file() {
+	# The same shapes `resolve` understands, so `abydos new.md:12` means line 12
+	# of a file to be written rather than a file called `new.md:12`.
+	candidate="$1"
+	candidate_line=""
+	base=${candidate%:*}
+	last=${candidate##*:}
+	if is_number "$last" && [ "$base" != "$candidate" ]; then
+		inner=${base%:*}
+		middle=${base##*:}
+		if is_number "$middle" && [ "$inner" != "$base" ]; then
+			candidate="$inner"
+			candidate_line="$middle"
+		else
+			candidate="$base"
+			candidate_line="$last"
+		fi
+	fi
+	case "$candidate" in
+		*/*) parent=${candidate%/*} ;;
+		*) parent="." ;;
+	esac
+	[ -z "$parent" ] && parent="/"
+	[ -d "$parent" ] || return 1
+	return 0
+}
+
 # Everything is checked before anything is opened. Half of `abydos a.md typo.md`
 # done and then an error is worse than either outcome on its own: two tabs were
-# asked for, one is there, and the message is about the one that is not.
+# asked for, one is there, and the message is about the one that is not. A file
+# to be created is checked in the same pass and written in a second one, for
+# exactly that reason.
 file_count=0
 for target; do
 	if [ -d "$target" ]; then continue; fi
 	if ! resolve "$target"; then
-		echo "abydos: $target does not exist" >&2
-		exit 1
+		if ! new_file "$target"; then
+			echo "abydos: $target does not exist, and neither does $parent" >&2
+			exit 1
+		fi
+		would_create="$would_create$candidate
+"
+		file_count=$((file_count + 1))
+		continue
 	fi
 	if ! absolute "$resolved" > /dev/null; then
 		echo "abydos: $target cannot be reached" >&2
@@ -319,6 +371,28 @@ for target; do
 	fi
 	file_count=$((file_count + 1))
 done
+
+# Written now that every target has been agreed to.
+#
+# Split on newlines only, and no pipeline: a `while read` on the other side of a
+# `|` is a subshell, and an `exit` there ends the subshell rather than this —
+# which would have reported success for a file it had just failed to write.
+if [ -n "$would_create" ]; then
+	saved_ifs=$IFS
+	IFS='
+'
+	for wanted in $would_create; do
+		[ -n "$wanted" ] || continue
+		if : > "$wanted" 2>/dev/null; then
+			echo "abydos: created $wanted" >&2
+		else
+			echo "abydos: $wanted could not be written" >&2
+			IFS=$saved_ifs
+			exit 1
+		fi
+	done
+	IFS=$saved_ifs
+fi
 
 # What the terminal is, asked once and in the order that costs least.
 terminal_present=no

@@ -981,3 +981,50 @@ menu items already give by being disabled.
 - **When** the back side button is used
 - **Then** nothing happens
 
+## Requirement: `abydos <name>` opens a file that is not written yet
+
+`abydos ~/.config/cuttr/config.yaml` on a path that does not exist creates it
+and opens it, rather than refusing.
+
+It refused — *"does not exist"*, and nothing opened — which is not what anybody
+typing that means. A name you have not written yet is the ordinary way to start
+a config file, and every editor reached from a shell opens the name and leaves
+the writing to you.
+
+**The directory has to be there, and that is the whole of the typo check.**
+`abydos ~/.confgi/x.yaml` still refuses, and names the directory it could not
+find: the mistake in a mistyped path is nearly always a directory name, because
+the file is the part you know is not written yet. The directories are not
+created, which would turn every typo into a nest of empty folders.
+
+The file is created empty rather than opened as an unsaved buffer, because the
+app opens files and a name with nothing behind it is not one. Which files were
+written is said on stderr, so an empty file left by a typo can be found and
+removed.
+
+**Nothing is written until every target has been agreed to.** `abydos a.md
+typo.md` was already an error about the second rather than a half-done open of
+the first; it must not become an error about the second *and* a stray empty
+first.
+
+`new.md:12` names line 12 of a file to be written, not a file called
+`new.md:12` — the same shapes the existing-file path understands.
+
+### Scenario: a config file being started
+
+- **Given** `~/.config/cuttr/` exists and `config.yaml` in it does not
+- **When** `abydos ~/.config/cuttr/config.yaml` is typed
+- **Then** the file is created empty and opens in the editor, and stderr says it
+  was created
+
+### Scenario: a typo in the directory
+
+- **When** `abydos ~/.confgi/config.yaml` is typed
+- **Then** nothing is created and nothing opens, and the message names
+  `~/.confgi` rather than only the file
+
+### Scenario: one good name and one bad one
+
+- **When** `abydos fresh.md nowhere/typo.md` is typed
+- **Then** neither is created, and the error is about the second
+
