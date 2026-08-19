@@ -17,8 +17,13 @@ final class SearchPane: NSView, ResultsPane {
 	/// goes: item 506's third decision, and the reason is in `ResultsPane`.
 	var onPlace: ((ResultPlacement) -> Void)?
 
-	private let search: ProjectSearch
-	private let projectRoot: URL
+	/// **Not `let`.** The pane is made once and cached for the life of the
+	/// window — under the panel, under the project view, or in a window of its
+	/// own — so a root bound at birth meant a window that had moved to another
+	/// project went on searching the one it left. A stale board shows work that
+	/// is not yours; a stale search *opens files in a tree you are not in*.
+	private var search: ProjectSearch
+	private var projectRoot: URL
 	private var searchFinished = true
 
 	private var field: NSSearchField!
@@ -54,6 +59,24 @@ final class SearchPane: NSView, ResultsPane {
 	}
 
 	required init?(coder: NSCoder) { fatalError("not used") }
+
+	/// Searches another project, without being closed and reopened.
+	///
+	/// **Results go, the query stays.** A result is a path into the tree the
+	/// window has left, and one left on screen still opens — which is the whole
+	/// reason this matters more than a stale board does. The query is a person's
+	/// words: it costs nothing to ask again and is the thing they would type.
+	func setProject(_ root: URL) {
+		guard root.standardizedFileURL != projectRoot.standardizedFileURL else { return }
+		projectRoot = root
+		search = ProjectSearch(root: root)
+
+		debounce?.cancel()
+		list.setResults([])
+		wasCapped = false
+		searchFinished = true
+		statusLabel.stringValue = ""
+	}
 
 	override var isFlipped: Bool { true }
 

@@ -204,3 +204,194 @@ struct ExitCodeTests {
 		#expect(session.exitCode == nil)
 	}
 }
+
+/// What a session leaves on screen once the program has gone.
+///
+/// The report: stop a Go service at a breakpoint and the goroutine list still
+/// shows `* [Go 1] main.main (Thread 27497960)`. Driven against the real Delve
+/// before this was written — `frames=0 scopes=0 threads=7` after the stop — so
+/// these are claims about a fault that was measured, not one that was read.
+@MainActor
+struct EndOfSessionTests {
+	private func makeSession() -> DebugSession {
+		DebugSession(projectRoot: URL(fileURLWithPath: NSTemporaryDirectory()))
+	}
+
+	private func running(_ session: DebugSession) {
+		session.fillForTesting(
+			threads: [
+				DebugThread(id: 1, name: "* [Go 1] main.main (Thread 27497960)"),
+				DebugThread(id: 2, name: "[Go 2] runtime.gopark"),
+			],
+			frames: [StackFrame(id: 1000, name: "main.main", file: "/p/main.go", line: 40)],
+			scopes: [Scope(name: "Locals", variablesReference: 1001)]
+		)
+	}
+
+	/// **`threads` was cleared by nothing anywhere in the file.** The frames and
+	/// the scopes were emptied on both paths and the goroutines were left, so
+	/// the list belonged to a process that had ended.
+	@Test func stoppingLeavesNothingOfTheProgram() {
+		let session = makeSession()
+		running(session)
+		#expect(!session.threads.isEmpty)
+
+		session.stop()
+
+		#expect(session.threads.isEmpty)
+		#expect(session.stackFrames.isEmpty)
+		#expect(session.scopes.isEmpty)
+		#expect(session.selectedThreadID == nil)
+		#expect(session.state == .terminated)
+	}
+
+	/// The other path to the same place. Two paths that disagreed about what is
+	/// left over is what put the clearing in one function.
+	@Test func theAdaptersOwnEndingLeavesNothingEither() async {
+		let session = makeSession()
+		running(session)
+
+		session.adapterSaidItEnded(body: [:])
+		await Task.yield()
+
+		#expect(session.threads.isEmpty)
+		#expect(session.stackFrames.isEmpty)
+		#expect(session.scopes.isEmpty)
+	}
+
+	/// The table is told, or it goes on drawing what it last had —
+	/// `onThreadsChanged` is fired by `refreshThreads` and by nothing else.
+	@Test func theThreadsTableIsToldTheListChanged() async {
+		let session = makeSession()
+		running(session)
+
+		let told = Counter()
+		session.onThreadsChanged = { told.bump() }
+		session.stop()
+		await Task.yield()
+
+		#expect(told.count == 1)
+	}
+
+	/// A console that simply stops cannot be told from one that is waiting, and
+	/// every other word in it is the adapter's.
+	@Test func theConsoleIsToldTheSessionEnded() async {
+		let session = makeSession()
+		let said = Recorder()
+		session.onOutput = { said.append($0) }
+
+		session.stop()
+		await Task.yield()
+
+		#expect(said.all.contains { $0.contains("Finished") })
+	}
+
+	/// The words are the toolbar's: it says `Finished — exit code 0`, so this
+	/// does. Two sentences for one fact is how somebody comes to believe they
+	/// are two facts.
+	@Test func theWordsMatchTheToolbars() async {
+		let session = makeSession()
+		let said = Recorder()
+		session.onOutput = { said.append($0) }
+
+		session.noteExitCode(inOutput: "Process 1 has exited with status 0\n")
+		session.stop()
+		await Task.yield()
+
+		#expect(said.all.contains { $0.contains("Finished \u{2014} exit code 0") })
+	}
+
+	@Test func aNonZeroStatusIsAFailure() async {
+		let session = makeSession()
+		let said = Recorder()
+		session.onOutput = { said.append($0) }
+
+		session.noteExitCode(inOutput: "Process 1 has exited with status 3\n")
+		session.stop()
+		await Task.yield()
+
+		#expect(said.all.contains { $0.contains("Failed \u{2014} exit code 3") })
+	}
+
+	/// **The line waits for the status rather than racing it.**
+	///
+	/// Driven against Delve: a program that reaches its own end produces
+	/// `total 6`, then the ending, then `Process … has exited with status 0`.
+	/// Written on the event, the console said "Finished" while the toolbar said
+	/// "Finished — exit code 0" — and a console line cannot be taken back.
+	@Test func theEndingWaitsForAStatusThatArrivesAfterTheEvent() async {
+		let session = makeSession()
+		let said = Recorder()
+		session.onOutput = { said.append($0) }
+
+		// The adapter says it is over and names no code, which is Delve.
+		session.adapterSaidItEnded(body: [:])
+		// The sentence arrives after, as it does on a real run.
+		session.noteExitCode(inOutput: "Process 97912 has exited with status 0\n")
+		await Task.yield()
+		await Task.yield()
+
+		#expect(session.exitCode == 0)
+		// Not a bare "Finished" beside a toolbar that knows the code.
+		#expect(said.all.contains { $0.contains("Finished \u{2014} exit code 0") })
+		#expect(!said.all.contains { $0.trimmingCharacters(in: .whitespacesAndNewlines) == "[Finished]" })
+	}
+
+    /// Both paths can be travelled for one session — a stopped program often
+    /// produces the event as well — and the line belongs there once.
+	@Test func theEndIsAnnouncedExactlyOnce() async {
+		let session = makeSession()
+		let said = Recorder()
+		session.onOutput = { said.append($0) }
+
+		session.stop()
+		session.adapterSaidItEnded(body: [:])
+		session.adapterSaidItEnded(body: ["exitCode": 0])
+		await Task.yield()
+
+		#expect(said.all.filter { $0.contains("Finished") }.count == 1)
+	}
+
+	/// **The status arrives after the state does, and must still be shown.**
+	///
+	/// Delve reports it in prose on its way out, so on a user-initiated stop it
+	/// lands after the session is already terminated — which is why
+	/// `noteExitCode` publishes `.terminated` a second time. Killing the adapter
+	/// before reading meant that never happened and the toolbar kept a bare
+	/// "Finished"; keeping the stream open until `disconnect` is answered is
+	/// what puts the code back.
+	@Test func aStatusArrivingAfterTheStopStillReachesTheToolbar() async {
+		let session = makeSession()
+		running(session)
+
+		let seen = Recorder()
+		session.observeState { seen.append(String(describing: $0)) }
+
+		session.stop()
+		await Task.yield()
+		#expect(session.exitCode == nil)
+
+		// What Delve says on its way out, read because the stream was still open.
+		session.noteExitCode(inOutput: "Process 51241 has exited with status 0\n")
+		await Task.yield()
+
+		#expect(session.exitCode == 0)
+		// Published again, so anything showing the state asks for the code once
+		// more. Without this the toolbar keeps the answer it had.
+		#expect(seen.all.filter { $0.contains("terminated") }.count >= 1)
+	}
+
+	private final class Counter: @unchecked Sendable {
+		private let lock = NSLock()
+		private var value = 0
+		var count: Int { lock.lock(); defer { lock.unlock() }; return value }
+		func bump() { lock.lock(); value += 1; lock.unlock() }
+	}
+
+	private final class Recorder: @unchecked Sendable {
+		private let lock = NSLock()
+		private var items: [String] = []
+		var all: [String] { lock.lock(); defer { lock.unlock() }; return items }
+		func append(_ text: String) { lock.lock(); items.append(text); lock.unlock() }
+	}
+}

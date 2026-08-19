@@ -1078,6 +1078,75 @@ public enum LanguageServers {
 		return nil
 	}
 
+	/// The root that owns a *file*, found by climbing rather than searching.
+	///
+	/// **The direction `markerDirectory` does not have.** That one searches
+	/// downward from a root, two levels, breadth-first — which is right when
+	/// there is no file in hand, and is what produced the report: with the scope
+	/// on `go-service`, the hunt for `Package.swift` started at `go-service` and
+	/// went down, found none, and started no Swift server at all. A Swift file
+	/// open in front of somebody got no answers because a pill said Go.
+	///
+	/// It is also what let a Go file in one module be answered by a server
+	/// rooted in another: three `go.mod`s side by side, and breadth-first
+	/// returns whichever it reaches first. That fault does not go silent — it
+	/// answers, from the wrong module.
+	///
+	/// Which server knows about a file is a question about **the file**. So this
+	/// starts at the file and walks up to the nearest directory holding that
+	/// language's markers, and stops at the project: a file in a plain folder
+	/// answers the project root, which is what every file answered before, and
+	/// nothing ever walks to `/`.
+	///
+	/// - Parameters:
+	///   - file: the file the question is about.
+	///   - project: the ceiling. Never climbed past, so a checkout inside a
+	///     home directory cannot be answered by a manifest in the home
+	///     directory.
+	public static func rootDirectory(
+		for definition: LanguageServerDefinition,
+		containing file: URL,
+		in project: URL
+	) -> URL {
+		rootDirectory(for: definition, containing: file, in: project, index: DirectoryIndex())
+	}
+
+	static func rootDirectory(
+		for definition: LanguageServerDefinition,
+		containing file: URL,
+		in project: URL,
+		index: DirectoryIndex
+	) -> URL {
+		guard !definition.rootMarkers.isEmpty else { return project }
+
+		let ceiling = FilePath.canonicalEvenIfMissing(project)
+		var directory = FilePath.canonicalEvenIfMissing(file.deletingLastPathComponent())
+
+		// A file outside the project is not this project's business, and
+		// climbing from it would leave the tree altogether.
+		guard directory == ceiling || directory.hasPrefix(ceiling + "/") else { return project }
+
+		while true {
+			// The project as the caller spelled it, not as the filesystem does.
+			// `markerDirectory` returns the very `root` it was handed when that
+			// root holds the markers, and a caller comparing the two answers
+			// would otherwise find `/tmp/x` unequal to `/private/tmp/x` — which
+			// is a symlink on macOS, and is how the first two tests here failed.
+			let url = directory == ceiling
+				? project
+				: URL(fileURLWithPath: directory, isDirectory: true)
+			// Nearest wins, which is what makes a package inside a package
+			// answer for its own files.
+			if holdsMarker(definition, at: url, index: index) { return url }
+			guard directory != ceiling else { return project }
+			let parent = (directory as NSString).deletingLastPathComponent
+			// Belt and braces: `deletingLastPathComponent` on "/" is "/", and a
+			// ceiling that was never reached would otherwise spin here.
+			guard parent != directory, !parent.isEmpty else { return project }
+			directory = parent
+		}
+	}
+
 	private static func holdsMarker(
 		_ definition: LanguageServerDefinition, at directory: URL, index: DirectoryIndex
 	) -> Bool {

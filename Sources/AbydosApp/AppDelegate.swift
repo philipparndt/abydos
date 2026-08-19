@@ -787,6 +787,98 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if options.findAcrossTabs {
+			// After `--find` has typed its query and the debounced search has
+			// run; stepping before there are matches proves nothing.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+				controller?.exerciseFindAcrossTabsForTesting()
+			}
+		}
+
+		if options.dragTab {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+				controller?.dragTabForTesting()
+			}
+		}
+
+		if !options.dropFiles.isEmpty {
+			// After the window has a project and whatever `--file` asked for is
+			// open, or "before" is a report of an empty editor.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+				controller?.dropFilesForTesting(options.dropFiles)
+			}
+		}
+
+		if let offer = options.backlogOffer {
+			// Before any pane is built, which is what makes the pretence
+			// possible at all: the view asks once, when it is made.
+			if offer == "missing" { BacklogAbsentView.pretendsTheToolIsMissing = true }
+			// After the walk that reads both folders, which happens off the main
+			// thread: asked sooner, every project looks like one with nothing.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+				print("OFFER project: \(controller?.project?.root.path ?? "none")")
+				print(controller?.backlogOfferReportForTesting() ?? "no window")
+				if offer == "openspec" {
+					print("OFFER pressed: " + (controller?.pressOpenSpecOfferForTesting() ?? "no window"))
+				}
+				fflush(stdout)
+			}
+
+			// The same pane asked again, for `--backlog-offer watch`: a record
+			// of work made while it was up — by the terminal it started, or by
+			// somebody in another window — should have replaced the offer with
+			// a board, and the pane is not reopened in between.
+			if offer == "watch" {
+				// Shown, and then read a moment later. Asking is what triggers
+				// the re-read — the pane reloads whenever it is shown — and the
+				// walk that answers it runs off the main thread, so a report
+				// printed in the same breath prints the state before it. That
+				// is not a delay somebody waits: it is one dispatch away, and
+				// the gap here is generous so the check cannot be flaky.
+				DispatchQueue.main.asyncAfter(deadline: .now() + 9.5) {
+					print("OFFER again: "
+						+ (controller?.backlogOfferAsItStandsForTesting() ?? "no window"))
+					fflush(stdout)
+				}
+			}
+		}
+
+		if options.drawReport { BacklogCardViewDrawReport.enable() }
+
+		// The report goes on for every form of the verb, presses included: what
+		// a press does is half the answer, and which layer saw it is the other.
+		if let steps = options.mouseSteps {
+			MouseReport.enable()
+			if steps != "report" {
+				DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+					controller?.pressMouseForTesting(steps)
+				}
+			}
+		}
+
+		if options.cardReport {
+			// After the walk that reads the folders, which happens off the main
+			// thread.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+				print("CARDS:\n\(controller?.cardGeometryForTesting() ?? "no window")")
+				fflush(stdout)
+				if options.writesACapture { return }
+				exit(0)
+			}
+		}
+
+		if options.lspRoot {
+			// After the file is open and its language known, which is what the
+			// root is worked out from. No server has to have started: the root
+			// is read off the disk.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+				print("LSPROOT: \(controller?.serverRootReportForTesting() ?? "no window")")
+				fflush(stdout)
+				if options.writesACapture { return }
+				exit(0)
+			}
+		}
+
 		if let spec = options.definitionAt {
 			let parts = spec.split(separator: ":").compactMap { Int($0) }
 			DispatchQueue.main.asyncAfter(deadline: .now() + (options.lspWait ?? 12)) {
@@ -898,6 +990,33 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 				if options.launchDebug { controller?.debugSelected(nil) }
 				if options.launchMenu { controller?.showConfigurationMenuForTesting() }
 				if options.launchEditor { controller?.editConfigurationForTesting() }
+			}
+		}
+
+		if options.debugStop {
+			// The console is the third of the three faults and cannot be read
+			// from the session, so it is echoed as it arrives — the same way a
+			// capture run reads what the adapter said.
+			controller?.echoDebugOutputForTesting()
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+				controller?.goDebug(nil)
+			}
+			// Delve builds first, so the breakpoint is not reached for several
+			// seconds; `--debug-steps` waits 6.0 for the same reason.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 7.0) {
+				controller?.reportDebugStopForTesting("before")
+			}
+			DispatchQueue.main.asyncAfter(deadline: .now() + 7.5) {
+				controller?.reportDebugStopForTesting(options.debugFinish ? "finish" : "press")
+			}
+			// Twice afterwards. The first is what the gesture leaves at once;
+			// the second is late enough for anything the adapter said on its way
+			// out to have arrived, which is where Delve's exit status lives.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 8.0) {
+				controller?.reportDebugStopForTesting("after")
+			}
+			DispatchQueue.main.asyncAfter(deadline: .now() + 11.0) {
+				controller?.reportDebugStopForTesting("settled")
 			}
 		}
 
@@ -1568,9 +1687,28 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		for switching in options.switchProjects {
 			DispatchQueue.main.asyncAfter(deadline: .now() + switching.at) {
 				let url = URL(fileURLWithPath: (switching.path as NSString).expandingTildeInPath)
+				// What the panes held before, so the after-state is a comparison
+				// rather than a claim.
+				controller?.reportPanesForTesting("before")
+				// Captured *before* the switch, which is the whole point of it.
+				// Taken after, this named the project just arrived at and the
+				// watcher check touched the wrong tree — a harness reporting
+				// "proj-b has no backlog" about a check meant for proj-a.
+				let left = controller?.project?.root
 				controller?.switchProject(to: url, followingTerminal: true)
 				print("SWITCHED to \(url.lastPathComponent) at \(Int(switching.at))s")
 				fflush(stdout)
+				// After the walk that re-reads the folders, which happens off
+				// the main thread: asked sooner, this reports a board that has
+				// not finished arriving.
+				DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+					controller?.reportPanesForTesting("after")
+					// And then the silent half: is the project that was left
+					// still being watched?
+					if let left, options.checkOldWatcher {
+						controller?.checkTheOldProjectIsUnwatchedForTesting(left)
+					}
+				}
 			}
 		}
 
@@ -1714,7 +1852,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			// then how it is drawn. Two questions, and neither answers the
 			// other — which is the same reason the pane has two controls.
 			controller?.showBacklogMode(list: mode.hasSuffix("list"))
-			controller?.showBacklogSource(openSpec: mode.hasPrefix("openspec"))
+			// `--backlog openspec-switch`: the switch is clicked *after* the
+			// board is up, which is the gesture somebody makes and not the one
+			// a driver usually makes — the call below happens before the walk
+			// that reads the folders has come back, so it switches a board with
+			// nothing on it.
+			controller?.showBacklogSource(
+				openSpec: !mode.hasSuffix("switch") && mode.hasPrefix("openspec"))
 
 			// After the walk that reads both folders, which happens off the main
 			// thread: a report asked for before the cards arrive is a report of
@@ -1752,12 +1896,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		// from the recent list instead, and everything it then did it did to
 		// somebody else's files. Whatever is printed below is only about the
 		// tree named on this line.
-		if options.backlogMenu != nil || options.backlogNew != nil || options.backlogInit {
+		if options.backlogMenu != nil || options.backlogMenuChange != nil
+			|| options.backlogNew != nil || options.backlogInit {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
 				print("BACKLOG project: \(controller?.project?.root.path ?? "none")")
 				if let number = options.backlogMenu {
 					print("BACKLOG menu \(String(format: "%04d", number)): "
 						+ (controller?.backlogMenuForTesting(number: number) ?? "no window"))
+				}
+				if let name = options.backlogMenuChange {
+					print("BACKLOG menu \(name): "
+						+ (controller?.backlogMenuForTesting(change: name) ?? "no window"))
 				}
 				if options.backlogInit {
 					print("BACKLOG before: \(controller?.backlogAbsentForTesting() ?? "no window")")

@@ -105,6 +105,13 @@ final class FindBar: NSView {
 		return button
 	}
 
+	/// Puts the switches where the options say, for a tab coming back.
+	private func applyOptionsToButtons() {
+		caseButton.state = options.caseSensitive ? .on : .off
+		wordButton.state = options.wholeWord ? .on : .off
+		regexButton.state = options.isRegex ? .on : .off
+	}
+
 	@objc private func optionToggled() {
 		options.caseSensitive = caseButton.state == .on
 		options.wholeWord = wordButton.state == .on
@@ -118,25 +125,126 @@ final class FindBar: NSView {
 
 	private func notifyQueryChanged() {
 		let query = field.stringValue
-		// An unfinished regex is marked invalid rather than reported as "no
-		// results", which would read as a wrong answer.
-		let valid = TextSearch.isValid(query: query, options: options)
-		field.textColor = valid ? .labelColor : Theme.current.gitConflict
+		markValidity(of: query)
 		onQueryChanged?(query, options)
 	}
+
+	/// Colours the field for a pattern that will not compile.
+	///
+	/// **Red now means two things** — this, and a search that found nothing —
+	/// and the words beside it are what tell them apart. Before, an unfinished
+	/// pattern was marked here and then reported as `No results` by the label a
+	/// few pixels away, which is the reading the comment here set out to avoid.
+	private func markValidity(of query: String) {
+		let valid = TextSearch.isValid(query: query, options: options)
+		isPatternValid = valid
+		colourQuery(valid ? .labelColor : Theme.current.gitConflict)
+	}
+
+	/// Colours the query — as far as `NSSearchField` allows, which is not far.
+	///
+	/// **Measured: this does not reach the screen.** With `field.textColor`, the
+	/// field editor's `textColor` and the attributed string all holding the
+	/// scheme's red, a capture of the window has the query at
+	/// `(236, 235, 235)` — white, over 1007 glyph pixels, none of them reddish —
+	/// while the `No results` beside it is `(212, 114, 112)`, which is that same
+	/// red. `NSSearchField` paints its text in a colour of its own choosing.
+	///
+	/// So **the label is what carries the signal**, and this is left in rather
+	/// than removed: it costs one line, it is right wherever the control does
+	/// honour it, and taking it out would also take out the invalid-pattern
+	/// marking that has been here since before this change — which, by the same
+	/// measurement, was never visible either.
+	///
+	/// Owning the text colour outright means drawing the magnifier and the clear
+	/// button by hand. That is a bigger change than this one and is not it.
+	private func colourQuery(_ colour: NSColor) {
+		field.textColor = colour
+		guard let editor = field.currentEditor() as? NSTextView else { return }
+		editor.textColor = colour
+		// The selected range keeps its own attributes, so typing straight after
+		// this would come out in the old colour.
+		editor.typingAttributes[.foregroundColor] = colour
+	}
+
+	/// Whether what is typed is a pattern that compiles.
+	///
+	/// Read by `setStatus`, which must not say `No results` about a search that
+	/// never ran.
+	private(set) var isPatternValid = true
 
 	// MARK: - State
 
 	var query: String { field.stringValue }
 
+	/// What the bar says, and whether it says it in red.
+	///
+	/// Four states, and the two red ones differ only in the words — which is why
+	/// the words have to differ:
+	///
+	/// | query | field | label |
+	/// | --- | --- | --- |
+	/// | empty | plain | *nothing* |
+	/// | matches | plain | `3 of 17` |
+	/// | no matches | red | `No results` |
+	/// | will not compile | red | `Incomplete pattern` |
+	///
+	/// The last row used to say `No results` in grey: an invalid pattern still
+	/// reached the search, the search found nothing in a regex that never
+	/// compiled, and the bar reported an answer to a question it never asked.
 	func setStatus(matchCount: Int, currentIndex: Int?) {
+		// An empty query has not found nothing; it has not been asked.
+		guard !field.stringValue.isEmpty else {
+			statusLabel.stringValue = ""
+			statusLabel.textColor = Theme.current.gitIgnored
+			return
+		}
+
+		guard isPatternValid else {
+			// Nothing was searched, so "no results" would be a wrong answer
+			// rather than an empty one.
+			statusLabel.stringValue = "Incomplete pattern"
+			statusLabel.textColor = Theme.current.gitConflict
+			return
+		}
+
 		if matchCount == 0 {
-			statusLabel.stringValue = field.stringValue.isEmpty ? "" : "No results"
-		} else if let currentIndex {
+			// **The label is the signal.** The two states somebody acts on
+			// differently — there are matches, there are none — differed by one
+			// grey word in the corner; now that word is red. Colouring the query
+			// too was tried and does not reach the screen: see `colourQuery`.
+			statusLabel.stringValue = "No results"
+			statusLabel.textColor = Theme.current.gitConflict
+			colourQuery(Theme.current.gitConflict)
+			return
+		}
+
+		statusLabel.textColor = Theme.current.gitIgnored
+		colourQuery(.labelColor)
+		if let currentIndex {
 			statusLabel.stringValue = "\(currentIndex + 1) of \(matchCount)"
 		} else {
 			statusLabel.stringValue = "\(matchCount)"
 		}
+	}
+
+	/// What the bar is saying and how, for a test that cannot open a window.
+	var statusReportForTesting: String {
+		let red = statusLabel.textColor == Theme.current.gitConflict
+		let fieldRed = field.textColor == Theme.current.gitConflict
+		// What is actually drawn, as against what was set. A photograph showed
+		// `No results` red beside a query still white, with both colours set —
+		// so the question is which of the three places the text's colour can
+		// live is the one being painted from.
+		let editor = field.currentEditor() as? NSTextView
+		let editorColour = editor?.textColor.map { $0 == Theme.current.gitConflict ? "red" : "plain" }
+		let drawn = field.attributedStringValue.length > 0
+			? field.attributedStringValue.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
+			: nil
+		return "query=\u{201C}\(field.stringValue)\u{201D} says=\u{201C}\(statusLabel.stringValue)\u{201D}"
+			+ " labelRed=\(red) queryRed=\(fieldRed)"
+			+ " editor=\(editor == nil ? "none" : (editorColour ?? "unset"))"
+			+ " attributed=\(drawn.map { $0 == Theme.current.gitConflict ? "red" : "plain" } ?? "none")"
 	}
 
 	func focusField(selectingAll: Bool = true) {
@@ -147,6 +255,18 @@ final class FindBar: NSView {
 	func setQuery(_ text: String) {
 		field.stringValue = text
 		notifyQueryChanged()
+	}
+
+	/// Shows a query and its switches without asking for the search again.
+	///
+	/// For a tab coming back to the front: its matches are already known and
+	/// kept, so re-running would be work whose answer is in hand — and it would
+	/// move the current match, since `runFind` starts from the caret.
+	func setQueryWithoutSearching(_ text: String, options: SearchOptions) {
+		field.stringValue = text
+		self.options = options
+		applyOptionsToButtons()
+		markValidity(of: text)
 	}
 
 	func applyThemeChange() {

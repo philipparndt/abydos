@@ -91,3 +91,48 @@ struct PipeDrainTests {
 		func increment() { lock.withLock { count += 1 } }
 	}
 }
+
+/// Stopping an adapter that will not answer.
+///
+/// The deadline path, exercised rather than assumed. `/bin/cat` is a process
+/// that holds its end open and answers nothing — a hung adapter, without having
+/// to find one that really hangs.
+@Suite struct DisconnectDeadlineTests {
+	@Test func anAdapterThatWillNotAnswerIsKilledAtTheDeadline() async throws {
+		let client = DAPClient()
+		client.callbackQueue = .global()
+		try client.start(executable: "/bin/cat", arguments: [], workingDirectory: nil)
+		#expect(client.isRunning)
+
+		let answered = try await withCheckedThrowingContinuation { continuation in
+			// Short, because this test waits for it in full. The real one is a
+			// second, chosen against Delve's measured 0.016 s.
+			client.disconnectThenStop(deadline: 0.2) { answered in
+				continuation.resume(returning: answered)
+			}
+		}
+
+		// Said to be unanswered, so the console can say the session was stopped
+		// rather than report a clean finish.
+		#expect(answered == false)
+		// And killed anyway, exactly as before.
+		#expect(!client.isRunning)
+		// Nothing was measured, because nothing replied.
+		#expect(client.lastDisconnectReply == nil)
+	}
+
+	/// A client with no adapter has nothing to drain and must not wait for one.
+	@Test func stoppingSomethingThatWasNeverStartedReturnsAtOnce() async throws {
+		let client = DAPClient()
+		client.callbackQueue = .global()
+
+		let answered = try await withCheckedThrowingContinuation { continuation in
+			client.disconnectThenStop(deadline: 5) { answered in
+				continuation.resume(returning: answered)
+			}
+		}
+		// True rather than false: there was no adapter to fail to answer, and a
+		// session that was never running did not end badly.
+		#expect(answered)
+	}
+}

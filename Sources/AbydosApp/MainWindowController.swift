@@ -838,6 +838,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			// Nothing left in the window that was made to hold it.
 			window?.close()
 		}
+		editor.onFilesDropped = { [weak self] urls in self?.openDropped(urls) }
 		editor.onActiveFileChanged = { [weak self] url in
 			// The outline belongs to the file in front, so it follows the tabs.
 			self?.refreshStructure()
@@ -1297,6 +1298,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		refreshRunControl()
 		startWatchingRepository(at: project.root)
 		scratchesPane?.setProject(project.root)
+		// The panes that are about a project follow it. Told with `project.root`
+		// rather than through `setWorkingDirectory`, which also carries a
+		// subproject scope — see `BottomPanel.setProject`.
+		bottomPanel.setProject(project.root)
 		bottomPanel.setWorkingDirectory(project.root)
 
 		// What was open here last time, from the folder beside the project —
@@ -1423,6 +1428,50 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			editor.open(fileURL: url, focusEditor: true, preview: false)
 		}
 		navigator.selectWithoutOpening(url: url)
+	}
+
+	/// Opens what was dropped on the editor.
+	///
+	/// **The window's project does not change.** `openFromTerminal` is the
+	/// precedent and the reason is what switching costs: the tree, git, the run
+	/// configurations, the language servers and the remembered session all belong
+	/// to the project, so re-pointing them because somebody dragged a file in is
+	/// a very large answer to a very small gesture. A file dropped on the *Dock
+	/// icon* is a different case — that one is addressed to the application,
+	/// which has no window in mind and must find one, and it does switch.
+	///
+	/// A folder is a project, which it means everywhere else here — `abydos
+	/// <dir>`, the Dock icon, the switcher — so it goes through the same opening
+	/// as those and obeys the same setting about taking this window or another.
+	///
+	/// Files open in order, last in front, and none of them provisional: a
+	/// preview tab is the answer to a single click in the tree, where the next
+	/// click replaces it, and a drag is deliberate.
+	func openDropped(_ urls: [URL]) {
+		let (folders, files) = EditorDrop.separate(urls)
+
+		// **Folders first, and the files go to the window that results.**
+		//
+		// The other order was tried and measured: a file opened here and a
+		// folder opened after it left `project=inner-project tabs=[]` — the file
+		// was opened into the project being left, and switching restored the
+		// arriving project's session over the top of it. The file was simply
+		// lost, which is not "each does what it would have done alone".
+		var target = self
+		for folder in folders {
+			guard let opened = (NSApp.delegate as? AppDelegate)?.open(projectAt: folder, from: target)
+			else { continue }
+			// The first folder's window takes the files. A drag with several
+			// folders opens several projects; the files belong with the first,
+			// which is the one the drop was aimed at.
+			if target === self { target = opened }
+		}
+
+		for file in files {
+			target.makeRoomForTheEditor()
+			target.editor.open(fileURL: file, focusEditor: true, preview: false)
+			target.navigator.selectWithoutOpening(url: file)
+		}
 	}
 
 	/// Opens a file provisionally, as a single click in the tree would.
@@ -1819,6 +1868,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			self.bottomPanel.writeDebugToolbarImageForTesting(to: "build/exit-toolbar.png")
 			let state = self.debugSession.map { String(describing: $0.state) } ?? "none"
 			print("EXIT: code=\(self.debugSession?.exitCode.map(String.init) ?? "none") state=\(state)")
+			fflush(stdout)
 		}
 	}
 
@@ -1878,8 +1928,236 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				self.bottomPanel.writeDebugToolbarImageForTesting(to: "build/exit-toolbar.png")
 				let state = self.debugSession.map { String(describing: $0.state) } ?? "none"
 				print("EXIT: code=\(self.debugSession?.exitCode.map(String.init) ?? "none") state=\(state)")
+			fflush(stdout)
 			}
 		}
+	}
+
+	/// Presses Stop and says what the session left behind.
+	///
+	/// The report the change is about: after a stop, what the panes are still
+	/// showing. `EXIT` already prints the code for a program that ended on its
+	/// own — this is the other path, the one somebody takes when the program is
+	/// sitting at a breakpoint and they have seen enough.
+	///
+	/// Printed twice, before and after, because the fault is a difference: the
+	/// goroutine list is right while the program is there and wrong a moment
+	/// later, and one line cannot show that.
+	func reportDebugStopForTesting(_ phase: String) {
+		guard let session = debugSession else {
+			print("STOP: \(phase) no session")
+			fflush(stdout)
+			return
+		}
+		if phase == "press" {
+			session.stop()
+			print("STOP: pressed")
+			fflush(stdout)
+			return
+		}
+		// The other ending: let it run to the end rather than stopping it. This
+		// is the path where Delve reports a status at all — stopped, it says
+		// "Detaching and terminating target process" and there is no status,
+		// because the program did not exit.
+		if phase == "finish" {
+			session.resume()
+			print("STOP: released")
+			fflush(stdout)
+			return
+		}
+		// Built a piece at a time. As one expression this was six interpolations
+		// and two optional maps joined by `+`, which the type checker gave up
+		// on — "unable to type-check this expression in reasonable time".
+		let reply = session.disconnectReplyTimeForTesting.map { String(format: "%.3fs", $0) } ?? "none"
+		let code = session.exitCode.map(String.init) ?? "none"
+		var line = "STOP: \(phase) state=\(session.state)"
+		line += " reply=\(reply) code=\(code)"
+		line += " threads=\(session.threads.count)"
+		line += " frames=\(session.stackFrames.count)"
+		line += " scopes=\(session.scopes.count)"
+		print(line)
+		for thread in session.threads {
+			print("STOP: \(phase) thread \(thread.id) \(thread.name)")
+		}
+		fflush(stdout)
+	}
+
+	/// Whether the project that was left is still being watched.
+	///
+	/// **The half that fails silently.** `watch()` starts a watcher only where
+	/// there is none, so a pane that kept its old ones would be woken by the
+	/// folder it no longer shows and never by the one it does — right when it is
+	/// opened and stale a moment later, which is harder to notice than being
+	/// stale throughout.
+	///
+	/// Checked by writing an item into the project that was left and looking
+	/// again. The board must not move. Count-based rather than wall-clock: what
+	/// is asserted is what the board holds, not that a second passed.
+	func checkTheOldProjectIsUnwatchedForTesting(_ oldRoot: URL) {
+		let folder = oldRoot.appendingPathComponent(".abydos/backlog/open", isDirectory: true)
+		guard FileManager.default.fileExists(atPath: folder.path) else {
+			print("PANES watch: \(oldRoot.lastPathComponent) has no backlog to touch")
+			fflush(stdout)
+			return
+		}
+		let file = folder.appendingPathComponent("9999-written-after-the-switch.md")
+		try? "# 9999 Written after the switch\n".write(to: file, atomically: true, encoding: .utf8)
+		print("PANES watch: wrote an item into \(oldRoot.lastPathComponent)")
+		fflush(stdout)
+
+		// Long enough for a watcher to have fired if one were still on it —
+		// FSEvents is subsecond, and the reload behind it is a directory walk.
+		DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+			self?.reportPanesForTesting("after touching the old project")
+			try? FileManager.default.removeItem(at: file)
+			exit(0)
+		}
+	}
+
+	/// Which project the panes are reading, either side of a switch.
+	///
+	/// The whole of the fault in one line: the window moves and the pane goes on
+	/// naming — and showing — the project it was made for. `--switch-project`
+	/// already existed and did the switching; what it could not do was say what
+	/// the panes then held.
+	func reportPanesForTesting(_ phase: String) {
+		let window = project?.root.lastPathComponent ?? "none"
+		let board = bottomPanel.existingBacklogPane?.projectReportForTesting ?? "no pane"
+		print("PANES \(phase): window=\(window) board=[\(board)]")
+		fflush(stdout)
+	}
+
+	/// Find, in every tab, and then the gesture the report is about.
+	///
+	/// Search in the file in front, switch to the next tab, and step — which is
+	/// where one file's offsets used to reach another file's view.
+	func exerciseFindAcrossTabsForTesting() {
+		print("FIND before:\n\(editor.activeGroup?.findReportForTesting ?? "no group")")
+		fflush(stdout)
+
+		editor.activeGroup?.selectNextTab(offset: 1)
+		print("FIND after switch:\n\(editor.activeGroup?.findReportForTesting ?? "no group")")
+		fflush(stdout)
+
+		// The step. Before this change it used the group's matches, which were
+		// the *other* file's.
+		editor.activeGroup?.findNext()
+		print("FIND after step:\n\(editor.activeGroup?.findReportForTesting ?? "no group")")
+		fflush(stdout)
+
+		// And back, to show the first tab kept what it was doing.
+		editor.activeGroup?.selectNextTab(offset: -1)
+		print("FIND back:\n\(editor.activeGroup?.findReportForTesting ?? "no group")")
+		fflush(stdout)
+
+		// Closing the searched tab takes its find state with it, because the
+		// state lives on the tab. Asserted rather than assumed: state that
+		// outlived its tab is what this change is about.
+		if let url = editor.activeGroup?.activeTabURL {
+			_ = editor.activeGroup?.closeTab(showing: url)
+		}
+		print("FIND after close:\n\(editor.activeGroup?.findReportForTesting ?? "no group")")
+		fflush(stdout)
+		exit(0)
+	}
+
+	/// Drops files on the editor the way the Finder would, and says what happened.
+	///
+	/// A real drag cannot be scripted, so this puts the URLs on a pasteboard and
+	/// hands it to the group's drop view exactly as AppKit does — the same
+	/// `draggingEntered` and `performDragOperation`, so what is checked is the
+	/// path a drag actually takes rather than the opening underneath it.
+	///
+	/// The project is printed either side: a dropped file must not move it, and
+	/// that is the half a report of tabs alone would not show.
+	func dropFilesForTesting(_ paths: [String]) {
+		let urls = paths.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }
+		print("DROP before: project=\(project?.root.lastPathComponent ?? "none")"
+			+ " tabs=[\(editor.openTabNamesForTesting)]")
+		fflush(stdout)
+
+		guard let group = editor.activeGroup, let target = group.view as? EditorDropView else {
+			print("DROP: no drop view")
+			fflush(stdout)
+			return
+		}
+
+		let board = NSPasteboard(name: .init("dev.abydos.drop-test"))
+		board.clearContents()
+		board.writeObjects(urls.map { $0 as NSURL })
+		let drag = TestingDrag(pasteboard: board, at: NSPoint(x: 200, y: 200))
+
+		let entered = target.draggingEntered(drag)
+		print("DROP offered: \(entered.contains(.copy) ? "copy" : (entered.isEmpty ? "nothing" : "other"))")
+		let took = target.performDragOperation(drag)
+		print("DROP accepted: \(took)")
+		fflush(stdout)
+
+		// After the open, which reaches the editor through the window.
+		DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+			guard let self else { return }
+			print("DROP after: project=\(self.project?.root.lastPathComponent ?? "none")"
+				+ " tabs=[\(self.editor.openTabNamesForTesting)]")
+			fflush(stdout)
+			exit(0)
+		}
+	}
+
+	/// Drags a tab onto the group's right-hand zone, the way another group would.
+	///
+	/// **The regression check for the drop path**, which this change edited: a
+	/// file drag and a tab drag now arrive at the same `performDragOperation`,
+	/// and the tab must still split. Driven rather than tested because
+	/// `EditorTabDrag` lives in the app target, where the suite cannot reach it.
+	func dragTabForTesting() {
+		guard let group = editor.activeGroup, let target = group.view as? EditorDropView else {
+			print("TABDRAG: no drop view")
+			fflush(stdout)
+			return
+		}
+		print("TABDRAG before: groups=\(editor.groupCountForTesting)"
+			+ " tabs=[\(editor.openTabNamesForTesting)]")
+
+		let payload: [String: Any] = [
+			"group": group.groupID.uuidString, "index": 0,
+			"path": group.activeTabURL?.path ?? "",
+		]
+		let board = NSPasteboard(name: .init("dev.abydos.tabdrag-test"))
+		board.clearContents()
+		board.setData(
+			try? JSONSerialization.data(withJSONObject: payload),
+			forType: EditorTabDrag.pasteboardType
+		)
+
+		// Well to the right, which is the zone that splits — **in window
+		// coordinates**, because `updateZone` converts `draggingLocation` from
+		// nil, which is the window. Handing it view coordinates put the point in
+		// the centre zone, and a centre drop onto a tab's own group is refused
+		// by design: the first run of this read as a broken split and was a
+		// broken harness.
+		let inView = NSPoint(x: target.bounds.width * 0.9, y: target.bounds.midY)
+		let drag = TestingDrag(pasteboard: board, at: target.convert(inView, to: nil))
+		let offered = target.draggingEntered(drag)
+		print("TABDRAG offered: \(offered.contains(.move) ? "move" : "other")")
+		_ = target.performDragOperation(drag)
+		fflush(stdout)
+
+		DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+			guard let self else { return }
+			print("TABDRAG after: groups=\(self.editor.groupCountForTesting)")
+			fflush(stdout)
+			exit(0)
+		}
+	}
+
+	/// The geometry every board card is drawn with, for `--card-report`.
+	func cardGeometryForTesting() -> String {
+		bottomPanel.existingBacklogPane?.cardGeometryReportForTesting ?? "no pane"
+	}
+
+	/// Which server root the file in front is filed under, for `--lsp-root`.
+	func serverRootReportForTesting() -> String {
+		editor.activeGroup?.serverRootReportForTesting ?? "no group"
 	}
 
 	/// Steps as the keyboard would, for checking the commands are connected.
@@ -3905,16 +4183,55 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	}
 
 	/// Whether the first card of a column can be dragged.
+	///
+	/// By the column's name, which the pane resolves against whichever record is
+	/// showing — the two no longer share a vocabulary, so `BacklogState` is the
+	/// wrong thing to parse it into here.
 	func backlogDragReportForTesting(state: String) -> String {
 		guard let pane = bottomPanel.showBacklog() else { return "no project" }
-		guard let state = BacklogState(rawValue: state) else { return "no such column" }
-		return pane.dragReportForTesting(state: state)
+		return pane.dragReportForTesting(column: state)
+	}
+
+	/// What the pane offers a project with no record of work, for
+	/// `--backlog-offer`.
+	func backlogOfferReportForTesting() -> String {
+		guard let pane = bottomPanel.showBacklog() else { return "no project" }
+		return pane.offerReportForTesting ?? "no offer: this project has a record of work"
+	}
+
+	/// The same, of a pane already open, **without showing it**.
+	///
+	/// `showBacklog()` reloads on the way past, so a report that asks through it
+	/// cannot tell a pane that keeps itself up to date from one that is re-read
+	/// by being asked. This is the question somebody sitting in front of the
+	/// pane is asking: has it noticed yet, on its own?
+	func backlogOfferAsItStandsForTesting() -> String {
+		guard let pane = bottomPanel.existingBacklogPane else { return "no pane is open" }
+		return pane.offerReportForTesting ?? "no offer: this project has a record of work"
+	}
+
+	/// Presses the OpenSpec offer, for `--backlog-offer openspec`.
+	///
+	/// Through the pane's own verb, so what is driven is what the button does
+	/// and not a second path to the same command.
+	func pressOpenSpecOfferForTesting() -> String {
+		guard let pane = bottomPanel.showBacklog() else { return "no project" }
+		pane.setUpOpenSpec()
+		return OpenSpec.commandLine() == nil
+			? "refused, because openspec is not installed"
+			: "ran \(OpenSpec.initCommand()) in a terminal"
 	}
 
 	/// What a card's context menu offers, for `--backlog-menu`.
 	func backlogMenuForTesting(number: Int) -> String {
 		guard let pane = bottomPanel.showBacklog() else { return "no project" }
 		return pane.menuTitlesForTesting(number: number)
+	}
+
+	/// The same for a change, which is named rather than numbered.
+	func backlogMenuForTesting(change: String) -> String {
+		guard let pane = bottomPanel.showBacklog() else { return "no project" }
+		return pane.menuTitlesForTesting(change: change)
 	}
 
 	/// Files an item from the pane and says where it landed, for `--backlog-new`.
@@ -4874,6 +5191,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			// here is the same file named as this machine names it. A report
 			// giving only the last component cannot tell the two apart.
 			print("DEFINITION-PATH: \(landed?.path ?? "nothing")")
+			// Flushed, because the run that asks this is usually killed rather
+			// than allowed to exit: a `--lsp-wait` long enough for sourcekit-lsp
+			// to index a package leaves the driver's `timeout` to end the app,
+			// and an unflushed buffer dies with it. Two runs of this verb
+			// reported nothing at all for exactly that reason.
+			fflush(stdout)
 		}
 	}
 
@@ -5138,9 +5461,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// stayed alive until the server answered, and the answer was then laid
 		// over a code view nobody is looking at.
 		Task { @MainActor [weak self] in
+			// The file's own root, not the scope: a rename is asked of the
+			// server that was told about this file, and the scope pill may be
+			// pointing at another subproject entirely.
 			let offer = await LanguageService.shared.renameOffer(
 				url: url, position: position, languageId: languageId,
-				project: project.scopeRoot, fallback: fallback
+				project: LanguageService.shared.root(
+					for: url, languageId: languageId, project: project.root
+				),
+				fallback: fallback
 			)
 			// Closed while the server was being asked. Nothing to say and nowhere
 			// to put a field.
@@ -5169,7 +5498,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				guard let self else { return true }
 				self.performRename(
 					in: url, position: position, to: newName,
-					languageId: languageId, project: project.scopeRoot
+					languageId: languageId,
+					project: LanguageService.shared.root(
+						for: url, languageId: languageId, project: project.root
+					)
 				)
 				return true
 			}
@@ -5317,7 +5649,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				url: url,
 				position: LSPPosition(line: line, character: character),
 				languageId: languageId,
-				project: project.scopeRoot
+				project: LanguageService.shared.root(
+					for: url, languageId: languageId, project: project.root
+				)
 			)
 			guard !locations.isEmpty else {
 				notify("No usages found", kind: .information)
@@ -5667,8 +6001,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			// A server that has already said it cannot work is the answer to
 			// "why is this empty" — better than the guess that it might still
 			// be starting, which it will never stop doing.
+			// The server that would have answered about this file, which is the
+			// one filed under the file's own root.
 			if let failure = LanguageService.shared.failure(
-				forLanguage: languageId, project: project.scopeRoot
+				forLanguage: languageId,
+				project: editor.activeGroup?.activeTabURL.map {
+					LanguageService.shared.root(for: $0, languageId: languageId, project: project.root)
+				} ?? project.scopeRoot
 			) {
 				return "The \(languageId) language server cannot read this project.\n\(failure)"
 					+ "\n\n\(LanguageService.logPath) has the rest."
@@ -5736,8 +6075,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				return buildSymbols.filter { $0.name.localizedCaseInsensitiveContains(query) }
 			}
 
+			// A document's symbols come from the server that was told about that
+			// document, which is the one its own root is filed under.
 			let all = await LanguageService.shared
-				.documentSymbols(url: url, languageId: languageId, project: project.scopeRoot)
+				.documentSymbols(
+					url: url, languageId: languageId,
+					project: LanguageService.shared.root(
+						for: url, languageId: languageId, project: project.root
+					)
+				)
 			guard !query.isEmpty else { return all }
 			return all
 				.filter { $0.name.localizedCaseInsensitiveContains(query) }
@@ -6231,6 +6577,75 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			}
 			let place = editor.currentPlace
 			print("NAV \(step): \(place.map { "\($0.url.lastPathComponent):\($0.line)" } ?? "nowhere")")
+		}
+	}
+
+	/// Presses a mouse button over a named view, and says where the editor
+	/// landed — `--mouse 3@editor,4@terminal`.
+	///
+	/// **The event goes to the view the pointer would be over**, not to the
+	/// function it should end up calling. What was broken here was the path
+	/// rather than the destination: `navigateBack` worked and nothing reached
+	/// it, and the terminal ate the events on the way past. Calling
+	/// `navigateBack` from a test would have passed the whole time.
+	///
+	/// The event is built through a `CGEvent` because that is the only way to
+	/// set `buttonNumber` — `NSEvent.mouseEvent` has no parameter for it, and
+	/// the number is the entire question. It carries a screen position rather
+	/// than one in a window, so the cell a terminal would report it at is not
+	/// meaningful; nothing here asks for one, and the side buttons never reach
+	/// that code.
+	func pressMouseForTesting(_ steps: String) {
+		for step in steps.split(separator: ",") {
+			let parts = step.split(separator: "@")
+			guard let number = Int(parts.first ?? "") else { continue }
+			let over = parts.count > 1 ? String(parts[1]) : "editor"
+			guard let target = viewForMouseTesting(named: over) else {
+				print("MOUSE \(step): there is no \(over) to press over")
+				fflush(stdout)
+				continue
+			}
+			pressForTesting(button: number, on: target)
+			let place = editor.currentPlace
+			print("MOUSE \(step): editor at "
+				+ (place.map { "\($0.url.lastPathComponent):\($0.line)" } ?? "nowhere"))
+			fflush(stdout)
+		}
+	}
+
+	/// The views a press can be aimed at, which are the two paths that differ:
+	/// the terminal has mouse handlers of its own, and the editor has none and
+	/// passes everything up.
+	private func viewForMouseTesting(named name: String) -> NSView? {
+		switch name {
+		case "terminal": return bottomPanel.showTerminal()?.terminalView
+		case "tree":     return navigator.view
+		default:         return editor.view
+		}
+	}
+
+	private func pressForTesting(button number: Int, on view: NSView) {
+		let middle = NSPoint(x: view.bounds.midX, y: view.bounds.midY)
+		let inWindow = view.convert(middle, to: nil)
+		let onScreen = view.window?.convertPoint(toScreen: inWindow) ?? .zero
+		let flipped = CGPoint(
+			x: onScreen.x,
+			y: (NSScreen.screens.first?.frame.height ?? 0) - onScreen.y
+		)
+		for type in [CGEventType.otherMouseDown, .otherMouseUp] {
+			guard let raw = CGEvent(
+				mouseEventSource: nil,
+				mouseType: type,
+				mouseCursorPosition: flipped,
+				mouseButton: .center
+			) else { continue }
+			raw.setIntegerValueField(.mouseEventButtonNumber, value: Int64(number))
+			guard let event = NSEvent(cgEvent: raw) else { continue }
+			if type == .otherMouseDown {
+				view.otherMouseDown(with: event)
+			} else {
+				view.otherMouseUp(with: event)
+			}
 		}
 	}
 
@@ -6772,7 +7187,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			fflush(stdout)
 			return
 		}
-		let root = project.scopeRoot
 		let position = LSPPosition(line: line, character: character)
 
 		func say(_ what: String, _ detail: String) {
@@ -6809,6 +7223,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				}
 
 				let service = LanguageService.shared
+				// The file's own root, not the scope. Measuring against the
+				// scope would time a server that was never going to answer
+				// about this file — which is the fault this verb is being used
+				// to check, measured wrongly.
+				let root = service.root(for: url, languageId: languageId, project: project.root)
 				async let symbols = service.documentSymbols(url: url, languageId: languageId, project: root)
 				async let completions = service.completions(
 					url: url, position: position, languageId: languageId, project: root)
@@ -6861,7 +7280,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				guard open.languageId == "java" else { return }
 				let url = open.url
 				let ready = await LanguageService.shared
-					.javaDebugReadinessForTesting(url: url, project: root)
+					.javaDebugReadinessForTesting(
+						url: url,
+						project: LanguageService.shared.root(
+							for: url, languageId: open.languageId, project: project.root
+						)
+					)
 				if !adapter, let port = ready.port {
 					adapter = true
 					say("debug adapter", "listening on port \(port)")
@@ -7062,6 +7486,41 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 	var canNavigateBack: Bool { navigation.canGoBack }
 	var canNavigateForward: Bool { navigation.canGoForward }
+
+	/// The side buttons, taken here so that every view gets them.
+	///
+	/// **At the window, not in a view.** A window controller is in the responder
+	/// chain behind everything in its window, so the editor, the tree, the panes
+	/// and the terminal all reach this without any of them opting in — and a
+	/// view that wants a side button for something of its own can still take it
+	/// first, which is how the chain is meant to work.
+	///
+	/// The same `navigateBack` and `navigateForward` the menu items call: one
+	/// history, one set of rules about when a step is possible, and one place
+	/// where a file deleted since is dealt with. Both already return without
+	/// doing anything where there is nowhere to go, which is what a button at
+	/// the end of the history should do and needs no second check here.
+	override func otherMouseDown(with event: NSEvent) {
+		MouseReport.say("window down", event)
+		// Consumed, so that a press nothing acted on does not arrive somewhere
+		// else as one. What it will become happens on the release.
+		switch MouseButtons.purpose(of: event.buttonNumber) {
+		case .navigateBack, .navigateForward: return
+		case .middleClick, .unclaimed: super.otherMouseDown(with: event)
+		}
+	}
+
+	/// **On the release**, because a navigation changes what is on screen and a
+	/// button still held is a hand still deciding — the same reason a click is a
+	/// press and a release in the same place.
+	override func otherMouseUp(with event: NSEvent) {
+		MouseReport.say("window up", event)
+		switch MouseButtons.purpose(of: event.buttonNumber) {
+		case .navigateBack: navigateBack(nil)
+		case .navigateForward: navigateForward(nil)
+		case .middleClick, .unclaimed: super.otherMouseUp(with: event)
+		}
+	}
 
 	@objc func stopSelected(_ sender: Any?) { stopRunning() }
 

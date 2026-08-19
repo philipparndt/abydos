@@ -36,6 +36,33 @@ struct CadovaModelTests {
 
 	/// The spike's own manifest, unchanged: one executable target, no products,
 	/// and `dependencies: ["Cadova"]` written the short way.
+	/// **A rebuild must not open the Finder.** Cadova reveals what it writes,
+	/// and this pane runs the build again on every save of any of the target's
+	/// sources — so what used to stop it was a line in the model itself, in
+	/// every example anybody wrote. `CADOVA_REVEAL_FILES` moves the fact to the
+	/// process that starts the run, where it belongs.
+	@Test func aPreviewRunSaysItDoesNotWantTheFinder() {
+		let environment = CadovaModel.runEnvironment(inheriting: [:])
+		#expect(environment["CADOVA_REVEAL_FILES"] == "0")
+		// The values Cadova's own `Platform` accepts are `0`, `false`, `no` and
+		// `off`, lowercased. Anything else means it reveals.
+		#expect(["0", "false", "no", "off"].contains(environment[CadovaModel.revealFilesVariable] ?? ""))
+	}
+
+	/// **Inherited and added to, never replaced.** A run handed a dictionary of
+	/// its own has no `PATH` to find `swift` with and no `HOME` for the
+	/// toolchain to look under, which is the same reason the command goes
+	/// through the login shell.
+	@Test func thePreviewRunKeepsTheEnvironmentItWasGiven() {
+		let environment = CadovaModel.runEnvironment(
+			inheriting: ["PATH": "/usr/bin", "HOME": "/Users/somebody", "CUSTOM": "kept"]
+		)
+		#expect(environment["PATH"] == "/usr/bin")
+		#expect(environment["HOME"] == "/Users/somebody")
+		#expect(environment["CUSTOM"] == "kept")
+		#expect(environment.count == 4)
+	}
+
 	@Test func readsTheTargetsDependenciesAndItsPath() {
 		let package = SwiftPackage.parse("""
 		// swift-tools-version: 6.3

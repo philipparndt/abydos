@@ -257,3 +257,57 @@ struct ProjectSearchTests {
 		}
 	}
 }
+
+/// What the find bar says, and when it says it in red.
+///
+/// The bar is in the app target and cannot be built here, so what is asserted is
+/// the *decision* it makes — which query is a search that found nothing, and
+/// which is a pattern that never ran. That distinction is the whole of the
+/// change: red came to mean both, so the words have to tell them apart.
+struct FindStatusTests {
+	/// A search that ran and found nothing.
+	@Test func aQueryThatMatchesNothingIsAnAnswer() {
+		let options = SearchOptions()
+		#expect(TextSearch.isValid(query: "nowhere", options: options))
+		#expect(TextSearch.matches(in: Rope("a b c\n"), query: "nowhere", options: options).isEmpty)
+	}
+
+	/// A pattern that never compiled, which is not the same thing at all.
+	///
+	/// Both produce no matches, so a bar keying only on the count says
+	/// `No results` for both — which is what it did, and what the comment beside
+	/// the field's colour said it was avoiding.
+	@Test func aPatternThatWillNotCompileIsNotAnAnswer() {
+		var options = SearchOptions()
+		options.isRegex = true
+
+		#expect(TextSearch.isValid(query: "(", options: options) == false)
+		#expect(TextSearch.isValid(query: "[a-", options: options) == false)
+		// And the search over it finds nothing, which is exactly why the count
+		// cannot be what distinguishes them.
+		#expect(TextSearch.matches(in: Rope("(a)\n"), query: "(", options: options).isEmpty)
+	}
+
+	/// Half a pattern finished is a pattern.
+	@Test func aFinishedPatternIsSearchedFor() {
+		var options = SearchOptions()
+		options.isRegex = true
+		#expect(TextSearch.isValid(query: "(a)", options: options))
+		#expect(!TextSearch.matches(in: Rope("xax\n"), query: "(a)", options: options).isEmpty)
+	}
+
+	/// An empty query is neither: it has not been asked.
+	@Test func anEmptyQueryIsValidAndFindsNothing() {
+		let options = SearchOptions()
+		#expect(TextSearch.isValid(query: "", options: options))
+		#expect(TextSearch.matches(in: Rope("a\n"), query: "", options: options).isEmpty)
+	}
+
+	/// A literal query is escaped before it is compiled, so a bracket typed
+	/// without regex on is a bracket rather than an incomplete pattern.
+	@Test func aBracketIsLiteralWhenRegexIsOff() {
+		let options = SearchOptions()
+		#expect(TextSearch.isValid(query: "(", options: options))
+		#expect(!TextSearch.matches(in: Rope("f(x)\n"), query: "(", options: options).isEmpty)
+	}
+}

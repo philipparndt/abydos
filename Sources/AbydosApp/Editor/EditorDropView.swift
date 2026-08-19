@@ -1,4 +1,5 @@
 import AppKit
+import AbydosKit
 
 /// An editor group's root view, which accepts dropped tabs.
 ///
@@ -59,13 +60,34 @@ final class EditorDropView: ColoredView {
 	// MARK: - Dragging
 
 	override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-		updateZone(sender)
-		return .move
+		operation(for: sender)
 	}
 
 	override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-		updateZone(sender)
-		return .move
+		operation(for: sender)
+	}
+
+	/// What this drag would do, and what to show while it is overhead.
+	///
+	/// **`.move` used to be the answer to everything**, which is right for a tab
+	/// being dragged between groups and is exactly what the Finder does not
+	/// offer for a file. The project tree already carries the lesson: an
+	/// operation the source never permitted is a drop that quietly does nothing,
+	/// which is indistinguishable from not accepting the drag at all.
+	///
+	/// The zone overlay is a tab's business. It answers "where does this pane
+	/// go", and a file is not a pane — it is a tab. So a file over the group
+	/// highlights nothing, and what is shown is what will happen.
+	private func operation(for sender: NSDraggingInfo) -> NSDragOperation {
+		if EditorTabDrag.payload(from: sender.draggingPasteboard) != nil {
+			updateZone(sender)
+			return .move
+		}
+		clearZone()
+		guard !EditorDrop.urls(from: sender.draggingPasteboard).isEmpty else { return [] }
+		// What the source is willing to do. A Finder drag offers copy; asking
+		// for move would be refused and look like nothing happening.
+		return sender.draggingSourceOperationMask.contains(.copy) ? .copy : []
 	}
 
 	override func draggingExited(_ sender: NSDraggingInfo?) {
@@ -116,14 +138,44 @@ final class EditorDropView: ColoredView {
 	override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
 		let zone = activeZone
 		clearZone()
+		guard let owner else { return false }
 
-		guard let owner,
-		      let payload = EditorTabDrag.payload(from: sender.draggingPasteboard),
-		      let zone
-		else { return false }
+		if let payload = EditorTabDrag.payload(from: sender.draggingPasteboard), let zone {
+			owner.onTabDropped?(payload, zone, owner)
+			return true
+		}
 
-		owner.onTabDropped?(payload, zone, owner)
+		// Files. Anything that is neither a tab nor a file is declined, so the
+		// drag springs back rather than opening a tab named after a web address.
+		let dropped = EditorDrop.urls(from: sender.draggingPasteboard)
+		guard !dropped.isEmpty else { return false }
+		owner.onFilesDropped?(dropped)
 		return true
+	}
+}
+
+/// Reading a drag that carries files.
+///
+/// Its own type because the decisions in it are decidable without a window —
+/// which URLs are files, and which of them are folders — and a drop is otherwise
+/// only checkable by driving.
+enum EditorDrop {
+	/// The file URLs a drag carries, in the order it carries them.
+	///
+	/// **File URLs only.** A browser will happily put an `https:` URL on the
+	/// board, and `NSURL` reads it perfectly well; opening a tab for it would
+	/// name a file that does not exist.
+	static func urls(from pasteboard: NSPasteboard) -> [URL] {
+		let options: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
+		let read = pasteboard.readObjects(forClasses: [NSURL.self], options: options) as? [URL]
+		// Asked for twice: the option is a request AppKit honours for what it
+		// can identify, and the filter is what makes it true.
+		return DroppedFiles.filesOnly(read ?? [])
+	}
+
+	/// Which of them are folders, and which are files. See `DroppedFiles`.
+	static func separate(_ urls: [URL]) -> (folders: [URL], files: [URL]) {
+		DroppedFiles.separate(urls)
 	}
 }
 
@@ -161,4 +213,53 @@ private final class DropHighlightOverlay: NSView {
 		accent.setStroke()
 		outline.stroke()
 	}
+}
+
+/// A drag the harness can make, since a real one cannot be scripted.
+///
+/// Only the parts `EditorDropView` reads are answered; the rest of
+/// `NSDraggingInfo` is a large protocol whose other members it never touches.
+/// Offering `.copy` is what a Finder drag offers, which is the case being
+/// checked — and answering `.move` here would hide the very trap this change is
+/// about.
+final class TestingDrag: NSObject, NSDraggingInfo {
+	private let board: NSPasteboard
+	private let point: NSPoint
+
+	init(pasteboard: NSPasteboard, at point: NSPoint) {
+		self.board = pasteboard
+		self.point = point
+	}
+
+	var draggingDestinationWindow: NSWindow? { nil }
+	var draggingSourceOperationMask: NSDragOperation { [.copy] }
+	var draggingLocation: NSPoint { point }
+	var draggedImageLocation: NSPoint { point }
+	var draggedImage: NSImage? { nil }
+	var draggingPasteboard: NSPasteboard { board }
+	var draggingSource: Any? { nil }
+	var draggingSequenceNumber: Int { 1 }
+	var draggingFormation: NSDraggingFormation {
+		get { .default }
+		set { _ = newValue }
+	}
+	var animatesToDestination: Bool {
+		get { false }
+		set { _ = newValue }
+	}
+	var numberOfValidItemsForDrop: Int {
+		get { 1 }
+		set { _ = newValue }
+	}
+	var springLoadingHighlight: NSSpringLoadingHighlight { .none }
+
+	func slideDraggedImage(to screenPoint: NSPoint) {}
+	func enumerateDraggingItems(
+		options: NSDraggingItemEnumerationOptions,
+		for view: NSView?,
+		classes: [AnyClass],
+		searchOptions: [NSPasteboard.ReadingOptionKey: Any],
+		using block: (NSDraggingItem, Int, UnsafeMutablePointer<ObjCBool>) -> Void
+	) {}
+	func resetSpringLoading() {}
 }

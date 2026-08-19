@@ -47,6 +47,40 @@ public struct CadovaModel: Equatable, Sendable {
 	/// The command line, as somebody would type it in the package root.
 	public var command: String { "swift run \(product)" }
 
+	/// What a preview run is told, on top of the environment it inherits.
+	///
+	/// **Cadova reveals what it writes**, which is right for somebody who typed
+	/// `swift run` and wrong for a pane that runs it again on every save of any
+	/// of the target's sources: the Finder would come to the front each time.
+	/// `Platform.revealFiles` returns early when `CADOVA_REVEAL_FILES` is `0`,
+	/// `false`, `no` or `off`, and that is the whole of the mechanism — added
+	/// upstream in `d358a4fd`, which also deleted the `Settings` type the
+	/// examples used to turn this off from inside the model.
+	///
+	/// **Set here rather than asked of the model**, because a model from
+	/// somebody else's repository has no reason to know this app exists. A run
+	/// this app starts is the thing that does not want the Finder, so the run is
+	/// what says so.
+	///
+	/// Harmless against an older Cadova: an environment variable nothing reads
+	/// is ignored, so this is not a version to check for.
+	public static let revealFilesVariable = "CADOVA_REVEAL_FILES"
+
+	/// The environment for a preview run: this process's own, with the one
+	/// variable added.
+	///
+	/// **Inherited and added to, never replaced.** A dictionary of our own would
+	/// hand `swift` a run with no `PATH`, no `HOME` and none of what a toolchain
+	/// a version manager owns needs to find itself — which is the same reason
+	/// the command goes through the login shell in the first place.
+	public static func runEnvironment(
+		inheriting base: [String: String] = ProcessInfo.processInfo.environment
+	) -> [String: String] {
+		var environment = base
+		environment[revealFilesVariable] = "0"
+		return environment
+	}
+
 	/// What the target's sources are, right now, as one comparable string.
 	///
 	/// **This exists because a build triggers a rebuild otherwise.** FSEvents with

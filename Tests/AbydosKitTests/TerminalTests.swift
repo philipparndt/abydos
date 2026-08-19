@@ -383,6 +383,33 @@ struct TerminalEmulatorTests {
 		#expect(release == "\u{1B}[<0;7;3m")
 	}
 
+	/// **The wire format the middle button has**, kept while the view above it
+	/// learnt to tell the buttons apart.
+	///
+	/// The middle button is 1 in the protocol and 2 to macOS, and every
+	/// `otherMouse` event — the middle button and both side buttons — used to be
+	/// forwarded as this. Which events arrive here is `TerminalView`'s business
+	/// and is checked by driving; that what arrives is encoded exactly as it was
+	/// is this, because it is the half with a format somebody else reads.
+	@Test func theMiddleButtonEncodesAsButtonOne() {
+		let emulator = makeEmulator()
+		emulator.write("\u{1B}[?1000h\u{1B}[?1006h")
+
+		let press = emulator.encodeMouse(button: .middle, row: 3, column: 7, isRelease: false)
+		#expect(press == "\u{1B}[<1;7;3M")
+
+		let release = emulator.encodeMouse(button: .middle, row: 3, column: 7, isRelease: true)
+		#expect(release == "\u{1B}[<1;7;3m")
+	}
+
+	/// A program that has not asked for mouse events is sent none, which is the
+	/// rule the middle button keeps as well.
+	@Test func theMiddleButtonIsSilentWhileNothingIsTracking() {
+		let emulator = makeEmulator()
+		#expect(emulator.mouseTracking == .off)
+		#expect(emulator.encodeMouse(button: .middle, row: 1, column: 1, isRelease: false) == nil)
+	}
+
 	@Test func dragIsSuppressedInClickOnlyMode() {
 		let emulator = makeEmulator()
 		emulator.write("\u{1B}[?1000h\u{1B}[?1006h")

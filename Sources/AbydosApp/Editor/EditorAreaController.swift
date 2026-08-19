@@ -66,6 +66,13 @@ final class EditorAreaController: NSViewController {
 	private var statusBarHeightConstraint: NSLayoutConstraint!
 
 	// Forwarded from the active group.
+	/// Files dropped on any group in this area, in the order they were dropped.
+	///
+	/// Passed straight out. What a dropped file *means* — a tab here, a project
+	/// for a folder, the tree told, the panel making room — belongs to the
+	/// window, which already answers all of that for a file opened from a
+	/// terminal.
+	var onFilesDropped: (([URL]) -> Void)?
 	var onActiveFileChanged: ((URL?) -> Void)?
 	var onToggleBreakpoint: ((URL, Int) -> Void)?
 	var onSetBreakpointEnabled: ((URL, Int, Bool) -> Void)?
@@ -192,6 +199,7 @@ final class EditorAreaController: NSViewController {
 		group.onTabDropped = { [weak self] payload, zone, target in
 			self?.handleDrop(payload: payload, zone: zone, target: target)
 		}
+		group.onFilesDropped = { [weak self] urls in self?.onFilesDropped?(urls) }
 		group.onTabDroppedOnTabBar = { [weak self] payload, index, target in
 			self?.handleTabBarDrop(payload: payload, index: index, target: target)
 		}
@@ -329,6 +337,16 @@ final class EditorAreaController: NSViewController {
 
 	/// The split holding the groups, so a capture run can move a divider
 	/// without a mouse: a drag is a `setPosition` and a layout pass.
+	/// Every open tab in the group in front, in strip order, with the active one
+	/// marked — for a report about what a gesture opened.
+	var openTabNamesForTesting: String {
+		guard let group = activeGroup ?? groups.first else { return "no group" }
+		return group.tabNamesForTesting
+	}
+
+	/// How many groups the area is split into.
+	var groupCountForTesting: Int { groups.count }
+
 	var rootSplitForTesting: NSSplitView? { splitHost.subviews.first as? NSSplitView }
 
 	var activeTabCount: Int { (activeGroup ?? groups.first)?.tabCount ?? 0 }

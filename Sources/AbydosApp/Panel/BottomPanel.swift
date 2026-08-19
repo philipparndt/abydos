@@ -552,6 +552,32 @@ final class BottomPanel: NSView {
 		workingDirectory = url
 	}
 
+	/// The backlog pane if this window has one, without making it.
+	///
+	/// `showBacklog()` makes one on demand, which is right for a person clicking
+	/// and wrong for anything asking a question — including the report that
+	/// checks a switch, which would otherwise open a pane by looking at it.
+	var existingBacklogPane: BacklogPane? {
+		for session in sessions {
+			if case let .backlog(pane) = session.kind { return pane }
+		}
+		return nil
+	}
+
+	/// The window moved to another project: tell the panes that are about one.
+	///
+	/// **Separate from `setWorkingDirectory` on purpose.** That is called with a
+	/// *subproject scope* as well as with a project root, and a backlog is the
+	/// repository's — one `.abydos/backlog`, one `openspec/`, both at the top —
+	/// so hanging this off it would empty the board the moment somebody stepped
+	/// into a subproject. Terminals want the scope; these panes want the project.
+	func setProject(_ url: URL) {
+		for session in sessions {
+			if case let .backlog(pane) = session.kind { pane.setProject(url) }
+		}
+		existingSearchPane?.setProject(url)
+	}
+
 	var hasSessions: Bool { !sessions.isEmpty }
 
 	/// Tells the terminals their pane changed size.
@@ -2007,6 +2033,11 @@ final class BottomPanel: NSView {
 		// terminal is somebody else's session, and what is wanted here is a
 		// prompt in that checkout to run `git log` in.
 		pane.onOpenWorktreeTerminal = { [weak self] worktree in self?.newTerminal(in: worktree) }
+		// `openspec init` and nothing else so far: a command the pane wants run
+		// where somebody can answer it, in the panel that owns the terminals.
+		pane.onRunCommand = { [weak self] title, command, directory in
+			self?.runCommand(title: title, command: command, directory: directory)
+		}
 
 		let session = Session(title: "Backlog", kind: .backlog(pane))
 		sessions.append(session)
@@ -2391,6 +2422,12 @@ final class BottomPanel: NSView {
 		rebuildColumns()
 		placeholder.isHidden = true
 		if focus { giveKeyboard(to: session) }
+		// A board is over files, and coming back to it is the moment to be sure
+		// it still says what they do. It is watched while there is something to
+		// watch, and the gap is the case that has no watcher yet: a project that
+		// keeps one record and gains the other, where nothing under the folder
+		// being watched has changed at all. The walk is off the main thread.
+		if case let .backlog(pane) = session.kind { pane.reload() }
 		activeTerminalChanged()
 	}
 

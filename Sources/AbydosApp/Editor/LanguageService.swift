@@ -291,6 +291,29 @@ final class LanguageService {
 		)
 	}
 
+	/// The project a *file* belongs to, for the purpose of asking about it.
+	///
+	/// **One place decides it**, and that is the whole of this change. There are
+	/// twenty call sites in the editor asking questions of a language server; if
+	/// any two of them disagree about which root a file is filed under, the file
+	/// is opened at one server and asked about through another — which answers
+	/// nothing and looks exactly like the fault being fixed.
+	///
+	/// The scope is not the answer. `Project.scopeRoot` says which launch
+	/// configurations there are, which module a build runs in, which tree git
+	/// acts on — all questions about *what somebody is working on*. Which server
+	/// knows about a file is a question about the file, and answering it with the
+	/// scope pill meant a Swift file got no Swift server while the pill said Go.
+	///
+	/// Falls back to the project wherever the file has no root of its own, which
+	/// is what every file answered before this existed.
+	func root(for url: URL, languageId: String, project: URL) -> URL {
+		guard let definition = LanguageServers.definition(
+			forLanguage: languageId, choosing: choices(for: project)
+		) else { return project }
+		return LanguageServers.rootDirectory(for: definition, containing: url, in: project)
+	}
+
 	/// Which server this project uses for a language, and where that was said.
 	private func selection(for languageId: String, project: URL) -> LanguageServers.Selection {
 		LanguageServers.selection(forLanguage: languageId, choosing: choices(for: project))

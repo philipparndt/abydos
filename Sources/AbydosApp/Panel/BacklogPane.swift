@@ -80,7 +80,9 @@ struct BacklogCard {
 struct OpenSpecCard: Equatable {
 	let change: OpenSpecChange
 	let progress: BacklogItem.Progress?
-	let state: BacklogState
+	/// **In OpenSpec's own vocabulary**, not the backlog's folders. Answering in
+	/// `BacklogState` is what put a change into a column it has no notion of.
+	let state: OpenSpecState
 
 	init(_ change: OpenSpecChange) {
 		self.change = change
@@ -93,9 +95,22 @@ struct OpenSpecCard: Equatable {
 	}
 
 	var name: String { change.name }
-	/// What is written, for a change with no tasks to count yet — which is the
-	/// useful thing to say at that stage.
-	var artifactSummary: String { change.artifactSummary }
+
+	/// The line under the name, and **in one place** because three of them read
+	/// it: the card, the row in the list, and the measurement that decides how
+	/// tall the card is. Those had the same expression written out three times,
+	/// and the one that can disagree is the height — a card measured without a
+	/// line it is then drawn with comes out short.
+	///
+	/// What is written and what is wanted next, while there are no tasks to
+	/// count. **And where the schema is one this cannot read, always**: that
+	/// change has a fraction like any other — `- [x]` means the same thing in
+	/// any schema — so keying on "no progress" alone would count its tasks and
+	/// never say that the column it is in was not derived.
+	var marks: String {
+		guard progress == nil || !change.isSchemaUnderstood else { return "" }
+		return change.artifactSummary
+	}
 }
 
 /// One thing on the board, whichever record it came from.
@@ -103,10 +118,63 @@ enum BoardEntry {
 	case item(BacklogCard)
 	case change(OpenSpecCard)
 
-	var state: BacklogState {
+	var column: BoardColumn {
 		switch self {
-		case let .item(card):   return card.state
-		case let .change(card): return card.state
+		case let .item(card):   return .backlog(card.state)
+		case let .change(card): return .openSpec(card.state)
+		}
+	}
+}
+
+/// One column of the board, from whichever record is showing.
+///
+/// **Each source brings its own**, which is the whole of this: the backlog's are
+/// its folders and OpenSpec's are its lifecycle, and one set of columns over two
+/// records is what sorted a change into `waiting` — a folder OpenSpec has no
+/// notion of and nothing can ever be in.
+///
+/// The two are not merged into a common five. They have `ready` and
+/// `in-progress` in common and nothing else, and a column called Open that means
+/// "written down, not agreed" for one record and "the proposal is not finished"
+/// for the other is a heading that has to be read twice.
+enum BoardColumn: Hashable {
+	case backlog(BacklogState)
+	case openSpec(OpenSpecState)
+
+	var title: String {
+		switch self {
+		case let .backlog(state):  return state.title
+		case let .openSpec(state): return state.title
+		}
+	}
+
+	/// The one line that says what belongs here, for a column with nothing in it.
+	var summary: String {
+		switch self {
+		case let .backlog(state):  return state.summary
+		case let .openSpec(state): return state.summary
+		}
+	}
+
+	/// What a driver prints and what the summary line counts by. The backlog's
+	/// is its folder name, because that is a real path somebody can `cd` to;
+	/// OpenSpec's is the state's own name, because there is no folder.
+	var key: String {
+		switch self {
+		case let .backlog(state):  return state.directoryName
+		case let .openSpec(state): return state.rawValue
+		}
+	}
+
+	/// The backlog state this column is, where it is one.
+	///
+	/// **Nil for every OpenSpec column, and that is what makes a drop into one
+	/// impossible to write.** A drag moves a file between folders; there are no
+	/// folders on that side, so the type says so rather than a guard hoping to.
+	var backlogState: BacklogState? {
+		switch self {
+		case let .backlog(state): return state
+		case .openSpec:           return nil
 		}
 	}
 }
@@ -135,18 +203,34 @@ final class BacklogPane: NSView {
 	/// Say something in the corner of the window.
 	var onNotify: ((String, String?) -> Void)?
 
-	private let backlog: Backlog
-	private let openSpec: OpenSpec
+	/// Runs a command in a terminal pane beside this one.
+	///
+	/// One callback rather than a verb of its own, because the pane has no
+	/// business knowing what a terminal is: `BottomPanel` owns them and already
+	/// runs commands in them for runs and for agents. What goes through it is
+	/// `openspec init`, which asks questions.
+	var onRunCommand: ((_ title: String, _ command: String, _ directory: URL) -> Void)?
+
+	/// **Not `let`.** A pane is made once per window and kept; a project is not.
+	/// Bound at birth, `reload()` after a project switch re-read the folders of
+	/// the project that was left — so the board had to be closed and reopened.
+	private var backlog: Backlog
+	private var openSpec: OpenSpec
 	private var watcher: FileSystemWatcher?
 	private var openSpecWatcher: FileSystemWatcher?
+	/// Runs only while the pane is showing its offer. See
+	/// `watchForARecordAppearing`.
+	private var appearanceTimer: Timer?
 
 	private var cardsByState: [BacklogState: [BacklogCard]] = [:]
-	private var changesByState: [BacklogState: [OpenSpecCard]] = [:]
-	/// Archived changes, which are not a column.
-	///
-	/// `history`'s argument exactly: a long list beside four short ones is a wall
-	/// with the work hidden behind it. They are in the list instead.
-	private var archivedChanges: [OpenSpecCard] = []
+	/// **The archived ones are in here too**, under `.archived`, because that is
+	/// a column now. They were a list of their own while it was not, on the
+	/// argument that keeps the backlog's `history` off its board — and that
+	/// argument is the opposite of this case: the backlog has `completed/` on
+	/// the board beside it, OpenSpec has no `completed/` at all, so the archive
+	/// *is* where finished work lives. A project that had just archived nine
+	/// changes showed five empty columns.
+	private var changesByState: [OpenSpecState: [OpenSpecCard]] = [:]
 
 	/// Whether this project has a backlog at all.
 	///
@@ -205,11 +289,51 @@ final class BacklogPane: NSView {
 		watch()
 	}
 
+	/// Shows another project's work, without being closed and reopened.
+	///
+	/// **Everything `init` worked out is worked out again**, in one function, so
+	/// the two cannot come to disagree about what a project means: which folders
+	/// there are, whether there is a backlog at all, whether there is an
+	/// `openspec/`, and therefore which of the two is being shown and whether
+	/// the switch between them is offered.
+	///
+	/// Re-pointed rather than rebuilt: a pane's place in the tab strip is an
+	/// arrangement somebody made, and a rebuild loses it.
+	func setProject(_ projectRoot: URL) {
+		guard projectRoot.standardizedFileURL != backlog.projectRoot.standardizedFileURL else { return }
+
+		// **Stopped and dropped, not kept.** `watch()` starts a watcher only
+		// where there is none, so a pane that kept its old ones would be woken
+		// by the project it left and never by the one it is in — right when it
+		// is opened and stale a moment later, which is harder to notice than
+		// being stale throughout.
+		watcher?.stop()
+		watcher = nil
+		openSpecWatcher?.stop()
+		openSpecWatcher = nil
+
+		backlog = Backlog(projectRoot: projectRoot)
+		openSpec = OpenSpec(projectRoot: projectRoot)
+		hasBacklog = backlog.exists
+		hasOpenSpec = openSpec.exists
+		// Re-picked, because it can become impossible: arriving at a project
+		// with only `openspec/` while the backlog is showing would otherwise
+		// leave the pane on a record that is not there.
+		source = hasBacklog ? .backlog : (hasOpenSpec ? .openSpec : .backlog)
+		cardsByState = [:]
+		changesByState = [:]
+
+		showContent()
+		reload()
+		watch()
+	}
+
 	required init?(coder: NSCoder) { fatalError("not used") }
 
 	deinit {
 		watcher?.stop()
 		openSpecWatcher?.stop()
+		appearanceTimer?.invalidate()
 	}
 
 	override var isFlipped: Bool { true }
@@ -277,6 +401,7 @@ final class BacklogPane: NSView {
 		boardView.pane = self
 		absentView = BacklogAbsentView(projectName: backlog.projectRoot.lastPathComponent)
 		absentView.onMake = { [weak self] in self?.confirmMakeBacklog() }
+		absentView.onSetUpOpenSpec = { [weak self] in self?.setUpOpenSpec() }
 
 		contentArea = NSView()
 		addSubview(header)
@@ -304,6 +429,10 @@ final class BacklogPane: NSView {
 	private var hasSomething: Bool { hasBacklog || hasOpenSpec }
 
 	private func showContent() {
+		// Whether anything is being waited for, decided here because this is the
+		// one place that knows which view is up.
+		watchForARecordAppearing(hasSomething ? false : true)
+
 		// The header is about a record of the work: which one, two presentations
 		// of it, how many are in each column, and what to start next. With no
 		// record at all there is nothing for it to say, and a row of disabled
@@ -348,36 +477,99 @@ final class BacklogPane: NSView {
 		refreshViews()
 	}
 
+	/// Which project this pane is reading, and what it found there.
+	///
+	/// The two together, because the fault was that they disagreed: the pane
+	/// went on naming the project it was made for and showing that project's
+	/// items, in a window that had moved on.
+	var projectReportForTesting: String {
+		let name = backlog.projectRoot.lastPathComponent
+		let items = BacklogState.board.reduce(0) { $0 + cards(in: $1).count }
+		let changes = changesByState.values.reduce(0) { $0 + $1.count }
+		return "project=\(name) backlog=\(hasBacklog) openspec=\(hasOpenSpec)"
+			+ " items=\(items) changes=\(changes)"
+	}
+
+	/// The geometry every card is drawn with.
+	///
+	/// Written for a progress bar reported missing from the change cards, which
+	/// turned out to be an **older build being looked at** — the bar was in the
+	/// current one all along, photographed at 96.8% of the card's width in
+	/// `gitModified`. Kept because it is what settled it: two impressions of a
+	/// screenshot were not going anywhere, and a line of numbers was.
+	///
+	/// It prints the scale first, because `scaled(_:)` rounds and a small enough
+	/// scale would round a 3-point bar to nothing — which was the best theory
+	/// until the numbers came back `bar=3.0` on both machines and killed it.
+	var cardGeometryReportForTesting: String {
+		let scale = Theme.current.scale
+		var lines = [
+			"scheme=\(Theme.current.name) scale=\(scale)"
+				+ " bar=\(Theme.current.scaled(3)) gap=\(Theme.current.scaled(4))"
+				+ " inset=\(Theme.current.scaled(6)) gutter=\(Theme.current.scaled(6))",
+		]
+		for view in boardView.columnViewsForTesting where !entries(in: view.column).isEmpty {
+			lines.append("  [\(view.column.key)] measured at width \(view.cardWidth)")
+			lines.append(view.rowHeightReportForTesting)
+		}
+		for column in columns {
+			for entry in entries(in: column) {
+				guard case let .change(card) = entry else { continue }
+				let progress = card.progress
+				let footer = BacklogCardView.footerForTesting(
+					marks: card.marks, progress: progress != nil, width: 300
+				)
+				lines.append(
+					"  \(card.name): progress=\(progress?.summary ?? "none")"
+						+ " marks=\u{201C}\(card.marks)\u{201D}"
+						+ " footer=\(footer)"
+						+ " height=\(BacklogCardView.height(for: entry, width: 300))"
+				)
+			}
+		}
+		return lines.joined(separator: "\n")
+	}
+
 	/// What is on the board, for a driver to print.
 	///
-	/// The columns in board order with what is in each, and the archive after
-	/// them — which is the one thing a picture of the board cannot show, since
-	/// it is deliberately not a column.
+	/// The columns of whichever record is showing, in board order, with what is
+	/// in each — the archive among them rather than after them, because it is a
+	/// column now.
 	var boardReportForTesting: String {
 		var lines: [String] = []
 		lines.append("source: \(source == .openSpec ? "openspec" : "backlog")"
 			+ ", backlog: \(hasBacklog), openspec: \(hasOpenSpec)"
 			+ ", switch shown: \(!(sourceControl?.isHidden ?? true))")
-		for state in BacklogState.board {
-			let entries = self.entries(in: state)
+		lines.append("columns: " + columns.map(\.key).joined(separator: ", "))
+		for column in columns {
+			let entries = self.entries(in: column)
 			guard !entries.isEmpty else { continue }
 			let names = entries.map { entry -> String in
 				switch entry {
 				case let .item(card):   return String(format: "%04d", card.number)
-				case let .change(card): return "\(card.name) \(card.progress?.summary ?? card.artifactSummary)"
+				case let .change(card):
+					// What the card itself shows, so a report and a photograph
+					// of the same board cannot say different things.
+					return ([card.name, card.progress?.summary ?? "", card.marks]
+						.filter { !$0.isEmpty }).joined(separator: " ")
 				}
 			}
-			lines.append("\(state.directoryName): \(names.joined(separator: ", "))")
-		}
-		if !archived.isEmpty {
-			lines.append("archived (not a column): \(archived.map(\.name).joined(separator: ", "))")
+			lines.append("\(column.key): \(names.joined(separator: ", "))")
 		}
 		return lines.joined(separator: "\n")
 	}
 
-	/// Whether a card can be dragged, and what is said when it cannot.
-	func dragReportForTesting(state: BacklogState) -> String {
-		guard let entry = entries(in: state).first else { return "nothing in \(state.directoryName)" }
+	/// Whether the first card of a column can be dragged, and what is said when
+	/// it cannot.
+	///
+	/// By the column's name rather than by a `BacklogState`, because the two
+	/// records no longer share a vocabulary and a driver asking for "ready" means
+	/// whichever record is showing.
+	func dragReportForTesting(column key: String) -> String {
+		guard let column = columns.first(where: { $0.key == key }) else {
+			return "no column called \(key) in this record"
+		}
+		guard let entry = entries(in: column).first else { return "nothing in \(key)" }
 		switch entry {
 		case let .item(card):
 			return "\(String(format: "%04d", card.number)) drags"
@@ -463,16 +655,14 @@ final class BacklogPane: NSView {
 			// spawned at all** — `openspec list --json` costs 0.60 s of Node
 			// start-up, and this runs whenever anything under either directory
 			// changes, including an agent ticking a checkbox.
-			var changes: [BacklogState: [OpenSpecCard]] = [:]
-			for card in openSpec.changes().map(OpenSpecCard.init) {
+			var changes: [OpenSpecState: [OpenSpecCard]] = [:]
+			for card in (openSpec.changes() + openSpec.archived()).map(OpenSpecCard.init) {
 				changes[card.state, default: []].append(card)
 			}
-			let archived = openSpec.archived().map(OpenSpecCard.init)
 
 			DispatchQueue.main.async {
 				self.cardsByState = found
 				self.changesByState = changes
-				self.archivedChanges = archived
 				if exists != self.hasBacklog || hasOpenSpec != self.hasOpenSpec {
 					self.hasBacklog = exists
 					self.hasOpenSpec = hasOpenSpec
@@ -481,6 +671,44 @@ final class BacklogPane: NSView {
 					self.watch()
 				}
 				self.refreshViews()
+			}
+		}
+	}
+
+	/// Looks again, while there is nothing to look at.
+	///
+	/// **A watcher cannot be started on a directory that does not exist**, and
+	/// that is the whole reason this exists. `watch()` starts FSEvents on
+	/// `.abydos/backlog` and on `openspec/changes` where those are there; a
+	/// project with neither has nothing to attach to, so the pane sat on its
+	/// offer until it was closed and opened again — reported after `openspec
+	/// init` had finished in the terminal beside it.
+	///
+	/// Ruled out: watching the project root instead. That is watching a whole
+	/// source tree to notice one folder, which is the reason `watch()` gives for
+	/// not doing it — and it would not even work, because `openspec init` makes
+	/// `openspec/` before `openspec/changes`, so the event for the entry
+	/// appearing arrives while there is still nothing to read.
+	///
+	/// So: two `fileExists` calls every two seconds, and only while the offer is
+	/// showing. That is a project with no record of work at all, which is nobody
+	/// scrolling anything, and it stops for good the moment there is one — the
+	/// reload that finds it puts a board up, and this is asked to stop from
+	/// there.
+	private func watchForARecordAppearing(_ wanted: Bool) {
+		guard wanted else {
+			appearanceTimer?.invalidate()
+			appearanceTimer = nil
+			return
+		}
+		guard appearanceTimer == nil else { return }
+		appearanceTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+			MainActor.assumeIsolated {
+				guard let self else { return }
+				guard self.backlog.exists || self.openSpec.exists else { return }
+				// The cheap question is answered here; the walk that reads what
+				// is in them is `reload`'s, off the main thread as ever.
+				self.reload()
 			}
 		}
 	}
@@ -520,32 +748,46 @@ final class BacklogPane: NSView {
 	}
 
 	private func refreshViews() {
-		let counts = BacklogState.board.map { "\(entries(in: $0).count) \($0.directoryName)" }
+		// The columns of whichever record is showing, which is also what makes
+		// this line change when the switch is clicked.
+		let counts = columns.map { "\(entries(in: $0).count) \($0.key)" }
 		summaryLabel.stringValue = counts.joined(separator: "   ")
-			+ (source == .openSpec && !archivedChanges.isEmpty ? "   \(archivedChanges.count) archived" : "")
 		startButton.isEnabled = !cards(in: .ready).isEmpty
 
 		guard hasSomething else { return }
 		if mode == .list {
 			listView.reload()
 		} else {
+			boardView.setColumns(columns)
 			boardView.reload()
+		}
+	}
+
+	/// The columns on the board, from whichever record is being looked at.
+	///
+	/// **Not one set for both.** The backlog's are its folders; OpenSpec's are
+	/// its lifecycle, and the archive is the last of them.
+	var columns: [BoardColumn] {
+		switch source {
+		case .backlog:  return BacklogState.board.map(BoardColumn.backlog)
+		case .openSpec: return OpenSpecState.board.map(BoardColumn.openSpec)
 		}
 	}
 
 	func cards(in state: BacklogState) -> [BacklogCard] { cardsByState[state] ?? [] }
 
-	/// What belongs in one column, from whichever record is being looked at.
-	func entries(in state: BacklogState) -> [BoardEntry] {
-		switch source {
-		case .backlog:  return cards(in: state).map(BoardEntry.item)
-		case .openSpec: return (changesByState[state] ?? []).map(BoardEntry.change)
+	/// What belongs in one column.
+	///
+	/// A column of the other record's is empty rather than an error: the two
+	/// vocabularies share `ready` and `in-progress` and nothing else, and asking
+	/// a backlog for its Archived column is a question with a true answer.
+	func entries(in column: BoardColumn) -> [BoardEntry] {
+		switch (source, column) {
+		case let (.backlog, .backlog(state)):   return cards(in: state).map(BoardEntry.item)
+		case let (.openSpec, .openSpec(state)): return (changesByState[state] ?? []).map(BoardEntry.change)
+		default: return []
 		}
 	}
-
-	/// The archived changes, which the list shows under the columns and the
-	/// board does not show at all.
-	var archived: [OpenSpecCard] { source == .openSpec ? archivedChanges : [] }
 
 	func item(number: Int) -> BacklogItem? {
 		BacklogState.board.compactMap { cards(in: $0).first { $0.item.number == number }?.item }.first
@@ -594,11 +836,35 @@ final class BacklogPane: NSView {
 		open.representedObject = card.change.directory
 		menu.addItem(open)
 
+		// **The command that picks it up, where it can be picked up.**
+		//
+		// First, above the archive entry: no change is ever offered both — one
+		// is for a change with work left and the other for a change with none —
+		// but the order is fixed here rather than left to which branch runs.
+		//
+		// **No `Executables.locate` on this path, deliberately.** `openspec
+		// archive` goes into a terminal and wants the CLI found, which is the
+		// entry below. This goes into an assistant: it is a slash command, it
+		// lives in `.claude/commands/opsx/apply.md` in the project, and asking
+		// whether Node is installed before offering it would be answering a
+		// question nobody asked — and answering it wrong for a Dock-launched
+		// app, whose `PATH` is four directories.
+		if let apply = OpenSpec.applyCommand(for: card.change, in: card.state) {
+			let entry = NSMenuItem(
+				title: "Copy \u{201C}\(apply)\u{201D}",
+				action: #selector(copyApplyCommandFromMenu(_:)),
+				keyEquivalent: ""
+			)
+			entry.target = self
+			entry.representedObject = apply
+			menu.addItem(entry)
+		}
+
 		// A change with every task ticked is one somebody is about to archive,
 		// and archiving rewrites the project's specs — so the command is handed
 		// over rather than run. Where the tool is not installed, that is what
 		// this says instead of quietly not being here.
-		if card.state == .completed, !card.change.isArchived {
+		if card.state == .complete, !card.change.isArchived {
 			let archive = NSMenuItem(
 				title: OpenSpec.commandLine() == nil
 					? "openspec is not installed\u{2026}"
@@ -639,6 +905,16 @@ final class BacklogPane: NSView {
 	@objc private func openChangeFileFromMenu(_ sender: NSMenuItem) {
 		guard let file = sender.representedObject as? URL else { return }
 		onOpenItem?(file)
+	}
+
+	/// The string is what the menu item carries, because it was worked out when
+	/// the menu was built and re-deriving it here would be a second place for
+	/// the rule about which states offer it to live.
+	@objc private func copyApplyCommandFromMenu(_ sender: NSMenuItem) {
+		guard let command = sender.representedObject as? String else { return }
+		NSPasteboard.general.clearContents()
+		NSPasteboard.general.setString(command, forType: .string)
+		onNotify?("Copied", command)
 	}
 
 	@objc private func copyArchiveCommandFromMenu(_ sender: NSMenuItem) {
@@ -732,6 +1008,38 @@ final class BacklogPane: NSView {
 		onOpenItem?(backlog.instructionsFile)
 	}
 
+	/// Sets a project up for OpenSpec, by running `openspec init` where its
+	/// questions can be answered.
+	///
+	/// **In a terminal, and no sheet in front of it**, which is where this stops
+	/// looking like the offer beside it. `Make a Backlog…` asks first because
+	/// `BacklogSetup.run` then writes without asking anything — the sheet is the
+	/// only chance to say what will happen, and to name the assistants it will
+	/// point at the folder. `openspec init` asks better questions than a sheet
+	/// could, in the terminal it is asked in, and answering them for somebody
+	/// writes slash commands and skills into their repository.
+	///
+	/// Nothing is claimed afterwards. The directory appears when the person has
+	/// finished answering, which is long after this returns, and the pane
+	/// re-reads both records every time it is shown — so coming back to this tab
+	/// is what shows the board, without the pane being reopened.
+	func setUpOpenSpec() {
+		guard OpenSpec.commandLine() != nil else {
+			onNotify?("OpenSpec is not installed", OpenSpec.installHint)
+			return
+		}
+		onRunCommand?("OpenSpec", OpenSpec.initCommand(), backlog.projectRoot)
+	}
+
+	/// What the empty state is offering, for a driver to print.
+	///
+	/// Nil where the pane has something to show, which is the other half of the
+	/// answer: a report saying "there is no offer" is how a driver tells a
+	/// project that was set up from one that was not.
+	var offerReportForTesting: String? {
+		hasSomething ? nil : absentView.offerReportForTesting
+	}
+
 	/// Files a new item, in `open/`.
 	///
 	/// **Never `ready/`**, and there is deliberately no control here that could
@@ -804,6 +1112,26 @@ final class BacklogPane: NSView {
 			.first
 		guard let card = found else { return "no item \(number) on the board" }
 		return menu(for: card).items
+			.map { $0.isSeparatorItem ? "\u{2014}" : $0.title }
+			.joined(separator: " | ")
+	}
+
+	/// The same, for a change — which has a name where an item has a number.
+	///
+	/// Its own verb rather than a cleverness over the other one: the two records
+	/// are addressed differently, and a driver that had to know `0540` means an
+	/// item and `find-bands-follow-soft-wrap` means a change would be one that
+	/// guesses.
+	func menuTitlesForTesting(change name: String) -> String {
+		let found = columns
+			.flatMap { entries(in: $0) }
+			.compactMap { entry -> OpenSpecCard? in
+				guard case let .change(card) = entry, card.name == name else { return nil }
+				return card
+			}
+			.first
+		guard let card = found else { return "no change called \(name) on the board" }
+		return "[\(card.state.rawValue)] " + menu(for: card).items
 			.map { $0.isSeparatorItem ? "\u{2014}" : $0.title }
 			.joined(separator: " | ")
 	}
@@ -979,11 +1307,8 @@ final class BacklogListView: NSView {
 	weak var pane: BacklogPane?
 
 	private enum Row {
-		case header(BacklogState, Int)
+		case header(BoardColumn, Int)
 		case entry(BoardEntry)
-		/// The archived changes, which are not a column on the board but are
-		/// worth finding here.
-		case archiveHeader(Int)
 	}
 
 	private var rows: [Row] = []
@@ -1031,16 +1356,14 @@ final class BacklogListView: NSView {
 	func reload() {
 		guard let pane else { return }
 		rows = []
-		for state in BacklogState.board {
-			let entries = pane.entries(in: state)
+		// The columns of whichever record is showing, the archive among them —
+		// it used to be a section of its own down here because it was not a
+		// column anywhere.
+		for column in pane.columns {
+			let entries = pane.entries(in: column)
 			guard !entries.isEmpty else { continue }
-			rows.append(.header(state, entries.count))
+			rows.append(.header(column, entries.count))
 			rows += entries.map(Row.entry)
-		}
-		let archived = pane.archived
-		if !archived.isEmpty {
-			rows.append(.archiveHeader(archived.count))
-			rows += archived.map { Row.entry(.change($0)) }
 		}
 		tableView.reloadData()
 	}
@@ -1065,17 +1388,15 @@ extension BacklogListView: NSTableViewDataSource, NSTableViewDelegate {
 
 	func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
 		switch rows[row] {
-		case .header, .archiveHeader: return Theme.current.scaled(26)
+		case .header: return Theme.current.scaled(26)
 		case .entry: return Theme.current.scaled(22)
 		}
 	}
 
 	func tableView(_ tableView: NSTableView, viewFor column: NSTableColumn?, row: Int) -> NSView? {
 		switch rows[row] {
-		case let .header(state, count):
-			return BacklogSectionHeader(state: state, count: count)
-		case let .archiveHeader(count):
-			return BacklogSectionHeader(state: .history, count: count, title: "ARCHIVED")
+		case let .header(column, count):
+			return BacklogSectionHeader(column: column, count: count)
 		case let .entry(entry):
 			let view = BacklogRowCell()
 			switch entry {
@@ -1092,7 +1413,7 @@ extension BacklogListView: NSTableViewDataSource, NSTableViewDelegate {
 
 	func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
 		switch rows[row] {
-		case .header, .archiveHeader: return false
+		case .header: return false
 		case .entry: return true
 		}
 	}
@@ -1100,16 +1421,12 @@ extension BacklogListView: NSTableViewDataSource, NSTableViewDelegate {
 
 /// `Ready — 3`, over the items in it.
 private final class BacklogSectionHeader: NSView {
-	private let state: BacklogState
+	private let column: BoardColumn
 	private let count: Int
-	/// What it says, where that is not the state's own name — `ARCHIVED`, which
-	/// is not a state anything is in.
-	private let title: String?
 
-	init(state: BacklogState, count: Int, title: String? = nil) {
-		self.state = state
+	init(column: BoardColumn, count: Int) {
+		self.column = column
 		self.count = count
-		self.title = title
 		super.init(frame: .zero)
 	}
 
@@ -1117,10 +1434,10 @@ private final class BacklogSectionHeader: NSView {
 
 	override func draw(_ dirtyRect: NSRect) {
 		let font = Theme.current.uiFont(11, weight: .semibold)
-		let text = "\(title ?? state.title.uppercased())  \(count)"
+		let text = "\(column.title.uppercased())  \(count)"
 		let attributes: [NSAttributedString.Key: Any] = [
 			.font: font,
-			.foregroundColor: BacklogPalette.colour(for: state),
+			.foregroundColor: BacklogPalette.colour(for: column),
 		]
 		let size = (text as NSString).size(withAttributes: attributes)
 		(text as NSString).draw(
@@ -1154,7 +1471,7 @@ private final class BacklogRowCell: NSView {
 		number = card.progress?.summary ?? ""
 		title = card.name
 		tint = BacklogPalette.colour(for: card.state)
-		marks = card.progress == nil ? card.artifactSummary : ""
+		marks = card.marks
 		needsDisplay = true
 	}
 
@@ -1243,8 +1560,28 @@ final class BacklogBoardView: NSView {
 
 	required init?(coder: NSCoder) { fatalError("not used") }
 
+	/// The columns this board is over, which the source decides.
+	///
+	/// Rebuilt rather than relabelled: the two records do not have the same
+	/// number of columns in general, and a column view carries the drop
+	/// behaviour of the state it was made for. Nothing happens where the set is
+	/// already the right one, which is every reload but the two that follow a
+	/// click on the switch.
+	func setColumns(_ wanted: [BoardColumn]) {
+		guard wanted != columns.map(\.column) else { return }
+		for column in columns {
+			stack.removeArrangedSubview(column)
+			column.removeFromSuperview()
+		}
+		columns = wanted.map { BacklogColumnView(column: $0) }
+		for column in columns {
+			column.pane = pane
+			stack.addArrangedSubview(column)
+		}
+	}
+
 	private func build() {
-		columns = BacklogState.board.map { BacklogColumnView(state: $0) }
+		columns = BacklogState.board.map { BacklogColumnView(column: .backlog($0)) }
 		stack = NSStackView(views: columns)
 		stack.orientation = .horizontal
 		stack.distribution = .fillEqually
@@ -1275,7 +1612,9 @@ final class BacklogBoardView: NSView {
 			// scrolls sideways, because a kanban board squeezed to sixty points
 			// a column is five lists of numbers.
 			stack.widthAnchor.constraint(
-				greaterThanOrEqualToConstant: Theme.current.scaled(CGFloat(BacklogState.board.count) * 190)
+				greaterThanOrEqualToConstant: Theme.current.scaled(
+					CGFloat(max(BacklogState.board.count, OpenSpecState.board.count)) * 190
+				)
 			),
 		])
 
@@ -1290,6 +1629,9 @@ final class BacklogBoardView: NSView {
 		fit.isActive = true
 	}
 
+	/// The columns themselves, for a report about what each is drawing.
+	var columnViewsForTesting: [BacklogColumnView] { columns }
+
 	func reload() {
 		columns.forEach { $0.reload() }
 	}
@@ -1302,7 +1644,7 @@ final class BacklogBoardView: NSView {
 /// One state, with its cards.
 final class BacklogColumnView: NSView {
 	weak var pane: BacklogPane?
-	let state: BacklogState
+	let column: BoardColumn
 
 	/// What a dragged card carries: the number, which is the only durable name
 	/// an item has.
@@ -1344,8 +1686,8 @@ final class BacklogColumnView: NSView {
 		}
 	}
 
-	init(state: BacklogState) {
-		self.state = state
+	init(column: BoardColumn) {
+		self.column = column
 		super.init(frame: .zero)
 		wantsLayer = true
 		layer?.backgroundColor = Theme.current.editorBackground.cgColor
@@ -1357,9 +1699,9 @@ final class BacklogColumnView: NSView {
 	override var isFlipped: Bool { true }
 
 	private func build() {
-		headerLabel = NSTextField(labelWithString: state.title.uppercased())
+		headerLabel = NSTextField(labelWithString: column.title.uppercased())
 		headerLabel.font = Theme.current.uiFont(11, weight: .semibold)
-		headerLabel.textColor = BacklogPalette.colour(for: state)
+		headerLabel.textColor = BacklogPalette.colour(for: column)
 
 		let table = NSTableView()
 		table.headerView = nil
@@ -1399,7 +1741,7 @@ final class BacklogColumnView: NSView {
 		// one, and five unlabelled columns explain nothing. `ready` is the one
 		// that matters: it is the folder an agent picks from, and the reason
 		// nothing is in it is that moving something there is a decision.
-		emptyLabel = NSTextField(wrappingLabelWithString: state.summary)
+		emptyLabel = NSTextField(wrappingLabelWithString: column.summary)
 		emptyLabel.font = Theme.current.uiFont(11)
 		emptyLabel.textColor = Theme.current.gitIgnored
 		emptyLabel.alignment = .left
@@ -1433,11 +1775,43 @@ final class BacklogColumnView: NSView {
 		])
 	}
 
+	/// What the table is using for each row and what the card view was given,
+	/// against what the card wants — the three that a cached height lets drift
+	/// apart.
+	///
+	/// `uses` is `rect(ofRow:)`, which includes the intercell spacing, so it is
+	/// a row taller than the card by design and compared with that allowed for.
+	/// `draws` is the card view's own frame, and it is the one that matters:
+	/// everything at the foot of a card — the bar above all — is measured from
+	/// its bottom edge, and a view left taller than its row has that edge, and
+	/// the bar on it, below the row's clip. A card whose bottom corners are
+	/// square in a photograph is this, and nothing else.
+	var rowHeightReportForTesting: String {
+		var lines: [String] = []
+		let spacing = tableView.intercellSpacing.height
+		for (index, entry) in entries.enumerated() {
+			let wanted = BacklogCardView.height(for: entry, width: cardWidth)
+			let used = tableView.rect(ofRow: index).height - spacing
+			let drawn = tableView.view(atColumn: 0, row: index, makeIfNecessary: false)?.frame.height
+			let name: String
+			switch entry {
+			case let .item(card): name = String(format: "%04d", card.number)
+			case let .change(card): name = card.name
+			}
+			let clipped = drawn.map { $0 - used > 0.5 } ?? false
+			lines.append("    \(name): wants=\(wanted) uses=\(used)"
+				+ " draws=\(drawn.map(String.init(describing:)) ?? "not made")"
+				+ (abs(wanted - used) > 0.5 ? "  ← DIFFERS" : "")
+				+ (clipped ? "  ← CLIPPED" : ""))
+		}
+		return lines.joined(separator: "\n")
+	}
+
 	func reload() {
-		entries = pane?.entries(in: state) ?? []
+		entries = pane?.entries(in: column) ?? []
 		headerLabel.stringValue = entries.isEmpty
-			? state.title.uppercased()
-			: "\(state.title.uppercased())  \(entries.count)"
+			? column.title.uppercased()
+			: "\(column.title.uppercased())  \(entries.count)"
 		emptyLabel.isHidden = !entries.isEmpty
 		tableView.reloadData()
 	}
@@ -1453,7 +1827,7 @@ final class BacklogColumnView: NSView {
 	func applySettings() {
 		layer?.backgroundColor = Theme.current.editorBackground.cgColor
 		headerLabel.font = Theme.current.uiFont(11, weight: .semibold)
-		headerLabel.textColor = BacklogPalette.colour(for: state)
+		headerLabel.textColor = BacklogPalette.colour(for: column)
 		emptyLabel.font = Theme.current.uiFont(11)
 		emptyLabel.textColor = Theme.current.gitIgnored
 		tableView.backgroundColor = Theme.current.editorBackground
@@ -1495,10 +1869,28 @@ extension BacklogColumnView: NSTableViewDataSource, NSTableViewDelegate {
 	/// So the heights are thrown away when the width actually changes, and only
 	/// then: `layout()` runs for every scroll and every reload, and telling a
 	/// table its rows have all changed height is not free.
+	///
+	/// **The rows are reloaded rather than re-measured**, which is the
+	/// difference between a card view built for the new height and one left at
+	/// the old. `noteHeightOfRows` is the cheaper call and it was the one made
+	/// here: it tells the table what each row is worth now, and a card view
+	/// already on screen could be left at the height it was made with. A view
+	/// taller than its row is clipped at the row's foot, and everything a card
+	/// draws from its bottom edge — the progress bar, the rounded corners — is
+	/// under that clip. Photographed, that is a card with square bottom corners
+	/// and no bar, which is what was reported: the bar arrived when Refresh was
+	/// pressed, and Refresh is a `reloadData`.
 	func widthChanged(to width: CGFloat) {
-		guard abs(width - measuredWidth) > 0.5, !entries.isEmpty else { return }
+		guard abs(width - measuredWidth) > 0.5 else { return }
+		// Remembered even with nothing to re-measure, which is the state a
+		// column is in for the moment between being built and the walk coming
+		// back off its own thread. Left at zero through that moment, the first
+		// layout after the cards arrive reports a width change that has already
+		// been accounted for — the cards were measured at that width — and
+		// reloads the rows in the middle of a layout pass for nothing.
 		measuredWidth = width
-		tableView.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0..<entries.count))
+		guard !entries.isEmpty else { return }
+		tableView.reloadData()
 	}
 
 	func tableView(_ tableView: NSTableView, viewFor column: NSTableColumn?, row: Int) -> NSView? {
@@ -1544,10 +1936,14 @@ extension BacklogColumnView: NSTableViewDataSource, NSTableViewDelegate {
 		// not something a drag should be able to change, because two people
 		// dragging would then disagree and neither would know.
 		tableView.setDropRow(-1, dropOperation: .on)
+		// A column that is not a folder cannot be dropped into, and the type is
+		// what says so: an OpenSpec column has no `BacklogState` to move a file
+		// to. The drag itself is refused where it starts, with a sentence.
+		guard let target = column.backlogState else { return [] }
 		guard let number = draggedNumber(from: info), let item = pane?.item(number: number) else {
 			return []
 		}
-		return item.state == state ? [] : .move
+		return item.state == target ? [] : .move
 	}
 
 	func tableView(
@@ -1556,9 +1952,10 @@ extension BacklogColumnView: NSTableViewDataSource, NSTableViewDelegate {
 		row: Int,
 		dropOperation: NSTableView.DropOperation
 	) -> Bool {
+		guard let target = column.backlogState else { return false }
 		guard let number = draggedNumber(from: info), let item = pane?.item(number: number) else { return false }
-		guard item.state != state else { return false }
-		pane?.move(item, to: state)
+		guard item.state != target else { return false }
+		pane?.move(item, to: target)
 		return true
 	}
 
@@ -1570,6 +1967,27 @@ extension BacklogColumnView: NSTableViewDataSource, NSTableViewDelegate {
 
 /// One item as a card: the number, the title, and what it carries.
 private final class BacklogCardView: NSView {
+	/// **A resized card redraws.**
+	///
+	/// A row's height is measured once and cached, and `widthChanged` re-measures
+	/// them all when the column's width changes — at which point AppKit resizes
+	/// the cell view that is already on screen. A resized `NSView` keeps the
+	/// drawing it already has unless it is told otherwise, and everything on a
+	/// card is positioned from one edge or the other: the stripe, the number and
+	/// the title hang off the top and survive, and the progress bar is measured
+	/// from `card.maxY` and does not. It stayed at the old bottom — outside the
+	/// new bounds, and therefore gone.
+	///
+	/// That is why the bar was missing on some cards and not others: the ones
+	/// whose height had changed since they were drawn. Scrolling the column or
+	/// resizing the window brought them back, because either forces the redraw
+	/// this asks for in the first place.
+	override func setFrameSize(_ newSize: NSSize) {
+		let changed = newSize.height != frame.height || newSize.width != frame.width
+		super.setFrameSize(newSize)
+		if changed { needsDisplay = true }
+	}
+
 	private var number = ""
 	private var title = ""
 	private var marks = ""
@@ -1587,6 +2005,9 @@ private final class BacklogCardView: NSView {
 	private static let gutter: CGFloat = 6
 	private static let barHeight: CGFloat = 3
 
+	/// Whether every card says what it drew, for `--draw-report`.
+	static var reportsDrawing = false
+
 	func configure(_ card: BacklogCard) {
 		number = String(format: "%04d", card.number)
 		title = card.title
@@ -1603,7 +2024,7 @@ private final class BacklogCardView: NSView {
 		number = card.progress?.summary ?? ""
 		title = card.name
 		tint = BacklogPalette.colour(for: card.state)
-		marks = card.progress == nil ? card.artifactSummary : ""
+		marks = card.marks
 		progress = card.progress
 		needsDisplay = true
 	}
@@ -1623,7 +2044,7 @@ private final class BacklogCardView: NSView {
 		case let .change(card):
 			return height(
 				title: card.name,
-				marks: card.progress == nil ? card.artifactSummary : "",
+				marks: card.marks,
 				hasProgress: card.progress != nil,
 				width: width
 			)
@@ -1708,6 +2129,11 @@ private final class BacklogCardView: NSView {
 	}
 
 	/// What sits below the title: the marks, and the bar when there is one.
+	/// The footer a card reserves, for the geometry report.
+	static func footerForTesting(marks: String, progress: Bool, width: CGFloat) -> CGFloat {
+		footer(markLines: markLines(marks, width: width), progress: progress)
+	}
+
 	static func footer(markLines: Int, progress: Bool) -> CGFloat {
 		var footer = markLine * CGFloat(markLines)
 		if progress { footer += Theme.current.scaled(Self.barHeight) + Theme.current.scaled(4) }
@@ -1719,7 +2145,25 @@ private final class BacklogCardView: NSView {
 	override func draw(_ dirtyRect: NSRect) {
 		let gutter = Theme.current.scaled(Self.gutter)
 		let inset = Theme.current.scaled(Self.inset)
-		let card = bounds.insetBy(dx: gutter, dy: 0)
+		// **The height this card's own contents want, where that is less than
+		// the frame it was given**, and the frame otherwise.
+		//
+		// The two agree whenever the table asked for a height at the width the
+		// card is drawn at, which is every ordinary pass — so this changes
+		// nothing that is already right. It is here for the pass that is not:
+		// a card left in a frame taller than its row hangs over the row's foot,
+		// and the foot is where the bar and the bottom corners are. Drawn to
+		// the height the contents want, they stay above the clip and the card
+		// is whole, with the spare points left blank where they can be seen and
+		// fixed rather than swallowing the bar where they cannot.
+		let wanted = Self.height(
+			title: title, marks: marks, hasProgress: progress != nil, width: bounds.width
+		)
+		let card = NSRect(
+			x: gutter, y: 0,
+			width: max(bounds.width - gutter * 2, 0),
+			height: min(bounds.height, wanted)
+		)
 
 		let path = NSBezierPath(roundedRect: card, xRadius: Theme.current.scaled(5), yRadius: Theme.current.scaled(5))
 		Theme.current.selectionInactive.setFill()
@@ -1791,6 +2235,17 @@ private final class BacklogCardView: NSView {
 		)
 
 		var bottom = card.maxY - inset
+
+		// What this card actually drew, when asked. A progress bar that is
+		// missing until something forces a second pass is a question about the
+		// pass that drew it first, and nothing outside `draw` can answer it.
+		if BacklogCardView.reportsDrawing {
+			let has = progress != nil
+			print("DRAW \(title.prefix(38)): bounds=\(bounds.size)"
+				+ " card=\(card.size) progress=\(has)"
+				+ " footer=\(Self.footer(markLines: Self.markLines(marks, width: width), progress: has))")
+			fflush(stdout)
+		}
 
 		// The checklist, as a bar along the foot of the card.
 		//
@@ -1865,17 +2320,55 @@ private final class BacklogCardView: NSView {
 /// names the command that does the same thing, because the command line is not
 /// a fallback here: it is the other half of the same tool, and somebody who
 /// learns the name once can run it in a project this app has never opened.
+/// What the pane shows a project that keeps no record of work yet.
+///
+/// **Both kinds, because the pane reads both.** It offered a backlog and only a
+/// backlog for as long as that was the only record there was; the source switch
+/// made `openspec/` the other half of this pane and left the empty state saying
+/// the app knew about one of them. A project with neither was then told its
+/// options, and the one it was not told about is the one this repository has
+/// been keeping its own changes in.
+///
+/// **Drawn as the editor draws a file it cannot show.** `FileNoticeView` is the
+/// same sentence about a different subject — there is nothing here, and here is
+/// what to do about it — so it is the same shape: an icon, a name, one line of
+/// reason, a row of `NoticeButton`s. That button is shared rather than copied,
+/// which is the half of the resemblance that cannot drift.
 final class BacklogAbsentView: NSView {
 	var onMake: (() -> Void)?
+	var onSetUpOpenSpec: (() -> Void)?
 
 	private let projectName: String
+	private var iconView: NSImageView!
 	private var titleLabel: NSTextField!
 	private var bodyLabel: NSTextField!
 	private var commandLabel: NSTextField!
-	private var makeButton: NSButton!
+	private var hintLabel: NSTextField!
+	private var makeButton: NoticeButton!
+	private var openSpecButton: NoticeButton!
+
+	/// Whether the `openspec` CLI is on this machine.
+	///
+	/// Asked once, when the view is built, and not on a drawing path:
+	/// `Executables.locate` runs a login shell. This view is made when a pane
+	/// is, and a project that has neither record is a project nobody is
+	/// scrolling — but the shell is expensive enough that it should be asked
+	/// deliberately rather than in a layout pass.
+	private let hasOpenSpecTool: Bool
+
+	/// Makes this view answer as a machine with no `openspec` on it, for
+	/// `--backlog-offer missing`.
+	///
+	/// A seam rather than a driven install: `Executables.locate` asks the login
+	/// shell, and on this machine the tool is under an fnm directory that the
+	/// shell will always find — so the state where it is absent cannot be
+	/// reached by a launch flag, only pretended. The same shape as
+	/// `BacklogCardViewDrawReport`, and off unless a driver asked.
+	static var pretendsTheToolIsMissing = false
 
 	init(projectName: String) {
 		self.projectName = projectName
+		self.hasOpenSpecTool = !Self.pretendsTheToolIsMissing && OpenSpec.commandLine() != nil
 		super.init(frame: .zero)
 		wantsLayer = true
 		layer?.backgroundColor = Theme.current.editorBackground.cgColor
@@ -1884,64 +2377,104 @@ final class BacklogAbsentView: NSView {
 
 	required init?(coder: NSCoder) { fatalError("not used") }
 
-	override var isFlipped: Bool { true }
-
 	private func build() {
-		titleLabel = NSTextField(labelWithString: "\(projectName) has no backlog")
-		titleLabel.font = Theme.current.uiFont(13, weight: .semibold)
-		titleLabel.textColor = Theme.current.editorText
+		iconView = NSImageView()
+		iconView.image = Theme.symbol("checklist", size: 34, color: Theme.current.gitIgnored)
+		iconView.imageScaling = .scaleProportionallyUpOrDown
+		iconView.translatesAutoresizingMaskIntoConstraints = false
+		iconView.widthAnchor.constraint(equalToConstant: 40).isActive = true
+		iconView.heightAnchor.constraint(equalToConstant: 40).isActive = true
 
-		bodyLabel = NSTextField(wrappingLabelWithString: """
-		A backlog is a folder of markdown beside the project: open, ready, \
-		in-progress, waiting and completed, the workflow that says how they are \
-		worked, and a spec of what the project does today. Making one writes \
-		.abydos/backlog and points the assistants installed on this machine at it.
-		""")
-		bodyLabel.font = Theme.current.uiFont(11)
+		// The project's name where the notice has a file's, because that is what
+		// this is about: not a missing folder, but this project having nowhere
+		// to keep what is left to do.
+		titleLabel = NSTextField(labelWithString: projectName)
+		titleLabel.font = .systemFont(ofSize: 15, weight: .semibold)
+		titleLabel.textColor = Theme.current.sidebarHeaderText
+		titleLabel.alignment = .center
+
+		bodyLabel = NSTextField(labelWithString: "No backlog and no OpenSpec directory yet.")
+		bodyLabel.font = .systemFont(ofSize: 12)
 		bodyLabel.textColor = Theme.current.gitIgnored
-		bodyLabel.preferredMaxLayoutWidth = Theme.current.scaled(420)
+		bodyLabel.alignment = .center
 
-		makeButton = NSButton(title: "Make a Backlog\u{2026}", target: self, action: #selector(makeClicked))
-		makeButton.bezelStyle = .rounded
-		makeButton.controlSize = .regular
+		makeButton = NoticeButton(title: "Make a Backlog\u{2026}", symbol: "checklist")
+		makeButton.onClick = { [weak self] in self?.onMake?() }
 
-		commandLabel = NSTextField(labelWithString: "or, in a terminal:  abydos-backlog init")
+		openSpecButton = NoticeButton(title: "Set Up OpenSpec\u{2026}", symbol: "square.and.pencil")
+		openSpecButton.onClick = { [weak self] in self?.onSetUpOpenSpec?() }
+		openSpecButton.isEnabled = hasOpenSpecTool
+
+		let buttons = NSStackView(views: [makeButton, openSpecButton])
+		buttons.orientation = .horizontal
+		buttons.spacing = 10
+
+		// What each button is, so that somebody who would rather type it can.
+		// The OpenSpec half is dropped where the tool is not there — a command
+		// nothing on this machine can run is not an alternative.
+		commandLabel = NSTextField(labelWithString: commandLine)
 		commandLabel.font = Theme.current.uiFont(11)
 		commandLabel.textColor = Theme.current.gitIgnored
+		commandLabel.alignment = .center
 		commandLabel.isSelectable = true
 
-		let stack = NSStackView(views: [titleLabel, bodyLabel, makeButton, commandLabel])
+		hintLabel = NSTextField(labelWithString: "openspec is not installed.  \(OpenSpec.installHint)")
+		hintLabel.font = Theme.current.uiFont(11)
+		hintLabel.textColor = Theme.current.gitIgnored
+		hintLabel.alignment = .center
+		hintLabel.isSelectable = true
+		hintLabel.isHidden = hasOpenSpecTool
+
+		let stack = NSStackView(views: [iconView, titleLabel, bodyLabel, buttons, commandLabel, hintLabel])
 		stack.orientation = .vertical
-		stack.alignment = .leading
-		stack.spacing = Theme.current.scaled(10)
-		stack.setCustomSpacing(Theme.current.scaled(16), after: bodyLabel)
+		stack.alignment = .centerX
+		stack.spacing = 10
+		stack.setCustomSpacing(16, after: bodyLabel)
 		stack.translatesAutoresizingMaskIntoConstraints = false
 		addSubview(stack)
 
 		NSLayoutConstraint.activate([
+			stack.centerXAnchor.constraint(equalTo: centerXAnchor),
 			stack.centerYAnchor.constraint(equalTo: centerYAnchor),
-			stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Theme.current.scaled(24)),
-			// Never the pane's whole width: a paragraph across a maximised
-			// window is one long line, which is the hardest thing to read that
-			// a panel can contain.
-			stack.widthAnchor.constraint(lessThanOrEqualToConstant: Theme.current.scaled(420)),
-			stack.trailingAnchor.constraint(
-				lessThanOrEqualTo: trailingAnchor, constant: -Theme.current.scaled(24)
-			),
+			stack.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, constant: -40),
 		])
 	}
 
-	@objc private func makeClicked() { onMake?() }
+	private var commandLine: String {
+		let backlog = "abydos-backlog init"
+		guard hasOpenSpecTool else { return "in a terminal:  \(backlog)" }
+		return "in a terminal:  \(backlog)   \u{00B7}   \(OpenSpec.initCommand())"
+	}
+
+	/// What this view is offering, for a driver to print.
+	///
+	/// The four states this has — neither record, no CLI, and either one made —
+	/// are a view in the app target, which the suite cannot reach. A line of
+	/// text can be read; a photograph has to be looked at by somebody.
+	var offerReportForTesting: String {
+		[
+			"title: \(titleLabel.stringValue)",
+			"detail: \(bodyLabel.stringValue)",
+			"button: \(makeButton.caption) enabled=\(makeButton.isEnabled)",
+			"button: \(openSpecButton.caption) enabled=\(openSpecButton.isEnabled)",
+			"commands: \(commandLabel.stringValue)",
+			"hint: \(hintLabel.isHidden ? "none" : hintLabel.stringValue)",
+		].joined(separator: "\n")
+	}
 
 	func applySettings() {
 		layer?.backgroundColor = Theme.current.editorBackground.cgColor
-		titleLabel.font = Theme.current.uiFont(13, weight: .semibold)
-		titleLabel.textColor = Theme.current.editorText
-		bodyLabel.font = Theme.current.uiFont(11)
+		iconView.image = Theme.symbol("checklist", size: 34, color: Theme.current.gitIgnored)
+		titleLabel.textColor = Theme.current.sidebarHeaderText
 		bodyLabel.textColor = Theme.current.gitIgnored
-		bodyLabel.preferredMaxLayoutWidth = Theme.current.scaled(420)
 		commandLabel.font = Theme.current.uiFont(11)
 		commandLabel.textColor = Theme.current.gitIgnored
+		hintLabel.font = Theme.current.uiFont(11)
+		hintLabel.textColor = Theme.current.gitIgnored
+		// The buttons draw themselves from the theme every time, so a scheme
+		// change reaches them through this.
+		makeButton.needsDisplay = true
+		openSpecButton.needsDisplay = true
 	}
 }
 
@@ -1961,6 +2494,26 @@ enum BacklogPalette {
 		case .inProgress: return Theme.current.gitModified
 		case .waiting: return Theme.current.gitConflict
 		case .completed, .history: return Theme.current.gitIgnored
+		}
+	}
+
+	/// The same five colours for OpenSpec's states, matched by what they mean
+	/// rather than by position: `ready` is the one an agent can pick up on
+	/// either board, so it is the same green on both, and a change being written
+	/// is the same grey as an item nobody has agreed yet.
+	static func colour(for state: OpenSpecState) -> NSColor {
+		switch state {
+		case .writing: return Theme.current.gitUnversioned
+		case .ready: return Theme.current.gitAdded
+		case .inProgress: return Theme.current.gitModified
+		case .complete, .archived: return Theme.current.gitIgnored
+		}
+	}
+
+	static func colour(for column: BoardColumn) -> NSColor {
+		switch column {
+		case let .backlog(state):  return colour(for: state)
+		case let .openSpec(state): return colour(for: state)
 		}
 	}
 
@@ -2006,4 +2559,10 @@ enum BacklogPalette {
 		if let run = card.run, run.isPresent { marks.append(run.branch) }
 		return marks.joined(separator: "  \u{00B7}  ")
 	}
+}
+
+
+/// Turns on the per-card drawing report, which lives on a private type.
+enum BacklogCardViewDrawReport {
+	static func enable() { BacklogCardView.reportsDrawing = true }
 }

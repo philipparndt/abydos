@@ -122,6 +122,13 @@ import Testing
 		process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
 		process.arguments = ["swift"] + arguments
 		process.currentDirectoryURL = directory
+		// **The same thing the preview pane says to its own runs**, and for the
+		// same reason: Cadova reveals what it writes, and a suite that opened a
+		// Finder window per model would be a suite nobody runs twice. The
+		// examples used to say it from inside the model; upstream reads
+		// `CADOVA_REVEAL_FILES` now, so it is said by whoever starts the run —
+		// here, that is this.
+		process.environment = CadovaModel.runEnvironment()
 		let pipe = Pipe()
 		process.standardOutput = pipe
 		process.standardError = pipe

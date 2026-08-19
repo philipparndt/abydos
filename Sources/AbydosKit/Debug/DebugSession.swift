@@ -480,6 +480,7 @@ public final class DebugSession {
 		state = .starting
 		launchGeneration += 1
 		exitCode = nil
+		saidTheSessionEnded = false
 		self.adapter = adapter
 
 		// Resolved against the project before anything is done with it. A
@@ -552,6 +553,7 @@ public final class DebugSession {
 		state = .starting
 		launchGeneration += 1
 		exitCode = nil
+		saidTheSessionEnded = false
 		self.adapter = adapter
 
 		try client.start(
@@ -592,6 +594,7 @@ public final class DebugSession {
 		state = .starting
 		launchGeneration += 1
 		exitCode = nil
+		saidTheSessionEnded = false
 		adapter = DebugAdapters.delve
 
 		try await client.connect(host: host, port: port)
@@ -625,6 +628,7 @@ public final class DebugSession {
 		state = .starting
 		launchGeneration += 1
 		exitCode = nil
+		saidTheSessionEnded = false
 		adapter = DebugAdapters.java
 
 		try await client.connect(host: host, port: port)
@@ -642,6 +646,7 @@ public final class DebugSession {
 		state = .starting
 		launchGeneration += 1
 		exitCode = nil
+		saidTheSessionEnded = false
 		self.adapter = adapter
 
 		switch adapter.transport {
@@ -702,14 +707,161 @@ public final class DebugSession {
 	}
 
 	public func stop() {
+		// **The state changes now and the adapter is drained behind it.**
+		//
+		// It used to be `disconnect`, then `client.stop()` — which clears both
+		// readability handlers before terminating anything, so the request just
+		// sent was never read and nothing the adapter said afterwards arrived.
+		// Two things arrive after `disconnect`: the adapter's last words, which
+		// are what the console shows, and — for Delve — the exit status, which
+		// it reports as the sentence `noteExitCode(inOutput:)` exists to parse
+		// because it never sends an `exited` event. Killed first, the toolbar
+		// showed a bare "Finished" where it had "Finished — exit code 0".
+		//
+		// Nothing waits on this thread. `DAPClient.stop` already carries a note
+		// about a bounded busy-wait on the main queue being recorded as idle
+		// time, and a second wait there would make that worse — so the panes
+		// empty on the spot and the reply is somebody else's problem. The exit
+		// code arriving a moment after the state is exactly the path
+		// `noteExitCode` was written for when a program ends on its own.
+		state = .terminated
+		clearWhatTheProgramLeftBehind()
+		client.disconnectThenStop { [weak self] answered in
+			self?.sayTheSessionEnded(adapterAnswered: answered)
+		}
+	}
+
+	/// How long the adapter took to answer the last `disconnect`, for the driven
+	/// run that chooses the deadline.
+	public var disconnectReplyTimeForTesting: TimeInterval? { client.lastDisconnectReply }
+
+	/// The adapter's own ending, as against the user pressing Stop.
+	///
+	/// A named path rather than a case body, because there are exactly two ways
+	/// a session ends and they must leave the same thing behind. Reachable from
+	/// the tests for the same reason.
+	func adapterSaidItEnded(body: [String: Any]) {
+		// `exited` carries the code; `terminated` only says it is over, and the
+		// two arrive in either order. Whichever came with a code is the one that
+		// knows how it went.
+		if let code = body["exitCode"] as? Int { exitCode = code }
+		state = .terminated
+		clearWhatTheProgramLeftBehind()
+
+		// Delve sends neither `exited` nor a code, and only says how the program
+		// went when asked to disconnect — which is where VS Code gets it from
+		// too. Asking costs nothing: the session is over either way.
+		guard exitCode == nil else {
+			sayTheSessionEnded()
+			return
+		}
+
+		// **And the console line waits for the answer**, rather than being
+		// written now. Driven against Delve, a program that reaches its own end
+		// produces this order:
+		//
+		//     total 6
+		//     [Finished]                                ← written here, too early
+		//     Process 97912 has exited with status 0
+		//
+		// The status lands a moment later, the toolbar picks it up — that is
+		// what `noteExitCode` republishing `.terminated` is for — and the
+		// console is left saying "Finished" beside a toolbar saying "Finished —
+		// exit code 0". A line is appended once and cannot be taken back, so it
+		// is written after the adapter has had its say.
+		client.disconnectThenStop { [weak self] answered in
+			self?.sayTheSessionEnded(adapterAnswered: answered)
+		}
+	}
+
+	/// Ends the session without waiting for anybody, for a window that is closing.
+	///
+	/// **`stop()` returns before the adapter is dead**, which is right for the
+	/// button — the panes answer at once and the draining happens behind them —
+	/// and wrong for teardown. A window that closes takes the pane, the callback
+	/// and any chance of finishing that work with it, so the adapter would be
+	/// left running.
+	///
+	/// That is not untidiness. `DAPClient.stopNow` carries the reason at length:
+	/// Foundation does not mark a pipe's descriptors close-on-exec, so an
+	/// adapter that outlives its session holds open every pipe that existed when
+	/// it started, and a stray one is enough to hang an unrelated `git` on a
+	/// read that never reaches end of file. Two of them, left behind by a test,
+	/// cost twenty minutes of a suite that should take fourteen seconds.
+	///
+	/// So this is the old `stop()`: ask, then kill, without waiting to be
+	/// answered. Nothing is going to read the answer anyway.
+	public func stopImmediately() {
 		client.send("disconnect", arguments: ["terminateDebuggee": true])
 		client.stop()
 		state = .terminated
+		clearWhatTheProgramLeftBehind()
+	}
+
+	/// Whether the console has already been told this session is over.
+	///
+	/// Two paths end a session — the stop button and the adapter's own
+	/// `terminated`/`exited` — and both can be travelled for one session: a
+	/// stopped program often produces the event as well. The line belongs on the
+	/// console once.
+	private var saidTheSessionEnded = false
+
+	/// Writes the end of the session to the console, in the app's own words.
+	///
+	/// **Every word in that console is the adapter's**, which is why a session
+	/// that ends quietly leaves a log that simply stops — and a log that stops
+	/// cannot be told from one that is waiting. Delve's banner and "Building
+	/// …" are already there, so a line about the session itself is in keeping.
+	///
+	/// The words are the toolbar's, because two sentences for one fact is how
+	/// somebody comes to believe they are two facts.
+	private func sayTheSessionEnded(adapterAnswered: Bool = true) {
+		guard !saidTheSessionEnded else { return }
+		saidTheSessionEnded = true
+
+		let ending: String
+		if !adapterAnswered {
+			// Not a clean finish, and it must not be reported as one: the
+			// adapter was killed, and whether the program went with it is a
+			// question this cannot answer.
+			ending = "Stopped \u{2014} the debug adapter did not answer, and was killed"
+		} else if let exitCode {
+			ending = exitCode == 0
+				? "Finished \u{2014} exit code 0"
+				: "Failed \u{2014} exit code \(exitCode)"
+		} else {
+			ending = "Finished"
+		}
+
+		// On its own line whatever the adapter left behind: Delve ends
+		// "Building <path>" without a newline, which is what `outputAtLineStart`
+		// is tracking.
+		let text = (outputAtLineStart ? "" : "\n") + "[" + ending + "]\n"
+		outputAtLineStart = true
+		onMain { [weak self] in self?.onOutput?(text) }
+	}
+
+	/// Empties what the panes are showing about a program that has gone.
+	///
+	/// **One function because there are two paths to the same place** — the
+	/// stop button, and the adapter's own `terminated`/`exited` — and they had
+	/// different ideas about what is left over. Both emptied the frames and the
+	/// scopes; neither touched `threads`, which is cleared by nothing anywhere
+	/// in this file, so the goroutine list went on showing
+	/// `* [Go 1] main.main (Thread 27093656)` for a process that had ended.
+	///
+	/// Emptying it is only half: `onThreadsChanged` is fired by `refreshThreads`
+	/// and by nothing else, so a list emptied in silence is a table still
+	/// drawing what it last had.
+	private func clearWhatTheProgramLeftBehind() {
 		stackFrames = []
 		scopes = []
+		threads = []
+		selectedThreadID = nil
 		onMain { [weak self] in
 			self?.onStackChanged?()
 			self?.onVariablesChanged?()
+			self?.onThreadsChanged?()
 		}
 	}
 
@@ -805,24 +957,7 @@ public final class DebugSession {
 				self.state = .running
 
 			case "terminated", "exited":
-				// `exited` carries the code; `terminated` only says it is over,
-				// and the two arrive in either order. Whichever came with a
-				// code is the one that knows how it went.
-				if let code = body["exitCode"] as? Int { self.exitCode = code }
-				self.state = .terminated
-				// Delve sends neither `exited` nor a code, and only says how the
-				// program went when asked to disconnect — which is where VS Code
-				// gets it from too. Asking costs nothing: the session is over
-				// either way.
-				if self.exitCode == nil {
-					self.client.send("disconnect", arguments: ["terminateDebuggee": true])
-				}
-				self.stackFrames = []
-				self.scopes = []
-				self.onMain {
-					self.onStackChanged?()
-					self.onVariablesChanged?()
-				}
+				self.adapterSaidItEnded(body: body)
 
 			default:
 				break
@@ -869,6 +1004,19 @@ public final class DebugSession {
 	public private(set) var selectedThreadID: Int?
 
 	public var onThreadsChanged: (() -> Void)?
+
+	/// The state an adapter would have left, without an adapter.
+	///
+	/// `threads`, `stackFrames` and `scopes` are `private(set)` and are filled
+	/// from replies, so what a session *leaves behind* — the thing this is
+	/// about — cannot be asserted without either a live adapter or a seam.
+	/// Internal, so only the tests in this module can reach it.
+	func fillForTesting(threads: [DebugThread], frames: [StackFrame], scopes: [Scope]) {
+		self.threads = threads
+		self.selectedThreadID = threads.first?.id
+		self.stackFrames = frames
+		self.scopes = scopes
+	}
 
 	/// Re-reads the list of goroutines.
 	///

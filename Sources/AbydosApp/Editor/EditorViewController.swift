@@ -30,6 +30,47 @@ final class EditorViewController: NSViewController {
 		/// accumulating. Exactly one may exist at a time.
 		var isPreview: Bool
 
+		/// The root the language server answering about this file is filed under.
+		///
+		/// **A property of the file, not of the scope pill.** Worked out once,
+		/// when the file is opened, and carried — because every later question
+		/// has to reach the same server the `didOpen` went to. A file opened
+		/// under one root and asked about under another reaches a server that
+		/// has never heard of it, which answers nothing and is indistinguishable
+		/// from the fault this exists to fix.
+		///
+		/// Nil until the document has a language, since which markers to climb
+		/// for is a fact about the language.
+		var serverRoot: URL?
+
+		/// What find is doing in this tab.
+		///
+		/// **On the tab because the offsets are.** `searchMatches` and
+		/// `currentMatchIndex` lived on the controller, which holds every tab —
+		/// so switching tabs with the bar open left one file's UTF-16 offsets
+		/// pointed at another file's view, and `setSearchMatches` then set a
+		/// caret from a range that document never produced.
+		///
+		/// It is also what the rest of this class already does, and says it
+		/// does: each tab owns its own `CodeView`, so caret, selection, scroll
+		/// offset and folds survive a switch because they were never shared.
+		/// Find was the exception.
+		var find = FindState()
+
+		/// Whether find is showing in this tab, what is being looked for, and
+		/// what was found.
+		///
+		/// One `FindBar` view still serves the whole group — this is what it
+		/// shows, not another bar.
+		struct FindState {
+			var isShowing = false
+			var query = ""
+			var options = SearchOptions()
+			/// UTF-16 offsets into *this* tab's document, and nowhere else.
+			var matches: [SearchMatch] = []
+			var current: Int?
+		}
+
 		/// A page is not a file: the launch configurations, and whatever else
 		/// the app puts in a tab of its own. It is named by this rather than by
 		/// its URL, which exists only so a tab can be told apart.
@@ -113,8 +154,6 @@ final class EditorViewController: NSViewController {
 	/// tomorrow is the Ignore button, which is written down.
 	private var dismissedSuggestions: Set<String> = []
 	/// Matches in the active document, and the one currently selected.
-	private var searchMatches: [SearchMatch] = []
-	private var currentMatchIndex: Int?
 	private var findDebounce: DispatchWorkItem?
 	private var languageSyncWork: DispatchWorkItem?
 	/// The list of completions, shared by every tab in this group: only one can
@@ -207,6 +246,14 @@ final class EditorViewController: NSViewController {
 	/// Identifies this group when a tab is dragged between panes.
 	let groupID = UUID()
 
+	/// Told when files are dropped on this group.
+	///
+	/// Handed up rather than opened here: a file needs the panel making room and
+	/// the tree told, and a folder is a project — none of which is a group's
+	/// business. `MainWindowController` already does all three for a file opened
+	/// from a terminal.
+	var onFilesDropped: (([URL]) -> Void)?
+
 	/// Asked to move a dragged tab here, in the given zone.
 	var onTabDropped: ((_ payload: EditorTabDrag.Payload, _ zone: EditorTabDrag.Zone, _ target: EditorViewController) -> Void)?
 	/// A tab dropped on this group's strip, to land at the given slot.
@@ -295,12 +342,12 @@ final class EditorViewController: NSViewController {
 		try? document.save()
 		refreshTabBar()
 
-		guard let project, let languageId = document.languageId else { return true }
+		guard let languageId = document.languageId, let root = serverRoot(for: tab) else { return true }
 		LanguageService.shared.changed(
-			url: tab.url, languageId: languageId, text: text, project: project.scopeRoot
+			url: tab.url, languageId: languageId, text: text, project: root
 		)
 		LanguageService.shared.saved(
-			url: tab.url, languageId: languageId, text: text, project: project.scopeRoot
+			url: tab.url, languageId: languageId, text: text, project: root
 		)
 		return true
 	}
@@ -766,11 +813,81 @@ final class EditorViewController: NSViewController {
 	/// has nothing to re-send, and re-opening its files at servers that never
 	/// stopped would be a `didOpen` for a document they already hold.
 	@objc private func languageServersMoved(_ note: Notification) {
-		guard let moved = note.object as? URL, let project else { return }
-		guard moved.standardizedFileURL.path == project.scopeRoot.standardizedFileURL.path else {
-			return
+		guard let moved = note.object as? URL, project != nil else { return }
+		// **Any root this group's files are filed under**, not the scope. With a
+		// root per file, one group can hold files belonging to several — a Swift
+		// package and a Go module side by side — and a server moving under any
+		// of them is one this group has documents at.
+		let path = moved.standardizedFileURL.path
+		let mine = tabs.contains { tab in
+			serverRoot(for: tab)?.standardizedFileURL.path == path
 		}
+		guard mine else { return }
 		rescope()
+	}
+
+	/// The root this tab's file is filed under, worked out once and kept.
+	///
+	/// The single answer every call site in this file uses. `LanguageService.root`
+	/// decides it; this remembers it, because it is a directory walk and the
+	/// questions asking it include one per keystroke.
+	private func serverRoot(for tab: Tab) -> URL? {
+		guard let project else { return nil }
+		if let known = tab.serverRoot { return known }
+		guard let languageId = tab.document?.languageId else { return nil }
+		let root = LanguageService.shared.root(
+			for: tab.url, languageId: languageId, project: project.root
+		)
+		tab.serverRoot = root
+		return root
+	}
+
+	/// The same for a file being opened, before there is a tab to ask.
+	private func serverRoot(for url: URL, languageId: String) -> URL? {
+		guard let project else { return nil }
+		return LanguageService.shared.root(for: url, languageId: languageId, project: project.root)
+	}
+
+	/// The tabs, in strip order, with the one in front marked.
+	var tabNamesForTesting: String {
+		tabs.map { ($0 === activeTab ? "*" : "") + $0.url.lastPathComponent }
+			.joined(separator: ", ")
+	}
+
+	/// What find is doing in every tab, for a driver.
+	///
+	/// The gesture nothing could drive: find in one file, switch tab, step. The
+	/// fault was read out of the code — one file's UTF-16 offsets handed to
+	/// another file's view — and a claim read rather than seen is a claim worth
+	/// checking.
+	var findReportForTesting: String {
+		var lines: [String] = []
+		lines.append("bar showing=\(!findBar.isHidden) \(findBar.statusReportForTesting)")
+		for (index, tab) in tabs.enumerated() {
+			let mark = tab === activeTab ? "*" : " "
+			let length = tab.document?.rope.utf16Count ?? 0
+			lines.append("\(mark) \(index) \(tab.url.lastPathComponent)"
+				+ " showing=\(tab.find.isShowing) query=\u{201C}\(tab.find.query)\u{201D}"
+				+ " matches=\(tab.find.matches.count) current=\(tab.find.current.map(String.init) ?? "none")"
+				+ " caret=\(tab.codeView?.caretOffset ?? -1) of \(length)")
+		}
+		return lines.joined(separator: "\n")
+	}
+
+	/// Which root the file in front is filed under, beside the scope, for a
+	/// driver.
+	///
+	/// The two used to be the same thing by construction, which is the fault.
+	/// Printed together so a run can show they are not — and that the file's
+	/// answer is the one that follows the file.
+	var serverRootReportForTesting: String {
+		guard let project else { return "no project" }
+		guard let tab = activeTab else { return "no tab" }
+		let language = tab.document?.languageId ?? "none"
+		let root = serverRoot(for: tab)?.lastPathComponent ?? "none"
+		return "file=\(tab.url.lastPathComponent) language=\(language)"
+			+ " root=\(root) scope=\(project.scopeRoot.lastPathComponent)"
+			+ " project=\(project.root.lastPathComponent)"
 	}
 
 	/// Whether this file's language has anything to say about its server, and
@@ -788,14 +905,15 @@ final class EditorViewController: NSViewController {
 	/// The first knows whether anything is running, coming, or neither, so the
 	/// strip goes away when the server lands however late that is.
 	private func refreshServerBanner() {
-		guard let project,
+		guard project != nil,
 		      let tab = activeTab,
 		      !tab.isDiff,
 		      let languageId = tab.document?.languageId,
 		      !dismissedSuggestions.contains(languageId),
+		      let root = serverRoot(for: tab),
 		      let notice = LanguageService.shared.notice(
 		      	forLanguage: languageId,
-		      	project: project.scopeRoot,
+		      	project: root,
 		      	ignoring: Set(Settings.shared.ignoredLanguageServers)
 		      )
 		else {
@@ -821,10 +939,11 @@ final class EditorViewController: NSViewController {
 	/// bar in the app.
 	private func refreshServerFooter() {
 		var footer: LanguageServerFooter?
-		if let project, let tab = activeTab, !tab.isDiff, let languageId = tab.document?.languageId {
-			footer = LanguageService.shared.footer(
-				forLanguage: languageId, project: project.scopeRoot
-			)
+		if let tab = activeTab, !tab.isDiff, let languageId = tab.document?.languageId,
+		   let root = serverRoot(for: tab) {
+			// Keyed by the file's own root, so it names the server answering
+			// about the file in front rather than the one the pill points at.
+			footer = LanguageService.shared.footer(forLanguage: languageId, project: root)
 		}
 		guard footer != statusServer else { return }
 		statusServer = footer
@@ -872,7 +991,11 @@ final class EditorViewController: NSViewController {
 		guard let project, let offer = serverBanner.notice?.offer else { return }
 		switch offer {
 		case .useDevContainer:
-			LanguageService.shared.useDevContainer(for: project.scopeRoot)
+			// For the server the banner is about, which is the one answering
+			// about the file in front.
+			LanguageService.shared.useDevContainer(
+				for: activeTab.flatMap { serverRoot(for: $0) } ?? project.root
+			)
 		}
 	}
 
@@ -1002,13 +1125,17 @@ final class EditorViewController: NSViewController {
 	/// about it. `LanguageService.opened` is what closes it at the old one and
 	/// opens it at the new, and does nothing at all when they are the same.
 	func rescope() {
-		guard let project else { return }
+		guard project != nil else { return }
 		for tab in tabs {
 			guard !tab.isDiff, let document = tab.document, let languageId = document.languageId
 			else { continue }
+			// Re-worked out rather than reused: a rescope is exactly when a
+			// file may have changed which root owns it.
+			tab.serverRoot = nil
+			guard let root = serverRoot(for: tab) else { continue }
 			LanguageService.shared.opened(
 				url: tab.url, languageId: languageId, text: text(of: document),
-				project: project.scopeRoot
+				project: root
 			)
 		}
 		refreshServerState()
@@ -1243,8 +1370,8 @@ final class EditorViewController: NSViewController {
 		// Auto save clears the dirty marker without any further user action.
 		document.onAutoSaved = { [weak self] in
 			self?.refreshTabBar()
-			guard let self, let project = self.project, let languageId = document.languageId else { return }
-			let root = project.scopeRoot
+			guard let self, let languageId = document.languageId,
+			      let root = self.serverRoot(for: fileURL, languageId: languageId) else { return }
 			// The other half of what repeats. An auto-save follows every typing
 			// pause, so this built the whole file as a `String` on the main
 			// thread as often as the sync above did.
@@ -1319,9 +1446,13 @@ final class EditorViewController: NSViewController {
 
 		// The server is told about the file as it is opened, and answers about
 		// it from then on.
-		if let project, let languageId = document.languageId {
+		if let languageId = document.languageId,
+		   let root = serverRoot(for: fileURL, languageId: languageId) {
+			// Worked out once, here, and carried by the tab: every later
+			// question must reach the server this `didOpen` went to.
+			tab.serverRoot = root
 			LanguageService.shared.opened(
-				url: fileURL, languageId: languageId, text: text(of: document), project: project.scopeRoot
+				url: fileURL, languageId: languageId, text: text(of: document), project: root
 			)
 			codeView.setDiagnostics(LanguageService.shared.diagnostics(for: fileURL))
 			refreshCompletionTriggers(for: tab)
@@ -1413,13 +1544,13 @@ final class EditorViewController: NSViewController {
 		languageSyncWork?.cancel()
 		let work = DispatchWorkItem { [weak self, weak tab] in
 			guard let self, let tab, let document = tab.document,
-			      let project = self.project, let languageId = document.languageId
+			      let languageId = document.languageId
 			else { return }
 			// Nothing is waiting to be sent once this has run, which is what
 			// `showCompletions` reads to decide whether it has to send it first.
 			self.languageSyncWork = nil
 			let url = tab.url
-			let root = project.scopeRoot
+			guard let root = self.serverRoot(for: tab) else { return }
 			withText(of: document) { text in
 				LanguageService.shared.changed(
 					url: url, languageId: languageId, text: text, project: root
@@ -1451,10 +1582,10 @@ final class EditorViewController: NSViewController {
 		languageSyncWork?.cancel()
 		languageSyncWork = nil
 
-		guard let document = tab.document, let project, let languageId = document.languageId
+		guard let document = tab.document, let languageId = document.languageId,
+		      let root = serverRoot(for: tab)
 		else { return }
 		let url = tab.url
-		let root = project.scopeRoot
 		let snapshot = document.rope
 
 		let text = await withCheckedContinuation { continuation in
@@ -1659,9 +1790,9 @@ final class EditorViewController: NSViewController {
 	/// in a file are usually typed before it has finished the handshake — and a
 	/// trigger set read once, too early, is empty for the life of the tab.
 	private func refreshCompletionTriggers(for tab: Tab) {
-		guard let codeView = tab.codeView, let project, let languageId = tab.document?.languageId
+		guard let codeView = tab.codeView, let languageId = tab.document?.languageId,
+		      let root = serverRoot(for: tab)
 		else { return }
-		let root = project.scopeRoot
 		let completion = LanguageService.shared.completionTriggers(languageId: languageId, project: root)
 		codeView.completionTriggerCharacters = Set(completion.compactMap { $0.first })
 		let signature = LanguageService.shared.signatureTriggers(languageId: languageId, project: root)
@@ -1690,8 +1821,8 @@ final class EditorViewController: NSViewController {
 		// Where the server has signature help, that is the better answer — it
 		// knows the whole call rather than one paragraph — and asking is worth
 		// a round trip because the stop has only just been arrived at.
-		if let project, let languageId = tab.document?.languageId,
-		   LanguageService.shared.offersSignatureHelp(languageId: languageId, project: project.scopeRoot) {
+		if let languageId = tab.document?.languageId, let root = serverRoot(for: tab),
+		   LanguageService.shared.offersSignatureHelp(languageId: languageId, project: root) {
 			askForSignatureHelp(in: tab)
 			return
 		}
@@ -1741,7 +1872,7 @@ final class EditorViewController: NSViewController {
 	@MainActor
 	private func showSignatureHelp(for tab: Tab) async {
 		guard activeTab === tab, let codeView = tab.codeView, let document = tab.document,
-		      let project, let languageId = document.languageId
+		      let languageId = document.languageId
 		else { return }
 
 		// The same reason as the completion list: a call the server has not been
@@ -1753,11 +1884,12 @@ final class EditorViewController: NSViewController {
 		let lineStart = document.rope.utf16Offset(fromByte: document.rope.byteOffset(ofLine: line))
 		let character = codeView.caretOffset - lineStart
 
+		guard let root = serverRoot(for: tab) else { return }
 		let help = await LanguageService.shared.signatureHelp(
 			url: tab.url,
 			position: LSPPosition(line: line, character: character),
 			languageId: languageId,
-			project: project.scopeRoot
+			project: root
 		)
 
 		guard activeTab === tab, let active = help?.active, let point = codeView.caretScreenPoint()
@@ -1794,7 +1926,7 @@ final class EditorViewController: NSViewController {
 				url: tab.url,
 				position: LSPPosition(line: line, character: character),
 				languageId: languageId,
-				project: project.scopeRoot
+				project: serverRoot(for: tab) ?? project.root
 			)
 			// A server answers about types and scope; the words in the file
 			// cannot, so anything it says is worth more than anything they do.
@@ -1819,8 +1951,9 @@ final class EditorViewController: NSViewController {
 		// enum cases somebody was waiting for at 123, once it had built 651
 		// files. Four empty answers and a right one, indistinguishable from
 		// "this language has nothing to offer" for the whole two minutes.
-		if items.isEmpty, let project, let languageId = document.languageId,
-		   LanguageService.shared.isPreparing(languageId: languageId, project: project.scopeRoot) {
+		if items.isEmpty, let languageId = document.languageId,
+		   let root = serverRoot(for: tab),
+		   LanguageService.shared.isPreparing(languageId: languageId, project: root) {
 			guard let point = codeView.caretScreenPoint() else { return }
 			completions.show(
 				notice: "\(languageId) server is still preparing…",
@@ -1898,7 +2031,7 @@ final class EditorViewController: NSViewController {
 				url: tab.url,
 				position: LSPPosition(line: line, character: character),
 				languageId: languageId,
-				project: project.scopeRoot
+				project: serverRoot(for: tab) ?? project.root
 			)
 			guard let first = locations.first, let url = first.url else { return }
 			open(fileURL: url, atLine: first.range.start.line + 1)
@@ -1982,9 +2115,9 @@ final class EditorViewController: NSViewController {
 
 	/// Opens the find bar, seeded with the selection when there is one.
 	func showFind() {
-		guard activeTab?.codeView != nil || pdfPreview != nil else { return }
-		findBar.isHidden = false
-		findBarHeight.constant = Theme.current.scaled(34)
+		guard let tab = activeTab, tab.codeView != nil || pdfPreview != nil else { return }
+		tab.find.isShowing = true
+		showFindBar(true)
 
 		if let selected = selectedTextForSearch() {
 			findBar.setQuery(selected)
@@ -1999,16 +2132,50 @@ final class EditorViewController: NSViewController {
 	}
 
 	func closeFind() {
-		findBar.isHidden = true
-		findBarHeight.constant = 0
-		searchMatches = []
-		currentMatchIndex = nil
-		activeTab?.codeView?.clearSearchMatches()
+		// This tab's, and only this tab's. Closing find in one file used to
+		// close it in every file in the group, because there was one flag for
+		// all of them.
+		if let tab = activeTab {
+			tab.find = Tab.FindState()
+			tab.codeView?.clearSearchMatches()
+		}
+		showFindBar(false)
 		pdfPreview?.clearFind()
 		focusActiveEditor()
 	}
 
-	var isFindVisible: Bool { !findBar.isHidden }
+	/// The one bar, shown or hidden. Which tab it is *about* is the tab's.
+	private func showFindBar(_ showing: Bool) {
+		findBar.isHidden = !showing
+		findBarHeight.constant = showing ? Theme.current.scaled(34) : 0
+	}
+
+	/// Puts the arriving tab's find state into the bar.
+	///
+	/// Called from `activate(index:)` and from nowhere else. Touches nothing
+	/// about responders: where the keyboard goes after a tab switch is settled
+	/// there, twice, with the measurements in the comments.
+	private func restoreFind(for tab: Tab) {
+		showFindBar(tab.find.isShowing)
+		guard tab.find.isShowing else {
+			// **Emptied, not just hidden.** Driving this caught the bar still
+			// holding `widget` and `1 of 199` after the tab that searched for it
+			// was closed — invisible, because the bar was hidden, and waiting to
+			// be shown over a file it knows nothing about. A hidden control
+			// holding another tab's answer is the same class of fault as the
+			// matches were.
+			findBar.setQueryWithoutSearching("", options: SearchOptions())
+			findBar.setStatus(matchCount: 0, currentIndex: nil)
+			return
+		}
+		findBar.setQueryWithoutSearching(tab.find.query, options: tab.find.options)
+		// The matches belong to this tab's document, so they can be handed to
+		// this tab's view — which is the whole point of their living here.
+		tab.codeView?.setSearchMatches(tab.find.matches, current: tab.find.current)
+		findBar.setStatus(matchCount: tab.find.matches.count, currentIndex: tab.find.current)
+	}
+
+	var isFindVisible: Bool { activeTab?.find.isShowing ?? false }
 
 	/// Debounced so a search does not run on every keystroke of a long query.
 	private func scheduleFind(query: String, options: SearchOptions) {
@@ -2027,7 +2194,25 @@ final class EditorViewController: NSViewController {
 		// nothing here — the bar keeps showing them because they still apply to
 		// the next file, and a search that quietly ignored them would find more
 		// than it said rather than less.
+		// Remembered whatever kind of tab this is, so coming back to it shows
+		// what was being looked for.
+		activeTab?.find.query = query
+		activeTab?.find.options = options
+
+		// **A pattern that will not compile is not searched for.** It used to
+		// be: the search ran, got nothing out of a regex that never compiled,
+		// and the bar reported `No results` — an answer to a question nobody
+		// asked. Not searching also keeps the last valid query's matches on
+		// screen, rather than clearing them on the keystroke that was only half
+		// of a bracket.
+		guard TextSearch.isValid(query: query, options: options) else {
+			findBar.setStatus(matchCount: 0, currentIndex: nil)
+			return
+		}
+
 		if let pdf = pdfPreview {
+			// A PDF has its matches inside PDFKit rather than as offsets, so the
+			// tab keeps the question and `PdfFileView` keeps the answer.
 			let count = pdf.find(query, caseSensitive: options.caseSensitive)
 			findBar.setStatus(matchCount: count, currentIndex: pdf.currentMatchIndex)
 			return
@@ -2036,21 +2221,23 @@ final class EditorViewController: NSViewController {
 		guard let tab = activeTab, let document = tab.document, let codeView = tab.codeView else { return }
 
 		guard !query.isEmpty else {
-			searchMatches = []
-			currentMatchIndex = nil
+			tab.find.matches = []
+			tab.find.current = nil
 			codeView.clearSearchMatches()
 			findBar.setStatus(matchCount: 0, currentIndex: nil)
 			return
 		}
 
-		searchMatches = TextSearch.matches(in: document.rope, query: query, options: options)
+		let matches = TextSearch.matches(in: document.rope, query: query, options: options)
 		// Start from the match nearest the caret rather than the top of the file.
 		let caret = codeView.caretOffset
-		currentMatchIndex = searchMatches.firstIndex { $0.utf16Range.lowerBound >= caret }
-			?? (searchMatches.isEmpty ? nil : 0)
+		let current = matches.firstIndex { $0.utf16Range.lowerBound >= caret }
+			?? (matches.isEmpty ? nil : 0)
+		tab.find.matches = matches
+		tab.find.current = current
 
-		codeView.setSearchMatches(searchMatches, current: currentMatchIndex)
-		findBar.setStatus(matchCount: searchMatches.count, currentIndex: currentMatchIndex)
+		codeView.setSearchMatches(matches, current: current)
+		findBar.setStatus(matchCount: matches.count, currentIndex: current)
 	}
 
 	private func stepMatch(by delta: Int) {
@@ -2060,13 +2247,19 @@ final class EditorViewController: NSViewController {
 			return
 		}
 
-		guard !searchMatches.isEmpty else { return }
-		let current = currentMatchIndex ?? -1
+		// **This tab's matches.** They used to be the group's, so stepping after
+		// a tab switch handed one file's offsets to another file's view — and
+		// `setSearchMatches` sets a caret from them, against a document that
+		// never produced that range.
+		guard let tab = activeTab else { return }
+		let matches = tab.find.matches
+		guard !matches.isEmpty else { return }
+		let current = tab.find.current ?? -1
 		// Wraps, which is what every find bar does at the ends.
-		let next = ((current + delta) % searchMatches.count + searchMatches.count) % searchMatches.count
-		currentMatchIndex = next
-		activeTab?.codeView?.setSearchMatches(searchMatches, current: next)
-		findBar.setStatus(matchCount: searchMatches.count, currentIndex: next)
+		let next = ((current + delta) % matches.count + matches.count) % matches.count
+		tab.find.current = next
+		tab.codeView?.setSearchMatches(matches, current: next)
+		findBar.setStatus(matchCount: matches.count, currentIndex: next)
 	}
 
 	func findNext() { stepMatch(by: 1) }
@@ -2715,6 +2908,11 @@ final class EditorViewController: NSViewController {
 		// see with `abydos deep.txt:150 main.go`, which put "150:1 Go" beside a
 		// two-line file — but any click between two tabs did the same.
 		tab.codeView?.reportCaretPosition()
+		// Find belongs to the tab, so the bar shows this one's. Placed here, with
+		// the other things a tab brings with it, and deliberately clear of the
+		// responder handling below — where the keyboard goes after a switch is
+		// settled twice already, with the measurements in those comments.
+		restoreFind(for: tab)
 		onStatusChanged?(self)
 		refreshServerState()
 		updateChrome()
@@ -2880,11 +3078,12 @@ final class EditorViewController: NSViewController {
 	/// once per tab that goes, and only when no other tab here is still showing
 	/// the same file.
 	private func announceClosed(_ closing: Tab) {
-		guard let project, let languageId = closing.document?.languageId,
+		guard let languageId = closing.document?.languageId,
+		      let root = serverRoot(for: closing),
 		      !tabs.contains(where: { $0 !== closing && $0.url == closing.url })
 		else { return }
 		LanguageService.shared.closed(
-			url: closing.url, languageId: languageId, project: project.scopeRoot
+			url: closing.url, languageId: languageId, project: root
 		)
 	}
 
@@ -3435,12 +3634,12 @@ final class EditorViewController: NSViewController {
 			// And tell the language server, or its diagnostics go on describing
 			// the file as it was — which after something else has just fixed
 			// one of them is the wrong answer written in red.
-			guard let project, let languageId = document.languageId else { continue }
+			guard let languageId = document.languageId, let root = serverRoot(for: tab) else { continue }
 			LanguageService.shared.changed(
-				url: tab.url, languageId: languageId, text: text(of: document), project: project.scopeRoot
+				url: tab.url, languageId: languageId, text: text(of: document), project: root
 			)
 			LanguageService.shared.saved(
-				url: tab.url, languageId: languageId, text: text(of: document), project: project.scopeRoot
+				url: tab.url, languageId: languageId, text: text(of: document), project: root
 			)
 		}
 	}

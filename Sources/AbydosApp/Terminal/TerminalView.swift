@@ -2638,19 +2638,59 @@ final class TerminalView: NSView, NSTextInputClient {
 		_ = forwardMouse(event, button: .right, isRelease: false, isDrag: true)
 	}
 
+	/// Everything past left and right, of which only the middle button is ours.
+	///
+	/// **`buttonNumber` is read.** macOS raises `otherMouseDown` for button 2 —
+	/// the middle one — and for 3 and 4, the side buttons, and all three used to
+	/// be forwarded as `.middle`. Middle is button 1 on the wire and middle
+	/// click in a terminal is commonly paste, so a side button pressed over this
+	/// view could put the selection into somebody's shell. `MouseButtons` says
+	/// which number means what, in one place, because the window reads the same
+	/// numbers to navigate on.
+	///
+	/// **Anything not forwarded travels up**, rather than stopping here. Both
+	/// branches used to return without calling `super`: the one for a program
+	/// that is not tracking the mouse, and the one where `forwardMouse` declines
+	/// — shift held, or the emulator with nothing to encode. That is why a side
+	/// button did nothing over a terminal even once the window knew what to do
+	/// with one: the event never reached it. A view that does not act on an
+	/// event has no business eating it.
+	///
+	/// Side buttons are not forwarded to the program at all, in any branch:
+	/// `TerminalEmulator.MouseButton` is left, middle, right, none and the two
+	/// scroll codes, and there is no code to send.
 	override func otherMouseDown(with event: NSEvent) {
-		guard !mouseSelects else { return }
-		_ = forwardMouse(event, button: .middle, isRelease: false)
+		MouseReport.say("terminal down", event, tracking: !mouseSelects)
+		guard isMiddle(event), !mouseSelects,
+		      forwardMouse(event, button: .middle, isRelease: false)
+		else {
+			super.otherMouseDown(with: event)
+			return
+		}
 	}
 
 	override func otherMouseUp(with event: NSEvent) {
-		guard !mouseSelects else { return }
-		_ = forwardMouse(event, button: .middle, isRelease: true)
+		MouseReport.say("terminal up", event, tracking: !mouseSelects)
+		guard isMiddle(event), !mouseSelects,
+		      forwardMouse(event, button: .middle, isRelease: true)
+		else {
+			super.otherMouseUp(with: event)
+			return
+		}
 	}
 
 	override func otherMouseDragged(with event: NSEvent) {
-		guard !mouseSelects else { return }
-		_ = forwardMouse(event, button: .middle, isRelease: false, isDrag: true)
+		guard isMiddle(event), !mouseSelects,
+		      forwardMouse(event, button: .middle, isRelease: false, isDrag: true)
+		else {
+			super.otherMouseDragged(with: event)
+			return
+		}
+	}
+
+	/// Whether this event is the one button this view forwards.
+	private func isMiddle(_ event: NSEvent) -> Bool {
+		MouseButtons.purpose(of: event.buttonNumber) == .middleClick
 	}
 
 	override func rightMouseDown(with event: NSEvent) {

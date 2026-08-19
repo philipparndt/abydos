@@ -34,6 +34,14 @@ struct OpenSpecChangeTests {
 		}
 	}
 
+	/// This package, which is a project with an `openspec/` of its own.
+	private static var packageRoot: URL {
+		URL(fileURLWithPath: #filePath)
+			.deletingLastPathComponent()  // AbydosKitTests
+			.deletingLastPathComponent()  // Tests
+			.deletingLastPathComponent()  // package root
+	}
+
 	private func tasks(done: Int, left: Int) -> String {
 		var text = "## 1. Doing it\n\n"
 		for index in 0..<done { text += "- [x] 1.\(index + 1) done\n" }
@@ -80,7 +88,9 @@ struct OpenSpecChangeTests {
 
 		let change = try #require(sandbox.openSpec.changes().first)
 		#expect(change.artifacts == [.proposal])
-		#expect(change.artifactSummary == "proposal")
+		// The summary lists what is written and names what is wanted next, and
+		// the empty `specs/` counts as neither.
+		#expect(change.artifactSummary == "proposal \u{2014} needs design")
 	}
 
 	@Test func aDirectoryWithNoneOfTheDocumentsIsNotAChange() {
@@ -101,7 +111,7 @@ struct OpenSpecChangeTests {
 
 	// MARK: - Where a change stands
 
-	@Test func aChangeWithNoTasksFileIsStillBeingWritten() throws {
+	@Test func aChangeStillBeingWrittenSaysWhatItNeedsNext() throws {
 		let sandbox = Sandbox()
 		sandbox.change("early", files: ["proposal.md": "## Why\n"])
 
@@ -109,17 +119,47 @@ struct OpenSpecChangeTests {
 		// Nothing at all rather than 0/0: a change still being written has no
 		// fraction, and a card says which documents exist instead.
 		#expect(change.progress() == nil)
-		#expect(change.state(progress: nil) == .open)
+		#expect(change.state(progress: nil) == .writing)
+		// And what it is waiting for, which is the useful half at that stage.
+		#expect(change.nextArtifact == .design)
+		#expect(change.artifactSummary == "proposal \u{2014} needs design")
 	}
 
-	@Test func aChangeWithNothingTickedIsReadyToPickUp() throws {
+	/// The chain, one document at a time, which is what a card counts down.
+	@Test func whatIsNeededNextFollowsTheSchemasChain() throws {
+		let sandbox = Sandbox()
+		sandbox.change("a", files: ["design.md": "## Context\n"])
+		sandbox.change("b", files: ["proposal.md": "x", "design.md": "x"])
+		sandbox.change("c", files: [
+			"proposal.md": "x", "design.md": "x", "specs/editor/spec.md": "x",
+		])
+		sandbox.change("d", files: [
+			"proposal.md": "x", "design.md": "x", "specs/editor/spec.md": "x",
+			"tasks.md": tasks(done: 0, left: 1),
+		])
+
+		let byName = Dictionary(uniqueKeysWithValues: sandbox.openSpec.changes().map { ($0.name, $0) })
+		#expect(byName["a"]?.nextArtifact == .proposal)
+		#expect(byName["b"]?.nextArtifact == .specs)
+		#expect(byName["c"]?.nextArtifact == .tasks)
+		// Every document there, so there is nothing to name.
+		#expect(byName["d"]?.nextArtifact == nil)
+	}
+
+	/// **`openspec list` calls this one `in-progress` and this calls it `ready`,
+	/// and the disagreement is the point.** The CLI is answering "has work
+	/// started" from a task count; a board is answering "what can I pick up".
+	@Test func aChangeWithNothingTickedIsReadyRatherThanInProgress() throws {
 		let sandbox = Sandbox()
 		sandbox.change("ready", files: ["tasks.md": tasks(done: 0, left: 30)])
 
 		let change = try #require(sandbox.openSpec.changes().first)
 		let progress = change.progress()
+		// The fraction is the number the CLI reports either way, which is what
+		// keeps the disagreement to the eye and out of the data.
 		#expect(progress?.summary == "0/30")
 		#expect(change.state(progress: progress) == .ready)
+		#expect(change.state(progress: progress) != .inProgress)
 	}
 
 	@Test func aChangePartWayThroughIsInProgress() throws {
@@ -132,28 +172,109 @@ struct OpenSpecChangeTests {
 		#expect(change.state(progress: progress) == .inProgress)
 	}
 
-	@Test func aChangeWithEveryTaskTickedIsDone() throws {
+	/// Complete, and not archived — which are two states, because one of them is
+	/// waiting for `openspec archive` to be run.
+	@Test func aChangeWithEveryTaskTickedIsComplete() throws {
 		let sandbox = Sandbox()
 		sandbox.change("finished", files: ["tasks.md": tasks(done: 9, left: 0)])
 
 		let change = try #require(sandbox.openSpec.changes().first)
 		let progress = change.progress()
 		#expect(progress?.isComplete == true)
-		#expect(change.state(progress: progress) == .completed)
+		#expect(change.state(progress: progress) == .complete)
+		#expect(change.state(progress: progress) != .archived)
 	}
 
-	/// Nothing in a change says it is stuck on something, and a marker invented
-	/// here would be a format this project made up and then had to keep.
-	@Test func noChangeIsEverWaiting() throws {
+	@Test func anArchivedChangeIsInItsOwnState() throws {
 		let sandbox = Sandbox()
-		sandbox.change("a", files: ["proposal.md": "## Why\n"])
-		sandbox.change("b", files: ["tasks.md": tasks(done: 0, left: 2)])
-		sandbox.change("c", files: ["tasks.md": tasks(done: 1, left: 1)])
-		sandbox.change("d", files: ["tasks.md": tasks(done: 2, left: 0)])
+		// Half-ticked on purpose: what makes it archived is where it is, not
+		// what its tasks say. `openspec archive` is somebody's decision.
+		sandbox.change("done-last-week", archived: true, files: ["tasks.md": tasks(done: 1, left: 1)])
 
-		for change in sandbox.openSpec.changes() {
-			#expect(change.state(progress: change.progress()) != .waiting)
+		let change = try #require(sandbox.openSpec.archived().first)
+		#expect(change.state(progress: change.progress()) == .archived)
+	}
+
+	/// A schema this reader does not know is named, not placed.
+	///
+	/// The states above are readable from a directory listing because
+	/// `spec-driven`'s chain makes `tasks.md` imply the rest. That is true of
+	/// exactly one schema, and sorting another one by the same rule would be a
+	/// card that looks answered and is guessed.
+	@Test func aChangeWithAnUnknownSchemaIsNotSorted() throws {
+		let sandbox = Sandbox()
+		sandbox.change("elsewhere", files: [
+			".openspec.yaml": "schema: some-other-workflow\ncreated: 2026-08-18\n",
+			"tasks.md": tasks(done: 3, left: 1),
+		])
+
+		let change = try #require(sandbox.openSpec.changes().first)
+		#expect(change.isSchemaUnderstood == false)
+		// Every task ticked would be `inProgress` under the rule that does not
+		// apply here; it goes to `writing` and says why instead.
+		#expect(change.state(progress: change.progress()) == .writing)
+		#expect(change.artifactSummary == "unknown schema: some-other-workflow")
+		#expect(change.nextArtifact == nil)
+		// The fraction still counts: `- [x]` means the same thing in any schema.
+		#expect(change.progress()?.summary == "3/4")
+	}
+
+	/// A missing header is `spec-driven`, not unknown.
+	@Test func aChangeWithNoHeaderIsReadAsTheSchemaItLooksLike() throws {
+		let sandbox = Sandbox()
+		sandbox.change("headerless", files: ["tasks.md": tasks(done: 1, left: 1)])
+
+		let change = try #require(sandbox.openSpec.changes().first)
+		#expect(change.schema == nil)
+		#expect(change.isSchemaUnderstood)
+		#expect(change.state(progress: change.progress()) == .inProgress)
+	}
+
+	/// Every state a change can be in is a column, and every column can hold
+	/// one — a board with a state nothing reaches is a column nobody can fill.
+	@Test func everyStateIsAColumnAndEveryColumnIsReachable() throws {
+		let sandbox = Sandbox()
+		sandbox.change("only-proposal", files: ["proposal.md": "x"])
+		sandbox.change("ready-to-apply", files: ["tasks.md": tasks(done: 0, left: 2)])
+		sandbox.change("part-done", files: ["tasks.md": tasks(done: 1, left: 1)])
+		sandbox.change("all-done", files: ["tasks.md": tasks(done: 2, left: 0)])
+		sandbox.change("last-week", archived: true, files: ["tasks.md": tasks(done: 2, left: 0)])
+
+		let all = sandbox.openSpec.changes() + sandbox.openSpec.archived()
+		let reached = Set(all.map { $0.state(progress: $0.progress()) })
+		#expect(reached == Set(OpenSpecState.board))
+		#expect(OpenSpecState.board.count == 5)
+		// Last, where `completed` is on the other board.
+		#expect(OpenSpecState.board.last == .archived)
+	}
+
+	// MARK: - The command a card offers
+
+	/// **Not `openspec apply`.** There is no such verb — applying is `openspec
+	/// instructions apply --change <name>` printing what to do and an agent
+	/// then doing it, so what a person pastes is the slash command.
+	@Test func aChangeThatCanBePickedUpOffersTheCommandThatPicksItUp() throws {
+		let sandbox = Sandbox()
+		sandbox.change("ready-to-apply", files: ["tasks.md": tasks(done: 0, left: 2)])
+
+		let change = try #require(sandbox.openSpec.changes().first)
+		#expect(
+			OpenSpec.applyCommand(for: change, in: .ready)
+				== "/opsx:apply ready-to-apply"
+		)
+	}
+
+	/// Offered where it can be acted on and nowhere else: a command an agent
+	/// then refuses is worse than no menu entry.
+	@Test func theApplyCommandIsOfferedOnlyWhereItCanBeActedOn() throws {
+		let sandbox = Sandbox()
+		sandbox.change("a-change", files: ["tasks.md": tasks(done: 0, left: 2)])
+		let change = try #require(sandbox.openSpec.changes().first)
+
+		let offered = OpenSpecState.board.filter {
+			OpenSpec.applyCommand(for: change, in: $0) != nil
 		}
+		#expect(offered == [.ready, .inProgress])
 	}
 
 	// MARK: - The archive
@@ -208,11 +329,7 @@ struct OpenSpecChangeTests {
 	/// list` reports the same totals for every one of them, which is what says
 	/// a subprocess is not needed to put a fraction on a card.
 	@Test func readsTheChangesInThisRepository() throws {
-		let root = URL(fileURLWithPath: #filePath)
-			.deletingLastPathComponent()  // AbydosKitTests
-			.deletingLastPathComponent()  // Tests
-			.deletingLastPathComponent()  // package root
-		let openSpec = OpenSpec(projectRoot: root)
+		let openSpec = OpenSpec(projectRoot: Self.packageRoot)
 		guard openSpec.exists else { return }
 
 		// **Not "there is at least one change".** That was written while there
@@ -229,6 +346,84 @@ struct OpenSpecChangeTests {
 		// And the archive, which is a directory beside them rather than one of
 		// them.
 		#expect(!changes.contains { $0.name == "archive" })
+	}
+
+	/// The fraction on a card is the number the CLI reports.
+	///
+	/// **The one thing that was already right, held so it stays right** while
+	/// the states around it are replaced. `openspec list --json` gives
+	/// `completedTasks` and `totalTasks` per change; this counts `- [x]` against
+	/// `- [ ]` and never spawns anything. They have agreed for every change in
+	/// this repository since the board was written, and this is what would
+	/// notice if they stopped.
+	///
+	/// Skipped where the CLI is not installed, the same way the language-server
+	/// tests are: whether somebody has it is a fact about their machine. One
+	/// invocation, ~0.60 s of Node start-up — which is affordable once in a
+	/// suite and is exactly why nothing on the drawing path does it.
+	///
+	/// **Archived changes are not in this comparison, because the CLI does not
+	/// list them**: `openspec list` has `--specs`, `--changes` and `--sort` and
+	/// no way to ask for the archive. They are counted below instead, against a
+	/// second implementation written here.
+	@Test func theFractionIsTheNumberTheCLIReports() throws {
+		let root = Self.packageRoot
+		let openSpec = OpenSpec(projectRoot: root)
+		guard openSpec.exists, let tool = OpenSpec.commandLine() else { return }
+
+		let process = Process()
+		process.executableURL = URL(fileURLWithPath: tool)
+		process.arguments = ["list", "--json"]
+		process.currentDirectoryURL = root
+		let pipe = Pipe()
+		process.standardOutput = pipe
+		process.standardError = FileHandle.nullDevice
+		try process.run()
+		let output = pipe.fileHandleForReading.readDataToEndOfFile()
+		process.waitUntilExit()
+		guard process.terminationStatus == 0 else { return }
+
+		let parsed = try JSONSerialization.jsonObject(with: output) as? [String: Any]
+		let listed = (parsed?["changes"] as? [[String: Any]]) ?? []
+		guard !listed.isEmpty else { return }
+
+		let read = Dictionary(uniqueKeysWithValues: openSpec.changes().map { ($0.name, $0) })
+		for entry in listed {
+			let name = try #require(entry["name"] as? String)
+			let change = try #require(read[name], "the CLI lists \(name) and this did not read it")
+			let total = try #require(entry["totalTasks"] as? Int)
+			let done = try #require(entry["completedTasks"] as? Int)
+			guard total > 0 else { continue }
+			let progress = try #require(change.progress())
+			#expect(progress.total == total, "\(name): total")
+			#expect(progress.done == done, "\(name): done")
+		}
+	}
+
+	/// The same counting over the archive, which the CLI will not list.
+	///
+	/// Against a second implementation rather than against nothing: a plain scan
+	/// for lines beginning `- [x]` or `- [ ]`, which is what the fraction claims
+	/// to be. Two ways of counting the same file is the most this can do without
+	/// the CLI, and it is enough to catch a parser that starts skipping a shape
+	/// of line.
+	@Test func theArchivesFractionsCountTheSameWayTwice() throws {
+		let openSpec = OpenSpec(projectRoot: Self.packageRoot)
+		guard openSpec.exists else { return }
+
+		for change in openSpec.archived() {
+			guard let progress = change.progress() else { continue }
+			let text = try String(contentsOf: change.tasksFile, encoding: .utf8)
+			var done = 0
+			var total = 0
+			for line in text.components(separatedBy: .newlines) {
+				let trimmed = line.trimmingCharacters(in: .whitespaces)
+				if trimmed.hasPrefix("- [x]") || trimmed.hasPrefix("- [X]") { done += 1; total += 1 }
+				else if trimmed.hasPrefix("- [ ]") { total += 1 }
+			}
+			#expect(progress.done == done, "\(change.name): done")
+			#expect(progress.total == total, "\(change.name): total")
+		}
 	}
 
 	/// **Nothing is spawned to work out what to draw**, which is the point of
@@ -267,6 +462,25 @@ struct OpenSpecChangeTests {
 			directory: URL(fileURLWithPath: "/tmp/say-what-goes-in-them")
 		)
 		#expect(OpenSpec.archiveCommand(for: change) == "openspec archive say-what-goes-in-them")
+	}
+
+	/// The other command handed over rather than run, and for a stronger reason:
+	/// `openspec init` asks which assistants to write slash commands and skills
+	/// for, and answering that for somebody writes files into their repository.
+	/// Spelled once, here, so that a view cannot hold a second spelling.
+	@Test func namesTheCommandThatSetsUpOpenSpec() {
+		#expect(OpenSpec.initCommand() == "openspec init")
+		// No `--tools`: `all` writes two dozen tools' worth of files nobody
+		// asked for, `none` leaves a directory no assistant can drive, and the
+		// question is the person's to answer in the terminal it is asked in.
+		#expect(!OpenSpec.initCommand().contains("--tools"))
+	}
+
+	/// A machine with no `openspec` on it can still be told what to install,
+	/// which is what the offer says in place of a command it cannot run.
+	@Test func saysHowToGetTheToolWhenItIsMissing() {
+		#expect(OpenSpec.installHint.contains("openspec"))
+		#expect(!OpenSpec.installHint.isEmpty)
 	}
 
 	/// **Found through the login shell, or not at all.** On the machine this was

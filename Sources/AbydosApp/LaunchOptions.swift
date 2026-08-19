@@ -51,7 +51,23 @@ struct LaunchOptions {
 	/// A menu cannot be photographed without a click, and the pane it belongs
 	/// to is in the app target where the suite cannot reach it — so the way to
 	/// check what a card offers is to open the real board and ask the real menu.
+	/// Start under the debugger, wait for the breakpoint, press Stop, and say
+	/// what is left on screen afterwards.
+	///
+	/// The gesture the report is about, and the one nothing could drive: there
+	/// were verbs for stepping and for letting a program finish, and none for
+	/// stopping one that has not.
+	var debugStop = false
+	/// The same run, but let the program finish instead of stopping it — the
+	/// path where an exit status exists to be reported.
+	var debugFinish = false
 	var backlogMenu: Int?
+	/// The same, for a change — which is named where an item is numbered.
+	///
+	/// One flag for both, because `--backlog-menu 0540` and `--backlog-menu
+	/// find-bands-follow-soft-wrap` are the same question asked of the two
+	/// records, and which record is showing is `--backlog`'s business.
+	var backlogMenuChange: String?
 	/// File a new item from the pane and print where it landed.
 	///
 	/// The one thing worth proving mechanically about that button: `ready/` is
@@ -372,6 +388,40 @@ struct LaunchOptions {
 	var usagesSteps: String?
 	/// Wait this long before capturing, for a language server to answer.
 	var lspWait: Double?
+	/// Print which root the file in front is filed under, beside the scope.
+	var lspRoot = false
+	/// Print the geometry every board card is drawn with.
+	var cardReport = false
+	/// Have every card print what it drew, each time it draws.
+	var drawReport = false
+	/// Print what the pane offers a project that keeps no record of work.
+	///
+	/// The four states this has — neither record, no `openspec` on the machine,
+	/// and either record made since — are a view in the app target, which the
+	/// suite cannot reach. A line of text can be diffed; a screenshot has to be
+	/// looked at.
+	/// `report` says what is offered; `openspec` presses the OpenSpec button;
+	/// `missing` answers as a machine with no `openspec` on it.
+	var backlogOffer: String?
+	/// What each mouse button does, and what each layer saw of it.
+	///
+	/// `report` on its own says what arrives and claims nothing, which is the
+	/// verb for a hand on a real mouse: a driver that maps the side buttons to
+	/// keystrokes sends no mouse event at all, and "nothing arrived" is a
+	/// different answer from "button 3 arrived and was ignored". Otherwise a
+	/// list of presses — `3@editor,4@terminal` — with where the editor landed
+	/// after each.
+	var mouseSteps: String?
+	/// Drop these files on the editor the way the Finder would.
+	var dropFiles: [String] = []
+	/// Drag a tab onto the group's right-hand zone, which must still split.
+	var dragTab = false
+	/// Find in one tab, switch to the next, and step — the gesture that reached
+	/// another file's view with this file's offsets.
+	var findAcrossTabs = false
+	/// After a switch, write into the project that was left and check the board
+	/// does not move.
+	var checkOldWatcher = false
 	/// Rewrite the open file externally after this many seconds.
 	var externalEdit: Double?
 	/// Raw bytes to send to the terminal, for verifying key encodings.
@@ -706,7 +756,15 @@ struct LaunchOptions {
 				} else {
 					options.backlogMode = "board"
 				}
-			case "--backlog-menu": options.backlogMenu = next().flatMap(Int.init)
+			case "--backlog-menu":
+				let named = next()
+				// A number is an item, anything else is a change's name. An
+				// item's name *is* its number, so there is nothing to collide.
+				if let number = named.flatMap(Int.init) {
+					options.backlogMenu = number
+				} else {
+					options.backlogMenuChange = named
+				}
 			case "--backlog-new":  options.backlogNew = next()
 			case "--backlog-init": options.backlogInit = true
 			case "--review-uncommitted": options.reviewUncommitted = true
@@ -887,6 +945,8 @@ struct LaunchOptions {
 			case "--menu-keys": options.menuKeys = true
 			case "--print-text": options.printText = true
 			case "--theme": options.theme = next()
+			case "--debug-stop": options.debugStop = true
+			case "--debug-finish": options.debugStop = true; options.debugFinish = true
 			case "--debug-inspect": options.debugInspect = true
 			case "--debug-binary": options.debugBinary = next()
 			case "--toast":      options.showToast = true
@@ -907,6 +967,21 @@ struct LaunchOptions {
 			case "--definition": options.definitionAt = next()
 			case "--usages-steps": options.usagesSteps = next()
 			case "--lsp-wait":   options.lspWait = next().flatMap(Double.init)
+			case "--lsp-root":   options.lspRoot = true
+			case "--card-report": options.cardReport = true
+			case "--draw-report": options.drawReport = true
+			case "--mouse":      options.mouseSteps = next() ?? "report"
+			case "--backlog-offer":
+				if index + 1 < arguments.count, !arguments[index + 1].hasPrefix("--") {
+					options.backlogOffer = next()
+				} else {
+					options.backlogOffer = "report"
+				}
+			case "--drag-tab": options.dragTab = true
+			case "--drop-files":
+				options.dropFiles = (next() ?? "").split(separator: ",").map(String.init)
+			case "--find-across-tabs": options.findAcrossTabs = true
+			case "--check-old-watcher": options.checkOldWatcher = true
 			case "--external-edit": options.externalEdit = next().flatMap(Double.init)
 			case "--send-bytes": options.terminalBytes = next()
 			case "--preview-mode": options.previewMode = next()

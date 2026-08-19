@@ -286,6 +286,10 @@ final class CadovaPreviewView: DelayedPaneView {
 		// a test behind it: `swift run` runs in the package root, so the `.3mf`
 		// lands beside the package and this is the directory to look in.
 		process.currentDirectoryURL = model.packageDirectory
+		// The one thing this run is told that a run somebody typed is not: do
+		// not reveal what you write. A pane rebuilds on every save, and each
+		// rebuild would otherwise bring the Finder to the front.
+		process.environment = CadovaModel.runEnvironment()
 
 		let output = Pipe()
 		let errors = Pipe()

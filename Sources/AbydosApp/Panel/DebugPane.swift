@@ -432,7 +432,10 @@ final class DebugPane: NSView {
 	}
 
 	func shutdown() {
-		session.stop()
+		// The window is going, so nothing will be left to read a reply or to
+		// show the console line — and an adapter left running holds open pipes
+		// that outlive it. See `DebugSession.stopImmediately`.
+		session.stopImmediately()
 	}
 
 	// MARK: - Copying

@@ -836,6 +836,152 @@ struct LanguageServerRootTests {
 		#expect(LanguageServers.suits(go, root: root))
 	}
 
+	// MARK: - The root a file belongs to
+
+	/// The reported layout: a Swift package and three Go modules side by side.
+	///
+	/// `abydos-examples`, near enough. Following `Stadium` out of
+	/// `cadova-models/Sources/HexKeyHolder/main.swift` did nothing while the
+	/// scope was `go-service`, because the search for `Package.swift` started at
+	/// `go-service` and went *down*.
+	private func makeExamplesTree() throws -> URL {
+		try makeTree([
+			"README.md",
+			"cadova-models/Package.swift",
+			"cadova-models/Sources/HexKeyHolder/main.swift",
+			"go-service/go.mod",
+			"go-service/main.go",
+			"multi-tier/go.mod",
+			"multi-tier/main.go",
+			"smart-home-microservice/go.mod",
+			"smart-home-microservice/main.go",
+			"notes/scratch.swift",
+		])
+	}
+
+	/// **Whatever is scoped.** The scope says which launch configurations there
+	/// are and which module a build runs in; which server knows about a file is
+	/// a question about the file.
+	@Test func aFileFindsItsOwnPackageWhateverIsScoped() throws {
+		let root = try makeExamplesTree()
+		defer { try? FileManager.default.removeItem(at: root) }
+		let swift = try #require(LanguageServers.definition(forLanguage: "swift", choosing: .none))
+
+		let file = root.appendingPathComponent("cadova-models/Sources/HexKeyHolder/main.swift")
+		let found = LanguageServers.rootDirectory(for: swift, containing: file, in: root)
+		#expect(found.lastPathComponent == "cadova-models")
+
+		// And the old answer, for the same file, with the scope on the Go
+		// module: nothing at all, which is the report.
+		let scoped = root.appendingPathComponent("go-service")
+		#expect(LanguageServers.markerDirectory(for: swift, in: scoped) == nil)
+	}
+
+	/// The second fault, which does not go silent — it answers, from the wrong
+	/// module. Three `go.mod`s and a breadth-first search returns the first.
+	@Test func oneOfThreeModulesAnswersForItsOwnFiles() throws {
+		let root = try makeExamplesTree()
+		defer { try? FileManager.default.removeItem(at: root) }
+		let go = try #require(LanguageServers.definition(forLanguage: "go", choosing: .none))
+
+		for module in ["go-service", "multi-tier", "smart-home-microservice"] {
+			let file = root.appendingPathComponent("\(module)/main.go")
+			let found = LanguageServers.rootDirectory(for: go, containing: file, in: root)
+			#expect(found.lastPathComponent == module, "\(module) was answered by \(found.lastPathComponent)")
+		}
+
+		// What the downward search says for all three: whichever it reaches
+		// first, the same one every time.
+		let searched = LanguageServers.markerDirectory(for: go, in: root)
+		#expect(searched != nil)
+	}
+
+	/// Which is what every file answered before this existed.
+	@Test func aFileInAPlainFolderFallsBackToTheProject() throws {
+		let root = try makeExamplesTree()
+		defer { try? FileManager.default.removeItem(at: root) }
+		let swift = try #require(LanguageServers.definition(forLanguage: "swift", choosing: .none))
+
+		let file = root.appendingPathComponent("notes/scratch.swift")
+		#expect(LanguageServers.rootDirectory(for: swift, containing: file, in: root) == root)
+	}
+
+	@Test func aPackageInsideAPackageAnswersForItsOwnFiles() throws {
+		let root = try makeTree([
+			"Package.swift",
+			"Sources/Outer/main.swift",
+			"Examples/Inner/Package.swift",
+			"Examples/Inner/Sources/Inner/main.swift",
+		])
+		defer { try? FileManager.default.removeItem(at: root) }
+		let swift = try #require(LanguageServers.definition(forLanguage: "swift", choosing: .none))
+
+		let inner = root.appendingPathComponent("Examples/Inner/Sources/Inner/main.swift")
+		let found = LanguageServers.rootDirectory(for: swift, containing: inner, in: root)
+		#expect(found.lastPathComponent == "Inner")
+		#expect(found.deletingLastPathComponent().lastPathComponent == "Examples")
+
+		let outer = root.appendingPathComponent("Sources/Outer/main.swift")
+		#expect(LanguageServers.rootDirectory(for: swift, containing: outer, in: root) == root)
+	}
+
+	/// The ceiling. A checkout inside a home directory must not be answered by a
+	/// manifest in the home directory, and nothing may walk to `/`.
+	@Test func aFileOutsideTheProjectAnswersTheProjectAndDoesNotClimbAway() throws {
+		let root = try makeExamplesTree()
+		defer { try? FileManager.default.removeItem(at: root) }
+		let swift = try #require(LanguageServers.definition(forLanguage: "swift", choosing: .none))
+
+		let elsewhere = URL(fileURLWithPath: "/usr/include/whatever.swift")
+		#expect(LanguageServers.rootDirectory(for: swift, containing: elsewhere, in: root) == root)
+
+		// And a file directly under the project, where the climb reaches the
+		// ceiling without finding anything.
+		let scoped = root.appendingPathComponent("go-service")
+		let file = scoped.appendingPathComponent("main.go")
+		let go = try #require(LanguageServers.definition(forLanguage: "go", choosing: .none))
+		// Bounded by the *given* project: asked within the module, the module is
+		// both the file's root and the ceiling.
+		#expect(LanguageServers.rootDirectory(for: go, containing: file, in: scoped) == scoped)
+	}
+
+	/// **The answer does not depend on what is scoped, and cannot.**
+	///
+	/// The reported fault was that it did: the scope was handed in as the root
+	/// to search from, so a Swift file got no Swift server while the pill said
+	/// Go. The climb takes the *project* as its ceiling and the file as its
+	/// start, so there is no scope in the question — which is what makes
+	/// switching subprojects while a file is open change nothing about which
+	/// server answers for it.
+	@Test func theSameFileAnswersTheSameRootWhateverIsScoped() throws {
+		let root = try makeExamplesTree()
+		defer { try? FileManager.default.removeItem(at: root) }
+		let swift = try #require(LanguageServers.definition(forLanguage: "swift", choosing: .none))
+
+		let file = root.appendingPathComponent("cadova-models/Sources/HexKeyHolder/main.swift")
+		let answer = LanguageServers.rootDirectory(for: swift, containing: file, in: root)
+
+		// Asked again, and again: one file, one answer, and no third argument
+		// for a scope to arrive through.
+		for _ in 0..<3 {
+			#expect(LanguageServers.rootDirectory(for: swift, containing: file, in: root) == answer)
+		}
+		#expect(answer.lastPathComponent == "cadova-models")
+	}
+
+	/// A language with no root markers has no root to climb to, and answers the
+	/// project — the same as before, and without walking anywhere.
+	@Test func aLanguageWithNoMarkersAnswersTheProject() throws {
+		let root = try makeExamplesTree()
+		defer { try? FileManager.default.removeItem(at: root) }
+
+		let markerless = LanguageServerDefinition(
+			languageIds: ["plain"], command: "none", installHint: "", name: "none"
+		)
+		let file = root.appendingPathComponent("cadova-models/Sources/HexKeyHolder/main.swift")
+		#expect(LanguageServers.rootDirectory(for: markerless, containing: file, in: root) == root)
+	}
+
 	/// The root moves and the key does not, which is what makes one lookup right
 	/// for everybody.
 	///
