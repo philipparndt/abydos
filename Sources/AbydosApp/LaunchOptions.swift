@@ -403,6 +403,10 @@ struct LaunchOptions {
 	/// `report` says what is offered; `openspec` presses the OpenSpec button;
 	/// `missing` answers as a machine with no `openspec` on it.
 	var backlogOffer: String?
+	/// When to say what a server has published about the file in front, and at
+	/// what weight it is drawn. A list of seconds, because the state being
+	/// watched changes on its own a minute after the file opens.
+	var diagnosticsAt: [Double] = []
 	/// What each mouse button does, and what each layer saw of it.
 	///
 	/// `report` on its own says what arrives and claims nothing, which is the
@@ -971,6 +975,9 @@ struct LaunchOptions {
 			case "--card-report": options.cardReport = true
 			case "--draw-report": options.drawReport = true
 			case "--mouse":      options.mouseSteps = next() ?? "report"
+			case "--diagnostics":
+				options.diagnosticsAt = (next() ?? "20")
+					.split(separator: ",").compactMap { Double($0) }
 			case "--backlog-offer":
 				if index + 1 < arguments.count, !arguments[index + 1].hasPrefix("--") {
 					options.backlogOffer = next()

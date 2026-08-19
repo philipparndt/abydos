@@ -1373,3 +1373,37 @@ struct IndexScratchPathTests {
 		}
 	}
 }
+
+/// How loudly a diagnostic is drawn, and what a server saying "not ready" is
+/// worth.
+///
+/// The report is five words — *"it shows an error but works"* — about a Swift
+/// package opened with nothing built: `No such module 'Cadova'` in red on line
+/// 1, while the model builds and renders in the pane beside it.
+struct DiagnosticWeightTests {
+	@Test func anErrorFromAPreparingServerIsDrawnQuietly() {
+		#expect(DiagnosticWeight.weight(of: .error, fromPreparingServer: true) == .quiet)
+	}
+
+	@Test func anErrorFromAReadyServerIsDrawnAsAnError() {
+		#expect(DiagnosticWeight.weight(of: .error, fromPreparingServer: false) == .error)
+	}
+
+	@Test func aWarningFromAPreparingServerIsDrawnQuietly() {
+		#expect(DiagnosticWeight.weight(of: .warning, fromPreparingServer: true) == .quiet)
+	}
+
+	@Test func aWarningFromAReadyServerIsDrawnAsAWarning() {
+		#expect(DiagnosticWeight.weight(of: .warning, fromPreparingServer: false) == .warning)
+	}
+
+	/// **Preparing is a reason to be quieter and never a reason to be louder.**
+	/// A hint is already drawn in the quiet weight, and moving one up because a
+	/// server was busy would be inventing a claim nobody made.
+	@Test func aHintIsUnchangedEitherWay() {
+		for preparing in [true, false] {
+			#expect(DiagnosticWeight.weight(of: .hint, fromPreparingServer: preparing) == .quiet)
+			#expect(DiagnosticWeight.weight(of: .information, fromPreparingServer: preparing) == .quiet)
+		}
+	}
+}

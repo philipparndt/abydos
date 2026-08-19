@@ -794,6 +794,13 @@ final class EditorViewController: NSViewController {
 		// This notification is posted the moment preparing stops — 0501's chip
 		// is drawn from the same one — so nothing here polls or waits.
 		reaskIfWaitingOnAServer()
+		// **The end of preparation repaints what is already on screen.** A
+		// server's last act before it is ready may be to withdraw the false
+		// diagnostic, or to send nothing at all — so a view that waited for the
+		// next one would hold a dimmed error after the server was ready, which
+		// is worse than the state being fixed. The same notification carries it,
+		// and `setDiagnostics` returns early unless something really changed.
+		for tab in tabs { applyDiagnostics(to: tab) }
 	}
 
 	/// What the strip above the file and the chip beside the caret should both
@@ -1457,7 +1464,12 @@ final class EditorViewController: NSViewController {
 			LanguageService.shared.opened(
 				url: fileURL, languageId: languageId, text: text(of: document), project: root
 			)
-			codeView.setDiagnostics(LanguageService.shared.diagnostics(for: fileURL))
+			codeView.setDiagnostics(
+				LanguageService.shared.diagnostics(for: fileURL),
+				fromPreparingServer: LanguageService.shared.isPreparing(
+					languageId: languageId, project: root
+				)
+			)
 			refreshCompletionTriggers(for: tab)
 		}
 
@@ -2045,8 +2057,36 @@ final class EditorViewController: NSViewController {
 	@objc private func diagnosticsChanged(_ notification: Notification) {
 		guard let url = notification.object as? URL else { return }
 		for tab in tabs where tab.url.absoluteString == url.absoluteString {
-			tab.codeView?.setDiagnostics(LanguageService.shared.diagnostics(for: url))
+			applyDiagnostics(to: tab)
 		}
+	}
+
+	/// What a server said about this tab's file, and how sure it was.
+	///
+	/// **Whether the server is preparing is asked here, on the path the
+	/// diagnostics already take**, rather than being carried with them: it is a
+	/// fact about the server at the moment of drawing, and it changes without
+	/// any diagnostic arriving to say so.
+	private func applyDiagnostics(to tab: Tab) {
+		guard let codeView = tab.codeView else { return }
+		let preparing = isServerPreparing(for: tab)
+		codeView.setDiagnostics(
+			LanguageService.shared.diagnostics(for: tab.url), fromPreparingServer: preparing
+		)
+	}
+
+	/// Whether the server that answers for this tab's file has said it is not
+	/// ready.
+	///
+	/// By project and language, which is what `isPreparing` is keyed by and what
+	/// a tab knows about its own file — so a window holding a preparing Swift
+	/// server and a settled Go one behaves correctly by construction rather than
+	/// by a special case.
+	private func isServerPreparing(for tab: Tab) -> Bool {
+		guard let languageId = tab.document?.languageId,
+		      let root = serverRoot(for: tab) ?? project?.root
+		else { return false }
+		return LanguageService.shared.isPreparing(languageId: languageId, project: root)
 	}
 
 	// MARK: - Debugging
@@ -2117,6 +2157,20 @@ final class EditorViewController: NSViewController {
 		} else {
 			codeView.setInlineValues(nil)
 		}
+	}
+
+	/// What a server said about each open file, and how loudly it is drawn.
+	///
+	/// Every tab rather than the one in front: a Cadova model opens with a
+	/// preview beside it, and "the file in front" is then whichever half the
+	/// driver last touched — which is not a thing worth making a report depend
+	/// on.
+	func diagnosticReportForTesting() -> String {
+		let coded = tabs.filter { $0.codeView != nil }
+		guard !coded.isEmpty else { return "no code view is open" }
+		return coded.map { tab in
+			"\(tab.url.lastPathComponent):\n\(tab.codeView?.diagnosticReportForTesting ?? "")"
+		}.joined(separator: "\n")
 	}
 
 	/// What each open file has beside its code, for `--debug-inspect`.

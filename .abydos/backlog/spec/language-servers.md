@@ -1429,3 +1429,76 @@ explains it.
 - **When** another diagram is opened
 - **Then** the pane names the twelve renders and says that a container runtime
   which has stopped answering is the usual reason
+
+## Requirement: A diagnostic from a server that is still preparing is not drawn as fact
+
+While a server is preparing, the diagnostics it publishes are drawn in a dimmed
+weight rather than in the colours the editor keeps for an error and a warning —
+on the underline, in the sentence beside the line, and anywhere else a
+diagnostic appears.
+
+Open a Swift package with nothing built and the first thing on screen is line 1
+in red — `No such module 'Cadova'` — while the model builds and renders in the
+pane beside it. Reported as *"it shows an error but works"*, which is the whole
+of the complaint in five words. 0501 measured it: the server publishes the
+diagnostic thirteen seconds after the file opens and withdraws it a minute
+later, once it has prepared eighteen targets.
+
+**Nothing is hidden, held or read.** 0501 decided to explain rather than
+suppress and every reason it gave still stands: the message cannot be matched
+against — `No such module` is one compiler's wording in one language — and the
+batch cannot be delayed, because a misplaced brace in the file being edited is
+real and arrives in the same one. Weight is the axis neither suppression nor
+delay is on. The diagnostic is present, complete, on its line, in the server's
+own words; it is only not asserted, which is exactly what the app knows while
+the server has said it is not ready.
+
+The dimming follows the server, not the window: a window may hold a Swift server
+that is preparing and a Go server that has been answering since it opened, and
+only the files answered by the preparing one are drawn this way. The key is
+`isPreparing(languageId:project:)`, which is what a tab already knows about its
+own file.
+
+**The end of preparation repaints what is on screen**, whether or not anything
+new has arrived. Preparation ends when a progress token closes and the last
+diagnostic may have arrived thirty seconds earlier, so a view that waited for the
+next one would hold a dimmed error after the server was ready — which is worse
+than the state being fixed.
+
+No colour is added for this. The quiet weight is the one `hint` and
+`information` have always been drawn in, so a scheme that has been thought about
+is thought about here too; the two severities still carry their own literals and
+moving those into the scheme files, as the find highlights were, is a change of
+its own.
+
+**The cost, accepted:** a *true* error is also quiet for its first minute on a
+cold project. It is bounded by preparation, the footer names the state
+throughout, and the diagnostic still says what it says. What nobody does any
+more is go looking for a mistake because something was red.
+
+### Scenario: a package whose dependencies have not been built
+
+- **Given** the Cadova example opened on a path with no build directory
+- **When** the server publishes `No such module` about line 1
+- **Then** the diagnostic is there, saying what the server said, drawn dimmed
+  rather than in error red
+
+### Scenario: preparation ends and the mistake was real
+
+- **Given** a file in that package with a genuine type error in it
+- **When** the server finishes preparing
+- **Then** the error is drawn in the ordinary error colour, with no trace of the
+  state it was published in
+
+### Scenario: a warm start
+
+- **Given** the same package opened again with everything built
+- **Then** its diagnostics are in the ordinary colours from the first frame,
+  because there was no preparation to speak of
+
+### Scenario: two servers, one of them ready
+
+- **Given** a window with a preparing Swift server and a Go server that has been
+  answering since the project opened
+- **Then** only the Swift file's diagnostics are dimmed
+

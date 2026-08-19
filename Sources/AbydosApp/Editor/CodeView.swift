@@ -107,16 +107,51 @@ final class CodeView: NSView, NSTextInputClient {
 	private var diagnosticsByLine: [Int: [LSPDiagnostic]] = [:]
 
 	/// Replaces what is underlined as a problem.
-	func setDiagnostics(_ diagnostics: [LSPDiagnostic]) {
+	/// What a server last said about this file, and whether it had told us it
+	/// was not ready when it said it.
+	///
+	/// `fromPreparingServer` is not about the diagnostics: it is about the
+	/// server. **And it has to be able to change on its own**, which is why the
+	/// early return below tests it. Preparation ends when a progress token
+	/// closes, and the last diagnostic may have arrived thirty seconds earlier —
+	/// a view that only redrew when something new arrived would keep a dimmed
+	/// error on screen after the server was ready, which is worse than the state
+	/// this is fixing.
+	func setDiagnostics(_ diagnostics: [LSPDiagnostic], fromPreparingServer isPreparing: Bool = false) {
 		var grouped: [Int: [LSPDiagnostic]] = [:]
 		for diagnostic in diagnostics {
 			// A problem spanning lines is marked on the line it starts at, which
 			// is where the cause is; underlining all of them buries it.
 			grouped[diagnostic.range.start.line, default: []].append(diagnostic)
 		}
-		guard grouped != diagnosticsByLine else { return }
+		guard grouped != diagnosticsByLine || isPreparing != diagnosticsArePreparing else { return }
 		diagnosticsByLine = grouped
+		diagnosticsArePreparing = isPreparing
 		needsDisplay = true
+	}
+
+	/// Whether the server that sent what is on screen had said it was preparing.
+	private var diagnosticsArePreparing = false
+
+	/// Every diagnostic on this file, and the weight it is drawn at.
+	///
+	/// The weight is the whole subject and it is a colour, so a photograph can
+	/// show it and cannot be diffed — and the transition being asserted here
+	/// happens a minute after the file opens, when nothing else on screen
+	/// changes. This says it in words, from the same function the drawing uses.
+	var diagnosticReportForTesting: String {
+		var lines = ["server preparing: \(diagnosticsArePreparing)"]
+		for line in diagnosticsByLine.keys.sorted() {
+			for diagnostic in diagnostics(onLine: line) {
+				let weight = DiagnosticWeight.weight(
+					of: diagnostic.severity, fromPreparingServer: diagnosticsArePreparing
+				)
+				lines.append("  \(line + 1): \(diagnostic.severity) drawn as \(weight)"
+					+ " — \(diagnostic.message.prefix(60))")
+			}
+		}
+		if lines.count == 1 { lines.append("  nothing on this file") }
+		return lines.joined(separator: "\n")
 	}
 
 	/// The problems on a line, worst first.
@@ -884,7 +919,7 @@ final class CodeView: NSView, NSTextInputClient {
 		paragraph.lineBreakMode = .byTruncatingTail
 		let text = NSAttributedString(string: message, attributes: [
 			.font: Theme.current.editorFont,
-			.foregroundColor: Self.color(for: worst.severity).withAlphaComponent(0.55),
+			.foregroundColor: colour(for: worst.severity).withAlphaComponent(0.55),
 			.paragraphStyle: paragraph,
 		])
 		text.draw(in: NSRect(
@@ -982,7 +1017,7 @@ final class CodeView: NSView, NSTextInputClient {
 			// An empty line, or a problem past its end, still needs a mark.
 			if endX <= startX { endX = startX + charWidth }
 
-			Self.color(for: diagnostic.severity).setStroke()
+			colour(for: diagnostic.severity).setStroke()
 			squiggle(from: startX, to: endX, y: rect.maxY - Theme.current.scaled(2)).stroke()
 		}
 	}
@@ -1014,14 +1049,30 @@ final class CodeView: NSView, NSTextInputClient {
 		return path
 	}
 
-	static func color(for severity: LSPDiagnostic.Severity) -> NSColor {
-		switch severity {
+	/// The colour a diagnostic is drawn in, from the weight it is worth.
+	///
+	/// **No third literal for the provisional weight**, which was the outcome to
+	/// rule out: `quiet` is `gitIgnored`, the colour `hint` and `information`
+	/// have always been drawn in, so a scheme that has been thought about is
+	/// thought about here too. Moving the two severities into the scheme files —
+	/// as 0536 did for the find highlights — remains worth doing and is a change
+	/// of its own; this one does not need it, because it adds no colour.
+	static func color(for weight: DiagnosticWeight) -> NSColor {
+		switch weight {
 		case .error: return .hex(0xE05252)
 		// Amber rather than the git blue: blue is what this window uses for
 		// "changed", and a warning is not a change.
 		case .warning: return .hex(0xD9A343)
-		case .information, .hint: return Theme.current.gitIgnored
+		case .quiet: return Theme.current.gitIgnored
 		}
+	}
+
+	/// What a diagnostic on screen is worth, which is its severity unless the
+	/// server that sent it had said it was still preparing.
+	private func colour(for severity: LSPDiagnostic.Severity) -> NSColor {
+		Self.color(for: DiagnosticWeight.weight(
+			of: severity, fromPreparingServer: diagnosticsArePreparing
+		))
 	}
 
 	// MARK: - Hovering

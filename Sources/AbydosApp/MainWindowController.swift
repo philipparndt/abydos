@@ -9946,6 +9946,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 	}
 
+	/// What a server said about the file in front and how loudly it is drawn,
+	/// for `--diagnostics`.
+	func reportDiagnosticsForTesting(at seconds: Double) {
+		print("DIAGNOSTICS at \(Int(seconds))s: \(editor.diagnosticReportForTesting())")
+		fflush(stdout)
+	}
+
 	/// Says whether the missing-server bar is up, and what it says.
 	func reportServerBannerForTesting() {
 		print("BANNER: \(editor.activeGroup?.serverBannerReportForTesting ?? "no editor")")

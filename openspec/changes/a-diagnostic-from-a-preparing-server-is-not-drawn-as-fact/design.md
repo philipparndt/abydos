@@ -38,6 +38,16 @@ of thing. Either the two severities move with it or the provisional weight is
 derived from what is already there; deciding which is part of the work rather
 than of this document, but a third literal is the answer to rule out.
 
+**Decided in the work: derived, and no scheme keys added.** The quiet weight is
+`Theme.current.gitIgnored` — the colour `hint` and `information` have always
+been drawn in — so a scheme that has been thought about is thought about here
+too, and this change adds no colour at all. `color(for:)` now takes a
+`DiagnosticWeight` rather than a severity, which is what makes the third literal
+impossible rather than merely absent. Moving the two severities into the scheme
+files remains worth doing and is a change of its own: it would touch every
+shipped scheme and `SchemeTests`, and none of that is needed to stop a false
+error shouting.
+
 **Repaint on the end of preparation, not on the next diagnostic.** This is the
 part that is easy to get wrong and is invisible when it is. Preparation ends when
 the server closes its progress token, and the last diagnostic may have arrived

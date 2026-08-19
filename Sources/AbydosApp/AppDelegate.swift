@@ -843,6 +843,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		for at in options.diagnosticsAt {
+			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+				controller?.reportDiagnosticsForTesting(at: at)
+			}
+		}
+
 		if options.drawReport { BacklogCardViewDrawReport.enable() }
 
 		// The report goes on for every form of the verb, presses included: what

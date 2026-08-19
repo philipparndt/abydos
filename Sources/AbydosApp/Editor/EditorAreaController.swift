@@ -761,6 +761,11 @@ final class EditorAreaController: NSViewController {
 		for group in groups { group.setInlineValues(values) }
 	}
 
+	/// What a server said about the file in front, and how loudly it is drawn.
+	func diagnosticReportForTesting() -> String {
+		activeGroup.diagnosticReportForTesting()
+	}
+
 	/// What the file in front has beside its code, for a driver to print.
 	func inlineValueReportForTesting() -> String {
 		activeGroup.inlineValueReportForTesting()
