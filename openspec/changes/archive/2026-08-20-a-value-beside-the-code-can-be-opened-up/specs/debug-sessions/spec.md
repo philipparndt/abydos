@@ -24,6 +24,18 @@ panel does, from one implementation rather than two, and SHALL be dismissed by
 Escape, by a click outside it, and by execution resuming — a tree of values from
 a program that is running again is worse than no tree.
 
+**It SHALL be walkable with the keyboard and resizable.** A tree is read by
+walking it: ↑ and ↓ move, → opens a row and ← closes it, which an outline view
+answers by itself once it has the keyboard — so the window SHALL take the
+keyboard when it opens, and expanding a row SHALL NOT lose what was selected.
+Rebuilding the rows under a node drops a selection the view can no longer place,
+so what is selected SHALL be remembered by the item rather than by the row. And a
+struct is why the window exists, so its size SHALL be the reader's: it carries a
+title bar to drag, edges to pull, and a close button.
+
+The same SHALL be true of the panel's own tree, which knew the keys and never
+received them: **clicking it SHALL give it the keyboard.**
+
 Nothing about the line SHALL change: the same text, in the same place, truncated
 the same way.
 
@@ -51,6 +63,19 @@ the same way.
   stopped
 - **THEN** no `variables` request is made for any of them
 - **AND** one is made when a hint is opened
+
+#### Scenario: walking it with the keyboard
+
+- **GIVEN** a value opened up
+- **WHEN** ↓ is pressed and then →
+- **THEN** the selection moves to the field and the field opens
+- **AND** what is selected is still selected once its children have arrived
+
+#### Scenario: clicking the panel's tree
+
+- **GIVEN** a stopped session with the variables tree showing in the panel
+- **WHEN** a row is clicked
+- **THEN** the tree has the keyboard, and the arrows walk it
 
 #### Scenario: the program is let go
 
