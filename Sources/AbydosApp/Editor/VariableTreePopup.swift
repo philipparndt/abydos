@@ -301,6 +301,40 @@ final class VariableTreePopup: NSPanel {
 			+ " tree has the keyboard=\(walker) selected=\(outline.selectedRow)"
 	}
 
+	/// What colour the selected row is actually drawn in.
+	///
+	/// **Reported from use: this panel's selection was blue** while the same
+	/// tree in the pane below was the theme's — a child window is not in a
+	/// window capture, so a photograph could not have said so. This asks the row
+	/// for its pixels instead, near its right edge where no text is, and says
+	/// both what came out and what the theme's selection is, so the two can be
+	/// compared rather than trusted.
+	var selectionColourForTesting: String {
+		let row = outline.selectedRow
+		guard row >= 0, let view = outline.rowView(atRow: row, makeIfNecessary: true) else {
+			return "nothing is selected"
+		}
+		guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
+			return "no bitmap"
+		}
+		view.cacheDisplay(in: view.bounds, to: rep)
+		// **Both colours in one space, or the comparison is nonsense.** A pixel
+		// read off the bitmap is in the display's profile; the theme's colour is
+		// sRGB. Converting only one of them made the same fill read as `#784F1F`
+		// beside a theme colour of `#6B3B10` — two names for one orange.
+		let space = rep.colorSpace
+		func said(_ colour: NSColor?) -> String {
+			guard let rgb = colour?.usingColorSpace(space) else { return "?" }
+			return String(
+				format: "#%02X%02X%02X",
+				Int(rgb.redComponent * 255), Int(rgb.greenComponent * 255), Int(rgb.blueComponent * 255)
+			)
+		}
+		let drawn = rep.colorAt(x: max(0, rep.pixelsWide - 3), y: rep.pixelsHigh / 2)
+		return "row \(row) drawn \(said(drawn)), theme's selection \(said(Theme.current.selectionActive))"
+			+ ", row view \(type(of: view))"
+	}
+
 	/// Walks with the arrows and waits for whatever the walk asked the adapter
 	/// for, so that what is reported is the state after the fetch rather than
 	/// before it — which is where the selection used to be lost.
@@ -400,6 +434,12 @@ extension VariableTreePopup: NSOutlineViewDataSource, NSOutlineViewDelegate {
 
 	func outlineView(_ outlineView: NSOutlineView, heightOfRowByItem item: Any) -> CGFloat {
 		Theme.current.scaled(20)
+	}
+
+	/// The panel's selection is the theme's, not the system accent — the same
+	/// row view the pane below uses, for the same reason its cells are shared.
+	func outlineView(_ outlineView: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? {
+		ThemedRowView()
 	}
 
 	func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {

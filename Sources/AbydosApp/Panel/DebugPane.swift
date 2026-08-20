@@ -404,6 +404,20 @@ final class DebugPane: NSView {
 		}
 	}
 
+	/// Walks, then reads after the answer has arrived.
+	///
+	/// **The check that missed this bug read too early.** → on a container the
+	/// adapter has not been asked about sends a `variables` request and returns;
+	/// the tree is rebuilt when the answer comes back, which is the moment the
+	/// selection used to be dropped, and a report printed on the same turn shows
+	/// the row still selected because nothing has been rebuilt yet.
+	func walkVariablesThenSettleForTesting(_ keys: [String], then say: @escaping (String) -> Void) {
+		_ = walkVariablesForTesting(keys)
+		DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+			say(self?.walkVariablesForTesting([]) ?? "the pane has gone")
+		}
+	}
+
 	/// Walks the variables tree with the arrow keys, as somebody would.
 	func walkVariablesForTesting(_ keys: [String]) -> String {
 		focusVariables()
@@ -432,6 +446,35 @@ final class DebugPane: NSView {
 		default: name = "?"
 		}
 		return "row \(row): \(name) expanded=\(variablesOutline.isItemExpanded(item))"
+			+ " openable=\(variablesOutline.isExpandable(item))"
+	}
+
+	/// What colour this tree draws its selected row in.
+	///
+	/// The pane is the reference: the panel that opens beside the code was
+	/// reported as blue while this was the theme's orange, and the fix is that
+	/// both go through one row view. So both are read the same way and the
+	/// answers compared, rather than either being compared with a colour looked
+	/// up in the theme — a row is drawn into a window with a material behind it,
+	/// and the pixel that comes out is a few points lighter than the fill.
+	var selectionColourForTesting: String {
+		let row = variablesOutline.selectedRow
+		guard row >= 0,
+		      let view = variablesOutline.rowView(atRow: row, makeIfNecessary: true),
+		      let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)
+		else { return "nothing is selected" }
+		view.cacheDisplay(in: view.bounds, to: rep)
+		let space = rep.colorSpace
+		func said(_ colour: NSColor?) -> String {
+			guard let rgb = colour?.usingColorSpace(space) else { return "?" }
+			return String(
+				format: "#%02X%02X%02X",
+				Int(rgb.redComponent * 255), Int(rgb.greenComponent * 255), Int(rgb.blueComponent * 255)
+			)
+		}
+		let drawn = rep.colorAt(x: max(0, rep.pixelsWide - 3), y: rep.pixelsHigh / 2)
+		return "row \(row) drawn \(said(drawn)), theme's selection \(said(Theme.current.selectionActive))"
+			+ ", row view \(type(of: view))"
 	}
 
 	/// Where the keyboard is and what it would walk, for a driver to print.
@@ -612,14 +655,17 @@ final class DebugPane: NSView {
 	}
 
 	private func rebuildWatches() {
+		let selected = selectedVariableRow()
 		watchNodes = session.watches.map { WatchNode(watch: $0) }
 		variablesOutline.reloadData()
 		for node in scopeNodes { variablesOutline.expandItem(node) }
+		select(variableRow: selected)
 	}
 
 	// MARK: - Variables
 
 	private func rebuildVariableTree() {
+		let selected = selectedVariableRow()
 		scopeNodes = session.scopes.enumerated().map { index, scope in
 			let node = ScopeNode(scope: scope, index: index)
 			node.children = build(variables: scope.variables, scopeIndex: index, prefix: [])
@@ -630,6 +676,46 @@ final class DebugPane: NSView {
 		// Scopes open by default; the whole point is to see the values.
 		for node in scopeNodes { variablesOutline.expandItem(node) }
 		restoreExpansion(nodes: scopeNodes.flatMap(\.children))
+		select(variableRow: selected)
+	}
+
+	/// What a row *is*, across a rebuild.
+	///
+	/// **Reported from use: the selection is lost when expanding with the
+	/// keyboard.** → on a container asks the adapter for its children; the
+	/// answer arrives, the tree is rebuilt from it, and `reloadData` over new
+	/// node objects leaves nothing selected — so the next → or ↓ goes nowhere
+	/// and the walk has to be started again with the mouse.
+	///
+	/// A row keeps its place by what it names rather than by which object it
+	/// is: a scope by its index, a variable by its scope and path, a watch by
+	/// its expression. The popup preserves its selection by item, which it can,
+	/// because its nodes survive an expansion; these do not.
+	private func identity(ofVariableRow item: Any) -> String? {
+		if let scope = item as? ScopeNode { return "scope:\(scope.index)" }
+		if let variable = item as? VariableNode {
+			return "var:\(variable.scopeIndex):\(variable.path)"
+		}
+		if let watch = item as? WatchNode { return "watch:\(watch.watch.expression)" }
+		return nil
+	}
+
+	private func selectedVariableRow() -> String? {
+		let row = variablesOutline.selectedRow
+		guard row >= 0, let item = variablesOutline.item(atRow: row) else { return nil }
+		return identity(ofVariableRow: item)
+	}
+
+	/// Puts the selection back, and leaves it alone when the row it was on is
+	/// gone — a collapsed parent, a frame that no longer has that variable.
+	private func select(variableRow wanted: String?) {
+		guard let wanted else { return }
+		for row in 0..<variablesOutline.numberOfRows {
+			guard let item = variablesOutline.item(atRow: row),
+			      identity(ofVariableRow: item) == wanted else { continue }
+			variablesOutline.selectRowIndexes([row], byExtendingSelection: false)
+			return
+		}
 	}
 
 	private func build(variables: [Variable], scopeIndex: Int, prefix: [Int]) -> [VariableNode] {
@@ -674,7 +760,7 @@ extension DebugPane: NSTableViewDataSource, NSTableViewDelegate {
 	}
 
 	func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
-		DebugRowView()
+		ThemedRowView()
 	}
 
 	func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
@@ -766,7 +852,7 @@ extension DebugPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 	}
 
 	func outlineView(_ outlineView: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? {
-		DebugRowView()
+		ThemedRowView()
 	}
 
 	func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
@@ -816,13 +902,6 @@ final class VariablesOutlineView: NSOutlineView {
 	var focusReportForTesting: String {
 		"accepts=\(acceptsFirstResponder) refuses=\(refusesFirstResponder)"
 			+ " has it=\(window?.firstResponder === self)"
-	}
-}
-
-private final class DebugRowView: NSTableRowView {
-	override func drawSelection(in dirtyRect: NSRect) {
-		Theme.current.selectionActive.setFill()
-		bounds.fill()
 	}
 }
 

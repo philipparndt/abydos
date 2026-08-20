@@ -2224,6 +2224,11 @@ final class EditorViewController: NSViewController {
 		popup.walkThenSettleForTesting(keys, then: say)
 	}
 
+	/// What colour the opened value draws its selected row in.
+	func openValueSelectionColourForTesting() -> String {
+		openValuePopup?.selectionColourForTesting ?? "nothing is open"
+	}
+
 	/// What the opened value's menu offers, and what it copies.
 	func openValueMenuForTesting() -> String {
 		guard let popup = openValuePopup else { return "nothing is open" }

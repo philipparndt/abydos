@@ -209,7 +209,17 @@ struct is why the window exists, so its size SHALL be the reader's: it carries a
 title bar to drag, edges to pull, and a close button.
 
 The same SHALL be true of the panel's own tree, which knew the keys and never
-received them: **clicking it SHALL give it the keyboard.**
+received them: **clicking it SHALL give it the keyboard, and expanding a row
+there SHALL NOT lose what was selected either.** Reported twice from use, and the
+second time in the panel: the panel rebuilds its whole tree from the session's
+answer, so its rows are new objects and remembering the item is not enough — a
+row SHALL be remembered by what it names, a scope by its index, a variable by its
+scope and path, a watch by its expression.
+
+And a selected row SHALL be drawn in the theme's colour in both, **from one row
+view rather than two**: the window opened beside the code drew the system's blue
+while the panel below it drew the theme's orange, because the class that drew the
+theme was private to the panel.
 
 Nothing about the line SHALL change: the same text, in the same place, truncated
 the same way.
@@ -245,6 +255,19 @@ the same way.
 - **WHEN** ↓ is pressed and then →
 - **THEN** the selection moves to the field and the field opens
 - **AND** what is selected is still selected once its children have arrived
+
+#### Scenario: walking the panel's tree
+
+- **GIVEN** the panel's variables tree, clicked, with a container selected
+- **WHEN** → is pressed and the adapter answers with its children
+- **THEN** the container is still selected, and the tree has grown by its
+  children
+
+#### Scenario: one colour for a selected row
+
+- **GIVEN** a value opened beside the code and the panel's tree below it
+- **THEN** a selected row is drawn the same colour in both, and it is the
+  theme's rather than the system's
 
 #### Scenario: clicking the panel's tree
 

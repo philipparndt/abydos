@@ -9979,6 +9979,32 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		fflush(stdout)
 	}
 
+	/// Walks the panel's variables tree with the keyboard, and reads it twice.
+	///
+	/// **The second read is the point.** → on a row the adapter has not been
+	/// asked about returns before its children exist; the tree is rebuilt when
+	/// the answer arrives, and that rebuild is what used to leave nothing
+	/// selected. A report printed on the same turn as the key press cannot see
+	/// it, which is how the bug came back after being called fixed.
+	private func walkThePaneForTesting() {
+		print("VALUE panel: \(bottomPanel.variablesKeyboardReportForTesting())")
+		print("VALUE panel clicked: \(bottomPanel.clickVariablesForTesting())")
+		print("VALUE panel down: \(bottomPanel.walkVariablesForTesting(["down"]))")
+		// Past the leaf and onto a row with something under it: → on a leaf
+		// asks the adapter for nothing, so it cannot rebuild anything and the
+		// bug cannot show. `openable=` in the report says which kind of row
+		// this landed on.
+		print("VALUE panel on a container: \(bottomPanel.walkVariablesForTesting(["down"]))")
+		print("VALUE panel right: \(bottomPanel.walkVariablesForTesting(["right"]))")
+		fflush(stdout)
+		bottomPanel.walkVariablesThenSettleForTesting([]) { [weak self] after in
+			print("VALUE panel right, once its children arrived: \(after)")
+			print("VALUE panel after: \(self?.bottomPanel.variablesKeyboardReportForTesting() ?? "gone")")
+			print("VALUE panel selection: \(self?.bottomPanel.variablesSelectionColourForTesting() ?? "gone")")
+			fflush(stdout)
+		}
+	}
+
 	/// Opens the first value on the stopped line that has anything under it, and
 	/// says what came back — for `--open-value`.
 	///
@@ -9993,7 +10019,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		print("VALUE: children requests after scrolling = \(session.childrenRequestsForTesting - before)")
 		guard let opened = editor.openFirstInlineValueForTesting() else {
 			print("VALUE: nothing on the stopped line can be opened")
-			fflush(stdout)
+			// The pane's tree is there regardless, and it is checked regardless:
+			// this early return is why the pane's own selection bug was driven
+			// and never seen.
+			walkThePaneForTesting()
 			return
 		}
 		print("VALUE: opened \(opened)")
@@ -10020,13 +10049,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				fflush(stdout)
 			}
 			print("VALUE placement: \(self.editor.openValueReportForTesting().split(separator: "\n").first ?? "")")
+			print("VALUE selection: \(self.editor.openValueSelectionColourForTesting())")
 			// And the panel's own tree, which never had the keyboard either.
-			print("VALUE panel: \(self.bottomPanel.variablesKeyboardReportForTesting())")
-			print("VALUE panel clicked: \(self.bottomPanel.clickVariablesForTesting())")
-			print("VALUE panel down: \(self.bottomPanel.walkVariablesForTesting(["down"]))")
-			print("VALUE panel right: \(self.bottomPanel.walkVariablesForTesting(["right"]))")
-			print("VALUE panel after: \(self.bottomPanel.variablesKeyboardReportForTesting())")
-			fflush(stdout)
+			self.walkThePaneForTesting()
 
 			// And letting the program go takes it away, which is the other half
 			// of what makes this safe to leave open.

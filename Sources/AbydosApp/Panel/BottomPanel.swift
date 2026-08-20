@@ -3052,6 +3052,17 @@ final class BottomPanel: NSView {
 		activeDebugPane?.walkVariablesForTesting(keys) ?? "no debug pane"
 	}
 
+	/// What colour the pane's tree draws its selected row in.
+	func variablesSelectionColourForTesting() -> String {
+		activeDebugPane?.selectionColourForTesting ?? "no debug pane"
+	}
+
+	/// Walks the pane's tree and reads it once the children have arrived.
+	func walkVariablesThenSettleForTesting(_ keys: [String], then say: @escaping (String) -> Void) {
+		guard let pane = activeDebugPane else { return say("no debug pane") }
+		pane.walkVariablesThenSettleForTesting(keys, then: say)
+	}
+
 	/// Which tabs are marked as drawn by the other engine, across every strip.
 	func engineMarksForTesting() -> String {
 		let strips = columnViews.map { $0.strip.engineMarksForTesting }

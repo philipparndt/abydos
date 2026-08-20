@@ -788,6 +788,11 @@ final class EditorAreaController: NSViewController {
 		activeGroup.walkOpenValueThenSettleForTesting(keys, then: say)
 	}
 
+	/// What colour the opened value draws its selected row in.
+	func openValueSelectionColourForTesting() -> String {
+		activeGroup.openValueSelectionColourForTesting()
+	}
+
 	/// What the opened value's menu offers, and what it copies.
 	func openValueMenuForTesting() -> String { activeGroup.openValueMenuForTesting() }
 
