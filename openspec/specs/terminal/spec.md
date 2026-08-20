@@ -689,3 +689,59 @@ left, middle, right, none and the two scroll codes, and has no code for them.
 - **WHEN** the middle button is pressed
 - **THEN** nothing is sent, as before
 
+### Requirement: A press on a tab's cross closes it, whatever the click count
+
+A click on the close button SHALL close that tab, however quickly it follows the
+last one.
+
+Closing four terminals is four clicks in the same corner of the screen, and the
+tabs shuffle left under the pointer as they go — so the second, third and fourth
+land inside the double-click interval and arrive reported as double clicks. The
+strip read the click count first and renamed, so the second press on a cross
+opened a rename field on whichever tab had just slid into that place, and the
+terminal somebody meant to close was still there with its name selected. Nobody
+has ever meant to rename a tab by hitting the one control on it that is not its
+name.
+
+Double-clicking a tab anywhere else SHALL still rename it in place, and
+double-clicking the empty part of the strip SHALL still give the panel the
+window.
+
+#### Scenario: closing four terminals in a row
+
+- **GIVEN** five terminal tabs
+- **WHEN** the close button is clicked four times in quick succession, without
+  the pointer moving
+- **THEN** four tabs are closed
+- **AND** no rename field opens
+
+#### Scenario: renaming still works
+
+- **GIVEN** a terminal tab
+- **WHEN** it is double-clicked away from its cross
+- **THEN** its name becomes editable in place
+
+### Requirement: The panel's own controls are drawn on a ground of their own
+
+The panel's controls SHALL be drawn on an opaque ground, so that a tab running
+under them is hidden rather than showing through.
+
+The tabs of a strip are laid out from its leading edge at whatever width each
+name needs, and the controls — the session tag, follow, maximise, hide — are
+placed backwards from its trailing edge. With enough tabs open the two meet:
+with a dozen terminals open the session tag was a translucent pill with a tab's
+name legible underneath it and the glyphs overlapping the names either side.
+This is the editor tab bar's own settled answer to the same collision — a tab's
+last few characters matter less than the controls staying readable and
+reachable.
+
+A tab hidden this way SHALL still be reachable, which is the other half and is
+covered by the tab-overflow capability.
+
+#### Scenario: a strip with more tabs than room
+
+- **GIVEN** a panel strip whose tabs reach the trailing edge
+- **WHEN** it is drawn
+- **THEN** the controls are legible against their own ground
+- **AND** no tab name is drawn through them
+

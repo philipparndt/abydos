@@ -4,13 +4,18 @@ How not to break this machine while working on Abydos. **Every rule here was
 learnt from an agent doing the wrong thing**, and every one had to be typed into
 a prompt by hand — five times in one day, which is what item 0471 is about.
 
-They are here because this file is read without being pointed at, which covers
-the agents nobody started through the backlog, and that is most of them. It is
-also the file `.abydos/backlog/project.md` names, so an agent the backlog started
-reaches the same copy. **There is one copy.** Nothing repeats these rules — not
-the prompt `abydos-backlog start` builds, which argues against repeating them in
-its own comment and is right, and not `project.md`, which belongs to the
-published `backlog-spec` tool rather than to this project.
+They are here because this file is read without being pointed at, which is how
+every agent working here arrives at them. **There is one copy**, and nothing
+repeats these rules.
+
+This project used to keep a `backlog-spec` backlog in `.abydos/backlog`, and
+`project.md` there named this file so that an agent the backlog started reached
+the same copy. That backlog is gone — the work it held is proposed as OpenSpec
+changes under `openspec/changes`, and the account it kept in
+`.abydos/backlog/spec` is `openspec/specs`. It is in the git history, where a
+hundred and thirty-eight completed items and what they decided can still be
+read. The `backlog-spec` tool itself is unaffected: it is somebody else's
+project and this was only one of its users.
 
 What is true *today* — which container runtime is up, which session is somebody's
 — is not here. That is `.abydos/today.md`, kept separate so this file can be
