@@ -1932,7 +1932,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		// tree named on this line.
 		if options.backlogMenu != nil || options.backlogMenuChange != nil
 			|| options.backlogNew != nil || options.backlogInit {
-			DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+			// **Waited for rather than slept through.** Three seconds was enough
+			// for the backlog, whose state is which folder a file is in; the
+			// OpenSpec record asks the CLI about every change, and a board still
+			// loading answers "no change called that", which reads as a card
+			// that is missing rather than as a report asked too early.
+			whenTheBoardHasCards(controller, giveUpAfter: 20) {
 				print("BACKLOG project: \(controller?.project?.root.path ?? "none")")
 				if let number = options.backlogMenu {
 					print("BACKLOG menu \(String(format: "%04d", number)): "
@@ -2996,4 +3001,33 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		NSApp.mainMenu = mainMenu
 	}
+}
+
+/// Runs `report` once the board has cards on it, or once the wait is over.
+///
+/// The board loads on its own: the backlog is a folder walk and the OpenSpec
+/// record is the CLI, once per change, found through the login shell. A driver
+/// that asks on a timer asks either too early or later than it needs to, and
+/// asking too early prints a sentence about a card that is not missing.
+///
+/// Gives up rather than waiting for ever, and reports anyway — an empty board is
+/// an answer, and a driver that never prints is one nobody can read.
+private func whenTheBoardHasCards(
+	_ controller: MainWindowController?,
+	giveUpAfter seconds: TimeInterval,
+	then report: @escaping () -> Void
+) {
+	let deadline = Date().addingTimeInterval(seconds)
+
+	func look() {
+		guard let controller else { return report() }
+		if controller.backlogHasCardsForTesting() || Date() >= deadline {
+			report()
+			return
+		}
+		DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: look)
+	}
+	// The first look is still after a beat: the pane is made when the panel is
+	// shown, and showing it is what the report itself does.
+	DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: look)
 }

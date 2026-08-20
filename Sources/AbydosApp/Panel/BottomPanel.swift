@@ -3052,6 +3052,11 @@ final class BottomPanel: NSView {
 		activeDebugPane?.walkVariablesForTesting(keys) ?? "no debug pane"
 	}
 
+	/// Whether the board has any cards yet.
+	func backlogHasCardsForTesting() -> Bool {
+		showBacklog()?.hasCardsForTesting ?? false
+	}
+
 	/// What colour the pane's tree draws its selected row in.
 	func variablesSelectionColourForTesting() -> String {
 		activeDebugPane?.selectionColourForTesting ?? "no debug pane"

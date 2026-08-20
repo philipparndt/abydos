@@ -266,6 +266,9 @@ struct OpenSpecChangeTests {
 
 	/// Offered where it can be acted on and nowhere else: a command an agent
 	/// then refuses is worse than no menu entry.
+	///
+	/// Ready only, since 0538: a change somebody is in the middle of has three
+	/// things to say about it and "pick this up" is not one of them.
 	@Test func theApplyCommandIsOfferedOnlyWhereItCanBeActedOn() throws {
 		let sandbox = Sandbox()
 		sandbox.change("a-change", files: ["tasks.md": tasks(done: 0, left: 2)])
@@ -274,7 +277,38 @@ struct OpenSpecChangeTests {
 		let offered = OpenSpecState.board.filter {
 			OpenSpec.applyCommand(for: change, in: $0) != nil
 		}
-		#expect(offered == [.ready, .inProgress])
+		#expect(offered == [.ready])
+	}
+
+	/// **Three sentences rather than one command**, and two of them are things
+	/// an assistant cannot find out for itself: whether what is left is going to
+	/// be done at all, and whether somebody has watched the app do what the
+	/// unticked boxes claim.
+	@Test func aChangePartWayThroughOffersThreeThingsToSay() throws {
+		let sandbox = Sandbox()
+		sandbox.change("half-done", files: ["tasks.md": tasks(done: 2, left: 3)])
+		let change = try #require(sandbox.openSpec.changes().first)
+
+		#expect(OpenSpec.commands(for: change, in: .inProgress) == [
+			"archive half-done as it is",
+			"complete half-done, I have verified it",
+			"continue on half-done",
+		])
+	}
+
+	/// Every state offers what it has to offer and nothing else. A change being
+	/// written has nothing to be told about yet, and a complete one has the
+	/// archive command, which is a shell command and lives elsewhere.
+	@Test func whatACardOffersFollowsItsState() throws {
+		let sandbox = Sandbox()
+		sandbox.change("a-change", files: ["tasks.md": tasks(done: 1, left: 1)])
+		let change = try #require(sandbox.openSpec.changes().first)
+
+		#expect(OpenSpec.commands(for: change, in: .ready) == ["/opsx:apply a-change"])
+		#expect(OpenSpec.commands(for: change, in: .inProgress).count == 3)
+		#expect(OpenSpec.commands(for: change, in: .writing).isEmpty)
+		#expect(OpenSpec.commands(for: change, in: .complete).isEmpty)
+		#expect(OpenSpec.commands(for: change, in: .archived).isEmpty)
 	}
 
 	// MARK: - The archive

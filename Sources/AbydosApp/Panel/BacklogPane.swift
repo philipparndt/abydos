@@ -849,14 +849,20 @@ final class BacklogPane: NSView {
 		// whether Node is installed before offering it would be answering a
 		// question nobody asked — and answering it wrong for a Dock-launched
 		// app, whose `PATH` is four directories.
-		if let apply = OpenSpec.applyCommand(for: card.change, in: card.state) {
+		//
+		// **A change part-way through offers three rather than one**, because
+		// there are three things to say about one and only the person looking
+		// at it knows which: archive it as it stands, tick the rest off because
+		// they were verified by hand, or carry on. `OpenSpec.commands` is where
+		// that lives and why.
+		for command in OpenSpec.commands(for: card.change, in: card.state) {
 			let entry = NSMenuItem(
-				title: "Copy \u{201C}\(apply)\u{201D}",
+				title: "Copy \u{201C}\(command)\u{201D}",
 				action: #selector(copyApplyCommandFromMenu(_:)),
 				keyEquivalent: ""
 			)
 			entry.target = self
-			entry.representedObject = apply
+			entry.representedObject = command
 			menu.addItem(entry)
 		}
 
@@ -1106,6 +1112,19 @@ final class BacklogPane: NSView {
 	/// click, and the pane is in the app target where the suite cannot reach it.
 	/// So it is checked by opening the real window on a real backlog and asking
 	/// the real menu what it says.
+	/// Whether the board has anything on it yet, for a driver that must not ask
+	/// before it does.
+	///
+	/// **The report used to be printed on a three-second timer**, and against
+	/// the OpenSpec record three seconds is not enough: every change's fraction
+	/// comes from the CLI, which is found through the login shell and started
+	/// once per change. The board was empty, and what the driver printed was
+	/// "no change called … on the board" — which reads exactly like a card that
+	/// is missing.
+	var hasCardsForTesting: Bool {
+		columns.contains { !entries(in: $0).isEmpty }
+	}
+
 	func menuTitlesForTesting(number: Int) -> String {
 		let found = BacklogState.board
 			.compactMap { cards(in: $0).first { $0.number == number } }

@@ -199,11 +199,31 @@ what to do and an agent then doing it. The command a person pastes is the slash
 command, which lives in `.claude/commands/opsx/apply.md` in the project itself.
 
 **It SHALL be offered only where the change can be picked up** — a change in
-Ready or In progress. A change still being written cannot be applied and OpenSpec
-says so itself, answering `blocked` for apply while an artifact is missing; a
-Complete or Archived change has nothing left to apply, and a Complete one already
-offers `openspec archive <name>`. An entry that hands somebody a command which is
-then refused is worse than no entry.
+Ready. A change still being written cannot be applied and OpenSpec says so
+itself, answering `blocked` for apply while an artifact is missing; a Complete or
+Archived change has nothing left to apply, and a Complete one already offers
+`openspec archive <name>`. An entry that hands somebody a command which is then
+refused is worse than no entry.
+
+**A change part-way through SHALL offer three sentences instead**, because
+picking a change up and carrying on with one are not the same thing to say, and
+which of the three is right is a judgement only the person looking at the card
+can make:
+
+    archive <name> as it is
+    complete <name>, I have verified it
+    continue on <name>
+
+The first is for work that is done enough, with what is left deliberately not
+taken — a thing that happens, and better written into the record than left as a
+change nobody closes. The second is for work that *is* done while the boxes are
+not ticked, because what proves them is somebody watching the app rather than a
+suite: **the person saying it is the evidence**, and the sentence says so out
+loud rather than letting an assistant tick boxes on its own say-so. The third is
+the ordinary one.
+
+They are sentences rather than slash commands for the same reason: two of the
+three are a person telling an assistant something it cannot find out for itself.
 
 **Copied rather than run, and for a different reason than the archive
 command's.** Archiving is not run from the menu because it rewrites the project's
@@ -226,7 +246,8 @@ question that was never asked.
 
 - **GIVEN** a card in In progress with 4 of 30 ticked
 - **WHEN** its menu is opened
-- **THEN** the same command is offered, since the rest is still to do
+- **THEN** the three sentences are offered — archive it as it is, complete it as
+  verified, carry on — and the apply command is not
 
 #### Scenario: a change still being written
 

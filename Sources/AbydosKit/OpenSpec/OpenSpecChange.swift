@@ -457,8 +457,52 @@ public struct OpenSpec: Sendable {
 	/// agent then refuses is worse than no entry.**
 	public static func applyCommand(for change: OpenSpecChange, in state: OpenSpecState) -> String? {
 		switch state {
-		case .ready, .inProgress: return "/opsx:apply \(change.name)"
-		case .writing, .complete, .archived: return nil
+		case .ready: return "/opsx:apply \(change.name)"
+		case .inProgress, .writing, .complete, .archived: return nil
+		}
+	}
+
+	/// What to say about a change somebody is already in the middle of.
+	///
+	/// **Picking a change up and carrying on with one are not the same
+	/// sentence.** A Ready change has one thing to say to an assistant — start
+	/// it — and that is what `/opsx:apply` is. A change with some of its tasks
+	/// ticked has three, and which one is right is a judgement only the person
+	/// looking at it can make:
+	///
+	///  - **Archive it as it is.** The work is done enough; what is left is not
+	///    going to be done, and the change should go into the record saying so.
+	///    This is the sentence for tasks that were deliberately not taken, which
+	///    is a thing that happens and is worth writing down rather than leaving
+	///    a change open for ever.
+	///  - **Complete it — I have verified it.** The work *is* done and the boxes
+	///    are not ticked, because what proves them is somebody watching the app
+	///    rather than a suite. The person saying this is the evidence, and the
+	///    sentence says so out loud rather than letting an assistant tick boxes
+	///    on its own say-so.
+	///  - **Carry on.** The ordinary one.
+	///
+	/// Sentences rather than slash commands, because two of the three are a
+	/// person telling an assistant something it cannot find out for itself.
+	public static func inProgressCommands(for change: OpenSpecChange) -> [String] {
+		[
+			"archive \(change.name) as it is",
+			"complete \(change.name), I have verified it",
+			"continue on \(change.name)",
+		]
+	}
+
+	/// Everything a card offers to copy, in the order it offers them.
+	///
+	/// One place rather than a branch in the menu, so what a state offers can be
+	/// read — and tested — without a view. The archive command is not here: it
+	/// is a shell command and wants the CLI found first, which is a question
+	/// about the machine rather than about the change.
+	public static func commands(for change: OpenSpecChange, in state: OpenSpecState) -> [String] {
+		switch state {
+		case .ready: return [applyCommand(for: change, in: state)].compactMap { $0 }
+		case .inProgress: return inProgressCommands(for: change)
+		case .writing, .complete, .archived: return []
 		}
 	}
 

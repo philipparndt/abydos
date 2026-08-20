@@ -4247,6 +4247,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			: "ran \(OpenSpec.initCommand()) in a terminal"
 	}
 
+	/// Whether the board has any cards yet, for a driver waiting on it.
+	func backlogHasCardsForTesting() -> Bool { bottomPanel.backlogHasCardsForTesting() }
+
 	/// What a card's context menu offers, for `--backlog-menu`.
 	func backlogMenuForTesting(number: Int) -> String {
 		guard let pane = bottomPanel.showBacklog() else { return "no project" }
