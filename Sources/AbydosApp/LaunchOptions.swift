@@ -409,6 +409,11 @@ struct LaunchOptions {
 	var diagnosticsAt: [Double] = []
 	/// When to open the first value beside the code that has anything under it.
 	var openValueAt: Double?
+	/// Copy a link to a place, as `reference:12`, `permalink:12` or
+	/// `reference:12-18`, and say what landed on the pasteboard.
+	var copyLink: String?
+	/// Put this on the pasteboard and follow it, saying where the caret went.
+	var followLink: String?
 	/// Which line to ask a server what it offers about, and after how long.
 	///
 	/// The wait is the argument rather than a constant because the servers this
@@ -1013,6 +1018,8 @@ struct LaunchOptions {
 					after: next().flatMap(Double.init) ?? 20
 				)
 			case "--code-action-take": options.codeActionTake = next()
+			case "--copy-link": options.copyLink = next()
+			case "--follow-link": options.followLink = next()
 			case "--diagnostics":
 				options.diagnosticsAt = (next() ?? "20")
 					.split(separator: ",").compactMap { Double($0) }

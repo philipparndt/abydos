@@ -865,6 +865,26 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let asked = options.copyLink {
+			// After the file is open and its document is real: a reference is
+			// about a tab, and there is none for the first second.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+				let parts = asked.split(separator: ":").map(String.init)
+				let form = parts.first ?? "reference"
+				let lines = (parts.count > 1 ? parts[1] : "1")
+					.split(separator: "-").compactMap { Int($0) }
+				controller?.copyLinkForTesting(
+					form, line: lines.first ?? 1, endLine: lines.count > 1 ? lines[1] : nil
+				)
+			}
+		}
+
+		if let link = options.followLink {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
+				controller?.followLinkForTesting(link)
+			}
+		}
+
 		if let asked = options.codeActionsAt {
 			DispatchQueue.main.asyncAfter(deadline: .now() + asked.after) {
 				controller?.reportCodeActionsForTesting(
@@ -2661,6 +2681,43 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		)
 		actions.keyEquivalentModifierMask = [.option]
 		editMenu.addItem(actions)
+
+		// **⌘⇧C for the reference, and nothing for the permalink.** The
+		// question the design left open was whether a keystroke is worth
+		// spending on a gesture done twice a week; the answer is that the
+		// reference is not that gesture. It is the string handed to an
+		// assistant, and handing one over is something somebody does several
+		// times in a sitting — this session alone produced dozens of
+		// `file:line` references by hand. The permalink is the twice-a-week one:
+		// it goes into a message or a bookmark, deliberately, and reaching the
+		// menu for it costs nothing anybody will notice.
+		//
+		// ⌘⇧C is free here and is what IDEA puts "copy reference" on, which is
+		// where the muscle memory comes from.
+		let copyReference = NSMenuItem(
+			title: "Copy Reference",
+			action: #selector(MainWindowController.copyReference(_:)),
+			keyEquivalent: "c"
+		)
+		copyReference.keyEquivalentModifierMask = [.command, .shift]
+		editMenu.addItem(copyReference)
+
+		let copyPermalink = NSMenuItem(
+			title: "Copy Permalink",
+			action: #selector(MainWindowController.copyPermalink(_:)),
+			keyEquivalent: ""
+		)
+		editMenu.addItem(copyPermalink)
+
+		// The other end of the same road, and the only door there is: nothing
+		// registers an `abydos://` scheme, so a link is followed by pasting it.
+		let goToCopied = NSMenuItem(
+			title: "Go to Copied Place",
+			action: #selector(MainWindowController.goToCopiedPlace(_:)),
+			keyEquivalent: "v"
+		)
+		goToCopied.keyEquivalentModifierMask = [.command, .shift]
+		editMenu.addItem(goToCopied)
 
 		// The file's own, which have no caret: `source.*` is about the whole
 		// file — organise imports, fix everything of one kind — and a menu that

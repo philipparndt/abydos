@@ -50,8 +50,16 @@ forge calls a file at a commit is arithmetic on a URL, not a question to ask a
 server.
 
 Where there is no remote, or the remote is a host this app does not recognise,
-the offer SHALL NOT be made — an entry that hands over a URL it had to invent is
-worse than an entry that is not there.
+**no URL SHALL be invented** — and the entry SHALL say which of those it was
+rather than disappearing.
+
+This is the one place the writing of this changed its own mind. "Do not offer the
+entry" was the intention, and building the menu is the moment it would have to be
+decided: whether a file is in a checkout, whether that checkout has a remote and
+whether the host is one this app knows are three questions for git, asked
+asynchronously, and a right-click cannot wait on them. An entry that appears and
+vanishes under the cursor depending on questions nobody can see is worse than one
+that is always there and explains itself the once.
 
 #### Scenario: a committed line on a pushed commit
 
@@ -63,8 +71,16 @@ worse than an entry that is not there.
 #### Scenario: no remote to link to
 
 - **GIVEN** a repository with no remote configured
-- **WHEN** the editor's menu is opened
-- **THEN** the permalink entry is not offered
+- **WHEN** a permalink is asked for
+- **THEN** nothing is copied, and it is said that this checkout has no remote
+  this app recognises
+
+#### Scenario: a file in no repository at all
+
+- **GIVEN** a project that is not a git checkout
+- **WHEN** a permalink is asked for
+- **THEN** nothing is copied, and it is said that a permalink names a commit and
+  this file is not in a checkout
 
 ### Requirement: A permalink says what it cannot promise
 
@@ -120,6 +136,13 @@ A `path:line` from anywhere else SHALL be opened at the number, with nothing
 inferred: this app has no idea what that file looked like when the reference was
 made, and guessing would be inventing.
 
+**There SHALL be a gesture that follows what is on the pasteboard**, since
+nothing makes one of these links clickable into this app: no `abydos://` scheme
+is registered and registering one is a separate piece of work. The pasteboard is
+the door — one gesture, taking either form, trying the permalink first because it
+is the specific shape and `path:line` would otherwise match the tail of any URL
+with a colon and a number in it.
+
 #### Scenario: a bookmark followed after the file has changed
 
 - **GIVEN** a permalink to line 2324 at a commit, and eight lines added above it
@@ -146,3 +169,17 @@ made, and guessing would be inventing.
 - **GIVEN** `path:12` pasted from a stack trace
 - **WHEN** it is opened
 - **THEN** it opens at line 12, with nothing re-found and nothing said
+
+#### Scenario: a commit this checkout has never had
+
+- **GIVEN** a permalink naming a commit that is not in this repository
+- **WHEN** it is opened
+- **THEN** it opens at the number the link carried, because there is nothing to
+  compare it against, and nothing is said about a line having moved
+
+#### Scenario: something on the pasteboard that is neither
+
+- **GIVEN** a pasteboard holding ordinary text
+- **WHEN** the gesture that follows a link is used
+- **THEN** nothing is opened, and it says that what is copied is neither a
+  reference nor a permalink

@@ -744,6 +744,10 @@ final class EditorAreaController: NSViewController {
 		didSet { for group in groups { group.onWatch = onWatch } }
 	}
 
+	var onCopyLink: ((URL, CodeView.LinkForm, Int, Int?) -> Void)? {
+		didSet { for group in groups { group.onCopyLink = onCopyLink } }
+	}
+
 	private var runnableLines: [String: Set<Int>] = [:]
 
 	func setRunnableLines(_ lines: [String: Set<Int>]) {

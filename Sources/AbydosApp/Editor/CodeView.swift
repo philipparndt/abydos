@@ -71,6 +71,12 @@ final class CodeView: NSView, NSTextInputClient {
 	var onFixWithAI: ((_ line: Int, _ diagnostic: LSPDiagnostic) -> Void)?
 	/// Asked to watch what is selected while debugging.
 	var onWatch: ((_ expression: String) -> Void)?
+	/// Which of the two forms to copy.
+	enum LinkForm { case reference, permalink }
+	/// Copy this place, in that form. The window does it: a reference needs the
+	/// project root and a permalink needs git, and neither is a text view's
+	/// business.
+	var onCopyLink: ((_ form: LinkForm, _ line: Int, _ endLine: Int?) -> Void)?
 	/// The text changed and the caret is in a word — or on a character the
 	/// server asked to be woken by: offer completions for it.
 	var onRequestCompletions: ((_ prefix: String, _ wasTriggered: Bool, _ caret: NSPoint) -> Void)?
@@ -2311,6 +2317,18 @@ final class CodeView: NSView, NSTextInputClient {
 			menu.addItem(.separator())
 			menu.addItem(item("Fix with AI", #selector(fixWithAIFromMenu)))
 		}
+		// **Two entries rather than one with a submenu.** A reference and a
+		// permalink are different in kind, not in format: one costs nothing and
+		// is always there, the other needs a repository with a remote and may
+		// have something to say about itself. A submenu hides the second behind
+		// a hover for no gain, and one item that picks for you is an item nobody
+		// trusts. The permalink is absent where there is nothing to link to,
+		// which the window answers, not this view.
+		if onCopyLink != nil {
+			menu.addItem(.separator())
+			menu.addItem(item("Copy Reference", #selector(copyReferenceFromMenu)))
+			menu.addItem(item("Copy Permalink", #selector(copyPermalinkFromMenu)))
+		}
 		menu.addItem(.separator())
 		menu.addItem(item("Cut", #selector(NSText.cut(_:))))
 		menu.addItem(item("Copy", #selector(NSText.copy(_:))))
@@ -2331,6 +2349,40 @@ final class CodeView: NSView, NSTextInputClient {
 	@objc private func goToDefinitionFromMenu() {
 		guard let position = caretPositionForRequest() else { return }
 		onGoToDefinition?(position.line, position.character)
+	}
+
+	/// The lines a reference names: the caret's line, or every line a selection
+	/// touches.
+	///
+	/// **Counted from 1**, which is how `CodePlace` counts and how everything
+	/// that prints a line number counts. A selection that ends at the very start
+	/// of a line does not include that line — dragging down to the beginning of
+	/// line 19 selects up to the end of 18, and saying 19 would name a line
+	/// nobody highlighted.
+	func lineSpanForReference() -> (line: Int, endLine: Int?)? {
+		guard let document else { return nil }
+		let selection = selectedUTF16Range()
+		let rope = document.rope
+		func line(at offset: Int) -> Int {
+			rope.line(atByteOffset: rope.byteOffset(fromUTF16: offset)) + 1
+		}
+		let start = line(at: selection.lowerBound)
+		guard !selection.isEmpty else { return (start, nil) }
+
+		var end = line(at: selection.upperBound)
+		let lastLineStart = rope.utf16Offset(fromByte: rope.byteOffset(ofLine: end - 1))
+		if end > start, selection.upperBound == lastLineStart { end -= 1 }
+		return (start, end > start ? end : nil)
+	}
+
+	@objc private func copyReferenceFromMenu() {
+		guard let span = lineSpanForReference() else { return }
+		onCopyLink?(.reference, span.line, span.endLine)
+	}
+
+	@objc private func copyPermalinkFromMenu() {
+		guard let span = lineSpanForReference() else { return }
+		onCopyLink?(.permalink, span.line, span.endLine)
 	}
 
 	@objc private func fixWithAIFromMenu() {

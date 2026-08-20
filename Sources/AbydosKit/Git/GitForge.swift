@@ -41,6 +41,41 @@ public enum GitForge {
 			URL(string: "https://\(host)/\(owner)/\(name)/pulls")
 		}
 
+		/// A permalink to a file at a commit, with the line named in it.
+		///
+		/// **A commit rather than a branch, and that is the whole point.** A
+		/// link into a branch says line 2324 of a file that anybody may edit,
+		/// and it is wrong the next time somebody inserts a line above it. A
+		/// link into a commit is right for ever, because a commit does not
+		/// change — which is what makes one worth sending to a person and worth
+		/// keeping as a bookmark for Monday.
+		///
+		/// The path is relative to the *repository* root, which is what a forge
+		/// serves; a reference's path is relative to the project root, which is
+		/// what `Scripts/abydos` resolves. In a monorepo those differ, and each
+		/// is right for its own audience.
+		///
+		/// **GitHub's spelling, for the hosts that share GitHub's layout** —
+		/// which is the same set this whole type already claims: GitHub, its
+		/// Enterprise installations, and Gitea and Forgejo by accident rather
+		/// than by claim. `#L12` and `#L12-L18` are theirs. GitLab spells a
+		/// range `#L12-18` and Bitbucket spells the whole thing differently
+		/// again; neither is guessed at here, because a URL invented for a host
+		/// nobody tested against is worse than no offer.
+		public func url(forFile path: String, atCommit commit: String, place: CodePlace?) -> URL? {
+			guard !commit.isEmpty, !path.isEmpty else { return nil }
+			// Each component escaped on its own: a path has slashes that must
+			// stay slashes, and may have a space that must not.
+			let escaped = path.split(separator: "/").map {
+				$0.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? String($0)
+			}.joined(separator: "/")
+			var text = "https://\(host)/\(owner)/\(name)/blob/\(commit)/\(escaped)"
+			if let place {
+				text += place.endLine.map { "#L\(place.line)-L\($0)" } ?? "#L\(place.line)"
+			}
+			return URL(string: text)
+		}
+
 		/// A page about one ref, with the ref escaped — branch names contain
 		/// slashes, and may contain worse.
 		private func page(_ section: String, _ branch: String) -> URL? {

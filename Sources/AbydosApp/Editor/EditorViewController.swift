@@ -226,6 +226,9 @@ final class EditorViewController: NSViewController {
 	/// Asked to put an agent on a problem: the file, the line, and what the
 	/// language server said about it.
 	var onFixWithAI: ((URL, Int, LSPDiagnostic) -> Void)?
+	/// Copy a link to a place in this tab's file. The window answers it: a
+	/// reference needs the project root, a permalink needs git.
+	var onCopyLink: ((URL, CodeView.LinkForm, Int, Int?) -> Void)?
 	/// Which lines have a breakpoint that does more than stop, per file.
 	private var conditionalBreakpoints: [String: Set<Int>] = [:]
 
@@ -1436,6 +1439,9 @@ final class EditorViewController: NSViewController {
 		}
 		codeView.onFixWithAI = { [weak self] line, diagnostic in
 			self?.onFixWithAI?(tab.url, line, diagnostic)
+		}
+		codeView.onCopyLink = { [weak self] form, line, endLine in
+			self?.onCopyLink?(tab.url, form, line, endLine)
 		}
 		codeView.onRequestCompletions = { [weak self] prefix, wasTriggered, _ in
 			self?.scheduleCompletions(for: tab, prefix: prefix, wasTriggered: wasTriggered)
