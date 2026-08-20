@@ -865,6 +865,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let asked = options.codeActionsAt {
+			DispatchQueue.main.asyncAfter(deadline: .now() + asked.after) {
+				controller?.reportCodeActionsForTesting(
+					line: asked.line, character: asked.character, take: options.codeActionTake
+				)
+			}
+		}
+
 		if let at = options.openValueAt {
 			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
 				controller?.openValueForTesting()
@@ -2634,6 +2642,35 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		)
 		rename.keyEquivalentModifierMask = [.shift]
 		editMenu.addItem(rename)
+
+		// **⌥⏎, which is IDEA's, and the only always-on way in.** Measured in
+		// 0538 against gopls and jdtls: a server answers *something* for every
+		// line of a real file — organise imports, generate accessors, and in
+		// gopls's case a kind of its own invention — so an indicator driven by
+		// "are there actions here" would be on every row. A keystroke asks only
+		// when somebody asks.
+		//
+		// A menu item rather than a key handled in the text view, because a menu
+		// item's key equivalent is matched before the view sees the event: ⌥⏎ in
+		// a text view is a newline, and catching it afterwards would be catching
+		// it after something else had already done it.
+		let actions = NSMenuItem(
+			title: "Show Context Actions",
+			action: #selector(MainWindowController.showCodeActions(_:)),
+			keyEquivalent: "\r"
+		)
+		actions.keyEquivalentModifierMask = [.option]
+		editMenu.addItem(actions)
+
+		// The file's own, which have no caret: `source.*` is about the whole
+		// file — organise imports, fix everything of one kind — and a menu that
+		// opens where somebody is typing is the wrong place for it.
+		let sourceActions = NSMenuItem(
+			title: "Source Actions…",
+			action: #selector(MainWindowController.showSourceActions(_:)),
+			keyEquivalent: ""
+		)
+		editMenu.addItem(sourceActions)
 
 		// IDEA's shortcuts on macOS, since that is where the muscle memory
 		// comes from.

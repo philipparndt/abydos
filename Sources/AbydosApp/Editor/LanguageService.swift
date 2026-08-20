@@ -65,6 +65,22 @@ final class LanguageService {
 	/// Diagnostics per file, newest wins.
 	private(set) var diagnostics: [String: [LSPDiagnostic]] = [:]
 
+	/// How a server's own edit gets applied, set by the window in front.
+	///
+	/// `workspace/applyEdit` arrives on a client and has to be carried out where
+	/// the open documents are, which is a window — so this is a hook rather than
+	/// anything this service does itself. Whoever takes it must answer exactly
+	/// once, and must answer `false` when the edit did not happen.
+	/// How many edits servers have asked this app to apply, for a driver that
+	/// has to say whether the second half of a command actually arrived.
+	private(set) var serverEditsForTesting = 0
+
+	var applyEditFromServer: ((
+		_ edit: WorkspaceEdit,
+		_ label: String?,
+		_ answer: @escaping (Bool, String?) -> Void
+	) -> Void)?
+
 	/// Documents this service has told a server about, and their version.
 	private var openDocuments: [String: Int] = [:]
 	/// Which server each open document was announced to, by URI.
@@ -1177,6 +1193,110 @@ final class LanguageService {
 			note(error, asked: "rename", of: server, about: url)
 			answered(withContent: false, for: key)
 			return .failed(error)
+		}
+	}
+
+	// MARK: - What a server offers
+
+	/// What came back when a server was asked what it offers, and who said it.
+	///
+	/// **The server's name travels with the list**, because the lists differ in
+	/// kind and not only in length: a syntactic server offers text
+	/// substitutions it worked out by shape, and jdtls offers what a compiler
+	/// knows. Somebody looking at a short list should be able to tell which they
+	/// are getting rather than wondering why the menu changed.
+	struct CodeActionOffer {
+		var server: String
+		/// Whether the server answering knows the code by its text rather than
+		/// by its types — the same caveat a rename carries.
+		var isSyntactic: Bool
+		var actions: [LSPCodeAction]
+
+		var isEmpty: Bool { actions.isEmpty }
+	}
+
+	/// What the server offers about a range, with the diagnostics under it.
+	///
+	/// The diagnostics are this app's own record of what the server last
+	/// published for the file, sent back as they arrived. A quick fix is a fix
+	/// *for* a diagnostic, and a request with an empty context comes back with
+	/// refactorings and no fixes — which reads as a server that does not offer
+	/// much.
+	func codeActions(
+		url: URL,
+		range: LSPRange,
+		languageId: String,
+		project: URL,
+		only: [String]? = nil
+	) async -> CodeActionOffer? {
+		guard let (key, server) = ready(languageId, project: project, for: "code actions") else {
+			return nil
+		}
+		guard server.client.offersCodeActions else {
+			return CodeActionOffer(
+				server: server.definition.name,
+				isSyntactic: server.definition.isSyntactic,
+				actions: []
+			)
+		}
+		let under = diagnostics(for: url).filter {
+			$0.range.start.line <= range.end.line && $0.range.end.line >= range.start.line
+		}
+		do {
+			let actions = try await server.client.codeActions(
+				uri: uri(for: url), range: range, diagnostics: under, only: only
+			)
+			answered(withContent: !actions.isEmpty, for: key)
+			return CodeActionOffer(
+				server: server.definition.name,
+				isSyntactic: server.definition.isSyntactic,
+				actions: actions
+			)
+		} catch {
+			note(error, asked: "code actions", of: server, about: url)
+			answered(withContent: false, for: key)
+			return nil
+		}
+	}
+
+	/// Fills an action in, where it arrived without its work.
+	///
+	/// Returns the action unchanged when the server has nothing to add or
+	/// refuses — the caller then has an action that still needs resolving,
+	/// which is a thing that can be said out loud, rather than an empty edit
+	/// that quietly does nothing.
+	func resolve(
+		_ action: LSPCodeAction, url: URL, languageId: String, project: URL
+	) async -> LSPCodeAction {
+		guard action.needsResolving,
+		      let (_, server) = ready(languageId, project: project, for: "resolving an action"),
+		      server.client.resolvesCodeActions
+		else { return action }
+		do {
+			return try await server.client.resolveCodeAction(action)
+		} catch {
+			note(error, asked: "codeAction/resolve", of: server, about: url)
+			return action
+		}
+	}
+
+	/// Runs a command an action carried, and says whether the server took it.
+	///
+	/// What the server does next may be to ask *this* program to apply an edit,
+	/// which arrives as `workspace/applyEdit` and is answered elsewhere. So a
+	/// `true` here means the command was accepted, not that anything changed.
+	func run(
+		_ command: LSPCommand, url: URL, languageId: String, project: URL
+	) async -> Bool {
+		guard let (_, server) = ready(languageId, project: project, for: "running a command") else {
+			return false
+		}
+		do {
+			_ = try await server.client.executeCommand(command.command, arguments: command.argumentList)
+			return true
+		} catch {
+			note(error, asked: "executeCommand", of: server, about: url)
+			return false
 		}
 	}
 
@@ -2504,6 +2624,20 @@ final class LanguageService {
 				name: .ideaiDiagnosticsChanged,
 				object: URL(string: uri)
 			)
+		}
+		// **A server asking this program to change files.** Set on every client
+		// because any server may send it — it is usually the second half of a
+		// code action that was a command — and answered by whichever window is
+		// in front, since applying an edit means the rope of whatever documents
+		// are open. Nothing in front is an honest `false`: a server told that
+		// the edit did not happen can say so, where one told nothing waits.
+		client.onApplyEdit = { [weak self] edit, label, answer in
+			self?.serverEditsForTesting += 1
+			guard let handler = self?.applyEditFromServer else {
+				answer(false, "This editor has no window to apply the edit in.")
+				return
+			}
+			DispatchQueue.main.async { handler(edit, label, answer) }
 		}
 		client.onExit = { [weak self, weak client] in
 			guard let self else { return }

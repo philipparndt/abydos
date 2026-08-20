@@ -485,6 +485,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		buildContent()
 		buildToolbar()
 		buildTitlebarBackdrop()
+		// From the moment there is a window, not only from the moment somebody
+		// clicks on one: a driven run never makes a window key, and a server
+		// asking to apply an edit in that gap would be told there was nowhere to
+		// apply it.
+		takeServerEdits()
 
 		editor.onNavigated = { [weak self] departure, arrival in
 			guard let self, !self.isNavigatingHistory else { return }
@@ -5577,9 +5582,228 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 	}
 
+	// MARK: - What a server offers
+
+	/// What a server offers about the caret — ⌥⏎.
+	///
+	/// **A keystroke and not a mark, and that was measured rather than
+	/// preferred.** Asked at every line of a real file, gopls answered something
+	/// about 16 lines of 16 and jdtls about 10 of 10; an indicator meaning "there
+	/// is something here" would therefore be on every row of every file, which is
+	/// an indicator nobody reads. Asking when somebody asks costs one request and
+	/// is never noise.
+	@objc func showCodeActions(_ sender: Any?) {
+		offerCodeActions(fileWide: false)
+	}
+
+	/// What a server offers about the *file* — organise imports, fix all of a
+	/// kind. These have no caret, so they are not in the menu that opens at one.
+	@objc func showSourceActions(_ sender: Any?) {
+		offerCodeActions(fileWide: true)
+	}
+
+	private func offerCodeActions(fileWide: Bool) {
+		guard let group = editor.activeGroup,
+		      let codeView = group.activeCodeView,
+		      let url = group.activeTabURL,
+		      let languageId = group.activeDocument?.languageId,
+		      let project,
+		      let caret = codeView.caretPositionForRequest()
+		else { return }
+
+		let position = LSPPosition(line: caret.line, character: caret.character)
+		// The file's own root rather than the scope's, the way a rename asks:
+		// the server that was told about this file is the one with anything to
+		// say about it.
+		let root = LanguageService.shared.root(for: url, languageId: languageId, project: project.root)
+		// A file-wide question is asked about the whole file rather than about
+		// where somebody happens to be standing, and asked with `only`, so a
+		// server that can answer it cheaply does.
+		let range = fileWide
+			? LSPRange(start: LSPPosition(line: 0, character: 0), end: position)
+			: LSPRange(start: position, end: position)
+
+		Task { @MainActor [weak self] in
+			let offer = await LanguageService.shared.codeActions(
+				url: url, range: range, languageId: languageId, project: root,
+				only: fileWide ? ["source"] : nil
+			)
+			guard let self else { return }
+			guard let offer else {
+				// No server for this file. Silent for the reason a rename is:
+				// it is most files in most projects, and what there is to say
+				// about a missing server is the strip above the file.
+				return
+			}
+
+			// `source.*` is about the file: in the caret's menu it would be a
+			// list of things that have nothing to do with where somebody is.
+			let wanted = offer.actions.filter { fileWide ? $0.isSourceAction : !$0.isSourceAction }
+			guard !wanted.isEmpty else {
+				self.notify(
+					fileWide ? "Nothing to do to this file" : "Nothing on offer here",
+					detail: "\(offer.server) offers nothing "
+						+ (fileWide ? "about this file." : "about this line."),
+					kind: .information
+				)
+				return
+			}
+
+			let menu = self.codeActionMenu(
+				wanted, from: offer, url: url, languageId: languageId, project: root
+			)
+			guard let point = codeView.caretScreenPoint() else { return }
+			menu.popUp(positioning: nil, at: NSPoint(x: point.x, y: point.y), in: nil)
+		}
+	}
+
+	/// The menu of what a server offers, in the server's own words.
+	///
+	/// **Whatever it offers is what is shown**, unedited and unsorted — the same
+	/// rule rename follows. The only thing added is who is talking: 0449 lets a
+	/// project choose its server, and a syntactic one's list is shorter and
+	/// different in kind. Somebody should be able to tell which they are getting
+	/// rather than wondering why the menu changed.
+	private func codeActionMenu(
+		_ actions: [LSPCodeAction],
+		from offer: LanguageService.CodeActionOffer,
+		url: URL,
+		languageId: String,
+		project: URL
+	) -> NSMenu {
+		let menu = NSMenu()
+		for action in actions {
+			let entry = NSMenuItem(
+				title: action.title,
+				action: #selector(takeCodeActionFromMenu(_:)),
+				keyEquivalent: ""
+			)
+			entry.target = self
+			entry.representedObject = TakenCodeAction(
+				action: action, url: url, languageId: languageId, project: project
+			)
+			// A server may send an action it will not run, with a reason meant
+			// to be read. Shown and not runnable, rather than dropped.
+			if let reason = action.disabledReason {
+				entry.isEnabled = false
+				entry.toolTip = reason
+			}
+			menu.addItem(entry)
+		}
+		menu.addItem(.separator())
+		let who = NSMenuItem(
+			title: offer.isSyntactic
+				? "from \(offer.server), which matches names rather than types"
+				: "from \(offer.server)",
+			action: nil,
+			keyEquivalent: ""
+		)
+		who.isEnabled = false
+		menu.addItem(who)
+		return menu
+	}
+
+	/// One action, and everything needed to carry it out.
+	private final class TakenCodeAction: NSObject {
+		let action: LSPCodeAction
+		let url: URL
+		let languageId: String
+		let project: URL
+
+		init(action: LSPCodeAction, url: URL, languageId: String, project: URL) {
+			self.action = action
+			self.url = url
+			self.languageId = languageId
+			self.project = project
+		}
+	}
+
+	@objc private func takeCodeActionFromMenu(_ sender: NSMenuItem) {
+		guard let taken = sender.representedObject as? TakenCodeAction else { return }
+		take(taken)
+	}
+
+	/// Carries out one action: resolve it if it arrived empty, apply its edit,
+	/// run its command.
+	///
+	/// **In that order, and all three.** An action may carry an edit *and* a
+	/// command — the protocol allows it and jdtls uses it — and doing only the
+	/// first half of one is worse than doing neither.
+	private func take(_ taken: TakenCodeAction) {
+		Task { @MainActor [weak self] in
+			guard let self else { return }
+			// **Resolved on the way to being applied, never treated as empty.**
+			// A server that answers cheaply and fills in the work when asked is
+			// the normal case, not the corner one: of 83 actions jdtls offered
+			// in the measurement, 81 arrived with nothing in them.
+			let action = await LanguageService.shared.resolve(
+				taken.action, url: taken.url, languageId: taken.languageId, project: taken.project
+			)
+
+			if action.needsResolving {
+				self.notify(
+					"“\(action.title)” could not be worked out",
+					detail: "The server offered it and then had nothing to do for it.",
+					kind: .warning
+				)
+				return
+			}
+
+			if let edit = action.edit, !edit.isEmpty {
+				self.apply(edit, named: action.title)
+			}
+			if let command = action.command {
+				let taken = await LanguageService.shared.run(
+					command, url: taken.url, languageId: taken.languageId, project: taken.project
+				)
+				// The server may now ask this window to apply an edit, which
+				// arrives as `workspace/applyEdit` and is answered there.
+				if !taken {
+					self.notify(
+						"“\(action.title)” was refused",
+						detail: "The server would not run it.",
+						kind: .warning
+					)
+				}
+			}
+		}
+	}
+
+	/// Says that this window will carry out the edits servers ask for.
+	///
+	/// **The same applying a rename uses, and deliberately not a second one.**
+	/// An edit arriving through `workspace/applyEdit` touches open documents and
+	/// closed files exactly as a rename's does, wants the same single undo entry
+	/// and the same refusal when part of it cannot be done — and a second
+	/// implementation of that is the one thing 0453 exists to prevent.
+	func takeServerEdits() {
+		LanguageService.shared.applyEditFromServer = { [weak self] edit, label, answer in
+			guard let self else {
+				answer(false, "The window the edit was for has closed.")
+				return
+			}
+			let outcome = self.apply(edit, named: label ?? "the server’s edit")
+			switch outcome {
+			case .applied:
+				answer(true, nil)
+			case let .refused(reasons):
+				answer(false, reasons.joined(separator: " "))
+			case let .putBack(failure):
+				answer(false, failure)
+			case let .halfDone(failure, changed, _):
+				// The state this whole design exists to make rare. The server is
+				// told `false` — the edit it asked for did not happen as asked —
+				// and told which files are not as either side believes.
+				answer(false, failure + " Left changed: "
+					+ changed.map(\.lastPathComponent).joined(separator: ", "))
+			}
+		}
+	}
+
 	/// Turns a workspace edit into files, and puts one entry on the undo stack
 	/// for the whole of it.
-	private func apply(_ edit: WorkspaceEdit, named newName: String) {
+	@discardableResult
+	private func apply(_ edit: WorkspaceEdit, named newName: String) -> WorkspaceEditApplier.Outcome {
 		let files = workspaceEditFiles()
 		let plan = WorkspaceEditPlan.make(edit, contents: files.contents, exists: files.exists)
 
@@ -5601,8 +5825,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			notify(summary.title, detail: summary.detail, kind: outcome.isUntouched ? .warning : .error)
 		}
 
-		guard case let .applied(applied) = outcome, !applied.isEmpty else { return }
+		guard case let .applied(applied) = outcome, !applied.isEmpty else { return outcome }
 		remember(applied, named: newName)
+		return outcome
 	}
 
 	/// The one undo entry for the whole rename.
@@ -10081,6 +10306,103 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		fflush(stdout)
 	}
 
+	/// What a server offers about a line, taken, with the file before and after
+	/// — for `--code-actions`.
+	///
+	/// **Driven through the same path the keystroke takes**, so what is watched
+	/// is what ⌥⏎ does: the offer is asked for exactly as `showCodeActions`
+	/// asks, and the action is taken exactly as the menu takes it. A report that
+	/// called the client directly would prove the client works and say nothing
+	/// about the editor.
+	func reportCodeActionsForTesting(line: Int, character: Int = 0, take wanted: String?) {
+		guard let group = editor.activeGroup,
+		      let url = group.activeTabURL,
+		      let languageId = group.activeDocument?.languageId,
+		      let project
+		else {
+			print("ACTIONS: nothing open")
+			fflush(stdout)
+			return
+		}
+		let root = LanguageService.shared.root(for: url, languageId: languageId, project: project.root)
+		let position = LSPPosition(line: line, character: character)
+
+		Task { @MainActor [weak self] in
+			guard let self else { return }
+			let caret = await LanguageService.shared.codeActions(
+				url: url, range: LSPRange(start: position, end: position),
+				languageId: languageId, project: root
+			)
+			guard let caret else {
+				print("ACTIONS line \(line): no server for this file")
+				fflush(stdout)
+				return
+			}
+			let atTheCaret = caret.actions.filter { !$0.isSourceAction }
+			print("ACTIONS line \(line) from \(caret.server): "
+				+ (atTheCaret.isEmpty
+					? "nothing on offer"
+					: atTheCaret.prefix(8).map(\.title).joined(separator: " | ")))
+			print("ACTIONS line \(line) needing resolve: "
+				+ "\(atTheCaret.filter(\.needsResolving).count) of \(atTheCaret.count)")
+
+			// The file's own, asked separately and never shown at the caret.
+			let file = await LanguageService.shared.codeActions(
+				url: url,
+				range: LSPRange(start: LSPPosition(line: 0, character: 0), end: position),
+				languageId: languageId, project: root, only: ["source"]
+			)
+			print("ACTIONS source: "
+				+ ((file?.actions.filter(\.isSourceAction).map(\.title).prefix(6).joined(separator: " | "))
+					.map { $0.isEmpty ? "nothing on offer" : $0 } ?? "no server"))
+			fflush(stdout)
+
+			// The caret's list first, then the file's: a source action is taken
+			// the same way, from the place it belongs.
+			// The gesture itself, so that what a person would see is what is
+			// reported: the menu at the caret, or the sentence when there is
+			// nothing to put in it.
+			if wanted == nil {
+				self.showCodeActions(nil)
+				DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+					print("ACTIONS said: \(self.toasts.saidForTesting.last ?? "nothing")")
+					fflush(stdout)
+				}
+			}
+
+			guard let wanted,
+			      let chosen = atTheCaret.first(where: { $0.title.contains(wanted) })
+				?? file?.actions.first(where: { $0.isSourceAction && $0.title.contains(wanted) })
+			else {
+				if wanted != nil { print("ACTIONS: nothing offered called \(wanted ?? "")") }
+				fflush(stdout)
+				return
+			}
+			let before = LanguageService.shared.serverEditsForTesting
+			print("ACTIONS taking a \(chosen.command == nil ? "plain edit" : "command")")
+			print("ACTIONS taking: \(chosen.title)")
+			fflush(stdout)
+			self.take(TakenCodeAction(
+				action: chosen, url: url, languageId: languageId, project: root
+			))
+
+			// The edit arrives through the rope or the disk; either way it is
+			// the file afterwards that says whether this worked.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+				let text = self.editor.document(for: url)?.rope.string
+					?? (try? String(contentsOf: url, encoding: .utf8))
+					?? ""
+				let head = text.components(separatedBy: "\n").prefix(6).joined(separator: " ⏎ ")
+				print("ACTIONS file after: \(head)")
+				// The other half of a command: the server asking this program to
+				// apply an edit, which is a request it waits on.
+				print("ACTIONS edits the server asked for: "
+					+ "\(LanguageService.shared.serverEditsForTesting - before)")
+				fflush(stdout)
+			}
+		}
+	}
+
 	/// Says whether the missing-server bar is up, and what it says.
 	func reportServerBannerForTesting() {
 		print("BANNER: \(editor.activeGroup?.serverBannerReportForTesting ?? "no editor")")
@@ -10626,6 +10948,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// have happened, and the file system watcher does not fire for a file
 	/// written while the app was in the background on every volume.
 	func windowDidBecomeKey(_ notification: Notification) {
+		// A server's own edit is applied where the open documents are, and that
+		// is a window. The one in front takes it.
+		takeServerEdits()
 		editor.reloadExternallyChangedFiles()
 		// The tree needs the same treatment: an agent or a checkout that adds
 		// files while the app is in the background should not leave the

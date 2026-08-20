@@ -209,7 +209,16 @@ final class ToastPresenter {
 		self.window = window
 	}
 
+	/// What has been said in this window, most recent last — for a driver that
+	/// has to say what somebody would have read.
+	///
+	/// A toast is drawn over the window for a few seconds and is gone; a run
+	/// that captures a screenshot a moment later catches nothing, and "nothing
+	/// was said" and "it was said and faded" look identical.
+	private(set) var saidForTesting: [String] = []
+
 	func show(_ toast: Toast) {
+		saidForTesting.append([toast.title, toast.detail].compactMap { $0 }.joined(separator: " — "))
 		guard let contentView = window?.contentView else { return }
 
 		let host = self.host ?? {

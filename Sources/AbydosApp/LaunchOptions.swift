@@ -409,6 +409,14 @@ struct LaunchOptions {
 	var diagnosticsAt: [Double] = []
 	/// When to open the first value beside the code that has anything under it.
 	var openValueAt: Double?
+	/// Which line to ask a server what it offers about, and after how long.
+	///
+	/// The wait is the argument rather than a constant because the servers this
+	/// is watched against differ by two orders of magnitude: gopls answers in a
+	/// second, and jdtls has a Maven import to do first.
+	var codeActionsAt: (line: Int, character: Int, after: Double)?
+	/// The action to take, matched on its title — the server's own words.
+	var codeActionTake: String?
 	/// Send the editor a motion nothing handles, and say what it named.
 	var unhandledMotions = false
 	/// When to say which panes were drawn by the engine that is not the usual
@@ -994,6 +1002,17 @@ struct LaunchOptions {
 				.split(separator: ",").compactMap { Double($0) }
 			case "--unhandled-motions": options.unhandledMotions = true
 			case "--open-value": options.openValueAt = next().flatMap(Double.init) ?? 8.0
+			case "--code-actions":
+				// `12` or `12:6` — the column matters: gopls offers "Add test
+				// for Greeting" over the name and nothing over the margin.
+				let where_ = (next() ?? "1").split(separator: ":")
+				let line = where_.first.flatMap { Int($0) } ?? 1
+				options.codeActionsAt = (
+					line: line - 1,
+					character: where_.count > 1 ? (Int(where_[1]) ?? 0) : 0,
+					after: next().flatMap(Double.init) ?? 20
+				)
+			case "--code-action-take": options.codeActionTake = next()
 			case "--diagnostics":
 				options.diagnosticsAt = (next() ?? "20")
 					.split(separator: ",").compactMap { Double($0) }
