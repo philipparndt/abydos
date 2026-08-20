@@ -2213,6 +2213,16 @@ final class EditorViewController: NSViewController {
 		return UnhandledMotions.reportForTesting
 	}
 
+	/// What the opened value's menu offers, and what it copies.
+	func openValueMenuForTesting() -> String {
+		guard let popup = openValuePopup else { return "nothing is open" }
+		return "menu: \(popup.menuTitlesForTesting)\n"
+			+ "  name -> \(popup.copyForTesting("name"))\n"
+			+ "  value -> \(popup.copyForTesting("value"))\n"
+			+ "  both -> \(popup.copyForTesting("both"))\n"
+			+ "  tree -> \(popup.copyForTesting("tree"))"
+	}
+
 	/// Opens a field inside what is open, for the claim about lazy children.
 	func expandInsideOpenValueForTesting() -> String {
 		openValuePopup?.expandFirstChildForTesting() ?? "nothing is open"
@@ -2240,15 +2250,19 @@ final class EditorViewController: NSViewController {
 	private func openInlineValue(_ hint: InlineValueHint, at rect: NSRect, over view: NSView) {
 		guard let onVariableChildren else { return }
 		openValuePopup?.dismiss()
-		let popup = VariableTreePopup(
-			root: Variable(
-				name: hint.name,
-				value: hint.value,
-				type: nil,
-				variablesReference: hint.variablesReference
-			),
-			children: onVariableChildren
+		// **The variable, not the hint.** A hint carries the value cut to what
+		// fits at the end of a line — ellipsis and all — which is right on the
+		// line and wrong everywhere else: copying one out of this window handed
+		// back `…` in the middle of a struct. The frame's own answer is what the
+		// window is opened on, and the adapter's children carry their full
+		// values already.
+		let root = inlineValues?.values[hint.name] ?? Variable(
+			name: hint.name,
+			value: hint.value,
+			type: nil,
+			variablesReference: hint.variablesReference
 		)
+		let popup = VariableTreePopup(root: root, children: onVariableChildren)
 		openValuePopup = popup
 		popup.show(over: view, at: rect)
 	}

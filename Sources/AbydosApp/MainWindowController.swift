@@ -9990,6 +9990,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			// And a field inside it, which is the second request and the first
 			// one that was not made until somebody reached for it.
 			print("VALUE expand: \(self.editor.expandInsideOpenValueForTesting())")
+			print("VALUE \(self.editor.openValueMenuForTesting())")
 			fflush(stdout)
 
 			// And letting the program go takes it away, which is the other half

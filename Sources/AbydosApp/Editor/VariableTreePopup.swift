@@ -70,6 +70,14 @@ final class VariableTreePopup: NSPanel {
 		outline.outlineTableColumn = outline.tableColumns.first
 		outline.dataSource = self
 		outline.delegate = self
+		// The same three the panel's tree offers, worded the same. A window you
+		// opened to read a struct is a window you copy out of — a field's value
+		// into a message, a name into a search — and having to go back to the
+		// panel to do it is the trip this window exists to save.
+		let menu = NSMenu()
+		menu.autoenablesItems = false
+		menu.delegate = self
+		outline.menu = menu
 		self.outline = outline
 
 		let scroll = NSScrollView()
@@ -161,6 +169,68 @@ final class VariableTreePopup: NSPanel {
 		}
 	}
 
+	/// The row the menu was opened on.
+	private var clickedNode: Node? {
+		let row = outline.clickedRow >= 0 ? outline.clickedRow : outline.selectedRow
+		guard row >= 0 else { return nil }
+		return outline.item(atRow: row) as? Node
+	}
+
+	private func copy(_ text: String) {
+		NSPasteboard.general.clearContents()
+		NSPasteboard.general.setString(text, forType: .string)
+	}
+
+	@objc private func copyValue() {
+		guard let node = clickedNode else { return }
+		copy(node.variable.value)
+	}
+
+	@objc private func copyName() {
+		guard let node = clickedNode else { return }
+		copy(node.variable.name)
+	}
+
+	/// `name = value`, which is what goes into a note or a message.
+	@objc private func copyBoth() {
+		guard let node = clickedNode else { return }
+		copy("\(node.variable.name) = \(node.variable.value)")
+	}
+
+	/// **The whole subtree, as it is shown.** A struct is why somebody opened
+	/// this window, and copying it a field at a time is the thing they came here
+	/// to stop doing. Only what has been fetched and is expanded, because that
+	/// is what is on screen: copying would otherwise mean a burst of requests to
+	/// an adapter for rows nobody has looked at.
+	@objc private func copyEverythingShown() {
+		copy(reportForTesting)
+	}
+
+	/// What the menu offers, for a driver to print.
+	var menuTitlesForTesting: String {
+		let menu = NSMenu()
+		menuNeedsUpdate(menu)
+		return menu.items.map { $0.isSeparatorItem ? "—" : $0.title }.joined(separator: ", ")
+	}
+
+	/// Copies as the menu item would, and says what landed on the pasteboard.
+	func copyForTesting(_ which: String) -> String {
+		let saved = NSPasteboard.general.string(forType: .string)
+		defer {
+			NSPasteboard.general.clearContents()
+			if let saved { NSPasteboard.general.setString(saved, forType: .string) }
+		}
+		outline.selectRowIndexes([0], byExtendingSelection: false)
+		switch which {
+		case "name": copyName()
+		case "value": copyValue()
+		case "tree": copyEverythingShown()
+		default: copyBoth()
+		}
+		return (NSPasteboard.general.string(forType: .string) ?? "nothing")
+			.replacingOccurrences(of: "\n", with: " ⏎ ")
+	}
+
 	/// Opens the first field under the root that has anything under it, as
 	/// clicking its triangle would — for the claim that children arrive on the
 	/// gesture rather than with the tree.
@@ -194,6 +264,22 @@ final class VariableTreePopup: NSPanel {
 		}
 		walk(nodes, depth: 0)
 		return lines.joined(separator: "\n")
+	}
+}
+
+extension VariableTreePopup: NSMenuDelegate {
+	func menuNeedsUpdate(_ menu: NSMenu) {
+		menu.removeAllItems()
+		func item(_ title: String, _ selector: Selector) -> NSMenuItem {
+			let entry = NSMenuItem(title: title, action: selector, keyEquivalent: "")
+			entry.target = self
+			return entry
+		}
+		menu.addItem(item("Copy Value", #selector(copyValue)))
+		menu.addItem(item("Copy Name", #selector(copyName)))
+		menu.addItem(item("Copy Name and Value", #selector(copyBoth)))
+		menu.addItem(.separator())
+		menu.addItem(item("Copy Everything Shown", #selector(copyEverythingShown)))
 	}
 }
 

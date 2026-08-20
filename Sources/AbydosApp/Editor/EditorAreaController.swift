@@ -778,6 +778,9 @@ final class EditorAreaController: NSViewController {
 		activeGroup.exerciseUnhandledMotionsForTesting()
 	}
 
+	/// What the opened value's menu offers, and what it copies.
+	func openValueMenuForTesting() -> String { activeGroup.openValueMenuForTesting() }
+
 	/// Opens a field inside what is open.
 	func expandInsideOpenValueForTesting() -> String {
 		activeGroup.expandInsideOpenValueForTesting()
