@@ -1,10 +1,10 @@
 ## 1. Asking
 
-- [ ] 1.1 `textDocument/codeAction` for the selection, carrying the diagnostics
+- [x] 1.1 `textDocument/codeAction` for the selection, carrying the diagnostics
       under it in the request's context.
-- [ ] 1.2 The answer parsed into something the editor can show: title, kind, and
+- [x] 1.2 The answer parsed into something the editor can show: title, kind, and
       whether it arrived with an edit.
-- [ ] 1.3 Tests over the parsing, including an action that is a command and one
+- [x] 1.3 Tests over the parsing, including an action that is a command and one
       with no edit at all.
 
 ## 2. Taking
@@ -17,11 +17,11 @@
 
 ## 3. The request coming the other way
 
-- [ ] 3.1 `workspace/applyEdit` handled as an inbound request: apply through the
+- [x] 3.1 `workspace/applyEdit` handled as an inbound request: apply through the
       same machinery and answer whether it was applied.
-- [ ] 3.2 A refusal is answered honestly rather than optimistically, and says
+- [x] 3.2 A refusal is answered honestly rather than optimistically, and says
       what happened.
-- [ ] 3.3 A test with a server that asks for an edit this app cannot apply.
+- [x] 3.3 A test with a server that asks for an edit this app cannot apply.
 
 ## 4. Seeing that there is anything
 

@@ -72,6 +72,18 @@ public struct LSPDiagnostic: Equatable, Sendable {
 	/// Which tool said so — `swiftc`, `gopls`, a linter behind the server.
 	public var source: String?
 	public var code: String?
+	/// The diagnostic exactly as the server sent it, where it came from one.
+	///
+	/// **Because it has to go back.** Asking what a server offers about a line
+	/// carries the diagnostics under it, and a server matches those against its
+	/// own — jdtls by the `data` it hung on them, several others by fields this
+	/// type has no idea about. A diagnostic rebuilt from the five fields read
+	/// here is a different object to the server that sent it, and the quick fix
+	/// that would have been offered is not.
+	///
+	/// Not part of what makes two diagnostics equal: one made in a test and one
+	/// read off the wire are the same diagnostic when they say the same thing.
+	public var raw: LSPRawJSON?
 
 	public init(
 		range: LSPRange,
@@ -109,6 +121,30 @@ public struct LSPDiagnostic: Equatable, Sendable {
 			source: dictionary["source"] as? String,
 			code: (code?.isEmpty == true) ? nil : code
 		)
+		raw = LSPRawJSON(dictionary)
+	}
+
+	/// What to send when this has to travel back to the server it came from.
+	///
+	/// The original where there is one, and otherwise the fields this type
+	/// keeps — which is what a diagnostic invented by the editor amounts to.
+	public var json: [String: Any] {
+		if let original = raw?.value as? [String: Any] { return original }
+		var dictionary: [String: Any] = [
+			"range": range.json,
+			"severity": severity.rawValue,
+			"message": message,
+		]
+		if let source { dictionary["source"] = source }
+		if let code { dictionary["code"] = code }
+		return dictionary
+	}
+
+	/// Equal when they say the same thing. The bytes a server happened to send
+	/// are not part of that.
+	public static func == (lhs: LSPDiagnostic, rhs: LSPDiagnostic) -> Bool {
+		lhs.range == rhs.range && lhs.severity == rhs.severity && lhs.message == rhs.message
+			&& lhs.source == rhs.source && lhs.code == rhs.code
 	}
 }
 

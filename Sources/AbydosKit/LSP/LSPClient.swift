@@ -58,6 +58,28 @@ public final class LSPClient: @unchecked Sendable {
 	/// is the only thing on the wire that knows the minute is not over.
 	public var onPreparing: ((Bool) -> Void)?
 
+	/// The server is asking *this* program to change files.
+	///
+	/// **The first inbound request here that writes anything**, and the reason
+	/// it is a callback with an answer rather than a notification: the server
+	/// waits, and what it waits for is whether the edit was applied. A code
+	/// action that is a command usually ends here — jdtls runs the command,
+	/// works out the edit, and sends it back this way.
+	///
+	/// Whoever takes this must call `answer` exactly once, and must say `false`
+	/// when the edit did not happen. A client that always answers `true`
+	/// teaches the server that the file on this machine now says something it
+	/// does not, and the next thing the server sends is built on that.
+	///
+	/// Nothing set here is an honest `false`: this program can be built without
+	/// anything willing to write, and a server should be told so rather than
+	/// left waiting.
+	public var onApplyEdit: ((
+		_ edit: WorkspaceEdit,
+		_ label: String?,
+		_ answer: @escaping (_ applied: Bool, _ reason: String?) -> Void
+	) -> Void)?
+
 	public var callbackQueue: DispatchQueue = .main
 
 	private var process: Process?
@@ -405,10 +427,44 @@ public final class LSPClient: @unchecked Sendable {
 			// editor cannot tell "not renameable here" from "this server is
 			// broken".
 			"rename": ["prepareSupport": true, "dynamicRegistration": false],
+			// **`codeActionLiteralSupport` is what stops a server answering with
+			// bare `Command`s.** Without it the protocol says a server may only
+			// send the old shape — a title and a command, with no kind to group
+			// by, no `isPreferred`, and no edit to look at before running it.
+			// The `valueSet` is the kinds this client understands; an empty
+			// string is in it because the protocol uses it for "no kind", and a
+			// server matching against the set has to find it there.
+			//
+			// `dataSupport` and `resolveSupport` are the lazy half: together
+			// they tell a server it may send a list with no edits in it and be
+			// asked for the one that was chosen. Claiming `dataSupport` without
+			// sending `data` back is how an action resolves to nothing.
+			"codeAction": [
+				"dynamicRegistration": false,
+				"isPreferredSupport": true,
+				"disabledSupport": true,
+				"dataSupport": true,
+				"resolveSupport": ["properties": ["edit", "command"]],
+				"codeActionLiteralSupport": [
+					"codeActionKind": ["valueSet": [
+						"", "quickfix", "refactor", "refactor.extract",
+						"refactor.inline", "refactor.rewrite", "source",
+						"source.organizeImports", "source.fixAll",
+					]],
+				],
+			],
 		],
 		"workspace": [
 			"workspaceFolders": true,
 			"symbol": ["dynamicRegistration": false],
+			// **This one is a promise to do work, not a claim about parsing.** A
+			// server that reads it may send `workspace/applyEdit` at any time —
+			// an inbound request that changes files — and several send it as the
+			// second half of a code action that was a command. It is claimed
+			// because `onApplyEdit` answers it and because the answer goes
+			// through the same applier a rename does.
+			"applyEdit": true,
+			"executeCommand": ["dynamicRegistration": false],
 			// **This is what decides the shape a rename comes back in.** Servers
 			// send the old `changes` map to clients that claim nothing here, and
 			// that map carries text only — so a Java rename that has to move
@@ -698,6 +754,82 @@ public final class LSPClient: @unchecked Sendable {
 		return WorkspaceEdit(json: result)
 	}
 
+	/// Whether this server offers anything about a place in a file.
+	///
+	/// Read from the handshake, for the reason `renames` is: a keystroke that
+	/// asks a server which does not do this gets an error back, and an error is
+	/// not "nothing on offer here" however much it looks like one on screen.
+	public var offersCodeActions: Bool {
+		let provider = locked { capabilities["codeActionProvider"] }
+		if let flag = provider as? Bool { return flag }
+		return provider is [String: Any]
+	}
+
+	/// Whether this server fills an action in when asked.
+	///
+	/// A server that says so may send a list with no edits in it, which is the
+	/// point of asking: the list is cheap and the work happens on the one that
+	/// was chosen.
+	public var resolvesCodeActions: Bool {
+		guard let options = locked({ capabilities["codeActionProvider"] }) as? [String: Any] else {
+			return false
+		}
+		return options["resolveProvider"] as? Bool ?? false
+	}
+
+	/// The kinds this server said it answers with, and empty when it said
+	/// nothing — which means "ask and find out" rather than "none".
+	public var codeActionKinds: [String] {
+		guard let options = locked({ capabilities["codeActionProvider"] }) as? [String: Any] else {
+			return []
+		}
+		return (options["codeActionKinds"] as? [Any])?.compactMap { $0 as? String } ?? []
+	}
+
+	/// What the server offers about a range, given what it said was wrong there.
+	///
+	/// **The diagnostics go with the request.** A quick fix is a fix *for* a
+	/// diagnostic, and the protocol has the client send back the ones under the
+	/// selection rather than have the server work out which of its own it last
+	/// published for this file. A request with an empty context still returns
+	/// refactorings; it is the fixes that go missing, silently.
+	///
+	/// `only` is how `source.*` is asked for separately: organise imports is
+	/// about the file and has no caret, so it is a different gesture asking a
+	/// narrower question.
+	public func codeActions(
+		uri: String,
+		range: LSPRange,
+		diagnostics: [LSPDiagnostic] = [],
+		only: [String]? = nil,
+		timeout: TimeInterval = 30
+	) async throws -> [LSPCodeAction] {
+		var context: [String: Any] = ["diagnostics": diagnostics.map(\.json)]
+		if let only { context["only"] = only }
+		let result = try await request("textDocument/codeAction", [
+			"textDocument": ["uri": uri],
+			"range": range.json,
+			"context": context,
+		], timeout: timeout)
+		return LSPCodeAction.list(from: result)
+	}
+
+	/// Asks the server to fill in an action it sent without one.
+	///
+	/// The whole action goes back, exactly as it arrived — `data` and all —
+	/// because that field is the server's own note to itself about which
+	/// proposal this was. What comes back replaces it; a server that answers
+	/// with something unreadable leaves the action as it was, and the caller
+	/// then has an action that still needs resolving rather than one that
+	/// silently does nothing.
+	public func resolveCodeAction(
+		_ action: LSPCodeAction, timeout: TimeInterval = 30
+	) async throws -> LSPCodeAction {
+		guard let raw = action.raw?.value else { return action }
+		let result = try await request("codeAction/resolve", raw as? [String: Any] ?? [:], timeout: timeout)
+		return LSPCodeAction(json: result) ?? action
+	}
+
 	public func references(uri: String, position: LSPPosition) async throws -> [LSPLocation] {
 		let result = try await request("textDocument/references", [
 			"textDocument": ["uri": uri],
@@ -818,7 +950,17 @@ public final class LSPClient: @unchecked Sendable {
 	/// mean a handshake with a real server first.
 	func sendForTesting(_ message: [String: Any]) { write(message) }
 
+	/// Everything this client puts on the wire, for a test with no server on the
+	/// other end.
+	///
+	/// The replies to inbound requests can be checked no other way: they are
+	/// written rather than returned, and a client with no process behind it has
+	/// no pipe to write them to. Called before the pipe, so a test sees the
+	/// message whether or not there is anything to send it to.
+	var wroteForTesting: (([String: Any]) -> Void)?
+
 	private func writeNow(_ message: [String: Any]) {
+		wroteForTesting?(message)
 		// Everything, on the way out: a request, a notification, and a reply to
 		// something the server asked. A container server knows the project by
 		// one name only, and it is not this one.
@@ -984,6 +1126,38 @@ public final class LSPClient: @unchecked Sendable {
 					if finished { self.onPreparing?(false) }
 				}
 			}
+
+		case "workspace/applyEdit":
+			// A request, not a notification: the server is waiting, and it is
+			// waiting to be told whether its edit happened.
+			guard let id = message["id"] else { return }
+			let label = parameters["label"] as? String
+
+			func answer(_ applied: Bool, _ reason: String?) {
+				var result: [String: Any] = ["applied": applied]
+				// `failureReason` is only meaningful when it failed, and a
+				// server that reads it on a success has been given a sentence
+				// about nothing.
+				if !applied, let reason { result["failureReason"] = reason }
+				write(["jsonrpc": "2.0", "id": id, "result": result])
+			}
+
+			// An edit this client cannot read is refused rather than half
+			// applied — the same rule `WorkspaceEdit(json:)` follows for a
+			// rename, one layer up: all of it or none of it.
+			guard let edit = WorkspaceEdit(json: parameters["edit"]) else {
+				answer(false, "The edit could not be read.")
+				return
+			}
+			guard let handler = onApplyEdit else {
+				answer(false, "This editor was not able to apply the edit.")
+				return
+			}
+			// Answered once, whatever the handler does with it. The answer is
+			// written from wherever the handler calls back — the write is
+			// already the one place that serialises onto the pipe.
+			let once = OnceAnswer(answer)
+			callbackQueue.async { handler(edit, label) { once.say($0, $1) } }
 
 		case "workspace/configuration":
 			// One answer per section asked about, and the answer is "nothing
