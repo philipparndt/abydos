@@ -225,6 +225,14 @@ the ordinary one.
 They are sentences rather than slash commands for the same reason: two of the
 three are a person telling an assistant something it cannot find out for itself.
 
+**What an entry says and what it copies are not the same string.** What is
+copied names the change, because it is pasted into an assistant that never saw
+the card. What the entry says does not: the menu belongs to one card, whose name
+is on the card the menu came out of, and a forty-character change name repeated
+three times makes a menu that has to be read sideways. The whole of what would be
+copied SHALL still be available on the entry, where somebody can look at it
+before pasting it.
+
 **Copied rather than run, and for a different reason than the archive
 command's.** Archiving is not run from the menu because it rewrites the project's
 specs. This is not run because there is nothing here to run it *with*: it is
@@ -248,6 +256,8 @@ question that was never asked.
 - **WHEN** its menu is opened
 - **THEN** the three sentences are offered — archive it as it is, complete it as
   verified, carry on — and the apply command is not
+- **AND** no entry repeats the change's name, while copying one puts the whole
+  sentence, name and all, on the pasteboard
 
 #### Scenario: a change still being written
 

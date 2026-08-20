@@ -69,11 +69,14 @@ and the sentence in the refusal is no longer true.
       unchanged. Held by `testExportingStillLetsTheRecipeDecide`, over the
       arguments: no `-o`, so the declaration decides. Not driven through a
       slicer, which nothing here can do.
-- [ ] 4.4 An older `go3mf`, refusing as it does today. **Not done**: 0.16.6 is
-      what is installed, and the branch is reached only by a tool older than
-      that. The floor itself is tested — `testOnlyZeroSixteenSixAndNewerHonourTheFlag`
-      — and the refusal it guards is one `guard` away, but nothing here has run
-      an old binary to watch it happen.
+- [x] 4.4 An older `go3mf`, refusing as it does today. **Verified by hand rather
+      than by a run here**: 0.16.6 is what is installed, and the branch is
+      reached only by a tool older than that, so nothing in this session could
+      exercise it. The floor itself is tested —
+      `testOnlyZeroSixteenSixAndNewerHonourTheFlag` — and the refusal it guards
+      is one `guard` away. Ticked on the reporter's own verification, which is
+      what the "complete it, I have verified it" sentence means: the person
+      saying it is the evidence.
 
 ## 5. Finish
 

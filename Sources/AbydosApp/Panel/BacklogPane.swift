@@ -857,12 +857,15 @@ final class BacklogPane: NSView {
 		// that lives and why.
 		for command in OpenSpec.commands(for: card.change, in: card.state) {
 			let entry = NSMenuItem(
-				title: "Copy \u{201C}\(command)\u{201D}",
+				title: "Copy \u{201C}\(command.title)\u{201D}",
 				action: #selector(copyApplyCommandFromMenu(_:)),
 				keyEquivalent: ""
 			)
 			entry.target = self
-			entry.representedObject = command
+			entry.representedObject = command.command
+			// The whole of what would be copied, for anybody who wants to see it
+			// before they paste it.
+			entry.toolTip = command.command
 			menu.addItem(entry)
 		}
 
@@ -874,12 +877,13 @@ final class BacklogPane: NSView {
 			let archive = NSMenuItem(
 				title: OpenSpec.commandLine() == nil
 					? "openspec is not installed\u{2026}"
-					: "Copy \u{201C}\(OpenSpec.archiveCommand(for: card.change))\u{201D}",
+					: "Copy \u{201C}openspec archive\u{201D}",
 				action: #selector(copyArchiveCommandFromMenu(_:)),
 				keyEquivalent: ""
 			)
 			archive.target = self
 			archive.representedObject = card.change
+			archive.toolTip = OpenSpec.archiveCommand(for: card.change)
 			menu.addItem(archive)
 		}
 

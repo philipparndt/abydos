@@ -289,11 +289,21 @@ struct OpenSpecChangeTests {
 		sandbox.change("half-done", files: ["tasks.md": tasks(done: 2, left: 3)])
 		let change = try #require(sandbox.openSpec.changes().first)
 
-		#expect(OpenSpec.commands(for: change, in: .inProgress) == [
+		let offered = OpenSpec.commands(for: change, in: .inProgress)
+		#expect(offered.map(\.command) == [
 			"archive half-done as it is",
 			"complete half-done, I have verified it",
 			"continue on half-done",
 		])
+		// **What the menu says does not repeat the name**, which is on the card
+		// the menu came out of. What is copied does, because it is pasted into
+		// an assistant that never saw the card.
+		#expect(offered.map(\.title) == [
+			"archive as it is",
+			"complete, I have verified it",
+			"continue on it",
+		])
+		#expect(!offered.contains { $0.title.contains("half-done") })
 	}
 
 	/// Every state offers what it has to offer and nothing else. A change being
@@ -304,7 +314,8 @@ struct OpenSpecChangeTests {
 		sandbox.change("a-change", files: ["tasks.md": tasks(done: 1, left: 1)])
 		let change = try #require(sandbox.openSpec.changes().first)
 
-		#expect(OpenSpec.commands(for: change, in: .ready) == ["/opsx:apply a-change"])
+		#expect(OpenSpec.commands(for: change, in: .ready).map(\.command) == ["/opsx:apply a-change"])
+		#expect(OpenSpec.commands(for: change, in: .ready).map(\.title) == ["/opsx:apply"])
 		#expect(OpenSpec.commands(for: change, in: .inProgress).count == 3)
 		#expect(OpenSpec.commands(for: change, in: .writing).isEmpty)
 		#expect(OpenSpec.commands(for: change, in: .complete).isEmpty)

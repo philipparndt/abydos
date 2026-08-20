@@ -484,11 +484,14 @@ public struct OpenSpec: Sendable {
 	///
 	/// Sentences rather than slash commands, because two of the three are a
 	/// person telling an assistant something it cannot find out for itself.
-	public static func inProgressCommands(for change: OpenSpecChange) -> [String] {
+	public static func inProgressCommands(for change: OpenSpecChange) -> [CardCommand] {
 		[
-			"archive \(change.name) as it is",
-			"complete \(change.name), I have verified it",
-			"continue on \(change.name)",
+			CardCommand(title: "archive as it is", command: "archive \(change.name) as it is"),
+			CardCommand(
+				title: "complete, I have verified it",
+				command: "complete \(change.name), I have verified it"
+			),
+			CardCommand(title: "continue on it", command: "continue on \(change.name)"),
 		]
 	}
 
@@ -498,11 +501,31 @@ public struct OpenSpec: Sendable {
 	/// read — and tested — without a view. The archive command is not here: it
 	/// is a shell command and wants the CLI found first, which is a question
 	/// about the machine rather than about the change.
-	public static func commands(for change: OpenSpecChange, in state: OpenSpecState) -> [String] {
+	public static func commands(for change: OpenSpecChange, in state: OpenSpecState) -> [CardCommand] {
 		switch state {
-		case .ready: return [applyCommand(for: change, in: state)].compactMap { $0 }
+		case .ready:
+			guard let apply = applyCommand(for: change, in: state) else { return [] }
+			return [CardCommand(title: "/opsx:apply", command: apply)]
 		case .inProgress: return inProgressCommands(for: change)
 		case .writing, .complete, .archived: return []
+		}
+	}
+
+	/// What an entry says, and what it copies.
+	///
+	/// **The two are not the same string, and that is the point.** What lands on
+	/// the pasteboard names the change, because it is pasted into an assistant
+	/// that has no idea which card was right-clicked. What the menu says does
+	/// not: the menu belongs to one card, whose name is on the card the menu
+	/// came out of, and repeating a forty-character change name three times
+	/// makes a menu that has to be read sideways.
+	public struct CardCommand: Equatable, Sendable {
+		public var title: String
+		public var command: String
+
+		public init(title: String, command: String) {
+			self.title = title
+			self.command = command
 		}
 	}
 
