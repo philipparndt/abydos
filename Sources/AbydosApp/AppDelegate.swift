@@ -282,6 +282,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		// Before anything is drawn: a palette applied after the first window is
 		// a window drawn twice, and the capture can catch the first one.
+		// Before any window, because the first pane is built with the window and
+		// a seam set after that is a seam the pane never saw.
+		if options.engineRefuses { TerminalView.pretendsTheLibraryWillNotStart = true }
+
 		if let theme = options.theme {
 			Settings.shared.appearance = theme
 			// The terminal follows, which is what it does by default now. A run
@@ -840,6 +844,18 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 						+ (controller?.backlogOfferAsItStandsForTesting() ?? "no window"))
 					fflush(stdout)
 				}
+			}
+		}
+
+		if let at = options.engineSwitchAt {
+			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+				controller?.switchEngineForTesting()
+			}
+		}
+
+		for at in options.engineReportsAt {
+			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+				controller?.reportEnginesForTesting()
 			}
 		}
 

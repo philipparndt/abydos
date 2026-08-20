@@ -371,7 +371,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	}
 
 	func clickPanelTabForTesting(_ index: Int) -> String {
-		bottomPanel.clickPanelTabForTesting(index)
+		let said = bottomPanel.clickPanelTabForTesting(index)
+		// Where the keyboard landed, which is the whole of what reaching for a
+		// pane means: a tree nobody can walk is a tree nobody selected.
+		return said + " | " + bottomPanel.variablesKeyboardReportForTesting()
 	}
 
 	/// Brings a tmux window forward, as clicking its tab would.
@@ -9952,6 +9955,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 	}
 
+	/// Turns the engine setting on and opens a terminal, so a pane older than
+	/// the change sits beside one younger — for `--engine-switch`.
+	func switchEngineForTesting() {
+		Settings.shared.terminalGhosttyEngine = true
+		print("ENGINE: setting on, opening a pane")
+		bottomPanel.newTerminal()
+		fflush(stdout)
+	}
+
+	/// Which panes say they were drawn by the other engine, for `--engines`.
+	func reportEnginesForTesting() {
+		print("ENGINES:\n\(bottomPanel.engineMarksForTesting())")
+		fflush(stdout)
+	}
+
 	/// What the editor said about motions nothing handled, for
 	/// `--unhandled-motions`.
 	func reportUnhandledMotionsForTesting() {
@@ -9991,6 +10009,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			// one that was not made until somebody reached for it.
 			print("VALUE expand: \(self.editor.expandInsideOpenValueForTesting())")
 			print("VALUE \(self.editor.openValueMenuForTesting())")
+			// The arrows, on the window that opened: down onto the field.
+			print("VALUE walk down: \(self.editor.walkOpenValueForTesting(["down"]))")
+			// Down onto a field, then → to open it: the case where the
+			// selection used to be lost, read after the children arrive.
+			// → on a row whose children have never been fetched: the branch
+			// that reloads the tree, and the one that lost the selection.
+			self.editor.walkOpenValueThenSettleForTesting(["right"]) { after in
+				print("VALUE right on a fresh field, once its children arrived: \(after)")
+				fflush(stdout)
+			}
+			print("VALUE placement: \(self.editor.openValueReportForTesting().split(separator: "\n").first ?? "")")
+			// And the panel's own tree, which never had the keyboard either.
+			print("VALUE panel: \(self.bottomPanel.variablesKeyboardReportForTesting())")
+			print("VALUE panel clicked: \(self.bottomPanel.clickVariablesForTesting())")
+			print("VALUE panel down: \(self.bottomPanel.walkVariablesForTesting(["down"]))")
+			print("VALUE panel right: \(self.bottomPanel.walkVariablesForTesting(["right"]))")
+			print("VALUE panel after: \(self.bottomPanel.variablesKeyboardReportForTesting())")
 			fflush(stdout)
 
 			// And letting the program go takes it away, which is the other half

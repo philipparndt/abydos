@@ -2448,6 +2448,10 @@ final class BottomPanel: NSView {
 		case .terminal: session.terminal?.focus()
 		case let .usages(pane): DispatchQueue.main.async { pane.focusList() }
 		case let .search(pane): DispatchQueue.main.async { pane.focusList() }
+		// A stopped session arrives to be read, and reading a tree means walking
+		// it: an outline view answers ↑↓←→ itself once it has the keyboard, and
+		// never had it here.
+		case let .debug(pane): DispatchQueue.main.async { pane.focusVariables() }
 		default: break
 		}
 	}
@@ -2682,14 +2686,27 @@ final class BottomPanel: NSView {
 
 			view.strip.setItems(
 				list.map { session in
-					PanelTabItem(
+					// Read off the pane's own engine, never off the setting:
+					// the two differ for every pane older than a change to it,
+					// and for every pane whose engine would not start.
+					var note: String?
+					var symbol = session.symbol
+					if case let .terminal(pane) = session.kind, let engineNote = pane.terminalView.engineNote {
+						note = engineNote
+						// A filled terminal where the outline one would be: no
+						// room taken, nothing added to a strip that is already
+						// full, and different enough to be asked about.
+						symbol = "terminal.fill"
+					}
+					return PanelTabItem(
 						title: session.displayTitle,
 						hasExited: session.hasExited,
 						isTerminal: { if case .terminal = session.kind { return true } else { return false } }(),
-						symbol: session.symbol,
+						symbol: symbol,
 						isShowing: session === showing,
 						isRun: session.isRun,
-						isRunning: session.isStillRunning
+						isRunning: session.isStillRunning,
+						engineNote: note
 					)
 				},
 				activeIndex: list.firstIndex { $0 === showing }
@@ -3020,6 +3037,28 @@ final class BottomPanel: NSView {
 		}.joined(separator: " | ")
 	}
 
+	/// Where the keyboard is in the debug pane's variables tree.
+	func variablesKeyboardReportForTesting() -> String {
+		activeDebugPane?.keyboardReportForTesting ?? "no debug pane"
+	}
+
+	/// Clicks the variables tree, as somebody would.
+	func clickVariablesForTesting() -> String {
+		activeDebugPane?.clickVariablesForTesting() ?? "no debug pane"
+	}
+
+	/// Walks the debug pane's variables tree with the arrow keys.
+	func walkVariablesForTesting(_ keys: [String]) -> String {
+		activeDebugPane?.walkVariablesForTesting(keys) ?? "no debug pane"
+	}
+
+	/// Which tabs are marked as drawn by the other engine, across every strip.
+	func engineMarksForTesting() -> String {
+		let strips = columnViews.map { $0.strip.engineMarksForTesting }
+		return strips.joined(separator: "\n")
+			+ "\nfallback said: \(EngineFallback.saidForTesting)"
+	}
+
 	/// The last lines the pane in front has, so that what a build wrote into it
 	/// can be read from outside.
 	func activeTerminalTailForTesting(lines: Int) -> String {
@@ -3268,6 +3307,15 @@ struct PanelTabItem {
 	/// saying the same thing, and the one in the corner of the eye is the tab.
 	var isRun = false
 	var isRunning = false
+	/// What to say about the engine that drew this pane, or nil where the usual
+	/// one did.
+	///
+	/// **Only the other engine.** A mark on every pane in the ordinary case is a
+	/// mark nobody reads — 0463's settled argument, which showed the container
+	/// and not the local copy — and this strip is already carrying a name, a
+	/// running wash, a Claude badge and a close cross.
+	var engineNote: String?
+
 	/// What this tab is called by something more durable than its position.
 	///
 	/// The strip remembers which tab its run of drawn tabs starts at, and an
@@ -3276,6 +3324,24 @@ struct PanelTabItem {
 	/// after it. Empty where nothing has said — a strip that cannot name its
 	/// tabs simply starts at the first, which is what it did before.
 	var identity: String = ""
+}
+
+extension PanelTabStrip: NSViewToolTipOwner {
+	/// What the tab under the pointer says about its engine.
+	///
+	/// Answered from the point rather than from a table built when the tooltip
+	/// was registered: this strip is rebuilt whenever tmux's windows are
+	/// re-read, and anything remembered by index would name the wrong tab a
+	/// moment later.
+	func view(
+		_ view: NSView, stringForToolTip tag: NSView.ToolTipTag,
+		point: NSPoint, userData: UnsafeMutableRawPointer?
+	) -> String {
+		for (index, item) in items.enumerated() where framesForToolTips.indices.contains(index) {
+			if framesForToolTips[index].contains(point), let note = item.engineNote { return note }
+		}
+		return ""
+	}
 }
 
 /// The panel's content area, which a dragged terminal tab can be dropped on.
@@ -3477,6 +3543,8 @@ final class PanelTabStrip: NSView, TabCloseHovering {
 	private var items: [PanelTabItem] = []
 	private var activeIndex: Int?
 	private var frames: [NSRect] = []
+	/// The same rects, readable by the tooltip owner in the extension below.
+	var framesForToolTips: [NSRect] { frames }
 	private var addButtonFrame: NSRect = .zero
 	/// The chevron on the +, narrow and part of the same shape.
 	private var addMenuFrame: NSRect = .zero
@@ -3681,7 +3749,41 @@ final class PanelTabStrip: NSView, TabCloseHovering {
 		recomputeLayout()
 		showActiveTab()
 		syncSpinner()
+		refreshEngineTips()
 		needsDisplay = true
+	}
+
+	/// A tooltip on any tab whose pane is drawn by the other engine.
+	///
+	/// The mark says *that* something is different; this says what, and carries
+	/// the engine's declared gaps — which are the reason somebody turned it on
+	/// deliberately and which live in a source file otherwise.
+	private func refreshEngineTips() {
+		removeAllToolTips()
+		for (index, item) in items.enumerated() {
+			guard let note = item.engineNote, frames.indices.contains(index) else { continue }
+			// The owner answers from the point, so nothing has to be kept in
+			// step with a strip that is rebuilt every time tmux is re-read.
+			_ = note
+			addToolTip(frames[index], owner: self, userData: nil)
+		}
+	}
+
+	/// Which tabs are marked and what they would say, for a driver to print.
+	var engineMarksForTesting: String {
+		// Every terminal tab, marked or not. The claim has two halves — a pane
+		// younger than the setting says the other engine drew it, and one older
+		// says what it actually has — and a list of only the marked ones can
+		// say the first.
+		let tabs = items.filter(\.isTerminal).map { item -> String in
+			let mark = item.engineNote == nil ? "the usual engine" : "libghostty-vt, marked"
+			return "\(item.title): \(mark)"
+		}
+		let notes = items.compactMap(\.engineNote)
+		return (tabs.isEmpty ? "no terminal tabs" : tabs.joined(separator: " | "))
+			// The whole note once, because the gaps are the reason somebody
+			// turned the engine on and a first line cannot show them.
+			+ (notes.isEmpty ? "" : "\nwhat the tooltip says:\n\(notes[0])")
 	}
 
 	/// Moves the run, if it has to, so the active tab is one somebody can see.

@@ -1870,7 +1870,45 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// between reporting what is drawing and reporting what somebody asked for.
 	/// A pane made before the setting was changed keeps the engine it was made
 	/// with, and this says so. Item 0474 added it and item 0485 made it true.
-	var engineNameForTesting: String { type(of: emulator).engineName }
+	var engineNameForTesting: String { engineName }
+
+	/// The engine this pane is actually using, for anything that shows it.
+	var engineName: String { type(of: emulator).engineName }
+
+	/// Whether this pane is drawn by the engine everything is drawn by unless
+	/// somebody asked otherwise.
+	///
+	/// **The mark is for the other one.** A mark present on every pane in the
+	/// ordinary case is a mark nobody reads, and it costs the strip room it does
+	/// not have — the same argument 0463 settled by showing the container and
+	/// not the local copy.
+	var isDrawnByTheUsualEngine: Bool { engineName == TerminalEmulator.engineName }
+
+	/// What to say about the engine on a tab that is not drawn by the usual one,
+	/// or nil when it is.
+	///
+	/// Three facts were indistinguishable and this separates two of them: the
+	/// setting is one thing and *this pane* is another, because a pane picks its
+	/// engine when it is built and keeps it — deliberately, since a running
+	/// shell would lose its scrollback otherwise. The third, that the engine
+	/// started at all, is said by the fallback when it happens and by this
+	/// afterwards: a pane that fell back says the usual engine drew it, which is
+	/// true.
+	///
+	/// The declared gaps go in it. They are the reason somebody turned the
+	/// engine on deliberately, they live in a source file otherwise, and this is
+	/// where the person running it will be looking.
+	var engineNote: String? {
+		guard !isDrawnByTheUsualEngine else { return nil }
+		var lines = ["Drawn by \(engineName), not this app's own emulator."]
+		let gaps = emulator.unimplemented
+		if !gaps.isEmpty {
+			lines.append("")
+			lines.append("What it cannot do:")
+			lines.append(contentsOf: gaps.map { "  • \($0)" })
+		}
+		return lines.joined(separator: "\n")
+	}
 
 	/// Builds the engine the setting asks for.
 	///
@@ -1885,12 +1923,35 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// handing back an engine whose every call is a no-op. A pane that draws
 	/// nothing is worse than a pane drawn by the other engine, and
 	/// `--report-geometry` prints which one it got.
+	/// Makes libghostty-vt answer as it does on a machine where the library will
+	/// not start, for `--engine-refuses`.
+	///
+	/// A seam rather than a driven install: whether the library loads is a fact
+	/// about this machine, and the branch that matters — the silent fall back —
+	/// cannot be reached on one where it does load. The same shape as the seam
+	/// in the backlog pane's offer, and off unless a driver asked.
+	static var pretendsTheLibraryWillNotStart = false
+
 	private static func makeEngine(rows: Int, columns: Int) -> TerminalEngine {
 		guard Settings.shared.terminalGhosttyEngine else {
 			return TerminalEmulator(rows: rows, columns: columns)
 		}
+		guard !pretendsTheLibraryWillNotStart else {
+			EngineFallback.sayOnce()
+			return TerminalEmulator(rows: rows, columns: columns)
+		}
 		let ghostty = GhosttyTerminalEngine(rows: rows, columns: columns)
-		guard ghostty.isUsable else { return TerminalEmulator(rows: rows, columns: columns) }
+		guard ghostty.isUsable else {
+			// **Silent is right for drawing and wrong for telling.** Falling
+			// back rather than handing back an engine whose every call is a
+			// no-op is the correct behaviour and stays; what was missing is that
+			// somebody who asked for libghostty-vt and got this instead had no
+			// way to find out. Said once — it is a fact about the library on
+			// this machine, not about this pane, and one per pane opened would
+			// be a stream of the same sentence.
+			EngineFallback.sayOnce()
+			return TerminalEmulator(rows: rows, columns: columns)
+		}
 		return ghostty
 	}
 

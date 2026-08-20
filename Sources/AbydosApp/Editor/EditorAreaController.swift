@@ -778,6 +778,16 @@ final class EditorAreaController: NSViewController {
 		activeGroup.exerciseUnhandledMotionsForTesting()
 	}
 
+	/// Walks what is open with the arrow keys.
+	func walkOpenValueForTesting(_ keys: [String]) -> String {
+		activeGroup.walkOpenValueForTesting(keys)
+	}
+
+	/// The same, reported after the fetch the walk asked for.
+	func walkOpenValueThenSettleForTesting(_ keys: [String], then say: @escaping (String) -> Void) {
+		activeGroup.walkOpenValueThenSettleForTesting(keys, then: say)
+	}
+
 	/// What the opened value's menu offers, and what it copies.
 	func openValueMenuForTesting() -> String { activeGroup.openValueMenuForTesting() }
 

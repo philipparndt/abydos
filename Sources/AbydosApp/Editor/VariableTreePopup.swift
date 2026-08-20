@@ -43,15 +43,25 @@ final class VariableTreePopup: NSPanel {
 		self.children = children
 		super.init(
 			contentRect: NSRect(x: 0, y: 0, width: 420, height: 260),
-			styleMask: [.borderless, .nonactivatingPanel],
+			// **Titled and resizable, not borderless.** A struct is why this
+			// window exists and a struct is not 420 by 260 — the first thing
+			// anybody does with one is make it bigger. A title bar is what
+			// gives it a grab handle, a close button and, with `.resizable`,
+			// edges that can be dragged; borderless had none of the three.
+			styleMask: [.titled, .closable, .resizable, .utilityWindow, .nonactivatingPanel],
 			backing: .buffered,
 			defer: true
 		)
 		isFloatingPanel = true
-		level = .popUpMenu
+		level = .floating
 		hidesOnDeactivate = true
+		title = root.name.isEmpty ? "Value" : root.name
+		titlebarAppearsTransparent = true
 		backgroundColor = Theme.current.editorBackground
 		hasShadow = true
+		// Small enough to be a hint about one variable, big enough that the
+		// first drag is not immediately necessary.
+		minSize = NSSize(width: 260, height: 120)
 		nodes = [Node(root)]
 		build()
 		// The root is what was asked about, so it opens showing its fields
@@ -104,6 +114,14 @@ final class VariableTreePopup: NSPanel {
 		contentView = content
 	}
 
+	/// **It can take the keyboard**, which a borderless panel cannot.
+	///
+	/// The tree walks itself once it has it — ↑↓ move, → opens a row, ← closes
+	/// it — so this is the whole of the keyboard work here. Non-activating still:
+	/// opening a value should not take the app's focus away from the editor, and
+	/// this becomes key only because it was asked for.
+	override var canBecomeKey: Bool { true }
+
 	/// Shows it at a hint, below the line where there is room and above it where
 	/// there is not — the same answer the completion list gives to the same
 	/// problem.
@@ -123,6 +141,14 @@ final class VariableTreePopup: NSPanel {
 
 		window.addChildWindow(self, ordered: .above)
 		orderFront(nil)
+		// The tree, not the window: the arrows have to arrive somewhere that
+		// knows what to do with them, and a row selected is where the first one
+		// starts from.
+		makeKey()
+		makeFirstResponder(outline)
+		if outline.numberOfRows > 0 {
+			outline.selectRowIndexes([0], byExtendingSelection: false)
+		}
 		watchForAClickOutside()
 	}
 
@@ -132,12 +158,16 @@ final class VariableTreePopup: NSPanel {
 			[weak self] event in
 			guard let self else { return event }
 			if event.type == .keyDown {
-				// 53 is Escape. Anything else is somebody typing in the editor,
-				// which is not this window's business.
+				// 53 is Escape. Anything else is either somebody typing in the
+				// editor or an arrow this window's tree is about to walk on, and
+				// neither is this monitor's business.
 				guard event.keyCode == 53 else { return event }
 				self.dismiss()
 				return nil
 			}
+			// A click in this window is somebody reaching into the tree, or
+			// dragging its title bar, or pulling its edge — all of which are
+			// this window being used rather than left.
 			if event.window !== self { self.dismiss() }
 			return event
 		}
@@ -164,8 +194,25 @@ final class VariableTreePopup: NSPanel {
 			let fetched = await self.children(reference)
 			node.isFetching = false
 			node.children = fetched.map(Node.init)
+
+			// **What was selected, kept across the reload.** Reported from use:
+			// pressing → to open a row lost the selection, so the next ↓ started
+			// again from nowhere and walking the tree with the keyboard fell
+			// apart at the first branch. `reloadItem(_:reloadChildren:)` rebuilds
+			// the rows under a node and the outline drops a selection it can no
+			// longer place — so it is remembered by *item*, which survives the
+			// rebuild, rather than by row, which does not.
+			let selected = self.outline.selectedRow >= 0
+				? self.outline.item(atRow: self.outline.selectedRow)
+				: nil
+
 			self.outline.reloadItem(node, reloadChildren: true)
 			self.outline.expandItem(node)
+
+			guard let selected else { return }
+			let row = self.outline.row(forItem: selected)
+			guard row >= 0 else { return }
+			self.outline.selectRowIndexes([row], byExtendingSelection: false)
 		}
 	}
 
@@ -247,7 +294,55 @@ final class VariableTreePopup: NSPanel {
 	/// Where it is and whether it is up, since a child panel is not in a window
 	/// capture and a photograph therefore cannot say either.
 	var placementForTesting: String {
-		"visible=\(isVisible) at \(Int(frame.minX)),\(Int(frame.minY)) \(Int(frame.width))x\(Int(frame.height))"
+		let walker = firstResponder === outline
+		return "visible=\(isVisible) at \(Int(frame.minX)),\(Int(frame.minY))"
+			+ " \(Int(frame.width))x\(Int(frame.height))"
+			+ " resizable=\(styleMask.contains(.resizable))"
+			+ " tree has the keyboard=\(walker) selected=\(outline.selectedRow)"
+	}
+
+	/// Walks with the arrows and waits for whatever the walk asked the adapter
+	/// for, so that what is reported is the state after the fetch rather than
+	/// before it — which is where the selection used to be lost.
+	func walkThenSettleForTesting(_ keys: [String], then say: @escaping (String) -> Void) {
+		_ = walkForTesting(keys)
+		DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+			say(self?.walkForTesting([]) ?? "the window has gone")
+		}
+	}
+
+	/// Walks the tree the way the arrow keys do, and says where it ended up.
+	///
+	/// Through the outline view's own key handling — `keyDown` on the view that
+	/// would receive it — rather than through the actions those keys map to, so
+	/// what is driven is what a key does.
+	func walkForTesting(_ keys: [String]) -> String {
+		// **The characters matter, not only the key code.** AppKit translates a
+		// key press into an action through `interpretKeyEvents`, which reads the
+		// characters; an event carrying an arrow's code and an empty string is
+		// translated into nothing at all, and the tree sits where it was. The
+		// arrows are the function-key range: ↑ is 0xF700 and the rest follow.
+		let arrows: [String: (UInt16, Int)] = [
+			"up": (126, NSUpArrowFunctionKey), "down": (125, NSDownArrowFunctionKey),
+			"left": (123, NSLeftArrowFunctionKey), "right": (124, NSRightArrowFunctionKey),
+		]
+		for key in keys {
+			guard let arrow = arrows[key],
+			      let scalar = UnicodeScalar(UInt32(arrow.1)) else { continue }
+			let characters = String(Character(scalar))
+			guard let event = NSEvent.keyEvent(
+				with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+				windowNumber: windowNumber, context: nil, characters: characters,
+				charactersIgnoringModifiers: characters, isARepeat: false, keyCode: arrow.0
+			) else { continue }
+			outline.keyDown(with: event)
+		}
+		let row = outline.selectedRow
+		guard row >= 0, let node = outline.item(atRow: row) as? Node else {
+			return "nothing is selected"
+		}
+		return "row \(row): \(node.variable.name.isEmpty ? "(the pointee)" : node.variable.name)"
+			+ " expanded=\(outline.isItemExpanded(node))"
 	}
 
 	/// What this window is showing, for a driver to print.

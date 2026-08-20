@@ -2213,6 +2213,17 @@ final class EditorViewController: NSViewController {
 		return UnhandledMotions.reportForTesting
 	}
 
+	/// Walks what is open with the arrow keys, and says where it ended up.
+	func walkOpenValueForTesting(_ keys: [String]) -> String {
+		openValuePopup?.walkForTesting(keys) ?? "nothing is open"
+	}
+
+	/// The same, but reported after whatever the walk asked for has arrived.
+	func walkOpenValueThenSettleForTesting(_ keys: [String], then say: @escaping (String) -> Void) {
+		guard let popup = openValuePopup else { return say("nothing is open") }
+		popup.walkThenSettleForTesting(keys, then: say)
+	}
+
 	/// What the opened value's menu offers, and what it copies.
 	func openValueMenuForTesting() -> String {
 		guard let popup = openValuePopup else { return "nothing is open" }

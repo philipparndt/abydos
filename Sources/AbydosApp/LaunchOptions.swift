@@ -411,6 +411,15 @@ struct LaunchOptions {
 	var openValueAt: Double?
 	/// Send the editor a motion nothing handles, and say what it named.
 	var unhandledMotions = false
+	/// When to say which panes were drawn by the engine that is not the usual
+	/// one — a list, because a pane opened after a setting change is the case
+	/// worth seeing beside one opened before it.
+	var engineReportsAt: [Double] = []
+	/// Turn the engine setting on at this moment and open a pane, so that one
+	/// older than the change can be seen beside one younger.
+	var engineSwitchAt: Double?
+	/// Answer as a machine where libghostty-vt will not start.
+	var engineRefuses = false
 	/// What each mouse button does, and what each layer saw of it.
 	///
 	/// `report` on its own says what arrives and claims nothing, which is the
@@ -979,6 +988,10 @@ struct LaunchOptions {
 			case "--card-report": options.cardReport = true
 			case "--draw-report": options.drawReport = true
 			case "--mouse":      options.mouseSteps = next() ?? "report"
+			case "--engine-switch": options.engineSwitchAt = next().flatMap(Double.init) ?? 5
+			case "--engine-refuses": options.engineRefuses = true
+			case "--engines": options.engineReportsAt = (next() ?? "4")
+				.split(separator: ",").compactMap { Double($0) }
 			case "--unhandled-motions": options.unhandledMotions = true
 			case "--open-value": options.openValueAt = next().flatMap(Double.init) ?? 8.0
 			case "--diagnostics":

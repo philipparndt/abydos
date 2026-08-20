@@ -212,7 +212,7 @@ final class DebugPane: NSView {
 		stack.action = #selector(frameClicked)
 		stackTable = stack
 
-		let variables = NSOutlineView()
+		let variables = VariablesOutlineView()
 		variables.headerView = nil
 		variables.backgroundColor = Theme.current.editorBackground
 		variables.selectionHighlightStyle = .regular
@@ -387,6 +387,79 @@ final class DebugPane: NSView {
 		scrollView.backgroundColor = Theme.current.editorBackground
 		scrollView.scrollerStyle = .overlay
 		return scrollView
+	}
+
+	/// Gives the variables tree the keyboard.
+	///
+	/// **An `NSOutlineView` walks itself** — ↑ and ↓ move the selection, → opens
+	/// a row and ← closes it, and typing jumps to a name — and none of that was
+	/// reachable because nothing ever made it the first responder. So this is
+	/// the whole of the keyboard work on this side: hand it over, and select a
+	/// row so that the first arrow has somewhere to start from.
+	func focusVariables() {
+		guard let window = variablesOutline.window else { return }
+		window.makeFirstResponder(variablesOutline)
+		if variablesOutline.selectedRow < 0, variablesOutline.numberOfRows > 0 {
+			variablesOutline.selectRowIndexes([0], byExtendingSelection: false)
+		}
+	}
+
+	/// Walks the variables tree with the arrow keys, as somebody would.
+	func walkVariablesForTesting(_ keys: [String]) -> String {
+		focusVariables()
+		let arrows: [String: (UInt16, Int)] = [
+			"up": (126, NSUpArrowFunctionKey), "down": (125, NSDownArrowFunctionKey),
+			"left": (123, NSLeftArrowFunctionKey), "right": (124, NSRightArrowFunctionKey),
+		]
+		for key in keys {
+			guard let arrow = arrows[key], let scalar = UnicodeScalar(UInt32(arrow.1)) else { continue }
+			let characters = String(Character(scalar))
+			guard let event = NSEvent.keyEvent(
+				with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+				windowNumber: variablesOutline.window?.windowNumber ?? 0, context: nil,
+				characters: characters, charactersIgnoringModifiers: characters,
+				isARepeat: false, keyCode: arrow.0
+			) else { continue }
+			variablesOutline.keyDown(with: event)
+		}
+		let row = variablesOutline.selectedRow
+		guard row >= 0, let item = variablesOutline.item(atRow: row) else { return "nothing is selected" }
+		let name: String
+		switch item {
+		case let node as VariableNode: name = node.variable.name
+		case let scope as ScopeNode: name = scope.scope.name
+		case let watch as WatchNode: name = watch.watch.expression
+		default: name = "?"
+		}
+		return "row \(row): \(name) expanded=\(variablesOutline.isItemExpanded(item))"
+	}
+
+	/// Where the keyboard is and what it would walk, for a driver to print.
+	var keyboardReportForTesting: String {
+		let hasIt = variablesOutline.window?.firstResponder === variablesOutline
+		let outline = variablesOutline as? VariablesOutlineView
+		return "variables tree has the keyboard: \(hasIt), selected row"
+			+ " \(variablesOutline.selectedRow), rows \(variablesOutline.numberOfRows)"
+			+ (outline.map { " [\($0.focusReportForTesting)]" } ?? "")
+	}
+
+	/// Clicks the first row of the variables tree, as somebody would, and says
+	/// where the keyboard ended up.
+	func clickVariablesForTesting() -> String {
+		guard variablesOutline.numberOfRows > 0 else { return "nothing in the tree" }
+		let row = variablesOutline.rect(ofRow: 0)
+		let inView = NSPoint(x: row.midX, y: row.midY)
+		let inWindow = variablesOutline.convert(inView, to: nil)
+		guard let event = NSEvent.mouseEvent(
+			with: .leftMouseDown, location: inWindow, modifierFlags: [], timestamp: 0,
+			windowNumber: variablesOutline.window?.windowNumber ?? 0, context: nil,
+			eventNumber: 0, clickCount: 1, pressure: 1
+		) else { return "no event" }
+		// The window's own responder handling, not `makeFirstResponder`: what is
+		// being checked is that a click does it.
+		variablesOutline.window?.makeFirstResponder(nil)
+		variablesOutline.mouseDown(with: event)
+		return keyboardReportForTesting
 	}
 
 	/// Told when the debugger starts or stops, so the tab can wear it.
@@ -719,6 +792,32 @@ extension DebugPane: NSOutlineViewDataSource, NSOutlineViewDelegate {
 }
 
 private final class PlaceholderNode {}
+
+/// The variables tree, which takes the keyboard when it is clicked.
+///
+/// **Reported from use: clicking a row did not give the tree the keyboard**, so
+/// the arrows that an outline view answers by itself — ↑↓ to walk, → to open a
+/// row, ← to close it — went to whatever had the keyboard instead, and reading
+/// a frame stayed a job for the mouse. A click is the ordinary way somebody
+/// says which of a window's panes they mean, and this is the pane that has to
+/// hear it: the panel hands the keyboard to a terminal when it activates one,
+/// and nothing was ever handing it here.
+///
+/// The tree already knew what to do with the keys. It only never got them.
+final class VariablesOutlineView: NSOutlineView {
+	override var acceptsFirstResponder: Bool { true }
+
+	override func mouseDown(with event: NSEvent) {
+		window?.makeFirstResponder(self)
+		super.mouseDown(with: event)
+	}
+
+	/// What this view says about taking the keyboard, for a driver to print.
+	var focusReportForTesting: String {
+		"accepts=\(acceptsFirstResponder) refuses=\(refusesFirstResponder)"
+			+ " has it=\(window?.firstResponder === self)"
+	}
+}
 
 private final class DebugRowView: NSTableRowView {
 	override func drawSelection(in dirtyRect: NSRect) {
