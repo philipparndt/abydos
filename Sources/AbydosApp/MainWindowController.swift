@@ -3235,6 +3235,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		session.observeVariables { [weak self, weak session] in
 			self?.editor.setInlineValues(session?.inlineValues)
 		}
+		// Opening one asks the adapter for its children, by the reference it
+		// gave — the same request the panel's tree makes, from the one function
+		// that makes it.
+		editor.setVariableChildren { [weak session] reference in
+			await session?.variables(reference: reference) ?? []
+		}
 		session.observeStopped { [weak self] file, line in
 			guard let self else { return }
 			// Room to see it, before opening it. Stopping somewhere is the one
@@ -9942,6 +9948,55 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			self.runSelected(nil)
 			DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
 				print("RERUN: after two runs \(self.bottomPanel.runConsolesForTesting)")
+			}
+		}
+	}
+
+	/// Opens the first value on the stopped line that has anything under it, and
+	/// says what came back — for `--open-value`.
+	///
+	/// Through the same callback the click uses, so what is driven is what a
+	/// click does. The count either side is the claim that drawing asks the
+	/// adapter for nothing: scrolling a stopped file with values beside every
+	/// line must not move it.
+	func openValueForTesting() {
+		guard let session = debugSession else { return print("VALUE: no session") }
+		let before = session.childrenRequestsForTesting
+		editor.scrollStoppedFileForTesting()
+		print("VALUE: children requests after scrolling = \(session.childrenRequestsForTesting - before)")
+		guard let opened = editor.openFirstInlineValueForTesting() else {
+			print("VALUE: nothing on the stopped line can be opened")
+			fflush(stdout)
+			return
+		}
+		print("VALUE: opened \(opened)")
+		// The fetch is a `Task`; give it the hop it needs before reading.
+		DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+			guard let self else { return }
+			print("VALUE: children requests total = \(session.childrenRequestsForTesting - before)")
+			print("VALUE tree:\n\(self.editor.openValueReportForTesting())")
+			// A value with nothing under it is a piece of text, and a click on
+			// it belongs to the editor.
+			print("VALUE leaf: \(self.editor.inlineValueClickForTesting(named: "stage"))")
+			// And a field inside it, which is the second request and the first
+			// one that was not made until somebody reached for it.
+			print("VALUE expand: \(self.editor.expandInsideOpenValueForTesting())")
+			fflush(stdout)
+
+			// And letting the program go takes it away, which is the other half
+			// of what makes this safe to leave open.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+				print("VALUE after expanding: requests = \(session.childrenRequestsForTesting - before)")
+				print("VALUE tree:\n\(self.editor.openValueReportForTesting())")
+				fflush(stdout)
+
+				// And letting the program go takes it away, which is the other
+				// half of what makes this safe to leave open.
+				session.resume()
+				DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+					print("VALUE after resuming: \(self.editor.openValueReportForTesting())")
+					fflush(stdout)
+				}
 			}
 		}
 	}

@@ -10,10 +10,21 @@ import Testing
 /// fact. The drawing is placement and is checked by driving.
 struct InlineValuesTests {
 	private let frame = [
-		"count": "12",
-		"total": "480",
-		"name": "\"holder\"",
+		"count": leaf("count", "12"),
+		"total": leaf("total", "480"),
+		"name": leaf("name", "\"holder\""),
 	]
+
+	/// A variable with nothing under it, which is what `variablesReference: 0`
+	/// means to every adapter.
+	private static func leaf(_ name: String, _ value: String) -> Variable {
+		Variable(name: name, value: value, type: nil, variablesReference: 0)
+	}
+
+	/// One the adapter says has children.
+	private static func container(_ name: String, _ value: String, reference: Int = 7) -> Variable {
+		Variable(name: name, value: value, type: nil, variablesReference: reference)
+	}
 
 	@Test func aLineNamingAVariableShowsItsValue() {
 		let hints = InlineValues.hints(in: "count += 1", from: frame)
@@ -25,7 +36,7 @@ struct InlineValuesTests {
 	@Test func aNameIsNotFoundInsideALongerName() {
 		for line in ["counter += 1", "account.total", "discount = 5", "recounted()"] {
 			#expect(
-				InlineValues.hints(in: line, from: ["count": "12"]).isEmpty,
+				InlineValues.hints(in: line, from: ["count": Self.leaf("count", "12")]).isEmpty,
 				"\(line) should name nothing"
 			)
 		}
@@ -55,7 +66,7 @@ struct InlineValuesTests {
 	/// hint. The whole value is still in the variables tree.
 	@Test func aValueTooLargeForALineIsCut() {
 		let long = String(repeating: "x", count: 200)
-		let hints = InlineValues.hints(in: "count", from: ["count": long], budget: 10)
+		let hints = InlineValues.hints(in: "count", from: ["count": Self.leaf("count", long)], budget: 10)
 		#expect(hints.first?.value == "xxxxxxxxxx\u{2026}")
 	}
 
@@ -76,6 +87,26 @@ struct InlineValuesTests {
 		#expect(InlineValues.hints(in: "count", from: [:]).isEmpty)
 	}
 
+	/// **What can be opened is the adapter's answer**, not the shape of the text.
+	/// A struct is a door; a string is a piece of text, however long it is.
+	@Test func aStructIsOpenableAndAStringIsNot() {
+		let variables = [
+			"mux": Self.container("mux", "*net/http.ServeMux {mu: sync.RWMutex {w:…"),
+			"stage": Self.leaf("stage", "\"local\""),
+		]
+		let hints = InlineValues.hints(in: "mux, stage", from: variables)
+		#expect(hints.first(where: { $0.name == "mux" })?.isOpenable == true)
+		#expect(hints.first(where: { $0.name == "mux" })?.variablesReference == 7)
+		#expect(hints.first(where: { $0.name == "stage" })?.isOpenable == false)
+		#expect(hints.first(where: { $0.name == "stage" })?.variablesReference == 0)
+	}
+
+	/// None of this changes a character of what is drawn.
+	@Test func theDrawnTextIsUnchangedByAnyOfIt() {
+		let variables = ["mux": Self.container("mux", "*net/http.ServeMux")]
+		#expect(InlineValues.hints(in: "mux", from: variables).map(\.text) == ["mux = *net/http.ServeMux"])
+	}
+
 	/// An adapter answers `scopes` from the inside out, so a name in two of them
 	/// is the nearer one.
 	@Test func theInnermostScopeWins() {
@@ -84,6 +115,6 @@ struct InlineValuesTests {
 		var globals = Scope(name: "Globals", variablesReference: 2)
 		globals.variables = [Variable(name: "n", value: "outer", type: nil, variablesReference: 0)]
 
-		#expect(InlineValues.byName([locals, globals])["n"] == "inner")
+		#expect(InlineValues.byName([locals, globals])["n"]?.value == "inner")
 	}
 }

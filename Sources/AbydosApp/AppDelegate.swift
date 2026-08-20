@@ -843,6 +843,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let at = options.openValueAt {
+			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+				controller?.openValueForTesting()
+			}
+		}
+
 		for at in options.diagnosticsAt {
 			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
 				controller?.reportDiagnosticsForTesting(at: at)

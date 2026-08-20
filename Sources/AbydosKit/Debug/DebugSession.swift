@@ -1280,8 +1280,18 @@ public final class DebugSession {
 		sayVariablesChanged()
 	}
 
+	/// How many times children have been asked for, for a driver to print.
+	///
+	/// **The claim this exists to check is a negative one**: scrolling a stopped
+	/// file, with values beside every line that names one, asks the adapter for
+	/// nothing. A request per hint per repaint is what would make a stopped
+	/// editor unusable, and the only honest way to say it does not happen is to
+	/// count.
+	public private(set) var childrenRequestsForTesting = 0
+
 	/// Children of a variable container.
 	public func variables(reference: Int) async -> [Variable] {
+		childrenRequestsForTesting += 1
 		guard reference > 0 else { return [] }
 		let response = try? await client.request("variables", arguments: ["variablesReference": reference])
 		let raw = (response?["variables"] as? [[String: Any]]) ?? []

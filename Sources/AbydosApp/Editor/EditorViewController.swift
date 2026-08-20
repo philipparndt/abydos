@@ -1392,6 +1392,13 @@ final class EditorViewController: NSViewController {
 			}
 		}
 
+		// A value beside the code, opened. The fetching belongs to whoever holds
+		// the session — this side knows where the hint was and nothing else.
+		codeView.onOpenInlineValue = { [weak self] hint, rect in
+			guard let self else { return }
+			self.openInlineValue(hint, at: rect, over: codeView)
+		}
+
 		codeView.onToggleBreakpoint = { [weak self] line in
 			// The gutter works in 0-based lines; everything outside is 1-based.
 			self?.onToggleBreakpoint?(fileURL, line + 1)
@@ -2110,6 +2117,9 @@ final class EditorViewController: NSViewController {
 	/// one function pushes per-file debug state into every tab, so a second way
 	/// in would be a second place for a tab to be missed.
 	func setInlineValues(_ values: InlineValueSet?) {
+		// A tree of values from a program that is running again is worse than no
+		// tree: the values leaving is exactly the moment it goes.
+		if values == nil { dismissOpenValue() }
 		inlineValues = values
 		for tab in tabs { applyDebugState(to: tab) }
 	}
@@ -2157,6 +2167,83 @@ final class EditorViewController: NSViewController {
 		} else {
 			codeView.setInlineValues(nil)
 		}
+	}
+
+	/// Draws every row of the file in front, which is what scrolling it does.
+	func scrollStoppedFileForTesting() {
+		guard let codeView = activeTab?.codeView else { return }
+		codeView.drawEveryRowForTesting()
+	}
+
+	/// Opens the first value on the stopped line that has something under it.
+	///
+	/// Every tab rather than the one in front, for the same reason the values
+	/// report reads them all: stopping moves the keyboard about, and "the active
+	/// tab" is not a thing worth making a driven check depend on.
+	func openFirstInlineValueForTesting() -> String? {
+		for tab in tabs {
+			guard let codeView = tab.codeView,
+			      let found = codeView.firstOpenableInlineValueForTesting()
+			else { continue }
+			openInlineValue(found.hint, at: found.rect, over: codeView)
+			return found.hint.text
+		}
+		return nil
+	}
+
+	func openValueReportForTesting() -> String {
+		guard let popup = openValuePopup else { return "nothing is open" }
+		return "\(popup.placementForTesting)\n\(popup.reportForTesting)"
+	}
+
+	/// Opens a field inside what is open, for the claim about lazy children.
+	func expandInsideOpenValueForTesting() -> String {
+		openValuePopup?.expandFirstChildForTesting() ?? "nothing is open"
+	}
+
+	/// What a click on the value named would do, without doing it — for the
+	/// claim that a piece of text is not a door.
+	func inlineValueClickForTesting(named name: String) -> String {
+		for tab in tabs {
+			guard let codeView = tab.codeView,
+			      let answer = codeView.clickAnswerForTesting(named: name)
+			else { continue }
+			return answer
+		}
+		return "no value called \(name) is on screen"
+	}
+
+	/// Asked for the children of a container, by the reference the adapter gave.
+	///
+	/// Set by whoever holds the debug session. Nil while nothing is stopped, in
+	/// which case there is nothing to open and no hint to open it from.
+	var onVariableChildren: ((Int) async -> [Variable])?
+
+	/// Opens a value beside the code into a tree of its own.
+	private func openInlineValue(_ hint: InlineValueHint, at rect: NSRect, over view: NSView) {
+		guard let onVariableChildren else { return }
+		openValuePopup?.dismiss()
+		let popup = VariableTreePopup(
+			root: Variable(
+				name: hint.name,
+				value: hint.value,
+				type: nil,
+				variablesReference: hint.variablesReference
+			),
+			children: onVariableChildren
+		)
+		openValuePopup = popup
+		popup.show(over: view, at: rect)
+	}
+
+	/// The one that is open, so a second click replaces it rather than stacking,
+	/// and so that resuming can take it away.
+	private var openValuePopup: VariableTreePopup?
+
+	/// Closes what is open, which the end of a stop does.
+	func dismissOpenValue() {
+		openValuePopup?.dismiss()
+		openValuePopup = nil
 	}
 
 	/// What a server said about each open file, and how loudly it is drawn.

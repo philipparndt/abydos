@@ -4,10 +4,22 @@ import Foundation
 public struct InlineValueHint: Equatable, Sendable {
 	public let name: String
 	public let value: String
+	/// Whether there is anything under it worth opening.
+	///
+	/// **The adapter's answer and nothing else** — `variablesReference > 0`,
+	/// which is what `Variable.isExpandable` means. Not the length of the value,
+	/// not a brace in the text: reading the string to guess would be the same
+	/// mistake as reading a diagnostic's message to guess whether it is true.
+	public let isOpenable: Bool
+	/// What to ask the adapter for when it is opened. Zero when there is
+	/// nothing under it.
+	public let variablesReference: Int
 
-	public init(name: String, value: String) {
+	public init(name: String, value: String, isOpenable: Bool = false, variablesReference: Int = 0) {
 		self.name = name
 		self.value = value
+		self.isOpenable = isOpenable
+		self.variablesReference = variablesReference
 	}
 
 	/// What a card of this actually reads, in one place so the drawing and any
@@ -38,11 +50,11 @@ public enum InlineValues {
 	/// `scopes` from the inside out — locals, then arguments, then whatever is
 	/// global — so a name that appears twice is the nearer one. Registers are
 	/// already dropped by the session before this sees them.
-	public static func byName(_ scopes: [Scope]) -> [String: String] {
-		var values: [String: String] = [:]
+	public static func byName(_ scopes: [Scope]) -> [String: Variable] {
+		var values: [String: Variable] = [:]
 		for scope in scopes {
 			for variable in scope.variables where values[variable.name] == nil {
-				values[variable.name] = variable.value
+				values[variable.name] = variable
 			}
 		}
 		return values
@@ -64,7 +76,7 @@ public enum InlineValues {
 	/// order that means anything at the end of a line.
 	public static func hints(
 		in line: String,
-		from variables: [String: String],
+		from variables: [String: Variable],
 		budget: Int = valueBudget
 	) -> [InlineValueHint] {
 		// The cheap way out, taken first: most lines of most files name nothing
@@ -80,9 +92,16 @@ public enum InlineValues {
 		func endToken() {
 			defer { token = ""; precededByDot = false }
 			guard !token.isEmpty, !precededByDot, !seen.contains(token) else { return }
-			guard let value = variables[token] else { return }
+			guard let variable = variables[token] else { return }
 			seen.insert(token)
-			hints.append(InlineValueHint(name: token, value: summary(of: value, budget: budget)))
+			hints.append(InlineValueHint(
+				name: token,
+				value: summary(of: variable.value, budget: budget),
+				// A container is a door; a string is a piece of text. The
+				// adapter is the only thing that knows which.
+				isOpenable: variable.isExpandable,
+				variablesReference: variable.variablesReference
+			))
 		}
 
 		for character in line {
@@ -142,9 +161,9 @@ public struct InlineValueSet: Equatable, Sendable {
 	public let file: String
 	/// The frame's own line, counted from 1 as the adapter counts.
 	public let line: Int
-	public let values: [String: String]
+	public let values: [String: Variable]
 
-	public init(file: String, line: Int, values: [String: String]) {
+	public init(file: String, line: Int, values: [String: Variable]) {
 		self.file = file
 		self.line = line
 		self.values = values

@@ -45,7 +45,7 @@ final class CodeView: NSView, NSTextInputClient {
 	/// row's drawing is then a scan of that row's tokens against it. Nothing is
 	/// worked out for a file this frame is not in — the editor does not hand it
 	/// one — and nothing at all while this is nil, which is the ordinary state.
-	private var inlineValues: [String: String]?
+	private var inlineValues: [String: Variable]?
 	/// 1-based lines that have something runnable on them, and the click that
 	/// runs it.
 	private var runnableLines: Set<Int> = []
@@ -129,6 +129,10 @@ final class CodeView: NSView, NSTextInputClient {
 		diagnosticsArePreparing = isPreparing
 		needsDisplay = true
 	}
+
+	/// Whether the pointer was over an openable value last time it moved, so the
+	/// cursor is put back exactly once when it leaves.
+	private var isOverInlineValue = false
 
 	/// Whether the server that sent what is on screen had said it was preparing.
 	private var diagnosticsArePreparing = false
@@ -957,7 +961,7 @@ final class CodeView: NSView, NSTextInputClient {
 		let paragraph = NSMutableParagraphStyle()
 		paragraph.lineBreakMode = .byTruncatingTail
 		let drawn = NSAttributedString(
-			string: hints.map(\.text).joined(separator: "   "),
+			string: Self.joined(hints),
 			attributes: [
 				.font: Theme.current.editorFont,
 				.foregroundColor: Theme.current.gitIgnored,
@@ -970,6 +974,134 @@ final class CodeView: NSView, NSTextInputClient {
 			width: available,
 			height: drawn.size().height
 		))
+
+		// A hint with something under it is underlined, which is the whole of
+		// how a door is told from a piece of text before it is pressed. Drawn
+		// rather than an attribute so that it stops where the hint does and not
+		// where the string does.
+		Theme.current.gitIgnored.withAlphaComponent(0.5).setFill()
+		for hint in hints where hint.isOpenable {
+			var band = hintRect(hint, in: hints, from: x, rect: rect)
+			band.origin.y = rect.maxY - Theme.current.scaled(3)
+			band.size.height = 1
+			guard band.maxX <= bounds.maxX - Theme.current.scaled(12) else { continue }
+			band.fill()
+		}
+	}
+
+	/// The hints of a line as one string, in one place, so the drawing and the
+	/// hit test cannot come to disagree about where anything is.
+	private static func joined(_ hints: [InlineValueHint]) -> String {
+		hints.map(\.text).joined(separator: Self.hintSeparator)
+	}
+
+	private static let hintSeparator = "   "
+
+	/// Where one hint sits, from the arithmetic the drawing already does.
+	///
+	/// **Not recorded while drawing.** Storing a rect per hint per row would put
+	/// bookkeeping on the drawing path and leave it stale the moment a line is
+	/// edited or the window resized; the editor font is monospaced, so the same
+	/// answer can be worked out when somebody actually clicks — which is once,
+	/// rather than on every repaint of every row.
+	private func hintRect(
+		_ hint: InlineValueHint, in hints: [InlineValueHint], from x: CGFloat, rect: NSRect
+	) -> NSRect {
+		var characters = 0
+		for other in hints {
+			if other == hint { break }
+			characters += other.text.count + Self.hintSeparator.count
+		}
+		return NSRect(
+			x: x + CGFloat(characters) * charWidth,
+			y: rect.minY,
+			width: CGFloat(hint.text.count) * charWidth,
+			height: rect.height
+		)
+	}
+
+	/// Told to open a value, with where on screen it was.
+	var onOpenInlineValue: ((InlineValueHint, NSRect) -> Void)?
+
+	/// The hints on one line and where each of them is, in this view.
+	///
+	/// **Worked out from the line's own text and the frame's values** — the same
+	/// two things the drawing is made from — rather than recorded while drawing.
+	/// Storing a rect per hint per row would put bookkeeping on the drawing path
+	/// and leave it stale the moment a line is edited; the editor font is
+	/// monospaced, so the same answer can be had when somebody actually clicks.
+	private func hintsWithRects(onVisualRow visual: Int) -> [(hint: InlineValueHint, rect: NSRect)] {
+		guard let inlineValues, let executionLine, let document else { return [] }
+		let docLine = min(document.lineCount - 1, documentLine(forVisualRow: visual))
+		guard docLine <= executionLine else { return [] }
+
+		let range = document.rope.lineByteRange(docLine)
+		let text = document.rope.string(in: range)
+		let hints = InlineValues.hints(in: text, from: inlineValues)
+		guard !hints.isEmpty else { return [] }
+
+		// The same x the drawing starts at, from the same measurement.
+		let attributed = attributedLine(
+			text: text,
+			lineStartUTF16: document.rope.utf16Offset(fromByte: range.lowerBound),
+			// An empty index: this wants the width of the line's glyphs, and
+			// what colour they are drawn in does not change it.
+			tokenIndex: TokenIndex(tokens: [])
+		)
+		let ctLine = CTLineCreateWithAttributedString(attributed)
+		let lineWidth = CGFloat(CTLineGetTypographicBounds(ctLine, nil, nil, nil))
+		let x = textOriginX + lineWidth + charWidth * 3
+		let row = NSRect(
+			x: 0, y: CGFloat(visual) * lineHeight, width: bounds.width, height: lineHeight
+		)
+		return hints.map { ($0, hintRect($0, in: hints, from: x, rect: row)) }
+	}
+
+	/// The hint under a point, if there is one and it can be opened.
+	func openableInlineValue(at point: NSPoint) -> InlineValueHint? {
+		guard inlineValues != nil else { return nil }
+		let visual = max(0, min(visibleLineCount - 1, Int(floor(point.y / lineHeight))))
+		return hintsWithRects(onVisualRow: visual)
+			.first { $0.hint.isOpenable && $0.rect.contains(point) }?.hint
+	}
+
+	/// Draws every row this file has, which is what scrolling past all of them
+	/// costs. For the claim that drawing values asks the adapter for nothing.
+	func drawEveryRowForTesting() {
+		guard let document else { return }
+		for line in 0..<document.lineCount {
+			let text = document.rope.string(in: document.rope.lineByteRange(line))
+			guard let inlineValues, let executionLine, line <= executionLine else { continue }
+			_ = InlineValues.hints(in: text, from: inlineValues)
+		}
+	}
+
+	/// The first value on this file that can be opened, and where it is — as a
+	/// click would find it, through the same function a click uses.
+	func firstOpenableInlineValueForTesting() -> (hint: InlineValueHint, rect: NSRect)? {
+		guard inlineValues != nil, executionLine != nil else { return nil }
+		for visual in 0..<max(visibleLineCount, 1) {
+			if let found = hintsWithRects(onVisualRow: visual).first(where: { $0.hint.isOpenable }) {
+				return found
+			}
+		}
+		return nil
+	}
+
+	/// What a click in the middle of the value named would find — for the claim
+	/// that a value with nothing under it is not a door. Nil where no value of
+	/// that name is drawn.
+	func clickAnswerForTesting(named name: String) -> String? {
+		for visual in 0..<max(visibleLineCount, 1) {
+			guard let found = hintsWithRects(onVisualRow: visual)
+				.first(where: { $0.hint.name == name }) else { continue }
+			let middle = NSPoint(x: found.rect.midX, y: found.rect.midY)
+			let hit = openableInlineValue(at: middle)
+			return hit == nil
+				? "\(name): nothing opens, and the click is the editor's"
+				: "\(name): opens"
+		}
+		return nil
 	}
 
 	/// Every line of this file that has values beside it, for a driver to print.
@@ -986,7 +1118,11 @@ final class CodeView: NSView, NSTextInputClient {
 			let text = document.rope.string(in: document.rope.lineByteRange(docLine))
 			let hints = InlineValues.hints(in: text, from: inlineValues)
 			guard !hints.isEmpty else { continue }
-			lines.append("  \(docLine + 1): \(hints.map(\.text).joined(separator: "   "))")
+			// The door is marked, because which hints can be opened is the claim
+			// being checked and a photograph cannot say it.
+			lines.append("  \(docLine + 1): " + hints.map {
+				$0.isOpenable ? "\($0.text) [opens, ref \($0.variablesReference)]" : $0.text
+			}.joined(separator: "   "))
 		}
 		return lines.isEmpty ? "no line names a variable in this frame" : lines.joined(separator: "\n")
 	}
@@ -1093,6 +1229,14 @@ final class CodeView: NSView, NSTextInputClient {
 	override func mouseMoved(with event: NSEvent) {
 		super.mouseMoved(with: event)
 		let hoverPoint = convert(event.locationInWindow, from: nil)
+		// A pointing hand over a value with something under it. Asked only while
+		// a session is stopped: `openableInlineValue` is one `guard` otherwise.
+		if openableInlineValue(at: hoverPoint) != nil {
+			NSCursor.pointingHand.set()
+		} else if isOverInlineValue {
+			NSCursor.iBeam.set()
+		}
+		isOverInlineValue = openableInlineValue(at: hoverPoint) != nil
 		updateNavigableWord(
 			at: hoverPoint,
 			commandHeld: event.modifierFlags.contains(.command)
@@ -1733,7 +1877,7 @@ final class CodeView: NSView, NSTextInputClient {
 	/// Beside `setExecutionLine` and `setBreakpoints` because it is the same
 	/// kind of thing — per-file debug state the editor pushes in — and it
 	/// arrives by the same route, `EditorViewController.applyDebugState`.
-	func setInlineValues(_ values: [String: String]?) {
+	func setInlineValues(_ values: [String: Variable]?) {
 		let wanted = (values?.isEmpty ?? true) ? nil : values
 		guard wanted != inlineValues else { return }
 		inlineValues = wanted
@@ -2033,8 +2177,21 @@ final class CodeView: NSView, NSTextInputClient {
 	override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
 	override func mouseDown(with event: NSEvent) {
-		window?.makeFirstResponder(self)
 		let point = convert(event.locationInWindow, from: nil)
+		// **Before anything else, and only while stopped.** A hint sits past the
+		// end of the line, where a click would otherwise put the caret at the
+		// line's end — so this is the one place it can be claimed, and it claims
+		// nothing when there is no session, no hint, or nothing under the hint.
+		if inlineValues != nil {
+			let visual = max(0, min(visibleLineCount - 1, Int(floor(point.y / lineHeight))))
+			if let found = hintsWithRects(onVisualRow: visual)
+				.first(where: { $0.hint.isOpenable && $0.rect.contains(point) }) {
+				onOpenInlineValue?(found.hint, found.rect)
+				return
+			}
+		}
+
+		window?.makeFirstResponder(self)
 		draggingBreakpointLine = nil
 
 		// Gutter clicks toggle folds rather than moving the caret. The gutter is

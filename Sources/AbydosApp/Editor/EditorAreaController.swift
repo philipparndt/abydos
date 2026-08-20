@@ -761,6 +761,33 @@ final class EditorAreaController: NSViewController {
 		for group in groups { group.setInlineValues(values) }
 	}
 
+	/// Scrolls the file in front through every row it has, for the claim that
+	/// drawing values asks the adapter for nothing.
+	func scrollStoppedFileForTesting() { activeGroup.scrollStoppedFileForTesting() }
+
+	/// Opens the first openable value on the stopped line, as a click would.
+	func openFirstInlineValueForTesting() -> String? {
+		activeGroup.openFirstInlineValueForTesting()
+	}
+
+	/// What the opened value is showing.
+	func openValueReportForTesting() -> String { activeGroup.openValueReportForTesting() }
+
+	/// Opens a field inside what is open.
+	func expandInsideOpenValueForTesting() -> String {
+		activeGroup.expandInsideOpenValueForTesting()
+	}
+
+	/// What a click on the value named would do, without doing it.
+	func inlineValueClickForTesting(named name: String) -> String {
+		activeGroup.inlineValueClickForTesting(named: name)
+	}
+
+	/// Where a value opened beside the code gets its children from.
+	func setVariableChildren(_ fetch: ((Int) async -> [Variable])?) {
+		for group in groups { group.onVariableChildren = fetch }
+	}
+
 	/// What a server said about the file in front, and how loudly it is drawn.
 	func diagnosticReportForTesting() -> String {
 		activeGroup.diagnosticReportForTesting()
