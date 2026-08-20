@@ -409,6 +409,8 @@ struct LaunchOptions {
 	var diagnosticsAt: [Double] = []
 	/// When to open the first value beside the code that has anything under it.
 	var openValueAt: Double?
+	/// Send the editor a motion nothing handles, and say what it named.
+	var unhandledMotions = false
 	/// What each mouse button does, and what each layer saw of it.
 	///
 	/// `report` on its own says what arrives and claims nothing, which is the
@@ -977,6 +979,7 @@ struct LaunchOptions {
 			case "--card-report": options.cardReport = true
 			case "--draw-report": options.drawReport = true
 			case "--mouse":      options.mouseSteps = next() ?? "report"
+			case "--unhandled-motions": options.unhandledMotions = true
 			case "--open-value": options.openValueAt = next().flatMap(Double.init) ?? 8.0
 			case "--diagnostics":
 				options.diagnosticsAt = (next() ?? "20")

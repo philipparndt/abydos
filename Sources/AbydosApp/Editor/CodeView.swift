@@ -2771,7 +2771,7 @@ final class CodeView: NSView, NSTextInputClient {
 		case #selector(insertNewlineIgnoringFieldEditor(_:)): insertTextAtCaret("\n")
 		default:
 			// Unhandled selectors are common (e.g. noop:); staying silent is right.
-			break
+			UnhandledMotions.note(selector)
 		}
 	}
 

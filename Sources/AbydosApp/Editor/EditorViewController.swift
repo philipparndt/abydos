@@ -2196,6 +2196,23 @@ final class EditorViewController: NSViewController {
 		return "\(popup.placementForTesting)\n\(popup.reportForTesting)"
 	}
 
+	/// Sends selectors at the editor the way a key binding would, and says what
+	/// was named — for `--unhandled-motions`.
+	///
+	/// **Not a key press, and the reason is the finding.** The four motions this
+	/// editor still does not handle are all `select…` and none of them has a
+	/// default binding on this system, so there is no key that reaches them —
+	/// which is exactly why nobody noticed they were missing. What can be driven
+	/// is the path a binding would take: `doCommand(by:)`, the same function the
+	/// key would arrive at.
+	func exerciseUnhandledMotionsForTesting() -> String {
+		guard let codeView = activeTab?.codeView else { return "no file in front" }
+		for name in ["selectWord:", "selectParagraph:", "noop:", "complete:", "selectWord:"] {
+			codeView.doCommand(by: Selector(name))
+		}
+		return UnhandledMotions.reportForTesting
+	}
+
 	/// Opens a field inside what is open, for the claim about lazy children.
 	func expandInsideOpenValueForTesting() -> String {
 		openValuePopup?.expandFirstChildForTesting() ?? "nothing is open"

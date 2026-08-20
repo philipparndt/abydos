@@ -773,6 +773,11 @@ final class EditorAreaController: NSViewController {
 	/// What the opened value is showing.
 	func openValueReportForTesting() -> String { activeGroup.openValueReportForTesting() }
 
+	/// Sends selectors at the editor the way a key binding would.
+	func exerciseUnhandledMotionsForTesting() -> String {
+		activeGroup.exerciseUnhandledMotionsForTesting()
+	}
+
 	/// Opens a field inside what is open.
 	func expandInsideOpenValueForTesting() -> String {
 		activeGroup.expandInsideOpenValueForTesting()

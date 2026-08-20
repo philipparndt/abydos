@@ -9952,6 +9952,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 	}
 
+	/// What the editor said about motions nothing handled, for
+	/// `--unhandled-motions`.
+	func reportUnhandledMotionsForTesting() {
+		let named = editor.exerciseUnhandledMotionsForTesting()
+		print("MOTIONS: \(named)")
+		print("MOTIONS log: \(DiagnosticLog.path("editor"))")
+		fflush(stdout)
+	}
+
 	/// Opens the first value on the stopped line that has anything under it, and
 	/// says what came back — for `--open-value`.
 	///

@@ -843,6 +843,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if options.unhandledMotions {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+				controller?.reportUnhandledMotionsForTesting()
+			}
+		}
+
 		if let at = options.openValueAt {
 			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
 				controller?.openValueForTesting()
