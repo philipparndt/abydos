@@ -561,7 +561,7 @@ public final class DebugSession {
 
 		// Launch is sent before waiting for `initialized`; the adapter replies
 		// to it once configuration is done, which is why it is not awaited.
-		client.send("launch", arguments: DebugAdapters.launchArguments(
+		send("launch", watching: DebugAdapters.launchArguments(
 			for: adapter,
 			program: program,
 			workingDirectory: workingDirectory.path,
@@ -602,7 +602,7 @@ public final class DebugSession {
 		// `attachCommands` replaces LLDB's own idea of attaching, which is what
 		// makes this a remote session: the target is the local binary and the
 		// process is the one gdbserver is holding.
-		client.send("attach", arguments: [
+		send("attach", watching: [
 			"request": "attach",
 			"program": program.path,
 			"attachCommands": [
@@ -644,7 +644,7 @@ public final class DebugSession {
 		if !arguments.isEmpty { request["args"] = arguments }
 		if let workingDirectory { request["cwd"] = workingDirectory }
 		if !environment.isEmpty { request["env"] = environment }
-		client.send("launch", arguments: request)
+		send("launch", watching: request)
 
 		startLaunchWatchdog()
 	}
@@ -702,7 +702,7 @@ public final class DebugSession {
 		}
 
 		try await handshake(with: adapter)
-		client.send("attach", arguments: DebugAdapters.attachArguments(for: adapter, pid: pid))
+		send("attach", watching: DebugAdapters.attachArguments(for: adapter, pid: pid))
 		startLaunchWatchdog()
 	}
 
@@ -1009,6 +1009,46 @@ public final class DebugSession {
 
 	/// The last thing the adapter said, which is usually why nothing started.
 	private var lastAdapterOutput: String?
+
+	/// Sends a launch or an attach, and reports a refusal the moment it arrives.
+	///
+	/// **The response used to be dropped.** `launch` is not awaited, and for a
+	/// good reason — the adapter answers it only once configuration is done, so
+	/// awaiting it would block the very events that finish the launch — but
+	/// "not awaited" had been written as "not read", and an adapter that says
+	/// `success: false` in the first second was answered by the watchdog
+	/// twenty-five seconds later, guessing from whatever it had printed by then.
+	///
+	/// A completion is the whole fix: the request is still not waited on, and
+	/// the answer is still read.
+	private func send(_ command: String, watching arguments: [String: Any]) {
+		let generation = launchGeneration
+		client.send(command, arguments: arguments) { [weak self] result in
+			guard case let .failure(error) = result else { return }
+			self?.onMain { [weak self] in
+				guard let self, self.launchGeneration == generation else { return }
+				// Only while this launch is still the one being waited on. A
+				// refusal that arrives after something else has happened — a
+				// stop pressed, a second launch started — is not news.
+				guard case .starting = self.state else { return }
+				self.state = .terminated
+				self.onMainLaunchStalled(LaunchStall.explainRefusal(
+					command,
+					message: Self.said(error),
+					lastOutput: self.lastAdapterOutput
+				))
+			}
+		}
+	}
+
+	/// The adapter's own sentence out of an error, and nothing invented.
+	private static func said(_ error: Error) -> String? {
+		if case let DAPClient.ClientError.adapterError(message) = error { return message }
+		// Every other case is this program's own description of a transport
+		// problem, which is not the adapter refusing and is worth saying as
+		// itself.
+		return (error as? LocalizedError)?.errorDescription
+	}
 
 	/// Gives up on a launch that has gone quiet.
 	///

@@ -284,6 +284,33 @@ public final class DAPClient: @unchecked Sendable {
 		throw ClientError.timedOut
 	}
 
+	/// What a refused request actually said.
+	///
+	/// **`body.error.format` and not `message`**, where there is one. The
+	/// protocol has two fields and they are not the same length: `message` is a
+	/// short line and `error.format` is the one meant to be shown. Delve's
+	/// difference between them, measured on this machine, is the whole reason a
+	/// launch failed for a nameable cause and reported nothing nameable:
+	///
+	///     message: "Failed to launch /Users/me/thing"
+	///     body.error.format: "Failed to launch /Users/me/thing: Version of Delve
+	///                         is too old for Go version go1.27.0 (maximum
+	///                         supported version 1.26, …)"
+	///
+	/// The second sentence is the fault. Keeping only the first is how a version
+	/// mismatch was reported as a path.
+	static func refusal(_ message: [String: Any], body: [String: Any]) -> String {
+		if let error = body["error"] as? [String: Any],
+		   let format = error["format"] as? String,
+		   !format.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+			// `variables` substitution is part of the protocol and no adapter
+			// this program talks to uses it; a `{name}` left in the text would
+			// be visible, which is better than dropping the sentence.
+			return format
+		}
+		return message["message"] as? String ?? "request failed"
+	}
+
 	private func adopt(_ connection: NWConnection) {
 		connection.start(queue: .global(qos: .userInitiated))
 		self.connection = connection
@@ -564,8 +591,7 @@ public final class DAPClient: @unchecked Sendable {
 				if success {
 					handler(.success(body))
 				} else {
-					let text = message["message"] as? String ?? "request failed"
-					handler(.failure(ClientError.adapterError(text)))
+					handler(.failure(ClientError.adapterError(Self.refusal(message, body: body))))
 				}
 			}
 

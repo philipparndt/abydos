@@ -47,4 +47,48 @@ public enum LaunchStall {
 		\(said)
 		"""
 	}
+
+	/// The message to show when the adapter *refused* — which is a different
+	/// event from going quiet, and used not to be told apart from it.
+	///
+	/// **Measured on the reported project**: `dlv dap` answered `Building …`,
+	/// then `Build Error: …` with the compiler's own words, then a `launch`
+	/// response with `success: false` and a message — all inside one second. The
+	/// app read none of it and reported the watchdog's guess twenty-five seconds
+	/// later, quoting `Building …`, which is the adapter clearing its throat.
+	///
+	/// The adapter's own sentence leads, because it is one line written for a
+	/// person. What it printed follows, because that is where the compiler's
+	/// words are — and it is *not* the same text: a message saying "check the
+	/// debug console for details" is useless on its own.
+	///
+	/// The console is named when the adapter points at it. A dialog that repeats
+	/// "check the console" without saying the console is a pane away is a dialog
+	/// in the way of its own advice.
+	public static func explainRefusal(
+		_ command: String, message: String?, lastOutput: String?
+	) -> String {
+		let said = (message ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+		let printed = (lastOutput ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+		let verb = command == "attach" ? "attach to the program" : "start the program"
+
+		var lines: [String] = []
+		lines.append(said.isEmpty
+			? "The debugger would not \(verb), and said nothing about why."
+			: "The debugger would not \(verb): \(said)")
+
+		if !printed.isEmpty {
+			lines.append("")
+			lines.append("What it said on the way:")
+			lines.append("")
+			lines.append(printed)
+		}
+		// Only when the adapter itself pointed there, and only once — repeating
+		// its own sentence back at somebody is not advice.
+		if said.lowercased().contains("console"), !printed.isEmpty {
+			lines.append("")
+			lines.append("The debug console has the whole of it.")
+		}
+		return lines.joined(separator: "\n")
+	}
 }
