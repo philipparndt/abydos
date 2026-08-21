@@ -42,7 +42,7 @@ final class ProjectNavigatorViewController: NSViewController {
 
 	private var project: Project?
 	private var rootNode: FileNode?
-	/// What the project depends on, as a second root beside the tree.
+	/// What the project depends on, as the second root beside the tree.
 	///
 	/// Nil for a project of no recognised kind, and then there is no section at
 	/// all — an empty *Dependencies* row is exactly the "this project has none"
@@ -58,6 +58,13 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// is followed into a compiler's own sources, and is thrown away with the
 	/// window. See `ToolchainSources`.
 	private var toolchains: [Toolchain] = []
+	/// What past agent sessions left behind for this project, as a third root.
+	///
+	/// Nil when there is nothing — the rule *Dependencies* keeps, for the reason
+	/// item 508 was filed: a permanent empty row is worse than no row. Unlike a
+	/// toolchain, whether a session left anything is knowable without being
+	/// told, so this can be read on open.
+	private var sessions: SessionNode?
 	/// When the section was last read.
 	///
 	/// A burst too large for FSEvents to name file by file — a build, a
@@ -259,6 +266,62 @@ final class ProjectNavigatorViewController: NSViewController {
 		// subproject, which `LaunchClock` reports beside the rest of the open.
 		refreshDependencies()
 		LaunchClock.mark("dependencies read")
+		refreshSessions()
+		LaunchClock.mark("sessions read")
+	}
+
+	// MARK: - What past sessions left
+
+	/// Reads the Claude Sessions root, and redraws only if it came out
+	/// different.
+	///
+	/// **Read here and not watched.** `/tmp/claude-<uid>` is written by every
+	/// agent on the machine, several times a second while one is working, and a
+	/// watcher on it would rebuild a root nobody is looking at for somebody
+	/// else's session. It is read when the tree is read, which is what
+	/// *Dependencies* does.
+	private func refreshSessions() {
+		guard let project else { return }
+		let read = SessionNode.read(project: project.root)
+		// Compared before redrawing, for the reason the dependency section is:
+		// `reloadData` throws away every row's identity, and a root that
+		// rebuilt itself on each refresh would collapse what somebody had open
+		// while they were reading it.
+		guard read?.identityForRefresh != sessions?.identityForRefresh else { return }
+
+		show(read)
+		// **And then the expensive half, off this thread.** Counting what is in
+		// each session means walking it, which for the seven this repository has
+		// on this machine is 6,920 files and 127 ms — a tenth of a second on the
+		// project-open path, growing with every session anybody ever ran. The
+		// rows are up without it, and gain their sizes when the walk lands.
+		guard let read else { return }
+		let sessions = read.sessions
+		// What was on screen when the walk started. Compared against on the way
+		// back — not against what the walk built, which may hold fewer rows
+		// once the empty ones are known.
+		let expected = read.identityIgnoringSize
+		DispatchQueue.global(qos: .utility).async { [weak self] in
+			let measured = sessions.map(AgentSessions.measured)
+			DispatchQueue.main.async {
+				guard let self else { return }
+				// Only if this window is still showing the same sessions: the
+				// project may have changed while the walk was running, and
+				// putting these rows back would show the last project's.
+				guard self.sessions?.identityIgnoringSize == expected else { return }
+				self.show(SessionNode.build(measured))
+			}
+		}
+	}
+
+	/// Puts a read of the root on screen, keeping what was open and selected.
+	private func show(_ node: SessionNode?) {
+		let expanded = expandedPaths()
+		let selected = selectedPaths()
+		sessions = node
+		outlineView.reloadData()
+		restore(expandedPaths: expanded)
+		restoreSelection(paths: selected)
 	}
 
 	// MARK: - Dependencies
@@ -2237,10 +2300,14 @@ final class ProjectNavigatorViewController: NSViewController {
 		// indices of everything after them.
 		for row in stride(from: outlineView.numberOfRows - 1, through: 0, by: -1) {
 			let item = outlineView.item(atRow: row)
-			// The Dependencies section folds away with everything else, section
-			// row included: it is a second root and "collapse all" means all.
+			// The other two roots fold away with everything else, their own rows
+			// included: "collapse all" means all.
 			if let dependency = item as? DependencyNode {
 				outlineView.collapseItem(dependency)
+				continue
+			}
+			if let session = item as? SessionNode {
+				outlineView.collapseItem(session)
 				continue
 			}
 			guard let node = item as? FileNode, node !== rootNode else { continue }
@@ -2292,6 +2359,7 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// is a different window's.
 	func placementProblem(for url: URL) -> String? {
 		if dependencies?.locate(url) != nil { return nil }
+		if sessions?.session(containing: url) != nil { return nil }
 		if rootNode?.node(for: url) != nil { return nil }
 		guard let project else { return "no project is open in this window." }
 		let path = FilePath.canonical(url)
@@ -2302,8 +2370,8 @@ final class ProjectNavigatorViewController: NSViewController {
 			// setting, the other is nothing anybody can do.
 			return "it is inside the project but hidden by a filter."
 		}
-		return "it is outside the project, and no package or toolchain in "
-			+ "Dependencies holds it."
+		return "it is outside the project, no package or toolchain in Dependencies "
+			+ "holds it, and no session left it behind."
 	}
 
 	/// Expands the root's immediate children, matching how IDEA shows a freshly
@@ -2423,6 +2491,7 @@ final class ProjectNavigatorViewController: NSViewController {
 			// tell from the selection landing on nothing at all.
 			if let node = item as? FileNode { return "\(node.name)@\(row)" }
 			if let node = item as? DependencyNode { return "\(node.title)@\(row)" }
+			if let node = item as? SessionNode { return "\(node.title)@\(row)" }
 			return "nothing@\(row)"
 		}
 		return (names.joined(separator: "+"), outlineView.numberOfRows)
@@ -2439,6 +2508,9 @@ final class ProjectNavigatorViewController: NSViewController {
 			let item = outlineView.item(atRow: row)
 			let indent = String(repeating: "  ", count: outlineView.level(forRow: row))
 			if let node = item as? DependencyNode {
+				return indent + node.title + (node.subtitle.map { " — " + $0 } ?? "")
+			}
+			if let node = item as? SessionNode {
 				return indent + node.title + (node.subtitle.map { " — " + $0 } ?? "")
 			}
 			return indent + ((item as? FileNode)?.name ?? "?")
@@ -2473,13 +2545,51 @@ final class ProjectNavigatorViewController: NSViewController {
 		outlineView.selectRowIndexes([row], byExtendingSelection: false)
 	}
 
+	/// Opens the Claude Sessions root and brings it into view, which on a
+	/// repository of this size is several screens down.
+	func openSessionsForTesting(files: Bool) {
+		guard let sessions else { return }
+		outlineView.expandItem(sessions)
+		if files {
+			for child in sessions.childNodes { outlineView.expandItem(child) }
+		}
+		let row = outlineView.row(forItem: sessions)
+		guard row >= 0 else { return }
+		// The last row first, so the root ends up at the top of the pane rather
+		// than at its bottom edge — the same reason `deps-open` does it.
+		outlineView.scrollRowToVisible(outlineView.numberOfRows - 1)
+		outlineView.scrollRowToVisible(row)
+		outlineView.selectRowIndexes([row], byExtendingSelection: false)
+	}
+
+	/// What roots the tree has and what is under the third of them, for
+	/// `--tree-roots`.
+	func rootsForTesting() -> String {
+		var said = ["project=\(rootNode?.name ?? "none")"]
+		said.append("dependencies=\(dependencies == nil ? "absent" : "present")")
+		guard let sessions else {
+			said.append("sessions=absent")
+			return said.joined(separator: " ")
+		}
+		said.append("sessions=\(sessions.childNodes.count)")
+		for node in sessions.childNodes.prefix(4) {
+			said.append("\n    \(node.title) [\(node.subtitle ?? "")]")
+		}
+		return said.joined(separator: " ")
+	}
+
 	/// Opens the section down to a file and selects it, the way activating a tab
 	/// on a file outside the project does.
 	func revealForTesting(_ path: String) {
 		let url = URL(fileURLWithPath: path)
 		selectWithoutOpening(url: url)
 		let package = dependency(containing: url)
+		// Which root claimed it, because three can and only one did.
+		let claimed = dependencies?.locate(url) != nil
+			? "dependencies"
+			: (sessions?.session(containing: url) != nil ? "sessions" : "tree")
 		print("TREE reveal: \(url.lastPathComponent) "
+			+ "claimed-by=\(claimed) "
 			+ "package=\(package?.name ?? "none") "
 			+ "origin=\(package?.origin ?? "none") "
 			+ "selection=\(selectionForTesting.name) "
@@ -2521,6 +2631,18 @@ final class ProjectNavigatorViewController: NSViewController {
 					expandAncestors(of: located.node, under: fileRoot)
 				}
 				found.append(located.node)
+				continue
+			}
+			// **Then Claude Sessions**, which is the third and last claimant.
+			// The order never has to be argued about, because nothing lives in
+			// two of them: a package's sources are not under `/tmp/claude-*`,
+			// and a session's scratch directory is not inside the project.
+			if let sessions, let session = sessions.session(containing: url),
+			   let fileRoot = session.fileRoot, let node = fileRoot.node(for: url) {
+				outlineView.expandItem(sessions)
+				outlineView.expandItem(session)
+				expandAncestors(of: node, under: fileRoot)
+				found.append(node)
 				continue
 			}
 			guard let rootNode, let node = rootNode.node(for: url) else { continue }
@@ -2615,7 +2737,14 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 		// it, because a dependency is not in the project — that is what it means.
 		guard let item else {
 			guard rootNode != nil else { return 0 }
-			return dependencies == nil ? 1 : 2
+			// Up to three, and each is there only when it holds something.
+			return 1 + (dependencies == nil ? 0 : 1) + (sessions == nil ? 0 : 1)
+		}
+		if let node = item as? SessionNode {
+			// A session row *is* a directory, the same as a package row: from
+			// here down the rows are ordinary files.
+			if let fileRoot = node.fileRoot { return fileRoot.children.count }
+			return node.childNodes.count
 		}
 		if let node = item as? DependencyNode {
 			// A package row *is* a directory: from here down the rows are
@@ -2655,8 +2784,16 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 
 	func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
 		guard let item else {
-			guard index > 0, let dependencies else { return rootNode! }
-			return dependencies.root
+			// The project, then Dependencies, then Claude Sessions — the order
+			// the reveal claims a file in, so the tree reads the same way it
+			// resolves.
+			guard index > 0 else { return rootNode! }
+			if let dependencies { return index == 1 ? dependencies.root : sessions! }
+			return sessions!
+		}
+		if let node = item as? SessionNode {
+			if let fileRoot = node.fileRoot { return fileRoot.children[index] }
+			return node.childNodes[index]
 		}
 		if let node = item as? DependencyNode {
 			if let fileRoot = node.fileRoot { return fileRoot.children[index] }
@@ -2671,6 +2808,7 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 	}
 
 	func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
+		if let node = item as? SessionNode { return node.isExpandable }
 		if let node = item as? DependencyNode { return node.isExpandable }
 		guard let node = item as? FileNode else { return false }
 		// A new folder has nothing in it and does not exist yet, so it gets no
@@ -2683,6 +2821,14 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 	}
 
 	func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
+		if let node = item as? SessionNode {
+			let cell = NavigatorCellView()
+			cell.configure(session: node)
+			// The transcript's path lives here and nowhere else: worth having
+			// for pointing another tool at it, not worth opening as a file.
+			cell.toolTip = node.detail
+			return cell
+		}
 		if let node = item as? DependencyNode {
 			let cell = NavigatorCellView()
 			cell.configure(dependency: node)
@@ -3235,10 +3381,19 @@ private final class NavigatorCellView: NSTableCellView {
 	/// A package is not a file and has no `FileNode` behind it — the files
 	/// start one level below it.
 	private var dependency: DependencyNode?
+	/// And for one of the Claude Sessions root's own rows, for the same reason:
+	/// a session is not a file, and its files start one level below it.
+	private var session: SessionNode?
 
 	func configure(dependency: DependencyNode) {
 		self.dependency = dependency
 		self.subtitle = dependency.subtitle
+		needsDisplay = true
+	}
+
+	func configure(session: SessionNode) {
+		self.session = session
+		self.subtitle = session.subtitle
 		needsDisplay = true
 	}
 
@@ -3291,7 +3446,26 @@ private final class NavigatorCellView: NSTableCellView {
 		let nameColor: NSColor
 		let nameFont: NSFont
 
-		if let dependency {
+		if let session {
+			text = session.title
+			switch session.row {
+			case .section:
+				icon = FileIcon.sessionSection()
+				// The other roots are written this way: this is a root of the
+				// tree, not a folder inside anything.
+				nameColor = isSelected ? selectedInk : Theme.current.sidebarHeaderText
+				nameFont = Theme.current.uiFont(13, weight: .bold)
+			case let .session(_, asked):
+				icon = FileIcon.session()
+				// A session the transcript said nothing about is named by its
+				// id, which is not a name — so it is drawn in the grey a note
+				// uses rather than as a title somebody wrote.
+				nameColor = isSelected
+					? selectedInk
+					: (asked == nil ? Theme.current.gitIgnored : Theme.current.sidebarHeaderText)
+				nameFont = Theme.current.uiFont(13)
+			}
+		} else if let dependency {
 			text = dependency.title
 			switch dependency.row {
 			case .section:

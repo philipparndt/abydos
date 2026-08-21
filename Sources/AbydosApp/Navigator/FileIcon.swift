@@ -61,6 +61,19 @@ enum FileIcon {
 		render(key: "dep.note", spec: Spec(symbol: "questionmark.circle", color: .hex(0xC7A03B)))
 	}
 
+	/// The Claude Sessions root. A clock rather than a folder or a shelf: what
+	/// is under it is sorted by when, and every row of it is something that
+	/// happened rather than something the project is made from.
+	static func sessionSection() -> NSImage? {
+		render(key: "session.section", spec: Spec(symbol: "clock.arrow.circlepath", color: .hex(0x8A9099)))
+	}
+
+	/// One session. Deliberately not the package box and not a folder: the row
+	/// is a conversation that left files behind, and the files are underneath.
+	static func session() -> NSImage? {
+		render(key: "session.one", spec: Spec(symbol: "bubble.left.and.text.bubble.right", color: .hex(0xC08A5E)))
+	}
+
 	static func image(for node: FileNode, isExpanded: Bool) -> NSImage? {
 		let key: String
 		let spec: Spec

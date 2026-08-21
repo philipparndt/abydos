@@ -7411,6 +7411,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 				continue
 			// The section sits below the whole tree, which on a repository of
 			// eight subprojects is several screens down.
+			// Which roots the tree has, and what the third of them holds — the
+			// one thing a screenshot of a tree several screens long cannot say.
+			case "roots":
+				print("TREE roots: \(navigator.rootsForTesting())")
+			case "sessions-open": navigator.openSessionsForTesting(files: false)
+			case "sessions-open-all": navigator.openSessionsForTesting(files: true)
 			case "deps-open": navigator.openDependenciesForTesting(groups: false)
 			case "deps-open-all": navigator.openDependenciesForTesting(groups: true)
 			// The field on the row, left standing: where its text sits and how
