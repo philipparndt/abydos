@@ -409,6 +409,10 @@ struct LaunchOptions {
 	var diagnosticsAt: [Double] = []
 	/// When to open the first value beside the code that has anything under it.
 	var openValueAt: Double?
+	/// Switch to this branch the way the titlebar does, and say what came of it.
+	var checkoutBranch: String?
+	/// And press whatever the notification offered.
+	var pressOffer = false
 	/// Copy a link to a place, as `reference:12`, `permalink:12` or
 	/// `reference:12-18`, and say what landed on the pasteboard.
 	var copyLink: String?
@@ -1018,6 +1022,8 @@ struct LaunchOptions {
 					after: next().flatMap(Double.init) ?? 20
 				)
 			case "--code-action-take": options.codeActionTake = next()
+			case "--checkout-branch": options.checkoutBranch = next()
+			case "--press-offer": options.pressOffer = true
 			case "--copy-link": options.copyLink = next()
 			case "--follow-link": options.followLink = next()
 			case "--diagnostics":

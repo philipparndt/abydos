@@ -126,19 +126,98 @@ enum BranchMenu {
 		Task { @MainActor in
 			let result = await GitRepository.run(["checkout", branch], in: root)
 			if result.exitCode != 0 {
-				// Most often a dirty work tree; git's own message is the clearest
-				// explanation we could show.
-				Toast.post(
-					"Could not switch to \(branch)",
-					detail: result.stderr.isEmpty
-						? "git exited with code \(result.exitCode)."
-						: result.stderr
-				)
+				await explainRefusal(result, branch: branch, in: root)
 				return
 			}
 			// The working tree changed underneath every open window on this repo.
 			NotificationCenter.default.post(name: .abydosRepositoryChanged, object: root)
 		}
+	}
+
+	/// Says why a checkout was refused, and offers the checkout that holds the
+	/// branch when that is the reason.
+	///
+	/// **One implementation, two ways in.** The titlebar and the project
+	/// switcher share the function above; the branches pane runs its own
+	/// checkout and calls this with the result, so the three cannot come to
+	/// explain the same refusal differently.
+	///
+	/// **Try, then explain.** The worktree list is asked only after a checkout
+	/// has failed, so a switch that works costs nothing extra. Checking first
+	/// would pay in the common case for the rare one, and git is the authority
+	/// at the moment it runs — a worktree can appear between a check and a
+	/// checkout.
+	@MainActor
+	static func explainRefusal(
+		_ refusal: GitRepository.ProcessResult, branch: String, in root: URL
+	) async {
+		let worktrees = await GitWorktrees.list(in: root)
+		let primaryName = worktrees.first { $0.isPrimary }?.name ?? root.lastPathComponent
+
+		// Every other refusal — a dirty work tree, a branch that does not exist,
+		// a hook that said no — keeps git's own message, which is the clearest
+		// explanation there is. An offer that appeared for those would be one
+		// more sentence people learn to ignore.
+		guard let holder = GitWorktrees.holder(
+			of: branch, in: worktrees, excluding: root
+		) else {
+			Toast.post(
+				"Could not switch to \(branch)",
+				detail: refusal.stderr.isEmpty
+					? "git exited with code \(refusal.exitCode)."
+					: refusal.stderr
+			)
+			return
+		}
+
+		let offer = BranchInUse.offer(for: holder)
+		Toast.post(Toast(
+			kind: .warning,
+			title: BranchInUse.title(branch),
+			detail: BranchInUse.detail(branch, offer: offer, primaryName: primaryName),
+			actionTitle: BranchInUse.action(for: offer, primaryName: primaryName),
+			action: { take(offer, in: root) }
+		))
+	}
+
+	/// Carries out what was offered — and nothing else.
+	///
+	/// Opening goes through the door every other way of choosing a checkout
+	/// uses, so a window already showing it is raised rather than a second one
+	/// made. **A prune does not then retry the switch**: it changes the
+	/// repository, and doing two things from one press is one more than was
+	/// agreed to.
+	@MainActor
+	private static func take(_ offer: BranchInUse.Offer, in root: URL) {
+		switch offer {
+		case let .open(worktree):
+			let delegate = NSApp.delegate as? AppDelegate
+			delegate?.open(projectAt: worktree.path, from: NSApp.keyWindow?.windowController as? MainWindowController)
+		case let .prune(worktree):
+			Task { @MainActor in
+				let result = await GitWorktrees.prune(in: root)
+				guard result.exitCode == 0 else {
+					Toast.post(
+						"Could not remove the registration",
+						detail: result.stderr.isEmpty
+							? "git exited with code \(result.exitCode)."
+							: result.stderr
+					)
+					return
+				}
+				Toast.post(
+					"Removed the registration for \(worktree.name)",
+					detail: "The branch is free now. Switching to it is a second press.",
+					kind: .information
+				)
+				NotificationCenter.default.post(name: .abydosRepositoryChanged, object: root)
+			}
+		}
+	}
+
+	/// Which branch a checkout is on, for a driver's report.
+	static func currentBranchForTesting(in root: URL) async -> String? {
+		await GitRepository.head(in: root).name
 	}
 
 	/// Which branch the work tree is on.

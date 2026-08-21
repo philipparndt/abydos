@@ -5741,6 +5741,44 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		NSPasteboard.general.setString(text, forType: .string)
 	}
 
+	/// Switches to a branch the way the titlebar does, and says what came of it
+	/// — for `--checkout-branch`.
+	///
+	/// Through `BranchMenu.checkout`, which is the function the titlebar and the
+	/// switcher share, so what is driven is what a click does.
+	func checkoutBranchForTesting(_ branch: String, pressing: Bool) {
+		guard let root = project?.root else {
+			print("BRANCH: no project")
+			fflush(stdout)
+			return
+		}
+		let before = toasts.saidForTesting.count
+		BranchMenu.checkout(branch, in: root)
+
+		// git and the worktree list are two processes; give them a moment.
+		DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+			guard let self else { return }
+			let said = self.toasts.saidForTesting.dropFirst(before)
+			print("BRANCH \(branch): \(said.isEmpty ? "nothing said" : said.joined(separator: " / "))")
+			Task { @MainActor in
+				let on = await BranchMenu.currentBranchForTesting(in: root)
+				print("BRANCH \(branch): on \(on ?? "none") in \(root.lastPathComponent)")
+				fflush(stdout)
+			}
+			guard pressing else { return }
+
+			let pressed = self.toasts.pressLastOfferForTesting()
+			print("BRANCH pressed: \(pressed)")
+			fflush(stdout)
+			DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+				guard let self else { return }
+				print("BRANCH after: project=\(self.project?.root.lastPathComponent ?? "none")"
+					+ " said=\(self.toasts.saidForTesting.dropFirst(before).joined(separator: " / "))")
+				fflush(stdout)
+			}
+		}
+	}
+
 	/// Copies a link the way the menu does, and says what came of it — for
 	/// `--copy-link`.
 	///

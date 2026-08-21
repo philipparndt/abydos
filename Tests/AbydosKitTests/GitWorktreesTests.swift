@@ -390,3 +390,84 @@ struct GitWorktreesTests {
 		#expect(await GitWorktrees.list(in: empty).isEmpty)
 	}
 }
+
+/// Which checkout holds a branch — the fact behind git's refusal.
+///
+/// `git checkout ui` where another worktree has `ui` exits non-zero with
+/// `fatal: 'ui' is already used by worktree at '/…/agent-a9b2'`. Every word is
+/// true and none of it is actionable, and the path is in a sentence rather than
+/// in an answer. This is the answer.
+struct BranchHolderTests {
+	private func worktree(
+		_ path: String, branch: String?, isPrimary: Bool = false, isMissing: Bool = false
+	) -> GitWorktree {
+		GitWorktree(
+			path: URL(fileURLWithPath: path),
+			branch: branch,
+			head: "abc123",
+			isPrimary: isPrimary,
+			isMissing: isMissing,
+			isLocked: false
+		)
+	}
+
+	private var repository: [GitWorktree] {
+		[
+			worktree("/Users/me/dev/cuttr", branch: "main", isPrimary: true),
+			worktree("/Users/me/dev/cuttr/.claude/worktrees/agent-a9b2", branch: "ui"),
+			worktree("/Users/me/dev/cuttr/.claude/worktrees/agent-b1c3", branch: nil),
+			worktree("/Users/me/dev/cuttr/.claude/worktrees/gone", branch: "stale", isMissing: true),
+		]
+	}
+
+	@Test func theWorktreeThatHasIt() {
+		let found = GitWorktrees.holder(of: "ui", in: repository)
+		#expect(found?.path.lastPathComponent == "agent-a9b2")
+		#expect(found?.isPrimary == false)
+	}
+
+	/// The original clone is a checkout like any other, and reads differently in
+	/// a sentence — which is why the row it comes back on says so.
+	@Test func thePrimaryCheckoutCanHoldItToo() {
+		#expect(GitWorktrees.holder(of: "main", in: repository)?.isPrimary == true)
+	}
+
+	@Test func aBranchNobodyHasIsNobodys() {
+		#expect(GitWorktrees.holder(of: "feature/other", in: repository) == nil)
+		#expect(GitWorktrees.holder(of: "", in: repository) == nil)
+	}
+
+	/// **A detached worktree holds no branch**, and `nil == nil` would have made
+	/// every one of them a match for a branch nobody named.
+	@Test func aDetachedWorktreeHoldsNothing() {
+		let detached = [worktree("/Users/me/dev/x/w", branch: nil)]
+		#expect(GitWorktrees.holder(of: "ui", in: detached) == nil)
+	}
+
+	/// A name that begins another name is a different branch. `ui` is not
+	/// `ui-rework`, and a prefix test would have said it was.
+	@Test func aNameThatStartsAnotherNameIsNotIt() {
+		let trees = [worktree("/Users/me/dev/x/w", branch: "ui-rework")]
+		#expect(GitWorktrees.holder(of: "ui", in: trees) == nil)
+		#expect(GitWorktrees.holder(of: "ui-rework", in: trees)?.branch == "ui-rework")
+	}
+
+	/// **The checkout doing the asking is not an answer.** A branch held by the
+	/// worktree somebody is already in cannot be why a checkout failed — git
+	/// would have succeeded — and offering to open the window's own project is an
+	/// offer to do nothing.
+	@Test func theCheckoutAskingIsNotOfferedToItself() {
+		let asking = URL(fileURLWithPath: "/Users/me/dev/cuttr/.claude/worktrees/agent-a9b2")
+		#expect(GitWorktrees.holder(of: "ui", in: repository, excluding: asking) == nil)
+		// And a different checkout still answers.
+		#expect(GitWorktrees.holder(of: "main", in: repository, excluding: asking)?.isPrimary == true)
+	}
+
+	/// A registration whose directory is gone still holds the branch as far as
+	/// git is concerned, which is exactly why it has to come back — with the fact
+	/// that it is missing, so the offer can be a prune rather than an open.
+	@Test func aMissingWorktreeStillHoldsItsBranch() {
+		let found = GitWorktrees.holder(of: "stale", in: repository)
+		#expect(found?.isMissing == true)
+	}
+}

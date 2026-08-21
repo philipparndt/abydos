@@ -539,7 +539,18 @@ final class BranchesPane: NSView {
 			return
 		}
 		guard let branch = selectedBranch, !branch.isCurrent else { return }
-		run { await GitBranches.checkout(branch, in: self.root) }
+		// Its own task rather than `run`, so that a refusal goes through the one
+		// explanation the titlebar and the switcher use: a branch another
+		// checkout holds is offered that checkout, and everything else keeps
+		// git's own message.
+		Task { @MainActor in
+			let result = await GitBranches.checkout(branch, in: self.root)
+			if result.exitCode != 0 {
+				await BranchMenu.explainRefusal(result, branch: branch.name, in: self.root)
+			}
+			self.refresh()
+			self.onRepositoryChanged?()
+		}
 	}
 
 	// MARK: - Worktrees

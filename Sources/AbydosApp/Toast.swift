@@ -217,8 +217,23 @@ final class ToastPresenter {
 	/// was said" and "it was said and faded" look identical.
 	private(set) var saidForTesting: [String] = []
 
+	/// The last toast's action, so a driver can press what was offered.
+	private var lastOfferForTesting: (() -> Void)?
+
+	/// Presses the last offer, and says whether there was one.
+	@discardableResult
+	func pressLastOfferForTesting() -> Bool {
+		guard let action = lastOfferForTesting else { return false }
+		action()
+		return true
+	}
+
 	func show(_ toast: Toast) {
-		saidForTesting.append([toast.title, toast.detail].compactMap { $0 }.joined(separator: " — "))
+		saidForTesting.append(
+			[toast.title, toast.detail].compactMap { $0 }.joined(separator: " — ")
+				+ (toast.actionTitle.map { " [button: \($0)]" } ?? "")
+		)
+		if toast.action != nil { lastOfferForTesting = toast.action }
 		guard let contentView = window?.contentView else { return }
 
 		let host = self.host ?? {

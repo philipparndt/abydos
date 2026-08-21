@@ -76,6 +76,44 @@ public enum GitWorktrees {
 		return parse(result.stdout)
 	}
 
+	/// Which checkout has this branch, and nil when none has.
+	///
+	/// **The fact behind git's refusal.** `git checkout ui` in a repository where
+	/// another worktree holds `ui` exits non-zero with
+	/// `fatal: 'ui' is already used by worktree at '/…/agent-a9b2'` — true, and
+	/// useless: the branch is checked out somewhere this program can open, and
+	/// the path is in a sentence rather than in an answer.
+	///
+	/// Asked of the worktree list instead. The path is in the message and that is
+	/// the wrong source: a wording is one version of one program's phrasing — the
+	/// rule `DiagnosticWeight` states about `No such module` — and a path with a
+	/// space or a quote in it cannot be parsed out of prose at all.
+	///
+	/// `excluding` is the checkout doing the asking. A branch held by the
+	/// worktree somebody is already in cannot be the reason a checkout failed —
+	/// git would simply have succeeded — and offering to open the window's own
+	/// project would be an offer to do nothing.
+	public static func holder(
+		of branch: String, in worktrees: [GitWorktree], excluding asking: URL? = nil
+	) -> GitWorktree? {
+		guard !branch.isEmpty else { return nil }
+		let asked = asking.map { FilePath.canonical($0) }
+		return worktrees.first { worktree in
+			// A detached worktree holds no branch, and `nil == nil` would make
+			// every one of them a match for a branch nobody named.
+			guard let held = worktree.branch, held == branch else { return false }
+			guard let asked else { return true }
+			return FilePath.canonical(worktree.path) != asked
+		}
+	}
+
+	/// The same, asked of git.
+	public static func holder(
+		of branch: String, in root: URL, excluding asking: URL? = nil
+	) async -> GitWorktree? {
+		holder(of: branch, in: await list(in: root), excluding: asking)
+	}
+
 	/// The primary first, then most recently worked on first.
 	///
 	/// A list of checkouts in git's own order is a list in the order they were

@@ -865,6 +865,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let branch = options.checkoutBranch {
+			DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+				controller?.checkoutBranchForTesting(branch, pressing: options.pressOffer)
+			}
+		}
+
 		if let asked = options.copyLink {
 			// After the file is open and its document is real: a reference is
 			// about a tab, and there is none for the first second.
