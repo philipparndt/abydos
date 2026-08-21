@@ -7415,6 +7415,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			// one thing a screenshot of a tree several screens long cannot say.
 			case "roots":
 				print("TREE roots: \(navigator.rootsForTesting())")
+			case "session-menu":
+				print("TREE session-menu: \(navigator.sessionMenuForTesting())")
 			case "sessions-open": navigator.openSessionsForTesting(files: false)
 			case "sessions-open-all": navigator.openSessionsForTesting(files: true)
 			case "deps-open": navigator.openDependenciesForTesting(groups: false)

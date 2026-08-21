@@ -279,6 +279,22 @@ public enum AgentSessions {
 		return (bytes, files, newest)
 	}
 
+	/// What somebody would type to carry on a session.
+	///
+	/// **The one thing a session id is actually good for.** Claude Code resumes a
+	/// conversation by id, so the id nobody can memorise becomes a command
+	/// anybody can paste — which is what makes a row for a session from last
+	/// Tuesday worth more than the files under it.
+	///
+	/// Run in the project the session belongs to: the sessions of a directory are
+	/// keyed by that directory, and `--resume` looks for the id under the one it
+	/// is started in. No `cd` is put in front of it, because the terminal in this
+	/// app is already there and a paste with somebody else's path in it is a
+	/// paste to edit.
+	public static func resumeCommand(for session: AgentSession) -> String {
+		"claude --resume \(session.id)"
+	}
+
 	/// The first thing that was asked of a session, from the head of its
 	/// transcript.
 	///

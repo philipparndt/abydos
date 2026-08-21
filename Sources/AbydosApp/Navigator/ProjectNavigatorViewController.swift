@@ -894,6 +894,14 @@ final class ProjectNavigatorViewController: NSViewController {
 		// for the name, and nothing asks any more — the row appears in the tree
 		// with the name selected on it, which is what the Finder's "New Folder"
 		// does and why the Finder does not write an ellipsis on it either.
+		// A session's row, and only that: the id is unreadable and is exactly
+		// what `claude --resume` takes, so the row hands it over as a command.
+		// First in the menu, because for a session row it is the only item in it
+		// that means anything.
+		let resume = item("Copy Resume Command", #selector(contextCopyResumeCommand))
+		resumeItem = resume
+		menu.addItem(resume)
+
 		let new = NSMenuItem(title: "New", action: nil, keyEquivalent: "")
 		let kinds = NSMenu()
 		kinds.addItem(item("File", #selector(contextNewFile)))
@@ -1011,6 +1019,29 @@ final class ProjectNavigatorViewController: NSViewController {
 	private var contextNode: FileNode? {
 		let nodes = contextNodes
 		return nodes.count == 1 ? nodes.first : nil
+	}
+
+	/// The session row the menu was opened on, if it was opened on one.
+	/// The one item that belongs to a session row.
+	private weak var resumeItem: NSMenuItem?
+
+	private var contextSession: AgentSession? {
+		let row = outlineView.clickedRow >= 0 ? outlineView.clickedRow : outlineView.selectedRow
+		guard row >= 0 else { return nil }
+		return (outlineView.item(atRow: row) as? SessionNode)?.session
+	}
+
+	/// Copies what somebody would type to carry that session on.
+	///
+	/// **What a session id is for.** It is unreadable and unmemorable, and it is
+	/// exactly what `claude --resume` wants — so the row that could not be named
+	/// by its id hands the id over as a command instead.
+	@objc private func contextCopyResumeCommand() {
+		guard let session = contextSession else { return }
+		let command = AgentSessions.resumeCommand(for: session)
+		NSPasteboard.general.clearContents()
+		NSPasteboard.general.setString(command, forType: .string)
+		Toast.post("Copied", detail: command, kind: .information)
 	}
 
 	@objc private func contextOpen() {
@@ -2545,6 +2576,26 @@ final class ProjectNavigatorViewController: NSViewController {
 		outlineView.selectRowIndexes([row], byExtendingSelection: false)
 	}
 
+	/// What the context menu offers over a session's row, and what its one item
+	/// copies — for `session-menu`.
+	func sessionMenuForTesting() -> String {
+		guard let sessions, let first = sessions.childNodes.first else { return "no sessions" }
+		outlineView.expandItem(sessions)
+		let row = outlineView.row(forItem: first)
+		guard row >= 0 else { return "no row for the first session" }
+		outlineView.selectRowIndexes([row], byExtendingSelection: false)
+
+		// **The same reader the `menu` step uses**, and that is the point: the
+		// first version of this called `menu.update()` and read the items itself,
+		// which reported all seventeen file items as offered while the menu on
+		// screen showed one. `contextMenuTitlesForTesting` calls the delegate
+		// directly, so what it prints is what a right-click gets.
+		let offered = contextMenuTitlesForTesting()
+		contextCopyResumeCommand()
+		return "offers=[\(offered.joined(separator: ", "))] "
+			+ "copied=\(NSPasteboard.general.string(forType: .string) ?? "nothing")"
+	}
+
 	/// Opens the Claude Sessions root and brings it into view, which on a
 	/// repository of this size is several screens down.
 	func openSessionsForTesting(files: Bool) {
@@ -2961,8 +3012,22 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 		let nodes = contextNodes
 		let node = contextNode
 		let isRoot = node === rootNode
-
-		for item in menu.items {
+		// **A session row is not a file, so nothing else in this menu belongs
+		// over it.** Driven, and the first version offered every file item on a
+		// session's row — New, Rename, Open Externally, and *Move to Trash*,
+		// which reads as an offer to delete somebody's session. They do nothing,
+		// because each guards on a file being clicked, but a menu of seventeen
+		// items that do nothing is not a menu. One item, which is the only one
+		// that means anything there.
+		let session = contextSession
+		resumeItem?.isHidden = session == nil
+		if session != nil {
+			for item in menu.items where item !== resumeItem { item.isHidden = true }
+			return
+		}
+		for item in menu.items where item !== resumeItem {
+			// Put back whatever a session row hid on the way past.
+			item.isHidden = false
 			// The two items that are only a submenu, before anything looks at an
 			// action — because an item with a submenu does not have the action it
 			// was made with. AppKit replaces it with its own `submenuAction:` the

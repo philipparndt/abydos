@@ -425,3 +425,29 @@ struct AgentSessionCostTests {
 		#expect(labelling < 5)
 	}
 }
+
+/// The one thing a session id is good for.
+struct ResumeCommandTests {
+	@Test func theIdBecomesACommand() {
+		let session = AgentSession(
+			id: "8626c2da-c711-4f19-9012-c3a8c0177669",
+			directory: URL(fileURLWithPath: "/tmp/claude-501/-p/8626c2da"),
+			scratchpad: nil, tasks: nil, lastWrote: .distantPast,
+			bytes: 0, fileCount: 0, transcript: nil
+		)
+		#expect(AgentSessions.resumeCommand(for: session)
+			== "claude --resume 8626c2da-c711-4f19-9012-c3a8c0177669")
+	}
+
+	/// No `cd` in front of it: the terminal in this app is already in the
+	/// project, and a paste carrying somebody else's path is a paste to edit.
+	@Test func itIsTheCommandAndNothingElse() {
+		let session = AgentSession(
+			id: "abc", directory: URL(fileURLWithPath: "/tmp/x"), scratchpad: nil,
+			tasks: nil, lastWrote: .distantPast, bytes: 0, fileCount: 0, transcript: nil
+		)
+		let command = AgentSessions.resumeCommand(for: session)
+		#expect(!command.contains("cd "))
+		#expect(!command.contains("&&"))
+	}
+}
