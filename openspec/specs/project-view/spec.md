@@ -801,6 +801,14 @@ A file opened from inside one SHALL be revealed there, with the root and the
 folders above it opened and the file selected — the same reveal a package's file
 gets.
 
+**But the root and a session's row are not files, and SHALL NOT be offered a
+file's menu.** Reported twice: right-clicking a session row offered New, Rename,
+Open Externally and *Move to Trash* — which reads as an offer to delete somebody's
+session — and after that was fixed for session rows, the root still offered all of
+it, which is the row anybody tries first. Each of those two rows SHALL offer only
+what applies to it: the directory it stands for, and for a session, the command
+that carries that session on.
+
 #### Scenario: opening something a session left
 
 - **GIVEN** a session row holding a screenshot and a log

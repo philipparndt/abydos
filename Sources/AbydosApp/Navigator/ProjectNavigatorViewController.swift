@@ -901,6 +901,13 @@ final class ProjectNavigatorViewController: NSViewController {
 		let resume = item("Copy Resume Command", #selector(contextCopyResumeCommand))
 		resumeItem = resume
 		menu.addItem(resume)
+		// **And a way into the directory itself**, for both rows of that root.
+		// Reported: right-clicking `Claude Sessions` offered the whole file menu
+		// — New, Rename, *Move to Trash* — and nothing that applies to it. Its
+		// own two items are these, and the file menu is not one of them.
+		let revealSession = item("Reveal in Finder", #selector(contextRevealSessionInFinder))
+		revealSessionItem = revealSession
+		menu.addItem(revealSession)
 
 		let new = NSMenuItem(title: "New", action: nil, keyEquivalent: "")
 		let kinds = NSMenu()
@@ -1021,14 +1028,35 @@ final class ProjectNavigatorViewController: NSViewController {
 		return nodes.count == 1 ? nodes.first : nil
 	}
 
-	/// The session row the menu was opened on, if it was opened on one.
-	/// The one item that belongs to a session row.
+	/// The two items that belong to the sessions root and the rows under it.
 	private weak var resumeItem: NSMenuItem?
+	private weak var revealSessionItem: NSMenuItem?
 
-	private var contextSession: AgentSession? {
+	/// The row of the sessions root the menu was opened on — the root itself, or
+	/// one session — if it was opened on either.
+	private var contextSessionRow: SessionNode? {
 		let row = outlineView.clickedRow >= 0 ? outlineView.clickedRow : outlineView.selectedRow
 		guard row >= 0 else { return nil }
-		return (outlineView.item(atRow: row) as? SessionNode)?.session
+		return outlineView.item(atRow: row) as? SessionNode
+	}
+
+	/// The session row the menu was opened on, if it was opened on one. The
+	/// root is not one: it has no id, and no session to resume.
+	private var contextSession: AgentSession? { contextSessionRow?.session }
+
+	/// The directory a row of that root stands for: a session's own, or the one
+	/// every session of this project sits in.
+	private var contextSessionDirectory: URL? {
+		guard let row = contextSessionRow else { return nil }
+		if let session = row.session { return session.directory }
+		// The root: taken from one of its sessions rather than rebuilt from a
+		// slug nobody should have to spell twice.
+		return row.childNodes.first?.session?.directory.deletingLastPathComponent()
+	}
+
+	@objc private func contextRevealSessionInFinder() {
+		guard let directory = contextSessionDirectory else { return }
+		NSWorkspace.shared.activateFileViewerSelecting([directory])
 	}
 
 	/// Copies what somebody would type to carry that session on.
@@ -2576,6 +2604,52 @@ final class ProjectNavigatorViewController: NSViewController {
 		outlineView.selectRowIndexes([row], byExtendingSelection: false)
 	}
 
+	/// What a **real right-click** offers over each row of the sessions root.
+	///
+	/// Through `NSView.menu(for:)` with a synthetic right-click at the row's own
+	/// rectangle, which is the gesture rather than the delegate: the previous
+	/// check called `menuNeedsUpdate` directly with a row *selected*, and a
+	/// selected row and a clicked row are not the same thing.
+	func sessionRightClicksForTesting() -> String {
+		guard let sessions else { return "no sessions" }
+		outlineView.expandItem(sessions)
+
+		var said: [String] = []
+		for row in 0..<outlineView.numberOfRows {
+			guard let node = outlineView.item(atRow: row) as? SessionNode else { continue }
+			let rect = outlineView.rect(ofRow: row)
+			let inView = NSPoint(x: rect.midX, y: rect.midY)
+			guard let event = NSEvent.mouseEvent(
+				with: .rightMouseDown,
+				location: outlineView.convert(inView, to: nil),
+				modifierFlags: [], timestamp: 0,
+				windowNumber: outlineView.window?.windowNumber ?? 0,
+				context: nil, eventNumber: 0, clickCount: 1, pressure: 1
+			) else { continue }
+
+			let menu = outlineView.menu(for: event)
+			// **`update()` is not the delegate.** `NSMenu.update()` on a menu
+			// that is not on screen validates items and does not necessarily ask
+			// a delegate to rebuild — so the state read here is whatever was set
+			// last. The delegate is called directly beside it, which is what
+			// AppKit does before showing the menu.
+			menu?.update()
+			let beforeDelegate = (menu?.items ?? []).filter { !$0.isHidden }.map(\.title)
+			if let menu { menuNeedsUpdate(menu) }
+			let offered = (menu?.items ?? []).filter { !$0.isHidden }.map(\.title)
+			_ = beforeDelegate
+			let kind: String
+			switch node.row {
+			case .section: kind = "root"
+			case .session: kind = "session"
+			}
+			said.append("\(kind)@\(row) clicked=\(outlineView.clickedRow) "
+				+ "session=\(contextSession?.id.prefix(8) ?? "nil") "
+				+ "offers=[\(offered.joined(separator: ", "))]")
+		}
+		return said.joined(separator: "\n    ")
+	}
+
 	/// What the context menu offers over a session's row, and what its one item
 	/// copies — for `session-menu`.
 	func sessionMenuForTesting() -> String {
@@ -3019,13 +3093,19 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 		// because each guards on a file being clicked, but a menu of seventeen
 		// items that do nothing is not a menu. One item, which is the only one
 		// that means anything there.
-		let session = contextSession
-		resumeItem?.isHidden = session == nil
-		if session != nil {
-			for item in menu.items where item !== resumeItem { item.isHidden = true }
+		// Reported again after the first attempt: right-clicking **the root** —
+		// which is the row anybody would try — still offered the whole file
+		// menu, because only a *session* row was being told apart. The root is
+		// not a file either.
+		resumeItem?.isHidden = contextSession == nil
+		revealSessionItem?.isHidden = contextSessionDirectory == nil
+		if contextSessionRow != nil {
+			for item in menu.items where item !== resumeItem && item !== revealSessionItem {
+				item.isHidden = true
+			}
 			return
 		}
-		for item in menu.items where item !== resumeItem {
+		for item in menu.items where item !== resumeItem && item !== revealSessionItem {
 			// Put back whatever a session row hid on the way past.
 			item.isHidden = false
 			// The two items that are only a submenu, before anything looks at an
