@@ -34,6 +34,61 @@ An agent once created five public Docker Hub repositories that nobody asked for.
 Nothing here needs to reach anybody else's machine to be finished, and a commit
 somebody can read is the deliverable.
 
+**Deleting a merged branch from `origin` is the one exception**, and only when
+somebody asks for it. What the rule guards against is something *arriving* where
+others can see it — a repository, a package, a commit nobody reviewed. A branch
+whose every commit is already in `origin/main` puts nothing there that is not
+there twice over, and the delete is undone by pushing the ref back.
+
+Prove it, per branch, and not from the listing alone:
+
+    git merge-base --is-ancestor <branch> origin/main
+
+`git branch -r --merged origin/main` gathers the candidates; the check above is
+what makes each one true. Write the SHAs to a file before the delete, so a branch
+can be put back by name and not by memory. Anything that check does not cover is
+still under the rule.
+
+Locally, `git branch -d` will refuse a branch that is merged to `main` while
+sitting ahead of its own stale upstream ref — it says "not fully merged" and
+means "your `origin/<branch>` is behind". That is the remote ref being old, not
+work being lost. `--is-ancestor` against `main` is the question worth asking, and
+`-D` follows from its answer.
+
+## Collect the worktrees git cannot see
+
+`git worktree prune` collects only what is *registered*, and a worktree whose
+repository was renamed or moved is registered nowhere: the record lived in the
+old `.git/worktrees`, and it went with it. `git worktree list` never mentions the
+directory, no prune will ever reach it, and it simply sits there.
+
+One sat under `.claude/worktrees` for two weeks — 4.9 GB of checkout and build
+output, pointing at a `/Users/philipparndt/dev/ideai/.git` that stopped existing
+when this repository became `abydos` — on a disk at 99% full.
+
+So look at the directories, not at the registration:
+
+    ls -d .claude/worktrees/*/
+    git worktree list --porcelain
+
+A directory the second does not name is orphaned. Its `.git` file names the
+repository it still wants; if that path is gone, nothing will collect it but you.
+
+Ask what is in it before you delete it — which git will not tell you, having
+refused to open it. Lend it an index and ask against the tip it was left on:
+
+    export GIT_DIR=$PWD/.git GIT_WORK_TREE=<dir> GIT_INDEX_FILE=<scratch>/probe.index
+    git read-tree <tip>
+    git diff --stat                              # changes against that tip
+    git status --short --untracked-files=normal  # anything never committed
+
+Silence from both, and a tip that `--is-ancestor` puts in `main`, means the
+directory is build output wrapped around a commit you already have.
+
+A *registered* worktree fails differently: it can be locked by a session that
+died, and the lock names the pid that took it, long since gone. `prune` skips a
+locked worktree and does not say so. `git worktree unlock <path>`, then prune.
+
 ## Never `make install`
 
 `make install` replaces the app in `/Applications` — the one somebody is using
