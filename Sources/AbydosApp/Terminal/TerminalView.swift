@@ -2320,6 +2320,20 @@ final class TerminalView: NSView, NSTextInputClient {
 	private func encode(event: NSEvent) -> String? {
 		let flags = event.modifierFlags
 
+		// Shift+Tab, ahead of the protocols rather than through them. `CSI Z` is
+		// what the advertised terminfo promises for `kcbt` and what both
+		// protocols' legacy tables give; `TerminalKeys.backtabSequence` has the
+		// argument and what the bare tab this used to send cost.
+		if let backtab = TerminalKeys.backtabSequence(
+			keyCode: event.keyCode,
+			shift: flags.contains(.shift),
+			control: flags.contains(.control),
+			option: flags.contains(.option),
+			command: flags.contains(.command)
+		) {
+			return backtab
+		}
+
 		// A program that asked to be told which key was pressed, rather than
 		// which byte it maps to, gets that first: Shift+Enter and Enter are one
 		// byte apart otherwise, and no program can tell them apart.

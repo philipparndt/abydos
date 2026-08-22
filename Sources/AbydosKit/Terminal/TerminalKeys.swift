@@ -75,6 +75,40 @@ public enum TerminalKeys {
 		}
 	}
 
+	/// What Shift+Tab sends: `CSI Z`, and nil for anything else.
+	///
+	/// **The terminfo this app advertises promises it.** `PseudoTerminal` sets
+	/// `TERM=xterm-256color`, whose entry declares `kcbt=\E[Z`, so a program that
+	/// looked up "back tab" — which is how every curses program and every line
+	/// editor asks — is waiting for exactly those three bytes.
+	///
+	/// Without this the key sent a bare tab. Not a wrong sequence but the *same*
+	/// one Tab sends, so no program could tell the two apart: an agent's
+	/// shift-tab mode toggle, a form stepping to the previous field and
+	/// readline's `menu-complete-backward` all either went forwards or did
+	/// nothing, and none of them had a way to notice.
+	///
+	/// Answered ahead of both modified-key protocols on purpose. Kitty's own
+	/// legacy table gives Shift+Tab as `CSI Z` under the disambiguate flag —
+	/// which is the only flag implemented here — so this is the right answer
+	/// under either protocol as well as under neither, and `ESC [ 9 ; 2 u` was
+	/// the wrong one in all three states.
+	///
+	/// Only Shift. ⌃⇥ and ⌥⇥ belong to the window and the app, and a terminal
+	/// that swallowed them would take away switching panes and windows.
+	public static func backtabSequence(
+		keyCode: UInt16,
+		shift: Bool,
+		control: Bool,
+		option: Bool,
+		command: Bool
+	) -> String? {
+		guard keyCode == Key.tab.rawValue,
+		      shift, !control, !option, !command
+		else { return nil }
+		return "\u{1B}[Z"
+	}
+
 	/// What a modified navigation key sends, or nil when the key has no special
 	/// meaning with that modifier.
 	///
