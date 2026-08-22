@@ -56,7 +56,10 @@ struct AgentSessionSlugTests {
 /// The sessions of a project, read off a tree this test makes.
 struct AgentSessionReadingTests {
 	/// A `/tmp` and a `~` of the test's own, so nothing reads the machine's.
-	private struct Machine {
+	///
+	/// `fileprivate` rather than private: the liveness suite below builds the
+	/// same tree and there is no second right way to spell one.
+	fileprivate struct Machine {
 		let root: URL
 		let temporary: URL
 		let home: URL
@@ -108,10 +111,41 @@ struct AgentSessionReadingTests {
 			return directory
 		}
 
-		func sessions() -> [AgentSession] {
+		func sessions(
+			running: Set<String> = [],
+			readingTranscripts: Bool = true,
+			now: Date = Date()
+		) -> [AgentSession] {
 			AgentSessions.sessions(
-				of: project, uid: uid, temporaryDirectory: temporary, home: home
+				of: project, running: running, readingTranscripts: readingTranscripts,
+				uid: uid, temporaryDirectory: temporary, home: home, now: now
 			)
+		}
+
+		/// A session that has started and written nothing — a scratch directory
+		/// with an empty `scratchpad` in it, and a transcript being written.
+		/// What Claude Code leaves after one question, which is the case the
+		/// tree could not see.
+		@discardableResult
+		func startedSession(_ id: String, asked: String, transcriptWritten: Date? = nil) throws -> URL {
+			let directory = temporary
+				.appendingPathComponent("claude-\(uid)/\(slug)/\(id)", isDirectory: true)
+			try FileManager.default.createDirectory(
+				at: directory.appendingPathComponent("scratchpad"), withIntermediateDirectories: true
+			)
+			let transcript = home.appendingPathComponent(".claude/projects/\(slug)/\(id).jsonl")
+			try FileManager.default.createDirectory(
+				at: transcript.deletingLastPathComponent(), withIntermediateDirectories: true
+			)
+			let record: [String: Any] = ["type": "user", "message": ["role": "user", "content": asked]]
+			let line = String(decoding: try! JSONSerialization.data(withJSONObject: record), as: UTF8.self)
+			try (line + "\n").write(to: transcript, atomically: true, encoding: .utf8)
+			if let transcriptWritten {
+				try FileManager.default.setAttributes(
+					[.modificationDate: transcriptWritten], ofItemAtPath: transcript.path
+				)
+			}
+			return directory
 		}
 
 		func clean() { try? FileManager.default.removeItem(at: root) }
@@ -308,6 +342,228 @@ struct AgentSessionReadingTests {
 	}
 }
 
+/// A session that is running, which is the one keyed on files could not see.
+struct AgentSessionLivenessTests {
+	private typealias Machine = AgentSessionReadingTests.Machine
+
+	/// The reported fault, as a test: a terminal opened in an empty project, one
+	/// question asked, and nothing in the tree.
+	@Test func aSessionThatHasWrittenNothingStillHasARow() throws {
+		let machine = try Machine()
+		defer { machine.clean() }
+		try machine.startedSession("live-1", asked: "why is there no row for this")
+
+		let sessions = machine.sessions()
+		#expect(sessions.map(\.id) == ["live-1"])
+		let session = try #require(sessions.first)
+		#expect(session.hasAnything == false)
+		#expect(session.worthARow)
+		#expect(session.liveness == .active)
+		// Measuring it finds nothing and does not take the row away.
+		#expect(AgentSessions.measured(session).worthARow)
+	}
+
+	/// The old rule, which is still the rule for everything that is not live.
+	@Test func aSessionThatWroteNothingAndIsNotLiveHasNoRow() throws {
+		let machine = try Machine()
+		defer { machine.clean() }
+		let hours = Date().addingTimeInterval(-6 * 3600)
+		try machine.startedSession("cold-1", asked: "yesterday's work", transcriptWritten: hours)
+
+		#expect(machine.sessions().isEmpty)
+	}
+
+	/// **Fourteen transcripts against two scratch directories** is what this
+	/// project has, and keying rows on the transcript would have made twelve of
+	/// them rows leading to a directory `/tmp` cleared on reboot.
+	@Test func aTranscriptOnItsOwnIsNotARow() throws {
+		let machine = try Machine()
+		defer { machine.clean() }
+		let week = Date().addingTimeInterval(-7 * 24 * 3600)
+		for index in 1...12 {
+			try machine.startedSession("gone-\(index)", asked: "long over", transcriptWritten: week)
+		}
+		try machine.session("kept", files: ["a.txt": "still here"])
+
+		#expect(machine.sessions().map(\.id) == ["kept"])
+	}
+
+	/// The hook is the only thing that says *running*, and it says it about a
+	/// session with no transcript at all.
+	@Test func theHookSaysRunningWhereATimestampCannot() throws {
+		let machine = try Machine()
+		defer { machine.clean() }
+		try FileManager.default.createDirectory(
+			at: machine.temporary.appendingPathComponent(
+				"claude-501/\(machine.slug)/hooked/scratchpad", isDirectory: true
+			),
+			withIntermediateDirectories: true
+		)
+
+		#expect(machine.sessions().isEmpty)
+		let sessions = machine.sessions(running: ["hooked"])
+		#expect(sessions.map(\.id) == ["hooked"])
+		#expect(sessions.first?.liveness == .running)
+	}
+
+	/// **Found by driving the app**, which is what watching it is for: a project
+	/// with no scratch root at all had a running session the register knew the id
+	/// of, and nothing ever asked about it — the ids came from the directories on
+	/// disk, and there were none. The fix's own first version then produced a
+	/// phantom, which `goingOnRunningIsNotAChangeOnDisk` caught: a project spelled
+	/// two ways had the id added under both, and the spelling with no directory
+	/// shadowed the real session.
+	@Test func aRunningSessionWithNoDirectoryAnywhereStillHasARow() throws {
+		let machine = try Machine()
+		defer { machine.clean() }
+
+		let sessions = machine.sessions(running: ["never-wrote-anything"])
+		#expect(sessions.map(\.id) == ["never-wrote-anything"])
+		#expect(sessions.first?.liveness == .running)
+		#expect(sessions.first?.scratchpad == nil)
+		#expect(sessions.first?.transcript == nil)
+	}
+
+	/// And the same on a driven run, where the register is the only thing left
+	/// that can speak: `--claude-running` is how a picture of this row is taken.
+	@Test func aDrivenRunStillShowsWhatTheRunItselfSaid() throws {
+		let machine = try Machine()
+		defer { machine.clean() }
+
+		let sessions = machine.sessions(running: ["said-by-the-run"], readingTranscripts: false)
+		#expect(sessions.map(\.id) == ["said-by-the-run"])
+		#expect(sessions.first?.liveness == .running)
+	}
+
+	/// A live session is the one somebody came to the tree to find, so it is not
+	/// buried under a fortnight of finished work by a clock it has not touched.
+	@Test func theLiveOneComesFirst() throws {
+		let machine = try Machine()
+		defer { machine.clean() }
+		try machine.session("wrote-a-lot", files: ["a.txt": "one"])
+		try machine.startedSession("just-started", asked: "and this one is running")
+		// The finished session's files are newer than anything the live one has.
+		try FileManager.default.setAttributes(
+			[.modificationDate: Date().addingTimeInterval(60)],
+			ofItemAtPath: machine.temporary
+				.appendingPathComponent("claude-501/\(machine.slug)/wrote-a-lot/scratchpad/a.txt").path
+		)
+
+		#expect(machine.sessions().map(\.id) == ["just-started", "wrote-a-lot"])
+	}
+
+	/// **0451, by a different door.** A capture must not vary with who happens to
+	/// be working on the machine, so both readings are declined together: a run
+	/// that ignored the hook and still read transcript times would have moved the
+	/// fault rather than answered it.
+	@Test func aDrivenRunSeesNoLiveness() throws {
+		let machine = try Machine()
+		defer { machine.clean() }
+		try machine.startedSession("live-1", asked: "working away")
+		try machine.session("kept", files: ["a.txt": "left behind"])
+
+		// Nothing the run did not name: the hook is never subscribed to on such
+		// a run, so the register is empty, and the transcript times are declined
+		// here.
+		let driven = machine.sessions(readingTranscripts: false)
+		#expect(driven.map(\.id) == ["kept"])
+		#expect(driven.allSatisfy { $0.liveness == .finished })
+		// And the same read with the transcripts noticed differs, or the test
+		// above proves nothing about the flag.
+		#expect(machine.sessions().map(\.id) == ["live-1", "kept"])
+	}
+
+	/// Counting files says nothing about whether anybody is still working.
+	@Test func measuringDoesNotForgetThatSomethingIsRunning() throws {
+		let machine = try Machine()
+		defer { machine.clean() }
+		try machine.session("busy", files: ["a.txt": "one"])
+
+		let session = try #require(machine.sessions(running: ["busy"]).first)
+		#expect(AgentSessions.measured(session).liveness == .running)
+	}
+
+	/// The question the tree asks before it walks six thousand files: a session
+	/// that has merely gone on running has moved no file of its own.
+	@Test func goingOnRunningIsNotAChangeOnDisk() throws {
+		let machine = try Machine()
+		defer { machine.clean() }
+		try machine.session("busy", files: ["a.txt": "one"])
+
+		let before = try #require(machine.sessions().first)
+		let after = try #require(machine.sessions(running: ["busy"]).first)
+		#expect(after.liveness != before.liveness)
+		#expect(after.unchangedOnDisk(from: before))
+	}
+}
+
+/// Which sessions become rows, once the walk has counted them.
+///
+/// The tree asks this after measuring, where the cheap read's permissive answer
+/// can turn out to be wrong — and it is where a live session has to survive
+/// having been counted at nothing.
+struct AgentSessionRowTests {
+	private func session(
+		_ id: String, files: Int, liveness: AgentSession.Liveness = .finished, wrote: Date = Date()
+	) -> AgentSession {
+		AgentSession(
+			id: id, hasAnything: files > 0,
+			directory: URL(fileURLWithPath: "/tmp/claude-501/-p/\(id)"),
+			scratchpad: URL(fileURLWithPath: "/tmp/claude-501/-p/\(id)/scratchpad"),
+			tasks: nil, lastWrote: wrote, bytes: Int64(files), fileCount: files,
+			isMeasured: true, liveness: liveness, transcript: nil
+		)
+	}
+
+	@Test func aMeasuredSessionWithNothingInItLosesItsRow() {
+		let rows = AgentSessions.rows(from: [session("empty", files: 0)])
+		#expect(rows.isEmpty)
+	}
+
+	/// The same session, running: the walk found nothing because there is
+	/// nothing to find yet, not because there is nothing there.
+	@Test func aLiveOneKeepsItsRowHavingBeenCountedAtNothing() {
+		let rows = AgentSessions.rows(from: [session("empty", files: 0, liveness: .running)])
+		#expect(rows.map(\.id) == ["empty"])
+	}
+
+	@Test func anActiveOneKeepsItToo() {
+		let rows = AgentSessions.rows(from: [session("empty", files: 0, liveness: .active)])
+		#expect(rows.map(\.id) == ["empty"])
+	}
+
+	@Test func theLiveOneLeadsWhateverTheClockSays() {
+		let now = Date()
+		let rows = AgentSessions.rows(from: [
+			session("newest-files", files: 9, wrote: now),
+			session("running", files: 0, liveness: .running, wrote: now.addingTimeInterval(-9999)),
+			session("older-files", files: 3, wrote: now.addingTimeInterval(-60)),
+		])
+		#expect(rows.map(\.id) == ["running", "newest-files", "older-files"])
+	}
+
+	/// An unmeasured session is taken at its word, because the walk that would
+	/// contradict it has not happened and the rows are wanted before it does.
+	@Test func anUnmeasuredSessionIsTakenAtItsWord() {
+		let unmeasured = AgentSession(
+			id: "not-yet", hasAnything: true,
+			directory: URL(fileURLWithPath: "/tmp/x"), scratchpad: nil, tasks: nil,
+			lastWrote: Date(), bytes: 0, fileCount: 0, isMeasured: false, transcript: nil
+		)
+		#expect(AgentSessions.rows(from: [unmeasured]).map(\.id) == ["not-yet"])
+	}
+
+	/// And one that left nothing and is not live is not a row at any stage.
+	@Test func nothingAndNotLiveIsNeverARow() {
+		let nothing = AgentSession(
+			id: "gone", hasAnything: false,
+			directory: URL(fileURLWithPath: "/tmp/x"), scratchpad: nil, tasks: nil,
+			lastWrote: Date(), bytes: 0, fileCount: 0, isMeasured: false, transcript: nil
+		)
+		#expect(AgentSessions.rows(from: [nothing]).isEmpty)
+	}
+}
+
 /// The real directories on this machine, when there are any.
 ///
 /// **Another program's layout is not a contract**, and a suite that only reads
@@ -326,10 +582,23 @@ struct AgentSessionLiveTests {
 				+ "\(session.bytes / 1024) KiB — \(asked ?? "(nothing asked)")")
 		}
 
-		// Every one of them has something, because one without is not listed.
-		#expect(sessions.allSatisfy { $0.hasAnything })
-		// And they are in order.
-		#expect(sessions == sessions.sorted { $0.lastWrote > $1.lastWrote })
+		// Every one of them is worth a row: it left something, or it is live.
+		// **Not `hasAnything` any more** — the session running this suite has an
+		// empty scratch directory until something in it needs a temporary file,
+		// and it is exactly the row that used to be missing.
+		#expect(sessions.allSatisfy { $0.worthARow })
+		// And they are in order: live first, then by when they last wrote.
+		#expect(sessions == sessions.sorted {
+			$0.isLive == $1.isLive ? $0.lastWrote > $1.lastWrote : $0.isLive
+		})
+
+		// Nothing is called `running` off a timestamp. Only the hook says that,
+		// and nothing here passed it one.
+		#expect(sessions.allSatisfy { $0.liveness != .running })
+
+		// And the old rule, asked for explicitly, still answers as it did.
+		let filesOnly = AgentSessions.sessions(of: project, readingTranscripts: false)
+		#expect(filesOnly.allSatisfy { $0.hasAnything })
 	}
 }
 
@@ -416,7 +685,21 @@ struct AgentSessionCostTests {
 		print("  " + MachineLoad.said)
 		// **The claim: the read is the cheap one.** What used to be one number
 		// is now two, and only the first is on the path that opens a project.
-		#expect(read < walked)
+		//
+		// **Asked only where there is something to walk**, which is not always.
+		// `/tmp` is cleared on reboot, so this machine can hold two sessions and
+		// fifteen files between them — and then both halves are a millisecond of
+		// noise and the comparison says nothing about either. It was asserted
+		// unconditionally and went red on exactly that: 3 ms against 1 ms, with
+		// nothing wrong. The number that motivated the split was 6,920 files and
+		// 127 ms, so a thousand is a fair line for "there is a walk here at all".
+		if files >= 1000 {
+			#expect(read < walked)
+		} else {
+			print("  SESSIONS cost: not comparing the halves — only \(files) files "
+				+ "to walk, which is less than either measurement's noise. "
+				+ MachineLoad.said)
+		}
 
 		// A bound rather than a budget: what this must not be is *seconds*, and
 		// `Stopwatch` is the thing that decides whether a tighter one may be

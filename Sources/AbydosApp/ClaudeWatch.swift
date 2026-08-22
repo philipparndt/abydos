@@ -14,6 +14,10 @@ final class ClaudeWatch {
 	/// Where to put a message about a given tmux session.
 	var windows: () -> [MainWindowController] = { [] }
 
+	/// What to do when the sessions of a project changed — a slug, because that
+	/// is the only name a hook event carries a project by.
+	var sessionsChanged: (String) -> Void = { _ in }
+
 	private var observer: (any NSObjectProtocol)?
 
 	/// Whether news from elsewhere on the machine belongs in this run.
@@ -73,6 +77,16 @@ final class ClaudeWatch {
 	}
 
 	func handle(_ payload: [String: String]) {
+		// **Before the early return below, and that is the whole of the fix.**
+		// A session that has started and written nothing announces nothing worth
+		// a toast — `SessionStart` never has a line — so the one event that says
+		// a session now exists was being dropped one line further down. The
+		// register takes every event; only some of them ask for a redraw, and
+		// `note` is what decides which.
+		if let slug = RunningSessions.shared.note(payload) {
+			sessionsChanged(slug)
+		}
+
 		guard let line = payload["announce"], !line.isEmpty else { return }
 
 		let session = payload["tmuxSession"]

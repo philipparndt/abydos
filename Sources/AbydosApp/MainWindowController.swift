@@ -378,6 +378,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	}
 
 	/// Brings a tmux window forward, as clicking its tab would.
+	/// A hook event said something about the sessions of some project. The
+	/// navigator decides whether it was the one this window is showing.
+	func claudeSessionsChanged(slug: String) {
+		navigator.claudeSessionsChanged(slug: slug)
+	}
+
 	func revealTmuxWindow(_ index: Int) {
 		window?.makeKeyAndOrderFront(nil)
 		NSApp.activate(ignoringOtherApps: true)

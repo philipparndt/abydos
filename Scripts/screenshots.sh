@@ -18,6 +18,12 @@
 # over the bottom right corner (0451). A shot that wants a toast in it still
 # asks for one, with `--toast`.
 #
+# The same for the `Claude Sessions` root, which would otherwise put whoever is
+# working on the machine into a picture of the tree: a capture reads no
+# transcript times and never hears the hook, so a shot that wants a session
+# running in it asks with `--claude-running <id>`, or `<id>@<seconds>` to have
+# it start while the window is open.
+#
 #   make screenshots                      # all of them
 #   make screenshots SHOT=debugger        # one
 #   make screenshots EXAMPLES=~/dev/x     # from somewhere else

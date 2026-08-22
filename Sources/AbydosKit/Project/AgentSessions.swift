@@ -44,6 +44,59 @@ public struct AgentSession: Equatable, Sendable {
 	/// writing this one produced twenty megabytes of it.
 	public let transcript: URL?
 
+	/// How live a session is, and — which is the point of having three cases
+	/// rather than a flag — how well that is known.
+	public enum Liveness: String, Sendable {
+		/// Nothing has been heard of it. A session that finished, or one whose
+		/// last word was long enough ago that nothing here will claim otherwise.
+		case finished
+		/// Its transcript was written a moment ago. **A proxy, and said as
+		/// one**: the transcript is what a session writes on every message, so a
+		/// recent one means somebody was working — but an idle session writes
+		/// nothing, and a crashed one stops writing exactly as a finished one
+		/// does. A row on this evidence says when it last wrote, never that it
+		/// is running.
+		case active
+		/// The hook said so, which is the only thing that can. `SessionStart`
+		/// and `SessionEnd` bracket a session exactly and nothing is inferred.
+		case running
+	}
+
+	/// Whether anything is still happening in it, by either reading.
+	public let liveness: Liveness
+
+	public var isLive: Bool { liveness != .finished }
+
+	/// Whether nothing about this session's own files has moved since that
+	/// reading of it.
+	///
+	/// What the tree asks before deciding to walk a scratchpad again. Liveness is
+	/// not part of it on purpose: a session that has merely gone on running has
+	/// changed no file, and re-counting 6,920 of them to find that out is the
+	/// cost this question exists to avoid.
+	public func unchangedOnDisk(from other: AgentSession) -> Bool {
+		hasAnything == other.hasAnything && lastWrote == other.lastWrote
+	}
+
+	/// The same session, said to be as live as this.
+	public func saying(_ liveness: Liveness) -> AgentSession {
+		AgentSession(
+			id: id, hasAnything: hasAnything, directory: directory, scratchpad: scratchpad,
+			tasks: tasks, lastWrote: lastWrote, bytes: bytes, fileCount: fileCount,
+			isMeasured: isMeasured, liveness: liveness, transcript: transcript
+		)
+	}
+
+	/// Whether it gets a row: it left files, **or** it is live.
+	///
+	/// The second half is what a session somebody has just started has and
+	/// nothing else does. Claude Code makes the scratch directory when a session
+	/// starts and writes into it only when a tool needs a temporary file, so a
+	/// session that has been asked one question has an empty directory — seven
+	/// of the eleven on this machine hold nothing at all, and one of them was the
+	/// session that reported this.
+	public var worthARow: Bool { hasAnything || isLive }
+
 	public init(
 		id: String,
 		hasAnything: Bool = true,
@@ -54,6 +107,7 @@ public struct AgentSession: Equatable, Sendable {
 		bytes: Int64,
 		fileCount: Int,
 		isMeasured: Bool = true,
+		liveness: Liveness = .finished,
 		transcript: URL?
 	) {
 		self.id = id
@@ -65,6 +119,7 @@ public struct AgentSession: Equatable, Sendable {
 		self.bytes = bytes
 		self.fileCount = fileCount
 		self.isMeasured = isMeasured
+		self.liveness = liveness
 		self.transcript = transcript
 	}
 
@@ -125,39 +180,148 @@ public enum AgentSessions {
 		home.appendingPathComponent(".claude/projects", isDirectory: true)
 	}
 
-	/// The sessions that left something behind for this project, newest first.
+	/// How recently a transcript must have been written for its session to count
+	/// as *active*, where there was no hook event to hear.
 	///
-	/// Nothing is run and nothing is written. A session that left no files is
-	/// not in the list at all — `/tmp` is cleared on reboot, so a row for one
-	/// whose files are gone would lead nowhere.
+	/// **Short on purpose, because the hook covers everything longer.** A
+	/// transcript is written on every message, so any window at all is a guess
+	/// about how long somebody stares at a prompt before answering it — and the
+	/// guess only ever has to survive until the next hook event, which arrives
+	/// the moment they do. Five minutes is long enough to read a diff and go and
+	/// fetch a coffee, and short enough that yesterday's finished sessions never
+	/// come back as rows leading to directories `/tmp` cleared on reboot.
+	public static let activeWithin: TimeInterval = 5 * 60
+
+	/// The sessions of this project worth a row, newest first.
+	///
+	/// Nothing is run and nothing is written. A session that left no files and is
+	/// not live is not in the list at all — `/tmp` is cleared on reboot, so a row
+	/// for one whose files are gone would lead nowhere.
+	///
+	/// `running` is what the register was told, and `readingTranscripts` is false
+	/// on a driven run. **Two knobs and not one**: what a driven run must decline
+	/// is news from *outside* the run, which is the hook (never subscribed to on
+	/// such a run) and the transcript times (declined here). A session the run
+	/// itself named on the command line is not outside news — it is the run
+	/// filling in the thing it means to photograph, exactly as `--toast` does for
+	/// the corner, and without it this feature could not be looked at at all.
 	public static func sessions(
 		of project: URL,
+		running: Set<String> = [],
+		readingTranscripts: Bool = true,
 		uid: uid_t = getuid(),
 		temporaryDirectory: URL = URL(fileURLWithPath: "/tmp"),
-		home: URL = FileManager.default.homeDirectoryForCurrentUser
+		home: URL = FileManager.default.homeDirectoryForCurrentUser,
+		now: Date = Date()
 	) -> [AgentSession] {
 		let manager = FileManager.default
 		let base = root(uid: uid, temporaryDirectory: temporaryDirectory)
 
 		var found: [AgentSession] = []
 		var seen: Set<String> = []
-		for name in slugs(of: project) {
+		let names = slugs(of: project)
+		for name in names {
 			let directory = base.appendingPathComponent(name, isDirectory: true)
-			guard let ids = try? manager.contentsOfDirectory(atPath: directory.path) else { continue }
 			let transcripts = transcriptRoot(home: home).appendingPathComponent(name, isDirectory: true)
+			// **One listing of the transcripts, with their times fetched in
+			// it.** This used to be a `fileExists` per session, and liveness
+			// wants the modification time as well — so asking for both in the
+			// listing that has to happen anyway is cheaper than what it
+			// replaces, rather than one stat per session more expensive.
+			let written = transcriptTimes(in: transcripts)
+			// **The ids of both, not of the scratch root alone.** A session that
+			// has started and written nothing may have no directory under `/tmp`
+			// yet and still have a transcript being written every few seconds.
+			var ids = Set((try? manager.contentsOfDirectory(atPath: directory.path)) ?? [])
+			if readingTranscripts { ids.formUnion(written.keys) }
 			for id in ids where !id.hasPrefix(".") {
 				guard seen.insert(id).inserted else { continue }
 				let session = read(
 					id: id,
 					in: directory.appendingPathComponent(id, isDirectory: true),
-					transcripts: transcripts
+					transcript: transcripts.appendingPathComponent("\(id).jsonl"),
+					transcriptWritten: written[id],
+					running: running.contains(id),
+					readingTranscripts: readingTranscripts,
+					now: now
 				)
-				if session.hasAnything { found.append(session) }
+				found.append(session)
 			}
 		}
-		// Newest first: which session this was is remembered by when, far more
-		// often than by name.
-		return found.sorted { $0.lastWrote > $1.lastWrote }
+		// And any session the register named that neither spelling's directories
+		// mention at all: it has started and written nothing anywhere, so nothing
+		// on disk knows about it and only the hook does.
+		//
+		// **After the loop and not inside it**, which is how it was written
+		// first — and driving the app found what that costs. A project spelled
+		// two ways got the id added under *both*, so the spelling whose directory
+		// does not exist produced a phantom session with no files and a date of
+		// `distantPast`, and `seen` let it shadow the real one.
+		if let name = names.first {
+			let directory = base.appendingPathComponent(name, isDirectory: true)
+			let transcripts = transcriptRoot(home: home).appendingPathComponent(name, isDirectory: true)
+			for id in running.sorted() where seen.insert(id).inserted {
+				found.append(read(
+					id: id,
+					in: directory.appendingPathComponent(id, isDirectory: true),
+					transcript: transcripts.appendingPathComponent("\(id).jsonl"),
+					transcriptWritten: nil,
+					running: true,
+					readingTranscripts: readingTranscripts,
+					now: now
+				))
+			}
+		}
+
+		return rows(from: found)
+	}
+
+	/// Which of these get rows, and in what order.
+	///
+	/// **Asked twice and answered here once**: the cheap read asks it, and the
+	/// tree asks it again after the walk, when the answer can differ. The cheap
+	/// read is permissive on purpose — it asks whether there is an *entry*, not
+	/// whether there is a file, because the difference costs a walk — so a
+	/// session can arrive holding nothing but an empty directory and lose its row
+	/// once that is known. **Unless it is live**, which is the whole of this
+	/// change: a session running now has nothing under it precisely because
+	/// nobody has asked it to write anything yet.
+	///
+	/// Newest first: which session this was is remembered by when, far more often
+	/// than by name. **A live one before all of them**, whatever the clock says
+	/// about its files — the session running now is the one somebody came to the
+	/// tree to find, and sorting it by a scratchpad it has not written to yet
+	/// would bury it under a fortnight of finished work. Sorted here rather than
+	/// only where they were read, because the walk sharpens every session's time:
+	/// a scratchpad of week-old files in a directory made this morning is a week
+	/// old, so the order it produces is not the order the cheap read produced.
+	public static func rows(from sessions: [AgentSession]) -> [AgentSession] {
+		sessions
+			.filter { $0.worthARow && (!$0.isMeasured || $0.fileCount > 0 || $0.isLive) }
+			.sorted { $0.isLive == $1.isLive ? $0.lastWrote > $1.lastWrote : $0.isLive }
+	}
+
+	/// Every transcript in a project's directory and when it was last written,
+	/// in one listing.
+	///
+	/// The names are the session ids, which is what makes a scratch directory
+	/// and a conversation pairable, and the time is the only evidence there is
+	/// that a session was working when nobody heard from the hook.
+	private static func transcriptTimes(in directory: URL) -> [String: Date] {
+		let keys: [URLResourceKey] = [.contentModificationDateKey]
+		guard let entries = try? FileManager.default.contentsOfDirectory(
+			at: directory, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles]
+		) else { return [:] }
+
+		var times: [String: Date] = [:]
+		for url in entries where url.pathExtension == "jsonl" {
+			// Prefetched by the listing above, so this is a dictionary lookup
+			// rather than a stat.
+			guard let time = (try? url.resourceValues(forKeys: Set(keys)))?.contentModificationDate
+			else { continue }
+			times[url.deletingPathExtension().lastPathComponent] = time
+		}
+		return times
 	}
 
 	/// One session, without walking anything.
@@ -165,7 +329,26 @@ public enum AgentSessions {
 	/// Three stats and at most two shallow listings: whether the directories are
 	/// there, when they last changed, and whether there is an entry in them.
 	/// What is *in* them is `measure(_:)`'s question, asked later and elsewhere.
-	private static func read(id: String, in directory: URL, transcripts: URL) -> AgentSession {
+	///
+	/// **Liveness is read from the transcript's modification time**, handed in
+	/// by the one listing that finds every transcript at once. The hook's
+	/// answer, where there is one, wins — it is a fact where this is a proxy.
+	///
+	/// **`readingTranscripts` is false on a driven run.** A capture must not show
+	/// somebody else's session at work, for the reason 0451 gives about the toast
+	/// corner: a picture that varies with who is working on the machine is a
+	/// picture nobody can reproduce. Declining the hook and still reading
+	/// transcript times would have moved that fault rather than answered it —
+	/// which is why this is declined here and not only in the listener.
+	private static func read(
+		id: String,
+		in directory: URL,
+		transcript: URL,
+		transcriptWritten: Date?,
+		running: Bool = false,
+		readingTranscripts: Bool = true,
+		now: Date = Date()
+	) -> AgentSession {
 		let manager = FileManager.default
 		func directoryIfPresent(_ name: String) -> URL? {
 			let url = directory.appendingPathComponent(name, isDirectory: true)
@@ -194,7 +377,22 @@ public enum AgentSessions {
 				.filter { !$0.hasPrefix(".") } ?? []).isEmpty
 		}
 
-		let transcript = transcripts.appendingPathComponent("\(id).jsonl")
+		let liveness: AgentSession.Liveness
+		if running {
+			liveness = .running
+		} else if readingTranscripts, let written = transcriptWritten,
+		          now.timeIntervalSince(written) < activeWithin {
+			liveness = .active
+		} else {
+			liveness = .finished
+		}
+
+		// **The transcript's time is deliberately not folded into `lastWrote`.**
+		// It moves every few seconds while a session works, and `lastWrote` is
+		// what the tree asks "has this session's directory moved" with before it
+		// walks six thousand files. A row that is running says so rather than
+		// giving a time, and a live session sorts above the finished ones
+		// whatever the clock says, so nothing wanted the sharper number anyway.
 		return AgentSession(
 			id: id,
 			hasAnything: anything,
@@ -205,7 +403,8 @@ public enum AgentSessions {
 			bytes: 0,
 			fileCount: 0,
 			isMeasured: false,
-			transcript: manager.fileExists(atPath: transcript.path) ? transcript : nil
+			liveness: liveness,
+			transcript: transcriptWritten == nil ? nil : transcript
 		)
 	}
 
@@ -242,6 +441,9 @@ public enum AgentSessions {
 			bytes: bytes,
 			fileCount: files,
 			isMeasured: true,
+			// Walked files say nothing about whether anybody is still working:
+			// this counts what is there and carries the answer it was given.
+			liveness: session.liveness,
 			transcript: session.transcript
 		)
 	}

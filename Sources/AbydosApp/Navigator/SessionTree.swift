@@ -54,13 +54,22 @@ final class SessionNode {
 		case let .section(count):
 			return count == 1 ? "1 session" : "\(count) sessions"
 		case let .session(session, _):
+			// **A session the hook spoke for says so, and nothing else does.**
+			// One known only by a recent transcript is dated like any other row:
+			// "active" would be a claim about somebody's attention that a
+			// modification time cannot support.
+			let when = session.liveness == .running ? "running" : Self.said(session.lastWrote)
 			// Until the walk has happened there is nothing true to say about how
 			// much is in it, so nothing is said. A subtitle that reads "0 files"
 			// before the measuring pass lands is a lie for the tenth of a second
 			// it is up, and this row is drawn the moment the project opens.
-			guard session.isMeasured else { return Self.said(session.lastWrote) }
+			guard session.isMeasured else { return when }
+			// And a live session that has written nothing goes on saying nothing
+			// about it, rather than "0 files" — which is the same lie, told after
+			// the walk instead of before it.
+			guard session.fileCount > 0 else { return when }
 			let files = session.fileCount == 1 ? "1 file" : "\(session.fileCount) files"
-			return "\(Self.said(session.lastWrote))  ·  \(files)  ·  \(Self.said(session.bytes))"
+			return "\(when)  ·  \(files)  ·  \(Self.said(session.bytes))"
 		}
 	}
 
@@ -95,31 +104,13 @@ final class SessionNode {
 
 	// MARK: - Building it
 
-	/// Reads the sessions of a project, or nil when there are none.
-	///
-	/// Nil rather than an empty root: a project no agent has worked on has two
-	/// roots, not three with an empty one.
-	static func read(project: URL) -> SessionNode? {
-		build(AgentSessions.sessions(of: project))
-	}
-
 	/// The same from sessions already in hand, which is what the measuring pass
 	/// hands back.
 	static func build(_ sessions: [AgentSession]) -> SessionNode? {
-		// **A measured session with no files in it loses its row.** The cheap
-		// read is permissive on purpose — it asks whether there is an entry,
-		// not whether there is a file, because the difference costs a walk — so
-		// three of this machine's sessions arrive holding nothing but an empty
-		// directory. Once the walk has happened the answer is known, and a row
-		// leading to nothing is worse than no row.
-		// And sorted here rather than only where they were read: the measuring
-		// pass sharpens every session's time — a scratchpad of week-old files in
-		// a directory made this morning is a week old — so the order it produces
-		// is not the order the cheap read produced, and "newest first" has to
-		// mean the newest that is known.
-		let sessions = sessions
-			.filter { !$0.isMeasured || $0.fileCount > 0 }
-			.sorted { $0.lastWrote > $1.lastWrote }
+		// Which of them are rows, and in what order: `AgentSessions.rows` is
+		// where that is decided and argued, because the cheap read asks the same
+		// question and there is no second right answer to it.
+		let sessions = AgentSessions.rows(from: sessions)
 		guard !sessions.isEmpty else { return nil }
 
 		let rows = sessions.map { session -> SessionNode in
@@ -143,6 +134,10 @@ final class SessionNode {
 	/// are on disk. Nothing is invented either way: both are directories that
 	/// exist.
 	private static func fileRoot(for session: AgentSession) -> FileNode? {
+		// **A disclosure triangle is a claim that there is something behind
+		// it**, and a session running now has an empty scratch directory until a
+		// tool needs a temporary file. It gets one when it has something.
+		guard session.hasAnything else { return nil }
 		if session.tasks != nil {
 			return FileNode(url: session.directory, isDirectory: true)
 		}
@@ -159,7 +154,12 @@ final class SessionNode {
 	/// has merely been asked for again.
 	var identityForRefresh: String {
 		childNodes.compactMap(\.session)
-			.map { "\($0.id):\($0.fileCount):\($0.bytes):\($0.lastWrote.timeIntervalSince1970)" }
+			.map {
+				// Liveness among them, or a row would go on saying `running`
+				// after the session ended: the files did not move, so nothing
+				// else here would differ and the redraw would be skipped.
+				"\($0.id):\($0.liveness.rawValue):\($0.fileCount):\($0.bytes):\($0.lastWrote.timeIntervalSince1970)"
+			}
 			.joined(separator: "|")
 	}
 

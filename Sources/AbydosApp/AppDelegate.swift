@@ -187,6 +187,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		// have finished. Nothing arrives unless the hooks are installed.
 		let watch = ClaudeWatch()
 		watch.windows = { [weak self] in self?.windowControllers ?? [] }
+		// And the `Claude Sessions` root, which is otherwise read once when a
+		// project opens: a session that starts, works and ends while somebody
+		// watches would change nothing on screen.
+		watch.sessionsChanged = { [weak self] slug in
+			for controller in self?.windowControllers ?? [] {
+				controller.claudeSessionsChanged(slug: slug)
+			}
+		}
 		watch.start()
 		claudeWatch = watch
 
@@ -304,6 +312,20 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 		// was given, or it fails" could not be read anywhere: the fallbacks came
 		// first in the source and the rule was an exception among them. 0522 and
 		// 0534 are both what that cost.
+		// **Before the window opens**, so the project's first read of its
+		// sessions already has it: this stands in for a session that was already
+		// running when somebody opened the project. With `@<seconds>` it happens
+		// later instead, through the same call the hook's notification makes —
+		// which is the only way to drive the redraw, `ClaudeWatch` never
+		// subscribing on a run like this one.
+		if let id = options.claudeRunning, let path = options.projectPath,
+		   options.claudeRunningAfter <= 0 {
+			RunningSessions.shared.note([
+				"event": "SessionStart", "session": id,
+				"cwd": URL(fileURLWithPath: path, isDirectory: true).path,
+			])
+		}
+
 		let controller: MainWindowController?
 		if DrivenRun.isActive {
 			controller = openForDrivenRun(options)
@@ -1009,6 +1031,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
 				controller?.notify("Saved 3 files", kind: .information)
+			}
+		}
+
+		if let id = options.claudeRunning, let path = options.projectPath,
+		   options.claudeRunningAfter > 0 {
+			let cwd = URL(fileURLWithPath: path, isDirectory: true).path
+			DispatchQueue.main.asyncAfter(deadline: .now() + options.claudeRunningAfter) {
+				guard let slug = RunningSessions.shared.note([
+					"event": "SessionStart", "session": id, "cwd": cwd,
+				]) else { return }
+				controller?.claudeSessionsChanged(slug: slug)
 			}
 		}
 

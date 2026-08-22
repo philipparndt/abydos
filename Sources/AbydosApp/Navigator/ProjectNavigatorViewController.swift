@@ -280,13 +280,52 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// watcher on it would rebuild a root nobody is looking at for somebody
 	/// else's session. It is read when the tree is read, which is what
 	/// *Dependencies* does.
+	/// The last cheap read, by session id, and the last walk's numbers.
+	///
+	/// Kept so that a refresh caused by a session *starting* does not blank every
+	/// row's size and walk six thousand files again to find the same numbers.
+	private var cheapSessions: [String: AgentSession] = [:]
+	private var measuredSessions: [String: AgentSession] = [:]
+	/// At most one walk at a time. A second is not queued: when one lands it
+	/// reads again, and anything that arrived meanwhile is picked up then.
+	private var walkingSessions = false
+
 	private func refreshSessions() {
 		guard let project else { return }
-		let read = SessionNode.read(project: project.root)
+		// **News from outside the run is declined on a driven run.** This is 0451
+		// arriving by a different door: a capture with somebody else's session at
+		// work in the tree is a picture that looks different for everybody who
+		// takes it, and `--screenshot` is pointed at the tree far more often than
+		// at the toast corner. Both outside sources go: `ClaudeWatch` never
+		// subscribes on such a run, so the register stays empty, and the
+		// transcript times are declined here. What is left is what the run itself
+		// put in the register with `--claude-running`, which is how a picture of
+		// this can be taken at all.
+		let running = RunningSessions.shared.ids(forSlugs: AgentSessions.slugs(of: project.root))
+		let fresh = AgentSessions.sessions(
+			of: project.root,
+			running: running,
+			readingTranscripts: !LaunchOptions.parse().isDrivenRun
+		)
+
+		// What an earlier walk counted, put back on the sessions whose own files
+		// have not moved since. A session merely going on running changes no
+		// file, and the row it is beside should not lose its size to say so.
+		let carried = fresh.map { session -> AgentSession in
+			guard cheapSessions[session.id]?.unchangedOnDisk(from: session) == true,
+			      let counted = measuredSessions[session.id]
+			else { return session }
+			return counted.saying(session.liveness)
+		}
+		cheapSessions = Dictionary(fresh.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+
+		let read = SessionNode.build(carried)
 		// Compared before redrawing, for the reason the dependency section is:
 		// `reloadData` throws away every row's identity, and a root that
 		// rebuilt itself on each refresh would collapse what somebody had open
-		// while they were reading it.
+		// while they were reading it. Liveness is part of that identity, so a
+		// row can stop saying `running` — and *only* liveness changing gets the
+		// redraw without the walk below, which finds nothing left to count.
 		guard read?.identityForRefresh != sessions?.identityForRefresh else { return }
 
 		show(read)
@@ -295,23 +334,49 @@ final class ProjectNavigatorViewController: NSViewController {
 		// on this machine is 6,920 files and 127 ms — a tenth of a second on the
 		// project-open path, growing with every session anybody ever ran. The
 		// rows are up without it, and gain their sizes when the walk lands.
-		guard let read else { return }
-		let sessions = read.sessions
+		guard let read, !walkingSessions else { return }
+		let unmeasured = read.sessions.filter { !$0.isMeasured }
+		guard !unmeasured.isEmpty else { return }
 		// What was on screen when the walk started. Compared against on the way
 		// back — not against what the walk built, which may hold fewer rows
 		// once the empty ones are known.
 		let expected = read.identityIgnoringSize
+		walkingSessions = true
 		DispatchQueue.global(qos: .utility).async { [weak self] in
-			let measured = sessions.map(AgentSessions.measured)
+			let measured = unmeasured.map(AgentSessions.measured)
 			DispatchQueue.main.async {
 				guard let self else { return }
+				self.walkingSessions = false
 				// Only if this window is still showing the same sessions: the
 				// project may have changed while the walk was running, and
 				// putting these rows back would show the last project's.
 				guard self.sessions?.identityIgnoringSize == expected else { return }
-				self.show(SessionNode.build(measured))
+				for session in measured { self.measuredSessions[session.id] = session }
+				// Merged into what is on screen rather than replacing it: a
+				// session that started while the walk ran has a row now, and its
+				// liveness is newer than anything the walk carried.
+				let merged = (self.sessions?.sessions ?? []).map { shown in
+					measured.first { $0.id == shown.id }?.saying(shown.liveness) ?? shown
+				}
+				self.show(SessionNode.build(merged))
+				// And once more, in case anything arrived while it ran. It stops
+				// here: nothing is unmeasured now, so the read above returns
+				// early on an identity that has not changed.
+				self.refreshSessions()
 			}
 		}
+	}
+
+	/// A hook event said something about a project. Read the root again if it
+	/// was this one.
+	///
+	/// Called for the events that changed which sessions are running, or that
+	/// ended a turn — never for the tool-use events, which arrive dozens of times
+	/// a minute and say nothing new. `RunningSessions.note` is what decides.
+	func claudeSessionsChanged(slug: String) {
+		guard let project else { return }
+		guard AgentSessions.slugs(of: project.root).contains(slug) else { return }
+		refreshSessions()
 	}
 
 	/// Puts a read of the root on screen, keeping what was open and selected.
@@ -693,6 +758,12 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// may have been coalesced away.
 	func refreshFromDisk() {
 		reloadTree()
+		// **And the sessions, which the tree reload does not touch.** They are
+		// not read from a directory the tree has loaded, so nothing else here
+		// would notice a session that started while the app was asleep — or one
+		// whose hooks are not installed, which is the only way such a session is
+		// ever seen at all.
+		refreshSessions()
 	}
 
 	/// Redraws the tree from the file system.
@@ -1065,7 +1136,11 @@ final class ProjectNavigatorViewController: NSViewController {
 	/// exactly what `claude --resume` wants — so the row that could not be named
 	/// by its id hands the id over as a command instead.
 	@objc private func contextCopyResumeCommand() {
-		guard let session = contextSession else { return }
+		// Not for one that is already running, which the menu also hides — but
+		// hiding an item is a thing a menu does, not a thing the action knows,
+		// and the driven report reads the two separately: `offers=[…] copied=…`
+		// said in one line that nothing was offered and something was copied.
+		guard let session = contextSession, !session.isLive else { return }
 		let command = AgentSessions.resumeCommand(for: session)
 		NSPasteboard.general.clearContents()
 		NSPasteboard.general.setString(command, forType: .string)
@@ -3097,7 +3172,11 @@ extension ProjectNavigatorViewController: NSOutlineViewDataSource, NSOutlineView
 		// which is the row anybody would try — still offered the whole file
 		// menu, because only a *session* row was being told apart. The root is
 		// not a file either.
-		resumeItem?.isHidden = contextSession == nil
+		// **And not over a session that is already running.** `claude --resume`
+		// on a live session is not a thing anybody wants pasted into a terminal:
+		// the conversation it names is open in a window somewhere, and what the
+		// command does with one is not this app's to promise.
+		resumeItem?.isHidden = contextSession.map(\.isLive) ?? true
 		revealSessionItem?.isHidden = contextSessionDirectory == nil
 		if contextSessionRow != nil {
 			for item in menu.items where item !== resumeItem && item !== revealSessionItem {

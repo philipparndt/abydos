@@ -249,6 +249,24 @@ struct LaunchOptions {
 	var debugBinary: String?
 	/// Raise a toast, to see what one looks like.
 	var showToast = false
+	/// Say that a Claude session is running in the project being opened, to see
+	/// what its row looks like.
+	///
+	/// **The same shape as `--toast`, for the same reason.** A driven run
+	/// declines news from outside itself — no hook subscription, no transcript
+	/// times — so without this there would be no way to photograph a live
+	/// session's row, and a tree captured without one looks exactly like a tree
+	/// that cannot draw one. That is the failure 0451 records for the toast
+	/// corner, and it was found by leaving a way to look.
+	var claudeRunning: String?
+	/// How long to wait before saying it: `--claude-running <id>@4`.
+	///
+	/// **Two moments, because they are two different claims.** At zero the
+	/// session was already running when the project opened, which is the read on
+	/// the open path. After a delay it starts while somebody is watching, which
+	/// is the redraw — and that half cannot be driven any other way, since
+	/// `ClaudeWatch` never subscribes on a driven run.
+	var claudeRunningAfter: TimeInterval = 0
 	/// Press play, as if from the titlebar.
 	var launchRun = false
 	/// Press the debug button beside it.
@@ -984,6 +1002,11 @@ struct LaunchOptions {
 			case "--debug-inspect": options.debugInspect = true
 			case "--debug-binary": options.debugBinary = next()
 			case "--toast":      options.showToast = true
+			case "--claude-running":
+				let said = next() ?? "0000dead-beef-4000-8000-000000000000"
+				let halves = said.split(separator: "@", maxSplits: 1)
+				options.claudeRunning = String(halves[0])
+				options.claudeRunningAfter = halves.count > 1 ? (Double(halves[1]) ?? 0) : 0
 			case "--launch-run":    options.launchRun = true
 			case "--launch-debug":  options.launchDebug = true
 			case "--launch-profile": options.launchProfile = true
