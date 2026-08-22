@@ -522,7 +522,8 @@ final class SettingsPaneController: NSViewController {
 				.toggle(
 					title: "GPU terminal rendering",
 					help: "Draw the terminal with Metal. Faster when a program repaints the whole "
-						+ "screen; still new.",
+						+ "screen, and on by default. Turn it off to draw through CoreGraphics "
+						+ "instead — the same screen either way.",
 					get: { Settings.shared.terminalGPURendering },
 					set: { Settings.shared.terminalGPURendering = $0 }
 				),

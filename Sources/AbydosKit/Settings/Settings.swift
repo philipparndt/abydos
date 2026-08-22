@@ -76,7 +76,7 @@ public final class Settings {
 			Key.terminalFontName: "",
 			Key.wordWrap: false,
 			Key.fontLigatures: true,
-			Key.terminalGPURendering: false,
+			Key.terminalGPURendering: true,
 			Key.terminalGhosttyEngine: false,
 			Key.terminalOptionAsMeta: false,
 			// The Abydos scheme, not the blue one this app started with.
@@ -374,9 +374,19 @@ public final class Settings {
 
 	/// Draw the terminal on the GPU rather than through CoreGraphics.
 	///
-	/// Off by default while it is new. The two paths draw the same screen; the
-	/// GPU one costs the same whether every cell has its own colour or none do,
-	/// which is what a full-screen program repainting constantly asks for.
+	/// On by default. The two paths draw the same screen; the GPU one costs the
+	/// same whether every cell has its own colour or none do, which is what a
+	/// full-screen program repainting constantly asks for. It was off while it
+	/// was new, and "new" is the only thing that has changed.
+	///
+	/// A registered default rather than a stored value, which is what makes this
+	/// reach somebody who never opened the switch and nobody else: anyone who
+	/// turned it off has that written down and keeps it. The same rule the
+	/// appearance default above follows, for the same reason.
+	///
+	/// The `vhs` bell style becomes reachable as a side effect — it is a shader,
+	/// and the CoreGraphics path cannot draw it. It is not thereby *selected*:
+	/// `terminalBellStyle` still defaults to `sound`.
 	public var terminalGPURendering: Bool {
 		get { defaults.bool(forKey: Key.terminalGPURendering) }
 		set { set(newValue, Key.terminalGPURendering) }
