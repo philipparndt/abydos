@@ -24,6 +24,41 @@ Two things follow from that, and they are what this is for:
 [Releases](https://github.com/philipparndt/abydos/releases) ·
 [What is supported](#what-is-supported)
 
+## Install
+
+```sh
+brew install --cask philipparndt/abydos/abydos
+```
+
+That taps [philipparndt/homebrew-abydos][tap] and installs from it in one step;
+`brew tap philipparndt/abydos` first and then `brew install --cask abydos` is the
+same thing said twice.
+
+To update:
+
+```sh
+brew update && brew upgrade --cask abydos
+```
+
+`brew update` refreshes the tap and `upgrade` acts on what it found — the first
+without the second checks and installs nothing, which is the usual reason a cask
+looks stuck a version behind. The app does not update itself: there is no Sparkle
+in it, nothing phones home, and Homebrew is the only thing that will tell you a
+new version exists.
+
+Or take `Abydos-<version>.dmg` from [the releases page][releases] and drag it to
+Applications — the same build, and then updating is your business rather than
+brew's. Either way it is signed with a Developer ID and notarised, so Gatekeeper
+opens it without a detour through System Settings. Requires macOS 14 or newer.
+
+```sh
+brew uninstall --cask abydos          # remove it
+brew uninstall --zap --cask abydos    # and its settings and saved state
+```
+
+[tap]: https://github.com/philipparndt/homebrew-abydos
+[releases]: https://github.com/philipparndt/abydos/releases
+
 ## What it does
 
 - **Terminal** — a real PTY with a VT100/xterm emulator: full colour, mouse
@@ -215,15 +250,27 @@ SwiftPM links, which is never pinned.
 make sign-check                     # the identity and notary profile it will use
 make release                        # sign, notarise, package build/Abydos-<version>.dmg
 make release-publish VERSION=0.2.0  # all of that, tagged and uploaded to GitHub
+make tap VERSION=0.2.0              # point the Homebrew tap at a release
 ```
 
 `release-publish` does the whole thing in the one order that keeps the tag and
 the download honest: it stamps `CFBundleShortVersionString`, commits that, tags
 `v0.2.0`, builds *from* the tag — so the commit stamped into the bundle is the
 one the tag names — signs, notarises, writes a `.sha256` beside the image,
-pushes, and creates the GitHub release with both files attached. It refuses a
-dirty working tree, an existing tag, a missing Developer ID certificate, and a
-`gh` that is not logged in.
+pushes, creates the GitHub release with both files attached, and last of all
+points the Homebrew tap at it. It refuses a dirty working tree, an existing tag,
+a missing Developer ID certificate, and a `gh` that is not logged in.
+
+The tap is [philipparndt/homebrew-abydos][tap], and the cask it carries is three
+facts — a version, a checksum and a URL — generated from the release rather than
+edited by hand. It is updated *after* the release exists, because a cask naming
+a download GitHub does not have yet is a `brew install` that fails for whoever
+is quickest. `make tap` runs that step on its own, which is what to use when the
+release went out fine and only the tap needs fixing:
+
+```sh
+Scripts/update-tap.sh --print 0.2.0 <sha256>   # the cask, without publishing it
+```
 
 The credentials are a keychain profile, stored once:
 

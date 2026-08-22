@@ -239,6 +239,14 @@ release-publish: ## Tag VERSION, build, notarise and upload the signed DMG to Gi
 	@test -n "$(VERSION)" || { echo "usage: make release-publish VERSION=0.2.0"; exit 1; }
 	@Scripts/publish-release.sh $(VERSION)
 
+# Separately from the release, because the tap is the one step worth being able
+# to redo on its own: a cask with a wrong checksum, or a tap push that failed
+# while the release itself went out fine, is fixed by running this again.
+.PHONY: tap
+tap: ## Point the Homebrew tap at a release: make tap VERSION=0.2.0
+	@test -n "$(VERSION)" || { echo "usage: make tap VERSION=0.2.0"; exit 1; }
+	@Scripts/update-tap.sh $(VERSION)
+
 .PHONY: sign-check
 sign-check: ## Show the signing identity and notary profile the release will use
 	@security find-identity -v -p codesigning | grep "Developer ID Application" \

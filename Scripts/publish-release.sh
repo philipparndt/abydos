@@ -9,6 +9,9 @@
 # the commit it claims, and the upload happens last so a failed notarisation
 # never leaves a release with nothing in it.
 #
+# The Homebrew tap is the last step, in Scripts/update-tap.sh — after the
+# release, because the cask names a download that has to be there first.
+#
 # Usage:
 #   make release-publish VERSION=0.2.0
 #
@@ -114,7 +117,9 @@ NOTES=$(mktemp)
 	echo
 	echo "### Install"
 	echo
-	echo "Download \`$(basename "$DMG")\`, open it and drag Abydos to Applications."
+	echo "    brew install --cask philipparndt/abydos/abydos"
+	echo
+	echo "Or download \`$(basename "$DMG")\`, open it and drag Abydos to Applications."
 	echo "The build is signed with a Developer ID and notarised, so Gatekeeper opens it"
 	echo "without a detour through System Settings."
 	echo
@@ -131,6 +136,13 @@ gh release create "$TAG" \
 	--title "Abydos $VERSION" \
 	--notes-file "$NOTES"
 rm -f "$NOTES"
+
+# --- And the tap ------------------------------------------------------------
+#
+# After the release exists, never before it: the cask carries the URL of the
+# image that was just uploaded, and a tap pointing at a download GitHub does not
+# have yet is a `brew install` that fails for whoever is quickest.
+Scripts/update-tap.sh "$VERSION"
 
 echo "==> Published $TAG"
 gh release view "$TAG" --json url --jq .url
