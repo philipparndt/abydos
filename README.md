@@ -27,12 +27,21 @@ Two things follow from that, and they are what this is for:
 ## Install
 
 ```sh
-brew install --cask philipparndt/abydos/abydos
+brew tap philipparndt/abydos
+brew trust philipparndt/abydos
+brew install --cask abydos
 ```
 
-That taps [philipparndt/homebrew-abydos][tap] and installs from it in one step;
-`brew tap philipparndt/abydos` first and then `brew install --cask abydos` is the
-same thing said twice.
+**The `trust` step is not optional and not ceremony.** Homebrew 6 refuses to load
+a cask from a tap outside its own repositories until you say you trust it —
+`Error: Refusing to load cask … from untrusted tap` — and this tap is exactly
+that. It is asking whether you trust [philipparndt/homebrew-abydos][tap] to run
+code on your machine, which is a fair question and one to answer for yourself
+rather than because a README said to. The tap holds one generated file; it is
+printed in full in the Releasing section below.
+
+Once trusted, `brew install --cask philipparndt/abydos/abydos` works as a
+one-liner too.
 
 To update:
 
@@ -42,9 +51,11 @@ brew update && brew upgrade --cask abydos
 
 `brew update` refreshes the tap and `upgrade` acts on what it found — the first
 without the second checks and installs nothing, which is the usual reason a cask
-looks stuck a version behind. The app does not update itself: there is no Sparkle
-in it, nothing phones home, and Homebrew is the only thing that will tell you a
-new version exists.
+looks stuck a version behind. Trust is remembered, so this is the whole of it
+from here on.
+
+The app does not update itself: there is no Sparkle in it, nothing phones home,
+and Homebrew is the only thing that will tell you a new version exists.
 
 Or take `Abydos-<version>.dmg` from [the releases page][releases] and drag it to
 Applications — the same build, and then updating is your business rather than

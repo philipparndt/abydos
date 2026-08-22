@@ -117,7 +117,12 @@ NOTES=$(mktemp)
 	echo
 	echo "### Install"
 	echo
-	echo "    brew install --cask philipparndt/abydos/abydos"
+	echo "    brew tap philipparndt/abydos"
+	echo "    brew trust philipparndt/abydos"
+	echo "    brew install --cask abydos"
+	echo
+	echo "Homebrew 6 refuses a cask from a tap outside its own repositories until"
+	echo "\`brew trust\` says otherwise; that is what the middle line is."
 	echo
 	echo "Or download \`$(basename "$DMG")\`, open it and drag Abydos to Applications."
 	echo "The build is signed with a Developer ID and notarised, so Gatekeeper opens it"

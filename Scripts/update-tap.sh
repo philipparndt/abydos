@@ -114,5 +114,10 @@ fi
 git add Casks/abydos.rb
 git commit -q -m "Abydos $VERSION"
 git push -q origin HEAD
+# `homebrew-` is stripped from a tap's name everywhere brew accepts one, so the
+# repository is philipparndt/homebrew-abydos and the tap is philipparndt/abydos.
+# Printing $TAP here gave people a name brew does not take.
+SHORT_TAP="${TAP/\/homebrew-//}"
 echo "==> $TAP now installs Abydos $VERSION"
-echo "    brew install --cask $TAP/abydos"
+echo "    brew tap $SHORT_TAP && brew trust $SHORT_TAP"
+echo "    brew install --cask abydos"
