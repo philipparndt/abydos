@@ -378,6 +378,28 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	}
 
 	/// Brings a tmux window forward, as clicking its tab would.
+	/// What the rail is showing, for `--rail`.
+	///
+	/// The panel's own state leads, because the rail's rule is written in terms
+	/// of it and a report that said only which buttons were lit could not tell a
+	/// closed panel from a bug.
+	func railReportForTesting() -> String {
+		"panel=\(isPanelVisible ? "open" : "closed") " + toolStrip.reportForTesting()
+	}
+
+	/// Shuts the panel, for `--close-panel`.
+	func closePanelForTesting() {
+		setPanelVisible(false)
+	}
+
+	/// Tells the rail which panes are in front.
+	///
+	/// The same shape as the `setSidebarSelection` call beside it, which is the
+	/// point: both groups of the rail now answer one question in one way.
+	private func updateRailForPanel() {
+		toolStrip.setPanelSelection(bottomPanel.frontPaneKinds)
+	}
+
 	/// A hook event said something about the sessions of some project. The
 	/// navigator decides whether it was the one this window is showing.
 	func claudeSessionsChanged(slug: String) {
@@ -731,6 +753,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// A run or a debugger brought forward takes the window back to the
 		// project it belongs to — while the window is following its terminal,
 		// which is the only time it is anywhere else.
+		// Every route into a pane comes through the panel's column rebuild —
+		// the button, ⇧⌘B, the Agent menu, a tab closing and leaving another in
+		// front, a split. So the rail is told from there rather than from each
+		// of the places somebody can open one.
+		bottomPanel.onFrontPanesChanged = { [weak self] in self?.updateRailForPanel() }
+
 		bottomPanel.onPaneNeedsProject = { [weak self] root in
 			guard let self, self.followsTerminal else { return }
 			// The other place a pane's report moves the window, and reachable in
@@ -2480,7 +2508,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	private func setPanelVisible(_ visible: Bool) {
 		guard visible != isPanelVisible else { return }
 
-		toolStrip.setTerminalSelected(visible)
+		// **This used to be `setTerminalSelected(visible)`, and that was the
+		// reported fault.** The panel being open lit the *terminal* button, so a
+		// window showing the backlog had the terminal lit and the backlog not.
+		// The rail now asks which panes are in front, which is empty while the
+		// panel is closed — so closing it still unlights the group, by the rule
+		// rather than by a special case.
+		defer { updateRailForPanel() }
 
 		if visible {
 			bottomPanel.isHidden = false

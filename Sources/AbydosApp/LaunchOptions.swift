@@ -247,6 +247,18 @@ struct LaunchOptions {
 	var debugInspect = false
 	/// Debug this binary with whichever adapter suits it.
 	var debugBinary: String?
+	/// Close the bottom panel before looking, which nothing else could do.
+	///
+	/// The app opens a terminal for a project that has no remembered session, so
+	/// "the panel is closed" was not a state any driven run could reach — and it
+	/// is one of the four the rail has to be right about.
+	var closePanel = false
+	/// Report which of the rail's buttons are lit, and why.
+	///
+	/// A picture of the rail says which are filled; it cannot say whether the
+	/// ladybird is lit because a session is running or because the pane is in
+	/// front, and those are the two the change that added this had to tell apart.
+	var railReport = false
 	/// Raise a toast, to see what one looks like.
 	var showToast = false
 	/// Say that a Claude session is running in the project being opened, to see
@@ -1001,6 +1013,8 @@ struct LaunchOptions {
 			case "--debug-finish": options.debugStop = true; options.debugFinish = true
 			case "--debug-inspect": options.debugInspect = true
 			case "--debug-binary": options.debugBinary = next()
+			case "--rail":       options.railReport = true
+			case "--close-panel": options.closePanel = true
 			case "--toast":      options.showToast = true
 			case "--claude-running":
 				let said = next() ?? "0000dead-beef-4000-8000-000000000000"

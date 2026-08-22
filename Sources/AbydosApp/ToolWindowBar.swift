@@ -5,6 +5,17 @@ enum SidebarToolKind {
 	case project, changes, branches, structure, scratches, history
 }
 
+/// A pane that docks under the editor and has a button on the rail.
+///
+/// **Not every pane kind, on purpose.** Search, usages and the profiler open in
+/// the same panel and are reached from elsewhere; the rail is thirty points wide
+/// and does not carry a button for each of them. What it must not do is answer
+/// for one of those with a neighbour's button, so they map to nothing rather
+/// than to something near.
+enum PanelToolKind: Hashable {
+	case backlog, review, debug, terminal
+}
+
 /// The narrow icon strip down the left edge, as in the reference screenshot.
 ///
 /// Only the project button is wired up; the rest are placeholders for tool
@@ -282,15 +293,75 @@ final class ToolWindowBar: NSView {
 		])
 	}
 
-	/// Lights the terminal button while the panel is showing.
-	func setTerminalSelected(_ selected: Bool) {
-		terminalButton.isSelected = selected
+	/// Lights whichever panes are in front, and nothing for a pane that is not.
+	///
+	/// **The rule the sidebar group already keeps**, now kept by the bottom group
+	/// too — which is the whole of what was reported. The fill used to mean three
+	/// different things down here: the terminal was lit because
+	/// `setPanelVisible` said the panel was open, the ladybird because a session
+	/// was running, and the backlog and review were never lit at all. So the
+	/// backlog pane could be open and in front with its own button looking
+	/// exactly like a button nobody had pressed, and the terminal below it lit.
+	///
+	/// A set rather than one kind, because the panel splits and a shell beside
+	/// the backlog puts two panes on screen.
+	func setPanelSelection(_ kinds: Set<PanelToolKind>) {
+		frontPanes = kinds
+		updateBottomGroup()
 	}
 
-	/// Lights the debug button while a session is running, so the strip says
-	/// something is being debugged even when the panel is closed.
+	/// Whether a debug session is running.
+	///
+	/// **Kept, and not folded into the selection.** It is what tells somebody
+	/// that something is being debugged *while the panel is closed*, and nothing
+	/// else on screen says it. It lights the same button, and the green below is
+	/// what tells the two apart.
 	func setDebugRunning(_ running: Bool) {
-		debugButton.isSelected = running
+		hasRunningDebugSession = running
+		updateBottomGroup()
+	}
+
+	private var frontPanes: Set<PanelToolKind> = []
+	/// Not `isDebugRunning`, which is taken: that one is a *question* the strip
+	/// asks the window when the debug menu is built. This is the answer the
+	/// window pushed, which is what the button is drawn from.
+	private var hasRunningDebugSession = false
+
+	/// One place that decides what the four buttons at the bottom say.
+	private func updateBottomGroup() {
+		backlogButton?.isSelected = frontPanes.contains(.backlog)
+		reviewButton?.isSelected = frontPanes.contains(.review)
+		terminalButton?.isSelected = frontPanes.contains(.terminal)
+		// The union: the pane in front, or a session running with the panel shut.
+		debugButton?.isSelected = frontPanes.contains(.debug) || hasRunningDebugSession
+		// **Green for the running one, which is the theme's green and not a new
+		// one.** A second green chosen here would be right in the default theme
+		// and wrong in somebody else's; this is the one the commit button already
+		// carries for work that is not pushed. `StripButton` draws the accent on
+		// the icon and the selection as a fill behind it, so the two compose with
+		// nothing new drawn.
+		debugButton?.accent = hasRunningDebugSession ? Theme.current.gitAdded : nil
+	}
+
+	/// Which buttons are lit and why, for `--rail`.
+	///
+	/// **A picture of the rail proves the fill and not the reason.** Two of the
+	/// four buttons at the bottom can be lit for two different reasons, and a
+	/// shot of a ladybird with a fill behind it cannot say whether a session is
+	/// running or the pane is merely in front. This says both.
+	func reportForTesting() -> String {
+		func said(_ name: String, _ button: StripButton?) -> String {
+			var parts = [name + "=" + (button?.isSelected == true ? "lit" : "unlit")]
+			if button?.accent != nil { parts.append("green") }
+			return parts.joined(separator: "+")
+		}
+		return [
+			said("backlog", backlogButton),
+			said("review", reviewButton),
+			said("debug", debugButton),
+			said("terminal", terminalButton),
+			said("project", projectButton),
+		].joined(separator: " ")
 	}
 
 	private var topConstraint: NSLayoutConstraint!
@@ -324,7 +395,9 @@ final class StripButton: NSView {
 	var onClick: (() -> Void)?
 
 	var isSelected = false {
-		didSet { needsDisplay = true }
+		// Compared, because the rail is now told on every column rebuild and
+		// most of those change nothing.
+		didSet { if isSelected != oldValue { needsDisplay = true } }
 	}
 
 	/// A colour for the symbol when it has something to say — the commit

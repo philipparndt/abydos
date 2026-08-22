@@ -194,6 +194,35 @@ final class BottomPanel: NSView {
 	/// something, one otherwise.
 	private var columnCount: Int { sessions.contains { $0.column == 1 } ? 2 : 1 }
 
+	/// Which kinds of pane are in front, for the rail's bottom group.
+	///
+	/// **A set, one per column, and not the focused column's alone.** The panel
+	/// splits, and a shell beside the backlog is an ordinary arrangement — so two
+	/// panes are on screen and the rail has room to say so. Answering with
+	/// `activeSession` would take the fill off a pane somebody is plainly looking
+	/// at the moment they clicked the other half, which is the fault this was
+	/// reported for, arriving from the other direction.
+	///
+	/// Empty while the panel is closed, so "nothing is lit for a pane that is not
+	/// on screen" needs no second path through the rail.
+	var frontPaneKinds: Set<PanelToolKind> {
+		guard !isHidden else { return [] }
+		var kinds: Set<PanelToolKind> = []
+		for column in 0..<columnCount {
+			guard let session = activeByColumn[column] ?? sessions(in: column).last else { continue }
+			// A kind with no button contributes nothing rather than being mapped
+			// to a neighbour.
+			switch session.kind {
+			case .backlog: kinds.insert(.backlog)
+			case .review: kinds.insert(.review)
+			case .debug: kinds.insert(.debug)
+			case .terminal: kinds.insert(.terminal)
+			case .search, .usages, .profiler: break
+			}
+		}
+		return kinds
+	}
+
 	/// The tabs in a column, in order.
 	private func sessions(in column: Int) -> [Session] {
 		sessions.filter { $0.column == column }
@@ -545,6 +574,15 @@ final class BottomPanel: NSView {
 
 	/// Told when the tabs or their names change, so a window can retitle.
 	var onActiveTerminalChanged: (() -> Void)?
+	/// Which panes are in front has changed, so the rail's bottom group can say
+	/// so.
+	///
+	/// **A second hook rather than a rename**, which was the design's open
+	/// question. `onActiveTerminalChanged` fires from `refreshTabs()` alone and
+	/// never from `activate` — so a backlog tab coming to the front raises it not
+	/// at all, which is exactly the moment the rail needs telling. And its one
+	/// subscriber wants the narrower question it is named for.
+	var onFrontPanesChanged: (() -> Void)?
 
 	// MARK: - Project
 
@@ -2531,6 +2569,13 @@ final class BottomPanel: NSView {
 
 	/// Builds the columns and puts each one's active pane in it.
 	private func rebuildColumns() {
+		// **Raised here and not from each of the eighteen callers.** Activating a
+		// tab, closing one, splitting, unsplitting and restoring a session all
+		// come through this, and each of them can change which pane is in front.
+		// Cheap to answer and cheaper to act on: the rail sets four booleans and
+		// redraws only the ones that moved.
+		defer { onFrontPanesChanged?() }
+
 		// A column with no tabs is not a column. Everything falls back to one.
 		if columnCount == 2, sessions(in: 0).isEmpty {
 			for session in sessions { session.column = 0 }

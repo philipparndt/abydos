@@ -1045,6 +1045,22 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if options.closePanel {
+			DispatchQueue.main.asyncAfter(deadline: .now() + max(0.4, options.screenshotDelay - 0.6)) {
+				controller?.closePanelForTesting()
+			}
+		}
+
+		if options.railReport {
+			// After whatever else this run does and *before* the shutter, which
+			// is what the first version got wrong: it read at two seconds against
+			// a default delay of 1.5, so the run had already exited and the line
+			// never printed.
+			DispatchQueue.main.asyncAfter(deadline: .now() + max(0.5, options.screenshotDelay - 0.2)) {
+				print("RAIL: \(controller?.railReportForTesting() ?? "no window")")
+			}
+		}
+
 		if options.debugConsole {
 			DispatchQueue.main.asyncAfter(deadline: .now() + max(1, options.screenshotDelay - 1)) {
 				controller?.showDebugConsoleForTesting()
