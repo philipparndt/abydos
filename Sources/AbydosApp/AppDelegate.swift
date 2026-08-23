@@ -1051,6 +1051,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let at = options.debugInterruptAt {
+			DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+				print("INTERRUPT: \(controller?.pressDebugInterruptForTesting() ?? "no window")")
+				fflush(stdout)
+			}
+		}
+
 		if options.railReport {
 			// After whatever else this run does and *before* the shutter, which
 			// is what the first version got wrong: it read at two seconds against

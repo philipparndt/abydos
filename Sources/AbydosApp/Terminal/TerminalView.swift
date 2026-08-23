@@ -266,8 +266,21 @@ final class TerminalView: NSView, NSTextInputClient {
 	/// False for a view that only displays output; there is nothing to type at.
 	private var runsProcess = true
 
+	/// What ⌃C should stop, for a view that shows output and owns no process.
+	///
+	/// **Set only by a pane that has something to stop**, which is what keeps
+	/// this to the debugger's console: the two streaming-log panes and the
+	/// devcontainer's *preparing* terminal are read-only too, and what stopping
+	/// means for each of them is a separate question nobody has answered. Where
+	/// this is nil the view behaves exactly as it did — it refuses the keyboard
+	/// and no key reaches it.
+	var onInterrupt: (() -> Void)?
+
 	override var isFlipped: Bool { true }
-	override var acceptsFirstResponder: Bool { runsProcess }
+	/// A shell takes the keyboard because everything is typed at it. A view that
+	/// only shows output takes it **only when there is something ⌃C could
+	/// stop** — which is one key, not a keyboard: see `keyDown`.
+	override var acceptsFirstResponder: Bool { runsProcess || onInterrupt != nil }
 
 	override func updateTrackingAreas() {
 		super.updateTrackingAreas()
@@ -2103,6 +2116,22 @@ final class TerminalView: NSView, NSTextInputClient {
 	}
 
 	override func keyDown(with event: NSEvent) {
+		// **A view that shows output carries one key and drops the rest.**
+		// Taking first responder means every key now arrives somewhere that used
+		// to receive none, and the program behind this view is usually not
+		// reading stdin — a pane somebody believes is read-only quietly
+		// delivering what they typed would be a worse fault than the one ⌃C is
+		// here to fix. So: the interrupt, and nothing else.
+		if !runsProcess {
+			let isInterrupt = TerminalKeys.isInterrupt(
+				charactersIgnoringModifiers: event.charactersIgnoringModifiers,
+				control: event.modifierFlags.contains(.control),
+				command: event.modifierFlags.contains(.command),
+				option: event.modifierFlags.contains(.option)
+			)
+			if let onInterrupt, isInterrupt { onInterrupt() }
+			return
+		}
 		// ⌘K clears, as it does in Terminal and every editor's console. A
 		// program is never sent it: nothing reads it, and every terminal on
 		// this platform takes it for this.

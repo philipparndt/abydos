@@ -247,6 +247,12 @@ struct LaunchOptions {
 	var debugInspect = false
 	/// Debug this binary with whichever adapter suits it.
 	var debugBinary: String?
+	/// Press ⌃C in the debugger's console, after this many seconds.
+	///
+	/// The claim it exists to check is not "stopping works" — the Stop button
+	/// already covers that — but that a *keystroke* reaches the console at all,
+	/// which is the half `acceptsFirstResponder` was refusing.
+	var debugInterruptAt: Double?
 	/// Close the bottom panel before looking, which nothing else could do.
 	///
 	/// The app opens a terminal for a project that has no remembered session, so
@@ -1014,6 +1020,7 @@ struct LaunchOptions {
 			case "--debug-inspect": options.debugInspect = true
 			case "--debug-binary": options.debugBinary = next()
 			case "--rail":       options.railReport = true
+			case "--debug-interrupt": options.debugInterruptAt = Double(next() ?? "8") ?? 8
 			case "--close-panel": options.closePanel = true
 			case "--toast":      options.showToast = true
 			case "--claude-running":

@@ -128,6 +128,29 @@ final class DebugPane: NSView {
 
 	/// Shows the log, for when something has gone wrong and it is the only
 	/// thing worth looking at.
+	/// Presses ⌃C in the console, and says what it did.
+	///
+	/// **A key delivered where a person would deliver it**, rather than calling
+	/// `session.stop()` and claiming the key works: what this has to prove is the
+	/// path from a keystroke to the stop, and the half that was broken —
+	/// `acceptsFirstResponder` — is only exercised by making the view first
+	/// responder first.
+	func pressInterruptForTesting() -> String {
+		showConsole()
+		let view = console.terminalView
+		window?.makeFirstResponder(view)
+		let tookKeyboard = window?.firstResponder === view
+		let before = session.isActive
+		guard let event = NSEvent.keyEvent(
+			with: .keyDown, location: .zero, modifierFlags: [.control],
+			timestamp: 0, windowNumber: window?.windowNumber ?? 0, context: nil,
+			characters: "\u{03}", charactersIgnoringModifiers: "c",
+			isARepeat: false, keyCode: 8
+		) else { return "no event" }
+		view.keyDown(with: event)
+		return "firstResponder=\(tookKeyboard) active before=\(before) after=\(session.isActive)"
+	}
+
 	func showConsole() {
 		sideTabs.selectedSegment = 1
 		sideTabChanged()
@@ -283,6 +306,22 @@ final class DebugPane: NSView {
 		// program under the debugger prints the colours it always prints, and
 		// anything else would show them as escape sequences.
 		console = TerminalPane(readOnly: ())
+		// **⌃C stops the session, which is what the Stop button does.** Not an
+		// interrupt: this console owns no process — its `PseudoTerminal` is
+		// never launched — and the program is one the adapter started, so what
+		// travels is a `disconnect` and not a signal. A program that traps
+		// `SIGINT` will not see one. Routed through `session.stop()` rather than
+		// through anything of its own, so the key and the button cannot drift
+		// into two opinions about what stopping means.
+		console.terminalView.onInterrupt = { [weak self] in
+			guard let self else { return }
+			// Nothing to ask for once it has ended, and nothing said about it: a
+			// terminal at a dead prompt does not announce that there was nothing
+			// to interrupt. Without this, ⌃C over a finished session would send a
+			// second `disconnect` and print its ending a second time.
+			guard self.session.isActive else { return }
+			self.session.stop()
+		}
 		console.isHidden = true
 		rightSide.addSubview(console)
 

@@ -5,6 +5,25 @@ import Foundation
 /// Kept out of the view so the table — and the rules for the modifiers applied
 /// to it — can be checked without a window and without a running shell.
 public enum TerminalKeys {
+	/// Whether this keystroke is ⌃C — the key that stops a program in any
+	/// terminal.
+	///
+	/// **Primitives rather than an `NSEvent`**, for the reason everything else
+	/// here takes them: this module holds no view code, and a predicate about a
+	/// keystroke is the half worth testing. Asked of
+	/// `charactersIgnoringModifiers`, because with control held `characters` is
+	/// the control code itself and there is nothing to compare.
+	///
+	/// **⌘ and ⌥ disqualify it.** ⌥⌃C is a different keystroke and ⌘C is Copy,
+	/// which somebody pressing over a console has every reason to expect — a
+	/// console that stopped the program on a copy would be a trap.
+	public static func isInterrupt(
+		charactersIgnoringModifiers: String?, control: Bool, command: Bool, option: Bool
+	) -> Bool {
+		guard control, !command, !option else { return false }
+		return charactersIgnoringModifiers?.lowercased() == "c"
+	}
+
 	/// macOS virtual key codes for the keys with a fixed sequence.
 	public enum Key: UInt16 {
 		case upArrow = 126

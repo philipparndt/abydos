@@ -378,6 +378,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	}
 
 	/// Brings a tmux window forward, as clicking its tab would.
+	/// Presses ⌃C in the debugger's console, for `--debug-interrupt`.
+	func pressDebugInterruptForTesting() -> String {
+		bottomPanel.activeDebugPane?.pressInterruptForTesting() ?? "no debug session"
+	}
+
 	/// What the rail is showing, for `--rail`.
 	///
 	/// The panel's own state leads, because the rail's rule is written in terms
