@@ -1475,8 +1475,26 @@ final class LanguageService {
 			// editing.
 			saying("Compiling the project, so there is something on the classpath to run")
 			_ = try? await server.client.executeCommand(
-				JavaDebug.buildCommand, arguments: [false], timeout: 300
+				JavaDebug.buildCommand, arguments: [JavaDebug.buildOptions()], timeout: 300
 			)
+			// **And hot code replace on, before the session exists to want it.**
+			// In `AUTO` the provider inside the bundle redefines whatever this
+			// server recompiles, so the swap follows the compile finishing rather
+			// than this app guessing when it has. Best-effort: a server that will
+			// not take the setting costs a session its swaps, where refusing to
+			// start over it would cost the debugging too.
+			// Logged, because a setting that silently did not take is exactly how
+			// this went wrong twice already — first as a dictionary the server
+			// refused, then as a JSON string with no `logLevel` in it. Whether
+			// the swap is even switched on is not a thing to guess at from the
+			// outside.
+			let accepted = (try? await server.client.executeCommand(
+				JavaDebug.settingsCommand,
+				arguments: [JavaDebug.HotSwap.settings(mode: .auto)],
+				timeout: 15
+			)) != nil
+			log("java hot code replace: asked \(server.definition.name) for AUTO — "
+				+ (accepted ? "accepted" : "refused or timed out"))
 			return JavaLaunchTarget(
 				port: port, projectName: resolved.projectName,
 				classPaths: resolved.classPaths, fromDebugHost: false
@@ -1499,6 +1517,7 @@ final class LanguageService {
 		// says `ClassNotFoundException` on the class somebody asked for, which
 		// names the symptom and not one thing about the cause; this is the line
 		// that does. Once per session, not per keystroke.
+		await host.setHotCodeReplace(.auto)
 		log("java launch in \(project.lastPathComponent) from the debugger's own jdtls: "
 			+ "project \(ready.projectName ?? "unnamed"), \(ready.classPaths.count) classpath "
 			+ "entries, first \(ready.classPaths.first ?? "none")")
@@ -1506,6 +1525,34 @@ final class LanguageService {
 			port: ready.port, projectName: ready.projectName,
 			classPaths: ready.classPaths, fromDebugHost: true
 		)
+	}
+
+	/// Compiles this project's Java for a swap into a running JVM.
+	///
+	/// **The same request a launch makes, asked for a different reason.** A
+	/// change on disk is not a class file until jdtls has been asked, which is
+	/// what `buildCommand` is on the launch path for; a swap needs exactly that
+	/// and nothing more, because the adapter is listening to the workspace and
+	/// redefines what the compile writes.
+	///
+	/// Whichever jdtls the debugger is using answers: the editing server when it
+	/// hosts the adapter, and otherwise the one started for the debugger alone.
+	/// Asking the wrong one would compile into a workspace nothing is watching.
+	///
+	/// Returns false when there is no such server, which is the ordinary state of
+	/// a project nobody is debugging — the caller asks only during a session.
+	@discardableResult
+	func compileJavaForSwap(project: URL, timeout: TimeInterval = 300) async -> Bool {
+		if let server = server(for: "java", project: project), server.client.isRunning,
+		   server.definition.hostsDebugAdapter {
+			return (try? await server.client.executeCommand(
+				JavaDebug.buildCommand, arguments: [JavaDebug.buildOptions()], timeout: timeout
+			)) != nil
+		}
+		guard let host = debugHosts[Self.debugHostKey(project: project)], host.isRunning else {
+			return false
+		}
+		return await host.buildWorkspace(timeout: timeout)
 	}
 
 	/// The debug port from a jdtls that is already answering about files.

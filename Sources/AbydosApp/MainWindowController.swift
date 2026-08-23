@@ -3276,6 +3276,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// point instead meant a session started any other way ran perfectly and
 	/// told the editor nothing: no execution marker, no breakpoint state.
 	func wire(_ session: DebugSession) {
+		session.onHotSwap = { [weak self, weak session] event, wasStopped in
+			guard let self, let session else { return }
+			self.reportHotSwap(event, wasStopped: wasStopped, in: session)
+		}
 		session.onBreakpointsChanged = { [weak self, weak session] in
 			guard let self, let session else { return }
 			self.syncBreakpointsToEditor(from: session)
@@ -9280,6 +9284,168 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 	}
 
+	// MARK: - Hot code replace
+
+	/// Says what a swap into the running JVM did.
+	///
+	/// **Most of these are refusals, and that is the JVM rather than a fault.**
+	/// HotSpot replaces method bodies and nothing else, so adding a method,
+	/// changing a signature, adding a field and changing what a class extends are
+	/// all refused — which is most of what editing feels like. A report that said
+	/// only "hot swap failed" would teach somebody to ignore it; one that carries
+	/// the adapter's own sentence tells them why they are about to restart.
+	private func reportHotSwap(
+		_ event: JavaDebug.HotSwap.Event, wasStopped: Bool, in session: DebugSession
+	) {
+		// Every stage in the log as well as the console. `BUILD_COMPLETE` with no
+		// `END` after it is the shape of "the adapter compiled and then found
+		// nothing to redefine", and telling that from "no events at all" is the
+		// whole of diagnosing a swap that does not happen.
+		DiagnosticLog.write(
+			"java hot code replace: \(event.stage.rawValue) \(event.message ?? "")", to: "lsp"
+		)
+		// **`activeDebugPane` and not `showDebug()`, which was the fault.**
+		// `showDebug()` ends in `activate(session, focus: true)` — it brings the
+		// pane forward *and takes the keyboard*. Called once per hot-swap event,
+		// that meant every save during a debug session pulled the focus out of
+		// the editor: reported as "I lose focus whenever I save, as soon as the
+		// application runs", and it is also why ⌘Z looked broken afterwards —
+		// the undo history was never lost, the keyboard was somewhere else.
+		//
+		// Reporting is not a reason to move anybody's keyboard. The pane is
+		// written into where it is; somebody who wants to look at it clicks it.
+		let console = bottomPanel.activeDebugPane
+		switch event.stage {
+		case .starting:
+			// Before anything has happened. In the console, where somebody
+			// looking for it finds it, and not in the corner of the window — a
+			// toast per save is a toast nobody reads.
+			if let message = event.message { console?.appendOutput(message + "\n") }
+
+		case .buildComplete:
+			if let message = event.message { console?.appendOutput(message + "\n") }
+			// **And now ask, which is the half that was missing.** The adapter
+			// says the build is done and then waits: `AUTO` is this client's
+			// policy about the event, not something the adapter acts on alone.
+			// Sending it here rather than on the save is what makes the timing
+			// right — the adapter knows when its compile finished and nothing
+			// out here does.
+			Task { @MainActor in
+				guard let result = await session.redefineClasses() else { return }
+				if let failure = result.errorMessage, !result.didSwap {
+					self.reportHotSwap(
+						JavaDebug.HotSwap.Event(stage: .error, message: failure),
+						wasStopped: wasStopped, in: session
+					)
+					return
+				}
+				guard result.didSwap else { return }
+				self.reportHotSwap(
+					JavaDebug.HotSwap.Event(
+						stage: .end,
+						message: "Redefined " + result.changed.joined(separator: ", ")
+					),
+					wasStopped: wasStopped, in: session
+				)
+			}
+
+		case .end:
+			console?.appendOutput((event.message ?? "Classes redefined in the running JVM") + "\n")
+			// **And the stack moved, which is the most confusing thing this
+			// does.** The adapter drops to an affected frame and enters it
+			// again, so somebody stopped in the method they just edited is
+			// suddenly somewhere else. Not this app's behaviour to decline, and
+			// unexplained it reads as the debugger losing its place.
+			if JavaDebug.HotSwap.movedTheStack(event, wasStopped: wasStopped) {
+				console?.appendOutput(
+					"The frame you were stopped in was entered again, so the new body runs "
+						+ "from its start.\n"
+				)
+			}
+
+		case .warning:
+			if let message = event.message { console?.appendOutput(message + "\n") }
+
+		case .error:
+			let detail = event.message ?? "The JVM would not take the change."
+			console?.appendOutput(detail + "\n")
+			// A session that cannot swap at all says so once — `cannotHotSwap`
+			// is set by the session the first time a failure is about the session
+			// rather than about the change, so this is the only time it is true
+			// and unsaid.
+			if session.cannotHotSwap {
+				guard !saidThisSessionCannotHotSwap else { return }
+				saidThisSessionCannotHotSwap = true
+				notify(
+					"This session cannot replace code",
+					detail: detail + "\nSaving will not change the running program.",
+					kind: .information
+				)
+				return
+			}
+			notify(
+				"The JVM would not take that change",
+				detail: detail + "\nIt replaces method bodies and nothing else.",
+				kind: .warning,
+				actionTitle: restartTitle(for: session),
+				action: { [weak self] in self?.runSelectedConfiguration(debug: true) }
+			)
+		}
+	}
+
+	/// Said once per session, since `cannotHotSwap` stays true afterwards.
+	private var saidThisSessionCannotHotSwap = false
+
+	/// What the restart offer is about to restart.
+	///
+	/// **Named for an attached session, because it is somebody's service.**
+	/// Restarting a JVM this app launched costs a process nobody else is using;
+	/// restarting one in a pod is a different sentence and deserves to be read
+	/// before it is pressed.
+	private func restartTitle(for session: DebugSession) -> String {
+		session.isAttached ? "Restart the program being debugged" : "Restart the session"
+	}
+
+	/// A save during a Java debug session, which is what makes a swap happen.
+	///
+	/// **The compile is all this app asks for.** In `AUTO` the provider inside
+	/// the bundle is listening to the workspace and redefines whatever jdtls
+	/// writes, so the swap follows the compile finishing rather than this app
+	/// guessing when it has.
+	///
+	/// One build at a time with at most one queued, the shape `refreshGitStatus`
+	/// uses for the same reason: saves come faster than a workspace build
+	/// finishes.
+	func compileForHotSwapIfDebugging(_ url: URL) {
+		guard url.pathExtension == "java", let project else { return }
+		guard let session = bottomPanel.activeDebugSession, !session.cannotHotSwap else { return }
+		// A session that has ended is not one a swap can reach, and asking for a
+		// workspace build on every save after a debugging run would be the cost
+		// of the feature without the feature.
+		if case .terminated = session.state { return }
+		if case .idle = session.state { return }
+		queueHotSwapCompile(project: project.scopeRoot)
+	}
+
+	private var hotSwapCompileRunning = false
+	private var hotSwapCompileQueued = false
+
+	private func queueHotSwapCompile(project root: URL) {
+		guard !hotSwapCompileRunning else {
+			hotSwapCompileQueued = true
+			return
+		}
+		hotSwapCompileRunning = true
+		Task { @MainActor in
+			_ = await LanguageService.shared.compileJavaForSwap(project: root)
+			self.hotSwapCompileRunning = false
+			if self.hotSwapCompileQueued {
+				self.hotSwapCompileQueued = false
+				self.queueHotSwapCompile(project: root)
+			}
+		}
+	}
+
 	/// The list of configurations, and the ways to change them.
 	private func showConfigurationMenu(at point: NSPoint, in view: NSView) {
 		configurationMenu().popUp(positioning: nil, at: point, in: view)
@@ -11167,7 +11333,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	}
 
 	@objc func saveDocument(_ sender: Any?) {
+		// Read before the save, because a save can close nothing but can change
+		// which tab is active on some paths, and the file that was written is the
+		// one the swap is about.
+		let written = editor.activeGroupTabURL
 		editor.save()
+		// **And into the running JVM, if one is being debugged.** The compile is
+		// all that is asked for: the adapter is in `AUTO` and listening to the
+		// workspace, so it redefines what jdtls writes. Nothing happens when
+		// nothing is being debugged, which is most saves.
+		if let written { compileForHotSwapIfDebugging(written) }
 	}
 
 	@objc func collapseAllFolds(_ sender: Any?) {

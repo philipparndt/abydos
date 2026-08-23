@@ -3355,8 +3355,43 @@ final class EditorViewController: NSViewController {
 		do {
 			try tab.document?.save()
 			refreshTabBar()
+			told(tab, wasSaved: true)
 		} catch {
 			Toast.post("Could not save \(tab.url.lastPathComponent)", detail: error.localizedDescription)
+		}
+	}
+
+	/// Tells the language server the file is now on disk.
+	///
+	/// **`didChange` is not `didSave`, and nothing was sending the second one for
+	/// a save somebody made.** `LanguageService.saved` had exactly one caller,
+	/// `reloadExternallyChangedFiles` — so a server was told a file had been
+	/// saved when *something else* wrote it, and never when the person at the
+	/// keyboard did. For most servers that is invisible: they answer about the
+	/// text they were given either way, which is why it went unnoticed for as
+	/// long as it did.
+	///
+	/// For jdtls it is the difference between a build that compiles and one that
+	/// does nothing. Eclipse builds *resources*, not dirty working copies, so
+	/// `vscode.java.buildWorkspace` after a save with no `didSave` recompiled
+	/// nothing and answered "Build completed" — measured on the hot-swap example,
+	/// where the source was saved at 05:52:38 and `target/classes` still held a
+	/// class file from 05:51:04 with the old string in it.
+	private func told(_ tab: Tab, wasSaved: Bool) {
+		guard wasSaved, let document = tab.document, let languageId = document.languageId,
+		      let root = serverRoot(for: tab)
+		else { return }
+		let url = tab.url
+		let snapshot = document.rope
+		Task { @MainActor in
+			let text = await withCheckedContinuation { continuation in
+				EditorViewController.languageTextQueue.async {
+					continuation.resume(returning: snapshot.string(in: 0..<snapshot.byteCount))
+				}
+			}
+			LanguageService.shared.saved(
+				url: url, languageId: languageId, text: text, project: root
+			)
 		}
 	}
 

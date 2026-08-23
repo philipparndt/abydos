@@ -870,6 +870,10 @@ final class EditorAreaController: NSViewController {
 	func goTo(line: Int) { activeGroup?.goTo(line: line) }
 
 	func save() { activeGroup.save() }
+
+	/// The file the active group is showing, for whoever needs to know what a
+	/// save just wrote.
+	var activeGroupTabURL: URL? { activeGroup.activeTabURL }
 	func closeActiveTab() { activeGroup.closeActiveTab() }
 	func selectNextTab(offset: Int) { activeGroup.selectNextTab(offset: offset) }
 	func collapseAllFolds() { activeGroup.collapseAllFolds() }

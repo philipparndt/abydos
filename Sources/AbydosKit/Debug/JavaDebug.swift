@@ -21,6 +21,15 @@ public enum JavaDebug {
 	/// The command that lists the classes with a `main` method, as the language
 	/// server sees them.
 	public static let mainClassCommand = "vscode.java.resolveMainClass"
+	/// The command that carries the debugger's settings into the adapter.
+	///
+	/// **Which is where hot code replace is turned on**, and it is a setting of
+	/// the adapter's rather than anything this app implements:
+	/// `hotCodeReplace` is `AUTO`, `MANUAL` or `NEVER`, and in `AUTO` the
+	/// provider inside the bundle swaps whenever the workspace it listens to
+	/// gains new class files — which is whenever jdtls has finished compiling.
+	public static let settingsCommand = "vscode.java.updateDebugSettings"
+
 	/// The command that compiles what the server has imported.
 	///
 	/// **The step between a classpath and a class file, and 0452 found it by
@@ -30,7 +39,28 @@ public enum JavaDebug {
 	/// first launch of a session can be handed an entirely right classpath with
 	/// nothing in it yet. VS Code's Java extension builds before it launches for
 	/// this reason, and so does this.
+	///
+	/// **And it was not doing it, for as long as it has existed.** The argument
+	/// went as a bare `false` and the command wants a JSON *string*, so every
+	/// call threw inside the server —
+	///
+	///     ClassCastException: class java.lang.Boolean cannot be cast to
+	///     class java.lang.String
+	///
+	/// — on jdtls's stderr, into a `try?` that dropped it, so nothing anywhere
+	/// said the compile had not happened. Found while adding hot code replace,
+	/// by reading the log after a launch: with the argument encoded the server
+	/// answers `Compile compile INFO: Time cost for ECJ: 1ms`, a line that had
+	/// never appeared before.
 	public static let buildCommand = "vscode.java.buildWorkspace"
+
+	/// The argument shape `vscode.java.buildWorkspace` wants.
+	///
+	/// The third command in this family to take its options pre-encoded, after
+	/// `classpathOptions` and `HotSwap.settings`. Assume any of them does.
+	public static func buildOptions(fullBuild: Bool = false) -> String {
+		"{\"isFullBuild\":\(fullBuild)}"
+	}
 
 	/// The argument shape `java.project.getClasspaths` wants.
 	///
@@ -123,6 +153,174 @@ public enum JavaDebug {
 				if !classPaths.isEmpty { request["sourcePaths"] = classPaths }
 			}
 			return request
+		}
+	}
+
+	// MARK: - Hot code replace
+
+	/// Replacing the body of a method in a JVM that is already running.
+	///
+	/// **Everything here was read out of the bundle rather than remembered**, with
+	/// `javap` over `com.microsoft.java.debug.plugin-0.53.2.jar` and the
+	/// `com.microsoft.java.debug.core-0.53.2.jar` inside it, because three
+	/// guesses about it were wrong and each would have been built on:
+	///
+	///  - **There is no capability.** `Types$Capabilities` has eighteen fields
+	///    and not one of them is about hot code replace, so nothing can be asked
+	///    ahead of time and whether it is possible is learnt from a refusal.
+	///  - **The request takes no arguments.** `RedefineClassesArguments` has no
+	///    fields at all, because `JavaHotCodeReplaceProvider` is an
+	///    `IResourceChangeListener` that keeps its own `deltaClassNames` — it
+	///    watches the workspace and already knows what was recompiled. There is
+	///    no way to hand it a class file, which is what the plan for OSGi had
+	///    depended on.
+	///  - **It drops to frame by itself.** `attemptPopFrames`,
+	///    `attemptDropToFrame` and `attemptStepIn` are all in the provider, so a
+	///    method affected by a swap is entered again rather than left to run its
+	///    old body out. Not this app's to decline, only to explain.
+	public enum HotSwap {
+		/// The custom DAP request. Sent only in `MANUAL`; in `AUTO` the provider
+		/// swaps on its own and this is never needed.
+		public static let command = "redefineClasses"
+
+		/// The event the adapter raises about a swap, at every stage of one.
+		public static let event = "hotcodereplace"
+
+		/// How the adapter is asked to behave, by `settingsCommand`.
+		public enum Mode: String, Sendable {
+			case auto = "AUTO"
+			case manual = "MANUAL"
+			case never = "NEVER"
+		}
+
+		/// The argument shape `vscode.java.updateDebugSettings` wants.
+		///
+		/// **A JSON *string*, not an object**, which is the same trap
+		/// `classpathOptions` records for `java.project.getClasspaths` — the
+		/// commands in this family take their options pre-encoded. Passing a
+		/// dictionary got it as far as the server and no further:
+		///
+		///     SEVERE: Parameters for userSettings must be json string:
+		///             {hotCodeReplace=AUTO}
+		///
+		/// Which is a message on jdtls's stderr and nothing at all in the app, so
+		/// the setting silently did not take. Found by driving it; a unit test
+		/// over this function cannot see it, and one is here anyway so the shape
+		/// cannot drift back.
+		/// **And `logLevel` with it, which is not optional in practice.**
+		/// `DebugSettingUtils` merges this JSON into the current settings and
+		/// then, unconditionally, hands `logLevel` to `LogUtils.configLogLevel`,
+		/// which parses it as a `java.util.logging.Level`. It is null until
+		/// somebody sets it, so a settings update that says only what it came to
+		/// say ends in
+		///
+		///     NullPointerException: Cannot invoke "String.length()"
+		///     because "name" is null
+		///       at java.util.logging.Level.parse
+		///       at LogUtils.configLogLevel
+		///
+		/// on jdtls's stderr. `WARNING` rather than `INFO` because this server
+		/// exists to host a debug adapter and its logging is already in the app's
+		/// own log at the volume it wants.
+		public static func settings(mode: Mode, logLevel: String = "WARNING") -> String {
+			"{\"hotCodeReplace\":\"\(mode.rawValue)\",\"logLevel\":\"\(logLevel)\"}"
+		}
+
+		/// What one `hotcodereplace` event says.
+		///
+		/// The five change types are the adapter's own, and they arrive in a
+		/// sequence rather than one at a time: `STARTING` when it begins,
+		/// `BUILD_COMPLETE` when the compile it was waiting for landed, `END`
+		/// when classes were actually redefined, and `ERROR` or `WARNING`
+		/// instead when they were not.
+		public enum Stage: String, Equatable, Sendable {
+			case starting = "STARTING"
+			case buildComplete = "BUILD_COMPLETE"
+			case end = "END"
+			case error = "ERROR"
+			case warning = "WARNING"
+		}
+
+		public struct Event: Equatable, Sendable {
+			public let stage: Stage
+			public let message: String?
+
+			public init(stage: Stage, message: String?) {
+				self.stage = stage
+				self.message = message
+			}
+		}
+
+		/// Reads one, or nil when the body is not one this understands.
+		///
+		/// A change type this app has not seen answers nil rather than being
+		/// forced into the nearest case: the adapter may grow one, and a new
+		/// stage silently reported as an error would be a lie about somebody's
+		/// session.
+		public static func event(from body: [String: Any]) -> Event? {
+			guard let said = body["changeType"] as? String,
+			      let stage = Stage(rawValue: said)
+			else { return nil }
+			let message = (body["message"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+			return Event(stage: stage, message: message)
+		}
+
+		/// What came back from a `redefineClasses` request.
+		public struct Result: Equatable, Sendable {
+			/// The classes the JVM took, as the adapter names them.
+			public let changed: [String]
+			/// Why it took none, when it took none.
+			public let errorMessage: String?
+
+			public init(changed: [String], errorMessage: String?) {
+				self.changed = changed
+				self.errorMessage = errorMessage
+			}
+
+			/// Whether anything was actually swapped.
+			public var didSwap: Bool { !changed.isEmpty }
+		}
+
+		public static func result(from body: [String: Any]) -> Result {
+			let changed = (body["changedClasses"] as? [Any])?.compactMap { $0 as? String } ?? []
+			let message = (body["errorMessage"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+			return Result(changed: changed, errorMessage: message)
+		}
+
+		/// Whether a failure is about the session rather than about the change.
+		///
+		/// **The one distinction the reporting turns on**, and the adapter does
+		/// not draw it: a change HotSpot refuses is ordinary and says nothing
+		/// about the session, while a session that cannot swap at all should say
+		/// so once and then stop. There is no field for it, so the only evidence
+		/// is the wording.
+		///
+		/// **Deliberately narrow.** It answers true only for the things that
+		/// cannot be about one edit — a VM that does not support redefinition at
+		/// all, or an adapter with no provider in it. Everything else is treated
+		/// as being about the change, because a refusal wrongly classified as
+		/// "this session cannot swap" silences every later save, and a message
+		/// nobody sees is worse than one they see twice.
+		public static func isAboutTheSession(_ message: String) -> Bool {
+			let said = message.lowercased()
+			// "does not support hot code replace", "hot code replace is not
+			// supported", "unsupported operation: redefine".
+			if said.contains("not support") || said.contains("unsupported") {
+				return said.contains("hot code replace")
+					|| said.contains("hotcodereplace")
+					|| said.contains("redefin")
+			}
+			// A provider that was never installed answers about itself.
+			return said.contains("no hot code replace provider")
+		}
+
+		/// Whether an event says the stack was moved under somebody.
+		///
+		/// The provider drops to an affected frame and enters it again, so a
+		/// session stopped inside a method it just swapped is somewhere else
+		/// afterwards. Unexplained that reads as the debugger losing its place.
+		public static func movedTheStack(_ event: Event, wasStopped: Bool) -> Bool {
+			event.stage == .end && wasStopped
 		}
 	}
 

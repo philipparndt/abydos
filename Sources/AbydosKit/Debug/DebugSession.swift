@@ -666,6 +666,10 @@ public final class DebugSession {
 		exitCode = nil
 		saidTheSessionEnded = false
 		adapter = DebugAdapters.java
+		// What a restart would cost, recorded where the request says it: an
+		// attach is a JVM somebody else started, and for this app that means one
+		// in a pod.
+		isAttached = request.kind == .attach
 
 		try await client.connect(host: host, port: port)
 		try await handshake(with: DebugAdapters.java)
@@ -998,10 +1002,69 @@ public final class DebugSession {
 			case "terminated", "exited":
 				self.adapterSaidItEnded(body: body)
 
+			case JavaDebug.HotSwap.event:
+				self.hotSwapSaid(body: body)
+
 			default:
 				break
 			}
 		}
+	}
+
+	// MARK: - Hot code replace
+
+	/// What a swap into this session did, at every stage of one.
+	///
+	/// The second argument is whether the program was stopped when it landed,
+	/// which is what decides whether the stack moved under somebody: the adapter
+	/// drops to an affected frame and enters it again, and that is worth saying
+	/// only when there was a frame to move.
+	public var onHotSwap: ((JavaDebug.HotSwap.Event, _ wasStopped: Bool) -> Void)?
+
+	/// Whether this session attached to a program somebody else started.
+	///
+	/// What a restart *costs* turns on it: restarting a JVM this app launched
+	/// ends a process nobody else is using, and restarting one it attached to in
+	/// a pod is restarting somebody's service.
+	public internal(set) var isAttached = false
+
+	/// Whether this session has been found to be unable to swap at all.
+	///
+	/// **Learnt rather than asked.** The adapter reports eighteen capabilities
+	/// and none of them is about hot code replace, so the only evidence is a
+	/// failure whose wording is about the session rather than about the change.
+	/// Once true, the reporting stops repeating itself.
+	public private(set) var cannotHotSwap = false
+
+	/// Asks the adapter to redefine whatever it has seen recompiled.
+	///
+	/// **This is the request nothing was sending, and its absence was the whole
+	/// fault.** `hotCodeReplace: AUTO` reads like a setting that makes the
+	/// adapter swap by itself; it is not. The provider inside the bundle
+	/// publishes `hotcodereplace` with `BUILD_COMPLETE` when the workspace it is
+	/// listening to finishes compiling, and then waits — `AUTO` is the *client's*
+	/// policy about what to do with that event, and the client is this. Measured
+	/// on the hot-swap example: `BUILD_COMPLETE` five times over five saves, and
+	/// never a `STARTING` or an `END`, because `doHotCodeReplace` is only reached
+	/// through this request.
+	///
+	/// It takes no arguments. Which classes are redefined is the provider's own
+	/// bookkeeping, from the resource deltas it accumulated.
+	@discardableResult
+	public func redefineClasses() async -> JavaDebug.HotSwap.Result? {
+		guard let body = try? await client.request(JavaDebug.HotSwap.command) else { return nil }
+		return JavaDebug.HotSwap.result(from: body)
+	}
+
+	private func hotSwapSaid(body: [String: Any]) {
+		guard let event = JavaDebug.HotSwap.event(from: body) else { return }
+		if event.stage == .error, let message = event.message,
+		   JavaDebug.HotSwap.isAboutTheSession(message) {
+			cannotHotSwap = true
+		}
+		let wasStopped: Bool
+		if case .stopped = state { wasStopped = true } else { wasStopped = false }
+		onMain { [weak self] in self?.onHotSwap?(event, wasStopped) }
 	}
 
 	/// Reports a launch that never produced an event.

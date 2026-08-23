@@ -362,7 +362,31 @@ public final class JavaDebugHost {
 	public func buildWorkspace(timeout: TimeInterval = 300) async -> Bool {
 		guard isRunning else { return false }
 		let result = try? await client.executeCommand(
-			JavaDebug.buildCommand, arguments: [false], timeout: timeout
+			JavaDebug.buildCommand, arguments: [JavaDebug.buildOptions()], timeout: timeout
+		)
+		return result != nil
+	}
+
+	/// Turns hot code replace on in the adapter, for the session about to start.
+	///
+	/// **The whole of the feature's mechanism is this one call.** In `AUTO` the
+	/// provider inside the bundle is an `IResourceChangeListener`: it watches the
+	/// workspace and redefines whatever this server recompiles, so a swap follows
+	/// from the compile finishing rather than from this app deciding when it has.
+	/// Driving it with `redefineClasses` instead would mean re-implementing that
+	/// decision worse, because the request swaps whatever deltas have arrived so
+	/// far and nothing here knows when that is all of them.
+	///
+	/// Best-effort by design. A server that does not take the setting leaves the
+	/// adapter on its default, which costs a session its swaps and nothing else —
+	/// where refusing to start the session over it would cost the debugging too.
+	@discardableResult
+	public func setHotCodeReplace(_ mode: JavaDebug.HotSwap.Mode) async -> Bool {
+		guard isRunning else { return false }
+		let result = try? await client.executeCommand(
+			JavaDebug.settingsCommand,
+			arguments: [JavaDebug.HotSwap.settings(mode: mode)],
+			timeout: 15
 		)
 		return result != nil
 	}
