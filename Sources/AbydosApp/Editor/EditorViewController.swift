@@ -2949,6 +2949,7 @@ final class EditorViewController: NSViewController {
 	private func makeModelView(for fileURL: URL, startAfter: TimeInterval = 0) -> NSView {
 		let container = ModelContainerView(color: Theme.current.editorBackground)
 		container.startAfter = startAfter
+		container.modelPath = fileURL.path
 		container.makeViewer = { [weak container] in
 			// The viewer sits in a pane rather than a window of its own: it takes
 			// the editor's background so the split reads as one surface, and keeps

@@ -416,6 +416,7 @@ final class CadovaPreviewView: DelayedPaneView {
 		// delay and has just spent seconds building. The lazy guard was about a
 		// pane nobody stopped at, and somebody stopped at this one.
 		container.startAfter = 0
+		container.modelPath = fileURL.path
 		container.makeViewer = { [weak container] in
 			let hosting = NSHostingView(rootView: ContentView(
 				fileURL: fileURL,
