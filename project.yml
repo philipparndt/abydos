@@ -1,8 +1,8 @@
-name: ideai
+name: Abydos
 
 # The Xcode project is generated from this file and is not checked in. The
 # package is still the source of truth: the app target is the window layer,
-# `Sources/ideai`, and everything under it comes from the SwiftPM package next
+# `Sources/AbydosMain`, and everything under it comes from the SwiftPM package
 # door — the same one `swift build` uses, so the two builds cannot drift.
 options:
   bundleIdPrefix: de.rnd7
@@ -23,17 +23,17 @@ settings:
     DEVELOPMENT_TEAM: 643R6YSRER
 
 packages:
-  ideai:
+  Abydos:
     path: .
 
 targets:
-  ideai:
+  Abydos:
     type: application
     platform: macOS
     sources:
       # Four lines: the window layer is a library of the package, so Xcode and
       # SwiftPM build the same sources with one dependency graph between them.
-      - path: Sources/ideaiMain
+      - path: Sources/AbydosMain
       # Folder references: the fonts are read by name at launch, and the icon
       # and notices travel with the app.
       - path: Resources/Fonts
@@ -44,19 +44,26 @@ targets:
       # which has no compiler to build a catalog with; both are made from
       # the same PNGs.
       - path: Resources/Assets.xcassets
-      - path: Resources/Icon/ideai.icns
+      - path: Resources/Icon/Abydos.icns
         buildPhase: resources
         optional: true
       - path: THIRD-PARTY-NOTICES.md
         buildPhase: resources
         optional: true
     dependencies:
-      - package: ideai
-        product: IdeaiApp
+      - package: Abydos
+        product: AbydosApp
     settings:
       base:
+        # `ideai` on purpose, and the last of that name left here. It is the
+        # identifier the app has shipped under and the one in
+        # `Resources/Info.plist`, so it is what macOS has the Local Network grant
+        # filed against. An Xcode build under a different identifier is a second
+        # app as far as the system is concerned, and it takes that grant away
+        # from the installed one — the day-long diagnosis the house rules about
+        # BUNDLE_ID exist to prevent.
         PRODUCT_BUNDLE_IDENTIFIER: de.rnd7.ideai
-        PRODUCT_NAME: ideai
+        PRODUCT_NAME: Abydos
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Resources/Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
@@ -67,10 +74,10 @@ targets:
         ENABLE_HARDENED_RUNTIME: YES
 
 schemes:
-  ideai:
+  Abydos:
     build:
       targets:
-        ideai: all
+        Abydos: all
     run:
       config: Debug
     archive:

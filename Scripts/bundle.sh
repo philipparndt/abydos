@@ -227,9 +227,25 @@ fi
 
 IDENTITY="${SIGN_IDENTITY:-}"
 if [ -z "$IDENTITY" ]; then
-	if security find-identity -v -p codesigning | grep -q "Apple Development"; then
-		IDENTITY="Apple Development"
-	else
+	# By hash, not by name. `--sign "Apple Development"` is a *prefix match over
+	# the certificate's name*, and a keychain can hold two certificates whose
+	# names are character-for-character identical — renewing a development
+	# certificate without deleting the old one is all it takes. codesign then
+	# refuses the whole thing with
+	#
+	#     Apple Development: … : ambiguous (matches … and … in login.keychain-db)
+	#
+	# The hash in the first column is unique by construction, so it cannot be
+	# ambiguous however many certificates share a name.
+	#
+	# This cost an afternoon in the worst possible shape: the signing failure was
+	# a *warning*, the bundle went out carrying only the ad-hoc signature the
+	# linker puts on, `make install` put it in /Applications, and the kernel
+	# killed it at launch with `CODESIGNING / Invalid Page` — a crash report full
+	# of dyld frames and nothing at all about a certificate.
+	IDENTITY=$(security find-identity -v -p codesigning \
+		| awk '/"Apple Development/ { print $2; exit }')
+	if [ -z "$IDENTITY" ]; then
 		IDENTITY="-"
 		echo "    no Apple Development certificate: signing ad-hoc, so Local Network"
 		echo "    access must be re-granted in System Settings after every build"
@@ -241,11 +257,38 @@ fi
 # what its signature says about it, and a development build that differs from
 # the shipped one there is a build whose network failures nobody can reproduce
 # in the thing they will actually run.
-if ! SIGN_OUT=$(codesign --force --deep --options runtime --sign "$IDENTITY" "$APP" 2>&1); then
-	echo "    warning: codesign with '$IDENTITY' failed; the app may not launch" >&2
-	echo "$SIGN_OUT" | sed 's/^/    /' >&2
-else
+if SIGN_OUT=$(codesign --force --deep --options runtime --sign "$IDENTITY" "$APP" 2>&1); then
 	echo "    signed with: $IDENTITY"
+elif [ "$IDENTITY" = "-" ]; then
+	# Ad-hoc failing is not something to carry on from: there is no simpler
+	# thing left to try.
+	echo "    error: ad-hoc codesign failed" >&2
+	echo "$SIGN_OUT" | sed 's/^/    /' >&2
+	exit 1
+else
+	# A real ad-hoc signature rather than whatever the linker left, and said
+	# rather than warned about. An app that is not signed is an app the kernel
+	# kills at launch, so "the app may not launch" was the wrong mood entirely —
+	# and a warning on line 240 of a build that then prints `==> Done` is a
+	# warning nobody reads.
+	echo "    codesign with '$IDENTITY' failed:" >&2
+	echo "$SIGN_OUT" | sed 's/^/    /' >&2
+	if ! SIGN_OUT=$(codesign --force --deep --options runtime --sign - "$APP" 2>&1); then
+		echo "    error: falling back to an ad-hoc signature failed too" >&2
+		echo "$SIGN_OUT" | sed 's/^/    /' >&2
+		exit 1
+	fi
+	echo "    signed ad-hoc instead: it will launch, but Local Network access" >&2
+	echo "    has to be re-granted in System Settings" >&2
+fi
+
+# Asked of codesign rather than assumed, because the whole failure this guards
+# against was a bundle that looked built and could not start. `--strict` is what
+# notices a signature that does not cover the resources.
+if ! VERIFY_OUT=$(codesign --verify --strict "$APP" 2>&1); then
+	echo "    error: the signed bundle does not verify" >&2
+	echo "$VERIFY_OUT" | sed 's/^/    /' >&2
+	exit 1
 fi
 
 echo "==> Done: $APP"
