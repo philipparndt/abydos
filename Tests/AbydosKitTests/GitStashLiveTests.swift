@@ -106,11 +106,22 @@ struct GitStashLiveTests {
 
 		for name in ["first", "second", "third"] {
 			try write("\(name)\n", "a.txt", in: root)
-			_ = await GitStash.push(in: root, message: name)
+			// **Asked rather than discarded.** This was `_ = await`, and a
+			// stash that did not happen showed up three lines later as a list
+			// with the wrong number of entries — which is the least useful
+			// place to find out.
+			#expect(await GitStash.push(in: root, message: name).exitCode == 0)
 		}
 		// Newest first, so: third, second, first.
 		let entries = await GitStash.list(in: root)
-		#expect(entries.map(\.message) == ["third", "second", "first"])
+
+		// **`require`, not `expect`, because the next line subscripts this.**
+		// `#expect` records and carries on, so a short list — which is what a
+		// `git` that failed to spawn under load produces, `run` answering -1
+		// with no output — reached `entries[2]` and trapped. That ends the
+		// process, not the test: one flake took this bundle down and 62 suites
+		// still running went with it, reported as failures of their own.
+		try #require(entries.map(\.message) == ["third", "second", "first"])
 
 		// Drop the newest and the oldest, which are not adjacent.
 		#expect(await GitStash.drop([entries[0], entries[2]], in: root).exitCode == 0)
