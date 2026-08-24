@@ -7,7 +7,7 @@ import AbydosKit
 /// the scheme, the two buttons, and a line of status. It costs no vertical
 /// space at all, which for something looked at constantly and pressed
 /// occasionally is the right trade.
-final class RunControl: NSView {
+final class RunControl: NSView, TitlebarMenuAnchor {
 	var onRun: (() -> Void)?
 	var onDebug: (() -> Void)?
 	var onStop: (() -> Void)?
@@ -17,7 +17,20 @@ final class RunControl: NSView {
 	var onProfile: (() -> Void)?
 	var onCoverage: (() -> Void)?
 	/// Asked to show the list of configurations, at a point in this view.
-	var onChooseConfiguration: ((NSPoint) -> Void)?
+	/// Asked for the configuration list, with the rect the popover should point
+	/// at — the scheme well, not the whole control.
+	var onChooseConfiguration: ((NSRect) -> Void)?
+
+	/// Whether the configuration popover is open, so the well it came out of
+	/// stays lit while it is. The pills have had this since they were pills; the
+	/// run control needed it the moment its list stopped being an `NSMenu`,
+	/// which closes on its own.
+	var isMenuOpen = false {
+		didSet {
+			guard isMenuOpen != oldValue else { return }
+			needsDisplay = true
+		}
+	}
 
 	private(set) var configurationName: String?
 	private var status: String = ""
@@ -237,7 +250,7 @@ final class RunControl: NSView {
 			setStatus("Starting\u{2026}", busy: true)
 			onDebug?()
 		} else if schemeRect.contains(point) {
-			onChooseConfiguration?(NSPoint(x: schemeRect.minX, y: schemeRect.maxY))
+			onChooseConfiguration?(schemeRect)
 		}
 	}
 
@@ -319,7 +332,7 @@ final class RunControl: NSView {
 
 		// The scheme, in a well of its own so it reads as something to press.
 		let well = NSBezierPath(roundedRect: schemeRect, xRadius: 5, yRadius: 5)
-		NSColor.white.withAlphaComponent(0.06).setFill()
+		NSColor.white.withAlphaComponent(isMenuOpen ? 0.14 : 0.06).setFill()
 		well.fill()
 
 		let name = configurationName ?? "No configuration"

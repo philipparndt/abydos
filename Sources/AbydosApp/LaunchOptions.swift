@@ -415,6 +415,9 @@ struct LaunchOptions {
 	var panelHeight: Double?
 	/// Open the list of launch configurations.
 	var launchMenu = false
+	/// A goal in the run list to open, so a capture run can see the places
+	/// behind one rather than only the row that holds them.
+	var launchMenuGoal: String?
 	/// Open the editor for the selected configuration.
 	var launchEditor = false
 	/// Open the symbol palette with this query and report what came back.
@@ -1063,6 +1066,9 @@ struct LaunchOptions {
 			case "--chart-path": options.reportChart = true
 			case "--debug-console": options.debugConsole = true
 			case "--launch-menu":   options.launchMenu = true
+			case "--launch-menu-open":
+				options.launchMenu = true
+				options.launchMenuGoal = next()
 			case "--launch-editor": options.launchEditor = true
 			case "--symbols":    options.symbolQuery = next() ?? ""
 			case "--symbols-project": options.symbolProject = true

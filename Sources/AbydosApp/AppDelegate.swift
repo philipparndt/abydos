@@ -1146,7 +1146,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 				controller?.echoDebugOutputForTesting()
 				if options.launchRun { controller?.runSelected(nil) }
 				if options.launchDebug { controller?.debugSelected(nil) }
-				if options.launchMenu { controller?.showConfigurationMenuForTesting() }
+				if options.launchMenu {
+					controller?.showConfigurationMenuForTesting(open: options.launchMenuGoal)
+				}
 				if options.launchEditor { controller?.editConfigurationForTesting() }
 			}
 		}

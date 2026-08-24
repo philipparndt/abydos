@@ -8128,17 +8128,31 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		}
 	}
 
-	/// Prints what the run control's menu offers, rather than opening it.
+	/// Opens the run list and prints what is in it.
 	///
-	/// Opening it is what a person does and exactly what a capture run cannot:
-	/// a menu runs a nested event loop, so the window is never drawn, the
-	/// screenshot never taken, and the run has to be killed — which throws away
-	/// the output that would have said what was in the menu.
-	func showConfigurationMenuForTesting() {
+	/// **This used to print a menu it built and threw away**, because opening
+	/// the real one was what a capture run could not do: an `NSMenu` runs a
+	/// nested event loop, so the window was never drawn, the screenshot never
+	/// taken, and the run had to be killed — taking the output with it. A
+	/// popover does not do that, so the harness can now open the thing somebody
+	/// actually sees instead of a second copy of it that was free to drift.
+	func showConfigurationMenuForTesting(open goal: String? = nil) {
 		// The destinations first, because they are the part worth checking and
 		// they arrive about twelve seconds after the menu is drawn — printing
 		// before they land prints "Finding destinations…" and proves nothing.
 		Task { @MainActor in
+			// And discovery before that. A reactor of a hundred modules is a
+			// walk of some seconds, and a run that printed at 1.2 s printed
+			// "No configurations yet" whatever the project held — which is a
+			// harness that cannot tell an empty project from a slow one.
+			// Generous: a reactor of a hundred and eighty modules takes 94 s to
+			// walk, measured, and most of that is the 45,772 Java files the main
+			// classes are found in.
+			let deadline = Date().addingTimeInterval(240)
+			while self.runConfigurations.isEmpty, Date() < deadline {
+				try? await Task.sleep(for: .milliseconds(200))
+			}
+
 			for configuration in self.runConfigurations where configuration.source == .xcodeScheme {
 				guard let target = configuration.xcode else { continue }
 				_ = await XcodeDestinations.shared.destinations(
@@ -8146,16 +8160,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 					workingDirectory: URL(fileURLWithPath: configuration.workingDirectory)
 				)
 			}
-			self.printConfigurationMenuForTesting()
+			self.printConfigurationMenuForTesting(open: goal)
 		}
 	}
 
-	private func printConfigurationMenuForTesting() {
-		for item in configurationMenu().items {
-			print("MENU: \(item.isSeparatorItem ? "—" : item.title)\(markForTesting(item))")
-			for entry in item.submenu?.items ?? [] {
-				print("MENU:     \(entry.isSeparatorItem ? "—" : entry.title)\(markForTesting(entry))")
-			}
+	private func printConfigurationMenuForTesting(open goal: String?) {
+		let list = runList()
+		print("MENU: \(list.arrangement.rowCount) rows for "
+			+ "\(list.arrangement.flatCount) runnable things")
+		if let control = runControl {
+			showConfigurationMenu(from: control.bounds, in: control)
+			for line in ProjectSwitcherPopover.rowsForTesting() { print("MENU: \(line)") }
+			guard let goal else { return }
+			print("MENU: --- opening \(goal) ---")
+			for line in ProjectSwitcherPopover.openGoalForTesting(goal) { print("MENU: \(line)") }
 		}
 		// Redirected to a file, stdout is fully buffered, and this run has no
 		// natural end — the window stays up until it is killed, which throws the
@@ -9784,146 +9802,128 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	}
 
 	/// The list of configurations, and the ways to change them.
-	private func showConfigurationMenu(at point: NSPoint, in view: NSView) {
-		configurationMenu().popUp(positioning: nil, at: point, in: view)
+	///
+	/// **A popover rather than the flat menu it used to be.** The menu printed
+	/// goals × modules: a reactor of a hundred modules offering three goals came
+	/// to three hundred rows, two hundred and ninety-seven of them saying the
+	/// same three words, running off the bottom of the screen and under a scroll
+	/// arrow — and an `NSMenu` cannot be typed at, so there was nothing to do
+	/// but scroll it. `RunPicker` names each goal once and treats the module as
+	/// the second choice it is; this is the same popover the project pill and
+	/// the branch pill use, so the filtering and the keys are the ones already
+	/// there.
+	private func showConfigurationMenu(from rect: NSRect, in control: RunControl) {
+		ProjectSwitcherPopover.show(
+			relativeTo: control,
+			anchorRect: rect,
+			currentProject: project,
+			owner: self,
+			focus: .runs,
+			runs: runList()
+		)
 	}
 
-	/// Everything the run control offers: the project's configurations, its
-	/// schemes and where each can go, and the Makefile's goals.
-	private func configurationMenu() -> NSMenu {
-		let menu = NSMenu()
-		let all = launchConfigurations
+	/// Everything the run popover needs: what can be run, what is chosen, and
+	/// what choosing one means.
+	///
+	/// The four sources are the menu's own, untouched — this is only what is
+	/// done with what they found.
+	func runList() -> ProjectSwitcherPopover.RunList {
+		let saved = launchConfigurations
+		let savedNames = Set(saved.map(\.name))
 
-		for configuration in all {
-			let item = NSMenuItem(
-				title: configuration.name, action: #selector(configurationChosen(_:)), keyEquivalent: ""
+		// The saved ones as rows. Only a name and a source are read from these:
+		// choosing one selects it by name, exactly as the menu item did.
+		var all: [RunConfiguration] = saved.map { entry in
+			RunConfiguration(
+				name: entry.name,
+				source: .vscode,
+				executable: entry.program,
+				arguments: entry.arguments,
+				workingDirectory: entry.workingDirectory
 			)
-			item.target = self
-			item.representedObject = configuration.name
-			// A tick here, and it is the right mark: clicking one of these
-			// selects it and nothing starts. The schemes below start when they
-			// are clicked, which is why they are marked differently.
-			item.state = configuration.name == selectedConfiguration?.name ? .on : .off
-			menu.addItem(item)
-		}
-		if all.isEmpty {
-			let empty = NSMenuItem(title: "No configurations yet", action: nil, keyEquivalent: "")
-			empty.isEnabled = false
-			menu.addItem(empty)
 		}
 
-		// The schemes of an Xcode project, each with the destinations it can go
-		// to. Here as well as in the Run menu, because this is the control
-		// somebody presses to choose what runs, and a device picker reachable
-		// only from a menu bar is a device picker nobody finds.
-		let schemes = runConfigurations.filter { $0.source == .xcodeScheme }
-		if !schemes.isEmpty {
-			menu.addItem(.separator())
-			let heading = NSMenuItem(title: "Schemes", action: nil, keyEquivalent: "")
-			heading.isEnabled = false
-			menu.addItem(heading)
+		all += runConfigurations.filter { $0.source == .xcodeScheme }
 
-			for configuration in schemes {
-				let item = NSMenuItem(
-					title: configuration.name,
-					action: #selector(runMenuItem(_:)),
-					keyEquivalent: ""
-				)
-				item.target = self
-				item.representedObject = configuration.id
-				markWillRun(item, configuration.name == selectedConfigurationName)
-				if let target = configuration.xcode {
-					item.submenu = destinationMenu(for: configuration, target: target)
-				}
-				menu.addItem(item)
-			}
+		for goal in makeGoals() where !savedNames.contains("make \(goal.name)") {
+			all.append(RunConfiguration(
+				name: "make \(goal.name)",
+				source: .make,
+				executable: "make",
+				arguments: [goal.name],
+				workingDirectory: goal.makefile.path.deletingLastPathComponent().path,
+				file: goal.makefile.path.path
+			))
 		}
 
-		// The goals a Makefile already defines, so a project that says how to
-		// run itself does not have to be told a second time.
-		//
-		// All of them, not only the ones a debugger could be attached to: a
-		// project whose `make dev` builds and runs a Swift app is exactly as
-		// runnable as one whose Makefile builds Go, and offering nothing for it
-		// was reading the Makefile and then pretending it said nothing.
-		let goals = makeGoals()
-		if !goals.isEmpty {
-			menu.addItem(.separator())
-			let heading = NSMenuItem(title: "From the Makefile", action: nil, keyEquivalent: "")
-			heading.isEnabled = false
-			menu.addItem(heading)
-
-			for goal in goals where !all.contains(where: { $0.name == "make \(goal.name)" }) {
-				// The ones a debugger can be attached to become configurations;
-				// the rest run as make runs them, in the terminal, which is
-				// what a `make dev` that builds and launches a Swift app wants
-				// anyway.
-				// One action for all of them: what a goal turns into is decided
-				// when it is clicked, by the same code the tests exercise —
-				// deciding it here, from a list built moments earlier, is how a
-				// goal came to be offered as debuggable and then do nothing.
-				let item = NSMenuItem(
-					title: "make \(goal.name)",
-					action: #selector(makeGoalChosen(_:)),
-					keyEquivalent: ""
-				)
-				item.target = self
-				item.representedObject = [goal.makefile.path.path, goal.name]
-				item.toolTip = goal.summary.isEmpty ? nil : goal.summary
-				menu.addItem(item)
-			}
+		all += runConfigurations.filter {
+			($0.source == .maven || $0.source == .gradle || $0.source == .javaMain)
+				&& !savedNames.contains($0.name)
 		}
 
-		// The same for a Maven or Gradle project, which says how to run itself
-		// in its build file exactly as a Makefile does.
-		let buildGoals = runConfigurations.filter {
-			$0.source == .maven || $0.source == .gradle || $0.source == .javaMain
+		var actions: [(title: String, symbol: String, handler: () -> Void)] = []
+		if selectedConfiguration != nil {
+			actions.append(("Edit\u{2026}", "pencil", { [weak self] in
+				self?.editSelectedConfiguration()
+			}))
+			// One local and one in the cluster differ by two fields, so the way
+			// to get the second is a copy of the first.
+			actions.append(("Duplicate\u{2026}", "plus.square.on.square", { [weak self] in
+				self?.duplicateSelectedConfiguration()
+			}))
 		}
-		if !buildGoals.isEmpty {
-			menu.addItem(.separator())
-			let heading = NSMenuItem(title: "From the build", action: nil, keyEquivalent: "")
-			heading.isEnabled = false
-			menu.addItem(heading)
+		actions.append(("New\u{2026}", "plus", { [weak self] in self?.addConfiguration() }))
+		actions.append(("Open launch.json", "doc.text", { [weak self] in self?.openLaunchFile() }))
 
-			for goal in buildGoals where !all.contains(where: { $0.name == goal.name }) {
-				let item = NSMenuItem(
-					title: goal.name, action: #selector(buildGoalChosen(_:)), keyEquivalent: ""
-				)
-				item.target = self
-				item.representedObject = goal.id
-				item.toolTip = goal.commandLine
-				menu.addItem(item)
-			}
-		}
-
-		menu.addItem(.separator())
-		let edit = NSMenuItem(
-			title: "Edit\u{2026}", action: #selector(editSelectedConfiguration), keyEquivalent: ""
+		return ProjectSwitcherPopover.RunList(
+			arrangement: RunPicker.arrange(all, pinned: savedNames),
+			selected: selectedConfigurationName,
+			choose: { [weak self] configuration in self?.chose(configuration) },
+			actions: actions
 		)
-		edit.target = self
-		edit.isEnabled = selectedConfiguration != nil
-		menu.addItem(edit)
+	}
 
-		// One local and one in the cluster differ by two fields, so the way to
-		// get the second is a copy of the first rather than typing it again.
-		let duplicate = NSMenuItem(
-			title: "Duplicate\u{2026}", action: #selector(duplicateSelectedConfiguration), keyEquivalent: ""
-		)
-		duplicate.target = self
-		duplicate.isEnabled = selectedConfiguration != nil
-		menu.addItem(duplicate)
+	/// What choosing a row means, which depends on where the row came from.
+	///
+	/// The same four behaviours the menu items had, in one place instead of four
+	/// selectors: a saved configuration is selected, a scheme is started, a make
+	/// goal goes through `MakeLaunch` because it may become a debuggable entry,
+	/// and everything else is selected as the goal to run.
+	private func chose(_ configuration: RunConfiguration) {
+		switch configuration.source {
+		case .vscode, .intelliJ:
+			selectedMakeRun = nil
+			selectedConfigurationName = configuration.name
+			refreshRunControl()
 
-		let add = NSMenuItem(title: "New\u{2026}", action: #selector(addConfiguration), keyEquivalent: "")
-		add.target = self
-		menu.addItem(add)
+		case .xcodeScheme:
+			// A scheme has a second axis of its own — where it runs — and in the
+			// menu that axis was a submenu, which is the only way a scheme could
+			// be started from this control at all. A popover row has no submenu,
+			// so the destination list opens as a menu from where the row was.
+			// It is not folded like a reactor's modules because the destinations
+			// are not known yet: asking Xcode takes about twelve seconds, and a
+			// row that could not say what was behind it until then would be
+			// worse than the menu it replaced.
+			guard let target = configuration.xcode, let control = runControl else {
+				run(configuration)
+				return
+			}
+			let menu = destinationMenu(for: configuration, target: target)
+			menu.popUp(positioning: nil, at: NSPoint(x: 0, y: control.bounds.maxY), in: control)
 
-		let reveal = NSMenuItem(
-			title: "Open launch.json", action: #selector(openLaunchFile), keyEquivalent: ""
-		)
-		reveal.target = self
-		menu.addItem(reveal)
+		case .make:
+			guard let file = configuration.file, let goal = configuration.arguments.first else { return }
+			chooseMakeGoal(goal, inMakefileAt: URL(fileURLWithPath: file))
 
-		return menu
+		default:
+			// Chosen, not started — the same bargain the build goals had: picking
+			// from a list says which one, and the play button says when.
+			selectedMakeRun = configuration
+			selectedConfigurationName = configuration.name
+			refreshRunControl()
+		}
 	}
 
 	/// The goals in the project's Makefiles that start a Go program.
@@ -10072,17 +10072,27 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	}
 
 	@objc private func makeGoalChosen(_ sender: NSMenuItem) {
-		guard let project,
-		      let parts = sender.representedObject as? [String], parts.count == 2,
-		      let makefile = Makefile.read(at: URL(fileURLWithPath: parts[0]))
-		else {
+		guard let parts = sender.representedObject as? [String], parts.count == 2 else {
+			notify("That Makefile could not be read")
+			return
+		}
+		chooseMakeGoal(parts[1], inMakefileAt: URL(fileURLWithPath: parts[0]))
+	}
+
+	/// Picks a Makefile goal to run, from the menu or from the run popover.
+	///
+	/// Shared rather than duplicated: what a goal becomes is decided here, by
+	/// `MakeLaunch`, and deciding it anywhere else is how a goal came to be
+	/// offered as debuggable and then do nothing.
+	private func chooseMakeGoal(_ goal: String, inMakefileAt path: URL) {
+		guard let project, let makefile = Makefile.read(at: path) else {
 			notify("That Makefile could not be read")
 			return
 		}
 
 		// Chosen, not started: picking something from a list of things to run
 		// says which one, and the play button says when.
-		switch MakeLaunch.choice(for: parts[1], in: makefile, projectRoot: project.root) {
+		switch MakeLaunch.choice(for: goal, in: makefile, projectRoot: project.root) {
 		case let .run(configuration):
 			selectedMakeRun = configuration
 			selectedConfigurationName = configuration.name
@@ -12101,8 +12111,9 @@ extension MainWindowController: NSToolbarDelegate {
 			control.onStop = { [weak self] in self?.stopRunning() }
 			control.onProfile = { [weak self] in self?.profileSelectedConfiguration() }
 			control.onCoverage = { [weak self] in self?.runSelectedWithCoverage() }
-			control.onChooseConfiguration = { [weak self] point in
-				self?.showConfigurationMenu(at: point, in: control)
+			control.onChooseConfiguration = { [weak self, weak control] rect in
+				guard let control else { return }
+				self?.showConfigurationMenu(from: rect, in: control)
 			}
 			control.onRunStateChanged = { [weak self] state in
 				self?.setTitlebarRunState(state)
