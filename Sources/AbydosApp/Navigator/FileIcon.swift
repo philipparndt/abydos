@@ -104,6 +104,21 @@ enum FileIcon {
 		return render(key: key, spec: spec)
 	}
 
+	/// The same glyph, for a row that has a name but no node behind it.
+	///
+	/// The palette lists files by path — there is no tree node for a file
+	/// nobody has expanded a folder to reach — and a file that looked one way
+	/// in the palette and another in the navigator would be two ideas about the
+	/// same file in one window.
+	static func image(forFileNamed name: String) -> NSImage? {
+		let lowered = name.lowercased()
+		let ext = (lowered as NSString).pathExtension
+		return render(
+			key: "file.\(ext)",
+			spec: specification(forExtension: ext, filename: lowered)
+		)
+	}
+
 	/// Rendered through `Theme.symbol`, so a row's icon obeys the same optical
 	/// weight as every other symbol in the window: at 2× a fixed `.regular`
 	/// makes `text.alignleft` four thick bars rather than four lines of text,

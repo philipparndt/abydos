@@ -177,6 +177,14 @@ struct LaunchOptions {
 	/// Print the palette's commands for this query.
 	var paletteQuery: String?
 
+	/// Open the palette, type this query a character at a time, and report what
+	/// the file list cost.
+	///
+	/// A character at a time rather than all at once, because the number worth
+	/// having is per keystroke: pasting a whole word measures one search where
+	/// somebody typing measures eight, and the eighth is the cheap one.
+	var paletteFiles: String?
+
 	/// Print what the project offers to run.
 	var listRunConfigurations = false
 
@@ -997,6 +1005,7 @@ struct LaunchOptions {
 			case "--click-below": options.clickBelowLastLine = true
 			case "--tab-menu": options.tabMenu = true
 			case "--palette": options.paletteQuery = next() ?? ""
+			case "--palette-files": options.paletteFiles = next() ?? ""
 			case "--run-configs": options.listRunConfigurations = true
 			case "--run-config": options.runConfigNamed = next()
 			case "--cadova-watch":

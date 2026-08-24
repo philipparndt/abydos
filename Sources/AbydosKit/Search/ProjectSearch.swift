@@ -169,35 +169,14 @@ public final class ProjectSearch {
 	// MARK: - Walking
 
 	/// Files worth searching, skipping excluded directories and binaries.
+	///
+	/// The walk moved to `ProjectFiles` when a second caller wanted it — the
+	/// command palette, which lists files by name. Its rules are the ones both
+	/// want, and a directory name added to the excluded directories setting has
+	/// to be skipped by both; two copies of that would drift the first time
+	/// somebody edited one.
 	func collectFiles() -> [URL] {
-		let excluded = Set(Settings.shared.excludedDirectories)
-		var results: [URL] = []
-
-		let keys: [URLResourceKey] = [.isDirectoryKey, .fileSizeKey, .isSymbolicLinkKey]
-		guard let enumerator = FileManager.default.enumerator(
-			at: root,
-			includingPropertiesForKeys: keys,
-			options: [.skipsHiddenFiles, .skipsPackageDescendants]
-		) else { return [] }
-
-		for case let url as URL in enumerator {
-			let name = url.lastPathComponent
-			guard let values = try? url.resourceValues(forKeys: Set(keys)) else { continue }
-
-			if values.isDirectory == true {
-				// Pruning at the directory level avoids walking node_modules at all,
-				// which is the difference between a fast search and an unusable one.
-				if excluded.contains(name) || name == ".git" {
-					enumerator.skipDescendants()
-				}
-				continue
-			}
-
-			if let size = values.fileSize, size > maximumFileSize { continue }
-			if values.isSymbolicLink == true { continue }
-			results.append(url)
-		}
-		return results
+		ProjectFiles.walk(in: root, maximumFileSize: maximumFileSize)
 	}
 
 	private func search(file url: URL, query: String, options: SearchOptions) -> FileSearchResult? {
