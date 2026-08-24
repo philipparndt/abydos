@@ -1130,6 +1130,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 	/// What scoped things work against.
 	var scopeRoot: URL? { subprojectRoot ?? project?.root }
 
+	/// The directory git commands belong in, which is not `scopeRoot`.
+	///
+	/// `git status` reports paths from the work tree root whatever directory it
+	/// ran in, while `git add` and friends resolve a pathspec against the
+	/// current one — so a pane running git inside a subproject and handing it
+	/// those root-relative paths made git look for `sub/sub/…` and refuse.
+	/// Staging did not work at all while a subproject was open.
+	///
+	/// Falls back to the scope only until the repository has been found, which
+	/// is also the one case where there is nothing better to say.
+	var gitCommandRoot: URL? { project?.gitRoot ?? scopeRoot }
+
 	/// Works on part of the project instead of the whole of it.
 	func openSubproject(at url: URL) {
 		guard let project else { return }
@@ -10537,7 +10549,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			// Nothing to show until the project's repository has been read,
 			// which the caller waits for rather than leaving the sidebar empty.
 			guard let project, project.git != nil else { return nil }
-			let pane = ChangesPane(root: scopeRoot ?? project.root)
+			let pane = ChangesPane(root: gitCommandRoot ?? project.root)
 			pane.onSelectChange = { [weak self] change in self?.showDiff(for: change) }
 			// `…` promotes the message rather than starting a second one.
 			pane.onOpenPage = { [weak self] summary in
@@ -10550,7 +10562,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			// Nothing to show until the project's repository has been read,
 			// which the caller waits for rather than leaving the sidebar empty.
 			guard let project, project.git != nil else { return nil }
-			let pane = BranchesPane(root: scopeRoot ?? project.root)
+			let pane = BranchesPane(root: gitCommandRoot ?? project.root)
 			// A worktree is a project in its own right, so opening one is
 			// switching to it rather than checking anything out.
 			//
@@ -10584,7 +10596,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 			// Nothing to show until the project's repository has been read,
 			// which the caller waits for rather than leaving the sidebar empty.
 			guard let project, project.git != nil else { return nil }
-			let pane = HistoryPane(root: scopeRoot ?? project.root)
+			let pane = HistoryPane(root: gitCommandRoot ?? project.root)
 			pane.offerScope(path: relativePathOfActiveFile())
 			pane.onSelectFile = { [weak self] commit, file in
 				self?.showCommitDiff(commit: commit, file: file)
@@ -10682,7 +10694,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		guard let project, project.git != nil, let group = editor.activeGroup else { return }
 
 		let page = (group.page(identifier: "log") as? HistoryPane)
-			?? HistoryPane(root: scopeRoot ?? project.root, layout: .page)
+			?? HistoryPane(root: gitCommandRoot ?? project.root, layout: .page)
 		logPage = page
 
 		// Named for what it is showing: two log tabs both called "Log" would be
@@ -10721,7 +10733,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		if let existing = group.page(identifier: "commit") as? ChangesPane {
 			page = existing
 		} else {
-			page = ChangesPane(root: scopeRoot ?? project.root, layout: .page)
+			page = ChangesPane(root: gitCommandRoot ?? project.root, layout: .page)
 			page.onWorkingCopyChanged = { [weak self] in
 				self?.navigator.refreshGitStatus()
 				self?.changesPane?.refresh()
@@ -10948,7 +10960,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// by — so with the root normalised one way and the file the other, a
 		// file under `/tmp` or `/var` narrowed the history to nothing. Same
 		// asymmetry as 0430.
-		let root = FilePath.canonical(project.root)
+		// Against the *git* root, which is what a path handed to `git log` is
+		// resolved from, and which may sit above the project root — a project
+		// opened on a subdirectory of a checkout is the ordinary case. Measured
+		// from the project root instead, the path was short by however many
+		// components separate the two, and the history came back empty.
+		let root = FilePath.canonical(gitCommandRoot ?? project.root)
 		let path = FilePath.canonical(url)
 		guard path.hasPrefix(root + "/") else { return nil }
 		return String(path.dropFirst(root.count + 1))

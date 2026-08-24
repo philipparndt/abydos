@@ -53,7 +53,28 @@ public final class Project {
 		let repo = await GitRepository.discover(from: scope ?? root)
 		await repo?.refresh()
 		git = repo
+		gitRoot = repo?.root
 	}
+
+	/// Where the repository's work tree starts, once it has been found.
+	///
+	/// Kept here so it can be read without a hop onto the actor, because the
+	/// callers that need it are building views: a pane is constructed
+	/// synchronously and has to be told which directory to run git in before it
+	/// can ask anything.
+	///
+	/// **This, and not `scopeRoot`, is the directory git commands belong in.**
+	/// `git status` reports paths from the work tree root whatever directory it
+	/// was run in, but `git add`, `restore`, `reset`, `clean` and `ls-files`
+	/// resolve a pathspec against the *current* directory. Run one in a
+	/// subproject and hand it a path that is already relative to the root and
+	/// the two compose:
+	///
+	///     warning: could not open directory 'sub/sub/'
+	///     fatal: pathspec 'sub/' did not match any files
+	///
+	/// which is staging that simply does not work while a subproject is open.
+	public private(set) var gitRoot: URL?
 
 	/// The project a file belongs to.
 	///
