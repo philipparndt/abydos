@@ -111,25 +111,46 @@ if [ -n "$GOSTL_SHADER" ]; then
 	if ! SHADER_OUT=$(xcrun -sdk macosx metal -c "$GOSTL_SHADER" -o "$BIN_DIR/Shaders.air" 2>&1) \
 		|| ! SHADER_OUT=$(xcrun -sdk macosx metallib "$BIN_DIR/Shaders.air" -o "$BIN_DIR/default.metallib" 2>&1)
 	then
-		echo "    error: the 3D viewer's shaders did not compile, so opening a" >&2
-		echo "    model would abort the app:" >&2
+		# The heading is decided by the case below, because the two failures mean
+		# opposite things now: one is a note about this machine, the other is a
+		# broken shader.
+		case "$SHADER_OUT" in
+			*"Metal Toolchain"*)
+				echo "    note: the Metal toolchain is not installed here, so the 3D" >&2
+				echo "    viewer's shaders were not compiled ahead of time:" >&2
+				;;
+			*)
+				echo "    error: the 3D viewer's shaders did not compile:" >&2
+				;;
+		esac
 		echo "$SHADER_OUT" | sed 's/^/    /' >&2
+		# **A missing toolchain and a broken shader are no longer the same
+		# thing.** Since gostl 0.23.2 the renderer falls back to compiling the
+		# `Shaders.metal` that ships in its bundle, which needs no toolchain — so
+		# a machine without one builds an app whose viewer works, and failing the
+		# build there would be refusing to build over nothing.
+		#
+		# A shader that does not *compile* is still fatal, because the runtime
+		# fallback compiles the same source and would fail the same way — later,
+		# and in front of somebody trying to look at a model.
 		case "$SHADER_OUT" in
 			*"Metal Toolchain"*)
 				echo "    Install it with: xcodebuild -downloadComponent MetalToolchain" >&2
+				echo "    Carrying on: the viewer compiles this source at runtime instead," >&2
+				echo "    so the only cost is a few hundred milliseconds the first time a" >&2
+				echo "    model is opened." >&2
+				;;
+			*)
+				# The escape hatch stays for the case it was written for: a
+				# shader this build cannot compile at all. The alternative to a
+				# broken 3D viewer should not be no build.
+				if [ "${ALLOW_MISSING_SHADERS:-0}" = "1" ]; then
+					echo "    ALLOW_MISSING_SHADERS=1: carrying on without them." >&2
+				else
+					exit 1
+				fi
 				;;
 		esac
-		# An escape hatch, because the alternative to a broken 3D viewer should
-		# not be no build at all. Somebody who never opens a model can pass
-		# ALLOW_MISSING_SHADERS=1 and get an app that works in every other
-		# respect — and is told, in the one sentence that matters, what it will
-		# do if they ever do open one.
-		if [ "${ALLOW_MISSING_SHADERS:-0}" = "1" ]; then
-			echo "    ALLOW_MISSING_SHADERS=1: carrying on without them. Opening a" >&2
-			echo "    model in this build will abort the app." >&2
-		else
-			exit 1
-		fi
 	else
 		echo "    compiled the 3D viewer's shaders"
 	fi
