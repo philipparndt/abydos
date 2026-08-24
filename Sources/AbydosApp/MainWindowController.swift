@@ -9205,7 +9205,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
 		// A Go configuration names a package, which is `go run`'s argument; any
 		// other names a binary, which is simply executed.
-		let words = configuration.type == "go"
+		//
+		// Except a script, whatever the type says. `go` is the default type a new
+		// configuration is written with, so a configuration somebody pointed at
+		// `./mvnw` and did not change the type of ran as `go run ./mvnw` — which
+		// fails in Go's words about a directory that is not a package, and is the
+		// same fault as handing the script to LLDB: believing the type over the
+		// file.
+		let isScript = ScriptLaunch.kind(ofProgramAt: program) != nil
+		let words = configuration.type == "go" && !isScript
 			? ["go", "run", program] + arguments
 			: [program] + arguments
 		let pane = bottomPanel.runCommand(
@@ -9218,6 +9226,149 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		// The shell reports what the program exited with, which is the one thing
 		// worth saying in the titlebar once it is over.
 		followRunningPane(pane)
+	}
+
+	/// Runs a wrapper script with JDWP asked for, then attaches to the JVM.
+	///
+	/// The same two halves as debugging in a pod, which is the flow this follows:
+	/// something elsewhere is started with its port open and suspended, and the
+	/// adapter inside the language server connects to it so the sources on screen
+	/// are the ones on this disk. What differs is that "elsewhere" is a child of
+	/// a shell script on this machine rather than a container, so there is no
+	/// port-forward and nothing to tell us when the JVM is up — the port is
+	/// opened by a grandchild this app never sees, and is polled for.
+	///
+	/// The script runs in an ordinary run pane, not swallowed by the debugger:
+	/// what Maven and Gradle print while they resolve and compile is most of what
+	/// there is to read when a launch does not work, and `internalConsole` would
+	/// have shown none of it.
+	private func startScriptDebug(
+		_ configuration: LaunchConfiguration,
+		kind: ScriptLaunch.Kind,
+		in root: URL,
+		environment: [String: String]
+	) {
+		let program = configuration.expandedProgram(root: root)
+		let directory = configuration.expandedWorkingDirectory(root: root)
+
+		// Gradle's port is Gradle's, so a stale JVM holding it is a thing that
+		// can happen and has to be said. For everyone else the kernel picks.
+		let port: Int
+		if kind == .gradle {
+			port = ScriptLaunch.gradleDebugPort
+			if DebugPort.isOpen(port) {
+				notify(
+					"Something is already on port \(port)",
+					detail: "Gradle's --debug-jvm always uses \(port) and cannot be told another. "
+						+ "A JVM left suspended by an earlier launch is the usual reason; stop it "
+						+ "and try again."
+				)
+				return
+			}
+		} else if let free = DebugPort.free() {
+			port = free
+		} else {
+			notify("No free port", detail: "The debugger needs a local port and the kernel had none.")
+			return
+		}
+
+		let plan = ScriptLaunch.plan(
+			kind: kind,
+			port: port,
+			environment: environment,
+			arguments: configuration.expandedArguments(root: root)
+		)
+
+		setPanelVisible(true)
+		runControl?.setStatus("Starting \(configuration.name)…", busy: true)
+
+		let words = [program] + plan.arguments
+		let pane = bottomPanel.runCommand(
+			title: configuration.name,
+			command: words.map(Self.shellQuoted).joined(separator: " "),
+			directory: URL(fileURLWithPath: directory),
+			environment: plan.environment,
+			reusing: "run:\(configuration.id)"
+		)
+		followRunningPane(pane)
+		// Said in the debug console rather than only in the status line: it is
+		// the one record of what was actually arranged, and the command in the
+		// run pane does not show it — the option went into the environment.
+		bottomPanel.showDebug()?.appendOutput(plan.note + "\n")
+
+		Task { @MainActor [weak self] in
+			guard let self else { return }
+			self.runControl?.setStatus("Waiting for the JVM on \(plan.port)…", busy: true)
+			guard await DebugPort.waitUntilOpen(plan.port) else {
+				// Deliberately specific about the two ways this ends badly,
+				// because they need opposite things done about them.
+				self.runControl?.setStatus("The JVM never opened \(plan.port)", failed: true)
+				self.notify(
+					"Nothing opened port \(plan.port)",
+					detail: Self.scriptDebugAdvice(for: kind)
+				)
+				return
+			}
+			self.attachToScriptJVM(configuration, port: plan.port, root: root)
+		}
+	}
+
+	/// What to try when the port never opened, which differs by wrapper.
+	private static func scriptDebugAdvice(for kind: ScriptLaunch.Kind) -> String {
+		switch kind {
+		case .maven:
+			return "Maven ran but no JVM took the debug option. A forked goal starts a second JVM "
+				+ "that does not inherit MAVEN_OPTS — Surefire needs it in argLine, Spring Boot in "
+				+ "jvmArguments."
+		case .gradle:
+			return "Gradle ran but nothing forked a JVM. --debug-jvm only opens a port for a task "
+				+ "that starts one, which means a JavaExec or Test task."
+		case .script:
+			return "The script ran but started no JVM under JAVA_TOOL_OPTIONS. If it starts the JVM "
+				+ "through something that clears the environment, the option has to go in there "
+				+ "instead."
+		}
+	}
+
+	/// Connects the Java debugger to a JVM that is up and waiting.
+	private func attachToScriptJVM(
+		_ configuration: LaunchConfiguration, port: Int, root: URL
+	) {
+		Task { @MainActor in
+			// The class files and the server's own port together, as the pod
+			// attach does: a frame from the JVM then lands on the source it was
+			// compiled from rather than on a decompiled stub.
+			let target: LanguageService.JavaLaunchTarget
+            do {
+				target = try await LanguageService.shared.javaLaunchTarget(
+					project: root,
+					anchor: JavaTooling.mainClasses(in: root).first.map { URL(fileURLWithPath: $0.file) },
+					saying: { sentence in self.runControl?.setStatus(sentence, busy: true) }
+				)
+			} catch {
+				runControl?.setStatus("Java cannot be debugged yet", failed: true)
+				notify(
+					"The Java language server is not ready",
+					detail: "The debugger for Java lives inside it, and the JVM is waiting on port "
+						+ "\(port) until it arrives or you stop it."
+				)
+				return
+			}
+
+			var request = JavaDebug.Request(kind: .attach)
+			request.host = "127.0.0.1"
+			request.port = port
+			request.classPaths = target.classPaths
+			request.projectName = target.projectName
+
+			guard let session = bottomPanel.startDebugging(
+				adapter: DebugAdapters.java,
+				executable: DebugAdapters.java.command,
+				start: .java(host: "127.0.0.1", port: target.port, request: request),
+				breakpoints: pendingBreakpoints
+			) else { return }
+			wire(session)
+		}
 	}
 
 	/// A word the shell will pass through as it was written.
@@ -9243,6 +9394,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 		in root: URL,
 		environment: [String: String]
 	) {
+		// A script before anything else, because the thing it is *not* is what
+		// the rest of this function assumes: a file a debugger can open. Handing
+		// `./mvnw` to lldb-dap got "is not a valid executable" — true, and about
+		// the wrong program. What a wrapper script has to be debugged through is
+		// the JVM it eventually starts.
+		if let kind = ScriptLaunch.kind(ofProgramAt: configuration.expandedProgram(root: root)) {
+			startScriptDebug(configuration, kind: kind, in: root, environment: environment)
+			return
+		}
+
 		let adapter = DebugAdapters.adapter(id: configuration.adapterID) ?? DebugAdapters.lldb
 
 		// Nothing to find on disk for Java: the adapter is started by the
