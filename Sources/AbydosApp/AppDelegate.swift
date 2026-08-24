@@ -451,6 +451,32 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 			}
 		}
 
+		if let query = options.paletteFiles {
+			ProjectSwitcherPopover.reportsForTesting = true
+			// Late enough that the project has opened and the tree has settled:
+			// what is being measured is the palette, not the window behind it.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
+				controller?.showProjectSwitcher(nil)
+				// A character at a time, at about the rate somebody types.
+				for length in 1...max(query.count, 1) {
+					let so_far = String(query.prefix(length))
+					DispatchQueue.main.asyncAfter(deadline: .now() + 0.5 + Double(length) * 0.15) {
+						ProjectSwitcherPopover.applyFilterForTesting(so_far)
+					}
+				}
+				DispatchQueue.main.asyncAfter(
+					deadline: .now() + 0.5 + Double(max(query.count, 1)) * 0.15 + 2.5
+				) {
+					for line in ProjectSwitcherPopover.rowsForTesting() {
+						print("PALETTEFILES \(line)")
+					}
+					fflush(stdout)
+					if options.writesACapture { return }
+					exit(0)
+				}
+			}
+		}
+
 		if let filter = options.switcherFilter {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
 				controller?.showProjectSwitcher(nil)
@@ -1120,7 +1146,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 				controller?.echoDebugOutputForTesting()
 				if options.launchRun { controller?.runSelected(nil) }
 				if options.launchDebug { controller?.debugSelected(nil) }
-				if options.launchMenu { controller?.showConfigurationMenuForTesting() }
+				if options.launchMenu {
+					controller?.showConfigurationMenuForTesting(open: options.launchMenuGoal)
+				}
 				if options.launchEditor { controller?.editConfigurationForTesting() }
 			}
 		}

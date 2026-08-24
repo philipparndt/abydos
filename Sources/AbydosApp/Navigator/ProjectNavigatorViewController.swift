@@ -502,6 +502,24 @@ final class ProjectNavigatorViewController: NSViewController {
 		rebuildDependencies(sets: dependencies?.sets ?? [])
 	}
 
+	/// Mends the palette's file list, or says it can no longer be trusted.
+	///
+	/// Named paths are added and removed one at a time; a batch the kernel gave
+	/// up describing only marks. Nothing here builds — a `swift build` produces
+	/// these events by the second and each build of the list is a `git ls-files`
+	/// over the whole repository, so the rebuild waits for somebody to open the
+	/// palette and want an answer.
+	private func updateFileIndex(with change: FileSystemChange) {
+		guard let files = project?.files else { return }
+		guard change.namesEveryPath else {
+			Task { await files.markStale() }
+			return
+		}
+		let paths = change.paths
+		guard !paths.isEmpty else { return }
+		Task { await files.noticed(changed: paths) }
+	}
+
 	/// Whether this batch of filesystem events could have changed the section.
 	private func changeTouchesDependencies(_ change: FileSystemChange) -> Bool {
 		guard change.namesEveryPath else {
@@ -756,6 +774,10 @@ final class ProjectNavigatorViewController: NSViewController {
 		// And the first file of a new kind should be offered as one, without
 		// the project being reopened. Counted again when a menu next asks.
 		fileKinds = nil
+		// The palette's file list, which is why this is here rather than in the
+		// palette: the palette is shut when the file somebody is about to look
+		// for is saved, and the watcher is the only thing awake to see it.
+		updateFileIndex(with: change)
 
 		// A lock file being written is the one event that changes the
 		// Dependencies section, and it is exactly what `swift package resolve`

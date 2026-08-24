@@ -56,7 +56,33 @@ public struct RunConfiguration: Equatable, Sendable, Identifiable {
 	/// destination is answered when there is somebody to ask.
 	public let xcode: XcodeTarget?
 
+	/// The module this belongs to, relative to the project root, where it
+	/// belongs to one.
+	///
+	/// **Kept apart from the name, and that is the point of it.** A hundred-
+	/// module reactor offers each goal once per module, so `name` reads
+	/// `mvn clean (client/ui)` a hundred times over with three words in common
+	/// — the list is goals × modules printed flat, and nothing in it says which
+	/// of the two axes a row varies on. With the module out on its own, a picker
+	/// can name the goal once and treat the module as the second choice it is.
+	/// `name` is unchanged, so everything that only ever wanted a label still
+	/// gets the one it always had.
+	public let module: String?
+
 	public var id: String { "\(source.rawValue):\(name):\(workingDirectory)" }
+
+	/// The name without its module, so the goals of a reactor can be counted.
+	///
+	/// Exact rather than guessed: the suffix `moduleSuffix` builds is
+	/// ` (\(module))`, and this takes off precisely that. A name that does not
+	/// end in it — a launch.json entry that happens to mention a module —
+	/// is returned whole.
+	public var goalName: String {
+		guard let module else { return name }
+		let suffix = " (\(module))"
+		guard name.hasSuffix(suffix) else { return name }
+		return String(name.dropLast(suffix.count))
+	}
 
 	/// Whether the native debugger can start on this.
 	///
@@ -89,10 +115,12 @@ public struct RunConfiguration: Equatable, Sendable, Identifiable {
 		file: String? = nil,
 		line: Int? = nil,
 		mainClass: String? = nil,
-		xcode: XcodeTarget? = nil
+		xcode: XcodeTarget? = nil,
+		module: String? = nil
 	) {
 		self.mainClass = mainClass
 		self.xcode = xcode
+		self.module = module
 		self.name = name
 		self.source = source
 		self.executable = executable
@@ -653,6 +681,7 @@ public enum RunConfigurationDiscovery {
 		let manifest = canonicalPath(package.manifest)
 		let workingDirectory = canonicalPath(directory)
 		let suffix = moduleSuffix(for: directory, root: root)
+		let module = moduleName(for: directory, root: root)
 
 		var result = package.executables.map { executable in
 			RunConfiguration(
@@ -662,7 +691,8 @@ public enum RunConfigurationDiscovery {
 				arguments: ["run", executable.name],
 				workingDirectory: workingDirectory,
 				file: manifest,
-				line: executable.line
+				line: executable.line,
+				module: module
 			)
 		}
 
@@ -679,7 +709,8 @@ public enum RunConfigurationDiscovery {
 				arguments: ["test"],
 				workingDirectory: workingDirectory,
 				file: manifest,
-				line: line
+				line: line,
+				module: module
 			))
 		}
 
@@ -695,6 +726,7 @@ public enum RunConfigurationDiscovery {
 
 		let executable = MavenProject.executable(for: directory, root: root)
 		let suffix = moduleSuffix(for: directory, root: root)
+		let module = moduleName(for: directory, root: root)
 		return project.goals.map { goal in
 			RunConfiguration(
 				name: "mvn \(goal.name)\(suffix)",
@@ -702,7 +734,8 @@ public enum RunConfigurationDiscovery {
 				executable: executable,
 				arguments: [goal.name],
 				workingDirectory: canonicalPath(directory),
-				file: canonicalPath(manifest)
+				file: canonicalPath(manifest),
+				module: module
 			)
 		}
 	}
@@ -721,6 +754,7 @@ public enum RunConfigurationDiscovery {
 
 		let executable = GradleBuild.executable(for: directory, root: root)
 		let suffix = moduleSuffix(for: directory, root: root)
+		let module = moduleName(for: directory, root: root)
 		// The wrapper is written as `./gradlew`, so it is run from the directory
 		// that holds it rather than from the module — and the module is named
 		// with Gradle's own `:module:task` instead.
@@ -736,7 +770,8 @@ public enum RunConfigurationDiscovery {
 				arguments: [prefix + task.name],
 				workingDirectory: canonicalPath(isWrapper ? wrapperDirectory : directory),
 				file: canonicalPath(buildFile),
-				line: task.line > 0 ? task.line : nil
+				line: task.line > 0 ? task.line : nil,
+				module: module
 			)
 		}
 	}
@@ -755,10 +790,15 @@ public enum RunConfigurationDiscovery {
 	/// build's menu says which module each goal belongs to, and a single-module
 	/// project is not made to read `mvn test (my-project)`.
 	static func moduleSuffix(for directory: URL, root: URL) -> String {
+		moduleName(for: directory, root: root).map { " (\($0))" } ?? ""
+	}
+
+	/// The same, as the module on its own — nil for the root.
+	static func moduleName(for directory: URL, root: URL) -> String? {
 		let rootPath = FilePath.canonical(root)
 		let path = FilePath.canonical(directory)
-		guard path != rootPath, path.hasPrefix(rootPath + "/") else { return "" }
-		return " (\(String(path.dropFirst(rootPath.count + 1))))"
+		guard path != rootPath, path.hasPrefix(rootPath + "/") else { return nil }
+		return String(path.dropFirst(rootPath.count + 1))
 	}
 
 	/// A configuration for every class with a `main` method.
@@ -781,7 +821,8 @@ public enum RunConfigurationDiscovery {
 				workingDirectory: canonicalPath(command.directory),
 				file: main.file,
 				line: main.line,
-				mainClass: main.name
+				mainClass: main.name,
+				module: moduleName(for: module, root: root)
 			)
 		}
 	}

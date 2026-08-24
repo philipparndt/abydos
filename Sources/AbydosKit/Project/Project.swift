@@ -92,6 +92,14 @@ public final class Project {
 	/// The load in flight, so a second caller joins it instead of starting one.
 	@MainActor private var loading: Task<Void, Never>?
 
+	/// Every file in the project, by path, for finding one by name.
+	///
+	/// Held here so two windows on the same project ask the same index: building
+	/// it is a `git ls-files` over the whole repository, and doing that twice is
+	/// the cost the index exists to avoid. It is an actor, so this is only a
+	/// reference.
+	public lazy var files = FileIndex(root: scope ?? root)
+
 	/// Where the repository's work tree starts, once it has been found.
 	///
 	/// Kept here so it can be read without a hop onto the actor, because the

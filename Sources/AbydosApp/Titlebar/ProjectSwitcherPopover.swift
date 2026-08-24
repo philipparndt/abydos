@@ -16,6 +16,26 @@ enum ProjectSwitcherPopover {
 		/// Branches only, grouped into their folders — what the branch pill
 		/// opens.
 		case branches
+		/// What the project can run, with the goals of a reactor folded — what
+		/// the run control opens.
+		case runs
+	}
+
+	/// Everything the run list needs, handed over by the window that knows it.
+	///
+	/// A carrier rather than something this popover works out for itself: what
+	/// a chosen row *does* differs by where it came from — a launch.json entry
+	/// is selected, a scheme is started, a Makefile goal is turned into a run —
+	/// and the window has that dispatch already. This takes the arrangement and
+	/// gives back the configuration that was chosen.
+	struct RunList {
+		var arrangement: RunPicker.Arrangement
+		/// The one the play button is pointed at, marked the way the current
+		/// branch is marked.
+		var selected: String?
+		var choose: (RunConfiguration) -> Void
+		/// The rows at the bottom: Edit…, New…, Open launch.json.
+		var actions: [(title: String, symbol: String, handler: () -> Void)] = []
 	}
 
 	/// Whether a driven run wants the pill's timings and rows printed.
@@ -28,6 +48,11 @@ enum ProjectSwitcherPopover {
 	/// the arrangement rather than photograph it.
 	static func rowsForTesting() -> [String] {
 		activeController?.rowsForTesting() ?? ["no popover"]
+	}
+
+	/// Opens a goal's places from a capture run, and says what is in them.
+	static func openGoalForTesting(_ name: String) -> [String] {
+		activeController?.openGoalForTesting(name) ?? ["no popover"]
 	}
 
 	/// Drives the filter from a capture run, so the filtered state can be seen.
@@ -64,7 +89,8 @@ enum ProjectSwitcherPopover {
 		anchorRect: NSRect? = nil,
 		currentProject: Project?,
 		owner: MainWindowController? = nil,
-		focus: Focus = .everything
+		focus: Focus = .everything,
+		runs: RunList? = nil
 	) {
 		// Clicking the pill while open should dismiss rather than stack popovers.
 		if let active, active.isShown {
@@ -74,7 +100,7 @@ enum ProjectSwitcherPopover {
 		}
 
 		let controller = SwitcherViewController(
-			currentProject: currentProject, owner: owner, focus: focus
+			currentProject: currentProject, owner: owner, focus: focus, runs: runs
 		)
 		let popover = NSPopover()
 		popover.contentViewController = controller
@@ -132,6 +158,21 @@ private final class SwitcherViewController: NSViewController {
 		case header(String)
 		case project(RecentProject, isOpen: Bool)
 		case branch(String, isCurrent: Bool)
+		/// A file in the open project, by its path relative to the root.
+		case file(String)
+		/// Something the project can run. `where` is the module it runs in,
+		/// shown beside the name — two rows called `run Main` are told apart by
+		/// nothing else.
+		///
+		/// The title is carried rather than taken from the configuration,
+		/// because inside an opened goal it is not the name that varies: a
+		/// hundred and eighty-four rows all reading `mvn package` with the
+		/// module in the margin is the same word printed down the screen. There
+		/// the place *is* the name, and the goal is in the row above.
+		case run(RunConfiguration, title: String, where: String?, isCurrent: Bool)
+		/// A goal that exists once per module, named once. `places` is how many
+		/// there are, so the row can say so rather than hiding it.
+		case goal(RunPicker.Goal)
 
 		var isSelectable: Bool {
 			if case .header = self { return false }
@@ -164,14 +205,35 @@ private final class SwitcherViewController: NSViewController {
 	/// The branch git treats as this repository's default, once asked.
 	private var defaultBranch: String?
 
+	/// What the project can run, when this is the run control's popover.
+	private let runs: ProjectSwitcherPopover.RunList?
+	/// The goal whose modules are being shown, when one has been opened.
+	private var openGoal: RunPicker.Goal?
+
+	/// The files matching what has been typed, and the query they answer.
+	///
+	/// Kept beside the rows rather than looked up while building them, because
+	/// the lookup is an `await` into the index actor and building rows is not
+	/// async — and must not become so. `filesQuery` is what makes a late answer
+	/// safe to drop: two keystrokes in flight land in whatever order they land.
+	private var fileMatches: [String] = []
+	private var filesQuery: String?
+	/// Whether the index has finished its first build. Until it has, the heading
+	/// says so — an empty list under "Files" reads as "there is no such file",
+	/// which is a different and wrong answer.
+	private var filesAreReady = false
+	private var fileSearch: Task<Void, Never>?
+
 	init(
 		currentProject: Project?,
 		owner: MainWindowController?,
-		focus: ProjectSwitcherPopover.Focus = .everything
+		focus: ProjectSwitcherPopover.Focus = .everything,
+		runs: ProjectSwitcherPopover.RunList? = nil
 	) {
 		self.currentProject = currentProject
 		self.owner = owner
 		self.focus = focus
+		self.runs = runs
 		super.init(nibName: nil, bundle: nil)
 	}
 
@@ -209,6 +271,7 @@ private final class SwitcherViewController: NSViewController {
 	override func loadView() {
 		buildRows()
 		readRepository()
+		prepareFiles()
 
 		// The cached scan is shown immediately and refreshed behind it, so the
 		// popover never waits on the file system to appear.
@@ -246,6 +309,7 @@ private final class SwitcherViewController: NSViewController {
 		let field = NSSearchField()
 		field.placeholderString = switch focus {
 		case .branches: "Filter branches"
+		case .runs: "Filter runs  ·  module/goal"
 		case .everything: "Search  ·  > actions  ·  : line"
 		}
 		field.font = Theme.current.uiFont(12)
@@ -356,6 +420,10 @@ private final class SwitcherViewController: NSViewController {
 			buildBranchRows()
 			return
 		}
+		if case .runs = focus {
+			buildRunRows()
+			return
+		}
 
 		let delegate = NSApp.delegate as? AppDelegate
 		RecentProjects.shared.pruneMissing()
@@ -436,33 +504,14 @@ private final class SwitcherViewController: NSViewController {
 	/// actions below them would be pushed off the end.
 	private static let projectLimit = 8
 
-	/// What the typing is asking for.
-	///
-	/// The prefixes are VS Code's, because this is the field VS Code taught
-	/// people to open and they arrive already knowing what `>` does.
-	private enum Scope {
-		/// Everything at once, ranked: projects, then branches, then actions.
-		case everything(String)
-		/// `>` — actions only, which is what a command palette normally is.
-		case commands(String)
-		/// `:` — a line in the file being edited.
-		case line(Int?)
-	}
+	/// And how many files, for the same reason. Smaller than the project limit
+	/// is deliberate: a two-letter query matches thousands of files where it
+	/// matches a dozen projects, and the answer to "too many" is another letter.
+	private static let fileLimit = 8
 
-	private var scope: Scope {
-		if filterText.hasPrefix(">") {
-			return .commands(rest(after: ">").lowercased())
-		}
-		if filterText.hasPrefix(":") {
-			let digits = rest(after: ":")
-			return .line(digits.isEmpty ? nil : Int(digits))
-		}
-		return .everything(filterText.lowercased())
-	}
-
-	private func rest(after prefix: String) -> String {
-		String(filterText.dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces)
-	}
+	/// What the typing is asking for. The decision itself is `PaletteScope`,
+	/// in the kit, where it can be asserted about without a window.
+	private var scope: PaletteScope { PaletteScope.of(filterText) }
 
 	/// Matches on both name and path, so "3d" finds everything under ~/dev/3d.
 	private func buildFilteredRows(delegate: AppDelegate?) {
@@ -509,6 +558,19 @@ private final class SwitcherViewController: NSViewController {
 			})
 		}
 
+		// Files of the project already open. Beside the projects rather than
+		// behind a prefix of their own: somebody typing `mvnw` should not have
+		// to decide which of four kinds of thing it is before they are allowed
+		// to type it.
+		if scope.offersFiles {
+			if !filesAreReady {
+				rows.append(.header("Files — still reading…"))
+			} else if !fileMatches.isEmpty {
+				rows.append(.header("Files"))
+				rows.append(contentsOf: fileMatches.map(Row.file))
+			}
+		}
+
 		// Branches of the repository already open. Typing a branch name is the
 		// same gesture as typing a project's, and ends in the same place the
 		// branch menu would have.
@@ -535,25 +597,29 @@ private final class SwitcherViewController: NSViewController {
 	/// results are most of the list.
 	private func buildBranchRows() {
 		rows = []
+		let needle = filterText.lowercased()
 
 		guard !branches.isEmpty else {
 			// Said rather than left blank. Until git answers there is nothing to
 			// show, and an empty popover looks like a repository with no
 			// branches rather than one that has not been read yet.
 			rows.append(.header(currentProject == nil ? "No repository" : "Reading branches…"))
+			appendRepositoryRows(matching: needle)
 			return
 		}
 
-		let needle = filterText.lowercased()
 		if !needle.isEmpty {
 			let matched = branches.filter { $0.lowercased().contains(needle) }
-			guard !matched.isEmpty else {
+			if matched.isEmpty {
 				rows.append(.header("No branch matches"))
-				return
+			} else {
+				for branch in matched {
+					rows.append(.branch(branch, isCurrent: branch == currentBranch))
+				}
 			}
-			for branch in matched {
-				rows.append(.branch(branch, isCurrent: branch == currentBranch))
-			}
+			// Typing `fork` or `github` reaches the handoffs the same way typing
+			// a branch name reaches a branch.
+			appendRepositoryRows(matching: needle)
 			return
 		}
 
@@ -571,7 +637,185 @@ private final class SwitcherViewController: NSViewController {
 				rows.append(.branch(branch, isCurrent: branch == currentBranch))
 			}
 		}
+		appendRepositoryRows(matching: needle)
 	}
+
+	/// The handoffs, under the branches, where the branch menu used to keep them.
+	///
+	/// Under rather than over: this popover is opened to pick a branch, and the
+	/// branch somebody wants must not have moved down four rows to make room for
+	/// something they asked for once a week.
+	private func appendRepositoryRows(matching needle: String) {
+		let handoffs = repositoryActions().filter {
+			needle.isEmpty || $0.title.lowercased().contains(needle)
+		}
+		guard !handoffs.isEmpty else { return }
+		rows.append(.header("Repository"))
+		for handoff in handoffs {
+			rows.append(.action(
+				title: handoff.title, symbol: handoff.symbol,
+				shortcut: nil, detail: nil, handler: handoff.handler
+			))
+		}
+	}
+
+	// MARK: - Runs
+
+	/// What the run control offers, with a reactor's goals named once each.
+	///
+	/// The sections are the ones the menu had — Configurations, Schemes, From
+	/// the Makefile, From the build — because they were the right sections. What
+	/// changes is that a goal offered in a hundred modules is one row in its
+	/// section rather than a hundred, and the modules are reached by opening it
+	/// or by typing one.
+	private func buildRunRows() {
+		rows = []
+		guard let runs else {
+			rows.append(.header("Nothing to run"))
+			return
+		}
+
+		// A goal that has been opened is the whole list: the question on screen
+		// is no longer "what shall I run" but "where".
+		if let openGoal, filterText.isEmpty {
+			// A row rather than a heading, because a heading cannot be clicked
+			// and ← is not something a mouse has either.
+			rows.append(.action(
+				title: openGoal.name,
+				symbol: "chevron.left",
+				shortcut: nil,
+				detail: "\(openGoal.places) places",
+				handler: { [weak self] in _ = self?.closeOpenGoal() }
+			))
+			if let root = openGoal.atRoot {
+				rows.append(.run(
+					root, title: "the reactor root", where: nil, isCurrent: isSelected(root)
+				))
+			}
+			for configuration in openGoal.inModules {
+				rows.append(.run(
+					configuration,
+					title: configuration.module ?? configuration.name,
+					where: nil,
+					isCurrent: isSelected(configuration)
+				))
+			}
+			return
+		}
+
+		let needle = filterText.lowercased()
+		if !needle.isEmpty {
+			// Flattened, the way the branch list flattens its folders: somebody
+			// who has typed a module name has already said which one they mean,
+			// and a goal that has to be opened first would be asking twice.
+			let found = RunPicker.matches(for: needle, in: runs.arrangement, limit: Self.runLimit)
+			if found.isEmpty {
+				rows.append(.header("Nothing matches"))
+			} else {
+				rows.append(.header("Runs"))
+				for match in found {
+					rows.append(.run(
+						match.configuration,
+						title: match.configuration.goalName,
+						where: match.configuration.module,
+						isCurrent: isSelected(match.configuration)
+					))
+				}
+			}
+			appendRunActions(matching: needle)
+			return
+		}
+
+		if !runs.arrangement.pinned.isEmpty {
+			rows.append(.header("Configurations"))
+			for configuration in runs.arrangement.pinned {
+				rows.append(.run(
+					configuration, title: configuration.name,
+					where: nil, isCurrent: isSelected(configuration)
+				))
+			}
+		}
+
+		// Singles and goals together, in their sections, in the order discovery
+		// found them — a goal sits where its siblings would have.
+		var sections: [(title: String, rows: [Row])] = []
+		func place(_ row: Row, under title: String) {
+			if let index = sections.firstIndex(where: { $0.title == title }) {
+				sections[index].rows.append(row)
+			} else {
+				sections.append((title, [row]))
+			}
+		}
+		for configuration in runs.arrangement.singles {
+			place(
+				.run(
+					configuration, title: configuration.goalName,
+					where: configuration.module, isCurrent: isSelected(configuration)
+				),
+				under: Self.heading(for: configuration.source)
+			)
+		}
+		for goal in runs.arrangement.goals {
+			guard let any = goal.whenChosen else { continue }
+			place(.goal(goal), under: Self.heading(for: any.source))
+		}
+		for section in sections {
+			rows.append(.header(section.title))
+			rows.append(contentsOf: section.rows)
+		}
+
+		if rows.isEmpty { rows.append(.header("No configurations yet")) }
+		appendRunActions(matching: "")
+	}
+
+	private func isSelected(_ configuration: RunConfiguration) -> Bool {
+		runs?.selected == configuration.name
+	}
+
+	/// Edit, duplicate, new, open the file — under everything, where the menu
+	/// kept them.
+	private func appendRunActions(matching needle: String) {
+		let actions = (runs?.actions ?? []).filter {
+			needle.isEmpty || $0.title.lowercased().contains(needle)
+		}
+		guard !actions.isEmpty else { return }
+		rows.append(.header("Configure"))
+		for action in actions {
+			rows.append(.action(
+				title: action.title, symbol: action.symbol,
+				shortcut: nil, detail: nil, handler: action.handler
+			))
+		}
+	}
+
+	/// The heading a discovered configuration belongs under — the menu's own
+	/// words, kept.
+	private static func heading(for source: RunConfiguration.Source) -> String {
+		switch source {
+		case .xcodeScheme: "Schemes"
+		case .make: "From the Makefile"
+		case .maven, .gradle, .javaMain: "From the build"
+		case .goModule, .swiftPackage, .bazel, .conan: "From the build"
+		case .intelliJ, .vscode: "Configurations"
+		}
+	}
+
+	/// The glyph beside a run row, so the sections are told apart at a glance
+	/// rather than only by their headings.
+	private static func symbol(for source: RunConfiguration.Source) -> String {
+		switch source {
+		case .intelliJ, .vscode: "play.fill"
+		case .xcodeScheme: "hammer"
+		case .make: "gearshape"
+		case .javaMain: "cup.and.saucer"
+		case .maven, .gradle, .bazel, .conan, .swiftPackage, .goModule: "shippingbox"
+		}
+	}
+
+	/// How many runs a filtered list shows. The same argument as the projects
+	/// and files above: a two-letter query in a reactor matches hundreds, and
+	/// the answer to "too many" is another letter.
+	private static let runLimit = 12
 
 	/// What `:` offers: one row, once there is a number to go to.
 	private func buildLineRows(_ number: Int?) {
@@ -587,42 +831,64 @@ private final class SwitcherViewController: NSViewController {
 		}))
 	}
 
+	/// One thing this repository can be handed off to.
+	private struct Handoff {
+		let title: String
+		let symbol: String
+		let handler: () -> Void
+	}
+
+	/// Where this repository can be opened other than here: Fork, and whatever
+	/// forge it is on.
+	///
+	/// **Shared, because the branch pill lost these when it became a popover.**
+	/// They were `BranchMenu`'s and they came back only in the palette's action
+	/// list, which the branch pill does not build — so somebody clicking the
+	/// pill to open the branch on GitHub found the entry simply gone. One list,
+	/// asked for by both.
+	private func repositoryActions() -> [Handoff] {
+		var found: [Handoff] = []
+
+		if let root = currentProject?.root, let fork = ForkIntegration.applicationURL() {
+			found.append(Handoff(title: "Open in Fork", symbol: "arrow.up.forward.app", handler: {
+				ForkIntegration.open(repository: root, application: fork)
+			}))
+		}
+
+		guard let forge else { return found }
+		let host = forge.displayName
+		if let branch = currentBranch, let url = forge.url(forBranch: branch) {
+			found.append(Handoff(title: "Open Branch on \(host)", symbol: "globe", handler: {
+				NSWorkspace.shared.open(url)
+			}))
+		}
+		if let url = forge.pullRequestsURL {
+			found.append(Handoff(title: "Open Pull Requests on \(host)", symbol: "globe", handler: {
+				NSWorkspace.shared.open(url)
+			}))
+		}
+		if let url = forge.webURL {
+			found.append(Handoff(title: "Open Repository on \(host)", symbol: "globe", handler: {
+				NSWorkspace.shared.open(url)
+			}))
+		}
+		return found
+	}
+
 	/// The things this window can be asked to do, as rows.
 	///
 	/// The same two handoffs the branch menu offers, flattened: a submenu cannot
 	/// be typed at, so the host's pages become rows of their own and are found
 	/// by the words in them.
 	private func matchingActions(_ needle: String) -> [Row] {
-		var actions: [(title: String, symbol: String, handler: () -> Void)] = []
+		var actions = repositoryActions().map {
+			(title: $0.title, symbol: $0.symbol, handler: $0.handler)
+		}
 
 		if let root = currentProject?.root {
-			if let fork = ForkIntegration.applicationURL() {
-				actions.append((title: "Open in Fork", symbol: "arrow.up.forward.app", handler: {
-					ForkIntegration.open(repository: root, application: fork)
-				}))
-			}
 			actions.append((title: "Reveal in Finder", symbol: "magnifyingglass", handler: {
 				NSWorkspace.shared.activateFileViewerSelecting([root])
 			}))
-		}
-
-		if let forge {
-			let host = forge.displayName
-			if let branch = currentBranch, let url = forge.url(forBranch: branch) {
-				actions.append((title: "Open Branch on \(host)", symbol: "globe", handler: {
-					NSWorkspace.shared.open(url)
-				}))
-			}
-			if let url = forge.pullRequestsURL {
-				actions.append((title: "Open Pull Requests on \(host)", symbol: "globe", handler: {
-					NSWorkspace.shared.open(url)
-				}))
-			}
-			if let url = forge.webURL {
-				actions.append((title: "Open Repository on \(host)", symbol: "globe", handler: {
-					NSWorkspace.shared.open(url)
-				}))
-			}
 		}
 
 		let delegate = NSApp.delegate as? AppDelegate
@@ -683,8 +949,114 @@ private final class SwitcherViewController: NSViewController {
 		}
 	}
 
+	/// Starts the file list building, before anything has been typed.
+	///
+	/// On open rather than on the first keystroke: the first build of a large
+	/// repository is a `git ls-files` of tens of thousands of paths, and started
+	/// here it overlaps with somebody reaching for the keyboard instead of
+	/// happening after they have finished with it. Only `everything` — the
+	/// branch pill's list has no files in it and should not pay for one.
+	private func prepareFiles() {
+		guard case .everything = focus, let files = currentProject?.files else { return }
+		let askedAt = Date()
+		Task { @MainActor [weak self] in
+			await files.prepare()
+			let count = await files.count
+			guard let self, self.isViewLoaded else { return }
+			// Only the flag. Anything already typed has a search of its own in
+			// flight, waiting on this same build, and it redraws when it lands —
+			// redrawing here as well would be the same list twice.
+			self.filesAreReady = true
+
+			guard ProjectSwitcherPopover.reportsForTesting else { return }
+			print(String(
+				format: "FILEINDEX ready after %8.1f ms  %6d files  %@",
+				Date().timeIntervalSince(askedAt) * 1000, count, LaunchClock.loadSaid
+			))
+			fflush(stdout)
+		}
+	}
+
+	/// Asks the index which files match, and redraws when it answers.
+	///
+	/// Off the main thread and out of `buildRows`. Matching 25,000 paths costs
+	/// 25 ms, which is a quarter of the way to a visible stutter on every
+	/// keystroke, and the project switch that held the main thread for 2,419 ms
+	/// is recent enough to be worth not repeating through a different door.
+	private func searchFiles() {
+		fileSearch?.cancel()
+		fileSearch = nil
+
+		guard scope.offersFiles, let query = scope.query,
+		      let files = currentProject?.files
+		else {
+			fileMatches = []
+			filesQuery = nil
+			return
+		}
+		// The previous answer is kept on screen while this one is found, rather
+		// than blanked: the list somebody is reading is nearly right, and a
+		// section that empties and refills on every keystroke cannot be clicked.
+		guard filesQuery != query else { return }
+
+		let askedAt = Date()
+		fileSearch = Task { @MainActor [weak self] in
+			await files.prepare()
+			let found = await files.matches(query, limit: Self.fileLimit)
+			let ready = await files.isReady
+			guard !Task.isCancelled, let self, self.isViewLoaded else { return }
+			// Two keystrokes in flight land in whatever order they land, and an
+			// older answer must not overwrite a newer one.
+			guard case let .everything(current) = self.scope, current == query else { return }
+
+			let answeredAt = Date()
+			self.fileMatches = found
+			self.filesQuery = query
+			self.filesAreReady = ready
+			self.rebuildPreservingSelection()
+
+			guard ProjectSwitcherPopover.reportsForTesting else { return }
+			// Two numbers, because they fail differently: the first is what the
+			// index cost, the second is what the main thread paid for it.
+			print(String(
+				format: "FILEMATCH %-14@ answered %7.2f ms  drew %6.2f ms  %d hits",
+				query as NSString,
+				answeredAt.timeIntervalSince(askedAt) * 1000,
+				Date().timeIntervalSince(answeredAt) * 1000,
+				found.count
+			))
+			fflush(stdout)
+		}
+	}
+
+	/// Redraws the list and puts the selection back where it was.
+	///
+	/// The files section arrives after the rest, so without this the highlight
+	/// jumps to the top of the list a moment after somebody stopped typing —
+	/// which is when they are about to press Return.
+	private func rebuildPreservingSelection() {
+		let selected = rows.indices.contains(tableView.selectedRow)
+			? describeForTesting(rows[tableView.selectedRow])
+			: nil
+
+		buildRows()
+		tableView.reloadData()
+		updatePreferredSize()
+
+		if let selected,
+		   let index = rows.firstIndex(where: { describeForTesting($0) == selected }) {
+			tableView.selectRowIndexes([index], byExtendingSelection: false)
+		} else {
+			selectFirstSelectableRow()
+		}
+	}
+
 	private func applyFilter(_ text: String) {
 		filterText = text.trimmingCharacters(in: .whitespaces)
+		// Typing is a question about the whole list, not about the goal that
+		// happened to be open when it started.
+		if !filterText.isEmpty { openGoal = nil }
+		searchFiles()
 		buildRows()
 		tableView.reloadData()
 		updatePreferredSize()
@@ -712,6 +1084,46 @@ private final class SwitcherViewController: NSViewController {
 			// Checking out the branch already on is a slow way of doing nothing.
 			guard !isCurrent, let root = currentProject?.root else { return }
 			BranchMenu.checkout(branch, in: root)
+		case let .file(path):
+			onDismiss?()
+			open(file: path)
+		case let .run(configuration, _, _, _):
+			onDismiss?()
+			runs?.choose(configuration)
+		case let .goal(goal):
+			// **Opens, whichever way it was activated.** It used to run at the
+			// reactor root on Return and open only on →, and that is one row
+			// doing two different things depending on how you touched it: a
+			// mouse has no →, so clicking a goal ran something instead of
+			// showing the places, and the popover shut. Running at the root is
+			// the first row inside instead, which costs one keystroke and is the
+			// same for everybody.
+			open(goal: goal)
+		}
+	}
+
+	/// Opens a file from the list, or says why it could not be.
+	///
+	/// The index is mended by filesystem events and is briefly behind them, so
+	/// a row can name a file that has since gone. Said rather than opened: an
+	/// editor onto a deleted file is an empty window with a title, which reads
+	/// as "the file is empty" and is a different and wrong answer.
+	private func open(file path: String) {
+		guard let root = currentProject?.root else { return }
+		let url = root.appendingPathComponent(path)
+		guard FileManager.default.fileExists(atPath: url.path) else {
+			Toast.post("That file is gone", detail: path)
+			// The list said otherwise, so it is behind. It will be right the
+			// next time the palette is opened.
+			if let files = currentProject?.files {
+				Task { await files.noticed(changed: [url]) }
+			}
+			return
+		}
+		// After the popover has gone, for the reason the menu actions give: a
+		// window that takes the keyboard cannot do it while a popover holds it.
+		DispatchQueue.main.async { [weak self] in
+			self?.owner?.openFile(at: url)
 		}
 	}
 
@@ -777,6 +1189,14 @@ private final class SwitcherViewController: NSViewController {
 	// MARK: - Keyboard
 
 	/// Sends the field editor's command, and reports the row it left selected.
+	func openGoalForTesting(_ name: String) -> [String] {
+		guard let goal = runs?.arrangement.goals.first(where: { $0.name == name }) else {
+			return ["no goal called \(name)"]
+		}
+		open(goal: goal)
+		return rowsForTesting()
+	}
+
 	func rowsForTesting() -> [String] {
 		rows.map { row in
 			switch row {
@@ -784,6 +1204,11 @@ private final class SwitcherViewController: NSViewController {
 			case let .branch(name, isCurrent):  return isCurrent ? "* \(name)" : "  \(name)"
 			case let .project(entry, _):        return "project \(entry.name)"
 			case let .action(title, _, _, _, _): return "action \(title)"
+			case let .file(path):               return "file \(path)"
+			case let .goal(goal):               return "goal \(goal.name) (\(goal.places))"
+			case let .run(_, title, place, current):
+				let where_ = place.map { "  [\($0)]" } ?? ""
+				return "\(current ? "* " : "  ")\(title)\(where_)"
 			}
 		}
 	}
@@ -801,7 +1226,60 @@ private final class SwitcherViewController: NSViewController {
 		case let .header(title):             return "header \(title)"
 		case let .project(project, _):       return "project \(project.path)"
 		case let .branch(name, _):           return "branch \(name)"
+		case let .file(path):                return "file \(path)"
+		case let .goal(goal):                return "goal \(goal.name)"
+		case let .run(run, _, place, _):     return "run \(run.name)\(place.map { " in \($0)" } ?? "")"
 		}
+	}
+
+	/// Opens the modules of the goal under the selection. False when there is
+	/// no goal there, so the key falls through to the field editor and the
+	/// caret still moves through what has been typed.
+	private func openSelectedGoal() -> Bool {
+		guard filterText.isEmpty, rows.indices.contains(tableView.selectedRow),
+		      case let .goal(goal) = rows[tableView.selectedRow]
+		else { return false }
+		open(goal: goal)
+		return true
+	}
+
+	/// Shows a goal's places, and puts the selection on the first of them
+	/// rather than on the row that goes back.
+	private func open(goal: RunPicker.Goal) {
+		openGoal = goal
+		buildRows()
+		tableView.reloadData()
+		updatePreferredSize()
+		let first = rows.firstIndex {
+			if case .run = $0 { return true }
+			return false
+		}
+		if let first {
+			tableView.selectRowIndexes([first], byExtendingSelection: false)
+			tableView.scrollRowToVisible(first)
+		} else {
+			selectFirstSelectableRow()
+		}
+	}
+
+	private func closeOpenGoal() -> Bool {
+		guard openGoal != nil else { return false }
+		let leaving = openGoal?.name
+		openGoal = nil
+		buildRows()
+		tableView.reloadData()
+		updatePreferredSize()
+		// Back onto the goal that was left, rather than the top of the list.
+		if let leaving, let index = rows.firstIndex(where: {
+			if case let .goal(goal) = $0 { return goal.name == leaving }
+			return false
+		}) {
+			tableView.selectRowIndexes([index], byExtendingSelection: false)
+			tableView.scrollRowToVisible(index)
+		} else {
+			selectFirstSelectableRow()
+		}
+		return true
 	}
 
 	private func selectFirstSelectableRow() {
@@ -825,6 +1303,10 @@ private final class SwitcherViewController: NSViewController {
 		case 126: // Up
 			moveSelection(by: -1)
 			return true
+		case 124: // Right — open a goal's modules
+			return openSelectedGoal()
+		case 123: // Left — back out of one
+			return closeOpenGoal()
 		default:
 			// Everything else belongs to the filter field.
 			return false
@@ -895,8 +1377,14 @@ extension SwitcherViewController: NSSearchFieldDelegate {
 		case #selector(NSResponder.insertNewline(_:)):
 			activateRow(at: tableView.selectedRow)
 			return true
+		case #selector(NSResponder.moveRight(_:)):
+			return openSelectedGoal()
+		case #selector(NSResponder.moveLeft(_:)):
+			return closeOpenGoal()
 		case #selector(NSResponder.cancelOperation(_:)):
-			// Escape clears the filter first, and only then closes.
+			// Escape leaves an opened goal first, then clears the filter, then
+			// closes — undoing one thing per press, in the order they were done.
+			if closeOpenGoal() { return true }
 			if filterText.isEmpty {
 				onDismiss?()
 			} else {
@@ -935,6 +1423,18 @@ extension SwitcherViewController: NSTableViewDataSource, NSTableViewDelegate {
 			return SwitcherProjectCell(entry: entry, isOpen: isOpen, filter: filterText)
 		case let .branch(name, isCurrent):
 			return SwitcherBranchCell(name: name, isCurrent: isCurrent, filter: filterText)
+		case let .file(path):
+			return SwitcherFileCell(path: path, filter: filterText)
+		case let .run(configuration, title, place, isCurrent):
+			return SwitcherRunCell(
+				title: title, place: place, chip: isCurrent ? "current" : nil,
+				symbol: Self.symbol(for: configuration.source), filter: filterText
+			)
+		case let .goal(goal):
+			return SwitcherRunCell(
+				title: goal.name, place: nil, chip: "\(goal.places) places  \u{203A}",
+				symbol: Self.symbol(for: goal.whenChosen?.source ?? .make), filter: filterText
+			)
 		}
 	}
 }
@@ -1166,6 +1666,183 @@ private final class SwitcherBranchCell: NSView {
 		marker.draw(at: NSPoint(
 			x: bounds.maxX - Theme.current.scaled(12) - ceil(markerSize.width),
 			y: bounds.midY - markerSize.height / 2
+		))
+	}
+}
+
+/// One thing that can be run: what it is called, and where it runs.
+///
+/// The same three-column shape as the file rows — glyph, name, right-aligned
+/// detail in the fixed face — because a run row answers the same question a
+/// file row does. Two configurations called `run Main` come from two modules
+/// and were told apart by nothing at all when the module lived inside the name
+/// of every row in the section.
+private final class SwitcherRunCell: NSView {
+	private let title: String
+	private let place: String?
+	private let chip: String?
+	private let symbol: String
+	private let filter: String
+
+	init(title: String, place: String?, chip: String?, symbol: String, filter: String) {
+		self.title = title
+		self.place = place
+		self.chip = chip
+		self.symbol = symbol
+		self.filter = filter
+		super.init(frame: .zero)
+	}
+
+	required init?(coder: NSCoder) { fatalError("not used") }
+
+	override var isFlipped: Bool { true }
+
+	override func draw(_ dirtyRect: NSRect) {
+		let tint = Theme.current.sidebarText
+		let iconSize = Theme.current.scaled(13)
+		if let icon = Theme.symbol(symbol, size: 11 * Theme.current.scale, color: tint) {
+			icon.drawFitted(in: NSRect(
+				x: Theme.current.scaled(12),
+				y: bounds.midY - iconSize / 2,
+				width: iconSize,
+				height: iconSize
+			))
+		}
+
+		let name = NSMutableAttributedString(string: title, attributes: [
+			.font: Theme.current.uiFont(13, weight: chip == "current" ? .semibold : .regular),
+			.foregroundColor: Theme.current.sidebarHeaderText,
+		])
+		if !filter.isEmpty,
+		   let range = title.range(of: filter, options: [.caseInsensitive, .diacriticInsensitive]) {
+			name.addAttribute(
+				.foregroundColor, value: Theme.current.gitModified, range: NSRange(range, in: title)
+			)
+		}
+		let nameX = Theme.current.scaled(33)
+		let nameSize = name.size()
+		name.draw(at: NSPoint(x: nameX, y: bounds.midY - nameSize.height / 2))
+
+		var right = bounds.maxX - Theme.current.scaled(12)
+		if let chip {
+			let mark = NSAttributedString(string: chip, attributes: [
+				.font: Theme.current.monoFont(11),
+				.foregroundColor: Theme.current.gitIgnored,
+			])
+			let markSize = mark.size()
+			mark.draw(at: NSPoint(x: right - ceil(markSize.width), y: bounds.midY - markSize.height / 2))
+			right -= ceil(markSize.width) + Theme.current.scaled(10)
+		}
+
+		guard let place else { return }
+		let paragraph = NSMutableParagraphStyle()
+		paragraph.alignment = .right
+		paragraph.lineBreakMode = .byTruncatingHead
+		let trail = NSMutableAttributedString(string: place, attributes: [
+			.font: Theme.current.monoFont(11),
+			.foregroundColor: Theme.current.gitIgnored,
+			.paragraphStyle: paragraph,
+		])
+		if !filter.isEmpty,
+		   let range = place.range(of: filter, options: [.caseInsensitive, .diacriticInsensitive]) {
+			trail.addAttribute(
+				.foregroundColor, value: Theme.current.gitModified, range: NSRange(range, in: place)
+			)
+		}
+		let left = nameX + ceil(nameSize.width) + Theme.current.scaled(12)
+		let available = right - left
+		guard available > Theme.current.scaled(30) else { return }
+		trail.draw(in: NSRect(
+			x: left, y: bounds.midY - trail.size().height / 2,
+			width: available, height: trail.size().height
+		))
+	}
+}
+
+/// One file, on one line: its name, and the directory it is in beside it.
+///
+/// The directory is not decoration. A project holds four files called
+/// `spec.md`, and the name alone tells them apart not at all — which is the
+/// difference between a list that can be chosen from and one that has to be
+/// opened four times.
+private final class SwitcherFileCell: NSView {
+	private let path: String
+	private let filter: String
+
+	init(path: String, filter: String) {
+		self.path = path
+		self.filter = filter
+		super.init(frame: .zero)
+	}
+
+	required init?(coder: NSCoder) { fatalError("not used") }
+
+	override var isFlipped: Bool { true }
+
+	override func draw(_ dirtyRect: NSRect) {
+		let name = (path as NSString).lastPathComponent
+		let directory = (path as NSString).deletingLastPathComponent
+
+		let iconSize = Theme.current.scaled(13)
+		if let icon = FileIcon.image(forFileNamed: name) {
+			icon.drawFitted(in: NSRect(
+				x: Theme.current.scaled(12),
+				y: bounds.midY - iconSize / 2,
+				width: iconSize,
+				height: iconSize
+			))
+		}
+
+		let title = NSMutableAttributedString(string: name, attributes: [
+			.font: Theme.current.uiFont(13),
+			.foregroundColor: Theme.current.sidebarHeaderText,
+		])
+		// Lit where the typing matched, so it is clear why this row is here —
+		// and, when the match is in a directory above, the name lights nowhere
+		// and the path beside it does instead.
+		if !filter.isEmpty,
+		   let range = name.range(of: filter, options: [.caseInsensitive, .diacriticInsensitive]) {
+			title.addAttribute(
+				.foregroundColor,
+				value: Theme.current.gitModified,
+				range: NSRange(range, in: name)
+			)
+		}
+
+		let nameX = Theme.current.scaled(33)
+		let titleSize = title.size()
+		title.draw(at: NSPoint(x: nameX, y: bounds.midY - titleSize.height / 2))
+
+		guard !directory.isEmpty else { return }
+
+		// Right-aligned and truncated at the front, as the project rows are: the
+		// tail of a path is the part that says which one this is.
+		let paragraph = NSMutableParagraphStyle()
+		paragraph.alignment = .right
+		paragraph.lineBreakMode = .byTruncatingHead
+
+		let trail = NSMutableAttributedString(string: directory, attributes: [
+			.font: Theme.current.monoFont(11),
+			.foregroundColor: Theme.current.gitIgnored,
+			.paragraphStyle: paragraph,
+		])
+		if !filter.isEmpty,
+		   let range = directory.range(of: filter, options: [.caseInsensitive, .diacriticInsensitive]) {
+			trail.addAttribute(
+				.foregroundColor,
+				value: Theme.current.gitModified,
+				range: NSRange(range, in: directory)
+			)
+		}
+
+		let left = nameX + ceil(titleSize.width) + Theme.current.scaled(12)
+		let available = bounds.maxX - Theme.current.scaled(12) - left
+		guard available > Theme.current.scaled(30) else { return }
+		trail.draw(in: NSRect(
+			x: left,
+			y: bounds.midY - trail.size().height / 2,
+			width: available,
+			height: trail.size().height
 		))
 	}
 }
