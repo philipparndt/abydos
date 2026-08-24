@@ -14,6 +14,7 @@ enum BranchMenu {
 		pill.isMenuOpen = true
 
 		Task { @MainActor in
+
 			guard let git = project.git else {
 				pill.isMenuOpen = false
 				return

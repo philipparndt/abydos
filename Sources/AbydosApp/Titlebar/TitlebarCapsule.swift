@@ -101,9 +101,31 @@ final class TitlebarCapsule: NSView, TitlebarMenuAnchor {
 	/// push button and the branch menu all behave differently — a titlebar that
 	/// said `main` in the usual way would be the only thing in the window not
 	/// admitting there is nothing there.
+	/// Whether the repository is still being looked for.
+	///
+	/// **The gap this fills is 784 ms**, measured opening a large work tree, and
+	/// it used to be 784 ms of nothing: no branch half, no divider, and a click
+	/// where the pill would be doing nothing at all — `BranchMenu.show` returned
+	/// without opening anything while `project.git` was nil. Somebody clicking a
+	/// pill that is not there and gets no response concludes the menu is slow,
+	/// which is what was reported.
+	///
+	/// A name rather than a spinner: the half has to reserve its width anyway,
+	/// and one word in the place the branch will be says the same thing without
+	/// a moving part in a titlebar.
+	var isReadingBranch = false {
+		didSet {
+			guard isReadingBranch != oldValue else { return }
+			invalidateIntrinsicContentSize()
+			needsDisplay = true
+		}
+	}
+
 	func setBranch(_ branch: String?, isUnborn: Bool = false) {
 		self.branch = branch
 		self.branchIsUnborn = isUnborn
+		// Whatever the answer, it has arrived.
+		if branch != nil { isReadingBranch = false }
 		// The only thing that qualifies what is on the capsule now. It shared
 		// this line with the worktree chip until 0490 moved that into a pill of
 		// its own, and the two of them writing straight onto `toolTip` — which
@@ -116,7 +138,11 @@ final class TitlebarCapsule: NSView, TitlebarMenuAnchor {
 
 	/// Whether the right half has anything to say. A directory that is not a
 	/// work tree has no branch, and the divider goes with it.
-	var hasBranch: Bool { branch != nil }
+	var hasBranch: Bool { branch != nil || isReadingBranch }
+
+	/// What the branch half says: the branch, or that it is still being looked
+	/// for.
+	private var branchText: String? { branch ?? (isReadingBranch ? "reading…" : nil) }
 
 	var isMenuOpen: Bool {
 		get { openHalf != nil }
@@ -136,9 +162,9 @@ final class TitlebarCapsule: NSView, TitlebarMenuAnchor {
 	/// right edge.
 	private var branchWidth: CGFloat {
 		let hintWidth = width(of: Self.hint, font: Self.hintFont)
-		guard let branch else { return Self.padding + hintWidth + Self.padding }
+		guard let shown = branchText else { return Self.padding + hintWidth + Self.padding }
 		return Self.padding
-			+ width(of: branch, font: Self.labelFont)
+			+ width(of: shown, font: Self.labelFont)
 			+ Self.gap + Self.chevronWidth
 			+ Self.gap + hintWidth
 			+ Self.padding
@@ -337,13 +363,15 @@ final class TitlebarCapsule: NSView, TitlebarMenuAnchor {
 		let hintX = shape.maxX - Self.padding - ceil(hintSize.width)
 		hint.draw(at: NSPoint(x: hintX, y: shape.midY - hintSize.height / 2))
 
-		guard let branch else { return }
+		guard let branch = branchText else { return }
 		let attributed = NSAttributedString(string: branch, attributes: [
 			.font: Self.labelFont,
 			// The dimmer of the two, and the same one the ⇧⌘P hint is drawn in:
 			// a branch with nothing on it is there, and is not yet a place
 			// anything has happened.
-			.foregroundColor: branchIsUnborn
+			// The dimmer colour also carries "still reading": it is not yet a
+			// branch anybody is on.
+			.foregroundColor: branchIsUnborn || isReadingBranch
 				? Theme.current.gutterText
 				: Theme.current.sidebarText,
 		])

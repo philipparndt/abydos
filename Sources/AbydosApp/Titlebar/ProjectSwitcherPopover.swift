@@ -4,8 +4,31 @@ import AbydosKit
 /// The dropdown anchored to the project pill: actions on top, then open
 /// projects, then recents — each with its badge and home-relative path.
 enum ProjectSwitcherPopover {
+	/// What the popover is for when it opens.
+	///
+	/// The same list, the same styling and the same filter field — the branch
+	/// pill wanted a branch picker with folders and a filter, and this popover
+	/// already was one for everything else. Two of them would be two things to
+	/// keep looking the same.
+	enum Focus {
+		/// Projects, branches and actions, ranked — what ⇧⌘P opens.
+		case everything
+		/// Branches only, grouped into their folders — what the branch pill
+		/// opens.
+		case branches
+	}
+
+	/// Whether a driven run wants the pill's timings and rows printed.
+	nonisolated(unsafe) static var reportsForTesting = false
+
 	private static var active: NSPopover?
 	private static weak var activeController: SwitcherViewController?
+
+	/// What the popover is showing, headings and all, so a driven run can check
+	/// the arrangement rather than photograph it.
+	static func rowsForTesting() -> [String] {
+		activeController?.rowsForTesting() ?? ["no popover"]
+	}
 
 	/// Drives the filter from a capture run, so the filtered state can be seen.
 	static func applyFilterForTesting(_ text: String) {
@@ -40,7 +63,8 @@ enum ProjectSwitcherPopover {
 		relativeTo pill: some NSView & TitlebarMenuAnchor,
 		anchorRect: NSRect? = nil,
 		currentProject: Project?,
-		owner: MainWindowController? = nil
+		owner: MainWindowController? = nil,
+		focus: Focus = .everything
 	) {
 		// Clicking the pill while open should dismiss rather than stack popovers.
 		if let active, active.isShown {
@@ -49,7 +73,9 @@ enum ProjectSwitcherPopover {
 			return
 		}
 
-		let controller = SwitcherViewController(currentProject: currentProject, owner: owner)
+		let controller = SwitcherViewController(
+			currentProject: currentProject, owner: owner, focus: focus
+		)
 		let popover = NSPopover()
 		popover.contentViewController = controller
 		popover.behavior = .transient
@@ -134,9 +160,18 @@ private final class SwitcherViewController: NSViewController {
 	private var currentBranch: String?
 	private var forge: GitForge.Repository?
 
-	init(currentProject: Project?, owner: MainWindowController?) {
+	private let focus: ProjectSwitcherPopover.Focus
+	/// The branch git treats as this repository's default, once asked.
+	private var defaultBranch: String?
+
+	init(
+		currentProject: Project?,
+		owner: MainWindowController?,
+		focus: ProjectSwitcherPopover.Focus = .everything
+	) {
 		self.currentProject = currentProject
 		self.owner = owner
+		self.focus = focus
 		super.init(nibName: nil, bundle: nil)
 	}
 
@@ -149,15 +184,22 @@ private final class SwitcherViewController: NSViewController {
 			async let names = BranchMenu.branches(in: root)
 			async let current = BranchMenu.currentBranch(in: root)
 			async let repository = GitForge.repository(in: root)
+			// Asked alongside the rest rather than after it: it is one more
+			// `symbolic-ref`, and the whole point of pinning the default is that
+			// it is there when the list first draws.
+			async let fallback = BranchGrouping.defaultBranch(in: root)
 
-			let (branches, head, forge) = await (names, current, repository)
+			let (branches, head, forge, main) = await (names, current, repository, fallback)
 			guard let self, self.isViewLoaded else { return }
 			self.branches = branches
 			self.currentBranch = head
 			self.forge = forge
-			// Only the filtered list shows any of this, so there is nothing to
-			// redraw until something has been typed.
-			guard !self.filterText.isEmpty else { return }
+			self.defaultBranch = main
+			// The branch list is the whole popover when that is what was opened,
+			// so it always redraws; everywhere else only the filtered list shows
+			// any of this, and there is nothing to redraw until something has
+			// been typed.
+			if case .everything = self.focus, self.filterText.isEmpty { return }
 			self.buildRows()
 			self.tableView.reloadData()
 			self.updatePreferredSize()
@@ -202,7 +244,10 @@ private final class SwitcherViewController: NSViewController {
 		// A visible field, so what you type is on screen and obviously a filter,
 		// rather than an invisible jump-to-match you have to guess at.
 		let field = NSSearchField()
-		field.placeholderString = "Search  ·  > actions  ·  : line"
+		field.placeholderString = switch focus {
+		case .branches: "Filter branches"
+		case .everything: "Search  ·  > actions  ·  : line"
+		}
 		field.font = Theme.current.uiFont(12)
 		field.delegate = self
 		field.focusRingType = .none
@@ -304,6 +349,14 @@ private final class SwitcherViewController: NSViewController {
 	// MARK: - Rows
 
 	private func buildRows() {
+		// Branches only, filter or no filter: the pill opened this to pick a
+		// branch, and offering to clone a repository underneath the results
+		// would be answering a question nobody asked.
+		if case .branches = focus {
+			buildBranchRows()
+			return
+		}
+
 		let delegate = NSApp.delegate as? AppDelegate
 		RecentProjects.shared.pruneMissing()
 
@@ -471,6 +524,52 @@ private final class SwitcherViewController: NSViewController {
 		if !actions.isEmpty {
 			rows.append(.header("Actions"))
 			rows.append(contentsOf: actions)
+		}
+	}
+
+	/// Branches, in their folders, with the ones nobody should hunt for on top.
+	///
+	/// Filtering flattens the folders deliberately. Somebody who has typed
+	/// `valid` is looking at four rows and does not need to be told which
+	/// folders they are in — the names say that — and headings between four
+	/// results are most of the list.
+	private func buildBranchRows() {
+		rows = []
+
+		guard !branches.isEmpty else {
+			// Said rather than left blank. Until git answers there is nothing to
+			// show, and an empty popover looks like a repository with no
+			// branches rather than one that has not been read yet.
+			rows.append(.header(currentProject == nil ? "No repository" : "Reading branches…"))
+			return
+		}
+
+		let needle = filterText.lowercased()
+		if !needle.isEmpty {
+			let matched = branches.filter { $0.lowercased().contains(needle) }
+			guard !matched.isEmpty else {
+				rows.append(.header("No branch matches"))
+				return
+			}
+			for branch in matched {
+				rows.append(.branch(branch, isCurrent: branch == currentBranch))
+			}
+			return
+		}
+
+		let arranged = BranchGrouping.arrange(
+			branches, current: currentBranch, default: defaultBranch
+		)
+		for branch in arranged.pinned {
+			rows.append(.branch(branch, isCurrent: branch == currentBranch))
+		}
+		for section in arranged.sections {
+			// The loose branches keep the heading they always had; a folder gets
+			// its own name, which is what somebody scanning for `fix/` reads.
+			rows.append(.header(section.folder ?? "Branches"))
+			for branch in section.branches {
+				rows.append(.branch(branch, isCurrent: branch == currentBranch))
+			}
 		}
 	}
 
@@ -678,6 +777,17 @@ private final class SwitcherViewController: NSViewController {
 	// MARK: - Keyboard
 
 	/// Sends the field editor's command, and reports the row it left selected.
+	func rowsForTesting() -> [String] {
+		rows.map { row in
+			switch row {
+			case let .header(title):            return "── \(title)"
+			case let .branch(name, isCurrent):  return isCurrent ? "* \(name)" : "  \(name)"
+			case let .project(entry, _):        return "project \(entry.name)"
+			case let .action(title, _, _, _, _): return "action \(title)"
+			}
+		}
+	}
+
 	func pressForTesting(_ selector: Selector) -> String {
 		let handled = control(filterField, textView: NSTextView(), doCommandBy: selector)
 		let row = tableView.selectedRow
